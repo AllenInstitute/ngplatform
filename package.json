@@ -1,0 +1,24 @@
+{
+  "name": "ngplatform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A research workspace around Neuroglancer: paste a state, share it, extend it with plugins.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest --run",
+    "e2e": "node e2e/smoke.mjs",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "neuroglancer": "file:../neuroglancer"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.3",
+    "vite": "^6.4.1",
+    "vitest": "^3.2.4"
+  }
+}
