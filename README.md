@@ -6,6 +6,10 @@ link; extend it with plugins. This is the platform shell (build guide Phase 1,
 milestones P0–P1) without any plugin yet. The TrackVis-style tractography
 plugin comes next.
 
+Where things stand, and what comes next: [`STATUS.md`](STATUS.md). The plan:
+[`docs/editor_repo_plan.md`](docs/editor_repo_plan.md). The app, deployed from
+the `gh-pages` branch: https://andrew-keenlyside.github.io/ngplatform/
+
 It consumes the zarr-vectors fork of Neuroglancer
 (`Andrew-Keenlyside/neuroglancer`, branch `zarr_vectors_working`) as a
 dependency, so Neuroglancer stays the rendering engine and the source of

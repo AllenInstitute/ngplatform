@@ -1,0 +1,3703 @@
+From 6916618843c66e27add224a03eb12b46421f3d1e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 30 Oct 2026 15:59:39 +0000
+Subject: [PATCH 1/2] Filter trees, a brute-force oracle and an indexed engine
+ for streamlines
+
+Step C0 of the viewer platform's filter plan: ground truth for TrackVis-style
+filtering, before any browser engine exists to be tested against it.
+
+zarr_vectors_tools.filtering (numpy only, so it also runs under Pyodide):
+- predicates: regions (sphere, box, slab, disk with an angle window, voxel
+  mask), leaves (passes / column / group) and and/or/not, with a versioned
+  JSON form ("zvf-predicate" v1) that other engines will read.  The module
+  docstring pins down each region's exact meaning.
+- oracle: tests every segment; defines the answer.  Plus summaries and
+  histograms over accepted streamlines.
+- IndexedEngine: segments filed under a cell grid, leaves cached by content,
+  so an operator flip is only boolean algebra.  Held to the oracle exactly
+  by property tests over random regions and trees, at cell sizes that make
+  segments span and skip cells.
+- Tractogram / load_tractogram (level 0 in the RAS mm select_streamlines
+  uses) and whole_brain_like synthetic sets.
+
+select_streamlines missed a streamline whose segment crosses the region
+with no vertex inside it and one end in a chunk the region does not touch:
+the read was cropped to the touched chunks, which drops that segment.  The
+oracle found it on the first store test.  It now also reads the chunks
+within `reach` of the region (default: one chunk on every side); a store's
+step length as `reach` gives the same answer from fewer chunks.
+
+benchmarks/filtering: gate G1 of the platform build guide, the same
+measurement under CPython and under Pyodide in Node.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01YR4HjHDYu9k6oaG8MkejjN
+---
+ .gitignore                                    |   3 +
+ benchmarks/README.md                          |   1 +
+ benchmarks/filtering/README.md                |  85 +++
+ benchmarks/filtering/g1.py                    | 186 ++++++
+ benchmarks/filtering/pyodide_worker.mjs       |  61 ++
+ .../filtering/results/measurements.json       | 368 ++++++++++++
+ benchmarks/filtering/results/summary.md       |  14 +
+ benchmarks/filtering/run.py                   | 155 +++++
+ docs/algorithms/streamlines_skeletons.md      |  41 +-
+ docs/api/filtering.rst                        |  45 ++
+ docs/api/index.rst                            |   1 +
+ tests/test_filtering_engines.py               | 214 +++++++
+ tests/test_filtering_oracle.py                | 236 ++++++++
+ tests/test_filtering_predicates.py            | 128 ++++
+ tests/test_filtering_store.py                 | 145 +++++
+ tests/test_streamline_select.py               |  25 +-
+ .../algorithms/streamline_select.py           |  35 +-
+ zarr_vectors_tools/filtering/__init__.py      |  65 ++
+ zarr_vectors_tools/filtering/geometry.py      | 175 ++++++
+ zarr_vectors_tools/filtering/indexed.py       | 321 ++++++++++
+ zarr_vectors_tools/filtering/oracle.py        | 132 ++++
+ zarr_vectors_tools/filtering/predicates.py    | 563 ++++++++++++++++++
+ zarr_vectors_tools/filtering/synthetic.py     | 123 ++++
+ zarr_vectors_tools/filtering/tractogram.py    | 280 +++++++++
+ 24 files changed, 3390 insertions(+), 12 deletions(-)
+ create mode 100644 benchmarks/filtering/README.md
+ create mode 100644 benchmarks/filtering/g1.py
+ create mode 100644 benchmarks/filtering/pyodide_worker.mjs
+ create mode 100644 benchmarks/filtering/results/measurements.json
+ create mode 100644 benchmarks/filtering/results/summary.md
+ create mode 100644 benchmarks/filtering/run.py
+ create mode 100644 docs/api/filtering.rst
+ create mode 100644 tests/test_filtering_engines.py
+ create mode 100644 tests/test_filtering_oracle.py
+ create mode 100644 tests/test_filtering_predicates.py
+ create mode 100644 tests/test_filtering_store.py
+ create mode 100644 zarr_vectors_tools/filtering/__init__.py
+ create mode 100644 zarr_vectors_tools/filtering/geometry.py
+ create mode 100644 zarr_vectors_tools/filtering/indexed.py
+ create mode 100644 zarr_vectors_tools/filtering/oracle.py
+ create mode 100644 zarr_vectors_tools/filtering/predicates.py
+ create mode 100644 zarr_vectors_tools/filtering/synthetic.py
+ create mode 100644 zarr_vectors_tools/filtering/tractogram.py
+
+diff --git a/.gitignore b/.gitignore
+index 73eb28a..d8809b8 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -9,6 +9,9 @@ dist/
+ .venv/
+ venv/
+ 
++# Benchmark inputs cached by benchmarks/filtering/run.py
++benchmarks/filtering/data/
++
+ # Pytest
+ .pytest_cache/
+ 
+diff --git a/benchmarks/README.md b/benchmarks/README.md
+index 918f875..e51fa6f 100644
+--- a/benchmarks/README.md
++++ b/benchmarks/README.md
+@@ -11,6 +11,7 @@ the third-party readers this package already wraps.
+ | [`paper/`](paper/) | *The three claims the paper makes, and nothing else.* | scripts — 8 panels as separate files + one supplementary table |
+ | [`formats/`](formats/) | *How does Zarr Vectors compare to the format I use today?* | 3 notebooks — Zarr Vectors reads/filters vs PLY, CSV, TRX, GraphML, SWC, OBJ |
+ | [`internals/`](internals/) | *How does Zarr Vectors scale along axis X?* | 8 notebooks — size, geometry type, backend, pyramid, bbox query, chunk shape, codec, edit cost |
++| [`filtering/`](filtering/) | *Is numpy, under Pyodide, fast enough to filter streamlines in a browser?* | scripts — gate G1 of the viewer platform plan, CPython and Pyodide side by side |
+ 
+ `formats/` and `internals/` are exploratory: each has its own
+ `README.md`, its own `_build.py`, and its own `01..N` numbering. They
+diff --git a/benchmarks/filtering/README.md b/benchmarks/filtering/README.md
+new file mode 100644
+index 0000000..e137eb6
+--- /dev/null
++++ b/benchmarks/filtering/README.md
+@@ -0,0 +1,85 @@
++# Filtering: gate G1
++
++*Is numpy, run inside the browser by Pyodide, fast enough to be the
++streamline filter engine of a Neuroglancer-based viewer?*
++
++This is gate G1 of the viewer platform's build guide. The filter plan sets
++interactive targets (its C8): an operator flip under 16 ms, a column filter
++under 50 ms, a 5 mm sphere under 100 ms, publishing the answer to the GPU
++under 20 ms, peak memory under 1.5 GB, and a first answer within 3 s. If
++numpy meets them under Pyodide, the platform needs no Rust kernel for those
++steps.
++
++## What is measured
++
++`g1.py` builds an `IndexedEngine` (`zarr_vectors_tools.filtering`) over a
++tractogram held in memory, then asks it every kind of question. Each region
++query gets a fresh region centred on a random vertex, so nothing comes from
++the cache; P3 flips the operators of trees whose leaves are all cached. The
++brute-force oracle answers one sphere too, as a cross-check (the run records
++whether they agree) and as the baseline the index must beat.
++
++| Key | Question |
++|---|---|
++| `build_s` | building the segment index (the engine's start-up) |
++| `sphere_ms`, `box_ms`, `disk_ms`, `mask_ms` | one region of about 5 mm (box 10 mm, mask 10 x 1 mm voxels) |
++| `slab_ms` | a 2 mm slab, TrackVis's slice filter |
++| `endpoints_ms` | a 5 mm sphere, either end inside |
++| `p1_ms` | `length between (p10, p90)` |
++| `p3_ms` | re-evaluating a four-leaf tree, every leaf cached |
++| `publish_ms` | three answers to one byte per streamline |
++| `oracle_sphere_s` | the same sphere, every segment tested |
++| `loaded_mb`, `peak_mb` | memory with the set loaded, and at its peak |
++
++Times are compute only: the geometry is already in memory, so nothing is
++fetched or decoded. `peak_mb` is the process's peak RSS under CPython, and
++the wasm heap under Pyodide, which only grows. Both include loading the set
++from `data/`, where `run.py` wrote it beforehand in a separate process, so
++generating a synthetic set costs neither runtime anything.
++
++The sets:
++
++- `synth-1e5`, `synth-1e6`: `whole_brain_like(n, seed=0)`. Streamlines with
++  1 mm steps and lengths of 20–200 mm (median about 50), curving smoothly
++  and folded back into a brain-sized ellipsoid. That gives a whole brain's
++  density, about 40 vertices per mm³ at 10^6 streamlines.
++- `real`: a store passed as `--real`, cached as `data/real/`. The
++  results below used the HiP-CT right-hemisphere iFOD2 tractogram
++  (`hip_ct_zarr_vector_.../APEX_hackathon/sub-Ha1_sample-RightHemi_...`):
++  79,648 streamlines and 39.4 M vertices at a 0.1 mm step.
++
++## Running
++
++You need an unpacked Pyodide distribution holding `pyodide.mjs`,
++`pyodide-lock.json` and the numpy wheel. The release tarball has them all,
++and nothing is fetched from a CDN.
++
++```bash
++curl -LO https://github.com/pyodide/pyodide/releases/download/314.0.7/pyodide-314.0.7.tar.bz2
++tar -xjf pyodide-314.0.7.tar.bz2      # -> ./pyodide/
++python benchmarks/filtering/run.py --pyodide-dir ./pyodide [--real path/to/store.zarrvectors]
++```
++
++Each set runs in a fresh process per runtime. Results go to
++`results/measurements.json` and `results/summary.md`. Run one runtime or set
++with `--runtimes cpython` or `--sets synth-1e5`. Under Pyodide the filtering
++subpackage is copied in as the package `zvfilter`, since it imports only
++numpy and itself; that is how a browser worker would load it.
++
++## Results
++
++See [`results/summary.md`](results/summary.md) for the table and
++[`results/measurements.json`](results/measurements.json) for every number
++(including p90 and max). They were measured on a 4-core cloud container with
++Python 3.13 / numpy 2.5 and Pyodide 314.0.7 (Python 3.14, numpy 2.4) under
++Node 22.
++
++RESULTS_PLACEHOLDER
++
++## Caveats
++
++- One machine, one run; the times are for comparing runtimes and sets, not
++  absolute.
++- Single-threaded throughout, as Pyodide is.
++- The engine holds level 0 whole in memory. A browser engine streams
++  chunks, so it fetches and decodes as well; that cost is not measured here.
+diff --git a/benchmarks/filtering/g1.py b/benchmarks/filtering/g1.py
+new file mode 100644
+index 0000000..bac37b5
+--- /dev/null
++++ b/benchmarks/filtering/g1.py
+@@ -0,0 +1,186 @@
++"""Gate G1: is numpy fast enough to be the in-browser filter engine?
++
++The build guide's gate G1 asks whether numpy under Pyodide meets the filter
++plan's interactive targets (C8) on 10^5 and 10^6 streamline tractograms; if
++it does, the Rust kernel is needed only for the spatial work.  This module
++is the measurement.  It imports nothing but numpy and the filtering
++subpackage, which the caller passes in, so the very same code runs under
++CPython and inside Pyodide (see run.py and pyodide_worker.mjs).
++
++Each set is filtered by the indexed engine with level 0 already in memory,
++so the times are compute only: no fetching, no decoding.  The brute-force
++oracle answers one of the same questions as a cross-check, and as the
++baseline the index has to beat.
++"""
++
++from __future__ import annotations
++
++import time
++from pathlib import Path
++
++import numpy as np
++
++#: The filter plan's C8 targets, in the units each measurement reports.
++GATES = {
++    "p3_ms": 16.0,          # operator flip, every leaf cached
++    "p1_ms": 50.0,          # one column comparison
++    "sphere_ms": 100.0,     # sphere r = 5 mm, geometry in memory
++    "publish_ms": 20.0,     # answers -> one byte per streamline
++    "peak_mb": 1536.0,      # peak memory while filtering
++    "first_result_s": 3.0,  # index build + first sphere
++}
++
++#: Synthetic sets: name -> streamline count.  Whole-brain-like, 1 mm steps.
++SYNTHETIC = {"synth-1e5": 100_000, "synth-1e6": 1_000_000}
++
++
++def prepare_set(filtering, name: str, data_dir: str | Path, store: str | None = None) -> None:
++    """Write set ``name`` to ``data_dir/name/`` as .npy files.
++
++    A synthetic set is generated; ``real`` is read from ``store`` (positions
++    kept as float32 RAS).  Both runtimes then load the same arrays, and
++    neither pays for generating them: a wasm heap never shrinks, so
++    generating inside Pyodide would count the generator's temporaries
++    against the engine.
++    """
++    if name in SYNTHETIC:
++        tg = filtering.whole_brain_like(SYNTHETIC[name], seed=0)
++        columns = {k: tg.columns[k] for k in ("fa_mean", "label")}
++    elif name == "real":
++        tg = filtering.load_tractogram(store, columns=["label_id"])
++        columns = {k: v for k, v in tg.columns.items() if k == "label_id"}
++    else:
++        raise ValueError(f"unknown set {name!r}")
++    out = Path(data_dir) / name
++    (out / "columns").mkdir(parents=True, exist_ok=True)
++    np.save(out / "vertices.npy", tg.vertices.astype(np.float32))
++    np.save(out / "offsets.npy", tg.offsets)
++    for key, values in columns.items():
++        np.save(out / "columns" / f"{key}.npy", values)
++
++
++def make_set(filtering, name: str, data_dir: str | Path):
++    """Load the set :func:`prepare_set` wrote (``length`` is computed on load)."""
++    where = Path(data_dir) / name
++    columns = {p.stem: np.load(p) for p in sorted((where / "columns").glob("*.npy"))}
++    return filtering.Tractogram(
++        np.load(where / "vertices.npy"), np.load(where / "offsets.npy"), columns=columns,
++    )
++
++
++def _timed(fn):
++    start = time.perf_counter()
++    out = fn()
++    return (time.perf_counter() - start) * 1e3, out
++
++
++def _stats(values: list[float]) -> dict[str, float]:
++    arr = np.asarray(values)
++    return {"median": float(np.median(arr)), "p90": float(np.percentile(arr, 90)),
++            "max": float(arr.max())}
++
++
++def measure(filtering, tractogram, *, trials: int = 9, seed: int = 0, memory_mb=None) -> dict:
++    """Time every kind of question on one tractogram.
++
++    Each region query uses a fresh region (centred on a random vertex), so
++    its leaf is never cached; P3 re-evaluates trees whose leaves all are.
++    ``memory_mb``, if given, reports the process's memory now; it is
++    sampled once the set is loaded and again once the index is built.
++    """
++    F = filtering
++    tg = tractogram
++    engine = None
++    out: dict = {
++        "n_streamlines": int(tg.n_objects),
++        "n_vertices": int(len(tg.vertices)),
++        "tractogram_mb": round((tg.vertices.nbytes + tg.offsets.nbytes) / 1e6, 1),
++    }
++    if memory_mb is not None:
++        out["loaded_mb"] = round(memory_mb())
++    build_ms, engine = _timed(lambda: F.IndexedEngine(tg))
++    out["build_s"] = build_ms / 1e3
++    out["index_mb"] = round(engine.index_bytes / 1e6, 1)
++    if memory_mb is not None:
++        out["built_mb"] = round(memory_mb())
++    out["cell_size_mm"] = round(engine.cell_size, 3)
++
++    rng = np.random.default_rng(seed)
++    centres = tg.vertices[rng.integers(0, len(tg.vertices), trials)].astype(np.float64)
++
++    def regions(make, label: str) -> None:
++        times, counts, work = [], [], []
++        for centre in centres:
++            ms, result = _timed(lambda c=centre: engine.evaluate(make(c)))
++            times.append(ms)
++            counts.append(int(result.sum()))
++            work.append(dict(engine.last_query))
++        out[f"{label}_ms"] = _stats(times)
++        out[f"{label}_accepted"] = int(np.median(counts))
++        if work[0]:
++            # Segments filed near the region, and how many needed the exact test.
++            out[f"{label}_candidates"] = int(np.median([w["candidates"] for w in work]))
++            out[f"{label}_tested"] = int(np.median([w["tested"] for w in work]))
++            # Segments tested per second: the rate a faster kernel would improve.
++            tested = np.array([w["tested"] for w in work], dtype=float)
++            out[f"{label}_tested_per_s"] = float(np.median(tested / (np.asarray(times) / 1e3)))
++
++    regions(lambda c: F.Passes(F.Sphere(c, 5.0)), "sphere")
++    out["first_result_s"] = out["build_s"] + out["sphere_ms"]["max"] / 1e3
++    regions(lambda c: F.Passes(F.Box(c - 5.0, c + 5.0)), "box")
++    regions(lambda c: F.Passes(F.Slab(1, c[1] - 1.0, c[1] + 1.0)), "slab")
++    normals = rng.normal(size=(trials, 3))
++    normal_of = {tuple(c): n for c, n in zip(centres, normals)}
++    regions(lambda c: F.Passes(F.Disk(c, normal_of[tuple(c)], 5.0)), "disk")
++    blob = rng.random((10, 10, 10)) < 0.5
++
++    def mask_at(c):
++        affine = np.eye(4)
++        affine[:3, 3] = c - 4.5           # 10 x 1 mm voxels centred on c
++        return F.Passes(F.Mask(blob, affine))
++
++    regions(mask_at, "mask")
++    regions(lambda c: F.Passes(F.Sphere(c + 0.25, 5.0), "endpoints"), "endpoints")
++
++    lengths = tg.columns["length"]
++    lo_hi = np.percentile(lengths, [10, 90])
++    p1 = []
++    for k in range(trials):
++        leaf = F.Column("length", "between", (float(lo_hi[0]) + 0.01 * k, float(lo_hi[1])))
++        p1.append(_timed(lambda leaf=leaf: engine.evaluate(leaf))[0])
++    out["p1_ms"] = _stats(p1)
++
++    # P3: four cached leaves, the operators flipped between evaluations.
++    a = F.Passes(F.Sphere(centres[0], 5.0))
++    b = F.Passes(F.Box(centres[1] - 5.0, centres[1] + 5.0))
++    c = F.Column("length", ">", float(np.median(lengths)))
++    d = F.Passes(F.Slab(1, centres[2][1] - 1.0, centres[2][1] + 1.0))
++    trees = [F.And(a, b, F.Not(c), d), F.Or(a, b, c, d), F.And(F.Or(a, b), F.Not(d), c),
++             F.Or(F.And(a, c), F.Not(b), d)]
++    for tree in trees:
++        engine.evaluate(tree)  # fill the cache
++    p3 = [_timed(lambda t=trees[k % len(trees)]: engine.evaluate(t))[0] for k in range(4 * trials)]
++    out["p3_ms"] = _stats(p3)
++
++    groups = [engine.evaluate(t) for t in trees[:3]]
++    out["publish_ms"] = _stats([_timed(lambda: engine.publish(groups))[0] for _ in range(trials)])
++
++    # The oracle answers the first sphere again, testing every segment.
++    leaf = F.Passes(F.Sphere(centres[0], 5.0))
++    oracle_ms, truth = _timed(lambda: F.evaluate(leaf, tg))
++    out["oracle_sphere_s"] = oracle_ms / 1e3
++    out["agrees_with_oracle"] = bool(np.array_equal(truth, engine.evaluate(leaf)))
++    return out
++
++
++def verdict(result: dict) -> dict[str, bool]:
++    """Which C8 gates one set's result meets."""
++    seen = {
++        "p3_ms": result["p3_ms"]["median"],
++        "p1_ms": result["p1_ms"]["median"],
++        "sphere_ms": result["sphere_ms"]["median"],
++        "publish_ms": result["publish_ms"]["median"],
++        "peak_mb": result.get("peak_mb", float("nan")),
++        "first_result_s": result["first_result_s"],
++    }
++    return {gate: bool(seen[gate] <= limit) for gate, limit in GATES.items()}
+diff --git a/benchmarks/filtering/pyodide_worker.mjs b/benchmarks/filtering/pyodide_worker.mjs
+new file mode 100644
+index 0000000..cd4f659
+--- /dev/null
++++ b/benchmarks/filtering/pyodide_worker.mjs
+@@ -0,0 +1,61 @@
++// Run g1.measure() for one set inside Pyodide, under Node, and print its JSON.
++//
++//   node pyodide_worker.mjs <pyodide-dir> <set> [data-dir]
++//
++// <pyodide-dir> is an unpacked Pyodide distribution holding pyodide.mjs,
++// pyodide-lock.json and the numpy wheel (the release tarball has them all);
++// nothing is fetched from a CDN.  The filtering subpackage is copied into
++// Pyodide's file system as the top-level package `zvfilter` -- it imports
++// only numpy and itself -- and g1.py next to it, so the code measured is the
++// code in this checkout.  run.py drives this once per set, in a fresh
++// process, so each set's peak wasm memory is its own.
++
++import { readdirSync, readFileSync } from "node:fs";
++import { dirname, join, resolve } from "node:path";
++import { fileURLToPath, pathToFileURL } from "node:url";
++
++const [pyodideDir, setName, dataDir] = process.argv.slice(2);
++if (!pyodideDir || !setName) {
++  console.error("usage: node pyodide_worker.mjs <pyodide-dir> <set> [data-dir]");
++  process.exit(2);
++}
++const here = dirname(fileURLToPath(import.meta.url));
++const packageDir = resolve(here, "../../zarr_vectors_tools/filtering");
++
++const { loadPyodide } = await import(pathToFileURL(join(resolve(pyodideDir), "pyodide.mjs")).href);
++const pyodide = await loadPyodide({ indexURL: resolve(pyodideDir) + "/" });
++await pyodide.loadPackage("numpy", { messageCallback: () => {} });
++
++const fs = pyodide.FS;
++fs.mkdirTree("/bench/zvfilter");
++for (const name of readdirSync(packageDir).filter((n) => n.endsWith(".py"))) {
++  fs.writeFile(`/bench/zvfilter/${name}`, readFileSync(join(packageDir, name)));
++}
++fs.writeFile("/bench/g1.py", readFileSync(join(here, "g1.py")));
++if (dataDir) {
++  fs.mkdirTree("/data");
++  pyodide.mountNodeFS("/data", resolve(dataDir));
++}
++
++const heapMb = () => pyodide._module.HEAPU8.buffer.byteLength / 1e6;
++const startMb = heapMb();
++const json = await pyodide.runPythonAsync(`
++import json, platform, sys
++sys.path.insert(0, "/bench")
++import numpy as np
++import g1, pyodide_js, zvfilter
++
++def heap_mb():
++    return pyodide_js._module.HEAPU8.buffer.byteLength / 1e6
++
++tg = g1.make_set(zvfilter, ${JSON.stringify(setName)}, "/data")
++result = g1.measure(zvfilter, tg, memory_mb=heap_mb)
++result["runtime"] = {"name": "pyodide", "python": platform.python_version(),
++                     "numpy": np.__version__, "pyodide": ${JSON.stringify(pyodide.version)}}
++json.dumps(result)
++`);
++const result = JSON.parse(json);
++// Wasm memory only grows, so its size at the end is the peak.
++result.peak_mb = Math.round(heapMb());
++result.startup_mb = Math.round(startMb);
++console.log(JSON.stringify(result));
+diff --git a/benchmarks/filtering/results/measurements.json b/benchmarks/filtering/results/measurements.json
+new file mode 100644
+index 0000000..a8ff81e
+--- /dev/null
++++ b/benchmarks/filtering/results/measurements.json
+@@ -0,0 +1,368 @@
++{
++ "sets": {
++  "synth-1e5": {
++   "cpython": {
++    "n_streamlines": 100000,
++    "n_vertices": 6081228,
++    "tractogram_mb": 73.8,
++    "loaded_mb": 167,
++    "build_s": 5.675253813999916,
++    "index_mb": 114.1,
++    "built_mb": 282,
++    "cell_size_mm": 3.124,
++    "sphere_ms": {
++     "median": 2.68869999990784,
++     "p90": 4.388060599831078,
++     "max": 4.8829789998308115
++    },
++    "sphere_accepted": 396,
++    "first_result_s": 5.680136792999747,
++    "box_ms": {
++     "median": 3.4023239995804033,
++     "p90": 5.732232600075804,
++     "max": 6.810411000060412
++    },
++    "box_accepted": 741,
++    "slab_ms": {
++     "median": 35.17063799972675,
++     "p90": 54.81098839973129,
++     "max": 79.52854599989223
++    },
++    "slab_accepted": 24145,
++    "disk_ms": {
++     "median": 1.1683170000651444,
++     "p90": 2.256709999710438,
++     "max": 2.6645620000635972
++    },
++    "disk_accepted": 170,
++    "mask_ms": {
++     "median": 5.522066000139603,
++     "p90": 9.636561000024813,
++     "max": 11.122233000151027
++    },
++    "mask_accepted": 668,
++    "endpoints_ms": {
++     "median": 6.895025000176247,
++     "p90": 7.430837600077211,
++     "max": 7.482336000066425
++    },
++    "endpoints_accepted": 98,
++    "p1_ms": {
++     "median": 0.12345599998297985,
++     "p90": 0.24739040009080782,
++     "max": 0.3056000000469794
++    },
++    "p3_ms": {
++     "median": 0.04339499992056517,
++     "p90": 0.06618149996029388,
++     "max": 0.11089300005551195
++    },
++    "publish_ms": {
++     "median": 0.5922919999648002,
++     "p90": 0.6396001998837164,
++     "max": 0.660576999962359
++    },
++    "oracle_sphere_s": 0.734190751999904,
++    "agrees_with_oracle": true,
++    "peak_mb": 4597,
++    "runtime": {
++     "name": "cpython",
++     "python": "3.13.17",
++     "numpy": "2.5.4"
++    }
++   },
++   "pyodide": {
++    "n_streamlines": 100000,
++    "n_vertices": 6081228,
++    "tractogram_mb": 73.8,
++    "loaded_mb": 939,
++    "build_s": 6.105171050999999,
++    "index_mb": 114.1,
++    "built_mb": 1087,
++    "cell_size_mm": 3.124,
++    "sphere_ms": {
++     "median": 6.133142000001257,
++     "p90": 12.272601399998706,
++     "max": 16.212378999998833
++    },
++    "sphere_accepted": 396,
++    "first_result_s": 6.121383429999998,
++    "box_ms": {
++     "median": 5.962666999998589,
++     "p90": 11.985383600000077,
++     "max": 14.362361999998186
++    },
++    "box_accepted": 741,
++    "slab_ms": {
++     "median": 83.46252399999798,
++     "p90": 114.28100839999972,
++     "max": 169.8857779999976
++    },
++    "slab_accepted": 24145,
++    "disk_ms": {
++     "median": 2.5799309999996467,
++     "p90": 4.356836800000963,
++     "max": 5.919908000002749
++    },
++    "disk_accepted": 170,
++    "mask_ms": {
++     "median": 12.565354999999556,
++     "p90": 25.591403199998553,
++     "max": 33.819419999996825
++    },
++    "mask_accepted": 668,
++    "endpoints_ms": {
++     "median": 14.52015099999926,
++     "p90": 14.863901999998319,
++     "max": 15.223410000000825
++    },
++    "endpoints_accepted": 98,
++    "p1_ms": {
++     "median": 0.7783399999965468,
++     "p90": 1.0943121999993366,
++     "max": 1.353656999999231
++    },
++    "p3_ms": {
++     "median": 0.5041319999996574,
++     "p90": 0.8391269999989959,
++     "max": 0.8933399999975222
++    },
++    "publish_ms": {
++     "median": 0.9764210000007267,
++     "p90": 1.111308200000849,
++     "max": 1.3030570000012176
++    },
++    "oracle_sphere_s": 1.2327111560000006,
++    "agrees_with_oracle": true,
++    "runtime": {
++     "name": "pyodide",
++     "python": "3.14.2",
++     "numpy": "2.4.6",
++     "pyodide": "314.0.7"
++    },
++    "peak_mb": 1087,
++    "startup_mb": 38
++   }
++  },
++  "synth-1e6": {
++   "cpython": {
++    "n_streamlines": 1000000,
++    "n_vertices": 60898150,
++    "tractogram_mb": 738.8,
++    "loaded_mb": 954,
++    "build_s": 70.33410760400011,
++    "index_mb": 1223.5,
++    "built_mb": 2784,
++    "cell_size_mm": 2.0,
++    "sphere_ms": {
++     "median": 35.21923300013441,
++     "p90": 74.06199380002363,
++     "max": 82.29547300015838
++    },
++    "sphere_accepted": 4201,
++    "first_result_s": 70.41640307700027,
++    "box_ms": {
++     "median": 38.18000699993718,
++     "p90": 86.11914260027334,
++     "max": 89.23718500000177
++    },
++    "box_accepted": 7817,
++    "slab_ms": {
++     "median": 791.4392819998284,
++     "p90": 898.2971392001673,
++     "max": 935.2072520000547
++    },
++    "slab_accepted": 291170,
++    "disk_ms": {
++     "median": 16.547611000078177,
++     "p90": 34.639272000003984,
++     "max": 37.31294799990792
++    },
++    "disk_accepted": 1648,
++    "mask_ms": {
++     "median": 62.38441999994393,
++     "p90": 139.55053539984874,
++     "max": 141.6367850001734
++    },
++    "mask_accepted": 6922,
++    "endpoints_ms": {
++     "median": 76.88154800007396,
++     "p90": 84.80699160008953,
++     "max": 107.59772599976714
++    },
++    "endpoints_accepted": 1069,
++    "p1_ms": {
++     "median": 4.083248000370077,
++     "p90": 5.019984200043837,
++     "max": 5.106945000079577
++    },
++    "p3_ms": {
++     "median": 1.025248500127418,
++     "p90": 1.6388750002533925,
++     "max": 1.7499649998171662
++    },
++    "publish_ms": {
++     "median": 7.877518999976019,
++     "p90": 7.946733000153472,
++     "max": 8.054581000124017
++    },
++    "oracle_sphere_s": 8.631284183999924,
++    "agrees_with_oracle": true,
++    "peak_mb": 5621,
++    "runtime": {
++     "name": "cpython",
++     "python": "3.13.17",
++     "numpy": "2.5.4"
++    }
++   },
++   "pyodide": {
++    "error": "rrnoError(44)},mknod(parent,name,mode,dev){throw new FS.ErrnoError(63)},rename(oldNode,newDir,newName){throw new FS.ErrnoError(63)},unlink(parent,name){throw new FS.ErrnoError(63)},rmdir(parent,name){throw new FS.ErrnoError(63)},readdir(node){throw new FS.ErrnoError(63)},symlink(parent,newName,oldPath){throw new FS.ErrnoError(63)}},stream_ops:{read(stream,buffer,offset,length,position){length=Math.min(length,stream.node.size-position);if(length<=0)return 0;var contents=stream.node.contents;var compressedData=contents.compressedData;var written=0;while(written<length){var start=contents.start+position+written;var desired=length-written;var chunkIndex=Math.floor(start/LZ4.CHUNK_SIZE);var compressedStart=compressedData[\"offsets\"][chunkIndex];var compressedSize=compressedData[\"sizes\"][chunkIndex];var currChunk;if(compressedData[\"successes\"][chunkIndex]){var found=compressedData[\"cachedIndexes\"].indexOf(chunkIndex);if(found>=0){currChunk=compressedData[\"cachedChunks\"][found]}else{compressedData[\"cachedIndexes\"].pop();compressedData[\"cachedIndexes\"].unshift(chunkIndex);currChunk=compressedData[\"cachedChunks\"].pop();compressedData[\"cachedChunks\"].unshift(currChunk);if(compressedData[\"debug\"]){out(\"decompressing chunk \"+chunkIndex);Module[\"decompressedChunks\"]=(Module[\"decompressedChunks\"]||0)+1}var compressed=compressedData[\"data\"].subarray(compressedStart,compressedStart+compressedSize);var originalSize=LZ4.codec.uncompress(compressed,currChunk);if(chunkIndex<compressedData[\"succes"
++   }
++  },
++  "real": {
++   "cpython": {
++    "n_streamlines": 79648,
++    "n_vertices": 39401458,
++    "tractogram_mb": 473.5,
++    "loaded_mb": 557,
++    "build_s": 22.81674762199964,
++    "index_mb": 668.1,
++    "built_mb": 1426,
++    "cell_size_mm": 1.073,
++    "sphere_ms": {
++     "median": 147.87725199994384,
++     "p90": 323.69045059995193,
++     "max": 572.2492649997548
++    },
++    "sphere_accepted": 7897,
++    "first_result_s": 23.388996886999394,
++    "box_ms": {
++     "median": 248.24500800013993,
++     "p90": 487.81889640013117,
++     "max": 992.1931019998738
++    },
++    "box_accepted": 11005,
++    "slab_ms": {
++     "median": 149.43055800040383,
++     "p90": 351.5166449999924,
++     "max": 486.05856099993616
++    },
++    "slab_accepted": 37119,
++    "disk_ms": {
++     "median": 56.006334999892715,
++     "p90": 220.19419139987804,
++     "max": 244.11658500002886
++    },
++    "disk_accepted": 4688,
++    "mask_ms": {
++     "median": 235.14678199990158,
++     "p90": 477.2402561998207,
++     "max": 915.1297129997147
++    },
++    "mask_accepted": 10277,
++    "endpoints_ms": {
++     "median": 5.176885000309994,
++     "p90": 6.5727917999538485,
++     "max": 9.545314999741095
++    },
++    "endpoints_accepted": 31,
++    "p1_ms": {
++     "median": 0.08307300004162244,
++     "p90": 0.12693999979092044,
++     "max": 0.2200799999627634
++    },
++    "p3_ms": {
++     "median": 0.0393949999306642,
++     "p90": 0.05104900014885061,
++     "max": 0.1142950000030396
++    },
++    "publish_ms": {
++     "median": 0.1576299996486341,
++     "p90": 0.18527939982959651,
++     "max": 0.18961300020237104
++    },
++    "oracle_sphere_s": 8.111310463999871,
++    "agrees_with_oracle": true,
++    "peak_mb": 4597,
++    "runtime": {
++     "name": "cpython",
++     "python": "3.13.17",
++     "numpy": "2.5.4"
++    }
++   },
++   "pyodide": {
++    "n_streamlines": 79648,
++    "n_vertices": 39401458,
++    "tractogram_mb": 473.5,
++    "loaded_mb": 1435,
++    "build_s": 35.67947546800001,
++    "index_mb": 668.1,
++    "built_mb": 2800,
++    "cell_size_mm": 1.073,
++    "sphere_ms": {
++     "median": 266.95938900000016,
++     "p90": 480.7679486000013,
++     "max": 972.2868829999953
++    },
++    "sphere_accepted": 7897,
++    "first_result_s": 36.651762351,
++    "box_ms": {
++     "median": 363.72114899999985,
++     "p90": 813.3362806000024,
++     "max": 1503.390678999999
++    },
++    "box_accepted": 11005,
++    "slab_ms": {
++     "median": 248.4155699999988,
++     "p90": 567.7396554000012,
++     "max": 673.8289809999998
++    },
++    "slab_accepted": 37119,
++    "disk_ms": {
++     "median": 87.02099699999621,
++     "p90": 278.5459591999996,
++     "max": 574.2825760000017
++    },
++    "disk_accepted": 4688,
++    "mask_ms": {
++     "median": 561.2055389999995,
++     "p90": 973.0058410000029,
++     "max": 1924.282237
++    },
++    "mask_accepted": 10277,
++    "endpoints_ms": {
++     "median": 7.463444999999069,
++     "p90": 7.6640581999981805,
++     "max": 8.047102999995559
++    },
++    "endpoints_accepted": 31,
++    "p1_ms": {
++     "median": 0.5424349999998412,
++     "p90": 0.7932348000025513,
++     "max": 0.9565419999972846
++    },
++    "p3_ms": {
++     "median": 0.35678849999953854,
++     "p90": 0.40716750000058255,
++     "max": 0.45910400000082063
++    },
++    "publish_ms": {
++     "median": 0.25469200000571846,
++     "p90": 0.2883720000014023,
++     "max": 0.3257159999989767
++    },
++    "oracle_sphere_s": 7.256342498999999,
++    "agrees_with_oracle": true,
++    "runtime": {
++     "name": "pyodide",
++     "python": "3.14.2",
++     "numpy": "2.4.6",
++     "pyodide": "314.0.7"
++    },
++    "peak_mb": 2800,
++    "startup_mb": 38
++   }
++  }
++ },
++ "real_store": "/tmp/claude-0/-home-user/34b23f17-056a-506c-9de9-b71b983fccaf/scratchpad/data/ifod.zarrvectors"
++}
+diff --git a/benchmarks/filtering/results/summary.md b/benchmarks/filtering/results/summary.md
+new file mode 100644
+index 0000000..94ded89
+--- /dev/null
++++ b/benchmarks/filtering/results/summary.md
+@@ -0,0 +1,14 @@
++# Gate G1 results
++
++Medians over 9 fresh regions (P3: 36 flips). Generated by `run.py`; see README.md.
++
++Gates (filter plan C8): p3_ms <= 16, p1_ms <= 50, sphere_ms <= 100, publish_ms <= 20, peak_mb <= 1536, first_result_s <= 3.
++
++| set | runtime | streamlines | vertices | build s | sphere ms | box ms | slab ms | disk ms | mask ms | ends ms | P1 ms | P3 ms | publish ms | oracle s | loaded MB | peak MB | gates met |
++|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
++| synth-1e5 | cpython | 100,000 | 6,081,228 | 5.7 | 2.7 | 3.4 | 35 | 1.2 | 5.5 | 6.9 | 0.12 | 0.04 | 0.59 | 0.7 | 167 | 4597 | 4/6 (missed: peak_mb, first_result_s) |
++| synth-1e5 | pyodide | 100,000 | 6,081,228 | 6.1 | 6.1 | 6.0 | 83 | 2.6 | 12.6 | 14.5 | 0.78 | 0.50 | 0.98 | 1.2 | 939 | 1087 | 5/6 (missed: first_result_s) |
++| synth-1e6 | cpython | 1,000,000 | 60,898,150 | 70.3 | 35.2 | 38.2 | 791 | 16.5 | 62.4 | 76.9 | 4.08 | 1.03 | 7.88 | 8.6 | 954 | 5621 | 4/6 (missed: peak_mb, first_result_s) |
++| synth-1e6 | pyodide | | | | | | | | | | | | | | | | failed: rrnoError(44)},mknod(parent,name,mode,dev){throw new FS.ErrnoError(63)},rename(o |
++| real | cpython | 79,648 | 39,401,458 | 22.8 | 147.9 | 248.2 | 149 | 56.0 | 235.1 | 5.2 | 0.08 | 0.04 | 0.16 | 8.1 | 557 | 4597 | 3/6 (missed: sphere_ms, peak_mb, first_result_s) |
++| real | pyodide | 79,648 | 39,401,458 | 35.7 | 267.0 | 363.7 | 248 | 87.0 | 561.2 | 7.5 | 0.54 | 0.36 | 0.25 | 7.3 | 1435 | 2800 | 3/6 (missed: sphere_ms, peak_mb, first_result_s) |
+diff --git a/benchmarks/filtering/run.py b/benchmarks/filtering/run.py
+new file mode 100644
+index 0000000..daebe03
+--- /dev/null
++++ b/benchmarks/filtering/run.py
+@@ -0,0 +1,155 @@
++"""Run gate G1 under CPython and Pyodide, and write the results.
++
++    python benchmarks/filtering/run.py --pyodide-dir PATH [--real STORE]
++
++Every set is first written to ``data/<set>/`` as .npy files, in a process
++of its own: the synthetic ones generated, ``real`` read from the store given
++as ``--real`` (its level 0, float32 RAS positions and ``label_id``).  Then
++each set is measured in a fresh process per runtime, so each reports its own
++peak memory: the process's high-water RSS under CPython, the wasm heap under
++Pyodide (which only grows, so its final size is the peak).  Sets already in
++``data/`` are reused.
++
++Writes ``results/measurements.json`` (everything) and ``results/summary.md``
++(the C8 gates, per set and runtime).
++"""
++
++from __future__ import annotations
++
++import argparse
++import json
++import platform
++import re
++import subprocess
++import sys
++from pathlib import Path
++
++HERE = Path(__file__).resolve().parent
++sys.path.insert(0, str(HERE))
++
++import g1  # noqa: E402
++
++DATA = HERE / "data"
++RESULTS = HERE / "results"
++
++
++def cpython_worker(name: str) -> None:
++    """Measure one set in this process and print its JSON."""
++    import numpy as np
++
++    from zarr_vectors_tools import filtering
++
++    def status_mb(field: str) -> float:
++        # VmHWM, unlike getrusage's ru_maxrss, is not carried over from the
++        # parent across exec.
++        with open("/proc/self/status") as f:
++            line = next(ln for ln in f if ln.startswith(field + ":"))
++        return int(line.split()[1]) / 1e3
++
++    tg = g1.make_set(filtering, name, DATA)
++    result = g1.measure(filtering, tg, memory_mb=lambda: status_mb("VmRSS"))
++    result["peak_mb"] = round(status_mb("VmHWM"))
++    result["runtime"] = {"name": "cpython", "python": platform.python_version(),
++                         "numpy": np.__version__}
++    print(json.dumps(result))
++
++
++def run_one(runtime: str, name: str, pyodide_dir: str | None) -> dict:
++    if runtime == "cpython":
++        cmd = [sys.executable, str(HERE / "run.py"), "--worker", name]
++    else:
++        cmd = ["node", str(HERE / "pyodide_worker.mjs"), pyodide_dir, name, str(DATA)]
++    done = subprocess.run(cmd, capture_output=True, text=True)
++    lines = [ln for ln in done.stdout.splitlines() if ln.startswith("{")]
++    if done.returncode != 0 or not lines:
++        # The last line naming an error, not the minified JS around it.
++        text = (done.stderr + "\n" + done.stdout).splitlines()
++        errors = [ln.strip()[:300] for ln in text
++                  if re.match(r"\s*(\w+(Error|Exception)|Aborted|RangeError)\b", ln)]
++        error = errors[-1] if errors else f"exit {done.returncode}"
++        print(f"  {runtime} {name}: {error}", file=sys.stderr)
++        return {"error": error}
++    return json.loads(lines[-1])
++
++
++def summary(measurements: dict) -> str:
++    rows = [
++        "| set | runtime | streamlines | vertices | build s | sphere ms | sphere tested "
++        "| box ms | slab ms | disk ms | mask ms | ends ms | P1 ms | P3 ms | publish ms "
++        "| oracle s | loaded MB | peak MB | gates met |",
++        "|" + "---|" * 19,
++    ]
++    for name, by_runtime in measurements["sets"].items():
++        for runtime, r in by_runtime.items():
++            if "error" in r:
++                failed = f" failed: {r['error'][:120]} |"
++                rows.append(f"| {name} | {runtime} |" + " |" * 16 + failed)
++                continue
++            met = g1.verdict(r)
++            missed = [g for g, ok in met.items() if not ok]
++            rows.append(
++                f"| {name} | {runtime} | {r['n_streamlines']:,} | {r['n_vertices']:,} "
++                f"| {r['build_s']:.1f} | {r['sphere_ms']['median']:.1f} "
++                f"| {r.get('sphere_tested', 0):,} "
++                f"| {r['box_ms']['median']:.1f} | {r['slab_ms']['median']:.0f} "
++                f"| {r['disk_ms']['median']:.1f} | {r['mask_ms']['median']:.1f} "
++                f"| {r['endpoints_ms']['median']:.1f} | {r['p1_ms']['median']:.2f} "
++                f"| {r['p3_ms']['median']:.2f} | {r['publish_ms']['median']:.2f} "
++                f"| {r['oracle_sphere_s']:.1f} | {r.get('loaded_mb', '')} | {r['peak_mb']} "
++                f"| {sum(met.values())}/{len(met)}"
++                + (f" (missed: {', '.join(missed)})" if missed else "") + " |"
++            )
++    gates = ", ".join(f"{k} <= {v:g}" for k, v in g1.GATES.items())
++    return (
++        "# Gate G1 results\n\nMedians over 9 fresh regions (P3: 36 flips). "
++        "Generated by `run.py`; see README.md.\n\n"
++        f"Gates (filter plan C8): {gates}.\n\n" + "\n".join(rows) + "\n"
++    )
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
++    parser.add_argument("--pyodide-dir", help="unpacked Pyodide distribution (with numpy)")
++    parser.add_argument("--real", help="a streamline store to add as the 'real' set")
++    parser.add_argument("--sets", nargs="+", default=list(g1.SYNTHETIC) + ["real"])
++    parser.add_argument("--runtimes", nargs="+", default=["cpython", "pyodide"])
++    parser.add_argument("--worker", help=argparse.SUPPRESS)
++    parser.add_argument("--prepare", help=argparse.SUPPRESS)
++    args = parser.parse_args()
++    if args.worker:
++        cpython_worker(args.worker)
++        return
++    if args.prepare:
++        from zarr_vectors_tools import filtering
++
++        g1.prepare_set(filtering, args.prepare, DATA, args.real)
++        if args.real:
++            (DATA / "real.json").write_text(json.dumps({"store": args.real}) + "\n")
++        return
++    sets = []
++    for name in args.sets:
++        if not (DATA / name / "vertices.npy").exists():
++            if name == "real" and not args.real:
++                continue
++            print(f"preparing {name} ...", file=sys.stderr, flush=True)
++            cmd = [sys.executable, str(HERE / "run.py"), "--prepare", name]
++            subprocess.run(cmd + (["--real", args.real] if name == "real" else []), check=True)
++        sets.append(name)
++    if "pyodide" in args.runtimes and not args.pyodide_dir:
++        parser.error("--pyodide-dir is needed to run under Pyodide")
++    RESULTS.mkdir(exist_ok=True)
++    measurements: dict = {"sets": {}}
++    if (DATA / "real.json").exists():
++        measurements["real_store"] = json.loads((DATA / "real.json").read_text())["store"]
++    for name in sets:
++        for runtime in args.runtimes:
++            print(f"{name} / {runtime} ...", file=sys.stderr, flush=True)
++            measurements["sets"].setdefault(name, {})[runtime] = run_one(
++                runtime, name, args.pyodide_dir)
++    (RESULTS / "measurements.json").write_text(json.dumps(measurements, indent=1) + "\n")
++    (RESULTS / "summary.md").write_text(summary(measurements))
++    print((RESULTS / "summary.md").read_text())
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/docs/algorithms/streamlines_skeletons.md b/docs/algorithms/streamlines_skeletons.md
+index 7ead3c9..fddc179 100644
+--- a/docs/algorithms/streamlines_skeletons.md
++++ b/docs/algorithms/streamlines_skeletons.md
+@@ -25,11 +25,44 @@ export_trk("tracts.zv", "roi_tracts.trk", object_ids=through.tolist())
+ | `mask` / `box` | the region (pass exactly one): a NIfTI path, a nibabel image, or a 3-D array with `mask_affine`; or `(min_corner, max_corner)` in RAS mm |
+ | `mode` | `"path"` (default): any part inside; `"endpoints"`: either end; `"both_endpoints"`: both ends |
+ | `sample_spacing` | mm between points tested along each segment; default: half the smallest voxel edge or box side |
++| `reach` | how far past the region the chunks read extend, in store units; default: one chunk on every side |
+ 
+-It returns sorted object ids, reading only the chunks the region touches. A
+-TRK store kept in TrackVis voxel mm is mapped to RAS first. A segment longer
+-than a chunk can jump over a region: at a heavily simplified `level`, select
+-at a finer one. A mask needs nibabel (`[trk]` extra).
++It returns sorted object ids, reading only the chunks near the region. A
++segment can cross the region with neither end inside it and one end in a
++chunk the region does not touch, so the neighbouring chunks are read too; if
++you know the store's step length, `reach=step` gives the same answer from
++fewer chunks. A TRK store kept in TrackVis voxel mm is mapped to RAS first. A
++segment longer than `reach` can jump over a region: at a heavily simplified
++`level`, select at a finer one. A mask needs nibabel (`[trk]` extra).
++
++## Filter trees
++
++`zarr_vectors_tools.filtering` evaluates TrackVis-style filters: regions
++(sphere, box, slab, disk with an angle window, voxel mask), column
++comparisons and group membership, combined with AND, OR and NOT. A filter
++is a tree with a versioned JSON form, which is what other engines (such as
++a browser viewer's) are tested against.
++
++```python
++from zarr_vectors_tools.filtering import (
++    Column, Disk, IndexedEngine, Passes, Sphere, load_tractogram, summarize, to_json,
++)
++
++tracts = load_tractogram("tracts.zv")                  # level 0, RAS mm
++tree = (Passes(Sphere((10, 30, 20), 5)) & Column("length", ">", 40)) \
++    - Passes(Disk((0, 30, 20), (1, 0, 0), 8, angle=(0, 45)))
++engine = IndexedEngine(tracts)                         # grid index + cached leaves
++accepted = engine.evaluate(tree)                       # bool per streamline
++summarize(accepted, tracts, ["length"])                # count, mean, std, min, max
++to_json(tree)                                          # {"format": "zvf-predicate", ...}
++```
++
++`filtering.evaluate` is the brute-force oracle: it tests every segment and
++defines the answer. `IndexedEngine` tests only the segments near each region
++and caches every leaf, so flipping an operator is only boolean algebra; it
++is tested to agree with the oracle exactly. The subpackage needs only numpy
++(the store is read only by `load_tractogram`), so it also runs under
++Pyodide. What each region means, exactly, is in the API reference.
+ 
+ ## Bundle summaries
+ 
+diff --git a/docs/api/filtering.rst b/docs/api/filtering.rst
+new file mode 100644
+index 0000000..c77ec9f
+--- /dev/null
++++ b/docs/api/filtering.rst
+@@ -0,0 +1,45 @@
++Filtering
++=========
++
++``zarr_vectors_tools.filtering``: TrackVis-style filter trees, the
++brute-force oracle that defines their answers, and an indexed engine for
++interactive use. See :doc:`../algorithms/streamlines_skeletons` for usage.
++
++.. automodule:: zarr_vectors_tools.filtering
++
++Filter trees and regions
++------------------------
++
++.. automodule:: zarr_vectors_tools.filtering.predicates
++   :members:
++   :show-inheritance:
++
++Tractograms
++-----------
++
++.. automodule:: zarr_vectors_tools.filtering.tractogram
++   :members:
++
++Oracle
++------
++
++.. automodule:: zarr_vectors_tools.filtering.oracle
++   :members:
++
++Indexed engine
++--------------
++
++.. automodule:: zarr_vectors_tools.filtering.indexed
++   :members:
++
++Segment tests
++-------------
++
++.. automodule:: zarr_vectors_tools.filtering.geometry
++   :members:
++
++Synthetic tractograms
++---------------------
++
++.. automodule:: zarr_vectors_tools.filtering.synthetic
++   :members:
+diff --git a/docs/api/index.rst b/docs/api/index.rst
+index cd00890..226b84f 100644
+--- a/docs/api/index.rst
++++ b/docs/api/index.rst
+@@ -13,5 +13,6 @@ part, see the narrative pages: :doc:`../convert/index`,
+    compose
+    multiresolution
+    algorithms
++   filtering
+    headers
+    cli
+diff --git a/tests/test_filtering_engines.py b/tests/test_filtering_engines.py
+new file mode 100644
+index 0000000..d1e7c2d
+--- /dev/null
++++ b/tests/test_filtering_engines.py
+@@ -0,0 +1,214 @@
++"""The indexed engine against the oracle, on random regions and random trees.
++
++The indexed engine answers from a grid of cells and a cache of leaves; the
++oracle tests every segment.  They must agree exactly, for every region type
++and mode, at grid cells smaller than a segment (so segments span and skip
++cells), larger than the data, and with regions placed on cell faces.  Then:
++a repeated leaf comes from the cache, an operator flip recomputes nothing,
++and the published byte mask follows the groups' draw order.
++"""
++
++from __future__ import annotations
++
++import numpy as np
++import pytest
++
++from zarr_vectors_tools.filtering import (
++    All,
++    And,
++    Box,
++    Column,
++    Disk,
++    IndexedEngine,
++    InGroup,
++    Mask,
++    Not,
++    Or,
++    Passes,
++    Slab,
++    Sphere,
++    Tractogram,
++    evaluate,
++    whole_brain_like,
++)
++
++
++@pytest.fixture(scope="module")
++def tractogram() -> Tractogram:
++    tg = whole_brain_like(
++        1500, seed=3, semi_axes=(25.0, 30.0, 20.0), mean_length=30.0,
++        length_range=(5.0, 80.0), n_groups=5,
++    )
++    # One-vertex and empty streamlines ride along with the rest.
++    extra = Tractogram.from_polylines([[[0.5, 0.5, 0.5]], np.zeros((0, 3)), [[3.0, -2.0, 1.0]]])
++    return Tractogram(
++        np.concatenate([tg.vertices, extra.vertices.astype(np.float32)]),
++        np.concatenate([tg.offsets, tg.offsets[-1] + extra.offsets[1:]]),
++        columns={
++            "fa_mean": np.concatenate(
++                [tg.columns["fa_mean"], [0.3, np.nan, 0.6]]).astype(np.float32),
++            "label": np.concatenate([tg.columns["label"], [0, 1, 2]]).astype(np.int32),
++        },
++        groups=tg.groups,
++    )
++
++
++def _region(rng: np.random.Generator, tg: Tractogram, engine: IndexedEngine):
++    anchor = tg.vertices[rng.integers(len(tg.vertices))].astype(np.float64)
++    if rng.random() < 0.3:
++        # Snap to the nearest cell corner, so the region sits on cell faces.
++        size = engine.cell_size
++        anchor = engine.origin + np.round((anchor - engine.origin) / size) * size
++    kind = rng.integers(5)
++    if kind == 0:
++        return Sphere(anchor + rng.normal(scale=0.5, size=3), rng.uniform(0.2, 6.0))
++    if kind == 1:
++        half = rng.uniform(0.1, 5.0, size=3)
++        return Box(anchor - half, anchor + half)
++    if kind == 2:
++        axis = int(rng.integers(3))
++        width = rng.uniform(0.0, 2.0)
++        return Slab(axis, anchor[axis] - width, anchor[axis] + width)
++    if kind == 3:
++        lo = rng.uniform(0, 60)
++        return Disk(anchor, rng.normal(size=3), rng.uniform(0.5, 8.0), (lo, rng.uniform(lo, 90)))
++    # A mask: a random blob of voxels, sometimes rotated, around the anchor.
++    shape = tuple(rng.integers(2, 7, size=3))
++    voxels = rng.random(shape) < 0.4
++    size = rng.uniform(0.5, 2.5)
++    q, _ = np.linalg.qr(rng.normal(size=(3, 3))) if rng.random() < 0.5 else (np.eye(3), None)
++    affine = np.eye(4)
++    affine[:3, :3] = q * size
++    affine[:3, 3] = anchor - affine[:3, :3] @ (np.asarray(shape) / 2.0)
++    return Mask(voxels, affine)
++
++
++def _leaf(rng: np.random.Generator, tg: Tractogram, engine: IndexedEngine):
++    pick = rng.random()
++    if pick < 0.65:
++        region = _region(rng, tg, engine)
++        mode = "path" if isinstance(region, Disk) else str(rng.choice(
++            ["path", "path", "endpoints", "both_endpoints"]))
++        return Passes(region, mode)
++    if pick < 0.85:
++        return rng.choice([
++            Column("length", ">", float(rng.uniform(5, 60))),
++            Column("fa_mean", "between", tuple(sorted(rng.uniform(0.1, 0.8, 2)))),
++            Column("fa_mean", "absent"),
++            Column("label", "in", rng.integers(0, 5, 2).tolist()),
++        ])
++    return InGroup(tuple(rng.integers(0, 6, 2).tolist()))
++
++
++def _tree(rng: np.random.Generator, tg: Tractogram, engine: IndexedEngine, depth: int = 0):
++    if depth >= 2 or rng.random() < 0.4:
++        return _leaf(rng, tg, engine)
++    op = rng.integers(4)
++    if op == 0:
++        return Not(_tree(rng, tg, engine, depth + 1))
++    children = [_tree(rng, tg, engine, depth + 1) for _ in range(int(rng.integers(2, 4)))]
++    return And(*children) if op < 3 else Or(*children)
++
++
++@pytest.mark.parametrize("cell_size, long_cells", [
++    (None, 64), (0.7, 64), (4.0, 64), (1000.0, 64),
++    (0.7, 1),   # every segment spanning two cells goes on the long list
++])
++def test_indexed_engine_agrees_with_the_oracle(
++    tractogram: Tractogram, cell_size, long_cells,
++) -> None:
++    engine = IndexedEngine(tractogram, cell_size=cell_size, long_cells=long_cells)
++    rng = np.random.default_rng(int(cell_size or 0) + long_cells)
++    for _ in range(60):
++        leaf = _leaf(rng, tractogram, engine)
++        np.testing.assert_array_equal(
++            engine.evaluate(leaf), evaluate(leaf, tractogram), err_msg=repr(leaf))
++    for _ in range(25):
++        tree = _tree(rng, tractogram, engine)
++        np.testing.assert_array_equal(
++            engine.evaluate(tree), evaluate(tree, tractogram), err_msg=repr(tree))
++
++
++def test_the_test_regions_hit_something(tractogram: Tractogram) -> None:
++    # Guard against a property test that passes because every answer is empty.
++    engine = IndexedEngine(tractogram)
++    rng = np.random.default_rng(0)
++    counts = [
++        int(evaluate(Passes(_region(rng, tractogram, engine)), tractogram).sum())
++        for _ in range(40)
++    ]
++    assert sum(c > 0 for c in counts) >= 30
++
++
++def test_segments_in_cells_inside_the_region_are_accepted_untested(
++    tractogram: Tractogram,
++) -> None:
++    engine = IndexedEngine(tractogram, cell_size=1.0)
++    for region in (Sphere((0, 0, 0), 6.0), Box((-4, -4, -4), (4, 4, 4)), Slab(2, -2.0, 2.0)):
++        got = engine.evaluate(Passes(region))
++        np.testing.assert_array_equal(got, evaluate(Passes(region), tractogram))
++        assert engine.last_query["inside_cells"] > 0
++        assert engine.last_query["accepted_untested"] > 0
++        assert engine.last_query["tested"] < engine.last_query["candidates"]
++
++
++def test_regions_outside_the_data(tractogram: Tractogram) -> None:
++    engine = IndexedEngine(tractogram)
++    for region in (Sphere((500, 0, 0), 3), Box((-900, -900, -900), (-800, -800, -800)),
++                   Slab(0, 400, 401), Mask(np.zeros((2, 2, 2)), np.eye(4))):
++        assert not engine.evaluate(Passes(region)).any()
++    everything = Box((-1e6, -1e6, -1e6), (1e6, 1e6, 1e6))
++    has = np.diff(tractogram.offsets) > 0
++    np.testing.assert_array_equal(engine.evaluate(Passes(everything)), has)
++
++
++def test_an_empty_tractogram() -> None:
++    engine = IndexedEngine(Tractogram(np.zeros((0, 3)), np.zeros(1, np.int64)))
++    assert engine.evaluate(Passes(Sphere((0, 0, 0), 1))).shape == (0,)
++    assert engine.evaluate(All()).shape == (0,)
++
++
++def test_leaves_are_cached_and_operator_flips_recompute_nothing(
++    tractogram: Tractogram, monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    engine = IndexedEngine(tractogram)
++    computed: list = []
++    real = engine._compute
++    monkeypatch.setattr(engine, "_compute", lambda node: computed.append(node) or real(node))
++    a = Passes(Sphere((0, 0, 0), 4))
++    b = Passes(Box((-5, -5, -5), (0, 5, 5)))
++    c = Column("length", ">", 20)
++    first = engine.evaluate(And(a, b, c))
++    assert len(computed) == 3
++    flipped = engine.evaluate(Or(a, Not(b), c))
++    assert len(computed) == 3
++    np.testing.assert_array_equal(flipped, evaluate(Or(a, Not(b), c), tractogram))
++    np.testing.assert_array_equal(first, evaluate(And(a, b, c), tractogram))
++    # The same sphere built again is the same leaf; a moved one is not.
++    engine.evaluate(Passes(Sphere((0.0, 0.0, 0.0), 4.0)))
++    assert len(computed) == 3
++    engine.evaluate(Passes(Sphere((0.0, 0.0, 0.5), 4.0)))
++    assert len(computed) == 4
++    engine.clear()
++    engine.evaluate(a)
++    assert len(computed) == 5
++
++
++def test_cached_answers_cannot_be_changed_through_a_result(tractogram: Tractogram) -> None:
++    engine = IndexedEngine(tractogram)
++    leaf = Column("length", ">", 20)
++    answer = engine.evaluate(leaf)
++    with pytest.raises(ValueError):
++        answer[0] = not answer[0]
++    combined = engine.evaluate(And(leaf, All()))
++    combined[:] = False
++    assert engine.evaluate(leaf).any()
++
++
++def test_publish_follows_draw_order() -> None:
++    first = np.array([1, 1, 0, 0, 0], bool)
++    second = np.array([0, 1, 1, 0, 0], bool)
++    third = np.array([0, 0, 1, 1, 0], bool)
++    assert IndexedEngine.publish([first, second, third]).tolist() == [1, 1, 2, 3, 0]
++    with pytest.raises(ValueError, match="255"):
++        IndexedEngine.publish([first] * 256)
+diff --git a/tests/test_filtering_oracle.py b/tests/test_filtering_oracle.py
+new file mode 100644
+index 0000000..5c8481e
+--- /dev/null
++++ b/tests/test_filtering_oracle.py
+@@ -0,0 +1,236 @@
++"""The brute-force filter oracle, on streamlines whose answers are known.
++
++Every case here is drawn so that the right answer can be checked by eye:
++lines through, past and exactly tangent to each region type, segments that
++cross a region with no vertex inside it, one-vertex and empty streamlines,
++absent column values.  Both engines must give these answers; the oracle is
++held to them here, and the indexed engine is held to the oracle in
++test_filtering_engines.py.
++"""
++
++from __future__ import annotations
++
++import numpy as np
++import pytest
++
++from zarr_vectors_tools.filtering import (
++    All,
++    Box,
++    Column,
++    Disk,
++    IndexedEngine,
++    InGroup,
++    Mask,
++    Not,
++    Passes,
++    Slab,
++    Sphere,
++    Tractogram,
++    evaluate,
++    histogram,
++    summarize,
++)
++
++
++def _line(a, b, n: int = 2) -> np.ndarray:
++    return np.linspace(np.asarray(a, float), np.asarray(b, float), n)
++
++
++def _accepted(tree, tractogram) -> list[int]:
++    got = np.flatnonzero(evaluate(tree, tractogram)).tolist()
++    # The indexed engine must agree on every known answer too, at a cell
++    # size small enough that the segments here span several cells.
++    assert np.flatnonzero(IndexedEngine(tractogram, cell_size=1.5).evaluate(tree)).tolist() == got
++    return got
++
++
++# -- sphere ----------------------------------------------------------------------
++
++
++@pytest.fixture
++def around_origin() -> Tractogram:
++    return Tractogram.from_polylines([
++        _line([-10, 0, 0], [10, 0, 0], 21),       # 0: through the centre
++        _line([-10, 5, 0], [10, 5, 0]),           # 1: tangent at exactly r = 5
++        _line([-10, 5.000001, 0], [10, 5.000001, 0]),  # 2: misses by 1e-6
++        _line([-20, 1, 1], [20, 1, 1]),           # 3: one segment, no vertex inside
++        [[1.0, 1.0, 1.0]],                        # 4: a single vertex inside
++        [[9.0, 9.0, 9.0]],                        # 5: a single vertex outside
++        np.zeros((0, 3)),                         # 6: no geometry at all
++        _line([3, 0, 0], [30, 0, 0]),             # 7: starts inside, leaves
++        _line([20, 0, 0], [6, 0, 0]),             # 8: stops 1 mm short
++    ])
++
++
++def test_sphere_path(around_origin: Tractogram) -> None:
++    assert _accepted(Passes(Sphere((0, 0, 0), 5.0)), around_origin) == [0, 1, 3, 4, 7]
++
++
++def test_sphere_endpoints(around_origin: Tractogram) -> None:
++    sphere = Sphere((0, 0, 0), 5.0)
++    # Either end inside: the single vertex (both ends) and the one leaving.
++    assert _accepted(Passes(sphere, "endpoints"), around_origin) == [4, 7]
++    assert _accepted(Passes(sphere, "both_endpoints"), around_origin) == [4]
++
++
++def test_a_zero_radius_sphere_is_a_point(around_origin: Tractogram) -> None:
++    assert _accepted(Passes(Sphere((1, 1, 1), 0.0)), around_origin) == [3, 4]
++
++
++# -- box and slab ----------------------------------------------------------------
++
++
++def test_box_meets_segments_with_no_vertex_inside() -> None:
++    tg = Tractogram.from_polylines([
++        _line([0, 0, 0], [10, 10, 0]),            # 0: the diagonal clips the corner (4..6)
++        _line([0, 6.5, 0], [10, 6.5, 0]),         # 1: passes above the box
++        _line([0, 6, 0], [10, 6, 0]),             # 2: runs along the top face
++        _line([5, 5, -10], [5, 5, 10]),           # 3: straight through, along z
++        _line([4.1, 5.95, 0], [3.9, 6.05, 0]),    # 4: crosses the top-left corner region
++        _line([3.0, 5.5, 0], [3.9, 6.6, 0]),      # 5: ends left of the box
++    ])
++    box = Box((4, 4, -1), (6, 6, 1))
++    assert _accepted(Passes(box), tg) == [0, 2, 3, 4]
++
++
++def test_box_endpoint_modes() -> None:
++    tg = Tractogram.from_polylines([
++        _line([5, 5, 0], [20, 5, 0]),
++        _line([5, 5, 0], [5.5, 5.5, 0.5]),
++        _line([-5, 5, 0], [20, 5, 0]),
++    ])
++    box = Box((4, 4, -1), (6, 6, 1))
++    assert _accepted(Passes(box, "endpoints"), tg) == [0, 1]
++    assert _accepted(Passes(box, "both_endpoints"), tg) == [1]
++
++
++def test_slab_is_a_box_unbounded_on_the_other_axes() -> None:
++    tg = Tractogram.from_polylines([
++        _line([0, -5, 0], [0, 5, 0]),             # 0: crosses y in 0..1, no vertex in it
++        _line([100, 0.5, -100], [101, 0.5, -99]),  # 1: inside, far away on x and z
++        _line([0, 1.0001, 0], [0, 3, 0]),         # 2: just above
++        _line([0, 3, 0], [0, 1, 0]),              # 3: ends on the face
++    ])
++    assert _accepted(Passes(Slab(1, 0.0, 1.0)), tg) == [0, 1, 3]
++
++
++# -- disk ------------------------------------------------------------------------
++
++
++def test_disk_needs_a_crossing_inside_the_radius() -> None:
++    tg = Tractogram.from_polylines([
++        _line([1, -1, 0], [1, 1, 0]),             # 0: crosses y=0 at (1,0,0), along the normal
++        _line([4, -1, 0], [4, 1, 0]),             # 1: crosses at 4 mm, outside r = 3
++        _line([-2, 0, 0], [2, 0, 0]),             # 2: lies in the plane: never crosses
++        _line([0, 2, 0], [0, 0, 0]),              # 3: ends on the disk
++        _line([0, 1, 0], [0, 3, 0]),              # 4: never reaches the plane
++        _line([0, 0, 0], [0, 0, 0]),              # 5: a zero-length segment on the plane
++    ])
++    disk = Disk((0, 0, 0), (0, 1, 0), 3.0)
++    assert _accepted(Passes(disk), tg) == [0, 3]
++
++
++def test_disk_angle_window() -> None:
++    # Segments crossing the disk's centre at 10, 50 and 85 degrees to its normal.
++    def at(degrees: float) -> np.ndarray:
++        t = np.radians(degrees)
++        direction = np.array([np.sin(t), np.cos(t), 0.0])
++        return np.stack([-direction, direction])
++
++    tg = Tractogram.from_polylines([at(10), at(50), at(85)])
++    disk = Disk((0, 0, 0), (0, -2, 0), 3.0)  # the normal's sign and length do not matter
++    assert _accepted(Passes(disk), tg) == [0, 1, 2]
++    assert _accepted(Passes(Disk(disk.center, disk.normal, 3.0, (0, 30))), tg) == [0]
++    assert _accepted(Passes(Disk(disk.center, disk.normal, 3.0, (45, 90))), tg) == [1, 2]
++    assert _accepted(Passes(Disk(disk.center, disk.normal, 3.0, (60, 80))), tg) == []
++
++
++# -- mask ------------------------------------------------------------------------
++
++
++def test_mask_samples_along_each_segment() -> None:
++    voxels = np.zeros((10, 10, 10), dtype=bool)
++    voxels[5, 5, 5] = True                         # world 10..12 mm on each axis, 2 mm voxels
++    affine = np.diag([2.0, 2.0, 2.0, 1.0])
++    tg = Tractogram.from_polylines([
++        _line([0, 10, 10], [20, 10, 10]),          # 0: through it, no vertex inside
++        _line([10.5, 10.5, 10.5], [10.6, 10.6, 10.6]),  # 1: wholly inside
++        _line([0, 0, 0], [5, 5, 5]),               # 2: nowhere near
++        _line([0, 12.2, 10], [20, 12.2, 10]),      # 3: just outside (y rounds to voxel 6)
++    ])
++    assert _accepted(Passes(Mask(voxels, affine)), tg) == [0, 1]
++    assert _accepted(Passes(Mask(voxels, affine), "both_endpoints"), tg) == [1]
++
++
++def test_an_empty_mask_accepts_nothing() -> None:
++    tg = Tractogram.from_polylines([_line([0, 0, 0], [5, 5, 5])])
++    assert _accepted(Passes(Mask(np.zeros((3, 3, 3)), np.eye(4))), tg) == []
++
++
++# -- columns and groups ----------------------------------------------------------
++
++
++@pytest.fixture
++def with_columns() -> Tractogram:
++    lines = [_line([i, 0, 0], [i, 0, 1 + i]) for i in range(6)]   # lengths 1..6
++    return Tractogram.from_polylines(
++        lines,
++        columns={
++            "fa": np.array([0.1, 0.2, np.nan, 0.4, 0.5, 0.6], np.float32),
++            "label": np.array([3, 3, 7, 7, 9, 9], np.int32),
++            "rgb": np.arange(18, dtype=np.float64).reshape(6, 3),
++        },
++        present={"label": np.array([1, 1, 1, 1, 1, 0], bool)},
++        groups={0: [0, 1], 2: [4]},
++    )
++
++
++@pytest.mark.parametrize("leaf, expected", [
++    (Column("length", ">", 3), [3, 4, 5]),
++    (Column("length", "between", (2, 4)), [1, 2, 3]),
++    (Column("n_vertices", "==", 2), [0, 1, 2, 3, 4, 5]),
++    (Column("fa", "<", 0.3), [0, 1]),
++    (Column("fa", "!=", 0.4), [0, 1, 4, 5]),        # the absent row passes no comparison
++    (Column("fa", "absent"), [2]),
++    (Column("label", "in", [7, 9]), [2, 3, 4]),     # row 5's label is absent
++    (Column("label", "absent"), [5]),
++    (Column("rgb", ">=", 9, channel=0), [3, 4, 5]),
++    (InGroup((0, 2)), [0, 1, 4]),
++    (InGroup((1,)), []),                            # declared, empty
++    (InGroup((40,)), []),                           # not declared at all
++])
++def test_column_and_group_leaves(with_columns: Tractogram, leaf, expected) -> None:
++    assert _accepted(leaf, with_columns) == expected
++
++
++def test_a_multichannel_column_needs_a_channel(with_columns: Tractogram) -> None:
++    with pytest.raises(ValueError, match="pick one"):
++        evaluate(Column("rgb", ">", 0), with_columns)
++    with pytest.raises(KeyError, match="no column"):
++        evaluate(Column("missing", ">", 0), with_columns)
++
++
++def test_composition(with_columns: Tractogram) -> None:
++    long = Column("length", ">", 2)
++    labelled_7 = Column("label", "==", 7)
++    assert _accepted(long & labelled_7, with_columns) == [2, 3]
++    assert _accepted(long - labelled_7, with_columns) == [4, 5]
++    assert _accepted(~long | InGroup((2,)), with_columns) == [0, 1, 4]
++    assert _accepted(Not(All()), with_columns) == []
++    assert _accepted(All(), with_columns) == [0, 1, 2, 3, 4, 5]
++
++
++def test_summary_and_histogram(with_columns: Tractogram) -> None:
++    accepted = evaluate(Column("length", ">=", 2), with_columns)   # rows 1..5
++    summary = summarize(accepted, with_columns, ["length", "fa", "rgb"])
++    assert summary["count"] == 5
++    assert summary["length"]["mean"] == pytest.approx(4.0)
++    assert summary["length"]["std"] == pytest.approx(np.std([2, 3, 4, 5, 6]))
++    # fa is absent on row 2, so 4 of the 5 rows have a value.
++    assert summary["fa"]["n"] == 4
++    assert summary["fa"]["mean"] == pytest.approx(np.mean([0.2, 0.4, 0.5, 0.6]))
++    assert summary["rgb[2]"]["max"] == 17
++    nothing = summarize(np.zeros(6, bool), with_columns, ["length"])
++    assert nothing["count"] == 0 and nothing["length"]["n"] == 0
++    assert np.isnan(nothing["length"]["mean"])
++    assert histogram(accepted, with_columns, "length", [0, 3, 10]).tolist() == [1, 4]
+diff --git a/tests/test_filtering_predicates.py b/tests/test_filtering_predicates.py
+new file mode 100644
+index 0000000..7cedb3c
+--- /dev/null
++++ b/tests/test_filtering_predicates.py
+@@ -0,0 +1,128 @@
++"""Filter trees and their JSON: what other engines are handed.
++
++What has to hold: every node and region survives a round trip through JSON
++text unchanged, a leaf's cache key changes exactly when its content does,
++and a malformed region or document is refused when it is built or read
++rather than giving a wrong answer later.
++"""
++
++from __future__ import annotations
++
++import json
++
++import numpy as np
++import pytest
++
++from zarr_vectors_tools.filtering import (
++    All,
++    And,
++    Box,
++    Column,
++    Disk,
++    InGroup,
++    Mask,
++    Not,
++    Or,
++    Passes,
++    Slab,
++    Sphere,
++    from_json,
++    to_json,
++)
++
++
++def _mask() -> Mask:
++    voxels = np.zeros((3, 4, 5), dtype=bool)
++    voxels[1, 2, 3] = voxels[0, 0, 0] = voxels[2, 3, 4] = True
++    affine = np.array([[0, 0.5, 0, 1], [-0.5, 0, 0, 2], [0, 0, 2, 3], [0, 0, 0, 1]], float)
++    return Mask(voxels, affine, spacing=0.1)
++
++
++def _every_kind():
++    return Or(
++        And(
++            Passes(Sphere((1, 2, 3), 4.5)),
++            Passes(Box((0, 0, 0), (1, 2, 3)), "endpoints"),
++            Not(Passes(Slab(2, -1.5, 1.5), "both_endpoints")),
++        ),
++        Passes(Disk((0, 0, 0), (0, 0, 3), 2.0, (10, 80))),
++        Passes(_mask()),
++        Column("length", "between", (40, 200)) - Column("fa", "absent"),
++        Column("label", "in", [5, 3, 5]),
++        Column("rgb", ">=", 0.25, channel=1),
++        InGroup((4, 1, 4)),
++        All(),
++    )
++
++
++def test_every_node_and_region_round_trips_through_json_text() -> None:
++    tree = _every_kind()
++    text = json.dumps(to_json(tree))
++    back = from_json(text)
++    assert back == tree
++    assert to_json(back) == to_json(tree)
++    assert back.key() == tree.key()
++
++
++def test_the_document_is_versioned() -> None:
++    doc = to_json(All())
++    assert doc == {"format": "zvf-predicate", "version": 1, "tree": {"op": "all"}}
++    with pytest.raises(ValueError, match="version 2 is not supported"):
++        from_json({**doc, "version": 2})
++    with pytest.raises(ValueError, match="not a zvf-predicate"):
++        from_json({"tree": {"op": "all"}})
++    with pytest.raises(ValueError, match="unknown node op"):
++        from_json({**doc, "tree": {"op": "xor"}})
++    with pytest.raises(ValueError, match="unknown region"):
++        from_json({**doc, "tree": {"op": "passes", "region": {"type": "cone"}}})
++
++
++def test_values_are_normalised_on_construction() -> None:
++    disk = Disk((0, 0, 0), (0, 0, 7), 1)
++    assert disk.normal == (0.0, 0.0, 1.0)
++    assert Column("label", "in", [3, 1, 3]).value == (1, 3)
++    assert InGroup([2, 0, 2]).ids == (0, 2)
++    assert Column("fa", "absent", 12).value is None
++
++
++def test_keys_follow_content() -> None:
++    a = Passes(Sphere((0, 0, 0), 5))
++    assert a.key() == Passes(Sphere((0.0, 0.0, 0.0), 5.0)).key()
++    assert a.key() != Passes(Sphere((0, 0, 0), 5.0001)).key()
++    assert a.key() != Passes(Sphere((0, 0, 0), 5), "endpoints").key()
++    moved = _mask()
++    voxels = moved.voxels.copy()
++    voxels[1, 1, 1] = True
++    assert Passes(Mask(voxels, moved.affine, 0.1)).key() != Passes(moved).key()
++
++
++def test_operators_build_trees() -> None:
++    a, b = Passes(Sphere((0, 0, 0), 1)), Column("length", ">", 1)
++    assert a & b == And(a, b)
++    assert a | b == Or(a, b)
++    assert ~a == Not(a)
++    assert a - b == And(a, Not(b))
++    assert (a - b).leaves() == [a, b]
++
++
++@pytest.mark.parametrize("build, message", [
++    (lambda: Sphere((0, 0, 0), -1), "radius must be 0 or more"),
++    (lambda: Sphere((0, 0), 1), "three finite numbers"),
++    (lambda: Sphere((0, 0, np.nan), 1), "three finite numbers"),
++    (lambda: Box((1, 1, 1), (0, 2, 2)), "below its min corner"),
++    (lambda: Slab(3, 0, 1), "axis must be 0, 1 or 2"),
++    (lambda: Slab(0, 1, 0), "below its min"),
++    (lambda: Disk((0, 0, 0), (0, 0, 0), 1), "zero vector"),
++    (lambda: Disk((0, 0, 0), (0, 0, 1), 1, (50, 40)), "lo <= hi <= 90"),
++    (lambda: Mask(np.ones((2, 2)), np.eye(4)), "must be 3-D"),
++    (lambda: Mask(np.ones((2, 2, 2)), np.eye(4), spacing=0), "spacing must be above 0"),
++    (lambda: Passes(Sphere((0, 0, 0), 1), "middle"), "mode must be"),
++    (lambda: Passes(Disk((0, 0, 0), (0, 0, 1), 1), "endpoints"), "only mode='path'"),
++    (lambda: Column("fa", "~", 1), "cmp must be"),
++    (lambda: Column("fa", "between", (2, 1)), "lo <= hi"),
++    (lambda: InGroup((-1,)), "0 or more"),
++    (lambda: And(), "at least one operand"),
++])
++def test_refusals(build, message) -> None:
++    with pytest.raises(ValueError, match=message):
++        build()
+diff --git a/tests/test_filtering_store.py b/tests/test_filtering_store.py
+new file mode 100644
+index 0000000..f70e83c
+--- /dev/null
++++ b/tests/test_filtering_store.py
+@@ -0,0 +1,145 @@
++"""Filtering streamlines read from a store, and select_streamlines against the oracle.
++
++What has to hold: load_tractogram gives back exactly what was written --
++geometry, object attributes with their absent rows, groups -- in the RAS
++millimetres select_streamlines uses, voxel-millimetre TRK stores included.
++And select_streamlines, which reads only the chunks near a region, finds
++the same streamlines as the oracle testing every segment, for regions that
++straddle chunk faces.
++"""
++
++from __future__ import annotations
++
++from pathlib import Path
++
++import numpy as np
++import pytest
++from zarr_vectors.types.polylines import write_polylines
++
++from zarr_vectors_tools.algorithms import select_streamlines
++from zarr_vectors_tools.filtering import (
++    Mask,
++    Passes,
++    Sphere,
++    Tractogram,
++    evaluate,
++    load_tractogram,
++    whole_brain_like,
++)
++
++CHUNK = (6.0, 6.0, 6.0)
++
++
++@pytest.fixture(scope="module")
++def synthetic() -> Tractogram:
++    return whole_brain_like(
++        400, seed=5, semi_axes=(15.0, 18.0, 12.0), mean_length=20.0,
++        length_range=(3.0, 50.0), step=2.5, n_groups=3,
++    )
++
++
++@pytest.fixture(scope="module")
++def store(synthetic: Tractogram, tmp_path_factory: pytest.TempPathFactory) -> Path:
++    path = tmp_path_factory.mktemp("filtering") / "tracts.zv"
++    lines = [synthetic.polyline(k) for k in range(synthetic.n_objects)]
++    write_polylines(
++        str(path), lines, chunk_shape=CHUNK, geometry_type="streamline",
++        object_attributes={"fa_mean": synthetic.columns["fa_mean"],
++                           "label": synthetic.columns["label"]},
++        groups={g: members.tolist() for g, members in enumerate(synthetic.groups)},
++    )
++    return path
++
++
++def test_load_gives_back_what_was_written(synthetic: Tractogram, store: Path) -> None:
++    loaded = load_tractogram(store)
++    assert loaded.n_objects == synthetic.n_objects
++    np.testing.assert_array_equal(loaded.offsets, synthetic.offsets)
++    np.testing.assert_array_equal(loaded.vertices, synthetic.vertices.astype(np.float64))
++    np.testing.assert_array_equal(loaded.columns["label"], synthetic.columns["label"])
++    fa, present = loaded.column("fa_mean")
++    want, want_present = synthetic.column("fa_mean")
++    np.testing.assert_array_equal(present, want_present)
++    np.testing.assert_array_equal(fa[present], want[want_present])
++    np.testing.assert_allclose(loaded.columns["length"], synthetic.columns["length"], rtol=1e-12)
++    assert [g.tolist() for g in loaded.groups] == [g.tolist() for g in synthetic.groups]
++
++
++def test_load_reads_only_the_columns_asked_for(store: Path) -> None:
++    loaded = load_tractogram(store, columns=["label", "not_there"])
++    assert sorted(loaded.columns) == ["label", "length", "n_vertices"]
++
++
++def test_load_refuses_what_is_not_streamlines(tmp_path: Path) -> None:
++    from zarr_vectors.types.points import write_points
++
++    path = tmp_path / "points.zv"
++    write_points(str(path), np.random.default_rng(0).random((10, 3)) * 10, chunk_shape=CHUNK)
++    with pytest.raises(ValueError, match="not streamlines"):
++        load_tractogram(path)
++
++
++def _random_mask(rng: np.random.Generator, anchor: np.ndarray) -> Mask:
++    shape = tuple(rng.integers(1, 5, size=3))
++    voxels = rng.random(shape) < 0.5
++    voxels.flat[0] = True
++    size = rng.uniform(0.3, 2.0)
++    affine = np.diag([size, size, size, 1.0])
++    affine[:3, 3] = anchor - size * np.asarray(shape) / 2.0
++    return Mask(voxels, affine)
++
++
++def test_select_streamlines_agrees_with_the_oracle(synthetic: Tractogram, store: Path) -> None:
++    loaded = load_tractogram(store)
++    rng = np.random.default_rng(8)
++    chunk = np.asarray(CHUNK)
++    nonempty = 0
++    for trial in range(16):
++        anchor = loaded.vertices[rng.integers(len(loaded.vertices))]
++        if trial % 2:
++            # Pull the region onto the nearest chunk face on one axis.
++            axis = rng.integers(3)
++            anchor = anchor.copy()
++            anchor[axis] = np.round(anchor[axis] / chunk[axis]) * chunk[axis]
++        mask = _random_mask(rng, anchor)
++        for mode in ("path", "endpoints", "both_endpoints"):
++            want = np.flatnonzero(evaluate(Passes(mask, mode), loaded))
++            got = select_streamlines(store, mask=mask.voxels, mask_affine=mask.affine, mode=mode)
++            np.testing.assert_array_equal(got, want, err_msg=f"trial {trial}, {mode}")
++            nonempty += mode == "path" and len(want) > 0
++    assert nonempty >= 12
++
++
++def test_a_voxmm_trk_store_loads_in_ras(tmp_path: Path) -> None:
++    pytest.importorskip("nibabel")
++    from nibabel.streamlines import Field
++    from nibabel.streamlines import Tractogram as NibTractogram
++    from nibabel.streamlines.trk import TrkFile
++
++    from zarr_vectors_tools.convert.ingest.trk_parallel import ingest_trk_parallel
++
++    trk_affine = np.array(
++        [[-2, 0, 0, 40], [0, 2, 0, -40], [0, 0, 2, -40], [0, 0, 0, 1]], dtype=np.float32,
++    )
++    through = np.column_stack([np.linspace(-30, 30, 13), np.zeros(13), np.zeros(13)])
++    away = np.column_stack([np.linspace(-30, 30, 13), np.full(13, 25.0), np.full(13, 25.0)])
++    path = tmp_path / "in.trk"
++    TrkFile(
++        NibTractogram([through.astype(np.float32), away.astype(np.float32)],
++                      affine_to_rasmm=np.eye(4)),
++        header={Field.VOXEL_TO_RASMM: trk_affine, Field.VOXEL_SIZES: (2, 2, 2),
++                Field.DIMENSIONS: (40, 40, 40), Field.VOXEL_ORDER: "LAS"},
++    ).save(str(path))
++    store = tmp_path / "voxmm.zv"
++    ingest_trk_parallel(
++        str(path), str(store), num_chunks=8, n_parts=1, workers=1,
++        build_multiscale=False, progress=False,
++    )
++    loaded = load_tractogram(store)
++    lines = sorted((loaded.polyline(k) for k in range(loaded.n_objects)), key=lambda p: p[0, 1])
++    np.testing.assert_allclose(lines[0], through, atol=1e-4)
++    np.testing.assert_allclose(lines[1], away, atol=1e-4)
++    # The oracle and select_streamlines read the same RAS box the same way.
++    ids = np.flatnonzero(evaluate(Passes(Sphere((0, 0, 0), 3.0)), loaded))
++    box = select_streamlines(store, box=([-3, -3, -3], [3, 3, 3]))
++    assert ids.tolist() == box.tolist() and len(ids) == 1
+diff --git a/tests/test_streamline_select.py b/tests/test_streamline_select.py
+index 3321711..7525a92 100644
+--- a/tests/test_streamline_select.py
++++ b/tests/test_streamline_select.py
+@@ -83,12 +83,34 @@ def test_only_the_chunks_the_region_touches_are_read(
+         return real(*args, **kwargs)
+ 
+     monkeypatch.setattr(polylines, "read_polylines", _spy)
+-    select_streamlines(store, mask=_mask(), mask_affine=AFFINE)
++    select_streamlines(store, mask=_mask(), mask_affine=AFFINE, reach=0)
+     # The ROI spans 17.5..21.5 mm, so chunks 1 and 2 on each axis; streamline
+     # 2 lives in chunk 0 and is never read.
+     assert seen and seen[0]
+     assert all(all(int(c) in (1, 2) for c in cc) for cc in seen[0])
+ 
++    # By default the neighbouring chunks are read as well: 0..3 on each axis.
++    seen.clear()
++    select_streamlines(store, mask=_mask(), mask_affine=AFFINE)
++    assert {int(c) for cc in seen[0] for c in cc} == {0, 1, 2, 3}
++
++
++def test_a_segment_leaving_the_touched_chunks_is_still_found(tmp_path: Path) -> None:
++    # The segment crosses the box, which lies in chunk (0, 0, 0) alone; no
++    # vertex is inside the box, and the far end is in chunk (1, 0, 0).  A read
++    # cropped to the touched chunks drops the segment, so reach=0 misses it.
++    path = tmp_path / "face.zv"
++    write_polylines(
++        str(path),
++        [np.array([[7.0, 9.0, 9.0], [13.0, 9.0, 9.0]], np.float32),
++         np.array([[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]], np.float32)],
++        chunk_shape=CHUNK, geometry_type="streamline",
++    )
++    box = ([8.0, 8.5, 8.5], [9.5, 9.5, 9.5])
++    assert select_streamlines(path, box=box).tolist() == [0]
++    assert select_streamlines(path, box=box, reach=6.0).tolist() == [0]
++    assert select_streamlines(path, box=box, reach=0).tolist() == []
++
+ 
+ def test_a_nifti_file_is_read_with_its_affine(store: Path, tmp_path: Path) -> None:
+     nib = pytest.importorskip("nibabel")
+@@ -142,6 +164,7 @@ def test_a_voxmm_trk_store_answers_a_ras_mask(tmp_path: Path) -> None:
+     ({"box": ([0, 0, 0], [1, 1, 1]), "mode": "middle"}, "mode must be"),
+     ({"mask": np.ones((2, 2, 2))}, "mask_affine"),
+     ({"box": ([2, 2, 2], [1, 1, 1])}, "below its min corner"),
++    ({"box": ([0, 0, 0], [1, 1, 1]), "reach": -1}, "reach must be"),
+ ])
+ def test_refusals(store: Path, kwargs, message) -> None:
+     with pytest.raises(ValueError, match=message):
+diff --git a/zarr_vectors_tools/algorithms/streamline_select.py b/zarr_vectors_tools/algorithms/streamline_select.py
+index de3c151..520c68c 100644
+--- a/zarr_vectors_tools/algorithms/streamline_select.py
++++ b/zarr_vectors_tools/algorithms/streamline_select.py
+@@ -2,16 +2,22 @@
+ 
+ "Streamlines that pass through this ROI" is the core query of tractography.
+ A store answers it without reading the tractogram: the region's bounding box
+-names the few chunks it touches, and only those are read.  Every vertex read
++names the few chunks near it, and only those are read.  Every vertex read
+ is tested against the region, and so are points sampled along each segment,
+ so a coarse level whose simplified segments step over a small ROI still
+ finds the streamlines that cross it.
+ 
+-The one thing that reading only those chunks can miss is a segment whose two
+-ends both lie in chunks the region does not touch -- a segment longer than a
+-chunk, jumping clean over the region.  At level 0 vertices are far closer
+-together than a chunk; at a heavily simplified coarse level, select at a
+-finer level if the region is smaller than a chunk.
++Reading only the chunks the region touches is not enough.  A segment can
++cross the region with neither end inside it and one end in a chunk the
++region does not touch -- a streamline passing just inside the region near a
++chunk face -- and a read cropped to the touched chunks drops that segment.
++So the chunks within ``reach`` of the region are read too.  By default that
++is one chunk on every side, which tests whole every segment shorter than a
++chunk; passing the store's step length reads fewer chunks for the same
++answer.  What can still be missed is a segment longer than ``reach``
++jumping clean over the region.  At level 0 vertices are far closer together
++than a chunk; at a heavily simplified coarse level, select at a finer level
++if the region is smaller than a chunk.
+ 
+ Regions are in world (RAS millimetre) coordinates -- a NIfTI mask with its
+ own affine, or a box.  A TRK store kept in TrackVis voxel millimetres is
+@@ -40,6 +46,7 @@ def select_streamlines(
+     mode: str = "path",
+     level: int = 0,
+     sample_spacing: float | None = None,
++    reach: float | None = None,
+ ) -> npt.NDArray[np.int64]:
+     """Object ids of the streamlines that meet a region.
+ 
+@@ -56,6 +63,15 @@ def select_streamlines(
+         sample_spacing: Distance between the points tested along each
+             segment, in millimetres.  Default: half the mask's smallest voxel
+             edge, or half the box's smallest side.
++        reach: How far past the region's bounding box, in store units, the
++            chunks read extend.  A segment that meets the region and is no
++            longer than ``reach`` is tested whole, wherever its ends lie.
++            Default: one chunk edge per axis -- the touched chunks and their
++            neighbours -- which covers every segment shorter than a chunk.
++            A store's step length is enough and reads fewer chunks; 0 reads
++            only the chunks the region touches, and can then miss a
++            streamline whose segment crosses the region with neither end
++            inside it and one end outside those chunks.
+ 
+     Returns:
+         Sorted, unique object ids.
+@@ -91,6 +107,8 @@ def select_streamlines(
+     spacing = float(sample_spacing) if sample_spacing is not None else region.default_spacing
+     if spacing <= 0:
+         raise ValueError(f"sample_spacing must be above 0, got {sample_spacing}")
++    if reach is not None and not reach >= 0:
++        raise ValueError(f"reach must be 0 or more, got {reach}")
+ 
+     # Store coordinates to RAS: the identity unless the positions are still
+     # TrackVis voxel millimetres.
+@@ -104,7 +122,10 @@ def select_streamlines(
+         level_meta = None
+     chunk_shape = get_level_chunk_shape(root_meta, level_meta)
+     lo, hi = _box_in_store(region.ras_bounds, np.linalg.inv(to_ras))
+-    chunks = _chunks_in_box(level_group, chunk_shape, lo, hi)
++    if np.any(hi < lo):  # an empty mask
++        return np.zeros(0, dtype=np.int64)
++    grow = np.asarray(chunk_shape, dtype=np.float64) if reach is None else float(reach)
++    chunks = _chunks_in_box(level_group, chunk_shape, lo - grow, hi + grow)
+     if not chunks:
+         return np.zeros(0, dtype=np.int64)
+ 
+diff --git a/zarr_vectors_tools/filtering/__init__.py b/zarr_vectors_tools/filtering/__init__.py
+new file mode 100644
+index 0000000..a8db394
+--- /dev/null
++++ b/zarr_vectors_tools/filtering/__init__.py
+@@ -0,0 +1,65 @@
++"""TrackVis-style streamline filtering: a filter-tree format and its reference engines.
++
++A filter is a tree of leaves -- passes through a region, a column
++comparison, group membership -- combined with AND, OR and NOT
++(:mod:`.predicates`, which also defines the JSON form engines exchange).
++Two engines evaluate it over a :class:`Tractogram` held in memory:
++
++- :mod:`.oracle` tests every segment, brute force.  It is the ground truth.
++- :class:`IndexedEngine` files segments under a grid, tests only the
++  segments near a region, and caches each leaf, so an operator change is
++  only boolean algebra.  Tested to agree with the oracle exactly.
++
++:func:`load_tractogram` reads a store's level 0 into a :class:`Tractogram`
++in the RAS millimetres :func:`~zarr_vectors_tools.algorithms.select_streamlines`
++uses, and :mod:`.synthetic` makes whole-brain-sized test sets.
++
++The subpackage imports only numpy (the store reader is imported when
++:func:`load_tractogram` is called), and its modules import one another
++relatively, so it can be copied into a Pyodide worker as it is.
++"""
++
++from .indexed import IndexedEngine
++from .oracle import evaluate, histogram, summarize
++from .predicates import (
++    All,
++    And,
++    Box,
++    Column,
++    Disk,
++    InGroup,
++    Mask,
++    Not,
++    Or,
++    Passes,
++    Slab,
++    Sphere,
++    from_json,
++    to_json,
++)
++from .synthetic import whole_brain_like
++from .tractogram import Tractogram, load_tractogram
++
++__all__ = [
++    "All",
++    "And",
++    "Box",
++    "Column",
++    "Disk",
++    "InGroup",
++    "IndexedEngine",
++    "Mask",
++    "Not",
++    "Or",
++    "Passes",
++    "Slab",
++    "Sphere",
++    "Tractogram",
++    "evaluate",
++    "from_json",
++    "histogram",
++    "load_tractogram",
++    "summarize",
++    "to_json",
++    "whole_brain_like",
++]
+diff --git a/zarr_vectors_tools/filtering/geometry.py b/zarr_vectors_tools/filtering/geometry.py
+new file mode 100644
+index 0000000..6f9e5aa
+--- /dev/null
++++ b/zarr_vectors_tools/filtering/geometry.py
+@@ -0,0 +1,175 @@
++"""Exact segment and point tests against each region type.
++
++Every function here is vectorised over a batch of segments ``a[i] -> b[i]``
++(each ``(E, 3)`` float64) or points, and implements the meaning
++:mod:`~zarr_vectors_tools.filtering.predicates` defines for the region.  The
++oracle and the indexed engine both call these, so they differ only in which
++segments they hand over: all of them, or the ones a spatial index says can
++matter.
++"""
++
++from __future__ import annotations
++
++import math
++
++import numpy as np
++import numpy.typing as npt
++
++from .predicates import Box, Disk, Mask, Region, Slab, Sphere
++
++__all__ = ["contains", "region_bounds", "segment_hits"]
++
++Array = npt.NDArray[np.float64]
++
++
++def segment_hits(a: Array, b: Array, region: Region) -> npt.NDArray[np.bool_]:
++    """Whether each segment ``a[i] -> b[i]`` meets ``region``."""
++    if isinstance(region, Sphere):
++        return _sphere(a, b, np.asarray(region.center), region.radius)
++    if isinstance(region, Box):
++        return _box(a, b, np.asarray(region.min), np.asarray(region.max))
++    if isinstance(region, Slab):
++        return _slab(a, b, region.axis, region.min, region.max)
++    if isinstance(region, Disk):
++        return _disk(a, b, region)
++    if isinstance(region, Mask):
++        return _mask(a, b, region)
++    raise TypeError(f"no segment test for {type(region).__name__}")
++
++
++def contains(points: Array, region: Region) -> npt.NDArray[np.bool_]:
++    """Whether each point lies in ``region`` (for the endpoint modes)."""
++    if isinstance(region, Sphere):
++        offset = points - np.asarray(region.center)
++        return np.einsum("ij,ij->i", offset, offset) <= region.radius ** 2
++    if isinstance(region, Box):
++        lo, hi = np.asarray(region.min), np.asarray(region.max)
++        return np.all((points >= lo) & (points <= hi), axis=1)
++    if isinstance(region, Slab):
++        coord = points[:, region.axis]
++        return (coord >= region.min) & (coord <= region.max)
++    if isinstance(region, Mask):
++        return region.contains(points)
++    raise TypeError(f"{type(region).__name__} has no inside to hold a point")
++
++
++def region_bounds(region: Region) -> tuple[Array, Array]:
++    """World box that every segment meeting ``region`` must reach into.
++
++    Unbounded axes (a slab's other two) are infinite.  An empty mask gives
++    an empty box (min above max).
++    """
++    if isinstance(region, Sphere):
++        c = np.asarray(region.center)
++        return c - region.radius, c + region.radius
++    if isinstance(region, Box):
++        return np.asarray(region.min), np.asarray(region.max)
++    if isinstance(region, Slab):
++        lo, hi = np.full(3, -np.inf), np.full(3, np.inf)
++        lo[region.axis], hi[region.axis] = region.min, region.max
++        return lo, hi
++    if isinstance(region, Disk):
++        # A disk of radius r with unit normal n spans r * sqrt(1 - n_k^2)
++        # along axis k.
++        c, n = np.asarray(region.center), np.asarray(region.normal)
++        half = region.radius * np.sqrt(np.clip(1.0 - n * n, 0.0, 1.0))
++        return c - half, c + half
++    if isinstance(region, Mask):
++        return region.world_bounds()
++    raise TypeError(f"no bounds for {type(region).__name__}")
++
++
++def _sphere(a: Array, b: Array, center: Array, radius: float) -> npt.NDArray[np.bool_]:
++    d = b - a
++    dd = np.einsum("ij,ij->i", d, d)
++    with np.errstate(invalid="ignore", divide="ignore"):
++        t = np.einsum("ij,ij->i", center - a, d) / dd
++    t = np.where(dd > 0, np.clip(t, 0.0, 1.0), 0.0)
++    nearest = a + t[:, None] * d - center
++    return np.einsum("ij,ij->i", nearest, nearest) <= radius * radius
++
++
++def _box(a: Array, b: Array, lo: Array, hi: Array) -> npt.NDArray[np.bool_]:
++    # Slab method over the parameter t in [0, 1].  An axis the segment does
++    # not move along admits every t or none, by whether it is inside.
++    d = b - a
++    moving = d != 0
++    with np.errstate(invalid="ignore", divide="ignore"):
++        t1 = (lo - a) / d
++        t2 = (hi - a) / d
++    inside = (a >= lo) & (a <= hi)
++    enter = np.where(moving, np.minimum(t1, t2), np.where(inside, -np.inf, np.inf))
++    leave = np.where(moving, np.maximum(t1, t2), np.where(inside, np.inf, -np.inf))
++    t_in = np.maximum(enter.max(axis=1), 0.0)
++    t_out = np.minimum(leave.min(axis=1), 1.0)
++    return t_in <= t_out
++
++
++def _slab(a: Array, b: Array, axis: int, lo: float, hi: float) -> npt.NDArray[np.bool_]:
++    ca, cb = a[:, axis], b[:, axis]
++    return (np.minimum(ca, cb) <= hi) & (np.maximum(ca, cb) >= lo)
++
++
++def _disk(a: Array, b: Array, disk: Disk) -> npt.NDArray[np.bool_]:
++    c, n = np.asarray(disk.center), np.asarray(disk.normal)
++    d0 = (a - c) @ n
++    d1 = (b - c) @ n
++    crosses = (((d0 <= 0) & (d1 >= 0)) | ((d0 >= 0) & (d1 <= 0))) & ~((d0 == 0) & (d1 == 0))
++    out = np.zeros(len(a), dtype=bool)
++    if not crosses.any():
++        return out
++    a, b, d0, d1 = a[crosses], b[crosses], d0[crosses], d1[crosses]
++    d = b - a
++    point = a + (d0 / (d0 - d1))[:, None] * d - c
++    within = np.einsum("ij,ij->i", point, point) <= disk.radius ** 2
++    # |cos| of the angle between the segment and the normal axis.  A
++    # crossing segment is never zero-length: both ends would be on the plane.
++    cos = np.clip(np.abs(d @ n) / np.linalg.norm(d, axis=1), 0.0, 1.0)
++    lo, hi = disk.angle
++    aligned = (cos <= _cos_deg(lo)) & (cos >= _cos_deg(hi))
++    out[np.flatnonzero(crosses)] = within & aligned
++    return out
++
++
++def _cos_deg(angle: float) -> float:
++    # Exact at the ends, so (0, 90) accepts every crossing.
++    if angle <= 0:
++        return 1.0
++    if angle >= 90:
++        return 0.0
++    return math.cos(math.radians(angle))
++
++
++#: Points sampled per batch in the mask test, to bound the temporaries.
++_MASK_BATCH = 1 << 21
++
++
++def _mask(a: Array, b: Array, mask: Mask) -> npt.NDArray[np.bool_]:
++    spacing = mask.sample_spacing
++    d = b - a
++    length = np.linalg.norm(d, axis=1)
++    # Interior points per segment: ceil(length / spacing) - 1, as
++    # select_streamlines samples.  The two vertices are tested as they are,
++    # not recomputed as a + 1 * d.
++    interior = np.maximum(np.ceil(length / spacing).astype(np.int64) - 1, 0)
++    hit = mask.contains(a) | mask.contains(b)
++    todo = np.flatnonzero(~hit & (interior > 0))
++    if len(todo) == 0:
++        return hit
++    counts = interior[todo].astype(np.intp)
++    ends = np.cumsum(counts)
++    start = 0
++    while start < len(todo):
++        # A batch of whole segments holding about _MASK_BATCH points.
++        stop = max(int(np.searchsorted(ends, (ends[start - 1] if start else 0) + _MASK_BATCH)),
++                   start + 1)
++        stop = min(stop, len(todo))
++        rows, n = todo[start:stop], counts[start:stop]
++        which = np.repeat(np.arange(len(rows)), n)
++        offsets = np.arange(int(n.sum())) - np.repeat(np.cumsum(n) - n, n)
++        fraction = (offsets + 1) / (n[which] + 1)
++        points = a[rows][which] + d[rows][which] * fraction[:, None]
++        inside = mask.contains(points)
++        hit[rows[np.unique(which[inside])]] = True
++        start = stop
++    return hit
+diff --git a/zarr_vectors_tools/filtering/indexed.py b/zarr_vectors_tools/filtering/indexed.py
+new file mode 100644
+index 0000000..58f4a9f
+--- /dev/null
++++ b/zarr_vectors_tools/filtering/indexed.py
+@@ -0,0 +1,321 @@
++"""An interactive filter engine in numpy: a spatial index plus cached leaves.
++
++This is the design the platform plan proposes for the browser
++(``zarr_vectors_filtering_wasm_plan.md``, part B), built from numpy alone so
++that it runs unchanged under Pyodide and can be timed there (gate G1 of the
++build guide).  It answers exactly what the oracle answers -- the tests hold
++it to that -- but does far less work per question:
++
++- A region leaf tests only the segments filed under the grid cells the
++  region's bounding box touches.  Each segment is filed under every cell its
++  own bounding box overlaps, so a segment that crosses a cell face, or skips
++  over a whole cell, is still found from any cell it passes through.  (A
++  rare long segment spanning many cells goes on a short list tested every
++  time instead.)
++- A segment that lies in one cell, where that cell lies wholly inside the
++  region, meets the region without being tested; and a segment is not
++  tested once its streamline has been accepted.
++- Endpoint modes test only the two ends of each streamline.
++- Every leaf's answer is cached by the leaf's content, so changing an
++  operator, or toggling one leaf, re-runs only the boolean algebra.
++
++Unlike the browser design, it holds level 0 whole in memory: the question it
++answers is how fast numpy computes the filters, not how they are fetched.
++"""
++
++from __future__ import annotations
++
++from collections import OrderedDict
++from collections.abc import Sequence
++
++import numpy as np
++import numpy.typing as npt
++
++from . import oracle
++from .geometry import contains, region_bounds, segment_hits
++from .predicates import All, And, Box, Column, InGroup, Node, Not, Or, Passes, Slab, Sphere
++from .tractogram import Tractogram
++
++__all__ = ["IndexedEngine"]
++
++#: Segments filed per batch while building the index.
++_BUILD_BLOCK = 1 << 21
++#: Candidate segments tested per batch in a query.
++_QUERY_BLOCK = 1 << 17
++
++
++class IndexedEngine:
++    """Filter one tractogram, interactively.
++
++    Args:
++        tractogram: The streamlines; held, not copied.
++        cell_size: Edge of the index's cubic cells, in millimetres.  The
++            default aims for about ``segments_per_cell`` segments per cell
++            and never goes below twice the median segment length.
++        segments_per_cell: Target occupancy for the default cell size.
++        cache_size: Leaf answers kept (least recently used are dropped).
++        long_cells: A segment whose bounding box spans more cells than this
++            is not filed under each of them but kept on a short list that
++            every region query tests.
++    """
++
++    def __init__(
++        self,
++        tractogram: Tractogram,
++        *,
++        cell_size: float | None = None,
++        segments_per_cell: int = 64,
++        cache_size: int = 256,
++        long_cells: int = 64,
++    ) -> None:
++        self.tractogram = tractogram
++        self._cache: OrderedDict[str, npt.NDArray[np.bool_]] = OrderedDict()
++        self._cache_size = int(cache_size)
++        self._start, self._end, self._owner = tractogram.edges()
++        self._first, self._last, self._has = tractogram.endpoints()
++        #: Counts from the last region query: cells visited, cells wholly
++        #: inside the region, segments accepted untested, candidates, tested.
++        self.last_query: dict[str, int] = {}
++        self._build(cell_size, segments_per_cell, long_cells)
++
++    # -- index -----------------------------------------------------------------
++
++    def _build(self, cell_size: float | None, per_cell: int, long_cells: int) -> None:
++        vertices = self.tractogram.vertices
++        n_edges = len(self._start)
++        self._long = np.zeros(0, dtype=self._start.dtype)
++        if n_edges == 0:
++            self.origin = np.zeros(3)
++            self.cell_size = 1.0
++            self.grid = np.ones(3, dtype=np.int64)
++            self._cell_start = np.zeros(2, dtype=np.int64)
++            self._filed = np.zeros(0, dtype=self._start.dtype)
++            self._single = np.zeros(0, dtype=bool)
++            return
++        lo = vertices.min(axis=0).astype(np.float64)
++        hi = vertices.max(axis=0).astype(np.float64)
++        extent = np.maximum(hi - lo, 1e-9)
++        if cell_size is None:
++            sample = np.arange(0, n_edges, max(1, n_edges // 100_000))
++            steps = np.linalg.norm(
++                vertices[self._end[sample]].astype(np.float64) - vertices[self._start[sample]],
++                axis=1,
++            )
++            volume_cell = float(np.prod(extent)) * per_cell / n_edges
++            cell_size = max(volume_cell ** (1 / 3), 2.0 * float(np.median(steps)), 1e-6)
++        self.cell_size = float(cell_size)
++        self.origin = lo
++        self.grid = np.floor(extent / self.cell_size).astype(np.int64) + 1
++        n_cells = int(np.prod(self.grid))
++        if n_cells >= 2**31 or n_edges >= 2**31:
++            raise ValueError(
++                f"{n_edges} segments in {n_cells} cells is too large for this engine; "
++                "pass a larger cell_size"
++            )
++
++        # Each filing is one int64: cell << 32 | single-cell flag << 31 | segment.
++        # Sorting them in place orders the index by cell without the int64
++        # index array an argsort would allocate.
++        parts: list[npt.NDArray[np.int64]] = []
++        long: list[npt.NDArray] = []
++        for first in range(0, n_edges, _BUILD_BLOCK):
++            s = self._start[first:first + _BUILD_BLOCK]
++            e = self._end[first:first + _BUILD_BLOCK]
++            a = vertices[s].astype(np.float64)
++            b = vertices[e].astype(np.float64)
++            c_lo = self._cell(np.minimum(a, b))
++            c_hi = self._cell(np.maximum(a, b))
++            del a, b
++            span = c_hi - c_lo + 1
++            copies = span.prod(axis=1)
++            ids = np.arange(first, first + len(s), dtype=np.int64)
++            one = copies == 1
++            parts.append(self._linear(c_lo[one]) << 32 | np.int64(1) << 31 | ids[one])
++            many = (copies > 1) & (copies <= long_cells)
++            long.append(ids[copies > long_cells].astype(self._start.dtype))
++            if many.any():
++                # Repeat counts are intp: numpy refuses int64 ones where intp
++                # is 32-bit, as under Pyodide.
++                n = copies[many].astype(np.intp)
++                which = np.repeat(np.arange(len(n)), n)
++                k = np.arange(int(n.sum())) - np.repeat(np.cumsum(n) - n, n)
++                sy, sz = span[many][which, 1], span[many][which, 2]
++                cell = c_lo[many][which] + np.column_stack([k // (sy * sz), (k // sz) % sy, k % sz])
++                parts.append(self._linear(cell) << 32 | ids[many][which])
++        packed = np.concatenate(parts)
++        del parts
++        packed.sort()
++        self._long = np.concatenate(long)
++        self._cell_start = np.searchsorted(
++            packed, np.arange(n_cells + 1, dtype=np.int64) << 32,
++        ).astype(np.int64)
++        self._filed = np.empty(len(packed), dtype=self._start.dtype)
++        self._single = np.empty(len(packed), dtype=bool)
++        for first in range(0, len(packed), _BUILD_BLOCK):
++            block = packed[first:first + _BUILD_BLOCK]
++            self._filed[first:first + _BUILD_BLOCK] = block & 0x7FFFFFFF
++            self._single[first:first + _BUILD_BLOCK] = (block >> 31) & 1
++        del packed
++
++    def _cell(self, points: npt.NDArray[np.float64]) -> npt.NDArray[np.int64]:
++        cell = np.floor((points - self.origin) / self.cell_size).astype(np.int64)
++        return np.clip(cell, 0, self.grid - 1)
++
++    def _linear(self, cell: npt.NDArray[np.int64]) -> npt.NDArray[np.int64]:
++        return (cell[:, 0] * self.grid[1] + cell[:, 1]) * self.grid[2] + cell[:, 2]
++
++    @property
++    def index_bytes(self) -> int:
++        """Bytes the index adds on top of the tractogram."""
++        return int(
++            self._filed.nbytes + self._single.nbytes + self._cell_start.nbytes
++            + self._long.nbytes + self._start.nbytes + self._end.nbytes + self._owner.nbytes
++            + self._first.nbytes + self._last.nbytes
++        )
++
++    def _cells(self, region) -> npt.NDArray[np.int64]:
++        """``(i, j, k)`` of every cell the region's bounding box touches."""
++        lo, hi = region_bounds(region)
++        # Widened by a hair, so a point the exact test accepts by rounding at
++        # the region's rim is never in a cell left out.
++        with np.errstate(invalid="ignore"):  # a slab's infinite sides stay infinite
++            lo = np.where(np.isfinite(lo), lo - 1e-9 * (1.0 + np.abs(lo)), lo)
++            hi = np.where(np.isfinite(hi), hi + 1e-9 * (1.0 + np.abs(hi)), hi)
++        world_hi = self.origin + self.grid * self.cell_size
++        if np.any(hi < self.origin) or np.any(lo > world_hi) or np.any(hi < lo):
++            return np.zeros((0, 3), dtype=np.int64)
++        c_lo = self._cell(np.maximum(lo, self.origin)[None])[0]
++        c_hi = self._cell(np.minimum(hi, world_hi)[None])[0]
++        axes = [np.arange(c_lo[i], c_hi[i] + 1) for i in range(3)]
++        return np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, 3)
++
++    def _inside(self, region, cells: npt.NDArray[np.int64]) -> npt.NDArray[np.bool_]:
++        """Which cells lie wholly inside the region (always False for a disk or mask).
++
++        A segment filed under one cell only lies in that cell, so in such a
++        cell it meets the region without being tested.  The cells are
++        widened by a hair, so rounding can only make a cell count as not
++        inside.
++        """
++        if len(cells) == 0 or not isinstance(region, (Sphere, Box, Slab)):
++            return np.zeros(len(cells), dtype=bool)
++        lo = self.origin + cells * self.cell_size
++        hi = lo + self.cell_size
++        lo = lo - 1e-9 * (1.0 + np.abs(lo) + self.cell_size)
++        hi = hi + 1e-9 * (1.0 + np.abs(hi) + self.cell_size)
++        if isinstance(region, Sphere):
++            c = np.asarray(region.center)
++            far = np.maximum(np.abs(lo - c), np.abs(hi - c))
++            return np.einsum("ij,ij->i", far, far) <= region.radius ** 2
++        if isinstance(region, Box):
++            return np.all(lo >= np.asarray(region.min), axis=1) & np.all(
++                hi <= np.asarray(region.max), axis=1)
++        return (lo[:, region.axis] >= region.min) & (hi[:, region.axis] <= region.max)
++
++    def _positions(self, cells: npt.NDArray[np.int64]) -> npt.NDArray[np.intp]:
++        """Positions in the filing of every segment filed under ``cells``."""
++        linear = self._linear(cells)
++        begin = self._cell_start[linear]
++        counts = (self._cell_start[linear + 1] - begin).astype(np.intp)
++        total = int(counts.sum())
++        k = np.arange(total, dtype=np.intp) - np.repeat(np.cumsum(counts) - counts, counts)
++        return np.repeat(begin, counts).astype(np.intp) + k
++
++    def _passes_path(self, region) -> npt.NDArray[np.bool_]:
++        out = np.zeros(self.tractogram.n_objects, dtype=bool)
++        cells = self._cells(region)
++        inside = self._inside(region, cells)
++        pos = self._positions(cells[inside])
++        single = self._single[pos]
++        sure = self._filed[pos[single]]
++        out[self._owner[sure]] = True
++        pos = np.concatenate([pos[~single], self._positions(cells[~inside])])
++        test = np.concatenate([self._filed[pos], self._long])
++        tested = 0
++        vertices = self.tractogram.vertices
++        for first in range(0, len(test), _QUERY_BLOCK):
++            # Skip segments of streamlines already accepted.
++            chunk = test[first:first + _QUERY_BLOCK]
++            chunk = chunk[~out[self._owner[chunk]]]
++            tested += len(chunk)
++            a = vertices[self._start[chunk]].astype(np.float64)
++            b = vertices[self._end[chunk]].astype(np.float64)
++            out[self._owner[chunk[segment_hits(a, b, region)]]] = True
++        self.last_query = {
++            "cells": int(len(cells)), "inside_cells": int(inside.sum()),
++            "accepted_untested": int(len(sure)), "candidates": int(len(test)),
++            "tested": int(tested),
++        }
++        return out
++
++    # -- leaves ----------------------------------------------------------------
++
++    def leaf(self, node: Node) -> npt.NDArray[np.bool_]:
++        """A leaf's answer, from the cache when the same leaf was asked before."""
++        key = node.key()
++        hit = self._cache.get(key)
++        if hit is not None:
++            self._cache.move_to_end(key)
++            return hit
++        result = self._compute(node)
++        result.setflags(write=False)
++        self._cache[key] = result
++        while len(self._cache) > self._cache_size:
++            self._cache.popitem(last=False)
++        return result
++
++    def _compute(self, node: Node) -> npt.NDArray[np.bool_]:
++        n = self.tractogram.n_objects
++        if isinstance(node, Passes):
++            if node.mode != "path":
++                has = self._has
++                at_first = contains(self._first[has], node.region)
++                at_last = contains(self._last[has], node.region)
++                out = np.zeros(n, dtype=bool)
++                out[has] = at_first | at_last if node.mode == "endpoints" else at_first & at_last
++                return out
++            return self._passes_path(node.region)
++        if isinstance(node, Column):
++            return oracle.column_mask(node, self.tractogram)
++        if isinstance(node, InGroup):
++            return self.tractogram.group_mask(node.ids)
++        raise TypeError(f"{type(node).__name__} is not a leaf")
++
++    # -- trees -----------------------------------------------------------------
++
++    def evaluate(self, tree: Node) -> npt.NDArray[np.bool_]:
++        """Which streamlines the filter accepts: an ``(N,)`` bool array by row."""
++        if isinstance(tree, All):
++            return np.ones(self.tractogram.n_objects, dtype=bool)
++        if isinstance(tree, And):
++            out = self.evaluate(tree.children[0]).copy()
++            for child in tree.children[1:]:
++                out &= self.evaluate(child)
++            return out
++        if isinstance(tree, Or):
++            out = self.evaluate(tree.children[0]).copy()
++            for child in tree.children[1:]:
++                out |= self.evaluate(child)
++            return out
++        if isinstance(tree, Not):
++            return ~self.evaluate(tree.child)
++        return self.leaf(tree)
++
++    def clear(self) -> None:
++        """Forget every cached leaf (after the tractogram changes)."""
++        self._cache.clear()
++
++    @staticmethod
++    def publish(groups: Sequence[npt.NDArray[np.bool_]]) -> npt.NDArray[np.uint8]:
++        """One byte per row for the viewer: 0 hidden, else 1 + the first group showing it.
++
++        Groups are in draw order; at most 255 fit a byte.
++        """
++        if len(groups) > 255:
++            raise ValueError(f"at most 255 groups fit a byte mask, got {len(groups)}")
++        if not groups:
++            return np.zeros(0, dtype=np.uint8)
++        out = np.zeros(len(groups[0]), dtype=np.uint8)
++        for index in range(len(groups) - 1, -1, -1):
++            out[groups[index]] = index + 1
++        return out
+diff --git a/zarr_vectors_tools/filtering/oracle.py b/zarr_vectors_tools/filtering/oracle.py
+new file mode 100644
+index 0000000..2005a55
+--- /dev/null
++++ b/zarr_vectors_tools/filtering/oracle.py
+@@ -0,0 +1,132 @@
++"""The brute-force reference: every predicate, tested on every segment.
++
++This is the ground truth the faster engines are measured against -- the
++indexed numpy engine here, and the browser engines built later.  It keeps
++nothing between calls and prunes nothing: a region leaf runs the exact
++segment test of :mod:`~zarr_vectors_tools.filtering.geometry` over all of
++the tractogram's segments, a batch at a time.  Slow on purpose, and simple
++enough to check by reading.
++"""
++
++from __future__ import annotations
++
++from collections.abc import Sequence
++from typing import Any
++
++import numpy as np
++import numpy.typing as npt
++
++from .geometry import contains, segment_hits
++from .predicates import All, And, Column, InGroup, Node, Not, Or, Passes
++from .tractogram import Tractogram
++
++__all__ = ["column_mask", "evaluate", "histogram", "passes", "summarize"]
++
++#: Segments tested per batch.
++_BLOCK = 1 << 20
++
++
++def evaluate(tree: Node, tractogram: Tractogram) -> npt.NDArray[np.bool_]:
++    """Which streamlines the filter accepts: an ``(N,)`` bool array by row."""
++    if isinstance(tree, All):
++        return np.ones(tractogram.n_objects, dtype=bool)
++    if isinstance(tree, Passes):
++        return passes(tree, tractogram)
++    if isinstance(tree, Column):
++        return column_mask(tree, tractogram)
++    if isinstance(tree, InGroup):
++        return tractogram.group_mask(tree.ids)
++    if isinstance(tree, And):
++        return np.logical_and.reduce([evaluate(c, tractogram) for c in tree.children])
++    if isinstance(tree, Or):
++        return np.logical_or.reduce([evaluate(c, tractogram) for c in tree.children])
++    if isinstance(tree, Not):
++        return ~evaluate(tree.child, tractogram)
++    raise TypeError(f"cannot evaluate {type(tree).__name__}")
++
++
++def passes(leaf: Passes, tractogram: Tractogram) -> npt.NDArray[np.bool_]:
++    """Rows that meet the leaf's region, by path or by their ends."""
++    out = np.zeros(tractogram.n_objects, dtype=bool)
++    if leaf.mode == "path":
++        start, end, owner = tractogram.edges()
++        vertices = tractogram.vertices
++        for lo in range(0, len(start), _BLOCK):
++            a = vertices[start[lo:lo + _BLOCK]].astype(np.float64)
++            b = vertices[end[lo:lo + _BLOCK]].astype(np.float64)
++            hit = segment_hits(a, b, leaf.region)
++            out[owner[lo:lo + _BLOCK][hit]] = True
++        return out
++    first, last, has = tractogram.endpoints()
++    at_first = contains(first[has], leaf.region)
++    at_last = contains(last[has], leaf.region)
++    out[has] = at_first | at_last if leaf.mode == "endpoints" else at_first & at_last
++    return out
++
++
++def column_mask(leaf: Column, tractogram: Tractogram) -> npt.NDArray[np.bool_]:
++    """Rows whose column value passes the comparison (absent values never do)."""
++    values, present = tractogram.column(leaf.name, leaf.channel)
++    if leaf.cmp == "absent":
++        return ~present
++    with np.errstate(invalid="ignore"):
++        if leaf.cmp == "<":
++            hit = values < leaf.value
++        elif leaf.cmp == "<=":
++            hit = values <= leaf.value
++        elif leaf.cmp == ">":
++            hit = values > leaf.value
++        elif leaf.cmp == ">=":
++            hit = values >= leaf.value
++        elif leaf.cmp == "==":
++            hit = values == leaf.value
++        elif leaf.cmp == "!=":
++            hit = values != leaf.value
++        elif leaf.cmp == "between":
++            hit = (values >= leaf.value[0]) & (values <= leaf.value[1])
++        else:  # "in"
++            hit = np.isin(values, np.asarray(leaf.value))
++    return np.asarray(hit, dtype=bool) & present
++
++
++def summarize(
++    accepted: npt.NDArray[np.bool_],
++    tractogram: Tractogram,
++    columns: Sequence[str] = ("length",),
++) -> dict[str, Any]:
++    """Count of accepted rows and, per column, statistics over them.
++
++    Each column reports ``n`` (accepted rows with a value), ``mean``,
++    ``std`` (population, ddof 0), ``min`` and ``max``; NaN where ``n`` is 0.
++    Multi-channel columns are summarised per channel as ``name[c]``.
++    """
++    accepted = np.asarray(accepted, dtype=bool)
++    out: dict[str, Any] = {"count": int(accepted.sum())}
++    for name in columns:
++        width = tractogram.columns[name].shape[1] if tractogram.columns[name].ndim == 2 else None
++        for channel in [None] if width is None else range(width):
++            values, present = tractogram.column(name, channel)
++            chosen = values[accepted & present].astype(np.float64)
++            label = name if channel is None else f"{name}[{channel}]"
++            if len(chosen) == 0:
++                out[label] = {"n": 0, "mean": np.nan, "std": np.nan, "min": np.nan, "max": np.nan}
++            else:
++                out[label] = {
++                    "n": int(len(chosen)), "mean": float(chosen.mean()),
++                    "std": float(chosen.std()), "min": float(chosen.min()),
++                    "max": float(chosen.max()),
++                }
++    return out
++
++
++def histogram(
++    accepted: npt.NDArray[np.bool_],
++    tractogram: Tractogram,
++    column: str,
++    bins: npt.ArrayLike,
++    channel: int | None = None,
++) -> npt.NDArray[np.int64]:
++    """Counts of accepted rows' values in ``bins`` (edges, as numpy.histogram)."""
++    values, present = tractogram.column(column, channel)
++    counts, _ = np.histogram(values[np.asarray(accepted, bool) & present], bins=np.asarray(bins))
++    return counts
+diff --git a/zarr_vectors_tools/filtering/predicates.py b/zarr_vectors_tools/filtering/predicates.py
+new file mode 100644
+index 0000000..e045451
+--- /dev/null
++++ b/zarr_vectors_tools/filtering/predicates.py
+@@ -0,0 +1,563 @@
++"""Filter trees for streamlines: regions, leaves, operators, and their JSON.
++
++A TrackVis-style filter is a tree.  Each leaf asks one question of every
++streamline and answers yes or no:
++
++- :class:`Passes` -- does the streamline meet a region (:class:`Sphere`,
++  :class:`Box`, :class:`Slab`, :class:`Disk` or :class:`Mask`)?  ``mode``
++  says which part of it counts: ``"path"`` (any segment), ``"endpoints"``
++  (either end) or ``"both_endpoints"``.
++- :class:`Column` -- does a per-streamline value pass a comparison?
++- :class:`InGroup` -- is the streamline a member of any of these groups?
++- :class:`All` -- yes, always (the default group before any filter).
++
++:class:`And`, :class:`Or` and :class:`Not` combine them, and so do the
++operators ``&``, ``|``, ``~`` and ``-`` (and-not) on any node.
++
++The JSON form (:func:`to_json` / :func:`from_json`) is the contract between
++engines: the brute-force oracle here, the indexed numpy engine, and the
++browser engines that are tested against them all read the same document.
++Coordinates are world millimetres, the same space
++:func:`~zarr_vectors_tools.algorithms.select_streamlines` takes regions in.
++
++What each region means, exactly
++-------------------------------
++Every set is closed, so a segment that just touches a region meets it.
++
++- ``sphere``: some point of the segment is within ``radius`` of ``center``.
++- ``box``: the segment meets the axis-aligned box ``min``..``max``.
++- ``slab``: the segment's coordinate on ``axis`` takes some value in
++  ``min``..``max`` (a box unbounded on the other two axes; TrackVis's slice
++  filter).
++- ``disk``: the segment crosses the disk's plane at a point within
++  ``radius`` of ``center``, and the angle between the segment and the
++  disk's normal axis lies within ``angle`` (degrees, 0..90; direction does
++  not matter).  A segment lying in the plane does not cross it.
++- ``mask``: a point sampled along the segment falls in a nonzero voxel.  The
++  points are the segment's two vertices and ``ceil(length / spacing) - 1``
++  evenly spaced between them; a point is in the voxel its coordinates round
++  to.  ``spacing`` defaults to half the smallest voxel edge.  This is the
++  scheme :func:`~zarr_vectors_tools.algorithms.select_streamlines` uses, so
++  the two agree point for point.
++
++A streamline with one vertex is that point; one with none meets nothing.
++The endpoint modes test the first and last vertex as points, so they do not
++apply to a disk, which has no interior.
++
++Column comparisons
++------------------
++``cmp`` is one of ``<  <=  >  >=  ==  !=``, ``between`` (``value`` is
++``[lo, hi]``, inclusive), ``in`` (``value`` is a list) or ``absent``.  An
++absent value -- a row the store marks absent, or a NaN -- passes no
++comparison, ``!=`` included, and passes only ``absent``.
++"""
++
++from __future__ import annotations
++
++import base64
++import hashlib
++import json
++import math
++from collections.abc import Iterable
++from dataclasses import dataclass, field
++from typing import Any
++
++import numpy as np
++import numpy.typing as npt
++
++__all__ = [
++    "All",
++    "And",
++    "Box",
++    "COMPARISONS",
++    "Column",
++    "Disk",
++    "FORMAT",
++    "InGroup",
++    "MODES",
++    "Mask",
++    "Node",
++    "Not",
++    "Or",
++    "Passes",
++    "Region",
++    "Slab",
++    "Sphere",
++    "VERSION",
++    "from_json",
++    "to_json",
++]
++
++#: Name and version written into every JSON document.  A reader refuses a
++#: version it does not know.
++FORMAT = "zvf-predicate"
++VERSION = 1
++
++MODES = ("path", "endpoints", "both_endpoints")
++COMPARISONS = ("<", "<=", ">", ">=", "==", "!=", "between", "in", "absent")
++
++
++def _vec3(values: Iterable[float], what: str) -> tuple[float, float, float]:
++    out = tuple(float(v) for v in values)
++    if len(out) != 3 or not all(math.isfinite(v) for v in out):
++        raise ValueError(f"{what} must be three finite numbers, got {list(out)}")
++    return out  # type: ignore[return-value]
++
++
++def _finite(value: float, what: str) -> float:
++    out = float(value)
++    if not math.isfinite(out):
++        raise ValueError(f"{what} must be finite, got {value}")
++    return out
++
++
++# ---------------------------------------------------------------------------
++# Regions
++# ---------------------------------------------------------------------------
++
++
++class Region:
++    """Base class of the shapes a :class:`Passes` leaf tests against."""
++
++    kind: str = ""
++
++    def to_json(self) -> dict[str, Any]:  # pragma: no cover - every subclass overrides
++        raise NotImplementedError
++
++
++@dataclass(frozen=True)
++class Sphere(Region):
++    """A ball: ``center`` and ``radius`` in world millimetres."""
++
++    center: tuple[float, float, float]
++    radius: float
++    kind = "sphere"
++
++    def __post_init__(self) -> None:
++        object.__setattr__(self, "center", _vec3(self.center, "sphere center"))
++        radius = _finite(self.radius, "sphere radius")
++        if radius < 0:
++            raise ValueError(f"sphere radius must be 0 or more, got {radius}")
++        object.__setattr__(self, "radius", radius)
++
++    def to_json(self) -> dict[str, Any]:
++        return {"type": self.kind, "center": list(self.center), "radius": self.radius}
++
++
++@dataclass(frozen=True)
++class Box(Region):
++    """An axis-aligned box from corner ``min`` to corner ``max``."""
++
++    min: tuple[float, float, float]
++    max: tuple[float, float, float]
++    kind = "box"
++
++    def __post_init__(self) -> None:
++        lo, hi = _vec3(self.min, "box min"), _vec3(self.max, "box max")
++        if any(h < low for low, h in zip(lo, hi)):
++            raise ValueError(f"box max corner {list(hi)} is below its min corner {list(lo)}")
++        object.__setattr__(self, "min", lo)
++        object.__setattr__(self, "max", hi)
++
++    def to_json(self) -> dict[str, Any]:
++        return {"type": self.kind, "min": list(self.min), "max": list(self.max)}
++
++
++@dataclass(frozen=True)
++class Slab(Region):
++    """Everything whose coordinate on ``axis`` (0, 1 or 2) is in ``min``..``max``."""
++
++    axis: int
++    min: float
++    max: float
++    kind = "slab"
++
++    def __post_init__(self) -> None:
++        if self.axis not in (0, 1, 2):
++            raise ValueError(f"slab axis must be 0, 1 or 2, got {self.axis}")
++        lo, hi = _finite(self.min, "slab min"), _finite(self.max, "slab max")
++        if hi < lo:
++            raise ValueError(f"slab max {hi} is below its min {lo}")
++        object.__setattr__(self, "axis", int(self.axis))
++        object.__setattr__(self, "min", lo)
++        object.__setattr__(self, "max", hi)
++
++    def to_json(self) -> dict[str, Any]:
++        return {"type": self.kind, "axis": self.axis, "min": self.min, "max": self.max}
++
++
++@dataclass(frozen=True)
++class Disk(Region):
++    """A flat disk, crossed by segments whose angle to ``normal`` is in ``angle``.
++
++    ``normal`` is normalised on construction.  ``angle`` is ``(lo, hi)`` in
++    degrees between the segment and the normal axis: ``(0, 90)`` accepts any
++    crossing, ``(0, 30)`` only segments within 30 degrees of the normal.
++    """
++
++    center: tuple[float, float, float]
++    normal: tuple[float, float, float]
++    radius: float
++    angle: tuple[float, float] = (0.0, 90.0)
++    kind = "disk"
++
++    def __post_init__(self) -> None:
++        object.__setattr__(self, "center", _vec3(self.center, "disk center"))
++        normal = np.asarray(_vec3(self.normal, "disk normal"))
++        norm = float(np.linalg.norm(normal))
++        if norm == 0:
++            raise ValueError("disk normal must not be the zero vector")
++        object.__setattr__(self, "normal", tuple(float(v) for v in normal / norm))
++        radius = _finite(self.radius, "disk radius")
++        if radius < 0:
++            raise ValueError(f"disk radius must be 0 or more, got {radius}")
++        object.__setattr__(self, "radius", radius)
++        lo, hi = (_finite(a, "disk angle") for a in self.angle)
++        if not 0 <= lo <= hi <= 90:
++            raise ValueError(f"disk angle must satisfy 0 <= lo <= hi <= 90, got {[lo, hi]}")
++        object.__setattr__(self, "angle", (lo, hi))
++
++    def to_json(self) -> dict[str, Any]:
++        return {
++            "type": self.kind, "center": list(self.center), "normal": list(self.normal),
++            "radius": self.radius, "angle": list(self.angle),
++        }
++
++
++@dataclass(frozen=True, eq=False)
++class Mask(Region):
++    """A voxel region: nonzero ``voxels`` placed in the world by ``affine``.
++
++    ``affine`` maps voxel indices to world millimetres (a NIfTI affine).
++    Two masks are equal when their voxels, affine and spacing are.
++    """
++
++    voxels: npt.NDArray[np.bool_]
++    affine: npt.NDArray[np.float64]
++    spacing: float | None = None
++    _to_voxel: npt.NDArray[np.float64] = field(init=False, repr=False)
++    kind = "mask"
++
++    def __post_init__(self) -> None:
++        voxels = np.asarray(self.voxels)
++        if voxels.ndim == 4 and voxels.shape[3] == 1:
++            voxels = voxels[..., 0]
++        if voxels.ndim != 3:
++            raise ValueError(f"a mask must be 3-D, got shape {voxels.shape}")
++        voxels = np.ascontiguousarray(voxels != 0)
++        voxels.setflags(write=False)
++        affine = np.asarray(self.affine, dtype=np.float64).reshape(4, 4).copy()
++        affine.setflags(write=False)
++        object.__setattr__(self, "voxels", voxels)
++        object.__setattr__(self, "affine", affine)
++        object.__setattr__(self, "_to_voxel", np.linalg.inv(affine))
++        if self.spacing is not None:
++            spacing = _finite(self.spacing, "mask spacing")
++            if spacing <= 0:
++                raise ValueError(f"mask spacing must be above 0, got {spacing}")
++            object.__setattr__(self, "spacing", spacing)
++
++    @property
++    def sample_spacing(self) -> float:
++        """Distance between points tested along a segment."""
++        if self.spacing is not None:
++            return self.spacing
++        return float(np.linalg.norm(self.affine[:3, :3], axis=0).min()) / 2.0
++
++    def contains(self, points: npt.NDArray) -> npt.NDArray[np.bool_]:
++        """Whether each world point falls in a nonzero voxel."""
++        to_voxel = self._to_voxel
++        ijk = np.rint(points @ to_voxel[:3, :3].T + to_voxel[:3, 3]).astype(np.int64)
++        shape = np.asarray(self.voxels.shape)
++        valid = np.all((ijk >= 0) & (ijk < shape), axis=1)
++        hit = np.zeros(len(points), dtype=bool)
++        hit[valid] = self.voxels[tuple(ijk[valid].T)]
++        return hit
++
++    def world_bounds(self) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
++        """World box around every nonzero voxel (each voxel +/- half a voxel)."""
++        occupied = np.argwhere(self.voxels)
++        if len(occupied) == 0:
++            return np.full(3, np.inf), np.full(3, -np.inf)
++        corners = np.array(np.meshgrid(*[
++            [occupied[:, a].min() - 0.5, occupied[:, a].max() + 0.5] for a in range(3)
++        ], indexing="ij")).reshape(3, -1).T
++        world = corners @ self.affine[:3, :3].T + self.affine[:3, 3]
++        return world.min(axis=0), world.max(axis=0)
++
++    def to_json(self) -> dict[str, Any]:
++        out: dict[str, Any] = {
++            "type": self.kind,
++            "shape": list(self.voxels.shape),
++            "affine": self.affine.tolist(),
++            # C order, most significant bit first (numpy.packbits).
++            "bits": base64.b64encode(np.packbits(self.voxels.ravel())).decode("ascii"),
++        }
++        if self.spacing is not None:
++            out["spacing"] = self.spacing
++        return out
++
++    def __eq__(self, other: object) -> bool:
++        if not isinstance(other, Mask):
++            return NotImplemented
++        return (
++            self.spacing == other.spacing
++            and self.voxels.shape == other.voxels.shape
++            and np.array_equal(self.affine, other.affine)
++            and np.array_equal(self.voxels, other.voxels)
++        )
++
++    def __hash__(self) -> int:
++        return hash(_digest(self.to_json()))
++
++
++def _region_from_json(doc: dict[str, Any]) -> Region:
++    kind = doc.get("type")
++    if kind == "sphere":
++        return Sphere(doc["center"], doc["radius"])
++    if kind == "box":
++        return Box(doc["min"], doc["max"])
++    if kind == "slab":
++        return Slab(int(doc["axis"]), doc["min"], doc["max"])
++    if kind == "disk":
++        return Disk(doc["center"], doc["normal"], doc["radius"], tuple(doc.get("angle", (0, 90))))
++    if kind == "mask":
++        shape = tuple(int(s) for s in doc["shape"])
++        bits = np.frombuffer(base64.b64decode(doc["bits"]), dtype=np.uint8)
++        voxels = np.unpackbits(bits, count=int(np.prod(shape))).astype(bool).reshape(shape)
++        return Mask(voxels, np.asarray(doc["affine"], dtype=np.float64), doc.get("spacing"))
++    raise ValueError(f"unknown region type {kind!r}")
++
++
++# ---------------------------------------------------------------------------
++# Tree nodes
++# ---------------------------------------------------------------------------
++
++
++class Node:
++    """Base class of every filter tree node."""
++
++    def __and__(self, other: Node) -> And:
++        return And(self, other)
++
++    def __or__(self, other: Node) -> Or:
++        return Or(self, other)
++
++    def __invert__(self) -> Not:
++        return Not(self)
++
++    def __sub__(self, other: Node) -> And:
++        return And(self, Not(other))
++
++    def to_json(self) -> dict[str, Any]:  # pragma: no cover - every subclass overrides
++        raise NotImplementedError
++
++    def key(self) -> str:
++        """A stable digest of the node, for caching its result."""
++        return _digest(self.to_json())
++
++    def leaves(self) -> list[Node]:
++        """The leaves under this node, left to right."""
++        return [self]
++
++
++@dataclass(frozen=True)
++class All(Node):
++    """Every streamline."""
++
++    def to_json(self) -> dict[str, Any]:
++        return {"op": "all"}
++
++
++@dataclass(frozen=True)
++class Passes(Node):
++    """Streamlines that meet ``region``, by path or by their ends."""
++
++    region: Region
++    mode: str = "path"
++
++    def __post_init__(self) -> None:
++        if not isinstance(self.region, Region):
++            raise TypeError(f"Passes needs a region, got {type(self.region).__name__}")
++        if self.mode not in MODES:
++            raise ValueError(f"mode must be one of {', '.join(MODES)}; got {self.mode!r}")
++        if self.mode != "path" and isinstance(self.region, Disk):
++            raise ValueError("a disk has no inside, so it takes only mode='path'")
++
++    def to_json(self) -> dict[str, Any]:
++        return {"op": "passes", "mode": self.mode, "region": self.region.to_json()}
++
++
++@dataclass(frozen=True)
++class Column(Node):
++    """Streamlines whose ``name`` column passes ``cmp value``.
++
++    ``channel`` picks one channel of a multi-channel column.
++    """
++
++    name: str
++    cmp: str
++    value: Any = None
++    channel: int | None = None
++
++    def __post_init__(self) -> None:
++        if self.cmp not in COMPARISONS:
++            raise ValueError(f"cmp must be one of {', '.join(COMPARISONS)}; got {self.cmp!r}")
++        value = self.value
++        if self.cmp == "absent":
++            value = None
++        elif self.cmp == "between":
++            lo, hi = (float(v) for v in value)
++            if hi < lo:
++                raise ValueError(f"between needs lo <= hi, got {[lo, hi]}")
++            value = (lo, hi)
++        elif self.cmp == "in":
++            value = tuple(sorted({_number(v) for v in value}))
++        else:
++            value = _number(value)
++        object.__setattr__(self, "value", value)
++
++    def to_json(self) -> dict[str, Any]:
++        out: dict[str, Any] = {"op": "column", "name": self.name, "cmp": self.cmp}
++        if self.value is not None:
++            out["value"] = list(self.value) if isinstance(self.value, tuple) else self.value
++        if self.channel is not None:
++            out["channel"] = int(self.channel)
++        return out
++
++
++def _number(value: Any) -> int | float:
++    if isinstance(value, (bool, np.bool_)):
++        return int(value)
++    if isinstance(value, (int, np.integer)):
++        return int(value)
++    return float(value)
++
++
++@dataclass(frozen=True)
++class InGroup(Node):
++    """Streamlines that belong to any of the groups ``ids``."""
++
++    ids: tuple[int, ...]
++
++    def __post_init__(self) -> None:
++        ids = tuple(sorted({int(i) for i in self.ids}))
++        if any(i < 0 for i in ids):
++            raise ValueError(f"group ids are 0 or more, got {list(ids)}")
++        object.__setattr__(self, "ids", ids)
++
++    def to_json(self) -> dict[str, Any]:
++        return {"op": "group", "ids": list(self.ids)}
++
++
++class _Combine(Node):
++    op = ""
++
++    def __init__(self, *children: Node) -> None:
++        if len(children) == 1 and not isinstance(children[0], Node):
++            children = tuple(children[0])
++        if not children:
++            raise ValueError(f"{self.op} needs at least one operand")
++        for child in children:
++            if not isinstance(child, Node):
++                raise TypeError(f"{self.op} operands are nodes, got {type(child).__name__}")
++        self.children: tuple[Node, ...] = tuple(children)
++
++    def __eq__(self, other: object) -> bool:
++        return type(self) is type(other) and self.children == other.children  # type: ignore[attr-defined]
++
++    def __hash__(self) -> int:
++        return hash((self.op, self.children))
++
++    def __repr__(self) -> str:
++        return f"{type(self).__name__}({', '.join(map(repr, self.children))})"
++
++    def to_json(self) -> dict[str, Any]:
++        return {"op": self.op, "args": [c.to_json() for c in self.children]}
++
++    def leaves(self) -> list[Node]:
++        return [leaf for child in self.children for leaf in child.leaves()]
++
++
++class And(_Combine):
++    """Streamlines every operand accepts."""
++
++    op = "and"
++
++
++class Or(_Combine):
++    """Streamlines any operand accepts."""
++
++    op = "or"
++
++
++class Not(Node):
++    """Streamlines the operand rejects."""
++
++    def __init__(self, child: Node) -> None:
++        if not isinstance(child, Node):
++            raise TypeError(f"not takes a node, got {type(child).__name__}")
++        self.child = child
++
++    def __eq__(self, other: object) -> bool:
++        return isinstance(other, Not) and self.child == other.child
++
++    def __hash__(self) -> int:
++        return hash(("not", self.child))
++
++    def __repr__(self) -> str:
++        return f"Not({self.child!r})"
++
++    def to_json(self) -> dict[str, Any]:
++        return {"op": "not", "arg": self.child.to_json()}
++
++    def leaves(self) -> list[Node]:
++        return self.child.leaves()
++
++
++def _node_from_json(doc: dict[str, Any]) -> Node:
++    op = doc.get("op")
++    if op == "all":
++        return All()
++    if op == "passes":
++        return Passes(_region_from_json(doc["region"]), doc.get("mode", "path"))
++    if op == "column":
++        return Column(doc["name"], doc["cmp"], doc.get("value"), doc.get("channel"))
++    if op == "group":
++        return InGroup(tuple(doc["ids"]))
++    if op == "and":
++        return And(*[_node_from_json(d) for d in doc["args"]])
++    if op == "or":
++        return Or(*[_node_from_json(d) for d in doc["args"]])
++    if op == "not":
++        return Not(_node_from_json(doc["arg"]))
++    raise ValueError(f"unknown node op {op!r}")
++
++
++def to_json(tree: Node) -> dict[str, Any]:
++    """The JSON document for ``tree``: ``{"format", "version", "tree"}``."""
++    return {"format": FORMAT, "version": VERSION, "tree": tree.to_json()}
++
++
++def from_json(doc: dict[str, Any] | str | bytes) -> Node:
++    """The tree a :func:`to_json` document (or its text) describes.
++
++    Raises:
++        ValueError: If the document is not a filter tree, is a version this
++            reader does not know, or names an unknown node or region.
++    """
++    if isinstance(doc, (str, bytes)):
++        doc = json.loads(doc)
++    if not isinstance(doc, dict) or doc.get("format") != FORMAT:
++        raise ValueError(f"not a {FORMAT} document")
++    if doc.get("version") != VERSION:
++        raise ValueError(
++            f"{FORMAT} version {doc.get('version')!r} is not supported (expected {VERSION})"
++        )
++    return _node_from_json(doc["tree"])
++
++
++def _digest(doc: dict[str, Any]) -> str:
++    text = json.dumps(doc, sort_keys=True, separators=(",", ":"))
++    return hashlib.sha1(text.encode("utf-8")).hexdigest()
++
+diff --git a/zarr_vectors_tools/filtering/synthetic.py b/zarr_vectors_tools/filtering/synthetic.py
+new file mode 100644
+index 0000000..9d817af
+--- /dev/null
++++ b/zarr_vectors_tools/filtering/synthetic.py
+@@ -0,0 +1,123 @@
++"""Synthetic tractograms for tests and benchmarks.
++
++:func:`whole_brain_like` makes smooth, randomly curving streamlines with a
++whole-brain's spread of lengths, filling an ellipsoid of brain size.  It is
++not anatomy -- there are no bundles to speak of -- but it has what filtering
++cost depends on: the number of streamlines, the vertex spacing, how long
++they run and how densely they pack space.  Generation is vectorised and
++seeded, and uses numpy alone, so the same call builds the same set under
++CPython and under Pyodide.
++"""
++
++from __future__ import annotations
++
++import numpy as np
++
++from .tractogram import Tractogram
++
++__all__ = ["whole_brain_like"]
++
++#: Streamlines generated per batch, to bound the temporaries.
++_BATCH = 50_000
++
++
++def whole_brain_like(
++    n: int,
++    *,
++    seed: int = 0,
++    step: float = 1.0,
++    mean_length: float = 60.0,
++    length_range: tuple[float, float] = (20.0, 200.0),
++    semi_axes: tuple[float, float, float] = (70.0, 85.0, 60.0),
++    curvature: float = 0.08,
++    n_groups: int = 8,
++    absent_fraction: float = 0.01,
++) -> Tractogram:
++    """``n`` streamlines in float32, with columns and groups to filter on.
++
++    Every vertex lies inside the ellipsoid ``semi_axes``: a streamline that
++    reaches its wall is reflected back in.
++
++    Args:
++        n: Number of streamlines.
++        seed: Seed for numpy's PCG64 generator.
++        step: Distance between consecutive vertices, in millimetres.
++        mean_length: Mean streamline length before clipping to
++            ``length_range`` (lengths are log-normal).
++        length_range: Shortest and longest streamline.
++        semi_axes: The ellipsoid the streamlines fill, centred on the origin.
++        curvature: How quickly the direction wanders, per step.
++        n_groups: Groups to assign rows to, round-robin by start octant and
++            row; 0 for none.
++        absent_fraction: Share of rows whose ``fa_mean`` is absent (NaN).
++
++    Columns:
++        ``length`` and ``n_vertices`` (computed), ``fa_mean`` (float32 in
++        0.15..0.75, some absent) and ``label`` (int32, the group).
++    """
++    rng = np.random.default_rng(seed)
++    sigma = np.log(1.0 + 0.6 ** 2) ** 0.5
++    lengths = rng.lognormal(np.log(mean_length) - sigma ** 2 / 2, sigma, n)
++    lengths = np.clip(lengths, *length_range)
++    counts = np.maximum(np.rint(lengths / step).astype(np.int64), 1) + 1
++
++    axes = np.asarray(semi_axes, dtype=np.float64)
++    direction = rng.normal(size=(n, 3))
++    direction /= np.linalg.norm(direction, axis=1, keepdims=True)
++    # Uniform in the ellipsoid shrunk to 80 %, so most of each streamline
++    # stays inside the brain-sized volume.
++    starts = rng.normal(size=(n, 3))
++    starts /= np.linalg.norm(starts, axis=1, keepdims=True)
++    starts *= rng.random((n, 1)) ** (1 / 3) * 0.8 * axes
++
++    offsets = np.zeros(n + 1, dtype=np.int64)
++    np.cumsum(counts, out=offsets[1:])
++    vertices = np.empty((int(offsets[-1]), 3), dtype=np.float32)
++    for lo in range(0, n, _BATCH):
++        hi = min(lo + _BATCH, n)
++        c = counts[lo:hi].astype(np.intp)  # intp: 32-bit under Pyodide
++        rows = np.repeat(np.arange(hi - lo), c)
++        first = np.cumsum(c) - c
++        # The heading drifts by a running sum of small kicks, restarted at
++        # each streamline, then the positions are a running sum of steps.
++        kick = rng.normal(scale=curvature, size=(int(c.sum()), 3))
++        drift = _restart_cumsum(kick, first, c)
++        heading = direction[lo:hi][rows] + drift
++        heading /= np.linalg.norm(heading, axis=1, keepdims=True)
++        heading[first] = 0.0  # the first vertex is the start itself
++        path = _restart_cumsum(heading * step, first, c)
++        vertices[offsets[lo]:offsets[hi]] = _fold(starts[lo:hi][rows] + path, axes)
++
++    octant = (starts > 0).astype(np.int64) @ np.array([1, 2, 4])
++    if n_groups:
++        label = ((octant + np.arange(n)) % n_groups).astype(np.int32)
++    else:
++        label = np.zeros(n, np.int32)
++    fa = rng.uniform(0.15, 0.75, n).astype(np.float32)
++    fa[rng.random(n) < absent_fraction] = np.nan
++    groups = [np.flatnonzero(label == g) for g in range(n_groups)]
++    return Tractogram(
++        vertices, offsets, columns={"fa_mean": fa, "label": label}, groups=groups,
++    )
++
++
++def _fold(points: np.ndarray, axes: np.ndarray) -> np.ndarray:
++    """Reflect points back into the ellipsoid, as a ray bounces off its wall.
++
++    In coordinates scaled to the unit ball, a radius r becomes a triangle
++    wave of r with period 2, so a streamline leaving the ellipsoid turns back
++    in, stays continuous, and the set keeps a brain's density.
++    """
++    unit = points / axes
++    r = np.linalg.norm(unit, axis=1, keepdims=True)
++    folded = np.abs((r + 1.0) % 2.0 - 1.0)
++    scale = np.divide(folded, r, out=np.ones_like(r), where=r > 0)
++    return unit * scale * axes
++
++
++def _restart_cumsum(values: np.ndarray, first: np.ndarray, counts: np.ndarray) -> np.ndarray:
++    """Cumulative sum along axis 0 that restarts at each ``first`` row."""
++    total = np.cumsum(values, axis=0)
++    before = np.zeros((len(first), values.shape[1]), dtype=total.dtype)
++    before[1:] = total[first[1:] - 1]
++    return total - np.repeat(before, counts, axis=0)
+diff --git a/zarr_vectors_tools/filtering/tractogram.py b/zarr_vectors_tools/filtering/tractogram.py
+new file mode 100644
+index 0000000..ebc987e
+--- /dev/null
++++ b/zarr_vectors_tools/filtering/tractogram.py
+@@ -0,0 +1,280 @@
++"""A streamline set held whole in memory, the input to both engines.
++
++:class:`Tractogram` is deliberately plain: one ``(V, 3)`` float64 vertex
++array, ``offsets`` cutting it into ``N`` streamlines, a dict of
++per-streamline columns, and the group memberships.  Row ``k`` is object id
++``k``, as in the store.  Nothing here imports the store layer, so the class
++(and the engines on top of it) also runs where zarr does not, such as a
++Pyodide worker handed arrays from JavaScript.
++
++:func:`load_tractogram` fills one from a store's level 0.
++"""
++
++from __future__ import annotations
++
++from collections.abc import Mapping, Sequence
++from dataclasses import dataclass, field
++from pathlib import Path
++from typing import Any
++
++import numpy as np
++import numpy.typing as npt
++
++__all__ = ["Tractogram", "load_tractogram"]
++
++#: Segments handled per batch wherever every segment is visited, so the
++#: float64 temporaries stay near 100 MB on a whole-brain tractogram.
++_BLOCK = 1 << 22
++
++Bools = npt.NDArray[np.bool_]
++
++
++@dataclass
++class Tractogram:
++    """Streamlines as flat arrays.
++
++    Attributes:
++        vertices: ``(V, 3)`` world positions, streamline after streamline.
++            Kept float32 when given float32 (as stores hold them); every
++            test widens to float64 first, so the answer is the same.
++        offsets: ``(N + 1,)`` int64; streamline ``k`` is
++            ``vertices[offsets[k]:offsets[k + 1]]``.  A streamline may be
++            empty (an object id with no geometry).
++        columns: Per-streamline values, ``(N,)`` or ``(N, C)``.  ``length``
++            (path length) and ``n_vertices`` are computed from the geometry
++            when not supplied.
++        present: For a column with absent rows, a ``(N,)`` bool mask that is
++            False where the value is absent.  NaNs count as absent too.
++        groups: Member rows of each group, indexed by group id.
++    """
++
++    vertices: npt.NDArray[np.floating]
++    offsets: npt.NDArray[np.int64]
++    columns: dict[str, npt.NDArray[Any]] = field(default_factory=dict)
++    present: dict[str, npt.NDArray[np.bool_]] = field(default_factory=dict)
++    groups: list[npt.NDArray[np.int64]] = field(default_factory=list)
++
++    def __post_init__(self) -> None:
++        vertices = np.asarray(self.vertices)
++        if vertices.dtype not in (np.float32, np.float64):
++            vertices = vertices.astype(np.float64)
++        self.vertices = np.ascontiguousarray(vertices).reshape(-1, 3)
++        self.columns = dict(self.columns)
++        self.present = dict(self.present)
++        self.offsets = np.asarray(self.offsets, dtype=np.int64)
++        if (
++            self.offsets.ndim != 1 or len(self.offsets) == 0 or self.offsets[0] != 0
++            or self.offsets[-1] != len(self.vertices) or np.any(np.diff(self.offsets) < 0)
++        ):
++            raise ValueError("offsets must rise from 0 to the vertex count")
++        n = self.n_objects
++        counts = np.diff(self.offsets)
++        if "n_vertices" not in self.columns:
++            self.columns["n_vertices"] = counts.copy()
++        if "length" not in self.columns:
++            self.columns["length"] = self._lengths()
++        for name, values in self.columns.items():
++            values = np.asarray(values)
++            if len(values) != n:
++                raise ValueError(f"column {name!r} has {len(values)} rows for {n} streamlines")
++            self.columns[name] = values
++        self.groups = [np.asarray(g, dtype=np.int64) for g in self.groups]
++
++    @classmethod
++    def from_polylines(
++        cls,
++        polylines: Sequence[npt.ArrayLike],
++        *,
++        columns: Mapping[str, npt.ArrayLike] | None = None,
++        present: Mapping[str, npt.ArrayLike] | None = None,
++        groups: Sequence[Sequence[int]] | Mapping[int, Sequence[int]] | None = None,
++    ) -> Tractogram:
++        """Build one from a list of ``(n_k, 3)`` arrays (row ``k`` is the ``k``-th)."""
++        arrays = [np.asarray(p, dtype=np.float64).reshape(-1, 3) for p in polylines]
++        offsets = np.zeros(len(arrays) + 1, dtype=np.int64)
++        offsets[1:] = np.cumsum([len(p) for p in arrays])
++        vertices = np.concatenate(arrays) if arrays else np.zeros((0, 3))
++        if isinstance(groups, Mapping):
++            size = max(groups, default=-1) + 1
++            groups = [list(groups.get(g, ())) for g in range(size)]
++        return cls(
++            vertices, offsets,
++            columns={k: np.asarray(v) for k, v in (columns or {}).items()},
++            present={k: np.asarray(v, dtype=bool) for k, v in (present or {}).items()},
++            groups=[np.asarray(g, dtype=np.int64) for g in (groups or [])],
++        )
++
++    @property
++    def n_objects(self) -> int:
++        return len(self.offsets) - 1
++
++    def polyline(self, row: int) -> npt.NDArray[np.float64]:
++        return self.vertices[self.offsets[row]:self.offsets[row + 1]]
++
++    def edges(self) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64], npt.NDArray[np.int64]]:
++        """``(start, end, owner)``: vertex indices and row of every segment.
++
++        A one-vertex streamline contributes one zero-length segment, so it is
++        tested as the point it is.  The arrays are int32 while the counts fit,
++        which halves them on a whole-brain tractogram.
++        """
++        index = np.int32 if len(self.vertices) < 2**31 - 1 else np.int64
++        counts = np.diff(self.offsets)
++        # Repeat counts must be intp, which is 32-bit under Pyodide.
++        per = np.where(counts >= 2, counts - 1, (counts == 1).astype(np.int64)).astype(np.intp)
++        total = int(per.sum())
++        owner = np.repeat(np.arange(self.n_objects, dtype=index), per)
++        # start = first vertex of the row + position within the row; a
++        # one-vertex row's zero-length segment ends where it starts.
++        start = np.arange(total, dtype=np.int64)
++        start -= np.repeat(np.cumsum(per) - per - self.offsets[:-1], per)
++        start = start.astype(index)
++        end = start + np.repeat(counts >= 2, per).astype(index)
++        return start, end, owner
++
++    def endpoints(self) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], Bools]:
++        """``(first, last, has_vertices)``: each row's end vertices.
++
++        Rows without vertices get NaN ends and ``has_vertices`` False.
++        """
++        counts = np.diff(self.offsets)
++        has = counts > 0
++        first = np.full((self.n_objects, 3), np.nan)
++        last = np.full((self.n_objects, 3), np.nan)
++        first[has] = self.vertices[self.offsets[:-1][has]]
++        last[has] = self.vertices[self.offsets[1:][has] - 1]
++        return first, last, has
++
++    def column(self, name: str, channel: int | None = None) -> tuple[npt.NDArray[Any], Bools]:
++        """``(values, present)`` for a column (one channel of a multi-channel one).
++
++        Raises:
++            KeyError: If there is no such column.
++        """
++        if name not in self.columns:
++            raise KeyError(f"no column {name!r}; have {sorted(self.columns)}")
++        values = self.columns[name]
++        if values.ndim == 2:
++            if channel is None:
++                if values.shape[1] != 1:
++                    raise ValueError(f"column {name!r} has {values.shape[1]} channels; pick one")
++                channel = 0
++            values = values[:, channel]
++        elif channel not in (None, 0):
++            raise ValueError(f"column {name!r} has one channel, not {channel + 1}")
++        present = self.present.get(name)
++        present = np.ones(len(values), dtype=bool) if present is None else present.copy()
++        if values.dtype.kind == "f":
++            present &= ~np.isnan(values)
++        return values, present
++
++    def group_mask(self, ids: Sequence[int]) -> npt.NDArray[np.bool_]:
++        """Rows in any of the groups ``ids`` (a group the set lacks has no rows)."""
++        out = np.zeros(self.n_objects, dtype=bool)
++        for gid in ids:
++            if 0 <= gid < len(self.groups):
++                out[self.groups[gid]] = True
++        return out
++
++    def _lengths(self) -> npt.NDArray[np.float64]:
++        start, end, owner = self.edges()
++        out = np.zeros(self.n_objects)
++        for lo in range(0, len(start), _BLOCK):
++            s, e = start[lo:lo + _BLOCK], end[lo:lo + _BLOCK]
++            step = np.linalg.norm(
++                self.vertices[e].astype(np.float64) - self.vertices[s], axis=1,
++            )
++            out += np.bincount(owner[lo:lo + _BLOCK], weights=step, minlength=self.n_objects)
++        return out
++
++
++def load_tractogram(
++    store_path: str | Path,
++    *,
++    level: int = 0,
++    columns: Sequence[str] | None = None,
++) -> Tractogram:
++    """Read a streamline store's level into a :class:`Tractogram`, in RAS mm.
++
++    Positions are mapped to RAS millimetres exactly as
++    :func:`~zarr_vectors_tools.algorithms.select_streamlines` maps them (a
++    TRK store kept in voxel millimetres goes through its header's affine),
++    so regions mean the same thing to both.
++
++    Filtering is defined at level 0.  A coarse level drops streamlines and
++    moves vertices, so ``level`` is for showing how much that changes the
++    answer, not for answering.
++
++    Args:
++        store_path: A streamline (or polyline) store.
++        level: Resolution level to read.
++        columns: Object attributes to load; default all of them.
++
++    Raises:
++        ValueError: If the store does not hold streamlines.
++        NotImplementedError: If the level is part of an additive pyramid,
++            whose complete content spans several levels.
++    """
++    from zarr_vectors.building import (
++        get_resolution_level,
++        object_count,
++        open_store,
++        read_all_groupings,
++        read_object_attribute_present_mask,
++        read_object_attributes,
++        read_root_metadata,
++    )
++    from zarr_vectors.constants import OBJECT_ATTRIBUTES
++    from zarr_vectors.types.polylines import read_polylines
++
++    from zarr_vectors_tools.convert.export._streamlines import stored_space, trackvis_to_rasmm
++
++    root = open_store(str(store_path))
++    root_meta = read_root_metadata(root)
++    geometry = set(root_meta.geometry_types or [])
++    if not geometry & {"streamline", "polyline"}:
++        raise ValueError(f"{store_path} holds {sorted(geometry) or 'no geometry'}, not streamlines")
++    if "additive_levels" in (root_meta.format_capabilities or []):
++        raise NotImplementedError(
++            f"{store_path} is an additive pyramid: a level's streamlines span it and every "
++            "coarser level, and reading that chain is not implemented here"
++        )
++    level_group = get_resolution_level(root, level)
++    n = object_count(level_group)
++
++    result = read_polylines(str(store_path), level=level)
++    pieces: list[npt.NDArray[np.float64] | None] = [None] * n
++    for oid, segments in zip(result["object_ids"], result["polylines"]):
++        oid = int(oid)
++        if oid >= n:
++            n = oid + 1
++            pieces.extend([None] * (n - len(pieces)))
++        pieces[oid] = np.concatenate(segments, axis=0).astype(np.float64)
++    empty = np.zeros((0, 3))
++    arrays = [p if p is not None else empty for p in pieces]
++
++    space, trk, _trx = stored_space(store_path)
++    if space == "voxmm" and trk is not None:
++        to_ras = trackvis_to_rasmm(trk)
++        arrays = [p @ to_ras[:3, :3].T + to_ras[:3, 3] if len(p) else p for p in arrays]
++
++    loaded: dict[str, npt.NDArray[Any]] = {}
++    present: dict[str, npt.NDArray[np.bool_]] = {}
++    try:
++        names = sorted(level_group[OBJECT_ATTRIBUTES].children())
++    except Exception:  # noqa: BLE001 - a level without object attributes
++        names = []
++    for name in names if columns is None else [c for c in columns if c in names]:
++        values = np.asarray(read_object_attributes(level_group, name))
++        if len(values) != n:
++            continue
++        loaded[name] = values
++        mask = read_object_attribute_present_mask(level_group, name)
++        if mask is not None:
++            present[name] = np.asarray(mask, dtype=bool)
++
++    try:
++        groups = [np.asarray(list(g), dtype=np.int64) for g in read_all_groupings(level_group)]
++    except Exception:  # noqa: BLE001 - a level without groups
++        groups = []
++    return Tractogram.from_polylines(arrays, columns=loaded, present=present, groups=groups)
+-- 
+2.43.0
+
