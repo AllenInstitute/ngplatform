@@ -1,0 +1,44 @@
+name: CI
+
+# Unit tests and type-check on every push and pull request, then a build of
+# the app against the pinned commit of the zarr-vectors Neuroglancer fork.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # The fork commit the app is built against (branch zarr_vectors_working).
+  # Bump it deliberately, with the e2e smoke test passing locally.
+  FORK_REPO: Andrew-Keenlyside/neuroglancer
+  FORK_SHA: 6ecceea6f58cf37b8cb743eb3269c7edea3b7844
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ngplatform
+      # package.json depends on file:../neuroglancer, so the fork sits beside it.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.FORK_REPO }}
+          ref: ${{ env.FORK_SHA }}
+          path: neuroglancer
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+        working-directory: neuroglancer
+      - run: npm install --no-audit --no-fund
+        working-directory: ngplatform
+      - run: npm test
+        working-directory: ngplatform
+      - run: npm run typecheck
+        working-directory: ngplatform
+      - run: npm run build
+        working-directory: ngplatform
