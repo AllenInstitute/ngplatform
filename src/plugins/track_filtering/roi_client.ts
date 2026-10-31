@@ -1,0 +1,114 @@
+/**
+ * The panel's side of the region worker: one worker per store, requests as
+ * promises with progress, results cached by region geometry and level, and
+ * conversion between the viewer's global coordinates and the store's.
+ */
+import { type Roi, type RoiGeometry, roiKey } from "./roi.js";
+import type { StoreInfo } from "./roi_worker.js";
+
+export type { StoreInfo };
+
+export interface RoiResult {
+  ids: BigUint64Array;
+  level: number;
+  chunks: number;
+  bytes: number;
+  ms: number;
+}
+
+interface Pending {
+  resolve: (result: RoiResult) => void;
+  reject: (error: Error) => void;
+  progress?: (done: number, total: number) => void;
+  level: number;
+  key: string;
+}
+
+/** Global dimensions as a Neuroglancer state writes them: name → [scale, unit]. */
+export type Dimensions = Record<string, [number, string]>;
+
+export class RoiEngine {
+  private worker: Worker;
+  private nextId = 1;
+  private pending = new Map<number, Pending>();
+  private results = new Map<string, Promise<RoiResult>>();
+  readonly ready: Promise<StoreInfo>;
+
+  constructor(readonly storeUrl: string) {
+    this.worker = new Worker(new URL("./roi_worker.ts", import.meta.url), { type: "module", name: "track-filtering regions" });
+    let opened!: (info: StoreInfo) => void;
+    let failed!: (e: Error) => void;
+    this.ready = new Promise((resolve, reject) => {
+      opened = resolve;
+      failed = reject;
+    });
+    this.worker.onmessage = (event: MessageEvent) => {
+      const msg = event.data;
+      if (msg.type === "opened") opened(msg.info);
+      else if (msg.type === "error" && msg.id === undefined) failed(new Error(msg.message));
+      else if (msg.type === "progress") this.pending.get(msg.id)?.progress?.(msg.done, msg.total);
+      else if (msg.type === "result" || msg.type === "error") {
+        const p = this.pending.get(msg.id);
+        this.pending.delete(msg.id);
+        if (p === undefined) return;
+        if (msg.type === "error") {
+          this.results.delete(p.key);
+          p.reject(new Error(msg.message));
+        } else {
+          p.resolve({ ids: msg.ids, level: p.level, chunks: msg.chunks, bytes: msg.bytes, ms: msg.ms });
+        }
+      }
+    };
+    this.worker.postMessage({ type: "open", storeUrl });
+  }
+
+  /**
+   * The objects passing through a region at a level.  The same region (to a
+   * micrometre) at the same level is answered from the cache.
+   */
+  evaluate(roi: RoiGeometry, level: number, progress?: (done: number, total: number) => void): Promise<RoiResult> {
+    const key = roiKey(roi, level);
+    const cached = this.results.get(key);
+    if (cached !== undefined) return cached;
+    const id = this.nextId++;
+    const promise = new Promise<RoiResult>((resolve, reject) => {
+      this.pending.set(id, { resolve, reject, progress, level, key });
+    });
+    this.results.set(key, promise);
+    // Keep the cache to a few hundred regions.
+    if (this.results.size > 400) this.results.delete(this.results.keys().next().value!);
+    this.worker.postMessage({ type: "evaluate", id, level, roi });
+    return promise;
+  }
+
+  dispose(): void {
+    this.worker.terminate();
+    for (const p of this.pending.values()) p.reject(new Error("closed"));
+    this.pending.clear();
+  }
+}
+
+/**
+ * Global (viewer) coordinates to store coordinates, per axis: the ratio of
+ * the global dimension's scale to the store's, then the store's offset.
+ */
+export function toStore(roi: Roi, dims: Dimensions, info: StoreInfo): RoiGeometry {
+  const factor = info.axisNames.map((name, k) => {
+    const global = dims[name]?.[0];
+    const stored = info.axisScales[k];
+    return global !== undefined && stored > 0 ? global / stored : 1;
+  });
+  const offset = info.coordinateOffset ?? [0, 0, 0];
+  return {
+    shape: roi.shape,
+    center: [0, 1, 2].map((k) => roi.center[k] * factor[k] - (offset[k] ?? 0)) as [number, number, number],
+    radius: roi.radius * factor[0],
+    size: [0, 1, 2].map((k) => roi.size[k] * factor[k]) as [number, number, number],
+  };
+}
+
+/** The finest level other than 0 small enough to preview a region quickly on, if any. */
+export function previewLevel(info: StoreInfo, maxVertices = 20_000_000): number | undefined {
+  const candidates = info.levels.filter((l) => l.index > 0 && (l.vertexCount ?? Infinity) <= maxVertices);
+  return candidates.length === 0 ? undefined : candidates.reduce((a, b) => (a.index < b.index ? a : b)).index;
+}

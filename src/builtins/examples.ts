@@ -1,47 +1,73 @@
 /**
- * Example workspaces offered in the Open dialog and the palette.
- *
- * The bundled excerpt ships inside the built app (public/examples/, made by
- * scripts/make_excerpt.py), so it opens wherever the app is hosted, including
- * hosts that cannot reach other sites.  The remote examples stream from
- * public buckets.
+ * Example workspaces offered in the Open dialog and the palette.  Every one
+ * streams public data.
  */
 import type { ExampleSpec } from "../platform/plugin_host.js";
-import type { Json } from "../sdk/types.js";
 
-// https:// rather than gs://: the fork's zarr-vectors reader finds no
-// zarr.json through the GCS kvstore.  Over plain HTTPS one listing probe is
-// refused cross-origin (a console error), and the reader carries on without it.
-const HIP_CT =
-  "https://storage.googleapis.com/hip_ct_zarr_vector_03987646472fethdsvdvdfg/zarr_vectors_test/" +
-  "APEX_hackathon/sub-Ha1_sample-RightHemi_atlas-BGPathwaysMaffei2026_space-orig_track-ifod_tractogram.zarrvectors/";
+// The HCP-1065 population tractogram (MNI space, RAS mm): 503,085
+// streamlines, 102 M vertices, five levels.  https:// rather than gs://: the
+// zarr-vectors reader finds no zarr.json through the GCS kvstore.
+const HCP1065 =
+  "https://storage.googleapis.com/hip_ct_zarr_vector_03987646472fethdsvdvdfg/zarr_vectors_test/hcp1065_whole_brain.zarrvectors/";
 
-function tractogramState(name: string, source: string): { ng: Json; app: Json } {
-  return {
-    ng: {
-      layers: [{ type: "auto", source, name }],
-      selectedLayer: { layer: name },
-      layout: "xy-3d",
-    },
-    app: {},
-  };
-}
+const sphere = (id: string, center: [number, number, number], radius: number) => ({
+  id,
+  shape: "sphere",
+  center,
+  radius,
+  size: [radius * 2, radius * 2, radius * 2],
+  op: "and",
+});
+
+/** Three track groups, by regions in MNI space, as a TrackVis user would draw them. */
+const HCP_GROUPS = {
+  version: 2,
+  data: {
+    editing: "cc",
+    groups: [
+      {
+        id: "cc",
+        name: "Corpus callosum",
+        colour: "#e4572e",
+        // A thin slab across the midline, over the body of the callosum.
+        rois: [{ id: "cc-1", shape: "box", center: [0, -5, 21], radius: 5, size: [4, 70, 16], op: "and" }],
+        filter: { ranges: {}, includeTags: [], excludeTags: [] },
+      },
+      {
+        id: "cst-l",
+        name: "Left corticospinal",
+        colour: "#3fb6c9",
+        // Posterior limb of the internal capsule, then the pons.
+        rois: [sphere("cst-l-1", [-24, -15, 8], 6), sphere("cst-l-2", [-10, -27, -30], 6)],
+        filter: { ranges: {}, includeTags: [], excludeTags: [] },
+      },
+      {
+        id: "cst-r",
+        name: "Right corticospinal",
+        colour: "#d4a72c",
+        rois: [sphere("cst-r-1", [24, -15, 8], 6), sphere("cst-r-2", [10, -27, -30], 6)],
+        filter: { ranges: {}, includeTags: [], excludeTags: [] },
+      },
+    ],
+  },
+};
 
 export const EXAMPLES: ExampleSpec[] = [
   {
-    id: "hip-ct",
-    title: "HiP-CT hemisphere, full tractogram",
-    description: "sub-Ha1 right hemisphere, iFOD2: 79,648 streamlines, 39.4 M vertices, six pyramid levels, streamed from GCS.",
-    remote: true,
-    state: () => tractogramState("Ha1 right hemisphere", HIP_CT + "|zarr-vectors:"),
-  },
-  {
-    id: "excerpt",
-    title: "HiP-CT hemisphere, bundled excerpt",
+    id: "hcp1065",
+    title: "HCP-1065 whole brain, with track groups",
     description:
-      "1,947 of the 79,648 iFOD2 streamlines, drawn from all 44 bundles at full 0.1 mm resolution and shipped with the app. Opens anywhere it is built with the excerpt.",
-    remote: false,
-    state: () => tractogramState("Ha1 excerpt", new URL("examples/ha1-excerpt.zarrvectors/", location.href).href + "|zarr-vectors:"),
+      "The HCP-1065 population tractogram in MNI space: 503,085 streamlines, five levels. Three track groups (corpus callosum, left and right corticospinal tracts) are set up in the Filtering tab; the unfiltered view starts hidden.",
+    remote: true,
+    state: () => ({
+      ng: {
+        layers: [{ type: "auto", source: HCP1065 + "|zarr-vectors:", name: "HCP-1065", visible: false }],
+        selectedLayer: { layer: "HCP-1065" },
+        position: [0, -15, 10],
+        layout: "xy-3d",
+      },
+      app: { trackFiltering: HCP_GROUPS },
+    }),
   },
   {
     id: "fib25",

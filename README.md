@@ -47,13 +47,8 @@ fork with `node build_tools/postpack.ts && rm -rf lib`; the app then builds
 from the fork's TypeScript directly, and fork edits show up on the next
 build.
 
-The bundled example is generated, not committed. Either take it from the
-deployed site, or build it:
-
-```bash
-git archive origin/gh-pages examples | tar -x -C public/
-python scripts/make_excerpt.py path/to/store.zarrvectors   # needs zarr-vectors-py and -tools
-```
+The examples stream public data (the default is the HCP-1065 tractogram);
+nothing is bundled with the app.
 
 ## Test in a browser
 

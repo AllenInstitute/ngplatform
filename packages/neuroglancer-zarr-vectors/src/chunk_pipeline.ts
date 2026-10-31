@@ -91,6 +91,15 @@ const vertexCells = new AsyncLru<Uint8Array | undefined>(
 let nextPipelineId = 0;
 
 /**
+ * Caps the raw vertex cells kept between reads (256 MiB by default).  A
+ * worker that keeps its own decoded copy of what it needs can make this
+ * small.
+ */
+export function setVertexCellCacheBytes(bytes: number): void {
+  vertexCells.setMaxSize(bytes);
+}
+
+/**
  * Segment id per fragment of each chunk, by inverting a level's manifests.
  * Needed for stores without `fragment_attributes/segment_id`, which
  * zarr-vectors-py's own writers do not write.
@@ -302,10 +311,18 @@ export class LevelPipeline {
     return this.owners;
   }
 
-  /** The chunk at spatial cell `chunk`, or `undefined` if it is empty. */
+  /**
+   * The chunk at spatial cell `chunk`, or `undefined` if it is empty.
+   *
+   * `bridges: false` leaves out the segments that cross into neighbouring
+   * chunks, and so every read of a neighbour's vertices: a tool testing a
+   * region against the chunks it touches reads those chunks alone.  Linked
+   * skeletons keep their links, which define their segments.
+   */
   async download(
     chunk: number[],
     signal: AbortSignal,
+    options: { bridges?: boolean } = {},
   ): Promise<DenseChunkData | undefined> {
     const { description } = this;
     const chunkKey = chunk.join(".");
@@ -316,7 +333,7 @@ export class LevelPipeline {
     // parent, so the child's chunk needs the links it does not own.
     const linked = description.skeletonLayout === "linked";
     const linksPromise =
-      this.links === undefined
+      this.links === undefined || (options.bridges === false && !linked)
         ? Promise.resolve([])
         : linked
           ? this.links.linksTouching(chunk)

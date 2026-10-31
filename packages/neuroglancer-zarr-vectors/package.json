@@ -7,7 +7,9 @@
   "exports": {
     ".": "./src/register_default.ts",
     "./backend": "./src/backend.ts",
-    "./async_computation": "./src/async_computation.ts"
+    "./async_computation": "./src/async_computation.ts",
+    "./reader": "./src/reader.ts",
+    "./source-url": "./src/source_url.ts"
   },
   "files": [
     "src/**/*.ts",

@@ -129,6 +129,8 @@ export interface WorkspaceApi {
   removeDatasetFromScene(datasetId: string): void;
   /** Removes one layer (a view of a dataset) from the active scene. */
   removeLayer(name: string): void;
+  /** Renames a layer; returns the name it got (made unique). */
+  renameLayer(name: string, newName: string): string;
 
   selectedLayer(): string | undefined;
   selectLayer(name: string | undefined): void;

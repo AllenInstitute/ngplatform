@@ -30,4 +30,4 @@ const engine = new Engine(shell.engineHost);
 (window as unknown as { viewer: unknown; engine: unknown }).viewer = engine.viewer;
 (window as unknown as { engine: unknown }).engine = engine;
 
-shell.attach(engine, urlSafeParse, import.meta.env.VITE_DEFAULT_EXAMPLE ?? "hip-ct", { catalogue: CATALOGUE, choices, resolution });
+shell.attach(engine, urlSafeParse, import.meta.env.VITE_DEFAULT_EXAMPLE ?? "hcp1065", { catalogue: CATALOGUE, choices, resolution });

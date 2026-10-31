@@ -42,6 +42,17 @@ export class AsyncLru<T> {
     private sizeOf?: (value: T) => number,
   ) {}
 
+  /** Changes the size limit (evicting from the oldest until it holds). */
+  setMaxSize(maxSize: number): void {
+    this.maxSize = maxSize;
+    for (const key of [...this.entries.keys()]) {
+      if (this.totalSize <= this.maxSize) break;
+      this.totalSize -= this.sizes.get(key) ?? 0;
+      this.sizes.delete(key);
+      this.entries.delete(key);
+    }
+  }
+
   /** The cached entry, without loading. */
   peek(key: string): Promise<T> | undefined {
     return this.entries.get(key);

@@ -66,6 +66,16 @@ The plugin imports Neuroglancer only through `neuroglancer/unstable/*`, and
 only APIs present in google/neuroglancer `master`; `compat.ts` holds the
 calls whose signatures have differed between Neuroglancer versions.
 
+### Reading a store outside the views
+
+`neuroglancer-zarr-vectors/reader` opens a store over plain HTTP and reads a
+level's spatial chunks as positions, per-vertex object ids and line segments,
+in any worker: for tools that compute on the geometry (the platform's track
+filtering tests regions with it). `download(chunk, signal, { bridges: false })`
+leaves out the segments that cross into neighbouring chunks, and with them
+every read of a neighbour's vertices. `neuroglancer-zarr-vectors/source-url`
+finds the store URL in a layer source and imports nothing.
+
 ### Building it into Neuroglancer instead
 
 To build it into Neuroglancer itself (as `src/datasource/zarr-vectors/`,

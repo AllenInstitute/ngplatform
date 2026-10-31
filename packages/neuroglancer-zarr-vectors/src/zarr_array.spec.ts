@@ -149,6 +149,16 @@ describe("coalesceRangeReads", () => {
     return { calls, read };
   }
 
+  it("reads a range longer than the merge cap whole", async () => {
+    const { calls, read } = source();
+    // A cap of 64 KiB, and a 200 KiB cell (as large level-0 cells are).
+    const merged = coalesceRangeReads(read, 1024, 64 * 1024);
+    const bytes = await merged("shard", { byteRange: { offset: 4096, length: 200 * 1024 } });
+    expect(bytes?.length).toBe(200 * 1024);
+    expect(Array.from(bytes!.subarray(0, 4))).toEqual(Array.from(data.subarray(4096, 4100)));
+    expect(calls).toEqual([{ path: "shard", offset: 4096, length: 200 * 1024 }]);
+  });
+
   it("merges nearby ranges of one key into one read, each caller keeping its bytes", async () => {
     const { calls, read } = source();
     const merged = coalesceRangeReads(read);

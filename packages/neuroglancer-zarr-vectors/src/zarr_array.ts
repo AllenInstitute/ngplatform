@@ -652,7 +652,9 @@ export function coalesceRangeReads(
       Math.max(maxGap, ...group.map((r) => r.mergeGap)),
       Math.floor((last - first) * COALESCE_PAD_FRACTION),
     );
-    pad = Math.min(pad, Math.floor((maxLength - (last - first)) / 2));
+    // A range already longer than the cap gets no padding: a negative pad
+    // would shrink the read from both ends.
+    pad = Math.max(0, Math.min(pad, Math.floor((maxLength - (last - first)) / 2)));
     const start = Math.max(0, first - pad);
     const end = last + pad;
     // Aborted only once every caller, joined ones included, has given up.

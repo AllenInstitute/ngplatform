@@ -72,7 +72,7 @@ check(chrome.layerPanel + chrome.sidePanels + chrome.status === 0, `no layer bar
 check(chrome.position === 1 && chrome.layoutButtons > 0, "position top left and layout buttons on the panels, as in Neuroglancer");
 
 // Datasets tab and Inspector.
-check((await page.locator(".datasets .ds-row").count()) === 1, "Datasets lists the scene's dataset");
+check((await page.locator(".datasets .ds-row").count()) >= 1, "Datasets lists the scene's datasets");
 await page.locator(".datasets .ds-row").first().click();
 await page.waitForTimeout(800);
 check((await page.locator(".ngp-layer-controls .neuroglancer-tab-label").count()) > 0, "the Layer tab shows the layer's own controls");
@@ -114,14 +114,12 @@ check((await page.locator('.scene-tab[aria-selected="true"]').innerText()) === "
 await page.locator("#tab-plugins").click();
 check((await page.locator(".plugin .switch").count()) >= 2, "the Plugins tab lists the plugins with switches");
 await page.locator('[id="tab-trackFiltering.panel"]').click();
-await page.waitForSelector(".tf-summary", { timeout: 60_000 }).catch(() => {});
-check((await page.locator(".tf-summary").count()) === 1, "Filtering shows how many objects pass");
+await page.waitForFunction(() => [...document.querySelectorAll(".tf-group .count")].some((c) => /^[0-9,]+$/.test(c.textContent ?? "")), null, { timeout: 120_000 }).catch(() => {});
+const counts = await page.locator(".tf-group .count").allInnerTexts();
+console.log(`track groups: ${counts.join(", ")}`);
+check(counts.length === 3 && counts.every((c) => /^[0-9,]+$/.test(c)), "the example's three track groups have exact counts");
 
-// Open dialog: the bundled excerpt, and a pasted plain Neuroglancer link.
-await page.keyboard.press("Control+o");
-await page.locator(".example", { hasText: "bundled excerpt" }).getByRole("button", { name: "Open" }).click();
-await waitReady("bundled excerpt");
-await page.screenshot({ path: `${shots}/3-excerpt.png` });
+// Open dialog: a pasted plain Neuroglancer link is recognised.
 await page.keyboard.press("Control+o");
 await page.locator("#open-input").fill('https://neuroglancer-demo.appspot.com/#!{"layers":[]}');
 check((await page.locator(".detected").innerText()).startsWith("Neuroglancer state, 0 layers"), "Open recognises a Neuroglancer link");
