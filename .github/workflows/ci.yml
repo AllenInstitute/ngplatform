@@ -41,6 +41,12 @@ jobs:
         working-directory: neuroglancer
       - run: npm install --no-audit --no-fund
         working-directory: ngplatform
+      # Installing ran Neuroglancer's prepare script, which points its package
+      # at a built lib/.  Build from its TypeScript instead, as local
+      # development does: lib/ has no type declarations for worker modules,
+      # which the zarr-vectors plugin's worker half imports.
+      - run: node build_tools/postpack.ts && rm -rf lib
+        working-directory: neuroglancer
       - run: npm test
         working-directory: ngplatform
       - run: npm run typecheck
