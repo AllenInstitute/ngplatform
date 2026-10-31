@@ -1,99 +1,69 @@
 # Status
 
-*As of 2026-10-30. The plan this follows is
-[`docs/editor_repo_plan.md`](docs/editor_repo_plan.md), the fourth document
-in the platform series.*
+*As of 2026-10-31.*
 
 ## Where things stand
 
 | Piece | State |
 |---|---|
-| **This repo: the shell** (build guide P0–P1) | First cut built and tested. Live at https://andrew-keenlyside.github.io/ngplatform/ once GitHub Pages serves the `gh-pages` branch. No plugins yet. |
-| **Filter oracle and engines, step C0** | Done, in `zarr-vectors-tools`, but not pushed there: the session has no access to the AllenInstitute organisation. Parked as patches in [`pending/zarr-vectors-tools/`](pending/zarr-vectors-tools/). |
-| **Gate G1** (is numpy in Pyodide fast enough?) | Measured. The answer is split; see below. |
-| **Neuroglancer fork** | Unchanged. Three limitations found and listed below. Step F1 (rebase, `setupEngine`, `embed.ts`) not started. |
+| **The platform GUI** (this release, 0.2) | Built and unit-tested. Neuroglancer shows only data; datasets, scenes, layer controls, selection, position, settings and help are in the platform's docks and dialogs. **Not yet checked by eye in a browser**: see below. |
+| **Plugin system** | Host, manifest, `PlatformContext`, contract tests, author guide. One built-in plugin (zarr-vectors store facts). No downstream plugins yet, by design. |
+| **Neuroglancer fork** | Branch `ngplatform` (`zarr_vectors_working` + two commits' worth of change): a viewer option to leave side panels to the host, and incremental layer restore. Not rebased onto upstream; the command registry and `setupEngine` (#1147) are not needed for this release. |
+| **Filter oracle and engines, step C0** | Done, in `zarr-vectors-tools`, parked as patches in [`pending/zarr-vectors-tools/`](pending/zarr-vectors-tools/). |
+| **Gate G1** | Measured; see [`docs/editor_repo_plan.md`](docs/editor_repo_plan.md) §5. |
 
-## The shell
+## The workspace model
 
-What it does:
+- A **workspace** is everything one link carries.
+- A **scene** is one Neuroglancer state. Scene tabs sit in the top bar; the
+  Scenes tab manages them (new, copy, rename, reorder, delete).
+- A **dataset** is a piece of data, matched to layers by its source URL. It
+  belongs to the workspace, so any scene can show it; the Datasets tab lists
+  the active scene's datasets, with the workspace's others below, ready to
+  add.
+- A **layer** is one way a scene shows a dataset. A dataset can be shown
+  through several layers ("Add another view"), which is the hook later
+  filtering plugins use.
 
-- **Open** a Neuroglancer link, a state JSON, a remote state URL, or a data
-  URL (added as a layer). It says which before opening.
-- The **address bar** always holds the workspace, as `#!{"ng": …, "app": …}`.
-  **Share** copies that link; **Copy state** gives plain Neuroglancer JSON for
-  any Neuroglancer.
-- **Undo / redo** over settled states.
-- A **command palette** (Ctrl/⌘ K): every action is a command.
-- **Layouts:** 4 panels, XY + 3D, 3D, XY.
-- **Docks:**
-  - Workspace: layers, and the facts of each zarr-vectors store (objects,
-    levels, extent, chunk, format);
-  - Plugins: what is coming;
-  - Inspector: the selected layer, the pointer position, and the values
-    under the pointer;
-  - Activity: a log, with Jobs and Python tabs as placeholders.
-- **Examples:**
-  - the HiP-CT right-hemisphere tractogram streamed from GCS (default);
-  - a bundled 1,947-streamline excerpt of it;
-  - Neuroglancer's FIB-25 EM example.
+The link is `#!{"ng": <active scene>, "app": {"platform": {scenes, datasets}, …plugins}}`,
+so it is still a valid Neuroglancer link for the active scene. "Copy this
+scene as a plain Neuroglancer link" drops the rest.
 
-How it is checked:
+## The GUI
 
-- `npm test`: 17 unit tests (state parsing, undo history, palette ranking).
-- `npm run typecheck`.
-- `node e2e/smoke.mjs`: drives the built app in headless Chromium and loads
-  both tractogram examples. Software WebGL there cannot draw Neuroglancer's
-  views, and the fork's standalone build fails the same way, so drawing
-  itself is checked only by eye on a real GPU.
+| Where | What |
+|---|---|
+| Top bar | Open, add a dataset, Share, undo/redo, scene tabs, status, screenshot, view settings, keyboard reference, command palette (Ctrl/⌘ K) |
+| Left dock | **Datasets** (show/hide, select, rename, reorder, add a view, remove from scene, delete), **Scenes**, **View** (Neuroglancer's position widget, zoom, rotation, layout, display switches), **Plugins** |
+| Right dock | **Inspector** (the selected dataset: Neuroglancer's own controls for its layer type, then the Source and contributed sections), **Selection** (Neuroglancer's selection details), **Pointer** |
+| Bottom dock | Activity log, Jobs, chunk Statistics, Python (placeholder) |
+| Below the views | Neuroglancer's status messages |
 
-## Gate G1
+Keys: digits 1–9 show or hide datasets, Alt+digit selects one, Shift+N adds
+a dataset, Alt+PageUp/PageDown change scene, Ctrl/⌘ Z undo, Ctrl/⌘ / the
+reference. Navigation keys and mouse bindings in the views are
+Neuroglancer's.
 
-Pyodide 314.0.7, on the HiP-CT hemisphere (79,648 streamlines, 39.4 M
-vertices at 0.1 mm):
+Undo, redo and switching scenes restore only what changed: unchanged layers
+are kept, and replaced layers keep their data sources alive until the new
+ones are ready, so nothing reloads.
 
-| Measurement | Result | Gate |
-|---|---|---|
-| Column filter, operator flip, publish | about 1 ms each | pass |
-| 5 mm sphere, median / p90 | 78 / 146 ms | 100 ms: borderline |
-| Disk / 10 mm mask | 130 / 306 ms | fail |
-| Index build / peak memory | 34 s / 2.6 GB | fail |
+## How it is checked
 
-At 10⁶ synthetic streamlines the index does not fit the 4 GB wasm heap.
-What follows from it:
-
-- numpy in Pyodide is enough for column filters, algebra, statistics and
-  publishing.
-- Only the per-segment region test wants compiled code. Try TypeScript in
-  the filter worker first.
-- The browser engine evaluates regions chunk by chunk over a filter-ready
-  store, never by holding level 0 whole.
-
-## Known limits (fork)
-
-- zarr-vectors sources given as `gs://` find no `zarr.json`. Use
-  `https://storage.googleapis.com/…`.
-- Over HTTPS, one S3-style listing probe is refused cross-origin and logs a
-  console error. The layer still loads.
-- Installing the fork from `../neuroglancer` runs its `prepare` script, which
-  rewrites the fork's `package.json` in place. Undo it with
-  `node build_tools/postpack.ts && rm -rf lib` in the fork.
+- `npm test`: 53 unit tests (workspace model, store with a fake engine,
+  commands with arguments, key bindings, `when` clauses, schemas, state
+  slices, plugin host with fixture plugins, state parsing, undo history).
+- `npm run typecheck`: the app together with Neuroglancer's sources.
+- `node e2e/smoke.mjs`: rewritten for the new GUI, including checks that the
+  views fill their area, that no Neuroglancer interface shows inside them,
+  and that a layout change and its undo make no data requests. **Not run
+  yet**: headless Chrome does not start in the build sandbox used for this
+  release, so the first visual check is yours.
 
 ## Next
 
-In the order of the plan's §4:
-
-1. Land the parked C0 patches on `zarr-vectors-tools`.
-2. **Z1** `zvtools index`: filter-ready columns. G1 moved this ahead of T2.
-3. **F1** in the fork: rebase onto upstream (command registry), carry #1147,
-   add `src/embed.ts`.
-4. **F2**: a `memory://` kvstore spike (gate G3).
-5. **Z2**: golden filter answers for the browser engines.
-6. **T1**: tractography display parity, the first plugin.
-
-## Needs you
-
-- **AllenInstitute access for Claude.** An org owner installs the Claude
-  GitHub App on `AllenInstitute/zarr-vectors-tools`, or applies the parked
-  patches by hand.
-- **GitHub Pages**, if the site does not appear on its own: Settings → Pages
-  → Deploy from a branch → `gh-pages` / root.
+1. Review this build in a browser; fix what the review finds.
+2. Run `e2e/smoke.mjs` with `CHROME` set on a machine with a GPU.
+3. External plugins from a URL, with a consent dialog.
+4. Then the plan's next steps: Z1 filter-ready index, `memory://` (gate G3),
+   the compute runtime (Pyodide worker), and the first plugin.

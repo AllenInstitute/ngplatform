@@ -1,5 +1,7 @@
-/** Modal sheets (command palette, Open) and toasts. */
+/** Modal sheets (palette, dialogs, generated forms), menus and toasts. */
 import { type Command, matchCommands } from "../core/commands.js";
+import type { Schema } from "../core/schema.js";
+import { validate, withDefaults } from "../core/schema.js";
 import { h, keyLabel } from "./dom.js";
 
 let openScrim: HTMLElement | null = null;
@@ -40,7 +42,23 @@ export function sheetIsOpen(): boolean {
   return openScrim !== null;
 }
 
-export function showPalette(commands: () => Command[], run: (command: Command) => void): void {
+/** A sheet with a title, a body and footer buttons. */
+export function sheet(title: string, body: Node[], foot: Node[], options: { wide?: boolean; label?: string } = {}): HTMLElement {
+  return h(
+    "div",
+    { class: options.wide ? "sheet wide" : "sheet", role: "dialog", "aria-label": options.label ?? title },
+    h("div", { class: "sheet-head" }, h("h2", { class: "sheet-title" }, title)),
+    h("div", { class: "sheet-body" }, ...body),
+    h("div", { class: "sheet-foot" }, ...foot),
+  );
+}
+
+export function showPalette(
+  commands: () => Command[],
+  available: (command: Command) => boolean,
+  keyFor: (command: Command) => string | undefined,
+  run: (command: Command) => void,
+): void {
   const input = h("input", {
     class: "palette-input",
     id: "palette-input",
@@ -51,7 +69,7 @@ export function showPalette(commands: () => Command[], run: (command: Command) =
     spellcheck: "false",
   });
   const results = h("ul", { class: "results", role: "listbox", id: "palette-results" });
-  const sheet = h("div", { class: "sheet", role: "dialog", "aria-label": "Commands" }, input, results);
+  const box = h("div", { class: "sheet", role: "dialog", "aria-label": "Commands" }, input, results);
   let matches: Command[] = [];
   let index = 0;
 
@@ -62,11 +80,11 @@ export function showPalette(commands: () => Command[], run: (command: Command) =
       ...(matches.length === 0
         ? [h("li", { class: "result" }, h("span", { class: "hint" }, "No command matches."))]
         : matches.map((command, i) => {
-            const available = command.isAvailable?.() ?? true;
-            const li = h(
+            const key = keyFor(command);
+            return h(
               "li",
               {
-                class: available ? "result" : "result unavailable",
+                class: available(command) ? "result" : "result unavailable",
                 role: "option",
                 "aria-selected": String(i === index),
                 onmousemove: () => {
@@ -78,17 +96,16 @@ export function showPalette(commands: () => Command[], run: (command: Command) =
                 onclick: () => choose(i),
               },
               h("span", {}, h("span", { class: "group-name" }, command.group), command.title),
-              command.keys ? h("kbd", {}, keyLabel(command.keys)) : null,
+              key ? h("kbd", {}, keyLabel(key)) : null,
               command.hint ? h("span", { class: "hint" }, command.hint) : null,
             );
-            return li;
           })),
     );
     results.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
   };
   const choose = (i: number) => {
     const command = matches[i];
-    if (command === undefined || !(command.isAvailable?.() ?? true)) return;
+    if (command === undefined || !available(command)) return;
     closeSheet();
     run(command);
   };
@@ -111,9 +128,200 @@ export function showPalette(commands: () => Command[], run: (command: Command) =
     }
   });
   render();
-  showSheet(sheet);
+  showSheet(box);
   input.focus();
 }
+
+export function confirmDialog(message: string, action = "Continue", danger = false): Promise<boolean> {
+  return new Promise((resolve) => {
+    let answered = false;
+    const answer = (value: boolean) => {
+      if (answered) return;
+      answered = true;
+      closeSheet();
+      resolve(value);
+    };
+    const ok = h("button", { class: danger ? "btn danger" : "btn primary", type: "button", onclick: () => answer(true) }, action);
+    showSheet(
+      sheet("Confirm", [h("p", { class: "empty" }, message)], [
+        h("button", { class: "btn", type: "button", onclick: () => answer(false) }, "Cancel"),
+        ok,
+      ]),
+      () => answer(false),
+    );
+    ok.focus();
+  });
+}
+
+export function promptDialog(title: string, label: string, value: string, action = "Save"): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    let answered = false;
+    const input = h("input", { class: "text-input", type: "text", "aria-label": label, spellcheck: "false" });
+    input.value = value;
+    const answer = (result: string | undefined) => {
+      if (answered) return;
+      answered = true;
+      closeSheet();
+      resolve(result);
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") answer(input.value);
+    });
+    showSheet(
+      sheet(title, [h("label", { class: "field" }, h("span", {}, label), input)], [
+        h("button", { class: "btn", type: "button", onclick: () => answer(undefined) }, "Cancel"),
+        h("button", { class: "btn primary", type: "button", onclick: () => answer(input.value) }, action),
+      ]),
+      () => answer(undefined),
+    );
+    input.focus();
+    input.select();
+  });
+}
+
+/** One input per schema property, typed from the schema. */
+function fieldFor(key: string, schema: Schema, value: unknown, required: boolean): { el: HTMLElement; read: () => unknown } {
+  const label = schema.title ?? key;
+  const hint = schema.description ? h("span", { class: "field-hint" }, schema.description) : null;
+  if (schema.enum !== undefined) {
+    const select = h("select", { class: "text-input", "aria-label": label });
+    for (const option of schema.enum) select.append(h("option", { value: JSON.stringify(option) }, String(option)));
+    if (value !== undefined) select.value = JSON.stringify(value);
+    return { el: h("label", { class: "field" }, h("span", {}, label), select, hint), read: () => JSON.parse(select.value) };
+  }
+  if (schema.type === "boolean") {
+    const box = h("input", { type: "checkbox", "aria-label": label });
+    box.checked = value === true;
+    return { el: h("label", { class: "field check" }, box, h("span", {}, label), hint), read: () => box.checked };
+  }
+  const numeric = schema.type === "number" || schema.type === "integer";
+  const structured = schema.type === "object" || schema.type === "array";
+  const input = structured
+    ? h("textarea", { class: "text-input mono", rows: 3, "aria-label": label, spellcheck: "false" })
+    : h("input", { class: "text-input", type: numeric ? "number" : "text", "aria-label": label, spellcheck: "false" });
+  if (numeric && schema.type === "integer") input.setAttribute("step", "1");
+  if (value !== undefined) input.value = structured ? JSON.stringify(value) : String(value);
+  const read = () => {
+    const text = input.value.trim();
+    if (text === "") return required ? (numeric ? NaN : "") : undefined;
+    if (numeric) return Number(text);
+    if (structured) {
+      try {
+        return JSON.parse(text);
+      } catch {
+        return text;
+      }
+    }
+    return text;
+  };
+  return { el: h("label", { class: "field" }, h("span", {}, label + (required ? "" : " (optional)")), input, hint), read };
+}
+
+/** A dialog generated from an object schema; resolves to the validated value, or undefined. */
+export function formDialog<T>(title: string, schema: Schema, initial: Partial<T> = {}, action = "Run"): Promise<T | undefined> {
+  return new Promise((resolve) => {
+    let answered = false;
+    const filled = withDefaults(schema, { ...initial }) as Record<string, unknown>;
+    const required = new Set(schema.required ?? []);
+    const fields = Object.entries(schema.properties ?? {}).map(([key, sub]) => ({ key, ...fieldFor(key, sub, filled[key], required.has(key)) }));
+    const errors = h("p", { class: "form-errors", role: "alert" });
+    const answer = (result: T | undefined) => {
+      if (answered) return;
+      answered = true;
+      closeSheet();
+      resolve(result);
+    };
+    const submit = () => {
+      const value: Record<string, unknown> = {};
+      for (const f of fields) {
+        const v = f.read();
+        if (v !== undefined) value[f.key] = v;
+      }
+      const problems = validate(schema, value);
+      if (problems.length > 0) {
+        errors.textContent = problems.join(". ");
+        return;
+      }
+      answer(value as T);
+    };
+    showSheet(
+      sheet(title, [...fields.map((f) => f.el), errors], [
+        h("button", { class: "btn", type: "button", onclick: () => answer(undefined) }, "Cancel"),
+        h("button", { class: "btn primary", type: "button", onclick: submit }, action),
+      ]),
+      () => answer(undefined),
+    );
+    (fields[0]?.el.querySelector("input,select,textarea") as HTMLElement | null)?.focus();
+  });
+}
+
+// ------------------------------------------------------------------ menus
+
+export interface MenuItem {
+  label: string;
+  icon?: string;
+  danger?: boolean;
+  disabled?: boolean;
+  run: () => void;
+}
+
+let openMenu: HTMLElement | null = null;
+
+export function closeMenu(): void {
+  openMenu?.remove();
+  openMenu = null;
+}
+
+/** A small menu below `anchor` (or at the pointer). */
+export function showMenu(anchor: HTMLElement | { x: number; y: number }, items: (MenuItem | "-")[]): void {
+  closeMenu();
+  const menu = h("div", { class: "menu", role: "menu" });
+  for (const item of items) {
+    if (item === "-") {
+      menu.append(h("div", { class: "menu-sep", role: "separator" }));
+      continue;
+    }
+    menu.append(
+      h(
+        "button",
+        {
+          class: item.danger ? "menu-item danger" : "menu-item",
+          type: "button",
+          role: "menuitem",
+          disabled: item.disabled,
+          onclick: () => {
+            closeMenu();
+            item.run();
+          },
+        },
+        item.label,
+      ),
+    );
+  }
+  document.body.append(menu);
+  const rect = anchor instanceof HTMLElement ? anchor.getBoundingClientRect() : { left: anchor.x, bottom: anchor.y, right: anchor.x };
+  const width = menu.offsetWidth;
+  const height = menu.offsetHeight;
+  const left = Math.min(rect.left, window.innerWidth - width - 8);
+  const top = Math.min(rect.bottom + 4, window.innerHeight - height - 8);
+  menu.style.left = `${Math.max(8, left)}px`;
+  menu.style.top = `${Math.max(8, top)}px`;
+  openMenu = menu;
+  (menu.querySelector("button:not([disabled])") as HTMLElement | null)?.focus();
+  const dismiss = (e: Event) => {
+    if (e instanceof KeyboardEvent && e.key !== "Escape") return;
+    if (e.target instanceof Node && menu.contains(e.target) && !(e instanceof KeyboardEvent)) return;
+    closeMenu();
+    document.removeEventListener("mousedown", dismiss, true);
+    document.removeEventListener("keydown", dismiss, true);
+  };
+  setTimeout(() => {
+    document.addEventListener("mousedown", dismiss, true);
+    document.addEventListener("keydown", dismiss, true);
+  });
+}
+
+// ------------------------------------------------------------------ toasts
 
 const toastHost = () => {
   let host = document.querySelector<HTMLElement>(".toasts");
@@ -141,19 +349,13 @@ export async function copyText(text: string, what: string): Promise<boolean> {
   } catch {
     const area = h("textarea", { class: "state-input", id: "copy-fallback", readonly: true });
     area.value = text;
-    const sheet = h(
-      "div",
-      { class: "sheet", role: "dialog", "aria-label": `Copy ${what}` },
-      h("div", { class: "sheet-head" }, h("h2", { class: "sheet-title" }, `Copy ${what}`)),
-      h(
-        "div",
-        { class: "sheet-body" },
-        h("p", { class: "empty" }, "The clipboard is not available here. The text is selected: copy it with your keyboard."),
-        area,
+    showSheet(
+      sheet(
+        `Copy ${what}`,
+        [h("p", { class: "empty" }, "The clipboard is not available here. The text is selected: copy it with your keyboard."), area],
+        [h("button", { class: "btn outline", type: "button", onclick: () => closeSheet() }, "Done")],
       ),
-      h("div", { class: "sheet-foot" }, h("button", { class: "btn outline", onclick: () => closeSheet() }, "Done")),
     );
-    showSheet(sheet);
     area.focus();
     area.select();
     return false;

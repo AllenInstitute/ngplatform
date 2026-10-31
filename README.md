@@ -1,38 +1,49 @@
 # ngplatform
 
 A research workspace around [Neuroglancer](https://github.com/google/neuroglancer):
-paste a Neuroglancer link, a state or a data URL; share the workspace as a
-link; extend it with plugins. This is the platform shell (build guide Phase 1,
-milestones P0–P1) without any plugin yet. The TrackVis-style tractography
-plugin comes next.
+paste a Neuroglancer link, a state or a data URL; organise data into
+datasets and scenes; share the workspace as a link; extend it with plugins.
 
-Where things stand, and what comes next: [`STATUS.md`](STATUS.md). The plan:
+Neuroglancer is the rendering engine and nothing else: the views show only
+data. Everything Neuroglancer offers around them (the layer list, each
+layer's controls, selection details, position, settings, help, statistics,
+status messages) is reached through the platform's own interface, which
+mounts Neuroglancer's widgets in its docks where they exist.
+
+Where things stand, and what comes next: [`STATUS.md`](STATUS.md). Writing a
+plugin: [`docs/plugins.md`](docs/plugins.md). The plan:
 [`docs/editor_repo_plan.md`](docs/editor_repo_plan.md). The app, deployed from
-the `gh-pages` branch: https://andrew-keenlyside.github.io/ngplatform/
+the `gh-pages` branch: https://andrew-keenlyside.github.io/ngplatform/ (and
+review builds under `/preview/`).
 
 It consumes the zarr-vectors fork of Neuroglancer
-(`Andrew-Keenlyside/neuroglancer`, branch `zarr_vectors_working`) as a
-dependency, so Neuroglancer stays the rendering engine and the source of
-truth for the view, and this repository holds only the product around it.
+(`Andrew-Keenlyside/neuroglancer`, branch `ngplatform`: `zarr_vectors_working`
+plus the two embedding changes the app needs) as a dependency.
 
 ## Develop
 
 ```bash
-git clone https://github.com/Andrew-Keenlyside/neuroglancer ../neuroglancer   # the fork, next to this repo
+git clone -b ngplatform https://github.com/Andrew-Keenlyside/neuroglancer ../neuroglancer   # the fork, next to this repo
+(cd ../neuroglancer && npm ci)
 npm install
 npm run dev           # http://localhost:5173
 npm test              # unit tests (vitest)
-npm run typecheck
+npm run typecheck     # the app, with Neuroglancer's sources
 npm run build         # dist/, a static site: serve it from any path
 ```
 
 `npm install` links the fork's source (`file:../neuroglancer`), which runs
-its `prepare` script and rewrites the fork's `package.json` in place. Undo
-that in the fork with `node build_tools/postpack.ts && rm -rf lib`.
+its `prepare` script: it builds `lib/` and rewrites the fork's `package.json`
+to point there. To work on the fork and the app together, undo that in the
+fork with `node build_tools/postpack.ts && rm -rf lib`; the app then builds
+from the fork's TypeScript directly, and fork edits show up on the next
+build.
 
-The bundled example is generated, not committed:
+The bundled example is generated, not committed. Either take it from the
+deployed site, or build it:
 
 ```bash
+git archive origin/gh-pages examples | tar -x -C public/
 python scripts/make_excerpt.py path/to/store.zarrvectors   # needs zarr-vectors-py and -tools
 ```
 
@@ -40,24 +51,26 @@ python scripts/make_excerpt.py path/to/store.zarrvectors   # needs zarr-vectors-
 
 ```bash
 npm run build && (cd dist && python3 -m http.server 4174 &)
-node e2e/smoke.mjs http://localhost:4174/
+CHROME=/usr/bin/google-chrome node e2e/smoke.mjs http://localhost:4174/
 ```
 
 Use a server that answers missing files with 404. Vite's preview server
 answers with `index.html`, which the zarr-vectors reader's probes take for
-data. The smoke test drives the shell in headless Chromium. SwiftShader's
-WebGL cannot draw Neuroglancer's views there (the fork's standalone build
-fails the same way), so the pointer check is skipped when that happens.
+data. With `CHROME` set the smoke test uses that browser and the machine's
+GPU; without it, Playwright's Chromium with SwiftShader, whose WebGL cannot
+draw Neuroglancer's views, so the checks that need drawing are skipped.
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `src/core/` | state I/O (`{ng, app}` links), undo history, command registry, the Neuroglancer bridge |
-| `src/ui/` | shell, docks, palette, Open dialog, panels, styles |
-| `src/main.ts` | boot: every import from Neuroglancer lives here and in `viewer_bridge.ts` |
-| `scripts/make_excerpt.py` | builds `public/examples/ha1-excerpt.zarrvectors` |
-| `e2e/smoke.mjs` | headless smoke test |
+| `src/engine/` | The only code that touches Neuroglancer: `neuroglancer.ts` (every import), `engine.ts` (the engine with no interface of its own, and the widgets it lends the docks) |
+| `src/core/` | Pure logic, unit-tested: the workspace model (scenes, datasets), state I/O, undo history, commands, key bindings, `when` clauses, schemas, state slices |
+| `src/platform/` | Services: the workspace store, the plugin host, jobs, registries |
+| `src/sdk/` | The plugin API: `PlatformContext` and the manifest |
+| `src/ui/` | The shell, docks, panels, dialogs and styles |
+| `src/builtins/` | Built-in contributions: examples, the Source section, zarr-vectors store facts (as a plugin) |
+| `e2e/smoke.mjs` | Browser smoke test |
 
 ## Known limits
 

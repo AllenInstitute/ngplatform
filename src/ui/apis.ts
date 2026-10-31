@@ -1,0 +1,80 @@
+/**
+ * The workspace and viewer APIs plugins see, built over the store and the
+ * engine.  They hand out plain data (names, ids, JSON), never Neuroglancer
+ * objects.
+ */
+import type { DatasetInfo, Json, LayerInfo, SceneDatasetInfo, ViewerApi, WorkspaceApi } from "../sdk/types.js";
+import type { Workbench } from "./workbench.js";
+
+export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; viewer: ViewerApi } {
+  const { store, engine } = wb;
+  const info = (d: { id: string; name: string; source: unknown; kind: string }): DatasetInfo => ({
+    id: d.id,
+    name: d.name,
+    source: d.source,
+    kind: d.kind,
+  });
+  const layerInfos = (): LayerInfo[] =>
+    engine.layers().map((l) => ({
+      name: l.name,
+      type: l.type,
+      visible: l.visible,
+      sources: l.sources,
+      ready: l.ready,
+      error: l.error,
+      dataset: store.datasetOfLayer(l.name)?.id,
+    }));
+
+  const workspace: WorkspaceApi = {
+    scenes: () => {
+      const p = store.state();
+      return p.scenes.map((s) => ({ id: s.id, name: s.name, active: s.id === p.activeScene }));
+    },
+    switchScene: (id) => store.switchScene(id),
+    newScene: (options) => store.newScene(options),
+    datasets: () => store.datasets().map(info),
+    sceneDatasets: (): SceneDatasetInfo[] => {
+      const layers = new Map(layerInfos().map((l) => [l.name, l]));
+      return store.sceneDatasets().map((entry) => {
+        const shown = entry.layers.map((n) => layers.get(n)).filter((l): l is LayerInfo => l !== undefined);
+        return { ...info(entry.dataset), layers: shown, visible: shown.some((l) => l.visible) };
+      });
+    },
+    addDataset: (spec) => store.addDataset(spec),
+    addLayer: (datasetId, layer?: Json) => {
+      const name = store.showDataset(datasetId, layer ?? {});
+      if (name === undefined) throw new Error(`no dataset ${datasetId}`);
+      return name;
+    },
+    removeDatasetFromScene: (id) => store.removeDatasetFromScene(id),
+    selectedLayer: () => engine.selectedLayer(),
+    selectLayer: (name) => store.selectLayer(name),
+    selectedDataset: () => {
+      const name = engine.selectedLayer();
+      const dataset = name === undefined ? undefined : store.datasetOfLayer(name);
+      return dataset && info(dataset);
+    },
+    onChanged: (callback) => {
+      const offs = [store.onChange(callback), engine.onSelectionChanged(callback)];
+      return () => offs.forEach((off) => off());
+    },
+  };
+
+  const viewer: ViewerApi = {
+    getState: () => store.ng(),
+    patchState: (edit) => store.patchState(edit),
+    onStateChanged: (callback) => engine.onStateChanged(callback),
+    layers: layerInfos,
+    layerSpec: (name) => engine.layerSpec(name),
+    setLayerVisible: (name, visible) => store.setLayerVisible(name, visible),
+    onLayersChanged: (callback) => engine.onLayersChanged(callback),
+    cursor: () => {
+      const c = engine.cursor();
+      return { active: c.active, position: c.position, names: c.names, units: c.units, values: c.values };
+    },
+    onCursorChanged: (callback) => engine.onCursorChanged(callback),
+    setPosition: (position) => engine.setPosition(position),
+  };
+
+  return { workspace, viewer };
+}

@@ -1,0 +1,287 @@
+/**
+ * The platform's dialogs: Open, Add dataset, Settings, Keyboard shortcuts
+ * and Edit state.  Settings and the view bindings are Neuroglancer's own
+ * panels, shown here instead of over the views.
+ */
+import { InputError, layerCount, parseInput } from "../core/state_io.js";
+import { layerNameFor } from "../core/state_io.js";
+import { closeSheet, sheet, showSheet, toast } from "./overlays.js";
+import { h, icon, keyLabel } from "./dom.js";
+import { kindLabel } from "./panels/format.js";
+import type { Workbench } from "./workbench.js";
+
+// -------------------------------------------------------------------- open
+
+export interface OpenActions {
+  /** Opens pasted text; `asScene` opens a state as a new scene instead of replacing the workspace. */
+  openText(text: string, from: string, asScene: boolean): Promise<boolean>;
+  openExample(id: string): void;
+}
+
+export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
+  const input = h("textarea", {
+    class: "state-input",
+    id: "open-input",
+    placeholder: 'https://…/#!{…}   or   {"layers": …}   or   gs://bucket/store.zarrvectors/|zarr-vectors:',
+    "aria-label": "Link, state or data URL",
+    spellcheck: "false",
+  });
+  const asScene = h("input", { type: "checkbox", id: "open-as-scene" });
+  const asSceneLabel = h("label", { class: "field check" }, asScene, h("span", {}, "Open as a new scene, keeping this workspace"));
+  const detected = h("span", { class: "detected" }, "Paste something to open.");
+  const openButton = h("button", { class: "btn primary", type: "button", disabled: true }, "Open");
+  const describe = () => {
+    asSceneLabel.hidden = true;
+    if (input.value.trim() === "") {
+      detected.textContent = "Paste something to open.";
+      detected.classList.remove("bad");
+      openButton.disabled = true;
+      return;
+    }
+    const handler = wb.openHandlers.match(input.value);
+    if (handler !== undefined) {
+      detected.classList.remove("bad");
+      detected.textContent = handler.title ?? `Opens with ${handler.owner ?? "a plugin"}.`;
+      openButton.disabled = false;
+      openButton.textContent = "Open";
+      return;
+    }
+    try {
+      const parsed = parseInput(input.value, wb.parseFragment);
+      detected.classList.remove("bad");
+      openButton.disabled = false;
+      if (parsed.kind === "state") {
+        const n = layerCount(parsed.state.ng);
+        const scenes = (parsed.state.app.platform as { scenes?: unknown[] } | undefined)?.scenes?.length ?? 0;
+        asSceneLabel.hidden = scenes > 1;
+        detected.textContent = `Neuroglancer state, ${n} layer${n === 1 ? "" : "s"}${scenes > 1 ? `, ${scenes} scenes` : ""}. ${asScene.checked && scenes <= 1 ? "Opens as a new scene." : "Replaces the workspace."}`;
+        openButton.textContent = "Open";
+      } else if (parsed.kind === "remote") {
+        asSceneLabel.hidden = false;
+        detected.textContent = "A state stored at a URL. It will be fetched and opened.";
+        openButton.textContent = "Fetch and open";
+      } else {
+        detected.textContent = `A data source. Adds the dataset “${parsed.name}” to this scene.`;
+        openButton.textContent = "Add dataset";
+      }
+    } catch (e) {
+      detected.textContent = (e as Error).message;
+      detected.classList.add("bad");
+      openButton.disabled = true;
+    }
+  };
+  input.addEventListener("input", describe);
+  asScene.addEventListener("change", describe);
+  const submit = async () => {
+    if (openButton.disabled) return;
+    if (await actions.openText(input.value, "pasted text", asScene.checked)) closeSheet();
+  };
+  openButton.addEventListener("click", submit);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      void submit();
+    }
+  });
+  const examples = wb.examples.list();
+  showSheet(
+    sheet(
+      "Open",
+      [
+        input,
+        asSceneLabel,
+        h("h3", { class: "section-title", hidden: examples.length === 0 }, "Examples"),
+        h(
+          "div",
+          { class: "examples" },
+          ...examples.map((example) =>
+            h(
+              "div",
+              { class: "example" },
+              h("span", { class: "title" }, example.title),
+              h(
+                "span",
+                { class: "desc" },
+                example.description + (example.remote && wb.framed ? " Needs a hosted copy of the app: this frame only reaches files bundled with it." : ""),
+              ),
+              h(
+                "button",
+                {
+                  class: "btn outline",
+                  type: "button",
+                  disabled: example.remote && wb.framed,
+                  onclick: () => {
+                    closeSheet();
+                    actions.openExample(example.id);
+                  },
+                },
+                "Open",
+              ),
+            ),
+          ),
+        ),
+      ],
+      [detected, h("button", { class: "btn", type: "button", onclick: () => closeSheet() }, "Cancel"), openButton],
+    ),
+  );
+  describe();
+  input.focus();
+}
+
+// ------------------------------------------------------------- add dataset
+
+const TYPES: [string, string][] = [
+  ["auto", "Detect from the source"],
+  ["image", "Image"],
+  ["segmentation", "Segmentation"],
+  ["annotation", "Annotations"],
+  ["mesh", "Mesh"],
+];
+
+export function showAddDatasetSheet(wb: Workbench): void {
+  const { store } = wb;
+  const url = h("input", {
+    class: "text-input mono",
+    type: "text",
+    id: "dataset-url",
+    placeholder: "https://…/store.zarrvectors/|zarr-vectors:   or   precomputed://gs://…",
+    "aria-label": "Data source URL",
+    spellcheck: "false",
+  });
+  const name = h("input", { class: "text-input", type: "text", id: "dataset-name", placeholder: "From the URL", "aria-label": "Name" });
+  const type = h("select", { class: "text-input", id: "dataset-type", "aria-label": "Show as" });
+  for (const [value, label] of TYPES) type.append(h("option", { value }, label));
+  const note = h("span", { class: "detected" }, "A URL Neuroglancer can read, with its format when it cannot be guessed.");
+  const add = h("button", { class: "btn primary", type: "button", disabled: true }, "Add");
+  const update = () => {
+    const value = url.value.trim();
+    add.disabled = value === "";
+    name.placeholder = value === "" ? "From the URL" : layerNameFor(value);
+  };
+  url.addEventListener("input", update);
+  const submit = () => {
+    const source = url.value.trim();
+    if (source === "") return;
+    const id = store.addDataset({ source, name: name.value.trim() || layerNameFor(source), kind: type.value });
+    closeSheet();
+    wb.log.add(`Added the dataset “${store.dataset(id)?.name}”.`, "ok");
+    wb.docks.show("inspector");
+  };
+  add.addEventListener("click", submit);
+  url.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submit();
+  });
+  const library = store.datasetsNotInScene();
+  showSheet(
+    sheet(
+      "Add a dataset to this scene",
+      [
+        h("label", { class: "field" }, h("span", {}, "Source"), url),
+        h("div", { class: "field-row" }, h("label", { class: "field" }, h("span", {}, "Name"), name), h("label", { class: "field" }, h("span", {}, "Show as"), type)),
+        library.length
+          ? h(
+              "div",
+              { class: "section" },
+              h("h3", { class: "section-title" }, "From this workspace"),
+              h(
+                "div",
+                { class: "list" },
+                ...library.map((d) =>
+                  h(
+                    "button",
+                    {
+                      class: "ds-row other pick",
+                      type: "button",
+                      onclick: () => {
+                        store.showDataset(d.id);
+                        closeSheet();
+                        wb.docks.show("inspector");
+                      },
+                    },
+                    h("span", { class: "ds-icon" }, icon("database")),
+                    h("span", { class: "ds-name" }, d.name),
+                    h("span", { class: "type" }, kindLabel(d.kind)),
+                    h("span", { class: "ds-icon" }, icon("plus")),
+                  ),
+                ),
+              ),
+            )
+          : h("span"),
+      ],
+      [note, h("button", { class: "btn", type: "button", onclick: () => closeSheet() }, "Cancel"), add],
+    ),
+  );
+  url.focus();
+}
+
+// ---------------------------------------------------------------- settings
+
+export function showSettingsSheet(wb: Workbench): void {
+  const panel = h("div", { class: "ng-host settings-host" });
+  let unmount: (() => void) | undefined;
+  showSheet(
+    sheet(
+      "View settings",
+      [
+        panel,
+        h("p", { class: "note" }, "Saved with the workspace, so a shared link shows the same. Memory limits apply to this browser tab."),
+      ],
+      [h("button", { class: "btn primary", type: "button", onclick: () => closeSheet() }, "Done")],
+    ),
+    () => unmount?.(),
+  );
+  unmount = wb.engine.mountSettings(panel);
+}
+
+// --------------------------------------------------------------- shortcuts
+
+export function showShortcutsSheet(wb: Workbench): void {
+  const table = h("dl", { class: "facts keys" });
+  for (const binding of wb.keybindings.list()) {
+    const command = wb.commands.get(binding.command);
+    if (command === undefined) continue;
+    table.append(h("dt", {}, h("kbd", {}, keyLabel(binding.key))), h("dd", {}, command.title));
+  }
+  const views = h("div", { class: "ng-host bindings-host" });
+  let unmount: (() => void) | undefined;
+  showSheet(
+    sheet(
+      "Keyboard and mouse",
+      [
+        h("h3", { class: "section-title" }, "Workspace"),
+        table,
+        h("h3", { class: "section-title" }, "In the views"),
+        views,
+      ],
+      [h("button", { class: "btn primary", type: "button", onclick: () => closeSheet() }, "Done")],
+      { wide: true },
+    ),
+    () => unmount?.(),
+  );
+  unmount = wb.engine.mountBindingsHelp(views);
+}
+
+// -------------------------------------------------------------- edit state
+
+export function showEditStateSheet(wb: Workbench, apply: (text: string) => Promise<boolean>): void {
+  const area = h("textarea", { class: "state-input tall", id: "state-editor", spellcheck: "false", "aria-label": "Workspace state" });
+  area.value = JSON.stringify(wb.store.workspace(), null, 2);
+  const status = h("span", { class: "detected" }, "The whole workspace: {ng: this scene's Neuroglancer state, app: scenes, datasets and plugin state}.");
+  const applyButton = h("button", { class: "btn primary", type: "button" }, "Apply");
+  applyButton.addEventListener("click", async () => {
+    try {
+      JSON.parse(area.value);
+    } catch (e) {
+      status.textContent = `Does not parse: ${(e as Error).message}`;
+      status.classList.add("bad");
+      return;
+    }
+    if (await apply(area.value)) closeSheet();
+  });
+  showSheet(
+    sheet("Edit state", [area], [status, h("button", { class: "btn", type: "button", onclick: () => closeSheet() }, "Cancel"), applyButton], { wide: true }),
+  );
+  area.focus();
+}
+
+export { InputError, toast };

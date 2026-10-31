@@ -1,28 +1,41 @@
-// Smoke test: load the built app in headless Chromium and drive the shell.
+// Smoke test: load the built app in Chromium and drive the platform GUI.
 //
-//   npm run build && npx vite preview --port 4173 &
+//   npm run build && (cd dist && python3 -m http.server 4174 &)
 //   node e2e/smoke.mjs [base-url] [screenshot-dir]
 //
-// WebGL comes from SwiftShader, so this runs on machines without a GPU.
+// Set CHROME=/path/to/chrome to use an installed Chrome with the machine's
+// GPU; otherwise Playwright's Chromium runs with SwiftShader, which cannot
+// draw Neuroglancer's views (checks that need drawing are then skipped).
 import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 
 // A project install of playwright, or a global one reached through NODE_PATH.
-const { chromium } = createRequire(import.meta.url)("playwright");
+const require = createRequire(import.meta.url);
+let chromium;
+try {
+  ({ chromium } = require("playwright"));
+} catch {
+  ({ chromium } = require("playwright-core"));
+}
 
-const base = process.argv[2] ?? "http://localhost:4173/";
+const base = process.argv[2] ?? "http://localhost:4174/";
 const shots = process.argv[3] ?? "e2e/screenshots";
 mkdirSync(shots, { recursive: true });
 
 const proxy = process.env.HTTPS_PROXY ? { server: process.env.HTTPS_PROXY, bypass: "localhost,127.0.0.1" } : undefined;
+const gpu = process.env.CHROME !== undefined;
 const browser = await chromium.launch({
-  args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"],
+  executablePath: process.env.CHROME,
+  args: gpu ? ["--ignore-gpu-blocklist", "--enable-gpu"] : ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"],
   proxy,
 });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true });
 const problems = [];
 page.on("console", (m) => { if (m.type() === "error") problems.push(m.text()); });
 page.on("pageerror", (e) => problems.push(String(e)));
+const cannotDraw = () => problems.some((p) => p.includes("Framebuffer configuration not supported"));
+let dataRequests = 0;
+page.on("request", (r) => { if (!r.url().startsWith(base)) dataRequests++; });
 
 const status = () => page.locator(".status").innerText();
 async function waitReady(label, timeout = 90_000) {
@@ -31,41 +44,85 @@ async function waitReady(label, timeout = 90_000) {
   console.log(`${label}: ${await status()}`);
 }
 const check = (ok, what) => { console.log(`${ok ? "ok  " : "FAIL"} ${what}`); if (!ok) process.exitCode = 1; };
+const layers = () => page.evaluate(() => window.engine.layers());
 
 await page.goto(base);
 await waitReady("default example");
 await page.screenshot({ path: `${shots}/1-default.png` });
 check((await page.evaluate(() => location.hash)).startsWith("#!"), "address bar holds the state");
-check((await page.locator(".dock-left .facts").count()) > 0, "workspace dock shows store facts");
 
-// Palette: switch to the 3D layout, then undo it.
+// The views fill their column, and hold no Neuroglancer interface.
+const fill = await page.evaluate(() => {
+  const engine = document.querySelector(".engine").getBoundingClientRect();
+  const host = document.querySelector(".engine-host").getBoundingClientRect();
+  return host.height / engine.height;
+});
+check(fill > 0.98, `the viewer fills the views area (${(fill * 100).toFixed(0)}% of its height)`);
+const chrome = await page.evaluate(() => {
+  const visible = (sel) => [...document.querySelectorAll(`.engine ${sel}`)].filter((e) => e.offsetParent !== null).length;
+  return {
+    topRow: visible(".neuroglancer-viewer-top-row"),
+    layerPanel: visible(".neuroglancer-layer-panel"),
+    sidePanels: visible(".neuroglancer-side-panel"),
+    status: visible("#neuroglancer-status-container"),
+  };
+});
+check(Object.values(chrome).every((n) => n === 0), `no Neuroglancer interface inside the views ${JSON.stringify(chrome)}`);
+
+// Datasets tab and Inspector.
+check((await page.locator(".datasets .ds-row").count()) === 1, "Datasets lists the scene's dataset");
+await page.locator(".datasets .ds-row").first().click();
+await page.waitForTimeout(800);
+check((await page.locator(".ngp-layer-controls .neuroglancer-tab-label").count()) > 0, "Inspector shows the layer's own controls");
+check((await page.locator(".inspector-section").count()) > 0, "Inspector shows contributed sections");
+
+// Hide and show the dataset from its row.
+await page.locator(".datasets .ds-row .vis").first().uncheck();
+await page.waitForTimeout(500);
+check((await layers())[0].visible === false, "the row's checkbox hides the dataset");
+await page.locator(".datasets .ds-row .vis").first().check();
+
+// Palette: change the layout, then undo it, with no data requests.
+await page.waitForTimeout(1500);
+dataRequests = 0;
 await page.keyboard.press("Control+k");
 await page.locator("#palette-input").fill("layout 3d");
 await page.keyboard.press("Enter");
-await page.waitForTimeout(800);
-check((await page.locator('.segmented button[aria-pressed="true"]').innerText()) === "3D", "palette ran Layout: 3D");
+await page.waitForTimeout(1200);
+check(await page.evaluate(() => window.engine.layout() === "3d"), "palette ran Layout: 3D");
 await page.screenshot({ path: `${shots}/2-3d.png` });
-await page.mouse.click(10, 10); // focus the page, not an input
+await page.locator(".brand").click(); // focus the page, not an input
 await page.keyboard.press("Control+z");
+await page.waitForTimeout(1500);
+check(await page.evaluate(() => window.engine.layout() === "xy-3d"), "undo restored the layout");
+check(dataRequests === 0, `layout change and undo made no data requests (${dataRequests})`);
+
+// Scenes: a new empty scene, the dataset added from the workspace, and back.
+await page.locator(".scene-add").click();
 await page.waitForTimeout(800);
-check((await page.locator('.segmented button[aria-pressed="true"]').innerText()) === "XY + 3D", "undo restored the layout");
+check((await page.locator(".scene-tab").count()) === 2, "New scene adds a scene tab");
+check((await layers()).length === 0, "the new scene starts empty");
+await page.locator(".ds-row.other .btn").first().click();
+await page.waitForTimeout(800);
+check((await layers()).length === 1, "a workspace dataset adds to the new scene");
+await page.locator(".scene-tab").first().click();
+await page.waitForTimeout(800);
+check((await page.locator('.scene-tab[aria-selected="true"]').innerText()) === "Scene 1", "switching back to Scene 1");
 
-// Hover a view so the inspector shows the pointer.
-const engine = await page.locator(".engine").boundingBox();
-await page.mouse.move(engine.x + engine.width * 0.25, engine.y + engine.height * 0.5);
+// Hover a view so the Pointer tab shows coordinates.
+await page.locator("#tab-pointer").click();
+const engineBox = await page.locator(".engine").boundingBox();
+await page.mouse.move(engineBox.x + engineBox.width * 0.25, engineBox.y + engineBox.height * 0.5);
 await page.waitForTimeout(600);
-if ((await page.locator(".coord").count()) >= 3) check(true, "inspector shows pointer coordinates");
-else if (problems.some((p) => p.includes("Framebuffer configuration not supported")))
-  console.log("skip inspector pointer check: this browser's WebGL cannot draw Neuroglancer's views");
-else check(false, "inspector shows pointer coordinates");
+if ((await page.locator(".coord").count()) >= 3) check(true, "Pointer shows coordinates");
+else if (cannotDraw()) console.log("skip pointer check: this browser's WebGL cannot draw Neuroglancer's views");
+else check(false, "Pointer shows coordinates");
 
-// Open dialog: the bundled excerpt.
+// Open dialog: the bundled excerpt, and a pasted plain Neuroglancer link.
 await page.keyboard.press("Control+o");
 await page.locator(".example", { hasText: "bundled excerpt" }).getByRole("button", { name: "Open" }).click();
 await waitReady("bundled excerpt");
 await page.screenshot({ path: `${shots}/3-excerpt.png` });
-
-// Open dialog: a pasted plain Neuroglancer link is recognised.
 await page.keyboard.press("Control+o");
 await page.locator("#open-input").fill('https://neuroglancer-demo.appspot.com/#!{"layers":[]}');
 check((await page.locator(".detected").innerText()).startsWith("Neuroglancer state, 0 layers"), "Open recognises a Neuroglancer link");

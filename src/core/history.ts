@@ -33,6 +33,15 @@ export class StateHistory {
     return true;
   }
 
+  /**
+   * Replaces the current entry without making an undo step: for changes not
+   * worth undoing on their own, such as which layer is selected.
+   */
+  replaceCurrent(snapshot: string): void {
+    if (this.adopting) this.adopting = false;
+    this.current = snapshot;
+  }
+
   /** The snapshot to restore for undo, or undefined when there is none. */
   undo(): string | undefined {
     const previous = this.past.pop();
@@ -55,6 +64,11 @@ export class StateHistory {
   /** Ends an adoption window that produced no state change (restoring an identical state). */
   settle(): void {
     this.adopting = false;
+  }
+
+  /** True between an undo or redo and the state it produces being recorded. */
+  get isAdopting(): boolean {
+    return this.adopting;
   }
 
   get canUndo(): boolean {

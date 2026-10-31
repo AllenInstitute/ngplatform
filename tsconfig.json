@@ -1,24 +1,23 @@
 {
+  // Neuroglancer's sources are typechecked with the app, so these follow the
+  // fork's own options (it does not use `strict`'s function-type checks).
   "compilerOptions": {
     "target": "es2022",
     "module": "esnext",
     "moduleResolution": "bundler",
-    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+    "strictNullChecks": true,
+    "experimentalDecorators": true,
+    "useDefineForClassFields": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "lib": [
-      "es2022",
-      "dom",
-      "dom.iterable"
-    ],
-    "types": [
-      "vite/client"
-    ]
+    "lib": ["dom", "webworker", "esnext", "dom.iterable"],
+    "types": ["vite/client"]
   },
-  "include": [
-    "src/core/state_io.ts",
-    "src/core/history.ts",
-    "src/core/commands.ts",
-    "tests"
-  ]
+  "include": ["src", "tests"]
 }

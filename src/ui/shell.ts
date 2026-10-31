@@ -1,49 +1,41 @@
 /**
- * The workspace shell: top bar, docks, command palette, and the state loop
- * (URL <-> Neuroglancer state, undo history).  Neuroglancer renders inside
- * `engineHost`; everything else here is the platform's.
+ * The shell: lays out the top bar, the docks and the engine, creates the
+ * platform's services and wires them together.  It holds no workspace state
+ * itself (that is the WorkspaceStore's) and no panel logic (that is in
+ * ui/panels); what remains here is composition and the core commands.
  */
-import { type Command, CommandRegistry, keyOf } from "../core/commands.js";
-import { StateHistory } from "../core/history.js";
+import { CommandError, CommandRegistry } from "../core/commands.js";
+import { KeybindingTable } from "../core/keybindings.js";
+import { InputError, layerNameFor, parseInput, type FragmentParser, workspaceLink } from "../core/state_io.js";
+import { ContextKeys } from "../core/when.js";
+import { activeScene, layersOf } from "../core/workspace.js";
+import { type Engine, LAYOUTS } from "../engine/engine.js";
+import { JobService } from "../platform/jobs.js";
+import { PluginHost } from "../platform/plugin_host.js";
+import { ExampleRegistry, InspectorRegistry, OpenHandlerRegistry } from "../platform/registries.js";
+import { ServiceRegistry } from "../platform/services.js";
+import { WorkspaceStore } from "../platform/workspace_store.js";
+import { registerBuiltins } from "../builtins/index.js";
+import { contextKeyFor } from "./context.js";
+import { type DockTab, DockManager, prefs } from "./docks.js";
+import { h, icon, iconButton, isMac, keyLabel, mark } from "./dom.js";
+import { closeSheet, confirmDialog, copyText, formDialog, promptDialog, sheetIsOpen, showPalette, toast } from "./overlays.js";
+import { ActivityLog } from "./panels/activity.js";
+import { renderDatasetsPanel } from "./panels/datasets.js";
+import { inspectorTarget, renderInspectorPanel } from "./panels/inspector.js";
 import {
-  type FragmentParser,
-  InputError,
-  layerCount,
-  parseInput,
-  type WorkspaceState,
-  workspaceLink,
-  encodeFragment,
-} from "../core/state_io.js";
-import type { ViewerBridge } from "../core/viewer_bridge.js";
-import { h, icon, isMac, keyLabel, mark } from "./dom.js";
-import { EXAMPLES, type Example } from "./examples.js";
-import { closeSheet, copyText, sheetIsOpen, showPalette, showSheet, toast } from "./overlays.js";
-import { ActivityLog, renderCursor, renderPlugins, renderSelection, renderWorkspace } from "./panels.js";
-
-const LAYOUTS: [string, string][] = [
-  ["4panel", "4 panels"],
-  ["xy-3d", "XY + 3D"],
-  ["3d", "3D"],
-  ["xy", "XY"],
-];
-
-/** Per-viewer conveniences only: dock sizes and which docks are open. */
-const prefs = {
-  get(key: string): string | null {
-    try {
-      return localStorage.getItem(`ngplatform.${key}`);
-    } catch {
-      return null;
-    }
-  },
-  set(key: string, value: string): void {
-    try {
-      localStorage.setItem(`ngplatform.${key}`, value);
-    } catch {
-      // Storage refused (private window, sandbox): the setting just is not kept.
-    }
-  },
-};
+  renderJobsPanel,
+  renderPluginsPanel,
+  renderPointerPanel,
+  renderPythonPanel,
+  renderSelectionPanel,
+  renderStatisticsPanel,
+} from "./panels/misc.js";
+import { renderNavigationPanel } from "./panels/navigation.js";
+import { renderScenesPanel } from "./panels/scenes.js";
+import { showAddDatasetSheet, showEditStateSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
+import type { Workbench } from "./workbench.js";
+import { createPlatformApis } from "./apis.js";
 
 /** Inside a frame (such as an artifact viewer), a link cannot carry the state. */
 const framed = (() => {
@@ -56,389 +48,259 @@ const framed = (() => {
 
 export class Shell {
   // No id: Neuroglancer's stylesheet sizes #neuroglancer-container for a
-  // full-page viewer, which would override the dock layout.
+  // full-page viewer, which would override the layout.
   readonly engineHost = h("div", { class: "engine-host" });
-  readonly commands = new CommandRegistry();
-  private readonly history = new StateHistory();
-  private readonly log = new ActivityLog();
-  private bridge!: ViewerBridge;
-  private parseFragment!: FragmentParser;
-  private app: Record<string, unknown> = {};
-  private settleTimer: number | undefined;
-  private lastHash = "";
-
   private readonly root: HTMLElement;
-  private readonly workspace = h("div", { class: "workspace" });
+  private readonly context = new ContextKeys();
+  private readonly docks: DockManager;
   private readonly statusDot = h("span", { class: "dot" });
   private readonly statusText = h("span", {}, "Starting");
-  private readonly undoButton = this.toolButton("undo", "Undo", "edit.undo");
-  private readonly redoButton = this.toolButton("redo", "Redo", "edit.redo");
-  private readonly layoutButtons = new Map<string, HTMLButtonElement>();
-  private readonly left = this.dock("left", "Workspace", [["workspace", "Workspace"], ["plugins", "Plugins"]]);
-  private readonly right = this.dock("right", "Inspector", [["inspector", "Inspector"]]);
-  private readonly bottom = this.dock("bottom", "Activity", [
-    ["activity", "Activity"],
-    ["jobs", "Jobs"],
-    ["python", "Python"],
-  ]);
-  private readonly selectionBox = h("div");
-  private readonly cursorBox = h("div");
-  private readonly valuesBox = h("div");
+  private readonly statusStrip = h("div", { class: "ng-status", "aria-live": "polite" });
+  private readonly sceneTabs = h("div", { class: "scene-tabs", role: "tablist", "aria-label": "Scenes" });
+  private readonly undoButton = iconButton("undo", "Undo", () => this.wb.run("edit.undo"));
+  private readonly redoButton = iconButton("redo", "Redo", () => this.wb.run("edit.redo"));
+  private wb!: Workbench;
+  private lastHashSeen = "";
 
   constructor(root: HTMLElement) {
     this.root = root;
+    this.docks = new DockManager(root, this.context);
     this.buildLayout();
   }
 
   // ------------------------------------------------------------- layout
 
-  private toolButton(name: string, label: string, command: string): HTMLButtonElement {
-    return h(
-      "button",
-      { class: "btn icon", type: "button", title: label, "aria-label": label, onclick: () => this.run(command) },
-      icon(name),
-    );
-  }
-
-  private dock(side: "left" | "right" | "bottom", title: string, tabs: [string, string][]) {
-    const body = h("div", { class: "dock-body" });
-    const panels = new Map<string, HTMLElement>();
-    const tabButtons = new Map<string, HTMLButtonElement>();
-    const el = h("aside", {
-      class: `dock dock-${side}`,
-      "aria-label": title,
-    });
-    const toggle = h(
-      "button",
-      {
-        class: "btn icon",
-        type: "button",
-        title: `Show or hide the ${title.toLowerCase()} dock`,
-        "aria-label": `Toggle ${title.toLowerCase()} dock`,
-        onclick: () => this.toggleDock(side),
-      },
-      icon(side === "left" ? "panel-left" : side === "right" ? "panel-right" : "panel-bottom"),
-    );
-    const head = h("div", { class: "dock-head", role: "tablist" });
-    for (const [id, label] of tabs) {
-      const panel = h("div", { role: "tabpanel", "aria-label": label });
-      panels.set(id, panel);
-      const button = h(
-        "button",
-        {
-          class: "tab",
-          type: "button",
-          role: "tab",
-          id: `tab-${id}`,
-          onclick: () => select(id),
-        },
-        label,
-      );
-      tabButtons.set(id, button);
-      head.append(button);
-    }
-    const select = (id: string) => {
-      for (const [key, button] of tabButtons) button.setAttribute("aria-selected", String(key === id));
-      body.replaceChildren(panels.get(id)!);
-      prefs.set(`${side}.tab`, id);
-    };
-    head.append(h("span", { class: "spacer" }), h("span", { class: "rail-title" }, title), toggle);
-    if (side === "left") head.prepend(toggle);
-    el.append(head, body);
-    const remembered = prefs.get(`${side}.tab`);
-    select(remembered && panels.has(remembered) ? remembered : tabs[0][0]);
-    return { el, panels, select, side };
-  }
-
   private buildLayout(): void {
-    const layoutGroup = h("div", { class: "segmented hide-narrow", role: "group", "aria-label": "Layout" });
-    for (const [value, label] of LAYOUTS) {
-      const button = h(
-        "button",
-        { type: "button", "aria-pressed": "false", onclick: () => this.run(`view.layout.${value}`) },
-        label,
-      );
-      this.layoutButtons.set(value, button);
-      layoutGroup.append(button);
-    }
     const topbar = h(
       "header",
       { class: "topbar" },
-      h("div", { class: "brand" }, mark(), h("span", { class: "brand-name" }, "ngplatform"), h("span", { class: "chip" }, "preview")),
+      h("div", { class: "brand" }, mark(), h("span", { class: "brand-name" }, "ngplatform")),
       h(
         "div",
         { class: "group" },
-        h("button", { class: "btn outline", type: "button", onclick: () => this.run("workspace.open") }, icon("open"), "Open"),
-        h("button", { class: "btn", type: "button", onclick: () => this.run("workspace.share") }, icon("link"), "Share"),
-        h(
-          "button",
-          { class: "btn hide-narrow", type: "button", onclick: () => this.run("workspace.copyState") },
-          icon("copy"),
-          "Copy state",
-        ),
+        h("button", { class: "btn outline", type: "button", onclick: () => this.wb.run("workspace.open") }, icon("open"), "Open"),
+        h("button", { class: "btn outline", type: "button", onclick: () => this.wb.run("dataset.add") }, icon("plus"), h("span", { class: "hide-narrow" }, "Dataset")),
+        h("button", { class: "btn", type: "button", onclick: () => this.wb.run("workspace.share") }, icon("link"), h("span", { class: "hide-narrow" }, "Share")),
       ),
       h("span", { class: "sep hide-narrow" }),
       h("div", { class: "group" }, this.undoButton, this.redoButton),
       h("span", { class: "sep hide-narrow" }),
-      layoutGroup,
+      this.sceneTabs,
       h("span", { class: "spacer" }),
       h("div", { class: "status", role: "status" }, this.statusDot, this.statusText),
       h(
+        "div",
+        { class: "group hide-narrow" },
+        iconButton("camera", "Screenshot", () => this.wb.run("view.screenshot")),
+        iconButton("settings", "View settings", () => this.wb.run("view.settings")),
+        iconButton("keyboard", "Keyboard and mouse", () => this.wb.run("help.shortcuts")),
+      ),
+      h(
         "button",
-        { class: "palette-trigger", type: "button", onclick: () => this.run("help.palette"), "aria-label": "Search commands" },
+        { class: "palette-trigger", type: "button", onclick: () => this.wb.run("help.palette"), "aria-label": "Search commands" },
         icon("search"),
-        h("span", { class: "grow" }, "Search commands"),
+        h("span", { class: "grow" }, "Commands"),
         h("kbd", {}, keyLabel("Mod+K")),
       ),
     );
-
     const engine = h("section", { class: "engine", "aria-label": "Viewer" }, this.engineHost);
-    const leftResizer = h("div", { class: "resizer", role: "separator", "aria-orientation": "vertical" });
-    const rightResizer = h("div", { class: "resizer", role: "separator", "aria-orientation": "vertical" });
-    this.workspace.append(this.left.el, leftResizer, engine, rightResizer, this.right.el);
-    this.bindResizer(leftResizer, "left");
-    this.bindResizer(rightResizer, "right");
-
-    this.right.panels.get("inspector")!.append(
-      h("div", { class: "section" }, h("h3", { class: "section-title" }, "Selected layer"), this.selectionBox),
-      h("div", { class: "section" }, h("h3", { class: "section-title" }, "Pointer"), this.cursorBox),
-      h("div", { class: "section" }, h("h3", { class: "section-title" }, "Under the pointer"), this.valuesBox),
+    const centre = h("div", { class: "centre" }, engine, this.statusStrip);
+    const workspace = h(
+      "div",
+      { class: "workspace" },
+      this.docks.element("left"),
+      this.docks.resizer("left"),
+      centre,
+      this.docks.resizer("right"),
+      this.docks.element("right"),
     );
-    renderPlugins(this.left.panels.get("plugins")!);
-    this.bottom.panels.get("activity")!.append(this.log.element);
-    this.bottom.panels
-      .get("jobs")!
-      .append(
-        h(
-          "p",
-          { class: "empty" },
-          "No jobs running. Filters, statistics and Python scripts will queue here, with progress and a cancel button, once the compute runtime lands.",
-        ),
-      );
-    this.bottom.panels
-      .get("python")!
-      .append(
-        h(
-          "p",
-          { class: "empty" },
-          "A Python console (Pyodide, in a worker) will run here, with the workspace exposed as ",
-          h("code", {}, "platform"),
-          ". Not in this preview.",
-        ),
-      );
-
-    this.root.append(topbar, this.workspace, this.bottom.el);
+    this.root.append(topbar, workspace, this.docks.resizer("bottom"), this.docks.element("bottom"));
     const narrow = window.matchMedia("(max-width: 760px)");
-    for (const side of ["left", "right", "bottom"] as const) {
-      const size = prefs.get(`${side}.size`);
-      if (size) this.root.style.setProperty(`--${side}`, size);
-      if (prefs.get(`${side}.collapsed`) === "1" || (narrow.matches && side !== "bottom")) {
-        this.setCollapsed(side, true, false);
-      }
-    }
-    // Side docks start closed on a narrow screen, and close when one gets narrow.
+    this.docks.restore(narrow.matches);
     narrow.addEventListener("change", () => {
       if (narrow.matches) {
-        this.setCollapsed("left", true, false);
-        this.setCollapsed("right", true, false);
+        this.docks.setCollapsed("left", true, false);
+        this.docks.setCollapsed("right", true, false);
       }
-    });
-  }
-
-  private dockFor(side: "left" | "right" | "bottom") {
-    return side === "left" ? this.left : side === "right" ? this.right : this.bottom;
-  }
-
-  private setCollapsed(side: "left" | "right" | "bottom", collapsed: boolean, remember = true): void {
-    const dock = this.dockFor(side);
-    dock.el.classList.toggle("collapsed", collapsed);
-    if (side !== "bottom") {
-      const resizer = side === "left" ? this.workspace.children[1] : this.workspace.children[3];
-      resizer?.classList.toggle("hidden", collapsed);
-      const narrow = window.matchMedia("(max-width: 760px)").matches;
-      const open = prefs.get(`${side}.size`) || (side === "left" ? "280px" : "300px");
-      this.root.style.setProperty(`--${side}`, collapsed || narrow ? "34px" : open);
-    }
-    if (remember) prefs.set(`${side}.collapsed`, collapsed ? "1" : "0");
-  }
-
-  private toggleDock(side: "left" | "right" | "bottom"): void {
-    this.setCollapsed(side, !this.dockFor(side).el.classList.contains("collapsed"));
-  }
-
-  private bindResizer(resizer: HTMLElement, side: "left" | "right"): void {
-    resizer.addEventListener("pointerdown", (down) => {
-      down.preventDefault();
-      resizer.setPointerCapture(down.pointerId);
-      resizer.classList.add("dragging");
-      const startX = down.clientX;
-      const startWidth = this.dockFor(side).el.getBoundingClientRect().width;
-      const move = (e: PointerEvent) => {
-        const delta = side === "left" ? e.clientX - startX : startX - e.clientX;
-        const width = Math.max(200, Math.min(window.innerWidth * 0.45, startWidth + delta));
-        this.root.style.setProperty(`--${side}`, `${Math.round(width)}px`);
-      };
-      const up = () => {
-        resizer.classList.remove("dragging");
-        resizer.removeEventListener("pointermove", move);
-        resizer.removeEventListener("pointerup", up);
-        prefs.set(`${side}.size`, this.root.style.getPropertyValue(`--${side}`));
-      };
-      resizer.addEventListener("pointermove", move);
-      resizer.addEventListener("pointerup", up);
     });
   }
 
   // ------------------------------------------------------------ wiring
 
-  attach(bridge: ViewerBridge, parseFragment: FragmentParser, defaultExample: string): void {
-    this.bridge = bridge;
-    this.parseFragment = parseFragment;
-    this.registerCommands();
-
-    const refreshLayers = () => {
-      renderWorkspace(this.left.panels.get("workspace")!, bridge);
-      renderSelection(this.selectionBox, bridge);
-      this.updateStatus();
+  attach(engine: Engine, parseFragment: FragmentParser, defaultExample: string): void {
+    const log = new ActivityLog();
+    const commands = new CommandRegistry();
+    commands.useContext(this.context);
+    const keybindings = new KeybindingTable();
+    const inspector = new InspectorRegistry();
+    const examples = new ExampleRegistry();
+    const openHandlers = new OpenHandlerRegistry();
+    const jobs = new JobService();
+    const services = new ServiceRegistry();
+    const store = new WorkspaceStore(engine, {
+      framed,
+      log: (message, level) => log.add(message, level),
+    });
+    const wb: Workbench = {
+      engine,
+      store,
+      commands,
+      keybindings,
+      context: this.context,
+      docks: this.docks,
+      inspector,
+      examples,
+      openHandlers,
+      jobs,
+      services,
+      plugins: undefined as unknown as PluginHost,
+      log,
+      parseFragment,
+      framed,
+      run: (id, args) => {
+        void commands.invoke(id, args).catch((e) => {
+          const message = e instanceof CommandError ? e.message : `${id} failed: ${(e as Error).message}`;
+          log.add(message, "error");
+          toast((e as Error).message, "error");
+        });
+      },
     };
-    bridge.onLayersChanged(refreshLayers);
-    bridge.onSelectionChanged(refreshLayers);
-    bridge.onCursorChanged(() => renderCursor(this.cursorBox, this.valuesBox, bridge.cursor()));
-    renderCursor(this.cursorBox, this.valuesBox, bridge.cursor());
-    bridge.onStateChanged(() => this.scheduleSettle());
-    this.commands.onChange(() => this.updateControls());
+    this.wb = wb;
+    const apis = createPlatformApis(wb);
+    wb.plugins = new PluginHost({
+      commands,
+      keybindings,
+      context: this.context,
+      docks: { addTab: (tab) => this.docks.addTab(tab), show: (id) => this.docks.show(id) },
+      inspector,
+      examples,
+      open: openHandlers,
+      ui: {
+        toast,
+        confirm: (message) => confirmDialog(message),
+        form: (title, schema, initial) => formDialog(title, schema, initial),
+      },
+      workspace: apis.workspace,
+      viewer: apis.viewer,
+      slices: {
+        get: (key) => store.rawSlice(key),
+        set: (key, version, value) => store.setRawSlice(key, version, value),
+        onChanged: (callback) => store.onSliceChanged(callback),
+      },
+      settings: {
+        get: (key) => {
+          const raw = prefs.get(key);
+          if (raw === null) return undefined;
+          try {
+            return JSON.parse(raw);
+          } catch {
+            return undefined;
+          }
+        },
+        set: (key, value) => prefs.set(key, JSON.stringify(value)),
+      },
+      jobs,
+      services,
+      log: (message, level, source) => log.add(message, level, source),
+    });
+
+    this.registerPanels();
+    this.registerCommands();
+    this.registerKeys();
+    registerBuiltins(wb);
+
+    // Neuroglancer's own status messages (loading, errors) go below the views.
+    engine.routeStatusMessages(this.statusStrip, (text, error) => {
+      if (error) log.add(text, "error", "Neuroglancer");
+    });
+
+    const refresh = () => {
+      this.updateContext();
+      this.updateStatus();
+      this.renderSceneTabs();
+      this.updateControls();
+    };
+    store.onChange(refresh);
+    engine.onLayersChanged(refresh);
+    engine.onSelectionChanged(refresh);
+    commands.onChange(() => this.updateControls());
+    jobs.onChange(() => this.updateStatus());
 
     window.addEventListener("keydown", (e) => this.onKey(e), true);
     window.addEventListener("hashchange", () => {
-      if (location.hash !== this.lastHash && location.hash.startsWith("#!")) {
-        void this.openText(location.href, "the address bar");
+      if (location.hash !== store.currentHash && location.hash !== this.lastHashSeen && location.hash.startsWith("#!")) {
+        this.lastHashSeen = location.hash;
+        void this.openText(location.href, "the address bar", false);
       }
     });
 
-    refreshLayers();
     if (location.hash.startsWith("#!")) {
-      void this.openText(location.href, "the link");
+      void this.openText(location.href, "the link", false);
     } else {
-      this.openExample(EXAMPLES.find((e) => e.id === defaultExample) ?? EXAMPLES[0]);
+      const example = examples.get(defaultExample) ?? examples.list()[0];
+      if (example !== undefined) store.open(example.state(), `the example “${example.title}”`);
+      else store.settle();
     }
-    this.log.add(
+    refresh();
+    log.add(
       framed
         ? "Running inside a frame: Share copies the workspace as JSON, since links here cannot carry it."
         : "Ready. The address bar always holds a link to the current workspace.",
     );
   }
 
-  private serialize(): string {
-    return JSON.stringify({ ng: this.bridge.getState(), app: this.app });
-  }
-
-  private scheduleSettle(): void {
-    window.clearTimeout(this.settleTimer);
-    this.settleTimer = window.setTimeout(() => this.settle(), 400);
-  }
-
-  /** Records a settled state: one undo step, and the address bar updated. */
-  private settle(): void {
-    window.clearTimeout(this.settleTimer);
-    this.settleTimer = undefined;
-    const snapshot = this.serialize();
-    this.history.record(snapshot);
-    if (!framed) {
-      const ng = this.bridge.getState();
-      const body = Object.keys(this.app).length ? { ng, app: this.app } : { ng };
-      const hash = "#!" + encodeFragment(JSON.stringify(body));
-      if (hash !== this.lastHash) {
-        this.lastHash = hash;
-        try {
-          history.replaceState(null, "", hash);
-        } catch {
-          // A host that forbids it keeps the old address; Share still works.
-        }
-      }
-    }
-    this.commands.notify();
-    this.updateStatus();
-  }
-
-  private apply(state: WorkspaceState): void {
-    this.app = state.app;
-    this.bridge.setState(state.ng);
-  }
-
-  private open(state: WorkspaceState, from: string): void {
-    this.apply(state);
-    this.settle();
-    const n = layerCount(state.ng);
-    this.log.add(`Opened ${n} layer${n === 1 ? "" : "s"} from ${from}.`, "ok");
-  }
-
-  private openExample(example: Example): void {
-    this.open(example.state(), `the example “${example.title}”`);
-  }
-
-  /** Opens whatever was pasted or linked; returns whether it worked. */
-  async openText(text: string, from: string): Promise<boolean> {
-    try {
-      const parsed = parseInput(text, this.parseFragment);
-      if (parsed.kind === "state") {
-        this.open(parsed.state, from);
-      } else if (parsed.kind === "remote") {
-        this.setStatus("busy", "Fetching state");
-        const response = await fetch(parsed.url);
-        if (!response.ok) throw new InputError(`${parsed.url} answered ${response.status} ${response.statusText}.`);
-        const json = await response.json();
-        const again = parseInput(JSON.stringify(json), this.parseFragment);
-        if (again.kind !== "state") throw new InputError("That URL did not hold a state.");
-        this.open(again.state, parsed.url);
-      } else {
-        this.bridge.addLayer({ name: parsed.name, source: parsed.url });
-        this.settle();
-        this.log.add(`Added layer “${parsed.name}” from ${parsed.url}.`, "ok");
-      }
-      return true;
-    } catch (e) {
-      const message = e instanceof InputError ? e.message : `Could not open that: ${(e as Error).message}`;
-      this.log.add(message, "error");
-      toast(message, "error");
-      this.updateStatus();
-      return false;
-    }
-  }
-
-  private restore(snapshot: string | undefined, verb: string): void {
-    if (snapshot === undefined) return;
-    window.clearTimeout(this.settleTimer);
-    this.apply(JSON.parse(snapshot) as WorkspaceState);
-    this.settle();
-    this.log.add(verb);
+  private registerPanels(): void {
+    const wb = this.wb;
+    const add = (tab: DockTab) => this.docks.addTab(tab);
+    add({ id: "datasets", title: "Datasets", slot: "left", order: 10, render: (host) => renderDatasetsPanel(host, wb) });
+    add({ id: "scenes", title: "Scenes", slot: "left", order: 20, render: (host) => renderScenesPanel(host, wb) });
+    add({ id: "view", title: "View", slot: "left", order: 30, render: (host) => renderNavigationPanel(host, wb) });
+    add({ id: "plugins", title: "Plugins", slot: "left", order: 90, render: (host) => renderPluginsPanel(host, wb) });
+    add({ id: "inspector", title: "Inspector", slot: "right", order: 10, render: (host) => renderInspectorPanel(host, wb) });
+    add({ id: "selection", title: "Selection", slot: "right", order: 20, render: (host) => renderSelectionPanel(host, wb) });
+    add({ id: "pointer", title: "Pointer", slot: "right", order: 30, render: (host) => renderPointerPanel(host, wb) });
+    add({
+      id: "activity",
+      title: "Activity",
+      slot: "bottom",
+      order: 10,
+      render: (host) => {
+        host.append(wb.log.element);
+      },
+    });
+    add({ id: "jobs", title: "Jobs", slot: "bottom", order: 20, render: (host) => renderJobsPanel(host, wb) });
+    add({ id: "statistics", title: "Chunk statistics", slot: "bottom", order: 30, transient: true, render: (host) => renderStatisticsPanel(host, wb) });
+    add({ id: "python", title: "Python", slot: "bottom", order: 40, render: (host) => renderPythonPanel(host) });
   }
 
   // ---------------------------------------------------------- commands
 
-  private run(id: string): void {
-    void this.commands.invoke(id).catch((e) => {
-      this.log.add(`${id} failed: ${(e as Error).message}`, "error");
-      toast((e as Error).message, "error");
-    });
-  }
-
   private registerCommands(): void {
-    const c = this.commands;
-    const add = (command: Command) => c.register(command);
+    const wb = this.wb;
+    const { store, engine, commands: c } = wb;
+    const add = c.register.bind(c);
+
     add({
       id: "help.palette",
       title: "Show all commands",
       group: "Help",
-      keys: "Mod+K",
-      run: () => showPalette(() => c.list(), (command) => this.run(command.id)),
+      run: () =>
+        showPalette(
+          () => c.list(),
+          (command) => c.available(command.id),
+          (command) => command.keys ?? wb.keybindings.keyFor(command.id),
+          (command) => wb.run(command.id),
+        ),
     });
+    add({ id: "help.shortcuts", title: "Keyboard and mouse reference", group: "Help", run: () => showShortcutsSheet(wb) });
+
+    // Workspace
     add({
       id: "workspace.open",
       title: "Open a link, state or data URL…",
       group: "Workspace",
-      keys: "Mod+O",
-      hint: "Neuroglancer links, state JSON, remote state URLs, or a data source to add as a layer",
-      run: () => this.showOpen(),
+      hint: "Neuroglancer links, state JSON, remote state URLs, or a data source to add as a dataset",
+      run: () => showOpenSheet(wb, { openText: (t, f, s) => this.openText(t, f, s), openExample: (id) => this.openExample(id) }),
     });
     add({
       id: "workspace.share",
@@ -446,193 +308,418 @@ export class Shell {
       group: "Workspace",
       hint: framed ? "Copies the workspace as JSON here, since this frame's links cannot carry it" : undefined,
       run: async () => {
-        this.settle();
+        store.settle();
         if (framed) {
-          if (await copyText(this.serialize(), "the workspace")) toast("Copied the workspace as JSON. Paste it into Open to restore it.");
+          if (await copyText(store.serialize(), "the workspace")) toast("Copied the workspace as JSON. Paste it into Open to restore it.");
           return;
         }
-        const link = workspaceLink(location.href, JSON.parse(this.serialize()));
+        const link = workspaceLink(location.href, store.workspace());
         if (await copyText(link, "the link")) toast(`Link copied (${(link.length / 1024).toFixed(1)} KB).`);
-        this.log.add("Copied a link to the workspace.");
+        wb.log.add("Copied a link to the workspace.");
       },
     });
     add({
       id: "workspace.copyState",
-      title: "Copy the Neuroglancer state",
+      title: "Copy this scene as a Neuroglancer state",
       group: "Workspace",
-      hint: "Plain Neuroglancer JSON: paste it into any Neuroglancer's Edit JSON state dialog",
+      hint: "Plain Neuroglancer JSON for any Neuroglancer",
       run: async () => {
-        const json = JSON.stringify(this.bridge.getState(), null, 2);
-        if (await copyText(json, "the state")) toast("Neuroglancer state copied.");
-        this.log.add("Copied the Neuroglancer state.");
+        if (await copyText(JSON.stringify(store.ng(), null, 2), "the state")) toast("Neuroglancer state copied.");
       },
     });
-    for (const example of EXAMPLES) {
-      add({
-        id: `workspace.example.${example.id}`,
-        title: `Open example: ${example.title}`,
-        group: "Examples",
-        hint: example.description,
-        run: () => this.openExample(example),
-      });
-    }
     add({
-      id: "edit.undo",
-      title: "Undo",
-      group: "Edit",
-      keys: "Mod+Z",
-      isAvailable: () => this.history.canUndo,
+      id: "workspace.copyPlainLink",
+      title: "Copy this scene as a plain Neuroglancer link",
+      group: "Workspace",
+      run: async () => {
+        const link = workspaceLink(location.href, { ng: store.ng(), app: {} });
+        if (await copyText(link, "the link")) toast("Plain Neuroglancer link copied.");
+      },
+    });
+    add({
+      id: "workspace.editState",
+      title: "Edit the workspace state as JSON…",
+      group: "Workspace",
+      run: () => showEditStateSheet(wb, (text) => this.openText(text, "the state editor", false)),
+    });
+    add({
+      id: "workspace.example",
+      title: "Open an example",
+      group: "Examples",
+      args: { type: "object", required: ["id"], properties: { id: { type: "string" } } },
+      run: ({ id }: { id: string }) => this.openExample(id),
+    });
+    wb.examples.onChange(() => this.registerExampleCommands());
+    this.registerExampleCommands();
+
+    // Edit
+    add({ id: "edit.undo", title: "Undo", group: "Edit", when: "canUndo", run: () => store.undo() });
+    add({ id: "edit.redo", title: "Redo", group: "Edit", when: "canRedo", run: () => store.redo() });
+
+    // Scenes
+    add({
+      id: "scene.new",
+      title: "New empty scene",
+      group: "Scenes",
+      hint: "Keeps the coordinate space and layout; add datasets to it",
+      args: { type: "object", properties: { name: { type: "string" } } },
+      run: ({ name }: { name?: string }) => store.newScene({ name }),
+    });
+    add({
+      id: "scene.duplicate",
+      title: "Duplicate this scene",
+      group: "Scenes",
+      args: { type: "object", properties: { name: { type: "string" } } },
+      run: ({ name }: { name?: string }) => store.newScene({ copy: true, name }),
+    });
+    add({
+      id: "scene.switch",
+      title: "Switch to a scene",
+      group: "Scenes",
+      args: { type: "object", required: ["id"], properties: { id: { type: "string" } } },
+      run: ({ id }: { id: string }) => store.switchScene(id),
+    });
+    const step = (delta: number) => {
+      const p = store.state();
+      const i = p.scenes.findIndex((s) => s.id === p.activeScene);
+      const next = p.scenes[(i + delta + p.scenes.length) % p.scenes.length];
+      store.switchScene(next.id);
+    };
+    add({ id: "scene.next", title: "Next scene", group: "Scenes", when: "sceneCount != 1", run: () => step(1) });
+    add({ id: "scene.previous", title: "Previous scene", group: "Scenes", when: "sceneCount != 1", run: () => step(-1) });
+    add({
+      id: "scene.rename",
+      title: "Rename this scene…",
+      group: "Scenes",
+      args: { type: "object", properties: { id: { type: "string" }, name: { type: "string" } } },
+      run: async ({ id, name }: { id?: string; name?: string }) => {
+        const scene = store.state().scenes.find((s) => s.id === (id ?? store.state().activeScene));
+        if (scene === undefined) return;
+        const value = name ?? (await promptDialog("Rename scene", "Name", scene.name));
+        if (value !== undefined) store.renameScene(scene.id, value);
+      },
+    });
+    add({
+      id: "scene.delete",
+      title: "Delete this scene…",
+      group: "Scenes",
+      when: "sceneCount != 1",
+      args: { type: "object", properties: { id: { type: "string" }, confirm: { type: "boolean", default: true } } },
+      run: async ({ id, confirm }: { id?: string; confirm: boolean }) => {
+        const scene = store.state().scenes.find((s) => s.id === (id ?? store.state().activeScene));
+        if (scene === undefined) return;
+        if (confirm && !(await confirmDialog(`Delete the scene “${scene.name}”? Undo brings it back.`, "Delete", true))) return;
+        store.deleteScene(scene.id);
+      },
+    });
+
+    // Datasets
+    add({
+      id: "dataset.add",
+      title: "Add a dataset to this scene…",
+      group: "Datasets",
+      args: {
+        type: "object",
+        properties: { source: { type: "string" }, name: { type: "string" }, kind: { type: "string" } },
+      },
+      run: (args: { source?: string; name?: string; kind?: string }) => {
+        if (args.source === undefined) return showAddDatasetSheet(wb);
+        return store.addDataset({ source: args.source, name: args.name ?? layerNameFor(args.source), kind: args.kind });
+      },
+    });
+    const datasetAt = (index: number) => store.sceneDatasets()[index - 1];
+    add({
+      id: "dataset.toggle",
+      title: "Show or hide a dataset by number",
+      group: "Datasets",
+      args: { type: "object", required: ["index"], properties: { index: { type: "integer", minimum: 1 } } },
+      run: ({ index }: { index: number }) => {
+        const entry = datasetAt(index);
+        if (entry === undefined) return;
+        const visible = engine.layers().some((l) => entry.layers.includes(l.name) && l.visible);
+        store.setDatasetVisible(entry.dataset.id, !visible);
+      },
+    });
+    add({
+      id: "dataset.select",
+      title: "Select a dataset by number",
+      group: "Datasets",
+      args: { type: "object", required: ["index"], properties: { index: { type: "integer", minimum: 1 } } },
+      run: ({ index }: { index: number }) => {
+        const entry = datasetAt(index);
+        if (entry === undefined) return;
+        store.selectDataset(entry.dataset.id);
+        this.docks.show("inspector");
+      },
+    });
+    const datasetArg = { type: "object" as const, properties: { id: { type: "string" as const } } };
+    const selectedDatasetId = (id?: string) => id ?? inspectorTarget(wb).dataset?.id;
+    add({
+      id: "dataset.remove",
+      title: "Remove the selected dataset from this scene",
+      group: "Datasets",
+      when: "selectedLayer",
+      args: datasetArg,
+      run: ({ id }: { id?: string }) => {
+        const target = selectedDatasetId(id);
+        if (target !== undefined) store.removeDatasetFromScene(target);
+      },
+    });
+    add({
+      id: "dataset.delete",
+      title: "Delete the selected dataset from the workspace…",
+      group: "Datasets",
+      args: { type: "object", properties: { id: { type: "string" }, confirm: { type: "boolean", default: true } } },
+      run: async ({ id, confirm }: { id?: string; confirm: boolean }) => {
+        const target = selectedDatasetId(id);
+        const dataset = target === undefined ? undefined : store.dataset(target);
+        if (dataset === undefined) return;
+        if (confirm && !(await confirmDialog(`Delete “${dataset.name}” from the workspace and every scene? Undo brings it back.`, "Delete", true))) return;
+        store.deleteDataset(dataset.id);
+      },
+    });
+    add({
+      id: "dataset.rename",
+      title: "Rename the selected dataset…",
+      group: "Datasets",
+      when: "selectedLayer",
+      args: { type: "object", properties: { id: { type: "string" }, name: { type: "string" } } },
+      run: async ({ id, name }: { id?: string; name?: string }) => {
+        const target = selectedDatasetId(id);
+        const dataset = target === undefined ? undefined : store.dataset(target);
+        if (dataset === undefined) return;
+        const value = name ?? (await promptDialog("Rename dataset", "Name", dataset.name));
+        if (value !== undefined) store.renameDataset(dataset.id, value);
+      },
+    });
+    add({
+      id: "dataset.addView",
+      title: "Add another view of the selected dataset",
+      group: "Datasets",
+      hint: "A second layer of the same data, with its own colours and settings",
+      when: "selectedLayer",
       run: () => {
-        this.settle();
-        this.restore(this.history.undo(), "Undid the last change.");
+        const { dataset, layer } = inspectorTarget(wb);
+        if (dataset !== undefined) store.addLayerView(dataset.id, layer?.name);
       },
     });
     add({
-      id: "edit.redo",
-      title: "Redo",
-      group: "Edit",
-      keys: "Mod+Shift+Z",
-      isAvailable: () => this.history.canRedo,
-      run: () => this.restore(this.history.redo(), "Redid the change."),
+      id: "dataset.showAll",
+      title: "Show every dataset in this scene",
+      group: "Datasets",
+      when: "hasLayers",
+      run: () => store.sceneDatasets().forEach((d) => store.setDatasetVisible(d.dataset.id, true)),
+    });
+
+    // View
+    const layoutIds = LAYOUTS.map(([value]) => value);
+    add({
+      id: "view.layout",
+      title: "Set the layout",
+      group: "View",
+      args: { type: "object", required: ["layout"], properties: { layout: { type: "string", enum: layoutIds } } },
+      run: ({ layout }: { layout: string }) => {
+        engine.setLayout(layout);
+        store.scheduleSettle();
+      },
     });
     for (const [value, label] of LAYOUTS) {
-      add({
-        id: `view.layout.${value}`,
-        title: `Layout: ${label}`,
-        group: "View",
-        run: () => {
-          this.bridge.setLayout(value);
-          this.updateControls();
-        },
-      });
+      add({ id: `view.layout.${value}`, title: `Layout: ${label}`, group: "View", run: () => c.invoke("view.layout", { layout: value }) });
     }
-    add({ id: "view.dock.left", title: "Show or hide the workspace dock", group: "View", run: () => this.toggleDock("left") });
-    add({ id: "view.dock.right", title: "Show or hide the inspector", group: "View", run: () => this.toggleDock("right") });
-    add({ id: "view.dock.bottom", title: "Show or hide the activity dock", group: "View", run: () => this.toggleDock("bottom") });
+    add({ id: "view.zoomIn", title: "Zoom in", group: "View", run: () => engine.zoom(0.5) });
+    add({ id: "view.zoomOut", title: "Zoom out", group: "View", run: () => engine.zoom(2) });
+    add({ id: "view.resetRotation", title: "Reset the rotation", group: "View", run: () => engine.resetOrientation() });
+    add({
+      id: "view.setPosition",
+      title: "Go to a position",
+      group: "View",
+      args: { type: "object", required: ["position"], properties: { position: { type: "array", items: { type: "number" } } } },
+      run: ({ position }: { position: number[] }) => engine.setPosition(position),
+    });
+    add({ id: "view.settings", title: "View settings…", group: "View", run: () => showSettingsSheet(wb) });
+    add({ id: "view.screenshot", title: "Screenshot…", group: "View", run: () => engine.showScreenshotDialog() });
+    const options: [string, string][] = [
+      ["showAxisLines", "axis lines"],
+      ["showScaleBar", "scale bar"],
+      ["showSlices", "cross sections in 3D"],
+      ["showDefaultAnnotations", "bounding boxes"],
+      ["wireFrame", "wire frame"],
+    ];
+    add({
+      id: "view.toggleOption",
+      title: "Toggle a display option",
+      group: "View",
+      args: { type: "object", required: ["option"], properties: { option: { type: "string", enum: options.map(([k]) => k) } } },
+      run: ({ option }: { option: string }) => engine.setViewOption(option, !engine.viewOptions()[option]),
+    });
+    for (const [key, label] of options) {
+      add({ id: `view.toggle.${key}`, title: `Show or hide ${label}`, group: "View", run: () => c.invoke("view.toggleOption", { option: key }) });
+    }
+    for (const [slot, title] of [
+      ["left", "workspace"],
+      ["right", "inspector"],
+      ["bottom", "activity"],
+    ] as const) {
+      add({ id: `view.dock.${slot}`, title: `Show or hide the ${title} dock`, group: "View", run: () => this.docks.toggle(slot) });
+    }
+    for (const [tab, title] of [
+      ["datasets", "Datasets"],
+      ["scenes", "Scenes"],
+      ["view", "View"],
+      ["inspector", "Inspector"],
+      ["selection", "Selection"],
+      ["pointer", "Pointer"],
+      ["activity", "Activity"],
+      ["jobs", "Jobs"],
+      ["statistics", "Chunk statistics"],
+      ["plugins", "Plugins"],
+    ]) {
+      add({ id: `panel.${tab}`, title: `Show the ${title} panel`, group: "Panels", run: () => this.docks.show(tab) });
+    }
+  }
+
+  private exampleCommands: (() => void)[] = [];
+
+  private registerExampleCommands(): void {
+    this.exampleCommands.splice(0).forEach((d) => d());
+    for (const example of this.wb.examples.list()) {
+      this.exampleCommands.push(
+        this.wb.commands.register({
+          id: `workspace.example.${example.id}`,
+          title: `Open example: ${example.title}`,
+          group: "Examples",
+          hint: example.description,
+          owner: example.owner,
+          run: () => this.openExample(example.id),
+        }),
+      );
+    }
+  }
+
+  private registerKeys(): void {
+    const k = this.wb.keybindings;
+    k.add({ key: "mod+k", command: "help.palette", inInputs: true });
+    k.add({ key: "mod+o", command: "workspace.open", inInputs: true });
+    k.add({ key: "mod+z", command: "edit.undo" });
+    k.add({ key: "mod+shift+z", command: "edit.redo" });
+    k.add({ key: "mod+y", command: "edit.redo" });
+    k.add({ key: "mod+/", command: "help.shortcuts" });
+    k.add({ key: "shift+n", command: "dataset.add" });
+    k.add({ key: "alt+pagedown", command: "scene.next" });
+    k.add({ key: "alt+pageup", command: "scene.previous" });
+    for (let i = 1; i <= 9; i++) {
+      k.add({ key: String(i), command: "dataset.toggle", args: { index: i } });
+      k.add({ key: `alt+${i}`, command: "dataset.select", args: { index: i } });
+    }
   }
 
   private onKey(e: KeyboardEvent): void {
-    const key = keyOf(e, isMac());
-    const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
-    const bindings: Record<string, string> = {
-      "mod+k": "help.palette",
-      "mod+o": "workspace.open",
-    };
-    if (!typing) {
-      bindings["mod+z"] = "edit.undo";
-      bindings["mod+shift+z"] = "edit.redo";
-      bindings["mod+y"] = "edit.redo";
-    }
-    const id = bindings[key];
-    if (id === undefined) return;
-    e.preventDefault();
-    e.stopPropagation();
-    if (sheetIsOpen() && id === "help.palette") {
+    const target = e.target as HTMLElement | null;
+    const typing =
+      target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable === true;
+    // A digit typed with Shift arrives as "!", "@"…; use the physical key for digits.
+    const key = /^Digit\d$/.test(e.code) ? keyFromCode(e) : keyFromEvent(e);
+    const binding = this.wb.keybindings.resolve(key, this.context.all(), typing);
+    if (binding === undefined) return;
+    if (sheetIsOpen() && binding.command === "help.palette") {
+      e.preventDefault();
       closeSheet();
       return;
     }
-    this.run(id);
+    if (sheetIsOpen()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    this.wb.run(binding.command, binding.args);
   }
 
-  // ------------------------------------------------------------ dialogs
+  // -------------------------------------------------------------- open
 
-  private showOpen(): void {
-    const input = h("textarea", {
-      class: "state-input",
-      id: "open-input",
-      placeholder: "https://…/#!{…}   or   {\"layers\": …}   or   gs://bucket/store.zarrvectors/|zarr-vectors:",
-      "aria-label": "Link, state or data URL",
-      spellcheck: "false",
-    });
-    const detected = h("span", { class: "detected" }, "Paste something to open.");
-    const openButton = h("button", { class: "btn primary", type: "button", disabled: true }, "Open");
-    const describe = () => {
-      if (input.value.trim() === "") {
-        detected.textContent = "Paste something to open.";
-        detected.classList.remove("bad");
-        openButton.disabled = true;
-        return;
+  private openExample(id: string): void {
+    const example = this.wb.examples.get(id);
+    if (example === undefined) throw new CommandError(`no example ${id}`);
+    this.wb.store.open(example.state(), `the example “${example.title}”`);
+  }
+
+  /** Opens whatever was pasted or linked; returns whether it worked. */
+  async openText(text: string, from: string, asScene: boolean): Promise<boolean> {
+    const { store, log } = this.wb;
+    try {
+      const handler = this.wb.openHandlers.match(text);
+      if (handler !== undefined) {
+        await handler.open(text.trim());
+        return true;
       }
-      try {
-        const parsed = parseInput(input.value, this.parseFragment);
-        detected.classList.remove("bad");
-        openButton.disabled = false;
-        if (parsed.kind === "state") {
-          const n = layerCount(parsed.state.ng);
-          detected.textContent = `Neuroglancer state, ${n} layer${n === 1 ? "" : "s"}${Object.keys(parsed.state.app).length ? ", with app state" : ""}. Replaces the workspace.`;
-          openButton.textContent = "Open";
-        } else if (parsed.kind === "remote") {
-          detected.textContent = "A state stored at a URL. It will be fetched and opened.";
-          openButton.textContent = "Fetch and open";
-        } else {
-          detected.textContent = `A data source. Adds the layer “${parsed.name}”.`;
-          openButton.textContent = "Add layer";
-        }
-      } catch (e) {
-        detected.textContent = (e as Error).message;
-        detected.classList.add("bad");
-        openButton.disabled = true;
+      const parsed = parseInput(text, this.wb.parseFragment);
+      if (parsed.kind === "state") {
+        const hasScenes = (parsed.state.app.platform as { scenes?: unknown[] } | undefined)?.scenes !== undefined;
+        if (asScene && !hasScenes) store.openAsScene(parsed.state.ng, "Opened scene", from);
+        else store.open(parsed.state, from);
+      } else if (parsed.kind === "remote") {
+        this.setStatus("busy", "Fetching state");
+        const response = await fetch(parsed.url);
+        if (!response.ok) throw new InputError(`${parsed.url} answered ${response.status} ${response.statusText}.`);
+        const json = await response.json();
+        const again = parseInput(JSON.stringify(json), this.wb.parseFragment);
+        if (again.kind !== "state") throw new InputError("That URL did not hold a state.");
+        if (asScene) store.openAsScene(again.state.ng, layerNameFor(parsed.url), parsed.url);
+        else store.open(again.state, parsed.url);
+      } else {
+        store.addDataset({ source: parsed.url, name: parsed.name });
+        this.docks.show("datasets");
       }
-    };
-    input.addEventListener("input", describe);
-    const submit = async () => {
-      if (openButton.disabled) return;
-      if (await this.openText(input.value, "pasted text")) closeSheet();
-    };
-    openButton.addEventListener("click", submit);
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        void submit();
-      }
-    });
-    const examples = h(
-      "div",
-      { class: "examples" },
-      ...EXAMPLES.map((example) =>
+      return true;
+    } catch (e) {
+      const message = e instanceof InputError ? e.message : `Could not open that: ${(e as Error).message}`;
+      log.add(message, "error");
+      toast(message, "error");
+      this.updateStatus();
+      return false;
+    }
+  }
+
+  // ----------------------------------------------------------- display
+
+  private updateContext(): void {
+    const { engine, store } = this.wb;
+    const layers = engine.layers();
+    const target = inspectorTarget(this.wb);
+    const set = (key: string, value: unknown) => this.context.set(key, value);
+    set("hasLayers", layers.length > 0);
+    set("sceneIsEmpty", layers.length === 0);
+    set("sceneCount", store.state().scenes.length);
+    set("selectedLayer", target.layer?.name);
+    set("selectedLayerType", target.layer?.type);
+    set("datasetKind", target.dataset?.kind);
+    set("sourceFormat", contextKeyFor(target.layer?.sources[0]));
+    set("canUndo", store.history.canUndo);
+    set("canRedo", store.history.canRedo);
+    set("framed", framed);
+    const kinds = new Set(store.sceneDatasets().map((d) => d.dataset.kind));
+    for (const kind of kinds) this.wb.plugins.datasetKindSeen(kind);
+  }
+
+  private renderSceneTabs(): void {
+    const p = this.wb.store.state();
+    const current = activeScene(p);
+    this.sceneTabs.replaceChildren(
+      ...p.scenes.map((scene) =>
         h(
-          "div",
-          { class: "example" },
-          h("span", { class: "title" }, example.title),
-          h(
-            "span",
-            { class: "desc" },
-            example.description + (example.remote && framed ? " Needs a hosted copy of the app: this frame only reaches files bundled with it." : ""),
-          ),
-          h(
-            "button",
-            {
-              class: "btn outline",
-              type: "button",
-              disabled: example.remote && framed,
-              onclick: () => {
-                closeSheet();
-                this.openExample(example);
-              },
-            },
-            "Open",
-          ),
+          "button",
+          {
+            class: "scene-tab",
+            type: "button",
+            role: "tab",
+            "aria-selected": String(scene.id === current.id),
+            title: scene.id === current.id ? "Double-click to rename" : `Switch to ${scene.name}`,
+            onclick: () => this.wb.store.switchScene(scene.id),
+            ondblclick: () => this.wb.run("scene.rename", { id: scene.id }),
+          },
+          scene.name,
         ),
       ),
+      iconButton("plus", "New scene", () => this.wb.run("scene.new"), { class: "btn icon scene-add" }),
     );
-    const sheet = h(
-      "div",
-      { class: "sheet", role: "dialog", "aria-label": "Open" },
-      h("div", { class: "sheet-head" }, h("h2", { class: "sheet-title" }, "Open")),
-      h(
-        "div",
-        { class: "sheet-body" },
-        input,
-        h("h3", { class: "section-title" }, "Examples"),
-        examples,
-      ),
-      h("div", { class: "sheet-foot" }, detected, h("button", { class: "btn", type: "button", onclick: () => closeSheet() }, "Cancel"), openButton),
-    );
-    showSheet(sheet);
-    input.focus();
   }
-
-  // ------------------------------------------------------------- status
 
   private setStatus(kind: "ok" | "busy" | "err" | "idle", text: string): void {
     this.statusDot.className = kind === "idle" ? "dot" : `dot ${kind}`;
@@ -640,21 +727,41 @@ export class Shell {
   }
 
   private updateStatus(): void {
-    if (this.bridge === undefined) return;
-    const layers = this.bridge.layers();
-    if (layers.length === 0) {
-      this.setStatus("idle", "No layers");
-      return;
-    }
-    const loading = layers.filter((l) => !l.ready).length;
-    if (loading > 0) this.setStatus("busy", `Loading ${loading} of ${layers.length} layer${layers.length === 1 ? "" : "s"}`);
+    if (this.wb === undefined) return;
+    const layers = this.wb.engine.layers();
+    const jobs = this.wb.jobs.running();
+    const failed = layers.filter((l) => l.error !== undefined).length;
+    const loading = layers.filter((l) => !l.ready && l.error === undefined).length;
+    const n = layersOf(this.wb.store.ng()).length;
+    if (n === 0 && jobs === 0) this.setStatus("idle", "Empty scene");
+    else if (failed > 0) this.setStatus("err", `${failed} of ${layers.length} failed to load`);
+    else if (loading > 0) this.setStatus("busy", `Loading ${loading} of ${layers.length}`);
+    else if (jobs > 0) this.setStatus("busy", `${jobs} job${jobs === 1 ? "" : "s"} running`);
     else this.setStatus("ok", `${layers.length} layer${layers.length === 1 ? "" : "s"} ready`);
   }
 
   private updateControls(): void {
-    this.undoButton.disabled = !this.commands.available("edit.undo");
-    this.redoButton.disabled = !this.commands.available("edit.redo");
-    const current = this.bridge?.layout();
-    for (const [value, button] of this.layoutButtons) button.setAttribute("aria-pressed", String(value === current));
+    this.undoButton.disabled = !this.wb.commands.available("edit.undo");
+    this.redoButton.disabled = !this.wb.commands.available("edit.redo");
   }
+}
+
+function keyFromEvent(e: KeyboardEvent): string {
+  const parts: string[] = [];
+  if (isMac() ? e.metaKey : e.ctrlKey) parts.push("mod");
+  if (e.altKey) parts.push("alt");
+  if (e.shiftKey) parts.push("shift");
+  // Alt changes the character on macOS; the physical key is what is bound.
+  const key = e.altKey && /^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : e.key.toLowerCase();
+  parts.push(key === " " ? "space" : key);
+  return parts.join("+");
+}
+
+function keyFromCode(e: KeyboardEvent): string {
+  const parts: string[] = [];
+  if (isMac() ? e.metaKey : e.ctrlKey) parts.push("mod");
+  if (e.altKey) parts.push("alt");
+  if (e.shiftKey) parts.push("shift");
+  parts.push(e.code.slice(5));
+  return parts.join("+");
 }
