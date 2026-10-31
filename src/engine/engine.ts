@@ -160,6 +160,8 @@ function layerError(managed: ManagedUserLayer): string | undefined {
 export class Engine {
   readonly viewer: Viewer;
   private readonly disposers: Disposer[] = [];
+  /** How many docked copies of each location-driven panel are mounted. */
+  private readonly docked = { selection: 0, statistics: 0 };
 
   constructor(readonly host: HTMLElement) {
     this.viewer = makeMinimalViewer({
@@ -212,6 +214,10 @@ export class Engine {
       else child.reset();
     }
     state.restoreState(ng);
+    // Docked panels draw only while their location is visible; a restored
+    // state without them would hide them.
+    if (this.docked.selection > 0) this.viewer.selectionDetailsState.location.visible = true;
+    if (this.docked.statistics > 0) this.viewer.statisticsDisplayState.location.visible = true;
   }
 
   onStateChanged(callback: () => void): Disposer {
@@ -483,15 +489,15 @@ export class Engine {
   mountSelection(host: HTMLElement): Disposer {
     const v = this.viewer;
     const location = v.selectionDetailsState.location;
-    const wasVisible = location.visible;
     location.visible = true;
+    this.docked.selection++;
     const undock = dockPanel(
       host,
       new SelectionDetailsPanel(DOCKED_PANEL_MANAGER, v.selectionDetailsState, v.layerSpecification, v.selectedLayer),
     );
     return () => {
       undock();
-      location.visible = wasVisible;
+      if (--this.docked.selection === 0) location.visible = false;
     };
   }
 
@@ -503,10 +509,11 @@ export class Engine {
     const v = this.viewer;
     const location = v.statisticsDisplayState.location;
     location.visible = true;
+    this.docked.statistics++;
     const undock = dockPanel(host, new StatisticsPanel(DOCKED_PANEL_MANAGER, v.chunkQueueManager, v.statisticsDisplayState));
     return () => {
       undock();
-      location.visible = false;
+      if (--this.docked.statistics === 0) location.visible = false;
     };
   }
 
