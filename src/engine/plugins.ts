@@ -1,14 +1,21 @@
 /**
- * The Neuroglancer plugins the platform loads: data sources packaged outside
- * Neuroglancer.  Each has a main-thread half, imported here, and worker
- * halves, imported by the platform's own worker scripts (./workers/), which
- * Neuroglancer starts instead of its defaults.
- *
- * To add one: import its main-thread module below and its worker modules in
- * ./workers/chunk_worker.ts and ./workers/async_worker.ts.
+ * Loads the data type plugins that are on: their Neuroglancer main-thread
+ * modules now, and their worker modules in the workers, which Neuroglancer
+ * starts from the platform's own scripts (./workers/) with the plugins named.
+ * Runs before the viewer exists, once per page load.
  */
-import "neuroglancer-zarr-vectors";
 import { setAsyncComputationWorkerFactory, setChunkWorkerFactory } from "./neuroglancer.js";
+import { workerName } from "./workers/plugins.js";
 
-setChunkWorkerFactory(() => new Worker(new URL("./workers/chunk_worker.ts", import.meta.url), { type: "module" }));
-setAsyncComputationWorkerFactory(() => new Worker(new URL("./workers/async_worker.ts", import.meta.url), { type: "module" }));
+export interface DataTypePlugin {
+  id: string;
+  /** The plugin's Neuroglancer main-thread module (registers its data source). */
+  neuroglancer: () => Promise<unknown>;
+}
+
+export async function loadDataTypePlugins(plugins: DataTypePlugin[]): Promise<void> {
+  for (const plugin of plugins) await plugin.neuroglancer();
+  const name = workerName(plugins.map((p) => p.id));
+  setChunkWorkerFactory(() => new Worker(new URL("./workers/chunk_worker.ts", import.meta.url), { type: "module", name }));
+  setAsyncComputationWorkerFactory(() => new Worker(new URL("./workers/async_worker.ts", import.meta.url), { type: "module", name }));
+}

@@ -29,6 +29,7 @@
  * the same values per fragment, so geometry and properties agree.
  */
 
+import { isDenseLayout, SPANS_PATH } from "./dense_manifests.js";
 import type { ElementType } from "./dtype.js";
 import {
   decodeFloat32,
@@ -64,8 +65,10 @@ export interface ZarrVectorsObjectTable {
   segmentIds: BigUint64Array;
   /** Where the segment ids came from, for diagnostics. */
   idSource: "segment_id" | "object_ids" | "row";
-  /** `object_index/manifests` metadata, for per-object reads. */
+  /** `object_index/manifests` metadata (`manifest_spans` in the dense layout). */
   manifestsJson: any | undefined;
+  /** Format 0.9.4's dense layout: manifests as span and block arrays. */
+  dense: boolean;
   /** `object_index` group attributes. */
   objectIndexAttrs: any;
 }
@@ -186,10 +189,11 @@ async function loadObjectTable(
   if (objectIndex === undefined) return undefined;
   const objectIndexAttrs = objectIndex.attributes ?? {};
   checkObjectIndexLayout(objectIndexAttrs);
+  const dense = isDenseLayout(objectIndexAttrs);
   const [manifests, objectIdsReader, segmentIdReader] = await Promise.all([
     readJson(
       access.read,
-      `${levelPath}/object_index/manifests/zarr.json`,
+      `${levelPath}/${dense ? SPANS_PATH : "object_index/manifests"}/zarr.json`,
       signal,
     ),
     // Only the v2 layout has object ids; v1 rows are the ids.
@@ -251,6 +255,7 @@ async function loadObjectTable(
     segmentIds,
     idSource,
     manifestsJson: manifests,
+    dense,
     objectIndexAttrs,
   };
 }

@@ -4,11 +4,13 @@ A research workspace around [Neuroglancer](https://github.com/google/neuroglance
 paste a Neuroglancer link, a state or a data URL; organise data into
 datasets and scenes; share the workspace as a link; extend it with plugins.
 
-Neuroglancer is the rendering engine and nothing else: the views show only
-data. Everything Neuroglancer offers around them (the layer list, each
-layer's controls, selection details, position, settings, help, statistics,
-status messages) is reached through the platform's own interface, which
-mounts Neuroglancer's widgets in its docks where they exist.
+The viewer is for looking: the views, the position in their top left and
+each panel's layout buttons in its top right, as in standard Neuroglancer.
+Managing data happens around it: **Datasets** and **Scenes** on the left,
+the selected dataset's **Layer** controls (Neuroglancer's own tabs) on the
+right, settings, screenshots and the keyboard reference in the top bar.
+Plugins add tabs on the left and formats to the viewer, and are switched on
+and off in the **Plugins** tab.
 
 Where things stand, and what comes next: [`STATUS.md`](STATUS.md). Writing a
 plugin: [`docs/plugins.md`](docs/plugins.md). The plan:
@@ -23,7 +25,8 @@ can host, and incremental layer restore. Zarr Vectors support is not in
 Neuroglancer: it is a Neuroglancer plugin,
 [`packages/neuroglancer-zarr-vectors`](packages/neuroglancer-zarr-vectors/),
 which any application embedding Neuroglancer can add, and which the
-platform loads in `src/engine/plugins.ts`.
+platform loads as a data type plugin. How plugins are installed and switched:
+[`docs/plugins.md`](docs/plugins.md).
 
 ## Develop
 
@@ -69,13 +72,14 @@ draw Neuroglancer's views, so the checks that need drawing are skipped.
 
 | Path | What |
 |---|---|
-| `src/engine/` | The only code that touches Neuroglancer: `neuroglancer.ts` (every import), `engine.ts` (the engine with no interface of its own, and the widgets it lends the docks), `plugins.ts` and `workers/` (Neuroglancer plugins: their main-thread and worker halves) |
+| `src/engine/` | The only code that touches Neuroglancer: `neuroglancer.ts` (every import), `engine.ts` (the engine with no interface of its own, and the widgets it lends the docks), `plugins.ts` and `workers/` (data type plugins: their main-thread and worker halves, loaded when switched on) |
 | `packages/neuroglancer-zarr-vectors/` | The Zarr Vectors data source as a Neuroglancer plugin: its own package, tests and fixtures, no dependency on the platform |
 | `src/core/` | Pure logic, unit-tested: the workspace model (scenes, datasets), state I/O, undo history, commands, key bindings, `when` clauses, schemas, state slices |
 | `src/platform/` | Services: the workspace store, the plugin host, jobs, registries |
 | `src/sdk/` | The plugin API: `PlatformContext` and the manifest |
 | `src/ui/` | The shell, docks, panels, dialogs and styles |
-| `src/builtins/` | Built-in contributions: examples, the Source section, zarr-vectors store facts (as a plugin) |
+| `src/plugins/` | The plugin catalogue, and the Track filtering tool plugin |
+| `src/builtins/` | Built-in examples |
 | `e2e/smoke.mjs` | Browser smoke test |
 
 ## Known limits

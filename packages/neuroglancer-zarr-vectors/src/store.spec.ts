@@ -161,6 +161,9 @@ describe("per-object reads reproduce the writer's polylines", () => {
     "poly_zstd_shard",
     "poly_multichunk",
     "poly_f64",
+    // Format 0.9.4's dense object index, int64 and int32 blocks.
+    "poly_dense",
+    "poly_dense_i32",
   ]) {
     it(name, async () => {
       expectSamePolylines(await readAllPolylines(name));
@@ -388,9 +391,28 @@ describe("objects read from their own rows", () => {
   });
 });
 
+describe("format 0.9.4's dense object index", () => {
+  it("reads the same object table as the vlen layout", async () => {
+    const vlen = await readObjectTable(access("poly_zstd"), "0");
+    for (const name of ["poly_dense", "poly_dense_i32"]) {
+      const table = await readObjectTable(access(name), "0");
+      expect(table?.dense, name).toBe(true);
+      expect(table?.numObjects, name).toBe(vlen?.numObjects);
+      expect(Array.from(table!.segmentIds), name).toEqual(
+        Array.from(vlen!.segmentIds),
+      );
+    }
+  });
+
+  it("opens with no warning about the layout", async () => {
+    const store = await open("poly_dense");
+    expect(store.warnings.filter((w: string) => /dense/.test(w))).toEqual([]);
+  });
+});
+
 describe("dense chunks", () => {
   it("bridge every curve across chunk faces with global ids", async () => {
-    for (const name of ["poly_raw", "poly_zstd_shard"]) {
+    for (const name of ["poly_raw", "poly_zstd_shard", "poly_dense"]) {
       const store = await open(name);
       const pipeline = new LevelPipeline(
         access(name),

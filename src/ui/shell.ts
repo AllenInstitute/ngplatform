@@ -12,9 +12,11 @@ import { activeScene, layersOf } from "../core/workspace.js";
 import { type Engine, LAYOUTS } from "../engine/engine.js";
 import { JobService } from "../platform/jobs.js";
 import { PluginHost } from "../platform/plugin_host.js";
-import { ExampleRegistry, InspectorRegistry, OpenHandlerRegistry } from "../platform/registries.js";
+import { ExampleRegistry, OpenHandlerRegistry } from "../platform/registries.js";
 import { ServiceRegistry } from "../platform/services.js";
 import { WorkspaceStore } from "../platform/workspace_store.js";
+import { type Choices, type Resolution, saveChoices, toggle as togglePlugin } from "../platform/plugin_switches.js";
+import type { CatalogueEntry } from "../plugins/catalogue.js";
 import { registerBuiltins } from "../builtins/index.js";
 import { contextKeyFor } from "./context.js";
 import { type DockTab, DockManager, prefs } from "./docks.js";
@@ -22,16 +24,13 @@ import { h, icon, iconButton, isMac, keyLabel, mark } from "./dom.js";
 import { closeSheet, confirmDialog, copyText, formDialog, promptDialog, sheetIsOpen, showPalette, toast } from "./overlays.js";
 import { ActivityLog } from "./panels/activity.js";
 import { renderDatasetsPanel } from "./panels/datasets.js";
-import { inspectorTarget, renderInspectorPanel } from "./panels/inspector.js";
+import { layerTarget, renderLayerPanel } from "./panels/layer.js";
 import {
   renderJobsPanel,
   renderPluginsPanel,
-  renderPointerPanel,
   renderPythonPanel,
-  renderSelectionPanel,
   renderStatisticsPanel,
 } from "./panels/misc.js";
-import { renderNavigationPanel } from "./panels/navigation.js";
 import { renderScenesPanel } from "./panels/scenes.js";
 import { showAddDatasetSheet, showEditStateSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
 import type { Workbench } from "./workbench.js";
@@ -127,12 +126,16 @@ export class Shell {
 
   // ------------------------------------------------------------ wiring
 
-  attach(engine: Engine, parseFragment: FragmentParser, defaultExample: string): void {
+  attach(
+    engine: Engine,
+    parseFragment: FragmentParser,
+    defaultExample: string,
+    plugins: { catalogue: CatalogueEntry[]; choices: Choices; resolution: Resolution },
+  ): void {
     const log = new ActivityLog();
     const commands = new CommandRegistry();
     commands.useContext(this.context);
     const keybindings = new KeybindingTable();
-    const inspector = new InspectorRegistry();
     const examples = new ExampleRegistry();
     const openHandlers = new OpenHandlerRegistry();
     const jobs = new JobService();
@@ -148,12 +151,17 @@ export class Shell {
       keybindings,
       context: this.context,
       docks: this.docks,
-      inspector,
       examples,
       openHandlers,
       jobs,
       services,
       plugins: undefined as unknown as PluginHost,
+      pluginSwitches: {
+        manifests: plugins.catalogue.map((e) => e.manifest),
+        enabled: plugins.resolution.enabled,
+        blocked: plugins.resolution.blocked,
+        toggle: (id, on) => this.switchPlugin(plugins.catalogue, plugins.choices, id, on),
+      },
       log,
       parseFragment,
       framed,
@@ -172,7 +180,6 @@ export class Shell {
       keybindings,
       context: this.context,
       docks: { addTab: (tab) => this.docks.addTab(tab), show: (id) => this.docks.show(id) },
-      inspector,
       examples,
       open: openHandlers,
       ui: {
@@ -208,6 +215,13 @@ export class Shell {
     this.registerCommands();
     this.registerKeys();
     registerBuiltins(wb);
+    for (const entry of plugins.catalogue) {
+      const enabled = plugins.resolution.enabled.has(entry.manifest.id);
+      // A data type plugin has no platform code: it was loaded with the viewer.
+      const load = entry.load ?? (async () => ({ activate() {} }));
+      wb.plugins.register(entry.manifest, load, { builtin: true, enabled });
+      if (enabled && entry.manifest.kind === "datatype") void wb.plugins.activate(entry.manifest.id).catch(() => {});
+    }
 
     // Neuroglancer's own status messages (loading, errors) go below the views.
     engine.routeStatusMessages(this.statusStrip, (text, error) => {
@@ -221,6 +235,18 @@ export class Shell {
       this.updateControls();
     };
     store.onChange(refresh);
+    // A plugin with state in the workspace (a filter in a shared link, say)
+    // is loaded as the workspace opens, so its effect shows without opening
+    // its tab.
+    const withState = () => {
+      for (const entry of plugins.catalogue) {
+        const key = entry.manifest.contributes?.appState?.key;
+        if (key === undefined || store.rawSlice(key) === undefined) continue;
+        const record = wb.plugins.list().find((r) => r.manifest.id === entry.manifest.id);
+        if (record?.status === "registered") void wb.plugins.activate(entry.manifest.id).catch(() => {});
+      }
+    };
+    store.onChange(withState);
     engine.onLayersChanged(refresh);
     engine.onSelectionChanged(refresh);
     commands.onChange(() => this.updateControls());
@@ -242,6 +268,7 @@ export class Shell {
       else store.settle();
     }
     refresh();
+    setTimeout(() => this.checkFormats(), 1500);
     log.add(
       framed
         ? "Running inside a frame: Share copies the workspace as JSON, since links here cannot carry it."
@@ -254,11 +281,8 @@ export class Shell {
     const add = (tab: DockTab) => this.docks.addTab(tab);
     add({ id: "datasets", title: "Datasets", slot: "left", order: 10, render: (host) => renderDatasetsPanel(host, wb) });
     add({ id: "scenes", title: "Scenes", slot: "left", order: 20, render: (host) => renderScenesPanel(host, wb) });
-    add({ id: "view", title: "View", slot: "left", order: 30, render: (host) => renderNavigationPanel(host, wb) });
     add({ id: "plugins", title: "Plugins", slot: "left", order: 90, render: (host) => renderPluginsPanel(host, wb) });
-    add({ id: "inspector", title: "Inspector", slot: "right", order: 10, render: (host) => renderInspectorPanel(host, wb) });
-    add({ id: "selection", title: "Selection", slot: "right", order: 20, render: (host) => renderSelectionPanel(host, wb) });
-    add({ id: "pointer", title: "Pointer", slot: "right", order: 30, render: (host) => renderPointerPanel(host, wb) });
+    add({ id: "layer", title: "Layer", slot: "right", order: 10, render: (host) => renderLayerPanel(host, wb) });
     add({
       id: "activity",
       title: "Activity",
@@ -449,11 +473,11 @@ export class Shell {
         const entry = datasetAt(index);
         if (entry === undefined) return;
         store.selectDataset(entry.dataset.id);
-        this.docks.show("inspector");
+        this.docks.show("layer");
       },
     });
     const datasetArg = { type: "object" as const, properties: { id: { type: "string" as const } } };
-    const selectedDatasetId = (id?: string) => id ?? inspectorTarget(wb).dataset?.id;
+    const selectedDatasetId = (id?: string) => id ?? layerTarget(wb).dataset?.id;
     add({
       id: "dataset.remove",
       title: "Remove the selected dataset from this scene",
@@ -499,7 +523,7 @@ export class Shell {
       hint: "A second layer of the same data, with its own colours and settings",
       when: "selectedLayer",
       run: () => {
-        const { dataset, layer } = inspectorTarget(wb);
+        const { dataset, layer } = layerTarget(wb);
         if (dataset !== undefined) store.addLayerView(dataset.id, layer?.name);
       },
     });
@@ -557,7 +581,7 @@ export class Shell {
     }
     for (const [slot, title] of [
       ["left", "workspace"],
-      ["right", "inspector"],
+      ["right", "layer"],
       ["bottom", "activity"],
     ] as const) {
       add({ id: `view.dock.${slot}`, title: `Show or hide the ${title} dock`, group: "View", run: () => this.docks.toggle(slot) });
@@ -565,10 +589,7 @@ export class Shell {
     for (const [tab, title] of [
       ["datasets", "Datasets"],
       ["scenes", "Scenes"],
-      ["view", "View"],
-      ["inspector", "Inspector"],
-      ["selection", "Selection"],
-      ["pointer", "Pointer"],
+      ["layer", "Layer"],
       ["activity", "Activity"],
       ["jobs", "Jobs"],
       ["statistics", "Chunk statistics"],
@@ -632,6 +653,38 @@ export class Shell {
     this.wb.run(binding.command, binding.args);
   }
 
+  // ----------------------------------------------------------- plugins
+
+  /**
+   * Switches a plugin on or off (with what it requires, or what requires
+   * it), keeps the choice, and reloads the page with the same link.
+   */
+  private async switchPlugin(catalogue: CatalogueEntry[], choices: Choices, id: string, on: boolean): Promise<void> {
+    const manifests = catalogue.map((e) => e.manifest);
+    const nameOf = (other: string) => manifests.find((m) => m.id === other)?.name ?? other;
+    const { choices: next, also } = togglePlugin(manifests, choices, id, on);
+    const message =
+      `Switch ${nameOf(id)} ${on ? "on" : "off"}` +
+      (also.length ? `, and with it ${also.map(nameOf).join(", ")}` : "") +
+      "? The page reloads with the same link.";
+    if (!(await confirmDialog(message, on ? "Switch on and reload" : "Switch off and reload"))) return;
+    saveChoices(next);
+    this.wb.store.settle();
+    location.reload();
+  }
+
+  /** Says so when the workspace uses a format whose plugin is off. */
+  private checkFormats(): void {
+    const formats = new Set(this.wb.engine.layers().flatMap((l) => l.sources.map((s) => contextKeyFor(s))));
+    const zv = this.wb.pluginSwitches.manifests.find((m) => m.id === "org.ngplatform.zarr-vectors");
+    if (zv !== undefined && formats.has("zarr-vectors") && !this.wb.pluginSwitches.enabled.has(zv.id)) {
+      const message = "This workspace has Zarr Vectors data, but the Zarr Vectors plugin is off. Switch it on in the Plugins tab.";
+      this.wb.log.add(message, "error");
+      toast(message, "error");
+      this.docks.show("plugins");
+    }
+  }
+
   // -------------------------------------------------------------- open
 
   private openExample(id: string): void {
@@ -682,7 +735,7 @@ export class Shell {
   private updateContext(): void {
     const { engine, store } = this.wb;
     const layers = engine.layers();
-    const target = inspectorTarget(this.wb);
+    const target = layerTarget(this.wb);
     const set = (key: string, value: unknown) => this.context.set(key, value);
     set("hasLayers", layers.length > 0);
     set("sceneIsEmpty", layers.length === 0);

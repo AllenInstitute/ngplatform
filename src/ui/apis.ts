@@ -47,6 +47,7 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
       return name;
     },
     removeDatasetFromScene: (id) => store.removeDatasetFromScene(id),
+    removeLayer: (name) => store.removeLayer(name),
     selectedLayer: () => engine.selectedLayer(),
     selectLayer: (name) => store.selectLayer(name),
     selectedDataset: () => {
@@ -74,6 +75,9 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
     },
     onCursorChanged: (callback) => engine.onCursorChanged(callback),
     setPosition: (position) => engine.setPosition(position),
+    segmentProperties: (layer) => engine.segmentProperties(layer),
+    onSegmentPropertiesChanged: (layer, callback) => engine.onSegmentPropertiesChanged(layer, callback),
+    setTemporaryVisibleSegments: (layer, ids) => engine.setTemporaryVisibleSegments(layer, ids),
   };
 
   return { workspace, viewer };

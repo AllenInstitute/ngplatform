@@ -3,11 +3,11 @@
  * hands each plugin its `PlatformContext`, and removes everything a plugin
  * added when it is deactivated.
  *
- * What a manifest declares (commands, panels, inspector sections, keys,
- * examples, open handlers) appears as soon as the plugin is registered;
- * using any of it activates the plugin, which then supplies the code.  A
- * plugin that throws three times is disabled, and its errors never reach the
- * shell or Neuroglancer.
+ * What a manifest declares (commands, panels, keys, examples, open handlers)
+ * appears as soon as the plugin is registered; using any of it activates
+ * the plugin, which then supplies the code.  A plugin registered switched
+ * off is only listed.  A plugin that throws three times is disabled for the
+ * session, and its errors never reach the shell or Neuroglancer.
  */
 import type { CommandRegistry } from "../core/commands.js";
 import type { KeybindingTable } from "../core/keybindings.js";
@@ -18,7 +18,6 @@ import type {
   DatasetInfo,
   Disposer,
   DockSlot,
-  InspectorTarget,
   JobControl,
   Json,
   Manifest,
@@ -37,15 +36,6 @@ export interface DockTabSpec {
   when?: string;
   owner?: string;
   render(host: HTMLElement): Disposer | void | Promise<Disposer | void>;
-}
-
-export interface InspectorSectionSpec {
-  id: string;
-  title: string;
-  order?: number;
-  when?: string;
-  owner?: string;
-  render(host: HTMLElement, target: InspectorTarget): Disposer | void | Promise<Disposer | void>;
 }
 
 export interface ExampleSpec {
@@ -71,7 +61,6 @@ export interface HostServices {
   keybindings: KeybindingTable;
   context: ContextKeys;
   docks: { addTab(tab: DockTabSpec): Disposer; show(id: string): void };
-  inspector: { addSection(section: InspectorSectionSpec): Disposer };
   examples: { add(example: ExampleSpec): Disposer };
   open: { addHandler(handler: OpenHandlerSpec): Disposer };
   ui: {
@@ -92,7 +81,8 @@ export interface HostServices {
   log(message: string, level: "info" | "error", source?: string): void;
 }
 
-export type PluginStatus = "registered" | "activating" | "active" | "failed" | "disabled";
+/** "off": switched off in the Plugins tab.  "disabled": stopped this session after failing. */
+export type PluginStatus = "off" | "registered" | "activating" | "active" | "failed" | "disabled";
 
 export interface PluginRecord {
   manifest: Manifest;
@@ -112,7 +102,6 @@ interface Entry extends PluginRecord {
   active: Disposer[];
   commands: Map<string, (args: unknown) => unknown>;
   panels: Map<string, (host: HTMLElement) => Disposer | void>;
-  sections: Map<string, (host: HTMLElement, target: InspectorTarget) => Disposer | void>;
   openers: Map<string, (text: string) => Promise<void> | void>;
 }
 
@@ -144,13 +133,14 @@ export class PluginHost {
    * called on first activation.  Throws PluginError when the manifest is
    * unsound.
    */
-  register(manifest: Manifest, load: () => Promise<PluginModule>, options: { builtin?: boolean } = {}): void {
+  register(manifest: Manifest, load: () => Promise<PluginModule>, options: { builtin?: boolean; enabled?: boolean } = {}): void {
     const problems = checkManifest(manifest);
     if (problems.length > 0) throw new PluginError(`${(manifest as Partial<Manifest>)?.id ?? "plugin"}: ${problems.join("; ")}`);
     if (this.plugins.has(manifest.id)) throw new PluginError(`${manifest.id} is already registered`);
+    const enabled = options.enabled ?? true;
     const entry: Entry = {
       manifest,
-      status: "registered",
+      status: enabled ? "registered" : "off",
       builtin: options.builtin ?? false,
       errors: 0,
       load,
@@ -158,13 +148,12 @@ export class PluginHost {
       active: [],
       commands: new Map(),
       panels: new Map(),
-      sections: new Map(),
       openers: new Map(),
     };
     this.plugins.set(manifest.id, entry);
-    this.declare(entry);
+    if (enabled) this.declare(entry);
     this.changed();
-    if (manifest.activation?.includes("onStartup")) void this.activate(manifest.id).catch(() => {});
+    if (enabled && manifest.activation?.includes("onStartup")) void this.activate(manifest.id).catch(() => {});
   }
 
   /** Removes a plugin and everything it added. */
@@ -221,20 +210,6 @@ export class PluginHost {
         }),
       );
     }
-    for (const section of c.inspector ?? []) {
-      entry.declared.push(
-        s.inspector.addSection({
-          ...section,
-          owner,
-          render: async (host, target) => {
-            await this.activate(owner);
-            const render = entry.sections.get(section.id);
-            if (render === undefined) return;
-            return this.guard(entry, () => render(host, target));
-          },
-        }),
-      );
-    }
     for (const example of c.examples ?? []) {
       if (example.state === undefined) continue;
       const state = example.state;
@@ -274,6 +249,7 @@ export class PluginHost {
     const entry = this.plugins.get(id);
     if (entry === undefined) return Promise.reject(new PluginError(`no plugin ${id}`));
     if (entry.status === "disabled") return Promise.reject(new PluginError(`${entry.manifest.name} is disabled`));
+    if (entry.status === "off") return Promise.reject(new PluginError(`${entry.manifest.name} is switched off`));
     if (entry.activation !== undefined) return entry.activation;
     entry.status = "activating";
     this.changed();
@@ -303,7 +279,7 @@ export class PluginHost {
   /** Runs every plugin that activates on datasets of `kind`. */
   datasetKindSeen(kind: string): void {
     for (const entry of this.plugins.values()) {
-      if (entry.activation === undefined && entry.status !== "disabled" && entry.manifest.activation?.includes(`onDatasetKind:${kind}`)) {
+      if (entry.activation === undefined && entry.status === "registered" && entry.manifest.activation?.includes(`onDatasetKind:${kind}`)) {
         void this.activate(entry.manifest.id).catch(() => {});
       }
     }
@@ -331,7 +307,6 @@ export class PluginHost {
     });
     entry.commands.clear();
     entry.panels.clear();
-    entry.sections.clear();
     entry.openers.clear();
     entry.activation = undefined;
     entry.module = undefined;
@@ -394,7 +369,6 @@ export class PluginHost {
     const c = manifest.contributes ?? {};
     const commandIds = new Set((c.commands ?? []).map((x) => x.id));
     const panelIds = new Set((c.panels ?? []).map((x) => x.id));
-    const sectionIds = new Set((c.inspector ?? []).map((x) => x.id));
     const openIds = new Set((c.openHandlers ?? []).map((x) => x.id));
     const slice = c.appState;
     const subscriptions: Disposer[] = [];
@@ -428,11 +402,6 @@ export class PluginHost {
           declared("panel", panelIds, id);
           entry.panels.set(id, render);
           return own(() => entry.panels.delete(id));
-        },
-        inspectorSection: (id, render) => {
-          declared("inspector section", sectionIds, id);
-          entry.sections.set(id, render);
-          return own(() => entry.sections.delete(id));
         },
         showPanel: (id) => s.docks.show(id),
         toast: (message, kind) => s.ui.toast(message, kind),

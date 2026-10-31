@@ -3,7 +3,7 @@
  *
  * One row per dataset, with its visibility, load state and type; a dataset
  * shown through several layers lists them beneath it.  Selecting a row
- * brings its controls up in the Inspector.  Datasets the workspace knows but
+ * brings its controls up in the Layer tab.  Datasets the workspace knows but
  * this scene does not show are listed below, ready to add.
  */
 import type { LayerInfo } from "../../engine/engine.js";
@@ -73,7 +73,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
           const type = layers[0]?.type && layers[0].type !== "new" ? layers[0].type : dataset.kind;
           const select = () => {
             store.selectDataset(dataset.id);
-            wb.docks.show("inspector");
+            wb.docks.show("layer");
           };
           const menu = (anchor: HTMLElement | { x: number; y: number }) =>
             showMenu(anchor, [
@@ -144,7 +144,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
                   title: "Show this layer's controls",
                   onclick: () => {
                     store.selectLayer(layer.name);
-                    wb.docks.show("inspector");
+                    wb.docks.show("layer");
                   },
                   oncontextmenu: (e: Event) => {
                     e.preventDefault();

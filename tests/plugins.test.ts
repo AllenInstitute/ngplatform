@@ -8,13 +8,12 @@ import { KeybindingTable } from "../src/core/keybindings.js";
 import { ContextKeys } from "../src/core/when.js";
 import { JobService } from "../src/platform/jobs.js";
 import { type DockTabSpec, type HostServices, PluginError, PluginHost } from "../src/platform/plugin_host.js";
-import { ExampleRegistry, InspectorRegistry, OpenHandlerRegistry } from "../src/platform/registries.js";
+import { ExampleRegistry, OpenHandlerRegistry } from "../src/platform/registries.js";
 import { ServiceRegistry } from "../src/platform/services.js";
 import { checkManifest } from "../src/sdk/manifest.js";
 import type { Manifest, PluginModule, ViewerApi, WorkspaceApi } from "../src/sdk/types.js";
 
 function services() {
-  const inspector = new InspectorRegistry();
   const tabs: DockTabSpec[] = [];
   const logs: string[] = [];
   const slices = new Map<string, unknown>();
@@ -29,7 +28,6 @@ function services() {
       },
       show: () => {},
     },
-    inspector,
     examples: new ExampleRegistry(),
     open: new OpenHandlerRegistry(),
     ui: { toast: (m) => logs.push(`toast: ${m}`), confirm: async () => true, form: async () => undefined },
@@ -45,13 +43,14 @@ function services() {
     services: new ServiceRegistry(),
     log: (message) => logs.push(message),
   };
-  return { s, tabs, logs, slices, inspector };
+  return { s, tabs, logs, slices };
 }
 
 const manifest: Manifest = {
   id: "org.example.counter",
   name: "Counter",
   version: "0.1.0",
+  kind: "tool",
   activation: ["onCommand:counter.add"],
   contributes: {
     commands: [
@@ -59,8 +58,7 @@ const manifest: Manifest = {
       { id: "counter.fail", title: "Fail" },
     ],
     keybindings: [{ key: "alt+c", command: "counter.add" }],
-    panels: [{ id: "counter.panel", title: "Counter", slot: "right" }],
-    inspector: [{ id: "counter.section", title: "Counter", when: "selectedLayerType == image" }],
+    panels: [{ id: "counter.panel", title: "Counter", slot: "right", when: "selectedLayerType == image" }],
     appState: { key: "counter", version: 1 },
   },
 };
@@ -82,7 +80,6 @@ function counterPlugin(loads: { n: number }): () => Promise<PluginModule> {
         ctx.ui.panel("counter.panel", (host) => {
           host.textContent = `count ${count}`;
         });
-        ctx.ui.inspectorSection("counter.section", () => {});
         ctx.services.provide("counter@1", { value: () => count });
       },
     };
@@ -93,14 +90,26 @@ describe("manifest checks", () => {
   it("accepts a sound manifest", () => {
     expect(checkManifest(manifest)).toEqual([]);
   });
+  it("keeps data type plugins to formats", () => {
+    const datatype: Manifest = { ...manifest, id: "org.example.format", kind: "datatype", activation: [] };
+    expect(checkManifest(datatype)).toContain(
+      "a data type plugin contributes a format, not commands or panels: make those a tool plugin that requires it",
+    );
+    expect(checkManifest({ id: "org.example.format", name: "F", version: "1.0.0", kind: "datatype" })).toEqual([]);
+    expect(checkManifest({ id: "org.example.f", name: "F", version: "1.0.0", kind: "widget" })).toEqual([
+      'kind: must be one of "datatype", "tool"',
+    ]);
+  });
+
   it("reports schema errors and dangling references", () => {
-    expect(checkManifest({ id: "Bad Id", name: "x", version: "1" })).toEqual(
+    expect(checkManifest({ id: "Bad Id", name: "x", version: "1", kind: "tool" })).toEqual(
       expect.arrayContaining([expect.stringMatching(/^id: does not match/), expect.stringMatching(/^version: does not match/)]),
     );
     const bad: Manifest = {
       id: "org.example.bad",
       name: "Bad",
       version: "1.0.0",
+      kind: "tool",
       activation: ["onCommand:missing", "onView:nowhere"],
       contributes: {
         commands: [{ id: "a", title: "A", when: "undeclaredKey" }],
@@ -117,6 +126,18 @@ describe("manifest checks", () => {
 });
 
 describe("PluginHost", () => {
+  it("lists a switched-off plugin without declaring anything or loading it", async () => {
+    const { s, tabs } = services();
+    const host = new PluginHost(s);
+    const loads = { n: 0 };
+    host.register(manifest, counterPlugin(loads), { enabled: false });
+    expect(host.list()[0].status).toBe("off");
+    expect(s.commands.has("counter.add")).toBe(false);
+    expect(tabs).toEqual([]);
+    await expect(host.activate(manifest.id)).rejects.toThrow(/switched off/);
+    expect(loads.n).toBe(0);
+  });
+
   it("shows declared contributions without loading code, and loads on first use", async () => {
     const { s, tabs, slices } = services();
     const host = new PluginHost(s);
@@ -138,7 +159,7 @@ describe("PluginHost", () => {
   });
 
   it("removes everything a plugin added when it is unregistered", async () => {
-    const { s, tabs, inspector } = services();
+    const { s, tabs } = services();
     const host = new PluginHost(s);
     host.register(manifest, counterPlugin({ n: 0 }));
     await host.activate(manifest.id);
@@ -146,7 +167,6 @@ describe("PluginHost", () => {
     expect(s.commands.has("counter.add")).toBe(false);
     expect(s.keybindings.list()).toEqual([]);
     expect(tabs).toEqual([]);
-    expect(inspector.list()).toEqual([]);
     expect(s.services.list()).toEqual([]);
   });
 
@@ -171,7 +191,7 @@ describe("PluginHost", () => {
     }));
     await expect(host.activate("org.example.broken")).rejects.toThrow("no luck");
     expect(host.list()[0]).toMatchObject({ status: "failed", error: "no luck" });
-    expect(() => host.register({ id: "x", name: "x", version: "1" } as Manifest, async () => ({ activate() {} }))).toThrow(PluginError);
+    expect(() => host.register({ id: "x", name: "x", version: "1", kind: "tool" } as Manifest, async () => ({ activate() {} }))).toThrow(PluginError);
   });
 
   it("refuses contributions the manifest did not declare", async () => {

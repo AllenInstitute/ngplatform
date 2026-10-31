@@ -1,13 +1,13 @@
 /**
- * The Neuroglancer engine, mounted with none of its own interface.
+ * The Neuroglancer engine, with its views and nothing for managing data.
  *
- * The viewer element holds the data panels only: no top bar, layer bar, side
- * panels or dialogs.  Everything those offered is reached through this class
- * and shown by the platform, which mounts Neuroglancer's own widgets (layer
- * controls, selection details, settings, help, statistics, position) into its
- * docks where they exist.
+ * Inside the viewer stays what is about looking: the views, the position in
+ * the top left and each panel's own controls (layout buttons, sections,
+ * scale) in its top right, as in standard Neuroglancer.  The layer bar,
+ * side panels and dialogs are off; what they offered is reached through this
+ * class and shown by the platform, which mounts Neuroglancer's own widgets
+ * (layer controls, settings, help, statistics) in its docks and dialogs.
  */
-import "./plugins.js";
 import {
   changeLayerName,
   deleteLayer,
@@ -19,9 +19,7 @@ import {
   initializeLayerFromSpecShowErrorStatus,
   makeMinimalViewer,
   ManagedUserLayer,
-  MousePositionWidget,
-  PositionWidget,
-  SelectionDetailsPanel,
+  SegmentationUserLayer,
   type SidePanelManager,
   StatisticsPanel,
   TabView,
@@ -53,6 +51,13 @@ export interface CursorInfo {
   units: string[];
   scales: number[];
   values: Record<string, unknown>;
+}
+
+export interface SegmentProperties {
+  ids: BigUint64Array;
+  numeric: { id: string; description: string | undefined; values: ArrayLike<number>; min: number; max: number }[];
+  /** Tags: each segment's `values[i]` lists its tags as character codes indexing `names`. */
+  tags: { names: string[]; descriptions: string[]; values: string[] } | undefined;
 }
 
 export interface NavigationInfo {
@@ -162,13 +167,26 @@ export class Engine {
   readonly viewer: Viewer;
   private readonly disposers: Disposer[] = [];
   /** How many docked copies of each location-driven panel are mounted. */
-  private readonly docked = { selection: 0, statistics: 0 };
+  private readonly docked = { statistics: 0 };
 
   constructor(readonly host: HTMLElement) {
     this.viewer = makeMinimalViewer({
       target: host,
-      showUIControls: false,
-      showTopBar: false,
+      // Position (top left) and each panel's controls (top right) only.
+      showUIControls: true,
+      showTopBar: true,
+      showLocation: true,
+      showAnnotationToolStatus: true,
+      showPanelControls: true,
+      showHelpButton: false,
+      showSettingsButton: false,
+      showEditStateButton: false,
+      showScreenshotButton: false,
+      showToolPaletteButton: false,
+      showLayerListPanelButton: false,
+      showSelectionPanelButton: false,
+      showLayerSidePanelButton: false,
+      showCopyUrlButton: false,
       showLayerPanel: false,
       showLayerHoverValues: false,
       showLayerDialog: false,
@@ -217,7 +235,6 @@ export class Engine {
     state.restoreState(ng);
     // Docked panels draw only while their location is visible; a restored
     // state without them would hide them.
-    if (this.docked.selection > 0) this.viewer.selectionDetailsState.location.visible = true;
     if (this.docked.statistics > 0) this.viewer.statisticsDisplayState.location.visible = true;
   }
 
@@ -453,9 +470,14 @@ export class Engine {
     const managed = this.managed(name);
     const userLayer = managed?.layer;
     if (managed === undefined || userLayer == null) return () => {};
+    // A layer with no annotation sources (most segmentation layers) shows an
+    // empty Annotations tab in Neuroglancer; here it is left out.
+    const annotationStates = (userLayer as { annotationStates?: { states: unknown[]; changed: { add(f: () => void): () => void } } })
+      .annotationStates;
+    const emptyTab = (id: string) => id === "annotations" && annotationStates !== undefined && annotationStates.states.length === 0;
     const tabsOf = () =>
       [...userLayer.tabs.options]
-        .map(([id, option]) => ({ id, label: option.label, hidden: option.hidden?.value ?? false, order: option.order ?? 0 }))
+        .map(([id, option]) => ({ id, label: option.label, hidden: (option.hidden?.value ?? false) || emptyTab(id), order: option.order ?? 0 }))
         .sort((a, b) => a.order - b.order)
         .map(({ id, label, hidden }) => ({ id, label, hidden }));
     const tabs = new WatchableValue(tabsOf());
@@ -471,9 +493,11 @@ export class Engine {
     };
     const offs = [
       userLayer.tabs.changed.add(refresh),
+      annotationStates?.changed.add(refresh) ?? (() => {}),
       ...[...userLayer.tabs.options.values()].map((o) => o.hidden?.changed.add(refresh) ?? (() => {})),
     ];
-    if (selectedTab.value === undefined) {
+    const current = tabs.value.find((t) => t.id === selectedTab.value);
+    if (current === undefined || current.hidden) {
       const first = tabs.value.find((t) => !t.hidden);
       if (first !== undefined) selectedTab.value = first.id;
     }
@@ -486,20 +510,73 @@ export class Engine {
     };
   }
 
-  /** Neuroglancer's selection details (pinned picks, with back and forward). */
-  mountSelection(host: HTMLElement): Disposer {
-    const v = this.viewer;
-    const location = v.selectionDetailsState.location;
-    location.visible = true;
-    this.docked.selection++;
-    const undock = dockPanel(
-      host,
-      new SelectionDetailsPanel(DOCKED_PANEL_MANAGER, v.selectionDetailsState, v.layerSpecification, v.selectedLayer),
-    );
-    return () => {
-      undock();
-      if (--this.docked.selection === 0) location.visible = false;
+  // ----------------------------------------------------- segment state
+
+  private segmentationLayer(name: string): SegmentationUserLayer | undefined {
+    const layer = this.managed(name)?.layer;
+    return layer instanceof SegmentationUserLayer ? layer : undefined;
+  }
+
+  /**
+   * A segmentation layer's segment properties (numeric columns and tags), as
+   * plain arrays, once its source has supplied them.
+   */
+  segmentProperties(name: string): SegmentProperties | undefined {
+    const map = this.segmentationLayer(name)?.displayState.segmentPropertyMap.value;
+    const inline = map?.segmentPropertyMap.inlineProperties;
+    if (map === undefined || inline === undefined) return undefined;
+    return {
+      ids: inline.ids,
+      numeric: map.numericalProperties.map((p) => ({
+        id: p.id,
+        description: p.description,
+        values: p.values,
+        min: Number(p.bounds[0]),
+        max: Number(p.bounds[1]),
+      })),
+      tags:
+        map.tags === undefined
+          ? undefined
+          : { names: map.tags.tags, descriptions: map.tags.tagDescriptions, values: map.tags.values },
     };
+  }
+
+  /** Calls back when a layer's segment properties arrive or change. */
+  onSegmentPropertiesChanged(name: string, callback: () => void): Disposer {
+    let current: Disposer | undefined;
+    let layer: SegmentationUserLayer | undefined;
+    const run = deferred(callback);
+    const bind = () => {
+      const next = this.segmentationLayer(name);
+      if (next === layer) return;
+      current?.();
+      layer = next;
+      current = next?.displayState.segmentPropertyMap.changed.add(run);
+      run();
+    };
+    const off = this.viewer.layerManager.layersChanged.add(bind);
+    bind();
+    return () => {
+      off();
+      current?.();
+    };
+  }
+
+  /**
+   * Shows only `ids` in a segmentation layer, through its temporary visible
+   * set: not saved in the state, so a filter result never bloats the link.
+   * `undefined` returns the layer to its ordinary visible segments.
+   */
+  setTemporaryVisibleSegments(name: string, ids: BigUint64Array | undefined): void {
+    const group = this.segmentationLayer(name)?.displayState.segmentationGroupState.value;
+    if (group === undefined) return;
+    group.temporaryVisibleSegments.clear();
+    if (ids === undefined) {
+      group.useTemporaryVisibleSegments.value = false;
+      return;
+    }
+    group.temporaryVisibleSegments.add(ids);
+    group.useTemporaryVisibleSegments.value = true;
   }
 
   mountSettings(host: HTMLElement): Disposer {
@@ -536,26 +613,6 @@ export class Engine {
         v.globalToolBinder,
       ),
     );
-  }
-
-  /** Neuroglancer's position widget: per-dimension coordinates, editable. */
-  mountPosition(host: HTMLElement): Disposer {
-    const v = this.viewer;
-    const widget = new PositionWidget(v.position, v.layerSpecification.coordinateSpaceCombiner, {
-      velocity: v.velocity,
-      getToolBinder: () => v.toolBinder,
-      allowFocus: true,
-    });
-    const mouse = new MousePositionWidget(document.createElement("div"), v.mouseState, v.coordinateSpace);
-    widget.element.classList.add("ngp-position");
-    mouse.element.classList.add("ngp-mouse-position");
-    host.append(widget.element, mouse.element);
-    return () => {
-      widget.element.remove();
-      mouse.element.remove();
-      widget.dispose();
-      mouse.dispose();
-    };
   }
 
   /** Opens Neuroglancer's screenshot dialog (scale, crop, statistics). */

@@ -61,20 +61,21 @@ check(fill > 0.98, `the viewer fills the views area (${(fill * 100).toFixed(0)}%
 const chrome = await page.evaluate(() => {
   const visible = (sel) => [...document.querySelectorAll(`.engine ${sel}`)].filter((e) => e.offsetParent !== null).length;
   return {
-    topRow: visible(".neuroglancer-viewer-top-row"),
     layerPanel: visible(".neuroglancer-layer-panel"),
     sidePanels: visible(".neuroglancer-side-panel"),
     status: visible("#neuroglancer-status-container"),
+    position: visible(".neuroglancer-position-widget"),
+    layoutButtons: visible(".neuroglancer-data-panel-layout-controls"),
   };
 });
-check(Object.values(chrome).every((n) => n === 0), `no Neuroglancer interface inside the views ${JSON.stringify(chrome)}`);
+check(chrome.layerPanel + chrome.sidePanels + chrome.status === 0, `no layer bar, side panels or status inside the views ${JSON.stringify(chrome)}`);
+check(chrome.position === 1 && chrome.layoutButtons > 0, "position top left and layout buttons on the panels, as in Neuroglancer");
 
 // Datasets tab and Inspector.
 check((await page.locator(".datasets .ds-row").count()) === 1, "Datasets lists the scene's dataset");
 await page.locator(".datasets .ds-row").first().click();
 await page.waitForTimeout(800);
-check((await page.locator(".ngp-layer-controls .neuroglancer-tab-label").count()) > 0, "Inspector shows the layer's own controls");
-check((await page.locator(".inspector-section").count()) > 0, "Inspector shows contributed sections");
+check((await page.locator(".ngp-layer-controls .neuroglancer-tab-label").count()) > 0, "the Layer tab shows the layer's own controls");
 
 // Hide and show the dataset from its row.
 await page.locator(".datasets .ds-row .vis").first().uncheck();
@@ -109,14 +110,12 @@ await page.locator(".scene-tab").first().click();
 await page.waitForTimeout(800);
 check((await page.locator('.scene-tab[aria-selected="true"]').innerText()) === "Scene 1", "switching back to Scene 1");
 
-// Hover a view so the Pointer tab shows coordinates.
-await page.locator("#tab-pointer").click();
-const engineBox = await page.locator(".engine").boundingBox();
-await page.mouse.move(engineBox.x + engineBox.width * 0.25, engineBox.y + engineBox.height * 0.5);
-await page.waitForTimeout(600);
-if ((await page.locator(".coord").count()) >= 3) check(true, "Pointer shows coordinates");
-else if (cannotDraw()) console.log("skip pointer check: this browser's WebGL cannot draw Neuroglancer's views");
-else check(false, "Pointer shows coordinates");
+// Plugins: both listed with a switch; the filtering tab reads the attributes.
+await page.locator("#tab-plugins").click();
+check((await page.locator(".plugin .switch").count()) >= 2, "the Plugins tab lists the plugins with switches");
+await page.locator('[id="tab-trackFiltering.panel"]').click();
+await page.waitForSelector(".tf-summary", { timeout: 60_000 }).catch(() => {});
+check((await page.locator(".tf-summary").count()) === 1, "Filtering shows how many objects pass");
 
 // Open dialog: the bundled excerpt, and a pasted plain Neuroglancer link.
 await page.keyboard.press("Control+o");

@@ -1,10 +1,10 @@
 /**
- * Small registries the platform and plugins add to: inspector sections,
- * examples and Open handlers.  Each entry has an owner and is removed by the
+ * Small registries the platform and plugins add to: examples and Open
+ * handlers.  Each entry has an owner and is removed by the
  * disposer its `add` returns.
  */
 import type { Disposer } from "../sdk/types.js";
-import type { ExampleSpec, InspectorSectionSpec, OpenHandlerSpec } from "./plugin_host.js";
+import type { ExampleSpec, OpenHandlerSpec } from "./plugin_host.js";
 
 export class Registry<T extends { id: string }> {
   private items: T[] = [];
@@ -38,16 +38,6 @@ export class Registry<T extends { id: string }> {
 
   private notify(): void {
     for (const listener of this.listeners) listener();
-  }
-}
-
-export class InspectorRegistry extends Registry<InspectorSectionSpec> {
-  addSection(section: InspectorSectionSpec): Disposer {
-    return this.add(section);
-  }
-
-  ordered(): InspectorSectionSpec[] {
-    return this.list().sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
   }
 }
 

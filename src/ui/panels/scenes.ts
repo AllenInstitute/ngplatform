@@ -25,9 +25,21 @@ export function renderScenesPanel(host: HTMLElement, wb: Workbench): () => void 
     ),
     list,
     h(
-      "p",
-      { class: "note" },
-      "Each scene keeps its own datasets, layers, position and layout. Datasets live in the workspace, so any scene can add one another scene uses.",
+      "div",
+      { class: "note explain" },
+      h(
+        "p",
+        {},
+        h("strong", {}, "A scene"),
+        " is one view of your data: which datasets it shows, how each is drawn, where you are looking, and the layout. Switch between scenes with the tabs at the top.",
+      ),
+      h(
+        "p",
+        {},
+        h("strong", {}, "The link"),
+        " in the address bar is the whole workspace: every scene and every dataset. Share it and the other person gets all of them. It is also a plain Neuroglancer link to the scene you are on; “Copy this scene as a plain Neuroglancer link” in the command palette gives just that scene.",
+      ),
+      h("p", {}, h("strong", {}, "Datasets"), " belong to the workspace, so any scene can show one another scene already uses."),
     ),
   );
 

@@ -337,32 +337,39 @@ textarea.text-input { height: auto; padding: 8px 10px; }
 .text-input.mono { font: 12px/1.5 var(--mono); }
 .form-errors { color: var(--err); margin: 0; font-size: 12px; min-height: 1em; }
 
-/* inspector */
-.dock-pane[data-tab="inspector"] { display: flex; flex-direction: column; gap: 10px; }
-.inspector-head { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px; }
-.inspector-head .empty.error { grid-column: 1 / -1; font-size: 12px; }
-.inspector-title { display: grid; gap: 4px; min-width: 0; }
+/* layer: Neuroglancer's own tabs at full height, under a one-line header */
+.dock-pane[data-tab="layer"] { display: flex; flex-direction: column; gap: 8px; padding: 8px; height: 100%; }
+.layer-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: none; padding: 0 2px; }
+.layer-head .empty.error { flex-basis: 100%; font-size: 12px; }
+.layer-head .views { flex-basis: 100%; }
 .title-button {
-  font: 600 15px/1.25 var(--ui); color: var(--text); background: none; border: 0; padding: 0; text-align: left;
-  cursor: text; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 600 14px/1.25 var(--ui); color: var(--text); background: none; border: 0; padding: 0; text-align: left;
+  cursor: text; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
 }
 .title-button:hover { color: var(--accent); }
-.views { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.views:empty { display: none; }
-.layer-controls-host { flex: 1 0 420px; display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; background: #000; }
+.layer-controls-host { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; background: #000; }
 .layer-controls-host:empty { display: none; }
-.inspector-sections { display: grid; gap: 10px; }
-.inspector-section { border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; margin: 0; }
-.inspector-section > summary { cursor: pointer; margin: 0; list-style: none; }
-.inspector-section > summary::-webkit-details-marker { display: none; }
-.inspector-section[open] > summary { margin-bottom: 8px; }
-.section + .inspector-section, .inspector-section + .inspector-section { margin-top: 0; }
 
 /* plugins, jobs, log */
 .plugin { border: 1px solid var(--line); border-radius: var(--r); padding: 10px; display: grid; gap: 4px; }
+.plugin.on { border-color: #2f4a3a; }
+.chip.kind-datatype { color: #8fb7e8; border-color: #2c4560; }
+.chip.kind-tool { color: var(--accent); border-color: #4a3a22; }
+.switch-label { margin-left: auto; display: inline-flex; }
+.switch {
+  appearance: none; -webkit-appearance: none; margin: 0; width: 30px; height: 17px; border-radius: 9px;
+  background: var(--ink-4); border: 1px solid var(--line-strong); position: relative; cursor: pointer; transition: background 0.15s;
+}
+.switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%;
+  background: var(--muted); transition: transform 0.15s, background 0.15s;
+}
+.switch:checked { background: #2f5a40; border-color: #3d7553; }
+.switch:checked::after { transform: translateX(13px); background: var(--ok); }
+.note.first { margin: 0 0 10px; }
 .plugin-head { display: flex; align-items: center; gap: 8px; }
 .plugin-name { font-weight: 600; }
-.plugin .chip { margin-left: auto; }
+
 .plugin .note { margin: 0; }
 
 .jobs { display: grid; gap: 8px; }
@@ -514,3 +521,10 @@ textarea.state-input.tall { min-height: 50vh; }
   .dock-bottom { height: min(var(--bh), 30vh); }
   .field-row { grid-template-columns: 1fr; }
 }
+
+.note.explain { display: grid; gap: 6px; color: var(--muted); }
+.note.explain p { margin: 0; }
+.note.explain strong { color: var(--text); font-weight: 500; }
+
+/* Neuroglancer's own bar inside the viewer: position, left; tool status. */
+.engine .neuroglancer-viewer-top-row { background: var(--ink-1); border-bottom: 1px solid var(--line); margin-bottom: 0; min-height: 26px; }

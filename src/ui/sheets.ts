@@ -165,7 +165,7 @@ export function showAddDatasetSheet(wb: Workbench): void {
     const id = store.addDataset({ source, name: name.value.trim() || layerNameFor(source), kind: type.value });
     closeSheet();
     wb.log.add(`Added the dataset “${store.dataset(id)?.name}”.`, "ok");
-    wb.docks.show("inspector");
+    wb.docks.show("layer");
   };
   add.addEventListener("click", submit);
   url.addEventListener("keydown", (e) => {
@@ -195,7 +195,7 @@ export function showAddDatasetSheet(wb: Workbench): void {
                       onclick: () => {
                         store.showDataset(d.id);
                         closeSheet();
-                        wb.docks.show("inspector");
+                        wb.docks.show("layer");
                       },
                     },
                     h("span", { class: "ds-icon" }, icon("database")),

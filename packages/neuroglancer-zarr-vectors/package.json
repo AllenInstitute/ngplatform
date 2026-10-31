@@ -1,6 +1,6 @@
 {
   "name": "neuroglancer-zarr-vectors",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Zarr Vectors stores in Neuroglancer, as a plugin: a data source and layer drawing for point clouds, lines, streamlines, skeletons, graphs and meshes.",
   "license": "Apache-2.0",
   "type": "module",
@@ -9,7 +9,12 @@
     "./backend": "./src/backend.ts",
     "./async_computation": "./src/async_computation.ts"
   },
-  "files": ["src/**/*.ts", "!src/**/*.spec.ts", "!src/test_fixtures.ts", "README.md"],
+  "files": [
+    "src/**/*.ts",
+    "!src/**/*.spec.ts",
+    "!src/test_fixtures.ts",
+    "README.md"
+  ],
   "peerDependencies": {
     "neuroglancer": "*"
   },

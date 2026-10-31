@@ -1,0 +1,13 @@
+{
+  "attributes": {
+    "zv_array": "object_index",
+    "num_objects": 6,
+    "num_present": 6,
+    "sid_ndim": 3,
+    "layout": "dense_manifests_v1",
+    "object_ids_sorted": true,
+    "block_dtype": "int32"
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

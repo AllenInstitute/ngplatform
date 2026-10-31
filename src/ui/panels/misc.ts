@@ -1,76 +1,6 @@
-/**
- * The smaller panels: Pointer, Selection, Statistics, Jobs, Python and
- * Plugins.
- */
-import type { CursorInfo } from "../../engine/engine.js";
+/** The smaller panels: Statistics, Jobs, Python and Plugins. */
 import { clear, h, icon, iconButton } from "../dom.js";
 import type { Workbench } from "../workbench.js";
-import { physical } from "./format.js";
-
-// ----------------------------------------------------------------- pointer
-
-function renderCursor(coords: HTMLElement, values: HTMLElement, cursor: CursorInfo): void {
-  if (!cursor.active || cursor.position.length === 0) {
-    clear(coords, h("p", { class: "empty" }, "Move the pointer over a view."));
-    clear(values);
-    return;
-  }
-  clear(
-    coords,
-    h(
-      "div",
-      { class: "coords" },
-      ...cursor.names.map((axis, i) => {
-        const [value, unit] = physical(cursor.position[i], cursor.units[i], cursor.scales[i]);
-        return h(
-          "div",
-          { class: "coord" },
-          h("div", { class: `axis axis-${i}` }, axis),
-          h("div", { class: "value" }, value, " ", h("span", { class: "unit" }, unit)),
-        );
-      }),
-    ),
-  );
-  const entries = Object.entries(cursor.values).filter(([, v]) => v !== undefined && v !== null);
-  clear(
-    values,
-    entries.length === 0
-      ? h("p", { class: "note" }, "Nothing under the pointer.")
-      : h(
-          "dl",
-          { class: "facts" },
-          ...entries.flatMap(([layer, v]) => [h("dt", {}, layer), h("dd", {}, typeof v === "string" ? v : JSON.stringify(v))]),
-        ),
-  );
-}
-
-export function renderPointerPanel(host: HTMLElement, wb: Workbench): () => void {
-  const coords = h("div");
-  const values = h("div");
-  host.append(
-    h("div", { class: "section" }, h("h3", { class: "section-title" }, "Pointer"), coords),
-    h("div", { class: "section" }, h("h3", { class: "section-title" }, "Under the pointer"), values),
-  );
-  const update = () => renderCursor(coords, values, wb.engine.cursor());
-  const off = wb.engine.onCursorChanged(update);
-  update();
-  return off;
-}
-
-// --------------------------------------------------------------- selection
-
-export function renderSelectionPanel(host: HTMLElement, wb: Workbench): () => void {
-  const panel = h("div", { class: "ng-host selection-host" });
-  host.append(
-    panel,
-    h(
-      "p",
-      { class: "note" },
-      "Ctrl + right-click in a view to pick and pin what is there; hover shows it until you pin it. Back and forward step through earlier picks.",
-    ),
-  );
-  return wb.engine.mountSelection(panel);
-}
 
 // -------------------------------------------------------------- statistics
 
@@ -130,65 +60,79 @@ export function renderPythonPanel(host: HTMLElement): void {
 
 // ----------------------------------------------------------------- plugins
 
+const KIND_LABEL = { datatype: "Data type", tool: "Tool" } as const;
+
 export function renderPluginsPanel(host: HTMLElement, wb: Workbench): () => void {
   const list = h("div", { class: "list" });
-  const services = h("div");
   host.append(
-    h("div", { class: "section" }, h("h3", { class: "section-title" }, "Installed"), list),
-    h("div", { class: "section" }, h("h3", { class: "section-title" }, "Services"), services),
     h(
-      "p",
-      { class: "note" },
-      "Plugins add panels to these docks, sections to the Inspector and commands to the palette, through a declared manifest. Nothing loads until it is used. See docs/plugins.md.",
+      "div",
+      { class: "section" },
+      h("h3", { class: "section-title" }, "Plugins"),
+      h(
+        "p",
+        { class: "note first" },
+        "Plugins are built into the app. A data type plugin teaches the viewer a format; a tool plugin adds a tab here on the left. Switching one on or off reloads the page with the same link, so the workspace comes back as it was. The choice is kept in this browser.",
+      ),
+      list,
     ),
   );
   const render = () => {
-    const records = wb.plugins.list();
+    const records = new Map(wb.plugins.list().map((r) => [r.manifest.id, r]));
+    const { manifests, enabled, blocked } = wb.pluginSwitches;
+    const nameOf = (id: string) => manifests.find((m) => m.id === id)?.name ?? id;
     clear(
       list,
-      ...(records.length === 0
-        ? [h("p", { class: "empty" }, "None.")]
-        : records.map((r) =>
-            h(
-              "div",
-              { class: "plugin" },
-              h(
-                "div",
-                { class: "plugin-head" },
-                h("span", { class: "plugin-name" }, r.manifest.name),
-                h("span", { class: "type" }, r.manifest.version),
-                h("span", { class: `chip ${r.status}` }, r.builtin ? `built-in · ${r.status}` : r.status),
-              ),
-              r.manifest.description ? h("p", { class: "empty" }, r.manifest.description) : null,
-              h(
-                "p",
-                { class: "note" },
-                [
-                  r.manifest.license ? `Licence ${r.manifest.license}` : undefined,
-                  r.manifest.activation?.length ? `Loads on ${r.manifest.activation.join(", ")}` : "Loads when used",
-                ]
-                  .filter(Boolean)
-                  .join(" · "),
-              ),
-              r.error ? h("p", { class: "empty error" }, r.error) : null,
-              r.builtin
-                ? null
-                : h(
-                    "div",
-                    { class: "row-actions" },
-                    r.status === "disabled"
-                      ? h("button", { class: "btn small", type: "button", onclick: () => wb.plugins.enable(r.manifest.id) }, "Enable")
-                      : h("button", { class: "btn small", type: "button", onclick: () => wb.plugins.disable(r.manifest.id) }, "Disable"),
-                  ),
-            ),
-          )),
-    );
-    const provided = wb.services.list();
-    clear(
-      services,
-      provided.length === 0
-        ? h("p", { class: "empty" }, "None provided.")
-        : h("dl", { class: "facts" }, ...provided.flatMap((s) => [h("dt", {}, s.name), h("dd", {}, s.owner)])),
+      ...manifests.map((manifest) => {
+        const on = enabled.has(manifest.id);
+        const record = records.get(manifest.id);
+        const missing = blocked.get(manifest.id);
+        const toggle = h("input", {
+          type: "checkbox",
+          class: "switch",
+          role: "switch",
+          "aria-label": `${on ? "Switch off" : "Switch on"} ${manifest.name}`,
+        });
+        toggle.checked = on;
+        toggle.addEventListener("change", () => {
+          toggle.checked = on; // the reload shows the new state
+          void wb.pluginSwitches.toggle(manifest.id, !on);
+        });
+        const state =
+          record?.status === "failed" || record?.status === "disabled"
+            ? `failed: ${record.error ?? "unknown error"}`
+            : missing !== undefined
+              ? `off: needs ${missing.map(nameOf).join(", ")}`
+              : on
+                ? record?.status === "active" || manifest.kind === "datatype"
+                  ? "on"
+                  : "on, loads when first used"
+                : "off";
+        return h(
+          "div",
+          { class: on ? "plugin on" : "plugin" },
+          h(
+            "div",
+            { class: "plugin-head" },
+            h("span", { class: `chip kind-${manifest.kind}` }, KIND_LABEL[manifest.kind]),
+            h("span", { class: "plugin-name" }, manifest.name),
+            h("span", { class: "type" }, manifest.version),
+            h("label", { class: "switch-label", title: state }, toggle),
+          ),
+          manifest.description ? h("p", { class: "empty" }, manifest.description) : null,
+          h(
+            "p",
+            { class: record?.error ? "note error" : "note" },
+            [
+              state[0].toUpperCase() + state.slice(1),
+              manifest.requires?.plugins?.length ? `requires ${manifest.requires.plugins.map(nameOf).join(", ")}` : undefined,
+              manifest.license ? `licence ${manifest.license}` : undefined,
+            ]
+              .filter(Boolean)
+              .join(" · "),
+          ),
+        );
+      }),
     );
   };
   const off = wb.plugins.onChange(render);

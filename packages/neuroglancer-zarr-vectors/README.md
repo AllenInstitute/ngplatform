@@ -1,9 +1,13 @@
 # neuroglancer-zarr-vectors
 
 A Neuroglancer plugin that reads [Zarr Vectors](https://github.com/AllenInstitute/zarr_vectors)
-stores (format 0.9.x, as written by zarr-vectors-py and zarr-vectors-tools)
-into a segmentation layer: point clouds, lines, streamlines, polylines,
-skeletons, graphs and meshes.
+stores (format 0.9.0 to 0.9.4, as written by zarr-vectors-py and
+zarr-vectors-tools) into a segmentation layer: point clouds, lines,
+streamlines, polylines, skeletons, graphs and meshes.
+
+Format 0.9.4's dense object index (`dense_manifests_v1`: `manifest_spans` and
+`manifest_blocks`, `int64` or `int32`) is read alongside the vlen layouts
+(`dense_manifests.ts`).
 
 It is a separate package, not part of Neuroglancer: an application that
 embeds Neuroglancer adds it, and one that does not pays nothing for it.

@@ -45,6 +45,12 @@ import {
 import { KIND_CAPABILITIES } from "./geometry_kind.js";
 import { LevelCells } from "./level_cells.js";
 import { CrossChunkLinks } from "./links.js";
+import {
+  BLOCKS_PATH,
+  readAllDenseManifests,
+  SPANS_PATH,
+} from "./dense_manifests.js";
+import type { ManifestBlock } from "./object_manifest.js";
 import { decodeObjectManifest } from "./object_manifest.js";
 import {
   readObjectTable,
@@ -95,16 +101,26 @@ async function fragmentOwners(
   level: ZarrVectorsLevel,
 ): Promise<Map<string, BigUint64Array> | undefined> {
   const table = await readObjectTable(access, level.path);
-  const manifests = await cells.reader("object_index/manifests");
-  if (table === undefined || manifests === undefined) return undefined;
-  const rows = await manifests.readVlenRows(0, table.numObjects);
+  if (table === undefined) return undefined;
+  let manifestsByRow: ManifestBlock[][];
+  if (table.dense) {
+    const [spans, blocks] = await Promise.all([
+      cells.reader(SPANS_PATH),
+      cells.reader(BLOCKS_PATH),
+    ]);
+    if (spans === undefined || blocks === undefined) return undefined;
+    manifestsByRow = await readAllDenseManifests(spans, blocks, table.numObjects);
+  } else {
+    const manifests = await cells.reader("object_index/manifests");
+    if (manifests === undefined) return undefined;
+    const rows = await manifests.readVlenRows(0, table.numObjects);
+    manifestsByRow = rows.map((blob) =>
+      blob === undefined ? [] : decodeObjectManifest(blob, 3),
+    );
+  }
   const owners = new Map<string, bigint[]>();
-  rows.forEach((blob, row) => {
-    if (blob === undefined) return;
-    for (const { chunkCoords, fragmentRef: ref } of decodeObjectManifest(
-      blob,
-      3,
-    )) {
+  manifestsByRow.forEach((manifest, row) => {
+    for (const { chunkCoords, fragmentRef: ref } of manifest) {
       const key = chunkCoords.join(".");
       let list = owners.get(key);
       if (list === undefined) owners.set(key, (list = []));

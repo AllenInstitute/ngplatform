@@ -15,12 +15,14 @@ const slot: Schema = { type: "string", enum: ["left", "right", "bottom"] };
 
 export const MANIFEST_SCHEMA: Schema = {
   type: "object",
-  required: ["id", "name", "version"],
+  required: ["id", "name", "version", "kind"],
   properties: {
     id: { type: "string", pattern: "^[a-z0-9]+(\\.[a-z0-9-]+)+$" },
     name: { type: "string" },
     version: { type: "string", pattern: "^\\d+\\.\\d+\\.\\d+" },
+    kind: { type: "string", enum: ["datatype", "tool"] },
     description: { type: "string" },
+    enabledByDefault: { type: "boolean" },
     license: { type: "string" },
     engines: { type: "object", properties: { ngplatform: { type: "string" } } },
     main: { type: "string" },
@@ -30,7 +32,10 @@ export const MANIFEST_SCHEMA: Schema = {
     },
     permissions: { type: "object", properties: { network: { type: "array", items: { type: "string" } } } },
     provides: { type: "object", properties: { services: { type: "array", items: { type: "string" } } } },
-    requires: { type: "object", properties: { services: { type: "array", items: { type: "string" } } } },
+    requires: {
+      type: "object",
+      properties: { plugins: { type: "array", items: { type: "string" } }, services: { type: "array", items: { type: "string" } } },
+    },
     contributes: {
       type: "object",
       additionalProperties: false,
@@ -54,10 +59,6 @@ export const MANIFEST_SCHEMA: Schema = {
             required: ["id", "title", "slot"],
             properties: { id, title: { type: "string" }, slot, order: { type: "number" }, when },
           },
-        },
-        inspector: {
-          type: "array",
-          items: { type: "object", required: ["id", "title"], properties: { id, title: { type: "string" }, order: { type: "number" }, when } },
         },
         datasetActions: {
           type: "array",
@@ -139,13 +140,15 @@ export function checkManifest(manifest: unknown): string[] {
     ...(c.commands ?? []).map((x) => x.when),
     ...(c.keybindings ?? []).map((x) => x.when),
     ...(c.panels ?? []).map((x) => x.when),
-    ...(c.inspector ?? []).map((x) => x.when),
     ...(c.datasetActions ?? []).map((x) => x.when),
   ];
   for (const clause of clauses) {
     for (const key of whenKeys(clause)) {
       if (!keys.has(key)) problems.push(`when clause "${clause}" reads undeclared context key ${key}`);
     }
+  }
+  if (m.kind === "datatype" && (c.commands?.length || c.panels?.length)) {
+    problems.push("a data type plugin contributes a format, not commands or panels: make those a tool plugin that requires it");
   }
   for (const h of c.openHandlers ?? []) {
     try {

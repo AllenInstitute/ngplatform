@@ -1,12 +1,19 @@
 /**
  * The plugin API: everything a plugin may touch.
  *
- * Plugins never import Neuroglancer or the platform's internals.  They get a
- * `PlatformContext` on activation and work through it: commands, panels in
- * the docks, inspector sections, the workspace (scenes, datasets, layers),
- * the viewer's state, jobs, services and their own slice of the workspace
- * state.  Everything a plugin adds is owned by it, and deactivating the
- * plugin removes it all.
+ * There are two kinds of plugin:
+ *
+ *  - A **data type** plugin teaches Neuroglancer a format (a data source,
+ *    with code in Neuroglancer's workers).  It has no platform code; the
+ *    catalogue names its Neuroglancer modules.
+ *  - A **tool** plugin adds to the workspace around the viewer: a tab in the
+ *    left dock, commands, analyses.  It never imports Neuroglancer or the
+ *    platform's internals: it gets a `PlatformContext` on activation and
+ *    works through it.  Everything it adds is owned by it, and deactivating
+ *    it removes it all.
+ *
+ * Either kind is switched on or off in the Plugins tab, which reloads the
+ * page with the same link.
  */
 import type { Schema } from "../core/schema.js";
 
@@ -27,12 +34,18 @@ export interface CommandContribution {
   when?: string;
 }
 
+export type PluginKind = "datatype" | "tool";
+
 export interface Manifest {
   /** Reverse-DNS and stable, e.g. "org.example.tractography". */
   id: string;
   name: string;
   version: string;
+  /** "datatype": a format Neuroglancer reads.  "tool": a workspace tool. */
+  kind: PluginKind;
   description?: string;
+  /** On for a browser that has not chosen; off unless stated. */
+  enabledByDefault?: boolean;
   /** SPDX identifier, shown to the user. GPL plugins ship separately from the core. */
   license?: string;
   engines?: { ngplatform?: string };
@@ -46,12 +59,12 @@ export interface Manifest {
   /** Advisory: what the plugin says it will reach. Shown before installing. */
   permissions?: { network?: string[] };
   provides?: { services?: string[] };
-  requires?: { services?: string[] };
+  /** Plugins that must be on for this one to be (switching it on switches them on). */
+  requires?: { plugins?: string[]; services?: string[] };
   contributes?: {
     commands?: CommandContribution[];
     keybindings?: { key: string; command: string; args?: unknown; when?: string }[];
     panels?: { id: string; title: string; slot: DockSlot; order?: number; when?: string }[];
-    inspector?: { id: string; title: string; order?: number; when?: string }[];
     datasetActions?: { command: string; title?: string; when?: string }[];
     openHandlers?: { id: string; pattern: string; title?: string }[];
     examples?: { id: string; title: string; description: string; remote?: boolean; state?: Json }[];
@@ -114,6 +127,8 @@ export interface WorkspaceApi {
    */
   addLayer(datasetId: string, layer?: Json): string;
   removeDatasetFromScene(datasetId: string): void;
+  /** Removes one layer (a view of a dataset) from the active scene. */
+  removeLayer(name: string): void;
 
   selectedLayer(): string | undefined;
   selectLayer(name: string | undefined): void;
@@ -136,6 +151,25 @@ export interface ViewerApi {
   cursor(): { active: boolean; position: number[]; names: string[]; units: string[]; values: Record<string, unknown> };
   onCursorChanged(callback: () => void): Disposer;
   setPosition(position: number[]): void;
+  /**
+   * A segmentation layer's segment properties (one row per segment: numeric
+   * columns, and tags), once its source has supplied them.
+   */
+  segmentProperties(layer: string): SegmentProperties | undefined;
+  onSegmentPropertiesChanged(layer: string, callback: () => void): Disposer;
+  /**
+   * Shows only these segments in a layer, without saving them in the state
+   * (a filter result is recomputed from the plugin's own state instead).
+   * `undefined` restores the layer's ordinary visible segments.
+   */
+  setTemporaryVisibleSegments(layer: string, ids: BigUint64Array | undefined): void;
+}
+
+export interface SegmentProperties {
+  ids: BigUint64Array;
+  numeric: { id: string; description: string | undefined; values: ArrayLike<number>; min: number; max: number }[];
+  /** `values[i]` lists segment i's tags as character codes indexing `names`. */
+  tags: { names: string[]; descriptions: string[]; values: string[] } | undefined;
 }
 
 // --------------------------------------------------------------- context
@@ -144,11 +178,6 @@ export interface JobControl {
   progress(fraction: number | undefined, message?: string): void;
   /** Becomes true when the user cancels; check it between steps. */
   readonly cancelled: boolean;
-}
-
-export interface InspectorTarget {
-  dataset: DatasetInfo | undefined;
-  layer: LayerInfo | undefined;
 }
 
 export interface PlatformContext {
@@ -161,7 +190,6 @@ export interface PlatformContext {
   ui: {
     /** Renders a panel declared in the manifest; return a disposer for cleanup. */
     panel(id: string, render: (host: HTMLElement) => Disposer | void): Disposer;
-    inspectorSection(id: string, render: (host: HTMLElement, target: InspectorTarget) => Disposer | void): Disposer;
     showPanel(id: string): void;
     toast(message: string, kind?: "info" | "error"): void;
     confirm(message: string): Promise<boolean>;

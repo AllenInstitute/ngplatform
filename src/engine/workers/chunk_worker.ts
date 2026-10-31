@@ -1,14 +1,16 @@
 /**
- * The chunk worker: Neuroglancer's own worker contents plus the backend
- * modules of the Neuroglancer plugins the platform loads (data sources
- * packaged outside Neuroglancer).  Neuroglancer's contents are imported
- * last, since they report the worker ready; the whole script still runs
- * before the worker handles its first message.
+ * The chunk worker: Neuroglancer's own worker contents plus the worker
+ * modules of the data type plugins that are on (named in this worker's
+ * `name`).  Neuroglancer's contents load last, since they report the worker
+ * ready; the main thread waits for that before sending anything.
  */
 import { setAsyncComputationWorkerFactory } from "neuroglancer/unstable/worker_factories.js";
-import "neuroglancer-zarr-vectors/backend";
+import { CHUNK_WORKER_MODULES, workerPlugins } from "./plugins.js";
+
+for (const id of workerPlugins(self.name)) await CHUNK_WORKER_MODULES[id]?.();
 
 // The chunk worker starts the async-computation workers itself.
-setAsyncComputationWorkerFactory(() => new Worker(new URL("./async_worker.ts", import.meta.url), { type: "module" }));
+const name = self.name;
+setAsyncComputationWorkerFactory(() => new Worker(new URL("./async_worker.ts", import.meta.url), { type: "module", name }));
 
-import "neuroglancer/worker/chunk";
+await import("neuroglancer/worker/chunk");

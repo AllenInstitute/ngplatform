@@ -20,6 +20,7 @@
  * data, posted as is to the chunk worker.
  */
 
+import { DENSE_MANIFESTS_LAYOUT } from "./dense_manifests.js";
 import type { ZarrVectorsGeometryDescription } from "./base.js";
 import type { ElementType } from "./dtype.js";
 import {
@@ -290,13 +291,6 @@ function checkFormat(zv: any, warnings: string[]) {
       );
     }
   }
-  const capabilities = zv?.format_capabilities;
-  if (Array.isArray(capabilities) && capabilities.includes("dense_manifests")) {
-    warnings.push(
-      "this store uses dense manifests (0.9.4), which this viewer cannot read; " +
-        "selected objects and segment properties are unavailable",
-    );
-  }
 }
 
 /** `required_capabilities` this viewer implements. */
@@ -327,7 +321,8 @@ export function checkObjectIndexLayout(objectIndexAttrs: any) {
   if (
     layout !== undefined &&
     layout !== "vlen_manifests_v1" &&
-    layout !== "vlen_manifests_v2"
+    layout !== "vlen_manifests_v2" &&
+    layout !== DENSE_MANIFESTS_LAYOUT
   ) {
     throw new Error(
       `object_index layout ${JSON.stringify(layout)} is not supported`,

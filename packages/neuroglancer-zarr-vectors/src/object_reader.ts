@@ -24,6 +24,11 @@
  * the objects that pass through them.
  */
 
+import {
+  BLOCKS_PATH,
+  DenseManifestReader,
+  SPANS_PATH,
+} from "./dense_manifests.js";
 import type { ZarrVectorsGeometryDescription } from "./base.js";
 import type { DecodedChunk } from "./chunk_decode.js";
 import {
@@ -360,7 +365,14 @@ export class ObjectReader {
   private cells: LevelCells;
   private links: CrossChunkLinks | undefined;
   private index:
-    | Promise<{ rows: SegmentIdIndex; chunkRows: number } | undefined>
+    | Promise<
+        | {
+            rows: SegmentIdIndex;
+            chunkRows: number;
+            dense: DenseManifestReader | undefined;
+          }
+        | undefined
+      >
     | undefined;
   /** Caches shared with the store's other readers, and this one's keys. */
   private caches: StoreCaches;
@@ -411,10 +423,25 @@ export class ObjectReader {
       const promise = (async () => {
         const table = await readObjectTable(this.access, this.cells.levelPath);
         if (table === undefined) return undefined;
+        if (table.dense) {
+          const [spans, blocks] = await Promise.all([
+            this.cells.reader(SPANS_PATH),
+            this.cells.reader(BLOCKS_PATH),
+          ]);
+          if (spans === undefined || blocks === undefined) {
+            throw new Error("object_index: dense layout without its arrays");
+          }
+          return {
+            rows: new SegmentIdIndex(table.segmentIds),
+            chunkRows: spans.array.readChunkShape[0],
+            dense: new DenseManifestReader(spans, blocks, 32, SHARED_SIGNAL),
+          };
+        }
         const manifests = await this.cells.reader("object_index/manifests");
         return {
           rows: new SegmentIdIndex(table.segmentIds),
           chunkRows: manifests?.array.readChunkShape[0] ?? 1,
+          dense: undefined,
         };
       })();
       this.index = promise;
@@ -431,6 +458,7 @@ export class ObjectReader {
     if (index === undefined) throw new Error("this store has no object index");
     const row = index.rows.rowOf(segmentId);
     if (row === undefined) return [];
+    if (index.dense !== undefined) return index.dense.manifest(row);
     const reader = await this.cells.reader("object_index/manifests");
     if (reader === undefined)
       throw new Error("object_index/manifests is missing");

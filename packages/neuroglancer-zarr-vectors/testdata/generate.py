@@ -150,6 +150,52 @@ def props_fixture():
         zv_arrays.OBJECT_ATTRIBUTE_ROW_BUCKET = saved
 
 
+def dense_fixtures():
+    """0.9.4's dense object-index layout, over the same polylines as `main`.
+
+    Run on its own (`python generate.py dense`) with a zarr-vectors that
+    writes format 0.9.4.  Each store is written in the vlen layout, then its
+    index is rewritten dense, with small array chunks so that reads cross
+    them: `poly_dense` has int64 blocks, `poly_dense_i32` int32 blocks.
+    """
+    import zarr_vectors.core.dense_manifests as dense
+    from zarr_vectors.core.arrays import read_all_object_manifests, write_object_index
+    from zarr_vectors.core.store import get_resolution_level, open_store
+
+    rng = np.random.default_rng(0)
+    polys = [
+        (np.cumsum(rng.normal(size=(20, 3)), axis=0) + 24).astype("float32")
+        for _ in range(6)
+    ]
+    fa = [rng.random(len(p)).astype("float32") for p in polys]
+    object_attributes = {
+        "length": np.arange(6, dtype="float32") * 1.5,
+        "kind": np.array([0, 1, 0, 1, 2, 2], dtype="int32"),
+    }
+    dense._BUCKET = 4
+    dense.BLOCKS_BUCKET = 8
+    for name, block_dtype in (("poly_dense", "int64"), ("poly_dense_i32", "int32")):
+        write_polylines(
+            fresh(name),
+            polys,
+            chunk_shape=(16.0, 16.0, 16.0),
+            vertex_attributes={"fa": fa},
+            object_attributes=object_attributes,
+            groups={0: [0, 1, 2], 1: [3, 4, 5]},
+            compressor="zstd",
+        )
+        root = open_store(path(name), mode="r+")
+        level = get_resolution_level(root, 0)
+        manifests = read_all_object_manifests(level)
+        write_object_index(
+            level,
+            {i: m for i, m in enumerate(manifests)},
+            3,
+            layout="dense",
+            block_dtype=block_dtype,
+        )
+
+
 def main():
     # Small row buckets keep the fixtures small; the reader must not assume
     # the writer's 65,536 / 16,384 defaults anyway.
@@ -464,4 +510,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    dense_fixtures() if sys.argv[1:] == ["dense"] else main()

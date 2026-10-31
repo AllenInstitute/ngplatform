@@ -1,31 +1,56 @@
-# Writing a plugin
+# Plugins
 
-There are two kinds, at two levels:
+## Installing, and switching on and off
 
-- A **platform plugin** (this guide) adds to the workspace around the
-  viewer: commands, panels, Inspector sections, analyses. It never touches
-  Neuroglancer.
-- A **Neuroglancer plugin** adds a data format to Neuroglancer itself, with
-  code in Neuroglancer's workers. `packages/neuroglancer-zarr-vectors` is
-  one; its README says how an application adds it, and
-  `src/engine/plugins.ts` is where the platform does. A platform plugin can
-  build on one (the zarr-vectors store facts here read what the Zarr
-  Vectors plugin loads).
+Plugins are built into the app. Every plugin it ships is listed in
+[`src/plugins/catalogue.ts`](../src/plugins/catalogue.ts): a manifest plus
+its code. The **Plugins** tab (left dock) lists them with a switch each.
+Switching one on or off reloads the page with the same link, so the
+workspace comes back as it was, now with or without the plugin; the choice
+is kept in this browser.
 
-A plugin adds to the workspace: commands, panels in the docks, sections in
-the Inspector, key bindings, examples, handlers for pasted links, a slice of
-the workspace state, and services for other plugins. It never touches
-Neuroglancer: it works through the `PlatformContext` it is given, so a
-rebase of the Neuroglancer fork does not break it.
+- Switching a plugin on also switches on the plugins it requires; switching
+  one off also switches off the plugins that require it. The confirmation
+  says which.
+- A plugin whose requirement is off is off, and the tab says why.
+- A workspace with data in a format whose plugin is off says so when it
+  opens, and shows the Plugins tab.
+
+To install a new plugin: add its package (or folder) to the app, add an
+entry to the catalogue, and, for a data type, its worker modules to
+[`src/engine/workers/plugins.ts`](../src/engine/workers/plugins.ts).
+`tests/catalogue.test.ts` checks the entries are complete. Loading plugins
+from a URL at run time is not supported yet.
+
+## Two kinds
+
+| Kind | What it does | Its code | Example |
+|---|---|---|---|
+| **Data type** (`kind: "datatype"`) | Teaches Neuroglancer a format: a data source, with code in Neuroglancer's workers | A Neuroglancer plugin package: a main-thread module (registers the data source) and worker modules | **Zarr Vectors** ([`packages/neuroglancer-zarr-vectors`](../packages/neuroglancer-zarr-vectors/)) |
+| **Tool** (`kind: "tool"`) | Adds to the workspace around the viewer: a tab in the left dock, commands, analyses | A platform module with `activate(ctx)`, using only the `PlatformContext` | **Track filtering** ([`src/plugins/track_filtering`](../src/plugins/track_filtering/)), which requires Zarr Vectors |
+
+A data type plugin has no platform code and contributes no commands or
+panels; tools that work on its data are separate tool plugins that declare
+`requires: { plugins: [<the data type>] }`.
+
+### How a data type reaches Neuroglancer's workers
+
+At start, before the viewer exists, the app imports the main-thread module of
+each data type that is on, and tells Neuroglancer to start its workers from
+the app's own scripts (`src/engine/workers/`), named with the plugins that are
+on. Each worker script imports those plugins' worker modules and then
+Neuroglancer's own worker contents. This uses the worker factories in the
+Neuroglancer the app builds on (`setChunkWorkerFactory`,
+`setAsyncComputationWorkerFactory`); see the Zarr Vectors package's README.
+
+## Writing a tool plugin
 
 The types are in [`src/sdk/types.ts`](../src/sdk/types.ts), and the manifest
 schema and its checks in [`src/sdk/manifest.ts`](../src/sdk/manifest.ts).
-[`src/builtins/zarr_vectors.ts`](../src/builtins/zarr_vectors.ts) is a small
-plugin the platform ships, and
-[`tests/plugins.test.ts`](../tests/plugins.test.ts) exercises every part of
-the host.
+Track filtering is a complete example; [`tests/plugins.test.ts`](../tests/plugins.test.ts)
+exercises every part of the host.
 
-## The model a plugin works with
+### The model a plugin works with
 
 | Word | Meaning |
 |---|---|
@@ -34,117 +59,94 @@ the host.
 | **Dataset** | A piece of data, identified by its source URL. It belongs to the workspace, so any scene can show it. |
 | **Layer** | One way a scene shows a dataset (colours, shader, segments). A scene can show a dataset through several layers. |
 
-`ctx.workspace.addLayer(datasetId, overrides)` is how a plugin shows a
-derived view: the same dataset with a different shader or segment set, or a
-derived source (a filtered store) recorded against the dataset it came from.
+`ctx.workspace.addLayer(datasetId, overrides)` shows a derived view: the same
+dataset with a different shader, subsources or segment set. Track filtering
+shows its result that way.
 
-## 1. The manifest
+### The manifest
 
-The manifest is read without running any code. It is enough to list the
-plugin, show its commands in the palette and its panels in the docks, and
-decide when to load the code.
+Read without running any code: enough to list the plugin, show its commands
+in the palette and its tab in the dock, and decide when to load the code.
 
-```json
-{
-  "id": "org.example.layer-stats",
-  "name": "Layer statistics",
-  "version": "0.1.0",
-  "license": "Apache-2.0",
-  "activation": ["onCommand:layerStats.show"],
-  "contributes": {
-    "commands": [
+```ts
+export const MANIFEST: Manifest = {
+  id: "org.example.layer-stats",
+  name: "Layer statistics",
+  version: "0.1.0",
+  kind: "tool",
+  enabledByDefault: false,
+  license: "Apache-2.0",
+  requires: { plugins: ["org.ngplatform.zarr-vectors"] },
+  contributes: {
+    panels: [{ id: "layerStats.panel", title: "Statistics", slot: "left", order: 50 }],
+    commands: [
       {
-        "id": "layerStats.show",
-        "title": "Statistics of the selected layer",
-        "when": "selectedLayerType == image",
-        "args": { "type": "object", "properties": { "bins": { "type": "integer", "minimum": 2, "default": 64 } } }
-      }
+        id: "layerStats.show",
+        title: "Statistics of the selected layer",
+        when: "sourceFormat == zarr-vectors",
+        args: { type: "object", properties: { bins: { type: "integer", minimum: 2, default: 64 } } },
+      },
     ],
-    "keybindings": [{ "key": "alt+s", "command": "layerStats.show" }],
-    "panels": [{ "id": "layerStats.panel", "title": "Statistics", "slot": "right" }],
-    "inspector": [{ "id": "layerStats.summary", "title": "Statistics", "when": "selectedLayerType == image" }],
-    "appState": { "key": "layerStats", "version": 1 }
-  }
-}
+    keybindings: [{ key: "alt+s", command: "layerStats.show" }],
+    appState: { key: "layerStats", version: 1 },
+  },
+};
 ```
 
-- **Activation events**: `onStartup`, `onCommand:<id>`, `onView:<panel>`,
-  `onDatasetKind:<kind>`, `onOpen:<regex>`. Using any declared contribution
-  also activates the plugin, so most plugins need none.
+- **Activation**: using a declared contribution loads the plugin. Activation
+  events (`onStartup`, `onCommand:<id>`, `onView:<panel>`,
+  `onDatasetKind:<kind>`, `onOpen:<regex>`) load it earlier.
 - **`when` clauses** read context keys: the platform's own (`hasLayers`,
   `sceneIsEmpty`, `sceneCount`, `selectedLayer`, `selectedLayerType`,
   `datasetKind`, `sourceFormat`, `canUndo`, `canRedo`, `framed`) and any the
   plugin lists in `contributes.contextKeys` and sets with `ctx.context.set`.
   Syntax: `a`, `!a`, `a == x`, `a != x`, joined with `&&` and `||`.
-- **Checks** (`checkManifest`): the schema, commands named by keys and dataset
-  actions exist, activation events name declared things, and `when` clauses
-  read only declared keys.
+- **Checks** (`checkManifest`): the schema, commands named by keys and
+  dataset actions exist, activation events name declared things, `when`
+  clauses read only declared keys, and data types contribute no UI.
 
-## 2. The code
+### The code
 
 ```ts
-import type { PluginModule } from "../sdk/types.js"; // src/sdk/types.ts
-
 export const plugin: PluginModule = {
   activate(ctx) {
     ctx.commands.register("layerStats.show", async ({ bins }: { bins: number }) => {
       const layer = ctx.workspace.selectedLayer();
-      return ctx.jobs.run(`Statistics of ${layer}`, async (job) => {
-        job.progress(0.5, "Reading chunks");
-        if (job.cancelled) return;
-        ctx.state.set({ layer, bins });
-      });
+      const props = layer && ctx.viewer.segmentProperties(layer);
+      ctx.state.set({ layer, bins, n: props?.ids.length });
     });
-
     ctx.ui.panel("layerStats.panel", (host) => {
       host.textContent = "…";
-      const off = ctx.viewer.onLayersChanged(() => { /* redraw */ });
-      return off; // called when the panel goes away
-    });
-
-    ctx.ui.inspectorSection("layerStats.summary", (host, { dataset, layer }) => {
-      host.textContent = `${dataset?.name}: ${layer?.type}`;
+      return ctx.viewer.onLayersChanged(() => { /* redraw */ }); // disposed with the panel
     });
   },
 };
 ```
 
 Everything registered through `ctx` is owned by the plugin and removed when
-it is deactivated or unregistered. Subscriptions a plugin makes itself go in
+it is deactivated. Subscriptions a plugin makes itself go in
 `ctx.subscriptions`.
 
-## 3. Registering
-
-Built-in plugins are registered at boot, as `src/builtins/index.ts` does:
-
-```ts
-wb.plugins.register(manifest, async () => (await import("./layer_stats.js")).plugin);
-```
-
-Loading external plugins from a URL, with a consent dialog showing their
-`permissions`, is the next step for the host; the manifest field `main`
-already names the module.
-
-## What the context offers
+### What the context offers
 
 | Part | For |
 |---|---|
-| `commands.register / invoke` | Supply declared commands; call any command with arguments. Arguments are validated against the declared schema and get its defaults. |
-| `ui.panel / inspectorSection / showPanel` | Render declared panels and Inspector sections. Return a disposer for cleanup. |
+| `commands.register / invoke` | Supply declared commands; call any command with arguments (validated against the declared schema, defaults filled in). |
+| `ui.panel / showPanel` | Render declared panels; return a disposer for cleanup. |
 | `ui.toast / confirm / form` | Messages, confirmation, and a dialog generated from a schema. |
-| `workspace` | Scenes, datasets, layers, the selection; add datasets and derived layers. |
-| `viewer` | The active scene's Neuroglancer state as JSON (`patchState` applies only what changed, as one undo step), layers, the pointer, the position. |
-| `state` | The plugin's slice of the workspace state: in the link, undoable, versioned. Bump `appState.version` and handle older data in your own migration when its shape changes. |
+| `workspace` | Scenes, datasets, layers and the selection; add datasets and derived layers, remove layers. |
+| `viewer` | The active scene's Neuroglancer state as JSON (`patchState` applies only what changed, as one undo step), layers, the pointer, the position, a segmentation layer's segment properties, and a temporary set of visible segments (not saved in the link). |
+| `state` | The plugin's slice of the workspace state: in the link, undoable, versioned. |
 | `settings` | Per-user settings kept in this browser, never in the link. |
 | `jobs.run` | Long work with progress and cancel, shown in the Jobs tab. |
 | `services.provide / get` | Share an API with other plugins (`get` waits for the provider). |
 | `open.handler` | Handle pasted text matching a declared pattern. |
 | `log` | Lines in the Activity tab, tagged with the plugin. |
 
-## Failure and trust
+### Failure and trust
 
 - A plugin's exceptions are logged against it and never reach the shell or
-  Neuroglancer; three in a session disable it.
+  Neuroglancer; three in a session stop it until the next load.
 - Plugins run in the page with full privileges. `permissions` in the
   manifest are shown to the user, not enforced.
 - Plugins that wrap GPL code (NAVis, a Lead-DBS port) are distributed
