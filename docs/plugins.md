@@ -1,5 +1,17 @@
 # Writing a plugin
 
+There are two kinds, at two levels:
+
+- A **platform plugin** (this guide) adds to the workspace around the
+  viewer: commands, panels, Inspector sections, analyses. It never touches
+  Neuroglancer.
+- A **Neuroglancer plugin** adds a data format to Neuroglancer itself, with
+  code in Neuroglancer's workers. `packages/neuroglancer-zarr-vectors` is
+  one; its README says how an application adds it, and
+  `src/engine/plugins.ts` is where the platform does. A platform plugin can
+  build on one (the zarr-vectors store facts here read what the Zarr
+  Vectors plugin loads).
+
 A plugin adds to the workspace: commands, panels in the docks, sections in
 the Inspector, key bindings, examples, handlers for pasted links, a slice of
 the workspace state, and services for other plugins. It never touches

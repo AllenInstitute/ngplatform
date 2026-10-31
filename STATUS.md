@@ -8,7 +8,8 @@
 |---|---|
 | **The platform GUI** (this release, 0.2) | Built and unit-tested. Neuroglancer shows only data; datasets, scenes, layer controls, selection, position, settings and help are in the platform's docks and dialogs. **Not yet checked by eye in a browser**: see below. |
 | **Plugin system** | Host, manifest, `PlatformContext`, contract tests, author guide. One built-in plugin (zarr-vectors store facts). No downstream plugins yet, by design. |
-| **Neuroglancer fork** | Branch `ngplatform` (`zarr_vectors_working` + two commits' worth of change): a viewer option to leave side panels to the host, and incremental layer restore. Not rebased onto upstream; the command registry and `setupEngine` (#1147) are not needed for this release. |
+| **Neuroglancer** | google/neuroglancer `master` (c8c4d139, 2026-10-28) plus three commits, each written to be proposed upstream, on `Andrew-Keenlyside/neuroglancer` branch `ngplatform-upstream`: (1) the application can supply the chunk and async-computation workers, (2) a viewer option to leave side panels to the host, (3) incremental layer restore. |
+| **Zarr Vectors** | A Neuroglancer plugin in `packages/neuroglancer-zarr-vectors`: the fork's datasource, unchanged apart from its imports, built against upstream through change (1). 172 tests pass against upstream. Neuroglancer's own build does not include it. |
 | **Filter oracle and engines, step C0** | Done, in `zarr-vectors-tools`, parked as patches in [`pending/zarr-vectors-tools/`](pending/zarr-vectors-tools/). |
 | **Gate G1** | Measured; see [`docs/editor_repo_plan.md`](docs/editor_repo_plan.md) §5. |
 
@@ -50,7 +51,7 @@ ones are ready, so nothing reloads.
 
 ## How it is checked
 
-- `npm test`: 53 unit tests (workspace model, store with a fake engine,
+- `npm test`: the plugin's 172 tests (codecs, layouts, pyramids, meshes, objects, worker imports) against upstream Neuroglancer, and 54 unit tests (workspace model, store with a fake engine,
   commands with arguments, key bindings, `when` clauses, schemas, state
   slices, plugin host with fixture plugins, state parsing, undo history).
 - `npm run typecheck`: the app together with Neuroglancer's sources.

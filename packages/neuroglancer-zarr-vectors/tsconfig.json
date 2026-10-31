@@ -1,0 +1,27 @@
+{
+  // Neuroglancer's own options: its sources are typechecked with this package.
+  "compilerOptions": {
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "noImplicitThis": true,
+    "noUnusedParameters": true,
+    "noUnusedLocals": true,
+    "preserveConstEnums": true,
+    "experimentalDecorators": true,
+    "alwaysStrict": true,
+    "strictNullChecks": true,
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "useDefineForClassFields": true,
+    "target": "ES2022",
+    "lib": ["dom", "webworker", "esnext", "dom.iterable"],
+    "module": "ESNext",
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["src", "../../node_modules/neuroglancer/typings"],
+  "exclude": ["browser_tests"]
+}

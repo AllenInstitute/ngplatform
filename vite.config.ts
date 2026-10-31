@@ -1,7 +1,8 @@
 import { defineConfig } from "vite";
 
-// Neuroglancer is consumed as TypeScript source from the fork (see
-// package.json), following the fork's own examples/vite configuration.
+// Neuroglancer is consumed as TypeScript source (see package.json), following
+// its own examples/vite configuration.  Data sources outside Neuroglancer
+// (packages/neuroglancer-zarr-vectors) are added by src/engine/plugins.ts.
 export default defineConfig({
   // Relative asset URLs, so the built app can be served from any path: a
   // bucket prefix, GitHub Pages, or an artifact host.
@@ -9,7 +10,6 @@ export default defineConfig({
   resolve: {
     conditions: [
       "neuroglancer/datasource:none_by_default",
-      "neuroglancer/datasource/zarr-vectors:enabled",
       "neuroglancer/datasource/zarr:enabled",
       "neuroglancer/datasource/nifti:enabled",
       "neuroglancer/datasource/precomputed:enabled",
@@ -34,13 +34,12 @@ export default defineConfig({
   optimizeDeps: {
     entries: [
       "index.html",
-      "node_modules/neuroglancer/src/main.bundle.js",
-      "node_modules/neuroglancer/src/async_computation.bundle.js",
-      "node_modules/neuroglancer/src/chunk_worker.bundle.js",
+      "src/engine/workers/chunk_worker.ts",
+      "src/engine/workers/async_worker.ts",
     ],
     // Neuroglancer's `new URL(..., import.meta.url)` workers defeat esbuild's
     // dependency pre-bundling.
-    exclude: ["neuroglancer"],
+    exclude: ["neuroglancer", "neuroglancer-zarr-vectors"],
   },
   test: {
     include: ["tests/**/*.test.ts"],

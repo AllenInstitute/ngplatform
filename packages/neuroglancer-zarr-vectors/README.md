@@ -1,0 +1,333 @@
+# neuroglancer-zarr-vectors
+
+A Neuroglancer plugin that reads [Zarr Vectors](https://github.com/AllenInstitute/zarr_vectors)
+stores (format 0.9.x, as written by zarr-vectors-py and zarr-vectors-tools)
+into a segmentation layer: point clouds, lines, streamlines, polylines,
+skeletons, graphs and meshes.
+
+It is a separate package, not part of Neuroglancer: an application that
+embeds Neuroglancer adds it, and one that does not pays nothing for it.
+
+```
+<store url>/|zarr-vectors:                     all subsources, default attributes
+<store url>/|zarr-vectors:#attributes=fa,z      choose the vertex attributes
+<store url>/|zarr-vectors:#attributes=fa,obj:kind  ...and object columns for shaders
+zarr-vectors://<store url>                     older form, still accepted
+```
+
+## Adding it to an application
+
+The plugin has a main-thread half and worker halves:
+
+| Import | Where | Registers |
+|---|---|---|
+| `neuroglancer-zarr-vectors` | main thread | the data source and the layer drawing |
+| `neuroglancer-zarr-vectors/backend` | chunk worker | chunk sources (dense chunks, objects, mesh fragments) |
+| `neuroglancer-zarr-vectors/async_computation` | async-computation workers | the zstd and blosc decoders its stores use |
+
+The worker halves need Neuroglancer to start its workers from the
+application's own scripts, which `setChunkWorkerFactory` and
+`setAsyncComputationWorkerFactory` (in `neuroglancer/unstable/worker_factories.js`)
+allow. These come from the change proposed upstream on
+`Andrew-Keenlyside/neuroglancer` branch `ngplatform-upstream`; until it is
+merged, build against that branch.
+
+```js
+// chunk_worker.js
+import { setAsyncComputationWorkerFactory } from "neuroglancer/unstable/worker_factories.js";
+import "neuroglancer-zarr-vectors/backend";
+setAsyncComputationWorkerFactory(
+  () => new Worker(new URL("./async_worker.js", import.meta.url), { type: "module" }));
+import "neuroglancer/worker/chunk";          // last: reports the worker ready
+
+// async_worker.js
+import "neuroglancer-zarr-vectors/async_computation";
+import "neuroglancer/worker/async_computation";
+
+// main thread, before creating a viewer
+import "neuroglancer-zarr-vectors";
+import { setAsyncComputationWorkerFactory, setChunkWorkerFactory } from "neuroglancer/unstable/worker_factories.js";
+setChunkWorkerFactory(
+  () => new Worker(new URL("./chunk_worker.js", import.meta.url), { type: "module" }));
+setAsyncComputationWorkerFactory(
+  () => new Worker(new URL("./async_worker.js", import.meta.url), { type: "module" }));
+```
+
+The application's bundler builds each worker script with Neuroglancer's
+worker modules and the plugin's in one module graph, so the plugin
+registers with Neuroglancer's own registries. ngplatform does exactly this
+(`src/engine/plugins.ts`, `src/engine/workers/`).
+
+The plugin imports Neuroglancer only through `neuroglancer/unstable/*`, and
+only APIs present in google/neuroglancer `master`; `compat.ts` holds the
+calls whose signatures have differed between Neuroglancer versions.
+
+### Building it into Neuroglancer instead
+
+To build it into Neuroglancer itself (as `src/datasource/zarr-vectors/`,
+optional through Neuroglancer's datasource conditions like every other
+format), copy `src/` there, rewrite `neuroglancer/unstable/` imports back to
+`#src/` and `./` imports to `#src/datasource/zarr-vectors/`, copy `testdata/`
+to `testdata/datasource/zarr-vectors/`, and run `npm run update-conditions`.
+
+## What it registers
+
+- The `zarr-vectors` kvstore-based data source (`register_default.ts`).
+- A subclass of `SegmentationUserLayer` under the existing `"segmentation"`
+  type name (`layer.ts`). It draws the dense subsource below and passes every
+  other subsource to the base class unchanged, so saved states keep their
+  layer type and non-zarr-vectors data behaves exactly as before.
+- Worker-side zstd and blosc decoders (`async_computation.ts`).
+
+## Modules
+
+Main thread (`frontend.ts` and what it imports) and chunk worker
+(`backend.ts`) load different halves; `worker_imports.spec.ts` keeps WebGL and
+UI code out of the worker.
+
+| module                                        | runs in | does                                                              |
+| --------------------------------------------- | ------- | ----------------------------------------------------------------- |
+| `register_default.ts`, `frontend.ts`          | main    | URL parsing, store opening, subsource list                        |
+| `layer.ts`                                    | main    | segmentation layer subclass that draws the dense subsource        |
+| `dense_frontend.ts`                           | main    | dense render layer: shaders, segment state, picking               |
+| `compat.ts`                                   | main    | calls that differ between Neuroglancer versions                   |
+| `backend.ts`                                  | worker  | chunk sources: dense chunks, object skeletons, mesh fragments     |
+| `chunk_pipeline.ts`                           | worker  | one dense chunk: decode, segment ids, bridges to neighbour chunks |
+| `object_reader.ts`                            | worker  | one object, assembled from its manifest's chunks                  |
+| `mesh_lod.ts`                                 | both    | mesh levels of detail: level choice, octree, octant split         |
+| `dense_lod.ts`, `base.ts`, `geometry_kind.ts` | both    | level choice, shared parameters, per-kind drawing rules           |
+| `store.ts`, `objects.ts`                      | both    | root/level metadata; object table and segment properties          |
+| `chunk_decode.ts`                             | worker  | a chunk's vertices, edges, faces and tangents                     |
+| `links.ts`                                    | both    | cross-chunk links                                                 |
+| `zarr_array.ts`                               | both    | zarr v3 arrays: codecs, sharding, byte-range rows                 |
+| `level_cells.ts`                              | worker  | a level's arrays, opened lazily                                   |
+| `fragment_index.ts`, `object_manifest.ts`     | worker  | binary fragment and manifest encodings                            |
+| `dtype.ts`, `util.ts`                         | both    | element decoding; LRU, concurrency, warn-once                     |
+
+## Subsources
+
+| id           | what                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------ |
+| `""`         | Dense overview of every object, from spatial chunks (`dense_frontend.ts`)                  |
+| `objects`    | Selected objects at full resolution, as Neuroglancer skeletons (curves, skeletons, graphs) |
+| `meshes`     | Selected objects as Neuroglancer meshes (mesh stores)                                      |
+| `properties` | Object attributes as segment properties; groups and categories as tags (below)             |
+
+The dense layer follows the layer's ordinary segment state: selected segments,
+segment colours, colour seed, `selectedAlpha` (2-d) / `objectAlpha` (3-d),
+`notSelectedAlpha` for everything else, and `ignoreNullVisibleSet` (an empty
+selection shows every object). Selected objects are left to `objects` /
+`meshes` while those subsources are enabled. While the layer would draw
+nothing in a view (`notSelectedAlpha` 0 with the selection drawn by
+`objects` / `meshes`, or every alpha 0) it loads no chunks for that view. The layer's skeleton shader and
+controls apply to both, with `prop_<attribute>()`, `prop_tangent()` and
+`segmentColor()`.
+
+Object values in shaders. Each vertex also carries its object's values, as
+float32 attributes named `obj_<column>` (and `prop_obj_<column>()`), in both
+layers, so one shader colours the overview and the selected objects alike:
+
+- `obj_group`: index (in `groups/`) of the first group the object belongs to,
+  NaN if none; present when the store has groups.
+- `obj_<column>`: the object's value in `object_attributes/<column>`; a
+  dictionary-encoded column gives its code, and the codes are listed in the
+  browser console when the layer opens. A value the store marks absent is
+  NaN (test with `isnan`).
+
+By default the group index and, when the store has at most 8 eligible
+columns (single-channel, numeric or dictionary, not 64-bit), all of them are
+added; with more, none, and a warning says how to choose. `#attributes=`
+chooses the columns explicitly: names with an `obj:` prefix are object
+columns, the rest vertex attributes; 64-bit columns are allowed there, with
+the same precision warning as vertex attributes. The group index is always
+added when the store has groups. Vertex and object values share
+Neuroglancer's limit of 12 attributes; columns that do not fit are left out
+with a warning. Values come from level 0's object
+table; the `meshes` subsource has no shader of its own in Neuroglancer, so
+mesh stores show them only in the dense overview.
+
+```glsl
+void main() {
+  if (isnan(obj_length)) discard;
+  emitRGB(colormapJet(clamp(obj_length / 500.0, 0.0, 1.0)));
+}
+```
+
+One pyramid level is drawn per view: the finest whose vertices, for what the
+view would load, fit one vertex per `renderScale`² pixels (`dense_lod.ts`).
+The coarsest level stands in while it loads. The Render tab's "Resolution
+(slice)" and "Resolution (mesh)" sliders set the target, and their
+histograms show the level drawn and its chunks, loaded and not. A level without a vertex count
+(or with 0, which writers also use as a placeholder) is estimated from its
+neighbours; a coarse level known to be empty is not used; a flat store (one
+plane) is measured as one stored unit thick.
+
+Additive pyramids. A level whose metadata says `refinement: "add"` holds
+only what the coarser levels do not: its complete content is its own data
+and the next coarser level's complete content (zarr-vectors-tools builds
+these with `zvtools pyramid --refinement add`; the store lists
+`additive_levels` in `required_capabilities`, and a store that requires
+anything this viewer does not implement is refused). Each view then draws
+the chosen level together with every coarser level it adds to, coarse
+first, with the vertex budget counting all of them; finer data is added as
+it loads rather than replacing what is drawn. `objects` reads each object
+from every level of level 0's chain. `meshes` cannot use Neuroglancer's
+levels of detail for an additive pyramid, so it draws each object whole,
+from every level, as a single level of detail (with a warning); in a
+replacement pyramid a level that adds to the next is not used as a level of
+detail.
+
+## What a store needs
+
+To open, a store needs only what zarr-vectors-py 0.9.x writes for any
+geometry: a 3-D root with `zarr_vectors` metadata, and level 0's `vertices`
+and `vertex_fragments`. Everything else is optional. The viewer detects each
+feature per store (and, where it can vary, per chunk), uses it when present,
+and otherwise does what the right-hand column says. Most features change only
+cost; an object index and directory listing also change what can be shown.
+
+| Feature                                                   | Gives                                                                                                         | Without it                                                                                                            |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `object_index` (`vlen_manifests_v1`/`v2`)                 | `objects` / `meshes` / `properties` subsources                                                                | dense overview only                                                                                                   |
+| more pyramid levels                                       | dense overview level choice (`dense_lod.ts`)                                                                  | level 0 everywhere                                                                                                    |
+| mesh levels whose chunks double and that store faces      | multi-resolution meshes (`mesh_lod.ts`)                                                                       | meshes at level 0                                                                                                     |
+| level stamped `fragment_link_groups`                      | one object's faces read alone, by byte range                                                                  | whole face cells (`zvtools index-faces` stamps it)                                                                    |
+| uncompressed cells, one per stored chunk (sharded or not) | byte-range reads of rows (an object's own curve and its fragments' range entries, bridges, faces, neighbours) | whole cells                                                                                                           |
+| `sharding_indexed`                                        | ranges of one shard read together are merged                                                                  | one request per cell                                                                                                  |
+| server directory listing                                  | cross-chunk links found by listing `links/0/`                                                                 | edges: the 26 neighbours are probed; faces: missing, warned                                                           |
+| `nonempty_chunks`                                         | empty cells skipped without a request                                                                         | a request that finds nothing                                                                                          |
+| zarr-vectors-tools `skeleton_layout`                      | skeleton layout known                                                                                         | inferred                                                                                                              |
+| `fragment_attributes/object_id`, or ids that are rows     | each fragment's object read directly                                                                          | taken from the level's manifests (a `segment_id` column may hold ids or rows, so it is used only where the two agree) |
+
+A feature is trusted only where the data bears it out: a stamped face group
+whose rows index another fragment, or whose count does not match the
+fragments, sends that chunk back to the whole-cell read with a console
+warning.
+
+## Format support
+
+Read through each array's own `zarr.json` (`zarr_array.ts`):
+
+- Codecs: none, zstd, blosc, gzip, zlib, crc32c; `sharding_indexed` with the
+  declared index codecs and location. Codecs and sharding may differ per
+  array, as `zvtools attach` and `build_pyramid` produce.
+- Byte-range reads of one key issued within 20 ms of each other (the cells
+  of a shard that several chunks need, the rows of a cell that several
+  objects own) are merged into one request when they lie within 8 KiB of
+  each other, or within a reader's own larger gap (`coalesceRangeReads`);
+  a merged read is padded by a tenth and kept, so later reads inside it cost
+  nothing. A server that ignores the range and sends more is handled: only
+  the asked-for bytes are kept.
+- `chunk_grid_origin` (negative chunk coordinates), `nonempty_chunks`.
+- Positions in any float or integer dtype; vertex attributes of any numeric
+  dtype with 1-4 components (from `row_shape`, else `channel_names`, else
+  measured), each level read with its own dtype; dictionary-encoded
+  attributes (as codes). Attributes are float32 in the shader: 64-bit
+  integers beyond 2^24 lose precision (warned). An attribute a level does
+  not store reads as NaN there (warned), not 0. The shader names each
+  attribute both `name` and `prop_name()`.
+- Object index layouts `vlen_manifests_v1` and `vlen_manifests_v2`
+  (`object_ids`), any number of chunks; `object_attributes/segment_id` as the
+  segment id; overlapping groups.
+- Cross-chunk links of either direction, int32 or int64, with `perm_idx`.
+- Skeletons as zarr-vectors-py's `read_graph` reads them: a vertex's parent is
+  the previous row of its fragment unless a `[child, parent]` link (in the
+  chunk or across chunks) names another. zarr-vectors-tools'
+  `skeleton_layout` marker (`linked_across_chunks`, `split_at_chunk_faces`)
+  is honoured; without it, the layout is inferred.
+
+Meshes: the `meshes` subsource is a Neuroglancer multiscale mesh
+(`mesh_lod.ts`). Level 0 and each following pyramid level whose chunks are
+twice the previous level's and which stores faces is a level of detail, as
+zarr-vectors-tools builds with `zvtools pyramid --method mesh_decimate
+--coarsen 2,2,2 --chunk-scale 2,2,2`; other stores use level 0 alone. An object
+a coarser level dropped stops at the last level that has it. An octree node is
+one chunk of a level, and its fragment is the object's faces stored in that
+chunk, including faces that reach into neighbours. A coarse fragment's
+triangles are clipped at the node's mid-planes into its eight octants, as the
+precomputed format is written, so where some octants are drawn coarse and
+others fine no strip of surface goes missing or is drawn twice. Chunks hold
+every object's faces; where a level is stamped `fragment_link_groups` (one face
+group per vertex fragment, as zarr-vectors-py's `write_mesh` and `zvtools
+pyramid` write), an object's faces and vertices are read alone, by byte range,
+otherwise the whole cell is read and filtered. The dense overview draws a mesh
+store's vertices and reads no faces.
+
+Caches: decoded chunks (384 MB), raw vertex cells (128 MB) and the bytes of
+byte-range reads (256 MB; objects requested in later waves find their rows in
+an earlier wave's merged read) are shared by every reader of a store and
+bounded by bytes, as are cross-chunk links. The
+worker drops a store's caches, including its shard indexes, when the last
+layer using it is removed, so a store rewritten in place is read afresh once
+its layer is removed and added again; within one layer there is no live
+reload.
+
+Editing: the viewer does not edit zarr-vectors stores. Edits made elsewhere
+(zarr-vectors-py's `EditSession`) show after the layer is reloaded, at level
+0; coarser levels show what they held until the pyramid is rebuilt.
+
+Not read yet (reported once in the console):
+
+- Draco-encoded vertices (the level is skipped). zarr-vectors-py also reorders
+  vertices when it writes Draco, so its cross-chunk faces would be wrong.
+- 0.9.4 dense manifests (`dense_manifests` capability): the store opens, but
+  without `objects` / `meshes` / `properties`.
+- Attribute-chunked levels (`chunk_attribute_values`): the level is skipped.
+- Link attributes (per-edge or per-face values).
+- Rank other than 3.
+
+## Segment properties
+
+`properties` is built from level 0's `object_attributes/` (found by listing
+the directory) and its `groups` (`objects.ts`). Its columns are the largest
+download of an open, so the layer does not wait for them: the Seg tab fills
+in when they arrive.
+
+- Numbers keep a Neuroglancer type that holds them exactly: 8-32-bit
+  integers as themselves, float16/32/64 as float32, 64-bit integers that fit
+  32 bits as int32/uint32. Larger 64-bit values (EM root ids) become exact
+  decimal text: Neuroglancer has no 64-bit properties, and float32 would
+  merge distinct ids.
+- A value is missing when its whole row equals the array's `fill_value` and
+  the writer declared that value the absent sentinel
+  (`fill_sentinel_meaning: "absent"`, as zarr-vectors-py writes), or a legacy
+  `present_mask` sidecar clears the row. That is per column: a missing value
+  is NaN (left out of filters and the selection panel) or empty text, and the
+  object keeps its other properties. An integer column with missing values
+  is float32 when its values fit ±2^24, else text.
+- Text columns (`string`, `fixed_length_utf32`) are text properties; vector
+  columns are one property per channel, `name_<channel>` (`channel_names`
+  when declared).
+- A dictionary-encoded column (`encoding: "dictionary"`, `categories`,
+  `_FillValue`) is a text property of the category, and each category is a
+  tag `name=category`.
+- Each group is a tag, named by `group_names` on `groups`, else
+  `group_attributes/name` (or `groupings_attributes/name`), else `group_<id>`;
+  its description gives the group id, member count (`n_objects` when stored)
+  and `source_column`. A group and a category of the same name are one tag
+  holding both's objects. A range group stops at the level's last object.
+  Only tags that hold an object are coded; with more than 65,535 there are no
+  tags (a warning). There is no `label` property: Neuroglancer already shows
+  a segment's tags as its label.
+- Property ids can be filtered in the Seg tab (`[a-zA-Z][a-zA-Z0-9_]*`), are
+  unique ignoring case, and are never `id`, `label` or `group` (the tags); a
+  changed name keeps the original as its description. Tag names are unique
+  ignoring case too, and a name stored exactly wins over a changed one.
+- Bounds are of the finite values. Segment ids are listed in ascending order,
+  each once (duplicates are warned about).
+- Additive pyramids: level 0 holds every object's attributes, but
+  `vertex_count` counts each level's own vertices, so it is summed over level
+  0's chain.
+- A column that cannot be read is skipped with a warning.
+
+## Tests
+
+- `npx vitest --run --root packages/neuroglancer-zarr-vectors` (from the
+  application it sits in): unit tests and end-to-end reads of stores written
+  by zarr-vectors-py v0.9.2 (`testdata/generate.py`), including exact
+  reconstruction of every polyline under each codec and layout, and of a
+  branching skeleton that leaves a chunk and returns. Decoders run in
+  Neuroglancer's async-computation worker under `@vitest/web-worker`.
+- `browser_tests/zarr_array.browser_test.ts`: blosc in a real browser (its
+  WASM decoder rejects the node worker polyfill). It needs Neuroglancer's
+  browser test harness, so it runs only in the in-tree layout above.

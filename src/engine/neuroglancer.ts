@@ -1,7 +1,8 @@
 /**
  * Everything the platform takes from Neuroglancer, in one place.
  *
- * This is the platform's embed surface: no other file imports Neuroglancer.
+ * This is the platform's embed surface: outside src/engine/ nothing imports
+ * Neuroglancer (the worker scripts in ./workers/ import its worker halves).
  * After a rebase of the fork, this is the file to fix; when the fork gains
  * its own `embed.ts`, these lines collapse into one import.
  */
@@ -29,4 +30,5 @@ export { StatisticsPanel } from "neuroglancer/unstable/ui/statistics.js";
 export { InputEventBindingHelpDialog } from "neuroglancer/unstable/help/input_event_bindings.js";
 export { MousePositionWidget, PositionWidget } from "neuroglancer/unstable/widget/position_widget.js";
 export { getStatusMessageContainers } from "neuroglancer/unstable/status.js";
+export { setAsyncComputationWorkerFactory, setChunkWorkerFactory } from "neuroglancer/unstable/worker_factories.js";
 export type { SidePanelManager } from "neuroglancer/unstable/ui/side_panel.js";

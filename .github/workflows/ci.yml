@@ -10,11 +10,12 @@ permissions:
   contents: read
 
 env:
-  # The fork commit the app is built against (branch ngplatform: the
-  # zarr_vectors_working branch plus the embedding changes the app needs).
-  # Bump it deliberately, with the e2e smoke test passing locally.
+  # The Neuroglancer commit the app is built against: google/neuroglancer
+  # master plus three embedding changes proposed upstream (branch
+  # ngplatform-upstream).  zarr-vectors is not in it: it is a plugin in
+  # packages/.  Bump it deliberately, with the e2e smoke test passing locally.
   FORK_REPO: Andrew-Keenlyside/neuroglancer
-  FORK_SHA: b5a1e49e183150f74987824f22f7847b2b9eb343
+  FORK_SHA: b9619e860b92578f7a59ed6f9f2850cf507dd894
   # The fork's install fetches Playwright browsers, which this job does not
   # use and which Playwright does not ship for every runner image.
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"

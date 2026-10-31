@@ -7,6 +7,7 @@
  * controls, selection details, settings, help, statistics, position) into its
  * docks where they exist.
  */
+import "./plugins.js";
 import {
   changeLayerName,
   deleteLayer,

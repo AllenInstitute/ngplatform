@@ -1,0 +1,532 @@
+/**
+ * @license
+ * Copyright 2026 Google Inc.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * @file The `zarr-vectors:` data source. One store yields, for a
+ * segmentation layer:
+ *  - `""`         the dense overview of every object (`dense_frontend.ts`);
+ *  - `objects`    selected objects at full resolution, as Neuroglancer
+ *                 skeletons (curves, skeletons, graphs, points with objects);
+ *  - `meshes`     selected objects as Neuroglancer meshes (mesh stores);
+ *  - `properties` object attributes and groups as segment properties.
+ */
+
+import type { ChunkManager } from "neuroglancer/unstable/chunk_manager/frontend.js";
+import { WithParameters } from "neuroglancer/unstable/chunk_manager/frontend.js";
+import {
+  makeCoordinateSpace,
+  makeIdentityTransform,
+  makeIdentityTransformedBoundingBox,
+} from "neuroglancer/unstable/coordinate_transform.js";
+import type {
+  DataSource,
+  DataSourceLookupResult,
+  DataSubsourceEntry,
+  GetKvStoreBasedDataSourceOptions,
+  KvStoreBasedDataSourceProvider,
+} from "neuroglancer/unstable/datasource/index.js";
+import {
+  ZarrVectorsGeometryChunkSourceParameters,
+  ZarrVectorsMeshSourceParameters,
+  ZarrVectorsObjectSkeletonSourceParameters,
+  ZARR_VECTORS_SEED_OBJECT_TABLE_RPC_ID,
+} from "./base.js";
+import {
+  attributeLayout,
+  ZarrVectorsMultiscaleGeometrySource,
+} from "./dense_frontend.js";
+import { levelDensities } from "./dense_lod.js";
+import { KIND_CAPABILITIES } from "./geometry_kind.js";
+import {
+  meshGridOffset,
+  meshLevels,
+} from "./mesh_lod.js";
+import type {
+  ShaderObjectValue,
+  ZarrVectorsObjectTable,
+} from "./objects.js";
+import {
+  chooseShaderObjectValues,
+  readObjectTable,
+  readSegmentProperties,
+} from "./objects.js";
+import type {
+  ZarrVectorsStore,
+  ZarrVectorsStoreAccess,
+} from "./store.js";
+import {
+  chunkIndexBounds,
+  formatAttributesFragment,
+  levelChain,
+  MAX_ATTRIBUTES,
+  OBJECT_ATTRIBUTE_PREFIX,
+  safeAttributeId,
+  kvStoreAccess,
+  openZarrVectorsStore,
+  parseAttributesFragment,
+  readJson,
+} from "./store.js";
+import { warnOnce } from "./util.js";
+import { WithSharedKvStoreContext } from "neuroglancer/unstable/kvstore/chunk_source_frontend.js";
+import type { SharedKvStoreContext } from "neuroglancer/unstable/kvstore/frontend.js";
+import {
+  kvstoreEnsureDirectoryPipelineUrl,
+  parseUrlSuffix,
+  pipelineUrlJoin,
+} from "neuroglancer/unstable/kvstore/url.js";
+import { VertexPositionFormat } from "neuroglancer/unstable/mesh/base.js";
+import { MultiscaleMeshSource } from "neuroglancer/unstable/mesh/frontend.js";
+import type { InlineSegmentPropertyMap } from "neuroglancer/unstable/segmentation_display_state/property_map.js";
+import { SegmentPropertyMap } from "neuroglancer/unstable/segmentation_display_state/property_map.js";
+import type { VertexAttributeInfo } from "neuroglancer/unstable/skeleton/base.js";
+import { SkeletonSource } from "neuroglancer/unstable/skeleton/frontend.js";
+import { DataType } from "neuroglancer/unstable/util/data_type.js";
+import * as matrix from "neuroglancer/unstable/util/matrix.js";
+
+export class ZarrVectorsObjectSkeletonSource extends WithParameters(
+  WithSharedKvStoreContext(SkeletonSource),
+  ZarrVectorsObjectSkeletonSourceParameters,
+) {
+  private vertexAttributes_: Map<string, VertexAttributeInfo> | undefined;
+  get vertexAttributes() {
+    this.vertexAttributes_ ??= new Map(
+      attributeLayout(this.parameters.description).map((a) => [
+        a.id,
+        { dataType: DataType.FLOAT32, numComponents: a.components },
+      ]),
+    );
+    return this.vertexAttributes_;
+  }
+}
+
+export class ZarrVectorsMeshSource extends WithParameters(
+  WithSharedKvStoreContext(MultiscaleMeshSource),
+  ZarrVectorsMeshSourceParameters,
+) {}
+
+/** The `meshes` subsource: every usable level as a level of detail. */
+async function meshSubsource(
+  chunkManager: ChunkManager,
+  context: SharedKvStoreContext,
+  access: ZarrVectorsStoreAccess,
+  storeUrl: string,
+  store: ZarrVectorsStore,
+  warnings: string[],
+  signal: AbortSignal | undefined,
+): Promise<DataSubsourceEntry> {
+  if (store.levels[0].refinement === "add") {
+    // Additive: an object is the union of its parts at level 0's chain,
+    // which Neuroglancer's levels of detail cannot express; one level of
+    // detail on the coarsest chain level's grid holds them all.
+    const levels = levelChain(store.levels, 0).map((i) => store.levels[i]);
+    warnings.push(
+      "additive mesh pyramid: meshes are drawn whole from every level, " +
+        "without levels of detail",
+    );
+    return meshSubsourceEntry(chunkManager, context, {
+      storeUrl,
+      description: store.description,
+      levels,
+      gridOffset: meshGridOffset(
+        store.lowerBounds,
+        levels[levels.length - 1].chunkShape,
+        1,
+      ),
+      union: true,
+    });
+  }
+  const { levels, unused } = await meshLevels(
+    store.levels,
+    async (level) =>
+      (await readJson(
+        access.read,
+        `${level.path}/links/0/zarr.json`,
+        signal,
+      )) !== undefined,
+  );
+  if (unused > 0) {
+    warnings.push(
+      `${unused} pyramid level(s) not used for meshes: each level of detail ` +
+        "needs faces and chunks twice the previous level's " +
+        "(zvtools pyramid --chunk-scale 2,2)",
+    );
+  }
+  return meshSubsourceEntry(chunkManager, context, {
+    storeUrl,
+    description: store.description,
+    levels,
+    gridOffset: meshGridOffset(
+      store.lowerBounds,
+      levels[0].chunkShape,
+      levels.length,
+    ),
+    union: false,
+  });
+}
+
+function meshSubsourceEntry(
+  chunkManager: ChunkManager,
+  context: SharedKvStoreContext,
+  fields: ZarrVectorsMeshSourceParameters,
+): DataSubsourceEntry {
+  const parameters = Object.assign(
+    new ZarrVectorsMeshSourceParameters(),
+    fields,
+  );
+  return {
+    id: "meshes",
+    default: true,
+    subsource: {
+      mesh: chunkManager.getChunkSource(ZarrVectorsMeshSource, {
+        sharedKvStoreContext: context,
+        parameters,
+        format: {
+          fragmentRelativeVertices: false,
+          vertexPositionFormat: VertexPositionFormat.float32,
+        },
+      }),
+    },
+  };
+}
+
+/**
+ * Segment properties that arrive after the layer does. Their columns are the
+ * largest download of an open and nothing drawn needs them, so the layer is
+ * not kept waiting: it rebuilds its property map when `ready` resolves
+ * (`layer.ts`), and the Seg tab fills in then.
+ */
+export class ZarrVectorsLazyPropertyMap extends SegmentPropertyMap {
+  constructor(readonly ready: Promise<InlineSegmentPropertyMap | undefined>) {
+    super({ inlineProperties: undefined });
+    ready.then(
+      (properties) => {
+        this.inlineProperties = properties;
+      },
+      () => {},
+    );
+  }
+}
+
+async function buildDataSource(
+  chunkManager: ChunkManager,
+  context: SharedKvStoreContext,
+  storeUrl: string,
+  selectedAttributes: string[] | undefined,
+  signal: AbortSignal | undefined,
+): Promise<DataSource> {
+  const access = kvStoreAccess(context.kvStoreContext, storeUrl);
+  const warnings: string[] = [];
+  const reportWarnings = () => {
+    for (const w of warnings.splice(0)) warnOnce(`${storeUrl}: ${w}`);
+  };
+  const propertiesOf = (
+    levelPath: string,
+    table: ZarrVectorsObjectTable,
+    chainPaths: string[],
+  ) =>
+    // One unreadable column is a warning, never a store that fails to open.
+    readSegmentProperties(
+      access,
+      levelPath,
+      table,
+      warnings,
+      signal,
+      chainPaths,
+    ).catch((e) => {
+      signal?.throwIfAborted();
+      warnings.push(
+        `segment properties unreadable: ${e instanceof Error ? e.message : e}`,
+      );
+      return undefined;
+    });
+  let early:
+    | {
+        levelPath: string;
+        properties: Promise<InlineSegmentPropertyMap | undefined>;
+      }
+    | undefined;
+  const store = await openZarrVectorsStore(
+    access,
+    selectedAttributes,
+    signal,
+    (levelPath, additive) => {
+      // Read while the levels' metadata loads: the subsources, properties
+      // and shader values all wait on it. Shared with the read below.
+      const table = readObjectTable(access, levelPath, signal);
+      table.catch(() => {});
+      // The properties' columns are the largest download of an open. Unless
+      // coarser levels add to level 0 (then the chain, known only once the
+      // levels are read, has a say), they can download now too.
+      if (!additive) {
+        const properties = table.then((t) =>
+          t === undefined ? undefined : propertiesOf(levelPath, t, [levelPath]),
+        );
+        properties.catch(() => {});
+        early = { levelPath, properties };
+      }
+    },
+  ).catch((e) => {
+    signal?.throwIfAborted();
+    throw new Error(`${storeUrl}: ${e instanceof Error ? e.message : e}`, {
+      cause: e,
+    });
+  });
+  const { lowerBounds, upperBounds } = store;
+  warnings.push(...store.warnings);
+  // Object attributes and group membership reach shaders as per-vertex
+  // `obj_<name>` / `obj_group`, after the vertex attributes.
+  const description = { ...store.description };
+  if (description.hasObjects) {
+    const requested = selectedAttributes
+      ?.filter((n) => n.startsWith(OBJECT_ATTRIBUTE_PREFIX))
+      .map((n) => n.slice(OBJECT_ATTRIBUTE_PREFIX.length));
+    const chosen: ShaderObjectValue[] = await chooseShaderObjectValues(
+      access,
+      store.levels[0].path,
+      requested,
+      MAX_ATTRIBUTES - description.attributes.length,
+      warnings,
+      signal,
+    ).catch((e) => {
+      signal?.throwIfAborted();
+      warnings.push(
+        `object attributes not offered to shaders: ${e instanceof Error ? e.message : e}`,
+      );
+      return [];
+    });
+    if (chosen.length > 0) {
+      const used = new Set(description.attributes.map((a) => a.id));
+      description.attributes = [
+        ...description.attributes,
+        ...chosen.map((c) => ({
+          name: c.column ?? "group",
+          id: safeAttributeId(`obj_${c.column ?? "group"}`, used),
+          dtype: "float32" as const,
+          components: 1,
+          enumLabels: c.categories,
+          objectValue: { column: c.column },
+        })),
+      ];
+      description.objectValuesPath = store.levels[0].path;
+      // What each code means, for whoever writes the shader.
+      const lines = description.attributes
+        .filter((a) => a.objectValue !== undefined)
+        .map(
+          (a) =>
+            `${a.id}${a.enumLabels ? `: ${a.enumLabels.map((l, i) => `${i}=${l}`).join(", ")}` : ""}`,
+        );
+      console.info(
+        `zarr-vectors: ${storeUrl}: object values in shaders: ${lines.join("; ")}` +
+          (chosen.some((c) => c.column === undefined)
+            ? " (obj_group is the index of the object's first group; " +
+              "group names are the Seg tab's tags, in store order)"
+            : ""),
+      );
+    }
+  }
+  // A coarse level that is known to hold nothing would be drawn as the
+  // zoomed-out view and the loading stand-in, showing nothing.
+  // An empty level that completes an additive one below it is kept: the
+  // level below adds to it, not past it.
+  const levels = store.levels.filter(
+    (level, i, all) =>
+      i === 0 ||
+      level.vertexCount !== 0 ||
+      level.arrays.vertices.attributes?.nonempty_chunks?.length !== 0 ||
+      (all[i - 1].refinement === "add" && level.refinement !== "add"),
+  );
+
+  const space = makeCoordinateSpace({
+    rank: 3,
+    names: store.axisNames,
+    units: store.axisUnits,
+    scales: Float64Array.from(store.axisScales),
+    boundingBoxes: [
+      makeIdentityTransformedBoundingBox({
+        lowerBounds: Float64Array.from(lowerBounds),
+        upperBounds: Float64Array.from(upperBounds),
+      }),
+    ],
+  });
+  let modelTransform = makeIdentityTransform(space);
+  if (store.coordinateOffset !== undefined) {
+    // The writer stores `world - coordinate_offset`; put the offset back.
+    const transform = matrix.createIdentity(Float64Array, 4);
+    transform.set(store.coordinateOffset, 12);
+    modelTransform = { ...modelTransform, transform };
+  }
+
+  const dense = new ZarrVectorsMultiscaleGeometrySource(
+    chunkManager,
+    context,
+    description,
+    levels.map((level) => ({
+      spec: {
+        rank: 3,
+        chunkDataSize: Float32Array.from(level.chunkShape),
+        ...chunkIndexBounds(lowerBounds, upperBounds, level.chunkShape),
+        lowerVoxelBound: Float32Array.from(lowerBounds),
+        upperVoxelBound: Float32Array.from(upperBounds),
+        levelIndex: level.index,
+      },
+      parameters: Object.assign(
+        new ZarrVectorsGeometryChunkSourceParameters(),
+        {
+          storeUrl,
+          description,
+          level,
+        },
+      ),
+    })),
+    levelDensities(levels, lowerBounds, upperBounds),
+    levels.map((_, i) => levelChain(levels, i)),
+  );
+  const subsources: DataSubsourceEntry[] = [
+    // Not one of Neuroglancer's mesh kinds: the zarr-vectors segmentation
+    // layer (`layer.ts`) recognises and draws it.
+    { id: "", default: true, subsource: { mesh: dense as any } },
+  ];
+
+  const table = description.hasObjects
+    ? await readObjectTable(access, levels[0].path, signal).catch((e) => {
+        warnings.push(
+          `object index unreadable: ${e instanceof Error ? e.message : e}`,
+        );
+        return undefined;
+      })
+    : undefined;
+  if (table !== undefined) {
+    // The worker's readers get the table from here, not from the store again.
+    chunkManager.rpc!.invoke(ZARR_VECTORS_SEED_OBJECT_TABLE_RPC_ID, {
+      storeUrl,
+      levelPath: levels[0].path,
+      table,
+    });
+    const params = {
+      storeUrl,
+      description,
+      level: levels[0],
+      // In an additive pyramid an object's parts sit at several levels.
+      levels: levelChain(store.levels, 0).map((i) => store.levels[i]),
+    };
+    const objectEntry: Promise<DataSubsourceEntry> =
+      KIND_CAPABILITIES[description.geometryKind].primitive === "triangles"
+        ? meshSubsource(
+            chunkManager,
+            context,
+            access,
+            storeUrl,
+            store,
+            warnings,
+            signal,
+          )
+        : Promise.resolve({
+            id: "objects",
+            default: true,
+            subsource: {
+              mesh: chunkManager.getChunkSource(
+                ZarrVectorsObjectSkeletonSource,
+                {
+                  sharedKvStoreContext: context,
+                  parameters: Object.assign(
+                    new ZarrVectorsObjectSkeletonSourceParameters(),
+                    params,
+                  ),
+                },
+              ),
+            },
+          });
+    const properties =
+      early !== undefined && early.levelPath === levels[0].path
+        ? early.properties
+        : propertiesOf(
+            levels[0].path,
+            table,
+            params.levels.map((level) => level.path),
+          );
+    subsources.push(await objectEntry);
+    // The properties follow the layer rather than holding it up.
+    subsources.push({
+      id: "properties",
+      default: true,
+      subsource: {
+        segmentPropertyMap: new ZarrVectorsLazyPropertyMap(properties),
+      },
+    });
+    properties.then(reportWarnings, () => {});
+  }
+  reportWarnings();
+  return {
+    modelTransform,
+    subsources,
+    canonicalUrl: `${storeUrl}|zarr-vectors:${formatAttributesFragment(selectedAttributes)}`,
+  };
+}
+
+export class ZarrVectorsDataSource implements KvStoreBasedDataSourceProvider {
+  get scheme() {
+    return "zarr-vectors";
+  }
+  get expectsDirectory() {
+    return true;
+  }
+  get description() {
+    return "Zarr Vectors store (points, lines, skeletons, graphs, meshes)";
+  }
+
+  async get(
+    options: GetKvStoreBasedDataSourceOptions,
+  ): Promise<DataSourceLookupResult> {
+    const { authorityAndPath, query, fragment } = parseUrlSuffix(
+      options.url.suffix,
+    );
+    if (query) {
+      throw new Error(
+        `Invalid URL ${JSON.stringify(options.url.url)}: query parameters are not supported`,
+      );
+    }
+    let selectedAttributes: string[] | undefined;
+    try {
+      selectedAttributes = parseAttributesFragment(fragment);
+    } catch (e) {
+      throw new Error(
+        `Invalid URL ${JSON.stringify(options.url.url)}: ${(e as Error).message}`,
+      );
+    }
+    const storeUrl = kvstoreEnsureDirectoryPipelineUrl(
+      pipelineUrlJoin(
+        kvstoreEnsureDirectoryPipelineUrl(options.kvStoreUrl),
+        authorityAndPath ?? "",
+      ),
+    );
+    return options.registry.chunkManager.memoize.getAsync(
+      {
+        type: "zarr-vectors:get",
+        url: storeUrl,
+        attributes: selectedAttributes?.join(","),
+      },
+      options,
+      (progressOptions) =>
+        buildDataSource(
+          options.registry.chunkManager,
+          options.registry.sharedKvStoreContext,
+          storeUrl,
+          selectedAttributes,
+          progressOptions.signal,
+        ),
+    );
+  }
+}

@@ -16,19 +16,24 @@ plugin: [`docs/plugins.md`](docs/plugins.md). The plan:
 the `gh-pages` branch: https://andrew-keenlyside.github.io/ngplatform/ (and
 review builds under `/preview/`).
 
-It consumes the zarr-vectors fork of Neuroglancer
-(`Andrew-Keenlyside/neuroglancer`, branch `ngplatform`: `zarr_vectors_working`
-plus the two embedding changes the app needs) as a dependency.
+It builds against google/neuroglancer `master` plus three small embedding
+changes proposed upstream (`Andrew-Keenlyside/neuroglancer`, branch
+`ngplatform-upstream`): workers an application can supply, side panels it
+can host, and incremental layer restore. Zarr Vectors support is not in
+Neuroglancer: it is a Neuroglancer plugin,
+[`packages/neuroglancer-zarr-vectors`](packages/neuroglancer-zarr-vectors/),
+which any application embedding Neuroglancer can add, and which the
+platform loads in `src/engine/plugins.ts`.
 
 ## Develop
 
 ```bash
-git clone -b ngplatform https://github.com/Andrew-Keenlyside/neuroglancer ../neuroglancer   # the fork, next to this repo
+git clone -b ngplatform-upstream https://github.com/Andrew-Keenlyside/neuroglancer ../neuroglancer   # next to this repo
 (cd ../neuroglancer && npm ci)
 npm install
 npm run dev           # http://localhost:5173
-npm test              # unit tests (vitest)
-npm run typecheck     # the app, with Neuroglancer's sources
+npm test              # unit tests: the app, then the zarr-vectors plugin
+npm run typecheck     # the app and the plugin, with Neuroglancer's sources
 npm run build         # dist/, a static site: serve it from any path
 ```
 
@@ -64,7 +69,8 @@ draw Neuroglancer's views, so the checks that need drawing are skipped.
 
 | Path | What |
 |---|---|
-| `src/engine/` | The only code that touches Neuroglancer: `neuroglancer.ts` (every import), `engine.ts` (the engine with no interface of its own, and the widgets it lends the docks) |
+| `src/engine/` | The only code that touches Neuroglancer: `neuroglancer.ts` (every import), `engine.ts` (the engine with no interface of its own, and the widgets it lends the docks), `plugins.ts` and `workers/` (Neuroglancer plugins: their main-thread and worker halves) |
+| `packages/neuroglancer-zarr-vectors/` | The Zarr Vectors data source as a Neuroglancer plugin: its own package, tests and fixtures, no dependency on the platform |
 | `src/core/` | Pure logic, unit-tested: the workspace model (scenes, datasets), state I/O, undo history, commands, key bindings, `when` clauses, schemas, state slices |
 | `src/platform/` | Services: the workspace store, the plugin host, jobs, registries |
 | `src/sdk/` | The plugin API: `PlatformContext` and the manifest |

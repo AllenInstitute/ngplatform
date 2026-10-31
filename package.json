@@ -2,21 +2,24 @@
   "name": "ngplatform",
   "version": "0.2.0",
   "private": true,
-  "description": "A research workspace around Neuroglancer: paste a state, share it, extend it with plugins.",
+  "description": "A research workspace around Neuroglancer: datasets, scenes and plugins around a viewer that shows only data.",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest --run",
+    "test": "vitest --run && vitest --run --root packages/neuroglancer-zarr-vectors",
     "e2e": "node e2e/smoke.mjs",
-    "typecheck": "tsc -p ."
+    "typecheck": "tsc -p . && tsc -p packages/neuroglancer-zarr-vectors"
   },
   "dependencies": {
-    "neuroglancer": "file:../neuroglancer"
+    "neuroglancer": "file:../neuroglancer",
+    "neuroglancer-zarr-vectors": "file:packages/neuroglancer-zarr-vectors"
   },
   "devDependencies": {
+    "@types/node": "^22.18.0",
+    "@vitest/web-worker": "^3.2.7",
     "typescript": "~5.8.3",
     "vite": "^6.4.1",
     "vitest": "^3.2.4"
