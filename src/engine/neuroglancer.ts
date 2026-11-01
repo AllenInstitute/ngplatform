@@ -31,3 +31,48 @@ export { InputEventBindingHelpDialog } from "neuroglancer/unstable/help/input_ev
 export { getStatusMessageContainers } from "neuroglancer/unstable/status.js";
 export { setAsyncComputationWorkerFactory, setChunkWorkerFactory } from "neuroglancer/unstable/worker_factories.js";
 export type { SidePanelManager } from "neuroglancer/unstable/ui/side_panel.js";
+
+// The native layer inspector (./inspector/): the layer models it binds its
+// controls to, the few rich editors it embeds as components (shader code,
+// resolution histograms, contrast and transfer-function editors), and the
+// segment-query and annotation helpers Neuroglancer's own tabs use.
+export type { UserLayer } from "neuroglancer/unstable/layer/index.js";
+export type { LayerDataSource, LoadedDataSubsource, LoadedLayerDataSource } from "neuroglancer/unstable/layer/layer_data_source.js";
+export { ImageUserLayer } from "neuroglancer/unstable/layer/image/index.js";
+export { AnnotationUserLayer } from "neuroglancer/unstable/layer/annotation/index.js";
+export { SingleMeshUserLayer } from "neuroglancer/unstable/layer/single_mesh/index.js";
+export { RefCounted } from "neuroglancer/unstable/util/disposable.js";
+export { WatchableVisibilityPriority } from "neuroglancer/unstable/visibility_priority/frontend.js";
+export { ShaderCodeWidget } from "neuroglancer/unstable/widget/shader_code_widget.js";
+export { RenderScaleWidget, VolumeRenderingRenderScaleWidget } from "neuroglancer/unstable/widget/render_scale_widget.js";
+export { ChannelDimensionsWidget } from "neuroglancer/unstable/widget/channel_dimensions_widget.js";
+export { channelInvlerpLayerControl } from "neuroglancer/unstable/widget/layer_control_channel_invlerp.js";
+export { propertyInvlerpLayerControl } from "neuroglancer/unstable/widget/layer_control_property_invlerp.js";
+export { transferFunctionLayerControl } from "neuroglancer/unstable/widget/transfer_function.js";
+export { getShaderSelectOptionLabel, type ShaderControlState } from "neuroglancer/unstable/webgl/shader_ui_controls.js";
+export { VolumeRenderingModes } from "neuroglancer/unstable/volume_rendering/trackable_volume_rendering_mode.js";
+export { makeCoordinateSpace, type CoordinateSpace, type WatchableCoordinateSpaceTransform } from "neuroglancer/unstable/coordinate_transform.js";
+export { formatScaleWithUnitAsString, parseScale } from "neuroglancer/unstable/util/si_units.js";
+export {
+  changeTagConstraintInSegmentQuery,
+  executeSegmentQuery,
+  forEachQueryResultSegmentIdGenerator,
+  parseSegmentQuery,
+  unparseSegmentQuery,
+  updatePropertyHistograms,
+  type FilterQuery,
+  type PreprocessedSegmentPropertyMap,
+  type PropertyHistogram,
+  type QueryResult,
+} from "neuroglancer/unstable/segmentation_display_state/property_map.js";
+export { getBaseObjectColor } from "neuroglancer/unstable/segmentation_display_state/frontend.js";
+export { packColor, serializeColor } from "neuroglancer/unstable/util/color.js";
+export { restoreLegacyTool } from "neuroglancer/unstable/ui/tool.js";
+export { AnnotationSource, AnnotationType, annotationTypeHandlers, type Annotation } from "neuroglancer/unstable/annotation/index.js";
+export { transformPoint } from "neuroglancer/unstable/util/matrix.js";
+export { MessageSeverity, type MessageList } from "neuroglancer/unstable/util/message_list.js";
+export { MeshSource, MultiscaleMeshSource } from "neuroglancer/unstable/mesh/frontend.js";
+export { SkeletonSource } from "neuroglancer/unstable/skeleton/frontend.js";
+export { MultiscaleVolumeChunkSource } from "neuroglancer/unstable/sliceview/volume/frontend.js";
+export { LocalDataSource } from "neuroglancer/unstable/datasource/local.js";
+export { DataType } from "neuroglancer/unstable/util/data_type.js";

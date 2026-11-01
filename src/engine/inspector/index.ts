@@ -1,0 +1,107 @@
+/**
+ * The layer inspector: a layer's settings as the platform's own interface.
+ *
+ * The tabs are the layer's own (Neuroglancer decides which a layer has:
+ * Source, Render, Segments, Annotations, Schema…), and the selected tab is
+ * kept in the layer's state as Neuroglancer keeps it. Each tab is built
+ * here from the layer's models; a tab this file does not know (a plugin's,
+ * or the graph tab of a graphene layer) is shown as Neuroglancer draws it.
+ */
+import { AnnotationUserLayer, SegmentationUserLayer, type UserLayer } from "../neuroglancer.js";
+import { annotationsTab, schemaTab } from "./annotations.js";
+import { renderTab } from "./render.js";
+import { segmentsTab } from "./segments.js";
+import { sourceTab } from "./source.js";
+import { el, embed, Scope, type Watch } from "./ui.js";
+
+type Builder = (scope: Scope, layer: UserLayer) => HTMLElement[];
+
+const NATIVE: Record<string, { label: string; build: Builder }> = {
+  source: { label: "Source", build: sourceTab },
+  rendering: { label: "Render", build: renderTab },
+  segments: {
+    label: "Segments",
+    build: (scope, layer) => (layer instanceof SegmentationUserLayer ? segmentsTab(scope, layer) : []),
+  },
+  annotations: { label: "Annotations", build: (scope, layer) => annotationsTab(scope, layer as AnnotationUserLayer) },
+  schema: {
+    label: "Schema",
+    build: (scope, layer) => (layer instanceof AnnotationUserLayer ? schemaTab(scope, layer) : []),
+  },
+};
+
+interface TabOption {
+  label: string;
+  order?: number;
+  hidden?: Watch<boolean>;
+  getter: () => { element: HTMLElement; visibility: { value: number }; dispose(): void };
+}
+
+export function mountInspector(host: HTMLElement, layer: UserLayer): () => void {
+  const scope = new Scope();
+  const options = (layer as any).tabs.options as Map<string, TabOption>;
+  const annotationStates = (layer as any).annotationStates as { states: unknown[]; changed: { add(f: () => void): () => void } } | undefined;
+  const selected = (layer as any).panels.panels[0].selectedTab as Watch<string | undefined>;
+
+  const strip = el("div", { class: "ins-tabs", role: "tablist" });
+  const content = el("div", { class: "ins-content", role: "tabpanel" });
+  const root = el("div", { class: "ins-root" }, strip, content);
+  host.append(root);
+
+  /** The tabs shown: the layer's own, in their order; an Annotations tab only when there are annotations. */
+  const tabs = () =>
+    [...options]
+      .filter(([id, o]) => !(o.hidden?.value ?? false) && !(id === "annotations" && annotationStates !== undefined && annotationStates.states.length === 0))
+      .sort(([, a], [, b]) => (a.order ?? 0) - (b.order ?? 0))
+      .map(([id, o]) => ({ id, label: NATIVE[id]?.label ?? o.label }));
+
+  let shown: { id: string; scope: Scope } | undefined;
+  const show = () => {
+    const list = tabs();
+    let id = selected.value;
+    if (!list.some((t) => t.id === id)) {
+      id = list[0]?.id;
+      if (id !== undefined && selected.value !== id) {
+        selected.value = id;
+        return; // `selected` changed: show() runs again.
+      }
+    }
+    strip.replaceChildren(
+      ...list.map((t) =>
+        el(
+          "button",
+          { type: "button", role: "tab", class: "ins-tab", "aria-selected": String(t.id === id), onclick: () => (selected.value = t.id) },
+          t.label,
+        ),
+      ),
+    );
+    if (shown?.id === id) return;
+    shown?.scope.dispose();
+    shown = undefined;
+    content.replaceChildren();
+    if (id === undefined) return;
+    const tabScope = scope.child();
+    shown = { id, scope: tabScope };
+    const native = NATIVE[id];
+    if (native !== undefined) {
+      content.append(...native.build(tabScope, layer));
+    } else {
+      // Not one of the platform's own: Neuroglancer's, as a component.
+      const tab = options.get(id)!.getter();
+      tabScope.ng.registerDisposer(tab as never);
+      tab.visibility.value = Number.POSITIVE_INFINITY;
+      content.append(embed(tab.element, "ins-ng-tab"));
+    }
+    content.scrollTop = 0;
+  };
+
+  const changed: Watch<unknown>[] = [selected, { value: undefined, changed: (layer as any).tabs.changed }];
+  if (annotationStates !== undefined) changed.push({ value: undefined, changed: annotationStates.changed });
+  for (const o of options.values()) if (o.hidden !== undefined) changed.push(o.hidden);
+  scope.watchSoon(changed, show);
+
+  return () => {
+    scope.dispose();
+    root.remove();
+  };
+}

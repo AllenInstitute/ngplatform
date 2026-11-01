@@ -89,7 +89,22 @@ check(chrome.position === 1 && chrome.layoutButtons > 0, "position top left and 
 check((await page.locator(".datasets .ds-row").count()) >= 1, "Datasets lists the scene's datasets");
 await page.locator(".datasets .ds-row").first().click();
 await page.waitForTimeout(800);
-check((await page.locator(".ngp-layer-controls .neuroglancer-tab-label").count()) > 0, "the Layer tab shows the layer's own controls");
+check((await page.locator(".ins-tab").count()) > 0 && (await page.locator(".ins-root .neuroglancer-tab-label").count()) === 0, "the Layer tab shows the layer's controls in the platform's own tabs");
+// The inspector's tabs, built by the platform from the layer's models.
+await page.locator(".ins-tab", { hasText: "Source" }).click();
+await page.waitForTimeout(800);
+check((await page.locator(".ins-url").first().inputValue()).includes("hcp1065"), "Source shows the data source URL");
+check((await page.locator(".ins-tx-grid input").count()) > 0, "Source shows the transform as an editable table");
+await page.locator(".ins-tab", { hasText: "Render" }).click();
+await page.waitForTimeout(800);
+check((await page.locator(".ins-content .ins-slider").count()) >= 4, "Render shows the layer's sliders");
+await page.locator(".ins-tab", { hasText: "Segments" }).click();
+await page.waitForTimeout(800);
+await page.locator(".ins-status button").click();
+await page.waitForTimeout(1500);
+check((await page.locator(".ins-seg-row:not(.ins-seg-head)").count()) > 5, `Segments lists the segments (${await page.locator(".ins-status").innerText()})`);
+await page.locator(".ins-query").fill("");
+await page.waitForTimeout(500);
 
 // Hide and show the dataset from its row.
 await page.locator(".datasets .ds-row .vis").first().uncheck();

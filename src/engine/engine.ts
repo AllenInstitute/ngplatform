@@ -22,11 +22,10 @@ import {
   SegmentationUserLayer,
   type SidePanelManager,
   StatisticsPanel,
-  TabView,
   type Viewer,
   ViewerSettingsPanel,
-  WatchableValue,
 } from "./neuroglancer.js";
+import { mountInspector } from "./inspector/index.js";
 
 export type Json = Record<string, unknown>;
 export type Disposer = () => void;
@@ -463,51 +462,13 @@ export class Engine {
   // ----------------------------------------- Neuroglancer widgets, docked
 
   /**
-   * Mounts a layer's own controls (Source, Rendering, Segments, Annotations…,
-   * whatever its type offers) into `host`.
+   * Mounts a layer's settings (Source, Render, Segments, Annotations…,
+   * whatever its type offers) into `host`, as the platform's own inspector.
    */
   mountLayerControls(host: HTMLElement, name: string): Disposer {
-    const managed = this.managed(name);
-    const userLayer = managed?.layer;
-    if (managed === undefined || userLayer == null) return () => {};
-    // A layer with no annotation sources (most segmentation layers) shows an
-    // empty Annotations tab in Neuroglancer; here it is left out.
-    const annotationStates = (userLayer as { annotationStates?: { states: unknown[]; changed: { add(f: () => void): () => void } } })
-      .annotationStates;
-    const emptyTab = (id: string) => id === "annotations" && annotationStates !== undefined && annotationStates.states.length === 0;
-    const tabsOf = () =>
-      [...userLayer.tabs.options]
-        .map(([id, option]) => ({ id, label: option.label, hidden: (option.hidden?.value ?? false) || emptyTab(id), order: option.order ?? 0 }))
-        .sort((a, b) => a.order - b.order)
-        .map(({ id, label, hidden }) => ({ id, label, hidden }));
-    const tabs = new WatchableValue(tabsOf());
-    const panelState = userLayer.panels.panels[0];
-    const selectedTab = panelState.selectedTab;
-    const view = new TabView({
-      makeTab: (id: string) => userLayer.tabs.options.get(id)!.getter(),
-      selectedTab,
-      tabs,
-    });
-    const refresh = () => {
-      tabs.value = tabsOf();
-    };
-    const offs = [
-      userLayer.tabs.changed.add(refresh),
-      annotationStates?.changed.add(refresh) ?? (() => {}),
-      ...[...userLayer.tabs.options.values()].map((o) => o.hidden?.changed.add(refresh) ?? (() => {})),
-    ];
-    const current = tabs.value.find((t) => t.id === selectedTab.value);
-    if (current === undefined || current.hidden) {
-      const first = tabs.value.find((t) => !t.hidden);
-      if (first !== undefined) selectedTab.value = first.id;
-    }
-    view.element.classList.add("ngp-layer-controls");
-    host.append(view.element);
-    return () => {
-      offs.forEach((off) => off());
-      view.element.remove();
-      view.dispose();
-    };
+    const userLayer = this.managed(name)?.layer;
+    if (userLayer == null) return () => {};
+    return mountInspector(host, userLayer);
   }
 
   // ----------------------------------------------------- segment state
