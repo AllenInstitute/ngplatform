@@ -34,6 +34,25 @@ import { mountInspector } from "./inspector/index.js";
 
 export type Json = Record<string, unknown>;
 
+export interface LayerTransformInfo {
+  rank: number;
+  input: { names: string[]; scales: number[]; units: string[] };
+  output: { names: string[]; scales: number[]; units: string[] };
+  matrix: Float64Array;
+  defaultMatrix: Float64Array;
+}
+
+interface WatchableTransformLike {
+  value: {
+    rank: number;
+    inputSpace: { names: readonly string[]; scales: Float64Array; units: readonly string[] };
+    outputSpace: { names: readonly string[]; scales: Float64Array; units: readonly string[] };
+    transform: Float64Array;
+  };
+  defaultTransform: { transform: Float64Array };
+  transform: Float64Array;
+}
+
 interface ProjectionLike {
   viewProjectionMat: Float32Array;
   displayDimensionRenderInfo: { displayDimensionIndices: Int32Array | number[] };
@@ -560,6 +579,26 @@ export class Engine {
     }
     group.temporaryVisibleSegments.add(ids);
     group.useTemporaryVisibleSegments.value = true;
+  }
+
+  /** A layer's first source's transform (see the SDK's ViewerApi.layerTransform). */
+  layerTransform(name: string): LayerTransformInfo | undefined {
+    const t = this.transformOf(name);
+    if (t === undefined) return undefined;
+    const { rank, inputSpace, outputSpace, transform } = t.value;
+    const space = (s: typeof inputSpace) => ({ names: [...s.names], scales: Array.from(s.scales), units: [...s.units] });
+    return { rank, input: space(inputSpace), output: space(outputSpace), matrix: Float64Array.from(transform), defaultMatrix: Float64Array.from(t.defaultTransform.transform) };
+  }
+
+  setLayerTransform(name: string, matrix: Float64Array): void {
+    const t = this.transformOf(name);
+    if (t !== undefined) t.transform = Float64Array.from(matrix);
+  }
+
+  private transformOf(name: string) {
+    const loaded = this.viewer.layerManager.getLayerByName(name)?.layer?.dataSources[0]?.loadState;
+    // A source that failed to load has no transform.
+    return (loaded as unknown as { transform?: WatchableTransformLike } | undefined)?.transform;
   }
 
   /** The view panels shown now, 2-D and 3-D. */

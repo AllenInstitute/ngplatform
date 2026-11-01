@@ -95,6 +95,11 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
     setTemporaryVisibleSegments: (layer, ids) => engine.setTemporaryVisibleSegments(layer, ids),
     draw3d: (layer, drawer) => engine.draw3d(layer, drawer),
     panels: () => engine.panels(),
+    layerTransform: (layer) => engine.layerTransform(layer),
+    setLayerTransform: (layer, matrix) => {
+      engine.setLayerTransform(layer, matrix);
+      store.scheduleSettle();
+    },
     onRendered: (callback) => engine.onRendered(callback),
   };
 

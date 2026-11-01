@@ -189,6 +189,23 @@ export interface ViewerApi {
   panels(): ViewPanelInfo[];
   /** Calls back after each frame the views draw. */
   onRendered(callback: () => void): Disposer;
+  /**
+   * A layer's first data source's transform, from its source space to the
+   * global one, and the transform the source itself gives (its default).
+   * Matrices are homogeneous, column-major, in multiples of each side's
+   * scales (as Neuroglancer keeps them); scales are in the units given.
+   */
+  layerTransform(layer: string): LayerTransform | undefined;
+  /** Sets a layer's transform matrix (same form as `layerTransform`'s), as one undo step. */
+  setLayerTransform(layer: string, matrix: Float64Array): void;
+}
+
+export interface LayerTransform {
+  rank: number;
+  input: { names: string[]; scales: number[]; units: string[] };
+  output: { names: string[]; scales: number[]; units: string[] };
+  matrix: Float64Array;
+  defaultMatrix: Float64Array;
 }
 
 export interface ViewPanelInfo {
