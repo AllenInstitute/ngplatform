@@ -22,7 +22,7 @@ import type { DatasetInfo, Disposer, Json, PlatformContext, PluginModule, Segmen
 import { computeMask, countPassing, emptyFilter, type FilterSpec, histogram, isEmptyFilter, passingIds, tagCounts, toCsv } from "./filter.js";
 import { FILTERING_PANEL } from "./manifest.js";
 import { groupMask, type Roi, type RoiOp, type RoiShape, rowIndex, rowMask } from "./roi.js";
-import { type Dimensions, previewLevel, RoiEngine, type RoiResult, type StoreInfo, toStore } from "./roi_client.js";
+import { type Curves, type Dimensions, previewLevel, RoiEngine, type RoiResult, type StoreInfo, toStore } from "./roi_client.js";
 import { fileName, millimetres, trkSpace, writeTrk } from "./trk.js";
 
 /**
@@ -242,8 +242,12 @@ class TrackGroups {
   private versions = new Map<string, number>();
   private serviceListeners = new Set<() => void>();
   private notifyQueued = false;
-  /** Curves already read for the service: by group, version and level. */
-  private curveCache = new Map<string, Promise<{ positions: Float32Array; offsets: Uint32Array; level: number; streamlines: number }>>();
+  /**
+   * Groups' streamlines read so far (store coordinates), by group, answer
+   * and level: what the volume view draws and a .trk save writes are one
+   * read.  A read stops early only when everyone waiting on it has given up.
+   */
+  private curveCache = new Map<string, { promise: Promise<Curves>; controller: AbortController; waiting: number; progress: Set<(done: number, total: number) => void> }>();
   /** The .trk save in progress, if any. */
   private saving: { groupId: string; done: number; total: number; controller: AbortController } | undefined;
   /** Level saved from: 0 is every streamline. */
@@ -891,7 +895,8 @@ class TrackGroups {
     this.updateAll();
     const started = performance.now();
     try {
-      const curves = await engine.curves(
+      const curves = await this.readCurves(
+        group.id,
         ids,
         level,
         (done, total) => {
@@ -971,24 +976,69 @@ class TrackGroups {
     const perObject = total / Math.max(1, props.ids.length);
     const estimate = (l: StoreInfo["levels"][number]) => ids.length * perObject * ((l.vertexCount ?? total) / Math.max(1, total));
     const level = info.levels.find((l) => estimate(l) <= maxPoints)?.index ?? info.levels[info.levels.length - 1].index;
-    const key = `${id}|${this.versions.get(id) ?? 0}|${level}`;
-    let pending = this.curveCache.get(key);
-    if (pending === undefined) {
-      const scale = millimetres(info);
-      const offset = info.coordinateOffset ?? [0, 0, 0];
-      pending = engine.curves(ids, level, undefined, signal).then((c) => {
-        const positions = new Float32Array(c.positions.length);
-        for (let i = 0; i < positions.length; i += 3) {
-          for (let k = 0; k < 3; ++k) positions[i + k] = (c.positions[i + k] + (offset[k] ?? 0)) * scale[k];
-        }
-        return { positions, offsets: c.offsets, level, streamlines: c.ids.length };
+    const scale = millimetres(info);
+    const offset = info.coordinateOffset ?? [0, 0, 0];
+    return this.readCurves(id, ids, level, undefined, signal).then((c) => {
+      const positions = new Float32Array(c.positions.length);
+      for (let i = 0; i < positions.length; i += 3) {
+        for (let k = 0; k < 3; ++k) positions[i + k] = (c.positions[i + k] + (offset[k] ?? 0)) * scale[k];
+      }
+      return { positions, offsets: c.offsets, level, streamlines: c.ids.length };
+    });
+  }
+
+  /** A group's streamlines at a level, read once and shared (see `curveCache`). */
+  private readCurves(id: string, ids: BigUint64Array, level: number, progress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Curves> {
+    const engine = this.engine!;
+    const key = `${id}|${this.versions.get(id) ?? 0}|${level}|${ids.length}`;
+    let entry = this.curveCache.get(key);
+    if (entry === undefined) {
+      const controller = new AbortController();
+      const listeners = new Set<(done: number, total: number) => void>();
+      const promise = engine.curves(ids, level, (done, total) => listeners.forEach((l) => l(done, total)), controller.signal);
+      entry = { promise, controller, waiting: 0, progress: listeners };
+      const created = entry;
+      promise.catch(() => {
+        if (this.curveCache.get(key) === created) this.curveCache.delete(key);
       });
-      pending.catch(() => this.curveCache.delete(key));
-      this.curveCache.set(key, pending);
-      // A few groups' worth.
-      while (this.curveCache.size > 12) this.curveCache.delete(this.curveCache.keys().next().value!);
+      this.curveCache.set(key, entry);
+      // A few groups' worth; the oldest go first.
+      for (const [old, e] of this.curveCache) {
+        if (this.curveCache.size <= 6) break;
+        if (old !== key && e.waiting === 0) this.curveCache.delete(old);
+      }
     }
-    return pending;
+    const shared = entry;
+    shared.waiting++;
+    if (progress) shared.progress.add(progress);
+    return new Promise<Curves>((resolve, reject) => {
+      let settled = false;
+      const leave = () => {
+        if (settled) return;
+        settled = true;
+        shared.waiting--;
+        if (progress) shared.progress.delete(progress);
+      };
+      signal?.addEventListener("abort", () => {
+        leave();
+        reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+        // Nobody else wants it: stop reading.
+        if (shared.waiting === 0) {
+          shared.controller.abort();
+          this.curveCache.delete(key);
+        }
+      });
+      shared.promise.then(
+        (c) => {
+          leave();
+          resolve(c);
+        },
+        (e) => {
+          leave();
+          reject(e);
+        },
+      );
+    });
   }
 
   addSphere(): void {
