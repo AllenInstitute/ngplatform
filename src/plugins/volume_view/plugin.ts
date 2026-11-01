@@ -104,18 +104,18 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string,
 }
 
 const STYLE = `
-.vv-host { position: absolute; inset: 0; background: #0a0a0d; overflow: hidden; }
+.vv-host { position: absolute; inset: 0; background: #000; overflow: hidden; }
 .vv-host canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
 .vv-host canvas:active { cursor: grabbing; }
 .vv-head { position: absolute; top: 6px; left: 8px; right: 6px; display: flex; align-items: flex-start; gap: 8px; pointer-events: none; }
 .vv-bar { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; flex-shrink: 0; max-width: 100%; pointer-events: auto; }
-.vv-bar button { height: 24px; padding: 0 8px; border-radius: 4px; border: 1px solid #3a3a44; background: rgba(20,20,26,0.85); color: #ddd; font: 12px/1 var(--ui, sans-serif); cursor: pointer; }
-.vv-bar button[aria-pressed="true"] { border-color: #8a6a35; color: #f0c070; }
-.vv-status { position: absolute; left: 8px; bottom: 6px; right: 8px; font: 11px/1.4 var(--mono, monospace); color: #9a9aa6; pointer-events: none; text-shadow: 0 0 3px #000; }
-.vv-title { flex: 1; min-width: 0; padding-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 12px/1 var(--ui, sans-serif); color: #cfcfd8; text-shadow: 0 0 3px #000; }
+.vv-bar button { height: 24px; padding: 0 8px; border-radius: 0; border: 1px solid #3d3d3d; background: rgba(12,12,12,0.85); color: #ddd; font: 12px/1 var(--ui, sans-serif); cursor: pointer; }
+.vv-bar button[aria-pressed="true"] { border-color: #8a8a8a; color: #fff; background: rgba(60,60,60,0.85); }
+.vv-status { position: absolute; left: 8px; bottom: 6px; right: 8px; font: 11px/1.4 var(--mono, monospace); color: #9a9a9a; pointer-events: none; text-shadow: 0 0 3px #000; }
+.vv-title { flex: 1; min-width: 0; padding-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 12px/1 var(--ui, sans-serif); color: #d0d0d0; text-shadow: 0 0 3px #000; }
 .vv-panel { display: grid; gap: 10px; }
 .vv-panel .row { display: flex; align-items: center; gap: 8px; }
-.vv-panel select, .vv-panel textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 4px; background: var(--ink-0); color: var(--text); font: 12px/1.3 var(--ui); padding: 4px; }
+.vv-panel select, .vv-panel textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 0; background: var(--ink-0); color: var(--text); font: 12px/1.3 var(--ui); padding: 4px; }
 .vv-panel textarea { font: 11px/1.4 var(--mono); min-height: 64px; resize: vertical; }
 .vv-panel label.check { display: flex; gap: 8px; align-items: center; font-size: 12px; }
 .vv-credit { font-size: 11px; color: var(--faint); margin: 0; }

@@ -541,7 +541,7 @@ export class VolumeRenderer {
     const target = this.frame(width, height);
     gl.bindFramebuffer(gl.FRAMEBUFFER, target.fb);
     gl.viewport(0, 0, width, height);
-    gl.clearColor(0.04, 0.04, 0.05, 1);
+    gl.clearColor(0, 0, 0, 1);
     gl.clearDepth(1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     const viewProj = viewProjection(camera, width / height);

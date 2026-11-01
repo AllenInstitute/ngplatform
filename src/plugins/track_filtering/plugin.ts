@@ -158,32 +158,32 @@ const STYLE = `
 .tf-groups { display: grid; gap: 3px; }
 .tf-group { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 5px 6px; border-radius: var(--r); border: 1px solid transparent; cursor: pointer; }
 .tf-group:hover { background: var(--ink-3); }
-.tf-group.editing { border-color: #4a3a22; background: var(--accent-soft); }
+.tf-group.editing { border-color: var(--select); background: var(--select-soft); }
 .tf-group .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .tf-group .count { font: 11px/1 var(--mono); color: var(--muted); white-space: nowrap; }
 .tf-group .count.busy { color: var(--warn); }
-.tf-swatch { width: 18px; height: 18px; padding: 0; border: 1px solid var(--line-strong); border-radius: 4px; background: none; cursor: pointer; }
+.tf-swatch { width: 18px; height: 18px; padding: 0; border: 1px solid var(--line-strong); border-radius: 0; background: none; cursor: pointer; }
 .tf-swatch::-webkit-color-swatch-wrapper { padding: 0; }
-.tf-swatch::-webkit-color-swatch { border: 0; border-radius: 3px; }
-.tf-swatch::-moz-color-swatch { border: 0; border-radius: 3px; }
+.tf-swatch::-webkit-color-swatch { border: 0; border-radius: 0; }
+.tf-swatch::-moz-color-swatch { border: 0; border-radius: 0; }
 .tf-editor { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
-.tf-name { font: 600 14px/1.3 var(--ui); background: transparent; border: 1px solid transparent; border-radius: 4px; color: var(--text); padding: 2px 4px; min-width: 0; flex: 1; }
+.tf-name { font: 600 14px/1.3 var(--ui); background: transparent; border: 1px solid transparent; border-radius: 0; color: var(--text); padding: 2px 4px; min-width: 0; flex: 1; }
 .tf-name:hover, .tf-name:focus { border-color: var(--line); background: var(--ink-0); }
 .tf-status { font-size: 12px; color: var(--muted); }
 .tf-save { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.tf-save select { height: 24px; border-radius: 4px; border: 1px solid var(--line); background: var(--ink-0); color: var(--text); font: 12px/1 var(--ui); max-width: 210px; }
+.tf-save select { height: 24px; border-radius: 0; border: 1px solid var(--line); background: var(--ink-0); color: var(--text); font: 12px/1 var(--ui); max-width: 210px; }
 .tf-save-status { font: 11px/1.3 var(--mono); color: var(--faint); flex-basis: 100%; }
 .tf-status strong { color: var(--text); font: 600 16px/1 var(--mono); margin-right: 4px; }
 .tf-roi { border: 1px solid var(--line); border-radius: var(--r); padding: 6px 8px; display: grid; gap: 5px; }
 .tf-roi-head { display: flex; align-items: center; gap: 6px; }
 .tf-roi-head .label { font-weight: 500; flex: 1; }
-.tf-roi select { height: 24px; border-radius: 4px; border: 1px solid var(--line); background: var(--ink-0); color: var(--text); font: 600 11px/1 var(--mono); }
+.tf-roi select { height: 24px; border-radius: 0; border: 1px solid var(--line); background: var(--ink-0); color: var(--text); font: 600 11px/1 var(--mono); }
 .tf-xyz { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
 .tf-xyz label { display: grid; gap: 1px; font-size: 10px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; }
-.tf-xyz input { width: 100%; box-sizing: border-box; height: 24px; border: 1px solid var(--line); border-radius: 4px; background: var(--ink-0); color: var(--text); font: 12px/1 var(--mono); padding: 0 4px; }
+.tf-xyz input { width: 100%; box-sizing: border-box; height: 24px; border: 1px solid var(--line); border-radius: 0; background: var(--ink-0); color: var(--text); font: 12px/1 var(--mono); padding: 0 4px; }
 .tf-roi-status { font: 11px/1.3 var(--mono); color: var(--faint); }
 .tf-prop { border: 1px solid var(--line); border-radius: var(--r); padding: 8px; display: grid; gap: 4px; }
-.tf-prop.filtered { border-color: #4a3a22; }
+.tf-prop.filtered { border-color: #8a8a8a; }
 .tf-prop-head { display: flex; align-items: baseline; gap: 6px; }
 .tf-prop-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tf-range { margin-left: auto; font: 11px/1 var(--mono); color: var(--muted); white-space: nowrap; }
@@ -192,14 +192,14 @@ const STYLE = `
 .tf-hist .pass { fill: var(--accent); }
 .tf-sliders { position: relative; height: 18px; }
 .tf-sliders input { position: absolute; inset: 0; width: 100%; margin: 0; pointer-events: none; background: none; -webkit-appearance: none; appearance: none; height: 18px; }
-.tf-sliders input::-webkit-slider-thumb { pointer-events: all; -webkit-appearance: none; width: 12px; height: 16px; border-radius: 3px; background: var(--accent); cursor: ew-resize; }
-.tf-sliders input::-moz-range-thumb { pointer-events: all; width: 12px; height: 16px; border-radius: 3px; background: var(--accent); border: 0; cursor: ew-resize; }
+.tf-sliders input::-webkit-slider-thumb { pointer-events: all; -webkit-appearance: none; width: 12px; height: 16px; border-radius: 0; background: var(--accent); cursor: ew-resize; }
+.tf-sliders input::-moz-range-thumb { pointer-events: all; width: 12px; height: 16px; border-radius: 0; background: var(--accent); border: 0; cursor: ew-resize; }
 .tf-sliders::before { content: ""; position: absolute; left: 0; right: 0; top: 8px; height: 2px; background: var(--line); }
 .tf details > summary { cursor: pointer; list-style: none; }
 .tf details > summary::-webkit-details-marker { display: none; }
 .tf details[open] > summary { margin-bottom: 8px; }
 .tf-tags { display: grid; gap: 2px; max-height: 220px; overflow: auto; }
-.tf-tag { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; font-size: 12px; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.tf-tag { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; font-size: 12px; cursor: pointer; padding: 2px 4px; border-radius: 0; }
 .tf-tag:hover { background: var(--ink-3); }
 .tf-tag input { margin: 0; accent-color: var(--accent); }
 .tf-tag .count { font: 11px/1 var(--mono); color: var(--muted); }
