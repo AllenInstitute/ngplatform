@@ -323,7 +323,10 @@ class TrackGroups {
     // Groups that came without a layer (from a link or an example) get one,
     // once the dataset is in the scene; a layer removed later stays removed.
     if (dataset !== undefined && this.dims() !== undefined) {
-      for (const group of this.saved.groups) if (group.layer === undefined) this.ensureLayer(group);
+      for (const { id } of this.saved.groups) {
+        const group = this.saved.groups.find((g) => g.id === id);
+        if (group !== undefined && group.layer === undefined) this.ensureLayer(group);
+      }
     }
     this.watchGroupLayers();
     this.writeAnnotations();
@@ -404,7 +407,11 @@ class TrackGroups {
   }
 
   /** Makes the group's layer (a view of the dataset without per-object subsources). */
-  private ensureLayer(group: Group): string | undefined {
+  private ensureLayer(stale: Group): string | undefined {
+    // Making a layer refreshes the workspace, which makes the other groups'
+    // layers then and there: the caller's copy of a group can be out of date.
+    const group = this.saved.groups.find((g) => g.id === stale.id);
+    if (group === undefined) return undefined;
     if (group.layer !== undefined && this.layerInfo(group.layer) !== undefined) return group.layer;
     if (this.creating.has(group.id)) return undefined;
     const dataset = this.dataset();
@@ -414,12 +421,12 @@ class TrackGroups {
     let layer: string;
     try {
       layer = this.ctx.workspace.addLayer(dataset.id, {
-      name: group.name,
-      type: "segmentation",
-      source: { url, subsources: { objects: false, meshes: false } },
-      notSelectedAlpha: 0,
-      ignoreNullVisibleSet: false,
-      segmentDefaultColor: group.colour,
+        name: group.name,
+        type: "segmentation",
+        source: { url, subsources: { objects: false, meshes: false } },
+        notSelectedAlpha: 0,
+        ignoreNullVisibleSet: false,
+        segmentDefaultColor: group.colour,
       });
       this.saved = { ...this.saved, groups: this.saved.groups.map((g) => (g.id === group.id ? { ...g, layer } : g)) };
       this.save();
