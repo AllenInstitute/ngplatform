@@ -538,6 +538,10 @@ textarea.state-input.tall { min-height: 50vh; }
   .dock-right:not(.collapsed) { right: 0; }
   .dock-bottom { height: min(var(--bh), 30vh); }
   .field-row { grid-template-columns: 1fr; }
+  /* The top bar fits a phone: the palette is its icon, the status shortens. */
+  .palette-trigger kbd { display: none; }
+  .status { flex: 0 1 auto; min-width: 0; overflow: hidden; }
+  .status > :last-child { overflow: hidden; text-overflow: ellipsis; }
 }
 
 .note.explain { display: grid; gap: 6px; color: var(--muted); }

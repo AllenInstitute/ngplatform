@@ -1,12 +1,13 @@
 /**
  * The volume view's OME-Zarr reading, against BigBrain's published metadata
  * (OME-Zarr 0.6, a physical system and an affine to MNI) and hand-made 0.4
- * and 0.5 groups.
+ * and 0.5 groups; and how it tells tissue from background.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { apply, identity, invert, mergeLevels, multiply, parseOmeLevels, rasBounds } from "../src/plugins/volume_view/ome.js";
+import { borderMean, tissueWindow } from "../src/plugins/volume_view/renderer.js";
 
 const fixture = (name: string) => JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", name), "utf8"));
 const BB = "https://ftp.bigbrainproject.org/bigbrain-ftp/BigBrainRelease.2015/OME_Zarr/";
@@ -84,5 +85,34 @@ describe("OME-Zarr levels", () => {
     const m = Float64Array.from([0, 2, 0, 5, -3, 0, 0, 1, 0, 0, 0.5, -2, 0, 0, 0, 1]);
     const product = multiply(m, invert(m));
     identity().forEach((v, i) => expect(product[i]).toBeCloseTo(v, 12));
+  });
+});
+
+describe("tissue and background", () => {
+  // A 6 x 5 x 4 volume: a background shell around a block of tissue.
+  const size: [number, number, number] = [6, 5, 4];
+  const volume = (background: number, tissue: (i: number) => number) => {
+    const data = new Uint8Array(size[0] * size[1] * size[2]).fill(background);
+    let i = 0;
+    for (let z = 1; z < 3; ++z) for (let y = 1; y < 4; ++y) for (let x = 1; x < 5; ++x) data[(z * size[1] + y) * size[0] + x] = tissue(i++);
+    return data;
+  };
+
+  it("finds the background on the volume's border", () => {
+    expect(borderMean(volume(0, () => 200), size)).toBe(0);
+    expect(borderMean(volume(255, () => 40), size)).toBe(255);
+  });
+
+  it("stretches the tissue's values, not the background's", () => {
+    // An MRI: dark background, tissue 100..123.
+    const [lo, hi] = tissueWindow(volume(0, (i) => 100 + i), true);
+    expect(lo * 255).toBeCloseTo(100, 6);
+    expect(hi * 255).toBeCloseTo(123, 6);
+    // A stain: pale background, tissue 40..63.
+    const [lo2, hi2] = tissueWindow(volume(255, (i) => 40 + i), false);
+    expect(lo2 * 255).toBeCloseTo(40, 6);
+    expect(hi2 * 255).toBeCloseTo(63, 6);
+    // Nothing but background: the full range.
+    expect(tissueWindow(new Uint8Array(8), true)).toEqual([0, 1]);
   });
 });

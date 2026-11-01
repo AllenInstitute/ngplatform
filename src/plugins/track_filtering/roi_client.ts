@@ -127,8 +127,10 @@ export class RoiEngine {
 
   dispose(): void {
     this.worker.terminate();
-    for (const p of this.pending.values()) p.reject(new Error("closed"));
-    for (const p of this.pendingCurves.values()) p.reject(new Error("closed"));
+    // Work given up, not failed: callers ignore aborts.
+    const closed = () => new DOMException("The region worker was closed", "AbortError");
+    for (const p of this.pending.values()) p.reject(closed());
+    for (const p of this.pendingCurves.values()) p.reject(closed());
     this.pending.clear();
     this.pendingCurves.clear();
   }

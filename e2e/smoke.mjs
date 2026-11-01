@@ -4,9 +4,10 @@
 //   node e2e/smoke.mjs [base-url] [screenshot-dir]
 //
 // Set CHROME=/path/to/chrome to use an installed Chrome with the machine's
-// GPU; otherwise Playwright's Chromium runs with SwiftShader, which cannot
-// draw Neuroglancer's views (checks that need drawing are then skipped).
-import { mkdirSync } from "node:fs";
+// GPU; otherwise Playwright's Chromium (or that Chrome, with SWIFTSHADER=1)
+// runs with SwiftShader's software WebGL2.
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 
 // A project install of playwright, or a global one reached through NODE_PATH.
@@ -23,10 +24,16 @@ const shots = process.argv[3] ?? "e2e/screenshots";
 mkdirSync(shots, { recursive: true });
 
 const proxy = process.env.HTTPS_PROXY ? { server: process.env.HTTPS_PROXY, bypass: "localhost,127.0.0.1" } : undefined;
-const gpu = process.env.CHROME !== undefined;
+const gpu = process.env.CHROME !== undefined && !process.env.SWIFTSHADER;
+// With SwiftShader, the Vulkan loader is pointed at the browser's own
+// SwiftShader driver: a GPU vendor's driver is otherwise still probed, and
+// NVIDIA's blocks for good opening /dev/nvidia-modeset in some sandboxes.
+const icd = join(dirname(process.env.CHROME ?? chromium.executablePath()), "vk_swiftshader_icd.json");
+const env = !gpu && existsSync(icd) ? { ...process.env, VK_ICD_FILENAMES: icd, VK_DRIVER_FILES: icd } : undefined;
 const browser = await chromium.launch({
   executablePath: process.env.CHROME,
   args: gpu ? ["--ignore-gpu-blocklist", "--enable-gpu"] : ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"],
+  env,
   proxy,
 });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true });
@@ -35,7 +42,14 @@ page.on("console", (m) => { if (m.type() === "error") problems.push(m.text()); }
 page.on("pageerror", (e) => problems.push(String(e)));
 const cannotDraw = () => problems.some((p) => p.includes("Framebuffer configuration not supported"));
 let dataRequests = 0;
-page.on("request", (r) => { if (!r.url().startsWith(base)) dataRequests++; });
+// Neuroglancer's data, not the volume view's (its sections stream in on their own).
+const volumeStore = (url) => url.includes("bigbrainproject.org/") || url.includes("/ngplatform/data/");
+const requested = [];
+page.on("request", (r) => {
+  if (r.url().startsWith(base) || volumeStore(r.url())) return;
+  dataRequests++;
+  requested.push(r.url());
+});
 
 const status = () => page.locator(".status").innerText();
 async function waitReady(label, timeout = 90_000) {
@@ -90,7 +104,7 @@ const volumeStatus = (await page.locator(".vv-status").textContent()) ?? "";
 check(!/Cannot draw|Could not|shader|program/.test(volumeStatus), `volume view draws (${volumeStatus})`);
 await page.screenshot({ path: `${shots}/1b-volume.png` });
 
-// Palette: change the layout, then undo it, with no data requests.
+// Palette: change the layout, then undo it.
 await page.waitForTimeout(1500);
 const layoutBefore = await page.evaluate(() => window.engine.layout());
 dataRequests = 0;
@@ -101,10 +115,15 @@ await page.waitForTimeout(1200);
 check(await page.evaluate(() => window.engine.layout() === "3d"), "palette ran Layout: 3D");
 await page.screenshot({ path: `${shots}/2-3d.png` });
 await page.locator(".brand").click(); // focus the page, not an input
+// Undo restores the state in place: nothing is fetched again. (The 3-D
+// panel the layout added may fetch for itself before this.)
+await page.waitForTimeout(3000);
+dataRequests = 0;
+requested.length = 0;
 await page.keyboard.press("Control+z");
 await page.waitForTimeout(1500);
 check((await page.evaluate(() => window.engine.layout())) === layoutBefore, "undo restored the layout");
-check(dataRequests === 0, `layout change and undo made no data requests (${dataRequests})`);
+check(dataRequests === 0, `undo made no data requests (${dataRequests}${requested.length ? `: ${[...new Set(requested.map((u) => u.replace(/[?#].*/, "").split("/").slice(-4).join("/")))].slice(0, 4).join(", ")}` : ""})`);
 
 // Scenes: a new empty scene, the dataset added from the workspace, and back.
 await page.locator(".scene-add").click();
@@ -113,7 +132,8 @@ check((await page.locator(".scene-tab").count()) === 2, "New scene adds a scene 
 check((await layers()).length === 0, "the new scene starts empty");
 await page.locator(".ds-row.other .btn").first().click();
 await page.waitForTimeout(800);
-check((await layers()).length === 1, "a workspace dataset adds to the new scene");
+// The dataset's own layer, and its track groups' layers with it.
+check((await layers()).length >= 1, "a workspace dataset adds to the new scene");
 await page.locator(".scene-tab").first().click();
 await page.waitForTimeout(800);
 check((await page.locator('.scene-tab[aria-selected="true"]').innerText()) === "Scene 1", "switching back to Scene 1");
@@ -122,7 +142,9 @@ check((await page.locator('.scene-tab[aria-selected="true"]').innerText()) === "
 await page.locator("#tab-plugins").click();
 check((await page.locator(".plugin .switch").count()) >= 2, "the Plugins tab lists the plugins with switches");
 await page.locator('[id="tab-trackFiltering.panel"]').click();
-await page.waitForFunction(() => [...document.querySelectorAll(".tf-group .count")].some((c) => /^[0-9,]+$/.test(c.textContent ?? "")), null, { timeout: 120_000 }).catch(() => {});
+await page
+  .waitForFunction(() => { const c = [...document.querySelectorAll(".tf-group .count")]; return c.length === 3 && c.every((e) => /^[0-9,]+$/.test(e.textContent ?? "")); }, null, { timeout: 180_000 })
+  .catch(() => {});
 const counts = await page.locator(".tf-group .count").allInnerTexts();
 console.log(`track groups: ${counts.join(", ")}`);
 check(counts.length === 3 && counts.every((c) => /^[0-9,]+$/.test(c)), "the example's three track groups have exact counts");
@@ -137,7 +159,13 @@ await page.keyboard.press("Escape");
 await page.setViewportSize({ width: 400, height: 800 });
 await page.waitForTimeout(800);
 await page.screenshot({ path: `${shots}/4-phone.png` });
-check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "no horizontal scroll at 400 px");
+const past = await page.evaluate(() =>
+  [...document.querySelectorAll("body *")]
+    .filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.right > window.innerWidth + 1; })
+    .slice(0, 4)
+    .map((e) => `${e.tagName.toLowerCase()}${e.className && typeof e.className === "string" ? `.${e.className.trim().split(/\s+/).join(".")}` : ""}`),
+);
+check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `no horizontal scroll at 400 px${past.length ? ` (past the edge: ${past.join(", ")})` : ""}`);
 
 console.log(problems.length ? `console errors:\n  ${[...new Set(problems)].slice(0, 10).join("\n  ")}` : "no console errors");
 await browser.close();

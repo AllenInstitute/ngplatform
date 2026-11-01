@@ -5,7 +5,10 @@
  * tracts, as line strips, depth-tested against the brain.
  *
  * The brain pass writes depth, so a tract shows where the cut exposes it and
- * is hidden by solid tissue.  Empty space is skipped with a coarse grid of
+ * is hidden by solid tissue.  Tissue is whatever differs from the
+ * background by more than the threshold: darker than a pale background
+ * (BigBrain's stain) or brighter than a dark one (an MRI), as the volume's
+ * border shows.  Empty space is skipped with a coarse grid of
  * block maxima.  Frames are drawn into an off-screen buffer at a chosen
  * scale (lower while the view moves) and stretched to the canvas.
  */
@@ -25,7 +28,7 @@ export interface Options {
   cut: [number, number, number] | undefined;
   sections: boolean;
   tracts: boolean;
-  /** Tissue starts where 1 - value exceeds this (0..1). */
+  /** Tissue starts where a value differs from the background by more than this (0..1). */
   threshold: number;
 }
 
@@ -75,6 +78,8 @@ uniform vec3 uCutSide;
 uniform bvec3 uPlaneReady;
 uniform vec4 uPlaneRect[3];
 uniform float uVoxel;
+uniform bool uDarkBackground;
+uniform vec2 uWindow;
 in vec2 vNdc;
 out vec4 outColor;
 
@@ -88,10 +93,22 @@ vec2 slab(vec3 o, vec3 inv, vec3 lo, vec3 hi, out vec3 tExit) {
 
 vec3 texOf(vec3 p) { return (uWorldToTex * vec4(p, 1.0)).xyz; }
 
-float value(vec3 p) {
+// The stored value, as shown.
+float raw(vec3 p) {
   vec3 tc = texOf(p);
-  if (any(lessThan(tc, vec3(0.0))) || any(greaterThan(tc, vec3(1.0)))) return 1.0;
+  if (any(lessThan(tc, vec3(0.0))) || any(greaterThan(tc, vec3(1.0)))) return uDarkBackground ? 0.0 : 1.0;
   return texture(uVolume, tc).r;
+}
+
+// A value as shown on the cut faces: the tissue's range stretched to black..white.
+float shown(float v) {
+  return clamp((v - uWindow.x) / max(uWindow.y - uWindow.x, 1e-3), 0.0, 1.0);
+}
+
+// How like the background a point is: 1 is background, lower is tissue.
+float value(vec3 p) {
+  float v = raw(p);
+  return uDarkBackground ? 1.0 - v : v;
 }
 
 float occupied(vec3 p) {
@@ -170,8 +187,8 @@ void main() {
     int axis = octExit.x <= octExit.y && octExit.x <= octExit.z ? 0 : octExit.y <= octExit.z ? 1 : 2;
     bool ok;
     float v = section(axis, p, ok);
-    if (!ok) v = value(p);
-    colour = vec3(v) * vec3(1.0, 0.97, 0.93);
+    if (!ok) v = raw(p);
+    colour = vec3(shown(v)) * vec3(1.0, 0.97, 0.93);
   } else {
     // Refine the surface between the last empty sample and this one.
     float a = before;
@@ -190,7 +207,7 @@ void main() {
       value(p + vec3(0.0, 0.0, h)) - value(p - vec3(0.0, 0.0, h)));
     vec3 normal = length(g) > 1e-6 ? normalize(g) : -d;
     if (dot(normal, d) > 0.0) normal = -normal;
-    float tissue = value(p - normal * 2.0 * h);
+    float tissue = raw(p - normal * 2.0 * h);
     vec3 base = mix(vec3(0.42, 0.33, 0.31), vec3(0.86, 0.80, 0.74), smoothstep(0.35, 0.9, tissue));
     vec3 light = normalize(-d + vec3(0.0, 0.0, 0.35));
     float diffuse = max(dot(normal, light), 0.0);
@@ -228,6 +245,50 @@ function compile(gl: WebGL2RenderingContext, vs: string, fs: string): WebGLProgr
   gl.linkProgram(program);
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(`program: ${gl.getProgramInfoLog(program)}`);
   return program;
+}
+
+/** The mean of the values on a volume's six faces (`data` x fastest). */
+export function borderMean(data: Uint8Array, size: [number, number, number]): number {
+  const [nx, ny, nz] = size;
+  let sum = 0;
+  let count = 0;
+  for (let z = 0; z < nz; ++z) {
+    for (let y = 0; y < ny; ++y) {
+      const row = (z * ny + y) * nx;
+      if (z === 0 || z === nz - 1 || y === 0 || y === ny - 1) {
+        for (let x = 0; x < nx; ++x) sum += data[row + x];
+        count += nx;
+      } else {
+        sum += data[row] + data[row + nx - 1];
+        count += 2;
+      }
+    }
+  }
+  return count === 0 ? 255 : sum / count;
+}
+
+/**
+ * The 1st to 99.5th percentiles (0..1) of the values that are clearly
+ * tissue: more than 8% of the range away from the background.
+ */
+export function tissueWindow(data: Uint8Array, darkBackground: boolean): [number, number] {
+  const counts = new Float64Array(256);
+  for (let i = 0; i < data.length; ++i) counts[data[i]]++;
+  const [from, to] = darkBackground ? [21, 256] : [0, 235];
+  let total = 0;
+  for (let v = from; v < to; ++v) total += counts[v];
+  if (total === 0) return [0, 1];
+  const at = (q: number) => {
+    let seen = 0;
+    for (let v = from; v < to; ++v) {
+      seen += counts[v];
+      if (seen >= q * total) return v;
+    }
+    return to - 1;
+  };
+  const lo = at(0.01);
+  const hi = Math.max(at(0.995), lo + 1);
+  return [lo / 255, hi / 255];
 }
 
 /** Row-major (as ome.ts keeps them) to column-major float32, as WebGL takes them. */
@@ -272,6 +333,10 @@ export class VolumeRenderer {
   private worldToTex: Mat4 | undefined;
   private box: { lo: number[]; hi: number[] } | undefined;
   private voxel = 1;
+  /** The volume's background is dark (tissue brighter), as in an MRI. */
+  private darkBackground = false;
+  /** The tissue's range of values (0..1), stretched to black..white on the cut faces. */
+  private window: [number, number] = [0, 1];
   private planes: (Plane | undefined)[] = [undefined, undefined, undefined];
   private tracts = new Map<string, Tracts>();
   private target: { fb: WebGLFramebuffer; colour: WebGLTexture; depth: WebGLRenderbuffer; w: number; h: number } | undefined;
@@ -307,7 +372,10 @@ export class VolumeRenderer {
     gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, size[0], size[1], size[2], 0, gl.RED, gl.UNSIGNED_BYTE, data);
     for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_3D, p, gl.LINEAR);
     for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T, gl.TEXTURE_WRAP_R]) gl.texParameteri(gl.TEXTURE_3D, p, gl.CLAMP_TO_EDGE);
-    // Block maxima of the tissue (255 - value), grown by a block, for skipping empty space.
+    this.darkBackground = borderMean(data, size) < 128;
+    const dark = this.darkBackground;
+    this.window = tissueWindow(data, dark);
+    // Block maxima of the tissue (difference from the background), grown by a block, for skipping empty space.
     const blocks = size.map((s) => Math.ceil(s / BLOCK)) as [number, number, number];
     const occ = new Uint8Array(blocks[0] * blocks[1] * blocks[2]);
     for (let z = 0; z < size[2]; ++z) {
@@ -317,7 +385,7 @@ export class VolumeRenderer {
         let i = (z * size[1] + y) * size[0];
         const row = (bz * blocks[1] + by) * blocks[0];
         for (let x = 0; x < size[0]; ++x, ++i) {
-          const v = 255 - data[i];
+          const v = dark ? data[i] : 255 - data[i];
           const b = row + ((x / BLOCK) | 0);
           if (v > occ[b]) occ[b] = v;
         }
@@ -513,6 +581,8 @@ export class VolumeRenderer {
       gl.uniform1f(this.u(p, "uStep"), this.voxel * 0.6);
       gl.uniform1f(this.u(p, "uBlockStep"), this.voxel * BLOCK * 0.9);
       gl.uniform1f(this.u(p, "uThreshold"), options.threshold);
+      gl.uniform1i(this.u(p, "uDarkBackground"), this.darkBackground ? 1 : 0);
+      gl.uniform2fv(this.u(p, "uWindow"), this.window);
       const cut = options.cut;
       gl.uniform1i(this.u(p, "uCut"), cut === undefined ? 0 : 1);
       if (cut !== undefined) {

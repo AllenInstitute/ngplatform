@@ -267,7 +267,10 @@ class TrackGroups {
       ctx.state.onChanged(() => {
         // Undo, redo, a link: the groups changed from outside.
         if (this.writing || this.commitTimer !== undefined) return;
-        this.saved = readSaved(ctx.state.get());
+        const saved = readSaved(ctx.state.get());
+        // Undoing something else hands back the same groups: keep their answers.
+        if (JSON.stringify(saved) === JSON.stringify(this.saved)) return;
+        this.saved = saved;
         this.evaluateAll();
         this.refresh();
       }),

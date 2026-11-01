@@ -1,6 +1,6 @@
 # Status
 
-*As of 2026-10-31.*
+*As of 2026-11-01.*
 
 ## Where things stand
 
@@ -11,7 +11,7 @@
 | **Zarr Vectors** (data type plugin) | `packages/neuroglancer-zarr-vectors`: reads format 0.9.0 to 0.9.4, including 0.9.4's dense object index. Its Neuroglancer modules and worker code load only when it is on. A public `reader` entry for tools. Fixed: a byte range longer than 8 MiB (a large level-0 cell) was read short, from both ends. 177 tests against upstream Neuroglancer. |
 | **Example data** | HCP-1065 (public population tractogram) only, with three track groups. The HiP-CT samples (Ha1, Hb1, i74, I80) are not referenced by the app or bundled with it. |
 | **Track filtering** (tool plugin, requires Zarr Vectors) | TrackVis-style track groups: each group keeps the objects through its regions (spheres and boxes; AND, OR, NOT) with attributes in range, and is a layer of its own, in its own colour, switched on and off here or in the Datasets tab. One group is edited at a time; regions are annotations in the views (Alt-drag to move) kept in step with the panel. Region tests run in a worker on level 0, reading only the chunks a region touches; a coarse level previews while a region moves. |
-| **Volume view** (tool plugin) | In place of Neuroglancer's 3-D panel (its 2-D views stay): a solid brain ray-marched in WebGL2 from a coarse level held as one 3-D texture, the octant facing the camera cut away at the position, its three faces showing sections resampled from finer levels in a worker (coarse first, then sharper), and the visible track groups drawn through the cut, depth-tested against the brain. Reads OME-Zarr 0.4 to 0.6 (zarr v3, sharded), several stores merged by voxel size, placed through an image's coordinate transforms (BigBrain's linear affine to MNI). Default: BigBrain (your OME-Zarr release on the BigBrain FTP) under HCP-1065. Structure after Open the Mind (BigBrain Hackathon 2026), reimplemented client-side; none of its code is used (it is CC BY-NC). **Shaders not compiled here** (no browser; the sandbox would not run glslang): the view says so in its status line if they fail. |
+| **Volume view** (tool plugin) | In place of Neuroglancer's 3-D panel (its 2-D views stay): a solid brain ray-marched in WebGL2 from a coarse level held as one 3-D texture, the octant facing the camera cut away at the position, its three faces showing sections resampled from finer levels in a worker (coarse first, then sharper), and the visible track groups drawn through the cut, depth-tested against the brain. Reads OME-Zarr 0.4 to 0.6 (zarr v3, sharded), several stores merged by voxel size, placed through an image's coordinate transforms (BigBrain's linear affine to MNI). Tissue is told from background by the volume's border (pale for BigBrain's stain, dark for an MRI); the cut faces stretch the tissue's own range of values. Volumes: BigBrain (your OME-Zarr release on the BigBrain FTP; the default) or the MNI ICBM152 2009a T1w template, brain only, 1 mm (the space HCP-1065 is in; converted from TemplateFlow and served from this site's `data/`, since TemplateFlow's bucket sends no CORS headers). Structure after Open the Mind (BigBrain Hackathon 2026), reimplemented client-side; none of its code is used (it is CC BY-NC). **Drawn and screenshotted in headless Chrome** (SwiftShader's software WebGL2) with the HCP-1065 track groups; not yet on a real GPU. |
 | **Auth** | A left-dock tab: services the workspace needs a sign-in for, with who is signed in; middleauth built in (tokens kept where Neuroglancer keeps them); plugins add providers. |
 | **Neuroglancer** | google/neuroglancer `master` (c8c4d139, 2026-10-28) plus four commits on `Andrew-Keenlyside/neuroglancer` branch `ngplatform-upstream`: (1) application-supplied workers, (2) host-owned side panels, (3) incremental layer restore, (4) a fix so `https://storage.googleapis.com` URLs can be listed (GCS answers with an XML namespace upstream rejected; without it a zarr-vectors store over https has no segment properties). |
 | **Filter oracle and engines, step C0** | Done, in `zarr-vectors-tools`, parked as patches in [`pending/zarr-vectors-tools/`](pending/zarr-vectors-tools/). |
@@ -80,20 +80,23 @@ nearby positions reuse them). 0.13 mm sections are about 50 MB a face.
 
 ## How it is checked
 
-- `npm test`: 97 unit tests (workspace model, store with a fake engine,
+- `npm test`: 99 unit tests (workspace model, store with a fake engine,
   commands with arguments, key bindings, `when` clauses, schemas, state
   slices, plugin host and switches, the catalogue, the filter computation,
-  region geometry, track-group logic, .trk files, sign-in, OME-Zarr transforms (against BigBrain's metadata),
+  region geometry, track-group logic, .trk files, sign-in, OME-Zarr transforms (against BigBrain's metadata), tissue and background,
   state parsing, undo history), then the Zarr Vectors plugin's 182 tests
   (codecs, layouts including 0.9.4's dense index, pyramids, meshes, objects,
   worker imports) against upstream Neuroglancer.
 - `npm run typecheck`: the app and the plugin, with Neuroglancer's sources.
-- `node e2e/smoke.mjs`: rewritten for the new GUI, including checks that the
-  views fill their area, that only the position and panel controls show
-  inside them, that a layout change and its undo make no data requests, and
-  that the plugins and the filtering tab work. **Not run
-  yet**: headless Chrome does not start in the build sandbox used for this
-  release, so the first visual check is yours.
+- `node e2e/smoke.mjs`: the GUI in headless Chrome, including checks that
+  the views fill their area, that only the position and panel controls show
+  inside them, that the volume view draws, that undo makes no data
+  requests, that the track groups get exact counts, and that a phone-width
+  window does not scroll sideways. All 20 checks pass (2026-11-01, Chrome
+  with SwiftShader: `CHROME=/usr/bin/google-chrome SWIFTSHADER=1`). Where
+  NVIDIA's driver is installed but the GPU cannot be opened (this build
+  sandbox), the script points Chrome's Vulkan loader at its own SwiftShader;
+  otherwise Chrome hangs at start.
 
 ## Next
 

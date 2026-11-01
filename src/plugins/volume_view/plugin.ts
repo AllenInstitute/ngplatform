@@ -17,9 +17,11 @@ import { type Camera, type Options, VolumeRenderer } from "./renderer.js";
 import { type LevelInfo, VolumeClient } from "./volume_client.js";
 
 const BIGBRAIN = "https://ftp.bigbrainproject.org/bigbrain-ftp/BigBrainRelease.2015/OME_Zarr/";
+/** TemplateFlow's copy has no CORS headers, so the site serves a converted one. */
+const MNI2009A = "https://andrew-keenlyside.github.io/ngplatform/data/MNI152NLin2009aAsym_T1w_brain.ome.zarr/";
 
 /** Volumes offered by name. */
-export const PRESETS: { id: string; title: string; stores: string[]; space?: string; credit: string }[] = [
+export const PRESETS: { id: string; title: string; stores: string[]; space?: string; threshold?: number; credit: string }[] = [
   {
     id: "bigbrain-mni",
     title: "BigBrain, in MNI ICBM152 2009b (linear)",
@@ -28,6 +30,16 @@ export const PRESETS: { id: string; title: string; stores: string[]; space?: str
     space: "MNI152NLin2009bAsym",
     credit:
       "BigBrain (Amunts et al., Science 2013), CC BY-NC-SA 4.0, bigbrainproject.org. OME-Zarr conversion and linear MNI placement by A. Keenlyside (2026). Structure after Open the Mind (C. Sam, BigBrain Hackathon 2026).",
+  },
+  {
+    id: "mni152-2009a",
+    title: "MNI ICBM152 2009a template (T1w, brain), 1 mm",
+    // The space HCP-1065 and DSI Studio's ICBM152 atlases are in.
+    stores: [MNI2009A],
+    // Above CSF, below grey matter: the surface is the cortex's.
+    threshold: 0.35,
+    credit:
+      "ICBM 152 Nonlinear Asymmetric 2009a (Fonov et al., NeuroImage 2011). Copyright (C) 1993-2004 Louis Collins, McConnell Brain Imaging Centre, Montreal Neurological Institute, McGill University. From TemplateFlow; masked to the brain and converted to OME-Zarr for this view.",
   },
 ];
 
@@ -40,7 +52,7 @@ export interface Saved {
   solid: number;
   /** The finest sections' voxel size, mm. */
   finest: number;
-  /** Tissue threshold, 0..1 of darkening from the background. */
+  /** Tissue threshold, 0..1 of difference from the background. */
   threshold: number;
   cut: boolean;
   sections: boolean;
@@ -59,7 +71,7 @@ export function readSaved(raw: unknown): Saved {
     space: s.space ?? preset?.space,
     solid: typeof s.solid === "number" ? s.solid : 0.4,
     finest: typeof s.finest === "number" ? s.finest : 0.2,
-    threshold: typeof s.threshold === "number" ? s.threshold : 0.08,
+    threshold: typeof s.threshold === "number" ? s.threshold : (preset?.threshold ?? 0.08),
     cut: s.cut !== false,
     sections: s.sections !== false,
     tracts: s.tracts !== false,
@@ -95,11 +107,12 @@ const STYLE = `
 .vv-host { position: absolute; inset: 0; background: #0a0a0d; overflow: hidden; }
 .vv-host canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
 .vv-host canvas:active { cursor: grabbing; }
-.vv-bar { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; }
+.vv-head { position: absolute; top: 6px; left: 8px; right: 6px; display: flex; align-items: flex-start; gap: 8px; pointer-events: none; }
+.vv-bar { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; flex-shrink: 0; max-width: 100%; pointer-events: auto; }
 .vv-bar button { height: 24px; padding: 0 8px; border-radius: 4px; border: 1px solid #3a3a44; background: rgba(20,20,26,0.85); color: #ddd; font: 12px/1 var(--ui, sans-serif); cursor: pointer; }
 .vv-bar button[aria-pressed="true"] { border-color: #8a6a35; color: #f0c070; }
 .vv-status { position: absolute; left: 8px; bottom: 6px; right: 8px; font: 11px/1.4 var(--mono, monospace); color: #9a9aa6; pointer-events: none; text-shadow: 0 0 3px #000; }
-.vv-title { position: absolute; left: 8px; top: 8px; font: 600 12px/1 var(--ui, sans-serif); color: #cfcfd8; pointer-events: none; text-shadow: 0 0 3px #000; }
+.vv-title { flex: 1; min-width: 0; padding-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 12px/1 var(--ui, sans-serif); color: #cfcfd8; text-shadow: 0 0 3px #000; }
 .vv-panel { display: grid; gap: 10px; }
 .vv-panel .row { display: flex; align-items: center; gap: 8px; }
 .vv-panel select, .vv-panel textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 4px; background: var(--ink-0); color: var(--text); font: 12px/1.3 var(--ui); padding: 4px; }
@@ -269,7 +282,7 @@ class VolumeView {
       el("button", { type: "button", title: "Reset the camera", onclick: () => this.resetCamera() }, "Reset"),
       el("button", { type: "button", title: "Back to Neuroglancer's 3-D panel", onclick: () => this.save({ on: false }) }, "×"),
     );
-    root.append(canvas, this.titleLine, bar, this.statusLine);
+    root.append(canvas, el("div", { class: "vv-head" }, this.titleLine, bar), this.statusLine);
     host.append(root);
     this.host = root;
     this.canvas = canvas;
@@ -402,7 +415,10 @@ class VolumeView {
     renderer.render(camera, this.options(), scale);
     // A slow machine draws at lower resolution while moving anyway.
     void before;
-    if (this.titleLine) this.titleLine.textContent = this.title;
+    if (this.titleLine) {
+      this.titleLine.textContent = this.title;
+      this.titleLine.title = this.title;
+    }
     if (this.statusLine) this.statusLine.textContent = this.status;
   }
 
@@ -417,7 +433,7 @@ class VolumeView {
     const centre = bounds.lo.map((v, k) => (v + bounds.hi[k]) / 2) as [number, number, number];
     const extent = Math.max(...bounds.hi.map((v, k) => v - bounds.lo[k]));
     // From the right, in front and above, so the removed octant faces the camera.
-    this.camera = { target: centre, distance: extent * 2.4, yaw: 0.75, pitch: 0.42 };
+    this.camera = { target: centre, distance: extent * 2.0, yaw: 0.75, pitch: 0.42 };
   }
 
   private title = "";
@@ -592,6 +608,8 @@ class VolumeView {
         },
         (e) => {
           if (this.tractKeys.get(group.id) === key) this.tractKeys.delete(group.id);
+          // Given up (the group's dataset closed, or the scene changed), not failed.
+          if ((e as DOMException).name === "AbortError") return;
           this.ctx.log.error(`${group.name}: tracts not drawn: ${(e as Error).message}`);
         },
       );
@@ -663,7 +681,7 @@ class VolumeView {
     const space = el("input", { class: "text-input", "aria-label": "Coordinate system", placeholder: "coordinate system (e.g. MNI152NLin2009bAsym)", value: s.space ?? "", hidden: preset.value !== "" }) as HTMLInputElement;
     preset.addEventListener("change", () => {
       const p = PRESETS.find((x) => x.id === preset.value);
-      if (p) this.save({ preset: p.id, stores: p.stores, space: p.space });
+      if (p) this.save({ preset: p.id, stores: p.stores, space: p.space, threshold: p.threshold ?? 0.08 });
       else {
         stores.hidden = false;
         space.hidden = false;
@@ -679,7 +697,7 @@ class VolumeView {
       sel.addEventListener("change", () => onChange(Number(sel.value)));
       return el("label", { class: "field" }, el("span", {}, label), sel);
     };
-    const threshold = el("input", { type: "range", min: "0.02", max: "0.4", step: "0.01", value: String(s.threshold), "aria-label": "Tissue threshold" }) as HTMLInputElement;
+    const threshold = el("input", { type: "range", min: "0.02", max: "0.6", step: "0.01", value: String(s.threshold), "aria-label": "Tissue threshold" }) as HTMLInputElement;
     threshold.addEventListener("input", () => {
       this.saved = { ...this.saved, threshold: Number(threshold.value) };
       this.request();
