@@ -6,8 +6,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { apply, identity, invert, mergeLevels, multiply, parseOmeLevels, rasBounds } from "../src/plugins/volume_view/ome.js";
-import { borderMean, tissueWindow } from "../src/plugins/volume_view/renderer.js";
+import { apply, identity, invert, mergeLevels, multiply, parseOmeLevels, rasBounds } from "../ome.js";
+import { borderMean, tissueWindow } from "../renderer.js";
 
 const fixture = (name: string) => JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", name), "utf8"));
 const BB = "https://ftp.bigbrainproject.org/bigbrain-ftp/BigBrainRelease.2015/OME_Zarr/";

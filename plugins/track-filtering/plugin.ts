@@ -18,7 +18,7 @@
  * It uses only the plugin API and the Zarr Vectors package's reader.
  */
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
-import type { DatasetInfo, Disposer, Json, PlatformContext, PluginModule, SegmentProperties } from "../../sdk/types.js";
+import type { DatasetInfo, Disposer, Json, PlatformContext, PluginModule, SegmentProperties } from "@ngplatform/sdk";
 import { computeMask, countPassing, emptyFilter, type FilterSpec, histogram, isEmptyFilter, passingIds, tagCounts, toCsv } from "./filter.js";
 import { FILTERING_PANEL } from "./manifest.js";
 import { groupMask, type Roi, type RoiOp, type RoiShape, rowIndex, rowMask } from "./roi.js";

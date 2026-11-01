@@ -1,7 +1,7 @@
 /**
  * Which plugins are on.
  *
- * Every plugin the app ships is in the catalogue (src/plugins/catalogue.ts).
+ * Every plugin the app ships is in the catalogue (plugins/index.ts).
  * Whether each is on is this browser's choice, kept in local storage and
  * defaulting to the manifest's `enabledByDefault`.  A plugin whose required
  * plugins are not all on is off, whatever was chosen.  Changing a choice

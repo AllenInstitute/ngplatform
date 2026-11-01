@@ -5,7 +5,7 @@ How the site's data/MNI152NLin2009aAsym_T1w_brain.ome.zarr was made.
     B=https://templateflow.s3.amazonaws.com/tpl-MNI152NLin2009aAsym
     curl -O $B/tpl-MNI152NLin2009aAsym_res-1_T1w.nii.gz \
          -O $B/tpl-MNI152NLin2009aAsym_res-1_desc-brain_mask.nii.gz -O $B/LICENSE
-    python3 tools/mni_template_to_omezarr.py tpl-MNI152NLin2009aAsym_res-1_T1w.nii.gz \
+    python3 plugins/volume-view/tools/mni_template_to_omezarr.py tpl-MNI152NLin2009aAsym_res-1_T1w.nii.gz \
         tpl-MNI152NLin2009aAsym_res-1_desc-brain_mask.nii.gz LICENSE \
         MNI152NLin2009aAsym_T1w_brain.ome.zarr
 

@@ -1,20 +1,11 @@
 /**
- * The worker halves of data type plugins, by plugin id.  Neuroglancer starts
- * its workers from ./chunk_worker.ts and ./async_worker.ts, which load the
- * modules of the plugins named in the worker's `name` (set by
- * ../plugins.ts from the plugins that are on).
- *
- * A data type plugin in src/plugins/catalogue.ts lists its worker modules
- * here too; tests/catalogue.test.ts checks the two agree.
+ * Which plugins a worker loads. Neuroglancer starts its workers from
+ * ./chunk_worker.ts and ./async_worker.ts, which load the modules (listed in
+ * plugins/workers.ts) of the plugins named in the worker's `name`, set by
+ * ../plugins.ts from the plugins that are on.
  */
 
-export const CHUNK_WORKER_MODULES: Record<string, () => Promise<unknown>> = {
-  "org.ngplatform.zarr-vectors": () => import("neuroglancer-zarr-vectors/backend"),
-};
-
-export const ASYNC_WORKER_MODULES: Record<string, () => Promise<unknown>> = {
-  "org.ngplatform.zarr-vectors": () => import("neuroglancer-zarr-vectors/async_computation"),
-};
+export { ASYNC_WORKER_MODULES, CHUNK_WORKER_MODULES } from "../../../plugins/workers.js";
 
 /** The plugin ids a worker was started with (its `name`, as JSON). */
 export function workerPlugins(name: string): string[] {

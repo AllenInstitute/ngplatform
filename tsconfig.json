@@ -17,7 +17,14 @@
     "noEmit": true,
     "skipLibCheck": true,
     "lib": ["dom", "webworker", "esnext", "dom.iterable"],
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    "paths": {
+      "@ngplatform/sdk": ["./src/sdk/index.ts"],
+      "@ngplatform/sdk/*": ["./src/sdk/*.ts"]
+    }
   },
-  "include": ["src", "tests"]
+  // Each plugin's top-level files and tests; zarr-vectors' package is
+  // checked with its own options (npm run typecheck).
+  "include": ["src", "tests", "plugins/*.ts", "plugins/*/*.ts", "plugins/*/tests"],
+  "exclude": ["plugins/*/vitest.config.ts"]
 }

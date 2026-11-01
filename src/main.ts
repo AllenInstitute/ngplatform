@@ -8,7 +8,7 @@ import { Engine } from "./engine/engine.js";
 import { urlSafeParse } from "./engine/neuroglancer.js";
 import { loadDataTypePlugins } from "./engine/plugins.js";
 import { loadChoices, resolveEnabled } from "./platform/plugin_switches.js";
-import { CATALOGUE } from "./plugins/catalogue.js";
+import { CATALOGUE } from "../plugins/index.js";
 import { Shell } from "./ui/shell.js";
 import "./ui/styles.css";
 

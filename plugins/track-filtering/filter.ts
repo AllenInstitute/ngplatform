@@ -3,7 +3,7 @@
  * ranges and group choices.  Pure functions over segment-property columns,
  * so they are tested without a viewer.
  */
-import type { SegmentProperties } from "../../sdk/types.js";
+import type { SegmentProperties } from "@ngplatform/sdk";
 
 export interface FilterSpec {
   /** Property id → inclusive [min, max]; a property without one is not filtered. */

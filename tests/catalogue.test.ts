@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ASYNC_WORKER_MODULES, CHUNK_WORKER_MODULES, workerName, workerPlugins } from "../src/engine/workers/plugins.js";
-import { CATALOGUE } from "../src/plugins/catalogue.js";
+import { CATALOGUE } from "../plugins/index.js";
 import { checkManifest } from "../src/sdk/manifest.js";
 
 describe("the plugin catalogue", () => {

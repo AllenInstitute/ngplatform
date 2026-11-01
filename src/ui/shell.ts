@@ -17,7 +17,7 @@ import { ExampleRegistry, OpenHandlerRegistry } from "../platform/registries.js"
 import { ServiceRegistry } from "../platform/services.js";
 import { WorkspaceStore } from "../platform/workspace_store.js";
 import { type Choices, type Resolution, saveChoices, toggle as togglePlugin } from "../platform/plugin_switches.js";
-import type { CatalogueEntry } from "../plugins/catalogue.js";
+import type { CatalogueEntry } from "../../plugins/index.js";
 import { registerBuiltins } from "../builtins/index.js";
 import { contextKeyFor } from "./context.js";
 import { type DockTab, DockManager, prefs } from "./docks.js";

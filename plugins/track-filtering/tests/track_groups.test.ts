@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { readSaved } from "../src/plugins/track_filtering/plugin.js";
-import { compactChunk, groupMask, IdSet, type RoiGeometry, roiBounds, roiKey, rowIndex, rowMask, segmentHitsBox, testChunk } from "../src/plugins/track_filtering/roi.js";
-import { previewLevel, type StoreInfo, toStore } from "../src/plugins/track_filtering/roi_client.js";
-import { fileName, trkSpace, writeTrk } from "../src/plugins/track_filtering/trk.js";
+import { readSaved } from "../plugin.js";
+import { compactChunk, groupMask, IdSet, type RoiGeometry, roiBounds, roiKey, rowIndex, rowMask, segmentHitsBox, testChunk } from "../roi.js";
+import { previewLevel, type StoreInfo, toStore } from "../roi_client.js";
+import { fileName, trkSpace, writeTrk } from "../trk.js";
 
 /** Two streamlines along x: object 7 at y = 0, object 9 at y = 10, one vertex per unit. */
 function chunk() {

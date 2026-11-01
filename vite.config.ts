@@ -1,13 +1,20 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 
 // Neuroglancer is consumed as TypeScript source (see package.json), following
-// its own examples/vite configuration.  Data sources outside Neuroglancer
-// (packages/neuroglancer-zarr-vectors) are added by src/engine/plugins.ts.
+// its own examples/vite configuration.  Plugins live in plugins/, one folder
+// each, and import the platform as @ngplatform/sdk.
+const sdk = fileURLToPath(new URL("./src/sdk/", import.meta.url));
+
 export default defineConfig({
   // Relative asset URLs, so the built app can be served from any path: a
   // bucket prefix, GitHub Pages, or an artifact host.
   base: "",
   resolve: {
+    alias: [
+      { find: /^@ngplatform\/sdk$/, replacement: `${sdk}index.ts` },
+      { find: /^@ngplatform\/sdk\/(.*)$/, replacement: `${sdk}$1.ts` },
+    ],
     conditions: [
       "neuroglancer/datasource:none_by_default",
       "neuroglancer/datasource/zarr:enabled",
@@ -42,7 +49,8 @@ export default defineConfig({
     exclude: ["neuroglancer", "neuroglancer-zarr-vectors"],
   },
   test: {
-    include: ["tests/**/*.test.ts"],
+    // The platform's tests, and each plugin's (zarr-vectors runs its own: see package.json).
+    include: ["tests/**/*.test.ts", "plugins/*/tests/**/*.test.ts"],
     environment: "node",
   },
 });

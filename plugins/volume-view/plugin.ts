@@ -9,8 +9,8 @@
  * cut moves.  Neuroglancer's 2-D views stay beside it, and moving the
  * position there moves the cut.
  */
-import type { Disposer, Json, PlatformContext, PluginModule } from "../../sdk/types.js";
-import type { TrackGroupsService } from "../track_filtering/plugin.js";
+import type { Disposer, Json, PlatformContext, PluginModule } from "@ngplatform/sdk";
+import type { TrackGroupsService } from "../track-filtering/plugin.js";
 import { VOLUME_PANEL } from "./manifest.js";
 import { rasBounds } from "./ome.js";
 import { type Camera, type Options, VolumeRenderer } from "./renderer.js";

@@ -13,14 +13,14 @@
  *      { type: "error", id, message }
  */
 import { setAsyncComputationWorkerFactory } from "neuroglancer/unstable/worker_factories.js";
-import { workerName } from "../../engine/workers/plugins.js";
+import { asyncComputationWorker } from "@ngplatform/sdk/workers";
 import { VolumeReader } from "./volume_reader.js";
 
 export type { LevelInfo } from "./volume_reader.js";
 
 // zstd and the other codecs decode in the platform's async-computation worker.
 setAsyncComputationWorkerFactory(
-  () => new Worker(new URL("../../engine/workers/async_worker.ts", import.meta.url), { type: "module", name: workerName(["org.ngplatform.zarr-vectors"]) }),
+  () => asyncComputationWorker(["org.ngplatform.zarr-vectors"]),
 );
 
 const reader = new VolumeReader();

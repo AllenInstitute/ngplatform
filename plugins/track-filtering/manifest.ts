@@ -1,5 +1,5 @@
 /** The track filtering plugin's manifest: read without loading its code. */
-import type { Manifest } from "../../sdk/types.js";
+import type { Manifest } from "@ngplatform/sdk";
 
 export const FILTERING_PANEL = "trackFiltering.panel";
 export const FILTERING_STATE_KEY = "trackFiltering";

@@ -9,13 +9,13 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest --run && vitest --run --root packages/neuroglancer-zarr-vectors",
-    "e2e": "node e2e/smoke.mjs",
-    "typecheck": "tsc -p . && tsc -p packages/neuroglancer-zarr-vectors"
+    "test": "vitest --run && vitest --run --root plugins/zarr-vectors",
+    "e2e": "node tests/e2e/smoke.mjs",
+    "typecheck": "tsc -p . && tsc -p plugins/zarr-vectors"
   },
   "dependencies": {
     "neuroglancer": "file:../neuroglancer",
-    "neuroglancer-zarr-vectors": "file:packages/neuroglancer-zarr-vectors"
+    "neuroglancer-zarr-vectors": "file:plugins/zarr-vectors"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",

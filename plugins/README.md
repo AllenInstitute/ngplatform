@@ -1,10 +1,50 @@
 # Plugins
 
-## Installing, and switching on and off
+Each plugin is a folder here. The app ships what [`index.ts`](index.ts)
+lists, and the **Plugins** tab (left dock) switches each on or off.
 
-Plugins are built into the app. Every plugin it ships is listed in
-[`src/plugins/catalogue.ts`](../src/plugins/catalogue.ts): a manifest plus
-its code. The **Plugins** tab (left dock) lists them with a switch each.
+```
+plugins/
+  index.ts             one entry per plugin: its manifest, and how to load its code
+  workers.ts           the worker modules of data-type plugins, by plugin id
+  zarr-vectors/        a data type: Zarr Vectors stores in Neuroglancer (an npm package)
+  track-filtering/     a tool: TrackVis-style track groups, saved as .trk
+  volume-view/         a tool: a solid, cut-open brain in place of the 3-D panel
+```
+
+## Adding a plugin
+
+1. **Make a folder**, `plugins/<name>/`, with at least:
+   - `manifest.ts`: `export const MY_MANIFEST: Manifest = { id, name, version, kind, … }`
+     (see [The manifest](#the-manifest)). The `id` is reverse-DNS and unique,
+     e.g. `org.my-lab.layer-stats`.
+   - `plugin.ts` (a tool): `export const plugin: PluginModule = { activate(ctx) { … } }`.
+   - `tests/*.test.ts`: run by `npm test` with the platform's tests.
+   - `README.md`: what it does, who looks after it.
+2. **Import the platform only through the SDK**, `@ngplatform/sdk` (types,
+   `checkManifest`) and `@ngplatform/sdk/workers` (for a worker of your own
+   that reads chunks through Neuroglancer's codecs). Everything a plugin may
+   do goes through the `ctx` it is given; nothing in `src/` is imported
+   directly. Neuroglancer itself can be imported (`neuroglancer/unstable/…`)
+   when a plugin needs its internals, as the data types do.
+3. **List it** in [`index.ts`](index.ts):
+   ```ts
+   { manifest: MY_MANIFEST, load: async () => (await import("./my-plugin/plugin.js")).plugin },
+   ```
+   A data type instead gives `neuroglancer: () => import("…")` (its
+   main-thread module, which registers the data source) and adds its worker
+   modules to [`workers.ts`](workers.ts).
+4. **Check it**: `npm test` (the catalogue test checks every manifest and
+   entry), `npm run typecheck`, `npm run e2e` against a build. A plugin with
+   its own `package.json` (as `zarr-vectors/`) can also run its own tests, as
+   the root `npm test` does for zarr-vectors.
+
+Owning a plugin is owning its folder: another team can amend or replace one
+without touching the platform or the other plugins, and review stays inside
+that folder plus one line in `index.ts`.
+
+## Switching plugins on and off
+
 Switching one on or off reloads the page with the same link, so the
 workspace comes back as it was, now with or without the plugin; the choice
 is kept in this browser.
@@ -16,18 +56,15 @@ is kept in this browser.
 - A workspace with data in a format whose plugin is off says so when it
   opens, and shows the Plugins tab.
 
-To install a new plugin: add its package (or folder) to the app, add an
-entry to the catalogue, and, for a data type, its worker modules to
-[`src/engine/workers/plugins.ts`](../src/engine/workers/plugins.ts).
-`tests/catalogue.test.ts` checks the entries are complete. Loading plugins
-from a URL at run time is not supported yet.
+Loading plugins from a URL at run time is not supported yet: plugins are
+built with the app.
 
 ## Two kinds
 
 | Kind | What it does | Its code | Example |
 |---|---|---|---|
-| **Data type** (`kind: "datatype"`) | Teaches Neuroglancer a format: a data source, with code in Neuroglancer's workers | A Neuroglancer plugin package: a main-thread module (registers the data source) and worker modules | **Zarr Vectors** ([`packages/neuroglancer-zarr-vectors`](../packages/neuroglancer-zarr-vectors/)) |
-| **Tool** (`kind: "tool"`) | Adds to the workspace around the viewer: a tab in the left dock, commands, analyses | A platform module with `activate(ctx)`, using only the `PlatformContext` | **Track filtering** ([`src/plugins/track_filtering`](../src/plugins/track_filtering/)), which requires Zarr Vectors |
+| **Data type** (`kind: "datatype"`) | Teaches Neuroglancer a format: a data source, with code in Neuroglancer's workers | A Neuroglancer plugin package: a main-thread module (registers the data source) and worker modules | [`zarr-vectors/`](zarr-vectors/) |
+| **Tool** (`kind: "tool"`) | Adds to the workspace around the viewer: a tab in the left dock, commands, a view beside Neuroglancer's, analyses | A platform module with `activate(ctx)`, using only the `PlatformContext` | [`track-filtering/`](track-filtering/) (requires Zarr Vectors), [`volume-view/`](volume-view/) |
 
 A data type plugin has no platform code and contributes no commands or
 panels; tools that work on its data are separate tool plugins that declare
@@ -38,17 +75,19 @@ panels; tools that work on its data are separate tool plugins that declare
 At start, before the viewer exists, the app imports the main-thread module of
 each data type that is on, and tells Neuroglancer to start its workers from
 the app's own scripts (`src/engine/workers/`), named with the plugins that are
-on. Each worker script imports those plugins' worker modules and then
-Neuroglancer's own worker contents. This uses the worker factories in the
-Neuroglancer the app builds on (`setChunkWorkerFactory`,
-`setAsyncComputationWorkerFactory`); see the Zarr Vectors package's README.
+on. Each worker script imports those plugins' modules from
+[`workers.ts`](workers.ts) and then Neuroglancer's own worker contents. This
+uses the worker factories in the Neuroglancer the app builds on
+(`setChunkWorkerFactory`, `setAsyncComputationWorkerFactory`); see
+[`zarr-vectors/README.md`](zarr-vectors/README.md).
 
 ## Writing a tool plugin
 
 The types are in [`src/sdk/types.ts`](../src/sdk/types.ts), and the manifest
-schema and its checks in [`src/sdk/manifest.ts`](../src/sdk/manifest.ts).
-Track filtering is a complete example; [`tests/plugins.test.ts`](../tests/plugins.test.ts)
-exercises every part of the host.
+schema and its checks in [`src/sdk/manifest.ts`](../src/sdk/manifest.ts), both
+imported as `@ngplatform/sdk`. Track filtering is a complete example;
+[`tests/plugins.test.ts`](../tests/plugins.test.ts) exercises every part of the
+host.
 
 ### The model a plugin works with
 

@@ -6,15 +6,15 @@
 
 | Piece | State |
 |---|---|
-| **The platform GUI** (0.3) | The viewer is for looking: views, position (top left) and each panel's layout buttons (top right), as standard Neuroglancer. Datasets and Scenes on the left; the selected dataset's Layer controls (Neuroglancer's own tabs, full height) on the right; settings, screenshot and keyboard reference in the top bar. **Not yet checked by eye in a browser by me**; yours is the first visual check. |
-| **Plugins** | Built into the app, listed in `src/plugins/catalogue.ts`, switched on and off in the Plugins tab (reloads with the same link). Two kinds: *data type* (a format) and *tool* (a left-dock tab). Requirements between plugins are enforced. See `docs/plugins.md`. |
-| **Zarr Vectors** (data type plugin) | `packages/neuroglancer-zarr-vectors`: reads format 0.9.0 to 0.9.4, including 0.9.4's dense object index. Its Neuroglancer modules and worker code load only when it is on. A public `reader` entry for tools. Fixed: a byte range longer than 8 MiB (a large level-0 cell) was read short, from both ends. 177 tests against upstream Neuroglancer. |
+| **The platform GUI** (0.3) | The viewer is for looking: views, position (top left) and each panel's layout buttons (top right), as standard Neuroglancer. Datasets and Scenes on the left; the selected dataset's Layer inspector on the right, the platform's own (Source, Render, Segments, Annotations, Schema), built from Neuroglancer's layer models, with Neuroglancer's shader editor and histogram editors as components; settings, screenshot and keyboard reference in the top bar (still Neuroglancer's panels). Checked in headless Chrome (SwiftShader). |
+| **Plugins** | Built into the app, one folder each in `plugins/`, listed in `plugins/index.ts`, switched on and off in the Plugins tab (reloads with the same link). Two kinds: *data type* (a format) and *tool* (a left-dock tab). Requirements between plugins are enforced. See `docs/plugins.md`. |
+| **Zarr Vectors** (data type plugin) | `plugins/zarr-vectors` (the `neuroglancer-zarr-vectors` package): reads format 0.9.0 to 0.9.4, including 0.9.4's dense object index. Its Neuroglancer modules and worker code load only when it is on. A public `reader` entry for tools. Fixed: a byte range longer than 8 MiB (a large level-0 cell) was read short, from both ends. 177 tests against upstream Neuroglancer. |
 | **Example data** | HCP-1065 (public population tractogram) only, with three track groups. The HiP-CT samples (Ha1, Hb1, i74, I80) are not referenced by the app or bundled with it. |
 | **Track filtering** (tool plugin, requires Zarr Vectors) | TrackVis-style track groups: each group keeps the objects through its regions (spheres and boxes; AND, OR, NOT) with attributes in range, and is a layer of its own, in its own colour, switched on and off here or in the Datasets tab. One group is edited at a time; regions are annotations in the views (Alt-drag to move) kept in step with the panel. Region tests run in a worker on level 0, reading only the chunks a region touches; a coarse level previews while a region moves. |
 | **Volume view** (tool plugin) | In place of Neuroglancer's 3-D panel (its 2-D views stay): a solid brain ray-marched in WebGL2 from a coarse level held as one 3-D texture, the octant facing the camera cut away at the position, its three faces showing sections resampled from finer levels in a worker (coarse first, then sharper), and the visible track groups drawn through the cut, depth-tested against the brain. Reads OME-Zarr 0.4 to 0.6 (zarr v3, sharded), several stores merged by voxel size, placed through an image's coordinate transforms (BigBrain's linear affine to MNI). Tissue is told from background by the volume's border (pale for BigBrain's stain, dark for an MRI); the cut faces stretch the tissue's own range of values. Volumes: BigBrain (your OME-Zarr release on the BigBrain FTP; the default) or the MNI ICBM152 2009a T1w template, brain only, 1 mm (the space HCP-1065 is in; converted from TemplateFlow and served from this site's `data/`, since TemplateFlow's bucket sends no CORS headers). Structure after Open the Mind (BigBrain Hackathon 2026), reimplemented client-side; none of its code is used (it is CC BY-NC). **Drawn and screenshotted in headless Chrome** (SwiftShader's software WebGL2) with the HCP-1065 track groups; not yet on a real GPU. |
 | **Auth** | A left-dock tab: services the workspace needs a sign-in for, with who is signed in; middleauth built in (tokens kept where Neuroglancer keeps them); plugins add providers. |
 | **Neuroglancer** | google/neuroglancer `master` (c8c4d139, 2026-10-28) plus four commits on `Andrew-Keenlyside/neuroglancer` branch `ngplatform-upstream`: (1) application-supplied workers, (2) host-owned side panels, (3) incremental layer restore, (4) a fix so `https://storage.googleapis.com` URLs can be listed (GCS answers with an XML namespace upstream rejected; without it a zarr-vectors store over https has no segment properties). |
-| **Filter oracle and engines, step C0** | Done, in `zarr-vectors-tools`, parked as patches in [`pending/zarr-vectors-tools/`](pending/zarr-vectors-tools/). |
+| **Filter oracle and engines, step C0** | Done, in `zarr-vectors-tools`: committed on its working branch `feat/additive-pyramids` (local, not yet pushed). |
 | **Gate G1** | Measured; see [`docs/editor_repo_plan.md`](docs/editor_repo_plan.md) §5. |
 
 ## Scenes, datasets and the link
@@ -88,7 +88,7 @@ nearby positions reuse them). 0.13 mm sections are about 50 MB a face.
   (codecs, layouts including 0.9.4's dense index, pyramids, meshes, objects,
   worker imports) against upstream Neuroglancer.
 - `npm run typecheck`: the app and the plugin, with Neuroglancer's sources.
-- `node e2e/smoke.mjs`: the GUI in headless Chrome, including checks that
+- `npm run e2e` (`tests/e2e/smoke.mjs`): the GUI in headless Chrome, including checks that
   the views fill their area, that only the position and panel controls show
   inside them, that the volume view draws, that undo makes no data
   requests, that the track groups get exact counts, and that a phone-width
@@ -101,7 +101,7 @@ nearby positions reuse them). 0.13 mm sections are about 50 MB a face.
 ## Next
 
 1. Review this build in a browser; fix what the review finds.
-2. Run `e2e/smoke.mjs` with `CHROME` set on a machine with a GPU.
+2. Run `tests/e2e/smoke.mjs` with `CHROME` set on a machine with a GPU.
 3. External plugins from a URL, with a consent dialog.
 4. Track filtering, next: endpoint modes (either or both ends in a region),
    mask regions (a painted or thresholded volume), statistics per group, and

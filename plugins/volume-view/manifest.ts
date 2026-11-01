@@ -1,5 +1,5 @@
 /** The volume view plugin's manifest: read without loading its code. */
-import type { Manifest } from "../../sdk/types.js";
+import type { Manifest } from "@ngplatform/sdk";
 
 export const VOLUME_PANEL = "volumeView.panel";
 export const VOLUME_STATE_KEY = "volumeView";

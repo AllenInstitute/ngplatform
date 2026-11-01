@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { computeMask, countPassing, emptyFilter, histogram, passingIds, tagCounts, toCsv } from "../src/plugins/track_filtering/filter.js";
-import type { SegmentProperties } from "../src/sdk/types.js";
+import { computeMask, countPassing, emptyFilter, histogram, passingIds, tagCounts, toCsv } from "../filter.js";
+import type { SegmentProperties } from "@ngplatform/sdk";
 
 const props: SegmentProperties = {
   ids: new BigUint64Array([10n, 11n, 12n, 13n, 14n]),

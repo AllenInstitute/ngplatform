@@ -1,7 +1,7 @@
 // Smoke test: load the built app in Chromium and drive the platform GUI.
 //
 //   npm run build && (cd dist && python3 -m http.server 4174 &)
-//   node e2e/smoke.mjs [base-url] [screenshot-dir]
+//   node tests/e2e/smoke.mjs [base-url] [screenshot-dir]
 //
 // Set CHROME=/path/to/chrome to use an installed Chrome with the machine's
 // GPU; otherwise Playwright's Chromium (or that Chrome, with SWIFTSHADER=1)
@@ -20,7 +20,7 @@ try {
 }
 
 const base = process.argv[2] ?? "http://localhost:4174/";
-const shots = process.argv[3] ?? "e2e/screenshots";
+const shots = process.argv[3] ?? "tests/e2e/screenshots";
 mkdirSync(shots, { recursive: true });
 
 const proxy = process.env.HTTPS_PROXY ? { server: process.env.HTTPS_PROXY, bypass: "localhost,127.0.0.1" } : undefined;

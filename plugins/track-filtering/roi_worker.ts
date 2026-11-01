@@ -28,14 +28,14 @@ import {
   type ZarrVectorsStoreAccess,
 } from "neuroglancer-zarr-vectors/reader";
 import { setAsyncComputationWorkerFactory } from "neuroglancer/unstable/worker_factories.js";
-import { workerName } from "../../engine/workers/plugins.js";
+import { asyncComputationWorker } from "@ngplatform/sdk/workers";
 import { type ChunkGeometry, compactChunk, IdSet, type RoiGeometry, roiBounds, testChunk } from "./roi.js";
 
 // Compressed arrays (the object manifests, zstd) decode in the platform's
 // async-computation worker, with Zarr Vectors' decoders loaded, as the
 // viewer's own workers do.
 setAsyncComputationWorkerFactory(
-  () => new Worker(new URL("../../engine/workers/async_worker.ts", import.meta.url), { type: "module", name: workerName(["org.ngplatform.zarr-vectors"]) }),
+  () => asyncComputationWorker(["org.ngplatform.zarr-vectors"]),
 );
 
 export interface StoreInfo {

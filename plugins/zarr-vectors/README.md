@@ -336,7 +336,7 @@ in when they arrive.
 
 ## Tests
 
-- `npx vitest --run --root packages/neuroglancer-zarr-vectors` (from the
+- `npx vitest --run --root plugins/zarr-vectors` (from the
   application it sits in): unit tests and end-to-end reads of stores written
   by zarr-vectors-py v0.9.2 (`testdata/generate.py`), including exact
   reconstruction of every polyline under each codec and layout, and of a
