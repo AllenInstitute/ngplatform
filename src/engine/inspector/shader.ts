@@ -51,7 +51,8 @@ export function shaderSection(scope: Scope, layer: UserLayer, m: ShaderModels): 
   });
   scope.ng.registerDisposer(code);
   const editor = embed(code.element, "ins-code");
-  const refresh = () => requestAnimationFrame(() => code.textEditor.refresh());
+  // The editor may be gone by the next frame (the inspector closed or moved on).
+  const refresh = () => requestAnimationFrame(() => code.textEditor?.refresh());
 
   const head = el("div", { class: "ins-section-head" }, el("h4", { class: "ins-section-title" }, "Shader"));
   const tools = el("div", { class: "ins-head-tools" });

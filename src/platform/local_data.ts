@@ -5,11 +5,19 @@
  * service worker (public/local-sw.js) answers by asking this page for the
  * file.  Neuroglancer reads it like any other source, ranges and all.
  *
+ * Files that are not Zarr (NIfTI) are read as virtual Zarr: the URLs under
+ * a file's own (<file>/zarr.json, <file>/0/c/…) are a Zarr v3 store made
+ * from it as they are asked for, in a worker (src/platform/virtual_zarr/),
+ * so a NIfTI opens as a chunked, multiscale OME-Zarr image.
+ *
  * The folders are remembered in this browser (where the browser can), so a
  * workspace link to local data opens again here after one click to allow
  * reading; the link means nothing on another computer.  A folder opened for
  * writing can be changed too: track groups saved into a zarr-vectors store.
  */
+
+import { VIRTUAL_FILE } from "./virtual_zarr/store.js";
+import type { VirtualRequest } from "./virtual_zarr/worker.js";
 
 type Handle = FileSystemFileHandle | FileSystemDirectoryHandle;
 type Permissioned = Handle & {
@@ -86,6 +94,7 @@ export class LocalData {
   /** The app's base URL; local URLs are under base/local/. */
   readonly base: string;
   private worker: Promise<ServiceWorker | undefined> | undefined;
+  private virtualWorker: Worker | undefined;
 
   constructor(base = new URL(".", location.href).href) {
     this.base = base;
@@ -133,6 +142,7 @@ export class LocalData {
       navigator.serviceWorker.addEventListener("message", (event) => {
         const data = event.data;
         if (data?.type === "local-read") void this.answer(data, event.ports[0]);
+        if (data?.type === "local-has") event.ports[0]?.postMessage(this.entries.has(data.id));
       });
       const registration = await navigator.serviceWorker.register(new URL("local-sw.js", this.base), { scope: this.base });
       await navigator.serviceWorker.ready;
@@ -256,6 +266,18 @@ export class LocalData {
       port.postMessage({ status: 403 });
       return;
     }
+    const virtual = splitVirtual(request.path);
+    if (virtual !== undefined) {
+      const file = await this.file(request.id, virtual.file);
+      if (file === undefined) {
+        port.postMessage({ status: 404 });
+        return;
+      }
+      this.virtualWorker ??= new Worker(new URL("./virtual_zarr/worker.ts", import.meta.url), { type: "module", name: "virtual-zarr" });
+      const message: VirtualRequest = { type: "get", store: `${request.id}/${virtual.file}`, file, key: virtual.key, range: request.range, head: request.head };
+      this.virtualWorker.postMessage(message, [port]);
+      return;
+    }
     const file = await this.file(request.id, request.path);
     if (file === undefined) {
       port.postMessage({ status: 404 });
@@ -289,19 +311,44 @@ export class LocalData {
   async detect(id: string): Promise<FoundDataset[]> {
     const entry = this.entries.get(id);
     if (entry === undefined) return [];
-    if (entry.kind === "file") {
-      const url = this.urlOf(id, entry.name);
-      if (/\.nii(\.gz)?$/i.test(entry.name)) return [{ source: `nifti://${url}`, name: entry.name.replace(/\.nii(\.gz)?$/i, ""), kind: "image", format: "NIfTI image", path: "" }];
-      return [];
-    }
+    if (entry.kind === "file") return VIRTUAL_FILE.test(entry.name) ? [this.image(id, entry.name)] : [];
     const here = await this.detectAt(id, "", entry.name);
     if (here !== undefined) return [here];
-    const found: FoundDataset[] = [];
+    const found: FoundDataset[] = (await this.files(id, "")).filter((f) => VIRTUAL_FILE.test(f)).map((f) => this.image(id, f));
     for (const child of await this.children(id)) {
       const one = await this.detectAt(id, child, child);
       if (one !== undefined) found.push(one);
+      else for (const f of await this.files(id, child)) if (VIRTUAL_FILE.test(f)) found.push(this.image(id, `${child}/${f}`));
     }
     return found;
+  }
+
+  /** A NIfTI file as a dataset: read as the OME-Zarr store under its URL. */
+  private image(id: string, path: string): FoundDataset {
+    const name = path.split("/").pop()!;
+    return { source: `zarr3://${this.urlOf(id, path)}/`, name: name.replace(VIRTUAL_FILE, ""), kind: "image", format: "NIfTI image", path };
+  }
+
+  /** The names of the files in a folder of an entry ("" for the folder itself). */
+  private async files(id: string, dir: string): Promise<string[]> {
+    const entry = this.entries.get(id);
+    if (entry === undefined) return [];
+    if (entry.files !== undefined) {
+      const prefix = dir === "" ? "" : `${dir}/`;
+      return [...entry.files.keys()].filter((p) => p.startsWith(prefix) && !p.slice(prefix.length).includes("/")).map((p) => p.slice(prefix.length)).sort();
+    }
+    let handle = entry.handle;
+    if (handle?.kind !== "directory" || entry.needsPermission) return [];
+    try {
+      for (const part of dir.split("/").filter(Boolean)) handle = await (handle as FileSystemDirectoryHandle).getDirectoryHandle(part);
+      const out: string[] = [];
+      for await (const [name, child] of (handle as unknown as { entries(): AsyncIterable<[string, Handle]> }).entries()) {
+        if (child.kind === "file" && !name.startsWith(".")) out.push(name);
+      }
+      return out.sort();
+    } catch {
+      return [];
+    }
   }
 
   private async detectAt(id: string, path: string, name: string): Promise<FoundDataset | undefined> {
@@ -368,6 +415,15 @@ export class LocalData {
     const entry = this.entries.get(id);
     return entry?.handle?.kind === "directory";
   }
+}
+
+/** A path under a file read as virtual Zarr: the file, and the key in its store. */
+export function splitVirtual(path: string): { file: string; key: string } | undefined {
+  const parts = path.split("/");
+  for (let i = 1; i < parts.length; ++i) {
+    if (VIRTUAL_FILE.test(parts[i - 1])) return { file: parts.slice(0, i).join("/"), key: parts.slice(i).join("/") };
+  }
+  return undefined;
 }
 
 /** A folder's files from a file input, keyed by their path inside it. */

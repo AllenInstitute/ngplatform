@@ -180,14 +180,15 @@ export function parseOmeLevels(url: string, group: any, space?: string): Pyramid
   let outputAxes = inputAxes;
   let outputName = base?.name ?? "physical";
   let after = common.reduce((acc, t) => mul(matrixOf(t, n), acc), matrixOf({ type: "identity" }, n));
-  if (space !== undefined && space !== outputName) {
-    const step = between.find((t) => nameOf(t.input) === outputName && nameOf(t.output) === space);
-    const target = systems.find((s) => s.name === space);
-    if (step !== undefined && target !== undefined) {
-      after = mul(matrixOf(step, n), after);
-      outputAxes = target.axes;
-      outputName = space;
-    }
+  // The system asked for when a transform leads there; else, as Neuroglancer
+  // does, the first one a transform leads to (so the two agree).
+  const leadsTo = (name: string | undefined) => between.find((t) => nameOf(t.input) === outputName && nameOf(t.output) === name && systems.some((s) => s.name === name));
+  const step = (space !== undefined ? leadsTo(space) : undefined) ?? between.find((t) => nameOf(t.input) === outputName && leadsTo(nameOf(t.output)) !== undefined);
+  const target = systems.find((s) => s.name === nameOf(step?.output));
+  if (step !== undefined && target !== undefined && target.name !== outputName) {
+    after = mul(matrixOf(step, n), after);
+    outputAxes = target.axes;
+    outputName = target.name;
   }
   // Output axes (in their order) to RAS millimetres.
   const toRas: number[][] = Array.from({ length: 4 }, (_, r) => Array.from({ length: n + 1 }, (_, c) => (r === 3 && c === n ? 1 : 0)));

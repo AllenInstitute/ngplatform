@@ -31,12 +31,21 @@ describe("OME-Zarr levels", () => {
     expect(hi[0]).toBeGreaterThan(60);
   });
 
-  it("stays in the image's own system when another is not asked for or not there", () => {
-    const own = parseOmeLevels(`${BB}400um`, fixture("bigbrain_400um_zarr.json"));
+  it("follows the image's first transform, as Neuroglancer does, when another system is not asked for or not there", () => {
+    const asked = parseOmeLevels(`${BB}400um`, fixture("bigbrain_400um_zarr.json"), "MNI152NLin2009bAsym");
+    for (const p of [parseOmeLevels(`${BB}400um`, fixture("bigbrain_400um_zarr.json")), parseOmeLevels(`${BB}400um`, fixture("bigbrain_400um_zarr.json"), "nowhere")]) {
+      expect(p.space).toBe("MNI152NLin2009bAsym");
+      expect(Array.from(p.levels[0].voxelToRas)).toEqual(Array.from(asked.levels[0].voxelToRas));
+    }
+  });
+
+  it("stays in the image's own system when no transform leads out of it", () => {
+    const group = fixture("bigbrain_400um_zarr.json");
+    const ms = (group.attributes?.ome ?? group).multiscales[0];
+    const own = parseOmeLevels(`${BB}400um`, { attributes: { ome: { ...(group.attributes?.ome ?? {}), multiscales: [{ ...ms, coordinateTransformations: [] }] } } });
     expect(own.space).toBe("physical");
     // physical (z, y, x) µm = 400 i + 190, so voxel x = 1 is 0.59 mm along x.
     apply(own.levels[0].voxelToRas, [1, 0, 0]).forEach((v, k) => expect(v).toBeCloseTo([0.59, 0.19, 0.19][k], 12));
-    expect(parseOmeLevels(`${BB}400um`, fixture("bigbrain_400um_zarr.json"), "nowhere").space).toBe("physical");
   });
 
   it("reads every level of a pyramid and merges stores by voxel size", () => {

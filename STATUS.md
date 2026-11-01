@@ -7,7 +7,8 @@
 | Piece | State |
 |---|---|
 | **The platform GUI** | Neuroglancer's views with its position and panel controls, as standard Neuroglancer. Scenes are tabs in the top bar (close, rename, reorder); Datasets on the left (Add: a URL, data on this computer, or a new annotation layer); the selected layer's inspector on the right, the platform's own (Source, Render, Segments, Annotations, Schema) with Neuroglancer's shader and histogram editors as components. Share copies links or opens the scene in Neuroglancer itself (Google's, or this site's plain `neuroglancer.html` when the scene uses a plugin's format). A Python console (Pyodide) with `ngp`, the workspace. Settings menu: view settings, reload layers, hard reset (every file checked with its server). |
-| **Data on this computer** | Add → Local: a folder (OME-Zarr, zarr-vectors, precomputed, or a folder of them) or a NIfTI file, read in place through a service worker (`public/local-sw.js`) that asks the page for each file, ranges and all. Remembered in Chrome and Edge; links to it work in that browser while the tab is open. |
+| **Data on this computer** | Add → Local: a folder (OME-Zarr, zarr-vectors, precomputed, NIfTI files, or a folder of them) or a NIfTI file, read in place through a service worker (`public/local-sw.js`) that asks the page for each file, ranges and all. Remembered in Chrome and Edge; links to it work in that browser while the tab is open. |
+| **Virtual Zarr** (local data) | A NIfTI file (`.nii`, `.nii.gz`; NIfTI-1 or -2, either byte order) opens as a chunked, multiscale OME-Zarr 0.6 image made from it as it is read (`src/platform/virtual_zarr/`, in a worker): the sform (else qform) as an affine to x, y, z; time or components as a first axis; scl_slope applied; coarser levels the mean of the finer (labels: the first voxel). A `.nii` is read only where viewed; a `.nii.gz` is decompressed once, on the first chunk. Measured on a 512 × 512 × 400 int16 file (200 MB): header 2 ms, a full-resolution chunk 20 ms, the coarsest level (the whole file read once) 1.9 s. |
 | **Plugins** | One folder each in `plugins/`, listed in `plugins/index.ts`; a one-line description and a Read more guide each in the Plugins tab. Plugins from this computer (a JavaScript tool module, or a Python file run in the console's Python) load and reload there. See `plugins/README.md`. |
 | **Zarr Vectors** (data type, on) | Reads format 0.9.0 to 0.9.4 into a segmentation layer: points, streamlines, skeletons, graphs, meshes. |
 | **Track filtering** (tool, on) | TrackVis-style groups over any zarr-vectors store; regions are sliders; `.trk` saved in batches straight to the file; groups written into a local store's own `groups` (read back by zarr-vectors-py and shown by the viewer as tags). |
@@ -71,21 +72,24 @@ objects a second), which is what the bulk read replaces.
 
 ## How it is checked
 
-- `npm test`: 120 unit tests (workspace model, store with a fake engine,
+- `npm test`: 138 unit tests (workspace model, store with a fake engine,
   commands with arguments, key bindings, `when` clauses, schemas, state
   slices, plugin host and switches, the catalogue, the filter computation,
   region geometry, track-group logic, .trk files, groups written into a
   store, sign-in, OME-Zarr transforms, tissue and background, the volume's
   display coordinates, label layout, registration fits and transform
-  files, state parsing, undo history), then the Zarr Vectors plugin's tests
+  files, state parsing, undo history, NIfTI read as virtual Zarr: every
+  chunk against the file, the pyramid, and placement as Neuroglancer and
+  the volume view read it), then the Zarr Vectors plugin's tests
   (codecs, layouts including 0.9.4's dense index, pyramids, meshes, objects,
   worker imports) against upstream Neuroglancer.
 - `npm run typecheck`: the app and the plugin, with Neuroglancer's sources.
 - `npm run e2e` (`tests/e2e/smoke.mjs`): the GUI in headless Chrome, including checks that
   the views fill their area, that only the position and panel controls show
   inside them, the inspector's tabs, that undo makes no data requests,
-  scene tabs, that the track groups get exact counts, and that a
-  phone-width window does not scroll sideways. All pass (2026-11-01, Chrome
+  scene tabs, that the track groups get exact counts, that a NIfTI opened
+  as local data is served as OME-Zarr with the file's voxels and opens as a
+  layer, and that a phone-width window does not scroll sideways. All pass (2026-11-01, Chrome
   with SwiftShader: `CHROME=/usr/bin/google-chrome SWIFTSHADER=1`). Where
   NVIDIA's driver is installed but the GPU cannot be opened (this build
   sandbox), the script points Chrome's Vulkan loader at its own SwiftShader;
@@ -99,4 +103,8 @@ objects a second), which is what the bulk read replaces.
 4. Track filtering, next: endpoint modes (either or both ends in a region),
    mask regions (a painted or thresholded volume), statistics per group, and
    density maps.
-5. Then the plan's other steps: Z1 filter-ready index, `memory://` (gate G3).
+5. Virtual Zarr, next: TIFF stacks; tractograms (`.trk`, `.tck`, `.trx`)
+   as zarr-vectors, indexed in one pass; precomputed annotations as
+   zarr-vectors, so Track filtering reads them; NIfTI in the volume view
+   (it reads uint8 and no transpose codec yet).
+6. Then the plan's other steps: Z1 filter-ready index, `memory://` (gate G3).

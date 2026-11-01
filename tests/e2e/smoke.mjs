@@ -58,6 +58,10 @@ async function waitReady(label, timeout = 90_000) {
   await page.waitForTimeout(4000); // let chunks stream in and draw
   console.log(`${label}: ${await status()}`);
 }
+// Clicks on the platform's own controls skip Playwright's wait for the page
+// to hold still across two frames, which software WebGL (SwiftShader) can
+// take longer than the timeout to give while the views draw.
+const click = (locator) => locator.click({ force: true });
 const check = (ok, what) => { console.log(`${ok ? "ok  " : "FAIL"} ${what}`); if (!ok) process.exitCode = 1; };
 const layers = () => page.evaluate(() => window.engine.layers());
 
@@ -94,20 +98,20 @@ check(chrome.position === 1 && chrome.layoutButtons > 0, "position top left and 
 
 // Datasets tab and Inspector.
 check((await page.locator(".datasets .ds-row").count()) >= 1, "Datasets lists the scene's datasets");
-await page.locator(".datasets .ds-row", { hasText: "HCP-1065" }).first().click();
+await click(page.locator(".datasets .ds-row", { hasText: "HCP-1065" }).first());
 await page.waitForTimeout(800);
 check((await page.locator(".ins-tab").count()) > 0 && (await page.locator(".ins-root .neuroglancer-tab-label").count()) === 0, "the Layer tab shows the layer's controls in the platform's own tabs");
 // The inspector's tabs, built by the platform from the layer's models.
-await page.locator(".ins-tab", { hasText: "Source" }).click();
+await click(page.locator(".ins-tab", { hasText: "Source" }));
 await page.waitForTimeout(800);
 check((await page.locator(".ins-url").first().inputValue()).includes("hcp1065"), "Source shows the data source URL");
 check((await page.locator(".ins-tx-grid input").count()) > 0, "Source shows the transform as an editable table");
-await page.locator(".ins-tab", { hasText: "Render" }).click();
+await click(page.locator(".ins-tab", { hasText: "Render" }));
 await page.waitForTimeout(800);
 check((await page.locator(".ins-content .ins-slider").count()) >= 4, "Render shows the layer's sliders");
-await page.locator(".ins-tab", { hasText: "Segments" }).click();
+await click(page.locator(".ins-tab", { hasText: "Segments" }));
 await page.waitForTimeout(800);
-await page.locator(".ins-status button").click();
+await click(page.locator(".ins-status button"));
 await page.waitForTimeout(1500);
 check((await page.locator(".ins-seg-row:not(.ins-seg-head)").count()) > 5, `Segments lists the segments (${await page.locator(".ins-status").innerText()})`);
 await page.locator(".ins-query").fill("");
@@ -135,7 +139,7 @@ await page.keyboard.press("Enter");
 await page.waitForTimeout(1200);
 check(await page.evaluate(() => window.engine.layout() === "3d"), "palette ran Layout: 3D");
 await page.screenshot({ path: `${shots}/2-3d.png`, timeout: 120_000 });
-await page.locator(".brand").click(); // focus the page, not an input
+await click(page.locator(".brand")); // focus the page, not an input
 // Undo restores the state in place: nothing is fetched again. (The 3-D
 // panel the layout added may fetch for itself before this.)
 await page.waitForTimeout(3000);
@@ -147,22 +151,22 @@ check((await page.evaluate(() => window.engine.layout())) === layoutBefore, "und
 check(dataRequests === 0, `undo made no data requests (${dataRequests}${requested.length ? `: ${[...new Set(requested.map((u) => u.replace(/[?#].*/, "").split("/").slice(-4).join("/")))].slice(0, 4).join(", ")}` : ""})`);
 
 // Scenes: a new empty scene, the dataset added from the workspace, and back.
-await page.locator(".scene-add").click();
+await click(page.locator(".scene-add"));
 await page.waitForTimeout(800);
 check((await page.locator(".scene-tab").count()) === 2, "New scene adds a scene tab");
 check((await layers()).length === 0, "the new scene starts empty");
-await page.locator(".ds-row.other .btn").first().click();
+await click(page.locator(".ds-row.other .btn").first());
 await page.waitForTimeout(800);
 // The dataset's own layer, and its track groups' layers with it.
 check((await layers()).length >= 1, "a workspace dataset adds to the new scene");
-await page.locator(".scene-tab").first().click();
+await click(page.locator(".scene-tab").first());
 await page.waitForTimeout(800);
 check((await page.locator('.scene-tab[aria-selected="true"]').innerText()) === "Scene 1", "switching back to Scene 1");
 
 // Plugins: both listed with a switch; the filtering tab reads the attributes.
-await page.locator("#tab-plugins").click();
+await click(page.locator("#tab-plugins"));
 check((await page.locator(".plugin .switch").count()) >= 2, "the Plugins tab lists the plugins with switches");
-await page.locator('[id="tab-trackFiltering.panel"]').click();
+await click(page.locator('[id="tab-trackFiltering.panel"]'));
 await page
   .waitForFunction(() => { const c = [...document.querySelectorAll(".tf-group .count")]; return c.length === 3 && c.every((e) => /^[0-9,]+$/.test(e.textContent ?? "")); }, null, { timeout: 180_000 })
   .catch(() => {});
@@ -175,6 +179,43 @@ await page.keyboard.press("Control+o");
 await page.locator("#open-input").fill('https://neuroglancer-demo.appspot.com/#!{"layers":[]}');
 check((await page.locator(".detected").innerText()).startsWith("Neuroglancer state, 0 layers"), "Open recognises a Neuroglancer link");
 await page.keyboard.press("Escape");
+
+// Local data: a NIfTI made here, read through the service worker as virtual Zarr.
+const local = await page.evaluate(async () => {
+  const [nx, ny, nz] = [40, 30, 20];
+  const bytes = new Uint8Array(352 + nx * ny * nz * 2);
+  const v = new DataView(bytes.buffer);
+  v.setInt32(0, 348, true);
+  [3, nx, ny, nz, 1, 1, 1, 1].forEach((d, k) => v.setInt16(40 + 2 * k, d, true));
+  v.setInt16(70, 4, true); // int16
+  v.setInt16(72, 16, true);
+  [1, 1, 1, 1].forEach((p, k) => v.setFloat32(76 + 4 * k, p, true));
+  v.setFloat32(108, 352, true);
+  bytes[123] = 2; // millimetres
+  v.setInt16(254, 4, true);
+  [[1, 0, 0, -20], [0, 1, 0, -15], [0, 0, 1, -10]].forEach((row, r) => row.forEach((x, c) => v.setFloat32(280 + 16 * r + 4 * c, x, true)));
+  bytes.set([110, 43, 49, 0], 344); // n+1
+  for (let i = 0; i < nx * ny * nz; ++i) v.setInt16(352 + 2 * i, i % 1000, true);
+  const wb = window.workbench;
+  await wb.localData.start();
+  const id = "smoketest";
+  wb.localData.entries.set(id, { id, name: "smoke.nii", kind: "file", files: new Map([["smoke.nii", new File([bytes], "smoke.nii")]]), needsPermission: false });
+  navigator.serviceWorker.controller?.postMessage({ type: "local-register", id });
+  const [found] = await wb.localData.detect(id);
+  const root = found.source.replace(/^zarr3:\/\//, "");
+  const group = await (await fetch(`${root}zarr.json`)).json();
+  const chunk = new Int16Array(await (await fetch(`${root}0/c/0/0/0`)).arrayBuffer());
+  return { source: found.source, version: group.attributes?.ome?.version, controlled: navigator.serviceWorker.controller !== null, voxels: [chunk[0], chunk[1], chunk[40], chunk[40 * 30 * 19 + 39]] };
+});
+check(local.version === "0.6" && local.controlled, `a local NIfTI is served as OME-Zarr through the service worker (${local.source})`);
+check(JSON.stringify(local.voxels) === JSON.stringify([0, 1, 40, 839]), `its chunks hold the file's voxels (${local.voxels})`);
+await page.evaluate((source) => {
+  window.workbench.store.newScene({ name: "local" });
+  window.workbench.store.addDataset({ source, name: "smoke", kind: "image" });
+}, local.source);
+await page.waitForFunction(() => window.engine.layers().some((l) => l.name === "smoke" && (l.ready || l.error)), null, { timeout: 60_000 }).catch(() => {});
+const opened = (await layers()).find((l) => l.name === "smoke");
+check(opened?.ready === true && !opened.error, `the local NIfTI opens as a layer${opened?.error ? ` (${opened.error})` : ""}`);
 
 // Narrow screen.
 await page.setViewportSize({ width: 400, height: 800 });
