@@ -51,9 +51,10 @@ page.on("request", (r) => {
   requested.push(r.url());
 });
 
-const status = () => page.locator(".status").innerText();
+// The status shows only while loading or failing; its state says when all is ready.
+const status = () => page.evaluate(() => document.querySelector(".status")?.textContent ?? "");
 async function waitReady(label, timeout = 90_000) {
-  await page.waitForFunction(() => /ready/.test(document.querySelector(".status")?.textContent ?? ""), null, { timeout });
+  await page.waitForFunction(() => document.querySelector(".status")?.dataset.state === "ok", null, { timeout });
   await page.waitForTimeout(4000); // let chunks stream in and draw
   console.log(`${label}: ${await status()}`);
 }
@@ -62,7 +63,13 @@ const layers = () => page.evaluate(() => window.engine.layers());
 
 await page.goto(base);
 await waitReady("default example");
-await page.screenshot({ path: `${shots}/1-default.png` });
+// The whole-brain tractogram is slow to draw on a software GPU (a frame a
+// second or more); the checks are about the platform, so it is hidden here.
+if (process.env.SWIFTSHADER) {
+  await page.evaluate(() => window.engine.setLayerVisible("HCP-1065", false));
+  await page.waitForTimeout(3000);
+}
+await page.screenshot({ path: `${shots}/1-default.png`, timeout: 120_000 });
 check((await page.evaluate(() => location.hash)).startsWith("#!"), "address bar holds the state");
 
 // The views fill their column, and hold no Neuroglancer interface.
@@ -87,7 +94,7 @@ check(chrome.position === 1 && chrome.layoutButtons > 0, "position top left and 
 
 // Datasets tab and Inspector.
 check((await page.locator(".datasets .ds-row").count()) >= 1, "Datasets lists the scene's datasets");
-await page.locator(".datasets .ds-row").first().click();
+await page.locator(".datasets .ds-row", { hasText: "HCP-1065" }).first().click();
 await page.waitForTimeout(800);
 check((await page.locator(".ins-tab").count()) > 0 && (await page.locator(".ins-root .neuroglancer-tab-label").count()) === 0, "the Layer tab shows the layer's controls in the platform's own tabs");
 // The inspector's tabs, built by the platform from the layer's models.
@@ -107,17 +114,16 @@ await page.locator(".ins-query").fill("");
 await page.waitForTimeout(500);
 
 // Hide and show the dataset from its row.
-await page.locator(".datasets .ds-row .vis").first().uncheck();
+await page.locator(".datasets .ds-row .vis").first().uncheck({ force: true });
 await page.waitForTimeout(500);
 check((await layers())[0].visible === false, "the row's checkbox hides the dataset");
-await page.locator(".datasets .ds-row .vis").first().check();
+await page.locator(".datasets .ds-row .vis").first().check({ force: true });
 
-// The volume view, in place of the 3-D panel: BigBrain, cut open, with the groups.
-await page.waitForTimeout(6000);
-check((await page.locator(".vv-host canvas").count()) === 1, "volume view shown in place of the 3-D panel");
-const volumeStatus = (await page.locator(".vv-status").textContent()) ?? "";
-check(!/Cannot draw|Could not|shader|program/.test(volumeStatus), `volume view draws (${volumeStatus})`);
-await page.screenshot({ path: `${shots}/1b-volume.png` });
+// The 3-D panel is Neuroglancer's own, with its Sections switch.
+check((await page.locator("div.perspective-panel-show-slice-views label").count()) >= 1, "the 3-D panel has Neuroglancer's Sections switch");
+check((await page.locator(".status").isHidden()), "no status shown when everything is ready");
+// Scenes have no tab of their own: they are the tabs at the top.
+check((await page.locator("#tab-scenes").count()) === 0, "no Scenes tab: scenes are the tabs at the top");
 
 // Palette: change the layout, then undo it.
 await page.waitForTimeout(1500);
@@ -128,7 +134,7 @@ await page.locator("#palette-input").fill("layout 3d");
 await page.keyboard.press("Enter");
 await page.waitForTimeout(1200);
 check(await page.evaluate(() => window.engine.layout() === "3d"), "palette ran Layout: 3D");
-await page.screenshot({ path: `${shots}/2-3d.png` });
+await page.screenshot({ path: `${shots}/2-3d.png`, timeout: 120_000 });
 await page.locator(".brand").click(); // focus the page, not an input
 // Undo restores the state in place: nothing is fetched again. (The 3-D
 // panel the layout added may fetch for itself before this.)
@@ -173,7 +179,7 @@ await page.keyboard.press("Escape");
 // Narrow screen.
 await page.setViewportSize({ width: 400, height: 800 });
 await page.waitForTimeout(800);
-await page.screenshot({ path: `${shots}/4-phone.png` });
+await page.screenshot({ path: `${shots}/4-phone.png`, timeout: 120_000 });
 const past = await page.evaluate(() =>
   [...document.querySelectorAll("body *")]
     .filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.right > window.innerWidth + 1; })

@@ -48,10 +48,10 @@ export function mountInspector(host: HTMLElement, layer: UserLayer): () => void 
   const root = el("div", { class: "ins-root" }, strip, content);
   host.append(root);
 
-  /** The tabs shown: the layer's own, in their order; an Annotations tab only when there are annotations. */
+  /** The tabs shown: the layer's own, in their order (Annotations always, as Neuroglancer shows it). */
   const tabs = () =>
     [...options]
-      .filter(([id, o]) => !(o.hidden?.value ?? false) && !(id === "annotations" && annotationStates !== undefined && annotationStates.states.length === 0))
+      .filter(([, o]) => !(o.hidden?.value ?? false))
       .sort(([, a], [, b]) => (a.order ?? 0) - (b.order ?? 0))
       .map(([id, o]) => ({ id, label: NATIVE[id]?.label ?? o.label }));
 

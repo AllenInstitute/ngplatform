@@ -102,12 +102,28 @@ export function annotationsTab(scope: Scope, layer: AnnotationUserLayer): HTMLEl
     lists.replaceChildren(...(all.length === 0 ? [note("No annotation sources.")] : all.map((state, i) => sourceList(built!, layer, state, all.length > 1 ? i + 1 : 0))));
   });
 
+  // A layer with nowhere to keep annotations (an image, say) can be given
+  // one: a local annotation source, saved in the state like any annotation
+  // layer's, beside its data.
+  const start = el(
+    "div",
+    { class: "ins-actions" },
+    button("Add annotations to this layer", () => {
+      const source = (layer as any).addDataSource(undefined);
+      source.spec = { ...source.spec, url: "local://annotations", setManually: true };
+    }, "A local annotation source for this layer: points, lines, boxes and ellipsoids kept with it"),
+  );
+  scope.watch([signal(states.changed)], () => {
+    start.hidden = mutable();
+  });
+
   return [
     section(
       "Draw",
       el("div", { class: "ins-row ins-wide" }, toolbox),
-      row("Colour", colour(scope, (layer.annotationDisplayState as any).color), "The default colour of new annotations"),
-      note("Choose a tool, then click in a 2-D view. Choose it again (or press Escape in the view) to stop."),
+      start,
+      row("Colour", colour(scope, (layer.annotationDisplayState as any).color), "The colour annotations are drawn in, unless the shader says otherwise"),
+      note("Choose a tool, then click in a view to place it; its description (its name) opens for typing. Choose the tool again, or press Escape, to stop. Labels can show descriptions beside the annotations (the Labels tab)."),
     ),
     lists,
   ];
@@ -124,6 +140,13 @@ function sourceList(scope: Scope, layer: AnnotationUserLayer, state: any, number
     list.append(note("Drawn in the views but not listed (too many to list). Click one in a view to inspect it."));
     return element;
   }
+  // The annotation just placed opens its description for typing: its name.
+  let justAdded: string | undefined;
+  if (!source.readonly) {
+    scope.add(source.childAdded.add((a: Annotation) => {
+      justAdded = a.id;
+    }));
+  }
   const watches = [signal(source.childAdded), signal(source.childUpdated), signal(source.childDeleted), signal(source.childrenReordered), signal(source.changed), signal(state.transform.changed)];
   scope.watchSoon(watches, () => {
     const annotations = [...(source as Iterable<Annotation>)];
@@ -131,7 +154,17 @@ function sourceList(scope: Scope, layer: AnnotationUserLayer, state: any, number
     const properties = (source.properties.value ?? []) as readonly { identifier: string; type: string }[];
     list.replaceChildren(
       ...(annotations.length === 0 ? [note(source.readonly ? "None." : "None yet: choose a tool above and click in a view.")] : []),
-      ...annotations.slice(0, 2000).map((a) => annotationRow(layer, state, a, properties)),
+      ...annotations.slice(0, 2000).map((a) => {
+        const row = annotationRow(layer, state, a, properties);
+        if (a.id === justAdded) {
+          justAdded = undefined;
+          queueMicrotask(() => {
+            row.scrollIntoView({ block: "nearest" });
+            row.querySelector(".ins-ann-desc")?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+          });
+        }
+        return row;
+      }),
       ...(annotations.length > 2000 ? [note(`And ${(annotations.length - 2000).toLocaleString()} more.`)] : []),
     );
   });
@@ -150,7 +183,7 @@ function annotationRow(layer: AnnotationUserLayer, state: any, a: Annotation, pr
     (layer as any).setLayerPosition(transform.modelTransform, position);
     (layer as any).selectAnnotation(state, a.id, true);
   };
-  const description = el("span", { class: "ins-ann-desc", title: source.readonly ? undefined : "Double-click to edit" }, a.description ?? "");
+  const description = el("span", { class: "ins-ann-desc", title: source.readonly ? undefined : "Double-click to name it" }, a.description || (source.readonly ? "" : "(no description)"));
   if (!source.readonly) {
     description.addEventListener("dblclick", (e) => {
       e.stopPropagation();

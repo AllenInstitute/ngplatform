@@ -212,11 +212,15 @@ function controlRow(scope: Scope, layer: UserLayer, m: ShaderModels, name: strin
     })) as never;
   }
   if (factory === undefined) return wrap(el("span", { class: "ins-faint" }, `(${control.type})`));
+  // Neuroglancer puts the channel picker (multi-channel contrast and
+  // transfer functions) or the property picker (property contrast) in the
+  // label container: shown beside the control's name.
+  const pickers = el("div", { class: "ins-pickers" });
   const { controlElement } = factory.makeControl(layer as never, scope.ng, {
-    labelContainer: el("div"),
+    labelContainer: pickers,
     labelTextContainer: el("div"),
     display: layer.manager.root.display,
     visibility: scope.visibility,
   } as never);
-  return el("div", { class: "ins-row ins-wide" }, label, embed(controlElement, "ins-histogram"));
+  return el("div", { class: "ins-row ins-wide" }, el("div", { class: "ins-label-with-pickers" }, label, pickers), embed(controlElement, "ins-histogram"));
 }

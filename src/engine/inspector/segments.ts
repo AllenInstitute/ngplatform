@@ -59,7 +59,7 @@ function segmentsView(scope: Scope, layer: SegmentationUserLayer): HTMLElement[]
   const input = el("input", {
     type: "search",
     class: "ins-text ins-query",
-    placeholder: "ids, label prefix, /regex, #tag, prop>1, <prop sorts, |prop shows",
+    placeholder: "ids, label prefix, /regex, #tag, prop>1, <prop sorts, |prop shows · Enter shows them",
     "aria-label": "Segment query",
     spellcheck: "false",
   }) as HTMLInputElement;
@@ -69,6 +69,22 @@ function segmentsView(scope: Scope, layer: SegmentationUserLayer): HTMLElement[]
     typing = setTimeout(() => (query.value = input.value), 120);
   });
   scope.add(() => clearTimeout(typing));
+  // Neuroglancer's keys: Enter shows the listed segments, Shift+Enter hides
+  // them, Ctrl+Enter hides every segment, Escape clears the query.
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      input.value = "";
+      query.value = "";
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      clearTimeout(typing);
+      query.value = input.value;
+      queueMicrotask(() => {
+        if (e.ctrlKey || e.metaKey) visible.clear();
+        else visible.set(listed(), !e.shiftKey);
+      });
+    }
+  });
   const errors = el("div", { class: "ins-messages" });
   const status = el("p", { class: "ins-note ins-status" });
   const tags = el("div", { class: "ins-tags" });
@@ -319,6 +335,12 @@ function segmentsView(scope: Scope, layer: SegmentationUserLayer): HTMLElement[]
         el("span", { class: "ins-seg-label", title: label }, label),
         ...columns.map((c) => el("span", { class: "num" }, index >= 0 ? fmt(c.values[index]) : "")),
       );
+      // Right-click goes to the segment, as in Neuroglancer's list.
+      row.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        ds.moveToSegment?.(id);
+      });
+      row.title = "Right-click to go to it";
       row.addEventListener("mouseenter", () => ds.segmentSelectionState?.set(id));
       row.addEventListener("mouseleave", () => ds.segmentSelectionState?.set(null));
       rows.push(row);
@@ -341,6 +363,7 @@ function segmentsView(scope: Scope, layer: SegmentationUserLayer): HTMLElement[]
     button("Star all", () => starred.set(listed(), true), "Star every segment listed"),
     button("Unstar all", () => starred.set(listed(), false), "Unstar every segment listed"),
     button("Copy ids", () => void navigator.clipboard?.writeText(listed().join(", ")), "Copy the listed ids, comma separated"),
+    button("Copy shown ids", () => void navigator.clipboard?.writeText(listed().filter((id) => visible.has(id)).join(", ")), "Copy the ids of the listed segments that are shown"),
   );
 
   scope.watchSoon(
