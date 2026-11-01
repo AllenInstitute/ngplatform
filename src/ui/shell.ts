@@ -12,6 +12,7 @@ import { activeScene, layersOf } from "../core/workspace.js";
 import { type Engine, LAYOUTS } from "../engine/engine.js";
 import { AuthRegistry, browserAuthEnvironment, middleauthProvider } from "../platform/auth.js";
 import { JobService } from "../platform/jobs.js";
+import { LocalData } from "../platform/local_data.js";
 import { LocalPlugins } from "../platform/local_plugins.js";
 import { PluginHost } from "../platform/plugin_host.js";
 import { ExampleRegistry, OpenHandlerRegistry } from "../platform/registries.js";
@@ -34,7 +35,7 @@ import {
   renderPluginsPanel,
   renderStatisticsPanel,
 } from "./panels/misc.js";
-import { showAddDatasetSheet, showEditStateSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
+import { showAddDatasetSheet, showEditStateSheet, showLocalSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
 import type { Workbench } from "./workbench.js";
 import { createPlatformApis } from "./apis.js";
 
@@ -109,7 +110,14 @@ export class Shell {
         "div",
         { class: "group hide-narrow" },
         iconButton("camera", "Screenshot", () => this.wb.run("view.screenshot")),
-        iconButton("settings", "View settings", () => this.wb.run("view.settings")),
+        iconButton("settings", "Settings and reloading", (e) =>
+          showMenu(e.currentTarget as HTMLElement, [
+            { label: "View settings…", run: () => this.wb.run("view.settings") },
+            "-",
+            { label: "Reload the scene's layers", run: () => this.wb.run("view.reloadLayers") },
+            { label: "Hard reset: reload everything fresh", run: () => this.wb.run("view.hardReset") },
+          ]),
+        ),
         iconButton("keyboard", "Keyboard and mouse", () => this.wb.run("help.shortcuts")),
       ),
       h(
@@ -185,6 +193,7 @@ export class Shell {
         toggle: (id, on) => this.switchPlugin(plugins.catalogue, plugins.choices, id, on),
       },
       log,
+      localData: new LocalData(),
       parseFragment,
       framed,
       run: (id, args) => {
@@ -196,6 +205,8 @@ export class Shell {
       },
     };
     this.wb = wb;
+    // For debugging from the console, beside window.viewer.
+    (window as unknown as { workbench: Workbench }).workbench = wb;
     const apis = createPlatformApis(wb);
     wb.plugins = new PluginHost({
       commands,
@@ -247,6 +258,9 @@ export class Shell {
       log: (message, level) => log.add(message, level ?? "info"),
     });
     void this.localPlugins.restore();
+    // Local data opened on earlier visits: the workspace's links to it work
+    // once reading is allowed again.
+    void wb.localData.restore();
     for (const entry of plugins.catalogue) {
       const enabled = plugins.resolution.enabled.has(entry.manifest.id);
       // A data type plugin has no platform code: it was loaded with the viewer.
@@ -498,6 +512,49 @@ export class Shell {
       run: (args: { source?: string; name?: string; kind?: string }) => {
         if (args.source === undefined) return showAddDatasetSheet(wb);
         return store.addDataset({ source: args.source, name: args.name ?? layerNameFor(args.source), kind: args.kind });
+      },
+    });
+    add({
+      id: "view.reloadLayers",
+      title: "Reload the scene's layers",
+      group: "View",
+      hint: "Opens every layer again, from its source",
+      run: () => store.reloadLayers(),
+    });
+    add({
+      id: "view.hardReset",
+      title: "Hard reset: reload everything fresh",
+      group: "View",
+      hint: "Reloads the page, checking every file with its server, for data that changed since it was loaded",
+      run: () => {
+        store.settle();
+        try {
+          sessionStorage.setItem("ngplatform.revalidate", "1");
+        } catch {
+          // Storage refused: an ordinary reload.
+        }
+        location.reload();
+      },
+    });
+    add({
+      id: "dataset.addLocal",
+      title: "Open data from this computer…",
+      group: "Datasets",
+      hint: "OME-Zarr, zarr-vectors, precomputed or NIfTI, read in place",
+      isAvailable: () => LocalData.supported,
+      run: () => showLocalSheet(wb, wb.localData),
+    });
+    add({
+      id: "dataset.reconnectLocal",
+      title: "Allow reading local data again",
+      group: "Datasets",
+      isAvailable: () => wb.localData.list().some((e) => e.needsPermission),
+      run: async () => {
+        const n = await wb.localData.reconnect();
+        if (n > 0) {
+          toast(`Reading ${n} local folder${n === 1 ? "" : "s"} again.`);
+          store.reloadLayers();
+        }
       },
     });
     add({

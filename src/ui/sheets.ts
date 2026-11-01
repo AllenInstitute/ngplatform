@@ -6,7 +6,8 @@
 import { InputError, layerCount, parseInput } from "../core/state_io.js";
 import { layerNameFor } from "../core/state_io.js";
 import { closeSheet, sheet, showSheet, toast } from "./overlays.js";
-import { h, icon, keyLabel } from "./dom.js";
+import { LocalData, type FoundDataset } from "../platform/local_data.js";
+import { clear, h, icon, keyLabel } from "./dom.js";
 import { kindLabel } from "./panels/format.js";
 import type { Workbench } from "./workbench.js";
 
@@ -212,6 +213,82 @@ export function showAddDatasetSheet(wb: Workbench): void {
     ),
   );
   url.focus();
+}
+
+// ------------------------------------------------------------ local data
+
+/** Opens data on this computer: pick a folder or a file, then choose what in it to add. */
+export function showLocalSheet(wb: Workbench, local: LocalData): void {
+  const found = h("div", { class: "list" });
+  const status = h("span", { class: "detected" }, "Nothing is uploaded: the viewer reads the files from here.");
+  const add = h("button", { class: "btn primary", type: "button", disabled: true }, "Add");
+  let choices: { dataset: FoundDataset; box: HTMLInputElement }[] = [];
+  const pick = async (folder: boolean) => {
+    status.textContent = "Opening…";
+    try {
+      const entry = await local.pick(folder);
+      if (entry === undefined) {
+        status.textContent = "Nothing picked.";
+        return;
+      }
+      const datasets = await local.detect(entry.id);
+      choices = datasets.map((dataset) => {
+        const box = h("input", { type: "checkbox" });
+        box.checked = true;
+        return { dataset, box };
+      });
+      clear(
+        found,
+        ...choices.map(({ dataset, box }) =>
+          h(
+            "label",
+            { class: "ds-row other pick" },
+            box,
+            h("span", { class: "ds-name" }, dataset.name),
+            h("span", { class: "type" }, dataset.format),
+            h("span", { class: "sub" }, dataset.path ? `${entry.name}/${dataset.path}` : entry.name),
+          ),
+        ),
+      );
+      add.disabled = choices.length === 0;
+      status.classList.toggle("bad", choices.length === 0);
+      status.textContent = choices.length
+        ? `${choices.length} dataset${choices.length === 1 ? "" : "s"} in ${entry.name}.`
+        : `No dataset found in ${entry.name}: it reads OME-Zarr, zarr-vectors, precomputed and NIfTI (a folder of them is fine).`;
+    } catch (e) {
+      status.textContent = (e as Error).message;
+      status.classList.add("bad");
+    }
+  };
+  add.addEventListener("click", () => {
+    for (const { dataset, box } of choices) {
+      if (box.checked) wb.store.addDataset({ source: dataset.source, name: dataset.name, kind: dataset.kind });
+    }
+    closeSheet();
+    wb.docks.show("layer");
+  });
+  showSheet(
+    sheet(
+      "Open from this computer",
+      [
+        h(
+          "div",
+          { class: "row-actions" },
+          h("button", { class: "btn outline", type: "button", onclick: () => void pick(true) }, icon("open"), "Folder…"),
+          h("button", { class: "btn outline", type: "button", onclick: () => void pick(false) }, icon("open"), "NIfTI file…"),
+        ),
+        h(
+          "p",
+          { class: "note" },
+          "A folder can be an OME-Zarr image, a zarr-vectors store, a Neuroglancer precomputed volume, or a folder holding several. ",
+          "Links to it work in this browser only, while this tab is open; it is remembered here, so it opens again after one click to allow reading.",
+          LocalData.canWrite ? "" : " This browser cannot remember folders or write into them: use Chrome or Edge for that.",
+        ),
+        found,
+      ],
+      [status, h("button", { class: "btn", type: "button", onclick: () => closeSheet() }, "Cancel"), add],
+    ),
+  );
 }
 
 // ---------------------------------------------------------------- settings

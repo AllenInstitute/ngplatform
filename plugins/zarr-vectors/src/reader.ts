@@ -30,6 +30,10 @@ import { kvStoreAccess, openZarrVectorsStore } from "./store.js";
 export type { DenseChunkData, ZarrVectorsLevel, ZarrVectorsStore, ZarrVectorsStoreAccess };
 export { LevelPipeline, ObjectReader, openZarrVectorsStore, setVertexCellCacheBytes };
 export { storeUrlOfSource } from "./source_url.js";
+// A level's object table (object id and segment id per row), for tools that
+// relate Neuroglancer's segment ids to the store's object ids.
+export type { ZarrVectorsObjectTable } from "./objects.js";
+export { readObjectTable } from "./objects.js";
 // Plain Zarr v3 arrays (sharded or not, any of Neuroglancer's codecs), for
 // tools that read other arrays beside a store, such as an image volume.
 export type { ZarrArray } from "./zarr_array.js";

@@ -7,10 +7,22 @@
 import { Engine } from "./engine/engine.js";
 import { urlSafeParse } from "./engine/neuroglancer.js";
 import { loadDataTypePlugins } from "./engine/plugins.js";
+import { revalidateFetches } from "./engine/workers/plugins.js";
 import { loadChoices, resolveEnabled } from "./platform/plugin_switches.js";
 import { CATALOGUE } from "../plugins/index.js";
 import { Shell } from "./ui/shell.js";
 import "./ui/styles.css";
+
+// A hard reset (View → Hard reset) asked for every file to be checked with
+// its server on this load, here and in Neuroglancer's workers.
+let revalidate = false;
+try {
+  revalidate = sessionStorage.getItem("ngplatform.revalidate") === "1";
+  sessionStorage.removeItem("ngplatform.revalidate");
+} catch {
+  // No storage: an ordinary load.
+}
+if (revalidate) revalidateFetches(window);
 
 const choices = loadChoices();
 const resolution = resolveEnabled(
@@ -22,6 +34,7 @@ await loadDataTypePlugins(
     id: e.manifest.id,
     neuroglancer: e.neuroglancer!,
   })),
+  { revalidate },
 );
 
 const shell = new Shell(document.getElementById("app")!);

@@ -63,6 +63,17 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
       const offs = [store.onChange(callback), engine.onSelectionChanged(callback)];
       return () => offs.forEach((off) => off());
     },
+    local: {
+      locate: (url) => {
+        const at = wb.localData.parse(url);
+        return at === undefined ? undefined : { writable: wb.localData.writable(at.id) };
+      },
+      write: async (url, data) => {
+        const at = wb.localData.parse(url);
+        if (at === undefined) throw new Error(`${url} is not on this computer`);
+        await wb.localData.write(at.id, at.path, data as BufferSource | string);
+      },
+    },
   };
 
   const viewer: ViewerApi = {

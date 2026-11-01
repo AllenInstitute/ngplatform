@@ -136,6 +136,13 @@ export class WorkspaceStore {
       .map((s) => s.name);
   }
 
+  /** Opens every layer of the scene again (after local data can be read again, say). */
+  reloadLayers(): void {
+    const ng = structuredClone(this.ng());
+    this.engine.setState({ ...ng, layers: [] });
+    this.engine.setState(ng);
+  }
+
   /** A new, empty annotation layer that annotations can be drawn into. */
   newAnnotationLayer(name = "annotations"): string {
     const taken = layersOf(this.ng()).map((l) => String(l.name));

@@ -45,9 +45,17 @@ export function trkSpace(info: StoreInfo): TrkSpace {
 
 /** The `.trk` file of some curves (store coordinates, as the region worker gives them). */
 export function writeTrk(curves: { offsets: Uint32Array; positions: Float32Array }, space: TrkSpace): ArrayBuffer {
-  const tracks = curves.offsets.length - 1;
-  const vertices = curves.positions.length / 3;
-  const buffer = new ArrayBuffer(HEADER_BYTES + 4 * tracks + 12 * vertices);
+  const header = trkHeader(space, curves.offsets.length - 1);
+  const body = trkBody(curves, space);
+  const out = new Uint8Array(header.byteLength + body.byteLength);
+  out.set(new Uint8Array(header), 0);
+  out.set(new Uint8Array(body), header.byteLength);
+  return out.buffer;
+}
+
+/** The 1000-byte TrackVis v2 header, for `tracks` streamlines. */
+export function trkHeader(space: TrkSpace, tracks: number): ArrayBuffer {
+  const buffer = new ArrayBuffer(HEADER_BYTES);
   const view = new DataView(buffer);
   const ascii = (at: number, text: string) => {
     for (let i = 0; i < text.length; ++i) view.setUint8(at + i, text.charCodeAt(i));
@@ -65,10 +73,19 @@ export function writeTrk(curves: { offsets: Uint32Array; positions: Float32Array
   view.setInt32(988, tracks, true);
   view.setInt32(992, 2, true);
   view.setInt32(996, HEADER_BYTES, true);
+  return buffer;
+}
 
-  // The body, 4-byte aligned after the header: a count, then x, y, z per point.
-  const ints = new Int32Array(buffer, HEADER_BYTES);
-  const floats = new Float32Array(buffer, HEADER_BYTES);
+/**
+ * The streamlines' records (a count, then x, y, z per point, in voxmm),
+ * for appending after the header: a file can be written a batch at a time.
+ */
+export function trkBody(curves: { offsets: Uint32Array; positions: Float32Array }, space: TrkSpace): ArrayBuffer {
+  const tracks = curves.offsets.length - 1;
+  const vertices = curves.positions.length / 3;
+  const buffer = new ArrayBuffer(4 * tracks + 12 * vertices);
+  const ints = new Int32Array(buffer);
+  const floats = new Float32Array(buffer);
   const { positions, offsets } = curves;
   const { scale, offset, origin } = space;
   // voxmm = RAS - (first voxel's centre) + half a voxel.

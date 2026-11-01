@@ -9,6 +9,7 @@ import type { FragmentParser } from "../core/state_io.js";
 import type { ContextKeys } from "../core/when.js";
 import type { Engine } from "../engine/engine.js";
 import type { JobService } from "../platform/jobs.js";
+import type { LocalData } from "../platform/local_data.js";
 import type { PluginHost } from "../platform/plugin_host.js";
 import type { ExampleRegistry, OpenHandlerRegistry } from "../platform/registries.js";
 import type { ServiceRegistry } from "../platform/services.js";
@@ -37,6 +38,8 @@ export interface Workbench {
     toggle(id: string, on: boolean): Promise<void>;
   };
   log: ActivityLog;
+  /** Data on this computer, served to the viewer (see platform/local_data.ts). */
+  localData: LocalData;
   parseFragment: FragmentParser;
   framed: boolean;
   /** Runs a command, reporting a failure in the log and a toast. */

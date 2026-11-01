@@ -26,6 +26,9 @@ import {
   setVertexCellCacheBytes,
   type ZarrVectorsStore,
   type ZarrVectorsStoreAccess,
+  openZarrArray,
+  readObjectTable,
+  ZarrArrayReader,
 } from "neuroglancer-zarr-vectors/reader";
 import { setAsyncComputationWorkerFactory } from "neuroglancer/unstable/worker_factories.js";
 import { asyncComputationWorker } from "@ngplatform/sdk/workers";
@@ -199,8 +202,66 @@ async function curves(id: number, level: number, ids: BigUint64Array): Promise<v
   }
 }
 
+/** Small questions about the store, answered with `{type: "answer", id, value}`. */
+const calls: Record<string, (msg: any) => Promise<{ value: unknown; transfer?: Transferable[] }>> = {
+  async objectIds({ level, segmentIds }: { level: number; segmentIds: BigUint64Array }) {
+    const levelPath = store!.levels[level].path;
+    const table = await readObjectTable(access!, levelPath);
+    if (table === undefined) throw new Error(`${levelPath} has no object table`);
+    const rowOf = new Map<bigint, number>();
+    for (let r = 0; r < table.numObjects; ++r) rowOf.set(table.segmentIds[r], r);
+    const objectIds = new BigUint64Array(segmentIds.length);
+    let missing = 0;
+    segmentIds.forEach((id, i) => {
+      const row = rowOf.get(id);
+      if (row === undefined) missing++;
+      else objectIds[i] = table.objectIds?.[row] ?? BigInt(row);
+    });
+    return { value: { objectIds, missing }, transfer: [objectIds.buffer] };
+  },
+  async groups({ level }: { level: number }) {
+    const levelPath = store!.levels[level].path;
+    const array = await openZarrArray(access!.read, `${levelPath}/groups`);
+    if (array === undefined) return { value: { names: [], members: [], levelPath } };
+    const attrs = array.attributes as { num_groups?: number; group_names?: string[]; group_ranges?: Record<string, [number, number]> };
+    const n = Number(attrs.num_groups ?? array.shape[0]);
+    const rows = await new ZarrArrayReader(array, access!.read, access!.shardIndexes).readVlenRows(0, n);
+    let names = Array.isArray(attrs.group_names) ? attrs.group_names.map(String) : [];
+    if (names.length < n) {
+      const column = await openZarrArray(access!.read, `${levelPath}/group_attributes/name`);
+      if (column !== undefined) {
+        const text = await new ZarrArrayReader(column, access!.read, access!.shardIndexes).readVlenRows(0, n);
+        names = text.map((b) => (b === undefined ? "" : new TextDecoder().decode(b)));
+      }
+    }
+    const members = rows.map((b, g) => {
+      const range = attrs.group_ranges?.[String(g)];
+      if (range !== undefined) {
+        const out = new BigUint64Array(Math.max(0, range[1] - range[0]));
+        for (let i = 0; i < out.length; ++i) out[i] = BigInt(range[0] + i);
+        return out;
+      }
+      if (b === undefined) return new BigUint64Array(0);
+      return new BigUint64Array(b.buffer.slice(b.byteOffset, b.byteOffset + (b.byteLength & ~7)));
+    });
+    return { value: { names: Array.from({ length: n }, (_, g) => names[g] || `group ${g}`), members, levelPath } };
+  },
+};
+
 self.onmessage = (event: MessageEvent) => {
   const msg = event.data;
+  if (msg.type === "call") {
+    const op = calls[msg.op];
+    if (op === undefined || store === undefined) {
+      postMessage({ type: "error", id: msg.id, message: store === undefined ? "no store is open" : `no ${msg.op}` });
+      return;
+    }
+    op(msg).then(
+      ({ value, transfer }) => postMessage({ type: "answer", id: msg.id, value }, { transfer: transfer ?? [] }),
+      (e) => postMessage({ type: "error", id: msg.id, message: (e as Error).message }),
+    );
+    return;
+  }
   if (msg.type === "open") {
     open(msg.storeUrl).then(
       (info) => postMessage({ type: "opened", info }),

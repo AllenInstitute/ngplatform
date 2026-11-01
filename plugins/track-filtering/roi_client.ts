@@ -64,7 +64,12 @@ export class RoiEngine {
       if (msg.type === "opened") opened(msg.info);
       else if (msg.type === "error" && msg.id === undefined) failed(new Error(msg.message));
       else if (msg.type === "progress") (this.pending.get(msg.id) ?? this.pendingCurves.get(msg.id))?.progress?.(msg.done, msg.total);
-      else if (msg.type === "curves" || (msg.type === "error" && this.pendingCurves.has(msg.id))) {
+      else if (msg.type === "answer" || (msg.type === "error" && this.pendingCalls.has(msg.id))) {
+        const p = this.pendingCalls.get(msg.id);
+        this.pendingCalls.delete(msg.id);
+        if (msg.type === "error") p?.reject(new Error(msg.message));
+        else p?.resolve(msg.value);
+      } else if (msg.type === "curves" || (msg.type === "error" && this.pendingCurves.has(msg.id))) {
         const p = this.pendingCurves.get(msg.id);
         this.pendingCurves.delete(msg.id);
         if (p === undefined) return;
@@ -125,12 +130,34 @@ export class RoiEngine {
     });
   }
 
+  private readonly pendingCalls = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+
+  private call<T>(op: string, args: object): Promise<T> {
+    const id = this.nextId++;
+    return new Promise<T>((resolve, reject) => {
+      this.pendingCalls.set(id, { resolve, reject });
+      this.worker.postMessage({ type: "call", id, op, ...args });
+    });
+  }
+
+  /** The store's object ids of these Neuroglancer segment ids, at a level (undefined where unknown). */
+  objectIds(segmentIds: BigUint64Array, level = 0): Promise<{ objectIds: BigUint64Array; missing: number }> {
+    return this.call("objectIds", { level, segmentIds });
+  }
+
+  /** A level's groups as stored: their names and members (object ids). */
+  groups(level = 0): Promise<{ names: string[]; members: BigUint64Array[]; levelPath: string }> {
+    return this.call("groups", { level });
+  }
+
   dispose(): void {
     this.worker.terminate();
     // Work given up, not failed: callers ignore aborts.
     const closed = () => new DOMException("The region worker was closed", "AbortError");
     for (const p of this.pending.values()) p.reject(closed());
     for (const p of this.pendingCurves.values()) p.reject(closed());
+    for (const p of this.pendingCalls.values()) p.reject(closed());
+    this.pendingCalls.clear();
     this.pending.clear();
     this.pendingCurves.clear();
   }

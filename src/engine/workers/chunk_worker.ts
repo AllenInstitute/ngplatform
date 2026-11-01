@@ -5,7 +5,9 @@
  * ready; the main thread waits for that before sending anything.
  */
 import { setAsyncComputationWorkerFactory } from "neuroglancer/unstable/worker_factories.js";
-import { CHUNK_WORKER_MODULES, workerPlugins } from "./plugins.js";
+import { CHUNK_WORKER_MODULES, revalidateFetches, workerPlugins, workerRevalidates } from "./plugins.js";
+
+if (workerRevalidates(self.name)) revalidateFetches(self);
 
 for (const id of workerPlugins(self.name)) await CHUNK_WORKER_MODULES[id]?.();
 

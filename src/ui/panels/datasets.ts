@@ -42,9 +42,19 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
   const others = h("div", { class: "section" });
   const addButton = h("button", { class: "btn outline small", type: "button", "aria-haspopup": "menu" }, icon("plus"), "Add");
   addButton.addEventListener("click", () => showAddMenu(addButton, wb));
-  host.append(h("div", { class: "panel-actions" }, addButton), list, others);
+  const permission = h(
+    "div",
+    { class: "note-bar", hidden: true },
+    h("span", {}, "Local data in this scene needs a click to be read again."),
+    h("button", { class: "btn small", type: "button", onclick: () => wb.run("dataset.reconnectLocal") }, "Allow"),
+  );
+  host.append(h("div", { class: "panel-actions" }, addButton), permission, list, others);
 
   const render = () => {
+    const localBase = `${wb.localData.base}local/`;
+    permission.hidden = !(
+      wb.localData.list().some((e) => e.needsPermission) && engine.layers().some((l) => l.sources.some((s) => s.includes(localBase)))
+    );
     const entries = store.sceneDatasets();
     const layerInfo = new Map(engine.layers().map((l) => [l.name, l]));
     const selected = engine.selectedLayer();
@@ -209,7 +219,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
     }
   };
 
-  const offs = [store.onChange(render), engine.onLayersChanged(render), engine.onSelectionChanged(render)];
+  const offs = [store.onChange(render), engine.onLayersChanged(render), engine.onSelectionChanged(render), wb.localData.onChange(render)];
   render();
   return () => offs.forEach((off) => off());
 }

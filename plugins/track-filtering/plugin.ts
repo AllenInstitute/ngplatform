@@ -23,7 +23,8 @@ import { computeMask, countPassing, emptyFilter, type FilterSpec, histogram, isE
 import { FILTERING_PANEL } from "./manifest.js";
 import { groupMask, type Roi, type RoiOp, type RoiShape, rowIndex, rowMask } from "./roi.js";
 import { type Curves, type Dimensions, previewLevel, RoiEngine, type RoiResult, type StoreInfo, toStore } from "./roi_client.js";
-import { fileName, millimetres, trkSpace, writeTrk } from "./trk.js";
+import { fileName, millimetres, trkBody, trkHeader, trkSpace } from "./trk.js";
+import { groupFiles, mergeGroups, type StoredGroup, withGroupsListed } from "./zv_groups.js";
 
 /**
  * What other plugins (the volume view) see of the track groups:
@@ -58,6 +59,8 @@ export interface Saved {
   editing?: string;
 }
 
+/** Points per batch when saving .trk: about 48 MB of the file in memory at a time. */
+const BATCH_POINTS = 4_000_000;
 const PALETTE = ["#e4572e", "#3fb6c9", "#d4a72c", "#8fd14f", "#b07cd8", "#f08bb3", "#5c8de8", "#e8b05c"];
 const BINS = 40;
 /** How long a region must stay put before the exact answer is computed. */
@@ -89,17 +92,33 @@ export function readSaved(raw: unknown): Saved {
 
 // ------------------------------------------------------------------ files
 
-interface SaveTarget {
-  name: string;
-  write(blob: Blob): Promise<void>;
+/** A file being written in parts, in order; `writeAt` rewrites bytes already written (a header's count). */
+interface SaveStream {
+  write(part: ArrayBuffer): Promise<void>;
+  writeAt(position: number, part: ArrayBuffer): Promise<void>;
+  close(): Promise<void>;
+  abort(): Promise<void>;
 }
 
-type SavePicker = (options: unknown) => Promise<{ name: string; createWritable(): Promise<{ write(b: Blob): Promise<void>; close(): Promise<void> }> }>;
+interface SaveTarget {
+  name: string;
+  /** True when parts go straight to disk; false when they are held until a download. */
+  streams: boolean;
+  open(): Promise<SaveStream>;
+}
+
+interface Writable {
+  write(data: ArrayBuffer | { type: "write"; position: number; data: ArrayBuffer }): Promise<void>;
+  close(): Promise<void>;
+  abort(): Promise<void>;
+}
+type SavePicker = (options: unknown) => Promise<{ name: string; createWritable(): Promise<Writable> }>;
 
 /**
  * Where a file goes: chosen in the browser's save dialog where it has one
- * (asked first, while the click still counts as the user's), else a
- * download.  `undefined` when the dialog is cancelled.
+ * (asked first, while the click still counts as the user's), written to
+ * disk part by part; else a download, assembled from its parts at the end.
+ * `undefined` when the dialog is cancelled.
  */
 async function saveTarget(name: string, description: string, extension: string): Promise<SaveTarget | undefined> {
   const picker = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker;
@@ -108,10 +127,15 @@ async function saveTarget(name: string, description: string, extension: string):
       const handle = await picker({ suggestedName: name, types: [{ description, accept: { "application/octet-stream": [extension] } }] });
       return {
         name: handle.name,
-        async write(blob) {
+        streams: true,
+        async open() {
           const writable = await handle.createWritable();
-          await writable.write(blob);
-          await writable.close();
+          return {
+            write: (part) => writable.write(part),
+            writeAt: (position, part) => writable.write({ type: "write", position, data: part }),
+            close: () => writable.close(),
+            abort: () => writable.abort(),
+          };
         },
       };
     } catch (e) {
@@ -121,10 +145,36 @@ async function saveTarget(name: string, description: string, extension: string):
   }
   return {
     name,
-    async write(blob) {
-      const a = el("a", { href: URL.createObjectURL(blob), download: name });
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+    streams: false,
+    async open() {
+      const parts: Uint8Array[] = [];
+      let length = 0;
+      return {
+        async write(part) {
+          parts.push(new Uint8Array(part));
+          length += part.byteLength;
+        },
+        async writeAt(position, part) {
+          // Only into what is held: the first part (a header) in practice.
+          let start = 0;
+          for (const p of parts) {
+            if (position >= start && position + part.byteLength <= start + p.byteLength) {
+              p.set(new Uint8Array(part), position - start);
+              return;
+            }
+            start += p.byteLength;
+          }
+          throw new Error(`cannot rewrite bytes ${position}..${position + part.byteLength} of ${length}`);
+        },
+        async close() {
+          const a = el("a", { href: URL.createObjectURL(new Blob(parts, { type: "application/octet-stream" })), download: name });
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+        },
+        async abort() {
+          parts.length = 0;
+        },
+      };
     },
   };
 }
@@ -178,9 +228,11 @@ const STYLE = `
 .tf-roi-head { display: flex; align-items: center; gap: 6px; }
 .tf-roi-head .label { font-weight: 500; flex: 1; }
 .tf-roi select { height: 24px; border-radius: 0; border: 1px solid var(--line); background: var(--ink-0); color: var(--text); font: 600 11px/1 var(--mono); }
-.tf-xyz { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
-.tf-xyz label { display: grid; gap: 1px; font-size: 10px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; }
-.tf-xyz input { width: 100%; box-sizing: border-box; height: 24px; border: 1px solid var(--line); border-radius: 0; background: var(--ink-0); color: var(--text); font: 12px/1 var(--mono); padding: 0 4px; }
+.tf-xyz { display: grid; gap: 2px; }
+.tf-field { display: grid; grid-template-columns: 44px minmax(0, 1fr) 72px; align-items: center; gap: 6px; }
+.tf-field > span { font-size: 10px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; }
+.tf-field input[type="range"] { width: 100%; margin: 0; accent-color: var(--accent); }
+.tf-field input[type="number"] { width: 100%; box-sizing: border-box; height: 22px; border: 1px solid var(--line); border-radius: 0; background: var(--ink-0); color: var(--text); font: 12px/1 var(--mono); padding: 0 4px; }
 .tf-roi-status { font: 11px/1.3 var(--mono); color: var(--faint); }
 .tf-prop { border: 1px solid var(--line); border-radius: var(--r); padding: 8px; display: grid; gap: 4px; }
 .tf-prop.filtered { border-color: #8a8a8a; }
@@ -897,27 +949,51 @@ class TrackGroups {
     this.saving = saving;
     this.updateAll();
     const started = performance.now();
+    const space = trkSpace(info);
+    // Batches of about 4 M points (48 MB of the file) at a time, written as
+    // they come, so memory stays the same whatever the group's size.  The
+    // header's streamline count is written last.
+    const total = info.levels[level]?.vertexCount ?? info.levels[0].vertexCount ?? 0;
+    const perObject = total / Math.max(1, props.ids.length);
+    const batch = Math.max(1, Math.floor(BATCH_POINTS / Math.max(1, perObject)));
+    let stream: Awaited<ReturnType<SaveTarget["open"]>> | undefined;
     try {
-      const curves = await this.readCurves(
-        group.id,
-        ids,
-        level,
-        (done, total) => {
-          saving.done = done;
-          saving.total = total;
+      stream = await target.open();
+      await stream.write(trkHeader(space, 0));
+      let tracks = 0;
+      let points = 0;
+      let bytes = 1000;
+      for (let from = 0; from < ids.length; from += batch) {
+        controller.signal.throwIfAborted();
+        const part = ids.subarray(from, Math.min(ids.length, from + batch));
+        const progress = (done: number, chunks: number) => {
+          saving.done = from + Math.round((done / Math.max(1, chunks)) * part.length);
+          saving.total = ids.length;
           this.updateAll();
-        },
-        controller.signal,
-      );
-      const bytes = writeTrk(curves, trkSpace(info));
-      await target.write(new Blob([bytes], { type: "application/octet-stream" }));
+        };
+        const curves =
+          part.length === ids.length
+            ? await this.readCurves(group.id, ids, level, progress, controller.signal)
+            : await engine.curves(part, level, progress, controller.signal);
+        const body = trkBody(curves, space);
+        await stream.write(body);
+        tracks += curves.offsets.length - 1;
+        points += curves.positions.length / 3;
+        bytes += body.byteLength;
+      }
+      const count = new ArrayBuffer(4);
+      new DataView(count).setInt32(0, tracks, true);
+      await stream.writeAt(988, count);
+      await stream.close();
+      stream = undefined;
       const seconds = (performance.now() - started) / 1000;
       const message =
-        `Saved ${curves.ids.length.toLocaleString()} streamlines (${(curves.positions.length / 3).toLocaleString()} points, ` +
-        `${(bytes.byteLength / 2 ** 20).toFixed(1)} MB) to ${target.name} in ${seconds.toFixed(1)} s.`;
+        `Saved ${tracks.toLocaleString()} streamlines (${points.toLocaleString()} points, ` +
+        `${(bytes / 2 ** 20).toFixed(1)} MB) to ${target.name} in ${seconds.toFixed(1)} s.`;
       this.saved_.set(group.id, message);
       this.ctx.log.info(`${group.name}: ${message}`);
     } catch (e) {
+      await stream?.abort().catch(() => {});
       if (controller.signal.aborted) {
         this.saved_.set(group.id, "Save cancelled.");
       } else {
@@ -932,6 +1008,64 @@ class TrackGroups {
 
   private updateAll(): void {
     for (const update of this.updaters) update();
+  }
+
+  /** The dataset's store, when it is on this computer: where groups can be written. */
+  private localStore(): { url: string; writable: boolean } | undefined {
+    const dataset = this.dataset();
+    const source = dataset && this.sourceOf(dataset);
+    const url = source && storeUrlOfSource(source);
+    if (url === undefined) return undefined;
+    const at = this.ctx.workspace.local.locate(url);
+    return at === undefined ? undefined : { url, writable: at.writable };
+  }
+
+  /**
+   * Writes the groups into the dataset's own store (level 0's `groups`), so
+   * the store carries them: other tools, and the viewer (as segment tags),
+   * see them.  A stored group with the same name is replaced; others stay.
+   */
+  async saveGroupsToStore(): Promise<void> {
+    const local = this.localStore();
+    const { engine, props } = this;
+    if (local === undefined || !local.writable) {
+      this.ctx.ui.toast("Groups can be written only into a zarr-vectors folder opened from this computer (Add → Local, in Chrome or Edge).", "error");
+      return;
+    }
+    if (engine === undefined || props === undefined) {
+      this.ctx.ui.toast("The dataset is still opening.", "error");
+      return;
+    }
+    const groups = this.saved.groups.filter((g) => this.results.get(g.id)?.state === "exact");
+    if (groups.length === 0) {
+      this.ctx.ui.toast("No group has its exact answer yet.", "error");
+      return;
+    }
+    try {
+      const stored = await engine.groups(0);
+      const mine: StoredGroup[] = [];
+      let missing = 0;
+      for (const group of groups) {
+        const ids = passingIds(props, this.results.get(group.id)!.mask!);
+        const mapped = await engine.objectIds(ids, 0);
+        missing += mapped.missing;
+        mine.push({ name: group.name, members: mapped.objectIds });
+      }
+      const merged = mergeGroups(
+        stored.names.map((name, i) => ({ name, members: stored.members[i] })),
+        mine,
+      );
+      const level = `${local.url}${stored.levelPath}/`;
+      for (const [path, bytes] of groupFiles(merged)) await this.ctx.workspace.local.write(level + path, bytes);
+      const levelJson = await (await fetch(`${level}zarr.json`, { cache: "no-store" })).text();
+      await this.ctx.workspace.local.write(`${level}zarr.json`, withGroupsListed(levelJson));
+      const message = `Wrote ${mine.length} group${mine.length === 1 ? "" : "s"} into ${stored.levelPath}/groups (${merged.length} in the store)${missing ? `; ${missing} objects had no object id and were left out` : ""}.`;
+      this.ctx.log.info(message);
+      this.ctx.ui.toast(message);
+      await this.ctx.commands.invoke("view.reloadLayers");
+    } catch (e) {
+      this.ctx.ui.toast(`Could not write the groups: ${(e as Error).message}`, "error");
+    }
   }
 
   // ----------------------------------------------------------- service
@@ -1126,6 +1260,27 @@ class TrackGroups {
         el("button", { class: "btn outline small", type: "button", onclick: () => this.newGroup() }, "+ New group"),
       ),
     );
+    const local = this.localStore();
+    if (local !== undefined) {
+      root.append(
+        el(
+          "div",
+          { class: "tf-row" },
+          el(
+            "button",
+            {
+              class: "btn small",
+              type: "button",
+              disabled: !local.writable,
+              title: local.writable ? "Write the groups into this store's groups (level 0)" : "This browser cannot write into folders: use Chrome or Edge",
+              onclick: () => void this.saveGroupsToStore(),
+            },
+            "Save groups into the store",
+          ),
+          el("span", { class: "tf-roi-status" }, "on this computer"),
+        ),
+      );
+    }
     const list = el("div", { class: "tf-groups" });
     if (this.saved.groups.length === 0) {
       list.append(el("p", { class: "empty" }, "No groups yet. A new group starts empty: add regions and attribute ranges to choose its objects."));
@@ -1189,7 +1344,7 @@ class TrackGroups {
       cancel.hidden = !mine;
       if (mine) {
         const s = this.saving!;
-        note.textContent = s.total === 0 ? "Reading the group's manifests…" : `Reading streamlines: ${s.done} of ${s.total} chunks`;
+        note.textContent = s.total === 0 ? "Reading the group's manifests…" : `Writing streamlines: ${s.done.toLocaleString()} of ${s.total.toLocaleString()}`;
       } else {
         note.textContent = this.saved_.get(group.id) ?? "";
       }
@@ -1288,17 +1443,53 @@ class TrackGroups {
     for (const o of ["and", "or", "not"]) op.append(el("option", { value: o }, o.toUpperCase()));
     op.value = roi.op;
     op.addEventListener("change", () => this.updateRoi(group, roi.id, { op: op.value as RoiOp }));
-    const number = (label: string, get: () => number, set: (v: number) => Partial<Roi>, step: number) => {
+    // Each value: a slider that moves the region as it is dragged, and a
+    // box to type it (Enter, or Set, applies what is typed).
+    const typed: (() => void)[] = [];
+    const number = (label: string, get: () => number, set: (v: number) => Partial<Roi>, step: number, bounds: () => [number, number]) => {
+      const slider = el("input", { type: "range", step, "aria-label": `${label} (slider)` }) as HTMLInputElement;
       const input = el("input", { type: "number", step, "aria-label": label }) as HTMLInputElement;
-      input.addEventListener("change", () => {
-        const v = Number(input.value);
-        if (Number.isFinite(v)) this.updateRoi(group, roi.id, set(v));
+      const fit = () => {
+        const [lo, hi] = bounds();
+        const v = get();
+        slider.min = String(Math.min(lo, v));
+        slider.max = String(Math.max(hi, v));
+      };
+      slider.addEventListener("pointerdown", fit);
+      slider.addEventListener("input", () => {
+        const v = Number(slider.value);
+        input.value = String(Math.round(v * 100) / 100);
+        this.updateRoi(group, roi.id, set(v), true);
       });
+      const apply = () => {
+        const v = Number(input.value);
+        if (Number.isFinite(v) && v !== get()) this.updateRoi(group, roi.id, set(v));
+      };
+      typed.push(apply);
+      input.addEventListener("change", apply);
       this.updaters.push(() => {
         if (document.activeElement !== input) input.value = String(Math.round(get() * 100) / 100);
+        if (document.activeElement !== slider) {
+          fit();
+          slider.value = String(get());
+        }
       });
-      return el("label", {}, label, input);
+      return el("label", { class: "tf-field" }, el("span", {}, label), slider, input);
     };
+    // The dataset's extent, in the view's coordinates, for the sliders.
+    const extent = (k: number): [number, number] => {
+      const info = this.info;
+      const dims = this.dims();
+      const name = info?.axisNames[k];
+      if (info === undefined || dims === undefined || name === undefined) return [current().center[k] - 100, current().center[k] + 100];
+      const global = dims[name]?.[0];
+      const factor = global !== undefined && info.axisScales[k] > 0 ? global / info.axisScales[k] : 1;
+      const offset = info.coordinateOffset?.[k] ?? 0;
+      const a = (info.bounds.lower[k] + offset) / factor;
+      const b = (info.bounds.upper[k] + offset) / factor;
+      return [Math.min(a, b), Math.max(a, b)];
+    };
+    const span = (): [number, number] => [0.1, Math.max(...[0, 1, 2].map((k) => extent(k)[1] - extent(k)[0])) / 2];
     const c = (k: number) => (v: number) => {
       const center = [...current().center] as [number, number, number];
       center[k] = v;
@@ -1307,20 +1498,20 @@ class TrackGroups {
     const fields = el(
       "div",
       { class: "tf-xyz" },
-      number("x", () => current().center[0], c(0), 0.5),
-      number("y", () => current().center[1], c(1), 0.5),
-      number("z", () => current().center[2], c(2), 0.5),
+      number("x", () => current().center[0], c(0), 0.5, () => extent(0)),
+      number("y", () => current().center[1], c(1), 0.5, () => extent(1)),
+      number("z", () => current().center[2], c(2), 0.5, () => extent(2)),
       roi.shape === "sphere"
-        ? number("radius", () => current().radius, (v) => ({ radius: Math.max(0.1, v) }), 0.5)
-        : number("width", () => current().size[0], (v) => ({ size: [Math.max(0.1, v), current().size[1], current().size[2]] }), 0.5),
+        ? number("radius", () => current().radius, (v) => ({ radius: Math.max(0.1, v) }), 0.5, span)
+        : number("width", () => current().size[0], (v) => ({ size: [Math.max(0.1, v), current().size[1], current().size[2]] }), 0.5, span),
     );
     const extra =
       roi.shape === "box"
         ? el(
             "div",
             { class: "tf-xyz" },
-            number("height", () => current().size[1], (v) => ({ size: [current().size[0], Math.max(0.1, v), current().size[2]] }), 0.5),
-            number("depth", () => current().size[2], (v) => ({ size: [current().size[0], current().size[1], Math.max(0.1, v)] }), 0.5),
+            number("height", () => current().size[1], (v) => ({ size: [current().size[0], Math.max(0.1, v), current().size[2]] }), 0.5, span),
+            number("depth", () => current().size[2], (v) => ({ size: [current().size[0], current().size[1], Math.max(0.1, v)] }), 0.5, span),
           )
         : null;
     const status = el("div", { class: "tf-roi-status" });
@@ -1335,6 +1526,7 @@ class TrackGroups {
         { class: "tf-roi-head" },
         el("span", { class: "label" }, `${roi.shape === "sphere" ? "Sphere" : "Box"} ${index + 1}`),
         op,
+        el("button", { class: "btn small", type: "button", title: "Apply the typed values", onclick: () => typed.forEach((apply) => apply()) }, "Set"),
         el("button", { class: "btn small", type: "button", title: "Move it to the centre of the views", onclick: () => this.updateRoi(group, roi.id, { center: this.viewCentre() }) }, "Here"),
         el("button", { class: "btn small", type: "button", title: "Go to it", onclick: () => this.ctx.viewer.setPosition([...current().center]) }, "Go"),
         el("button", { class: "btn small", type: "button", title: "Remove it", "aria-label": "Remove", onclick: () => this.removeRoi(group, roi.id) }, "×"),

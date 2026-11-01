@@ -143,6 +143,14 @@ export interface WorkspaceApi {
   selectedDataset(): DatasetInfo | undefined;
 
   onChanged(callback: () => void): Disposer;
+
+  /** Data opened from this computer (Add → Local), which plugins can write into. */
+  local: {
+    /** Whether a URL is under local data, and whether its folder can be written. */
+    locate(url: string): { writable: boolean } | undefined;
+    /** Writes a file at a URL under local data (asking to edit the folder the first time). */
+    write(url: string, data: Uint8Array | string): Promise<void>;
+  };
 }
 
 export interface ViewerApi {

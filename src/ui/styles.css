@@ -333,6 +333,7 @@ kbd {
 .ds-row:hover .btn.icon, .ds-row.selected .btn.icon { opacity: 1; }
 .ds-row.other { grid-template-columns: auto minmax(0, 1fr) auto auto; }
 .ds-row.other .sub { grid-column: 2 / -1; }
+.note-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px; margin-bottom: 8px; border: 1px solid var(--warn); color: var(--text); font-size: 12px; }
 .panel-actions { display: flex; justify-content: flex-end; gap: 6px; margin-bottom: 8px; }
 .ds-row.pick { grid-template-columns: auto minmax(0, 1fr) auto auto; }
 .ds-icon { display: inline-flex; color: var(--muted); }

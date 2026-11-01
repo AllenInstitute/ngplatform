@@ -13,9 +13,9 @@ export interface DataTypePlugin {
   neuroglancer: () => Promise<unknown>;
 }
 
-export async function loadDataTypePlugins(plugins: DataTypePlugin[]): Promise<void> {
+export async function loadDataTypePlugins(plugins: DataTypePlugin[], options: { revalidate?: boolean } = {}): Promise<void> {
   for (const plugin of plugins) await plugin.neuroglancer();
-  const name = workerName(plugins.map((p) => p.id));
+  const name = workerName(plugins.map((p) => p.id), options);
   setChunkWorkerFactory(() => new Worker(new URL("./workers/chunk_worker.ts", import.meta.url), { type: "module", name }));
   setAsyncComputationWorkerFactory(() => new Worker(new URL("./workers/async_worker.ts", import.meta.url), { type: "module", name }));
 }
