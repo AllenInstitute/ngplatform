@@ -83,3 +83,4 @@ export type { PerspectiveViewRenderContext } from "neuroglancer/unstable/perspec
 export { OffscreenTextures, setPerspectiveSectionClip } from "neuroglancer/unstable/perspective_view/panel.js";
 export { addPerspectivePanelToggle } from "neuroglancer/unstable/data_panel_layout.js";
 export { TrackableBoolean } from "neuroglancer/unstable/trackable_boolean.js";
+export { setScreenshotOverlay } from "neuroglancer/unstable/util/screenshot_manager.js";

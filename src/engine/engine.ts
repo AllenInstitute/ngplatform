@@ -23,6 +23,7 @@ import {
   makeMinimalViewer,
   ManagedUserLayer,
   SegmentationUserLayer,
+  setScreenshotOverlay,
   type SidePanelManager,
   StatisticsPanel,
   TrackableBoolean,
@@ -32,6 +33,23 @@ import {
 import { mountInspector } from "./inspector/index.js";
 
 export type Json = Record<string, unknown>;
+
+interface ProjectionLike {
+  viewProjectionMat: Float32Array;
+  displayDimensionRenderInfo: { displayDimensionIndices: Int32Array | number[] };
+}
+
+/** A view panel and where a point of the global space is in it. */
+export interface ViewPanel {
+  kind: "2d" | "3d";
+  element: HTMLElement;
+  /**
+   * Where a global position (all global dimensions) shows: CSS pixels from
+   * the panel's top left, and depth (-1..1 within the view; for a 2-D view,
+   * within its section's thickness).  Undefined behind the camera.
+   */
+  project(global: ArrayLike<number>): { x: number; y: number; depth: number } | undefined;
+}
 export type Disposer = () => void;
 
 export interface LayerInfo {
@@ -542,6 +560,46 @@ export class Engine {
     }
     group.temporaryVisibleSegments.add(ids);
     group.useTemporaryVisibleSegments.value = true;
+  }
+
+  /** The view panels shown now, 2-D and 3-D. */
+  panels(): ViewPanel[] {
+    const out: ViewPanel[] = [];
+    for (const panel of this.viewer.display.panels) {
+      const any = panel as unknown as {
+        element?: HTMLElement;
+        sliceView?: { projectionParameters: { value: ProjectionLike } };
+        projectionParameters?: { value: ProjectionLike };
+      };
+      const projection = any.sliceView?.projectionParameters.value ?? any.projectionParameters?.value;
+      const element = any.element;
+      if (projection?.viewProjectionMat === undefined || element === undefined || !element.isConnected) continue;
+      out.push({
+        kind: any.sliceView !== undefined ? "2d" : "3d",
+        element,
+        project: (global) => {
+          const p = any.sliceView?.projectionParameters.value ?? any.projectionParameters!.value;
+          const { displayDimensionIndices } = p.displayDimensionRenderInfo;
+          const d = [0, 1, 2].map((i) => (displayDimensionIndices[i] === -1 ? 0 : (global[displayDimensionIndices[i]] ?? 0)));
+          const m = p.viewProjectionMat;
+          const c = [0, 1, 2, 3].map((r) => m[r] * d[0] + m[4 + r] * d[1] + m[8 + r] * d[2] + m[12 + r]);
+          if (c[3] <= 0) return undefined;
+          const rect = element.getBoundingClientRect();
+          return { x: ((c[0] / c[3] + 1) / 2) * rect.width, y: ((1 - c[1] / c[3]) / 2) * rect.height, depth: c[2] / c[3] };
+        },
+      });
+    }
+    return out;
+  }
+
+  /** Calls back after each frame Neuroglancer draws. */
+  onRendered(callback: () => void): Disposer {
+    return this.viewer.display.updateFinished.add(callback);
+  }
+
+  /** Draws on top of Neuroglancer's screenshots (see the fork's screenshot_manager). */
+  setScreenshotOverlay(overlay: ((context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void) | undefined): void {
+    setScreenshotOverlay(overlay);
   }
 
   /** A plugin's drawing in the 3-D view, with the layer `name` (see ./draw3d.ts). */
