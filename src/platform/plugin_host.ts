@@ -62,6 +62,8 @@ export interface HostServices {
   keybindings: KeybindingTable;
   context: ContextKeys;
   docks: { addTab(tab: DockTabSpec): Disposer; show(id: string): void };
+  /** The view beside Neuroglancer's. */
+  views: { mount(render: (host: HTMLElement) => Disposer | void, owner: string): Disposer };
   examples: { add(example: ExampleSpec): Disposer };
   open: { addHandler(handler: OpenHandlerSpec): Disposer };
   ui: {
@@ -406,6 +408,7 @@ export class PluginHost {
           return own(() => entry.panels.delete(id));
         },
         showPanel: (id) => s.docks.show(id),
+        view: (render) => own(s.views.mount(render, owner)),
         toast: (message, kind) => s.ui.toast(message, kind),
         confirm: (message) => s.ui.confirm(message),
         form: (title, schema, initial) => s.ui.form(title, schema, initial),

@@ -55,18 +55,22 @@ const HCP_GROUPS = {
 export const EXAMPLES: ExampleSpec[] = [
   {
     id: "hcp1065",
-    title: "HCP-1065 whole brain, with track groups",
+    title: "HCP-1065 whole brain, with track groups, in BigBrain",
     description:
-      "The HCP-1065 population tractogram in MNI space: 503,085 streamlines, five levels. Three track groups (corpus callosum, left and right corticospinal tracts) are set up in the Filtering tab; the unfiltered view starts hidden.",
+      "The HCP-1065 population tractogram in MNI space: 503,085 streamlines, five levels. Three track groups (corpus callosum, left and right corticospinal tracts) are set up in the Filtering tab; the unfiltered view starts hidden. The volume view shows them in BigBrain (placed in MNI), cut open at the position.",
     remote: true,
     state: () => ({
       ng: {
         layers: [{ type: "auto", source: HCP1065 + "|zarr-vectors:", name: "HCP-1065", visible: false }],
         selectedLayer: { layer: "HCP-1065" },
         position: [0, -15, 10],
-        layout: "xy-3d",
+        layout: "xy",
       },
-      app: { trackFiltering: HCP_GROUPS },
+      app: {
+        trackFiltering: HCP_GROUPS,
+        // BigBrain in MNI in place of the 3-D panel (the volume view plugin).
+        volumeView: { version: 1, data: { on: true, preset: "bigbrain-mni", layout: "xy-3d" } },
+      },
     }),
   },
   {

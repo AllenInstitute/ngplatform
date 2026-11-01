@@ -61,6 +61,10 @@ export class Shell {
   private readonly undoButton = iconButton("undo", "Undo", () => this.wb.run("edit.undo"));
   private readonly redoButton = iconButton("redo", "Redo", () => this.wb.run("edit.redo"));
   private wb!: Workbench;
+  /** A plugin's view beside Neuroglancer's, and the divider between them. */
+  private readonly viewArea = h("div", { class: "engine-view", hidden: true });
+  private readonly viewSplit = h("div", { class: "engine-split", hidden: true, role: "separator", "aria-orientation": "vertical", title: "Drag to resize" });
+  private view: { owner: string; dispose: () => void } | undefined;
   private auth: AuthRegistry | undefined;
   private lastHashSeen = "";
 
@@ -105,7 +109,8 @@ export class Shell {
         h("kbd", {}, keyLabel("Mod+K")),
       ),
     );
-    const engine = h("section", { class: "engine", "aria-label": "Viewer" }, this.engineHost);
+    const engine = h("section", { class: "engine", "aria-label": "Viewer" }, this.engineHost, this.viewSplit, this.viewArea);
+    this.viewSplit.addEventListener("pointerdown", (e) => this.dragViewSplit(e, engine));
     const centre = h("div", { class: "centre" }, engine, this.statusStrip);
     const workspace = h(
       "div",
@@ -186,6 +191,7 @@ export class Shell {
       keybindings,
       context: this.context,
       docks: { addTab: (tab) => this.docks.addTab(tab), show: (id) => this.docks.show(id) },
+      views: { mount: (render, owner) => this.mountView(render, owner) },
       examples,
       open: openHandlers,
       ui: {
@@ -691,6 +697,56 @@ export class Shell {
       toast(message, "error");
       this.docks.show("plugins");
     }
+  }
+
+  // -------------------------------------------------------------- views
+
+  private mountView(render: (host: HTMLElement) => (() => void) | void, owner: string): () => void {
+    this.view?.dispose();
+    const host = h("div", { class: "engine-view-host" });
+    this.viewArea.replaceChildren(host);
+    this.viewArea.hidden = false;
+    this.viewSplit.hidden = false;
+    this.viewArea.style.flexBasis = `${prefs.get("viewShare") ?? "50"}%`;
+    let cleanup: (() => void) | void;
+    const mounted = {
+      owner,
+      dispose: () => {
+        if (this.view !== mounted) return;
+        this.view = undefined;
+        try {
+          cleanup?.();
+        } finally {
+          host.remove();
+          this.viewArea.hidden = true;
+          this.viewSplit.hidden = true;
+        }
+      },
+    };
+    this.view = mounted;
+    try {
+      cleanup = render(host);
+    } catch (e) {
+      mounted.dispose();
+      throw e;
+    }
+    return mounted.dispose;
+  }
+
+  private dragViewSplit(event: PointerEvent, engine: HTMLElement): void {
+    event.preventDefault();
+    const box = engine.getBoundingClientRect();
+    const move = (e: PointerEvent) => {
+      const share = Math.min(85, Math.max(15, (100 * (box.right - e.clientX)) / box.width));
+      this.viewArea.style.flexBasis = `${share}%`;
+      prefs.set("viewShare", share.toFixed(1));
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
   }
 
   // -------------------------------------------------------------- open

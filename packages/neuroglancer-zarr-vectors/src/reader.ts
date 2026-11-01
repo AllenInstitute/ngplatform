@@ -30,6 +30,10 @@ import { kvStoreAccess, openZarrVectorsStore } from "./store.js";
 export type { DenseChunkData, ZarrVectorsLevel, ZarrVectorsStore, ZarrVectorsStoreAccess };
 export { LevelPipeline, ObjectReader, openZarrVectorsStore, setVertexCellCacheBytes };
 export { storeUrlOfSource } from "./source_url.js";
+// Plain Zarr v3 arrays (sharded or not, any of Neuroglancer's codecs), for
+// tools that read other arrays beside a store, such as an image volume.
+export type { ZarrArray } from "./zarr_array.js";
+export { openZarrArray, ShardIndexCache, ZarrArrayReader } from "./zarr_array.js";
 
 /**
  * Store access over `fetch`, with byte ranges.  Listing is not offered

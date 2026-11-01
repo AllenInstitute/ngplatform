@@ -11,6 +11,8 @@
 | **Zarr Vectors** (data type plugin) | `packages/neuroglancer-zarr-vectors`: reads format 0.9.0 to 0.9.4, including 0.9.4's dense object index. Its Neuroglancer modules and worker code load only when it is on. A public `reader` entry for tools. Fixed: a byte range longer than 8 MiB (a large level-0 cell) was read short, from both ends. 177 tests against upstream Neuroglancer. |
 | **Example data** | HCP-1065 (public population tractogram) only, with three track groups. The HiP-CT samples (Ha1, Hb1, i74, I80) are not referenced by the app or bundled with it. |
 | **Track filtering** (tool plugin, requires Zarr Vectors) | TrackVis-style track groups: each group keeps the objects through its regions (spheres and boxes; AND, OR, NOT) with attributes in range, and is a layer of its own, in its own colour, switched on and off here or in the Datasets tab. One group is edited at a time; regions are annotations in the views (Alt-drag to move) kept in step with the panel. Region tests run in a worker on level 0, reading only the chunks a region touches; a coarse level previews while a region moves. |
+| **Volume view** (tool plugin) | In place of Neuroglancer's 3-D panel (its 2-D views stay): a solid brain ray-marched in WebGL2 from a coarse level held as one 3-D texture, the octant facing the camera cut away at the position, its three faces showing sections resampled from finer levels in a worker (coarse first, then sharper), and the visible track groups drawn through the cut, depth-tested against the brain. Reads OME-Zarr 0.4 to 0.6 (zarr v3, sharded), several stores merged by voxel size, placed through an image's coordinate transforms (BigBrain's linear affine to MNI). Default: BigBrain (your OME-Zarr release on the BigBrain FTP) under HCP-1065. Structure after Open the Mind (BigBrain Hackathon 2026), reimplemented client-side; none of its code is used (it is CC BY-NC). **Shaders not compiled here** (no browser; the sandbox would not run glslang): the view says so in its status line if they fail. |
+| **Auth** | A left-dock tab: services the workspace needs a sign-in for, with who is signed in; middleauth built in (tokens kept where Neuroglancer keeps them); plugins add providers. |
 | **Neuroglancer** | google/neuroglancer `master` (c8c4d139, 2026-10-28) plus four commits on `Andrew-Keenlyside/neuroglancer` branch `ngplatform-upstream`: (1) application-supplied workers, (2) host-owned side panels, (3) incremental layer restore, (4) a fix so `https://storage.googleapis.com` URLs can be listed (GCS answers with an XML namespace upstream rejected; without it a zarr-vectors store over https has no segment properties). |
 | **Filter oracle and engines, step C0** | Done, in `zarr-vectors-tools`, parked as patches in [`pending/zarr-vectors-tools/`](pending/zarr-vectors-tools/). |
 | **Gate G1** | Measured; see [`docs/editor_repo_plan.md`](docs/editor_repo_plan.md) §5. |
@@ -67,12 +69,21 @@ rows, 16 chunks at a time, and stitches each streamline in walk order:
 Reading the same 10,000 one object at a time took about five minutes (33
 objects a second), which is what the bulk read replaces.
 
+## The volume view on BigBrain, measured (Node, from this machine)
+
+BigBrain's levels in MNI are 1.32, 0.53, 0.26 and 0.13 mm (its linear
+affine scales the histology by about 1.3). The solid is the 0.53 mm level
+(9 MB compressed, 329 × 286 × 371): 3.8–7 s in Node with the pure-JS zstd
+decoder (browsers decode with WebAssembly). A 0.26 mm section across the
+brain is about 40 of the 200 µm store's 128³ chunks (6.5–9 s cold in Node;
+nearby positions reuse them). 0.13 mm sections are about 50 MB a face.
+
 ## How it is checked
 
-- `npm test`: 92 unit tests (workspace model, store with a fake engine,
+- `npm test`: 97 unit tests (workspace model, store with a fake engine,
   commands with arguments, key bindings, `when` clauses, schemas, state
   slices, plugin host and switches, the catalogue, the filter computation,
-  region geometry, track-group logic, .trk files, sign-in,
+  region geometry, track-group logic, .trk files, sign-in, OME-Zarr transforms (against BigBrain's metadata),
   state parsing, undo history), then the Zarr Vectors plugin's 182 tests
   (codecs, layouts including 0.9.4's dense index, pyramids, meshes, objects,
   worker imports) against upstream Neuroglancer.

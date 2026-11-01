@@ -193,6 +193,12 @@ export interface PlatformContext {
     /** Renders a panel declared in the manifest; return a disposer for cleanup. */
     panel(id: string, render: (host: HTMLElement) => Disposer | void): Disposer;
     showPanel(id: string): void;
+    /**
+     * Shows a view beside Neuroglancer's (where its 3-D panel would be),
+     * until the disposer is called.  One view at a time: a new one replaces
+     * the last.
+     */
+    view(render: (host: HTMLElement) => Disposer | void): Disposer;
     toast(message: string, kind?: "info" | "error"): void;
     confirm(message: string): Promise<boolean>;
     /** A dialog generated from a schema; resolves undefined on cancel. */

@@ -10,7 +10,11 @@ Managing data happens around it: **Datasets** and **Scenes** on the left,
 the selected dataset's **Layer** controls (Neuroglancer's own tabs) on the
 right, settings, screenshots and the keyboard reference in the top bar.
 Plugins add tabs on the left and formats to the viewer, and are switched on
-and off in the **Plugins** tab.
+and off in the **Plugins** tab. Built in: **Zarr Vectors** (a format),
+**Track filtering** (TrackVis-style track groups, saved as `.trk`) and the
+**Volume view** (a solid brain from an OME-Zarr pyramid in place of the 3-D
+panel, cut open at the position, with sections and the track groups). Data
+behind a sign-in is handled in the **Auth** tab.
 
 Where things stand, and what comes next: [`STATUS.md`](STATUS.md). Writing a
 plugin: [`docs/plugins.md`](docs/plugins.md). The plan:
@@ -18,10 +22,10 @@ plugin: [`docs/plugins.md`](docs/plugins.md). The plan:
 the `gh-pages` branch: https://andrew-keenlyside.github.io/ngplatform/ (and
 review builds under `/preview/`).
 
-It builds against google/neuroglancer `master` plus three small embedding
-changes proposed upstream (`Andrew-Keenlyside/neuroglancer`, branch
-`ngplatform-upstream`): workers an application can supply, side panels it
-can host, and incremental layer restore. Zarr Vectors support is not in
+It builds against google/neuroglancer `master` plus four small changes on
+`Andrew-Keenlyside/neuroglancer`, branch `ngplatform-upstream`: workers an
+application can supply, side panels it can host, incremental layer restore,
+and listing `https://storage.googleapis.com` URLs (a namespace fix). Zarr Vectors support is not in
 Neuroglancer: it is a Neuroglancer plugin,
 [`packages/neuroglancer-zarr-vectors`](packages/neuroglancer-zarr-vectors/),
 which any application embedding Neuroglancer can add, and which the
@@ -73,7 +77,7 @@ draw Neuroglancer's views, so the checks that need drawing are skipped.
 | `src/platform/` | Services: the workspace store, the plugin host, jobs, registries |
 | `src/sdk/` | The plugin API: `PlatformContext` and the manifest |
 | `src/ui/` | The shell, docks, panels, dialogs and styles |
-| `src/plugins/` | The plugin catalogue, and the Track filtering tool plugin |
+| `src/plugins/` | The plugin catalogue, and the Track filtering and Volume view tool plugins |
 | `src/builtins/` | Built-in examples |
 | `e2e/smoke.mjs` | Browser smoke test |
 
@@ -81,5 +85,7 @@ draw Neuroglancer's views, so the checks that need drawing are skipped.
 
 - The fork's zarr-vectors reader finds no `zarr.json` through `gs://` URLs.
   Use `https://storage.googleapis.com/...`.
-- Over `https://storage.googleapis.com/`, one listing probe is refused
-  cross-origin and logs a console error. The layer loads regardless.
+- Over `https://storage.googleapis.com/`, one listing probe (an HTML
+  directory listing) is refused cross-origin and logs a console error; the
+  S3-style listing then works.
+- The volume view reads uint8 images only, and zarr v3 (OME-Zarr 0.5, 0.6).

@@ -133,6 +133,7 @@ it is deactivated. Subscriptions a plugin makes itself go in
 |---|---|
 | `commands.register / invoke` | Supply declared commands; call any command with arguments (validated against the declared schema, defaults filled in). |
 | `ui.panel / showPanel` | Render declared panels; return a disposer for cleanup. |
+| `ui.view` | Show a view beside Neuroglancer's, where its 3-D panel would be (the volume view uses it); one at a time, with a draggable divider. |
 | `ui.toast / confirm / form` | Messages, confirmation, and a dialog generated from a schema. |
 | `workspace` | Scenes, datasets, layers and the selection; add datasets and derived layers, remove layers. |
 | `viewer` | The active scene's Neuroglancer state as JSON (`patchState` applies only what changed, as one undo step), layers, the pointer, the position, a segmentation layer's segment properties, and a temporary set of visible segments (not saved in the link). |

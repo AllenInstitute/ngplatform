@@ -7,6 +7,7 @@
  */
 import type { Manifest, PluginModule } from "../sdk/types.js";
 import { TRACK_FILTERING_MANIFEST } from "./track_filtering/manifest.js";
+import { VOLUME_VIEW_MANIFEST } from "./volume_view/manifest.js";
 
 export interface CatalogueEntry {
   manifest: Manifest;
@@ -30,4 +31,5 @@ export const ZARR_VECTORS_MANIFEST: Manifest = {
 export const CATALOGUE: CatalogueEntry[] = [
   { manifest: ZARR_VECTORS_MANIFEST, neuroglancer: () => import("neuroglancer-zarr-vectors") },
   { manifest: TRACK_FILTERING_MANIFEST, load: async () => (await import("./track_filtering/plugin.js")).plugin },
+  { manifest: VOLUME_VIEW_MANIFEST, load: async () => (await import("./volume_view/plugin.js")).plugin },
 ];

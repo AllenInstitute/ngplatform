@@ -1,0 +1,136 @@
+{
+  "attributes": {
+    "ome": {
+      "version": "0.6",
+      "multiscales": [
+        {
+          "name": "BigBrain2015_coronal_400um",
+          "coordinateSystems": [
+            {
+              "name": "physical",
+              "axes": [
+                {
+                  "name": "z",
+                  "type": "space",
+                  "unit": "micrometer"
+                },
+                {
+                  "name": "y",
+                  "type": "space",
+                  "unit": "micrometer"
+                },
+                {
+                  "name": "x",
+                  "type": "space",
+                  "unit": "micrometer"
+                }
+              ]
+            },
+            {
+              "name": "MNI152NLin2009bAsym",
+              "axes": [
+                {
+                  "name": "z",
+                  "type": "space",
+                  "unit": "micrometer"
+                },
+                {
+                  "name": "y",
+                  "type": "space",
+                  "unit": "micrometer"
+                },
+                {
+                  "name": "x",
+                  "type": "space",
+                  "unit": "micrometer"
+                }
+              ]
+            }
+          ],
+          "datasets": [
+            {
+              "path": "0",
+              "coordinateTransformations": [
+                {
+                  "type": "sequence",
+                  "input": {
+                    "path": "0"
+                  },
+                  "output": {
+                    "name": "physical"
+                  },
+                  "transformations": [
+                    {
+                      "type": "scale",
+                      "scale": [
+                        400.0,
+                        400.0,
+                        400.0
+                      ]
+                    },
+                    {
+                      "type": "translation",
+                      "translation": [
+                        190.0,
+                        190.0,
+                        190.0
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "type": "mean",
+          "metadata": {
+            "description": "1-level mean pyramid written by BRIDGE",
+            "codec": "zstd",
+            "mni_linear": {
+              "system": "MNI152NLin2009bAsym",
+              "template": "MNI ICBM152 2009b nonlinear asymmetric (hires 0.5 mm T1, masked)",
+              "axes": "z, y, x = MNI S, A, R in micrometres (MNI mm x 1000)",
+              "chain": "store physical (zyx um: section, row, column) -> approximate histological RAS (signed permutation + offset from matching the stack to full16_400/100um_optbal) -> FireANTs MI affine of the stack's own 500 um version to MNI 2009b asym (moments, rigid, affine)",
+              "checks": {
+                "check_corr_vs_3d_release_route_500um": 0.2825,
+                "check_dice_vs_mni_mask": 0.8873
+              }
+            }
+          },
+          "coordinateTransformations": [
+            {
+              "type": "affine",
+              "affine": [
+                [
+                  0.04968906704042479,
+                  -1.4913379301226666,
+                  -0.081127503408894,
+                  92049.07610819691
+                ],
+                [
+                  1.2446300369464327,
+                  0.10027772639425456,
+                  0.0041544909619067386,
+                  -115548.7417750402
+                ],
+                [
+                  0.004634803769063957,
+                  -0.26015412217659845,
+                  1.1877180161983774,
+                  -64099.19882331918
+                ]
+              ],
+              "input": {
+                "name": "physical"
+              },
+              "output": {
+                "name": "MNI152NLin2009bAsym"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

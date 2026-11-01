@@ -83,8 +83,16 @@ await page.waitForTimeout(500);
 check((await layers())[0].visible === false, "the row's checkbox hides the dataset");
 await page.locator(".datasets .ds-row .vis").first().check();
 
+// The volume view, in place of the 3-D panel: BigBrain, cut open, with the groups.
+await page.waitForTimeout(6000);
+check((await page.locator(".vv-host canvas").count()) === 1, "volume view shown in place of the 3-D panel");
+const volumeStatus = (await page.locator(".vv-status").textContent()) ?? "";
+check(!/Cannot draw|Could not|shader|program/.test(volumeStatus), `volume view draws (${volumeStatus})`);
+await page.screenshot({ path: `${shots}/1b-volume.png` });
+
 // Palette: change the layout, then undo it, with no data requests.
 await page.waitForTimeout(1500);
+const layoutBefore = await page.evaluate(() => window.engine.layout());
 dataRequests = 0;
 await page.keyboard.press("Control+k");
 await page.locator("#palette-input").fill("layout 3d");
@@ -95,7 +103,7 @@ await page.screenshot({ path: `${shots}/2-3d.png` });
 await page.locator(".brand").click(); // focus the page, not an input
 await page.keyboard.press("Control+z");
 await page.waitForTimeout(1500);
-check(await page.evaluate(() => window.engine.layout() === "xy-3d"), "undo restored the layout");
+check((await page.evaluate(() => window.engine.layout())) === layoutBefore, "undo restored the layout");
 check(dataRequests === 0, `layout change and undo made no data requests (${dataRequests})`);
 
 // Scenes: a new empty scene, the dataset added from the workspace, and back.

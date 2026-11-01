@@ -29,6 +29,7 @@ function services() {
       },
       show: () => {},
     },
+    views: { mount: () => () => {} },
     examples: new ExampleRegistry(),
     open: new OpenHandlerRegistry(),
     ui: { toast: (m) => logs.push(`toast: ${m}`), confirm: async () => true, form: async () => undefined },

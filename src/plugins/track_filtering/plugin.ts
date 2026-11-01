@@ -23,7 +23,23 @@ import { computeMask, countPassing, emptyFilter, type FilterSpec, histogram, isE
 import { FILTERING_PANEL } from "./manifest.js";
 import { groupMask, type Roi, type RoiOp, type RoiShape, rowIndex, rowMask } from "./roi.js";
 import { type Dimensions, previewLevel, RoiEngine, type RoiResult, type StoreInfo, toStore } from "./roi_client.js";
-import { fileName, trkSpace, writeTrk } from "./trk.js";
+import { fileName, millimetres, trkSpace, writeTrk } from "./trk.js";
+
+/**
+ * What other plugins (the volume view) see of the track groups:
+ * `trackFiltering.groups`.
+ */
+export interface TrackGroupsService {
+  /** The groups of the dataset being filtered; `version` changes when a group's answer does. */
+  list(): { id: string; name: string; colour: string; visible: boolean; count: number; exact: boolean; version: number }[];
+  onChanged(callback: () => void): Disposer;
+  /**
+   * A group's streamlines, whole, in RAS millimetres: from level 0 when that
+   * is at most about `maxPoints` points, else from the finest sample level
+   * that is.
+   */
+  curves(id: string, maxPoints: number, signal?: AbortSignal): Promise<{ positions: Float32Array; offsets: Uint32Array; level: number; streamlines: number }>;
+}
 
 export interface Group {
   id: string;
@@ -222,6 +238,12 @@ class TrackGroups {
   private waiting = false;
   /** Groups whose layer is being made (making one refreshes the workspace, which asks again). */
   private creating = new Set<string>();
+  /** Bumped when a group's answer changes, for the service's listeners. */
+  private versions = new Map<string, number>();
+  private serviceListeners = new Set<() => void>();
+  private notifyQueued = false;
+  /** Curves already read for the service: by group, version and level. */
+  private curveCache = new Map<string, Promise<{ positions: Float32Array; offsets: Uint32Array; level: number; streamlines: number }>>();
   /** The .trk save in progress, if any. */
   private saving: { groupId: string; done: number; total: number; controller: AbortController } | undefined;
   /** Level saved from: 0 is every streamline. */
@@ -246,6 +268,7 @@ class TrackGroups {
         this.refresh();
       }),
       ctx.workspace.onChanged(() => this.refresh()),
+      ctx.viewer.onLayersChanged(() => this.notify()),
       ctx.viewer.onStateChanged(() => this.readAnnotations()),
     );
     this.refresh();
@@ -265,6 +288,7 @@ class TrackGroups {
   /** Saves now: one undo step. */
   private save(patch: Partial<Saved> = {}): void {
     this.saved = { ...this.saved, ...patch };
+    this.notify();
     if (this.commitTimer !== undefined) clearTimeout(this.commitTimer);
     this.commitTimer = undefined;
     this.write();
@@ -805,6 +829,8 @@ class TrackGroups {
 
   private setResult(group: Group, result: GroupResult): void {
     this.results.set(group.id, result);
+    this.versions.set(group.id, (this.versions.get(group.id) ?? 0) + 1);
+    this.notify();
     this.show(group);
     for (const update of this.updaters) update();
   }
@@ -898,6 +924,71 @@ class TrackGroups {
 
   private updateAll(): void {
     for (const update of this.updaters) update();
+  }
+
+  // ----------------------------------------------------------- service
+
+  /** Tells the service's listeners, once per turn however many changes. */
+  private notify(): void {
+    if (this.notifyQueued || this.serviceListeners.size === 0) return;
+    this.notifyQueued = true;
+    queueMicrotask(() => {
+      this.notifyQueued = false;
+      for (const listener of [...this.serviceListeners]) listener();
+    });
+  }
+
+  service(): TrackGroupsService {
+    return {
+      list: () =>
+        this.saved.groups.map((g) => {
+          const r = this.results.get(g.id);
+          return {
+            id: g.id,
+            name: g.name,
+            colour: g.colour,
+            visible: this.layerInfo(g.layer)?.visible === true,
+            count: r?.count ?? 0,
+            exact: r?.state === "exact",
+            version: this.versions.get(g.id) ?? 0,
+          };
+        }),
+      onChanged: (callback) => {
+        this.serviceListeners.add(callback);
+        return () => this.serviceListeners.delete(callback);
+      },
+      curves: (id, maxPoints, signal) => this.groupCurves(id, maxPoints, signal),
+    };
+  }
+
+  private groupCurves(id: string, maxPoints: number, signal?: AbortSignal) {
+    const { props, engine, info } = this;
+    const mask = this.results.get(id)?.mask;
+    if (props === undefined || engine === undefined || info === undefined || mask === undefined) return Promise.reject(new Error("the group has no answer yet"));
+    const ids = passingIds(props, mask);
+    // Points at a level: its share of the streamlines, at the store's mean length.
+    const total = info.levels[0].vertexCount ?? 0;
+    const perObject = total / Math.max(1, props.ids.length);
+    const estimate = (l: StoreInfo["levels"][number]) => ids.length * perObject * ((l.vertexCount ?? total) / Math.max(1, total));
+    const level = info.levels.find((l) => estimate(l) <= maxPoints)?.index ?? info.levels[info.levels.length - 1].index;
+    const key = `${id}|${this.versions.get(id) ?? 0}|${level}`;
+    let pending = this.curveCache.get(key);
+    if (pending === undefined) {
+      const scale = millimetres(info);
+      const offset = info.coordinateOffset ?? [0, 0, 0];
+      pending = engine.curves(ids, level, undefined, signal).then((c) => {
+        const positions = new Float32Array(c.positions.length);
+        for (let i = 0; i < positions.length; i += 3) {
+          for (let k = 0; k < 3; ++k) positions[i + k] = (c.positions[i + k] + (offset[k] ?? 0)) * scale[k];
+        }
+        return { positions, offsets: c.offsets, level, streamlines: c.ids.length };
+      });
+      pending.catch(() => this.curveCache.delete(key));
+      this.curveCache.set(key, pending);
+      // A few groups' worth.
+      while (this.curveCache.size > 12) this.curveCache.delete(this.curveCache.keys().next().value!);
+    }
+    return pending;
   }
 
   addSphere(): void {
@@ -1284,5 +1375,6 @@ export const plugin: PluginModule = {
     ctx.commands.register("trackFiltering.addBox", () => groups.addBox());
     ctx.commands.register("trackFiltering.exportCsv", () => groups.exportCsv());
     ctx.commands.register("trackFiltering.saveTrk", () => void groups.saveTrk());
+    ctx.subscriptions.push(ctx.services.provide("trackFiltering.groups", groups.service()));
   },
 };

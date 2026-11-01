@@ -177,6 +177,11 @@ kbd {
    so the host is sized by layout (flex), never by offsets. */
 .engine { position: relative; display: flex; min-width: 0; min-height: 0; background: #000; overflow: hidden; }
 .engine-host { flex: 1 1 auto; min-width: 0; min-height: 0; }
+.engine-view { flex: 0 0 50%; min-width: 0; min-height: 0; position: relative; display: flex; }
+.engine-view[hidden], .engine-split[hidden] { display: none; }
+.engine-view-host { flex: 1; position: relative; min-width: 0; }
+.engine-split { flex: 0 0 5px; cursor: col-resize; background: var(--line); }
+.engine-split:hover { background: var(--accent); }
 
 /* Neuroglancer's status messages, below the views. */
 .ng-status { position: relative; background: var(--ink-1); }
