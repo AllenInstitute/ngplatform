@@ -6,28 +6,28 @@
 
 | Piece | State |
 |---|---|
-| **The platform GUI** (0.3) | The viewer is for looking: views, position (top left) and each panel's layout buttons (top right), as standard Neuroglancer. Datasets and Scenes on the left; the selected dataset's Layer inspector on the right, the platform's own (Source, Render, Segments, Annotations, Schema), built from Neuroglancer's layer models, with Neuroglancer's shader editor and histogram editors as components; settings, screenshot and keyboard reference in the top bar (still Neuroglancer's panels). Checked in headless Chrome (SwiftShader). |
-| **Plugins** | Built into the app, one folder each in `plugins/`, listed in `plugins/index.ts`, switched on and off in the Plugins tab (reloads with the same link). Two kinds: *data type* (a format) and *tool* (a left-dock tab). Requirements between plugins are enforced. See `docs/plugins.md`. |
-| **Zarr Vectors** (data type plugin) | `plugins/zarr-vectors` (the `neuroglancer-zarr-vectors` package): reads format 0.9.0 to 0.9.4, including 0.9.4's dense object index. Its Neuroglancer modules and worker code load only when it is on. A public `reader` entry for tools. Fixed: a byte range longer than 8 MiB (a large level-0 cell) was read short, from both ends. 177 tests against upstream Neuroglancer. |
-| **Example data** | HCP-1065 (public population tractogram) only, with three track groups. The HiP-CT samples (Ha1, Hb1, i74, I80) are not referenced by the app or bundled with it. |
-| **Track filtering** (tool plugin, requires Zarr Vectors) | TrackVis-style track groups: each group keeps the objects through its regions (spheres and boxes; AND, OR, NOT) with attributes in range, and is a layer of its own, in its own colour, switched on and off here or in the Datasets tab. One group is edited at a time; regions are annotations in the views (Alt-drag to move) kept in step with the panel. Region tests run in a worker on level 0, reading only the chunks a region touches; a coarse level previews while a region moves. |
-| **Volume view** (tool plugin) | In place of Neuroglancer's 3-D panel (its 2-D views stay): a solid brain ray-marched in WebGL2 from a coarse level held as one 3-D texture, the octant facing the camera cut away at the position, its three faces showing sections resampled from finer levels in a worker (coarse first, then sharper), and the visible track groups drawn through the cut, depth-tested against the brain. Reads OME-Zarr 0.4 to 0.6 (zarr v3, sharded), several stores merged by voxel size, placed through an image's coordinate transforms (BigBrain's linear affine to MNI). Tissue is told from background by the volume's border (pale for BigBrain's stain, dark for an MRI); the cut faces stretch the tissue's own range of values. Volumes: BigBrain (your OME-Zarr release on the BigBrain FTP; the default) or the MNI ICBM152 2009a T1w template, brain only, 1 mm (the space HCP-1065 is in; converted from TemplateFlow and served from this site's `data/`, since TemplateFlow's bucket sends no CORS headers). Structure after Open the Mind (BigBrain Hackathon 2026), reimplemented client-side; none of its code is used (it is CC BY-NC). **Drawn and screenshotted in headless Chrome** (SwiftShader's software WebGL2) with the HCP-1065 track groups; not yet on a real GPU. |
-| **Auth** | A left-dock tab: services the workspace needs a sign-in for, with who is signed in; middleauth built in (tokens kept where Neuroglancer keeps them); plugins add providers. |
-| **Neuroglancer** | google/neuroglancer `master` (c8c4d139, 2026-10-28) plus four commits on `Andrew-Keenlyside/neuroglancer` branch `ngplatform-upstream`: (1) application-supplied workers, (2) host-owned side panels, (3) incremental layer restore, (4) a fix so `https://storage.googleapis.com` URLs can be listed (GCS answers with an XML namespace upstream rejected; without it a zarr-vectors store over https has no segment properties). |
-| **Filter oracle and engines, step C0** | Done, in `zarr-vectors-tools`: committed on its working branch `feat/additive-pyramids` (local, not yet pushed). |
-| **Gate G1** | Measured; see [`docs/editor_repo_plan.md`](docs/editor_repo_plan.md) §5. |
+| **The platform GUI** | Neuroglancer's views with its position and panel controls, as standard Neuroglancer. Scenes are tabs in the top bar (close, rename, reorder); Datasets on the left (Add: a URL, data on this computer, or a new annotation layer); the selected layer's inspector on the right, the platform's own (Source, Render, Segments, Annotations, Schema) with Neuroglancer's shader and histogram editors as components. Share copies links or opens the scene in Neuroglancer itself (Google's, or this site's plain `neuroglancer.html` when the scene uses a plugin's format). A Python console (Pyodide) with `ngp`, the workspace. Settings menu: view settings, reload layers, hard reset (every file checked with its server). |
+| **Data on this computer** | Add → Local: a folder (OME-Zarr, zarr-vectors, precomputed, or a folder of them) or a NIfTI file, read in place through a service worker (`public/local-sw.js`) that asks the page for each file, ranges and all. Remembered in Chrome and Edge; links to it work in that browser while the tab is open. |
+| **Plugins** | One folder each in `plugins/`, listed in `plugins/index.ts`; a one-line description and a Read more guide each in the Plugins tab. Plugins from this computer (a JavaScript tool module, or a Python file run in the console's Python) load and reload there. See `plugins/README.md`. |
+| **Zarr Vectors** (data type, on) | Reads format 0.9.0 to 0.9.4 into a segmentation layer: points, streamlines, skeletons, graphs, meshes. |
+| **Track filtering** (tool, on) | TrackVis-style groups over any zarr-vectors store; regions are sliders; `.trk` saved in batches straight to the file; groups written into a local store's own `groups` (read back by zarr-vectors-py and shown by the viewer as tags). |
+| **Volume rendering** (tool, off) | "Volume" beside "Sections" in Neuroglancer's 3-D panel: an OME-Zarr image drawn as a solid in the same view (the `draw3d` hook), depth-tested with tracts and annotations, the octant facing the camera cut away and Neuroglancer's sections shown on its faces. In screenshots, being in Neuroglancer's canvas. |
+| **Labels** (tool, on) | Labels pinned to points, track groups or annotations; beside the pin or lined up at the view's sides with leader lines; 2-D, 3-D or both; dragged and resized in the views; painted into screenshots. |
+| **Registration** (tool, off) | Landmark pairs (Alt+F, Alt+M) fitted as translation, rigid, similarity or affine, with residuals; applied as the layer's transform; plain 4 × 4, ITK / ANTs and LTA files in and out. |
+| **Examples** | HCP-1065 on the MNI152 2009a template (the default; the template served from this site's `data/`), and MICrONS minnie65 (EM and v1300 segmentation). The HiP-CT samples (Ha1, Hb1, i74, I80) are not referenced by the app or bundled with it. |
+| **Neuroglancer** | google/neuroglancer `master` plus commits on `Andrew-Keenlyside/neuroglancer` branch `ngplatform-upstream`: application-supplied workers, host-owned side panels, incremental layer restore, GCS listing, a one-byte GET where a bucket's CORS blocks HEAD (without it no chunk of the HCP store loaded), switches beside Sections and sections clipped to a box, a screenshot overlay, and resolution histograms across the width (greyed while hidden). |
+| **Filter oracle and engines, step C0** | In `zarr-vectors-tools`, on its branch `working`. |
 
 ## Scenes, datasets and the link
 
 - The **link** in the address bar is the whole workspace: every scene and
   every dataset. It is also a plain Neuroglancer link to the scene on show.
 - A **scene** is one view of the data: which datasets, drawn how, from
-  where, in what layout. Scene tabs sit in the top bar; the Scenes tab
-  manages them.
+  where, in what layout. Scenes are the tabs in the top bar.
 - A **dataset** is a piece of data, matched to layers by its source URL. It
   belongs to the workspace, so any scene can show it.
 - A **layer** is one way a scene shows a dataset; a dataset can have several
-  (Track filtering adds one for its result).
+  (Track filtering adds one for each group).
 
 ## Track filtering on HCP-1065, measured
 
@@ -69,30 +69,23 @@ rows, 16 chunks at a time, and stitches each streamline in walk order:
 Reading the same 10,000 one object at a time took about five minutes (33
 objects a second), which is what the bulk read replaces.
 
-## The volume view on BigBrain, measured (Node, from this machine)
-
-BigBrain's levels in MNI are 1.32, 0.53, 0.26 and 0.13 mm (its linear
-affine scales the histology by about 1.3). The solid is the 0.53 mm level
-(9 MB compressed, 329 × 286 × 371): 3.8–7 s in Node with the pure-JS zstd
-decoder (browsers decode with WebAssembly). A 0.26 mm section across the
-brain is about 40 of the 200 µm store's 128³ chunks (6.5–9 s cold in Node;
-nearby positions reuse them). 0.13 mm sections are about 50 MB a face.
-
 ## How it is checked
 
-- `npm test`: 99 unit tests (workspace model, store with a fake engine,
+- `npm test`: 120 unit tests (workspace model, store with a fake engine,
   commands with arguments, key bindings, `when` clauses, schemas, state
   slices, plugin host and switches, the catalogue, the filter computation,
-  region geometry, track-group logic, .trk files, sign-in, OME-Zarr transforms (against BigBrain's metadata), tissue and background,
-  state parsing, undo history), then the Zarr Vectors plugin's 182 tests
+  region geometry, track-group logic, .trk files, groups written into a
+  store, sign-in, OME-Zarr transforms, tissue and background, the volume's
+  display coordinates, label layout, registration fits and transform
+  files, state parsing, undo history), then the Zarr Vectors plugin's tests
   (codecs, layouts including 0.9.4's dense index, pyramids, meshes, objects,
   worker imports) against upstream Neuroglancer.
 - `npm run typecheck`: the app and the plugin, with Neuroglancer's sources.
 - `npm run e2e` (`tests/e2e/smoke.mjs`): the GUI in headless Chrome, including checks that
   the views fill their area, that only the position and panel controls show
-  inside them, that the volume view draws, that undo makes no data
-  requests, that the track groups get exact counts, and that a phone-width
-  window does not scroll sideways. All 20 checks pass (2026-11-01, Chrome
+  inside them, the inspector's tabs, that undo makes no data requests,
+  scene tabs, that the track groups get exact counts, and that a
+  phone-width window does not scroll sideways. All pass (2026-11-01, Chrome
   with SwiftShader: `CHROME=/usr/bin/google-chrome SWIFTSHADER=1`). Where
   NVIDIA's driver is installed but the GPU cannot be opened (this build
   sandbox), the script points Chrome's Vulkan loader at its own SwiftShader;

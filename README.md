@@ -34,6 +34,10 @@ plugins/
 4. `npm test` checks the manifest and the entries; the **Plugins** tab
    switches it on and off.
 
+To try one without building, the Plugins tab's **Add** loads a
+JavaScript module or a Python file from your computer, and reloads it after
+each edit.
+
 The full guide, with the manifest, the `ctx` API and examples:
 [`plugins/README.md`](plugins/README.md).
 

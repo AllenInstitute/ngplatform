@@ -38,6 +38,19 @@ plugins/
    entry), `npm run typecheck`, `npm run e2e` against a build. A plugin with
    its own `package.json` (as `zarr-vectors/`) can also run its own tests, as
    the root `npm test` does for zarr-vectors.
+5. **Describe it**: `description` is one sentence (the Plugins tab shows
+   it); `guide` is a short user guide in Markdown (`##` headings, lists,
+   `` `code` ``, links) and `links` its repositories and papers, both
+   shown behind **Read more**.
+
+### Trying a plugin without building the app
+
+The Plugins tab's **Add** loads a plugin from this computer: a JavaScript
+module (one file, bundled) exporting `manifest` (a tool) and `plugin`, or a
+folder with `manifest.json` and the module it names as `main`; or a Python
+file, run in the Python tab's interpreter, where `@ngp.command("Title")`
+adds a function to the command palette. **Reload** reads it again after an
+edit. In Chrome and Edge the file is remembered between visits.
 
 Owning a plugin is owning its folder: another team can amend or replace one
 without touching the platform or the other plugins, and review stays inside
@@ -172,10 +185,13 @@ it is deactivated. Subscriptions a plugin makes itself go in
 |---|---|
 | `commands.register / invoke` | Supply declared commands; call any command with arguments (validated against the declared schema, defaults filled in). |
 | `ui.panel / showPanel` | Render declared panels; return a disposer for cleanup. |
-| `ui.view` | Show a view beside Neuroglancer's, where its 3-D panel would be (the volume view uses it); one at a time, with a draggable divider. |
+| `ui.view` | Show a view beside Neuroglancer's, where its 3-D panel would be; one at a time, with a draggable divider. |
+| `ui.viewToggle` | A switch beside "Sections" in the 3-D panel (volume rendering's "Volume"). |
+| `ui.overlay / screenshotOverlay` | An element over the views, and painting into Neuroglancer's screenshots (labels use both). |
 | `ui.toast / confirm / form` | Messages, confirmation, and a dialog generated from a schema. |
 | `workspace` | Scenes, datasets, layers and the selection; add datasets and derived layers, remove layers. |
-| `viewer` | The active scene's Neuroglancer state as JSON (`patchState` applies only what changed, as one undo step), layers, the pointer, the position, a segmentation layer's segment properties, and a temporary set of visible segments (not saved in the link). |
+| `viewer` | The active scene's Neuroglancer state as JSON (`patchState` applies only what changed, as one undo step), layers, the pointer, the position, a segmentation layer's segment properties, and a temporary set of visible segments (not saved in the link). `draw3d` draws in the 3-D view with a layer (raw WebGL2, Neuroglancer's camera and depth; volume rendering uses it); `panels` and `onRendered` place things over the views; `layerTransform` and `setLayerTransform` read and set a layer's transform (registration). |
+| `workspace.local` | Files of data opened from this computer: whether a URL is one, and writing into it (track filtering saves groups this way). |
 | `state` | The plugin's slice of the workspace state: in the link, undoable, versioned. |
 | `settings` | Per-user settings kept in this browser, never in the link. |
 | `jobs.run` | Long work with progress and cancel, shown in the Jobs tab. |
