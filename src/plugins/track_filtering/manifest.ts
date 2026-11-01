@@ -7,7 +7,7 @@ export const FILTERING_STATE_KEY = "trackFiltering";
 export const TRACK_FILTERING_MANIFEST: Manifest = {
   id: "org.ngplatform.track-filtering",
   name: "Track filtering",
-  version: "0.2.0",
+  version: "0.3.0",
   kind: "tool",
   enabledByDefault: true,
   description:
@@ -23,6 +23,7 @@ export const TRACK_FILTERING_MANIFEST: Manifest = {
       { id: "trackFiltering.addSphere", title: "Add a sphere region to the group being edited", group: "Filtering" },
       { id: "trackFiltering.addBox", title: "Add a box region to the group being edited", group: "Filtering" },
       { id: "trackFiltering.exportCsv", title: "Export the edited group's objects as CSV", group: "Filtering" },
+      { id: "trackFiltering.saveTrk", title: "Save the edited group's streamlines as .trk", group: "Filtering" },
     ],
     keybindings: [{ key: "alt+shift+s", command: "trackFiltering.addSphere" }],
     appState: { key: FILTERING_STATE_KEY, version: 2 },

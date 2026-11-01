@@ -23,6 +23,7 @@ import { computeMask, countPassing, emptyFilter, type FilterSpec, histogram, isE
 import { FILTERING_PANEL } from "./manifest.js";
 import { groupMask, type Roi, type RoiOp, type RoiShape, rowIndex, rowMask } from "./roi.js";
 import { type Dimensions, previewLevel, RoiEngine, type RoiResult, type StoreInfo, toStore } from "./roi_client.js";
+import { fileName, trkSpace, writeTrk } from "./trk.js";
 
 export interface Group {
   id: string;
@@ -70,6 +71,48 @@ export function readSaved(raw: unknown): Saved {
   return { dataset: s.dataset, groups, editing: groups[0]?.id };
 }
 
+// ------------------------------------------------------------------ files
+
+interface SaveTarget {
+  name: string;
+  write(blob: Blob): Promise<void>;
+}
+
+type SavePicker = (options: unknown) => Promise<{ name: string; createWritable(): Promise<{ write(b: Blob): Promise<void>; close(): Promise<void> }> }>;
+
+/**
+ * Where a file goes: chosen in the browser's save dialog where it has one
+ * (asked first, while the click still counts as the user's), else a
+ * download.  `undefined` when the dialog is cancelled.
+ */
+async function saveTarget(name: string, description: string, extension: string): Promise<SaveTarget | undefined> {
+  const picker = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker;
+  if (picker !== undefined) {
+    try {
+      const handle = await picker({ suggestedName: name, types: [{ description, accept: { "application/octet-stream": [extension] } }] });
+      return {
+        name: handle.name,
+        async write(blob) {
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+        },
+      };
+    } catch (e) {
+      if ((e as DOMException).name === "AbortError") return undefined;
+      // Not allowed here (a frame, a policy): download instead.
+    }
+  }
+  return {
+    name,
+    async write(blob) {
+      const a = el("a", { href: URL.createObjectURL(blob), download: name });
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+    },
+  };
+}
+
 // ------------------------------------------------------------------- DOM
 
 type Child = Node | string | null | undefined | false;
@@ -111,6 +154,9 @@ const STYLE = `
 .tf-name { font: 600 14px/1.3 var(--ui); background: transparent; border: 1px solid transparent; border-radius: 4px; color: var(--text); padding: 2px 4px; min-width: 0; flex: 1; }
 .tf-name:hover, .tf-name:focus { border-color: var(--line); background: var(--ink-0); }
 .tf-status { font-size: 12px; color: var(--muted); }
+.tf-save { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tf-save select { height: 24px; border-radius: 4px; border: 1px solid var(--line); background: var(--ink-0); color: var(--text); font: 12px/1 var(--ui); max-width: 210px; }
+.tf-save-status { font: 11px/1.3 var(--mono); color: var(--faint); flex-basis: 100%; }
 .tf-status strong { color: var(--text); font: 600 16px/1 var(--mono); margin-right: 4px; }
 .tf-roi { border: 1px solid var(--line); border-radius: var(--r); padding: 6px 8px; display: grid; gap: 5px; }
 .tf-roi-head { display: flex; align-items: center; gap: 6px; }
@@ -176,6 +222,12 @@ class TrackGroups {
   private waiting = false;
   /** Groups whose layer is being made (making one refreshes the workspace, which asks again). */
   private creating = new Set<string>();
+  /** The .trk save in progress, if any. */
+  private saving: { groupId: string; done: number; total: number; controller: AbortController } | undefined;
+  /** Level saved from: 0 is every streamline. */
+  private trkLevel = 0;
+  /** What the last save of each group did. */
+  private saved_ = new Map<string, string>();
   /** Region ids last written to the annotation layer: only these can be "deleted in a view". */
   private written = new Set<string>();
   private host: HTMLElement | undefined;
@@ -779,6 +831,75 @@ class TrackGroups {
     this.ctx.log.info(`Exported ${countPassing(mask).toLocaleString()} objects of ${group.name} as CSV.`);
   }
 
+  /**
+   * Saves a group's streamlines as a .trk file: every one of them, whole,
+   * from `level` (0 for all; a coarser level keeps a sample).  The worker
+   * reads each chunk the group passes through once, reusing what it holds.
+   */
+  async saveTrk(group = this.editing(), level = this.trkLevel): Promise<void> {
+    const dataset = this.dataset();
+    const result = group && this.results.get(group.id);
+    const { props, engine, info } = this;
+    if (group === undefined || dataset === undefined || result?.mask === undefined || props === undefined || engine === undefined || info === undefined) {
+      this.ctx.ui.toast("No group with streamlines to save.", "error");
+      return;
+    }
+    if (this.saving !== undefined) {
+      this.ctx.ui.toast("A save is already running.", "error");
+      return;
+    }
+    if (result.state !== "exact") {
+      this.ctx.ui.toast("The group's exact answer is still being worked out; save once it is.", "error");
+      return;
+    }
+    const ids = passingIds(props, result.mask);
+    if (ids.length === 0) {
+      this.ctx.ui.toast(`${group.name} has no streamlines to save.`, "error");
+      return;
+    }
+    const target = await saveTarget(fileName(`${dataset.name} ${group.name}${level > 0 ? ` level ${level}` : ""}`, ".trk"), "TrackVis tracks", ".trk");
+    if (target === undefined) return;
+    const controller = new AbortController();
+    const saving = { groupId: group.id, done: 0, total: 0, controller };
+    this.saving = saving;
+    this.updateAll();
+    const started = performance.now();
+    try {
+      const curves = await engine.curves(
+        ids,
+        level,
+        (done, total) => {
+          saving.done = done;
+          saving.total = total;
+          this.updateAll();
+        },
+        controller.signal,
+      );
+      const bytes = writeTrk(curves, trkSpace(info));
+      await target.write(new Blob([bytes], { type: "application/octet-stream" }));
+      const seconds = (performance.now() - started) / 1000;
+      const message =
+        `Saved ${curves.ids.length.toLocaleString()} streamlines (${(curves.positions.length / 3).toLocaleString()} points, ` +
+        `${(bytes.byteLength / 2 ** 20).toFixed(1)} MB) to ${target.name} in ${seconds.toFixed(1)} s.`;
+      this.saved_.set(group.id, message);
+      this.ctx.log.info(`${group.name}: ${message}`);
+    } catch (e) {
+      if (controller.signal.aborted) {
+        this.saved_.set(group.id, "Save cancelled.");
+      } else {
+        this.saved_.set(group.id, `Save failed: ${(e as Error).message}`);
+        this.ctx.ui.toast(`Could not save ${group.name}: ${(e as Error).message}`, "error");
+      }
+    } finally {
+      this.saving = undefined;
+      this.updateAll();
+    }
+  }
+
+  private updateAll(): void {
+    for (const update of this.updaters) update();
+  }
+
   addSphere(): void {
     this.addRoi("sphere");
   }
@@ -899,6 +1020,40 @@ class TrackGroups {
     for (const update of this.updaters) update();
   }
 
+  /** Save as .trk: the level to save from, progress, and cancel. */
+  private saveControl(group: Group): HTMLElement {
+    const info = this.info;
+    const button = el("button", { class: "btn small", type: "button", onclick: () => void this.saveTrk(group) }, "Save .trk") as HTMLButtonElement;
+    const cancel = el("button", { class: "btn outline small", type: "button", onclick: () => this.saving?.controller.abort() }, "Cancel") as HTMLButtonElement;
+    const level = el("select", { "aria-label": "Streamlines to save" }) as HTMLSelectElement;
+    const total = info?.levels[0]?.vertexCount;
+    for (const l of info?.levels ?? [{ index: 0, vertexCount: undefined, chunkShape: [] }]) {
+      const share = l.index === 0 || total === undefined || l.vertexCount === undefined ? undefined : (100 * l.vertexCount) / total;
+      const label = l.index === 0 ? "All streamlines" : `Level ${l.index} sample${share === undefined ? "" : ` (about ${share < 1 ? share.toFixed(1) : Math.round(share)}%)`}`;
+      level.append(el("option", { value: String(l.index) }, label));
+    }
+    level.value = String(this.trkLevel);
+    level.addEventListener("change", () => (this.trkLevel = Number(level.value)));
+    const note = el("div", { class: "tf-save-status" });
+    this.updaters.push(() => {
+      const r = this.results.get(group.id);
+      const busy = this.saving !== undefined;
+      const mine = this.saving?.groupId === group.id;
+      button.disabled = busy || r?.state !== "exact" || r.count === 0;
+      button.title = r?.state === "exact" ? "Save this group's streamlines, whole, as a TrackVis .trk file" : "Available once the group's exact answer is in";
+      level.disabled = busy;
+      cancel.hidden = !mine;
+      if (mine) {
+        const s = this.saving!;
+        note.textContent = s.total === 0 ? "Reading the group's manifests…" : `Reading streamlines: ${s.done} of ${s.total} chunks`;
+      } else {
+        note.textContent = this.saved_.get(group.id) ?? "";
+      }
+      note.hidden = note.textContent === "";
+    });
+    return el("div", { class: "tf-save" }, button, level, cancel, note);
+  }
+
   private editor(group: Group): HTMLElement {
     const props = this.props;
     const box = el("div", { class: "tf-editor" });
@@ -925,7 +1080,7 @@ class TrackGroups {
         r?.detail ?? "",
       );
     });
-    box.append(status);
+    box.append(status, this.saveControl(group));
 
     // Regions.
     box.append(
@@ -1128,5 +1283,6 @@ export const plugin: PluginModule = {
     ctx.commands.register("trackFiltering.addSphere", () => groups.addSphere());
     ctx.commands.register("trackFiltering.addBox", () => groups.addBox());
     ctx.commands.register("trackFiltering.exportCsv", () => groups.exportCsv());
+    ctx.commands.register("trackFiltering.saveTrk", () => void groups.saveTrk());
   },
 };

@@ -626,6 +626,130 @@ export class ObjectReader {
     return { positions, edges: edgeArray, attributes };
   }
 
+  /**
+   * Many curves at once: what {@link readSkeleton} gives one by one, but
+   * with each chunk read once for all of them (the manifests first, then
+   * per chunk the rows of every fragment any of them has there).  For a
+   * bundle of thousands of streamlines this is the difference between a
+   * request per object per chunk and a few coalesced reads per chunk.
+   * Curves only (`implicit_sequential` lines); positions only.  The result
+   * keeps the order of `segmentIds`, leaving out objects with no vertices.
+   */
+  async readCurves(
+    segmentIds: readonly bigint[],
+    signal: AbortSignal,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ ids: bigint[]; offsets: Uint32Array; positions: Float32Array }> {
+    const { description } = this;
+    if (
+      KIND_CAPABILITIES[description.geometryKind].primitive !== "lines" ||
+      description.linksConvention !== "implicit_sequential"
+    ) {
+      throw new Error("readCurves reads curves (streamlines) only");
+    }
+    const index = await this.objectIndex();
+    if (index === undefined) throw new Error("this store has no object index");
+    // Manifests in row order, so each chunk of the manifest array is read
+    // while its rows are wanted, not again after the cache has moved on.
+    const order = segmentIds
+      .map((id, i) => ({ id, i, row: index.rows.rowOf(id) ?? -1 }))
+      .filter((o) => o.row >= 0)
+      .sort((a, b) => a.row - b.row);
+    const manifests = new Array<ManifestBlock[] | undefined>(segmentIds.length);
+    let done = 0;
+    if (index.dense !== undefined) {
+      const { dense } = index;
+      await mapConcurrent(order, 16, async ({ i, row }) => {
+        manifests[i] = await dense.manifest(row);
+        signal.throwIfAborted();
+      });
+    } else {
+      // Each chunk of the manifest array once, several at a time: the
+      // shared cache is sized for objects loading a few at a time.
+      const reader = await this.cells.reader("object_index/manifests");
+      if (reader === undefined) throw new Error("object_index/manifests is missing");
+      const byChunk = new Map<number, typeof order>();
+      for (const o of order) {
+        const c = Math.floor(o.row / index.chunkRows);
+        let list = byChunk.get(c);
+        if (list === undefined) byChunk.set(c, (list = []));
+        list.push(o);
+      }
+      await mapConcurrent([...byChunk], 6, async ([c, list]) => {
+        const bytes = await reader.readChunk([c], signal);
+        signal.throwIfAborted();
+        const elements = bytes === undefined ? [] : decodeVlenElements(bytes);
+        for (const { i, row } of list) {
+          const blob = elements[row - c * index.chunkRows];
+          manifests[i] = blob === undefined || blob.byteLength === 0 ? [] : decodeObjectManifest(blob, 3);
+        }
+      });
+    }
+    const wanted = new Map<string, Set<number>>();
+    for (const blocks of manifests) {
+      for (const block of blocks ?? []) {
+        const key = block.chunkCoords.join(".");
+        let set = wanted.get(key);
+        if (set === undefined) wanted.set(key, (set = new Set()));
+        for (const f of resolveFragmentRef(block.fragmentRef)) set.add(f);
+      }
+    }
+    const keys = [...wanted.keys()];
+    const chunks = new Map<string, ChunkRows>();
+    const steps = keys.length;
+    onProgress?.(0, steps);
+    await mapConcurrent(keys, 16, async (key) => {
+      const rows = await this.chunkRows(key, [...wanted.get(key)!], signal);
+      signal.throwIfAborted();
+      if (rows !== undefined) chunks.set(key, rows);
+      onProgress?.(++done, steps);
+    });
+    // Each object's fragments, in manifest order, continue one another.
+    const walk = (blocks: ManifestBlock[], visit: (chunk: ChunkRows, row: number) => void) => {
+      for (const block of blocks) {
+        const chunk = chunks.get(block.chunkCoords.join("."));
+        if (chunk === undefined) continue;
+        for (const f of resolveFragmentRef(block.fragmentRef)) {
+          if (f >= chunk.fragments.numFragments) continue;
+          forEachFragmentVertex(chunk.fragments, f, (v) => {
+            const row = chunk.indexOf(v);
+            if (row >= 0) visit(chunk, row);
+          });
+        }
+      }
+    };
+    const ids: bigint[] = [];
+    const counts: number[] = [];
+    let vertices = 0;
+    segmentIds.forEach((id, i) => {
+      const blocks = manifests[i];
+      if (blocks === undefined) return;
+      let n = 0;
+      walk(blocks, () => ++n);
+      if (n === 0) return;
+      ids.push(id);
+      counts.push(n);
+      vertices += n;
+    });
+    const positions = new Float32Array(3 * vertices);
+    const offsets = new Uint32Array(ids.length + 1);
+    let at = 0;
+    let k = 0;
+    segmentIds.forEach((_, i) => {
+      const blocks = manifests[i];
+      if (blocks === undefined || k >= ids.length || ids[k] !== segmentIds[i]) return;
+      offsets[k] = at / 3;
+      walk(blocks, (chunk, row) => {
+        positions[at++] = chunk.positions[3 * row];
+        positions[at++] = chunk.positions[3 * row + 1];
+        positions[at++] = chunk.positions[3 * row + 2];
+      });
+      ++k;
+    });
+    offsets[ids.length] = vertices;
+    return { ids, offsets, positions };
+  }
+
   /** The chunks an object has geometry in at this level. */
   async chunksOf(segmentId: bigint): Promise<number[][]> {
     const blocks = await this.manifest(segmentId);

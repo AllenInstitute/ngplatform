@@ -10,27 +10,41 @@
  *
  * Messages in:  { type: "open", storeUrl }
  *               { type: "evaluate", id, level, roi }    roi in store coordinates
+ *               { type: "curves", id, level, ids }   whole streamlines of objects
  *               { type: "cancel", id }
  * Messages out: { type: "opened", info } | { type: "error", id?, message }
  *               { type: "progress", id, done, total }
  *               { type: "result", id, ids, chunks, bytes, ms }
+ *               { type: "curves", id, ids, offsets, positions, ms }
  */
 import {
   httpAccess,
   levelPipeline,
   type LevelPipeline,
+  ObjectReader,
   openZarrVectorsStore,
   setVertexCellCacheBytes,
   type ZarrVectorsStore,
   type ZarrVectorsStoreAccess,
 } from "neuroglancer-zarr-vectors/reader";
+import { setAsyncComputationWorkerFactory } from "neuroglancer/unstable/worker_factories.js";
+import { workerName } from "../../engine/workers/plugins.js";
 import { type ChunkGeometry, compactChunk, IdSet, type RoiGeometry, roiBounds, testChunk } from "./roi.js";
+
+// Compressed arrays (the object manifests, zstd) decode in the platform's
+// async-computation worker, with Zarr Vectors' decoders loaded, as the
+// viewer's own workers do.
+setAsyncComputationWorkerFactory(
+  () => new Worker(new URL("../../engine/workers/async_worker.ts", import.meta.url), { type: "module", name: workerName(["org.ngplatform.zarr-vectors"]) }),
+);
 
 export interface StoreInfo {
   axisNames: string[];
   axisUnits: string[];
   axisScales: number[];
   coordinateOffset: number[] | undefined;
+  /** The store's bounds, in its own coordinates. */
+  bounds: { lower: number[]; upper: number[] };
   levels: { index: number; vertexCount: number | undefined; chunkShape: number[] }[];
   geometry: string;
 }
@@ -44,6 +58,7 @@ const CONCURRENCY = 6;
 let store: ZarrVectorsStore | undefined;
 let access: ZarrVectorsStoreAccess | undefined;
 const pipelines = new Map<number, LevelPipeline>();
+const objectReaders = new Map<number, ObjectReader>();
 const controllers = new Map<number, AbortController>();
 
 /** Decoded chunks, least recently used first; pending reads are shared. */
@@ -98,6 +113,7 @@ async function open(storeUrl: string): Promise<StoreInfo> {
   access = httpAccess(storeUrl);
   store = await openZarrVectorsStore(access, []);
   pipelines.clear();
+  objectReaders.clear();
   cache.clear();
   sizes.clear();
   cachedBytes = 0;
@@ -106,6 +122,7 @@ async function open(storeUrl: string): Promise<StoreInfo> {
     axisUnits: store.axisUnits,
     axisScales: store.axisScales,
     coordinateOffset: store.coordinateOffset,
+    bounds: { lower: Array.from(store.lowerBounds), upper: Array.from(store.upperBounds) },
     levels: store.levels.map((l) => ({ index: l.index, vertexCount: l.vertexCount, chunkShape: l.chunkShape })),
     geometry: store.description.geometryKind,
   };
@@ -159,6 +176,29 @@ async function evaluate(id: number, level: number, roi: RoiGeometry): Promise<vo
   }
 }
 
+/** Objects' whole streamlines at a level, each chunk read once for all of them. */
+async function curves(id: number, level: number, ids: BigUint64Array): Promise<void> {
+  if (store === undefined || access === undefined) throw new Error("no store is open");
+  const controller = new AbortController();
+  controllers.set(id, controller);
+  const started = performance.now();
+  try {
+    let reader = objectReaders.get(level);
+    if (reader === undefined) {
+      reader = new ObjectReader(access, store.description, store.levels[level]);
+      objectReaders.set(level, reader);
+    }
+    const out = await reader.readCurves(Array.from(ids), controller.signal, (done, total) => postMessage({ type: "progress", id, done, total }));
+    const found = BigUint64Array.from(out.ids);
+    postMessage(
+      { type: "curves", id, ids: found, offsets: out.offsets, positions: out.positions, ms: performance.now() - started },
+      { transfer: [found.buffer, out.offsets.buffer, out.positions.buffer] },
+    );
+  } finally {
+    controllers.delete(id);
+  }
+}
+
 self.onmessage = (event: MessageEvent) => {
   const msg = event.data;
   if (msg.type === "open") {
@@ -168,6 +208,8 @@ self.onmessage = (event: MessageEvent) => {
     );
   } else if (msg.type === "evaluate") {
     evaluate(msg.id, msg.level, msg.roi).catch((e) => postMessage({ type: "error", id: msg.id, message: (e as Error).message }));
+  } else if (msg.type === "curves") {
+    curves(msg.id, msg.level, msg.ids).catch((e) => postMessage({ type: "error", id: msg.id, message: (e as Error).message }));
   } else if (msg.type === "cancel") {
     controllers.get(msg.id)?.abort();
   }

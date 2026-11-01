@@ -255,6 +255,28 @@ describe("objects read from their own rows", () => {
     });
   }
 
+  for (const name of ["poly_zstd", "poly_raw_shard", "poly_multichunk", "poly_dense"]) {
+    it(`${name}: reads many curves at once as one by one, in the order asked`, async () => {
+      const reader = await objectReader(name);
+      const ids = expected.polylines.map((_: unknown, i: number) => BigInt(i)).reverse();
+      // An id the store does not have is left out.
+      const got = await reader.readCurves([...ids, 1000000n], signal);
+      expect(got.ids).toEqual(ids);
+      expect(got.offsets.length).toBe(ids.length + 1);
+      for (const [k, id] of got.ids.entries()) {
+        const one = await reader.readSkeleton(id, signal);
+        const mine = got.positions.subarray(3 * got.offsets[k], 3 * got.offsets[k + 1]);
+        expect(Array.from(mine), `object ${id}`).toEqual(Array.from(one.positions));
+        expect(mine.length / 3).toBe(expected.polylines[Number(id)].length);
+      }
+    });
+  }
+
+  it("reads many curves only from curve stores", async () => {
+    const reader = await objectReader("skel_raw");
+    await expect(reader.readCurves([0n], signal)).rejects.toThrow(/curves/);
+  });
+
   it("measures attribute widths at open from cell headers, not whole cells", async () => {
     const { reads, access: counted } = countingAccess("poly_raw");
     await openZarrVectorsStore(counted, undefined);

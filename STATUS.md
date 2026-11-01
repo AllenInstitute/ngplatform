@@ -50,13 +50,30 @@ smaller level-0 cells, compressed vertices, or a per-fragment bounding-box
 column (so a region reads only the fragments near it). Any of these is an
 offline rewrite of the store (`zvtools index`, the plan's Z1).
 
+### Saving a group as .trk
+
+"Save .trk" in the group editor writes the group's streamlines, whole, as a
+TrackVis v2 file on a 1 mm RAS grid from the store's bounds (so every group
+of a dataset shares one header). The worker reads the group's object
+manifests, then each chunk the group passes through once, only the group's
+rows, 16 chunks at a time, and stitches each streamline in walk order:
+
+| Group | Streamlines | Points | Chunks | Read | Write | File |
+|---|---|---|---|---|---|---|
+| Left CST (both spheres), all streamlines | 2,913 | 763,398 | 15 | 2.7 s | 8 ms | 8.7 MB |
+| Same, level 1 sample | 313 | 82,369 | 13 | 2.2 s | 14 ms | 0.9 MB |
+| 10,000 objects spread over the brain (worst case) | 10,000 | 1.94 M | 106 | 12.7 s | | |
+
+Reading the same 10,000 one object at a time took about five minutes (33
+objects a second), which is what the bulk read replaces.
+
 ## How it is checked
 
-- `npm test`: 81 unit tests (workspace model, store with a fake engine,
+- `npm test`: 84 unit tests (workspace model, store with a fake engine,
   commands with arguments, key bindings, `when` clauses, schemas, state
   slices, plugin host and switches, the catalogue, the filter computation,
-  region geometry and track-group logic,
-  state parsing, undo history), then the Zarr Vectors plugin's 177 tests
+  region geometry, track-group logic and .trk files,
+  state parsing, undo history), then the Zarr Vectors plugin's 182 tests
   (codecs, layouts including 0.9.4's dense index, pyramids, meshes, objects,
   worker imports) against upstream Neuroglancer.
 - `npm run typecheck`: the app and the plugin, with Neuroglancer's sources.

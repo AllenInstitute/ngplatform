@@ -24,6 +24,22 @@ interface Pending {
   key: string;
 }
 
+/** Objects' whole streamlines: object k's vertices are `positions[3 * offsets[k] ..< 3 * offsets[k + 1]]`, in store coordinates. */
+export interface Curves {
+  ids: BigUint64Array;
+  offsets: Uint32Array;
+  positions: Float32Array;
+  level: number;
+  ms: number;
+}
+
+interface PendingCurves {
+  resolve: (curves: Curves) => void;
+  reject: (error: Error) => void;
+  progress?: (done: number, total: number) => void;
+  level: number;
+}
+
 /** Global dimensions as a Neuroglancer state writes them: name → [scale, unit]. */
 export type Dimensions = Record<string, [number, string]>;
 
@@ -32,6 +48,7 @@ export class RoiEngine {
   private nextId = 1;
   private pending = new Map<number, Pending>();
   private results = new Map<string, Promise<RoiResult>>();
+  private pendingCurves = new Map<number, PendingCurves>();
   readonly ready: Promise<StoreInfo>;
 
   constructor(readonly storeUrl: string) {
@@ -46,8 +63,14 @@ export class RoiEngine {
       const msg = event.data;
       if (msg.type === "opened") opened(msg.info);
       else if (msg.type === "error" && msg.id === undefined) failed(new Error(msg.message));
-      else if (msg.type === "progress") this.pending.get(msg.id)?.progress?.(msg.done, msg.total);
-      else if (msg.type === "result" || msg.type === "error") {
+      else if (msg.type === "progress") (this.pending.get(msg.id) ?? this.pendingCurves.get(msg.id))?.progress?.(msg.done, msg.total);
+      else if (msg.type === "curves" || (msg.type === "error" && this.pendingCurves.has(msg.id))) {
+        const p = this.pendingCurves.get(msg.id);
+        this.pendingCurves.delete(msg.id);
+        if (p === undefined) return;
+        if (msg.type === "error") p.reject(new Error(msg.message));
+        else p.resolve({ ids: msg.ids, offsets: msg.offsets, positions: msg.positions, level: p.level, ms: msg.ms });
+      } else if (msg.type === "result" || msg.type === "error") {
         const p = this.pending.get(msg.id);
         this.pending.delete(msg.id);
         if (p === undefined) return;
@@ -81,10 +104,33 @@ export class RoiEngine {
     return promise;
   }
 
+  /**
+   * The whole streamlines of `ids` at a level, read in the worker with each
+   * chunk read once.  Aborting `signal` stops the reads.
+   */
+  curves(ids: BigUint64Array, level: number, progress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Curves> {
+    const id = this.nextId++;
+    return new Promise<Curves>((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+        return;
+      }
+      this.pendingCurves.set(id, { resolve, reject, progress, level });
+      signal?.addEventListener("abort", () => {
+        if (!this.pendingCurves.delete(id)) return;
+        this.worker.postMessage({ type: "cancel", id });
+        reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+      });
+      this.worker.postMessage({ type: "curves", id, level, ids });
+    });
+  }
+
   dispose(): void {
     this.worker.terminate();
     for (const p of this.pending.values()) p.reject(new Error("closed"));
+    for (const p of this.pendingCurves.values()) p.reject(new Error("closed"));
     this.pending.clear();
+    this.pendingCurves.clear();
   }
 }
 

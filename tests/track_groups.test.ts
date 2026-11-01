@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readSaved } from "../src/plugins/track_filtering/plugin.js";
 import { compactChunk, groupMask, IdSet, type RoiGeometry, roiBounds, roiKey, rowIndex, rowMask, segmentHitsBox, testChunk } from "../src/plugins/track_filtering/roi.js";
 import { previewLevel, type StoreInfo, toStore } from "../src/plugins/track_filtering/roi_client.js";
+import { fileName, trkSpace, writeTrk } from "../src/plugins/track_filtering/trk.js";
 
 /** Two streamlines along x: object 7 at y = 0, object 9 at y = 10, one vertex per unit. */
 function chunk() {
@@ -117,6 +118,7 @@ describe("coordinates and levels", () => {
     axisUnits: ["m", "m", "m"],
     axisScales: [1e-3, 1e-3, 1e-3],
     coordinateOffset: undefined,
+    bounds: { lower: [-78, -112, -50], upper: [79, 77, 86] },
     levels: [
       { index: 0, vertexCount: 102_000_000, chunkShape: [31, 32, 34] },
       { index: 1, vertexCount: 10_000_000, chunkShape: [31, 32, 34] },
@@ -154,5 +156,64 @@ describe("saved groups", () => {
   it("fills in what a hand-written group leaves out", () => {
     const saved = readSaved({ groups: [{ id: "a", rois: [] }] });
     expect(saved.groups[0]).toMatchObject({ id: "a", name: "Group 1", rois: [], filter: { ranges: {}, includeTags: [], excludeTags: [] } });
+  });
+});
+
+describe(".trk files", () => {
+  const info: StoreInfo = {
+    axisNames: ["x", "y", "z"],
+    axisUnits: ["m", "m", "m"],
+    axisScales: [1e-3, 1e-3, 1e-3],
+    coordinateOffset: undefined,
+    bounds: { lower: [-78.4, -112, -50], upper: [79, 77.2, 86] },
+    levels: [{ index: 0, vertexCount: 5, chunkShape: [31, 32, 34] }],
+    geometry: "streamline",
+  };
+  // Two streamlines, in store coordinates (MNI millimetres).
+  const curves = { offsets: Uint32Array.from([0, 2, 5]), positions: Float32Array.from([0, 0, 0, 1, 2, 3, -10, 20, 30, -11, 21, 31, -12, 22, 32]) };
+
+  /** Reads a file back as nibabel does: points to RAS through vox_to_ras. */
+  function read(buffer: ArrayBuffer) {
+    const view = new DataView(buffer);
+    const text = (at: number, n: number) => String.fromCharCode(...new Uint8Array(buffer, at, n)).replace(/\0.*$/, "");
+    const voxelSize = [0, 1, 2].map((k) => view.getFloat32(12 + 4 * k, true));
+    const affine = Array.from({ length: 16 }, (_, i) => view.getFloat32(440 + 4 * i, true));
+    const tracks: number[][][] = [];
+    let at = 1000;
+    for (let t = 0; t < view.getInt32(988, true); ++t) {
+      const m = view.getInt32(at, true);
+      at += 4;
+      const points: number[][] = [];
+      for (let p = 0; p < m; ++p, at += 12) {
+        const vox = [0, 1, 2].map((k) => view.getFloat32(at + 4 * k, true) / voxelSize[k] - 0.5);
+        points.push([0, 1, 2].map((r) => affine[4 * r] * vox[0] + affine[4 * r + 1] * vox[1] + affine[4 * r + 2] * vox[2] + affine[4 * r + 3]));
+      }
+      tracks.push(points);
+    }
+    return { id: text(0, 6), order: text(948, 4), version: view.getInt32(992, true), size: view.getInt32(996, true), end: at, dims: [0, 1, 2].map((k) => view.getInt16(6 + 2 * k, true)), tracks };
+  }
+
+  it("writes a version 2 header and every point, which read back to the same RAS millimetres", () => {
+    const space = trkSpace(info);
+    expect(space.origin).toEqual([-79, -112, -50]);
+    const buffer = writeTrk(curves, space);
+    expect(buffer.byteLength).toBe(1000 + 2 * 4 + 5 * 12);
+    const file = read(buffer);
+    expect(file).toMatchObject({ id: "TRACK", order: "RAS", version: 2, size: 1000, end: buffer.byteLength });
+    expect(file.dims[0]).toBeGreaterThanOrEqual(79 + 79);
+    expect(file.tracks.map((t) => t.length)).toEqual([2, 3]);
+    const flat = file.tracks.flat(2);
+    flat.forEach((v, i) => expect(v).toBeCloseTo(curves.positions[i], 4));
+  });
+
+  it("puts back a store's coordinate offset and converts its units to millimetres", () => {
+    const um = { ...info, axisScales: [1e-6, 1e-6, 1e-6], coordinateOffset: [1000, 0, 0], bounds: { lower: [-1000, 0, 0], upper: [1000, 1000, 1000] } };
+    const file = read(writeTrk({ offsets: Uint32Array.from([0, 1]), positions: Float32Array.from([500, 250, 0]) }, trkSpace(um)));
+    file.tracks[0][0].forEach((v, k) => expect(v).toBeCloseTo([1.5, 0.25, 0][k], 4));
+  });
+
+  it("names files as file systems accept", () => {
+    expect(fileName("HCP-1065 Left/right: CST?", ".trk")).toBe("HCP-1065 Left right CST.trk");
+    expect(fileName("  ", ".trk")).toBe("tracks.trk");
   });
 });

@@ -19,7 +19,7 @@ export interface CatalogueEntry {
 export const ZARR_VECTORS_MANIFEST: Manifest = {
   id: "org.ngplatform.zarr-vectors",
   name: "Zarr Vectors",
-  version: "0.2.0",
+  version: "0.3.0",
   kind: "datatype",
   enabledByDefault: true,
   description:

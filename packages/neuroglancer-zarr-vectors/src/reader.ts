@@ -18,16 +18,17 @@
  * @file The reader, for tools that work on a store's geometry outside
  * Neuroglancer's views (filters, statistics): open a store over plain HTTP
  * and read a level's spatial chunks as positions, per-vertex object ids and
- * line segments.  Runs in any worker; nothing here touches the DOM or WebGL.
+ * line segments, or many objects' whole curves at once (`ObjectReader`).  Runs in any worker; nothing here touches the DOM or WebGL.
  */
 
 import type { DenseChunkData } from "./chunk_pipeline.js";
 import { LevelPipeline, setVertexCellCacheBytes } from "./chunk_pipeline.js";
+import { ObjectReader } from "./object_reader.js";
 import type { ZarrVectorsLevel, ZarrVectorsStore, ZarrVectorsStoreAccess } from "./store.js";
 import { kvStoreAccess, openZarrVectorsStore } from "./store.js";
 
 export type { DenseChunkData, ZarrVectorsLevel, ZarrVectorsStore, ZarrVectorsStoreAccess };
-export { LevelPipeline, openZarrVectorsStore, setVertexCellCacheBytes };
+export { LevelPipeline, ObjectReader, openZarrVectorsStore, setVertexCellCacheBytes };
 export { storeUrlOfSource } from "./source_url.js";
 
 /**
