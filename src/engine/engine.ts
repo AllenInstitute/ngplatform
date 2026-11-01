@@ -597,9 +597,23 @@ export class Engine {
     return this.viewer.display.updateFinished.add(callback);
   }
 
-  /** Draws on top of Neuroglancer's screenshots (see the fork's screenshot_manager). */
-  setScreenshotOverlay(overlay: ((context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void) | undefined): void {
-    setScreenshotOverlay(overlay);
+  private readonly screenshotPainters = new Set<(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void>();
+
+  /** Paints on top of Neuroglancer's screenshots (see the fork's screenshot_manager), until disposed. */
+  addScreenshotOverlay(paint: (context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void): Disposer {
+    this.screenshotPainters.add(paint);
+    setScreenshotOverlay((context, canvas) => {
+      for (const painter of this.screenshotPainters) painter(context, canvas);
+    });
+    return () => this.screenshotPainters.delete(paint);
+  }
+
+  /** An element over the views, for drawing beside them in HTML (labels, say). */
+  addOverlay(): { element: HTMLElement; dispose(): void } {
+    const element = document.createElement("div");
+    element.className = "view-overlay";
+    this.host.parentElement!.append(element);
+    return { element, dispose: () => element.remove() };
   }
 
   /** A plugin's drawing in the 3-D view, with the layer `name` (see ./draw3d.ts). */

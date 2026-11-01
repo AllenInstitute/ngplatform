@@ -70,6 +70,8 @@ export interface HostServices {
     toast(message: string, kind?: "info" | "error"): void;
     confirm(message: string): Promise<boolean>;
     viewToggle(spec: { label: string; title?: string; value: boolean; onChange(value: boolean): void }): { set(value: boolean): void; dispose(): void };
+    overlay(): { element: HTMLElement; dispose(): void };
+    screenshotOverlay(paint: (context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void): Disposer;
     form<T>(title: string, schema: Schema, initial?: Partial<T>): Promise<T | undefined>;
   };
   workspace: WorkspaceApi;
@@ -416,6 +418,12 @@ export class PluginHost {
           own(toggle.dispose);
           return toggle;
         },
+        overlay: () => {
+          const overlay = s.ui.overlay();
+          own(overlay.dispose);
+          return overlay;
+        },
+        screenshotOverlay: (paint) => own(s.ui.screenshotOverlay(paint)),
         confirm: (message) => s.ui.confirm(message),
         form: (title, schema, initial) => s.ui.form(title, schema, initial),
       },

@@ -28,7 +28,6 @@ import { closeSheet, confirmDialog, copyText, formDialog, promptDialog, sheetIsO
 import { ActivityLog } from "./panels/activity.js";
 import { renderAuthPanel } from "./panels/auth.js";
 import { renderDatasetsPanel, showAddMenu } from "./panels/datasets.js";
-import { Labels } from "./labels.js";
 import { forgetPython, renderPythonPanel, runPythonPlugin } from "./panels/python.js";
 import { layerTarget, renderLayerPanel } from "./panels/layer.js";
 import {
@@ -69,7 +68,6 @@ export class Shell {
   private view: { owner: string; dispose: () => void } | undefined;
   private auth: AuthRegistry | undefined;
   private localPlugins: LocalPlugins | undefined;
-  private labels: Labels | undefined;
   private lastHashSeen = "";
 
   constructor(root: HTMLElement) {
@@ -222,6 +220,8 @@ export class Shell {
         toast,
         confirm: (message) => confirmDialog(message),
         viewToggle: (spec) => engine.viewToggle(spec),
+        overlay: () => engine.addOverlay(),
+        screenshotOverlay: (paint) => engine.addScreenshotOverlay(paint),
         form: (title, schema, initial) => formDialog(title, schema, initial),
       },
       workspace: apis.workspace,
@@ -252,7 +252,6 @@ export class Shell {
     this.registerPanels();
     this.registerCommands();
     this.registerKeys();
-    this.labels = new Labels(wb, this.engineHost.parentElement!);
     registerBuiltins(wb);
     this.localPlugins = new LocalPlugins({
       host: wb.plugins,
@@ -329,7 +328,6 @@ export class Shell {
     const wb = this.wb;
     const add = (tab: DockTab) => this.docks.addTab(tab);
     add({ id: "datasets", title: "Datasets", slot: "left", order: 10, render: (host) => renderDatasetsPanel(host, wb) });
-    add({ id: "labels", title: "Labels", slot: "left", order: 60, render: (host) => this.labels!.render(host) });
     add({ id: "auth", title: "Auth", slot: "left", order: 80, render: (host) => renderAuthPanel(host, wb, this.auth!) });
     add({ id: "plugins", title: "Plugins", slot: "left", order: 90, render: (host) => renderPluginsPanel(host, wb, this.localPlugins!) });
     add({ id: "layer", title: "Layer", slot: "right", order: 10, render: (host) => renderLayerPanel(host, wb) });
@@ -709,7 +707,6 @@ export class Shell {
     for (const [tab, title] of [
       ["datasets", "Datasets"],
       ["layer", "Layer"],
-      ["labels", "Labels"],
       ["activity", "Activity"],
       ["jobs", "Jobs"],
       ["statistics", "Chunk statistics"],

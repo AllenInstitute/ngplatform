@@ -185,6 +185,21 @@ export interface ViewerApi {
    * a handle to ask for another frame and to stop.
    */
   draw3d(layer: string, drawer: Drawer3d): { redraw(): void; dispose(): void };
+  /** The view panels shown now, and where a global position is in each (for overlays). */
+  panels(): ViewPanelInfo[];
+  /** Calls back after each frame the views draw. */
+  onRendered(callback: () => void): Disposer;
+}
+
+export interface ViewPanelInfo {
+  kind: "2d" | "3d";
+  element: HTMLElement;
+  /**
+   * Where a global position (all global dimensions) shows: CSS pixels from
+   * the panel's top left, and depth (-1..1 within the view; for a 2-D view,
+   * within its section's thickness).  Undefined behind the camera.
+   */
+  project(global: ArrayLike<number>): { x: number; y: number; depth: number } | undefined;
 }
 
 /** One frame of the 3-D view, as a plugin draws into it. */
@@ -260,6 +275,10 @@ export interface PlatformContext {
      * draws there; until the disposer is called.
      */
     viewToggle(spec: { label: string; title?: string; value: boolean; onChange(value: boolean): void }): { set(value: boolean): void; dispose(): void };
+    /** An element over the views (pointer events pass through it, not its children), until disposed. */
+    overlay(): { element: HTMLElement; dispose(): void };
+    /** Paints over each screenshot Neuroglancer takes, in its canvas's pixels, until disposed. */
+    screenshotOverlay(paint: (context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void): Disposer;
     confirm(message: string): Promise<boolean>;
     /** A dialog generated from a schema; resolves undefined on cancel. */
     form<T>(title: string, schema: Schema, initial?: Partial<T>): Promise<T | undefined>;
