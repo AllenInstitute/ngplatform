@@ -188,7 +188,7 @@ void main() {
     bool ok;
     float v = section(axis, p, ok);
     if (!ok) v = raw(p);
-    colour = vec3(shown(v)) * vec3(1.0, 0.97, 0.93);
+    colour = vec3(shown(v));
   } else {
     // Refine the surface between the last empty sample and this one.
     float a = before;
@@ -208,7 +208,8 @@ void main() {
     vec3 normal = length(g) > 1e-6 ? normalize(g) : -d;
     if (dot(normal, d) > 0.0) normal = -normal;
     float tissue = raw(p - normal * 2.0 * h);
-    vec3 base = mix(vec3(0.42, 0.33, 0.31), vec3(0.86, 0.80, 0.74), smoothstep(0.35, 0.9, tissue));
+    // The tissue's own grey just beneath the surface, kept off black so the lighting reads.
+    vec3 base = vec3(0.25 + 0.75 * shown(tissue));
     vec3 light = normalize(-d + vec3(0.0, 0.0, 0.35));
     float diffuse = max(dot(normal, light), 0.0);
     float spec = pow(max(dot(reflect(-light, normal), -d), 0.0), 24.0);
