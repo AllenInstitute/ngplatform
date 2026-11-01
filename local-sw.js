@@ -4,7 +4,9 @@
  * file) picked as <id>.  The page that picked it holds the files and reads
  * them; this worker asks it, so the files never leave the computer and
  * Neuroglancer (and its workers) read them like any other URL, with
- * ranges.  Links to local data work only while that page is open.
+ * ranges.  Links to local data work only while that page is open.  Under a
+ * NIfTI file's own URL the page answers with a Zarr store made from the file
+ * (virtual Zarr), which can take a while the first time for a large .gz.
  */
 const PREFIX = new URL("./local/", self.registration.scope).pathname;
 /** The page (client id) that holds each picked folder or file. */
@@ -19,35 +21,41 @@ self.addEventListener("message", (event) => {
   if (data?.type === "local-claim") event.waitUntil(self.clients.claim());
 });
 
-async function ask(client, request) {
+/** How long a page may take over one read: a large .nii.gz is decompressed on its first. */
+const READ_TIMEOUT = 10 * 60 * 1000;
+
+async function ask(client, request, timeout) {
   const channel = new MessageChannel();
   const answer = new Promise((resolve) => {
     channel.port1.onmessage = (e) => resolve(e.data);
-    setTimeout(() => resolve(undefined), 30000);
+    setTimeout(() => resolve(undefined), timeout);
   });
   client.postMessage(request, [channel.port2]);
   return answer;
 }
 
-/** Asks the page that picked `id` (or, after this worker restarted, every page) for a file. */
-async function read(id, path, range, head) {
-  const request = { type: "local-read", id, path, range, head };
+/** The page holding `id`: the one that registered it, or (after this worker restarted) the one that says so. */
+async function owner(id) {
   const known = owners.get(id);
   if (known !== undefined) {
     const client = await self.clients.get(known);
-    if (client) {
-      const answer = await ask(client, request);
-      if (answer && answer.status !== 410) return answer;
-    }
+    if (client) return client;
+    owners.delete(id);
   }
   for (const client of await self.clients.matchAll({ type: "window" })) {
-    const answer = await ask(client, request);
-    if (answer && answer.status !== 410) {
+    if ((await ask(client, { type: "local-has", id }, 2000)) === true) {
       owners.set(id, client.id);
-      return answer;
+      return client;
     }
   }
-  return { status: 410 };
+  return undefined;
+}
+
+async function read(id, path, range, head) {
+  const client = await owner(id);
+  if (client === undefined) return { status: 410 };
+  const answer = await ask(client, { type: "local-read", id, path, range, head }, READ_TIMEOUT);
+  return answer ?? { status: 504, message: "The page holding this data did not answer in time." };
 }
 
 function parseRange(header) {
@@ -73,7 +81,7 @@ self.addEventListener("fetch", (event) => {
       const answer = await read(id, path, range, method === "HEAD");
       const headers = { "access-control-allow-origin": "*", "cache-control": "no-store" };
       if (answer.status === 410) return new Response("This local data is not open in any tab. Open it again from Add → Local.", { status: 410, headers });
-      if (answer.status !== 200) return new Response(null, { status: answer.status, headers });
+      if (answer.status !== 200) return new Response(answer.message ?? null, { status: answer.status, headers });
       const { body, size, start } = answer;
       headers["accept-ranges"] = "bytes";
       headers["content-type"] = "application/octet-stream";
