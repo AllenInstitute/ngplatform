@@ -234,6 +234,51 @@ export function textInput(value: string, commit: (v: string) => void, attrs: Att
   return input;
 }
 
+/**
+ * A one-line box that grows to show all of a long value (a URL) instead of
+ * scrolling within itself.  Enter commits; Escape reverts.
+ */
+export function growingInput(value: string, commit: (v: string) => void, attrs: Attrs = {}): HTMLTextAreaElement {
+  const input = el("textarea", { class: "ins-text ins-grow", rows: 1, spellcheck: "false", wrap: "soft", ...attrs }) as HTMLTextAreaElement;
+  let committed = value;
+  const fit = () => {
+    input.style.height = "auto";
+    if (input.scrollHeight > 0) input.style.height = `${input.scrollHeight + 2}px`;
+  };
+  const set = (v: string) => {
+    input.value = v;
+    requestAnimationFrame(fit);
+  };
+  set(value);
+  const done = () => {
+    if (input.value === committed) return;
+    committed = input.value;
+    commit(input.value);
+  };
+  input.addEventListener("input", () => {
+    // Pasted line breaks are not part of a URL.
+    if (/[\r\n]/.test(input.value)) input.value = input.value.replace(/[\r\n]+/g, "");
+    fit();
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      done();
+      input.blur();
+    } else if (e.key === "Escape") {
+      set(committed);
+      input.blur();
+    }
+  });
+  input.addEventListener("blur", done);
+  new ResizeObserver(fit).observe(input);
+  (input as HTMLTextAreaElement & { setValue(v: string): void }).setValue = (v: string) => {
+    committed = v;
+    set(v);
+  };
+  return input;
+}
+
 /** The text of a list of Neuroglancer messages (errors first). */
 export function messagesView(scope: Scope, list: Iterable<{ severity: number; message: string }> & { changed: { add(f: () => void): () => void } }): HTMLElement {
   const host = el("div", { class: "ins-messages" });

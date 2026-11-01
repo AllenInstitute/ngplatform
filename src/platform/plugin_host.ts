@@ -69,6 +69,7 @@ export interface HostServices {
   ui: {
     toast(message: string, kind?: "info" | "error"): void;
     confirm(message: string): Promise<boolean>;
+    viewToggle(spec: { label: string; title?: string; value: boolean; onChange(value: boolean): void }): { set(value: boolean): void; dispose(): void };
     form<T>(title: string, schema: Schema, initial?: Partial<T>): Promise<T | undefined>;
   };
   workspace: WorkspaceApi;
@@ -410,11 +411,23 @@ export class PluginHost {
         showPanel: (id) => s.docks.show(id),
         view: (render) => own(s.views.mount(render, owner)),
         toast: (message, kind) => s.ui.toast(message, kind),
+        viewToggle: (spec) => {
+          const toggle = s.ui.viewToggle(spec);
+          own(toggle.dispose);
+          return toggle;
+        },
         confirm: (message) => s.ui.confirm(message),
         form: (title, schema, initial) => s.ui.form(title, schema, initial),
       },
       workspace: s.workspace,
-      viewer: s.viewer,
+      viewer: {
+        ...s.viewer,
+        draw3d: (layer, drawer) => {
+          const handle = s.viewer.draw3d(layer, drawer);
+          own(handle.dispose);
+          return handle;
+        },
+      },
       state: {
         get: <T>() => {
           if (slice === undefined) throw new PluginError(`${owner} declares no appState`);

@@ -76,3 +76,10 @@ export { SkeletonSource } from "neuroglancer/unstable/skeleton/frontend.js";
 export { MultiscaleVolumeChunkSource } from "neuroglancer/unstable/sliceview/volume/frontend.js";
 export { LocalDataSource } from "neuroglancer/unstable/datasource/local.js";
 export { DataType } from "neuroglancer/unstable/util/data_type.js";
+
+// Drawing in the 3-D panel, for plugins (./draw3d.ts).
+export { PerspectiveViewRenderLayer } from "neuroglancer/unstable/perspective_view/render_layer.js";
+export type { PerspectiveViewRenderContext } from "neuroglancer/unstable/perspective_view/render_layer.js";
+export { OffscreenTextures, setPerspectiveSectionClip } from "neuroglancer/unstable/perspective_view/panel.js";
+export { addPerspectivePanelToggle } from "neuroglancer/unstable/data_panel_layout.js";
+export { TrackableBoolean } from "neuroglancer/unstable/trackable_boolean.js";

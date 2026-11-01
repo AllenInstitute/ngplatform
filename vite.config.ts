@@ -34,6 +34,10 @@ export default defineConfig({
     target: "es2022",
     chunkSizeWarningLimit: 4 * 1024 * 1024,
     assetsDir: "assets",
+    rollupOptions: {
+      // The app, and plain Neuroglancer with the plugins' formats.
+      input: { main: "index.html", neuroglancer: "neuroglancer.html" },
+    },
   },
   server: {
     fs: { allow: [".."] },
@@ -41,6 +45,7 @@ export default defineConfig({
   optimizeDeps: {
     entries: [
       "index.html",
+      "neuroglancer.html",
       "src/engine/workers/chunk_worker.ts",
       "src/engine/workers/async_worker.ts",
     ],

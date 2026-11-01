@@ -8,7 +8,10 @@
  * class and shown by the platform, which mounts Neuroglancer's own widgets
  * (layer controls, settings, help, statistics) in its docks and dialogs.
  */
+import type { Drawer3d } from "../sdk/types.js";
+import { draw3d } from "./draw3d.js";
 import {
+  addPerspectivePanelToggle,
   changeLayerName,
   deleteLayer,
   EventActionMap,
@@ -22,6 +25,7 @@ import {
   SegmentationUserLayer,
   type SidePanelManager,
   StatisticsPanel,
+  TrackableBoolean,
   type Viewer,
   ViewerSettingsPanel,
 } from "./neuroglancer.js";
@@ -538,6 +542,27 @@ export class Engine {
     }
     group.temporaryVisibleSegments.add(ids);
     group.useTemporaryVisibleSegments.value = true;
+  }
+
+  /** A plugin's drawing in the 3-D view, with the layer `name` (see ./draw3d.ts). */
+  draw3d(name: string, drawer: Drawer3d): { redraw(): void; dispose(): void } {
+    return draw3d(this.viewer, name, drawer);
+  }
+
+  /** A switch beside "Sections" in the 3-D panels. */
+  viewToggle(spec: { label: string; title?: string; value: boolean; onChange(value: boolean): void }): { set(value: boolean): void; dispose(): void } {
+    const value = new TrackableBoolean(spec.value, spec.value);
+    const off = value.changed.add(() => spec.onChange(value.value));
+    const remove = addPerspectivePanelToggle({ label: spec.label, title: spec.title, value });
+    return {
+      set: (v) => {
+        value.value = v;
+      },
+      dispose: () => {
+        off();
+        remove();
+      },
+    };
   }
 
   mountSettings(host: HTMLElement): Disposer {

@@ -32,7 +32,7 @@ function services() {
     views: { mount: () => () => {} },
     examples: new ExampleRegistry(),
     open: new OpenHandlerRegistry(),
-    ui: { toast: (m) => logs.push(`toast: ${m}`), confirm: async () => true, form: async () => undefined },
+    ui: { toast: (m) => logs.push(`toast: ${m}`), confirm: async () => true, form: async () => undefined, viewToggle: () => ({ set: () => {}, dispose: () => {} }) },
     workspace: {} as WorkspaceApi,
     viewer: {} as ViewerApi,
     slices: {

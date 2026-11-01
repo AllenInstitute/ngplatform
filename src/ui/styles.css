@@ -22,6 +22,8 @@
   --select-strong: #3c3;
   --select-soft: rgba(136, 204, 136, 0.1);
   --ok: #6c6;
+  /* An on/off switch that is on. */
+  --on: #3f9f48;
   --warn: #d9b14f;
   --err: #e0716b;
   /* Direction-encoded colour, as tractography draws x, y and z (the logo). */
@@ -45,6 +47,32 @@ button, input, textarea, select { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 [hidden] { display: none !important; }
 code { font-family: var(--mono); font-size: 12px; }
+
+/* Tick boxes stay tick boxes.  A switch (.switch, and the 3-D panel's
+   Sections and Volume) turns something in the viewer on or off: a round
+   knob in a square track, grey when off and green when on. */
+input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
+input[type="checkbox"].switch,
+.perspective-panel-show-slice-views input[type="checkbox"],
+.ngp-view-toggle input[type="checkbox"] {
+  appearance: none; -webkit-appearance: none; flex: none; margin: 0;
+  width: 32px; height: 18px; border-radius: 0; position: relative; vertical-align: middle;
+  background: #3a3a3a; border: 1px solid #555; cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+input[type="checkbox"].switch::after,
+.perspective-panel-show-slice-views input[type="checkbox"]::after,
+.ngp-view-toggle input[type="checkbox"]::after {
+  content: ""; position: absolute; top: 1px; left: 1px; width: 14px; height: 14px; border-radius: 50%;
+  background: #a6a6a6; transition: transform 0.15s, background 0.15s;
+}
+input[type="checkbox"].switch:checked,
+.perspective-panel-show-slice-views input[type="checkbox"]:checked,
+.ngp-view-toggle input[type="checkbox"]:checked { background: var(--on); border-color: var(--on); }
+input[type="checkbox"].switch:checked::after,
+.perspective-panel-show-slice-views input[type="checkbox"]:checked::after,
+.ngp-view-toggle input[type="checkbox"]:checked::after { transform: translateX(14px); background: #fff; }
+input[type="checkbox"].switch:disabled { opacity: 0.4; cursor: default; }
 
 .app {
   --lw: var(--left, 300px);
@@ -125,12 +153,21 @@ code { font-family: var(--mono); font-size: 12px; }
 .scene-tabs { display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .scene-tabs::-webkit-scrollbar { display: none; }
 .scene-tab {
-  height: 28px; padding: 0 12px; border: 1px solid transparent; border-radius: var(--r);
-  background: transparent; color: var(--muted); cursor: pointer; white-space: nowrap; max-width: 180px;
-  overflow: hidden; text-overflow: ellipsis;
+  display: inline-flex; align-items: center; gap: 2px; flex: none;
+  height: 28px; padding: 0 3px 0 12px; border: 1px solid transparent; border-radius: var(--r);
+  background: transparent; color: var(--muted); cursor: pointer; white-space: nowrap; max-width: 200px;
 }
+.scene-tab .scene-tab-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .scene-tab:hover { color: var(--text); background: var(--ink-3); }
 .scene-tab[aria-selected="true"] { color: var(--text); background: var(--ink-3); border-color: var(--line-strong); box-shadow: inset 0 -2px 0 var(--select); }
+.scene-tab:only-of-type { padding-right: 12px; }
+.scene-close {
+  display: inline-grid; place-items: center; width: 18px; height: 18px; flex: none;
+  border: 0; padding: 0; background: transparent; color: var(--faint); cursor: pointer; visibility: hidden;
+}
+.scene-close svg { width: 11px; height: 11px; }
+.scene-tab:hover .scene-close, .scene-tab[aria-selected="true"] .scene-close { visibility: visible; }
+.scene-close:hover { color: var(--text); background: var(--ink-4); }
 .scene-add { color: var(--muted); }
 
 .palette-trigger {
@@ -214,11 +251,12 @@ kbd {
 .dock-left { border-right: 1px solid var(--line); }
 .dock-right { border-left: 1px solid var(--line); }
 .dock-head {
-  display: flex; align-items: center; gap: 2px;
-  height: 36px; padding: 0 4px 0 6px; flex: none;
+  display: flex; align-items: flex-start; gap: 2px;
+  min-height: 36px; padding: 5px 4px 4px 6px; box-sizing: border-box; flex: none;
   border-bottom: 1px solid var(--line);
 }
-.dock-tabs { display: flex; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; flex: 1; }
+/* Tabs that do not fit wrap onto another row, rather than hiding. */
+.dock-tabs { display: flex; flex-wrap: wrap; gap: 2px; min-width: 0; flex: 1; }
 .dock-tabs::-webkit-scrollbar { display: none; }
 .tab {
   height: 26px; padding: 0 9px; border: 0; border-radius: 0; flex: none;
@@ -293,11 +331,12 @@ kbd {
 }
 .ds-row .btn.icon { height: 22px; opacity: 0.6; }
 .ds-row:hover .btn.icon, .ds-row.selected .btn.icon { opacity: 1; }
-.ds-row.other, .ds-row.scene { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+.ds-row.other { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+.ds-row.other .sub { grid-column: 2 / -1; }
+.panel-actions { display: flex; justify-content: flex-end; gap: 6px; margin-bottom: 8px; }
 .ds-row.pick { grid-template-columns: auto minmax(0, 1fr) auto auto; }
 .ds-icon { display: inline-flex; color: var(--muted); }
 .ds-icon svg { width: 15px; height: 15px; }
-.ds-row.scene.selected .ds-icon { color: var(--select); }
 .vis { margin: 0; accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer; }
 .ds-group { display: grid; gap: 2px; }
 .ds-layers { display: grid; gap: 2px; margin-left: 22px; padding-left: 8px; border-left: 1px solid var(--line); }
@@ -335,7 +374,7 @@ kbd {
 /* fields */
 .field { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
 .field.check { display: flex; align-items: center; gap: 8px; color: var(--text); cursor: pointer; }
-.field.check input { accent-color: var(--accent); margin: 0; }
+
 .field-hint { color: var(--faint); font-size: 11px; }
 .field-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
 .text-input {
@@ -365,16 +404,7 @@ textarea.text-input { height: auto; padding: 8px 10px; }
 .chip.kind-datatype { color: var(--text); border-color: var(--line-strong); }
 .chip.kind-tool { color: var(--muted); border-color: var(--line-strong); }
 .switch-label { margin-left: auto; display: inline-flex; }
-.switch {
-  appearance: none; -webkit-appearance: none; margin: 0; width: 30px; height: 17px; border-radius: 0;
-  background: var(--ink-4); border: 1px solid var(--line-strong); position: relative; cursor: pointer; transition: background 0.15s;
-}
-.switch::after {
-  content: ""; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 0;
-  background: var(--muted); transition: transform 0.15s, background 0.15s;
-}
-.switch:checked { background: #4a4a4a; border-color: #8a8a8a; }
-.switch:checked::after { transform: translateX(13px); background: #eee; }
+
 .note.first { margin: 0 0 10px; }
 .plugin-head { display: flex; align-items: center; gap: 8px; }
 .plugin-name { font-weight: 600; }
@@ -404,6 +434,21 @@ textarea.text-input { height: auto; padding: 8px 10px; }
 @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(330%); } }
 .job .sub { grid-column: 1 / -1; color: var(--faint); font-size: 12px; }
 
+/* python console */
+.dock-pane.py-host { display: flex; flex-direction: column; padding: 0; height: 100%; }
+.py-out { flex: 1; min-height: 0; overflow: auto; padding: 8px 12px; font: 12px/1.45 var(--mono); }
+.py-out pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.py-in { color: var(--text); }
+.py-out .py-in { color: var(--muted); }
+.py-out .py-result { color: var(--text); }
+.py-out .py-err { color: var(--err); }
+.py-out .py-note { color: var(--faint); }
+.py-line { display: flex; align-items: flex-start; gap: 8px; padding: 6px 12px; border-top: 1px solid var(--line); flex: none; }
+.py-prompt { font: 12px/20px var(--mono); color: var(--faint); }
+textarea.py-in {
+  flex: 1; resize: none; border: 0; outline: 0; background: transparent; padding: 0; min-height: 20px; max-height: 40vh;
+  font: 12px/20px var(--mono);
+}
 .log { list-style: none; margin: 0; padding: 0; font: 12px/1.5 var(--mono); }
 .log li { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 10px; padding: 1px 0; }
 .log time { color: var(--faint); font-variant-numeric: tabular-nums; }
@@ -425,7 +470,8 @@ textarea.text-input { height: auto; padding: 8px 10px; }
 .selection-host, .statistics-host, .settings-host, .bindings-host { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .settings-host { max-height: 60vh; overflow: auto; }
 .bindings-host { max-height: 50vh; overflow: auto; }
-.bindings-host .neuroglancer-side-panel-titlebar, .settings-host .neuroglancer-side-panel-titlebar { display: none; }
+.bindings-host .neuroglancer-side-panel-titlebar, .settings-host .neuroglancer-side-panel-titlebar,
+.statistics-host .neuroglancer-side-panel-titlebar { display: none; }
 
 /* ------------------------------------------------------ layer inspector */
 .ins-root { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -516,7 +562,8 @@ textarea.text-input { height: auto; padding: 8px 10px; }
 /* Source */
 .ins-sources { display: flex; flex-direction: column; }
 .ins-url-field { position: relative; }
-.ins-url { font-family: var(--mono); font-size: 11px; height: 28px; }
+.ins-url { font-family: var(--mono); font-size: 11px; }
+textarea.ins-grow { display: block; width: 100%; box-sizing: border-box; resize: none; overflow: hidden; min-height: 28px; line-height: 16px; padding-top: 5px; padding-bottom: 5px; word-break: break-all; }
 .ins-completions {
   position: absolute; z-index: 30; left: 0; right: 0; top: 100%; max-height: 240px; overflow: auto; margin: 0; padding: 0; list-style: none;
   background: var(--ink-2); border: 1px solid var(--line-strong); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);

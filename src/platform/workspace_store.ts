@@ -127,6 +127,24 @@ export class WorkspaceStore {
     return this.platform.datasets.filter((d) => !shown.has(d.id));
   }
 
+  /** The names of the other scenes that show a dataset. */
+  scenesShowing(id: string): string[] {
+    const dataset = this.dataset(id);
+    if (dataset === undefined) return [];
+    return this.platform.scenes
+      .filter((s) => s.id !== this.platform.activeScene && layersOf(s.ng ?? {}).some((l) => datasetKey(l) === dataset.key))
+      .map((s) => s.name);
+  }
+
+  /** A new, empty annotation layer that annotations can be drawn into. */
+  newAnnotationLayer(name = "annotations"): string {
+    const taken = layersOf(this.ng()).map((l) => String(l.name));
+    const added = this.engine.addLayer({ type: "annotation", source: "local://annotations", name: uniqueName(name, taken), tool: "annotatePoint" }, { select: true });
+    this.settle();
+    this.options.log(`Added the annotation layer “${added}”. Ctrl+click in a view to place a point; other shapes are in its Annotations tab.`, "ok");
+    return added;
+  }
+
   unusedDatasets(): DatasetRecord[] {
     return unusedDatasets(this.platform, this.ng());
   }

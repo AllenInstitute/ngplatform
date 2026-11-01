@@ -43,7 +43,12 @@ export interface Manifest {
   version: string;
   /** "datatype": a format Neuroglancer reads.  "tool": a workspace tool. */
   kind: PluginKind;
+  /** One sentence, shown under the plugin's name. */
   description?: string;
+  /** A short user guide in Markdown (## headings, lists, `code`, [links](…)), behind "Read more". */
+  guide?: string;
+  /** Where to find out more: repositories, specifications, papers. */
+  links?: { title: string; url: string }[];
   /** On for a browser that has not chosen; off unless stated. */
   enabledByDefault?: boolean;
   /** SPDX identifier, shown to the user. GPL plugins ship separately from the core. */
@@ -165,6 +170,48 @@ export interface ViewerApi {
    * `undefined` restores the layer's ordinary visible segments.
    */
   setTemporaryVisibleSegments(layer: string, ids: BigUint64Array | undefined): void;
+  /**
+   * Draws in Neuroglancer's 3-D view, as part of a layer: `drawer.draw` runs
+   * in each frame the 3-D panel draws while the layer is visible, between
+   * Neuroglancer's own opaque drawing, so depth tests both ways.  Returns
+   * a handle to ask for another frame and to stop.
+   */
+  draw3d(layer: string, drawer: Drawer3d): { redraw(): void; dispose(): void };
+}
+
+/** One frame of the 3-D view, as a plugin draws into it. */
+export interface Frame3d {
+  gl: WebGL2RenderingContext;
+  /**
+   * Display coordinates to clip space (column-major).  Display coordinates
+   * are the global coordinates of the three displayed dimensions, in their
+   * own units: a dimension with scale 1e-3 m counts millimetres.
+   */
+  viewProjection: Float32Array;
+  invViewProjection: Float32Array;
+  /** The displayed dimensions: names, and scale and unit of one coordinate (e.g. 0.001, "m"). */
+  dimensions: { names: string[]; scales: number[]; units: string[] };
+  /** The view's position, in display coordinates. */
+  position: [number, number, number];
+  width: number;
+  height: number;
+  /** Fragment output locations: colour, depth (as 1 - gl_FragDepth, in all four channels) and pick id (0 for none). */
+  outputs: { color: number; z: number; pick: number };
+  /** The camera is moving: draw something cheaper if there is a choice. */
+  moving: boolean;
+}
+
+export interface Drawer3d {
+  draw(frame: Frame3d): void;
+  /**
+   * Where Neuroglancer's sections may show in this frame (display
+   * coordinates), e.g. only on the faces of a cut the drawer leaves; asked
+   * after `draw`, only in frames it drew.  Undefined leaves them alone.
+   */
+  sectionClip?(frame: Omit<Frame3d, "gl">): { lower: number[]; upper: number[] } | undefined;
+  /** False while it has nothing to draw yet (screenshots wait for it). */
+  isReady?(): boolean;
+  dispose?(): void;
 }
 
 export interface SegmentProperties {
@@ -200,6 +247,11 @@ export interface PlatformContext {
      */
     view(render: (host: HTMLElement) => Disposer | void): Disposer;
     toast(message: string, kind?: "info" | "error"): void;
+    /**
+     * A switch beside "Sections" in the 3-D panel, for something the plugin
+     * draws there; until the disposer is called.
+     */
+    viewToggle(spec: { label: string; title?: string; value: boolean; onChange(value: boolean): void }): { set(value: boolean): void; dispose(): void };
     confirm(message: string): Promise<boolean>;
     /** A dialog generated from a schema; resolves undefined on cancel. */
     form<T>(title: string, schema: Schema, initial?: Partial<T>): Promise<T | undefined>;

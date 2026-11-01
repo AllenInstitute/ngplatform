@@ -22,7 +22,7 @@ import {
   type WatchableCoordinateSpaceTransform,
 } from "../neuroglancer.js";
 import { signal } from "./render.js";
-import { button, el, messagesView, note, type Scope, textInput, type Watch } from "./ui.js";
+import { button, el, growingInput, messagesView, note, type Scope, textInput, type Watch } from "./ui.js";
 
 /** What kind of data a subsource holds, in words. */
 export function subsourceKind(subsource: any): string {
@@ -125,7 +125,7 @@ function urlField(scope: Scope, layer: UserLayer, source: LayerDataSource) {
     if (value !== "" && value === existing.url) return;
     source.spec = { ...existing, url: value, setManually: true } as never;
   };
-  const input = textInput(source.spec.url, commit, { class: "ins-text ins-url", placeholder: "Data source URL, e.g. zarr://https://…", "aria-label": "Data source URL" });
+  const input = growingInput(source.spec.url, commit, { class: "ins-text ins-grow ins-url", placeholder: "Data source URL, e.g. zarr://https://…", "aria-label": "Data source URL" });
   const menu = el("ul", { class: "ins-completions", role: "listbox" });
   menu.hidden = true;
   let controller: AbortController | undefined;
@@ -151,6 +151,7 @@ function urlField(scope: Scope, layer: UserLayer, source: LayerDataSource) {
                 onmousedown: (e: MouseEvent) => {
                   e.preventDefault();
                   input.value = value.slice(0, result.offset) + c.value;
+                  input.dispatchEvent(new Event("input"));
                   input.focus();
                   complete();
                 },
@@ -180,7 +181,7 @@ function urlField(scope: Scope, layer: UserLayer, source: LayerDataSource) {
     element: el("div", { class: "ins-url-field" }, input, menu),
     input,
     sync: () => {
-      if (document.activeElement !== input) input.value = source.spec.url;
+      if (document.activeElement !== input) (input as unknown as { setValue(v: string): void }).setValue(source.spec.url);
     },
   };
 }
@@ -253,7 +254,12 @@ function boundsText(space: CoordinateSpace, i: number): string {
  */
 export function transformTable(scope: Scope, t: WatchableCoordinateSpaceTransform): HTMLElement {
   const host = el("div", { class: "ins-transform" });
-  const reset = button("Reset", () => t.reset(), "Back to the source's own transform");
+  const identity = () => {
+    const stride = t.value.rank + 1;
+    return Float64Array.from({ length: stride * stride }, (_, k) => (k % stride === Math.floor(k / stride) ? 1 : 0));
+  };
+  const toIdentity = button("Reset to identity", () => (t.transform = identity()), "Identity matrix and no offset; names and scales stay");
+  const toDefault = button("Reset to the source's own", () => t.reset(), "The transform, names and scales the source itself gives");
   const editing = () => host.contains(document.activeElement);
   const render = () => {
     if (editing()) return;
@@ -296,8 +302,10 @@ export function transformTable(scope: Scope, t: WatchableCoordinateSpaceTransfor
     }
     const grid = el("div", { class: "ins-tx-grid" }, ...cells);
     grid.style.gridTemplateColumns = `minmax(90px, 1.3fr) repeat(${rank + 1}, minmax(52px, 1fr))`;
-    reset.hidden = t.spec === undefined;
-    host.replaceChildren(grid, el("div", { class: "ins-actions" }, reset));
+    const id = identity();
+    toIdentity.hidden = transform.length === id.length && transform.every((v, k) => v === id[k]);
+    toDefault.hidden = t.spec === undefined;
+    host.replaceChildren(grid, el("div", { class: "ins-actions" }, toIdentity, toDefault));
   };
   host.addEventListener("focusout", () => setTimeout(() => !editing() && render(), 0));
   scope.watch(t as unknown as Watch<unknown>, render);

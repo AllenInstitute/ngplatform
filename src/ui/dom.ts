@@ -89,7 +89,7 @@ export function icon(name: keyof typeof PATHS | string): SVGSVGElement {
   return svg;
 }
 
-/** The platform's mark: three strokes in direction-encoded colour (x, y, z). */
+/** The platform's mark: three axes in direction-encoded colour (x, y, z). */
 export function mark(): SVGSVGElement {
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
@@ -98,9 +98,9 @@ export function mark(): SVGSVGElement {
   svg.setAttribute("height", "20");
   svg.setAttribute("aria-hidden", "true");
   const strokes: [string, string][] = [
-    ["M3 15c4-1 8-6 16-8", "var(--dec-x)"],
-    ["M3 11c5 0 9 3 16 7", "var(--dec-y)"],
-    ["M7 3c0 6 3 11 4 16", "var(--dec-z)"],
+    ["M8 14H20", "var(--dec-x)"],
+    ["M8 14V2", "var(--dec-y)"],
+    ["M8 14L2.5 19.5", "var(--dec-z)"],
   ];
   for (const [d, color] of strokes) {
     const path = document.createElementNS(ns, "path");

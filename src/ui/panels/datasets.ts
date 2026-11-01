@@ -3,8 +3,8 @@
  *
  * One row per dataset, with its visibility, load state and type; a dataset
  * shown through several layers lists them beneath it.  Selecting a row
- * brings its controls up in the Layer tab.  Datasets the workspace knows but
- * this scene does not show are listed below, ready to add.
+ * brings its controls up in the Layer tab.  Datasets that other scenes show
+ * are listed below, ready to add to this one.
  */
 import type { LayerInfo } from "../../engine/engine.js";
 import { clear, h, icon, iconButton } from "../dom.js";
@@ -27,22 +27,24 @@ function statusDot(layers: LayerInfo[]): HTMLElement {
   return h("span", { class: ready ? "dot ok" : "dot busy", title: ready ? "Ready" : "Loading" });
 }
 
+/** The Add menu: a dataset by URL, local data, or a new annotation layer. */
+export function showAddMenu(anchor: HTMLElement, wb: Workbench): void {
+  showMenu(anchor, [
+    { label: "Dataset from a URL…", run: () => wb.run("dataset.add") },
+    { label: "Local file or folder…", disabled: !wb.commands.available("dataset.addLocal"), run: () => wb.run("dataset.addLocal") },
+    { label: "New annotation layer", run: () => wb.run("dataset.newAnnotations") },
+  ]);
+}
+
 export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => void {
   const { store, engine } = wb;
-  const sceneTitle = h("span", { class: "scene-name" });
   const list = h("div", { class: "datasets" });
   const others = h("div", { class: "section" });
-  const header = h(
-    "div",
-    { class: "panel-head" },
-    h("div", { class: "panel-title" }, h("span", { class: "eyebrow" }, "Scene"), sceneTitle),
-    h("button", { class: "btn outline small", type: "button", onclick: () => wb.run("dataset.add") }, icon("plus"), "Add"),
-  );
-  host.append(header, list, others);
+  const addButton = h("button", { class: "btn outline small", type: "button", "aria-haspopup": "menu" }, icon("plus"), "Add");
+  addButton.addEventListener("click", () => showAddMenu(addButton, wb));
+  host.append(h("div", { class: "panel-actions" }, addButton), list, others);
 
   const render = () => {
-    const scene = store.state().scenes.find((s) => s.id === store.state().activeScene);
-    sceneTitle.textContent = scene?.name ?? "";
     const entries = store.sceneDatasets();
     const layerInfo = new Map(engine.layers().map((l) => [l.name, l]));
     const selected = engine.selectedLayer();
@@ -53,11 +55,13 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
         h(
           "div",
           { class: "empty-state" },
-          h("p", { class: "empty" }, h("strong", {}, "This scene shows no datasets. "), "Add one by URL, or open a link or an example."),
+          h("p", { class: "empty" }, h("strong", {}, "This scene shows no datasets. "), "Add one by URL or from this computer, start an annotation layer, or open a link or an example."),
           h(
             "div",
             { class: "row-actions" },
-            h("button", { class: "btn primary small", type: "button", onclick: () => wb.run("dataset.add") }, icon("plus"), "Add dataset"),
+            h("button", { class: "btn primary small", type: "button", onclick: () => wb.run("dataset.add") }, icon("plus"), "From a URL"),
+            h("button", { class: "btn outline small", type: "button", disabled: !wb.commands.available("dataset.addLocal"), onclick: () => wb.run("dataset.addLocal") }, icon("open"), "Local…"),
+            h("button", { class: "btn outline small", type: "button", onclick: () => wb.run("dataset.newAnnotations") }, icon("plus"), "Annotation layer"),
             h("button", { class: "btn outline small", type: "button", onclick: () => wb.run("workspace.open") }, icon("open"), "Open…"),
           ),
         ),
@@ -180,20 +184,26 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
     } else {
       clear(
         others,
-        h("h3", { class: "section-title" }, "In the workspace, not in this scene"),
+        h("h3", { class: "section-title" }, "In other scenes"),
         h(
           "div",
           { class: "list" },
-          ...notShown.map((dataset) =>
-            h(
+          ...notShown.map((dataset) => {
+            const scenes = store.scenesShowing(dataset.id);
+            const source = shortSource(typeof dataset.source === "string" ? dataset.source : String((dataset.source as { url?: string } | undefined)?.url ?? ""));
+            return h(
               "div",
-              { class: "ds-row other" },
+              { class: "ds-row other", title: `Add “${dataset.name}” to this scene`, onclick: () => store.showDataset(dataset.id) },
               h("span", { class: "ds-icon" }, icon("database")),
               h("span", { class: "ds-name" }, dataset.name),
               h("span", { class: "type" }, kindLabel(dataset.kind)),
-              iconButton("plus", `Add “${dataset.name}” to this scene`, () => store.showDataset(dataset.id)),
-            ),
-          ),
+              iconButton("plus", `Add “${dataset.name}” to this scene`, (e) => {
+                e.stopPropagation();
+                store.showDataset(dataset.id);
+              }),
+              h("span", { class: "sub" }, [scenes.length ? `in ${scenes.join(", ")}` : "in no scene", source].filter(Boolean).join(" · ")),
+            );
+          }),
         ),
       );
     }

@@ -7,7 +7,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { apply, identity, invert, mergeLevels, multiply, parseOmeLevels, rasBounds } from "../ome.js";
-import { borderMean, tissueWindow } from "../renderer.js";
+import { borderMean, displayOfRas, tissueWindow } from "../solid.js";
+import { omeZarrUrl, readSaved } from "../plugin.js";
 
 const fixture = (name: string) => JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", name), "utf8"));
 const BB = "https://ftp.bigbrainproject.org/bigbrain-ftp/BigBrainRelease.2015/OME_Zarr/";
@@ -114,5 +115,28 @@ describe("tissue and background", () => {
     expect(hi2 * 255).toBeCloseTo(63, 6);
     // Nothing but background: the full range.
     expect(tissueWindow(new Uint8Array(8), true)).toEqual([0, 1]);
+  });
+});
+
+describe("drawing in Neuroglancer's 3-D view", () => {
+  it("finds the OME-Zarr store behind an image layer's source", () => {
+    expect(omeZarrUrl("zarr://https://a.org/x.ome.zarr")).toBe("https://a.org/x.ome.zarr/");
+    expect(omeZarrUrl("https://a.org/x.ome.zarr/|zarr3:")).toBe("https://a.org/x.ome.zarr/");
+    expect(omeZarrUrl("zarr2://gs://bucket/brain/")).toBe("https://storage.googleapis.com/bucket/brain/");
+    expect(omeZarrUrl("precomputed://gs://bucket/em")).toBeUndefined();
+    expect(omeZarrUrl(undefined)).toBeUndefined();
+  });
+
+  it("maps RAS millimetres to display coordinates by dimension name and unit", () => {
+    const m = displayOfRas({ names: ["x", "y", "z"], scales: [0.001, 0.001, 0.002], units: ["m", "m", "m"] })!;
+    expect([m[0], m[5], m[10], m[15]]).toEqual([1, 1, 0.5, 1]);
+    const swapped = displayOfRas({ names: ["z", "y", "x"], scales: [0.001, 0.001, 0.001], units: ["m", "m", "m"] })!;
+    expect([swapped[2], swapped[5], swapped[8]]).toEqual([1, 1, 1]);
+    expect(displayOfRas({ names: ["t", "y", "x"], scales: [1, 1, 1], units: ["s", "m", "m"] })).toBeUndefined();
+  });
+
+  it("starts off, with the cut on", () => {
+    expect(readSaved(undefined)).toMatchObject({ on: false, cut: true });
+    expect(readSaved({ on: true, threshold: 0.3 })).toMatchObject({ on: true, threshold: 0.3 });
   });
 });

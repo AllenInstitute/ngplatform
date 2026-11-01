@@ -52,48 +52,57 @@ const HCP_GROUPS = {
   },
 };
 
+// The MNI152 2009a asymmetric T1w template (brain), as OME-Zarr in RAS mm,
+// hosted beside the app (see plugins/volume-view/tools/).
+const MNI2009A = "zarr://https://andrew-keenlyside.github.io/ngplatform/data/MNI152NLin2009aAsym_T1w_brain.ome.zarr/";
+
+const MICRONS = "precomputed://gs://iarpa_microns/minnie/minnie65";
+
 export const EXAMPLES: ExampleSpec[] = [
   {
-    id: "hcp1065",
-    title: "HCP-1065 whole brain, with track groups, in BigBrain",
+    id: "mni-hcp1065",
+    title: "HCP-1065 tractogram on the MNI template",
     description:
-      "The HCP-1065 population tractogram in MNI space: 503,085 streamlines, five levels. Three track groups (corpus callosum, left and right corticospinal tracts) are set up in the Filtering tab; the unfiltered view starts hidden. The volume view shows them in BigBrain (placed in MNI), cut open at the position.",
+      "The HCP-1065 population tractogram (503,085 streamlines, five levels, zarr-vectors) over the MNI152 2009a T1w template, both in MNI space. Three track groups (corpus callosum, left and right corticospinal) are set up in the Filtering tab.",
     remote: true,
     state: () => ({
       ng: {
-        layers: [{ type: "auto", source: HCP1065 + "|zarr-vectors:", name: "HCP-1065", visible: false }],
-        selectedLayer: { layer: "HCP-1065" },
+        dimensions: { x: [0.001, "m"], y: [0.001, "m"], z: [0.001, "m"] },
         position: [0, -15, 10],
-        layout: "xy",
+        crossSectionScale: 0.6,
+        projectionScale: 260,
+        layers: [
+          { type: "image", source: MNI2009A, name: "MNI152 2009a" },
+          { type: "auto", source: HCP1065 + "|zarr-vectors:", name: "HCP-1065" },
+        ],
+        selectedLayer: { layer: "HCP-1065" },
+        layout: "xy-3d",
       },
-      app: {
-        trackFiltering: HCP_GROUPS,
-        // BigBrain in MNI in place of the 3-D panel (the volume view plugin).
-        volumeView: { version: 1, data: { on: true, preset: "bigbrain-mni", layout: "xy-3d" } },
-      },
+      app: { trackFiltering: HCP_GROUPS },
     }),
   },
   {
-    id: "fib25",
-    title: "FIB-25 EM volume and segmentation",
-    description: "Neuroglancer's classic Drosophila example: precomputed image plus ground-truth segmentation, to show any Neuroglancer data opens.",
+    id: "microns",
+    title: "MICrONS cubic millimetre, mouse visual cortex",
+    description:
+      "The MICrONS minnie65 electron microscopy volume and its v1300 segmentation, with a few cells shown in 3-D. Click a cell in a section to show it.",
     remote: true,
     state: () => ({
       ng: {
-        dimensions: { x: [8e-9, "m"], y: [8e-9, "m"], z: [8e-9, "m"] },
-        position: [2914.5, 3088.5, 4045.5],
-        crossSectionScale: 3.5,
-        projectionScale: 1024,
+        dimensions: { x: [4e-9, "m"], y: [4e-9, "m"], z: [4e-8, "m"] },
+        position: [240640, 207872, 21360],
+        crossSectionScale: 12,
+        projectionScale: 120000,
         layers: [
-          { type: "image", source: "precomputed://gs://neuroglancer-public-data/flyem_fib-25/image", name: "image" },
+          { type: "image", source: `${MICRONS}/em`, name: "EM" },
           {
             type: "segmentation",
-            source: "precomputed://gs://neuroglancer-public-data/flyem_fib-25/ground_truth",
-            segments: ["158571", "21894", "22060", "24436", "2515"],
-            name: "ground truth",
+            source: `${MICRONS}/seg_m1300`,
+            segments: ["864691135610744327", "864691135849440862", "864691135565846039", "864691135454281322"],
+            name: "Cells (v1300)",
           },
         ],
-        selectedLayer: { layer: "ground truth" },
+        selectedLayer: { layer: "Cells (v1300)" },
         layout: "xy-3d",
       },
       app: {},

@@ -6,12 +6,13 @@
  */
 import { CommandError, CommandRegistry } from "../core/commands.js";
 import { KeybindingTable } from "../core/keybindings.js";
-import { InputError, layerNameFor, parseInput, type FragmentParser, workspaceLink } from "../core/state_io.js";
+import { InputError, layerNameFor, neuroglancerLink, parseInput, type FragmentParser, workspaceLink } from "../core/state_io.js";
 import { ContextKeys } from "../core/when.js";
 import { activeScene, layersOf } from "../core/workspace.js";
 import { type Engine, LAYOUTS } from "../engine/engine.js";
 import { AuthRegistry, browserAuthEnvironment, middleauthProvider } from "../platform/auth.js";
 import { JobService } from "../platform/jobs.js";
+import { LocalPlugins } from "../platform/local_plugins.js";
 import { PluginHost } from "../platform/plugin_host.js";
 import { ExampleRegistry, OpenHandlerRegistry } from "../platform/registries.js";
 import { ServiceRegistry } from "../platform/services.js";
@@ -22,18 +23,17 @@ import { registerBuiltins } from "../builtins/index.js";
 import { contextKeyFor } from "./context.js";
 import { type DockTab, DockManager, prefs } from "./docks.js";
 import { h, icon, iconButton, isMac, keyLabel, mark } from "./dom.js";
-import { closeSheet, confirmDialog, copyText, formDialog, promptDialog, sheetIsOpen, showPalette, toast } from "./overlays.js";
+import { closeSheet, confirmDialog, copyText, formDialog, promptDialog, sheetIsOpen, showMenu, showPalette, toast } from "./overlays.js";
 import { ActivityLog } from "./panels/activity.js";
 import { renderAuthPanel } from "./panels/auth.js";
-import { renderDatasetsPanel } from "./panels/datasets.js";
+import { renderDatasetsPanel, showAddMenu } from "./panels/datasets.js";
+import { forgetPython, renderPythonPanel, runPythonPlugin } from "./panels/python.js";
 import { layerTarget, renderLayerPanel } from "./panels/layer.js";
 import {
   renderJobsPanel,
   renderPluginsPanel,
-  renderPythonPanel,
   renderStatisticsPanel,
 } from "./panels/misc.js";
-import { renderScenesPanel } from "./panels/scenes.js";
 import { showAddDatasetSheet, showEditStateSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
 import type { Workbench } from "./workbench.js";
 import { createPlatformApis } from "./apis.js";
@@ -66,6 +66,7 @@ export class Shell {
   private readonly viewSplit = h("div", { class: "engine-split", hidden: true, role: "separator", "aria-orientation": "vertical", title: "Drag to resize" });
   private view: { owner: string; dispose: () => void } | undefined;
   private auth: AuthRegistry | undefined;
+  private localPlugins: LocalPlugins | undefined;
   private lastHashSeen = "";
 
   constructor(root: HTMLElement) {
@@ -85,8 +86,18 @@ export class Shell {
         "div",
         { class: "group" },
         h("button", { class: "btn outline", type: "button", onclick: () => this.wb.run("workspace.open") }, icon("open"), "Open"),
-        h("button", { class: "btn outline", type: "button", onclick: () => this.wb.run("dataset.add") }, icon("plus"), h("span", { class: "hide-narrow" }, "Dataset")),
-        h("button", { class: "btn", type: "button", onclick: () => this.wb.run("workspace.share") }, icon("link"), h("span", { class: "hide-narrow" }, "Share")),
+        h(
+          "button",
+          { class: "btn outline", type: "button", "aria-haspopup": "menu", onclick: (e: Event) => showAddMenu(e.currentTarget as HTMLElement, this.wb) },
+          icon("plus"),
+          h("span", { class: "hide-narrow" }, "Add"),
+        ),
+        h(
+          "button",
+          { class: "btn", type: "button", "aria-haspopup": "menu", onclick: (e: Event) => this.showShareMenu(e.currentTarget as HTMLElement) },
+          icon("link"),
+          h("span", { class: "hide-narrow" }, "Share"),
+        ),
       ),
       h("span", { class: "sep hide-narrow" }),
       h("div", { class: "group" }, this.undoButton, this.redoButton),
@@ -197,6 +208,7 @@ export class Shell {
       ui: {
         toast,
         confirm: (message) => confirmDialog(message),
+        viewToggle: (spec) => engine.viewToggle(spec),
         form: (title, schema, initial) => formDialog(title, schema, initial),
       },
       workspace: apis.workspace,
@@ -228,6 +240,13 @@ export class Shell {
     this.registerCommands();
     this.registerKeys();
     registerBuiltins(wb);
+    this.localPlugins = new LocalPlugins({
+      host: wb.plugins,
+      runPython: (owner, source) => runPythonPlugin(wb, owner, source),
+      forgetPython,
+      log: (message, level) => log.add(message, level ?? "info"),
+    });
+    void this.localPlugins.restore();
     for (const entry of plugins.catalogue) {
       const enabled = plugins.resolution.enabled.has(entry.manifest.id);
       // A data type plugin has no platform code: it was loaded with the viewer.
@@ -293,9 +312,8 @@ export class Shell {
     const wb = this.wb;
     const add = (tab: DockTab) => this.docks.addTab(tab);
     add({ id: "datasets", title: "Datasets", slot: "left", order: 10, render: (host) => renderDatasetsPanel(host, wb) });
-    add({ id: "scenes", title: "Scenes", slot: "left", order: 20, render: (host) => renderScenesPanel(host, wb) });
     add({ id: "auth", title: "Auth", slot: "left", order: 80, render: (host) => renderAuthPanel(host, wb, this.auth!) });
-    add({ id: "plugins", title: "Plugins", slot: "left", order: 90, render: (host) => renderPluginsPanel(host, wb) });
+    add({ id: "plugins", title: "Plugins", slot: "left", order: 90, render: (host) => renderPluginsPanel(host, wb, this.localPlugins!) });
     add({ id: "layer", title: "Layer", slot: "right", order: 10, render: (host) => renderLayerPanel(host, wb) });
     add({
       id: "activity",
@@ -308,7 +326,7 @@ export class Shell {
     });
     add({ id: "jobs", title: "Jobs", slot: "bottom", order: 20, render: (host) => renderJobsPanel(host, wb) });
     add({ id: "statistics", title: "Chunk statistics", slot: "bottom", order: 30, transient: true, render: (host) => renderStatisticsPanel(host, wb) });
-    add({ id: "python", title: "Python", slot: "bottom", order: 40, render: (host) => renderPythonPanel(host) });
+    add({ id: "python", title: "Python", slot: "bottom", order: 40, render: (host) => renderPythonPanel(host, wb) });
   }
 
   // ---------------------------------------------------------- commands
@@ -367,11 +385,28 @@ export class Shell {
     });
     add({
       id: "workspace.copyPlainLink",
-      title: "Copy this scene as a plain Neuroglancer link",
+      title: "Copy this scene as a Neuroglancer link",
       group: "Workspace",
+      hint: "For Neuroglancer itself, without this app",
       run: async () => {
-        const link = workspaceLink(location.href, { ng: store.ng(), app: {} });
-        if (await copyText(link, "the link")) toast("Plain Neuroglancer link copied.");
+        const { url, viewer } = neuroglancerLink(store.ng(), this.pluginFormatsIn(), location.href);
+        if (await copyText(url, "the link")) toast(`Neuroglancer link copied (${viewer}).`);
+      },
+    });
+    add({
+      id: "workspace.openInNeuroglancer",
+      title: "Open this scene in Neuroglancer",
+      group: "Workspace",
+      hint: "The same view and data in a new tab, without this app",
+      run: () => {
+        const formats = this.pluginFormatsIn();
+        const { url, viewer } = neuroglancerLink(store.ng(), formats, location.href);
+        window.open(url, "_blank", "noopener");
+        wb.log.add(
+          formats.length
+            ? `Opened this scene in Neuroglancer (${viewer}): it reads ${formats.join(", ")}, which Google's public Neuroglancer does not.`
+            : `Opened this scene in Neuroglancer (${viewer}).`,
+        );
       },
     });
     add({
@@ -463,6 +498,16 @@ export class Shell {
       run: (args: { source?: string; name?: string; kind?: string }) => {
         if (args.source === undefined) return showAddDatasetSheet(wb);
         return store.addDataset({ source: args.source, name: args.name ?? layerNameFor(args.source), kind: args.kind });
+      },
+    });
+    add({
+      id: "dataset.newAnnotations",
+      title: "New annotation layer",
+      group: "Datasets",
+      hint: "An empty layer to draw points, lines, boxes and ellipsoids into",
+      run: () => {
+        store.newAnnotationLayer();
+        wb.docks.show("layer");
       },
     });
     const datasetAt = (index: number) => store.sceneDatasets()[index - 1];
@@ -602,11 +647,11 @@ export class Shell {
     }
     for (const [tab, title] of [
       ["datasets", "Datasets"],
-      ["scenes", "Scenes"],
       ["layer", "Layer"],
       ["activity", "Activity"],
       ["jobs", "Jobs"],
       ["statistics", "Chunk statistics"],
+      ["python", "Python"],
       ["plugins", "Plugins"],
     ]) {
       add({ id: `panel.${tab}`, title: `Show the ${title} panel`, group: "Panels", run: () => this.docks.show(tab) });
@@ -688,6 +733,13 @@ export class Shell {
   }
 
   /** Says so when the workspace uses a format whose plugin is off. */
+  /** Formats in this scene that only this app's plugins read, such as zarr-vectors. */
+  private pluginFormatsIn(): string[] {
+    const plugin = new Set(this.wb.pluginSwitches.manifests.filter((m) => m.kind === "datatype").map((m) => m.id.replace(/^org\.ngplatform\./, "")));
+    const formats = new Set(this.wb.engine.layers().flatMap((l) => l.sources.map((s) => contextKeyFor(s) ?? "")));
+    return [...formats].filter((f) => plugin.has(f));
+  }
+
   private checkFormats(): void {
     const formats = new Set(this.wb.engine.layers().flatMap((l) => l.sources.map((s) => contextKeyFor(s))));
     const zv = this.wb.pluginSwitches.manifests.find((m) => m.id === "org.ngplatform.zarr-vectors");
@@ -815,32 +867,99 @@ export class Shell {
     for (const kind of kinds) this.wb.plugins.datasetKindSeen(kind);
   }
 
+  private showShareMenu(anchor: HTMLElement): void {
+    const run = (id: string) => () => void this.wb.run(id);
+    showMenu(anchor, [
+      { label: "Copy link to the workspace", run: run("workspace.share") },
+      { label: "Copy this scene as a Neuroglancer link", run: run("workspace.copyPlainLink") },
+      { label: "Copy this scene as Neuroglancer JSON", run: run("workspace.copyState") },
+      "-",
+      { label: "Open this scene in Neuroglancer ↗", run: run("workspace.openInNeuroglancer") },
+    ]);
+  }
+
   private renderSceneTabs(): void {
-    const p = this.wb.store.state();
+    const { store } = this.wb;
+    const p = store.state();
     const current = activeScene(p);
+    const closable = p.scenes.length > 1;
+    const close = (id: string, name: string) => {
+      store.deleteScene(id);
+      toast(`Closed “${name}”. ${keyLabel("Mod+Z")} brings it back.`);
+    };
     this.sceneTabs.replaceChildren(
-      ...p.scenes.map((scene) =>
-        h(
-          "button",
+      ...p.scenes.map((scene, index) => {
+        const active = scene.id === current.id;
+        const menu = (anchor: HTMLElement | { x: number; y: number }) =>
+          showMenu(anchor, [
+            { label: "Rename…", run: () => this.wb.run("scene.rename", { id: scene.id }) },
+            {
+              label: "Duplicate",
+              run: () => {
+                store.switchScene(scene.id);
+                store.newScene({ copy: true });
+              },
+            },
+            "-",
+            { label: "Move left", disabled: index === 0, run: () => store.moveScene(scene.id, index - 1) },
+            { label: "Move right", disabled: index === p.scenes.length - 1, run: () => store.moveScene(scene.id, index + 1) },
+            "-",
+            { label: "Close", disabled: !closable, run: () => close(scene.id, scene.name) },
+          ]);
+        return h(
+          "div",
           {
             class: "scene-tab",
-            type: "button",
             role: "tab",
-            "aria-selected": String(scene.id === current.id),
-            title: scene.id === current.id ? "Double-click to rename" : `Switch to ${scene.name}`,
-            onclick: () => this.wb.store.switchScene(scene.id),
+            tabindex: active ? 0 : -1,
+            "aria-selected": String(active),
+            title: active ? "Double-click to rename; right-click for more" : `Switch to ${scene.name}`,
+            onclick: () => store.switchScene(scene.id),
             ondblclick: () => this.wb.run("scene.rename", { id: scene.id }),
+            onauxclick: (e: Event) => {
+              if ((e as MouseEvent).button === 1 && closable) close(scene.id, scene.name);
+            },
+            oncontextmenu: (e: Event) => {
+              e.preventDefault();
+              const m = e as MouseEvent;
+              menu({ x: m.clientX, y: m.clientY });
+            },
+            onkeydown: (e: Event) => {
+              const k = e as KeyboardEvent;
+              if (k.key === "Enter") store.switchScene(scene.id);
+              if (k.key === "Delete" && closable) close(scene.id, scene.name);
+            },
           },
-          scene.name,
-        ),
-      ),
+          h("span", { class: "scene-tab-name" }, scene.name),
+          closable
+            ? h(
+                "button",
+                {
+                  class: "scene-close",
+                  type: "button",
+                  title: `Close ${scene.name}`,
+                  "aria-label": `Close ${scene.name}`,
+                  onclick: (e: Event) => {
+                    e.stopPropagation();
+                    close(scene.id, scene.name);
+                  },
+                },
+                icon("close"),
+              )
+            : null,
+        );
+      }),
       iconButton("plus", "New scene", () => this.wb.run("scene.new"), { class: "btn icon scene-add" }),
     );
   }
 
+  /** Shown only while something loads or has failed; "ready" says nothing worth the space. */
   private setStatus(kind: "ok" | "busy" | "err" | "idle", text: string): void {
     this.statusDot.className = kind === "idle" ? "dot" : `dot ${kind}`;
     this.statusText.textContent = text;
+    const status = this.statusDot.parentElement!;
+    status.dataset.state = kind;
+    status.hidden = kind === "ok" || kind === "idle";
   }
 
   private updateStatus(): void {

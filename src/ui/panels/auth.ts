@@ -33,7 +33,6 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench, auth: AuthRegi
     h(
       "div",
       { class: "section" },
-      h("h3", { class: "section-title" }, "Sign-in"),
       h(
         "p",
         { class: "note first" },

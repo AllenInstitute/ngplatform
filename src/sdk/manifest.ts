@@ -22,6 +22,11 @@ export const MANIFEST_SCHEMA: Schema = {
     version: { type: "string", pattern: "^\\d+\\.\\d+\\.\\d+" },
     kind: { type: "string", enum: ["datatype", "tool"] },
     description: { type: "string" },
+    guide: { type: "string" },
+    links: {
+      type: "array",
+      items: { type: "object", required: ["title", "url"], properties: { title: { type: "string" }, url: { type: "string", pattern: "^https?://" } } },
+    },
     enabledByDefault: { type: "boolean" },
     license: { type: "string" },
     engines: { type: "object", properties: { ngplatform: { type: "string" } } },

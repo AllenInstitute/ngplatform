@@ -123,6 +123,22 @@ export function encodeFragment(json: string): string {
   );
 }
 
+/** Google's public Neuroglancer. */
+export const PUBLIC_NEUROGLANCER = "https://neuroglancer-demo.appspot.com/";
+
+/**
+ * A link that opens a Neuroglancer state in Neuroglancer itself: Google's
+ * public one, or, when the state uses formats only this app's plugins read,
+ * this app's plain Neuroglancer page (neuroglancer.html), which reads them.
+ */
+export function neuroglancerLink(ng: unknown, pluginFormats: string[], here: string): { url: string; viewer: string } {
+  const fragment = `#!${encodeFragment(JSON.stringify(ng))}`;
+  if (pluginFormats.length === 0) return { url: PUBLIC_NEUROGLANCER + fragment, viewer: "neuroglancer-demo.appspot.com" };
+  const plain = new URL("neuroglancer.html", here.replace(/#.*$/, ""));
+  plain.search = "";
+  return { url: plain.href + fragment, viewer: "this site's plain Neuroglancer" };
+}
+
 /** A link to this app that opens `state`. */
 export function workspaceLink(base: string, state: WorkspaceState): string {
   const body = Object.keys(state.app).length === 0 ? { ng: state.ng } : state;
