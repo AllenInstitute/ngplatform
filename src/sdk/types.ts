@@ -225,8 +225,50 @@ export interface PlatformContext {
     info(message: string): void;
     error(message: string): void;
   };
+  /** Sign-in: a provider adds its services to the Auth tab. */
+  auth: {
+    register(provider: AuthProvider): Disposer;
+  };
   /** Disposed when the plugin deactivates. */
   readonly subscriptions: Disposer[];
+}
+
+// ------------------------------------------------------------------ sign-in
+
+/** Where a service's sign-in stands. */
+export interface AuthStatus {
+  state: "signed-in" | "signed-out" | "expired" | "unknown" | "error";
+  /** Who is signed in, when the service says. */
+  user?: string;
+  detail?: string;
+}
+
+/** One thing to sign in to: an auth server, a bucket, a project. */
+export interface AuthService {
+  id: string;
+  title: string;
+  /** What uses it (the datasets, apps or URLs). */
+  detail?: string;
+  /** The addresses typed into the Auth tab that led here (removable there). */
+  manual?: string[];
+  status(signal?: AbortSignal): Promise<AuthStatus>;
+  /** Called from a click: it may open a sign-in window at once. */
+  signIn?(): Promise<void>;
+  signOut?(): Promise<void>;
+}
+
+/**
+ * A kind of sign-in (middleauth is built in): which services the workspace
+ * needs, given its data sources and the servers added by hand.
+ */
+export interface AuthProvider {
+  id: string;
+  title: string;
+  /** One line for the Auth tab. */
+  description?: string;
+  /** Whether this provider takes a server typed into the Auth tab (a URL). */
+  accepts?(server: string): boolean;
+  services(input: { sources: string[]; manual: string[] }): Promise<AuthService[]>;
 }
 
 export interface PluginModule {

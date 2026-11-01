@@ -372,6 +372,19 @@ textarea.text-input { height: auto; padding: 8px 10px; }
 
 .plugin .note { margin: 0; }
 
+/* sign-in */
+.auth-list { display: grid; gap: 8px; }
+.auth-service { border: 1px solid var(--line); border-radius: var(--r); padding: 10px; display: grid; gap: 4px; }
+.auth-service .note, .auth-service .empty { margin: 0; overflow-wrap: anywhere; }
+.auth-head { display: flex; align-items: center; gap: 8px; }
+.auth-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.auth-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.chip.auth-signed-in { color: var(--ok); border-color: #2f5a40; }
+.chip.auth-expired, .chip.auth-error { color: var(--err); border-color: #5a2f2f; }
+.auth-add { display: flex; gap: 6px; margin-top: 10px; }
+.auth-add .text-input { flex: 1; min-width: 0; }
+.auth-reload { margin: 8px 0 0; }
+
 .jobs { display: grid; gap: 8px; }
 .job { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px 10px; }
 .job .bar { grid-column: 1 / -1; height: 4px; background: var(--ink-3); border-radius: 2px; overflow: hidden; }

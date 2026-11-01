@@ -142,6 +142,38 @@ it is deactivated. Subscriptions a plugin makes itself go in
 | `services.provide / get` | Share an API with other plugins (`get` waits for the provider). |
 | `open.handler` | Handle pasted text matching a declared pattern. |
 | `log` | Lines in the Activity tab, tagged with the plugin. |
+| `auth.register` | Add a sign-in method to the Auth tab (see below). |
+
+### Sign-in
+
+The Auth tab lists what the workspace's data needs a sign-in for, with who
+is signed in, and buttons to sign in, sign out and check. Middleauth (the
+Google sign-in CAVE-style servers use, for `middleauth+https://` data) is
+built in and keeps its tokens where Neuroglancer does, so either can sign in
+for the other. A plugin adds another check with an `AuthProvider`:
+
+```ts
+ctx.auth.register({
+  id: "my-lab",
+  title: "My lab's data",
+  accepts: (server) => server.startsWith("https://data.my-lab.org"),
+  async services({ sources, manual }) {
+    // One service per thing to sign in to, found from the workspace's
+    // data sources and the servers typed into the Auth tab.
+    return [{
+      id: "my-lab:main",
+      title: "data.my-lab.org",
+      async status() { return { state: "signed-out" }; },
+      async signIn() { /* open the sign-in window first, before any await */ },
+      async signOut() {},
+    }];
+  },
+});
+```
+
+`signIn` is called straight from the click, so a window it opens before its
+first `await` is not blocked. Data that a viewer layer already opened keeps
+the sign-in it had; the tab offers a reload, which keeps the workspace.
 
 ### Failure and trust
 

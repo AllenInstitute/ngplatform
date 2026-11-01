@@ -69,10 +69,10 @@ objects a second), which is what the bulk read replaces.
 
 ## How it is checked
 
-- `npm test`: 84 unit tests (workspace model, store with a fake engine,
+- `npm test`: 92 unit tests (workspace model, store with a fake engine,
   commands with arguments, key bindings, `when` clauses, schemas, state
   slices, plugin host and switches, the catalogue, the filter computation,
-  region geometry, track-group logic and .trk files,
+  region geometry, track-group logic, .trk files, sign-in,
   state parsing, undo history), then the Zarr Vectors plugin's 182 tests
   (codecs, layouts including 0.9.4's dense index, pyramids, meshes, objects,
   worker imports) against upstream Neuroglancer.

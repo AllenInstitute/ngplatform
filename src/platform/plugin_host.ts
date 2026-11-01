@@ -15,6 +15,7 @@ import type { Schema } from "../core/schema.js";
 import type { ContextKeys } from "../core/when.js";
 import { checkManifest } from "../sdk/manifest.js";
 import type {
+  AuthProvider,
   DatasetInfo,
   Disposer,
   DockSlot,
@@ -78,6 +79,7 @@ export interface HostServices {
   settings: { get(key: string): unknown; set(key: string, value: unknown): void };
   jobs: { run<T>(title: string, work: (control: JobControl) => Promise<T>, owner?: string): Promise<T> };
   services: ServiceRegistry;
+  auth: { register(provider: AuthProvider, owner?: string): Disposer };
   log(message: string, level: "info" | "error", source?: string): void;
 }
 
@@ -445,6 +447,7 @@ export class PluginHost {
         info: (message) => s.log(message, "info", owner),
         error: (message) => s.log(message, "error", owner),
       },
+      auth: { register: (provider) => own(s.auth.register(provider, owner)) },
       subscriptions,
     };
     return context;

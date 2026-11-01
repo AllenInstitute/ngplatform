@@ -10,6 +10,7 @@ import { InputError, layerNameFor, parseInput, type FragmentParser, workspaceLin
 import { ContextKeys } from "../core/when.js";
 import { activeScene, layersOf } from "../core/workspace.js";
 import { type Engine, LAYOUTS } from "../engine/engine.js";
+import { AuthRegistry, browserAuthEnvironment, middleauthProvider } from "../platform/auth.js";
 import { JobService } from "../platform/jobs.js";
 import { PluginHost } from "../platform/plugin_host.js";
 import { ExampleRegistry, OpenHandlerRegistry } from "../platform/registries.js";
@@ -23,6 +24,7 @@ import { type DockTab, DockManager, prefs } from "./docks.js";
 import { h, icon, iconButton, isMac, keyLabel, mark } from "./dom.js";
 import { closeSheet, confirmDialog, copyText, formDialog, promptDialog, sheetIsOpen, showPalette, toast } from "./overlays.js";
 import { ActivityLog } from "./panels/activity.js";
+import { renderAuthPanel } from "./panels/auth.js";
 import { renderDatasetsPanel } from "./panels/datasets.js";
 import { layerTarget, renderLayerPanel } from "./panels/layer.js";
 import {
@@ -59,6 +61,7 @@ export class Shell {
   private readonly undoButton = iconButton("undo", "Undo", () => this.wb.run("edit.undo"));
   private readonly redoButton = iconButton("redo", "Redo", () => this.wb.run("edit.redo"));
   private wb!: Workbench;
+  private auth: AuthRegistry | undefined;
   private lastHashSeen = "";
 
   constructor(root: HTMLElement) {
@@ -140,6 +143,9 @@ export class Shell {
     const openHandlers = new OpenHandlerRegistry();
     const jobs = new JobService();
     const services = new ServiceRegistry();
+    const auth = new AuthRegistry(localStorage);
+    auth.register(middleauthProvider(browserAuthEnvironment()), "platform");
+    this.auth = auth;
     const store = new WorkspaceStore(engine, {
       framed,
       log: (message, level) => log.add(message, level),
@@ -208,6 +214,7 @@ export class Shell {
       },
       jobs,
       services,
+      auth,
       log: (message, level, source) => log.add(message, level, source),
     });
 
@@ -281,6 +288,7 @@ export class Shell {
     const add = (tab: DockTab) => this.docks.addTab(tab);
     add({ id: "datasets", title: "Datasets", slot: "left", order: 10, render: (host) => renderDatasetsPanel(host, wb) });
     add({ id: "scenes", title: "Scenes", slot: "left", order: 20, render: (host) => renderScenesPanel(host, wb) });
+    add({ id: "auth", title: "Auth", slot: "left", order: 80, render: (host) => renderAuthPanel(host, wb, this.auth!) });
     add({ id: "plugins", title: "Plugins", slot: "left", order: 90, render: (host) => renderPluginsPanel(host, wb) });
     add({ id: "layer", title: "Layer", slot: "right", order: 10, render: (host) => renderLayerPanel(host, wb) });
     add({

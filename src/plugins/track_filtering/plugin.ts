@@ -1029,7 +1029,7 @@ class TrackGroups {
     const total = info?.levels[0]?.vertexCount;
     for (const l of info?.levels ?? [{ index: 0, vertexCount: undefined, chunkShape: [] }]) {
       const share = l.index === 0 || total === undefined || l.vertexCount === undefined ? undefined : (100 * l.vertexCount) / total;
-      const label = l.index === 0 ? "All streamlines" : `Level ${l.index} sample${share === undefined ? "" : ` (about ${share < 1 ? share.toFixed(1) : Math.round(share)}%)`}`;
+      const label = l.index === 0 ? "All streamlines" : `Level ${l.index} sample${share === undefined ? "" : ` (about ${share >= 1 ? Math.round(share) : Number(share.toPrecision(1))}%)`}`;
       level.append(el("option", { value: String(l.index) }, label));
     }
     level.value = String(this.trkLevel);

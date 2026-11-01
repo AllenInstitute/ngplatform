@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { CommandRegistry } from "../src/core/commands.js";
 import { KeybindingTable } from "../src/core/keybindings.js";
 import { ContextKeys } from "../src/core/when.js";
+import { AuthRegistry } from "../src/platform/auth.js";
 import { JobService } from "../src/platform/jobs.js";
 import { type DockTabSpec, type HostServices, PluginError, PluginHost } from "../src/platform/plugin_host.js";
 import { ExampleRegistry, OpenHandlerRegistry } from "../src/platform/registries.js";
@@ -41,6 +42,7 @@ function services() {
     settings: { get: () => undefined, set: () => {} },
     jobs: new JobService(),
     services: new ServiceRegistry(),
+    auth: new AuthRegistry({ getItem: () => null, setItem: () => {} }),
     log: (message) => logs.push(message),
   };
   return { s, tabs, logs, slices };
@@ -209,5 +211,23 @@ describe("PluginHost", () => {
     }));
     await host.activate("org.example.sneaky");
     expect(error?.message).toMatch(/no panel "undeclared"/);
+  });
+});
+
+describe("sign-in providers from plugins", () => {
+  it("are registered through the context and removed when the plugin stops", async () => {
+    const { s } = services();
+    const auth = s.auth as AuthRegistry;
+    const host = new PluginHost(s);
+    const m: Manifest = { ...manifest, id: "org.example.auth", activation: ["onStartup"], contributes: {} };
+    host.register(m, async () => ({
+      activate(ctx) {
+        ctx.auth.register({ id: "example", title: "Example", services: async () => [] });
+      },
+    }));
+    await host.activate(m.id);
+    expect(auth.list().map((p) => p.id)).toEqual(["example"]);
+    await host.deactivate(m.id);
+    expect(auth.list()).toEqual([]);
   });
 });
