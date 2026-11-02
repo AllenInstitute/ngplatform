@@ -41,7 +41,7 @@ export async function openFromDevice(wb: Workbench, folder: boolean): Promise<bo
 }
 
 /** What Open from device reads, for messages. */
-const LOCAL_FORMATS = "NIfTI, OME-Zarr, zarr-vectors and precomputed";
+const LOCAL_FORMATS = "NIfTI, TrackVis .trk, OME-Zarr, zarr-vectors and precomputed";
 
 export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
   const input = h("textarea", {
@@ -306,7 +306,7 @@ export function showLocalSheet(wb: Workbench, local: LocalData): void {
       status.classList.toggle("bad", choices.length === 0);
       status.textContent = choices.length
         ? `${choices.length} dataset${choices.length === 1 ? "" : "s"} in ${entry.name}.`
-        : `No dataset found in ${entry.name}: it reads OME-Zarr, zarr-vectors, precomputed and NIfTI (a folder of them is fine).`;
+        : `No dataset found in ${entry.name}: it reads OME-Zarr, zarr-vectors, precomputed, NIfTI and .trk (a folder of them is fine).`;
     } catch (e) {
       status.textContent = (e as Error).message;
       status.classList.add("bad");
@@ -332,7 +332,7 @@ export function showLocalSheet(wb: Workbench, local: LocalData): void {
         h(
           "p",
           { class: "note" },
-          "A folder can be an OME-Zarr image, a zarr-vectors store, a Neuroglancer precomputed volume, or a folder holding several. ",
+          "A file: NIfTI or TrackVis .trk, read in place. A folder: an OME-Zarr image, a zarr-vectors store, a precomputed volume, or a folder holding several. ",
           "Links to it work in this browser only, while this tab is open; it is remembered here, so it opens again after one click to allow reading.",
           LocalData.canWrite ? "" : " This browser cannot remember folders or write into them: use Chrome or Edge for that.",
         ),

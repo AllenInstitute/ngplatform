@@ -36,6 +36,27 @@ export interface CommandContribution {
 
 export type PluginKind = "datatype" | "tool";
 
+/**
+ * A kind of file a data type plugin reads in place as a virtual store: the
+ * keys under the file's own URL (<file>/zarr.json, <file>/0/…) made from it
+ * as they are asked for, by a worker.  Local data lists such files and
+ * routes their keys to the worker (see @ngplatform/sdk/virtual).
+ */
+export interface VirtualFormat {
+  /** File names it reads. */
+  pattern: RegExp;
+  /** Their extensions, for file pickers (".trk"). */
+  extensions: string[];
+  /** What such a file is, for lists ("TrackVis tractogram"). */
+  format: string;
+  /** The dataset's layer type ("image", "segmentation", "auto"). */
+  kind: string;
+  /** The layer source for the store served at `url` (the file's own URL). */
+  source(url: string): string;
+  /** A worker answering the store's keys (made once, when first needed). */
+  worker(): Worker;
+}
+
 export interface Manifest {
   /** Reverse-DNS and stable, e.g. "org.example.tractography". */
   id: string;

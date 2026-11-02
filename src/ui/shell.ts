@@ -268,6 +268,9 @@ export class Shell {
     void this.localPlugins.restore();
     // Local data opened on earlier visits: the workspace's links to it work
     // once reading is allowed again.
+    for (const entry of plugins.catalogue) {
+      if (entry.virtualFormats !== undefined && plugins.resolution.enabled.has(entry.manifest.id)) wb.localData.addFormats(entry.virtualFormats());
+    }
     void wb.localData.restore();
     for (const entry of plugins.catalogue) {
       const enabled = plugins.resolution.enabled.has(entry.manifest.id);

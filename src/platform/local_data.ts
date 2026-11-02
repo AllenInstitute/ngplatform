@@ -5,10 +5,11 @@
  * service worker (public/local-sw.js) answers by asking this page for the
  * file.  Neuroglancer reads it like any other source, ranges and all.
  *
- * Files that are not Zarr (NIfTI) are read as virtual Zarr: the URLs under
- * a file's own (<file>/zarr.json, <file>/0/c/…) are a Zarr v3 store made
- * from it as they are asked for, in a worker (src/platform/virtual_zarr/),
- * so a NIfTI opens as a chunked, multiscale OME-Zarr image.
+ * Files that are not Zarr are read as virtual stores: the URLs under a
+ * file's own (<file>/zarr.json, <file>/0/c/…) are a store made from it as
+ * they are asked for, in a worker.  NIfTI opens as a chunked, multiscale
+ * OME-Zarr image (src/platform/virtual_zarr/); data type plugins add their
+ * own formats (`addFormats`: Zarr Vectors reads .trk as zarr-vectors).
  *
  * The folders are remembered in this browser (where the browser can), so a
  * workspace link to local data opens again here after one click to allow
@@ -16,8 +17,19 @@
  * writing can be changed too: track groups saved into a zarr-vectors store.
  */
 
-import { VIRTUAL_FILE } from "./virtual_zarr/store.js";
-import type { VirtualRequest } from "./virtual_zarr/worker.js";
+import type { VirtualFormat } from "../sdk/types.js";
+import { listingHtml, VIRTUAL_FILE } from "./virtual_zarr/store.js";
+import type { VirtualRequest } from "../sdk/virtual.js";
+
+/** NIfTI, read as OME-Zarr by the platform's own worker. */
+export const NIFTI_FORMAT: VirtualFormat = {
+  pattern: VIRTUAL_FILE,
+  extensions: [".nii", ".nii.gz"],
+  format: "NIfTI image",
+  kind: "image",
+  source: (url) => `zarr3://${url}/`,
+  worker: () => new Worker(new URL("./virtual_zarr/worker.ts", import.meta.url), { type: "module", name: "virtual-zarr" }),
+};
 
 type Handle = FileSystemFileHandle | FileSystemDirectoryHandle;
 type Permissioned = Handle & {
@@ -94,10 +106,27 @@ export class LocalData {
   /** The app's base URL; local URLs are under base/local/. */
   readonly base: string;
   private worker: Promise<ServiceWorker | undefined> | undefined;
-  private virtualWorker: Worker | undefined;
+  /** Files read as virtual stores, and the workers that serve them. */
+  private formats: VirtualFormat[] = [NIFTI_FORMAT];
+  private readonly virtualWorkers = new Map<VirtualFormat, Worker>();
 
   constructor(base = new URL(".", location.href).href) {
     this.base = base;
+  }
+
+  /** Adds kinds of file read as virtual stores (a data type plugin's). */
+  addFormats(formats: VirtualFormat[]): void {
+    this.formats = [...this.formats, ...formats];
+  }
+
+  /** The virtual format a file name is read as, if any. */
+  formatOf(name: string): VirtualFormat | undefined {
+    return this.formats.find((f) => f.pattern.test(name));
+  }
+
+  /** Extensions of the files read as virtual stores, for file pickers. */
+  get extensions(): string[] {
+    return this.formats.flatMap((f) => f.extensions);
   }
 
   static get supported(): boolean {
@@ -211,11 +240,11 @@ export class LocalData {
       } else if (!folder && picker.showOpenFilePicker) {
         const [handle] = await picker.showOpenFilePicker({
           id: "ngplatform-data",
-          types: [{ description: "Images (NIfTI)", accept: { "application/octet-stream": [".nii", ".gz"] } }],
+          types: [{ description: this.formats.map((f) => f.format).join(", "), accept: { "application/octet-stream": [...new Set(this.extensions.map((e) => e.replace(/^.*(\.[^.]+)$/, "$1")))] } }],
         });
         entry = { id, name: handle.name, kind: "file", handle, needsPermission: false };
       } else {
-        const files = await pickWithInput(folder);
+        const files = await pickWithInput(folder, this.extensions);
         if (files === undefined) return undefined;
         const first = [...files.keys()][0];
         entry = folder ? { id, name: first.split("/")[0], kind: "folder", files: stripFolder(files), needsPermission: false } : { id, name: first, kind: "file", files, needsPermission: false };
@@ -266,16 +295,29 @@ export class LocalData {
       port.postMessage({ status: 403 });
       return;
     }
-    const virtual = splitVirtual(request.path);
+    const virtual = splitVirtual(request.path, this.formats);
     if (virtual !== undefined) {
       const file = await this.file(request.id, virtual.file);
       if (file === undefined) {
         port.postMessage({ status: 404 });
         return;
       }
-      this.virtualWorker ??= new Worker(new URL("./virtual_zarr/worker.ts", import.meta.url), { type: "module", name: "virtual-zarr" });
+      let worker = this.virtualWorkers.get(virtual.format);
+      if (worker === undefined) this.virtualWorkers.set(virtual.format, (worker = virtual.format.worker()));
       const message: VirtualRequest = { type: "get", store: `${request.id}/${virtual.file}`, file, key: virtual.key, range: request.range, head: request.head };
-      this.virtualWorker.postMessage(message, [port]);
+      worker.postMessage(message, [port]);
+      return;
+    }
+    if (request.path === "" || request.path.endsWith("/")) {
+      // A folder: its listing, as a web server's index page.
+      const dir = request.path.replace(/\/$/, "");
+      const names = [...(await this.subfolders(request.id, dir)).map((d) => `${d}/`), ...(await this.files(request.id, dir))];
+      if (names.length === 0) {
+        port.postMessage({ status: 404 });
+        return;
+      }
+      const body = listingHtml(names).slice().buffer;
+      port.postMessage({ status: 200, size: body.byteLength, start: 0, body: request.head ? undefined : body, contentType: "text/html" }, request.head ? [] : [body]);
       return;
     }
     const file = await this.file(request.id, request.path);
@@ -311,22 +353,30 @@ export class LocalData {
   async detect(id: string): Promise<FoundDataset[]> {
     const entry = this.entries.get(id);
     if (entry === undefined) return [];
-    if (entry.kind === "file") return VIRTUAL_FILE.test(entry.name) ? [this.image(id, entry.name)] : [];
+    if (entry.kind === "file") {
+      const format = this.formatOf(entry.name);
+      return format === undefined ? [] : [this.virtual(id, entry.name, format)];
+    }
     const here = await this.detectAt(id, "", entry.name);
     if (here !== undefined) return [here];
-    const found: FoundDataset[] = (await this.files(id, "")).filter((f) => VIRTUAL_FILE.test(f)).map((f) => this.image(id, f));
+    const inFolder = async (dir: string) =>
+      (await this.files(id, dir)).flatMap((f) => {
+        const format = this.formatOf(f);
+        return format === undefined ? [] : [this.virtual(id, dir === "" ? f : `${dir}/${f}`, format)];
+      });
+    const found: FoundDataset[] = await inFolder("");
     for (const child of await this.children(id)) {
       const one = await this.detectAt(id, child, child);
       if (one !== undefined) found.push(one);
-      else for (const f of await this.files(id, child)) if (VIRTUAL_FILE.test(f)) found.push(this.image(id, `${child}/${f}`));
+      else found.push(...(await inFolder(child)));
     }
     return found;
   }
 
-  /** A NIfTI file as a dataset: read as the OME-Zarr store under its URL. */
-  private image(id: string, path: string): FoundDataset {
+  /** A file read as a virtual store, as a dataset: the store under the file's own URL. */
+  private virtual(id: string, path: string, format: VirtualFormat): FoundDataset {
     const name = path.split("/").pop()!;
-    return { source: `zarr3://${this.urlOf(id, path)}/`, name: name.replace(VIRTUAL_FILE, ""), kind: "image", format: "NIfTI image", path };
+    return { source: format.source(this.urlOf(id, path)), name: name.replace(format.pattern, ""), kind: format.kind, format: format.format, path };
   }
 
   /** The names of the files in a folder of an entry ("" for the folder itself). */
@@ -375,6 +425,29 @@ export class LocalData {
     return undefined;
   }
 
+  /** The names of the folders in a folder of an entry ("" for the entry itself). */
+  private async subfolders(id: string, dir: string): Promise<string[]> {
+    if (dir === "") return this.children(id);
+    const entry = this.entries.get(id);
+    if (entry === undefined) return [];
+    if (entry.files !== undefined) {
+      const prefix = `${dir}/`;
+      return [...new Set([...entry.files.keys()].filter((p) => p.startsWith(prefix) && p.slice(prefix.length).includes("/")).map((p) => p.slice(prefix.length).split("/")[0]))].sort();
+    }
+    let handle = entry.handle;
+    if (handle?.kind !== "directory" || entry.needsPermission) return [];
+    try {
+      for (const part of dir.split("/").filter(Boolean)) handle = await (handle as FileSystemDirectoryHandle).getDirectoryHandle(part);
+      const out: string[] = [];
+      for await (const [name, child] of (handle as unknown as { entries(): AsyncIterable<[string, Handle]> }).entries()) {
+        if (child.kind === "directory" && !name.startsWith(".")) out.push(name);
+      }
+      return out.sort();
+    } catch {
+      return [];
+    }
+  }
+
   private async children(id: string): Promise<string[]> {
     const entry = this.entries.get(id);
     if (entry === undefined) return [];
@@ -417,11 +490,12 @@ export class LocalData {
   }
 }
 
-/** A path under a file read as virtual Zarr: the file, and the key in its store. */
-export function splitVirtual(path: string): { file: string; key: string } | undefined {
+/** A path under a file read as a virtual store: the file, the key in its store, and its format. */
+export function splitVirtual(path: string, formats: VirtualFormat[] = [NIFTI_FORMAT]): { file: string; key: string; format: VirtualFormat } | undefined {
   const parts = path.split("/");
   for (let i = 1; i < parts.length; ++i) {
-    if (VIRTUAL_FILE.test(parts[i - 1])) return { file: parts.slice(0, i).join("/"), key: parts.slice(i).join("/") };
+    const format = formats.find((f) => f.pattern.test(parts[i - 1]));
+    if (format !== undefined) return { file: parts.slice(0, i).join("/"), key: parts.slice(i).join("/"), format };
   }
   return undefined;
 }
@@ -433,12 +507,12 @@ function stripFolder(files: Map<string, File>): Map<string, File> {
   return out;
 }
 
-function pickWithInput(folder: boolean): Promise<Map<string, File> | undefined> {
+function pickWithInput(folder: boolean, extensions: string[]): Promise<Map<string, File> | undefined> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
     if (folder) input.webkitdirectory = true;
-    else input.accept = ".nii,.gz";
+    else input.accept = [...new Set(extensions.map((e) => e.replace(/^.*(\.[^.]+)$/, "$1")))].join(",");
     input.addEventListener("change", () => {
       const files = new Map<string, File>();
       for (const file of input.files ?? []) files.set(file.webkitRelativePath || file.name, file);

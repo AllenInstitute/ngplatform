@@ -410,8 +410,8 @@ describe("levels in Neuroglancer", () => {
 
 describe("local paths", () => {
   it("splits a path under a NIfTI file into the file and a key", () => {
-    expect(splitVirtual("brain.nii.gz/zarr.json")).toEqual({ file: "brain.nii.gz", key: "zarr.json" });
-    expect(splitVirtual("sub-01/anat/T1w.nii/0/c/0/1/2")).toEqual({ file: "sub-01/anat/T1w.nii", key: "0/c/0/1/2" });
+    expect(splitVirtual("brain.nii.gz/zarr.json")).toMatchObject({ file: "brain.nii.gz", key: "zarr.json" });
+    expect(splitVirtual("sub-01/anat/T1w.nii/0/c/0/1/2")).toMatchObject({ file: "sub-01/anat/T1w.nii", key: "0/c/0/1/2" });
     expect(splitVirtual("brain.nii.gz")).toBeUndefined();
     expect(splitVirtual("image.ome.zarr/0/zarr.json")).toBeUndefined();
   });

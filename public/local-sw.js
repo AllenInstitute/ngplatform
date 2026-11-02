@@ -84,7 +84,7 @@ self.addEventListener("fetch", (event) => {
       if (answer.status !== 200) return new Response(answer.message ?? null, { status: answer.status, headers });
       const { body, size, start } = answer;
       headers["accept-ranges"] = "bytes";
-      headers["content-type"] = "application/octet-stream";
+      headers["content-type"] = answer.contentType ?? "application/octet-stream";
       if (range !== undefined && size !== undefined) {
         const end = start + (body ? body.byteLength : 0);
         if (start >= size && size > 0) return new Response(null, { status: 416, headers: { ...headers, "content-range": `bytes */${size}` } });

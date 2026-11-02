@@ -13,6 +13,12 @@ export const VIRTUAL_FILE = /\.nii(\.gz)?$/i;
 export interface VirtualStore {
   /** The bytes of `key`, or undefined when the store has no such key. */
   get(key: string): Promise<Uint8Array | undefined>;
+  /**
+   * The names in a directory ("" or a key ending in "/"), sub-directories
+   * ending in "/"; undefined when there is no such directory.  For readers
+   * that list (zarr-vectors' object attributes).
+   */
+  list?(prefix: string): string[] | undefined;
 }
 
 /** Random access to a file's bytes. */
@@ -121,11 +127,25 @@ export interface Answer {
   start?: number;
   body?: ArrayBuffer;
   message?: string;
+  /** "text/html" for a directory listing; otherwise bytes. */
+  contentType?: string;
+}
+
+/** A directory listing as an HTML page of links, which Neuroglancer's http store reads as Python's http.server's. */
+export function listingHtml(names: string[]): Uint8Array {
+  const escape = (n: string) => n.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  return new TextEncoder().encode(`<!DOCTYPE html><html><body><ul>${names.map((n) => `<li><a href="${escape(encodeURI(n))}">${escape(n)}</a></li>`).join("")}</ul></body></html>`);
 }
 
 export type Range = { start?: number; end?: number; suffix?: number };
 
 export async function answer(store: VirtualStore, key: string, range: Range | undefined, head: boolean): Promise<Answer> {
+  if (key === "" || key.endsWith("/")) {
+    const names = store.list?.(key);
+    if (names === undefined) return { status: 404 };
+    const html = listingHtml(names);
+    return { status: 200, size: html.byteLength, start: 0, body: head ? undefined : html.slice().buffer, contentType: "text/html" };
+  }
   const data = await store.get(key);
   if (data === undefined) return { status: 404 };
   const size = data.byteLength;
