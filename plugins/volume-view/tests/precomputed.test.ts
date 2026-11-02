@@ -6,8 +6,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { encodeZIndexCompressed3d } from "neuroglancer/unstable/util/zorder.js";
-import { apply } from "../ome.js";
-import { chunkId, decodeMinishardIndex, type RangeRead, PrecomputedScale, readInfo, type Scale, scaleLevel, shardOf, type Sharding } from "../precomputed.js";
+import { chunkId, decodeMinishardIndex, type RangeRead, PrecomputedScale, readInfo, type Scale, shardOf, type Sharding } from "@ngplatform/sdk/precomputed";
+import { apply, scaleLevel } from "../ome.js";
 import { precomputedUrl } from "../sources.js";
 import { storeOf } from "../plugin.js";
 

@@ -1,9 +1,11 @@
 /**
- * Track filtering: TrackVis-style track groups over a Zarr Vectors dataset.
+ * Track filtering: TrackVis-style track groups over any dataset that is not
+ * an image: a Zarr Vectors store (streamlines, skeletons, points, meshes), a
+ * segmentation volume (Neuroglancer precomputed) or an annotation layer.
  *
- * A group keeps the objects (streamlines, skeletons, points) that pass
- * through its regions (spheres and boxes, each AND, OR or NOT) and whose
- * attributes are in range.  Each group is a layer of the dataset, in its own
+ * A group keeps the objects (streamlines, skeletons, points, segments,
+ * annotations) that pass through its regions (spheres and boxes, each AND,
+ * OR or NOT) and, for Zarr Vectors, whose attributes are in range.  Each group is a layer of the dataset, in its own
  * colour, so it shows and is switched on and off like any layer, here and in
  * the Datasets tab.  Regions are drawn in the views as annotations: drag one
  * with Alt to move it, and the group follows.
@@ -19,6 +21,10 @@
  */
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
 import type { DatasetInfo, Disposer, Json, PlatformContext, PluginModule, SegmentProperties } from "@ngplatform/sdk";
+import { precomputedUrl } from "@ngplatform/sdk/sources";
+import { annotationGeometry, annotationMeets } from "./annotation_regions.js";
+import type { NmRegion } from "./labels.js";
+import { LabelsEngine } from "./labels_client.js";
 import { computeMask, countPassing, emptyFilter, type FilterSpec, histogram, isEmptyFilter, passingIds, tagCounts, toCsv } from "./filter.js";
 import { FILTERING_PANEL } from "./manifest.js";
 import { groupMask, type Roi, type RoiOp, type RoiShape, rowIndex, rowMask } from "./roi.js";
@@ -261,6 +267,8 @@ const STYLE = `
 
 interface GroupResult {
   mask: Uint8Array | undefined;
+  /** The passing objects, for datasets whose objects are not rows of segment properties (segments, annotations). */
+  ids?: string[];
   count: number;
   /** "exact": level 0; "preview": a coarse level's sample; "computing", "empty", "error". */
   state: "exact" | "preview" | "computing" | "empty" | "error" | "waiting";
@@ -269,12 +277,31 @@ interface GroupResult {
 
 // ------------------------------------------------------------ controller
 
+/** What a dataset is to filtering. */
+type Kind = "zarr-vectors" | "segmentation" | "annotations";
+
+/** Combines regions' answers: every AND, at least one OR (when there are any), no NOT. */
+export function combineIds(results: { op: RoiOp; ids: string[] }[]): string[] {
+  const ands = results.filter((r) => r.op === "and");
+  const ors = results.filter((r) => r.op === "or");
+  const nots = new Set(results.filter((r) => r.op === "not").flatMap((r) => r.ids));
+  let keep: Set<string> | undefined;
+  for (const r of ands) keep = keep === undefined ? new Set(r.ids) : new Set(r.ids.filter((id) => keep!.has(id)));
+  if (ors.length > 0) {
+    const any = new Set(ors.flatMap((r) => r.ids));
+    keep = keep === undefined ? any : new Set([...keep].filter((id) => any.has(id)));
+  }
+  return [...(keep ?? [])].filter((id) => !nots.has(id));
+}
+
 class TrackGroups {
   private saved: Saved;
   private props: SegmentProperties | undefined;
   private rowOf: ((id: bigint) => number | undefined) | undefined;
   private engine: RoiEngine | undefined;
   private engineUrl: string | undefined;
+  /** For a segmentation: the region tests on its volume. */
+  private labels: LabelsEngine | undefined;
   private info: StoreInfo | undefined;
   private results = new Map<string, GroupResult>();
   private roiStatus = new Map<string, string>();
@@ -328,10 +355,20 @@ class TrackGroups {
       }),
       ctx.workspace.onChanged(() => this.refresh()),
       ctx.viewer.onLayersChanged(() => this.notify()),
-      ctx.viewer.onStateChanged(() => this.readAnnotations()),
+      ctx.viewer.onStateChanged(() => {
+        this.readAnnotations();
+        // An annotation dataset's groups follow its annotations as they are drawn.
+        if (this.kind() !== "annotations") return;
+        const now = JSON.stringify(this.baseAnnotations());
+        if (now === this.annotationsSeen) return;
+        this.annotationsSeen = now;
+        this.evaluateAll();
+      }),
     );
     this.refresh();
   }
+
+  private annotationsSeen = "";
 
   dispose(): void {
     this.offs.forEach((off) => off());
@@ -340,6 +377,7 @@ class TrackGroups {
     for (const t of this.exactTimers.values()) clearTimeout(t);
     if (this.commitTimer !== undefined) clearTimeout(this.commitTimer);
     this.engine?.dispose();
+    this.labels?.dispose();
   }
 
   // ------------------------------------------------------------ saving
@@ -379,8 +417,27 @@ class TrackGroups {
 
   // ----------------------------------------------------------- dataset
 
+  /** The scene's datasets that can be filtered: Zarr Vectors, segmentation volumes and annotation layers. */
   private candidates() {
-    return this.ctx.workspace.sceneDatasets().filter((d) => d.layers.some((l) => l.sources.some((s) => storeUrlOfSource(s) !== undefined)));
+    return this.ctx.workspace.sceneDatasets().filter((d) => this.kindOf(d) !== undefined);
+  }
+
+  /** What a dataset is to filtering; undefined for images and what it cannot test. */
+  private kindOf(dataset: DatasetInfo): Kind | undefined {
+    const entry = this.ctx.workspace.sceneDatasets().find((d) => d.id === dataset.id);
+    const layers = entry?.layers ?? [];
+    if (layers.some((l) => l.sources.some((s) => storeUrlOfSource(s) !== undefined))) return "zarr-vectors";
+    const groups = this.groupLayers();
+    const own = layers.filter((l) => !groups.has(l.name) && l.name !== this.roiLayerName(dataset));
+    if (own.some((l) => l.type === "segmentation" && l.sources.some((s) => precomputedUrl(s) !== undefined))) return "segmentation";
+    if (own.some((l) => l.type === "annotation" && l.sources.some((s) => /^local:\/\/annotations/.test(s)))) return "annotations";
+    return undefined;
+  }
+
+  /** The kind of the dataset being filtered. */
+  private kind(): Kind | undefined {
+    const dataset = this.dataset();
+    return dataset && this.kindOf(dataset);
   }
 
   private dataset(): DatasetInfo | undefined {
@@ -435,13 +492,21 @@ class TrackGroups {
       this.loadProps();
     }
     const source = dataset && this.sourceOf(dataset);
-    const url = source && storeUrlOfSource(source);
+    const kind = dataset && this.kindOf(dataset);
+    const url = source && (kind === "zarr-vectors" ? storeUrlOfSource(source) : kind === "segmentation" ? precomputedUrl(source) : kind === "annotations" ? `annotations:${dataset!.id}` : undefined);
     if (url !== this.engineUrl) {
       this.engine?.dispose();
       this.engine = undefined;
+      this.labels?.dispose();
+      this.labels = undefined;
       this.info = undefined;
       this.engineUrl = url;
-      if (url !== undefined) {
+      if (url !== undefined && kind === "segmentation") {
+        this.labels = new LabelsEngine(url);
+        this.evaluateAll();
+      } else if (url !== undefined && kind === "annotations") {
+        this.evaluateAll();
+      } else if (url !== undefined) {
         const engine = new RoiEngine(url);
         this.engine = engine;
         engine.ready.then(
@@ -555,17 +620,24 @@ class TrackGroups {
     const dataset = this.dataset();
     const url = dataset && this.sourceOf(dataset);
     if (dataset === undefined || url === undefined) return undefined;
+    const kind = this.kindOf(dataset);
     this.creating.add(group.id);
     let layer: string;
     try {
-      layer = this.ctx.workspace.addLayer(dataset.id, {
-        name: group.name,
-        type: "segmentation",
-        source: { url, subsources: { objects: false, meshes: false } },
-        notSelectedAlpha: 0,
-        ignoreNullVisibleSet: false,
-        segmentDefaultColor: group.colour,
-      });
+      const spec: Json =
+        kind === "annotations"
+          ? { name: group.name, type: "annotation", source: "local://annotations", annotations: [], annotationColor: group.colour }
+          : kind === "segmentation"
+            ? { name: group.name, type: "segmentation", source: url, ignoreNullVisibleSet: false, segmentDefaultColor: group.colour }
+            : {
+                name: group.name,
+                type: "segmentation",
+                source: { url, subsources: { objects: false, meshes: false } },
+                notSelectedAlpha: 0,
+                ignoreNullVisibleSet: false,
+                segmentDefaultColor: group.colour,
+              };
+      layer = this.ctx.workspace.addLayer(dataset.id, spec);
       this.saved = { ...this.saved, groups: this.saved.groups.map((g) => (g.id === group.id ? { ...g, layer } : g)) };
       this.save();
     } finally {
@@ -591,10 +663,13 @@ class TrackGroups {
       group = this.editing();
       if (group === undefined) return;
     }
-    // A fifth of a level-0 chunk, in global units: 5–6 mm on a typical tractogram.
+    // A fifth of a level-0 chunk, in global units: 5–6 mm on a typical
+    // tractogram.  Without a store (a segmentation, annotations): about 40
+    // screen pixels of the sections.
     const info = this.info;
     const dims = this.dims();
-    let size = 5;
+    const scale = Number((this.ctx.viewer.getState() as { crossSectionScale?: number }).crossSectionScale);
+    let size = Number.isFinite(scale) && scale > 0 ? Number((scale * 40).toPrecision(2)) : 5;
     if (info !== undefined && dims !== undefined) {
       const stored = Math.min(...info.levels[0].chunkShape) / 6;
       const factor = (dims[info.axisNames[0]]?.[0] ?? 1) / (info.axisScales[0] || 1);
@@ -795,6 +870,8 @@ class TrackGroups {
    * when its regions have stayed put a moment, the exact one from level 0.
    */
   private evaluateGroup(group: Group, exactNow = false): void {
+    const kind = this.kind();
+    if (kind === "segmentation" || kind === "annotations") return this.evaluateOther(group, kind);
     const props = this.props;
     const rowOf = this.rowOf;
     const dims = this.dims();
@@ -889,6 +966,85 @@ class TrackGroups {
     );
   }
 
+  /** A region in nanometres, from the viewer's coordinates. */
+  private toNm(roi: Roi, nm: [number, number, number]): NmRegion {
+    return {
+      shape: roi.shape,
+      center: [0, 1, 2].map((k) => roi.center[k] * nm[k]) as [number, number, number],
+      radius: roi.radius * nm[0],
+      size: [0, 1, 2].map((k) => roi.size[k] * nm[k]) as [number, number, number],
+    };
+  }
+
+  /** Each global axis's size in nanometres; undefined unless x, y and z are in metres. */
+  private nmPerUnit(): [number, number, number] | undefined {
+    const dims = this.dims();
+    const axes = ["x", "y", "z"].map((name) => dims?.[name]);
+    if (axes.some((a) => a === undefined || a[1] !== "m")) return undefined;
+    return axes.map((a) => a![0] * 1e9) as [number, number, number];
+  }
+
+  /** The base annotation layer's annotations, for an annotation dataset. */
+  private baseAnnotations(): Json[] {
+    const dataset = this.dataset();
+    const base = dataset && this.baseLayers(dataset).find((name) => this.layerInfo(name)?.type === "annotation");
+    const spec = base === undefined ? undefined : this.ctx.viewer.layerSpec(base);
+    return Array.isArray(spec?.annotations) ? (spec!.annotations as Json[]) : [];
+  }
+
+  /** A group of a segmentation's segments or of annotations: each region's objects, combined. */
+  private evaluateOther(group: Group, kind: "segmentation" | "annotations"): void {
+    const token = (this.tokens.get(group.id) ?? 0) + 1;
+    this.tokens.set(group.id, token);
+    const current = () => this.tokens.get(group.id) === token;
+    const nm = this.nmPerUnit();
+    if (group.rois.length === 0) {
+      this.setResult(group, { mask: undefined, ids: [], count: 0, state: "empty", detail: "Add a region to choose objects." });
+      return;
+    }
+    if (nm === undefined) {
+      this.waiting = true;
+      this.setResult(group, { mask: undefined, count: 0, state: "waiting", detail: "Waiting for the view's x, y and z…" });
+      return;
+    }
+    const regions = group.rois.map((r) => this.toNm(r, nm));
+    if (kind === "annotations") {
+      const geometry = annotationGeometry(this.baseAnnotations(), nm);
+      const ids = combineIds(regions.map((region, i) => ({ op: group.rois[i].op, ids: geometry.filter((a) => annotationMeets(region, a)).map((a) => a.id) })));
+      this.setResult(group, { mask: undefined, ids, count: ids.length, state: "exact", detail: `of ${geometry.length.toLocaleString()} annotations` });
+      return;
+    }
+    const labels = this.labels;
+    if (labels === undefined) {
+      this.waiting = true;
+      this.setResult(group, { mask: undefined, count: 0, state: "waiting", detail: "Opening the segmentation…" });
+      return;
+    }
+    const prior = this.results.get(group.id);
+    this.setResult(group, { ...(prior ?? { mask: undefined, count: 0 }), state: "computing", detail: "Reading the regions' voxels…" });
+    const old = this.exactTimers.get(group.id);
+    if (old !== undefined) clearTimeout(old);
+    this.exactTimers.set(
+      group.id,
+      setTimeout(() => {
+        this.exactTimers.delete(group.id);
+        if (!current()) return;
+        void Promise.all(regions.map((region) => labels.evaluate(region))).then(
+          (results) => {
+            if (!current()) return;
+            const ids = combineIds(results.map((r, i) => ({ op: group.rois[i].op, ids: Array.from(r.ids, String) })));
+            results.forEach((r, i) => this.roiStatus.set(group.rois[i].id, `${r.ids.length.toLocaleString()} segments · ${r.level} · ${r.chunks} chunk${r.chunks === 1 ? "" : "s"} · ${(r.ms / 1000).toFixed(r.ms < 1000 ? 2 : 1)} s`));
+            const levels = [...new Set(results.map((r) => r.level))].join(", ");
+            this.setResult(group, { mask: undefined, ids, count: ids.length, state: "exact", detail: `segments with a voxel in the regions (at ${levels})` });
+          },
+          (e) => {
+            if (current()) this.setResult(group, { mask: undefined, count: 0, state: "error", detail: (e as Error).message });
+          },
+        );
+      }, EXACT_DELAY_MS),
+    );
+  }
+
   private setResult(group: Group, result: GroupResult): void {
     this.results.set(group.id, result);
     this.versions.set(group.id, (this.versions.get(group.id) ?? 0) + 1);
@@ -901,12 +1057,38 @@ class TrackGroups {
   private show(group: Group): void {
     const result = this.results.get(group.id);
     const layer = this.saved.groups.find((g) => g.id === group.id)?.layer;
-    if (layer === undefined || result?.mask === undefined || this.props === undefined) return;
+    if (layer === undefined || result === undefined) return;
+    if (result.ids !== undefined) {
+      if (this.kind() === "annotations") {
+        // The group's layer holds copies of the passing annotations.
+        const passing = new Set(result.ids);
+        const annotations = this.baseAnnotations().filter((a) => passing.has(String(a.id)));
+        const spec = this.ctx.viewer.layerSpec(layer);
+        if (JSON.stringify(spec?.annotations ?? []) === JSON.stringify(annotations)) return;
+        this.ctx.viewer.patchState((ng) => {
+          const target = (ng.layers as Json[] | undefined)?.find((l) => l.name === layer);
+          if (target !== undefined) target.annotations = annotations;
+        });
+      } else {
+        this.ctx.viewer.setTemporaryVisibleSegments(layer, BigUint64Array.from(result.ids, (id) => BigInt(id)));
+      }
+      return;
+    }
+    if (result.mask === undefined || this.props === undefined) return;
     this.ctx.viewer.setTemporaryVisibleSegments(layer, passingIds(this.props, result.mask));
   }
 
   exportCsv(): void {
     const group = this.editing();
+    const ids = group && this.results.get(group.id)?.ids;
+    if (group !== undefined && ids !== undefined) {
+      const blob = new Blob([["id", ...ids].join("\n") + "\n"], { type: "text/csv" });
+      const a = el("a", { href: URL.createObjectURL(blob), download: `${group.name}.csv` });
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      this.ctx.log.info(`Exported ${ids.length.toLocaleString()} ids of ${group.name} as CSV.`);
+      return;
+    }
     const mask = group && this.results.get(group.id)?.mask;
     if (this.props === undefined || mask === undefined || group === undefined) {
       this.ctx.ui.toast("No group with objects to export.", "error");
@@ -1227,8 +1409,8 @@ class TrackGroups {
     const dataset = this.dataset();
     if (dataset === undefined) {
       root.append(
-        el("p", { class: "tf-intro" }, "Track groups select a Zarr Vectors dataset's objects by the regions they pass through and by their attributes. Each group is a layer of its own."),
-        el("p", { class: "empty" }, el("strong", {}, "No Zarr Vectors dataset in this scene. "), "Add one in the Datasets tab."),
+        el("p", { class: "tf-intro" }, "Groups keep the objects that pass through regions: tracts, points, segments or annotations. Each group is a layer."),
+        el("p", { class: "empty" }, el("strong", {}, "Nothing to filter in this scene. "), "Add tracts, a segmentation or annotations in Datasets."),
       );
       return;
     }
@@ -1295,7 +1477,7 @@ class TrackGroups {
         const info = this.layerInfo(group.layer);
         eye.checked = info?.visible === true;
         const r = this.results.get(group.id);
-        count.textContent = r === undefined || r.mask === undefined ? "…" : `${r.count.toLocaleString()}${r.state === "preview" ? "~" : ""}`;
+        count.textContent = r === undefined || (r.mask === undefined && r.ids === undefined) ? "…" : `${r.count.toLocaleString()}${r.state === "preview" ? "~" : ""}`;
         count.className = r?.state === "exact" || r?.state === "empty" ? "count" : "count busy";
         count.title = r?.detail ?? "";
       });
@@ -1352,7 +1534,9 @@ class TrackGroups {
   }
 
   private editor(group: Group): HTMLElement {
-    const props = this.props;
+    const kind = this.kind();
+    // Attributes are Zarr Vectors' object columns.
+    const props = kind === "zarr-vectors" ? this.props : undefined;
     const box = el("div", { class: "tf-editor" });
     const name = el("input", { class: "tf-name", value: group.name, "aria-label": "Group name", spellcheck: "false" }) as HTMLInputElement;
     name.addEventListener("change", () => this.renameGroup(group, name.value));
@@ -1372,12 +1556,13 @@ class TrackGroups {
     this.updaters.push(() => {
       const r = this.results.get(group.id);
       status.replaceChildren(
-        el("strong", {}, r?.mask === undefined ? "–" : `${r.count.toLocaleString()}${r.state === "preview" ? "~" : ""}`),
+        el("strong", {}, r?.mask === undefined && r?.ids === undefined ? "–" : `${r!.count.toLocaleString()}${r!.state === "preview" ? "~" : ""}`),
         props === undefined ? "" : `of ${props.ids.length.toLocaleString()} objects · `,
         r?.detail ?? "",
       );
     });
-    box.append(status, this.saveControl(group));
+    box.append(status);
+    if (kind === "zarr-vectors") box.append(this.saveControl(group));
 
     // Regions.
     box.append(

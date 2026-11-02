@@ -12,7 +12,10 @@
  * `sequence`), followed to the system asked for.
  *
  * Output axes named x, y, z are taken as right, anterior, superior.
+ *
+ * Also a Neuroglancer precomputed scale as a level (`scaleLevel`).
  */
+import type { Scale } from "@ngplatform/sdk/precomputed";
 
 /** A 4 × 4 matrix, row-major. */
 export type Mat4 = Float64Array;
@@ -247,4 +250,21 @@ export function rasBounds(level: VolumeLevel, shape: number[]): { lo: [number, n
     }
   }
   return { lo, hi };
+}
+
+/**
+ * A scale as a volume level: voxel (x, y, z) centres to millimetres, where
+ * Neuroglancer puts them (voxel v spans [v, v + 1) after the offset, in
+ * nanometres).
+ */
+export function scaleLevel(url: string, scale: Scale): VolumeLevel {
+  const offset = scale.voxel_offset ?? [0, 0, 0];
+  const mm = scale.resolution.map((r) => r * 1e-6);
+  const m = new Float64Array(16) as Mat4;
+  for (let k = 0; k < 3; ++k) {
+    m[5 * k] = mm[k];
+    m[4 * k + 3] = (offset[k] + 0.5) * mm[k];
+  }
+  m[15] = 1;
+  return { url, path: scale.key, voxelToRas: m, voxelSize: (mm[0] + mm[1] + mm[2]) / 3, axes: ["z", "y", "x"] };
 }

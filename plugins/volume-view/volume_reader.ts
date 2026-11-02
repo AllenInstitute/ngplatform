@@ -13,8 +13,8 @@
  * worker runs this; it is plain code, so it is tested without one.
  */
 import { httpAccess, openZarrArray, ShardIndexCache, ZarrArrayReader } from "neuroglancer-zarr-vectors/reader";
-import { invert, mergeLevels, parseOmeLevels, type VolumeLevel } from "./ome.js";
-import { PrecomputedScale, readInfo, scaleLevel } from "./precomputed.js";
+import { PrecomputedScale, readInfo } from "@ngplatform/sdk/precomputed";
+import { invert, mergeLevels, parseOmeLevels, scaleLevel, type VolumeLevel } from "./ome.js";
 import { PRECOMPUTED } from "./sources.js";
 
 export interface LevelInfo extends VolumeLevel {
@@ -150,7 +150,7 @@ export class VolumeReader {
 
   /** A Neuroglancer precomputed image: its scales, finest first, as arrays in z, y, x order. */
   private async openPrecomputed(url: string, signal?: AbortSignal): Promise<{ levels: LevelInfo[]; name: string }> {
-    const info = await readInfo(url, undefined, signal);
+    const info = await readInfo(url, undefined, signal, "image");
     this.levels = info.scales
       .map((scale): OpenLevel => {
         const reader = new PrecomputedScale(url, scale, info.data_type);

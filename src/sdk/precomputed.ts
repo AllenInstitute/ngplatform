@@ -1,16 +1,18 @@
 /**
- * Neuroglancer precomputed images for the volume view: the `info` file's
- * scales as levels, and their chunks (raw or JPEG, sharded or not) read and
- * decoded to uint8, x fastest, padded to the full chunk shape.
+ * Neuroglancer precomputed volumes, for plugins that read them in their own
+ * workers: the `info` file's scales, and their chunks (sharded or not) read
+ * and decoded, x fastest, padded to the full chunk shape.  Images: uint8,
+ * raw or JPEG.  Segmentations: uint32 or uint64, raw or
+ * compressed_segmentation, as 64-bit ids.
  *
  * Sharding is `neuroglancer_uint64_sharded_v1`, as Neuroglancer reads it
  * (src/datasource/precomputed/sharded.ts): a chunk's compressed Morton code,
  * hashed, picks a shard file and a minishard in it, whose index lists where
  * the chunk is.
  */
+import { decodeChannels } from "neuroglancer/unstable/sliceview/compressed_segmentation/decode_uint64.js";
 import { JpegDecoder } from "neuroglancer/unstable/third_party/jpgjs/jpg.js";
 import { murmurHash3_x86_128Hash64Bits_Bigint } from "neuroglancer/unstable/util/hash.js";
-import type { Mat4, VolumeLevel } from "./ome.js";
 
 export interface Sharding {
   "@type": "neuroglancer_uint64_sharded_v1";
@@ -29,6 +31,7 @@ export interface Scale {
   voxel_offset?: [number, number, number];
   chunk_sizes: [number, number, number][];
   encoding: string;
+  compressed_segmentation_block_size?: [number, number, number];
   sharding?: Sharding;
 }
 
@@ -37,23 +40,6 @@ export interface Info {
   data_type: string;
   num_channels: number;
   scales: Scale[];
-}
-
-/**
- * A scale as a volume level: voxel (x, y, z) centres to millimetres, where
- * Neuroglancer puts them (voxel v spans [v, v + 1) after the offset, in
- * nanometres).
- */
-export function scaleLevel(url: string, scale: Scale): VolumeLevel {
-  const offset = scale.voxel_offset ?? [0, 0, 0];
-  const mm = scale.resolution.map((r) => r * 1e-6);
-  const m = new Float64Array(16) as Mat4;
-  for (let k = 0; k < 3; ++k) {
-    m[5 * k] = mm[k];
-    m[4 * k + 3] = (offset[k] + 0.5) * mm[k];
-  }
-  m[15] = 1;
-  return { url, path: scale.key, voxelToRas: m, voxelSize: (mm[0] + mm[1] + mm[2]) / 3, axes: ["z", "y", "x"] };
 }
 
 /** Neuroglancer's chunk id for a sharded scale: the grid position as a compressed Morton code. */
@@ -121,7 +107,7 @@ export const httpRead: RangeRead = async (url, range, signal) => {
   return bytes;
 };
 
-/** One scale of a precomputed image, its chunks read as uint8 x-fastest blocks of the full chunk shape. */
+/** One scale of a precomputed volume, its chunks read as x-fastest blocks of the full chunk shape. */
 export class PrecomputedScale {
   readonly chunk: [number, number, number];
   readonly grid: [number, number, number];
@@ -135,23 +121,15 @@ export class PrecomputedScale {
   ) {
     this.chunk = scale.chunk_sizes[0];
     this.grid = [0, 1, 2].map((k) => Math.ceil(scale.size[k] / this.chunk[k])) as [number, number, number];
-    if (dataType !== "uint8") throw new Error(`${dataType} precomputed images are not drawn yet (uint8 only)`);
-    if (scale.encoding !== "raw" && scale.encoding !== "jpeg") throw new Error(`the ${scale.encoding} encoding is not read yet (raw and jpeg only)`);
   }
 
-  /** Chunk (x, y, z) of the grid, or undefined where the image has none. */
+  /** Chunk (x, y, z) of a uint8 image, or undefined where it has none. */
   async readChunk(position: [number, number, number], signal?: AbortSignal): Promise<Uint8Array | undefined> {
     const { chunk, scale } = this;
-    const offset = scale.voxel_offset ?? [0, 0, 0];
-    const lo = [0, 1, 2].map((k) => position[k] * chunk[k]);
-    const extent = [0, 1, 2].map((k) => Math.min(chunk[k], scale.size[k] - lo[k]));
-    let bytes: Uint8Array | undefined;
-    if (scale.sharding === undefined) {
-      const name = [0, 1, 2].map((k) => `${offset[k] + lo[k]}-${offset[k] + lo[k] + extent[k]}`).join("_");
-      bytes = await this.read(`${this.url}${scale.key}/${name}`, undefined, signal);
-    } else {
-      bytes = await this.readSharded(chunkId(position, this.grid), signal);
-    }
+    if (this.dataType !== "uint8") throw new Error(`${this.dataType} precomputed images are not drawn yet (uint8 only)`);
+    if (scale.encoding !== "raw" && scale.encoding !== "jpeg") throw new Error(`the ${scale.encoding} encoding is not read yet (raw and jpeg only)`);
+    const extent = this.extent(position);
+    const bytes = await this.readBytes(position, signal);
     if (bytes === undefined) return undefined;
     const voxels = extent[0] * extent[1] * extent[2];
     let data: Uint8Array;
@@ -165,16 +143,51 @@ export class PrecomputedScale {
       data = bytes;
       if (data.byteLength < voxels) throw new Error(`a raw chunk of ${data.byteLength} bytes, for ${voxels} voxels`);
     }
-    if (extent[0] === chunk[0] && extent[1] === chunk[1] && extent[2] === chunk[2]) return data.subarray(0, voxels);
-    // An edge chunk: pad to the full shape.
-    const out = new Uint8Array(chunk[0] * chunk[1] * chunk[2]);
-    for (let z = 0; z < extent[2]; ++z) {
-      for (let y = 0; y < extent[1]; ++y) {
-        const from = (z * extent[1] + y) * extent[0];
-        out.set(data.subarray(from, from + extent[0]), (z * chunk[1] + y) * chunk[0]);
+    return pad(data.subarray(0, voxels), extent, chunk, new Uint8Array(chunk[0] * chunk[1] * chunk[2]));
+  }
+
+  /** Chunk (x, y, z) of a segmentation, as 64-bit ids, or undefined where it has none. */
+  async readLabels(position: [number, number, number], signal?: AbortSignal): Promise<BigUint64Array | undefined> {
+    const { chunk, scale } = this;
+    const bytes = await this.readBytes(position, signal);
+    if (bytes === undefined) return undefined;
+    const extent = this.extent(position);
+    const voxels = extent[0] * extent[1] * extent[2];
+    let data: BigUint64Array;
+    if (scale.encoding === "compressed_segmentation") {
+      const words = new Uint32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + (bytes.byteLength & ~3)));
+      data = new BigUint64Array(voxels);
+      if (this.dataType === "uint64") {
+        decodeChannels(data, words, 0, [...extent, 1], scale.compressed_segmentation_block_size ?? [8, 8, 8]);
+      } else {
+        const narrow = decodeChannels(new Uint32Array(voxels), words, 0, [...extent, 1], scale.compressed_segmentation_block_size ?? [8, 8, 8]);
+        for (let i = 0; i < voxels; ++i) data[i] = BigInt(narrow[i]);
       }
+    } else if (scale.encoding === "raw") {
+      const copy = bytes.slice(0, voxels * (this.dataType === "uint64" ? 8 : 4));
+      if (this.dataType === "uint64") data = new BigUint64Array(copy.buffer);
+      else if (this.dataType === "uint32") data = BigUint64Array.from(new Uint32Array(copy.buffer), (v) => BigInt(v));
+      else throw new Error(`${this.dataType} is not a segmentation type`);
+    } else {
+      throw new Error(`the ${scale.encoding} encoding is not read for segmentations (raw and compressed_segmentation only)`);
     }
-    return out;
+    return pad(data, extent, chunk, new BigUint64Array(chunk[0] * chunk[1] * chunk[2]));
+  }
+
+  /** The voxels of chunk (x, y, z) inside the volume. */
+  extent(position: [number, number, number]): [number, number, number] {
+    return [0, 1, 2].map((k) => Math.min(this.chunk[k], this.scale.size[k] - position[k] * this.chunk[k])) as [number, number, number];
+  }
+
+  /** A chunk's stored bytes, gzip and sharding undone; undefined when it has none. */
+  private async readBytes(position: [number, number, number], signal?: AbortSignal): Promise<Uint8Array | undefined> {
+    const { chunk, scale } = this;
+    if (scale.sharding !== undefined) return this.readSharded(chunkId(position, this.grid), signal);
+    const offset = scale.voxel_offset ?? [0, 0, 0];
+    const lo = [0, 1, 2].map((k) => position[k] * chunk[k]);
+    const extent = this.extent(position);
+    const name = [0, 1, 2].map((k) => `${offset[k] + lo[k]}-${offset[k] + lo[k] + extent[k]}`).join("_");
+    return this.read(`${this.url}${scale.key}/${name}`, undefined, signal);
   }
 
   private async readSharded(id: bigint, signal?: AbortSignal): Promise<Uint8Array | undefined> {
@@ -213,11 +226,24 @@ export class PrecomputedScale {
   }
 }
 
-export async function readInfo(url: string, read: RangeRead = httpRead, signal?: AbortSignal): Promise<Info> {
+/** A precomputed volume's `info`, with one channel; `type`, when given, is the kind wanted ("image", "segmentation"). */
+export async function readInfo(url: string, read: RangeRead = httpRead, signal?: AbortSignal, type?: string): Promise<Info> {
   const bytes = await read(`${url}info`, undefined, signal);
   if (bytes === undefined) throw new Error(`${url}: no info file`);
   const info = JSON.parse(new TextDecoder().decode(bytes)) as Info;
-  if (info.type !== "image") throw new Error(`${url}: a precomputed ${info.type}, not an image`);
+  if (type !== undefined && info.type !== type) throw new Error(`${url}: a precomputed ${info.type}, not an ${type}`);
   if (info.num_channels !== 1) throw new Error(`${url}: ${info.num_channels} channels (one only)`);
   return info;
+}
+
+/** Copies a chunk's `extent` of voxels into the full `chunk` shape, x fastest. */
+function pad<T extends Uint8Array | BigUint64Array>(data: T, extent: number[], chunk: number[], out: T): T {
+  if (extent[0] === chunk[0] && extent[1] === chunk[1] && extent[2] === chunk[2]) return data;
+  for (let z = 0; z < extent[2]; ++z) {
+    for (let y = 0; y < extent[1]; ++y) {
+      const from = (z * extent[1] + y) * extent[0];
+      out.set(data.subarray(from, from + extent[0]) as never, (z * chunk[1] + y) * chunk[0]);
+    }
+  }
+  return out;
 }
