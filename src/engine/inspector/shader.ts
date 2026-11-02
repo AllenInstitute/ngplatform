@@ -30,6 +30,8 @@ export interface ShaderModels {
   /** Per-object values the shader can read, by name and type. */
   properties?: () => { name: string; type: string; range?: string }[];
   propertiesChanged?: Watch<unknown>[];
+  /** Rows shown above the code (an image layer's colour map). */
+  rows?: HTMLElement[];
 }
 
 /** The error text of a compile, link or `#uicontrol` parse failure. */
@@ -100,7 +102,7 @@ export function shaderSection(scope: Scope, layer: UserLayer, m: ShaderModels): 
     errors.textContent = lines.join("\n");
   });
 
-  root.append(head, props, editor, errors, shaderControls(scope, layer, m));
+  root.append(head, ...(m.rows ?? []), props, editor, errors, shaderControls(scope, layer, m));
   refresh();
   return root;
 }
