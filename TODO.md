@@ -19,7 +19,7 @@ items are done (and say where); the rest are in rough order of work.
 - [x] Elsewhere, tick boxes, as in Neuroglancer: **Selections** (and Volume) beside Sections in the 3-D panel, and other on/off buttons.
 - [x] Plugins panel spacing: Add no longer sits on the first plugin; even gaps throughout.
 - [x] Pop-ups: softer grey and border, rounded corners.
-- [ ] Shorter text throughout (descriptions, hints, empty states); keep Read more. *(Done for examples, plugin descriptions, filtering, volume, labels, registration, sign-in and the local-data dialogs; the plugin guides and inspector hints are next.)*
+- [x] Shorter text throughout (descriptions, hints, empty states); keep Read more. *(The plugin guides, behind Read more, keep their detail.)*
 
 ### Track filtering
 - [x] "Show all objects" (no bracketed note), off by default.

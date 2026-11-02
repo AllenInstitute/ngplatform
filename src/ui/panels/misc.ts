@@ -135,7 +135,7 @@ function confirmPlugin(offer: UrlPluginOffer): Promise<boolean> {
           h(
             "p",
             { class: "note" },
-            "Its code runs in this page, as the app's own plugins do: it can see your workspace, the data you open and your sign-ins to data servers. Add plugins only from people you trust. It loads again on later visits until you remove it.",
+            "Its code runs in this page with the app's access: your workspace, the data you open, your sign-ins to data servers. Add plugins only from people you trust. It loads on later visits until you remove it.",
           ),
         ],
         [h("button", { class: "btn", type: "button", onclick: () => answer(false) }, "Cancel"), h("button", { class: "btn primary", type: "button", onclick: () => answer(true) }, "Run it")],

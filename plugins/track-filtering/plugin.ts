@@ -1681,7 +1681,7 @@ class TrackGroups {
     const list = el("div", { class: "tf-groups" });
     const groups = this.groups();
     if (groups.length === 0) {
-      list.append(el("p", { class: "empty" }, "No groups yet. A new group starts empty: add regions and attribute ranges to choose its objects."));
+      list.append(el("p", { class: "empty" }, "No groups yet. Add one, then regions and attribute ranges to pick its objects."));
     }
     for (const group of groups) {
       const colour = el("input", { type: "color", class: "tf-swatch", value: group.colour, title: "Colour", "aria-label": `${group.name} colour` }) as HTMLInputElement;
