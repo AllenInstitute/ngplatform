@@ -37,6 +37,39 @@ export function parseSwc(text: string): SwcNode[] {
   return nodes;
 }
 
+/**
+ * Several SWC files as one (a folder's `@all.swc`): each file's text after a
+ * `# @file <name>` line.  Each file's ids are its own, so they are numbered
+ * apart; a file that does not parse is left out and named in `skipped`.
+ */
+export function parseSwcCollection(text: string): { nodes: SwcNode[]; files: string[]; fileOf: Int32Array; skipped: string[] } {
+  const parts = text.split(/^# @file (.*)$/m);
+  const nodes: SwcNode[] = [];
+  const files: string[] = [];
+  const skipped: string[] = [];
+  const owner: number[] = [];
+  let base = 0;
+  for (let i = 1; i < parts.length; i += 2) {
+    const name = parts[i].trim();
+    let mine: SwcNode[];
+    try {
+      mine = parseSwc(parts[i + 1]);
+    } catch {
+      skipped.push(name);
+      continue;
+    }
+    const renumber = new Map(mine.map((n, k) => [n.id, base + k + 1]));
+    for (const n of mine) {
+      nodes.push({ ...n, id: renumber.get(n.id)!, parent: n.parent === -1 ? -1 : renumber.get(n.parent)! });
+      owner.push(files.length);
+    }
+    files.push(name);
+    base += mine.length;
+  }
+  if (nodes.length === 0) throw new Error("no SWC file in the folder could be read");
+  return { nodes, files, fileOf: Int32Array.from(owner), skipped };
+}
+
 export interface PointTable {
   /** x y z per point. */
   positions: Float64Array;

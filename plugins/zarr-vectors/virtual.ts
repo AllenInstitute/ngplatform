@@ -59,6 +59,8 @@ export const ZARR_VECTORS_VIRTUAL: VirtualFormat[] = [
     kind: "auto",
     source: (url) => `${url}/|zarr-vectors:`,
     worker,
+    // A folder of neurons opens as one store, each neuron's file a property.
+    collect: { extension: ".swc", label: "SWC files" },
   },
   {
     pattern: /\.(csv|tsv|xyz)$/i,

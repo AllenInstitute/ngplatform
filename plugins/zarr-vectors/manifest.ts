@@ -29,7 +29,7 @@ A tractogram (TrackVis \`.trk\`, MRtrix \`.tck\` or \`.trx\`) opens in place (Op
 A mesh or surface (\`.obj\`, \`.stl\`, \`.ply\`, GIFTI \`.gii\`, FreeSurfer \`lh.pial\` and the like) opens in place too; anatomical GIFTI and FreeSurfer surfaces are moved into scanner RAS as zarr-vectors-tools does: each \`.obj\` object (\`o\`/\`g\`) or the whole file is one object, ids from 1, at the file's coordinates (millimetres, or nanometres when it spans more than 50,000).
 
 ## Neurons and points on this computer
-An SWC file opens as skeletons, one object per tree, in micrometres, with each node's radius and type. A point table (\`.csv\`, \`.tsv\`, \`.xyz\`; x, y, z columns by name or the first three) opens as points, its other numeric columns as values; up to 250,000 points each point is an object, so it can be selected and filtered. Columns named \`x_um\`, \`x_mm\` or \`x_nm\` give the unit.
+An SWC file opens as skeletons, one object per tree, in micrometres, with each node's radius and type; a folder of SWC files also offers them all as one dataset, each neuron's file a property. A point table (\`.csv\`, \`.tsv\`, \`.xyz\`; x, y, z columns by name or the first three) opens as points, its other numeric columns as values; up to 250,000 points each point is an object, so it can be selected and filtered. Columns named \`x_um\`, \`x_mm\` or \`x_nm\` give the unit.
 
 ## What you see
 - **Overview**: every object, drawn from the spatial chunks at the level of detail the view needs. With no segments selected, all objects show.

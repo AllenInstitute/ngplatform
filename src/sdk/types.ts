@@ -55,6 +55,12 @@ export interface VirtualFormat {
   source(url: string): string;
   /** A worker answering the store's keys (made once, when first needed). */
   worker(): Worker;
+  /**
+   * Several such files in one folder can open as one store: the folder's
+   * `@all<extension>`, which the worker gets as one text file, each file's
+   * text after a `# @file <name>` line (for text formats such as SWC).
+   */
+  collect?: { extension: string; label: string };
 }
 
 export interface Manifest {

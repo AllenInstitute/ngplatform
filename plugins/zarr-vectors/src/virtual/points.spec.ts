@@ -10,12 +10,13 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { readSegmentProperties } from "../objects.js";
 import { LevelPipeline, ObjectReader, openZarrVectorsStore, readObjectTable, ShardIndexCache } from "../reader.js";
-import { parsePointTable, parseSwc, type SwcNode } from "./point_files.js";
+import { parsePointTable, parseSwc, parseSwcCollection, type SwcNode } from "./point_files.js";
 import { type CellStore, MAX_POINT_OBJECTS, pointStore, skeletonStore } from "./points.js";
 
 const DIR = path.resolve(import.meta.dirname, "../../testdata/points");
 const signal = new AbortController().signal;
 const text = (name: string) => fs.readFileSync(path.join(DIR, name), "utf8");
+const text_ = text;
 
 function access(store: CellStore) {
   return {
@@ -114,6 +115,27 @@ describe("virtual skeleton store", () => {
     expect(root.zarr_vectors.chunk_shape).toEqual([64, 64, 64]);
     expect(await store.get("0/groups/zarr.json")).toBeUndefined();
     expect(await store.get("0/fragment_attributes/segment_id/zarr.json")).toBeUndefined();
+  });
+
+  it("reads a folder's SWC files as one store, each neuron's file a property", async () => {
+    const names = ["neuron_a.swc", "neuron_b.swc", "two_trees.swc"];
+    const text = names.map((n) => `# @file ${n}\n${text_(n)}\n`).join("") + "# @file broken.swc\n1 1 x 0 0 1 -1\n";
+    const { nodes, files, fileOf, skipped } = parseSwcCollection(text);
+    expect(files).toEqual(names);
+    expect(skipped).toEqual(["broken.swc"]);
+    // The same ids in different files stay apart.
+    expect(new Set(nodes.map((n) => n.id)).size).toBe(nodes.length);
+    const store = skeletonStore(nodes, "neurons", { names: files, fileOf });
+    const a = access(store);
+    const zv = await openZarrVectorsStore(a as never, undefined);
+    const table = (await readObjectTable(a as never, "0"))!;
+    const props = (await readSegmentProperties(a as never, "0", table, []))!;
+    const file = props.properties.find((p) => p.id === "file") as unknown as { values: string[] };
+    // neuron_a and neuron_b are one tree each; two_trees has two.
+    expect(file.values).toEqual(["neuron_a.swc", "neuron_b.swc", "two_trees.swc", "two_trees.swc"]);
+    const data = (await new LevelPipeline(a as never, zv.description, zv.levels[0]).download([0, 0, 0], signal, { bridges: false }))!;
+    expect(data.numOwnVertices).toBe(nodes.length);
+    expect(data.edges.length / 2).toBe(nodes.filter((n) => n.parent !== -1).length);
   });
 
   it("refuses parents in a cycle", () => {

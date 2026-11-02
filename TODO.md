@@ -46,7 +46,7 @@ items are done (and say where); the rest are in rough order of work.
   - [x] `.trk` (TrackVis) first;
   - [x] `.tck` (MRtrix), `.trx`;
   - [x] meshes and surfaces: `.obj`, `.stl`, `.ply`, GIFTI, FreeSurfer *(very large meshes sit in one cell; split into cells next)*;
-  - [x] points and skeletons: `.swc` (one object per tree), point tables `.csv`/`.tsv`/`.xyz` (each point an object up to 250,000, so they filter; larger tables in cells about eight across, drawn but not grouped) *(Python twin byte-identical, the 300,000-point table's 247 keys included)*.
+  - [x] points and skeletons: `.swc` (one object per tree), point tables `.csv`/`.tsv`/`.xyz` (each point an object up to 250,000, so they filter; larger tables in cells about eight across, drawn but not grouped; a folder of SWC files as one store, each neuron's file a property) *(Python twin byte-identical, the 300,000-point table's 247 keys included)*.
   - [x] Python twin speed: 200,000 streamlines in 5.9 s (was 17 s; the browser takes 3.4 s).
 - [x] Linked to the Zarr Vectors data type: these files open only when it is on.
 

@@ -72,7 +72,12 @@ function column(n: number, rows: number, dataType: string, fill: unknown, attrib
     chunk_grid: { name: "regular", configuration: { chunk_shape: [rows] } },
     chunk_key_encoding: { name: "default", configuration: { separator: "/" } },
     fill_value: fill,
-    codecs: dataType === "variable_length_bytes" ? [{ name: "vlen-bytes", configuration: {} }] : [{ name: "bytes", configuration: { endian: "little" } }],
+    codecs:
+      dataType === "variable_length_bytes"
+        ? [{ name: "vlen-bytes", configuration: {} }]
+        : dataType === "string"
+          ? [{ name: "vlen-utf8", configuration: {} }]
+          : [{ name: "bytes", configuration: { endian: "little" } }],
     attributes,
   };
 }
@@ -85,6 +90,8 @@ export interface CellStoreSpec {
   objectRows?: number[];
   vertexAttributes: { name: string; values: Float32Array }[];
   objectColumns: { name: string; values: Float32Array }[];
+  /** Text per object (a neuron's file name, say). */
+  textColumns?: { name: string; values: string[] }[];
   /** Skeletons: `[child, parent]` row pairs where the parent is not the row before. */
   links?: Int32Array;
   /** The axes' unit, if known. */
@@ -161,6 +168,7 @@ export class CellStore {
     if (this.count > 0) {
       paths.push("0/object_index/manifests", "0/object_index/object_ids", "0/object_attributes/segment_id", "0/fragment_attributes/object_id");
       paths.push(...spec.objectColumns.map((c) => `0/object_attributes/${c.name}`));
+      paths.push(...(spec.textColumns ?? []).map((c) => `0/object_attributes/${c.name}`));
     }
     for (const path of paths) {
       const parts = path.split("/");
@@ -258,6 +266,7 @@ export class CellStore {
       return cellArray({ zv_array: "attribute", name: vertexAttribute[1], dtype: "float32", row_shape: [] });
     }
     const columnJson = /^0\/object_attributes\/([^/]+)\/zarr\.json$/.exec(key);
+    if (columnJson !== null && (spec.textColumns ?? []).some((col) => col.name === columnJson[1])) return json(column(this.count, COLUMN_ROWS, "string", ""));
     if (columnJson !== null && spec.objectColumns.some((col) => col.name === columnJson[1])) {
       return json(column(this.count, COLUMN_ROWS, "float32", "NaN", { zv_array: "object_attribute", name: columnJson[1], dtype: "float32", shape: [this.count], fill_sentinel_meaning: "absent" }));
     }
@@ -294,6 +303,21 @@ export class CellStore {
       const ids = new BigUint64Array(COLUMN_ROWS).fill(0xffffffffffffffffn);
       for (let i = 0; i < COLUMN_ROWS && first + i < this.count; ++i) ids[i] = BigInt(first + i + 1);
       return bytesOf(ids);
+    }
+    const text = (spec.textColumns ?? []).find((col) => `object_attributes/${col.name}` === chunk[1])?.values;
+    if (text !== undefined) {
+      // vlen-utf8: the row count, then each row's length and bytes (empty past the last object).
+      const rows = Array.from({ length: COLUMN_ROWS }, (_, i) => new TextEncoder().encode(text[first + i] ?? ""));
+      const out = new Uint8Array(4 + 4 * COLUMN_ROWS + rows.reduce((n, r) => n + r.length, 0));
+      const view = new DataView(out.buffer);
+      view.setUint32(0, COLUMN_ROWS, true);
+      let at = 4;
+      for (const r of rows) {
+        view.setUint32(at, r.length, true);
+        out.set(r, at + 4);
+        at += 4 + r.length;
+      }
+      return out;
     }
     const values = spec.objectColumns.find((col) => `object_attributes/${col.name}` === chunk[1])?.values;
     if (values === undefined) return undefined;
@@ -334,7 +358,7 @@ export class CellStore {
  * sum of its edges' lengths) and branch points (nodes with two or more
  * children).
  */
-export function skeletonStore(nodes: SwcNode[], name: string): CellStore {
+export function skeletonStore(nodes: SwcNode[], name: string, files?: { names: string[]; fileOf: Int32Array }): CellStore {
   const index = new Map<number, number>();
   nodes.forEach((n, i) => index.set(n.id, i));
   const children = nodes.map(() => [] as number[]);
@@ -396,6 +420,8 @@ export function skeletonStore(nodes: SwcNode[], name: string): CellStore {
         { name: "branch_points", values: branches },
       ],
       links: Int32Array.from(pairs),
+      // From a folder of files: each neuron's file.
+      ...(files === undefined ? {} : { textColumns: [{ name: "file", values: roots.map((r) => files.names[files.fileOf[r]]) }] }),
       // SWC coordinates are in micrometres by convention.
       unit: "micrometer",
     },

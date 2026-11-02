@@ -320,7 +320,7 @@ export class LocalData {
     }
     const virtual = splitVirtual(request.path, this.formats);
     if (virtual !== undefined) {
-      const file = await this.file(request.id, virtual.file);
+      const file = (await this.file(request.id, virtual.file)) ?? (await this.collection(request.id, virtual.file, virtual.format));
       if (file === undefined) {
         port.postMessage({ status: 404 });
         return;
@@ -382,11 +382,28 @@ export class LocalData {
     }
     const here = await this.detectAt(id, "", entry.name);
     if (here !== undefined) return [here];
-    const inFolder = async (dir: string) =>
-      (await this.files(id, dir)).flatMap((f) => {
+    const inFolder = async (dir: string) => {
+      const files = await this.files(id, dir);
+      const out: FoundDataset[] = [];
+      // Several files a format can collect: one dataset for them all first, and
+      // each on its own only while there are few.
+      const collected = new Set<VirtualFormat>();
+      for (const format of this.formats) {
+        const collect = format.collect;
+        if (collect === undefined) continue;
+        const count = files.filter((f) => format.pattern.test(f) && !f.startsWith("@all")).length;
+        if (count < 2) continue;
+        const path = `${dir === "" ? "" : `${dir}/`}@all${collect.extension}`;
+        const folder = dir === "" ? entry.name : dir.split("/").pop()!;
+        out.push({ ...this.virtual(id, path, format), name: `${folder} (${count} ${collect.label})` });
+        if (count > 10) collected.add(format);
+      }
+      for (const f of files) {
         const format = this.formatOf(f);
-        return format === undefined ? [] : [this.virtual(id, dir === "" ? f : `${dir}/${f}`, format)];
-      });
+        if (format !== undefined && !collected.has(format)) out.push(this.virtual(id, dir === "" ? f : `${dir}/${f}`, format));
+      }
+      return out;
+    };
     const found: FoundDataset[] = await inFolder("");
     for (const child of await this.children(id)) {
       const one = await this.detectAt(id, child, child);
@@ -397,6 +414,25 @@ export class LocalData {
   }
 
   /** A file read as a virtual store, as a dataset: the store under the file's own URL. */
+  /**
+   * A folder's files of a collecting format as one text file (`@all<ext>`
+   * in the folder): each file's text after a `# @file <name>` line, in name
+   * order.
+   */
+  private async collection(id: string, path: string, format: VirtualFormat): Promise<File | undefined> {
+    const collect = format.collect;
+    const name = path.split("/").pop()!;
+    if (collect === undefined || name !== `@all${collect.extension}`) return undefined;
+    const dir = path.slice(0, path.length - name.length).replace(/\/$/, "");
+    const names = (await this.files(id, dir)).filter((f) => format.pattern.test(f) && !f.startsWith("@all")).sort();
+    const parts: (string | Blob)[] = [];
+    for (const n of names) {
+      const file = await this.file(id, dir === "" ? n : `${dir}/${n}`);
+      if (file !== undefined) parts.push(`# @file ${n}\n`, file, "\n");
+    }
+    return parts.length === 0 ? undefined : new File(parts, name);
+  }
+
   private virtual(id: string, path: string, format: VirtualFormat): FoundDataset {
     const name = path.split("/").pop()!;
     return { source: format.source(this.urlOf(id, path)), name: name.replace(format.pattern, ""), kind: format.kind, format: format.format, path };

@@ -6,13 +6,19 @@
 import { serveVirtualStores } from "@ngplatform/sdk/virtual";
 import { FREESURFER_SURFACE, parseMeshFile } from "./src/virtual/mesh_files.js";
 import { MeshStore } from "./src/virtual/meshes.js";
-import { parsePointTable, parseSwc } from "./src/virtual/point_files.js";
+import { parsePointTable, parseSwc, parseSwcCollection } from "./src/virtual/point_files.js";
 import { pointStore, skeletonStore } from "./src/virtual/points.js";
 import { openTractogram } from "./src/virtual/tractograms.js";
 
 serveVirtualStores(async (file) => {
   if (/\.(obj|stl|ply|gii)$/i.test(file.name) || FREESURFER_SURFACE.test(file.name)) {
     return new MeshStore(await parseMeshFile(new Uint8Array(await file.arrayBuffer()), file.name), file.name.replace(/\.(surf\.gii|gii|obj|stl|ply)$/i, ""));
+  }
+  if (/^@all\.swc$/i.test(file.name)) {
+    // A folder's SWC files, which local data hands over as one text.
+    const { nodes, files, fileOf, skipped } = parseSwcCollection(await file.text());
+    if (skipped.length > 0) console.warn(`SWC files left out (they did not parse): ${skipped.join(", ")}`);
+    return skeletonStore(nodes, "neurons", { names: files, fileOf });
   }
   if (/\.swc$/i.test(file.name)) return skeletonStore(parseSwc(await file.text()), file.name.replace(/\.swc$/i, ""));
   if (/\.(csv|tsv|xyz)$/i.test(file.name)) return pointStore(parsePointTable(await file.text()), file.name.replace(/\.(csv|tsv|xyz)$/i, ""));
