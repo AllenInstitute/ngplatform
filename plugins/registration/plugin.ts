@@ -55,6 +55,8 @@ export interface Saved {
   manual: Manual;
   /** The transform (Neuroglancer's form) the hand-made one is applied to. */
   start?: number[];
+  /** Freeview's "Apply to all visible volumes": the other visible 3-D layers follow the moving one. */
+  all?: boolean;
 }
 
 export function readSaved(raw: unknown): Saved {
@@ -67,6 +69,7 @@ export function readSaved(raw: unknown): Saved {
     base: Array.isArray(s.base) ? s.base : undefined,
     manual: readManual(s.manual),
     start: Array.isArray(s.start) ? s.start : undefined,
+    all: s.all === true,
   };
 }
 
@@ -287,9 +290,38 @@ class Registration {
     this.refit(true);
   }
 
+  /**
+   * The other visible 3-D layers, which follow the moving one with "Apply
+   * to all visible volumes" (images and segmentations, not the landmarks).
+   */
+  private followers(): string[] {
+    const moving = this.layer();
+    const shown = new Set(this.ctx.viewer.layers().filter((l) => l.visible && (l.type === "image" || l.type === "segmentation")).map((l) => l.name));
+    // Volumes only: geometry (tractograms, their track groups, meshes) stays where it is.
+    const geometry = (name: string) => JSON.stringify(this.ctx.viewer.layerSpec(name)?.source ?? "").includes("zarr-vectors");
+    return this.candidates().filter((name) => name !== moving && shown.has(name) && !geometry(name));
+  }
+
+  /**
+   * Freeview's "Apply to all visible volumes": each other visible layer is
+   * moved as the moving layer is, relative to where its own file puts it
+   * (or put back there, when the box is cleared).
+   */
+  private syncFollowers(all = this.saved.all === true): void {
+    const r = this.relative();
+    for (const name of this.followers()) {
+      const t = this.ctx.viewer.layerTransform(name);
+      const d = t && physical(t, t.defaultMatrix);
+      if (!t || !d || t.rank !== 3) continue;
+      const move = all && r !== undefined ? permute(r.move, axisOrder(t.output.names)) : identity4();
+      this.ctx.viewer.setLayerTransform(name, neuroglancer(t, multiply4(move, d)));
+    }
+  }
+
   /** A placement made another way (a fit, a file) replaces the hand-made one, which starts again from it. */
   private placed(name: string, matrix: Float64Array): void {
     this.ctx.viewer.setLayerTransform(name, matrix);
+    if (this.saved.all) this.syncFollowers();
     if (this.saved.start !== undefined || !isIdentityManual(this.saved.manual)) this.save({ manual: identityManual(this.saved.manual.around), start: undefined });
   }
 
@@ -329,6 +361,7 @@ class Registration {
     const t = name && this.ctx.viewer.layerTransform(name);
     if (name && t) this.ctx.viewer.setLayerTransform(name, Float64Array.from(this.saved.base ?? this.saved.start ?? t.matrix));
     this.save({ base: undefined, start: undefined, manual: identityManual(this.saved.manual.around) });
+    if (this.saved.all) this.syncFollowers();
     this.showLandmarks();
   }
 
@@ -371,6 +404,7 @@ class Registration {
     this.ctx.viewer.setLayerTransform(name, neuroglancer(t, multiply4(permute(manualMatrix(m, centre), order), p)));
     // Kept now, so every step of a drag starts from the same transform.
     this.saved = { ...this.saved, manual: m, start, base: this.saved.base ?? start };
+    if (this.saved.all) this.syncFollowers();
     if (persist) {
       this.save({});
       this.showLandmarks();
@@ -879,6 +913,21 @@ class Registration {
             "div",
             { class: "rg-row" },
             el("button", { class: "btn outline small", type: "button", disabled: !moved, title: "The transform the layer had before registering", onclick: () => this.restore() }, "Restore to original"),
+          ),
+          el(
+            "label",
+            { class: "field check", title: "Every other visible image and segmentation moves as this layer does (Freeview's Apply to all visible volumes)" },
+            el("input", {
+              type: "checkbox",
+              checked: saved.all === true,
+              disabled: !hasLayer,
+              onchange: (e: Event) => {
+                const on = (e.target as HTMLInputElement).checked;
+                this.save({ all: on });
+                this.syncFollowers(on);
+              },
+            }),
+            el("span", {}, "Apply to all visible volumes"),
           ),
           el("h3", { class: "section-title" }, "Landmarks"),
           el("p", { class: "note rg-tight" }, "Point at a feature in the fixed data, Alt+F; the same feature in the moving layer, Alt+M."),
