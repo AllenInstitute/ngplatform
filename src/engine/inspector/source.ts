@@ -4,6 +4,7 @@
  * parts (subsources) are on, and its coordinate transform as an editable
  * table. Sources can be added and removed.
  */
+import { omeBase, summariseOme } from "./ome.js";
 import {
   type CoordinateSpace,
   DataType,
@@ -114,8 +115,37 @@ function sourceCard(scope: Scope, layer: UserLayer, source: LayerDataSource): { 
     status.textContent = "";
     loadedScope = scope.child();
     body.append(...loadedSource(loadedScope, state as LoadedLayerDataSource));
+    const base = omeBase(source.spec.url);
+    if (base !== undefined) body.append(omeSection(base));
   });
   return { element, focus: () => url.input.focus() };
+}
+
+/**
+ * The image's own coordinate systems and transforms, as its OME-Zarr
+ * metadata gives them (ome.ts): what Neuroglancer folds into the one
+ * transform above.  Read once, when the source loads.
+ */
+function omeSection(base: string): HTMLElement {
+  const host = el("div", { class: "ins-ome" });
+  void (async () => {
+    const read = async (key: string) => {
+      const response = await fetch(`${base}/${key}`);
+      return response.ok ? response.json() : undefined;
+    };
+    const attributes = (await read("zarr.json").catch(() => undefined))?.attributes ?? (await read(".zattrs").catch(() => undefined));
+    const s = attributes === undefined ? undefined : summariseOme(attributes);
+    if (s === undefined) return;
+    const rows = (items: [string, string][]) => el("div", { class: "ins-ome-rows" }, ...items.flatMap(([k, v]) => [el("span", { class: "ins-label" }, k), el("span", { class: "ins-ome-value" }, v)]));
+    host.append(
+      el("h5", { class: "ins-subhead" }, `OME-Zarr ${s.version}: coordinate systems`),
+      rows(s.systems.map((c) => [c.name, c.axes])),
+      ...(s.transforms.length ? [el("h5", { class: "ins-subhead" }, "Transforms between them"), rows(s.transforms.map((x) => [`${x.from} → ${x.to}`, x.what]))] : []),
+      el("h5", { class: "ins-subhead" }, `Levels (${s.levels.length})`),
+      rows(s.levels.map((l) => [l.path, l.what || "none"])),
+    );
+  })();
+  return host;
 }
 
 /** The URL box, with Neuroglancer's completions (schemes, buckets, paths) as a list under it. */
