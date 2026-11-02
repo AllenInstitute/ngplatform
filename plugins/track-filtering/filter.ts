@@ -125,3 +125,44 @@ export function toCsv(props: SegmentProperties, mask: Uint8Array): string {
   }
   return lines.join("\n") + "\n";
 }
+
+export interface ColumnStatistics {
+  id: string;
+  /** Over the passing objects with a finite value. */
+  n: number;
+  mean: number;
+  sd: number;
+  median: number;
+  min: number;
+  max: number;
+}
+
+/** Each numeric column's statistics over the passing objects (NaN where none has a value). */
+export function groupStatistics(props: SegmentProperties, mask: Uint8Array): ColumnStatistics[] {
+  return props.numeric.map(({ id, values }) => {
+    const picked: number[] = [];
+    for (let i = 0; i < mask.length; ++i) if (mask[i] && Number.isFinite(values[i])) picked.push(values[i]);
+    const n = picked.length;
+    if (n === 0) return { id, n, mean: NaN, sd: NaN, median: NaN, min: NaN, max: NaN };
+    picked.sort((a, b) => a - b);
+    let sum = 0;
+    for (const v of picked) sum += v;
+    const mean = sum / n;
+    let squares = 0;
+    for (const v of picked) squares += (v - mean) ** 2;
+    const median = n % 2 === 1 ? picked[(n - 1) / 2] : (picked[n / 2 - 1] + picked[n / 2]) / 2;
+    return { id, n, mean, sd: n > 1 ? Math.sqrt(squares / (n - 1)) : 0, median, min: picked[0], max: picked[n - 1] };
+  });
+}
+
+/** CSV of groups' statistics: a row per group and column (group, objects, column, n, mean, sd, median, min, max). */
+export function statisticsCsv(groups: { name: string; count: number; columns: ColumnStatistics[] }[]): string {
+  const quote = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+  const number = (v: number) => (Number.isFinite(v) ? String(Number(v.toPrecision(7))) : "");
+  const lines = ["group,objects,attribute,n,mean,sd,median,min,max"];
+  for (const g of groups) {
+    if (g.columns.length === 0) lines.push([quote(g.name), g.count, "", "", "", "", "", "", ""].join(","));
+    for (const c of g.columns) lines.push([quote(g.name), g.count, quote(c.id), c.n, number(c.mean), number(c.sd), number(c.median), number(c.min), number(c.max)].join(","));
+  }
+  return lines.join("\n") + "\n";
+}

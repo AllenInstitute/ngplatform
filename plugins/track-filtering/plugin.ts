@@ -26,7 +26,20 @@ import { annotationGeometry, annotationMeets } from "./annotation_regions.js";
 import { addDensity, densityGrid, displayMax, niftiFile } from "./density.js";
 import type { NmRegion } from "./labels.js";
 import { LabelsEngine } from "./labels_client.js";
-import { computeMask, countPassing, emptyFilter, type FilterSpec, histogram, isEmptyFilter, passingIds, tagCounts, toCsv } from "./filter.js";
+import {
+  type ColumnStatistics,
+  computeMask,
+  countPassing,
+  emptyFilter,
+  type FilterSpec,
+  groupStatistics,
+  histogram,
+  isEmptyFilter,
+  passingIds,
+  statisticsCsv,
+  tagCounts,
+  toCsv,
+} from "./filter.js";
 import { FILTERING_PANEL } from "./manifest.js";
 import { groupMask, type Roi, type RoiEnds, type RoiOp, type RoiShape, rowIndex, rowMask } from "./roi.js";
 import { type Curves, type Dimensions, previewLevel, RoiEngine, type RoiResult, type StoreInfo, toStore } from "./roi_client.js";
@@ -256,6 +269,13 @@ const STYLE = `
 .tf-roi { border: 1px solid var(--line); border-radius: var(--r); padding: 6px 8px; display: grid; gap: 5px; }
 .tf-roi-head { display: flex; align-items: center; gap: 6px; }
 .tf-roi-head .label { font-weight: 500; flex: 1; }
+.tf-roi .tf-stats { border-top: 1px solid var(--line); padding-top: 8px; }
+.tf-stats .tf-row { margin: 6px 0; gap: 6px; }
+.tf-stats select { flex: 1; min-width: 0; height: 24px; border-radius: 0; border: 1px solid var(--line); background: var(--ink-0); color: var(--text); font: 12px/1 var(--ui); }
+.tf-stats-table { width: 100%; border-collapse: collapse; font: 11px/1.4 var(--mono); }
+.tf-stats-table th { text-align: left; font: 500 10px/1.4 var(--ui); color: var(--muted); padding: 2px 4px 2px 0; }
+.tf-stats-table td { padding: 2px 4px 2px 0; color: var(--text); white-space: nowrap; }
+.tf-stats-table td:first-child { white-space: normal; font-family: var(--ui); }
 .tf-roi .tf-ends select { height: 24px; border-radius: 0; border: 1px solid var(--line); background: var(--ink-0); color: var(--text); font: 12px/1 var(--ui); width: 100%; }
 .tf-roi select { height: 24px; border-radius: 0; border: 1px solid var(--line); background: var(--ink-0); color: var(--text); font: 600 11px/1 var(--mono); }
 .tf-xyz { display: grid; gap: 2px; }
@@ -357,6 +377,10 @@ class TrackGroups {
   private trkLevel = 0;
   /** What the last save of each group did. */
   private saved_ = new Map<string, string>();
+  /** The Statistics section: open or not, the attribute shown, and statistics by answer. */
+  private statsOpen = false;
+  private statsColumn: string | undefined;
+  private readonly statsCache = new WeakMap<Uint8Array, Map<string, ColumnStatistics>>();
   /** The density map last made for each group, to save. */
   private readonly densities = new Map<string, File>();
   /** Region ids last written to the annotation layer: only these can be "deleted in a view". */
@@ -1688,9 +1712,75 @@ class TrackGroups {
     }
     root.append(list);
 
-    if (editing === undefined) return;
-    root.append(this.editor(editing));
+    if (editing !== undefined) root.append(this.editor(editing));
+    if (groups.length > 0) root.append(this.statistics(groups));
     for (const update of this.updaters) update();
+  }
+
+  /** Each group's count and one attribute's mean ± SD and median; every attribute in the CSV. */
+  private statistics(groups: Group[]): HTMLElement {
+    const props = this.kind() === "zarr-vectors" ? this.props : undefined;
+    const details = el("details", { class: "tf-stats" }) as HTMLDetailsElement;
+    details.open = this.statsOpen;
+    const select = el("select", { "aria-label": "Attribute" }) as HTMLSelectElement;
+    for (const c of props?.numeric ?? []) select.append(el("option", { value: c.id }, c.id));
+    if (props?.numeric.some((c) => c.id === this.statsColumn)) select.value = this.statsColumn!;
+    const table = el("table", { class: "tf-stats-table" });
+    const csv = el("button", { class: "btn small", type: "button", title: "Every attribute's statistics for every group, as CSV", onclick: () => this.exportStatistics(groups) }, "CSV");
+    const format = (v: number) => (Number.isFinite(v) ? Number(v.toPrecision(4)).toLocaleString() : "–");
+    const update = () => {
+      if (!details.open) return;
+      const column = props?.numeric.find((c) => c.id === select.value);
+      table.replaceChildren(
+        el("tr", {}, el("th", {}, "Group"), el("th", {}, "Objects"), ...(column ? [el("th", {}, "Mean ± SD"), el("th", {}, "Median")] : [])),
+        ...groups.map((g) => {
+          const r = this.results.get(g.id);
+          const exact = r?.state === "exact";
+          const stats = column && r?.mask && exact ? this.columnStatistics(r.mask, column) : undefined;
+          return el(
+            "tr",
+            {},
+            el("td", {}, g.name),
+            el("td", {}, r === undefined || !exact ? "…" : r.count.toLocaleString()),
+            ...(column ? [el("td", {}, stats ? `${format(stats.mean)} ± ${format(stats.sd)}` : "…"), el("td", {}, stats ? format(stats.median) : "…")] : []),
+          );
+        }),
+      );
+    };
+    select.addEventListener("change", () => {
+      this.statsColumn = select.value;
+      update();
+    });
+    details.addEventListener("toggle", () => {
+      this.statsOpen = details.open;
+      update();
+    });
+    this.updaters.push(update);
+    details.append(el("summary", { class: "section-title" }, "Statistics"), el("div", { class: "tf-row" }, props?.numeric.length ? select : el("span"), csv), table);
+    return details;
+  }
+
+  /** One attribute's statistics over a group's objects, kept while its answer stays the same. */
+  private columnStatistics(mask: Uint8Array, column: SegmentProperties["numeric"][number]): ColumnStatistics {
+    let byColumn = this.statsCache.get(mask);
+    if (byColumn === undefined) this.statsCache.set(mask, (byColumn = new Map()));
+    let stats = byColumn.get(column.id);
+    if (stats === undefined) byColumn.set(column.id, (stats = groupStatistics({ ids: new BigUint64Array(0), numeric: [column], tags: undefined }, mask)[0]));
+    return stats;
+  }
+
+  /** Every group's statistics (count, and each attribute's), as a CSV file. */
+  exportStatistics(groups = this.groups()): void {
+    const props = this.kind() === "zarr-vectors" ? this.props : undefined;
+    const rows = groups.map((g) => {
+      const r = this.results.get(g.id);
+      return { name: g.name, count: r?.state === "exact" ? r.count : NaN, columns: props && r?.mask && r.state === "exact" ? groupStatistics(props, r.mask) : [] };
+    });
+    const blob = new Blob([statisticsCsv(rows)], { type: "text/csv" });
+    const a = el("a", { href: URL.createObjectURL(blob), download: fileName(`${this.dataset()?.name ?? "groups"} statistics`, ".csv") });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    this.ctx.log.info(`Exported the statistics of ${groups.length} groups as CSV.`);
   }
 
   /** Save as .trk: the level to save from, progress, and cancel. */
@@ -2011,6 +2101,7 @@ export const plugin: PluginModule = {
     ctx.commands.register("trackFiltering.exportCsv", () => groups.exportCsv());
     ctx.commands.register("trackFiltering.saveTrk", () => void groups.saveTrk());
     ctx.commands.register("trackFiltering.densityMap", () => void groups.densityMap());
+    ctx.commands.register("trackFiltering.exportStatistics", () => groups.exportStatistics());
     ctx.subscriptions.push(ctx.services.provide("trackFiltering.groups", groups.service()));
   },
 };

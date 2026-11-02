@@ -24,6 +24,7 @@ export const TRACK_FILTERING_MANIFEST: Manifest = {
 - **Density map**: how many of the group's streamlines pass through each voxel (1 mm for a brain), shown as an image layer; **Save .nii** keeps it as a NIfTI file in the store's RAS+ millimetres.
 - **Save groups into the store**: for a zarr-vectors folder opened from this computer (Add → Local, in Chrome or Edge), the groups are written into the store itself (level 0's \`groups\`, with names and counts, as zarr-vectors-py writes them), where other tools, and the viewer as tags, see them.
 - **Export CSV**: the group's objects and their attributes.
+- **Statistics** (below the groups): each group's count and an attribute's mean ± SD and median; **CSV** gives every attribute's n, mean, SD, median and range for every group.
 
 ## How it scales
 Regions read only the chunks they overlap, at level 0, cached as they are read, so a small region in a large tractogram is quick; a region covering the whole brain reads all of it. Attributes are held for every object (about 100 bytes each); a group of millions of objects is fine to show and save.`,
@@ -44,6 +45,7 @@ Regions read only the chunks they overlap, at level 0, cached as they are read, 
       { id: "trackFiltering.exportCsv", title: "Export the edited group's objects as CSV", group: "Filtering" },
       { id: "trackFiltering.saveTrk", title: "Save the edited group's streamlines as .trk", group: "Filtering" },
       { id: "trackFiltering.densityMap", title: "Make a density map of the edited group's streamlines", group: "Filtering" },
+      { id: "trackFiltering.exportStatistics", title: "Export every group's statistics as CSV", group: "Filtering" },
     ],
     keybindings: [{ key: "alt+shift+s", command: "trackFiltering.addSphere" }],
     appState: { key: FILTERING_STATE_KEY, version: 2 },

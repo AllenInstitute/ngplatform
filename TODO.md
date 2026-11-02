@@ -65,7 +65,8 @@ items are done (and say where); the rest are in rough order of work.
 - [x] External plugins from a URL, with a consent dialog (Plugins → Add → From a URL…; the manifest is shown before any code runs; remembered until removed).
 - [x] Track filtering: endpoint modes. Each region of a streamline or skeleton store can ask for either end, or both ends, in it instead of passing through (ends found chunk by chunk: a fragment's first or last vertex unless a link carries the line on; HCP-1065: 785 of the 25,734 callosal tracts end in the midline slab).
 - [x] Track filtering: density maps. A group's streamlines counted once per voxel (1 mm for a brain), shown at once as a heat-map layer over the anatomy and saved as NIfTI (Save .nii); HCP-1065's left corticospinal group: 2,913 streamlines in 5–20 s. Plugins can open a file they make as local data (`workspace.local.open`).
-- [ ] Track filtering, next: disk regions with an angle limit, mask regions (a painted or thresholded volume), statistics per group with CSV.
+- [x] Track filtering: statistics per group (count, and an attribute's mean ± SD and median, in a Statistics section; CSV of every attribute's n, mean, SD, median and range for every group).
+- [ ] Track filtering, next: disk regions with an angle limit, mask regions (a painted or thresholded volume).
 - [x] Virtual Zarr: TIFF stacks (TIFF/BigTIFF, strips or tiles, LZW/deflate/PackBits, OME and ImageJ hyperstacks and pixel sizes).
 - [x] A new scene fits its first dataset (centre and zoom, in the data's own units), and image layers take their contrast from the source's OME window (the virtual stores now write one).
 - [ ] Virtual Zarr, next: `.nii.gz` kept decompressed between visits (OPFS); `.hdr`/`.img` pairs; RGB (NIfTI and TIFF); TIFF floating-point predictor.
