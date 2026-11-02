@@ -99,6 +99,12 @@ export class Shell {
           icon("link"),
           h("span", { class: "hide-narrow" }, "Share"),
         ),
+        h(
+          "button",
+          { class: "btn", type: "button", title: "Open this scene in Neuroglancer, in a new tab", onclick: () => this.wb.run("workspace.openInNeuroglancer") },
+          icon("external"),
+          h("span", { class: "hide-narrow" }, "Neuroglancer"),
+        ),
       ),
       h("span", { class: "sep hide-narrow" }),
       h("div", { class: "group" }, this.undoButton, this.redoButton),
@@ -108,7 +114,7 @@ export class Shell {
       h("div", { class: "status", role: "status" }, this.statusDot, this.statusText),
       h(
         "div",
-        { class: "group hide-narrow" },
+        { class: "group" },
         iconButton("camera", "Screenshot", () => this.wb.run("view.screenshot")),
         iconButton("settings", "Settings and reloading", (e) =>
           showMenu(e.currentTarget as HTMLElement, [
@@ -118,7 +124,7 @@ export class Shell {
             { label: "Hard reset: reload everything fresh", run: () => this.wb.run("view.hardReset") },
           ]),
         ),
-        iconButton("keyboard", "Keyboard and mouse", () => this.wb.run("help.shortcuts")),
+        iconButton("keyboard", "Keyboard and mouse", () => this.wb.run("help.shortcuts"), { class: "btn icon hide-narrow" }),
       ),
       h(
         "button",
@@ -141,7 +147,7 @@ export class Shell {
       this.docks.element("right"),
     );
     this.root.append(topbar, workspace, this.docks.resizer("bottom"), this.docks.element("bottom"));
-    const narrow = window.matchMedia("(max-width: 760px)");
+    const narrow = window.matchMedia("(max-width: 520px)");
     this.docks.restore(narrow.matches);
     narrow.addEventListener("change", () => {
       if (narrow.matches) {
@@ -372,7 +378,12 @@ export class Shell {
       title: "Open a link, state or data URL…",
       group: "Workspace",
       hint: "Neuroglancer links, state JSON, remote state URLs, or a data source to add as a dataset",
-      run: () => showOpenSheet(wb, { openText: (t, f, s) => this.openText(t, f, s), openExample: (id) => this.openExample(id) }),
+      run: () =>
+        showOpenSheet(wb, {
+          openText: (t, f, s) => this.openText(t, f, s),
+          openExample: (id) => this.openExample(id),
+          openBlank: () => store.newScene({ name: "Blank" }),
+        }),
     });
     add({
       id: "workspace.share",
@@ -413,16 +424,26 @@ export class Shell {
       id: "workspace.openInNeuroglancer",
       title: "Open this scene in Neuroglancer",
       group: "Workspace",
-      hint: "The same view and data in a new tab, without this app",
+      hint: "Google's Neuroglancer, in a new tab, without this app",
       run: () => {
-        const formats = this.pluginFormatsIn();
-        const { url, viewer } = neuroglancerLink(store.ng(), formats, location.href);
+        const { url } = neuroglancerLink(store.ng(), [], location.href);
         window.open(url, "_blank", "noopener");
-        wb.log.add(
-          formats.length
-            ? `Opened this scene in Neuroglancer (${viewer}): it reads ${formats.join(", ")}, which Google's public Neuroglancer does not.`
-            : `Opened this scene in Neuroglancer (${viewer}).`,
-        );
+        const missing = [
+          ...this.pluginFormatsIn().map((f) => (f === "zarr-vectors" ? "Zarr Vectors" : f)),
+          ...(this.usesLocalData() ? ["data on this computer"] : []),
+        ];
+        if (missing.length) toast(`Neuroglancer doesn't read ${missing.join(" or ")}, so only the other layers (images) are likely to show there.`);
+        wb.log.add("Opened this scene in Neuroglancer.");
+      },
+    });
+    add({
+      id: "workspace.openInPlainNeuroglancer",
+      title: "Open this scene in this site's Neuroglancer",
+      group: "Workspace",
+      hint: "Neuroglancer with this site's data type plugins (Zarr Vectors), in a new tab",
+      run: () => {
+        const { url } = neuroglancerLink(store.ng(), ["plugins"], location.href);
+        window.open(url, "_blank", "noopener");
       },
     });
     add({
@@ -799,6 +820,12 @@ export class Shell {
     return [...formats].filter((f) => plugin.has(f));
   }
 
+  /** Whether the scene shows data from this computer, which only this app can serve. */
+  private usesLocalData(): boolean {
+    const prefix = `${this.wb.localData.base}local/`;
+    return this.wb.engine.layers().some((l) => l.sources.some((s) => s.includes(prefix)));
+  }
+
   private checkFormats(): void {
     const formats = new Set(this.wb.engine.layers().flatMap((l) => l.sources.map((s) => contextKeyFor(s))));
     const zv = this.wb.pluginSwitches.manifests.find((m) => m.id === "org.ngplatform.zarr-vectors");
@@ -933,7 +960,8 @@ export class Shell {
       { label: "Copy this scene as a Neuroglancer link", run: run("workspace.copyPlainLink") },
       { label: "Copy this scene as Neuroglancer JSON", run: run("workspace.copyState") },
       "-",
-      { label: "Open this scene in Neuroglancer ↗", run: run("workspace.openInNeuroglancer") },
+      { label: "Open in Neuroglancer ↗", run: run("workspace.openInNeuroglancer") },
+      { label: "Open in Neuroglancer with Zarr Vectors ↗", run: run("workspace.openInPlainNeuroglancer") },
     ]);
   }
 
@@ -941,7 +969,6 @@ export class Shell {
     const { store } = this.wb;
     const p = store.state();
     const current = activeScene(p);
-    const closable = p.scenes.length > 1;
     const close = (id: string, name: string) => {
       store.deleteScene(id);
       toast(`Closed “${name}”. ${keyLabel("Mod+Z")} brings it back.`);
@@ -963,7 +990,7 @@ export class Shell {
             { label: "Move left", disabled: index === 0, run: () => store.moveScene(scene.id, index - 1) },
             { label: "Move right", disabled: index === p.scenes.length - 1, run: () => store.moveScene(scene.id, index + 1) },
             "-",
-            { label: "Close", disabled: !closable, run: () => close(scene.id, scene.name) },
+            { label: "Close", run: () => close(scene.id, scene.name) },
           ]);
         return h(
           "div",
@@ -976,7 +1003,7 @@ export class Shell {
             onclick: () => store.switchScene(scene.id),
             ondblclick: () => this.wb.run("scene.rename", { id: scene.id }),
             onauxclick: (e: Event) => {
-              if ((e as MouseEvent).button === 1 && closable) close(scene.id, scene.name);
+              if ((e as MouseEvent).button === 1) close(scene.id, scene.name);
             },
             oncontextmenu: (e: Event) => {
               e.preventDefault();
@@ -986,26 +1013,24 @@ export class Shell {
             onkeydown: (e: Event) => {
               const k = e as KeyboardEvent;
               if (k.key === "Enter") store.switchScene(scene.id);
-              if (k.key === "Delete" && closable) close(scene.id, scene.name);
+              if (k.key === "Delete") close(scene.id, scene.name);
             },
           },
           h("span", { class: "scene-tab-name" }, scene.name),
-          closable
-            ? h(
-                "button",
-                {
-                  class: "scene-close",
-                  type: "button",
-                  title: `Close ${scene.name}`,
-                  "aria-label": `Close ${scene.name}`,
-                  onclick: (e: Event) => {
-                    e.stopPropagation();
-                    close(scene.id, scene.name);
-                  },
-                },
-                icon("close"),
-              )
-            : null,
+          h(
+            "button",
+            {
+              class: "scene-close",
+              type: "button",
+              title: p.scenes.length > 1 ? `Close ${scene.name}` : `Close ${scene.name}; a blank scene takes its place`,
+              "aria-label": `Close ${scene.name}`,
+              onclick: (e: Event) => {
+                e.stopPropagation();
+                close(scene.id, scene.name);
+              },
+            },
+            icon("close"),
+          ),
         );
       }),
       iconButton("plus", "New scene", () => this.wb.run("scene.new"), { class: "btn icon scene-add" }),

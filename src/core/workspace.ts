@@ -304,11 +304,16 @@ export function renameScene(p: PlatformState, id: string, name: string): Platfor
 }
 
 /**
- * Removes a scene.  The last scene cannot go.  Removing the active scene
- * switches to its neighbour, whose state is returned as `ng`.
+ * Removes a scene.  Removing the active scene switches to its neighbour,
+ * whose state is returned as `ng`; removing the only scene leaves a blank
+ * one in its place, so there is always a scene.
  */
-export function removeScene(p: PlatformState, currentNg: Json, id: string): { platform: PlatformState; ng: Json } {
-  if (p.scenes.length <= 1 || !p.scenes.some((s) => s.id === id)) return { platform: p, ng: currentNg };
+export function removeScene(p: PlatformState, currentNg: Json, id: string, makeId: IdMaker = randomId): { platform: PlatformState; ng: Json } {
+  if (!p.scenes.some((s) => s.id === id)) return { platform: p, ng: currentNg };
+  if (p.scenes.length === 1) {
+    const blank = { id: makeId("s-"), name: "Scene 1" };
+    return { platform: { ...p, scenes: [blank], activeScene: blank.id }, ng: emptySceneFrom(currentNg) };
+  }
   const index = p.scenes.findIndex((s) => s.id === id);
   if (id !== p.activeScene) {
     return { platform: { ...p, scenes: p.scenes.filter((s) => s.id !== id) }, ng: currentNg };

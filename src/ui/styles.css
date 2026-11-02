@@ -48,30 +48,22 @@ button, input, textarea, select { font: inherit; color: inherit; }
 [hidden] { display: none !important; }
 code { font-family: var(--mono); font-size: 12px; }
 
-/* Tick boxes stay tick boxes.  A switch (.switch, and the 3-D panel's
-   Sections and Volume) turns something in the viewer on or off: a round
-   knob in a square track, grey when off and green when on. */
+/* On/off is a tick box, as in Neuroglancer (Sections and Volume in the 3-D
+   view included).  Only a plugin's on/off is a switch: a round knob in a
+   round-ended track, grey when off and green when on. */
 input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
-input[type="checkbox"].switch,
-.perspective-panel-show-slice-views input[type="checkbox"],
-.ngp-view-toggle input[type="checkbox"] {
+input[type="checkbox"].switch {
   appearance: none; -webkit-appearance: none; flex: none; margin: 0;
-  width: 32px; height: 18px; border-radius: 0; position: relative; vertical-align: middle;
-  background: #3a3a3a; border: 1px solid #555; cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  width: 34px; height: 20px; border-radius: 999px; position: relative; vertical-align: middle;
+  background: #4a4a4a; border: 0; cursor: pointer;
+  transition: background 0.15s;
 }
-input[type="checkbox"].switch::after,
-.perspective-panel-show-slice-views input[type="checkbox"]::after,
-.ngp-view-toggle input[type="checkbox"]::after {
-  content: ""; position: absolute; top: 1px; left: 1px; width: 14px; height: 14px; border-radius: 50%;
-  background: #a6a6a6; transition: transform 0.15s, background 0.15s;
+input[type="checkbox"].switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: #d8d8d8; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); transition: transform 0.15s, background 0.15s;
 }
-input[type="checkbox"].switch:checked,
-.perspective-panel-show-slice-views input[type="checkbox"]:checked,
-.ngp-view-toggle input[type="checkbox"]:checked { background: var(--on); border-color: var(--on); }
-input[type="checkbox"].switch:checked::after,
-.perspective-panel-show-slice-views input[type="checkbox"]:checked::after,
-.ngp-view-toggle input[type="checkbox"]:checked::after { transform: translateX(14px); background: #fff; }
+input[type="checkbox"].switch:checked { background: var(--on); }
+input[type="checkbox"].switch:checked::after { transform: translateX(14px); background: #fff; }
 input[type="checkbox"].switch:disabled { opacity: 0.4; cursor: default; }
 
 .app {
@@ -99,7 +91,7 @@ input[type="checkbox"].switch:disabled { opacity: 0.4; cursor: default; }
   min-width: 0;
 }
 .brand { display: flex; align-items: center; gap: 8px; margin-right: 4px; flex: none; }
-.brand-name { font-weight: 600; letter-spacing: 0.01em; }
+.brand-name { font-weight: 600; letter-spacing: 0.01em; color: #fff; }
 .chip {
   font: 500 10px/1 var(--ui);
   text-transform: uppercase;
@@ -115,6 +107,14 @@ input[type="checkbox"].switch:disabled { opacity: 0.4; cursor: default; }
 .group { display: flex; align-items: center; gap: 4px; flex: none; }
 .sep { width: 1px; height: 20px; background: var(--line); margin-inline: 2px; flex: none; }
 .spacer { flex: 1; }
+
+/* A button that reads as a link: Read more, and the like. */
+button.link {
+  background: none; border: 0; padding: 0; margin: 0; font: inherit; color: var(--muted);
+  text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 2px; cursor: pointer;
+}
+button.link:hover { color: var(--text); text-decoration-color: currentColor; }
+button.link:disabled { color: var(--faint); cursor: default; text-decoration: none; }
 
 .btn {
   display: inline-flex;
@@ -160,7 +160,6 @@ input[type="checkbox"].switch:disabled { opacity: 0.4; cursor: default; }
 .scene-tab .scene-tab-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .scene-tab:hover { color: var(--text); background: var(--ink-3); }
 .scene-tab[aria-selected="true"] { color: var(--text); background: var(--ink-3); border-color: var(--line-strong); box-shadow: inset 0 -2px 0 var(--select); }
-.scene-tab:only-of-type { padding-right: 12px; }
 .scene-close {
   display: inline-grid; place-items: center; width: 18px; height: 18px; flex: none;
   border: 0; padding: 0; background: transparent; color: var(--faint); cursor: pointer; visibility: hidden;
@@ -400,7 +399,13 @@ textarea.text-input { height: auto; padding: 8px 10px; }
 .layer-controls-host:empty { display: none; }
 
 /* plugins, jobs, log */
-.plugin { border: 1px solid var(--line); border-radius: var(--r); padding: 10px; display: grid; gap: 4px; }
+.panel-intro { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.panel-intro .note { margin: 0; }
+.panel-intro .btn { flex: none; }
+.plugin-list { gap: 8px; }
+.plugin-list + .plugin-list:not(:empty) { margin-top: 18px; }
+.plugin { border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px 12px; display: grid; gap: 6px; }
+.plugin-desc { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .plugin.on { border-color: var(--line-strong); }
 .chip.kind-datatype { color: var(--text); border-color: var(--line-strong); }
 .chip.kind-tool { color: var(--muted); border-color: var(--line-strong); }
@@ -646,7 +651,7 @@ textarea.ins-grow { display: block; width: 100%; box-sizing: border-box; resize:
 /* --------------------------------------------------------------- overlays */
 .scrim {
   position: fixed; inset: 0; z-index: 100;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.5);
   display: flex; justify-content: center; align-items: flex-start;
   padding: max(8vh, env(safe-area-inset-top, 0px)) 16px 16px;
 }
@@ -654,7 +659,7 @@ textarea.ins-grow { display: block; width: 100%; box-sizing: border-box; resize:
   width: min(640px, 100%);
   max-height: 84vh;
   display: flex; flex-direction: column;
-  background: var(--ink-2); border: 1px solid var(--line-strong); border-radius: 0;
+  background: var(--ink-2); border: 1px solid var(--line); border-radius: 4px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
   overflow: hidden;
 }
@@ -698,7 +703,7 @@ textarea.state-input.tall { min-height: 50vh; }
 
 .menu {
   position: fixed; z-index: 130; min-width: 190px; padding: 4px;
-  background: var(--ink-2); border: 1px solid var(--line-strong); border-radius: 0;
+  background: var(--ink-2); border: 1px solid var(--line); border-radius: 4px;
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5); display: grid;
 }
 .menu-item {
@@ -717,7 +722,7 @@ textarea.state-input.tall { min-height: 50vh; }
   display: grid; gap: 8px; justify-items: end;
 }
 .toast {
-  background: var(--ink-3); border: 1px solid var(--line-strong); border-radius: var(--r);
+  background: var(--ink-3); border: 1px solid var(--line); border-radius: 4px;
   padding: 8px 12px; max-width: min(380px, calc(100vw - 32px));
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
@@ -731,9 +736,21 @@ textarea.state-input.tall { min-height: 50vh; }
 @media (max-width: 760px) {
   .hide-narrow { display: none !important; }
   .brand-name { display: none; }
+  .field-row { grid-template-columns: 1fr; }
+  /* The top bar fits a half-width window: the palette is its icon, the status shortens. */
+  .palette-trigger kbd { display: none; }
+  .status { flex: 0 1 auto; min-width: 0; overflow: hidden; }
+  .status > :last-child { overflow: hidden; text-overflow: ellipsis; }
+}
+@media (min-width: 521px) and (max-width: 760px) {
+  /* A half-width window: the side docks take at most a third each, so the views keep room. */
+  .app:not(.left-collapsed) { --lw: min(var(--left, 300px), 34vw); }
+  .app:not(.right-collapsed) { --rw: min(var(--right, 360px), 34vw); }
+}
+@media (max-width: 520px) {
   .app { --lw: 34px; --rw: 34px; }
   .resizer-left, .resizer-right { display: none; }
-  /* An open side dock floats over the views instead of squeezing them. */
+  /* On a phone an open side dock floats over the views instead of squeezing them. */
   .dock-left:not(.collapsed), .dock-right:not(.collapsed) {
     position: absolute; top: 0; bottom: 0; z-index: 20;
     width: min(340px, 88vw);
@@ -742,11 +759,6 @@ textarea.state-input.tall { min-height: 50vh; }
   .dock-left:not(.collapsed) { left: 0; }
   .dock-right:not(.collapsed) { right: 0; }
   .dock-bottom { height: min(var(--bh), 30vh); }
-  .field-row { grid-template-columns: 1fr; }
-  /* The top bar fits a phone: the palette is its icon, the status shortens. */
-  .palette-trigger kbd { display: none; }
-  .status { flex: 0 1 auto; min-width: 0; overflow: hidden; }
-  .status > :last-child { overflow: hidden; text-overflow: ellipsis; }
 }
 
 .note.explain { display: grid; gap: 6px; color: var(--muted); }

@@ -38,6 +38,7 @@ export function clear(el: Element, ...children: Child[]): void {
 
 const PATHS: Record<string, string> = {
   open: "M3 6.5h6l2 2h10v10.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z",
+  external: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
   link: "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1",
   copy: "M8 8h11v12H8zM5 16V4h11",
   undo: "M9 7 4 12l5 5M4 12h11a5 5 0 0 1 0 10h-3",
@@ -98,9 +99,9 @@ export function mark(): SVGSVGElement {
   svg.setAttribute("height", "20");
   svg.setAttribute("aria-hidden", "true");
   const strokes: [string, string][] = [
-    ["M8 14H20", "var(--dec-x)"],
-    ["M8 14V2", "var(--dec-y)"],
-    ["M8 14L2.5 19.5", "var(--dec-z)"],
+    ["M3 15L19 7", "var(--dec-x)"],
+    ["M3 11L19 18", "var(--dec-y)"],
+    ["M7 3L11 19", "var(--dec-z)"],
   ];
   for (const [d, color] of strokes) {
     const path = document.createElementNS(ns, "path");

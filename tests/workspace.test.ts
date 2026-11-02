@@ -133,9 +133,14 @@ describe("scenes", () => {
     expect(switchScene(back.platform, sceneA, first).platform).toBe(back.platform);
   });
 
-  it("removes scenes, never the last, moving to a neighbour when it was active", () => {
+  it("removes scenes, moving to a neighbour when it was active, and replaces the last with a blank one", () => {
     const p0 = emptyPlatform(ids);
-    expect(removeScene(p0, sceneA, p0.activeScene).platform).toBe(p0);
+    expect(removeScene(p0, sceneA, "no-such-scene").platform).toBe(p0);
+    const last = removeScene(p0, sceneA, p0.activeScene, ids);
+    expect(last.platform.scenes).toHaveLength(1);
+    expect(last.platform.activeScene).not.toBe(p0.activeScene);
+    expect(last.platform.scenes[0]).toEqual({ id: last.platform.activeScene, name: "Scene 1" });
+    expect((last.ng as { layers?: unknown[] }).layers ?? []).toEqual([]);
     const { platform: p1, id: second } = addScene(p0, sceneA, {}, ids);
     const removed = removeScene(p1, {}, second);
     expect(removed.platform.scenes).toHaveLength(1);

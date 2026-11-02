@@ -84,8 +84,8 @@ function firstSentence(text: string): string {
 }
 
 export function renderPluginsPanel(host: HTMLElement, wb: Workbench, local: LocalPlugins): () => void {
-  const list = h("div", { class: "list" });
-  const localList = h("div", { class: "list" });
+  const list = h("div", { class: "list plugin-list" });
+  const localList = h("div", { class: "list plugin-list" });
   const addButton = h("button", { class: "btn outline small", type: "button", "aria-haspopup": "menu" }, icon("plus"), "Add");
   addButton.addEventListener("click", () =>
     showMenu(addButton, [
@@ -96,7 +96,7 @@ export function renderPluginsPanel(host: HTMLElement, wb: Workbench, local: Loca
     ]),
   );
   host.append(
-    h("div", { class: "panel-intro" }, h("p", { class: "note" }, "Formats and tools; switching one reloads the page with the same link."), addButton),
+    h("div", { class: "panel-intro" }, h("p", { class: "note" }, "Switching one reloads the page."), addButton),
     list,
     localList,
   );

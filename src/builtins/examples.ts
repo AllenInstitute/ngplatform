@@ -63,7 +63,7 @@ export const EXAMPLES: ExampleSpec[] = [
     id: "mni-hcp1065",
     title: "HCP-1065 tractogram on the MNI template",
     description:
-      "The HCP-1065 population tractogram (503,085 streamlines, five levels, zarr-vectors) over the MNI152 2009a T1w template, both in MNI space. Three track groups (corpus callosum, left and right corticospinal) are set up in the Filtering tab.",
+      "503,085 streamlines (zarr-vectors) on the MNI152 2009a T1w template, with three track groups set up in Filtering.",
     remote: true,
     state: () => ({
       ng: {
@@ -73,7 +73,7 @@ export const EXAMPLES: ExampleSpec[] = [
         projectionScale: 260,
         layers: [
           { type: "image", source: MNI2009A, name: "MNI152 2009a" },
-          { type: "auto", source: HCP1065 + "|zarr-vectors:", name: "HCP-1065" },
+          { type: "auto", source: HCP1065 + "|zarr-vectors:", name: "HCP-1065", visible: false },
         ],
         selectedLayer: { layer: "HCP-1065" },
         layout: "xy-3d",
@@ -85,7 +85,7 @@ export const EXAMPLES: ExampleSpec[] = [
     id: "microns",
     title: "MICrONS cubic millimetre, mouse visual cortex",
     description:
-      "The MICrONS minnie65 electron microscopy volume and its v1300 segmentation, with a few cells shown in 3-D. Click a cell in a section to show it.",
+      "Electron microscopy and the v1300 segmentation of minnie65, with a few cells in 3-D.",
     remote: true,
     state: () => ({
       ng: {

@@ -17,7 +17,31 @@ export interface OpenActions {
   /** Opens pasted text; `asScene` opens a state as a new scene instead of replacing the workspace. */
   openText(text: string, from: string, asScene: boolean): Promise<boolean>;
   openExample(id: string): void;
+  /** A new, empty scene. */
+  openBlank(): void;
 }
+
+/**
+ * Asks for a file (or folder) on this device with the system's file picker
+ * and adds what it holds as datasets of the scene; false when nothing was.
+ */
+export async function openFromDevice(wb: Workbench, folder: boolean): Promise<boolean> {
+  const local = wb.localData;
+  const entry = await local.pick(folder);
+  if (entry === undefined) return false;
+  const datasets = await local.detect(entry.id);
+  if (datasets.length === 0) {
+    toast(`Nothing to open in ${entry.name}. Files: ${LOCAL_FORMATS}.`, "error");
+    void local.forget(entry.id);
+    return false;
+  }
+  for (const dataset of datasets) wb.store.addDataset({ source: dataset.source, name: dataset.name, kind: dataset.kind });
+  wb.docks.show("layer");
+  return true;
+}
+
+/** What Open from device reads, for messages. */
+const LOCAL_FORMATS = "NIfTI, OME-Zarr, zarr-vectors and precomputed";
 
 export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
   const input = h("textarea", {
@@ -85,16 +109,44 @@ export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
     }
   });
   const examples = wb.examples.list();
+  const fromDevice = (folder: boolean) => async () => {
+    try {
+      if (await openFromDevice(wb, folder)) closeSheet();
+    } catch (e) {
+      toast((e as Error).message, "error");
+    }
+  };
+  const card = (title: string, desc: string, run: () => void, disabled = false) =>
+    h(
+      "div",
+      { class: "example" },
+      h("span", { class: "title" }, title),
+      h("span", { class: "desc" }, desc),
+      h("button", { class: "btn outline", type: "button", disabled, onclick: run }, "Open"),
+    );
   showSheet(
     sheet(
       "Open",
       [
+        ...(LocalData.supported
+          ? [h(
+              "div",
+              { class: "row-actions open-device" },
+              h("button", { class: "btn primary", type: "button", onclick: fromDevice(false) }, icon("open"), "Open from device…"),
+              h("button", { class: "btn outline", type: "button", onclick: fromDevice(true) }, "Folder…"),
+              h("span", { class: "detected" }, LOCAL_FORMATS + "; read in place, not uploaded."),
+            )]
+          : []),
         input,
         asSceneLabel,
-        h("h3", { class: "section-title", hidden: examples.length === 0 }, "Examples"),
+        h("h3", { class: "section-title" }, "Examples and templates"),
         h(
           "div",
           { class: "examples" },
+          card("Blank viewer", "An empty scene, beside the ones open now.", () => {
+            closeSheet();
+            actions.openBlank();
+          }),
           ...examples.map((example) =>
             h(
               "div",

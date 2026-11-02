@@ -273,8 +273,8 @@ export class DockManager {
       const move = (e: PointerEvent) => {
         const now = vertical ? e.clientY : e.clientX;
         const delta = slot === "left" ? now - start : start - now;
-        const limit = vertical ? window.innerHeight * 0.6 : window.innerWidth * 0.5;
-        const size = Math.max(vertical ? 90 : 220, Math.min(limit, startSize + delta));
+        const limit = vertical ? window.innerHeight * 0.6 : window.innerWidth * (window.innerWidth <= 760 ? 0.34 : 0.5);
+        const size = Math.max(vertical ? 90 : 160, Math.min(limit, startSize + delta));
         this.root.style.setProperty(`--${slot}`, `${Math.round(size)}px`);
       };
       const up = () => {
