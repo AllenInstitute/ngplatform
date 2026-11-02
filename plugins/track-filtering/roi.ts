@@ -6,11 +6,14 @@
  *
  * TrackVis semantics: a group keeps the tracks that pass through every
  * "and" region, through at least one "or" region (when it has any), and
- * through no "not" region, and whose attributes are in range.
+ * through no "not" region, and whose attributes are in range.  A region can
+ * instead ask for a track's ends: either end in it, or both.
  */
 
 export type RoiShape = "sphere" | "box";
 export type RoiOp = "and" | "or" | "not";
+/** What of a track must be in a region: by default any of it (it passes through); else either end, or both. */
+export type RoiEnds = "either" | "both";
 
 export interface Roi {
   id: string;
@@ -22,6 +25,7 @@ export interface Roi {
   /** Box extents (full widths), in global units. */
   size: [number, number, number];
   op: RoiOp;
+  ends?: RoiEnds;
 }
 
 /** A region in store coordinates, as the worker tests it. */
@@ -30,6 +34,7 @@ export interface RoiGeometry {
   center: [number, number, number];
   radius: number;
   size: [number, number, number];
+  ends?: RoiEnds;
 }
 
 export function roiBounds(roi: RoiGeometry, margin = 0): { lo: number[]; hi: number[] } {
@@ -43,7 +48,7 @@ export function roiBounds(roi: RoiGeometry, margin = 0): { lo: number[]; hi: num
 /** A stable key for a region's geometry, to cache its result by. */
 export function roiKey(roi: RoiGeometry, level: number): string {
   const r = (v: number) => Math.round(v * 1000) / 1000;
-  return `${level}|${roi.shape}|${roi.center.map(r).join(",")}|${r(roi.radius)}|${roi.size.map(r).join(",")}`;
+  return `${level}|${roi.shape}|${roi.center.map(r).join(",")}|${r(roi.radius)}|${roi.size.map(r).join(",")}${roi.ends ? `|${roi.ends}` : ""}`;
 }
 
 /**
@@ -57,6 +62,12 @@ export class IdSet {
   add(low: number, high: number): void {
     if (high < 0x200000) this.small.add(high * 0x100000000 + low);
     else this.big.add((BigInt(high) << 32n) | BigInt(low));
+  }
+
+  /** Adds an id as testEnds keys it. */
+  addKey(key: number | bigint): void {
+    if (typeof key === "number") this.small.add(key);
+    else this.big.add(key);
   }
 
   get size(): number {
@@ -187,6 +198,71 @@ export function testChunk(geometry: ChunkGeometry, roi: RoiGeometry, hits: IdSet
       inside = segmentHitsBox(p, a, b, lo, hi);
     }
     if (inside) hits.add(idLow[a], idHigh === undefined ? 0 : idHigh[a]);
+  }
+}
+
+/** A chunk's line ends: the vertices joined to at most one other, each with its object's id. */
+export interface ChunkEnds {
+  positions: Float32Array;
+  idLow: Uint32Array;
+  idHigh: Uint32Array | undefined;
+  bytes: number;
+}
+
+/**
+ * The ends of the chunk's lines: vertices with at most one segment, counting
+ * the links `linked` gives a vertex (to fragments elsewhere) as segments.  A
+ * lone vertex is both ends of its line, so it is listed twice.
+ */
+export function chunkEnds(geometry: ChunkGeometry, linked: Map<number, number>): ChunkEnds {
+  const { positions, idLow, idHigh, next, extra } = geometry;
+  const n = idLow.length;
+  const degree = new Uint8Array(n);
+  for (let v = 0; v < n; ++v) {
+    if (next[v] !== 0) {
+      degree[v]++;
+      degree[v + 1]++;
+    }
+  }
+  for (const v of extra) degree[v] = Math.min(255, degree[v] + 1);
+  for (const [v, links] of linked) if (v < n) degree[v] = Math.min(255, degree[v] + links);
+  const ends: number[] = [];
+  for (let v = 0; v < n; ++v) {
+    if (degree[v] === 0) ends.push(v, v);
+    else if (degree[v] === 1) ends.push(v);
+  }
+  const out: ChunkEnds = {
+    positions: new Float32Array(3 * ends.length),
+    idLow: new Uint32Array(ends.length),
+    idHigh: idHigh === undefined ? undefined : new Uint32Array(ends.length),
+    bytes: 0,
+  };
+  ends.forEach((v, i) => {
+    out.positions.set(positions.subarray(3 * v, 3 * v + 3), 3 * i);
+    out.idLow[i] = idLow[v];
+    if (out.idHigh !== undefined) out.idHigh[i] = idHigh![v];
+  });
+  out.bytes = out.positions.byteLength + out.idLow.byteLength + (out.idHigh?.byteLength ?? 0);
+  return out;
+}
+
+/** Counts, per object, its line ends inside the region (into `counts`, keyed as IdSet keys them). */
+export function testEnds(ends: ChunkEnds, roi: RoiGeometry, counts: Map<number | bigint, number>): void {
+  const { lo, hi } = roiBounds(roi);
+  const r2 = roi.radius * roi.radius;
+  const p = ends.positions;
+  for (let i = 0; i < ends.idLow.length; ++i) {
+    const x = p[3 * i];
+    const y = p[3 * i + 1];
+    const z = p[3 * i + 2];
+    const inside =
+      roi.shape === "sphere"
+        ? (x - roi.center[0]) ** 2 + (y - roi.center[1]) ** 2 + (z - roi.center[2]) ** 2 <= r2
+        : x >= lo[0] && x <= hi[0] && y >= lo[1] && y <= hi[1] && z >= lo[2] && z <= hi[2];
+    if (!inside) continue;
+    const high = ends.idHigh === undefined ? 0 : ends.idHigh[i];
+    const key = high < 0x200000 ? high * 0x100000000 + ends.idLow[i] : (BigInt(high) << 32n) | BigInt(ends.idLow[i]);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 }
 

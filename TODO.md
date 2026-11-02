@@ -63,7 +63,8 @@ items are done (and say where); the rest are in rough order of work.
 ## Earlier items not yet done
 - [ ] Run the browser smoke test on a machine with a GPU (pixel checks).
 - [x] External plugins from a URL, with a consent dialog (Plugins → Add → From a URL…; the manifest is shown before any code runs; remembered until removed).
-- [ ] Track filtering, next: endpoint modes (either or both ends in a region), disk regions with an angle limit, mask regions (a painted or thresholded volume), statistics per group with CSV, density maps exported as NIfTI.
+- [x] Track filtering: endpoint modes. Each region of a streamline or skeleton store can ask for either end, or both ends, in it instead of passing through (ends found chunk by chunk: a fragment's first or last vertex unless a link carries the line on; HCP-1065: 785 of the 25,734 callosal tracts end in the midline slab).
+- [ ] Track filtering, next: disk regions with an angle limit, mask regions (a painted or thresholded volume), statistics per group with CSV, density maps exported as NIfTI.
 - [x] Virtual Zarr: TIFF stacks (TIFF/BigTIFF, strips or tiles, LZW/deflate/PackBits, OME and ImageJ hyperstacks and pixel sizes).
 - [x] A new scene fits its first dataset (centre and zoom, in the data's own units), and image layers take their contrast from the source's OME window (the virtual stores now write one).
 - [ ] Virtual Zarr, next: `.nii.gz` kept decompressed between visits (OPFS); `.hdr`/`.img` pairs; RGB (NIfTI and TIFF); TIFF floating-point predictor.

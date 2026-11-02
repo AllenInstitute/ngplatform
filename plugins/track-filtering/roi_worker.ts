@@ -9,7 +9,8 @@
  * nothing again.  Requests report progress per chunk and can be cancelled.
  *
  * Messages in:  { type: "open", storeUrl }
- *               { type: "evaluate", id, level, roi }    roi in store coordinates
+ *               { type: "evaluate", id, level, roi }    roi in store coordinates;
+ *                 roi.ends: test the lines' ends (either, or both) instead
  *               { type: "curves", id, level, ids }   whole streamlines of objects
  *               { type: "cancel", id }
  * Messages out: { type: "opened", info } | { type: "error", id?, message }
@@ -32,7 +33,7 @@ import {
 } from "neuroglancer-zarr-vectors/reader";
 import { setAsyncComputationWorkerFactory } from "neuroglancer/unstable/worker_factories.js";
 import { asyncComputationWorker } from "@ngplatform/sdk/workers";
-import { type ChunkGeometry, compactChunk, IdSet, type RoiGeometry, roiBounds, testChunk } from "./roi.js";
+import { type ChunkEnds, chunkEnds, type ChunkGeometry, compactChunk, IdSet, type RoiGeometry, roiBounds, testChunk, testEnds } from "./roi.js";
 
 // Compressed arrays (the object manifests, zstd) decode in the platform's
 // async-computation worker, with Zarr Vectors' decoders loaded, as the
@@ -64,8 +65,8 @@ const pipelines = new Map<number, LevelPipeline>();
 const objectReaders = new Map<number, ObjectReader>();
 const controllers = new Map<number, AbortController>();
 
-/** Decoded chunks, least recently used first; pending reads are shared. */
-const cache = new Map<string, Promise<ChunkGeometry | undefined>>();
+/** Decoded chunks (and their line ends), least recently used first; pending reads are shared. */
+const cache = new Map<string, Promise<ChunkGeometry | ChunkEnds | undefined>>();
 const sizes = new Map<string, number>();
 let cachedBytes = 0;
 
@@ -81,19 +82,51 @@ function remember(key: string, bytes: number): void {
   }
 }
 
-function chunk(level: number, coords: number[]): Promise<ChunkGeometry | undefined> {
-  const key = `${level}|${coords.join(".")}`;
-  const hit = cache.get(key);
-  if (hit !== undefined) {
-    cache.delete(key);
-    cache.set(key, hit);
-    return hit;
-  }
+function pipelineOf(level: number): LevelPipeline {
   let pipeline = pipelines.get(level);
   if (pipeline === undefined) {
     pipeline = levelPipeline(access!, store!, store!.levels[level]);
     pipelines.set(level, pipeline);
   }
+  return pipeline;
+}
+
+function cached<T extends ChunkGeometry | ChunkEnds>(key: string): Promise<T | undefined> | undefined {
+  const hit = cache.get(key);
+  if (hit === undefined) return undefined;
+  cache.delete(key);
+  cache.set(key, hit);
+  return hit as Promise<T | undefined>;
+}
+
+/**
+ * The ends of a chunk's lines.  A fragment's first or last vertex is a
+ * line's end unless a link carries the line on (into a neighbouring chunk,
+ * or another fragment), so the links touching the chunk are read too.
+ */
+function ends(level: number, coords: number[]): Promise<ChunkEnds | undefined> {
+  const key = `ends|${level}|${coords.join(".")}`;
+  const hit = cached<ChunkEnds>(key);
+  if (hit !== undefined) return hit;
+  const pending = Promise.all([chunk(level, coords), pipelineOf(level).linkedVertices(coords)]).then(([geometry, linked]) => {
+    if (geometry === undefined) {
+      remember(key, 0);
+      return undefined;
+    }
+    const out = chunkEnds(geometry, linked);
+    remember(key, out.bytes);
+    return out;
+  });
+  pending.catch(() => cache.delete(key));
+  cache.set(key, pending);
+  return pending;
+}
+
+function chunk(level: number, coords: number[]): Promise<ChunkGeometry | undefined> {
+  const key = `${level}|${coords.join(".")}`;
+  const hit = cached<ChunkGeometry>(key);
+  if (hit !== undefined) return hit;
+  const pipeline = pipelineOf(level);
   // Reads are shared between requests, so none is cancelled with one.  The
   // segments crossing into neighbouring chunks are left out: they would
   // need the neighbours' vertices, and a region meets the segments either
@@ -155,16 +188,19 @@ async function evaluate(id: number, level: number, roi: RoiGeometry): Promise<vo
     const distance = (c: number[]) => c.reduce((s, v, k) => s + (v - centre[k]) ** 2, 0);
     coords.sort((a, b) => distance(a) - distance(b));
     const hits = new IdSet();
+    // Ends: each object's line ends inside the region, counted.
+    const endCounts = new Map<number | bigint, number>();
     let done = 0;
     let bytes = 0;
     let next = 0;
     const work = async () => {
       while (next < coords.length) {
         const c = coords[next++];
-        const data = await chunk(level, c);
+        const data = roi.ends === undefined ? await chunk(level, c) : await ends(level, c);
         if (controller.signal.aborted) return;
         if (data !== undefined) {
-          testChunk(data, roi, hits);
+          if (roi.ends === undefined) testChunk(data as ChunkGeometry, roi, hits);
+          else testEnds(data as ChunkEnds, roi, endCounts);
           bytes += data.bytes;
         }
         postMessage({ type: "progress", id, done: ++done, total: coords.length });
@@ -172,6 +208,7 @@ async function evaluate(id: number, level: number, roi: RoiGeometry): Promise<vo
     };
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, coords.length) }, work));
     if (controller.signal.aborted) return;
+    for (const [key, count] of endCounts) if (roi.ends === "either" || count >= 2) hits.addKey(key);
     const ids = hits.toArray();
     postMessage({ type: "result", id, ids, chunks: coords.length, bytes, ms: performance.now() - started }, { transfer: [ids.buffer] });
   } finally {

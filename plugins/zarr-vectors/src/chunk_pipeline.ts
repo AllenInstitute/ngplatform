@@ -312,6 +312,22 @@ export class LevelPipeline {
   }
 
   /**
+   * The chunk's vertices (rows) that links join to other fragments, here or
+   * in a neighbouring chunk, with how many links each: where a line goes on
+   * past the end of one of its fragments (a one-vertex fragment can have a
+   * link in and one out).
+   */
+  async linkedVertices(chunk: number[]): Promise<Map<number, number>> {
+    const out = new Map<number, number>();
+    if (this.links === undefined) return out;
+    const local = (coords: readonly number[]) => coords.every((c, d) => c === chunk[d]);
+    for (const { endpoints } of await this.links.linksTouching(chunk)) {
+      for (const e of endpoints) if (local(e.chunkCoords)) out.set(e.vertexIndex, (out.get(e.vertexIndex) ?? 0) + 1);
+    }
+    return out;
+  }
+
+  /**
    * The chunk at spatial cell `chunk`, or `undefined` if it is empty.
    *
    * `bridges: false` leaves out the segments that cross into neighbouring

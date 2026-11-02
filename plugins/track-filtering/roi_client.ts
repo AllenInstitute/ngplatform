@@ -179,6 +179,7 @@ export function toStore(roi: Roi, dims: Dimensions, info: StoreInfo): RoiGeometr
     center: [0, 1, 2].map((k) => roi.center[k] * factor[k] - (offset[k] ?? 0)) as [number, number, number],
     radius: roi.radius * factor[0],
     size: [0, 1, 2].map((k) => roi.size[k] * factor[k]) as [number, number, number],
+    ...(roi.ends === undefined ? {} : { ends: roi.ends }),
   };
 }
 

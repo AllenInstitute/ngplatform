@@ -27,7 +27,7 @@ import type { NmRegion } from "./labels.js";
 import { LabelsEngine } from "./labels_client.js";
 import { computeMask, countPassing, emptyFilter, type FilterSpec, histogram, isEmptyFilter, passingIds, tagCounts, toCsv } from "./filter.js";
 import { FILTERING_PANEL } from "./manifest.js";
-import { groupMask, type Roi, type RoiOp, type RoiShape, rowIndex, rowMask } from "./roi.js";
+import { groupMask, type Roi, type RoiEnds, type RoiOp, type RoiShape, rowIndex, rowMask } from "./roi.js";
 import { type Curves, type Dimensions, previewLevel, RoiEngine, type RoiResult, type StoreInfo, toStore } from "./roi_client.js";
 import { fileName, millimetres, trkBody, trkHeader, trkSpace } from "./trk.js";
 import { groupFiles, mergeGroups, type StoredGroup, withGroupsListed } from "./zv_groups.js";
@@ -247,6 +247,7 @@ const STYLE = `
 .tf-roi { border: 1px solid var(--line); border-radius: var(--r); padding: 6px 8px; display: grid; gap: 5px; }
 .tf-roi-head { display: flex; align-items: center; gap: 6px; }
 .tf-roi-head .label { font-weight: 500; flex: 1; }
+.tf-roi .tf-ends select { height: 24px; border-radius: 0; border: 1px solid var(--line); background: var(--ink-0); color: var(--text); font: 12px/1 var(--ui); width: 100%; }
 .tf-roi select { height: 24px; border-radius: 0; border: 1px solid var(--line); background: var(--ink-0); color: var(--text); font: 600 11px/1 var(--mono); }
 .tf-xyz { display: grid; gap: 2px; }
 .tf-field { display: grid; grid-template-columns: 44px minmax(0, 1fr) 72px; align-items: center; gap: 6px; }
@@ -1717,6 +1718,12 @@ class TrackGroups {
     for (const o of ["and", "or", "not"]) op.append(el("option", { value: o }, o.toUpperCase()));
     op.value = roi.op;
     op.addEventListener("change", () => this.updateRoi(group, roi.id, { op: op.value as RoiOp }));
+    // Lines (streamlines, skeletons) can be tested by their ends instead.
+    const lines = this.kind() === "zarr-vectors" && /^(streamline|polyline|line|skeleton|graph)s?$/.test(this.info?.geometry ?? "");
+    const ends = el("select", { "aria-label": "What must be in the region", title: "What of each track must be in the region" }) as HTMLSelectElement;
+    for (const [value, label] of [["", "Passes through"], ["either", "Either end in it"], ["both", "Both ends in it"]]) ends.append(el("option", { value }, label));
+    ends.value = roi.ends ?? "";
+    ends.addEventListener("change", () => this.updateRoi(group, roi.id, { ends: (ends.value || undefined) as RoiEnds | undefined }));
     // Each value: a slider that moves the region as it is dragged, and a
     // box to type it (Enter, or Set, applies what is typed).
     const typed: (() => void)[] = [];
@@ -1805,6 +1812,7 @@ class TrackGroups {
         el("button", { class: "btn small", type: "button", title: "Go to it", onclick: () => this.ctx.viewer.setPosition([...current().center]) }, "Go"),
         el("button", { class: "btn small", type: "button", title: "Remove it", "aria-label": "Remove", onclick: () => this.removeRoi(group, roi.id) }, "×"),
       ),
+      lines ? el("div", { class: "tf-ends" }, ends) : null,
       fields,
       extra,
       status,
