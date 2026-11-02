@@ -131,7 +131,7 @@ Any engine that disagrees with the oracle on a golden file is wrong by definitio
 Each step is one PR (or a small series) with its own acceptance test. Steps in different repositories can run in parallel where their dependencies allow.
 
 ### zarr-vectors-tools
-- **Z0 (done, on `claude/new-session-f9c16u`; push blocked, see the status note).** C0: the filtering subpackage (predicates + JSON, oracle, indexed engine, synthetic fixtures, `load_tractogram`), 78 tests, the G1 harness and its results.
+- **Z0 (done, on zarr-vectors-tools' branch `working`).** C0: the filtering subpackage (predicates + JSON, oracle, indexed engine, synthetic fixtures, `load_tractogram`), 78 tests, the G1 harness and its results.
   - It also fixes `select_streamlines`: it missed streamlines crossing a region near a chunk face (§6).
   - *Accept:* CI green; the store property test fails if the fix is reverted (checked).
 - **Z1 `zvtools index`, now before T2 (G1).** Write K5's columns and the fragment owner column, using core's `write_fragment_owner_column`.
@@ -223,7 +223,7 @@ Measured with `zarr-vectors-tools/benchmarks/filtering` (C0's harness):
 - **Real data is denser than the plan assumed.** The HiP-CT iFOD2 hemisphere has a 0.1 mm step: 79,648 streamlines, 39.4 M vertices, a median of 543 vertices each. A whole brain at that step would be hundreds of millions of vertices. This is why level 0 cannot be held whole in a wasm32 heap, and why the filter plan's chunk-streamed GeomCache, not an in-memory engine, is the browser design.
 
 - **Hosting constraints, learnt by trying.**
-  - A claude.ai Artifact cannot host the app with data: it serves only standard web file types (zarr chunk keys have no extension) and blocks every other host.
+  - A sandboxed page host cannot host the app with data: it serves only standard web file types (zarr chunk keys have no extension) and blocks every other host.
   - The app therefore deploys as a static site. Your bucket answers any origin (`Access-Control-Allow-Origin: *`), so any static host can stream the full tractogram.
 - **The static host must answer missing files with 404.** The zarr-vectors reader probes for optional arrays. Vite's preview server's SPA fallback returns `index.html` instead, which the reader parses as data and fails.
 - **Fork limitations found on the way** (to fix in the fork, not work around in the app):
