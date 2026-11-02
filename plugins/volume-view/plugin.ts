@@ -21,7 +21,7 @@ export interface Saved {
   on: boolean;
   /** The image layer drawn; the first image it can read when unset or gone. */
   layer?: string;
-  /** The solid's voxel size, mm: the finest level at least this coarse. */
+  /** The solid's voxel size, mm: the finest level at least this coarse; 0 follows the 3-D view's zoom. */
   solid: number;
   /** Tissue threshold, 0..1 of difference from the background. */
   threshold: number;
@@ -33,7 +33,7 @@ export function readSaved(raw: unknown): Saved {
   return {
     on: s.on === true,
     layer: typeof s.layer === "string" ? s.layer : undefined,
-    solid: typeof s.solid === "number" ? s.solid : 1,
+    solid: typeof s.solid === "number" ? s.solid : 0,
     threshold: typeof s.threshold === "number" ? s.threshold : 0.2,
     cut: s.cut !== false,
   };
@@ -108,8 +108,11 @@ class VolumeRendering {
       }),
       ctx.viewer.onLayersChanged(() => this.update()),
       ctx.viewer.onStateChanged(() => {
-        // A box around the position follows it, a moment after it stops.
-        if (this.region === undefined) return;
+        // A box around the position follows it, and automatic detail the
+        // zoom, a moment after they stop.
+        if (!this.saved.on) return;
+        const zoomed = this.saved.solid === 0 && this.autoFor !== this.autoVoxel();
+        if (this.region === undefined && !zoomed) return;
         clearTimeout(this.follow);
         this.follow = setTimeout(() => this.update(), 400);
       }),
@@ -142,11 +145,29 @@ class VolumeRendering {
     return candidates.find((l) => l.name === this.saved.layer) ?? candidates[0];
   }
 
-  /** The finest level at least `solid` coarse (a large one is drawn as a box around the position). */
+  /**
+   * The finest level at least `solid` coarse (a large one is drawn as a box
+   * around the position).  Automatic (`solid` 0): the finest whose box, or
+   * whole image, spans three quarters of the 3-D view's height.
+   */
   private chooseLevel(): LevelInfo | undefined {
-    const wanted = this.saved.solid * 0.95;
+    const wanted = (this.saved.solid > 0 ? this.saved.solid : this.autoVoxel()) * 0.95;
     return this.levels.find((l) => l.voxelSize >= wanted) ?? this.levels[this.levels.length - 1];
   }
+
+  /** For automatic detail: the voxel size (mm) at which a box spans most of the 3-D view. */
+  private autoVoxel(): number {
+    const state = this.ctx.viewer.getState() as { projectionScale?: number; dimensions?: Record<string, [number, string]> };
+    const scales = Object.values(state.dimensions ?? {})
+      .filter(([, unit]) => unit === "m")
+      .map(([scale]) => scale);
+    if (state.projectionScale === undefined || scales.length === 0) return 1;
+    // The view's height: projectionScale canonical voxels, the smallest display scale each.
+    const height = state.projectionScale * Math.min(...scales) * 1000;
+    return (0.75 * height) / BOX;
+  }
+
+  private autoFor: number | undefined;
 
   /** The position, in a level's voxels; undefined when the view's axes are not x, y and z. */
   private positionIn(level: LevelInfo): number[] | undefined {
@@ -222,6 +243,7 @@ class VolumeRendering {
       this.region = undefined;
       void this.open(url);
     } else if (this.levels.length > 0) {
+      this.autoFor = this.autoVoxel();
       const level = this.chooseLevel();
       if (level !== undefined) {
         const region = this.regionFor(level);
@@ -327,11 +349,12 @@ class VolumeRendering {
       layer.addEventListener("change", () => this.set({ layer: layer.value }));
       const detail = el("select", { class: "text-input", "aria-label": "Detail" }) as HTMLSelectElement;
       const chosen = this.chooseLevel();
+      detail.append(el("option", { value: "0" }, `Automatic${saved.solid === 0 && chosen ? ` (${mm(chosen.voxelSize)})` : ""}`));
       for (const l of this.levels) {
         const big = Math.max(...l.size) > WHOLE;
         detail.append(el("option", { value: String(l.voxelSize) }, `${mm(l.voxelSize)} · ${big ? `a ${BOX}³ box` : l.size.join(" × ")}`));
       }
-      if (chosen) detail.value = String(chosen.voxelSize);
+      detail.value = saved.solid === 0 || chosen === undefined ? "0" : String(chosen.voxelSize);
       detail.disabled = this.levels.length === 0;
       detail.addEventListener("change", () => this.set({ solid: Number(detail.value) }));
       const threshold = el("input", { type: "range", min: "0.01", max: "0.9", step: "0.01", value: String(saved.threshold), "aria-label": "Tissue threshold" }) as HTMLInputElement;
