@@ -21,7 +21,7 @@
 import type { VirtualFormat } from "../sdk/types.js";
 import { MGH_FILE } from "./images/mgh.js";
 import { NPY_FILE } from "./images/npy.js";
-import { listingHtml, pairAsSingleFile, TIFF_FILE, VIRTUAL_FILE } from "./images/store.js";
+import { LABEL_NAME, listingHtml, pairAsSingleFile, TIFF_FILE, VIRTUAL_FILE } from "./images/store.js";
 import type { VirtualRequest } from "../sdk/virtual.js";
 import { ZARR_VECTORS_VIRTUAL } from "./vectors/formats.js";
 
@@ -472,6 +472,8 @@ export class LocalData {
     }
     const here = await this.detectAt(id, "", entry.name);
     if (here !== undefined) return [here];
+    const subject = await this.freeSurferSubject(id, "");
+    if (subject !== undefined) return subject;
     const inFolder = async (dir: string) => {
       const files = await this.files(id, dir);
       const out: FoundDataset[] = [];
@@ -498,7 +500,7 @@ export class LocalData {
     for (const child of await this.children(id)) {
       const one = await this.detectAt(id, child, child);
       if (one !== undefined) found.push(one);
-      else found.push(...(await inFolder(child)));
+      else found.push(...((await this.freeSurferSubject(id, child)) ?? (await inFolder(child))));
     }
     return found;
   }
@@ -525,7 +527,36 @@ export class LocalData {
 
   private virtual(id: string, path: string, format: VirtualFormat): FoundDataset {
     const name = path.split("/").pop()!;
-    return { source: format.source(this.urlOf(id, path)), name: name.replace(format.pattern, ""), kind: format.kind, format: format.format, path };
+    // A label image (aseg, a BIDS dseg…) opens as a segmentation (images/open.ts reads it as labels).
+    const kind = format.kind === "image" && LABEL_NAME.test(name) ? "segmentation" : format.kind;
+    // A FreeSurfer surface's whole name is its pattern (lh.pial): keep it.
+    return { source: format.source(this.urlOf(id, path)), name: name.replace(format.pattern, "") || name, kind, format: format.format, path };
+  }
+
+  /**
+   * A FreeSurfer subject (a folder with mri/ and surf/): its T1 (or orig,
+   * brain), aparc+aseg (or aseg) as a segmentation, and the white and pial
+   * surfaces, rather than every one of the dozens of files it holds.
+   */
+  private async freeSurferSubject(id: string, dir: string): Promise<FoundDataset[] | undefined> {
+    const at = (sub: string) => (dir === "" ? sub : `${dir}/${sub}`);
+    const children = await this.subfolders(id, dir);
+    if (!children.includes("mri") || !children.includes("surf")) return undefined;
+    const mri = await this.files(id, at("mri"));
+    const surf = await this.files(id, at("surf"));
+    const subject = dir === "" ? this.entries.get(id)?.name ?? "subject" : dir.split("/").pop()!;
+    const out: FoundDataset[] = [];
+    const add = (folder: string, file: string | undefined, kind?: string) => {
+      if (file === undefined) return;
+      const format = this.formatOf(file);
+      if (format === undefined) return;
+      const found = this.virtual(id, at(`${folder}/${file}`), format);
+      out.push({ ...found, name: `${subject} ${found.name}`, kind: kind ?? found.kind });
+    };
+    add("mri", ["T1.mgz", "orig.mgz", "brain.mgz", "norm.mgz"].find((f) => mri.includes(f)));
+    add("mri", ["aparc+aseg.mgz", "aseg.mgz"].find((f) => mri.includes(f)), "segmentation");
+    for (const surface of ["lh.white", "rh.white", "lh.pial", "rh.pial"]) add("surf", surf.includes(surface) ? surface : undefined);
+    return out.length > 0 ? out : undefined;
   }
 
   /** The names of the files in a folder of an entry ("" for the folder itself). */

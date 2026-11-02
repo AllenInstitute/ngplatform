@@ -317,8 +317,12 @@ export class NiftiStore implements VirtualStore {
     readonly header: NiftiHeader,
     private readonly data: () => Promise<ByteSource>,
     readonly name: string,
-    /** rgb: each voxel's colour packed in a uint32 (R lowest), which the group's metadata says. */
-    readonly options: { rgb?: boolean } = {},
+    /**
+     * rgb: each voxel's colour packed in a uint32 (R lowest), which the group's metadata says.
+     * label: a label image whatever its intent says (a FreeSurfer aseg, say): picked, not
+     * averaged, when downsampled, and signed integers as uint32, as segmentations are read.
+     */
+    readonly options: { rgb?: boolean; label?: boolean } = {},
   ) {
     const h = header;
     if (h.magic !== "n+1" && h.magic !== "n+2") {
@@ -338,8 +342,17 @@ export class NiftiStore implements VirtualStore {
     const slope = h.sclSlope;
     const inter = Number.isFinite(h.sclInter) ? h.sclInter : 0;
     this.scale = Number.isFinite(slope) && slope !== 0 && (slope !== 1 || inter !== 0) ? { slope, inter } : undefined;
-    this.label = LABEL_INTENTS.has(h.intentCode);
-    this.outType = this.scale !== undefined || inType === "float64" ? "float32" : inType === "int64" ? (this.label ? "uint64" : "float32") : inType;
+    this.label = options.label === true || LABEL_INTENTS.has(h.intentCode);
+    this.outType =
+      this.label && (inType === "int8" || inType === "int16" || inType === "int32")
+        ? "uint32"
+        : this.scale !== undefined || inType === "float64"
+          ? "float32"
+          : inType === "int64"
+            ? this.label
+              ? "uint64"
+              : "float32"
+            : inType;
     this.raw = this.scale === undefined && (this.outType === inType || (inType === "int64" && this.outType === "uint64"));
     this.affine = niftiAffine(h);
     this.levels = this.pyramid();
@@ -683,7 +696,7 @@ export class NiftiStore implements VirtualStore {
 }
 
 /** A NIfTI file as a store; reads only its header until a chunk is asked for. */
-export async function openNifti(file: Blob, name: string): Promise<NiftiStore> {
+export async function openNifti(file: Blob, name: string, options: { label?: boolean } = {}): Promise<NiftiStore> {
   const start = new Uint8Array(await file.slice(0, 540).arrayBuffer());
   const gz = isGzip(start);
   const header = parseNiftiHeader(gz ? await gunzipHead(file, 540) : start);
@@ -696,5 +709,5 @@ export async function openNifti(file: Blob, name: string): Promise<NiftiStore> {
     const voxels = header.dim.slice(1, 1 + header.dim[0]).reduce((a, d) => a * Math.max(1, d), 1);
     return new NiftiStore(packedHeader(header), () => data().then((s) => packedColours(s, header.voxOffset, voxels, samples)), name, { rgb: true });
   }
-  return new NiftiStore(header, data, name);
+  return new NiftiStore(header, data, name, options);
 }

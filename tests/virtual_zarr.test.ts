@@ -108,6 +108,8 @@ const VIEWS: Record<string, (b: ArrayBuffer) => ArrayLike<number>> = {
   uint8: (b) => new Uint8Array(b),
   int16: (b) => new Int16Array(b),
   uint16: (b) => new Uint16Array(b),
+  int32: (b) => new Int32Array(b),
+  uint32: (b) => new Uint32Array(b),
   float32: (b) => new Float32Array(b),
 };
 
@@ -293,6 +295,8 @@ describe("NIfTI as Zarr", () => {
     const coarse = await readLevel(s, 1);
     expect(coarse.at(10, 20, 5)).toBe(fine.at(20, 40, 5));
     expect(coarse.at(64, 64, 19)).toBe(fine.at(128, 128, 19));
+    // Signed labels are served unsigned, as segmentations are read.
+    expect((await json(s, "0/zarr.json")).data_type).toBe("uint32");
   });
 
   it("applies scl_slope and scl_inter as float32, and shows float64 as float32", async () => {

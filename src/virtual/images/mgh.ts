@@ -118,11 +118,11 @@ export function mghAsNifti(h: MghHeader, description = ""): NiftiHeader {
   };
 }
 
-export async function openMgh(file: Blob, name: string): Promise<NiftiStore> {
+export async function openMgh(file: Blob, name: string, options: { label?: boolean } = {}): Promise<NiftiStore> {
   const start = new Uint8Array(await file.slice(0, MGH_HEADER).arrayBuffer());
   const gz = isGzip(start);
   const header = mghAsNifti(parseMghHeader(gz ? await gunzipHead(file, MGH_HEADER) : start), `FreeSurfer ${gz ? "MGZ" : "MGH"}: ${name}`);
   const key = file instanceof File ? `${file.name}|${file.size}|${file.lastModified}` : undefined;
   const whole = blobSource(file);
-  return new NiftiStore(header, gz ? gunzipSource(file, key) : () => Promise.resolve(whole), name);
+  return new NiftiStore(header, gz ? gunzipSource(file, key) : () => Promise.resolve(whole), name, options);
 }

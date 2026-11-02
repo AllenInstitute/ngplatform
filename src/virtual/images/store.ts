@@ -11,6 +11,12 @@
 export const VIRTUAL_FILE = /\.(nii(\.gz)?|hdr)$/i;
 export const TIFF_FILE = /\.tiff?$/i;
 
+/**
+ * Names of label images (segmentations, parcellations, atlases): FreeSurfer's
+ * aseg, aparc+aseg and wmparc, BIDS's dseg, and the usual words.
+ */
+export const LABEL_NAME = /(^|[._+-])(aseg|aparc|wmparc|dseg|seg|segmentation|labels?|parcellation|parc)([._+-]|$)/i;
+
 export interface VirtualStore {
   /** The bytes of `key`, or undefined when the store has no such key. */
   get(key: string): Promise<Uint8Array | undefined>;

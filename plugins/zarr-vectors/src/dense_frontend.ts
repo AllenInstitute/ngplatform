@@ -754,10 +754,18 @@ export class ZarrVectorsDenseLayer extends RefCounted {
     this.redrawNeeded = redrawNeeded;
     const { chunkManager, displayState } = options;
     const rpc = chunkManager.rpc!;
+    // A mesh's vertices are no picture of it in a cross-section (every
+    // vertex of a surface, flattened onto the section): meshes show in 3-d
+    // only, until surfaces are drawn as their outlines on the section.
+    const meshOnly3d =
+      KIND_CAPABILITIES[options.source.description.geometryKind]
+        ?.primitive === "triangles";
     const updateMask = () => {
       this.drawMask.value =
         (denseLayerDraws(denseDrawState(displayState, false)) ? DRAWS_3D : 0) |
-        (denseLayerDraws(denseDrawState(displayState, true)) ? DRAWS_2D : 0);
+        (!meshOnly3d && denseLayerDraws(denseDrawState(displayState, true))
+          ? DRAWS_2D
+          : 0);
     };
     for (const value of [
       displayState.objectAlpha,
@@ -1124,6 +1132,8 @@ function DenseRenderLayer<
       }
       void (attachment as VisibleLayerInfo<LayerView, DenseAttachmentState>);
       if (chunks.length === 0) return;
+      if (targetIsSliceView && (this.shared.drawMask.value & DRAWS_2D) === 0)
+        return;
 
       const { helper, gl } = this;
       const renderOptions = targetIsSliceView
