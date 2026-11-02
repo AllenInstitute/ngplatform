@@ -19,6 +19,7 @@
  */
 
 import type { VirtualFormat } from "../sdk/types.js";
+import { MGH_FILE } from "./images/mgh.js";
 import { listingHtml, pairAsSingleFile, TIFF_FILE, VIRTUAL_FILE } from "./images/store.js";
 import type { VirtualRequest } from "../sdk/virtual.js";
 import { ZARR_VECTORS_VIRTUAL } from "./vectors/formats.js";
@@ -31,6 +32,14 @@ export const NIFTI_FORMAT: VirtualFormat = {
   kind: "image",
   source: (url) => `zarr3://${url}/`,
   worker: () => new Worker(new URL("./images/worker.ts", import.meta.url), { type: "module", name: "virtual-zarr" }),
+};
+
+/** FreeSurfer's .mgz and .mgh, read by the same worker as NIfTI (images/mgh.ts). */
+export const MGH_FORMAT: VirtualFormat = {
+  ...NIFTI_FORMAT,
+  pattern: MGH_FILE,
+  extensions: [".mgz", ".mgh"],
+  format: "FreeSurfer volume",
 };
 
 export const TIFF_FORMAT: VirtualFormat = {
@@ -119,7 +128,7 @@ export class LocalData {
   readonly base: string;
   private worker: Promise<ServiceWorker | undefined> | undefined;
   /** Files read as virtual stores, and the workers that serve them. */
-  private formats: VirtualFormat[] = [NIFTI_FORMAT, TIFF_FORMAT, ...ZARR_VECTORS_VIRTUAL];
+  private formats: VirtualFormat[] = [NIFTI_FORMAT, MGH_FORMAT, TIFF_FORMAT, ...ZARR_VECTORS_VIRTUAL];
   private readonly virtualWorkers = new Map<VirtualFormat, Worker>();
 
   constructor(base = new URL(".", location.href).href) {
@@ -612,7 +621,6 @@ export function splitVirtual(path: string, formats: VirtualFormat[] = [NIFTI_FOR
   return undefined;
 }
 
-/** A folder's files from a file input, keyed by their path inside it. */
 /** Something dropped on the window: a handle where the browser gives one, and its files either way. */
 export interface DroppedItem {
   name: string;
@@ -677,6 +685,7 @@ async function entryFiles(dir: FileSystemDirectoryEntry, prefix: string): Promis
   return out;
 }
 
+/** A folder's files from a file input, keyed by their path inside it. */
 function stripFolder(files: Map<string, File>): Map<string, File> {
   const out = new Map<string, File>();
   for (const [path, file] of files) out.set(path.slice(path.indexOf("/") + 1), file);

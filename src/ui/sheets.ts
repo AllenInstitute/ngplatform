@@ -54,7 +54,7 @@ async function addLocalEntry(wb: Workbench, entry: LocalEntry): Promise<boolean>
 }
 
 /** What Open from device reads, for messages. */
-const LOCAL_FORMATS = "NIfTI, TIFF stacks, tractograms (.trk, .tck, .trx), meshes and surfaces (.obj, .stl, .ply, .gii, FreeSurfer), SWC neurons, point tables (.csv, .xyz), OME-Zarr, zarr-vectors and precomputed";
+const LOCAL_FORMATS = "NIfTI, FreeSurfer .mgz/.mgh, TIFF stacks, tractograms (.trk, .tck, .trx), meshes and surfaces (.obj, .stl, .ply, .gii, FreeSurfer), SWC neurons, point tables (.csv, .xyz), OME-Zarr, zarr-vectors and precomputed";
 
 export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
   const input = h("textarea", {

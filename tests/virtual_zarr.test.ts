@@ -8,6 +8,8 @@
 import { parseOmeMetadata } from "neuroglancer/unstable/datasource/zarr/ome.js";
 import { describe, expect, it } from "vitest";
 import { apply, parseOmeLevels } from "../plugins/volume-view/ome.js";
+import { readFileSync } from "node:fs";
+import { mghVoxelToRas, openMgh, parseMghHeader } from "../src/virtual/images/mgh.js";
 import { splitVirtual } from "../src/virtual/local_data.js";
 import { NiftiStore, nearestAxes, niftiAffine, openNifti, parseNiftiHeader } from "../src/virtual/images/nifti.js";
 import { answer, blobSource, pairAsSingleFile } from "../src/virtual/images/store.js";
@@ -456,5 +458,38 @@ describe("local paths", () => {
     const source = blobSource(new Blob([new Uint8Array([1, 2, 3, 4, 5])]));
     expect(Array.from(await source.read(1, 4))).toEqual([2, 3, 4]);
     expect(source.size).toBe(5);
+  });
+});
+
+describe("FreeSurfer .mgz and .mgh as virtual OME-Zarr", () => {
+  const DIR = new URL("./testdata/mgh/", import.meta.url);
+  const expected = JSON.parse(readFileSync(new URL("expected.json", DIR), "utf8")) as Record<string, { shape: number[]; affine: number[][]; voxels: number[] }>;
+
+  for (const name of ["short.mgz", "frames.mgh"]) {
+    it(`reads ${name}: voxels and placement as nibabel and FreeSurfer's mri_info read them`, async () => {
+      const want = expected[name];
+      const s = await openMgh(new Blob([readFileSync(new URL(name, DIR))]), name);
+      // Voxel to RAS, as FreeSurfer computes it.
+      const m = niftiAffine(s.header).matrix;
+      for (let r = 0; r < 3; ++r) for (let c = 0; c < 4; ++c) expect(m[r][c]).toBeCloseTo(want.affine[r][c], 4);
+      const { at, size } = await readLevel(s, 0);
+      const [ni, nj, nk] = want.shape;
+      const frames = want.shape[3] ?? 1;
+      expect(size.slice(-3)).toEqual([ni, nj, nk]);
+      let n = 0;
+      for (let t = 0; t < frames; ++t)
+        for (let k = 0; k < nk; ++k)
+          for (let j = 0; j < nj; ++j)
+            for (let i = 0; i < ni; ++i, ++n) expect(at(i, j, k, t)).toBeCloseTo(want.voxels[n], 4);
+    });
+  }
+
+  it("refuses what is not MGH", () => {
+    expect(() => parseMghHeader(new Uint8Array(284))).toThrow(/not an MGH file/);
+    expect(mghVoxelToRas(parseMghHeader(Object.assign(new Uint8Array(284), { 3: 1 }))).map((r) => r.slice(0, 3))).toEqual([
+      [-1, 0, 0],
+      [0, 0, 1],
+      [0, -1, 0],
+    ]);
   });
 });
