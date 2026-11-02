@@ -8,7 +8,7 @@
  */
 
 /** Files read as virtual Zarr, by name: NIfTI images. */
-export const VIRTUAL_FILE = /\.nii(\.gz)?$/i;
+export const VIRTUAL_FILE = /\.(nii(\.gz)?|hdr)$/i;
 export const TIFF_FILE = /\.tiff?$/i;
 
 export interface VirtualStore {
@@ -159,4 +159,30 @@ export async function answer(store: VirtualStore, key: string, range: Range | un
   }
   // A copy: the store may keep `data` in its cache, and the body is transferred.
   return { status: 200, size, start, body: head ? undefined : data.slice(start, end).buffer };
+}
+
+/**
+ * A NIfTI (or Analyze 7.5) .hdr/.img pair as one single-file NIfTI, the
+ * image not copied: the header marked "n+1" (or "n+2") with the image after
+ * it.  An Analyze header's orientation fields, which NIfTI reads as qform
+ * and sform, are cleared, so its voxel sizes alone place it.
+ */
+export async function pairAsSingleFile(hdr: Blob, img: Blob, name: string): Promise<File> {
+  const bytes = new Uint8Array(await hdr.slice(0, 540).arrayBuffer());
+  const view = new DataView(bytes.buffer);
+  const le = [348, 540].includes(view.getInt32(0, true));
+  const size = view.getInt32(0, le);
+  if (size === 540) {
+    const header = bytes.slice(0, 540);
+    header.set([110, 43, 50, 0, 13, 10, 26, 10], 4); // "n+2\0\r\n\032\n"
+    new DataView(header.buffer).setBigInt64(168, 544n, le);
+    return new File([header, new Uint8Array(4), img], name);
+  }
+  if (size !== 348) throw new Error("not a NIfTI or Analyze header");
+  const header = bytes.slice(0, 348);
+  const magic = new TextDecoder().decode(header.subarray(344, 347));
+  if (magic !== "ni1") header.fill(0, 252, 344);
+  header.set([110, 43, 49, 0], 344); // "n+1"
+  new DataView(header.buffer).setFloat32(108, 352, le);
+  return new File([header, new Uint8Array(4), img], name);
 }

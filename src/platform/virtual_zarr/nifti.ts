@@ -322,7 +322,7 @@ export class NiftiStore implements VirtualStore {
   ) {
     const h = header;
     if (h.magic !== "n+1" && h.magic !== "n+2") {
-      throw new Error(h.magic === "ni1" || h.magic === "ni2" ? "this header's image is in a separate .img file, which is not read yet" : "not a NIfTI file (no n+1 or n+2 mark)");
+      throw new Error(h.magic === "ni1" || h.magic === "ni2" ? "this header's image is in a separate .img file: open the folder holding both" : "not a NIfTI file (no n+1 or n+2 mark)");
     }
     const inType = NIFTI_TYPES.get(h.datatype);
     if (inType === undefined) throw new Error(`${UNREAD[h.datatype] ?? `data type ${h.datatype}`} NIfTI images are not read yet`);

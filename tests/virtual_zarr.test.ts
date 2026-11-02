@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { apply, parseOmeLevels } from "../plugins/volume-view/ome.js";
 import { splitVirtual } from "../src/platform/local_data.js";
 import { NiftiStore, nearestAxes, niftiAffine, openNifti, parseNiftiHeader } from "../src/platform/virtual_zarr/nifti.js";
-import { answer, blobSource } from "../src/platform/virtual_zarr/store.js";
+import { answer, blobSource, pairAsSingleFile } from "../src/platform/virtual_zarr/store.js";
 
 interface Spec {
   version?: 1 | 2;
@@ -346,6 +346,27 @@ describe("NIfTI as Zarr", () => {
     const chunk = new Uint32Array((await s.get("0/c/0/0/0"))!.slice().buffer);
     const pack = (r: number, g: number, b: number) => (r | (g << 8) | (b << 16) | (255 << 24)) >>> 0;
     expect([chunk[0], chunk[1]]).toEqual([pack(0, 10, 20), pack(30, 40, 50)]);
+  });
+
+  it("reads a .hdr/.img pair (NIfTI or Analyze) as the single file it stands for", async () => {
+    const single = nifti({ dim: [5, 4, 3], pixdim: [2, 2, 3], value });
+    const hdr = single.slice(0, 348);
+    hdr.set([110, 105, 49, 0], 344); // "ni1"
+    new DataView(hdr.buffer).setFloat32(108, 0, true);
+    const img = single.slice(352);
+    const pair = await openNifti(await pairAsSingleFile(new Blob([hdr]), new Blob([img]), "pair.nii"), "pair");
+    const expected = await readLevel(await store(single), 0);
+    const got = await readLevel(pair, 0);
+    expect(got.size).toEqual(expected.size);
+    expect(got.at(4, 3, 2)).toBe(expected.at(4, 3, 2));
+    expect(got.at(1, 2, 1)).toBe(expected.at(1, 2, 1));
+    // Analyze 7.5: no mark, and its orientation bytes where NIfTI keeps qform and sform.
+    const analyze = hdr.slice();
+    analyze.fill(7, 252, 344);
+    analyze.fill(0, 344, 348);
+    const old = await openNifti(await pairAsSingleFile(new Blob([analyze]), new Blob([img]), "old.nii"), "old");
+    expect(niftiAffine(old.header).matrix.map((row) => row.slice(0, 3))).toEqual([[2, 0, 0], [0, 2, 0], [0, 0, 3]]);
+    expect(splitVirtual("study/t1.hdr/zarr.json")).toMatchObject({ file: "study/t1.hdr", key: "zarr.json" });
   });
 
   it("answers ranges of a key", async () => {

@@ -18,13 +18,13 @@
  */
 
 import type { VirtualFormat } from "../sdk/types.js";
-import { listingHtml, TIFF_FILE, VIRTUAL_FILE } from "./virtual_zarr/store.js";
+import { listingHtml, pairAsSingleFile, TIFF_FILE, VIRTUAL_FILE } from "./virtual_zarr/store.js";
 import type { VirtualRequest } from "../sdk/virtual.js";
 
 /** NIfTI, read as OME-Zarr by the platform's own worker. */
 export const NIFTI_FORMAT: VirtualFormat = {
   pattern: VIRTUAL_FILE,
-  extensions: [".nii", ".nii.gz"],
+  extensions: [".nii", ".nii.gz", ".hdr"],
   format: "NIfTI image",
   kind: "image",
   source: (url) => `zarr3://${url}/`,
@@ -320,7 +320,12 @@ export class LocalData {
     }
     const virtual = splitVirtual(request.path, this.formats);
     if (virtual !== undefined) {
-      const file = (await this.file(request.id, virtual.file)) ?? (await this.collection(request.id, virtual.file, virtual.format));
+      let file = (await this.file(request.id, virtual.file)) ?? (await this.collection(request.id, virtual.file, virtual.format));
+      // A .hdr's image is in the .img beside it.
+      if (file !== undefined && /\.hdr$/i.test(virtual.file)) {
+        const img = await this.file(request.id, virtual.file.replace(/\.hdr$/i, ".img"));
+        file = img === undefined ? undefined : await pairAsSingleFile(file, img, file.name.replace(/\.hdr$/i, ".nii"));
+      }
       if (file === undefined) {
         port.postMessage({ status: 404 });
         return;

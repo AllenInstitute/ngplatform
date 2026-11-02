@@ -9,5 +9,5 @@ import { openTiff, TIFF_FILE } from "./tiff.js";
 export type { VirtualRequest } from "../../sdk/virtual.js";
 
 serveVirtualStores((file) =>
-  TIFF_FILE.test(file.name) ? openTiff(file, file.name.replace(/(\.ome)?\.tiff?$/i, "")) : openNifti(file, file.name.replace(/\.nii(\.gz)?$/i, "")),
+  TIFF_FILE.test(file.name) ? openTiff(file, file.name.replace(/(\.ome)?\.tiff?$/i, "")) : openNifti(file, file.name.replace(/\.(nii(\.gz)?|hdr)$/i, "")),
 );
