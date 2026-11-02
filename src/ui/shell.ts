@@ -35,6 +35,7 @@ import {
   renderPluginsPanel,
   renderStatisticsPanel,
 } from "./panels/misc.js";
+import { CONVENTION_LABELS, type PanelConvention } from "../engine/anatomical.js";
 import { openDropped, showAddDatasetSheet, showEditStateSheet, showLocalSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
 import type { Workbench } from "./workbench.js";
 import { createPlatformApis } from "./apis.js";
@@ -120,6 +121,7 @@ export class Shell {
         iconButton("settings", "Settings and reloading", (e) =>
           showMenu(e.currentTarget as HTMLElement, [
             { label: "View settings…", run: () => this.wb.run("view.settings") },
+            { label: "Which way up the views are…", run: () => this.wb.run("view.panelConvention") },
             "-",
             { label: "Reload the scene's layers", run: () => this.wb.run("view.reloadLayers") },
             { label: "Hard reset: reload everything fresh", run: () => this.wb.run("view.hardReset") },
@@ -700,6 +702,27 @@ export class Shell {
     add({ id: "view.zoomIn", title: "Zoom in", group: "View", run: () => engine.zoom(0.5) });
     add({ id: "view.zoomOut", title: "Zoom out", group: "View", run: () => engine.zoom(2) });
     add({ id: "view.resetRotation", title: "Reset the rotation", group: "View", run: () => engine.resetOrientation() });
+    const conventions: [PanelConvention | "auto", string, string][] = [
+      ["auto", "Automatic", "as Freeview for anatomy in millimetres or micrometres, as Neuroglancer for electron microscopy"],
+      ["radiological", "As Freeview (radiological)", CONVENTION_LABELS.radiological],
+      ["neurological", "Neurological", CONVENTION_LABELS.neurological],
+      ["neuroglancer", "As Neuroglancer", CONVENTION_LABELS.neuroglancer],
+    ];
+    for (const [id, title] of conventions) {
+      add({ id: `view.panels.${id}`, title: `Views: ${title}`, group: "View", run: () => engine.setPanelConvention(id) });
+    }
+    add({
+      id: "view.panelConvention",
+      title: "Which way up the views are…",
+      group: "View",
+      run: () => {
+        const { preference } = engine.panelConvention();
+        showMenu(
+          this.root.querySelector<HTMLElement>('button[title="Settings and reloading"]') ?? { x: window.innerWidth - 320, y: 48 },
+          conventions.map(([id, title]) => ({ label: `${preference === id ? "✓ " : ""}${title}`, current: preference === id, run: () => engine.setPanelConvention(id) })),
+        );
+      },
+    });
     add({
       id: "view.setPosition",
       title: "Go to a position",

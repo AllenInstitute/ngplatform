@@ -29,8 +29,10 @@ import {
   StatisticsPanel,
   TrackableBoolean,
   type Viewer,
+  setNamedPanelOrientation,
   ViewerSettingsPanel,
 } from "./neuroglancer.js";
+import { looksAnatomical, type PanelConvention, panelRotations } from "./anatomical.js";
 import { mountInspector } from "./inspector/index.js";
 
 export type Json = Record<string, unknown>;
@@ -227,6 +229,18 @@ function layerError(managed: ManagedUserLayer): string | undefined {
   return undefined;
 }
 
+const PANEL_CONVENTION_KEY = "ngplatform.panelConvention";
+
+function readPanelPreference(): PanelConvention | "auto" {
+  try {
+    const v = localStorage.getItem(PANEL_CONVENTION_KEY);
+    if (v === "radiological" || v === "neurological" || v === "neuroglancer") return v;
+  } catch {
+    // No storage: the default.
+  }
+  return "auto";
+}
+
 export class Engine {
   readonly viewer: Viewer;
   private readonly disposers: Disposer[] = [];
@@ -259,6 +273,7 @@ export class Engine {
       externalSidePanels: true,
       showPanelBorders: true,
     });
+    this.viewer.coordinateSpace.changed.add(() => this.applyPanelConvention());
     const bindings = this.viewer.inputEventBindings;
     bindings.global.addParent(viewKeyBindings(), Number.NEGATIVE_INFINITY);
     bindings.sliceView.addParent(getDefaultSliceViewPanelBindings(), Number.NEGATIVE_INFINITY);
@@ -563,6 +578,49 @@ export class Engine {
   resetOrientation(): void {
     this.viewer.navigationState.pose.orientation.reset();
     this.viewer.perspectiveNavigationState.pose.orientation.reset();
+  }
+
+  /**
+   * Which way up the cross-section panels show the data (see anatomical.ts):
+   * a choice remembered in this browser, or "auto": as Freeview does
+   * (radiological) for anatomy in RAS, as Neuroglancer does otherwise.
+   */
+  panelConvention(): { preference: PanelConvention | "auto"; applied: PanelConvention } {
+    return { preference: this.panelPreference, applied: this.appliedConvention };
+  }
+
+  setPanelConvention(preference: PanelConvention | "auto"): void {
+    this.panelPreference = preference;
+    try {
+      localStorage.setItem(PANEL_CONVENTION_KEY, preference);
+    } catch {
+      // Not remembered; it still applies now.
+    }
+    this.applyPanelConvention();
+  }
+
+  private panelPreference: PanelConvention | "auto" = readPanelPreference();
+  private appliedConvention: PanelConvention = "neuroglancer";
+
+  private applyPanelConvention(): void {
+    const space = this.viewer.coordinateSpace.value;
+    const want: PanelConvention =
+      this.panelPreference !== "auto"
+        ? this.panelPreference
+        : space.valid && looksAnatomical(space.names, Array.from(space.scales), space.units)
+          ? "radiological"
+          : "neuroglancer";
+    if (want === this.appliedConvention) return;
+    this.appliedConvention = want;
+    const rotations = panelRotations(want);
+    for (const axes of ["xy", "xz", "yz"] as const) {
+      const q = rotations[axes];
+      setNamedPanelOrientation(axes, q === undefined ? undefined : (Float32Array.from(q) as unknown as Parameters<typeof setNamedPanelOrientation>[1]));
+    }
+    // Panels take their rotation when made: make the layout again.
+    const layout = this.viewer.layout.toJSON();
+    this.viewer.layout.restoreState(layout === "3d" ? "xy" : "3d");
+    this.viewer.layout.restoreState(layout);
   }
 
   layout(): string {

@@ -23,6 +23,7 @@ export {
   initializeLayerFromSpecShowErrorStatus,
 } from "neuroglancer/unstable/layer/index.js";
 export { TabView } from "neuroglancer/unstable/widget/tab_view.js";
+export { setNamedPanelOrientation } from "neuroglancer/unstable/data_panel_layout.js";
 export { SegmentationUserLayer } from "neuroglancer/unstable/layer/segmentation/index.js";
 export { WatchableValue } from "neuroglancer/unstable/trackable_value.js";
 export { ViewerSettingsPanel } from "neuroglancer/unstable/ui/viewer_settings.js";

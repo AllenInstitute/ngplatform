@@ -24,7 +24,7 @@ env:
   # ngplatform-upstream).  zarr-vectors is not in it: it is a plugin in
   # plugins/.  Bump it deliberately, with the e2e smoke test passing locally.
   FORK_REPO: Andrew-Keenlyside/neuroglancer
-  FORK_SHA: 896832e202138ea76188e78e9d458fd2c99dcde4
+  FORK_SHA: fcba7cefd7fa5b148f8064dc8fa2b3c0abd17997
   # The fork's install fetches Playwright browsers, which this job does not
   # use and which Playwright does not ship for every runner image.
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
