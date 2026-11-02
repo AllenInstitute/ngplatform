@@ -18,6 +18,11 @@ view, depth-tested against it.
   precomputed one.
 - Detail follows the zoom, or a chosen level. A level over 384 voxels a side
   is drawn as a 256-voxel box around the position, which follows it.
+- The cut's faces show three sections of their own, as sharp as the 3-D
+  view's zoom can show, down to the image's finest level: zoom into the cut
+  to see fine structure over the coarse solid. **Fine sections on the cut**
+  in the Volume tab turns this off, to show the 2-D views' sections instead
+  (as does switching **Sections** back on in the 3-D view).
 
 ## Notes from users
 
