@@ -45,6 +45,7 @@ import {
 } from "neuroglancer/unstable/layer/index.js";
 import type { LoadedDataSubsource } from "neuroglancer/unstable/layer/layer_data_source.js";
 import { SegmentationUserLayer } from "neuroglancer/unstable/layer/segmentation/index.js";
+import { SkeletonRenderMode } from "neuroglancer/unstable/skeleton/frontend.js";
 import {
   mergeSegmentPropertyMaps,
   PreprocessedSegmentPropertyMap,
@@ -211,13 +212,35 @@ export class ZarrVectorsSegmentationUserLayer extends SegmentationUserLayer {
         );
       }, this.displayState.segmentationGroupState.value);
     }
-    if (directionDefault) this.adoptDirectionShader();
+    if (directionDefault) {
+      this.adoptDirectionShader();
+      this.adoptThinLines();
+    }
   }
 
   /**
    * Colour curves by direction unless the user has chosen a shader.  Moving
    * the default with the value keeps an untouched shader out of saved state.
    */
+  /**
+   * Tractograms show as plain lines one pixel wide in cross-sections too, as
+   * TrackVis and most tractography viewers draw them, rather than
+   * Neuroglancer's skeleton default (lines and points, two pixels).  As with
+   * the shader, an untouched setting moves with its default.
+   */
+  private adoptThinLines() {
+    const { mode, lineWidth } = this.displayState.skeletonRenderingOptions.params2d;
+    const enumDefault = mode as unknown as { defaultValue: SkeletonRenderMode };
+    if (mode.value === enumDefault.defaultValue && mode.value !== SkeletonRenderMode.LINES) {
+      enumDefault.defaultValue = SkeletonRenderMode.LINES;
+      mode.value = SkeletonRenderMode.LINES;
+    }
+    if (lineWidth.value === lineWidth.defaultValue && lineWidth.value !== 1) {
+      lineWidth.defaultValue = 1;
+      lineWidth.value = 1;
+    }
+  }
+
   private adoptDirectionShader() {
     const { shader } = this.displayState.skeletonRenderingOptions;
     if (shader.value !== shader.defaultValue) return;

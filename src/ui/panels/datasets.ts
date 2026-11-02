@@ -10,7 +10,7 @@ import type { LayerInfo } from "../../engine/engine.js";
 import { clear, h, icon, iconButton } from "../dom.js";
 import { promptDialog, showMenu } from "../overlays.js";
 import type { Workbench } from "../workbench.js";
-import { kindLabel, shortSource } from "./format.js";
+import { shortSource } from "./format.js";
 
 function checkbox(checked: boolean, label: string, onChange: (value: boolean) => void): HTMLElement {
   const box = h("input", { type: "checkbox", class: "vis", "aria-label": label, title: label });
@@ -38,6 +38,8 @@ export function showAddMenu(anchor: HTMLElement, wb: Workbench): void {
 
 export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => void {
   const { store, engine } = wb;
+  /** "Local" for data on this computer; nothing for data from the web. */
+  const where = (url: string) => (wb.localData.parse(url.replace(/^[a-z0-9+]+:\/\/(?=https?:)/, "")) !== undefined ? "Local" : "");
   const list = h("div", { class: "datasets" });
   const others = h("div", { class: "section" });
   const addButton = h("button", { class: "btn outline small", type: "button", "aria-haspopup": "menu" }, icon("plus"), "Add");
@@ -138,7 +140,8 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
             checkbox(visible, visible ? "Hide" : "Show", (v) => store.setDatasetVisible(dataset.id, v)),
             statusDot(layers),
             h("span", { class: "ds-name" }, dataset.name),
-            h("span", { class: "type" }, kindLabel(type)),
+            // Only where the data lives when that is this computer: the type is plain from the views.
+            h("span", { class: "type" }, where(layers[0]?.sources[0] ?? String(dataset.source ?? ""))),
             iconButton("more", "More actions", (e) => {
               e.stopPropagation();
               menu(e.currentTarget as HTMLElement);
@@ -179,7 +182,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
                 checkbox(layer.visible, layer.visible ? "Hide view" : "Show view", (v) => store.setLayerVisible(layer.name, v)),
                 statusDot([layer]),
                 h("span", { class: "ds-name" }, layer.name),
-                h("span", { class: "type" }, kindLabel(layer.type)),
+                h("span", { class: "type" }, where(layer.sources[0] ?? "")),
               ),
             ),
           );
@@ -206,7 +209,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
               { class: "ds-row other", title: `Add “${dataset.name}” to this scene`, onclick: () => store.showDataset(dataset.id) },
               h("span", { class: "ds-icon" }, icon("database")),
               h("span", { class: "ds-name" }, dataset.name),
-              h("span", { class: "type" }, kindLabel(dataset.kind)),
+              h("span", { class: "type" }, where(typeof dataset.source === "string" ? dataset.source : String((dataset.source as { url?: string } | undefined)?.url ?? ""))),
               iconButton("plus", `Add “${dataset.name}” to this scene`, (e) => {
                 e.stopPropagation();
                 store.showDataset(dataset.id);
