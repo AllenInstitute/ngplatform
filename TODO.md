@@ -28,7 +28,7 @@ items are done (and say where); the rest are in rough order of work.
   - [x] zarr-vectors (streamlines, points, skeletons, meshes): as now;
   - [x] local annotation layers (points, lines, boxes, ellipsoids);
   - [x] segmentation volumes (precomputed, zarr, e.g. MICrONS): segments present in the region;
-  - [ ] precomputed annotations and skeletons: read as virtual zarr-vectors;
+  - [x] precomputed annotations (read by their spatial index, in the worker); *precomputed skeletons still to do*;
   - [x] tractograms opened from disk (virtual zarr-vectors, below).
 - [x] No "no zarr-vectors in this scene" message when other filterable data is there.
 
