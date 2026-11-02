@@ -1,5 +1,7 @@
 # Labels
 
+![Labels pinned to structures, in 2-D and 3-D](../../docs/images/plugins/labels.png)
+
 Labels on the views for figures, as an anatomy atlas draws them: a pin on
 what is named, a thin leader line, and the name beside it or lined up at
 the view's edge. Pinned to a point, a track group's centre (from the track

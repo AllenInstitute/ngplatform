@@ -5,6 +5,19 @@
 A workspace around [Neuroglancer](https://github.com/google/neuroglancer),
 extended by plugins. Live at https://alleninstitute.github.io/ngplatform/.
 
+The idea is a wrapper for domain-specific tools and toolboxes that work with
+Zarr, OME-Zarr and Zarr Vectors datasets: track filtering, registration,
+annotation and segmentation, filters, new data formats. Tools like these are
+too specialised, or too large, to belong in Neuroglancer itself as pull
+requests, so here each one is a plugin around an unchanged Neuroglancer. The
+platform supplies the workspace (datasets, scenes, the link that holds them),
+files from your own computer read in place as virtual Zarr stores, and an
+SDK (`@ngplatform/sdk`) through which plugins add tabs, commands, views,
+overlays, jobs and data formats.
+
+**Docs:** the user guide, a page for each plugin and how to contribute are at
+https://ngplatform.readthedocs.io/ (sources in [`docs/`](docs/)).
+
 ## Add a plugin
 
 Each plugin is a folder in [`plugins/`](plugins/):
@@ -37,17 +50,3 @@ each edit.
 
 The full guide, with the manifest, the `ctx` API and examples:
 [`plugins/README.md`](plugins/README.md).
-
-## Run it
-
-```bash
-git clone -b ngplatform-upstream https://github.com/Andrew-Keenlyside/neuroglancer ../neuroglancer
-(cd ../neuroglancer && npm ci && node build_tools/postpack.ts && rm -rf lib)
-npm install
-npm run dev        # http://localhost:5173
-npm test           # the platform and every plugin
-npm run typecheck
-npm run e2e        # tests/e2e/smoke.mjs, in Chrome, against a served build
-```
-
-Where things stand: [`STATUS.md`](STATUS.md).

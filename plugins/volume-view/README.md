@@ -1,5 +1,7 @@
 # Volume view
 
+![A template drawn as a solid, cut open at the position](../../docs/images/plugins/volume-rendering.png)
+
 In place of Neuroglancer's 3-D panel: a solid brain ray-marched in WebGL2
 from an OME-Zarr pyramid, with the octant facing the camera cut away at the
 current position, sections from finer levels on the cut faces, and the

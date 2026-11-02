@@ -1,0 +1,25 @@
+name: Plugin idea
+description: A tool or a data format ngplatform could have.
+labels: [plugin idea]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What would it do?
+    validations: { required: true }
+  - type: textarea
+    id: today
+    attributes:
+      label: What do people use for this today?
+      description: Other tools that do it, and what is good or bad about them.
+  - type: textarea
+    id: data
+    attributes:
+      label: Data to try it on
+      description: Public datasets or formats it should work with.
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Taking it on
+      options:
+        - label: I would like to help build it.

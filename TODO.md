@@ -4,6 +4,52 @@ What has been asked for or agreed and is not built yet, newest first. Ticked
 items are done (and say where); the rest are in rough order of work.
 `STATUS.md` says what exists.
 
+## The plan agreed on 2026-11-02, evening
+
+Worked through A, then B, then C. Estimates are rough focused days.
+Priorities within that: virtual Zarr, then reading and exporting local data,
+then the Luxar plugin and drawing labels by hand.
+
+### Housekeeping
+- [x] Docs: MkDocs site for Read the Docs (`mkdocs.yml`, `.readthedocs.yaml`, `docs/`): the idea, the window tab by tab, loading and exporting data, coming from Freeview / Neuroglancer, a user page per plugin with *Notes from users*, plugin ideas, contributing; a figure at the top of each plugin README; `CONTRIBUTING.md` and issue templates. The Read the Docs project itself is to be created (import the repository at readthedocs.org).
+- [ ] Commit attribution: 28 commits on main and 11 gh-pages deploys carry an email GitHub links to another account (Andrew-K-K). Either move that email to the Andrew-Keenlyside account in GitHub's settings (no history change) or rewrite and force-push. Andrew to choose.
+- [ ] A `LICENSE` file: `package.json` says Apache-2.0 but there is no licence text; the AllenInstitute org may have its own policy. Andrew to decide.
+- [ ] The S-21-46 track groups did not show their streamlines in the 3-D view in a headless run (2-D fine); check in a real browser.
+
+### A. Local data
+- [ ] A1. A core `src/virtual/` module for all local read-in and write-out (the image and vector virtual stores in one place). 2–3 d
+- [ ] A2. Drag-and-drop of files and folders anywhere in the window. 0.5 d
+- [ ] A3. Formats to match zarr-vectors-tools: `.mgz`/`.mgh`, LAS/LAZ, Parquet/Feather, GraphML and edge lists, `.npy`/`.npz`, CIFTI, a FreeSurfer subject folder (with thickness, curv, sulc, area, aparc). 4–6 d
+- [ ] A4. Coarse levels for every virtual vector store: streamlines 2–3 levels, meshes in cells with simplified levels, points subsampled, all within a time budget so opening stays fast. 3–4 d
+- [ ] A5. **Export as** for local data: images to `.nii`, `.nii.gz`, `.mgz`, `.mgh`, OME-Zarr, TIFF; vectors to `.trk`, `.tck`, `.trx`, OBJ, STL, PLY, CSV. 3–4 d
+- [ ] A5b. Saving large data: (a) a region or level within a size limit, (b) a whole pyramid written chunk by chunk into a local folder, (c) edits only, as a small layer over the read-only source; (d) zvtools for very large jobs. 3–5 d
+- [ ] A6. Datasets list: no type shown for remote data; "Local" for local data. <0.5 d
+- [ ] A7. `.trk` and other tractograms open as lines, thickness 1. <0.5 d
+
+### B. Display
+- [ ] B8. `data/lookup-tables/`: FreeSurferColorLUT, Allen CCF, Harvard-Oxford, JHU, AAL, Brainnetome, Schaefer as `.txt` (each table's licence checked), applied to segmentations by name and colour. 2–3 d
+- [ ] B9. A colormap menu in Render → Shader: grayscale, heat (min/mid/max), jet, GE colour, NIH, PET, binary, viridis and others. 1–2 d
+- [ ] B10. Segmentations filled or as outlines (the fork's segmentation shader). 3–5 d
+- [ ] B19. Surface data: per-vertex values, `.annot` and `.label` coloured by colormap or lookup table; surface outlines on the slices. 5–8 d
+
+### C. Plugins
+- [ ] C11a. Luxar: a Luxar view (layer mode, its own three.js scene) with the camera following Neuroglancer's 3-D view. 3–4 d
+- [ ] C11b. Luxar: Zarr Vectors to Luxar's format on the fly, in memory, no new files; our levels as its progressive levels. 7–10 d
+- [ ] C11c. Luxar: multiscale OME-Zarr voxels drawn on the fly in the same scene; one level first, then bricks from several levels. 4 + 10–15 d
+- [ ] C11d. Luxar: Gaussian splats; this makes new files (a GPU fit). Try on SRB 2026a; ask where the files go first. 2–3 d + GPU time
+- [ ] C12. Annotations (Labels renamed): labels, measuring (lengths, areas, line profiles), contours, statistics per label or region. 5–7 d
+- [ ] C13. Segmentation, in Annotations: a WebKnossos survey (brush, lasso, fill, quick select by threshold and AI, interpolation, proofreading, AI jobs), then a scaffold: an editable label layer, sphere brush add/erase, threshold-limited brush, 2-D/3-D fill, undo, save to local. 0.5 + 8–10 d
+- [ ] C14. Orientations: vector fields, DTI ellipsoids and FA colour, spherical-harmonic ODF glyphs (as FURY draws them), multiscale: coarse levels' ODFs replaced by finer ones as you zoom. 15–20 d
+- [ ] C15. Filters: mean, median, Gaussian, Frangi, on the fly as a virtual store over any OME-Zarr, per chunk and per level. 8–10 d
+- [ ] C16. Registration: apply to all visible volumes; straightening with landmarks alone (Freeview's landmarks-to-axes); save without cropping; `.mgz`; B-spline cubic; `.dat`/`.xfm`/FSL `.mat`; levels over 512 MB in blocks. The Source tab shows an OME-Zarr's coordinate systems and transforms (0.6, RFC-5) under the layer's transform. 6–8 d
+- [ ] C17. Collections: a tab beside the scenes for an OME-Zarr collection (RFC-8): its images, coordinate systems and transforms, with a viewer. 5 d
+- [ ] C18. Capture (screenshots expanded): GIF, video (WebM / MP4), movie frames, slice sweeps, 3-D rotations, magnification and trimming. 4–6 d
+
+Possible future plugins (neuron tracing and review as CATMAID, proofreading,
+atlas, surfaces, tract statistics, connectome, time series, spatial
+transcriptomics, probe tracks, DICOM, side by side, quality control, AI
+models, story): `docs/plugins/ideas.md`.
+
 ## Asked for on 2026-11-02, afternoon
 - [x] Registration: Freeview's Transform Volume controls: Rotate, Translate, Scale and Flip tabs along X (L-R), Y (P-A), Z (I-S), each a slider (the layer moves as it is dragged) and a typed value; rotate about the volume's centre or the cursor; Move centre to cursor; Restore to original. Composed as Freeview's `LayerMRI::DoTransform` (flip, scale, rotate x, y, z, translate), checked against its own steps.
 - [x] Registration: save the moved image on this computer as NIfTI (`.nii.gz`, `.nii`) or OME-Zarr (into a chosen folder in Chrome and Edge, else a zip); resampled (nearest, trilinear, cubic; onto its own grid or another image's) or the voxels unchanged with the new placement in the header. Checked against FreeSurfer's `mri_vol2vol`.

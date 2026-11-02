@@ -1,0 +1,57 @@
+site_name: ngplatform
+site_description: A workspace around Neuroglancer, extended by plugins.
+site_url: https://ngplatform.readthedocs.io/
+repo_url: https://github.com/AllenInstitute/ngplatform
+repo_name: AllenInstitute/ngplatform
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  logo: logo.svg
+  favicon: logo.svg
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: green
+      toggle: { icon: material/weather-night, name: Dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: green
+      toggle: { icon: material/weather-sunny, name: Light mode }
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - content.action.edit
+    - search.suggest
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc: { permalink: true }
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.keys
+
+nav:
+  - Home: index.md
+  - User guide:
+      - The window, tab by tab: guide/interface.md
+      - Loading and exporting data: guide/data.md
+      - Coming from Freeview: guide/from-freeview.md
+      - Coming from Neuroglancer: guide/from-neuroglancer.md
+  - Plugins:
+      - plugins/index.md
+      - Zarr Vectors: plugins/zarr-vectors.md
+      - Track filtering: plugins/track-filtering.md
+      - Labels: plugins/labels.md
+      - Registration: plugins/registration.md
+      - Volume rendering: plugins/volume-rendering.md
+      - Ideas for new plugins: plugins/ideas.md
+      - Page template: plugins/template.md
+  - Contributing: contributing.md
+  - Design notes:
+      - The repository plan: editor_repo_plan.md

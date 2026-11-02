@@ -1,0 +1,19 @@
+name: Something does not work
+description: A bug, an error, or data that does not show as it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations: { required: true }
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to see it
+      description: The steps, and a link to the workspace if the data is public (the address bar holds it).
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and system
+      placeholder: Chrome 131 on macOS 15

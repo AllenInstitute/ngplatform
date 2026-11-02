@@ -1,0 +1,24 @@
+# Volume rendering
+
+![A template drawn as a solid, cut open at the position](../images/plugins/volume-rendering.png)
+
+**Kind:** tool · **Off by default** (switch it on in the Plugins tab) · a
+**Volume** switch beside **Sections** in the 3-D view ·
+[Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/volume-view)
+
+Draws an image as a solid in Neuroglancer's 3-D view, ray-marched from its
+pyramid, with the octant facing the camera cut away at the position so the
+sections show on the cut faces. Tracts and annotations are drawn in the same
+view, depth-tested against it.
+
+## Using it
+
+- Switch the plugin on, then **Volume** in the 3-D panel.
+- It draws the selected image: an OME-Zarr image (local NIfTI included) or a
+  precomputed one.
+- Detail follows the zoom, or a chosen level. A level over 384 voxels a side
+  is drawn as a 256-voxel box around the position, which follows it.
+
+## Notes from users
+
+*Add your tips, workflows and problems here (edit this page on GitHub).*

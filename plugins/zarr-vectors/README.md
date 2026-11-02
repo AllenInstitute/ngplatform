@@ -1,5 +1,7 @@
 # neuroglancer-zarr-vectors
 
+![Neurons from SWC files as a virtual Zarr Vectors store, in 2-D and 3-D](../../docs/images/plugins/zarr-vectors.png)
+
 A Neuroglancer plugin that reads [Zarr Vectors](https://github.com/AllenInstitute/zarr_vectors)
 stores (format 0.9.0 to 0.9.4, as written by zarr-vectors-py and
 zarr-vectors-tools) into a segmentation layer: point clouds, lines,

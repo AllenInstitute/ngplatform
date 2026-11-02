@@ -1,5 +1,7 @@
 # Track filtering
 
+![Three track groups of the S-21-46 tractogram](../../docs/images/plugins/track-filtering.png)
+
 TrackVis-style track groups over a Zarr Vectors dataset. Each group keeps
 the streamlines that pass through its regions (spheres and boxes, with AND,
 OR and NOT) and whose attributes are in range, and shows them as a layer of

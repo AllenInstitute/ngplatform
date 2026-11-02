@@ -1,5 +1,7 @@
 # Registration
 
+![Rotating a template by hand, live](../../docs/images/plugins/registration.png)
+
 Places a moving layer onto the global (fixed) space by hand (as Freeview's
 Transform Volume tool), from landmark pairs, or from a transform file; and
 saves the transform, or the moved image as NIfTI or OME-Zarr. After
