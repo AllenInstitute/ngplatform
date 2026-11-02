@@ -332,6 +332,30 @@ export class LocalData {
     return this.detect(id);
   }
 
+  /** The file a virtual store is made from (an Analyze pair as one file), given its place. */
+  private async virtualFile(id: string, virtual: { file: string; format: VirtualFormat }): Promise<File | undefined> {
+    let file = (await this.file(id, virtual.file)) ?? (await this.collection(id, virtual.file, virtual.format));
+    // A .hdr's image is in the .img beside it.
+    if (file !== undefined && /\.hdr$/i.test(virtual.file)) {
+      const img = await this.file(id, virtual.file.replace(/\.hdr$/i, ".img"));
+      file = img === undefined ? undefined : await pairAsSingleFile(file, img, file.name.replace(/\.hdr$/i, ".nii"));
+    }
+    return file;
+  }
+
+  /**
+   * The file on this computer a dataset's source reads, when it is one read
+   * as a virtual store (for exporting it), with its format.
+   */
+  async sourceFile(source: string): Promise<{ file: File; format: VirtualFormat } | undefined> {
+    const at = this.parse(source.replace(/^[a-z0-9+]+:\/\/(?=https?:)/, ""));
+    if (at === undefined) return undefined;
+    const virtual = splitVirtual(`${at.path.replace(/\/$/, "")}/`, this.formats);
+    if (virtual === undefined) return undefined;
+    const file = await this.virtualFile(at.id, virtual);
+    return file === undefined ? undefined : { file, format: virtual.format };
+  }
+
   /** Drops a file opened with openFile, given a URL under it. */
   close(url: string): void {
     const at = this.parse(url);
@@ -377,12 +401,7 @@ export class LocalData {
     }
     const virtual = splitVirtual(request.path, this.formats);
     if (virtual !== undefined) {
-      let file = (await this.file(request.id, virtual.file)) ?? (await this.collection(request.id, virtual.file, virtual.format));
-      // A .hdr's image is in the .img beside it.
-      if (file !== undefined && /\.hdr$/i.test(virtual.file)) {
-        const img = await this.file(request.id, virtual.file.replace(/\.hdr$/i, ".img"));
-        file = img === undefined ? undefined : await pairAsSingleFile(file, img, file.name.replace(/\.hdr$/i, ".nii"));
-      }
+      const file = await this.virtualFile(request.id, virtual);
       if (file === undefined) {
         port.postMessage({ status: 404 });
         return;

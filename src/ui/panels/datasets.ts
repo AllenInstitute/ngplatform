@@ -11,6 +11,7 @@ import { clear, h, icon, iconButton } from "../dom.js";
 import { promptDialog, showMenu } from "../overlays.js";
 import type { Workbench } from "../workbench.js";
 import { shortSource } from "./format.js";
+import { canExport, exportDataset } from "../export.js";
 
 function checkbox(checked: boolean, label: string, onChange: (value: boolean) => void): HTMLElement {
   const box = h("input", { type: "checkbox", class: "vis", "aria-label": label, title: label });
@@ -102,6 +103,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
                 },
               },
               { label: "Add another view of it", run: () => store.addLayerView(dataset.id, entry.layers[0]) },
+              ...(canExport(wb, dataset) ? [{ label: "Export as…", run: () => void exportDataset(wb, dataset) }] : []),
               "-",
               { label: "Move up", disabled: index === 0, run: () => store.moveDataset(dataset.id, index - 1) },
               { label: "Move down", disabled: index === entries.length - 1, run: () => store.moveDataset(dataset.id, index + 1) },
