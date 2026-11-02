@@ -51,6 +51,8 @@ export interface StoreInfo {
   bounds: { lower: number[]; upper: number[] };
   levels: { index: number; vertexCount: number | undefined; chunkShape: number[] }[];
   geometry: string;
+  /** Whether the store has objects (an object index): what groups are made of. */
+  objects: boolean;
 }
 
 /** Decoded geometry kept here; at about 17 bytes a vertex, some 20 M vertices. */
@@ -161,6 +163,7 @@ async function open(storeUrl: string): Promise<StoreInfo> {
     bounds: { lower: Array.from(store.lowerBounds), upper: Array.from(store.upperBounds) },
     levels: store.levels.map((l) => ({ index: l.index, vertexCount: l.vertexCount, chunkShape: l.chunkShape })),
     geometry: store.description.geometryKind,
+    objects: store.description.hasObjects,
   };
 }
 

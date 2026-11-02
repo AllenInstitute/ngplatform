@@ -149,15 +149,42 @@ describe("virtual point store", () => {
     });
   }
 
-  it("draws a large table's points without making each an object", async () => {
+  it("splits a large table into cells, its points not objects, each cell's in file order", async () => {
     const n = MAX_POINT_OBJECTS + 1;
     const positions = new Float64Array(3 * n);
-    for (let i = 0; i < positions.length; ++i) positions[i] = (i * 7919) % 1000;
-    const store = pointStore({ positions, columns: [] }, "big");
+    for (let i = 0; i < positions.length; ++i) positions[i] = ((i * 7919) % 1000) - 300;
+    const values = Float32Array.from({ length: n }, (_, i) => i);
+    const store = pointStore({ positions, columns: [{ name: "row", values }] }, "big");
     const a = access(store);
     const zv = await openZarrVectorsStore(a as never, undefined);
     expect(zv.description.hasObjects).toBe(false);
-    const data = (await new LevelPipeline(a as never, zv.description, zv.levels[0]).download([0, 0, 0], signal, { bridges: false }))!;
-    expect(data.numOwnVertices).toBe(n);
+    const level = zv.levels[0];
+    const off = zv.coordinateOffset ?? [0, 0, 0];
+    const cells = level.chunkShape.map((c, k) => Math.floor(zv.upperBounds[k] / c) + 1);
+    expect(cells).toEqual([8, 8, 8]);
+    const pipeline = new LevelPipeline(a as never, zv.description, level);
+    const seen = new Uint8Array(n);
+    let total = 0;
+    for (let x = 0; x < cells[0]; ++x) {
+      for (let y = 0; y < cells[1]; ++y) {
+        for (let z = 0; z < cells[2]; ++z) {
+          const data = await pipeline.download([x, y, z], signal, { bridges: false });
+          if (data === undefined) continue;
+          let last = -1;
+          for (let v = 0; v < data.numOwnVertices; ++v) {
+            const row = data.attributes[0][v];
+            expect(row).toBeGreaterThan(last);
+            last = row;
+            seen[row]++;
+            expect(at(data.positions, v, off)).toEqual(Array.from(positions.subarray(3 * row, 3 * row + 3)));
+            const cell = [0, 1, 2].map((k) => Math.floor(data.positions[3 * v + k] / level.chunkShape[k]));
+            expect(cell).toEqual([x, y, z]);
+          }
+          total += data.numOwnVertices;
+        }
+      }
+    }
+    expect(total).toBe(n);
+    expect(seen.every((c) => c === 1)).toBe(true);
   });
 });

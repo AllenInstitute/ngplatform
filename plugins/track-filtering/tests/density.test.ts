@@ -12,6 +12,7 @@ const info = (lower: number[], upper: number[], unit = "m", scale = 1e-3, offset
   bounds: { lower, upper },
   levels: [{ index: 0, vertexCount: 10, chunkShape: [16, 16, 16] }],
   geometry: "streamline",
+  objects: true,
 });
 
 describe("track density", () => {

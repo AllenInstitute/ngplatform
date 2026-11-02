@@ -125,6 +125,7 @@ describe("coordinates and levels", () => {
       { index: 2, vertexCount: 1_000_000, chunkShape: [62, 64, 68] },
     ],
     geometry: "streamline",
+    objects: true,
   };
 
   it("converts the viewer's coordinates to the store's", () => {
@@ -176,6 +177,7 @@ describe(".trk files", () => {
     bounds: { lower: [-78.4, -112, -50], upper: [79, 77.2, 86] },
     levels: [{ index: 0, vertexCount: 5, chunkShape: [31, 32, 34] }],
     geometry: "streamline",
+    objects: true,
   };
   // Two streamlines, in store coordinates (MNI millimetres).
   const curves = { offsets: Uint32Array.from([0, 2, 5]), positions: Float32Array.from([0, 0, 0, 1, 2, 3, -10, 20, 30, -11, 21, 31, -12, 22, 32]) };

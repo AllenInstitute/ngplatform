@@ -5,7 +5,9 @@
  *
  * As for meshes (./meshes.ts), one cell holds everything: moved to start at
  * the cell's corner (`coordinate_offset`, which the reader adds back), the
- * cell the smallest power of two past every coordinate.
+ * cell the smallest power of two past every coordinate.  A point table too
+ * large to make objects of is split into cells instead (about eight across),
+ * so the viewer reads only those in view; each cell's points in file order.
  *
  * A skeleton store has one object per tree (segment ids 1..N, in file then
  * root order), each one fragment whose rows are its nodes in depth-first
@@ -47,17 +49,17 @@ function element(payload: Uint8Array): Uint8Array {
   return out;
 }
 
-function perCell(attributes: Record<string, unknown>): unknown {
+function perCell(shape: number[], nonempty: string[], attributes: Record<string, unknown>): unknown {
   return {
     zarr_format: 3,
     node_type: "array",
-    shape: [1, 1, 1],
+    shape,
     data_type: "variable_length_bytes",
     chunk_grid: { name: "regular", configuration: { chunk_shape: [1, 1, 1] } },
     chunk_key_encoding: { name: "default", configuration: { separator: "/" } },
     fill_value: "",
     codecs: [{ name: "vlen-bytes", configuration: {} }],
-    attributes: { nonempty_chunks: ["0.0.0"], chunk_grid_origin: [0, 0, 0], ...attributes },
+    attributes: { nonempty_chunks: nonempty, chunk_grid_origin: [0, 0, 0], ...attributes },
   };
 }
 
@@ -87,6 +89,8 @@ export interface CellStoreSpec {
   links?: Int32Array;
   /** The axes' unit, if known. */
   unit?: string;
+  /** Split into cells about this many across (points that are not objects only); else one cell. */
+  cellsAcross?: number;
 }
 
 export class CellStore {
@@ -96,6 +100,9 @@ export class CellStore {
   private readonly lo: number[];
   private readonly hi: number[];
   private readonly directories = new Set<string>();
+  /** Each cell's rows, in order, by its key ("i.j.k"); one cell unless the spec asks for more. */
+  private readonly cells = new Map<string, Uint32Array>();
+  private readonly shape: number[];
   /** Objects (0 when the rows are not objects). */
   readonly count: number;
 
@@ -119,9 +126,35 @@ export class CellStore {
     };
     this.lo = [0, 1, 2].map((k) => extreme(k, Math.min, Infinity));
     this.hi = [0, 1, 2].map((k) => extreme(k, Math.max, -Infinity));
-    // The smallest power of two past every coordinate (hi == C would be the next cell).
+    // One cell: the smallest power of two past every coordinate (hi == C
+    // would be the next cell).  Else a power of two about 1/cellsAcross of it.
+    const span = Math.max(...this.hi);
     this.chunk = 1;
-    while (this.chunk <= Math.max(...this.hi)) this.chunk *= 2;
+    while (this.chunk <= span) this.chunk *= 2;
+    if (spec.cellsAcross !== undefined && spec.objectRows === undefined && spec.links === undefined) {
+      while (this.chunk > 1 && this.chunk * spec.cellsAcross > 2 * span) this.chunk /= 2;
+    }
+    const n = this.vertices.length / 3;
+    const cellOf = new Array<string>(n);
+    const counts = new Map<string, number>();
+    for (let v = 0; v < n; ++v) {
+      const key = [0, 1, 2].map((k) => Math.floor(this.vertices[3 * v + k] / this.chunk)).join(".");
+      cellOf[v] = key;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    if (n === 0) counts.set("0.0.0", 0);
+    const filled = new Map<string, number>();
+    for (const [key, count] of [...counts].sort(([a], [b]) => (a < b ? -1 : 1))) {
+      this.cells.set(key, new Uint32Array(count));
+      filled.set(key, 0);
+    }
+    for (let v = 0; v < n; ++v) {
+      const key = cellOf[v];
+      const at = filled.get(key)!;
+      this.cells.get(key)![at] = v;
+      filled.set(key, at + 1);
+    }
+    this.shape = [0, 1, 2].map((k) => Math.floor(this.hi[k] / this.chunk) + 1);
     this.count = spec.objectRows?.length ?? 0;
     const paths = ["0/vertices", "0/vertex_fragments", ...spec.vertexAttributes.map((a) => `0/vertex_attributes/${a.name}`)];
     if (spec.kind === "skeleton") paths.push("0/links/0/0.0.0");
@@ -154,6 +187,9 @@ export class CellStore {
     const c = this.chunk;
     const skeleton = spec.kind === "skeleton";
     const links = spec.links ?? new Int32Array(0);
+    const cellArray = (attributes: Record<string, unknown>) => json(perCell(this.shape, [...this.cells.keys()], attributes));
+    const cell = /^0\/(vertices|vertex_fragments|vertex_attributes\/[^/]+|links\/0\/0\.0\.0|fragment_attributes\/object_id)\/c\/(\d+)\/(\d+)\/(\d+)$/.exec(key);
+    if (cell !== null) return this.cellChunk(cell[1], this.cells.get(`${cell[2]}.${cell[3]}.${cell[4]}`));
     switch (key) {
       case "zarr.json":
         return json(
@@ -197,19 +233,13 @@ export class CellStore {
           }),
         );
       case "0/vertices/zarr.json":
-        return json(perCell({ zv_array: "vertices", dtype: "float32", encoding: "raw" }));
+        return cellArray({ zv_array: "vertices", dtype: "float32", encoding: "raw" });
       case "0/vertex_fragments/zarr.json":
-        return json(perCell({ zv_array: "vertex_fragments", encoding: "fragment_index_v1" }));
-      case "0/vertices/c/0/0/0":
-        return element(bytesOf(this.vertices));
-      case "0/vertex_fragments/c/0/0/0":
-        return element(fragmentIndex(spec.objectRows ?? [this.vertices.length / 3]));
+        return cellArray({ zv_array: "vertex_fragments", encoding: "fragment_index_v1" });
       case "0/links/0/zarr.json":
         return json(group({ zv_array: "links_family", level_delta: 0, link_width: 2, directed: true, store: "canonical", sid_ndim: 3, num_links: links.length / 2, num_physical_records: links.length / 2 }));
       case "0/links/0/0.0.0/zarr.json":
-        return json(perCell({ zv_array: "links", dtype: "int32", offsets: [[0, 0, 0]], has_perm: false, link_width: 2, level_delta: 0 }));
-      case "0/links/0/0.0.0/c/0/0/0":
-        return element(bytesOf(links));
+        return cellArray({ zv_array: "links", dtype: "int32", offsets: [[0, 0, 0]], has_perm: false, link_width: 2, level_delta: 0 });
       case "0/object_index/zarr.json":
         return json(group({ zv_array: "object_index", num_objects: this.count, num_present: this.count, sid_ndim: 3, layout: "vlen_manifests_v2", object_ids_sorted: true }));
       case "0/object_index/manifests/zarr.json":
@@ -219,20 +249,13 @@ export class CellStore {
       case "0/object_attributes/segment_id/zarr.json":
         return json(column(this.count, COLUMN_ROWS, "uint64", U64_MAX, { zv_array: "object_attribute", name: "segment_id", dtype: "uint64", shape: [this.count], fill_sentinel_meaning: "absent" }));
       case "0/fragment_attributes/object_id/zarr.json":
-        return json(perCell({ zv_array: "fragment_attribute", name: "object_id", dtype: "uint64", row_shape: [] }));
-      case "0/fragment_attributes/object_id/c/0/0/0": {
-        const rows = new BigUint64Array(this.count);
-        for (let o = 0; o < this.count; ++o) rows[o] = BigInt(o);
-        return element(bytesOf(rows));
-      }
+        return cellArray({ zv_array: "fragment_attribute", name: "object_id", dtype: "uint64", row_shape: [] });
     }
     if (/^0\/(links|object_attributes|vertex_attributes|fragment_attributes)\/zarr\.json$/.test(key)) return json(group());
-    const vertexAttribute = /^0\/vertex_attributes\/([^/]+)\/(zarr\.json|c\/0\/0\/0)$/.exec(key);
+    const vertexAttribute = /^0\/vertex_attributes\/([^/]+)\/zarr\.json$/.exec(key);
     if (vertexAttribute !== null) {
-      const values = spec.vertexAttributes.find((a) => a.name === vertexAttribute[1])?.values;
-      if (values === undefined) return undefined;
-      if (vertexAttribute[2] === "zarr.json") return json(perCell({ zv_array: "attribute", name: vertexAttribute[1], dtype: "float32", row_shape: [] }));
-      return element(bytesOf(values));
+      if (!spec.vertexAttributes.some((a) => a.name === vertexAttribute[1])) return undefined;
+      return cellArray({ zv_array: "attribute", name: vertexAttribute[1], dtype: "float32", row_shape: [] });
     }
     const columnJson = /^0\/object_attributes\/([^/]+)\/zarr\.json$/.exec(key);
     if (columnJson !== null && spec.objectColumns.some((col) => col.name === columnJson[1])) {
@@ -277,6 +300,31 @@ export class CellStore {
     const out = new Float32Array(COLUMN_ROWS).fill(Number.NaN);
     out.set(values.subarray(first, first + COLUMN_ROWS));
     return bytesOf(out);
+  }
+
+  /** A cell's chunk of a per-cell array: its rows' vertices or values, its fragments, its links. */
+  private cellChunk(array: string, rows: Uint32Array | undefined): Uint8Array | undefined {
+    if (rows === undefined) return undefined;
+    const { spec } = this;
+    // Objects and links only ever come in one cell, holding every row in order.
+    const whole = rows.length === this.vertices.length / 3;
+    const gather = (values: Float32Array, width: number) => {
+      if (whole) return values;
+      const out = new Float32Array(rows.length * width);
+      rows.forEach((v, i) => out.set(values.subarray(width * v, width * v + width), width * i));
+      return out;
+    };
+    if (array === "vertices") return element(bytesOf(gather(this.vertices, 3)));
+    if (array === "vertex_fragments") return element(fragmentIndex(spec.objectRows ?? [rows.length]));
+    if (array === "links/0/0.0.0") return spec.links === undefined ? undefined : element(bytesOf(spec.links));
+    if (array === "fragment_attributes/object_id") {
+      if (this.count === 0) return undefined;
+      const out = new BigUint64Array(this.count);
+      for (let o = 0; o < this.count; ++o) out[o] = BigInt(o);
+      return element(bytesOf(out));
+    }
+    const values = spec.vertexAttributes.find((a) => `vertex_attributes/${a.name}` === array)?.values;
+    return values === undefined ? undefined : element(bytesOf(gather(values, 1)));
   }
 }
 
@@ -357,7 +405,8 @@ export function skeletonStore(nodes: SwcNode[], name: string): CellStore {
 
 /**
  * A point table as a point store: each point an object (up to
- * MAX_POINT_OBJECTS), the other columns its values.  The unit is the x, y, z
+ * MAX_POINT_OBJECTS; past that, the points in cells about eight across), the
+ * other columns its values.  The unit is the x, y, z
  * columns' (x_um, …), else guessed as for meshes.
  */
 export function pointStore(table: PointTable, name: string): CellStore {
@@ -378,6 +427,8 @@ export function pointStore(table: PointTable, name: string): CellStore {
       kind: "point_cloud",
       positions: table.positions,
       objectRows: objects ? new Array<number>(n).fill(1) : undefined,
+      // Too many to be objects: in cells, so a view reads only its own.
+      cellsAcross: objects ? undefined : 8,
       vertexAttributes: table.columns,
       objectColumns: objects ? table.columns : [],
       // Else a guess, as for meshes.

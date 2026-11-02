@@ -965,6 +965,10 @@ class TrackGroups {
     const token = (this.tokens.get(group.id) ?? 0) + 1;
     this.tokens.set(group.id, token);
     const current = () => this.tokens.get(group.id) === token;
+    if (this.info?.objects === false) {
+      this.setResult(group, { mask: undefined, count: 0, state: "error", detail: "This store has no objects (points too many to be one each, say), so there is nothing to group." });
+      return;
+    }
     if (props === undefined || rowOf === undefined) {
       this.waiting = true;
       this.setResult(group, { mask: undefined, count: 0, state: "waiting", detail: "Reading the objects' attributes…" });
