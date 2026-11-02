@@ -50,7 +50,9 @@ export type Region =
   | { kind: "box"; affine: number[]; lo: number[]; hi: number[] }
   | { kind: "ellipsoid"; affine: number[]; centre: number[]; radii: number[] }
   /** A label of a label volume: voxel → its voxel (nearest) by `affine`; `labels` is a block of it from `origin`, `size` voxels, x fastest. */
-  | { kind: "label"; affine: number[]; labels: ArrayLike<number>; origin: number[]; size: number[]; value: number };
+  | { kind: "label"; affine: number[]; labels: ArrayLike<number>; origin: number[]; size: number[]; value: number }
+  /** A label of a segmentation the worker reads itself (`store`, at `level`): voxel → its voxel by `affine`.  The worker turns it into a "label" region. */
+  | { kind: "segmentation"; affine: number[]; store: string; level: number; value: number };
 
 /** A test of image voxel indices for a region. */
 export function regionTest(region: Region): (x: number, y: number, z: number) => boolean {
@@ -86,6 +88,7 @@ export function regionTest(region: Region): (x: number, y: number, z: number) =>
       return s <= 1;
     };
   }
+  if (region.kind === "segmentation") throw new Error("a segmentation is read into a label region first");
   const { labels, origin, size, value } = region;
   return (x, y, z) => {
     const i = Math.round(at(x, y, z, 0)) - origin[0];

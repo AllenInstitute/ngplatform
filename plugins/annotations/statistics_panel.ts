@@ -12,7 +12,7 @@ import type { AnnotationJson } from "./measure.js";
 import { annotationFromGlobal, annotationLayers, imagePlacement, rankOf, toGlobalOf } from "./scene.js";
 import type { Segmentation } from "./segmentation/panel.js";
 import { corners, levelWithin, type Region, type Summary, voxelBox } from "./statistics.js";
-import { button, csv, download, el, field, fmt, physical, select } from "./ui.js";
+import { button, csv, download, el, field, fmt, numberInput, physical, select } from "./ui.js";
 import { layerStore, readableImages, type Voxels } from "./voxels.js";
 
 interface Row extends Summary {
@@ -33,6 +33,8 @@ export class Statistics {
   private rows: Row[] = [];
   private image = "";
   private region = "";
+  /** The label asked for in a segmentation layer (not one drawn here). */
+  private segValue = 1;
   private budget = "256";
   private note = "";
   private running: AbortController | undefined;
@@ -62,6 +64,11 @@ export class Statistics {
         out.push([`l|${s.fileName}|${value}`, `Label ${value}${s.labels.get(value)?.name ? ` ${s.labels.get(value)!.name}` : ""} (${s.layer})`]);
       }
     }
+    // Other segmentations whose voxels can be read (an atlas in NIfTI, say): a label chosen by number.
+    const drawn = new Set(this.segmentation.sessions.map((s) => s.layer));
+    for (const layer of readableImages(this.ctx, ["segmentation"])) {
+      if (!drawn.has(layer)) out.push([`s|${layer}|`, `A label of ${layer}`]);
+    }
     return out;
   }
 
@@ -72,7 +79,7 @@ export class Statistics {
     if (store === undefined || !owner) return;
     this.running?.abort();
     const controller = (this.running = new AbortController());
-    const maxVoxels = (Number(this.budget) * 2 ** 20) / 4;
+    const maxVoxels = (Number(this.budget) * 2 ** 20) / (kind === "s" ? 8 : 4);
     this.setNote("Reading…");
     try {
       const levels = await this.voxels.levels(store);
@@ -95,6 +102,29 @@ export class Statistics {
           return {
             region: a.type === "ellipsoid" ? { kind: "ellipsoid", affine: Array.from(affine), centre: a.center!, radii: a.radii!.map(Math.abs) } : { kind: "box", affine: Array.from(affine), lo: a.pointA!, hi: a.pointB! },
             box: voxelBox(corners(lo, hi), toVoxel, levels[level].size),
+          };
+        };
+      } else if (kind === "s") {
+        const segStore = layerStore(this.ctx, owner);
+        if (segStore === undefined) throw new Error(`${owner}'s voxels cannot be read`);
+        const segLevels = await this.voxels.levels(segStore);
+        const value = this.segValue;
+        title = `Label ${value} (${owner})`;
+        regionAt = (level) => {
+          // The segmentation's level nearest the image's in voxel size.
+          let sl = 0;
+          segLevels.forEach((l, i) => {
+            if (Math.abs(Math.log(l.voxelSize / levels[level].voxelSize)) < Math.abs(Math.log(segLevels[sl].voxelSize / levels[level].voxelSize))) sl = i;
+          });
+          const segPlaced = imagePlacement(this.ctx, owner, segLevels[sl]);
+          const affine = segPlaced && between(placements[level]!, segPlaced);
+          if (affine === undefined) throw new Error(`${owner} and ${image} are not in the same three dimensions`);
+          // All of the segmentation that overlaps the image.
+          const toImage = invertOr(affine)!;
+          const edges = corners([-0.5, -0.5, -0.5], segLevels[sl].size.map((n) => n - 0.5)).map((p) => apply(toImage, p));
+          return {
+            region: { kind: "segmentation", affine: Array.from(affine), store: segStore, level: sl, value },
+            box: voxelBox(edges, Float64Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]), levels[level].size),
           };
         };
       } else {
@@ -194,7 +224,11 @@ export class Statistics {
                 "div",
                 { class: "an-grid2" },
                 field("Image", select(images.map((n) => [n, n]), this.image, (v) => (this.image = v), "Image")),
-                field("Region", select(regions, this.region, (v) => (this.region = v), "Region")),
+                field("Region", select(regions, this.region, (v) => {
+                  this.region = v;
+                  draw(true);
+                }, "Region")),
+                this.region.startsWith("s|") ? field("Label", numberInput(this.segValue, (v) => (this.segValue = Math.round(v)), { step: 1, "aria-label": "Label value" }), "Its number in the segmentation") : "",
                 field("Memory", select(BUDGETS, this.budget, (v) => (this.budget = v), "Memory"), "The finest level that fits is read"),
                 el("div", { class: "an-end" }, go),
               ),

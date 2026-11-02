@@ -17,7 +17,8 @@ folding sections.
   and saved as CSV. Drawing is Neuroglancer's own annotation tools, in a
   `measurements` layer this section makes.
 - **Statistics**: an image's voxel count, volume, mean, SD, min, max and
-  median inside a box, an ellipsoid or a label, read at the finest level
+  median inside a box, an ellipsoid, a label drawn here or a label of any
+  readable segmentation layer (an atlas), read at the finest level
   that fits a memory budget (as Registration's save picks a level).
 - **Segmentation**: label volumes drawn by hand (brush, eraser, 2-D and 3-D
   fills, pick, quick select, interpolation between sections, intensity
@@ -114,7 +115,14 @@ drawn.
 
 **Added to the SDK for it:** `viewer.reloadData(url)` (`src/sdk/types.ts`,
 `src/ui/apis.ts`): Neuroglancer invalidates every chunk source in its chunk
-manager whose key names the URL. No Neuroglancer change was needed.
+manager whose key names the URL (each held for two seconds, so the worker's
+answer never finds it let go). No Neuroglancer change was needed.
+
+A finer reload would re-read only the chunks a stroke changed (today every
+chunk of the store on screen is read again; from memory, so it is quick, but
+a large view flickers for a frame). That needs a per-chunk invalidation in
+Neuroglancer's chunk worker, which the fork does not have yet: a small
+`ChunkSource.invalidateChunks(keys)` RPC beside `invalidateCache`.
 
 It also uses the volume view's reader (`../volume-view/volume_reader.ts`,
 which gained `rawRegion` and `rawPoints`) and Registration's writers

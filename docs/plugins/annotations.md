@@ -47,7 +47,9 @@ view's side.
 ## Statistics
 
 As Freeview's label statistics: choose an **image** and a **region** (a box
-or ellipsoid annotation, or a label of a label volume drawn here), then
+or ellipsoid annotation, a label of a label volume drawn here, or a label
+of any segmentation layer whose voxels can be read, such as an atlas in
+NIfTI or OME-Zarr, by its number), then
 **Compute**: the voxel count, volume (mm³), mean, standard deviation
 (n − 1), minimum, maximum and median of the image inside. The finest level
 of the image whose box round the region fits the **memory** chosen is read

@@ -102,7 +102,14 @@ self.onmessage = (event: MessageEvent) => {
       postMessage({ type: "block", id: msg.id, data }, { transfer: [data.buffer] });
     } else if (msg.type === "stats") {
       const { data, size } = await reader.rawRegion(msg.level, { lo: msg.lo, hi: msg.hi }, signal, progress);
-      const inside = valuesInside(data, msg.lo, size, regionTest(msg.region as Region));
+      let region = msg.region as Region;
+      if (region.kind === "segmentation") {
+        // The segmentation's labels on the image's block, nearest.
+        const seg = await open(region.store);
+        const labels = await block(seg.reader, region.level, msg.lo, size, region.affine, signal);
+        region = { kind: "label", affine: IDENTITY, labels, origin: msg.lo, size, value: region.value };
+      }
+      const inside = valuesInside(data, msg.lo, size, regionTest(region));
       postMessage({ type: "stats", id: msg.id, summary: summarise(inside) });
     } else {
       throw new Error(`unknown request ${msg.type}`);

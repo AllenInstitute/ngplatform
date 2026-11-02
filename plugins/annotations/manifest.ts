@@ -37,7 +37,7 @@ Draw with Neuroglancer's annotation tools (**Line**, **Polyline**, **Box**, **El
 - **Line profile**: an image's values along a line, as a plot; **CSV** saves it.
 
 ## Statistics
-For an image and a region (a box or ellipsoid annotation, or a label of a label volume): voxel count, volume, mean, standard deviation, minimum, maximum and median of the image inside. The finest level that fits the memory budget is read. Each result is a row of a table you can save as CSV.
+For an image and a region (a box or ellipsoid annotation, a label of a label volume drawn here, or a label of a segmentation layer such as an atlas): voxel count, volume, mean, standard deviation, minimum, maximum and median of the image inside. The finest level that fits the memory budget is read. Each result is a row of a table you can save as CSV.
 
 ## Segmentation
 Label volumes drawn by hand, shown as a segmentation layer that updates as you draw.
