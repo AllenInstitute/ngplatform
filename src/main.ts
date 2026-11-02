@@ -43,4 +43,4 @@ const engine = new Engine(shell.engineHost);
 (window as unknown as { viewer: unknown; engine: unknown }).viewer = engine.viewer;
 (window as unknown as { engine: unknown }).engine = engine;
 
-shell.attach(engine, urlSafeParse, import.meta.env.VITE_DEFAULT_EXAMPLE ?? "mni-hcp1065", { catalogue: CATALOGUE, choices, resolution });
+shell.attach(engine, urlSafeParse, import.meta.env.VITE_DEFAULT_EXAMPLE ?? "s2146-mni", { catalogue: CATALOGUE, choices, resolution });

@@ -64,13 +64,15 @@ async function waitReady(label, timeout = 90_000) {
 const click = (locator) => locator.click({ force: true });
 const check = (ok, what) => { console.log(`${ok ? "ok  " : "FAIL"} ${what}`); if (!ok) process.exitCode = 1; };
 const layers = () => page.evaluate(() => window.engine.layers());
+/** The default example's tractogram: its layer, and a part of its store's URL. */
+const TRACTOGRAM = { layer: "S-21-46", url: "bridgeanatomical" };
 
 await page.goto(base);
 await waitReady("default example");
 // The whole-brain tractogram is slow to draw on a software GPU (a frame a
 // second or more); the checks are about the platform, so it is hidden here.
 if (process.env.SWIFTSHADER) {
-  await page.evaluate(() => window.engine.setLayerVisible("HCP-1065", false));
+  await page.evaluate((name) => window.engine.setLayerVisible(name, false), TRACTOGRAM.layer);
   await page.waitForTimeout(3000);
 }
 await page.screenshot({ path: `${shots}/1-default.png`, timeout: 120_000 });
@@ -98,19 +100,21 @@ check(chrome.position === 1 && chrome.layoutButtons > 0, "position top left and 
 
 // Datasets tab and Inspector.
 check((await page.locator(".datasets .ds-row").count()) >= 1, "Datasets lists the scene's datasets");
-await click(page.locator(".datasets .ds-row", { hasText: "HCP-1065" }).first());
+await click(page.locator(".datasets .ds-row", { hasText: TRACTOGRAM.layer }).first());
 await page.waitForTimeout(800);
 check((await page.locator(".ins-tab").count()) > 0 && (await page.locator(".ins-root .neuroglancer-tab-label").count()) === 0, "the Layer tab shows the layer's controls in the platform's own tabs");
 // The inspector's tabs, built by the platform from the layer's models.
 await click(page.locator(".ins-tab", { hasText: "Source" }));
 await page.waitForTimeout(800);
-check((await page.locator(".ins-url").first().inputValue()).includes("hcp1065"), "Source shows the data source URL");
+check((await page.locator(".ins-url").first().inputValue()).includes(TRACTOGRAM.url), "Source shows the data source URL");
 check((await page.locator(".ins-tx-grid input").count()) > 0, "Source shows the transform as an editable table");
 await click(page.locator(".ins-tab", { hasText: "Render" }));
 await page.waitForTimeout(800);
 check((await page.locator(".ins-content .ins-slider").count()) >= 4, "Render shows the layer's sliders");
 await click(page.locator(".ins-tab", { hasText: "Segments" }));
 await page.waitForTimeout(800);
+// The segment properties (a row a streamline: 3.3 million) arrive after the views.
+await page.locator(".ins-status button").waitFor({ timeout: 240_000 }).catch(() => {});
 await click(page.locator(".ins-status button"));
 await page.waitForTimeout(1500);
 check((await page.locator(".ins-seg-row:not(.ins-seg-head)").count()) > 5, `Segments lists the segments (${await page.locator(".ins-status").innerText()})`);

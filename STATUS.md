@@ -16,7 +16,7 @@
 | **Volume rendering** (tool, off) | "Volume" beside "Sections" in Neuroglancer's 3-D panel: an OME-Zarr image (NIfTI from this computer included; uint8, or other types windowed to 0..255) or a precomputed one (raw or JPEG, sharded or not) drawn as a solid in the same view (the `draw3d` hook), depth-tested with tracts and annotations, the octant facing the camera cut away and Neuroglancer's sections shown on its faces. Detail is automatic (follows the zoom) or a chosen level; a level over 384 voxels a side is drawn as a 256-voxel box around the position, which follows it (MICrONS' EM: a 2 µm box in 12 s). |
 | **Labels** (tool, on) | Labels pinned to points, track groups or annotations; beside the pin or lined up at the view's sides with leader lines; 2-D, 3-D or both; dragged and resized in the views; painted into screenshots. |
 | **Registration** (tool, off) | Moving by hand as Freeview's Transform Volume (rotate, translate, scale, flip; sliders and typed values; about the volume's centre or the cursor; Restore to original). Landmark pairs (Alt+F, Alt+M) fitted as translation, rigid, similarity or affine, with residuals. Transform files in and out: FreeSurfer LTA (with both volumes' geometry; VOX to VOX read), ITK / ANTs, plain 4 × 4. Save image: NIfTI or OME-Zarr, resampled (nearest, trilinear, cubic; own grid or another image's) or header only, in a worker (the finest level within 512 MB). |
-| **Examples** | HCP-1065 on SRB 2026a (the default: the HiP-CT template of ten brains at 100 µm in MNI 2009b space, OME-Zarr 0.6 read from Andrew's public GCS bucket), and MICrONS minnie65 (EM and v1300 segmentation). The HiP-CT samples (Ha1, Hb1, i74, I80) are not referenced by the app or bundled with it. |
+| **Examples** | S-21-46 on SRB 2026a (the default: BRIDGE's anatomically constrained tractogram of the 50 µm HiP-CT brain S-21-46 in MNI space, 3.3 M streamlines as zarr-vectors, on SRB 2026a, the HiP-CT template of ten brains at 100 µm in MNI 2009b space; both from Andrew's public GCS bucket), HCP-1065 on SRB 2026a, and MICrONS minnie65 (EM and v1300 segmentation). The HiP-CT samples Ha1, Hb1, i74 and I80 are not referenced by the app or bundled with it. |
 | **Neuroglancer** | google/neuroglancer `master` plus commits on `Andrew-Keenlyside/neuroglancer` branch `ngplatform-upstream`: application-supplied workers, host-owned side panels, incremental layer restore, GCS listing, a one-byte GET where a bucket's CORS blocks HEAD (without it no chunk of the HCP store loaded), switches beside Sections and sections clipped to a box, a screenshot overlay, and resolution histograms laid out by resolution (every level keeps its place; the target line moves). |
 | **Filter oracle and engines, step C0** | In `zarr-vectors-tools`, on its branch `working`. |
 
@@ -43,6 +43,12 @@ worker's code (reads and tests):
 | | 0 (exact) | 71 MB | 3.6 s | 0.04–0.05 s | 9,599 |
 | Corpus callosum, 4 × 70 × 16 mm midline box | 1 (preview) | 15 MB | 1.3 s | 0.06 s | 2,628 |
 | | 0 (exact) | 150 MB | 5.2 s | 0.11 s | 25,734 |
+
+S-21-46 (the default, 3.3 M streamlines, 420 M vertices in 23 × 21 × 20 mm
+cells, raw and unsharded), in the browser: the corpus callosum box is exact
+(52,731 streamlines) in 22 s from a cold start, the three example groups in
+70 s; its 3.3 M rows of segment properties (length, orientation, tortuosity,
+vertex count) load in the background, about 290 MB of JavaScript heap.
 
 So the first exact answer in a new area takes seconds (the download), and
 moving a region around an area already read is exact at 10–20 updates a
