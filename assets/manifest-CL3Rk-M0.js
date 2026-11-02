@@ -1,4 +1,4 @@
-const e="annotations.labels",t={id:"org.ngplatform.annotations",name:"Labels",version:"0.1.0",kind:"tool",enabledByDefault:!0,description:"Labels on the views for figures: pinned to points, track groups or annotations, in 2-D, 3-D or both, and in screenshots.",guide:`Labels name what is in the views, as an anatomy atlas does: a pin on the structure, a thin leader line, and its name beside it or lined up at the edge of the view.
+const e="annotations.labels",t={id:"org.ngplatform.annotations",name:"Labels",version:"0.1.0",kind:"tool",enabledByDefault:!0,description:"Labels on the views for figures, pinned to points, groups or annotations, in screenshots too.",guide:`Labels name what is in the views, as an anatomy atlas does: a pin on the structure, a thin leader line, and its name beside it or lined up at the edge of the view.
 
 ## Adding labels (the Labels tab)
 - **At the position**: a label pinned where the views are centred.

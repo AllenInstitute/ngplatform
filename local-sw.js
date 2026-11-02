@@ -43,7 +43,8 @@ async function owner(id) {
     owners.delete(id);
   }
   for (const client of await self.clients.matchAll({ type: "window" })) {
-    if ((await ask(client, { type: "local-has", id }, 2000)) === true) {
+    // A page busy drawing can take a while to answer.
+    if ((await ask(client, { type: "local-has", id }, 10_000)) === true) {
       owners.set(id, client.id);
       return client;
     }
@@ -84,7 +85,7 @@ self.addEventListener("fetch", (event) => {
       if (answer.status !== 200) return new Response(answer.message ?? null, { status: answer.status, headers });
       const { body, size, start } = answer;
       headers["accept-ranges"] = "bytes";
-      headers["content-type"] = "application/octet-stream";
+      headers["content-type"] = answer.contentType ?? "application/octet-stream";
       if (range !== undefined && size !== undefined) {
         const end = start + (body ? body.byteLength : 0);
         if (start >= size && size > 0) return new Response(null, { status: 416, headers: { ...headers, "content-range": `bytes */${size}` } });

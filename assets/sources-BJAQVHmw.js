@@ -1,0 +1,1 @@
+function o(r){const t=/^precomputed:\/\/(.+)$/i.exec(r?.trim()??"");if(t===null)return;let e=t[1].replace(/\|.*$/,"");if(e=e.replace(/^gs:\/\/([^/]+)\/?/,"https://storage.googleapis.com/$1/").replace(/^s3:\/\/([^/]+)\/?/,"https://$1.s3.amazonaws.com/"),!!/^https?:\/\//.test(e))return e.endsWith("/")?e:`${e}/`}export{o as p};

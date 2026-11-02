@@ -1,4 +1,4 @@
-const e="registration.panel",t={id:"org.ngplatform.registration",name:"Registration",version:"0.1.0",kind:"tool",enabledByDefault:!1,description:"Aligns a layer to the others from landmark pairs (translation, rigid, similarity or affine), and reads and writes affine transform files.",guide:`Registration places a **moving** layer onto the **fixed** space the other layers are in, from pairs of landmarks: the same feature, marked once in each.
+const e="registration.panel",t={id:"org.ngplatform.registration",name:"Registration",version:"0.1.0",kind:"tool",enabledByDefault:!1,description:"Aligns a layer to the others from landmark pairs, and reads and writes transform files.",guide:`Registration places a **moving** layer onto the **fixed** space the other layers are in, from pairs of landmarks: the same feature, marked once in each.
 
 ## Marking pairs
 - Choose the moving layer in the Registration tab.
