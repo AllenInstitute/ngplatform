@@ -19,7 +19,7 @@ items are done (and say where); the rest are in rough order of work.
 - [x] Elsewhere, tick boxes, as in Neuroglancer: **Selections** (and Volume) beside Sections in the 3-D panel, and other on/off buttons.
 - [x] Plugins panel spacing: Add no longer sits on the first plugin; even gaps throughout.
 - [x] Pop-ups: softer grey and border, rounded corners.
-- [ ] Shorter text throughout (descriptions, hints, empty states); keep Read more. *(Started: examples, plugins, filtering, volume; more to do.)*
+- [ ] Shorter text throughout (descriptions, hints, empty states); keep Read more. *(Done for examples, plugin descriptions, filtering, volume, labels, registration, sign-in and the local-data dialogs; the plugin guides and inspector hints are next.)*
 
 ### Track filtering
 - [x] "Show all objects" (no bracketed note), off by default.
@@ -28,7 +28,8 @@ items are done (and say where); the rest are in rough order of work.
   - [x] zarr-vectors (streamlines, points, skeletons, meshes): as now;
   - [x] local annotation layers (points, lines, boxes, ellipsoids);
   - [x] segmentation volumes (precomputed, zarr, e.g. MICrONS): segments present in the region;
-  - [x] precomputed annotations (read by their spatial index, in the worker); *precomputed skeletons still to do*;
+  - [x] precomputed annotations (read by their spatial index, in the worker);
+  - [ ] precomputed skeletons (per segment; filter through the segmentation's volume where there is one);
   - [x] tractograms opened from disk (virtual zarr-vectors, below).
 - [x] No "no zarr-vectors in this scene" message when other filterable data is there.
 
@@ -40,11 +41,12 @@ items are done (and say where); the rest are in rough order of work.
 - [x] Resolution histograms: every level of every layer laid out across the full width all the time; only the marker of what is loading moves.
 
 ### Virtual zarr-vectors
-- [ ] A `virtual` module in zarr-vectors-tools: a standard file read as a zarr-vectors store on demand, without converting it. *(Built in the Zarr Vectors plugin, in TypeScript, so it runs in the browser without Pyodide: `plugins/zarr-vectors/src/virtual/`; checked against zarr-vectors-py's validator and `zvtools convert`. A Python twin in zarr-vectors-tools, for `zvtools` to serve files to any Neuroglancer, is not built yet.)*
+- [x] A `virtual` module in zarr-vectors-tools: a standard file read as a zarr-vectors store on demand, without converting it. *(Two twins: TypeScript in the Zarr Vectors plugin (`plugins/zarr-vectors/src/virtual/`), which the browser runs, and Python in zarr-vectors-tools (`zarr_vectors_tools.virtual`, `zvtools virtual serve`, branch `working`); every key byte-identical between the two on every test file; valid by zarr-vectors-py's level-3 validation.)*
   - [x] `.trk` (TrackVis) first;
   - [x] `.tck` (MRtrix), `.trx`;
-  - [x] meshes: `.obj`, `.stl`, `.ply` *(GIFTI surfaces and precomputed EM meshes still to do)*;
+  - [x] meshes and surfaces: `.obj`, `.stl`, `.ply`, GIFTI, FreeSurfer *(very large meshes sit in one cell; split into cells next)*;
   - [ ] points and skeletons: `.swc`, CSV points.
+  - [ ] Python twin speed: it builds 200,000 streamlines in 17 s, the browser in 3.4 s (vectorise the binning).
 - [x] Linked to the Zarr Vectors data type: these files open only when it is on.
 
 ### Repository hygiene
