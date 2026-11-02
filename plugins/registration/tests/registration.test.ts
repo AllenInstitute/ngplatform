@@ -80,8 +80,9 @@ describe("transform files", () => {
     close(multiply4(ras, invert4(ras)), Float64Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]));
   });
 
-  it("refuses LTA files that need their volumes", () => {
-    expect(() => readLta("type = 0\n1 4 4\n1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n")).toThrow(/RAS-to-RAS/);
+  it("refuses LTA files that need their volumes and do not carry them, and types it does not read", () => {
+    expect(() => readLta("type = 0\n1 4 4\n1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n")).toThrow(/volumes' info/);
+    expect(() => readLta("type = 14\n1 4 4\n1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n")).toThrow(/type 14/);
   });
 });
 

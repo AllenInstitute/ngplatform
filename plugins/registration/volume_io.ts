@@ -1,0 +1,493 @@
+/**
+ * Writing a moved image, as Freeview's Save Volume As does: either its
+ * voxels unchanged with the new placement in its header, or resampled
+ * (nearest, trilinear or cubic) onto a grid (its own, or another image's)
+ * so the voxels themselves are moved.  Out as NIfTI-1 (sform and, where the
+ * placement is a rotation and scales, qform) or as an OME-Zarr pyramid
+ * (0.5 scale and translation when the grid lies along x, y and z; else 0.6
+ * with an affine, as this app's NIfTI stores are written).
+ *
+ * Volumes are x fastest; `voxelToRas` takes voxel indices (x, y, z) to RAS
+ * millimetres, a 4 × 4 row-major.
+ */
+import { invert4, type Mat4, multiply4 } from "./fit.js";
+
+export type VoxelType = "uint8" | "int8" | "uint16" | "int16" | "uint32" | "int32" | "float32" | "float64";
+export type TypedArray = Uint8Array | Int8Array | Uint16Array | Int16Array | Uint32Array | Int32Array | Float32Array | Float64Array;
+export type Method = "nearest" | "linear" | "cubic";
+
+export const ARRAYS = {
+  uint8: Uint8Array,
+  int8: Int8Array,
+  uint16: Uint16Array,
+  int16: Int16Array,
+  uint32: Uint32Array,
+  int32: Int32Array,
+  float32: Float32Array,
+  float64: Float64Array,
+} as const;
+
+export interface Volume {
+  data: TypedArray;
+  size: [number, number, number];
+  type: VoxelType;
+  voxelToRas: Mat4;
+}
+
+export interface Grid {
+  size: [number, number, number];
+  voxelToRas: Mat4;
+}
+
+/** Bytes (little-endian, as read) as an array of their type. */
+export function typed(type: VoxelType, bytes: Uint8Array): TypedArray {
+  const Type = ARRAYS[type];
+  const aligned = bytes.byteOffset % Type.BYTES_PER_ELEMENT === 0 ? bytes : bytes.slice();
+  return new Type(aligned.buffer as ArrayBuffer, aligned.byteOffset, aligned.byteLength / Type.BYTES_PER_ELEMENT);
+}
+
+// ------------------------------------------------------------ resampling
+
+const RANGE: Partial<Record<VoxelType, [number, number]>> = {
+  uint8: [0, 255],
+  int8: [-128, 127],
+  uint16: [0, 65535],
+  int16: [-32768, 32767],
+  uint32: [0, 4294967295],
+  int32: [-2147483648, 2147483647],
+};
+
+/** Catmull-Rom weights for a fraction t (Keys, a = -0.5): interpolating, as cubic resampling usually is. */
+function cubicWeights(t: number, w: Float64Array): void {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  w[0] = -0.5 * t3 + t2 - 0.5 * t;
+  w[1] = 1.5 * t3 - 2.5 * t2 + 1;
+  w[2] = -1.5 * t3 + 2 * t2 + 0.5 * t;
+  w[3] = 0.5 * t3 - 0.5 * t2;
+}
+
+/**
+ * `source` moved by `move` (its RAS to where it is shown, RAS) and sampled
+ * at each voxel of `grid`: out[j] = source at V⁻¹ · move⁻¹ · G · j.  Outside
+ * the source is 0.  Integer types are rounded and clamped.
+ */
+export function resample(source: Volume, grid: Grid, move: Mat4, method: Method, progress?: (done: number, total: number) => void): TypedArray {
+  const [nx, ny, nz] = source.size;
+  const [ox, oy, oz] = grid.size;
+  const a = multiply4(invert4(source.voxelToRas), multiply4(invert4(move), grid.voxelToRas));
+  const out = new ARRAYS[source.type](ox * oy * oz);
+  const range = RANGE[source.type];
+  const put = range
+    ? (i: number, v: number) => {
+        out[i] = v <= range[0] ? range[0] : v >= range[1] ? range[1] : Math.round(v);
+      }
+    : (i: number, v: number) => {
+        out[i] = v;
+      };
+  const src = source.data;
+  const sx = 1;
+  const sy = nx;
+  const sz = nx * ny;
+  const wx = new Float64Array(4);
+  const wy = new Float64Array(4);
+  const wz = new Float64Array(4);
+  for (let z = 0; z < oz; ++z) {
+    for (let y = 0; y < oy; ++y) {
+      let px = a[1] * y + a[2] * z + a[3];
+      let py = a[5] * y + a[6] * z + a[7];
+      let pz = a[9] * y + a[10] * z + a[11];
+      let at = (z * oy + y) * ox;
+      for (let x = 0; x < ox; ++x, ++at, px += a[0], py += a[4], pz += a[8]) {
+        if (method === "nearest") {
+          const i = Math.round(px);
+          const j = Math.round(py);
+          const k = Math.round(pz);
+          if (i >= 0 && j >= 0 && k >= 0 && i < nx && j < ny && k < nz) out[at] = src[i * sx + j * sy + k * sz];
+          continue;
+        }
+        if (px <= -1 || py <= -1 || pz <= -1 || px >= nx || py >= ny || pz >= nz) continue;
+        const i0 = Math.floor(px);
+        const j0 = Math.floor(py);
+        const k0 = Math.floor(pz);
+        const fx = px - i0;
+        const fy = py - j0;
+        const fz = pz - k0;
+        let v = 0;
+        if (method === "linear") {
+          for (let dk = 0; dk < 2; ++dk) {
+            const k = k0 + dk;
+            if (k < 0 || k >= nz) continue;
+            const cz = dk ? fz : 1 - fz;
+            for (let dj = 0; dj < 2; ++dj) {
+              const j = j0 + dj;
+              if (j < 0 || j >= ny) continue;
+              const cyz = cz * (dj ? fy : 1 - fy);
+              const row = j * sy + k * sz;
+              if (i0 >= 0) v += cyz * (1 - fx) * src[row + i0];
+              if (i0 + 1 < nx) v += cyz * fx * src[row + i0 + 1];
+            }
+          }
+        } else {
+          cubicWeights(fx, wx);
+          cubicWeights(fy, wy);
+          cubicWeights(fz, wz);
+          for (let dk = 0; dk < 4; ++dk) {
+            const k = k0 - 1 + dk;
+            if (k < 0 || k >= nz) continue;
+            for (let dj = 0; dj < 4; ++dj) {
+              const j = j0 - 1 + dj;
+              if (j < 0 || j >= ny) continue;
+              const w = wz[dk] * wy[dj];
+              const row = j * sy + k * sz;
+              for (let di = 0; di < 4; ++di) {
+                const i = i0 - 1 + di;
+                if (i >= 0 && i < nx) v += w * wx[di] * src[row + i];
+              }
+            }
+          }
+        }
+        put(at, v);
+      }
+    }
+    progress?.(z + 1, oz);
+  }
+  return out;
+}
+
+// ------------------------------------------------------------ NIfTI-1
+
+const NIFTI: Record<VoxelType, [number, number]> = {
+  uint8: [2, 8],
+  int16: [4, 16],
+  int32: [8, 32],
+  float32: [16, 32],
+  float64: [64, 64],
+  int8: [256, 8],
+  uint16: [512, 16],
+  uint32: [768, 32],
+};
+
+/** A voxel-to-RAS matrix as NIfTI's quaternion form, when it is a rotation times positive scales (and perhaps a flip of k). */
+export function quaternionOf(m: Mat4): { b: number; c: number; d: number; pixdim: [number, number, number]; qfac: number } | undefined {
+  const col = (k: number) => [m[k], m[4 + k], m[8 + k]];
+  const pixdim = [0, 1, 2].map((k) => Math.hypot(...col(k))) as [number, number, number];
+  if (pixdim.some((p) => !(p > 0))) return undefined;
+  const r = [0, 1, 2].map((k) => col(k).map((v) => v / pixdim[k]));
+  // Columns must be orthonormal.
+  for (let i = 0; i < 3; ++i) for (let j = i + 1; j < 3; ++j) if (Math.abs(r[i][0] * r[j][0] + r[i][1] * r[j][1] + r[i][2] * r[j][2]) > 1e-4) return undefined;
+  const det =
+    r[0][0] * (r[1][1] * r[2][2] - r[1][2] * r[2][1]) - r[1][0] * (r[0][1] * r[2][2] - r[0][2] * r[2][1]) + r[2][0] * (r[0][1] * r[1][2] - r[0][2] * r[1][1]);
+  const qfac = det < 0 ? -1 : 1;
+  if (qfac < 0) r[2] = r[2].map((v) => -v);
+  // R[row][col] = r[col][row]; nifti_mat44_to_quatern.
+  const R = (i: number, j: number) => r[j][i];
+  let a = R(0, 0) + R(1, 1) + R(2, 2) + 1;
+  let b: number;
+  let c: number;
+  let d: number;
+  if (a > 0.5) {
+    a = 0.5 * Math.sqrt(a);
+    b = (0.25 * (R(2, 1) - R(1, 2))) / a;
+    c = (0.25 * (R(0, 2) - R(2, 0))) / a;
+    d = (0.25 * (R(1, 0) - R(0, 1))) / a;
+  } else {
+    const xd = 1 + R(0, 0) - (R(1, 1) + R(2, 2));
+    const yd = 1 + R(1, 1) - (R(0, 0) + R(2, 2));
+    const zd = 1 + R(2, 2) - (R(0, 0) + R(1, 1));
+    if (xd > 1) {
+      b = 0.5 * Math.sqrt(xd);
+      c = (0.25 * (R(0, 1) + R(1, 0))) / b;
+      d = (0.25 * (R(0, 2) + R(2, 0))) / b;
+      a = (0.25 * (R(2, 1) - R(1, 2))) / b;
+    } else if (yd > 1) {
+      c = 0.5 * Math.sqrt(yd);
+      b = (0.25 * (R(0, 1) + R(1, 0))) / c;
+      d = (0.25 * (R(1, 2) + R(2, 1))) / c;
+      a = (0.25 * (R(0, 2) - R(2, 0))) / c;
+    } else {
+      d = 0.5 * Math.sqrt(zd);
+      b = (0.25 * (R(0, 2) + R(2, 0))) / d;
+      c = (0.25 * (R(1, 2) + R(2, 1))) / d;
+      a = (0.25 * (R(1, 0) - R(0, 1))) / d;
+    }
+    if (a < 0) {
+      b = -b;
+      c = -c;
+      d = -d;
+    }
+  }
+  return { b, c, d, pixdim, qfac };
+}
+
+/** The 0.5th and 99.5th percentiles of a strided sample: a display window. */
+export function displayWindow(data: TypedArray): [number, number] {
+  const step = Math.max(1, Math.floor(data.length / 200_000));
+  const sample: number[] = [];
+  for (let i = 0; i < data.length; i += step) if (Number.isFinite(data[i])) sample.push(data[i]);
+  if (sample.length === 0) return [0, 1];
+  sample.sort((x, y) => x - y);
+  const lo = sample[Math.floor(0.005 * (sample.length - 1))];
+  const hi = sample[Math.ceil(0.995 * (sample.length - 1))];
+  return hi > lo ? [lo, hi] : [sample[0], Math.max(sample[sample.length - 1], sample[0] + 1)];
+}
+
+/** A NIfTI-1 single file (.nii): the volume with `voxelToRas` as its sform (and qform where it can be one). */
+export function niftiFile(volume: Volume, options: { description?: string; label?: boolean; window?: [number, number] } = {}): Uint8Array {
+  const [code, bitpix] = NIFTI[volume.type];
+  const body = new Uint8Array(volume.data.buffer, volume.data.byteOffset, volume.data.byteLength);
+  const out = new Uint8Array(352 + body.byteLength);
+  const v = new DataView(out.buffer);
+  const m = volume.voxelToRas;
+  const q = quaternionOf(m);
+  const pixdim = q?.pixdim ?? ([0, 1, 2].map((k) => Math.hypot(m[k], m[4 + k], m[8 + k])) as [number, number, number]);
+  v.setInt32(0, 348, true);
+  [3, ...volume.size, 1, 1, 1, 1].forEach((d, k) => v.setInt16(40 + 2 * k, d, true));
+  if (options.label) v.setInt16(68, 1002, true); // NIFTI_INTENT_LABEL
+  v.setInt16(70, code, true);
+  v.setInt16(72, bitpix, true);
+  [q?.qfac ?? 1, ...pixdim, 0, 0, 0, 0].forEach((d, k) => v.setFloat32(76 + 4 * k, d, true));
+  v.setFloat32(108, 352, true); // vox_offset
+  v.setFloat32(112, 1, true); // scl_slope
+  out[123] = 2; // millimetres
+  if (options.window !== undefined) {
+    v.setFloat32(124, options.window[1], true); // cal_max
+    v.setFloat32(128, options.window[0], true); // cal_min
+  }
+  out.set(new TextEncoder().encode((options.description ?? "").slice(0, 79)), 148);
+  if (q !== undefined) {
+    v.setInt16(252, 2, true); // qform_code: aligned
+    v.setFloat32(256, q.b, true);
+    v.setFloat32(260, q.c, true);
+    v.setFloat32(264, q.d, true);
+    for (let r = 0; r < 3; ++r) v.setFloat32(268 + 4 * r, m[4 * r + 3], true);
+  }
+  v.setInt16(254, 2, true); // sform_code: aligned
+  for (let r = 0; r < 3; ++r) for (let c = 0; c < 4; ++c) v.setFloat32(280 + 16 * r + 4 * c, m[4 * r + c], true);
+  out.set([110, 43, 49, 0], 344); // "n+1"
+  out.set(body, 352);
+  return out;
+}
+
+export async function gzip(bytes: Uint8Array): Promise<Uint8Array> {
+  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+// ------------------------------------------------------------ OME-Zarr
+
+/** Half the size: the mean of each 2 × 2 × 2 block (labels: its first voxel), a level coarser; its voxels' placement too. */
+export function halve(volume: Volume, label: boolean): Volume {
+  const [nx, ny, nz] = volume.size;
+  const size = [Math.ceil(nx / 2), Math.ceil(ny / 2), Math.ceil(nz / 2)] as [number, number, number];
+  const out = new ARRAYS[volume.type](size[0] * size[1] * size[2]);
+  const src = volume.data;
+  const range = RANGE[volume.type];
+  let at = 0;
+  for (let z = 0; z < size[2]; ++z) {
+    for (let y = 0; y < size[1]; ++y) {
+      for (let x = 0; x < size[0]; ++x, ++at) {
+        if (label) {
+          out[at] = src[2 * x + nx * (2 * y + ny * 2 * z)];
+          continue;
+        }
+        let sum = 0;
+        let n = 0;
+        for (let k = 2 * z; k < Math.min(2 * z + 2, nz); ++k) {
+          for (let j = 2 * y; j < Math.min(2 * y + 2, ny); ++j) {
+            for (let i = 2 * x; i < Math.min(2 * x + 2, nx); ++i) {
+              sum += src[i + nx * (j + ny * k)];
+              n++;
+            }
+          }
+        }
+        out[at] = range ? Math.round(sum / n) : sum / n;
+      }
+    }
+  }
+  // A coarse voxel's centre is the centre of the fine voxels it covers.
+  const step = Float64Array.from([2, 0, 0, 0.5, 0, 2, 0, 0.5, 0, 0, 2, 0.5, 0, 0, 0, 1]);
+  return { data: out, size, type: volume.type, voxelToRas: multiply4(volume.voxelToRas, label ? Float64Array.from([2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1]) : step) };
+}
+
+/** Whether a voxel-to-RAS matrix scales each of x, y, z (positively) and turns nothing: OME-Zarr 0.5 can hold it. */
+export function alongAxes(m: Mat4): boolean {
+  for (let r = 0; r < 3; ++r) for (let c = 0; c < 3; ++c) if (r !== c && Math.abs(m[4 * r + c]) > 1e-9 * Math.abs(m[4 * c + c])) return false;
+  return m[0] > 0 && m[5] > 0 && m[10] > 0;
+}
+
+const CHUNK = 64;
+
+/** One array's chunks (z, y, x order, `CHUNK` a side, x fastest), gzipped; chunks all zero are left out (the fill value). */
+async function chunks(volume: Volume, path: string, files: Map<string, Uint8Array>): Promise<void> {
+  const [nx, ny, nz] = volume.size;
+  const Type = ARRAYS[volume.type];
+  const grid = [Math.ceil(nz / CHUNK), Math.ceil(ny / CHUNK), Math.ceil(nx / CHUNK)];
+  const chunk = new Type(CHUNK * CHUNK * CHUNK);
+  for (let cz = 0; cz < grid[0]; ++cz) {
+    for (let cy = 0; cy < grid[1]; ++cy) {
+      for (let cx = 0; cx < grid[2]; ++cx) {
+        chunk.fill(0);
+        let any = false;
+        for (let z = 0; z < CHUNK && cz * CHUNK + z < nz; ++z) {
+          for (let y = 0; y < CHUNK && cy * CHUNK + y < ny; ++y) {
+            const from = cx * CHUNK + nx * (cy * CHUNK + y + ny * (cz * CHUNK + z));
+            const run = Math.min(CHUNK, nx - cx * CHUNK);
+            const row = volume.data.subarray(from, from + run);
+            chunk.set(row as never, (z * CHUNK + y) * CHUNK);
+            if (!any) for (let i = 0; i < run; ++i) if (row[i] !== 0) { any = true; break; }
+          }
+        }
+        if (!any) continue;
+        files.set(`${path}/c/${cz}/${cy}/${cx}`, await gzip(new Uint8Array(chunk.buffer.slice(0))));
+      }
+    }
+  }
+}
+
+const json = (value: unknown) => new TextEncoder().encode(JSON.stringify(value, null, 1));
+
+/**
+ * An OME-Zarr image (Zarr v3) as files by path in the store: a pyramid
+ * halved down to about 64 voxels a side, chunks 64³ gzipped.
+ */
+export async function omeZarrFiles(volume: Volume, name: string, options: { label?: boolean; window?: [number, number]; description?: string } = {}): Promise<Map<string, Uint8Array>> {
+  const files = new Map<string, Uint8Array>();
+  const levels = [volume];
+  while (levels.length < 12 && Math.max(...levels[levels.length - 1].size) > CHUNK) levels.push(halve(levels[levels.length - 1], options.label === true));
+  for (let i = 0; i < levels.length; ++i) {
+    const l = levels[i];
+    files.set(`${i}/zarr.json`, json({
+      zarr_format: 3,
+      node_type: "array",
+      shape: [l.size[2], l.size[1], l.size[0]],
+      data_type: l.type,
+      chunk_grid: { name: "regular", configuration: { chunk_shape: [CHUNK, CHUNK, CHUNK] } },
+      chunk_key_encoding: { name: "default", configuration: { separator: "/" } },
+      fill_value: 0,
+      codecs: [{ name: "bytes", configuration: { endian: "little" } }, { name: "gzip", configuration: { level: 5 } }],
+      dimension_names: ["z", "y", "x"],
+      attributes: {},
+    }));
+    await chunks(l, String(i), files);
+  }
+  const space = (n: string) => ({ name: n, type: "space", unit: "millimeter" });
+  const kind = options.label ? "nearest" : "mean";
+  const omero = options.window === undefined || options.label ? {} : { omero: { channels: [{ label: name, active: true, window: { min: options.window[0], max: options.window[1], start: options.window[0], end: options.window[1] } }] } };
+  const metadata = options.description ? { metadata: { description: options.description } } : {};
+  let multiscale: unknown;
+  let version: string;
+  if (levels.every((l) => alongAxes(l.voxelToRas))) {
+    version = "0.5";
+    multiscale = {
+      name,
+      axes: ["z", "y", "x"].map(space),
+      datasets: levels.map((l, i) => ({
+        path: String(i),
+        coordinateTransformations: [
+          { type: "scale", scale: [l.voxelToRas[10], l.voxelToRas[5], l.voxelToRas[0]] },
+          { type: "translation", translation: [l.voxelToRas[11], l.voxelToRas[7], l.voxelToRas[3]] },
+        ],
+      })),
+      type: kind,
+      ...metadata,
+    };
+  } else {
+    // 0.6: each level to level 0's voxels ("array"), then an affine to RAS.
+    version = "0.6";
+    const m = volume.voxelToRas;
+    // Rows x, y, z; columns the array's axes z, y, x, then the offset.
+    const affine = [0, 1, 2].map((r) => [m[4 * r + 2], m[4 * r + 1], m[4 * r], m[4 * r + 3]]);
+    const toLevel0 = levels.map((l) => multiply4(invert4(volume.voxelToRas), l.voxelToRas));
+    multiscale = {
+      name,
+      coordinateSystems: [
+        { name: "physical", axes: ["x", "y", "z"].map(space) },
+        { name: "array", axes: ["z", "y", "x"].map((n) => ({ name: n, type: "space" })) },
+      ],
+      datasets: levels.map((_, i) => {
+        const t = toLevel0[i];
+        const scale = [t[10], t[5], t[0]];
+        return i === 0
+          ? { path: "0", coordinateTransformations: [{ type: "scale", scale: [1, 1, 1], input: "0", output: "array" }] }
+          : {
+              path: String(i),
+              coordinateTransformations: [
+                { type: "sequence", input: String(i), output: "array", transformations: [{ type: "scale", scale }, { type: "translation", translation: [t[11], t[7], t[3]] }] },
+              ],
+            };
+      }),
+      coordinateTransformations: [{ type: "affine", affine, input: "array", output: "physical" }],
+      type: kind,
+      ...metadata,
+    };
+  }
+  files.set("zarr.json", json({ zarr_format: 3, node_type: "group", attributes: { ome: { version, multiscales: [multiscale], ...omero } } }));
+  return files;
+}
+
+// ------------------------------------------------------------ zip
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; ++n) {
+    let c = n;
+    for (let k = 0; k < 8; ++k) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+export function crc32(bytes: Uint8Array): number {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; ++i) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/** Files in a zip, stored (the chunks are compressed already); for browsers that cannot write a folder. Under 4 GB. */
+export function zipFiles(files: Map<string, Uint8Array>): Blob {
+  if (files.size > 0xffff) throw new Error("too many files for a zip (over 65,535)");
+  const parts: BlobPart[] = [];
+  const central: Uint8Array[] = [];
+  let offset = 0;
+  for (const [path, data] of files) {
+    const name = new TextEncoder().encode(path);
+    const crc = crc32(data);
+    const local = new Uint8Array(30 + name.length);
+    const l = new DataView(local.buffer);
+    l.setUint32(0, 0x04034b50, true);
+    l.setUint16(4, 20, true);
+    l.setUint16(6, 0x0800, true); // UTF-8 names
+    l.setUint32(14, crc, true);
+    l.setUint32(18, data.length, true);
+    l.setUint32(22, data.length, true);
+    l.setUint16(26, name.length, true);
+    local.set(name, 30);
+    const entry = new Uint8Array(46 + name.length);
+    const e = new DataView(entry.buffer);
+    e.setUint32(0, 0x02014b50, true);
+    e.setUint16(4, 20, true);
+    e.setUint16(6, 20, true);
+    e.setUint16(8, 0x0800, true);
+    e.setUint32(16, crc, true);
+    e.setUint32(20, data.length, true);
+    e.setUint32(24, data.length, true);
+    e.setUint16(28, name.length, true);
+    e.setUint32(42, offset, true);
+    entry.set(name, 46);
+    parts.push(local, data as BlobPart);
+    central.push(entry);
+    offset += local.length + data.length;
+    if (offset > 0xffffffff) throw new Error("too large for a zip (over 4 GB)");
+  }
+  const size = central.reduce((n, c) => n + c.length, 0);
+  const end = new Uint8Array(22);
+  const d = new DataView(end.buffer);
+  d.setUint32(0, 0x06054b50, true);
+  d.setUint16(8, files.size, true);
+  d.setUint16(10, files.size, true);
+  d.setUint32(12, size, true);
+  d.setUint32(16, offset, true);
+  return new Blob([...parts, ...(central as BlobPart[]), end]);
+}
+

@@ -4,6 +4,15 @@ What has been asked for or agreed and is not built yet, newest first. Ticked
 items are done (and say where); the rest are in rough order of work.
 `STATUS.md` says what exists.
 
+## Asked for on 2026-11-02, afternoon
+- [x] Registration: Freeview's Transform Volume controls: Rotate, Translate, Scale and Flip tabs along X (L-R), Y (P-A), Z (I-S), each a slider (the layer moves as it is dragged) and a typed value; rotate about the volume's centre or the cursor; Move centre to cursor; Restore to original. Composed as Freeview's `LayerMRI::DoTransform` (flip, scale, rotate x, y, z, translate), checked against its own steps.
+- [x] Registration: save the moved image on this computer as NIfTI (`.nii.gz`, `.nii`) or OME-Zarr (into a chosen folder in Chrome and Edge, else a zip); resampled (nearest, trilinear, cubic; onto its own grid or another image's) or the voxels unchanged with the new placement in the header. Checked against FreeSurfer's `mri_vol2vol`.
+- [x] Registration: save the new affine as a FreeSurfer `.lta` (RAS to RAS with both volumes' geometry, as Freeview's Save Reg); `lta_convert` reads it. Freeview's VOX to VOX LTAs import.
+- [x] The default template: SRB 2026a (the HiP-CT template, 100 µm, MNI 2009b space) from Andrew's GCS bucket, in place of MNI152 2009a.
+- [x] Track filtering: a rename (pencil) button on each group; a new group's name is selected, ready to type over.
+- [x] README logo: black word mark (it showed white on GitHub's light theme when the computer was in dark mode).
+- [ ] Registration, next: Freeview's "Apply to all visible volumes"; saving segmentations held as uint64; levels finer than 512 MB in blocks.
+
 ## From the review of 2026-11-02
 
 ### Top bar, Open, scenes

@@ -1,6 +1,7 @@
 /**
- * The registration plugin's manifest: landmark pairs fitted to a transform
- * for a layer, and affine transform files.  Its code is ./plugin.ts.
+ * The registration plugin's manifest: moving a layer by hand (Freeview's
+ * Transform Volume), landmark pairs fitted to a transform, transform files
+ * and the moved image saved.  Its code is ./plugin.ts.
  */
 import type { Manifest } from "@ngplatform/sdk";
 
@@ -9,27 +10,31 @@ export const REGISTRATION_PANEL = "registration.panel";
 export const REGISTRATION_MANIFEST: Manifest = {
   id: "org.ngplatform.registration",
   name: "Registration",
-  version: "0.1.0",
+  version: "0.2.0",
   kind: "tool",
   enabledByDefault: false,
-  description: "Aligns a layer to the others from landmark pairs, and reads and writes transform files.",
-  guide: `Registration places a **moving** layer onto the **fixed** space the other layers are in, from pairs of landmarks: the same feature, marked once in each.
+  description: "Moves a layer onto the others by hand (as Freeview's Transform Volume) or from landmark pairs, and saves the transform or the moved image.",
+  guide: `Registration places a **moving** layer onto the **fixed** space the other layers are in: by hand, from pairs of landmarks, or from a transform file. Then save the transform, or the moved image.
 
-## Marking pairs
-- Choose the moving layer in the Registration tab.
+## By hand (as Freeview's Transform Volume)
+- Choose the moving layer, then **Rotate**, **Translate**, **Scale** or **Flip** it along X (L-R), Y (P-A) and Z (I-S): drag a slider and the layer moves with it, or type a value (any value; the sliders cover Freeview's ranges: ±180° in half degrees, the volume's size either way, scale 0.5 to 2).
+- Rotations turn about the centre of the volume or the cursor (the views' centre), chosen before turning; flips turn about the same point and scaling about the volume's centre. As in Freeview, the volume is flipped, then scaled, then turned about X, Y and Z in that order, then translated.
+- **Move centre to cursor** translates the volume's centre to the views' centre. **Restore to original** puts back the transform the layer had before registering.
+
+## Marking landmark pairs
 - Point at a feature in the fixed data and press **Alt+F**; point at the same feature in the moving layer and press **Alt+M**. Pairs match in the order they are marked. (Without a mouse over the views, the views' centre is used.)
 - Moving points are kept in the moving layer's own coordinates, so they stay on its features however it is moved.
+- **Translation** (1 pair or more), **rigid** (3), **similarity** (3: rigid and one scale) or **affine** (4, not all in a plane). Rigid and similarity never mirror (Horn's quaternion method); affine is least squares. Fits are in millimetres, whatever the voxel sizes. A fit replaces any moving by hand, which then starts again from it.
+- With **Live** on, the layer moves with every pair; otherwise **Apply**. Each pair's error (the distance, after the fit, between its moving point and its fixed point) and the RMS and largest show how good the fit is; switch a pair off to leave it out.
 
-## Fitting
-- **Translation** (1 pair or more), **rigid** (3), **similarity** (3: rigid and one scale) or **affine** (4, not all in a plane). Rigid and similarity never mirror (Horn's quaternion method); affine is least squares. Fits are in millimetres, whatever the voxel sizes.
-- With **Live** on, the layer moves with every pair; otherwise **Apply**. **Reset** puts back the transform it had before.
-- Each pair's error (the distance, after the fit, between its moving point and its fixed point) and the RMS and largest show how good the fit is; switch a pair off to leave it out. Lines in the views join each moving point to its fixed point.
+## Saving
+- **Save transform**: the layer's new placement relative to its file's, moving to fixed RAS millimetres: FreeSurfer LTA (RAS to RAS, with both volumes' geometry, as Freeview's Save Reg, so \`mri_vol2vol --lta\` and \`lta_convert\` take it alone; the fixed volume is the grid chosen under Image, else the moving one), ITK / ANTs (\`.txt\`) or a plain 4 × 4. **Import…** reads any of these (and Freeview's VOX to VOX LTAs).
+- **Save image…**: the moving image as NIfTI (\`.nii.gz\`, \`.nii\`) or OME-Zarr, on this computer. **Resampled** moves the voxels into a grid (its own, or another image's: onto the grid of), nearest neighbour, trilinear or cubic, as Freeview's Save Volume As; labels are always nearest neighbour. **Unchanged** keeps the voxels and writes the new placement in the header (OME-Zarr 0.6's affine when it turns). The finest level that fits in 512 MB is read.
+- OME-Zarr is written into a folder you choose (in Chrome and Edge), else downloaded as a zip.
 
-## Transform files
-Import or export the moving layer's placement as moving-to-fixed RAS millimetres: plain 4 × 4 text, ITK / ANTs (\`.txt\`, converted from LPS and from fixed-to-moving) or FreeSurfer LTA (RAS to RAS). Exports are relative to the layer's own placement (as its file gives it), as ngtools writes them.
-
-After the landmark registration of Neuroglancer by Forrest Collman and Sean Martin, and [ngtools](https://github.com/neuroscales/ngtools) by Yaël Balbastre.`,
+After Freeview's Transform Volume tool (FreeSurfer), the landmark registration of Neuroglancer by Forrest Collman and Sean Martin, and [ngtools](https://github.com/neuroscales/ngtools) by Yaël Balbastre.`,
   links: [
+    { title: "Freeview's Transform Volume (FreeSurfer)", url: "https://surfer.nmr.mgh.harvard.edu/fswiki/FreeviewGuide/FreeviewTools/TransformVolume" },
     { title: "ngtools (neuroscales)", url: "https://github.com/neuroscales/ngtools" },
     { title: "Neuroglancer: linear registration example (pull request 883)", url: "https://github.com/google/neuroglancer/pull/883" },
   ],
