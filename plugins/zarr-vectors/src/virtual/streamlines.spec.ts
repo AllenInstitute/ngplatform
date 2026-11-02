@@ -145,4 +145,36 @@ describe("virtual streamline store", () => {
     const curves = await new ObjectReader(a as never, zv.description, zv.levels[1]).readCurves([0n, 1n, 10n, 24990n], signal);
     expect(curves.ids).toEqual([0n, 10n, 24990n]);
   });
+
+  it("gives a large tractogram nested levels, one streamline in 10, 100, 1000, while each keeps about 2,000", async () => {
+    const n = 2_500_000;
+    const store = await StreamlineStore.build({
+      scalarNames: [],
+      propertyNames: [],
+      expectedCount: n,
+      extent: 100,
+      name: "large",
+      async read(onBatch: (b: TrkBatch) => void) {
+        const per = 250_000;
+        for (let start = 0; start < n; start += per) {
+          const points = new Float32Array(per * 6);
+          const offsets = new Uint32Array(per + 1);
+          for (let i = 0; i < per; ++i) {
+            const x = ((start + i) % 100) - 50;
+            points.set([x, 0, 0, x + 0.5, 30, 0], 6 * i);
+            offsets[i + 1] = 2 * (i + 1);
+          }
+          onBatch({ points, offsets, scalars: new Float32Array(0), properties: new Float32Array(0) });
+        }
+        return n;
+      },
+    });
+    const a = access(store);
+    const zv = await openZarrVectorsStore(a as never, []);
+    // 2.5 M, 250 k, 25 k, 2.5 k: one more (250) would hold too few.
+    expect(zv.levels.length).toBe(4);
+    expect(zv.levels.map((l) => l.vertexCount)).toEqual([2 * n, 2 * (n / 10), 2 * (n / 100), 2 * (n / 1000)]);
+    const curves = await new ObjectReader(a as never, zv.description, zv.levels[3]).readCurves([0n, 10n, 1000n, 2_499_000n], signal);
+    expect(curves.ids).toEqual([0n, 1000n, 2_499_000n]);
+  }, 60_000);
 });

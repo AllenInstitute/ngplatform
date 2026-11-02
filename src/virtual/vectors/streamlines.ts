@@ -12,8 +12,10 @@
  *   (one per run of vertices in a cell, in object then walk order; boundary
  *   vertices are not repeated), with a bridge record (links/0/<offset>,
  *   the "directed" policy) for each crossing;
- * - level 1, for large tractograms: one streamline in ten, every fourth
- *   point (and the last), in cells twice as large, keeping level 0's ids;
+ * - levels 1 to 4, for large tractograms: one streamline in 10, 100, 1000
+ *   … (each a subset of the one before) while a level keeps about 2,000 or
+ *   more, every 4th, 8th, 16th … point (and the last), in cells 2, 4, 8 …
+ *   times as large, keeping level 0's ids;
  * - objects: a manifest per streamline (its fragments in walk order),
  *   identity ids, and per-streamline columns (length, points, the file's
  *   properties); per-point values as vertex attributes.
@@ -333,7 +335,15 @@ export class StreamlineStore {
     const nValues = input.scalarNames.length;
     const nProperties = input.propertyNames.length;
     const levels = [new Level("0", chunk, input.scalarNames, () => true, 1)];
-    if (input.expectedCount > 20_000) levels.push(new Level("1", 2 * chunk, [], (o) => o % 10 === 0, 4));
+    // Coarser levels for large tractograms, each one streamline in ten of the
+    // last (so each is a subset of the one before), in cells twice as large,
+    // with fewer points each, while a level still holds a couple of thousand.
+    if (input.expectedCount > 20_000) {
+      for (let k = 1, every = 10; k <= 4 && input.expectedCount / every >= 2_000; ++k, every *= 10) {
+        const keepEvery = every;
+        levels.push(new Level(String(k), 2 ** k * chunk, [], (o) => o % keepEvery === 0, 2 ** (k + 1)));
+      }
+    }
     const length = new Grow(f32);
     const points = new Grow(f32);
     const properties = input.propertyNames.map(() => new Grow(f32));
@@ -435,7 +445,7 @@ export class StreamlineStore {
                     chunk_shape: [level.chunk, level.chunk, level.chunk],
                     object_sparsity: level.present / Math.max(1, this.count),
                     coarsening_method: "subsample",
-                    parent_level: 0,
+                    parent_level: Number(level.path) - 1,
                     preserves_object_ids: true,
                     inherited_num_objects: this.count,
                   }),
