@@ -712,6 +712,15 @@ export class Shell {
       add({ id: `view.panels.${id}`, title: `Views: ${title}`, group: "View", run: () => engine.setPanelConvention(id) });
     }
     add({
+      id: "view.momentum",
+      title: "3-D view: keep turning after a drag (momentum) on or off",
+      group: "View",
+      run: () => {
+        engine.momentum = !engine.momentum;
+        toast(engine.momentum ? "The 3-D view keeps turning after a drag." : "The 3-D view stops when you let go.");
+      },
+    });
+    add({
       id: "view.panelConvention",
       title: "Which way up the views are…",
       group: "View",

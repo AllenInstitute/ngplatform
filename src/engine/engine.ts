@@ -33,6 +33,7 @@ import {
   ViewerSettingsPanel,
 } from "./neuroglancer.js";
 import { looksAnatomical, type PanelConvention, panelRotations } from "./anatomical.js";
+import { addMomentum } from "./momentum.js";
 import { mountInspector } from "./inspector/index.js";
 
 export type Json = Record<string, unknown>;
@@ -230,6 +231,15 @@ function layerError(managed: ManagedUserLayer): string | undefined {
 }
 
 const PANEL_CONVENTION_KEY = "ngplatform.panelConvention";
+const MOMENTUM_KEY = "ngplatform.momentum";
+
+function readMomentum(): boolean {
+  try {
+    return localStorage.getItem(MOMENTUM_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
 
 function readPanelPreference(): PanelConvention | "auto" {
   try {
@@ -274,6 +284,7 @@ export class Engine {
       showPanelBorders: true,
     });
     this.viewer.coordinateSpace.changed.add(() => this.applyPanelConvention());
+    addMomentum(host, this.viewer.perspectiveNavigationState.pose.orientation, () => this.momentum);
     const bindings = this.viewer.inputEventBindings;
     bindings.global.addParent(viewKeyBindings(), Number.NEGATIVE_INFINITY);
     bindings.sliceView.addParent(getDefaultSliceViewPanelBindings(), Number.NEGATIVE_INFINITY);
@@ -600,6 +611,22 @@ export class Engine {
   }
 
   private panelPreference: PanelConvention | "auto" = readPanelPreference();
+
+  /** Whether the 3-D view keeps turning after a drag (see momentum.ts); remembered in the browser. */
+  get momentum(): boolean {
+    return this.momentumOn;
+  }
+
+  set momentum(on: boolean) {
+    this.momentumOn = on;
+    try {
+      localStorage.setItem(MOMENTUM_KEY, on ? "on" : "off");
+    } catch {
+      // Not remembered; it still applies now.
+    }
+  }
+
+  private momentumOn = readMomentum();
   private appliedConvention: PanelConvention = "neuroglancer";
 
   private applyPanelConvention(): void {
