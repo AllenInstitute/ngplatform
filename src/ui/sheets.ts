@@ -134,7 +134,7 @@ export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
               { class: "row-actions open-device" },
               h("button", { class: "btn primary", type: "button", onclick: fromDevice(false) }, icon("open"), "Open from device…"),
               h("button", { class: "btn outline", type: "button", onclick: fromDevice(true) }, "Folder…"),
-              h("span", { class: "detected" }, LOCAL_FORMATS + "; read in place, not uploaded."),
+              h("span", { class: "note-inline" }, LOCAL_FORMATS + "; read in place, not uploaded."),
             )]
           : []),
         input,

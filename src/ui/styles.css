@@ -669,6 +669,7 @@ textarea.ins-grow { display: block; width: 100%; box-sizing: border-box; resize:
 .sheet-body { padding: 12px 16px 16px; overflow: auto; display: grid; gap: 12px; }
 .sheet-foot { display: flex; gap: 8px; justify-content: flex-end; align-items: center; padding: 10px 16px; border-top: 1px solid var(--line); }
 .sheet-foot .detected { margin-right: auto; color: var(--muted); font-size: 12px; }
+.note-inline { color: var(--muted); font-size: 12px; align-self: center; }
 .sheet-foot .detected.bad { color: var(--err); }
 
 textarea.state-input {
