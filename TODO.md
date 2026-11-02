@@ -32,6 +32,7 @@ items are done (and say where); the rest are in rough order of work.
   - [ ] precomputed skeletons (per segment; filter through the segmentation's volume where there is one);
   - [x] tractograms opened from disk (virtual zarr-vectors, below).
 - [x] No "no zarr-vectors in this scene" message when other filterable data is there.
+- [x] Groups belong to the dataset they filter: a scene with other data no longer lists (or counts against) another dataset's groups. Save .trk only for streamlines.
 
 ### Volume rendering
 - [x] The Volume switch does nothing on the EM image-only examples: make it draw them.
@@ -45,7 +46,7 @@ items are done (and say where); the rest are in rough order of work.
   - [x] `.trk` (TrackVis) first;
   - [x] `.tck` (MRtrix), `.trx`;
   - [x] meshes and surfaces: `.obj`, `.stl`, `.ply`, GIFTI, FreeSurfer *(very large meshes sit in one cell; split into cells next)*;
-  - [ ] points and skeletons: `.swc`, CSV points.
+  - [x] points and skeletons: `.swc` (one object per tree), point tables `.csv`/`.tsv`/`.xyz` (each point an object up to 250,000, so they filter) *(one cell; Python twin byte-identical)*.
   - [x] Python twin speed: 200,000 streamlines in 5.9 s (was 17 s; the browser takes 3.4 s).
 - [x] Linked to the Zarr Vectors data type: these files open only when it is on.
 
@@ -63,7 +64,9 @@ items are done (and say where); the rest are in rough order of work.
 - [ ] Run the browser smoke test on a machine with a GPU (pixel checks).
 - [ ] External plugins from a URL, with a consent dialog.
 - [ ] Track filtering, next: endpoint modes (either or both ends in a region), disk regions with an angle limit, mask regions (a painted or thresholded volume), statistics per group with CSV, density maps exported as NIfTI.
-- [ ] Virtual Zarr, next: TIFF stacks; `.nii.gz` kept decompressed between visits (OPFS); `.hdr`/`.img` pairs; RGB.
+- [x] Virtual Zarr: TIFF stacks (TIFF/BigTIFF, strips or tiles, LZW/deflate/PackBits, OME and ImageJ hyperstacks and pixel sizes).
+- [x] A new scene fits its first dataset (centre and zoom, in the data's own units), and image layers take their contrast from the source's OME window (the virtual stores now write one).
+- [ ] Virtual Zarr, next: `.nii.gz` kept decompressed between visits (OPFS); `.hdr`/`.img` pairs; RGB (NIfTI and TIFF); TIFF floating-point predictor.
 - [ ] `memory://` layers (gate G3): data made in the page (Python, a filter result) shown as a layer.
 - [ ] zarr-vectors-tools Z1: `zvtools index`, filter-ready columns (length, bounding box, endpoints, fragment owner), so a region reads only the fragments near it.
 
