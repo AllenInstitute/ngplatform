@@ -53,6 +53,10 @@ export interface EngineLike {
   moveLayer(name: string, index: number): void;
   selectedLayer(): string | undefined;
   selectLayer(name: string | undefined): void;
+  /** Fits the view to the data once a layer has loaded (the first in an empty scene). */
+  fitWhenLoaded?(name: string): void;
+  /** Takes an image layer's contrast from its source's channel metadata once loaded. */
+  contrastWhenLoaded?(name: string): void;
 }
 
 export interface StoreOptions {
@@ -323,8 +327,12 @@ export class WorkspaceStore {
   showDataset(id: string, overrides: Json = {}): string | undefined {
     const dataset = this.dataset(id);
     if (dataset === undefined) return undefined;
-    const spec = { ...layerForDataset(dataset, this.ng()), ...overrides };
+    const ng = this.ng();
+    const spec = { ...layerForDataset(dataset, ng), ...overrides };
     const name = this.engine.addLayer(spec, { select: true });
+    // The first data in a scene sets its coordinate space; the view then fits it.
+    if (layersOf(ng).length === 0) this.engine.fitWhenLoaded?.(name);
+    this.engine.contrastWhenLoaded?.(name);
     this.settle();
     this.options.log(`Added “${dataset.name}” to the scene.`, "ok");
     return name;

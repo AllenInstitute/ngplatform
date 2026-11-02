@@ -9,6 +9,7 @@
 
 /** Files read as virtual Zarr, by name: NIfTI images. */
 export const VIRTUAL_FILE = /\.nii(\.gz)?$/i;
+export const TIFF_FILE = /\.tiff?$/i;
 
 export interface VirtualStore {
   /** The bytes of `key`, or undefined when the store has no such key. */

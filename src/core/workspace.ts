@@ -253,10 +253,12 @@ export function activeScene(p: PlatformState): SceneRecord {
   return p.scenes.find((s) => s.id === p.activeScene) ?? p.scenes[0];
 }
 
-/** The parts of a scene a new, empty scene inherits: the coordinate space and the layout. */
+/** The parts of a scene a new, empty scene inherits: the layout. */
 export function emptySceneFrom(ng: Json): Json {
   const out: Json = {};
-  for (const key of ["dimensions", "layout"]) if (ng[key] !== undefined) out[key] = ng[key];
+  // Not the dimensions: the first data added sets them, in its own units (an
+  // EM volume in nanometres, a TIFF stack in micrometres), and the zoom fits it.
+  if (ng.layout !== undefined) out.layout = ng.layout;
   return out;
 }
 

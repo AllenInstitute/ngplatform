@@ -215,6 +215,14 @@ function typed(type: DType, bytes: Uint8Array): Typed {
   return new ARRAYS[type](bytes.buffer as ArrayBuffer, bytes.byteOffset, bytes.byteLength / BYTES[type]) as Typed;
 }
 
+/** A display window as OME's omero metadata writes it. */
+export interface DisplayWindow {
+  min: number;
+  max: number;
+  start: number;
+  end: number;
+}
+
 const LABEL_INTENTS = new Set([1002, 1003]);
 const CHUNK = 64;
 const CHUNK_2D = 256;
@@ -266,6 +274,7 @@ export class NiftiStore implements VirtualStore {
   /** Coarser levels' chunks (each made from many finer ones); level 0's are cut again from the bands. */
   private readonly chunks = new Lru<Uint8Array>(96 << 20);
   private readonly bands = new Lru<Uint8Array>(64 << 20);
+  private windows: Promise<DisplayWindow[] | undefined> | undefined;
 
   constructor(
     readonly header: NiftiHeader,
@@ -359,7 +368,50 @@ export class NiftiStore implements VirtualStore {
     };
   }
 
-  private group(): unknown {
+  /**
+   * Each volume's display window (OME's omero window, which Neuroglancer
+   * takes for the contrast): the 0.5th to 99.5th percentile of its middle
+   * plane, and the plane's range.  None for label images.
+   */
+  displayWindows(): Promise<DisplayWindow[] | undefined> {
+    return (this.windows ??= this.label ? Promise.resolve(undefined) : this.sampleWindows().catch(() => undefined));
+  }
+
+  private async sampleWindows(): Promise<DisplayWindow[] | undefined> {
+    const source = await this.data();
+    const [nx, ny, nz] = this.shape;
+    const size = BYTES[this.inType];
+    const plane = nx * ny * size;
+    const volumes = this.extra?.name === "c" ? this.extra.size : 1;
+    const { slope, inter } = this.scale ?? { slope: 1, inter: 0 };
+    const out: DisplayWindow[] = [];
+    for (let v = 0; v < volumes; ++v) {
+      const at = this.header.voxOffset + (v * nz + Math.floor(nz / 2)) * plane;
+      const bytes = (await source.read(at, at + plane)).slice();
+      if (bytes.byteLength < plane) return undefined;
+      if (!this.header.littleEndian && size > 1) swapBytes(bytes, size);
+      const values = typed(this.inType, bytes);
+      const n = nx * ny;
+      const step = Math.max(1, Math.floor(n / 65536));
+      const sample: number[] = [];
+      for (let i = 0; i < n; i += step) {
+        const x = Number(values[i]) * slope + inter;
+        if (Number.isFinite(x)) sample.push(x);
+      }
+      if (sample.length === 0) return undefined;
+      sample.sort((a, b) => a - b);
+      const quantile = (p: number) => sample[Math.round(p * (sample.length - 1))];
+      const min = sample[0];
+      const max = sample[sample.length - 1];
+      let start = quantile(0.005);
+      let end = quantile(0.995);
+      if (!(end > start)) [start, end] = max > min ? [min, max] : [min, min + 1];
+      out.push({ min, max: Math.max(max, end), start, end });
+    }
+    return out;
+  }
+
+  private group(windows?: DisplayWindow[]): unknown {
     const h = this.header;
     const unit = spatialUnit(h);
     const axis = (name: string, unit?: string) => {
@@ -392,6 +444,13 @@ export class NiftiStore implements VirtualStore {
               metadata: { description: h.description || `${this.name}, read from its NIfTI file` },
             },
           ],
+          ...(windows === undefined
+            ? {}
+            : {
+                omero: {
+                  channels: windows.map((window, c) => ({ label: windows.length > 1 ? `${this.name} ${c}` : this.name, active: true, window })),
+                },
+              }),
         },
         nifti: {
           version: h.version,
@@ -434,7 +493,7 @@ export class NiftiStore implements VirtualStore {
   }
 
   async get(key: string): Promise<Uint8Array | undefined> {
-    if (key === "zarr.json") return jsonBytes(this.group());
+    if (key === "zarr.json") return jsonBytes(this.group(await this.displayWindows()));
     const meta = /^(\d+)\/zarr\.json$/.exec(key);
     if (meta !== null) {
       const index = Number(meta[1]);

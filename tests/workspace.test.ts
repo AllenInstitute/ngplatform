@@ -108,7 +108,7 @@ describe("scenes", () => {
   it("adds an empty scene that keeps the space and layout, and a copy that keeps everything", () => {
     const p0 = emptyPlatform(ids);
     const empty = addScene(p0, sceneA, {}, ids);
-    expect(empty.ng).toEqual({ dimensions: { x: [1, "m"] }, layout: "xy" });
+    expect(empty.ng).toEqual({ layout: "xy" });
     expect(empty.platform.scenes.map((s) => s.name)).toEqual(["Scene 1", "Scene 2"]);
     expect(empty.platform.activeScene).toBe(empty.id);
     // The scene left behind carries its state.

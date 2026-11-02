@@ -18,6 +18,7 @@ import {
   getDefaultPerspectivePanelBindings,
   getDefaultSliceViewPanelBindings,
   getStatusMessageContainers,
+  ImageUserLayer,
   InputEventBindingHelpDialog,
   initializeLayerFromSpecShowErrorStatus,
   makeMinimalViewer,
@@ -457,6 +458,77 @@ export class Engine {
     const v = this.viewer;
     if (crossSection !== undefined && crossSection > 0) v.crossSectionScale.value = crossSection;
     if (projection !== undefined && projection > 0) v.projectionScale.value = projection;
+  }
+
+  /**
+   * Centres the view on the data and zooms the sections and the 3D view to
+   * show all of it.
+   */
+  fitToData(): void {
+    const v = this.viewer;
+    const space = v.coordinateSpace.value;
+    if (!space.valid || space.rank === 0) return;
+    v.position.reset();
+    v.position.snapToVoxel();
+    v.projectionScale.reset();
+    v.projectionScale.handleCoordinateSpaceChanged();
+    // The largest extent across the displayed axes, in canonical voxels (the zoom's unit).
+    const { canonicalVoxelFactors, displayDimensionIndices } = v.navigationState.displayDimensionRenderInfo.value;
+    const { lowerBounds, upperBounds } = space.bounds;
+    let extent = 0;
+    canonicalVoxelFactors.forEach((factor, i) => {
+      const dim = displayDimensionIndices[i];
+      if (dim !== -1) extent = Math.max(extent, (upperBounds[dim] - lowerBounds[dim]) * factor);
+    });
+    const panel = this.host.parentElement?.querySelector<HTMLElement>(".neuroglancer-rendered-data-panel");
+    const pixels = Math.max(160, Math.min(panel?.clientWidth ?? 400, panel?.clientHeight ?? 400));
+    const scale = (extent * 1.1) / pixels;
+    if (Number.isFinite(scale) && scale > 0) v.crossSectionScale.value = scale;
+  }
+
+  /** Fits the view to the data (fitToData) once layer `name` has loaded. */
+  fitWhenLoaded(name: string): void {
+    this.whenLoaded(name, () => this.viewer.coordinateSpace.value.valid, () => this.fitToData());
+  }
+
+  /**
+   * Sets an image layer's contrast from its source's channel metadata (OME's
+   * omero window) once it has loaded, unless its shader or contrast is set.
+   */
+  contrastWhenLoaded(name: string): void {
+    this.whenLoaded(name, () => true, () => {
+      const layer = this.managed(name)?.layer;
+      if (!(layer instanceof ImageUserLayer)) return;
+      const spec = layer.toJSON() as Json;
+      const controls = (spec.shaderControls ?? {}) as Json;
+      if (spec.shader !== undefined || controls.normalized !== undefined) return;
+      const load = layer.dataSources[0]?.loadState;
+      const channel = load !== undefined && load.error === undefined ? load.dataSource.channelMetadata?.channels?.[0] : undefined;
+      if (channel?.range === undefined) return;
+      layer.shaderControlState.restoreState({ ...controls, normalized: { range: Array.from(channel.range), ...(channel.window ? { window: Array.from(channel.window) } : {}) } });
+    });
+  }
+
+  /** Runs `run` once layer `name` is ready and `also` holds, if within `timeout` ms. */
+  private whenLoaded(name: string, also: () => boolean, run: () => void, timeout = 120_000): void {
+    const v = this.viewer;
+    const offs: Disposer[] = [];
+    let done = false;
+    const finish = () => {
+      done = true;
+      offs.forEach((off) => off());
+    };
+    const check = () => {
+      if (done) return;
+      const managed = this.managed(name);
+      if (managed === undefined) return finish();
+      if (managed.isReady() !== true || !also()) return;
+      finish();
+      run();
+    };
+    const timer = setTimeout(finish, timeout);
+    offs.push(v.layerManager.readyStateChanged.add(check), v.layerManager.layersChanged.add(check), v.coordinateSpace.changed.add(check), () => clearTimeout(timer));
+    check();
   }
 
   resetOrientation(): void {

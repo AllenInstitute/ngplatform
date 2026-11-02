@@ -18,7 +18,7 @@
  */
 
 import type { VirtualFormat } from "../sdk/types.js";
-import { listingHtml, VIRTUAL_FILE } from "./virtual_zarr/store.js";
+import { listingHtml, TIFF_FILE, VIRTUAL_FILE } from "./virtual_zarr/store.js";
 import type { VirtualRequest } from "../sdk/virtual.js";
 
 /** NIfTI, read as OME-Zarr by the platform's own worker. */
@@ -29,6 +29,13 @@ export const NIFTI_FORMAT: VirtualFormat = {
   kind: "image",
   source: (url) => `zarr3://${url}/`,
   worker: () => new Worker(new URL("./virtual_zarr/worker.ts", import.meta.url), { type: "module", name: "virtual-zarr" }),
+};
+
+export const TIFF_FORMAT: VirtualFormat = {
+  ...NIFTI_FORMAT,
+  pattern: TIFF_FILE,
+  extensions: [".tif", ".tiff"],
+  format: "TIFF stack",
 };
 
 type Handle = FileSystemFileHandle | FileSystemDirectoryHandle;
@@ -107,7 +114,7 @@ export class LocalData {
   readonly base: string;
   private worker: Promise<ServiceWorker | undefined> | undefined;
   /** Files read as virtual stores, and the workers that serve them. */
-  private formats: VirtualFormat[] = [NIFTI_FORMAT];
+  private formats: VirtualFormat[] = [NIFTI_FORMAT, TIFF_FORMAT];
   private readonly virtualWorkers = new Map<VirtualFormat, Worker>();
 
   constructor(base = new URL(".", location.href).href) {

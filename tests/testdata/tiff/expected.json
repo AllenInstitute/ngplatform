@@ -1,0 +1,122 @@
+{
+ "strips_u16.tif": {
+  "dim": [
+   17,
+   13,
+   4
+  ],
+  "size": [
+   1.0,
+   1.0,
+   1.0
+  ],
+  "sha256": "a0591ce7eef983d071f7836eb8725f8d2d4fda0c673a7f325281d7f4d58f58cd"
+ },
+ "lzw_predictor_be.tif": {
+  "dim": [
+   17,
+   13,
+   4
+  ],
+  "size": [
+   1.0,
+   1.0,
+   1.0
+  ],
+  "sha256": "a0591ce7eef983d071f7836eb8725f8d2d4fda0c673a7f325281d7f4d58f58cd"
+ },
+ "lzw_random_u8.tif": {
+  "dim": [
+   80,
+   96,
+   2
+  ],
+  "size": [
+   1.0,
+   1.0,
+   1.0
+  ],
+  "sha256": "3efb8e95bb2fab595c3a423a3ca441c0eee591965e217b4a9a39e988bc6cbc4c"
+ },
+ "tiles_deflate_u8.tif": {
+  "dim": [
+   50,
+   40,
+   3
+  ],
+  "size": [
+   1.0,
+   1.0,
+   1.0
+  ],
+  "sha256": "aa4f182336e966a27ff5740573af2733480d1dfc3edbd6d1cdb755e0a7873144"
+ },
+ "packbits_i8.tif": {
+  "dim": [
+   11,
+   9,
+   2
+  ],
+  "size": [
+   1.0,
+   1.0,
+   1.0
+  ],
+  "sha256": "a8a2a3f9cb2abe363c31bf81c021b560968e948f3f662bff816fd121f0fa8204"
+ },
+ "bigtiff_f32.tif": {
+  "dim": [
+   6,
+   7,
+   3
+  ],
+  "size": [
+   1.0,
+   1.0,
+   1.0
+  ],
+  "sha256": "228c27137d149d08d67080e6e20e552cd563cf8d501d09b1049a5829f966e01c"
+ },
+ "imagej_channels.tif": {
+  "dim": [
+   12,
+   10,
+   3,
+   1,
+   2
+  ],
+  "size": [
+   0.25,
+   0.25,
+   2.0
+  ],
+  "sha256": "d0e4d59f1883c5f56cb2d7882252483b2605248ec0f7a021cdf563cf84726a43"
+ },
+ "ome_time.ome.tif": {
+  "dim": [
+   9,
+   8,
+   4,
+   3
+  ],
+  "size": [
+   0.5,
+   0.5,
+   1.5
+  ],
+  "sha256": "fc527a79b0ae3d5cd5dfbd82a0c81603ed4eaa88d8418aa7753ea5e8a2b63b4a"
+ },
+ "with_thumbnail.tif": {
+  "dim": [
+   14,
+   12,
+   2
+  ],
+  "size": [
+   1.0,
+   1.0,
+   1.0
+  ],
+  "sha256": "46cff7a77e2c494c3bb1027e81a45e88a06c7f61eee2ba7cc9fd3c2a000d3b5f"
+ }
+}
