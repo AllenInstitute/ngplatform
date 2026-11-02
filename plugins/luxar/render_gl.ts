@@ -354,14 +354,41 @@ void main() {
   gl_Position = vec4(p, 0.0, 1.0);
 }`;
 
-function compositeFragment(outputs: Outputs): string {
+/**
+ * The tone-mapping composite.  As `depth`, it writes depth instead of
+ * colour: the nearest line's depth (from `uDepth`), only where the light
+ * shown is at least `uCut`, so lines that show block what Neuroglancer draws
+ * behind them afterwards (its sections) and faint glow does not.
+ */
+function compositeFragment(outputs: Outputs, depth: boolean): string {
+  const outs = depth
+    ? [
+        `layout(location = ${outputs.color}) out vec4 outColour;`,
+        outputs.z !== undefined ? `layout(location = ${outputs.z}) out highp vec4 outZ;` : "",
+        outputs.pick !== undefined ? `layout(location = ${outputs.pick}) out highp vec4 outPick;` : "",
+      ].join("\n")
+    : `layout(location = ${outputs.color}) out vec4 outColour;`;
+  const write = depth
+    ? `
+  if (shown.a < uCut) discard;
+  float d = texelFetch(uDepth, ivec2(gl_FragCoord.xy) - uOrigin, 0).r;
+  if (d >= 1.0) discard;
+  float fragDepth = uNear ? 0.0 : d;
+  gl_FragDepth = fragDepth;
+  outColour = vec4(0.0);
+  ${outputs.z !== undefined ? "outZ = vec4(1.0 - fragDepth);" : ""}
+  ${outputs.pick !== undefined ? "outPick = vec4(0.0);" : ""}`
+    : "outColour = shown;";
   return `#version 300 es
 precision highp float;
 uniform highp sampler2D uLight;
+uniform highp sampler2D uDepth;
 uniform ivec2 uOrigin;
 uniform int uToneMap;
 uniform bool uEmission;
-layout(location = ${outputs.color}) out vec4 outColour;
+uniform float uCut;
+uniform bool uNear;
+${outs}
 
 vec3 tone(vec3 x) {
   if (uToneMap == 0) {
@@ -374,6 +401,7 @@ vec3 tone(vec3 x) {
 
 void main() {
   vec4 light = texelFetch(uLight, ivec2(gl_FragCoord.xy) - uOrigin, 0);
+  vec4 shown;
   if (uEmission) {
     // Emission and absorption, order-independent: the light emitted, each
     // part dimmed by the absorption of the rest (Luxar's self-screening
@@ -382,11 +410,13 @@ void main() {
     float through = exp(-tau);
     float screen = tau < 1e-3 ? 1.0 - 0.5 * tau : (1.0 - through) / tau;
     vec3 c = tone(light.rgb * screen);
-    outColour = vec4(c, 1.0 - through);
+    shown = vec4(c, 1.0 - through);
+    ${depth ? "shown.a = max(shown.a, max(c.r, max(c.g, c.b)));" : ""}
   } else {
     vec3 c = tone(light.rgb);
-    outColour = vec4(c, max(c.r, max(c.g, c.b)));
+    shown = vec4(c, max(c.r, max(c.g, c.b)));
   }
+  ${write}
 }`;
 }
 
@@ -523,13 +553,25 @@ export class Renderer {
   }
 
   /** Tone maps the light in `texture` onto the bound target (the caller sets blending). */
-  composite(texture: WebGLTexture, outputs: Outputs, options: { toneMap: number; emission: boolean; origin: [number, number] }): void {
+  composite(
+    texture: WebGLTexture,
+    outputs: Outputs,
+    options: { toneMap: number; emission: boolean; origin: [number, number]; depth?: { texture: WebGLTexture; cut: number; near: boolean } },
+  ): void {
     const { gl } = this;
-    const p = this.compile(`composite|${outputs.color}`, COMPOSITE_VS, compositeFragment(outputs));
+    const depth = options.depth;
+    const p = this.compile(`composite|${depth ? "depth" : "colour"}|${outputs.color},${outputs.z},${outputs.pick}`, COMPOSITE_VS, compositeFragment(outputs, depth !== undefined));
     gl.useProgram(p.program);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.uniform1i(this.uniform(p, "uLight"), 0);
+    if (depth) {
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, depth.texture);
+      gl.uniform1i(this.uniform(p, "uDepth"), 1);
+      gl.uniform1f(this.uniform(p, "uCut"), depth.cut);
+      gl.uniform1i(this.uniform(p, "uNear"), depth.near ? 1 : 0);
+    }
     gl.uniform2i(this.uniform(p, "uOrigin"), options.origin[0], options.origin[1]);
     gl.uniform1i(this.uniform(p, "uToneMap"), options.toneMap);
     gl.uniform1i(this.uniform(p, "uEmission"), options.emission ? 1 : 0);
@@ -537,6 +579,10 @@ export class Renderer {
     gl.bindVertexArray(this.emptyVao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindVertexArray(null);
+    if (depth) {
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.activeTexture(gl.TEXTURE0);
+    }
     gl.bindTexture(gl.TEXTURE_2D, null);
   }
 
@@ -594,6 +640,47 @@ export class LightTarget {
     if (this.texture) gl.deleteTexture(this.texture);
     this.framebuffer = this.texture = undefined;
     this.depth = null;
+    this.size = [0, 0];
+  }
+}
+
+/** A depth texture (no colour) for the nearest line at each pixel. */
+export class DepthTarget {
+  framebuffer: WebGLFramebuffer | undefined;
+  texture: WebGLTexture | undefined;
+  private size: [number, number] = [0, 0];
+
+  constructor(private readonly gl: WebGL2RenderingContext) {}
+
+  /** Binds it at this size, cleared to the far plane; false when it cannot be made complete. */
+  bind(width: number, height: number): boolean {
+    const { gl } = this;
+    if (this.framebuffer === undefined || this.size[0] !== width || this.size[1] !== height) {
+      this.release();
+      this.texture = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, this.texture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, width, height, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      this.framebuffer = gl.createFramebuffer()!;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, this.texture, 0);
+      this.size = [width, height];
+    } else gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffer);
+    gl.drawBuffers([gl.NONE]);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) return false;
+    gl.depthMask(true);
+    gl.clearDepth(1);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    return true;
+  }
+
+  release(): void {
+    const { gl } = this;
+    if (this.framebuffer) gl.deleteFramebuffer(this.framebuffer);
+    if (this.texture) gl.deleteTexture(this.texture);
+    this.framebuffer = this.texture = undefined;
     this.size = [0, 0];
   }
 }

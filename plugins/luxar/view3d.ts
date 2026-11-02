@@ -13,7 +13,7 @@
 import type { Drawer3d, Frame3d } from "@ngplatform/sdk";
 import { GpuChunks, selectChunks, type Selection } from "./chunks.js";
 import type { LayerView } from "./layer_view.js";
-import { LightTarget, Renderer } from "./render_gl.js";
+import { DepthTarget, LightTarget, Renderer } from "./render_gl.js";
 import { apply, boxInFrustum, coverage, invertAffine, modelTo, multiply, pixelsPerUnit } from "./view_math.js";
 
 /** GPU memory for one layer's chunks in the 3-D view. */
@@ -34,6 +34,7 @@ export class View3d implements Drawer3d {
   private renderer: Renderer | undefined;
   private chunks: GpuChunks | undefined;
   private target: LightTarget | undefined;
+  private nearest: DepthTarget | undefined;
   private broken = false;
   selection: Selection | undefined;
   /** Why it draws nothing, for the panel. */
@@ -84,6 +85,7 @@ export class View3d implements Drawer3d {
       this.dispose();
       this.renderer = new Renderer(gl);
       this.target = new LightTarget(gl, this.renderer.floatTargets);
+      this.nearest = new DepthTarget(gl);
     }
     const info = view.client.info;
     const transform = view.transform();
@@ -145,7 +147,17 @@ export class View3d implements Drawer3d {
       }
       renderer.draw(drawn, "accumulate", { color: 0 }, uniforms);
 
+      // The nearest line at each pixel, for the depth written below.
+      const nearest = this.nearest!;
+      if (nearest.bind(width, height)) {
+        gl.disable(gl.BLEND);
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthFunc(gl.LESS);
+        renderer.draw(drawn, "depth", { color: 0 }, { ...uniforms, depthCut: 0.05, depthNear: false });
+      }
+
       // Tone map it onto the view: colour only.
+      gl.enable(gl.BLEND);
       gl.bindFramebuffer(gl.FRAMEBUFFER, saved.framebuffer);
       gl.viewport(saved.viewport[0], saved.viewport[1], width, height);
       const only = (location: number | undefined) => saved.drawBuffers.map((b, i) => (i === location ? b : gl.NONE));
@@ -156,14 +168,25 @@ export class View3d implements Drawer3d {
       else gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       renderer.composite(this.target!.texture!, frame.outputs, { toneMap: view.toneIndex, emission, origin: [saved.viewport[0], saved.viewport[1]] });
 
-      // The lines' cores write depth, Neuroglancer's depth output and an empty pick id.
-      gl.drawBuffers(saved.drawBuffers.map((b, i) => (i === frame.outputs.color ? gl.NONE : b)));
-      gl.disable(gl.BLEND);
-      gl.enable(gl.DEPTH_TEST);
-      gl.depthFunc(gl.LESS);
-      gl.depthMask(true);
-      if (saved.stencil) gl.enable(gl.STENCIL_TEST);
-      renderer.draw(drawn, "depth", frame.outputs, { ...uniforms, depthCut: 0.3, depthNear: through });
+      // Where the lines show, the nearest one's depth goes into
+      // Neuroglancer's depth buffer and depth output (with an empty pick
+      // id): the sections it draws next then neither paint over lines in
+      // front of them nor show through lines behind them.  Faint glow
+      // writes none, so a section behind it is not blacked out.
+      if (nearest.texture !== undefined) {
+        gl.drawBuffers(saved.drawBuffers.map((b, i) => (i === frame.outputs.color ? gl.NONE : b)));
+        gl.disable(gl.BLEND);
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthFunc(gl.LESS);
+        gl.depthMask(true);
+        if (saved.stencil) gl.enable(gl.STENCIL_TEST);
+        renderer.composite(this.target!.texture!, frame.outputs, {
+          toneMap: view.toneIndex,
+          emission,
+          origin: [saved.viewport[0], saved.viewport[1]],
+          depth: { texture: nearest.texture, cut: 0.15, near: through },
+        });
+      }
     } finally {
       this.restore(gl, saved);
     }
@@ -172,6 +195,8 @@ export class View3d implements Drawer3d {
   dispose(): void {
     this.chunks?.clear();
     this.target?.release();
+    this.nearest?.release();
+    this.nearest = undefined;
     this.renderer?.dispose();
     this.chunks = undefined;
     this.target = undefined;

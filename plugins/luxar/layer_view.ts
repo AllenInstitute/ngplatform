@@ -36,6 +36,7 @@ export class LayerView {
     this.handle = ctx.viewer.draw3d(name, {
       draw: (frame) => this.view3d.draw(frame),
       isReady: () => this.view3d.isReady(),
+      afterSections: true,
       dispose: () => this.view3d.dispose(),
     });
     this.client.onChunk = () => {
