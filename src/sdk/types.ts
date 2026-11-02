@@ -190,8 +190,13 @@ export interface WorkspaceApi {
 export interface ViewerApi {
   /** The active scene's Neuroglancer state. */
   getState(): Json;
-  /** Edits the state; only what changed is applied, as one undo step. */
-  patchState(edit: (ng: Json) => void): void;
+  /**
+   * Edits the state; only what changed is applied, as one undo step.  With
+   * `quiet`, an edit made on the user's behalf (pointing a layer at data the
+   * plugin made, say) amends the current step instead, so undo still undoes
+   * what the user did.
+   */
+  patchState(edit: (ng: Json) => void, options?: { quiet?: boolean }): void;
   onStateChanged(callback: () => void): Disposer;
   layers(): LayerInfo[];
   layerSpec(name: string): Json | undefined;

@@ -4,7 +4,7 @@
  * the window to 0..255 in place (x fastest), so the solid is not scrambled.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { openNifti } from "../../../src/platform/virtual_zarr/nifti.js";
+import { openNifti } from "../../../src/virtual/images/nifti.js";
 import { VolumeReader } from "../volume_reader.js";
 
 /** A NIfTI-1 of int16 voxels, value(x, y, z), 1 mm, at the origin. */

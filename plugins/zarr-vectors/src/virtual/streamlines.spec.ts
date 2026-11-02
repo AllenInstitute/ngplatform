@@ -10,9 +10,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { readSegmentProperties } from "../objects.js";
 import { LevelPipeline, ObjectReader, openZarrVectorsStore, readObjectTable, ShardIndexCache } from "../reader.js";
-import { cellSize, fragmentIndex, StreamlineStore } from "./streamlines.js";
-import { openTractogram, openTrk } from "./tractograms.js";
-import type { TrkBatch } from "./trk.js";
+import { cellSize, fragmentIndex, StreamlineStore } from "../../../../src/virtual/vectors/streamlines.js";
+import { openTractogram, openTrk } from "../../../../src/virtual/vectors/tractograms.js";
+import type { TrkBatch } from "../../../../src/virtual/vectors/trk.js";
 
 const DIR = path.resolve(import.meta.dirname, "../../testdata/tractograms");
 const expected = JSON.parse(fs.readFileSync(path.join(DIR, "expected.json"), "utf8"));

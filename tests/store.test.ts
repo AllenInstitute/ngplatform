@@ -201,4 +201,22 @@ describe("undo granularity", () => {
     expect(store.undo()).toBe(true);
     expect(engine.layers()[0].visible).toBe(true);
   });
+  it("does not make a quiet edit (a plugin's, on the user's behalf) an undo step", () => {
+    const { store, engine } = setup();
+    store.open({ ng: { layers: [{ name: "a", source: IMAGE }], layout: "xy" }, app: {} }, "test");
+    store.patchState((ng) => {
+      ng.layout = "3d";
+    });
+    store.patchState(
+      (ng) => {
+        (ng.layers as Json[])[0].source = [IMAGE, "http://app/local/derived-0123abcd/g.trk/|zarr-vectors:"];
+      },
+      { quiet: true },
+    );
+    // Undo undoes the user's layout, not the plugin's source.
+    expect(store.undo()).toBe(true);
+    expect(engine.ng.layout).toBe("xy");
+    // The derived source does not make the layer a dataset of its own.
+    expect(store.datasets().length).toBe(1);
+  });
 });

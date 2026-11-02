@@ -12,7 +12,7 @@ import { activeScene, layersOf } from "../core/workspace.js";
 import { type Engine, LAYOUTS } from "../engine/engine.js";
 import { AuthRegistry, browserAuthEnvironment, middleauthProvider } from "../platform/auth.js";
 import { JobService } from "../platform/jobs.js";
-import { LocalData } from "../platform/local_data.js";
+import { LocalData } from "../virtual/local_data.js";
 import { LocalPlugins } from "../platform/local_plugins.js";
 import { PluginHost } from "../platform/plugin_host.js";
 import { ExampleRegistry, OpenHandlerRegistry } from "../platform/registries.js";

@@ -4,12 +4,12 @@
  * skeletons and point tables.  Local
  * data lists them and serves their keys from the worker.
  */
-import type { VirtualFormat } from "@ngplatform/sdk";
-import { FREESURFER_SURFACE } from "./src/virtual/mesh_files.js";
+import type { VirtualFormat } from "../../sdk/types.js";
+import { FREESURFER_SURFACE } from "./mesh_files.js";
 
 /** One worker serves every format here. */
 let shared: Worker | undefined;
-const worker = () => (shared ??= new Worker(new URL("./virtual_worker.ts", import.meta.url), { type: "module", name: "virtual zarr-vectors" }));
+const worker = () => (shared ??= new Worker(new URL("./worker.ts", import.meta.url), { type: "module", name: "virtual zarr-vectors" }));
 
 export const ZARR_VECTORS_VIRTUAL: VirtualFormat[] = [
   {

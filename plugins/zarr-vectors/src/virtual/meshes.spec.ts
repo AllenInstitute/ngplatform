@@ -10,8 +10,8 @@ import { describe, expect, it } from "vitest";
 import { meshGridOffset, meshLevels, objectMeshLayout, partitionMeshFragment } from "../mesh_lod.js";
 import { readSegmentProperties } from "../objects.js";
 import { LevelPipeline, ObjectReader, openZarrVectorsStore, readObjectTable, ShardIndexCache } from "../reader.js";
-import { parseMeshFile } from "./mesh_files.js";
-import { MeshStore } from "./meshes.js";
+import { parseMeshFile } from "../../../../src/virtual/vectors/mesh_files.js";
+import { MeshStore } from "../../../../src/virtual/vectors/meshes.js";
 
 const DIR = path.resolve(import.meta.dirname, "../../testdata/meshes");
 const expected = JSON.parse(fs.readFileSync(path.join(DIR, "expected.json"), "utf8"));

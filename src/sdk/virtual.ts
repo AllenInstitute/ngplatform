@@ -11,9 +11,9 @@
  * A store answers a key ("zarr.json", "0/c/0/1/2") with its bytes, or
  * undefined when it has no such key.
  */
-import { answer, type Range, type VirtualStore } from "../platform/virtual_zarr/store.js";
+import { answer, type Range, type VirtualStore } from "../virtual/images/store.js";
 
-export { answer, blobSource, type ByteSource, jsonBytes, Lru, type Range, type VirtualStore } from "../platform/virtual_zarr/store.js";
+export { answer, blobSource, type ByteSource, jsonBytes, Lru, type Range, type VirtualStore } from "../virtual/images/store.js";
 
 /** What local data sends a format's worker for each key, with the reply port. */
 export interface VirtualRequest {

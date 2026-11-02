@@ -6,8 +6,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { levelPipeline, openZarrVectorsStore, ShardIndexCache } from "../../zarr-vectors/src/reader.js";
-import { StreamlineStore } from "../../zarr-vectors/src/virtual/streamlines.js";
-import type { TrkBatch } from "../../zarr-vectors/src/virtual/trk.js";
+import { StreamlineStore } from "../../../src/virtual/vectors/streamlines.js";
+import type { TrkBatch } from "../../../src/virtual/vectors/trk.js";
 import { chunkEnds, compactChunk, IdSet, type RoiGeometry, testEnds } from "../roi.js";
 
 const signal = new AbortController().signal;

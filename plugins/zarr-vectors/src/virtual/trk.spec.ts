@@ -7,8 +7,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseTckHeader, readTck } from "./tck.js";
-import { parseTrkHeader, readTrk, type TrkBatch } from "./trk.js";
+import { parseTckHeader, readTck } from "../../../../src/virtual/vectors/tck.js";
+import { parseTrkHeader, readTrk, type TrkBatch } from "../../../../src/virtual/vectors/trk.js";
 
 const DIR = path.resolve(import.meta.dirname, "../../testdata/tractograms");
 const expected = JSON.parse(fs.readFileSync(path.join(DIR, "expected.json"), "utf8"));

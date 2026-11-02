@@ -10,8 +10,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { readSegmentProperties } from "../objects.js";
 import { LevelPipeline, ObjectReader, openZarrVectorsStore, readObjectTable, ShardIndexCache } from "../reader.js";
-import { parsePointTable, parseSwc, parseSwcCollection, type SwcNode } from "./point_files.js";
-import { type CellStore, MAX_POINT_OBJECTS, pointStore, skeletonStore } from "./points.js";
+import { parsePointTable, parseSwc, parseSwcCollection, type SwcNode } from "../../../../src/virtual/vectors/point_files.js";
+import { type CellStore, MAX_POINT_OBJECTS, pointStore, skeletonStore } from "../../../../src/virtual/vectors/points.js";
 
 const DIR = path.resolve(import.meta.dirname, "../../testdata/points");
 const signal = new AbortController().signal;

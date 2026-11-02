@@ -198,12 +198,13 @@ export class WorkspaceStore {
     // Selecting a layer or pinning a pick is not an edit: it updates the
     // current undo entry instead of adding one.
     const editKey = editSignature(workspace);
-    if (this.lastEditKey !== undefined && editKey === this.lastEditKey && !this.history.isAdopting) {
+    if (this.amend || (this.lastEditKey !== undefined && editKey === this.lastEditKey && !this.history.isAdopting)) {
       this.history.replaceCurrent(snapshot);
     } else {
       this.history.record(snapshot);
     }
     this.lastEditKey = editKey;
+    this.amend = false;
     if (!this.options.framed) {
       const hash = "#!" + encodeFragment(JSON.stringify(workspace));
       if (hash !== this.lastHash) {
@@ -267,13 +268,28 @@ export class WorkspaceStore {
     return true;
   }
 
-  /** Edits the active scene's state; only what changed is applied. */
-  patchState(edit: (ng: Json) => void): void {
+  /**
+   * Edits the active scene's state; only what changed is applied.  A quiet
+   * edit (one a plugin makes on the user's behalf, such as pointing a layer
+   * at data it made) amends the current undo step rather than adding one,
+   * so undo still undoes what the user did.
+   */
+  patchState(edit: (ng: Json) => void, options: { quiet?: boolean } = {}): void {
+    // A change of the user's still settling is recorded first, as its own step.
+    if (options.quiet && this.settleTimer !== undefined) this.settle();
     const ng = structuredClone(this.ng());
     edit(ng);
     this.engine.setState(ng);
-    this.scheduleSettle();
+    if (options.quiet) {
+      this.amend = true;
+      this.settle();
+    } else {
+      this.scheduleSettle();
+    }
   }
+
+  /** The next settle amends the current undo step (a quiet edit). */
+  private amend = false;
 
   // -------------------------------------------------------------- scenes
 

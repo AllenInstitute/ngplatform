@@ -8,9 +8,9 @@
 import { parseOmeMetadata } from "neuroglancer/unstable/datasource/zarr/ome.js";
 import { describe, expect, it } from "vitest";
 import { apply, parseOmeLevels } from "../plugins/volume-view/ome.js";
-import { splitVirtual } from "../src/platform/local_data.js";
-import { NiftiStore, nearestAxes, niftiAffine, openNifti, parseNiftiHeader } from "../src/platform/virtual_zarr/nifti.js";
-import { answer, blobSource, pairAsSingleFile } from "../src/platform/virtual_zarr/store.js";
+import { splitVirtual } from "../src/virtual/local_data.js";
+import { NiftiStore, nearestAxes, niftiAffine, openNifti, parseNiftiHeader } from "../src/virtual/images/nifti.js";
+import { answer, blobSource, pairAsSingleFile } from "../src/virtual/images/store.js";
 
 interface Spec {
   version?: 1 | 2;

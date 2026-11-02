@@ -397,6 +397,8 @@ class TrackGroups {
    * read.  A read stops early only when everyone waiting on it has given up.
    */
   /** Each streamline group's own store (see GROUP_STORE_POINTS), by group id. */
+  /** Set while a group's layer is being pointed at its store, so showing it does not start over. */
+  private attaching = false;
   private groupStores = new Map<string, { version: number; controller: AbortController; timer?: ReturnType<typeof setTimeout>; source?: string }>();
   private curveCache = new Map<string, { promise: Promise<Curves>; controller: AbortController; waiting: number; progress: Set<(done: number, total: number) => void> }>();
   /** The .trk save in progress, if any. */
@@ -1289,13 +1291,15 @@ class TrackGroups {
    * of it drawn, so the layer is still listed under the dataset.
    */
   private attachGroupStore(id: string): void {
+    if (this.attaching) return;
     const group = this.saved.groups.find((g) => g.id === id);
     const dataset = this.dataset();
     const base = dataset && this.sourceOf(dataset);
     if (group?.layer === undefined || base === undefined || this.layerInfo(group.layer) === undefined) return;
     const own = this.groupStores.get(id)?.source;
     const layer = group.layer;
-    this.ctx.viewer.patchState((ng) => {
+    this.ctx.viewer.patchState(
+      (ng) => {
       const target = (ng.layers as Json[] | undefined)?.find((l) => l.name === layer);
       if (target === undefined) return;
       if (own !== undefined) {
@@ -1305,8 +1309,15 @@ class TrackGroups {
         target.source = { url: base, subsources: { objects: false, meshes: false } };
         target.ignoreNullVisibleSet = false;
       }
-    });
-    this.show(group);
+      },
+      { quiet: true },
+    );
+    this.attaching = true;
+    try {
+      this.show(group);
+    } finally {
+      this.attaching = false;
+    }
   }
 
   private dropGroupStore(id: string): void {
@@ -1323,7 +1334,14 @@ class TrackGroups {
     const result = this.results.get(group.id);
     const layer = this.saved.groups.find((g) => g.id === group.id)?.layer;
     if (layer === undefined || result === undefined) return;
-    if (JSON.stringify(this.ctx.viewer.layerSpec(layer)?.source ?? "").includes("/local/derived-")) {
+    const ownStore = this.groupStores.get(group.id)?.source;
+    const pointsAtOwn = JSON.stringify(this.ctx.viewer.layerSpec(layer)?.source ?? "").includes("/local/derived-");
+    if (ownStore !== undefined && !pointsAtOwn && this.drawsOwnStores()) {
+      // Undo went back past the change to its own store: point at it again.
+      this.attachGroupStore(group.id);
+      return;
+    }
+    if (pointsAtOwn) {
       if (this.groupStores.get(group.id)?.source === undefined) {
         // A store from an earlier visit (made in the page, now gone): back to the dataset until a new one is made.
         this.attachGroupStore(group.id);

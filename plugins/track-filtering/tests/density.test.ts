@@ -1,6 +1,6 @@
 /** Track density maps: the grid, each streamline counted once a voxel, and the NIfTI file placed in RAS+ mm. */
 import { describe, expect, it } from "vitest";
-import { niftiAffine, openNifti } from "../../../src/platform/virtual_zarr/nifti.js";
+import { niftiAffine, openNifti } from "../../../src/virtual/images/nifti.js";
 import { addDensity, densityGrid, displayMax, niftiFile, voxelSize } from "../density.js";
 import type { StoreInfo } from "../roi_worker.js";
 

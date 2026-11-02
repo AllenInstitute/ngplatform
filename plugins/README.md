@@ -119,7 +119,7 @@ serveVirtualStores((file) => openMyFormat(file)); // { get(key), list?(prefix) }
 ```
 
 Zarr Vectors uses this for tractograms, meshes and surfaces, SWC neurons
-and point tables ([`zarr-vectors/virtual.ts`](zarr-vectors/virtual.ts)); the
+and point tables ([`src/virtual/vectors/formats.ts`](../src/virtual/vectors/formats.ts)); the
 platform's NIfTI and TIFF reader is the same kind of worker. `list` answers
 folder listings (directory keys end in "/"), which Neuroglancer's http store
 reads. A text format can set `collect` to offer a folder of its files as one

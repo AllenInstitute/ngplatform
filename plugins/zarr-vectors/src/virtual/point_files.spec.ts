@@ -1,6 +1,6 @@
 /** SWC and point-table parsing. */
 import { describe, expect, it } from "vitest";
-import { parsePointTable, parseSwc } from "./point_files.js";
+import { parsePointTable, parseSwc } from "../../../../src/virtual/vectors/point_files.js";
 
 describe("point and skeleton files", () => {
   it("reads SWC nodes and refuses broken trees", () => {

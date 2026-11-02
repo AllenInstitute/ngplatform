@@ -1,7 +1,7 @@
 /** .nii.gz files kept decompressed between visits: made once, read back, the oldest dropped. */
 import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import { type CacheDirectory, cachedFile, gunzipSource } from "../src/platform/virtual_zarr/store.js";
+import { type CacheDirectory, cachedFile, gunzipSource } from "../src/virtual/images/store.js";
 
 /** An in-memory stand-in for an OPFS directory. */
 function fakeDirectory() {

@@ -8,8 +8,9 @@
  * Files that are not Zarr are read as virtual stores: the URLs under a
  * file's own (<file>/zarr.json, <file>/0/c/…) are a store made from it as
  * they are asked for, in a worker.  NIfTI opens as a chunked, multiscale
- * OME-Zarr image (src/platform/virtual_zarr/); data type plugins add their
- * own formats (`addFormats`: Zarr Vectors reads .trk as zarr-vectors).
+ * OME-Zarr image (./images/), and tractograms, meshes, neurons and point
+ * tables as Zarr Vectors stores (./vectors/); data type plugins can add
+ * their own formats (`addFormats`).
  *
  * The folders are remembered in this browser (where the browser can), so a
  * workspace link to local data opens again here after one click to allow
@@ -18,8 +19,9 @@
  */
 
 import type { VirtualFormat } from "../sdk/types.js";
-import { listingHtml, pairAsSingleFile, TIFF_FILE, VIRTUAL_FILE } from "./virtual_zarr/store.js";
+import { listingHtml, pairAsSingleFile, TIFF_FILE, VIRTUAL_FILE } from "./images/store.js";
 import type { VirtualRequest } from "../sdk/virtual.js";
+import { ZARR_VECTORS_VIRTUAL } from "./vectors/formats.js";
 
 /** NIfTI, read as OME-Zarr by the platform's own worker. */
 export const NIFTI_FORMAT: VirtualFormat = {
@@ -28,7 +30,7 @@ export const NIFTI_FORMAT: VirtualFormat = {
   format: "NIfTI image",
   kind: "image",
   source: (url) => `zarr3://${url}/`,
-  worker: () => new Worker(new URL("./virtual_zarr/worker.ts", import.meta.url), { type: "module", name: "virtual-zarr" }),
+  worker: () => new Worker(new URL("./images/worker.ts", import.meta.url), { type: "module", name: "virtual-zarr" }),
 };
 
 export const TIFF_FORMAT: VirtualFormat = {
@@ -117,7 +119,7 @@ export class LocalData {
   readonly base: string;
   private worker: Promise<ServiceWorker | undefined> | undefined;
   /** Files read as virtual stores, and the workers that serve them. */
-  private formats: VirtualFormat[] = [NIFTI_FORMAT, TIFF_FORMAT];
+  private formats: VirtualFormat[] = [NIFTI_FORMAT, TIFF_FORMAT, ...ZARR_VECTORS_VIRTUAL];
   private readonly virtualWorkers = new Map<VirtualFormat, Worker>();
 
   constructor(base = new URL(".", location.href).href) {

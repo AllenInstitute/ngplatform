@@ -133,6 +133,19 @@ check((await page.locator(".status").isHidden()), "no status shown when everythi
 // Scenes have no tab of their own: they are the tabs at the top.
 check((await page.locator("#tab-scenes").count()) === 0, "no Scenes tab: scenes are the tabs at the top");
 
+// The example's track groups switch to stores of their own streamlines
+// once their exact answers settle (a quiet change, not an undo step); the
+// undo check below counts data requests, so it waits for that first.
+for (let waited = 0; waited < 300_000; waited += 2000) {
+  const own = await page.evaluate(() =>
+    window.viewer.layerManager.managedLayers
+      .filter((l) => /callosum|corticospinal/i.test(l.name))
+      .map((l) => JSON.stringify(l.layer?.toJSON()?.source ?? "").includes("/local/derived-")),
+  );
+  if (own.length > 0 && own.every(Boolean)) break;
+  await page.waitForTimeout(2000);
+}
+
 // Palette: change the layout, then undo it.
 await page.waitForTimeout(1500);
 const layoutBefore = await page.evaluate(() => window.engine.layout());
@@ -157,7 +170,12 @@ dataRequests = 0;
 requested.length = 0;
 await page.keyboard.press("Control+z");
 await page.waitForTimeout(1500);
-check((await page.evaluate(() => window.engine.layout())) === layoutBefore, "undo restored the layout");
+const layoutAfterUndo = await page.evaluate(() => window.engine.layout());
+if (layoutAfterUndo !== layoutBefore) {
+  const h = await page.evaluate(() => { const x = window.workbench.store.history; return `past ${x.past.length}, future ${x.future.length}, layouts in past: ${x.past.slice(-4).map((s) => JSON.parse(s).ng.layout).join(",")}, future: ${x.future.map((s) => JSON.parse(s).ng.layout).join(",")}`; });
+  console.log(`  layout before ${layoutBefore}, after undo ${layoutAfterUndo}; history: ${h}`);
+}
+check(layoutAfterUndo === layoutBefore, "undo restored the layout");
 check(dataRequests === 0, `undo made no data requests (${dataRequests}${requested.length ? `: ${[...new Set(requested.map((u) => u.replace(/[?#].*/, "").split("/").slice(-4).join("/")))].slice(0, 4).join(", ")}` : ""})`);
 
 // Scenes: a new empty scene, the dataset added from the workspace, and back.

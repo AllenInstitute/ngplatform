@@ -3,12 +3,12 @@
  * ./virtual.ts): a tractogram, mesh, SWC file or point table is read once, when its store is first
  * asked for, then every key is made from what was read.
  */
-import { serveVirtualStores } from "@ngplatform/sdk/virtual";
-import { FREESURFER_SURFACE, parseMeshFile } from "./src/virtual/mesh_files.js";
-import { MeshStore } from "./src/virtual/meshes.js";
-import { parsePointTable, parseSwc, parseSwcCollection } from "./src/virtual/point_files.js";
-import { pointStore, skeletonStore } from "./src/virtual/points.js";
-import { openTractogram } from "./src/virtual/tractograms.js";
+import { serveVirtualStores } from "../../sdk/virtual.js";
+import { FREESURFER_SURFACE, parseMeshFile } from "./mesh_files.js";
+import { MeshStore } from "./meshes.js";
+import { parsePointTable, parseSwc, parseSwcCollection } from "./point_files.js";
+import { pointStore, skeletonStore } from "./points.js";
+import { openTractogram } from "./tractograms.js";
 
 serveVirtualStores(async (file) => {
   if (/\.(obj|stl|ply|gii)$/i.test(file.name) || FREESURFER_SURFACE.test(file.name)) {

@@ -6,7 +6,7 @@
 import { InputError, layerCount, parseInput } from "../core/state_io.js";
 import { layerNameFor } from "../core/state_io.js";
 import { closeSheet, sheet, showSheet, toast } from "./overlays.js";
-import { LocalData, type FoundDataset } from "../platform/local_data.js";
+import { LocalData, type FoundDataset } from "../virtual/local_data.js";
 import { clear, h, icon, keyLabel } from "./dom.js";
 import { kindLabel } from "./panels/format.js";
 import type { Workbench } from "./workbench.js";

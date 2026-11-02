@@ -8,9 +8,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { readSegmentProperties } from "../objects.js";
 import { ObjectReader, openZarrVectorsStore, readObjectTable, ShardIndexCache } from "../reader.js";
-import { openTrx } from "./tractograms.js";
-import type { TrkBatch } from "./trk.js";
-import { openTrxInfo, readTrx, zipEntries } from "./trx.js";
+import { openTrx } from "../../../../src/virtual/vectors/tractograms.js";
+import type { TrkBatch } from "../../../../src/virtual/vectors/trk.js";
+import { openTrxInfo, readTrx, zipEntries } from "../../../../src/virtual/vectors/trx.js";
 
 const DIR = path.resolve(import.meta.dirname, "../../testdata/tractograms");
 const expected = JSON.parse(fs.readFileSync(path.join(DIR, "expected_trx.json"), "utf8"));

@@ -7,7 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseMeshFile } from "./mesh_files.js";
+import { parseMeshFile } from "../../../../src/virtual/vectors/mesh_files.js";
 
 const DIR = path.resolve(import.meta.dirname, "../../testdata/meshes");
 const expected = JSON.parse(fs.readFileSync(path.join(DIR, "expected.json"), "utf8"));

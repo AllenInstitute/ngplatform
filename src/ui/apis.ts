@@ -80,7 +80,7 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
 
   const viewer: ViewerApi = {
     getState: () => store.ng(),
-    patchState: (edit) => store.patchState(edit),
+    patchState: (edit, options) => store.patchState(edit, options),
     onStateChanged: (callback) => engine.onStateChanged(callback),
     layers: layerInfos,
     layerSpec: (name) => engine.layerSpec(name),
