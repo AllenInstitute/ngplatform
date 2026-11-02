@@ -749,6 +749,9 @@ textarea.state-input.tall { min-height: 50vh; }
   .app:not(.right-collapsed) { --rw: min(var(--right, 360px), 34vw); }
 }
 @media (max-width: 520px) {
+  /* A phone: undo, redo and Open in Neuroglancer stay in the palette and the Share menu. */
+  .hide-phone { display: none !important; }
+  .scene-tabs { min-width: 72px; }
   .app { --lw: 34px; --rw: 34px; }
   .resizer-left, .resizer-right { display: none; }
   /* On a phone an open side dock floats over the views instead of squeezing them. */
