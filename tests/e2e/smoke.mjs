@@ -213,7 +213,10 @@ await page.evaluate((source) => {
   window.workbench.store.newScene({ name: "local" });
   window.workbench.store.addDataset({ source, name: "smoke", kind: "image" });
 }, local.source);
-await page.waitForFunction(() => window.engine.layers().some((l) => l.name === "smoke" && (l.ready || l.error)), null, { timeout: 60_000 }).catch(() => {});
+// Under software WebGL (SwiftShader) the first shader compile after a heavy
+// scene can hold the page for over a minute (getShaderParameter waits on a
+// busy GPU process), so the layer is given three.
+await page.waitForFunction(() => window.engine.layers().some((l) => l.name === "smoke" && (l.ready || l.error)), null, { timeout: process.env.SWIFTSHADER ? 180_000 : 60_000 }).catch(() => {});
 const opened = (await layers()).find((l) => l.name === "smoke");
 check(opened?.ready === true && !opened.error, `the local NIfTI opens as a layer${opened?.ready === true && !opened.error ? "" : ` (${JSON.stringify(await layers())})`}`);
 
