@@ -421,12 +421,17 @@ class TrackGroups {
 
   /** The scene's datasets that can be filtered: Zarr Vectors, segmentation volumes and annotation layers. */
   private candidates() {
-    return this.ctx.workspace.sceneDatasets().filter((d) => this.kindOf(d) !== undefined);
+    const entries = this.ctx.workspace.sceneDatasets();
+    return entries.filter((d) => this.kindOf(d, entries) !== undefined);
   }
 
-  /** What a dataset is to filtering; undefined for images and what it cannot test. */
-  private kindOf(dataset: DatasetInfo): Kind | undefined {
-    const entry = this.ctx.workspace.sceneDatasets().find((d) => d.id === dataset.id);
+  /**
+   * What a dataset is to filtering; undefined for images and what it cannot
+   * test.  `entries`: the scene's datasets, when the caller has them (each
+   * lookup serializes the viewer's state).
+   */
+  private kindOf(dataset: DatasetInfo, entries = this.ctx.workspace.sceneDatasets()): Kind | undefined {
+    const entry = entries.find((d) => d.id === dataset.id);
     const layers = entry?.layers ?? [];
     if (layers.some((l) => l.sources.some((s) => storeUrlOfSource(s) !== undefined))) return "zarr-vectors";
     const groups = this.groupLayers();
@@ -437,11 +442,12 @@ class TrackGroups {
     return undefined;
   }
 
-  /** The kind of the dataset being filtered. */
+  /** The kind of the dataset being filtered, as of the last refresh (the workspace's last change). */
   private kind(): Kind | undefined {
-    const dataset = this.dataset();
-    return dataset && this.kindOf(dataset);
+    return this.currentKind;
   }
+
+  private currentKind: Kind | undefined;
 
   private dataset(): DatasetInfo | undefined {
     const candidates = this.candidates();
@@ -487,6 +493,7 @@ class TrackGroups {
   /** Follows the scene: which dataset, its store, its attributes, its layers. */
   private refresh(): void {
     const dataset = this.dataset();
+    this.currentKind = dataset && this.kindOf(dataset);
     const base = dataset && this.baseLayers(dataset)[0];
     if (base !== this.watching) {
       this.propsOff?.();
@@ -495,7 +502,7 @@ class TrackGroups {
       this.loadProps();
     }
     const source = dataset && this.sourceOf(dataset);
-    const kind = dataset && this.kindOf(dataset);
+    const kind = this.currentKind;
     const url =
       source &&
       (kind === "zarr-vectors"
