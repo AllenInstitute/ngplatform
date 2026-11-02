@@ -20,10 +20,12 @@ transform, or the moved image.
   moving point. Fit as translation, rigid, similarity or affine, with the
   residual of each pair.
 - **Transform files:** save or import FreeSurfer `.lta` (RAS to RAS with
-  both volumes' geometry), ITK / ANTs `.txt`, or a plain 4 × 4 matrix.
-- **Save image:** NIfTI or OME-Zarr, resampled (nearest, trilinear or cubic;
-  onto its own grid or another image's) or with the voxels unchanged and the
-  new placement in the header.
+  both volumes' geometry), ITK / ANTs `.txt`, or a plain 4 × 4 matrix;
+  import MNI `.xfm` (FreeSurfer's `talairach.xfm`) too.
+- **Save image:** NIfTI, FreeSurfer `.mgz`/`.mgh` or OME-Zarr, resampled
+  (nearest, trilinear or cubic; onto its own grid, its own grid enlarged to
+  hold all of the moved image, or another image's) or with the voxels
+  unchanged and the new placement in the header.
 
 Checked against FreeSurfer 7: `lta_convert` reads the transforms, and
 `mri_vol2vol` resamples to the same image.

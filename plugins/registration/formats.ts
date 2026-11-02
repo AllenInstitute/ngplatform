@@ -150,8 +150,28 @@ export function writeLta(movingToFixed: Mat4, geometry: { src?: VolumeGeometry; 
   ].join("\n");
 }
 
+/**
+ * An MNI .xfm (MINC's linear transform, as FreeSurfer's talairach.xfm):
+ * the three rows after `Linear_Transform =`, from the source's world (RAS
+ * mm) to the target's, so moving to fixed as it stands.
+ */
+export function readXfm(text: string): Mat4 {
+  const at = text.search(/Linear_Transform\s*=/);
+  if (at === -1) throw new Error("not a linear MNI transform (no Linear_Transform)");
+  const numbers = text
+    .slice(at)
+    .replace(/^Linear_Transform\s*=/, "")
+    .split(";")[0]
+    .trim()
+    .split(/\s+/)
+    .map(Number);
+  if (numbers.length < 12 || numbers.slice(0, 12).some((v) => !Number.isFinite(v))) throw new Error("the transform needs 12 numbers (3 rows of 4)");
+  return Float64Array.from([...numbers.slice(0, 12), 0, 0, 0, 1]);
+}
+
 /** Reads a file by its name and contents, in whichever of the formats it is. */
 export function readTransformFile(name: string, text: string): Mat4 {
+  if (/\.xfm$/i.test(name) || /Linear_Transform\s*=/.test(text)) return readXfm(text);
   if (/\.lta$/i.test(name) || /^\s*type\s*=/m.test(text)) return readLta(text);
   if (/^Transform:/m.test(text) || /^Parameters:/m.test(text)) return readItk(text);
   return readPlain(text);

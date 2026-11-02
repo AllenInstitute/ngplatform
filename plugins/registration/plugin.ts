@@ -33,7 +33,7 @@ import {
 } from "./manual.js";
 import { REGISTRATION_PANEL } from "./manifest.js";
 import type { SaveRequest } from "./save_worker.js";
-import { zipFiles, type Method } from "./volume_io.js";
+import { ENLARGE, type Method, zipFiles } from "./volume_io.js";
 
 interface Pair {
   id: string;
@@ -449,7 +449,7 @@ class Registration {
     if (format === "lta") {
       // With the volumes' geometry (moving; fixed: the grid chosen, else the moving one's), as FreeSurfer's tools want.
       const src = await this.geometry(r.name);
-      const dst = this.grid ? await this.geometry(this.grid) : src;
+      const dst = this.grid && this.grid !== ENLARGE ? await this.geometry(this.grid) : src;
       text = writeLta(r.move, { src, dst });
     } else {
       text = format === "itk" ? writeItk(r.move) : writePlain(r.move);
@@ -501,7 +501,7 @@ class Registration {
     try {
       if (format === "zarr" && picker.showDirectoryPicker) folder = await picker.showDirectoryPicker({ id: "ngplatform-save", mode: "readwrite" });
       else if (format !== "zarr" && picker.showSaveFilePicker)
-        file = await picker.showSaveFilePicker({ id: "ngplatform-save", suggestedName: base + suffix, types: [{ description: "NIfTI", accept: { "application/octet-stream": [suffix] } }] });
+        file = await picker.showSaveFilePicker({ id: "ngplatform-save", suggestedName: base + suffix, types: [{ description: /^mg/.test(format) ? "FreeSurfer volume" : "NIfTI", accept: { "application/octet-stream": [suffix] } }] });
     } catch (e) {
       if ((e as DOMException).name === "AbortError") return;
       throw e;
@@ -512,7 +512,7 @@ class Registration {
     const label = this.ctx.viewer.layers().find((l) => l.name === r.name)?.type === "segmentation";
     const request: SaveRequest = {
       store,
-      grid: !this.headerOnly && this.grid ? this.storeOf(this.grid) : undefined,
+      grid: this.headerOnly || !this.grid ? undefined : this.grid === ENLARGE ? ENLARGE : this.storeOf(this.grid),
       move: Array.from(r.move),
       header: this.headerOnly,
       method: this.method,
@@ -734,7 +734,7 @@ class Registration {
     file.addEventListener("change", () => file.files?.[0] && void this.importFile(file.files[0]));
     const segmentation = this.ctx.viewer.layers().find((l) => l.name === name)?.type === "segmentation";
     const grids = this.grids(name);
-    if (this.grid && !grids.includes(this.grid)) this.grid = "";
+    if (this.grid && this.grid !== ENLARGE && !grids.includes(this.grid)) this.grid = "";
     const note = el("p", { class: "note rg-tight", role: "status" });
     this.noteUpdate = () => {
       note.textContent = this.saveNote;
@@ -761,10 +761,10 @@ class Registration {
       el(
         "div",
         { class: "rg-grid2" },
-        select("Format", [["nii.gz", "NIfTI (.nii.gz)"], ["nii", "NIfTI (.nii)"], ["zarr", "OME-Zarr"]], this.imageFormat, (v) => (this.imageFormat = v as ImageFormat)),
+        select("Format", [["nii.gz", "NIfTI (.nii.gz)"], ["nii", "NIfTI (.nii)"], ["mgz", "FreeSurfer (.mgz)"], ["mgh", "FreeSurfer (.mgh)"], ["zarr", "OME-Zarr"]], this.imageFormat, (v) => (this.imageFormat = v as ImageFormat)),
         select("Voxels", [["resample", "Resampled"], ["header", "Unchanged (new header)"]], this.headerOnly ? "header" : "resample", (v) => ((this.headerOnly = v === "header"), redraw())),
         select("Sample method", [["nearest", "Nearest neighbour"], ["linear", "Trilinear"], ["cubic", "Cubic"]], segmentation ? "nearest" : this.method, (v) => (this.method = v as Method), this.headerOnly || segmentation),
-        select("Onto the grid of", [["", "Its own"], ...grids.map((g): [string, string] => [g, g])], this.grid, (v) => (this.grid = v), this.headerOnly),
+        select("Onto the grid of", [["", "Its own (cropped to it)"], [ENLARGE, "Its own, enlarged to hold it all"], ...grids.map((g): [string, string] => [g, g])], this.grid, (v) => (this.grid = v), this.headerOnly),
       ),
       el(
         "p",

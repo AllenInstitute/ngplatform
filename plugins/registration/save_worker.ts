@@ -15,21 +15,26 @@ import { setAsyncComputationWorkerFactory } from "neuroglancer/unstable/worker_f
 import { asyncComputationWorker } from "@ngplatform/sdk/workers";
 import { VolumeReader } from "../volume-view/volume_reader.js";
 import { multiply4 } from "./fit.js";
-import { ARRAYS, displayWindow, gzip, type Method, niftiFile, omeZarrFiles, resample, typed, type Volume, type VoxelType } from "./volume_io.js";
+import { ARRAYS, displayWindow, ENLARGE, enlargedGrid, gzip, type Method, mghFile, niftiFile, omeZarrFiles, resample, typed, type Volume, type VoxelType } from "./volume_io.js";
 
 // zstd and the other codecs decode in the platform's async-computation worker.
 setAsyncComputationWorkerFactory(() => asyncComputationWorker(["org.ngplatform.zarr-vectors"]));
 
 export interface SaveRequest {
   store: string;
-  /** Resample onto this image's grid (its finest level that fits) rather than the layer's own. */
+  /**
+   * Resample onto this image's grid (its finest level that fits) rather than
+   * the layer's own; "enlarge": the layer's own voxels, the grid grown to
+   * hold the whole moved image (Freeview's Save Volume As without "crop to
+   * original volume size").
+   */
   grid?: string;
   /** The layer's own RAS to where it is shown (RAS mm), row-major. */
   move: number[];
   /** Keep the voxels and write the new placement in the header, rather than resample. */
   header: boolean;
   method: Method;
-  format: "nii" | "nii.gz" | "zarr";
+  format: "nii" | "nii.gz" | "mgz" | "mgh" | "zarr";
   name: string;
   label: boolean;
   /** The finest level of at most this many bytes is read (and, resampled, written as many again). */
@@ -37,6 +42,8 @@ export interface SaveRequest {
 }
 
 const controllers = new Map<number, AbortController>();
+
+
 
 /** The finest level (they are finest first) of at most `max` bytes, or the coarsest. */
 function levelFor(levels: { size: number[]; type?: string }[], max: number): number {
@@ -59,7 +66,9 @@ async function save(msg: SaveRequest & { id: number }, signal: AbortSignal): Pro
     out = { ...source, voxelToRas: multiply4(move, source.voxelToRas) };
   } else {
     let grid = { size: source.size, voxelToRas: source.voxelToRas };
-    if (msg.grid !== undefined) {
+    if (msg.grid === ENLARGE) {
+      grid = enlargedGrid(source, move);
+    } else if (msg.grid !== undefined) {
       const other = await new VolumeReader().open([msg.grid], undefined, signal);
       const g = other.levels[levelFor(other.levels, msg.maxBytes)];
       grid = { size: g.size, voxelToRas: g.voxelToRas };
@@ -75,6 +84,9 @@ async function save(msg: SaveRequest & { id: number }, signal: AbortSignal): Pro
   let files: [string, Uint8Array][];
   if (msg.format === "zarr") {
     files = [...(await omeZarrFiles(out, msg.name, { label: msg.label, window, description }))];
+  } else if (msg.format === "mgz" || msg.format === "mgh") {
+    const mgh = mghFile(out);
+    files = [[`image.${msg.format}`, msg.format === "mgz" ? await gzip(mgh) : mgh]];
   } else {
     const nii = niftiFile(out, { label: msg.label, window, description: description.slice(0, 79) });
     files = [[msg.format === "nii.gz" ? "image.nii.gz" : "image.nii", msg.format === "nii.gz" ? await gzip(nii) : nii]];

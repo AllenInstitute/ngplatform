@@ -111,3 +111,26 @@ export function resample(source: Volume, grid: Grid, move: Mat4, method: Method,
 }
 
 // ------------------------------------------------------------ NIfTI-1
+
+/** `SaveRequest.grid` asking for the layer's own voxels on a grid grown to hold all of the moved image. */
+export const ENLARGE = "enlarge";
+
+/** The source's voxel grid (same voxel size and axes), grown or shrunk to just hold the moved image's corners. */
+export function enlargedGrid(source: { size: number[]; voxelToRas: Float64Array }, move: Float64Array): { size: [number, number, number]; voxelToRas: Float64Array } {
+  const toIndex = multiply4(invert4(source.voxelToRas), multiply4(move, source.voxelToRas));
+  const lo = [Infinity, Infinity, Infinity];
+  const hi = [-Infinity, -Infinity, -Infinity];
+  for (let c = 0; c < 8; ++c) {
+    // Voxel corners: from -0.5 to size - 0.5 along each axis.
+    const p = [0, 1, 2].map((k) => ((c >> k) & 1 ? source.size[k] - 0.5 : -0.5));
+    for (let r = 0; r < 3; ++r) {
+      const v = toIndex[4 * r] * p[0] + toIndex[4 * r + 1] * p[1] + toIndex[4 * r + 2] * p[2] + toIndex[4 * r + 3];
+      lo[r] = Math.min(lo[r], v);
+      hi[r] = Math.max(hi[r], v);
+    }
+  }
+  const first = lo.map((v) => Math.floor(v + 0.5));
+  const size = hi.map((v, k) => Math.max(1, Math.ceil(v - 0.5) - first[k] + 1)) as [number, number, number];
+  const shift = Float64Array.from([1, 0, 0, first[0], 0, 1, 0, first[1], 0, 0, 1, first[2], 0, 0, 0, 1]);
+  return { size, voxelToRas: multiply4(source.voxelToRas, shift) };
+}

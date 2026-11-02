@@ -104,3 +104,11 @@ describe("Neuroglancer's transform, in millimetres", async () => {
     neuroglancer(t, p).forEach((v, i) => expect(v).toBeCloseTo(t.matrix[i], 12));
   });
 });
+
+describe("MNI .xfm", () => {
+  it("reads FreeSurfer's talairach.xfm as moving to fixed", async () => {
+    const { readTransformFile } = await import("../formats.js");
+    const text = "MNI Transform File\n% avi2talxfm\n\nTransform_Type = Linear;\nLinear_Transform =\n 1.1 0.02 -0.01 -2.5\n -0.03 1.05 0.2 -18\n 0.01 -0.15 1.2 3;\n";
+    expect(Array.from(readTransformFile("talairach.xfm", text))).toEqual([1.1, 0.02, -0.01, -2.5, -0.03, 1.05, 0.2, -18, 0.01, -0.15, 1.2, 3, 0, 0, 0, 1]);
+  });
+});

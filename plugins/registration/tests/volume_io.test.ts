@@ -170,3 +170,21 @@ describe("zip", () => {
     expect(crc32(new TextEncoder().encode("123456789"))).toBe(0xcbf43926);
   });
 });
+
+describe("saving without cropping", () => {
+  it("grows the image's own grid to hold all of the moved image", async () => {
+    const { enlargedGrid } = await import("../volume_io.js");
+    const v = ramp([10, 10, 10], () => 1);
+    // A 45° turn about z through the volume's centre: the corners reach out by a factor of √2.
+    const centre = [0, 1, 2].map((r) => v.voxelToRas[4 * r] * 4.5 + v.voxelToRas[4 * r + 1] * 4.5 + v.voxelToRas[4 * r + 2] * 4.5 + v.voxelToRas[4 * r + 3]) as [number, number, number];
+    const turn = manualMatrix({ ...identityManual(), rotate: [0, 0, 45] }, centre);
+    const grid = enlargedGrid(v, turn);
+    expect(grid.size[2]).toBe(10);
+    expect(grid.size[0]).toBeGreaterThanOrEqual(14);
+    expect(grid.size[0]).toBeLessThanOrEqual(16);
+    // Same voxel size and axes as the image's own.
+    for (const i of [0, 1, 2, 4, 5, 6, 8, 9, 10]) expect(grid.voxelToRas[i]).toBeCloseTo(v.voxelToRas[i], 9);
+    // Nothing moved: the image's own grid.
+    expect(enlargedGrid(v, identity4()).size).toEqual([10, 10, 10]);
+  });
+});

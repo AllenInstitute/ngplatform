@@ -16,8 +16,8 @@ Balbastre (transform files, moving-to-fixed RAS mm).
 | `plugin.ts` | The panel: moving by hand, pairs, fitting and applying, landmark layers, import, saving |
 | `manual.ts` | Freeview's translate, rotate, scale and flip, composed as `LayerMRI::DoTransform` does; its slider ranges |
 | `fit.ts` | Translation, rigid and similarity (Horn's quaternion method), affine (least squares); residuals |
-| `formats.ts` | Plain 4 × 4, ITK / ANTs `.txt`, FreeSurfer `.lta` (RAS to RAS with both volumes' geometry; VOX to VOX read) |
-| `volume_io.ts` | Resampling (nearest, trilinear, Catmull-Rom cubic), NIfTI-1 (sform, qform), OME-Zarr 0.5 / 0.6 pyramids, zip |
+| `formats.ts` | Plain 4 × 4, ITK / ANTs `.txt`, FreeSurfer `.lta` (RAS to RAS with both volumes' geometry; VOX to VOX read), MNI `.xfm` read |
+| `volume_io.ts` | Resampling (nearest, trilinear, Catmull-Rom cubic) and the enlarged grid; the writers (NIfTI, MGH, OME-Zarr, zip) are the platform's (`src/virtual/out/volume.ts`) |
 | `save_worker.ts` | Reads a layer's store (with the volume view's reader) and writes it moved, off the main thread |
 | `tests/` | `npm test` runs them |
 
