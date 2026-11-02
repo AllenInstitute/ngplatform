@@ -11,10 +11,10 @@ import { describe, expect, it } from "vitest";
 import { readSegmentProperties } from "../objects.js";
 import { LevelPipeline, ObjectReader, openZarrVectorsStore, readObjectTable, ShardIndexCache } from "../reader.js";
 import { cellSize, fragmentIndex, StreamlineStore } from "./streamlines.js";
-import { openTractogram, openTrk } from "./store_trk.js";
+import { openTractogram, openTrk } from "./tractograms.js";
 import type { TrkBatch } from "./trk.js";
 
-const DIR = path.resolve(import.meta.dirname, "../../testdata/trk");
+const DIR = path.resolve(import.meta.dirname, "../../testdata/tractograms");
 const expected = JSON.parse(fs.readFileSync(path.join(DIR, "expected.json"), "utf8"));
 const trk = (name: string) => new Blob([fs.readFileSync(path.join(DIR, name))]);
 

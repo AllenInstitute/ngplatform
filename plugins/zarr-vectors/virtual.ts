@@ -19,6 +19,14 @@ export const ZARR_VECTORS_VIRTUAL: VirtualFormat[] = [
     worker,
   },
   {
+    pattern: /\.trx$/i,
+    extensions: [".trx"],
+    format: "TRX tractogram",
+    kind: "auto",
+    source: (url) => `${url}/|zarr-vectors:`,
+    worker,
+  },
+  {
     pattern: /\.tck$/i,
     extensions: [".tck"],
     format: "MRtrix tractogram",

@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { parseTckHeader, readTck } from "./tck.js";
 import { parseTrkHeader, readTrk, type TrkBatch } from "./trk.js";
 
-const DIR = path.resolve(import.meta.dirname, "../../testdata/trk");
+const DIR = path.resolve(import.meta.dirname, "../../testdata/tractograms");
 const expected = JSON.parse(fs.readFileSync(path.join(DIR, "expected.json"), "utf8"));
 
 async function readAll(bytes: Uint8Array, slice?: number) {

@@ -42,7 +42,7 @@ items are done (and say where); the rest are in rough order of work.
 ### Virtual zarr-vectors
 - [ ] A `virtual` module in zarr-vectors-tools: a standard file read as a zarr-vectors store on demand, without converting it. *(Built in the Zarr Vectors plugin, in TypeScript, so it runs in the browser without Pyodide: `plugins/zarr-vectors/src/virtual/`; checked against zarr-vectors-py's validator and `zvtools convert`. A Python twin in zarr-vectors-tools, for `zvtools` to serve files to any Neuroglancer, is not built yet.)*
   - [x] `.trk` (TrackVis) first;
-  - [ ] `.tck` (MRtrix), `.trx`;
+  - [x] `.tck` (MRtrix), `.trx`;
   - [ ] meshes: `.obj`, `.stl`, `.ply`, GIFTI surfaces, EM meshes;
   - [ ] points and skeletons: `.swc`, CSV points.
 - [x] Linked to the Zarr Vectors data type: these files open only when it is on.
