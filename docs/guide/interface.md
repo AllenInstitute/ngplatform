@@ -98,6 +98,23 @@ link, a table from your computer included. **None** takes them off again.
 Where each table comes from, and its licence:
 [`data/lookup-tables/`](https://github.com/AllenInstitute/ngplatform/tree/main/data/lookup-tables).
 
+### Outlines
+
+A segmentation layer's **Render → 2-D views → Draw** shows its segments
+**Filled** or as **Outlines** in the 2-D views, each in its own colour
+(its lookup table's, or the colour from its id), at any angle and zoom.
+Outlines are drawn by an image layer added just above the segmentation,
+"*name* outlines", which reads the same labels; the segmentation's own 2-D
+opacity is set to 0 meanwhile (its meshes are untouched), and **Filled**
+removes the outline layer and gives the opacity back. The outline layer's
+**Render** tab sets the line width in screen pixels (`outline_width`), the
+lines' opacity, and an optional faint fill (`fill_opacity`). It follows the
+segmentation's colours and its shown segments by itself.
+
+Limits: a boundary lying exactly on the face of a data chunk is not drawn
+(the outline has gaps there), and with more than 4,096 coloured or shown
+segments the outlines use the hashed colours or show every segment.
+
 ## 5. Bottom dock
 
 | Tab | What it holds |

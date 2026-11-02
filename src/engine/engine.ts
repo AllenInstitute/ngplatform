@@ -32,6 +32,7 @@ import {
   ViewerSettingsPanel,
 } from "./neuroglancer.js";
 import { mountInspector } from "./inspector/index.js";
+import { watchOutlines } from "./outlines.js";
 
 export type Json = Record<string, unknown>;
 
@@ -275,6 +276,8 @@ export class Engine {
       host.removeEventListener("contextmenu", noMenu);
       host.removeEventListener("wheel", noZoom);
     });
+    // Segmentations drawn as outlines keep their outline layers' colours in step.
+    this.disposers.push(watchOutlines(this));
   }
 
   // ------------------------------------------------------------- state

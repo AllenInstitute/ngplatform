@@ -15,6 +15,7 @@ there yet.
 | Layer panel (left) | **Datasets** tab, and the **Layer** tab on the right for the selected one |
 | Colour map, window/level | Layer → **Render → Colour map** (grayscale, heat, jet, GE colour, NIH, PET, binary colour and more) and the contrast slider |
 | Lookup table (FreeSurferColorLUT) | Layer → **Render → Lookup table**: FreeSurfer's and other atlases' tables, or a file |
+| Show as outline (label volumes) | Layer → **Render → 2-D views → Draw: Outlines** |
 | Viewport layouts 1×1, 2×2, 1&3 | the layout buttons, or the command palette's *Set the layout* |
 | Coordinates / Info panel | the position at the top left of the views; each layer's value under the mouse |
 | Tools → Transform Volume | the **Registration** plugin (same controls, plus landmark fitting) |
