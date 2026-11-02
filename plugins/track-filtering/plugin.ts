@@ -56,6 +56,8 @@ export interface Group {
   filter: FilterSpec;
   /** The layer showing the group, once made. */
   layer?: string;
+  /** The dataset it filters, as sourceKey(source); none: any dataset (older states). */
+  source?: string;
 }
 
 export interface Saved {
@@ -86,6 +88,7 @@ export function readSaved(raw: unknown): Saved {
         rois: Array.isArray(g.rois) ? g.rois : [],
         filter: { ...emptyFilter(), ...(g.filter ?? {}) },
         layer: g.layer,
+        ...(typeof g.source === "string" ? { source: g.source } : {}),
       })),
     };
   }
@@ -94,6 +97,17 @@ export function readSaved(raw: unknown): Saved {
     groups.push({ id: "g0", name: "Filtered", colour: PALETTE[0], rois: [], filter: { ...emptyFilter(), ...s.filter } });
   }
   return { dataset: s.dataset, groups, editing: groups[0]?.id };
+}
+
+/**
+ * A data source as a key to tell datasets apart by: without the format
+ * (|zarr-vectors:) or a trailing slash, Google Cloud Storage as gs://.
+ */
+export function sourceKey(source: string): string {
+  return source
+    .replace(/\|.*$/, "")
+    .replace(/^https:\/\/storage\.googleapis\.com\//, "gs://")
+    .replace(/\/+$/, "");
 }
 
 // ------------------------------------------------------------------ files
@@ -465,6 +479,13 @@ class TrackGroups {
     return (source as { url?: string } | undefined)?.url;
   }
 
+  /** The groups of the dataset being filtered (and those made before groups had a dataset). */
+  private groups(): Group[] {
+    const source = this.currentDataset && this.sourceOf(this.currentDataset);
+    const key = source === undefined ? undefined : sourceKey(source);
+    return this.saved.groups.filter((g) => g.source === undefined || g.source === key);
+  }
+
   private groupLayers(): Set<string> {
     return new Set(this.saved.groups.map((g) => g.layer).filter((l): l is string => l !== undefined));
   }
@@ -543,7 +564,7 @@ class TrackGroups {
     // Groups that came without a layer (from a link or an example) get one,
     // once the dataset is in the scene; a layer removed later stays removed.
     if (dataset !== undefined && this.dims() !== undefined) {
-      for (const { id } of this.saved.groups) {
+      for (const { id } of this.groups()) {
         const group = this.saved.groups.find((g) => g.id === id);
         if (group !== undefined && group.layer === undefined) this.ensureLayer(group);
       }
@@ -587,9 +608,17 @@ class TrackGroups {
   // ------------------------------------------------------------ groups
 
   newGroup(): void {
-    const n = this.saved.groups.length;
-    const group: Group = { id: `g${Date.now().toString(36)}`, name: `Group ${n + 1}`, colour: PALETTE[n % PALETTE.length], rois: [], filter: emptyFilter() };
+    const n = this.groups().length;
     const dataset = this.dataset();
+    const source = dataset && this.sourceOf(dataset);
+    const group: Group = {
+      id: `g${Date.now().toString(36)}`,
+      name: `Group ${n + 1}`,
+      colour: PALETTE[n % PALETTE.length],
+      rois: [],
+      filter: emptyFilter(),
+      ...(source === undefined ? {} : { source: sourceKey(source) }),
+    };
     this.save({ groups: [...this.saved.groups, group], editing: group.id, dataset: dataset?.id });
     this.ensureLayer(group);
     // Show all objects is off once there are groups: the groups are the view.
@@ -598,7 +627,8 @@ class TrackGroups {
   }
 
   private editing(): Group | undefined {
-    return this.saved.groups.find((g) => g.id === this.saved.editing) ?? this.saved.groups[0];
+    const groups = this.groups();
+    return groups.find((g) => g.id === this.saved.editing) ?? groups[0];
   }
 
   private deleteGroup(group: Group): void {
@@ -731,7 +761,7 @@ class TrackGroups {
   /** The annotations the regions layer should hold: the shown groups' regions, in their colours. */
   private desiredAnnotations(): Json[] {
     const out: Json[] = [];
-    for (const group of this.saved.groups) {
+    for (const group of this.groups()) {
       const shown = group.id === this.saved.editing || this.layerInfo(group.layer)?.visible === true;
       if (!shown) continue;
       group.rois.forEach((roi, i) => {
@@ -883,7 +913,7 @@ class TrackGroups {
 
   private evaluateAll(): void {
     this.waiting = false;
-    for (const group of this.saved.groups) this.evaluateGroup(group, true);
+    for (const group of this.groups()) this.evaluateGroup(group, true);
   }
 
   /**
@@ -1280,7 +1310,7 @@ class TrackGroups {
       this.ctx.ui.toast("The dataset is still opening.", "error");
       return;
     }
-    const groups = this.saved.groups.filter((g) => this.results.get(g.id)?.state === "exact");
+    const groups = this.groups().filter((g) => this.results.get(g.id)?.state === "exact");
     if (groups.length === 0) {
       this.ctx.ui.toast("No group has its exact answer yet.", "error");
       return;
@@ -1327,7 +1357,7 @@ class TrackGroups {
   service(): TrackGroupsService {
     return {
       list: () =>
-        this.saved.groups.map((g) => {
+        this.groups().map((g) => {
           const r = this.results.get(g.id);
           return {
             id: g.id,
@@ -1452,7 +1482,7 @@ class TrackGroups {
       this.dataset()?.id,
       this.props?.ids.length,
       this.info !== undefined,
-      this.saved.groups.map((g) => [g.id, g.name, g.colour, g.layer, g.rois.map((r) => [r.id, r.shape, r.op])]),
+      this.groups().map((g) => [g.id, g.name, g.colour, g.layer, g.rois.map((r) => [r.id, r.shape, r.op])]),
       editing?.id,
       editing?.filter.includeTags,
       editing !== undefined && isEmptyFilter(editing.filter),
@@ -1521,10 +1551,11 @@ class TrackGroups {
       );
     }
     const list = el("div", { class: "tf-groups" });
-    if (this.saved.groups.length === 0) {
+    const groups = this.groups();
+    if (groups.length === 0) {
       list.append(el("p", { class: "empty" }, "No groups yet. A new group starts empty: add regions and attribute ranges to choose its objects."));
     }
-    for (const group of this.saved.groups) {
+    for (const group of groups) {
       const colour = el("input", { type: "color", class: "tf-swatch", value: group.colour, title: "Colour", "aria-label": `${group.name} colour` }) as HTMLInputElement;
       colour.addEventListener("click", (e) => e.stopPropagation());
       colour.addEventListener("change", () => this.recolour(group, colour.value));
@@ -1621,7 +1652,8 @@ class TrackGroups {
       );
     });
     box.append(status);
-    if (kind === "zarr-vectors") box.append(this.saveControl(group));
+    // Streamlines only: .trk holds lines.
+    if (kind === "zarr-vectors" && /^(streamline|polyline)s?$/.test(this.info?.geometry ?? "")) box.append(this.saveControl(group));
 
     // Regions.
     box.append(

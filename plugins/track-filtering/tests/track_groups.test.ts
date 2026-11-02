@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readSaved } from "../plugin.js";
+import { readSaved, sourceKey } from "../plugin.js";
 import { compactChunk, groupMask, IdSet, type RoiGeometry, roiBounds, roiKey, rowIndex, rowMask, segmentHitsBox, testChunk } from "../roi.js";
 import { previewLevel, type StoreInfo, toStore } from "../roi_client.js";
 import { fileName, trkSpace, writeTrk } from "../trk.js";
@@ -156,6 +156,14 @@ describe("saved groups", () => {
   it("fills in what a hand-written group leaves out", () => {
     const saved = readSaved({ groups: [{ id: "a", rois: [] }] });
     expect(saved.groups[0]).toMatchObject({ id: "a", name: "Group 1", rois: [], filter: { ranges: {}, includeTags: [], excludeTags: [] } });
+    expect(saved.groups[0].source).toBeUndefined();
+  });
+
+  it("keeps the dataset a group filters, keyed the same however the source is written", () => {
+    expect(readSaved({ groups: [{ id: "a", rois: [], source: "gs://b/x.zarrvectors" }] }).groups[0].source).toBe("gs://b/x.zarrvectors");
+    const keys = ["https://storage.googleapis.com/b/x.zarrvectors/|zarr-vectors:", "gs://b/x.zarrvectors/", "gs://b/x.zarrvectors"].map(sourceKey);
+    expect(new Set(keys).size).toBe(1);
+    expect(sourceKey("http://127.0.0.1/local/a/cells.csv/|zarr-vectors:")).toBe("http://127.0.0.1/local/a/cells.csv");
   });
 });
 

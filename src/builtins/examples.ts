@@ -19,6 +19,9 @@ const sphere = (id: string, center: [number, number, number], radius: number) =>
   op: "and",
 });
 
+/** The HCP-1065 store as Track filtering tells datasets apart (its sourceKey). */
+const HCP1065_KEY = HCP1065.replace("https://storage.googleapis.com/", "gs://").replace(/\/$/, "");
+
 /** Three track groups, by regions in MNI space, as a TrackVis user would draw them. */
 const HCP_GROUPS = {
   version: 2,
@@ -32,6 +35,7 @@ const HCP_GROUPS = {
         // A thin slab across the midline, over the body of the callosum.
         rois: [{ id: "cc-1", shape: "box", center: [0, -5, 21], radius: 5, size: [4, 70, 16], op: "and" }],
         filter: { ranges: {}, includeTags: [], excludeTags: [] },
+        source: HCP1065_KEY,
       },
       {
         id: "cst-l",
@@ -40,6 +44,7 @@ const HCP_GROUPS = {
         // Posterior limb of the internal capsule, then the pons.
         rois: [sphere("cst-l-1", [-24, -15, 8], 6), sphere("cst-l-2", [-10, -27, -30], 6)],
         filter: { ranges: {}, includeTags: [], excludeTags: [] },
+        source: HCP1065_KEY,
       },
       {
         id: "cst-r",
@@ -47,6 +52,7 @@ const HCP_GROUPS = {
         colour: "#d4a72c",
         rois: [sphere("cst-r-1", [24, -15, 8], 6), sphere("cst-r-2", [10, -27, -30], 6)],
         filter: { ranges: {}, includeTags: [], excludeTags: [] },
+        source: HCP1065_KEY,
       },
     ],
   },
