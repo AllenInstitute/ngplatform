@@ -35,7 +35,7 @@ import {
   renderPluginsPanel,
   renderStatisticsPanel,
 } from "./panels/misc.js";
-import { showAddDatasetSheet, showEditStateSheet, showLocalSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
+import { openDropped, showAddDatasetSheet, showEditStateSheet, showLocalSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
 import type { Workbench } from "./workbench.js";
 import { createPlatformApis } from "./apis.js";
 
@@ -311,6 +311,7 @@ export class Shell {
     jobs.onChange(() => this.updateStatus());
 
     window.addEventListener("keydown", (e) => this.onKey(e), true);
+    this.acceptDrops();
     // Changes before the user's first input after opening belong to opening (see WorkspaceStore.noteInput).
     for (const type of ["keydown", "pointerdown", "wheel"]) window.addEventListener(type, () => this.wb.store.noteInput(), { capture: true, passive: true });
     window.addEventListener("hashchange", () => {
@@ -1065,6 +1066,50 @@ export class Shell {
     else if (loading > 0) this.setStatus("busy", `Loading ${loading} of ${layers.length}`);
     else if (jobs > 0) this.setStatus("busy", `${jobs} job${jobs === 1 ? "" : "s"} running`);
     else this.setStatus("ok", `${layers.length} layer${layers.length === 1 ? "" : "s"} ready`);
+  }
+
+  /**
+   * Files and folders dropped anywhere on the window open as Open from
+   * device opens them: read in place, as virtual stores where they are not
+   * Zarr already.  A hint covers the window while files are dragged over it.
+   */
+  private acceptDrops(): void {
+    const hint = h("div", { class: "drop-hint", hidden: true }, h("div", {}, icon("open"), h("span", {}, "Drop files or folders to open them"), h("small", {}, "Read in place, nothing is uploaded")));
+    document.body.append(hint);
+    const carriesFiles = (e: DragEvent) => e.dataTransfer?.types.includes("Files") === true;
+    let depth = 0;
+    window.addEventListener("dragenter", (e) => {
+      if (!carriesFiles(e)) return;
+      depth++;
+      hint.hidden = false;
+    });
+    window.addEventListener("dragleave", (e) => {
+      if (!carriesFiles(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) hint.hidden = true;
+    });
+    window.addEventListener(
+      "dragover",
+      (e) => {
+        if (!carriesFiles(e)) return;
+        e.preventDefault();
+        e.dataTransfer!.dropEffect = "copy";
+      },
+      { capture: true },
+    );
+    window.addEventListener(
+      "drop",
+      (e) => {
+        if (!carriesFiles(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        depth = 0;
+        hint.hidden = true;
+        this.wb.store.noteInput();
+        openDropped(this.wb, e.dataTransfer!).catch((err) => toast(`Could not open what was dropped: ${(err as Error).message}`, "error"));
+      },
+      { capture: true },
+    );
   }
 
   /**

@@ -276,6 +276,38 @@ export class LocalData {
   }
 
   /**
+   * Opens what was dropped on the window: one folder or one file as it is
+   * (remembered, as if picked, where the browser hands over a handle); more
+   * than one as a single group of files, so a .hdr and its .img stay paired.
+   * Call `collectDropped` inside the drop event and pass its result here.
+   */
+  async openDropped(dropped: Promise<DroppedItem[]>): Promise<LocalEntry | undefined> {
+    const items = (await dropped).filter((d): d is DroppedItem => d !== undefined);
+    if (items.length === 0) return undefined;
+    await this.start();
+    const id = newId();
+    let entry: Open;
+    const [only] = items;
+    if (items.length === 1 && only.handle !== undefined) {
+      entry = { id, name: only.handle.name, kind: only.handle.kind === "directory" ? "folder" : "file", handle: only.handle, needsPermission: false };
+      await idb("readwrite", (s) => s.put({ id, name: entry.name, kind: entry.kind, handle: only.handle })).catch(() => {});
+    } else {
+      let files = new Map<string, File>();
+      for (const item of items) for (const [path, file] of await item.files()) files.set(path, file);
+      // One folder: its files, not the folder, are the entry's top level (as when picked).
+      if (items.length === 1 && only.folder) files = stripFolder(files);
+      if (files.size === 0) return undefined;
+      const single = files.size === 1 && items.length === 1 && !items[0].folder;
+      const name = single ? [...files.keys()][0] : items.length === 1 ? items[0].name : `${items.length} dropped items`;
+      entry = { id, name, kind: single ? "file" : "folder", files, needsPermission: false };
+    }
+    this.entries.set(id, entry);
+    this.register();
+    this.changed();
+    return { id, name: entry.name, kind: entry.kind, needsPermission: false };
+  }
+
+  /**
    * Opens a file made in the page (a density map, say) as data on this
    * computer, for this visit only; returns the datasets found in it.  A
    * derived file (a track group's own streamlines, say) is a view of a
@@ -581,6 +613,70 @@ export function splitVirtual(path: string, formats: VirtualFormat[] = [NIFTI_FOR
 }
 
 /** A folder's files from a file input, keyed by their path inside it. */
+/** Something dropped on the window: a handle where the browser gives one, and its files either way. */
+export interface DroppedItem {
+  name: string;
+  folder: boolean;
+  handle?: FileSystemFileHandle | FileSystemDirectoryHandle;
+  /** Its files by path (inside a folder: "folder/sub/file"). */
+  files(): Promise<Map<string, File>>;
+}
+
+/**
+ * What a drop event carries, read while the event lasts (the browser drops
+ * access to the items once it returns): handles in Chrome and Edge, else
+ * the older entry API, else plain files.
+ */
+export function collectDropped(transfer: DataTransfer): Promise<DroppedItem[]> {
+  const pending: Promise<DroppedItem | undefined>[] = [];
+  for (const item of [...transfer.items]) {
+    if (item.kind !== "file") continue;
+    const asHandle = (item as unknown as { getAsFileSystemHandle?(): Promise<FileSystemHandle | null> }).getAsFileSystemHandle?.();
+    const entry = item.webkitGetAsEntry?.() ?? null;
+    const file = item.getAsFile();
+    pending.push(
+      (async () => {
+        const handle = ((await asHandle?.catch(() => null)) ?? undefined) as FileSystemFileHandle | FileSystemDirectoryHandle | undefined;
+        const folder = handle?.kind === "directory" || entry?.isDirectory === true;
+        const name = handle?.name ?? entry?.name ?? file?.name ?? "dropped";
+        const files = async () => {
+          if (handle !== undefined) return handleFiles(handle, handle.kind === "directory" ? `${handle.name}/` : "");
+          if (entry?.isDirectory) return entryFiles(entry as FileSystemDirectoryEntry, `${entry.name}/`);
+          return new Map(file === null ? [] : [[file.name, file]]);
+        };
+        return { name, folder, handle, files };
+      })(),
+    );
+  }
+  return Promise.all(pending).then((all) => all.filter((d): d is DroppedItem => d !== undefined));
+}
+
+async function handleFiles(handle: FileSystemFileHandle | FileSystemDirectoryHandle, prefix: string): Promise<Map<string, File>> {
+  const out = new Map<string, File>();
+  if (handle.kind === "file") {
+    out.set(prefix + handle.name, await handle.getFile());
+    return out;
+  }
+  for await (const child of (handle as unknown as { values(): AsyncIterable<FileSystemFileHandle | FileSystemDirectoryHandle> }).values()) {
+    for (const [path, file] of await handleFiles(child, child.kind === "directory" ? `${prefix}${child.name}/` : prefix)) out.set(path, file);
+  }
+  return out;
+}
+
+async function entryFiles(dir: FileSystemDirectoryEntry, prefix: string): Promise<Map<string, File>> {
+  const out = new Map<string, File>();
+  const reader = dir.createReader();
+  for (;;) {
+    const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => reader.readEntries(resolve, reject));
+    if (batch.length === 0) break;
+    for (const child of batch) {
+      if (child.isDirectory) for (const [p, f] of await entryFiles(child as FileSystemDirectoryEntry, `${prefix}${child.name}/`)) out.set(p, f);
+      else out.set(prefix + child.name, await new Promise<File>((resolve, reject) => (child as FileSystemFileEntry).file(resolve, reject)));
+    }
+  }
+  return out;
+}
+
 function stripFolder(files: Map<string, File>): Map<string, File> {
   const out = new Map<string, File>();
   for (const [path, file] of files) out.set(path.slice(path.indexOf("/") + 1), file);

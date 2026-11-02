@@ -6,7 +6,7 @@
 import { InputError, layerCount, parseInput } from "../core/state_io.js";
 import { layerNameFor } from "../core/state_io.js";
 import { closeSheet, sheet, showSheet, toast } from "./overlays.js";
-import { LocalData, type FoundDataset } from "../virtual/local_data.js";
+import { collectDropped, LocalData, type FoundDataset, type LocalEntry } from "../virtual/local_data.js";
 import { clear, h, icon, keyLabel } from "./dom.js";
 import { kindLabel } from "./panels/format.js";
 import type { Workbench } from "./workbench.js";
@@ -26,9 +26,22 @@ export interface OpenActions {
  * and adds what it holds as datasets of the scene; false when nothing was.
  */
 export async function openFromDevice(wb: Workbench, folder: boolean): Promise<boolean> {
+  const entry = await wb.localData.pick(folder);
+  return entry !== undefined && (await addLocalEntry(wb, entry));
+}
+
+/**
+ * Opens what was dropped on the window (files or folders): read in place,
+ * as Open from device reads them.  Call it from the drop event itself.
+ */
+export async function openDropped(wb: Workbench, transfer: DataTransfer): Promise<boolean> {
+  const entry = await wb.localData.openDropped(collectDropped(transfer));
+  return entry !== undefined && (await addLocalEntry(wb, entry));
+}
+
+/** Adds what a local entry holds as datasets of the scene; false when it holds nothing readable. */
+async function addLocalEntry(wb: Workbench, entry: LocalEntry): Promise<boolean> {
   const local = wb.localData;
-  const entry = await local.pick(folder);
-  if (entry === undefined) return false;
   const datasets = await local.detect(entry.id);
   if (datasets.length === 0) {
     toast(`Nothing to open in ${entry.name}. Files: ${LOCAL_FORMATS}.`, "error");

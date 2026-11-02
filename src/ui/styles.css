@@ -784,3 +784,14 @@ textarea.state-input.tall { min-height: 50vh; }
 .ins-pickers { display: flex; gap: 4px; align-items: center; font-size: 11px; color: var(--muted); }
 .ins-pickers select, .ins-pickers input { background: var(--ink-0); color: var(--text); border: 1px solid var(--line); border-radius: 0; font: inherit; }
 .view-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 4; overflow: hidden; }
+
+/* Files dragged over the window. */
+.drop-hint {
+  position: fixed; inset: 0; z-index: 200; pointer-events: none;
+  display: grid; place-items: center; background: rgba(0, 0, 0, 0.55);
+  outline: 2px dashed var(--accent); outline-offset: -12px;
+}
+.drop-hint[hidden] { display: none; }
+.drop-hint > div { display: grid; justify-items: center; gap: 8px; color: var(--text); font-size: 16px; }
+.drop-hint svg { width: 40px; height: 40px; }
+.drop-hint small { color: var(--faint); font-size: 12px; }
