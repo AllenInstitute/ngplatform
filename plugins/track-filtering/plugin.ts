@@ -504,8 +504,11 @@ class TrackGroups {
   newGroup(): void {
     const n = this.saved.groups.length;
     const group: Group = { id: `g${Date.now().toString(36)}`, name: `Group ${n + 1}`, colour: PALETTE[n % PALETTE.length], rois: [], filter: emptyFilter() };
-    this.save({ groups: [...this.saved.groups, group], editing: group.id, dataset: this.dataset()?.id });
+    const dataset = this.dataset();
+    this.save({ groups: [...this.saved.groups, group], editing: group.id, dataset: dataset?.id });
     this.ensureLayer(group);
+    // Show all objects is off once there are groups: the groups are the view.
+    if (n === 0 && dataset !== undefined) for (const base of this.baseLayers(dataset)) this.ctx.viewer.setLayerVisible(base, false);
     this.ctx.ui.showPanel(FILTERING_PANEL);
   }
 
@@ -1231,16 +1234,11 @@ class TrackGroups {
     }
 
     // Dataset.
-    const candidates = this.candidates();
-    if (candidates.length > 1) {
-      const select = el("select", { class: "text-input", "aria-label": "Dataset" });
-      for (const d of candidates) select.append(el("option", { value: d.id }, d.name));
-      select.value = dataset.id;
-      select.addEventListener("change", () => this.save({ dataset: select.value }));
-      root.append(el("label", { class: "field" }, el("span", {}, "Dataset"), select));
-    } else {
-      root.append(el("div", { class: "field" }, el("span", {}, "Dataset"), el("strong", {}, dataset.name)));
-    }
+    const select = el("select", { class: "text-input", "aria-label": "Dataset" }) as HTMLSelectElement;
+    for (const d of this.candidates()) select.append(el("option", { value: d.id }, d.name));
+    select.value = dataset.id;
+    select.addEventListener("change", () => this.save({ dataset: select.value }));
+    root.append(el("label", { class: "field" }, el("span", {}, "Dataset"), select));
     const bases = this.baseLayers(dataset);
     if (bases.length > 0) {
       const all = el("input", { type: "checkbox" }) as HTMLInputElement;
@@ -1248,7 +1246,7 @@ class TrackGroups {
       this.updaters.push(() => {
         all.checked = bases.some((b) => this.layerInfo(b)?.visible);
       });
-      root.append(el("label", { class: "field check" }, all, el("span", {}, "Show all objects (the unfiltered view)")));
+      root.append(el("label", { class: "field check" }, all, el("span", {}, "Show all objects")));
     }
 
     // Groups.
