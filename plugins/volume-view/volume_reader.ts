@@ -12,7 +12,7 @@
  * drawing another through the same chunks, reads nothing again.  The volume
  * worker runs this; it is plain code, so it is tested without one.
  */
-import { httpAccess, openZarrArray, ShardIndexCache, ZarrArrayReader } from "neuroglancer-zarr-vectors/reader";
+import { httpAccess, openZarrArray, ShardIndexCache, type ZarrArrayRead, ZarrArrayReader } from "neuroglancer-zarr-vectors/reader";
 import { PrecomputedScale, readInfo } from "@ngplatform/sdk/precomputed";
 import { invert, mergeLevels, parseOmeLevels, scaleLevel, type VolumeLevel } from "./ome.js";
 import { PRECOMPUTED } from "./sources.js";
@@ -29,6 +29,9 @@ interface OpenLevel {
   info: LevelInfo;
   /** A read chunk, decoded, in the array's order and of the full chunk shape. */
   readChunk(index: number[]): Promise<Uint8Array | undefined>;
+  /** The chunk's own values (before the window), for other types than uint8. */
+  rawChunk?(index: number[]): Promise<Uint8Array | undefined>;
+  type: keyof typeof NUMERIC;
   /** The value where there is no chunk. */
   fill: number;
   /** For x, y, z: the array dimension it is. */
@@ -61,6 +64,75 @@ async function readJson(url: string, signal?: AbortSignal): Promise<any | undefi
   if (response.status === 404 || response.status === 403) return undefined;
   if (!response.ok) throw new Error(`${url}: ${response.status} ${response.statusText}`);
   return response.json();
+}
+
+/** Element types drawn, and their typed arrays. */
+const NUMERIC = {
+  uint8: Uint8Array,
+  int8: Int8Array,
+  uint16: Uint16Array,
+  int16: Int16Array,
+  uint32: Uint32Array,
+  int32: Int32Array,
+  float32: Float32Array,
+  float64: Float64Array,
+} as const;
+
+/** A chunk's bytes (little-endian) as numbers. */
+function values(bytes: Uint8Array, type: keyof typeof NUMERIC): ArrayLike<number> {
+  const Type = NUMERIC[type];
+  const copy = bytes.slice(0, bytes.byteLength - (bytes.byteLength % Type.BYTES_PER_ELEMENT));
+  return new Type(copy.buffer);
+}
+
+function toUint8(v: ArrayLike<number>, [lo, hi]: [number, number]): Uint8Array {
+  const out = new Uint8Array(v.length);
+  const scale = 255 / (hi - lo);
+  for (let i = 0; i < v.length; ++i) {
+    const x = (v[i] - lo) * scale;
+    out[i] = x <= 0 || !(x === x) ? 0 : x >= 255 ? 255 : x;
+  }
+  return out;
+}
+
+/**
+ * For an array stored with Zarr v3's transpose codec: a read that presents
+ * it in its stored order (shape, chunk shape and chunk keys permuted, the
+ * codec dropped), and its axes in that order; undefined for other arrays.
+ */
+async function storedOrder(read: ZarrArrayRead, path: string, axes: string[], signal?: AbortSignal): Promise<{ read: ZarrArrayRead; axes: string[] } | undefined> {
+  const bytes = await read(`${path}/zarr.json`, { signal });
+  if (bytes === undefined) return undefined;
+  const meta = JSON.parse(new TextDecoder().decode(bytes));
+  const transpose = (meta?.codecs as { name: string; configuration?: { order?: unknown } }[] | undefined)?.find((c) => c?.name === "transpose");
+  if (transpose === undefined) return undefined;
+  const rank = meta.shape.length;
+  const given = transpose.configuration?.order;
+  const order: number[] = Array.isArray(given) ? given.map(Number) : given === "F" ? [...Array(rank).keys()].reverse() : [...Array(rank).keys()];
+  const chunkShape: number[] = meta.chunk_grid.configuration.chunk_shape;
+  const stored = {
+    ...meta,
+    shape: order.map((o) => meta.shape[o]),
+    chunk_grid: { ...meta.chunk_grid, configuration: { ...meta.chunk_grid.configuration, chunk_shape: order.map((o) => chunkShape[o]) } },
+    codecs: meta.codecs.filter((c: unknown) => c !== transpose),
+    ...(Array.isArray(meta.dimension_names) ? { dimension_names: order.map((o) => meta.dimension_names[o]) } : {}),
+  };
+  const separator = meta.chunk_key_encoding?.configuration?.separator ?? "/";
+  const prefix = `${path}/c${separator}`;
+  const storedJson = new TextEncoder().encode(JSON.stringify(stored));
+  return {
+    axes: order.map((o) => axes[o]),
+    read: async (key, options) => {
+      if (key === `${path}/zarr.json`) return storedJson;
+      if (key.startsWith(prefix)) {
+        const v = key.slice(prefix.length).split(separator);
+        const logical = new Array<string>(v.length);
+        order.forEach((o, d) => (logical[o] = v[d]));
+        return read(prefix + logical.join(separator), options);
+      }
+      return read(key, options);
+    },
+  };
 }
 
 export class VolumeReader {
@@ -122,9 +194,14 @@ export class VolumeReader {
         let store = accesses.get(level.url);
         if (store === undefined) accesses.set(level.url, (store = { access: httpAccess(level.url), shardIndexes: new ShardIndexCache() }));
         const { access, shardIndexes } = store;
-        const array = await openZarrArray(access.read, level.path, signal);
+        // Chunks stored transposed (a NIfTI read as virtual Zarr) are read in their stored order.
+        const stored = await storedOrder(access.read, level.path, level.axes, signal);
+        const read = stored?.read ?? access.read;
+        if (stored !== undefined) level = { ...level, axes: stored.axes };
+        const array = await openZarrArray(read, level.path, signal);
         if (array === undefined) throw new Error(`${level.url}${level.path}: no array`);
-        if (array.elementType !== "uint8") throw new Error(`${level.url}${level.path}: ${array.elementType} images are not shown yet (uint8 only)`);
+        if (!(array.elementType in NUMERIC)) throw new Error(`${level.url}${level.path}: ${array.elementType} images are not drawn`);
+        if (array.shape.length !== 3) throw new Error(`${level.url}${level.path}: ${array.shape.length}-D images are not drawn (3-D only)`);
         const dimOf = [0, 1, 2].map((k) => level.axes.indexOf("xyz"[k])) as [number, number, number];
         const chunkShape = array.readChunkShape;
         const info: LevelInfo = {
@@ -133,11 +210,18 @@ export class VolumeReader {
           chunk: chunkShape,
           size: [array.shape[dimOf[0]], array.shape[dimOf[1]], array.shape[dimOf[2]]],
         };
-        const reader = new ZarrArrayReader(array, access.read, shardIndexes);
+        const reader = new ZarrArrayReader(array, read, shardIndexes);
         const fill = Number(array.fillValue ?? 0);
+        const type = array.elementType as keyof typeof NUMERIC;
         return {
           info,
-          readChunk: (index) => reader.readChunk(index),
+          readChunk: async (index) => {
+            const bytes = await reader.readChunk(index);
+            // Other types than uint8: through the image's window, to 0..255.
+            return bytes === undefined || type === "uint8" ? bytes : toUint8(values(bytes, type), this.window);
+          },
+          rawChunk: (index) => reader.readChunk(index),
+          type,
           fill: Number.isFinite(fill) ? fill : 0,
           dimOf,
           grid: array.shape.map((s, d) => Math.ceil(s / chunkShape[d])),
@@ -145,7 +229,33 @@ export class VolumeReader {
       }),
     );
     this.reset();
+    this.window = [0, 255];
+    const coarsest = this.levels[this.levels.length - 1];
+    if (coarsest !== undefined && coarsest.type !== "uint8") this.window = await this.windowOf(coarsest, signal);
     return { levels: this.levels.map((l) => l.info), name: pyramids[0]?.name ?? "", description: pyramids.find((p) => p.description)?.description };
+  }
+
+  /** The intensities shown 0..255: the 0.5th to 99.5th percentile of a level's values. */
+  private window: [number, number] = [0, 255];
+
+  private async windowOf(level: OpenLevel, signal?: AbortSignal): Promise<[number, number]> {
+    const sample: number[] = [];
+    const chunks: number[][] = [];
+    for (let a = 0; a < level.grid[0]; ++a) for (let b = 0; b < level.grid[1]; ++b) for (let c = 0; c < level.grid[2]; ++c) chunks.push([a, b, c]);
+    const step = Math.max(1, Math.floor(chunks.length / 64));
+    for (let i = 0; i < chunks.length; i += step) {
+      signal?.throwIfAborted();
+      const raw = await level.rawChunk?.(chunks[i]);
+      if (raw === undefined) continue;
+      const v = values(raw, level.type);
+      const stride = Math.max(1, Math.floor(v.length / 20000));
+      for (let k = 0; k < v.length; k += stride) if (Number.isFinite(v[k])) sample.push(v[k]);
+    }
+    if (sample.length === 0) return [0, 1];
+    sample.sort((x, y) => x - y);
+    const lo = sample[Math.floor(0.005 * (sample.length - 1))];
+    const hi = sample[Math.ceil(0.995 * (sample.length - 1))];
+    return hi > lo ? [lo, hi] : [lo, lo + 1];
   }
 
   /** A Neuroglancer precomputed image: its scales, finest first, as arrays in z, y, x order. */
@@ -159,6 +269,7 @@ export class VolumeReader {
         return {
           info: { ...scaleLevel(url, scale), shape: [sz, sy, sx], chunk: [cz, cy, cx], size: [sx, sy, sz] },
           readChunk: ([z, y, x]) => reader.readChunk([x, y, z]),
+          type: "uint8",
           fill: 0,
           dimOf: [2, 1, 0],
           grid: [reader.grid[2], reader.grid[1], reader.grid[0]],

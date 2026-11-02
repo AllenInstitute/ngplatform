@@ -36,7 +36,7 @@ export type { ZarrVectorsObjectTable } from "./objects.js";
 export { readObjectTable } from "./objects.js";
 // Plain Zarr v3 arrays (sharded or not, any of Neuroglancer's codecs), for
 // tools that read other arrays beside a store, such as an image volume.
-export type { ZarrArray } from "./zarr_array.js";
+export type { ZarrArray, ZarrArrayRead } from "./zarr_array.js";
 export { openZarrArray, ShardIndexCache, ZarrArrayReader } from "./zarr_array.js";
 
 /**
