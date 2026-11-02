@@ -3,7 +3,7 @@
 </p>
 
 A workspace around [Neuroglancer](https://github.com/google/neuroglancer),
-extended by plugins. Live at https://andrew-keenlyside.github.io/ngplatform/.
+extended by plugins. Live at https://alleninstitute.github.io/ngplatform/.
 
 ## Add a plugin
 

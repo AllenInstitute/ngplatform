@@ -11,7 +11,7 @@
 
 ## 0. Decisions in one page
 
-1. **The editor is a new repository: `Andrew-Keenlyside/ngplatform`** (the build guide's name). The shell's first cut is built, and its GitHub Pages deploy is the review link.
+1. **The editor is a new repository: `AllenInstitute/ngplatform`** (the build guide's name; it began as `Andrew-Keenlyside/ngplatform` and moved to the org on 2026-11-02). The shell's first cut is built, and its GitHub Pages deploy is the review link.
 2. **Four repositories, each with one job.**
    - The **Neuroglancer fork** renders, and owns everything that runs inside Neuroglancer's workers.
    - **zarr-vectors-py** owns the format.
@@ -238,7 +238,7 @@ Measured with `zarr-vectors-tools/benchmarks/filtering` (C0's harness):
 
 | Decision | Options | Suggestion |
 |---|---|---|
-| Name and owner of the editor repo | **decided: `Andrew-Keenlyside/ngplatform`** | it can move to the AllenInstitute org later (GitHub keeps redirects) |
+| Name and owner of the editor repo | **decided: `AllenInstitute/ngplatform`** | moved there from `Andrew-Keenlyside/ngplatform` on 2026-11-02 (GitHub redirects the old repository URLs, not the old Pages site) |
 | Licence | Apache-2.0 (Neuroglancer's) / BSD-3-Clause (zarr-vectors') | Apache-2.0: it matches the engine it embeds, and its patent grant suits a platform |
 | Where the fork lives | your fork vs an org fork | the org, alongside the editor, so both can share CI secrets and permissions |
 | Hosting | static (GitHub Pages / GCS bucket / Cloudflare) | a GCS bucket next to the data, with a COOP/COEP-free profile first (filter plan D8) |

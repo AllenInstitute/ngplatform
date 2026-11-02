@@ -42,7 +42,7 @@ An SWC file opens as skeletons, one object per tree, in micrometres, with each n
   links: [
     { title: "zarr-vectors-py (format and Python library)", url: "https://github.com/AllenInstitute/zarr-vectors-py" },
     { title: "zarr-vectors-tools (conversion and pyramids)", url: "https://github.com/AllenInstitute/zarr-vectors-tools" },
-    { title: "This plugin's source", url: "https://github.com/Andrew-Keenlyside/ngplatform/tree/platform-gui/plugins/zarr-vectors" },
+    { title: "This plugin's source", url: "https://github.com/AllenInstitute/ngplatform/tree/main/plugins/zarr-vectors" },
   ],
   license: "Apache-2.0",
 };

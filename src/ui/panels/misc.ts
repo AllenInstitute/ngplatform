@@ -51,7 +51,7 @@ export function renderJobsPanel(host: HTMLElement, wb: Workbench): () => void {
 // ----------------------------------------------------------------- plugins
 
 const KIND_LABEL = { datatype: "Data type", tool: "Tool" } as const;
-const GUIDE = "https://github.com/Andrew-Keenlyside/ngplatform/blob/platform-gui/plugins/README.md";
+const GUIDE = "https://github.com/AllenInstitute/ngplatform/blob/main/plugins/README.md";
 
 /** The "Read more" sheet: a plugin's guide, links and facts. */
 export function showPluginInfo(manifest: Manifest): void {

@@ -30,7 +30,7 @@ export const TRACK_FILTERING_MANIFEST: Manifest = {
 Regions read only the chunks they overlap, at level 0, cached as they are read, so a small region in a large tractogram is quick; a region covering the whole brain reads all of it. Attributes are held for every object (about 100 bytes each); a group of millions of objects is fine to show and save.`,
   links: [
     { title: "zarr-vectors-tools (convert TRK, TRX, TCK and skeletons)", url: "https://github.com/AllenInstitute/zarr-vectors-tools" },
-    { title: "This plugin's source", url: "https://github.com/Andrew-Keenlyside/ngplatform/tree/platform-gui/plugins/track-filtering" },
+    { title: "This plugin's source", url: "https://github.com/AllenInstitute/ngplatform/tree/main/plugins/track-filtering" },
   ],
   license: "Apache-2.0",
   requires: { plugins: ["org.ngplatform.zarr-vectors"] },
