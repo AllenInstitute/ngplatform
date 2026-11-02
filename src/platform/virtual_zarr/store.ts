@@ -68,13 +68,92 @@ export async function gunzipHead(blob: Blob, n: number): Promise<Uint8Array> {
 }
 
 /**
- * A gzipped file's contents, decompressed once (when first read) into a
- * blob, which the browser keeps on disk when it is large.  A gzip stream
- * cannot be read from the middle, so this is the price of a `.gz`.
+ * A gzipped file's contents, decompressed once (when first read).  A gzip
+ * stream cannot be read from the middle, so this is the price of a `.gz`.
+ * With a `cacheKey` (the file's name, size and date) the decompressed copy
+ * is kept in the origin's private file system (OPFS) for later visits;
+ * otherwise, or where that is not allowed, it goes into a blob, which the
+ * browser keeps on disk when it is large.
  */
-export function gunzipSource(blob: Blob): () => Promise<ByteSource> {
+export function gunzipSource(blob: Blob, cacheKey?: string, cache: Promise<CacheDirectory | undefined> = opfsDirectory()): () => Promise<ByteSource> {
   let whole: Promise<ByteSource> | undefined;
-  return () => (whole ??= new Response(blob.stream().pipeThrough(new DecompressionStream("gzip"))).blob().then(blobSource));
+  const decompress = () => blob.stream().pipeThrough(new DecompressionStream("gzip"));
+  return () =>
+    (whole ??= (async () => {
+      const dir = cacheKey === undefined ? undefined : await cache.catch(() => undefined);
+      if (dir !== undefined) {
+        const kept = await cachedFile(dir, cacheKey!, decompress).catch(() => undefined);
+        if (kept !== undefined) return blobSource(kept);
+      }
+      return blobSource(await new Response(decompress()).blob());
+    })());
+}
+
+/** The parts of an OPFS directory handle the cache uses (a fake one in tests). */
+export interface CacheDirectory {
+  getFileHandle(name: string, options?: { create?: boolean }): Promise<{ getFile(): Promise<File>; createWritable(): Promise<WritableStream<Uint8Array> & { close(): Promise<void> }> }>;
+  removeEntry(name: string): Promise<void>;
+  keys(): AsyncIterable<string>;
+}
+
+/** Decompressed files kept, at most; the least recently used go first. */
+const KEEP = 6;
+
+function opfsDirectory(): Promise<CacheDirectory | undefined> {
+  const storage = (globalThis.navigator as { storage?: { getDirectory?(): Promise<FileSystemDirectoryHandle> } } | undefined)?.storage;
+  if (storage?.getDirectory === undefined) return Promise.resolve(undefined);
+  return storage
+    .getDirectory()
+    .then((root) => root.getDirectoryHandle("ngplatform-gunzipped", { create: true }) as unknown as CacheDirectory)
+    .catch(() => undefined);
+}
+
+/** A file name for a cache key: its hash, hex. */
+function cacheName(key: string): string {
+  let a = 0x811c9dc5;
+  let b = 0x01000193;
+  for (let i = 0; i < key.length; ++i) {
+    a = Math.imul(a ^ key.charCodeAt(i), 0x01000193) >>> 0;
+    b = Math.imul(b ^ key.charCodeAt(i), 0x5bd1e995) >>> 0;
+  }
+  return `${a.toString(16).padStart(8, "0")}${b.toString(16).padStart(8, "0")}`;
+}
+
+/**
+ * The decompressed file kept under `key`, made (streamed to disk) when it
+ * is not there; a ".done" mark says it was written whole.  The oldest
+ * copies beyond KEEP are removed.
+ */
+export async function cachedFile(dir: CacheDirectory, key: string, decompress: () => ReadableStream<Uint8Array>): Promise<File> {
+  const name = cacheName(key);
+  const mark = `${name}.done`;
+  try {
+    const done = await dir.getFileHandle(mark);
+    const file = await (await dir.getFileHandle(name)).getFile();
+    // Touch the mark: it dates the copy's last use.
+    const w = await done.createWritable();
+    await w.close();
+    return file;
+  } catch {
+    // Not kept (or not whole): made below.
+  }
+  const handle = await dir.getFileHandle(name, { create: true });
+  await decompress().pipeTo(await handle.createWritable());
+  const done = await dir.getFileHandle(mark, { create: true });
+  await (await done.createWritable()).close();
+  // Beyond KEEP copies, the least recently used go.
+  const marks: { name: string; used: number }[] = [];
+  for await (const entry of dir.keys()) {
+    if (!entry.endsWith(".done")) continue;
+    marks.push({ name: entry.slice(0, -5), used: (await (await dir.getFileHandle(entry)).getFile()).lastModified });
+  }
+  marks.sort((x, y) => y.used - x.used);
+  for (const old of marks.slice(KEEP)) {
+    if (old.name === name) continue;
+    await dir.removeEntry(`${old.name}.done`).catch(() => {});
+    await dir.removeEntry(old.name).catch(() => {});
+  }
+  return (await dir.getFileHandle(name)).getFile();
 }
 
 /** A cache of values with sizes, dropping the least recently used beyond a budget of bytes. */

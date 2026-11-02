@@ -688,7 +688,9 @@ export async function openNifti(file: Blob, name: string): Promise<NiftiStore> {
   const gz = isGzip(start);
   const header = parseNiftiHeader(gz ? await gunzipHead(file, 540) : start);
   const whole = blobSource(file);
-  const data = gz ? gunzipSource(file) : () => Promise.resolve(whole);
+  // A file from this computer is kept decompressed between visits, by its name, size and date.
+  const key = file instanceof File ? `${file.name}|${file.size}|${file.lastModified}` : undefined;
+  const data = gz ? gunzipSource(file, key) : () => Promise.resolve(whole);
   const samples = COLOUR[header.datatype];
   if (samples !== undefined) {
     const voxels = header.dim.slice(1, 1 + header.dim[0]).reduce((a, d) => a * Math.max(1, d), 1);
