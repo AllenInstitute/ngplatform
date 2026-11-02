@@ -8,12 +8,18 @@
  */
 import type { Disposer, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { VOLUME_PANEL } from "./manifest.js";
-import { SolidDrawer } from "./solid.js";
-import { type LevelInfo, VolumeClient } from "./volume_client.js";
+import { invert, multiply } from "./ome.js";
+import { displayOfRas, SolidDrawer } from "./solid.js";
+import { PRECOMPUTED, precomputedUrl } from "./sources.js";
+import { type LevelInfo, type Region, VolumeClient } from "./volume_client.js";
+
+/** Levels up to this many voxels a side are drawn whole; larger ones as a box this many voxels a side around the position. */
+const WHOLE = 384;
+const BOX = 256;
 
 export interface Saved {
   on: boolean;
-  /** The image layer drawn; the first OME-Zarr image when unset or gone. */
+  /** The image layer drawn; the first image it can read when unset or gone. */
   layer?: string;
   /** The solid's voxel size, mm: the finest level at least this coarse. */
   solid: number;
@@ -45,6 +51,12 @@ export function omeZarrUrl(source: string | undefined): string | undefined {
   url = url.replace(/^gs:\/\/([^/]+)\//, "https://storage.googleapis.com/$1/").replace(/^s3:\/\/([^/]+)\//, "https://$1.s3.amazonaws.com/");
   if (!/^https?:\/\//.test(url) && !url.startsWith("/")) return undefined;
   return url.endsWith("/") ? url : `${url}/`;
+}
+
+/** The store the reader opens for an image layer: an OME-Zarr URL or `precomputed:<url>`; undefined for formats it does not read. */
+export function storeOf(source: string | undefined): string | undefined {
+  const pre = precomputedUrl(source);
+  return pre !== undefined ? PRECOMPUTED + pre : omeZarrUrl(source);
 }
 
 type Child = Node | string | null | undefined | false;
@@ -95,9 +107,18 @@ class VolumeRendering {
         this.update();
       }),
       ctx.viewer.onLayersChanged(() => this.update()),
+      ctx.viewer.onStateChanged(() => {
+        // A box around the position follows it, a moment after it stops.
+        if (this.region === undefined) return;
+        clearTimeout(this.follow);
+        this.follow = setTimeout(() => this.update(), 400);
+      }),
+      () => clearTimeout(this.follow),
     );
     this.update();
   }
+
+  private follow: ReturnType<typeof setTimeout> | undefined;
 
   private set(patch: Partial<Saved>): void {
     this.saved = { ...this.saved, ...patch };
@@ -111,9 +132,9 @@ class VolumeRendering {
     this.panelUpdate?.();
   }
 
-  /** Image layers this can draw: OME-Zarr images. */
+  /** Image layers this can draw: OME-Zarr and precomputed images. */
   candidates(): LayerInfo[] {
-    return this.ctx.viewer.layers().filter((l) => l.type === "image" && omeZarrUrl(l.sources[0]) !== undefined);
+    return this.ctx.viewer.layers().filter((l) => l.type === "image" && storeOf(l.sources[0]) !== undefined);
   }
 
   private target(): LayerInfo | undefined {
@@ -121,12 +142,42 @@ class VolumeRendering {
     return candidates.find((l) => l.name === this.saved.layer) ?? candidates[0];
   }
 
+  /** The finest level at least `solid` coarse (a large one is drawn as a box around the position). */
   private chooseLevel(): LevelInfo | undefined {
     const wanted = this.saved.solid * 0.95;
-    // The finest level at least `solid` coarse, and at most 384 voxels on a side.
-    const fits = (l: LevelInfo) => Math.max(...l.size) <= 384;
-    return this.levels.find((l) => l.voxelSize >= wanted && fits(l)) ?? this.levels.find(fits) ?? this.levels[this.levels.length - 1];
+    return this.levels.find((l) => l.voxelSize >= wanted) ?? this.levels[this.levels.length - 1];
   }
+
+  /** The position, in a level's voxels; undefined when the view's axes are not x, y and z. */
+  private positionIn(level: LevelInfo): number[] | undefined {
+    const state = this.ctx.viewer.getState() as { position?: number[]; dimensions?: Record<string, [number, string]> };
+    const dims = state.dimensions;
+    if (state.position === undefined || dims === undefined) return undefined;
+    const names = Object.keys(dims);
+    const toDisplay = displayOfRas({ names, scales: names.map((n) => dims[n][0]), units: names.map((n) => dims[n][1]) } as never);
+    if (toDisplay === undefined) return undefined;
+    const toVoxel = invert(multiply(toDisplay, level.voxelToRas));
+    const p = state.position;
+    return [0, 1, 2].map((r) => toVoxel[4 * r] * p[0] + toVoxel[4 * r + 1] * p[1] + toVoxel[4 * r + 2] * p[2] + toVoxel[4 * r + 3]);
+  }
+
+  private region: Region | undefined;
+
+  /**
+   * The box of a large level to draw: kept while the position stays in its
+   * middle half, else centred on the position again.
+   */
+  private regionFor(level: LevelInfo): Region | undefined {
+    if (Math.max(...level.size) <= WHOLE) return undefined;
+    const at = this.positionIn(level) ?? level.size.map((s) => s / 2);
+    const old = this.region;
+    if (old !== undefined && this.regionLevel === level.path && [0, 1, 2].every((k) => Math.abs(at[k] - (old.lo[k] + old.hi[k]) / 2) <= BOX / 4)) return old;
+    const lo = [0, 1, 2].map((k) => Math.max(0, Math.min(level.size[k] - BOX, Math.round(at[k] - BOX / 2)))) as [number, number, number];
+    const hi = [0, 1, 2].map((k) => Math.min(level.size[k], lo[k] + BOX)) as [number, number, number];
+    return { lo, hi };
+  }
+
+  private regionLevel: string | undefined;
 
   private updating = false;
 
@@ -150,8 +201,11 @@ class VolumeRendering {
       this.handle?.dispose();
       this.handle = undefined;
       this.handleLayer = undefined;
-      if (saved.on) this.setStatus("No OME-Zarr image in this scene to draw. Add one (zarr://…) as a dataset.");
-      else this.setStatus("");
+      if (saved.on) {
+        const message = "No image here that volume rendering reads (OME-Zarr or precomputed).";
+        if (this.status !== message) this.ctx.ui.toast(message);
+        this.setStatus(message);
+      } else this.setStatus("");
       this.panelUpdate?.();
       return;
     }
@@ -160,16 +214,24 @@ class VolumeRendering {
         ng.layout = "xy-3d";
       });
     }
-    const url = omeZarrUrl(target.sources[0])!;
+    const url = storeOf(target.sources[0])!;
     if (url !== this.store) {
       this.store = url;
       this.levels = [];
       this.loaded = undefined;
+      this.region = undefined;
       void this.open(url);
     } else if (this.levels.length > 0) {
       const level = this.chooseLevel();
-      const key = level && `${url}|${level.path}`;
-      if (level !== undefined && key !== this.loaded) void this.load(level, key!);
+      if (level !== undefined) {
+        const region = this.regionFor(level);
+        const key = `${url}|${level.path}|${region?.lo.join(",") ?? ""}`;
+        if (key !== this.loaded) {
+          this.region = region;
+          this.regionLevel = level.path;
+          void this.load(level, key, region);
+        }
+      }
     }
     if (this.handleLayer !== target.name) {
       this.handle?.dispose();
@@ -221,7 +283,7 @@ class VolumeRendering {
     }
   }
 
-  private async load(level: LevelInfo, key: string): Promise<void> {
+  private async load(level: LevelInfo, key: string, region: Region | undefined): Promise<void> {
     const client = this.client;
     if (client === undefined) return;
     this.loading?.abort();
@@ -232,11 +294,15 @@ class VolumeRendering {
     const started = performance.now();
     this.setStatus(`Loading the solid (${label})…`);
     try {
-      const { data, size } = await client.volume(index, (done, total) => this.setStatus(`Loading the solid (${label}): ${done} of ${total} chunks`), controller.signal);
+      const { data, size } = await client.volume(index, (done, total) => this.setStatus(`Loading the solid (${label}): ${done} of ${total} chunks`), controller.signal, region);
       if (controller.signal.aborted) return;
-      this.drawer.setVolume(data, size, level.voxelToRas, level.voxelSize);
+      // A box's voxel 0 is the level's voxel `lo`.
+      const voxelToRas = new Float64Array(level.voxelToRas);
+      if (region !== undefined) for (let r = 0; r < 3; ++r) voxelToRas[4 * r + 3] += [0, 1, 2].reduce((sum, c) => sum + level.voxelToRas[4 * r + c] * region.lo[c], 0);
+      this.drawer.setVolume(data, size, voxelToRas, level.voxelSize);
       this.handle?.redraw();
-      this.setStatus(`Solid at ${label} (${size.join(" × ")} voxels), in ${((performance.now() - started) / 1000).toFixed(1)} s`);
+      const where = region === undefined ? "" : ", a box around the position";
+      this.setStatus(`Solid at ${label} (${size.join(" × ")} voxels${where}), in ${((performance.now() - started) / 1000).toFixed(1)} s`);
     } catch (e) {
       if (controller.signal.aborted) return;
       this.loaded = undefined;
@@ -251,7 +317,7 @@ class VolumeRendering {
       const { saved } = this;
       const candidates = this.candidates();
       const target = this.target();
-      const on = el("input", { type: "checkbox", class: "switch", role: "switch", "aria-label": "Volume rendering" }) as HTMLInputElement;
+      const on = el("input", { type: "checkbox", "aria-label": "Volume rendering" }) as HTMLInputElement;
       on.checked = saved.on;
       on.addEventListener("change", () => this.set({ on: on.checked }));
       const layer = el("select", { class: "text-input", "aria-label": "Image" }) as HTMLSelectElement;
@@ -262,8 +328,8 @@ class VolumeRendering {
       const detail = el("select", { class: "text-input", "aria-label": "Detail" }) as HTMLSelectElement;
       const chosen = this.chooseLevel();
       for (const l of this.levels) {
-        const big = Math.max(...l.size) > 384;
-        detail.append(el("option", { value: String(l.voxelSize), disabled: big }, `${mm(l.voxelSize)} · ${l.size.join(" × ")}${big ? " (too large)" : ""}`));
+        const big = Math.max(...l.size) > WHOLE;
+        detail.append(el("option", { value: String(l.voxelSize) }, `${mm(l.voxelSize)} · ${big ? `a ${BOX}³ box` : l.size.join(" × ")}`));
       }
       if (chosen) detail.value = String(chosen.voxelSize);
       detail.disabled = this.levels.length === 0;
@@ -284,8 +350,8 @@ class VolumeRendering {
           "div",
           { class: "vv-panel" },
           el("label", { class: "vv-row" }, el("span", { class: "vv-label" }, "Volume rendering"), on),
-          el("p", { class: "note" }, "Draws an image as a solid in the 3-D view, cut open at the position. Also switched with “Volume” beside “Sections” there."),
-          el("label", { class: "field" }, el("span", {}, "Image"), candidates.length ? layer : el("span", { class: "note" }, "No OME-Zarr image in this scene.")),
+          el("p", { class: "note" }, "An image as a solid in the 3-D view, cut open at the position. Also “Volume” beside “Sections” there."),
+          el("label", { class: "field" }, el("span", {}, "Image"), candidates.length ? layer : el("span", { class: "note" }, "No OME-Zarr or precomputed image here.")),
           el("label", { class: "field" }, el("span", {}, "Detail"), detail),
           el("label", { class: "field" }, el("span", {}, "Tissue threshold"), el("div", { class: "vv-row" }, threshold, thresholdValue)),
           el("label", { class: "field check" }, cut, el("span", {}, "Cut away the octant facing the camera")),

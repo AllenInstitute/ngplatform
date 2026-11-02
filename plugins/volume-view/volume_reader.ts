@@ -12,8 +12,10 @@
  * drawing another through the same chunks, reads nothing again.  The volume
  * worker runs this; it is plain code, so it is tested without one.
  */
-import { httpAccess, openZarrArray, ShardIndexCache, type ZarrArray, ZarrArrayReader } from "neuroglancer-zarr-vectors/reader";
+import { httpAccess, openZarrArray, ShardIndexCache, ZarrArrayReader } from "neuroglancer-zarr-vectors/reader";
 import { invert, mergeLevels, parseOmeLevels, type VolumeLevel } from "./ome.js";
+import { PrecomputedScale, readInfo, scaleLevel } from "./precomputed.js";
+import { PRECOMPUTED } from "./sources.js";
 
 export interface LevelInfo extends VolumeLevel {
   /** The array's shape and read-chunk shape, in its axis order. */
@@ -25,11 +27,19 @@ export interface LevelInfo extends VolumeLevel {
 
 interface OpenLevel {
   info: LevelInfo;
-  reader: ZarrArrayReader;
-  array: ZarrArray;
+  /** A read chunk, decoded, in the array's order and of the full chunk shape. */
+  readChunk(index: number[]): Promise<Uint8Array | undefined>;
+  /** The value where there is no chunk. */
+  fill: number;
   /** For x, y, z: the array dimension it is. */
   dimOf: [number, number, number];
   grid: number[];
+}
+
+/** A voxel box of a level, x, y, z, from `lo` up to (not including) `hi`. */
+export interface Region {
+  lo: [number, number, number];
+  hi: [number, number, number];
 }
 
 export type Progress = (done: number, total: number) => void;
@@ -84,7 +94,7 @@ export class VolumeReader {
       return hit;
     }
     // Shared by every request that wants it, so no one request cancels it.
-    const pending = level.reader.readChunk(index).then((data) => {
+    const pending = level.readChunk(index).then((data) => {
       this.remember(key, data?.byteLength ?? 0);
       return data;
     });
@@ -95,6 +105,7 @@ export class VolumeReader {
 
   /** Opens the stores' levels (finest first), placed in `space` where they name it. */
   async open(stores: string[], space: string | undefined, signal?: AbortSignal): Promise<{ levels: LevelInfo[]; name: string; description?: string }> {
+    if (stores.length === 1 && stores[0].startsWith(PRECOMPUTED)) return this.openPrecomputed(stores[0].slice(PRECOMPUTED.length), signal);
     const pyramids = await Promise.all(
       stores.map(async (store) => {
         const url = store.endsWith("/") ? store : `${store}/`;
@@ -122,47 +133,89 @@ export class VolumeReader {
           chunk: chunkShape,
           size: [array.shape[dimOf[0]], array.shape[dimOf[1]], array.shape[dimOf[2]]],
         };
-        return { info, array, reader: new ZarrArrayReader(array, access.read, shardIndexes), dimOf, grid: array.shape.map((s, d) => Math.ceil(s / chunkShape[d])) };
+        const reader = new ZarrArrayReader(array, access.read, shardIndexes);
+        const fill = Number(array.fillValue ?? 0);
+        return {
+          info,
+          readChunk: (index) => reader.readChunk(index),
+          fill: Number.isFinite(fill) ? fill : 0,
+          dimOf,
+          grid: array.shape.map((s, d) => Math.ceil(s / chunkShape[d])),
+        };
       }),
     );
-    this.cache.clear();
-    this.sizes.clear();
-    this.cached = 0;
+    this.reset();
     return { levels: this.levels.map((l) => l.info), name: pyramids[0]?.name ?? "", description: pyramids.find((p) => p.description)?.description };
   }
 
-  private fillValue(level: OpenLevel): number {
-    const f = Number(level.array.fillValue ?? 0);
-    return Number.isFinite(f) ? f : 0;
+  /** A Neuroglancer precomputed image: its scales, finest first, as arrays in z, y, x order. */
+  private async openPrecomputed(url: string, signal?: AbortSignal): Promise<{ levels: LevelInfo[]; name: string }> {
+    const info = await readInfo(url, undefined, signal);
+    this.levels = info.scales
+      .map((scale): OpenLevel => {
+        const reader = new PrecomputedScale(url, scale, info.data_type);
+        const [cx, cy, cz] = reader.chunk;
+        const [sx, sy, sz] = scale.size;
+        return {
+          info: { ...scaleLevel(url, scale), shape: [sz, sy, sx], chunk: [cz, cy, cx], size: [sx, sy, sz] },
+          readChunk: ([z, y, x]) => reader.readChunk([x, y, z]),
+          fill: 0,
+          dimOf: [2, 1, 0],
+          grid: [reader.grid[2], reader.grid[1], reader.grid[0]],
+        };
+      })
+      .sort((a, b) => a.info.voxelSize - b.info.voxelSize);
+    this.reset();
+    return { levels: this.levels.map((l) => l.info), name: url.replace(/\/$/, "").split("/").pop() ?? "" };
   }
 
-  /** A whole level, x fastest. */
-  async volume(index: number, signal: AbortSignal, progress?: Progress): Promise<{ data: Uint8Array; size: [number, number, number] }> {
+  private reset(): void {
+    this.cache.clear();
+    this.sizes.clear();
+    this.cached = 0;
+  }
+
+  /** A level, or the `region` of it, x fastest. */
+  async volume(index: number, signal: AbortSignal, progress?: Progress, region?: Region): Promise<{ data: Uint8Array; size: [number, number, number] }> {
     const level = this.levels[index];
-    const { size, chunk: cs, shape } = level.info;
-    const { dimOf, grid } = level;
-    const out = new Uint8Array(size[0] * size[1] * size[2]).fill(this.fillValue(level));
-    const indices: number[][] = [];
-    for (let a = 0; a < grid[0]; ++a) for (let b = 0; b < grid[1]; ++b) for (let c = 0; c < grid[2]; ++c) indices.push([a, b, c]);
-    // Output strides per array dimension.
-    const outStride = [1, size[0], size[0] * size[1]];
+    const { chunk: cs, shape } = level.info;
+    const { dimOf } = level;
+    const lo = region?.lo ?? [0, 0, 0];
+    const hi = region?.hi ?? level.info.size;
+    const size = [0, 1, 2].map((k) => Math.max(0, hi[k] - lo[k])) as [number, number, number];
+    const out = new Uint8Array(size[0] * size[1] * size[2]).fill(level.fill);
+    // The box and the output's strides, per array dimension.
+    const aLo = [0, 0, 0];
+    const aHi = [0, 0, 0];
     const stride = [0, 0, 0];
-    for (let k = 0; k < 3; ++k) stride[dimOf[k]] = outStride[k];
+    const outStride = [1, size[0], size[0] * size[1]];
+    for (let k = 0; k < 3; ++k) {
+      aLo[dimOf[k]] = Math.max(0, lo[k]);
+      aHi[dimOf[k]] = Math.min(shape[dimOf[k]], hi[k]);
+      stride[dimOf[k]] = outStride[k];
+    }
+    const outLo = [0, 0, 0];
+    for (let k = 0; k < 3; ++k) outLo[dimOf[k]] = lo[k];
+    const first = [0, 1, 2].map((d) => Math.floor(aLo[d] / cs[d]));
+    const last = [0, 1, 2].map((d) => Math.ceil(aHi[d] / cs[d]) - 1);
+    const indices: number[][] = [];
+    for (let a = first[0]; a <= last[0]; ++a) for (let b = first[1]; b <= last[1]; ++b) for (let c = first[2]; c <= last[2]; ++c) indices.push([a, b, c]);
     let done = 0;
     await each(indices, signal, async (ci) => {
       const data = await this.chunk(level, ci);
       if (data !== undefined) {
         const origin = [0, 1, 2].map((d) => ci[d] * cs[d]);
-        const extent = [0, 1, 2].map((d) => Math.min(cs[d], shape[d] - origin[d]));
-        const base = origin[0] * stride[0] + origin[1] * stride[1] + origin[2] * stride[2];
-        for (let i = 0; i < extent[0]; ++i) {
-          for (let j = 0; j < extent[1]; ++j) {
-            let from = (i * cs[1] + j) * cs[2];
-            let to = base + i * stride[0] + j * stride[1];
+        const from = [0, 1, 2].map((d) => Math.max(origin[d], aLo[d]));
+        const to = [0, 1, 2].map((d) => Math.min(origin[d] + cs[d], aHi[d]));
+        const run = to[2] - from[2];
+        for (let i = from[0]; i < to[0]; ++i) {
+          for (let j = from[1]; j < to[1]; ++j) {
+            let src = ((i - origin[0]) * cs[1] + (j - origin[1])) * cs[2] + (from[2] - origin[2]);
+            let dst = (i - outLo[0]) * stride[0] + (j - outLo[1]) * stride[1] + (from[2] - outLo[2]) * stride[2];
             if (stride[2] === 1) {
-              out.set(data.subarray(from, from + extent[2]), to);
+              out.set(data.subarray(src, src + run), dst);
             } else {
-              for (let k = 0; k < extent[2]; ++k, ++from, to += stride[2]) out[to] = data[from];
+              for (let k = 0; k < run; ++k, ++src, dst += stride[2]) out[dst] = data[src];
             }
           }
         }
@@ -208,7 +261,7 @@ export class VolumeReader {
     const atV = voxelAt(rect[0] + du / 2, rect[2] + dv / 2 + dv);
     const stepU = [0, 1, 2].map((k) => atU[k] - origin[k]);
     const stepV = [0, 1, 2].map((k) => atV[k] - origin[k]);
-    const out = new Uint8Array(width * height).fill(this.fillValue(level));
+    const out = new Uint8Array(width * height).fill(level.fill);
 
     // Each texel's chunk (flat index in the grid, -1 outside) and its offset there.
     const chunkOf = new Int32Array(width * height).fill(-1);

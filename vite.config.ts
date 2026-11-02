@@ -5,6 +5,9 @@ import { defineConfig } from "vite";
 // its own examples/vite configuration.  Plugins live in plugins/, one folder
 // each, and import the platform as @ngplatform/sdk.
 const sdk = fileURLToPath(new URL("./src/sdk/", import.meta.url));
+// Neuroglancer's JPEG decoder is plain JavaScript, which its "./unstable/*.js"
+// export (to TypeScript sources) does not reach.
+const jpg = fileURLToPath(new URL("./node_modules/neuroglancer/src/third_party/jpgjs/jpg.js", import.meta.url));
 
 export default defineConfig({
   // Relative asset URLs, so the built app can be served from any path: a
@@ -14,6 +17,7 @@ export default defineConfig({
     alias: [
       { find: /^@ngplatform\/sdk$/, replacement: `${sdk}index.ts` },
       { find: /^@ngplatform\/sdk\/(.*)$/, replacement: `${sdk}$1.ts` },
+      { find: /^neuroglancer\/unstable\/third_party\/jpgjs\/jpg\.js$/, replacement: jpg },
     ],
     conditions: [
       "neuroglancer/datasource:none_by_default",

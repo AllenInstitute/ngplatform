@@ -1,7 +1,8 @@
 /** The main thread's side of the volume worker: requests as promises, with progress and cancel. */
 import type { LevelInfo } from "./volume_worker.js";
+import type { Region } from "./volume_reader.js";
 
-export type { LevelInfo };
+export type { LevelInfo, Region };
 
 interface Pending {
   resolve: (value: any) => void;
@@ -49,8 +50,8 @@ export class VolumeClient {
     return this.request({ type: "open", stores, space });
   }
 
-  volume(level: number, progress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<{ data: Uint8Array; size: [number, number, number] }> {
-    return this.request({ type: "volume", level }, { progress, signal });
+  volume(level: number, progress?: (done: number, total: number) => void, signal?: AbortSignal, region?: Region): Promise<{ data: Uint8Array; size: [number, number, number] }> {
+    return this.request({ type: "volume", level, region }, { progress, signal });
   }
 
   plane(

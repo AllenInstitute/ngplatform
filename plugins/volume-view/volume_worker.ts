@@ -3,7 +3,7 @@
  * chunk decoding and resampling stay off the main thread.
  *
  * In:  { type: "open", id, stores, space }
- *      { type: "volume", id, level }
+ *      { type: "volume", id, level, region?: { lo, hi } }
  *      { type: "plane", id, level, axis, value, rect: [u0, u1, v0, v1], texel }
  *      { type: "cancel", id }
  * Out: { type: "opened", id, levels, name, description }
@@ -40,7 +40,7 @@ self.onmessage = (event: MessageEvent) => {
   if (msg.type === "open") {
     work = reader.open(msg.stores, msg.space, signal).then((r) => postMessage({ type: "opened", id: msg.id, ...r }));
   } else if (msg.type === "volume") {
-    work = reader.volume(msg.level, signal, progress).then(({ data, size }) => postMessage({ type: "volume", id: msg.id, data, size }, { transfer: [data.buffer] }));
+    work = reader.volume(msg.level, signal, progress, msg.region).then(({ data, size }) => postMessage({ type: "volume", id: msg.id, data, size }, { transfer: [data.buffer] }));
   } else if (msg.type === "plane") {
     work = reader
       .plane(msg.level, msg, signal, progress, (image) => postMessage({ type: "plane", id: msg.id, ...image, final: false }, { transfer: [image.data.buffer] }))
