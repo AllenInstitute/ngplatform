@@ -183,6 +183,8 @@ export class VolumeReader {
         const url = store.endsWith("/") ? store : `${store}/`;
         const group = (await readJson(`${url}zarr.json`, signal)) ?? (await readJson(`${url}.zattrs`, signal));
         if (group === undefined) throw new Error(`${url}: no zarr.json`);
+        // Colour voxels packed in a uint32 (this app's RGB TIFF and NIfTI): not intensities to window.
+        if (group.attributes?.ngplatform?.rendering === "rgb") throw new Error("colour (RGB) images are not drawn as volumes yet");
         return parseOmeLevels(url, group, space);
       }),
     );
