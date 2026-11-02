@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { openNifti } from "../../../src/virtual/images/nifti.js";
 import { VolumeReader } from "../../volume-view/volume_reader.js";
 import { History, Stroke } from "../segmentation/history.js";
-import { ballReach, ballShape, dabsBetween, floodFill, type ImageBlock, inRange, paintBall, sameLabel, type Vec3 } from "../segmentation/kernels.js";
+import { ballReach, ballShape, dabsBetween, distance2d, floodFill, type ImageBlock, inRange, interpolate, paintBall, sameLabel, type Vec3 } from "../segmentation/kernels.js";
 import { LabelVolume } from "../segmentation/label_volume.js";
 import { component, otsu, THRESHOLD_SELECT } from "../segmentation/quick_select.js";
 import { cropped, niftiGz, omeZarr } from "../segmentation/save.js";
@@ -219,6 +219,42 @@ describe("fills", () => {
     expect(w.get(15, 15, 21)).toBe(0);
     const limited = floodFill(new Stroke(vol([30, 30, 30])), [15, 15, 15], inRange(image, 50, 200), { value: 5 }, { maxVoxels: 100 });
     expect(limited).toMatchObject({ changed: 100, limited: true });
+  });
+});
+
+describe("interpolation between sections", () => {
+  it("measures Euclidean distances to the nearest set pixel", () => {
+    const seed = new Uint8Array(25);
+    seed[12] = 1;
+    const d = distance2d(seed, 5, 5);
+    expect(d[12]).toBe(0);
+    expect(d[0]).toBeCloseTo(Math.SQRT2 * 2);
+    expect(d[14]).toBe(2);
+    expect(Array.from(distance2d(new Uint8Array(4), 2, 2))).toEqual([Infinity, Infinity, Infinity, Infinity]);
+  });
+
+  it("grows a disc of radius 4 in section 2 into one of 8 in section 6, through the sections between", () => {
+    const v = vol([40, 40, 10]);
+    const s = new Stroke(v);
+    paintBall(s, [20, 20, 2], ballShape(4, "voxels"), { value: 5 }, [0, 0, 1]);
+    paintBall(s, [20, 20, 6], ballShape(8, "voxels"), { value: 5 }, [0, 0, 1]);
+    // Another label in section 4 is left alone.
+    s.set(20, 20, 4, 9);
+    s.finish();
+    const t = new Stroke(v);
+    expect(interpolate(t, 5, 2, { lo: [0, 0, 0], hi: [40, 40, 10] })).toBe(3);
+    t.finish();
+    const radius = (z: number) => {
+      let r = 0;
+      while (v.get(20 + r + 1, 20, z) === 5) ++r;
+      return r;
+    };
+    expect(radius(3)).toBe(5);
+    expect(radius(5)).toBe(7);
+    expect(v.get(20, 20, 4)).toBe(9);
+    expect(v.get(21, 20, 4)).toBe(5);
+    expect(v.get(20, 20, 1)).toBe(0);
+    expect(v.get(20, 20, 7)).toBe(0);
   });
 });
 

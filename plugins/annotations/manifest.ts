@@ -42,14 +42,15 @@ For an image and a region (a box or ellipsoid annotation, or a label of a label 
 ## Segmentation
 Label volumes drawn by hand, shown as a segmentation layer that updates as you draw.
 - **New** makes an empty one on an image's grid (the same voxels and placement; 8, 16 or 32 bits); **Open** reads a NIfTI label image to edit.
-- Tools: **Brush** (a sphere or a disc in the section, its radius in mm or voxels), **Erase**, **Fill 2-D** (the section) and **Fill 3-D** (bounded), **Pick** a label from a view, and **Quick select** (a box or a click). Brush and fills can be limited to an intensity range of the image.
-- In a view, the left button draws; hold **Space** to move the view instead. Keys while drawing: \`B\` brush, \`E\` erase, \`F\` fill, \`Shift+F\` fill 3-D, \`I\` pick, \`[\` and \`]\` brush size, \`Ctrl+Z\` and \`Ctrl+Shift+Z\` undo and redo strokes, \`Escape\` stops drawing.
+- Tools: **Brush** (a sphere or a disc in the section, its radius in mm or voxels), **Erase**, **Fill 2-D** (the section) and **Fill 3-D** (bounded), **Pick** a label from a view, and **Quick select** (a box or a click). **Interpolate** fills the sections between two where a label is drawn. Brush and fills can be limited to an intensity range of the image.
+- In a view, the left button draws; hold **Space** to move the view instead. Keys while drawing: \`B\` brush, \`E\` erase, \`F\` fill, \`Shift+F\` fill 3-D, \`I\` pick, \`V\` interpolate between sections, \`[\` and \`]\` brush size, \`Ctrl+Z\` and \`Ctrl+Shift+Z\` undo and redo strokes, \`Escape\` stops drawing.
 - **Save** as NIfTI (.nii.gz) or an OME-Zarr folder; only the painted box, if you ask.
 
 A label volume lives in this page until saved: save it before closing the page.`,
   links: [{ title: "WebKnossos volume annotation (what this follows)", url: "https://docs.webknossos.org/webknossos/volume_annotation/index.html" }],
   license: "Apache-2.0",
   activation: ["onStartup"],
+  provides: { services: ["annotations.quickSelect"] },
   contributes: {
     panels: [{ id: ANNOTATIONS_PANEL, title: "Annotations", slot: "left", order: 60 }],
     appState: { key: "labels", version: 1 },
@@ -60,6 +61,7 @@ A label volume lives in this page until saved: save it before closing the page.`
       { id: "annotations.saveLabelVolume", title: "Save the label volume", group: "Annotations" },
       { id: "annotations.tool", title: "Drawing tool", group: "Annotations", args: { type: "object", properties: { tool: { type: "string" } }, required: ["tool"] } },
       { id: "annotations.brushSize", title: "Brush size", group: "Annotations", args: { type: "object", properties: { factor: { type: "number", default: 1.25 } } } },
+      { id: "annotations.interpolate", title: "Interpolate the label between drawn sections", group: "Annotations" },
       { id: "annotations.undoStroke", title: "Undo the last stroke", group: "Annotations", when: PAINTING },
       { id: "annotations.redoStroke", title: "Redo a stroke", group: "Annotations", when: PAINTING },
       { id: "annotations.stopDrawing", title: "Stop drawing", group: "Annotations", when: PAINTING },
@@ -72,6 +74,7 @@ A label volume lives in this page until saved: save it before closing the page.`
       { key: "shift+f", command: "annotations.tool", args: { tool: "fill3d" }, when: PAINTING },
       { key: "i", command: "annotations.tool", args: { tool: "pick" }, when: PAINTING },
       { key: "q", command: "annotations.tool", args: { tool: "quick" }, when: PAINTING },
+      { key: "v", command: "annotations.interpolate", when: PAINTING },
       { key: "]", command: "annotations.brushSize", args: { factor: 1.25 }, when: PAINTING },
       { key: "[", command: "annotations.brushSize", args: { factor: 0.8 }, when: PAINTING },
       { key: "mod+z", command: "annotations.undoStroke", when: PAINTING },

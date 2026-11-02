@@ -159,26 +159,27 @@ export class Statistics {
       if (!regions.some(([k]) => k === this.region)) this.region = regions[0]?.[0] ?? "";
       const go = button(this.running ? "Reading…" : "Compute", () => void this.compute(), "Statistics of the image in the region", "btn primary small");
       go.disabled = !this.image || !this.region || this.running !== undefined;
+      // One card a result: the dock is narrow for eight columns.
       const table = this.rows.length
         ? el(
             "div",
-            { class: "an-table-wrap" },
-            el(
-              "table",
-              { class: "an-table an-stats" },
-              el("thead", {}, el("tr", {}, ...["Region", "Voxels", "Volume", "Mean", "SD", "Min", "Max", "Median"].map((h, i) => el("th", { class: i ? "num" : "" }, h)))),
+            { class: "an-results" },
+            ...this.rows.map((r) =>
               el(
-                "tbody",
-                {},
-                ...this.rows.map((r) =>
-                  el(
-                    "tr",
-                    { title: `${r.image}, level ${r.level} (${physical(r.voxelSize)} voxels)` },
-                    el("td", {}, r.region),
-                    el("td", { class: "num" }, r.count.toLocaleString()),
-                    el("td", { class: "num" }, physical(r.volume, 3)),
-                    ...[r.mean, r.sd, r.min, r.max, r.median].map((v) => el("td", { class: "num" }, fmt(v))),
-                  ),
+                "div",
+                { class: "an-result" },
+                el("div", { class: "an-result-head" }, el("span", {}, r.region), el("span", { class: "an-faint" }, `${r.image} · level ${r.level}, ${physical(r.voxelSize)}`)),
+                el(
+                  "dl",
+                  { class: "an-facts" },
+                  ...([
+                    ["Voxels", r.count.toLocaleString()],
+                    ["Volume", physical(r.volume, 3)],
+                    ["Median", fmt(r.median)],
+                    ["Mean", fmt(r.mean)],
+                    ["SD", fmt(r.sd)],
+                    ["Range", `${fmt(r.min)} – ${fmt(r.max)}`],
+                  ] as [string, string][]).flatMap(([k, v]) => [el("dt", {}, k), el("dd", {}, v)]),
                 ),
               ),
             ),

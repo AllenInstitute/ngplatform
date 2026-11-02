@@ -201,6 +201,136 @@ export function floodFill(
   return { changed, reached, limited };
 }
 
+// ------------------------------------------------------------ interpolation
+
+/** Squared distances along a line to the nearest zero of `f` (0 where set, Infinity elsewhere): Felzenszwalb and Huttenlocher's lower envelope. */
+function edt1d(f: Float64Array, n: number, out: Float64Array, v: Int32Array, z: Float64Array): void {
+  let k = 0;
+  v[0] = 0;
+  z[0] = -Infinity;
+  z[1] = Infinity;
+  for (let q = 1; q < n; ++q) {
+    if (f[q] === Infinity) continue;
+    if (f[v[0]] === Infinity) {
+      v[0] = q;
+      continue;
+    }
+    let s = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+    while (s <= z[k]) {
+      --k;
+      s = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+    }
+    ++k;
+    v[k] = q;
+    z[k] = s;
+    z[k + 1] = Infinity;
+  }
+  if (f[v[0]] === Infinity) {
+    out.fill(Infinity, 0, n);
+    return;
+  }
+  k = 0;
+  for (let q = 0; q < n; ++q) {
+    while (z[k + 1] < q) ++k;
+    out[q] = (q - v[k]) ** 2 + f[v[k]];
+  }
+}
+
+/** Euclidean distances in a w × h image to the nearest pixel where `seed` is set. */
+export function distance2d(seed: Uint8Array, w: number, h: number): Float64Array {
+  const d = new Float64Array(w * h);
+  for (let i = 0; i < d.length; ++i) d[i] = seed[i] ? 0 : Infinity;
+  const n = Math.max(w, h);
+  const f = new Float64Array(n);
+  const out = new Float64Array(n);
+  const v = new Int32Array(n);
+  const z = new Float64Array(n + 1);
+  for (let x = 0; x < w; ++x) {
+    for (let y = 0; y < h; ++y) f[y] = d[x + w * y];
+    edt1d(f, h, out, v, z);
+    for (let y = 0; y < h; ++y) d[x + w * y] = out[y];
+  }
+  for (let y = 0; y < h; ++y) {
+    for (let x = 0; x < w; ++x) f[x] = d[x + w * y];
+    edt1d(f, w, out, v, z);
+    for (let x = 0; x < w; ++x) d[x + w * y] = Math.sqrt(out[x]);
+  }
+  return d;
+}
+
+/** A section's mask as a signed distance: positive inside (to the edge), negative outside. */
+export function signedDistance(mask: Uint8Array, w: number, h: number): Float64Array {
+  const toOutside = distance2d(mask.map((m) => (m ? 0 : 1)), w, h);
+  const toInside = distance2d(mask, w, h);
+  const out = new Float64Array(w * h);
+  for (let i = 0; i < out.length; ++i) out[i] = mask[i] ? toOutside[i] : -toInside[i];
+  return out;
+}
+
+/**
+ * Fills the sections between labelled ones (shape-based interpolation, as
+ * WebKnossos's and ITK-SNAP's): along `axis`, where a label is drawn in
+ * sections a and b with only unlabelled sections between, each section
+ * between gets the shape where the two signed distances, weighted by
+ * nearness, are positive.  Within `box` (the label's own box, say); paints
+ * only unlabelled voxels.  Returns the sections filled.
+ */
+export function interpolate(stroke: Stroke, value: number, axis: number, box: { lo: number[]; hi: number[] }): number {
+  const volume = stroke.volume;
+  const [u, w] = [0, 1, 2].filter((k) => k !== axis);
+  const nu = box.hi[u] - box.lo[u];
+  const nw = box.hi[w] - box.lo[w];
+  const at = (s: number, i: number, j: number) => {
+    const p = [0, 0, 0];
+    p[axis] = s;
+    p[u] = box.lo[u] + i;
+    p[w] = box.lo[w] + j;
+    return p as Vec3;
+  };
+  const mask = (s: number) => {
+    const m = new Uint8Array(nu * nw);
+    let any = false;
+    for (let j = 0; j < nw; ++j) {
+      for (let i = 0; i < nu; ++i) {
+        if (volume.get(...at(s, i, j)) === value) {
+          m[i + nu * j] = 1;
+          any = true;
+        }
+      }
+    }
+    return any ? m : undefined;
+  };
+  const drawn: number[] = [];
+  const masks = new Map<number, Uint8Array>();
+  for (let s = box.lo[axis]; s < box.hi[axis]; ++s) {
+    const m = mask(s);
+    if (m === undefined) continue;
+    drawn.push(s);
+    masks.set(s, m);
+  }
+  let filled = 0;
+  for (let k = 1; k < drawn.length; ++k) {
+    const a = drawn[k - 1];
+    const b = drawn[k];
+    if (b - a < 2) continue;
+    const da = signedDistance(masks.get(a)!, nu, nw);
+    const db = signedDistance(masks.get(b)!, nu, nw);
+    for (let s = a + 1; s < b; ++s) {
+      const t = (s - a) / (b - a);
+      for (let j = 0; j < nw; ++j) {
+        for (let i = 0; i < nu; ++i) {
+          const q = i + nu * j;
+          if ((1 - t) * da[q] + t * db[q] <= 0) continue;
+          const p = at(s, i, j);
+          if (volume.get(...p) === 0) stroke.set(...p, value);
+        }
+      }
+      ++filled;
+    }
+  }
+  return filled;
+}
+
 /** A block of an image's values on the label grid (x fastest), from voxel `lo`. */
 export interface ImageBlock {
   lo: Vec3;

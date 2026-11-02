@@ -70,7 +70,9 @@ export class Session {
       session.source = found.source;
       session.url = found.source.replace(/^zarr3:\/\//, "");
       const before = new Set(ctx.viewer.layers().map((l) => l.name));
-      ctx.workspace.addDataset({ source: found.source, name, kind: "segmentation" });
+      // The volume alone: its bounds' outline (a yellow box round the whole grid) is no help when drawing.
+      const source = { url: found.source, subsources: { default: true, bounds: false }, enableDefaultSubsources: false };
+      ctx.workspace.addDataset({ source, name, kind: "segmentation" });
       session.layer = ctx.viewer.layers().find((l) => !before.has(l.name) && l.sources.some((s) => s.includes(fileName)))?.name ?? name;
     } catch (e) {
       session.unserve();

@@ -18,7 +18,8 @@ export const STYLE = `
 .an-grid2 select, .an-grid2 .text-input { min-width: 0; width: 100%; }
 .an-end { display: flex; justify-content: flex-end; }
 .an-inline { display: flex; gap: 4px; align-items: center; }
-.an-inline .an-num { width: 0; flex: 1; }
+.an-inline .an-num { width: 0; flex: 1; min-width: 44px; }
+.an-grid2 .an-inline select { width: auto; flex: none; }
 .an-num { height: 24px; padding: 0 4px; font: 12px/1 var(--mono); min-width: 0; width: 64px; }
 .an-tools { align-self: start; }
 .an-table-wrap { overflow-x: auto; }
@@ -29,6 +30,13 @@ export const STYLE = `
 .an-click { cursor: pointer; }
 .an-click:hover td { background: var(--ink-3); }
 .an-current td { background: var(--select-soft); }
+.an-results { display: grid; gap: 6px; }
+.an-result { border: 1px solid var(--line); padding: 6px 8px; display: grid; gap: 4px; }
+.an-result-head { display: grid; gap: 2px; font-size: 12px; }
+.an-result-head .an-faint { font-size: 11px; }
+.an-facts { display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 2px 8px; margin: 0; font-size: 12px; }
+.an-facts dt { color: var(--faint); }
+.an-facts dd { margin: 0; font: 11px/1.5 var(--mono); text-align: right; white-space: nowrap; }
 .an-plot-wrap { display: grid; gap: 2px; }
 .an-plot { width: 100%; height: auto; display: block; }
 .an-plot .an-grid { stroke: var(--line); stroke-width: 1; }

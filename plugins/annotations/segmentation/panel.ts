@@ -21,7 +21,7 @@ import { button, download, el, field, fileName, fmt, numberInput, physical, sele
 import { type ImageLevel, layerStore, readableImages, type Voxels } from "../voxels.js";
 import { storeOf } from "../../volume-view/sources.js";
 import { Stroke } from "./history.js";
-import { ballReach, ballShape, dabsBetween, floodFill, type ImageBlock, inRange, type Paint, paintBall, sameLabel, type Vec3 } from "./kernels.js";
+import { ballReach, ballShape, dabsBetween, floodFill, type ImageBlock, inRange, interpolate, type Paint, paintBall, sameLabel, type Vec3 } from "./kernels.js";
 import { LABEL_MAX, type LabelType, LabelVolume } from "./label_volume.js";
 import { Painter, type ViewPoint } from "./painter.js";
 import { type Prompt, QuickSelectRegistry } from "./quick_select.js";
@@ -85,7 +85,7 @@ export class Segmentation {
 
   /** Work on the volume in order (a stroke's dabs may wait for image values). */
   private queue: Promise<void> = Promise.resolve();
-  private stroke: Stroke | undefined;
+  private brushing: Brushing | undefined;
   private last: Vec3 | undefined;
   private quickStart: { voxel: Vec3; axis?: number } | undefined;
   private quickEnd: Vec3 | undefined;
@@ -126,6 +126,7 @@ export class Segmentation {
     });
     c.register("annotations.undoStroke", () => this.undo(false));
     c.register("annotations.redoStroke", () => this.undo(true));
+    c.register("annotations.interpolate", () => this.interpolate());
     c.register("annotations.stopDrawing", () => this.setDrawing(false));
     // A layer removed from the scene ends its session's drawing.
     this.offs.push(
@@ -266,7 +267,9 @@ export class Segmentation {
     // The depth's gradient over voxel indices: through the voxels' map to the global dimensions.
     const m = placed.voxelToGlobal;
     const normal = [0, 1, 2].map((k) => placed.dims.reduce((s, d, r) => s + (p.depthPerUnit!.get(d) ?? 0) * m[4 * r + k], 0)) as Vec3;
-    return { voxel, normal: Math.hypot(...normal) > 0 ? normal : undefined };
+    if (Math.hypot(...normal) === 0) return { voxel };
+    this.axis = dominant(normal);
+    return { voxel, normal };
   }
 
   /** The brush's shape in voxels. */
@@ -292,28 +295,33 @@ export class Segmentation {
     });
   }
 
-  /** The brush's or eraser's paint, its image limit read for a box first. */
-  private async paintFor(erase: boolean, lo: Vec3, hi: Vec3): Promise<Paint> {
-    const paint: Paint = erase ? { value: 0, only: this.eraseOnly ? this.value : undefined } : { value: this.value, only: this.overwrite === "empty" ? 0 : undefined };
-    if (this.limit && this.current?.reference) {
-      const block = await this.current.imageBlock(lo, hi);
-      if (block) paint.where = inRange(block, this.low, this.high);
-    }
-    return paint;
+  /**
+   * A stroke of the brush or eraser, its settings taken when it starts:
+   * its dabs may wait for the image's values after the button is let go.
+   */
+  private begin(session: Session): Brushing {
+    const erase = this.tool === "erase";
+    return {
+      session,
+      stroke: new Stroke(session.volume),
+      q: this.shapeQ(),
+      paint: erase ? { value: 0, only: this.eraseOnly ? this.value : undefined } : { value: this.value, only: this.overwrite === "empty" ? 0 : undefined },
+      range: this.limit && session.reference ? [this.low, this.high] : undefined,
+      disc: this.shape === "disc",
+    };
   }
 
-  private dab(at: Vec3, normal: Vec3 | undefined): Promise<void> {
-    const stroke = this.stroke;
-    const session = this.current;
-    if (stroke === undefined || session === undefined) return Promise.resolve();
-    const q = this.shapeQ();
-    const reach = ballReach(q);
-    const lo = at.map((v, k) => Math.floor(v - reach[k]) - 1) as Vec3;
-    const hi = at.map((v, k) => Math.ceil(v + reach[k]) + 2) as Vec3;
-    return this.paintFor(this.tool === "erase", lo, hi).then((paint) => {
-      paintBall(stroke, at, q, paint, this.shape === "disc" ? normal : undefined);
-      if (stroke.flush().length) session.refresh(true);
-    });
+  private async dab(b: Brushing, at: Vec3, normal: Vec3 | undefined): Promise<void> {
+    const reach = ballReach(b.q);
+    const paint: Paint = { ...b.paint };
+    if (b.range !== undefined) {
+      const lo = at.map((v, k) => Math.floor(v - reach[k]) - 1) as Vec3;
+      const hi = at.map((v, k) => Math.ceil(v + reach[k]) + 2) as Vec3;
+      const block = await b.session.imageBlock(lo, hi);
+      if (block) paint.where = inRange(block, b.range[0], b.range[1]);
+    }
+    paintBall(b.stroke, at, b.q, paint, b.disc ? normal : undefined);
+    if (b.stroke.flush().length) b.session.refresh(true);
   }
 
   private down(p: ViewPoint): void {
@@ -324,10 +332,10 @@ export class Segmentation {
     switch (this.tool) {
       case "brush":
       case "erase": {
-        this.stroke = new Stroke(session.volume);
+        const brushing = (this.brushing = this.begin(session));
         this.last = voxel;
         this.lastNormal = normal;
-        this.enqueue(() => this.dab(voxel, normal));
+        this.enqueue(() => this.dab(brushing, voxel, normal));
         break;
       }
       case "pick": {
@@ -349,6 +357,27 @@ export class Segmentation {
   }
 
   private lastNormal: Vec3 | undefined;
+  /** The voxel axis across the 2-D view last drawn in: interpolation runs along it. */
+  private axis = 2;
+
+  /** Fills the sections between those where the active label is drawn, along the last view's axis. */
+  private interpolate(): void {
+    const session = this.current;
+    if (session === undefined) return;
+    const value = this.value;
+    const axis = this.axis;
+    this.enqueue(() => {
+      const box = session.volume.paintedBox(value);
+      if (box === undefined) {
+        this.ctx.ui.toast(`Label ${value} is not drawn yet.`);
+        return;
+      }
+      const stroke = new Stroke(session.volume);
+      const sections = interpolate(stroke, value, axis, box);
+      this.ctx.ui.toast(sections ? `Filled ${sections} section${sections === 1 ? "" : "s"} of label ${value} between those drawn.` : `Label ${value} has no gaps between drawn sections along ${"xyz"[axis]}: draw it in two sections a few apart.`);
+      this.commit(stroke, session, value);
+    });
+  }
 
   private drag(p: ViewPoint): void {
     if (this.tool === "quick") {
@@ -356,13 +385,14 @@ export class Segmentation {
       if (where) this.quickEnd = where.voxel;
       return;
     }
-    if (this.stroke === undefined || this.last === undefined) return;
+    const brushing = this.brushing;
+    if (brushing === undefined || this.last === undefined) return;
     const where = this.locate(p);
     if (where === undefined) return;
     const from = this.last;
     this.last = where.voxel;
     const normal = where.normal ?? this.lastNormal;
-    for (const at of dabsBetween(from, where.voxel, this.shapeQ())) this.enqueue(() => this.dab(at, normal));
+    for (const at of dabsBetween(from, where.voxel, brushing.q)) this.enqueue(() => this.dab(brushing, at, normal));
   }
 
   private up(): void {
@@ -373,21 +403,20 @@ export class Segmentation {
       this.enqueue(() => this.runQuick(start, end));
       return;
     }
-    const stroke = this.stroke;
-    this.stroke = undefined;
+    const brushing = this.brushing;
+    this.brushing = undefined;
     this.last = undefined;
-    if (stroke !== undefined) this.enqueue(() => this.commit(stroke));
+    if (brushing !== undefined) this.enqueue(() => this.commit(brushing.stroke, brushing.session, brushing.paint.value));
   }
 
   /** Ends a stroke: kept for undo, shown, counted. */
-  private commit(stroke: Stroke): void {
-    const session = this.current;
+  private commit(stroke: Stroke, session = this.current, value = this.value): void {
     stroke.finish();
     if (session === undefined || stroke.changes === 0) return;
     session.history.push(stroke);
     session.unsaved++;
     session.refresh();
-    session.applyColours([this.value]);
+    if (value > 0) session.applyColours([value]);
     this.recount();
   }
 
@@ -772,6 +801,7 @@ export class Segmentation {
       el("div", { class: "an-row" }, button("Range from the cursor", () => void this.rangeFromCursor(), "The value under the pointer, ± the tolerance of the range there")),
     );
 
+    const interpolateButton = button("Interpolate", () => this.interpolate(), "Fill the sections between those where this label is drawn, across the view last drawn in (V)");
     const undo = button("Undo", () => this.undo(false), "Undo the last stroke (Ctrl+Z while drawing)");
     undo.disabled = !session.history.canUndo;
     const redo = button("Redo", () => this.undo(true), "Ctrl+Shift+Z while drawing");
@@ -814,7 +844,7 @@ export class Segmentation {
       "div",
       { class: "an-seg" },
       head,
-      el("div", { class: "an-row" }, toggle, undo, redo),
+      el("div", { class: "an-row" }, toggle, undo, redo, interpolateButton),
       tools,
       el("div", { class: "an-row an-label" }, el("span", { class: "an-swatch big", style: `background:${session.colour(this.value)}` }), valueInput, colour, labelName, next),
       options.childElementCount ? options : null,
@@ -866,6 +896,16 @@ export class Segmentation {
     this.high = Number((value + t).toPrecision(4));
     this.update?.();
   }
+}
+
+interface Brushing {
+  session: Session;
+  stroke: Stroke;
+  q: number[];
+  paint: Paint;
+  /** The image range it is limited to. */
+  range: [number, number] | undefined;
+  disc: boolean;
 }
 
 /** The voxel axis a normal is closest to. */

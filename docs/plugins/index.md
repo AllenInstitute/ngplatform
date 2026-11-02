@@ -13,7 +13,7 @@ and a *Read more* guide each.
   `|zarr-vectors:`). They can also declare files they read in place from
   your computer, as virtual stores.
 - **Tools** add tabs, commands, overlays and views around Neuroglancer: track
-  filtering, labels, registration, volume rendering. They work through the
+  filtering, annotations, registration, volume rendering. They work through the
   platform's SDK (`@ngplatform/sdk`): the workspace, the viewer, the docks,
   jobs, storage and sign-in.
 
@@ -23,7 +23,7 @@ and a *Read more* guide each.
 |---|---|---|---|
 | [Zarr Vectors](zarr-vectors.md) | data type | yes | Points, streamlines, skeletons, graphs and meshes from Zarr Vectors stores, and local tractograms, meshes, neurons and point tables as virtual stores. |
 | [Track filtering](track-filtering.md) | tool | yes | TrackVis-style groups of the objects that pass through regions. |
-| [Labels](labels.md) | tool | yes | Labels on the views for figures, in screenshots too. |
+| [Annotations](annotations.md) | tool | yes | Labels on the views for figures, measurements, statistics in a region, and label volumes drawn by hand. |
 | [Registration](registration.md) | tool | no | Move a layer by hand (as Freeview) or by landmarks; save the transform or the moved image. |
 | [Volume rendering](volume-rendering.md) | tool | no | An image drawn as a solid in the 3-D view, cut open at the position. |
 

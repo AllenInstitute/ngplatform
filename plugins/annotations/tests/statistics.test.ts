@@ -18,13 +18,17 @@ describe("label statistics", () => {
     const block = new Float32Array(1000).map((_, i) => i % 10);
     const box = regionTest({ kind: "box", affine: IDENTITY, lo: [2, 0, 0], hi: [4, 9, 0] });
     const inBox = valuesInside(block, [0, 0, 0], [10, 10, 10], box);
-    expect(inBox.length).toBe(3 * 10);
-    expect(summarise(inBox).mean).toBeCloseTo(3);
+    // Centres in [lo, hi): x 2 and 3, y 0 to 8; the flat z takes its one section.
+    expect(inBox.length).toBe(2 * 9);
+    expect(summarise(inBox).mean).toBeCloseTo(2.5);
 
     // A sphere of radius 2 voxels in a space of half-size voxels (radius 4 there).
     const half = [2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1];
     const ball = regionTest({ kind: "ellipsoid", affine: half, centre: [10, 10, 10], radii: [4, 4, 4] });
     expect(valuesInside(block, [0, 0, 0], [10, 10, 10], ball).length).toBe(33);
+    // A flat ellipse (an ellipse in z = 10 there) takes one image section: half a voxel is a unit there.
+    const flat = regionTest({ kind: "ellipsoid", affine: half, centre: [10, 10, 10], radii: [4, 4, 0] });
+    expect(valuesInside(block, [0, 0, 0], [10, 10, 10], flat).length).toBe(13);
 
     // Label 2 of a label block placed one voxel along x from the image.
     const labels = new Uint8Array(27);

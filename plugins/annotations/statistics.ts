@@ -56,13 +56,17 @@ export type Region =
 export function regionTest(region: Region): (x: number, y: number, z: number) => boolean {
   const a = region.affine;
   const at = (x: number, y: number, z: number, r: number) => a[4 * r] * x + a[4 * r + 1] * y + a[4 * r + 2] * z + a[4 * r + 3];
+  // A flat box or ellipse takes the image's section it lies in: voxels whose
+  // centres are within half an image voxel of it, along that axis.
+  const half = [0, 1, 2].map((r) => 0.5 * Math.max(Math.abs(a[4 * r]), Math.abs(a[4 * r + 1]), Math.abs(a[4 * r + 2])));
   if (region.kind === "box") {
     const lo = region.lo.map((v, k) => Math.min(v, region.hi[k]));
     const hi = region.lo.map((v, k) => Math.max(v, region.hi[k]));
     return (x, y, z) => {
       for (let r = 0; r < 3; ++r) {
         const v = at(x, y, z, r);
-        if (v < lo[r] || v > hi[r]) return false;
+        // Centres in [lo, hi), so voxels tile the box and count to its volume.
+        if (hi[r] - lo[r] < 2 * half[r] ? v < lo[r] - half[r] || v >= hi[r] + half[r] : v < lo[r] || v >= hi[r]) return false;
       }
       return true;
     };
@@ -73,9 +77,8 @@ export function regionTest(region: Region): (x: number, y: number, z: number) =>
       let s = 0;
       for (let r = 0; r < 3; ++r) {
         const d = at(x, y, z, r) - centre[r];
-        // A flat axis (radius 0) takes the section it lies in.
         if (radii[r] === 0) {
-          if (Math.abs(d) > 0.5) return false;
+          if (d < -half[r] || d >= half[r]) return false;
           continue;
         }
         s += (d / radii[r]) ** 2;
