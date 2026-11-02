@@ -215,7 +215,7 @@ await page.evaluate((source) => {
 }, local.source);
 await page.waitForFunction(() => window.engine.layers().some((l) => l.name === "smoke" && (l.ready || l.error)), null, { timeout: 60_000 }).catch(() => {});
 const opened = (await layers()).find((l) => l.name === "smoke");
-check(opened?.ready === true && !opened.error, `the local NIfTI opens as a layer${opened?.error ? ` (${opened.error})` : ""}`);
+check(opened?.ready === true && !opened.error, `the local NIfTI opens as a layer${opened?.ready === true && !opened.error ? "" : ` (${JSON.stringify(await layers())})`}`);
 
 // Narrow screen.
 await page.setViewportSize({ width: 400, height: 800 });
