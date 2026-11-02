@@ -449,7 +449,7 @@ export class Labels {
     const draw = () => {
       groupsButton.disabled = (this.groups?.list().length ?? 0) === 0;
       if (this.labels.length === 0) {
-        list.replaceChildren(el("p", { class: "empty" }, "No labels. Add one at the position, one per track group, or one per annotation with a description; then drag it in a view to move it, and by its corner to resize it."));
+        list.replaceChildren(el("p", { class: "empty" }, "No labels yet. Add one, then drag it in a view to move it, or by its corner to resize it."));
         return;
       }
       list.replaceChildren(

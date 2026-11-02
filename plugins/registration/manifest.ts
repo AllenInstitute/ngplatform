@@ -12,7 +12,7 @@ export const REGISTRATION_MANIFEST: Manifest = {
   version: "0.1.0",
   kind: "tool",
   enabledByDefault: false,
-  description: "Aligns a layer to the others from landmark pairs (translation, rigid, similarity or affine), and reads and writes affine transform files.",
+  description: "Aligns a layer to the others from landmark pairs, and reads and writes transform files.",
   guide: `Registration places a **moving** layer onto the **fixed** space the other layers are in, from pairs of landmarks: the same feature, marked once in each.
 
 ## Marking pairs

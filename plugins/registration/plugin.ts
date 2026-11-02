@@ -359,7 +359,7 @@ class Registration {
           "div",
           { class: "rg" },
           el("label", { class: "field" }, el("span", {}, "Moving layer"), candidates.length ? layer : el("span", { class: "note" }, "No 3-D layer to move.")),
-          el("p", { class: "note" }, "Point at a feature in the fixed data and press Alt+F; at the same feature in the moving layer, Alt+M. Pairs match in order."),
+          el("p", { class: "note" }, "Point at a feature in the fixed data, Alt+F; the same feature in the moving layer, Alt+M."),
           el(
             "div",
             { class: "rg-row" },

@@ -10,7 +10,7 @@ export const TRACK_FILTERING_MANIFEST: Manifest = {
   version: "0.3.0",
   kind: "tool",
   enabledByDefault: true,
-  description: "Track groups: the objects of a Zarr Vectors dataset that pass through regions and have attributes in range, each shown as a layer of its own.",
+  description: "Groups of the objects that pass through regions: tracts, segments or annotations. Each group is a layer.",
   guide: `TrackVis-style filtering for any Zarr Vectors dataset: streamlines, skeletons, graphs, or point clouds whose points belong to objects. A **group** keeps the objects that pass through its regions and whose attributes are in range, and shows them as a layer of its own, in its own colour.
 
 ## Making a group

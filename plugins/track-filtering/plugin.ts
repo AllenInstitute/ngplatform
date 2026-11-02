@@ -1214,7 +1214,7 @@ class TrackGroups {
     const local = this.localStore();
     const { engine, props } = this;
     if (local === undefined || !local.writable) {
-      this.ctx.ui.toast("Groups can be written only into a zarr-vectors folder opened from this computer (Add → Local, in Chrome or Edge).", "error");
+      this.ctx.ui.toast("Groups are written only into a local zarr-vectors folder (Chrome or Edge).", "error");
       return;
     }
     if (engine === undefined || props === undefined) {
@@ -1575,7 +1575,7 @@ class TrackGroups {
       ),
     );
     if (group.rois.length === 0) {
-      box.append(el("p", { class: "note" }, "A region is placed at the centre of the views. Alt-drag it in a view to move it; you can also draw ellipsoids and boxes there with Neuroglancer's annotation tools."));
+      box.append(el("p", { class: "note" }, "A region starts at the centre of the views; Alt-drag it to move it."));
     }
     group.rois.forEach((roi, i) => box.append(this.roiControl(group, roi, i)));
 

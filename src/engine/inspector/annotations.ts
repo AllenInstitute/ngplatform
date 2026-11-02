@@ -123,7 +123,7 @@ export function annotationsTab(scope: Scope, layer: AnnotationUserLayer): HTMLEl
       el("div", { class: "ins-row ins-wide" }, toolbox),
       start,
       row("Colour", colour(scope, (layer.annotationDisplayState as any).color), "The colour annotations are drawn in, unless the shader says otherwise"),
-      note("Choose a tool, then click in a view to place it; its description (its name) opens for typing. Choose the tool again, or press Escape, to stop. Labels can show descriptions beside the annotations (the Labels tab)."),
+      note("Choose a tool, then click in a view to place one; type its description. Escape stops."),
     ),
     lists,
   ];

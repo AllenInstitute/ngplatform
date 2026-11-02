@@ -36,7 +36,7 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench, auth: AuthRegi
       h(
         "p",
         { class: "note first" },
-        "Data behind a sign-in (middleauth+https:// sources, and whatever plugins add) is listed here with who you are signed in as. The viewer also asks when a dataset needs it. Sign-ins are kept in this browser, never in the link.",
+        "Data behind a sign-in, and who you are signed in as. Sign-ins stay in this browser, never in the link.",
       ),
       list,
       reload,

@@ -333,7 +333,7 @@ export function showLocalSheet(wb: Workbench, local: LocalData): void {
           "p",
           { class: "note" },
           "A file: NIfTI, or a tractogram (.trk, .tck, .trx), read in place. A folder: an OME-Zarr image, a zarr-vectors store, a precomputed volume, or a folder holding several. ",
-          "Links to it work in this browser only, while this tab is open; it is remembered here, so it opens again after one click to allow reading.",
+          "Links to it work only in this browser, while this tab is open.",
           LocalData.canWrite ? "" : " This browser cannot remember folders or write into them: use Chrome or Edge for that.",
         ),
         found,
