@@ -46,11 +46,11 @@ export interface LayerTransformInfo {
 interface WatchableTransformLike {
   value: {
     rank: number;
-    inputSpace: { names: readonly string[]; scales: Float64Array; units: readonly string[] };
+    inputSpace: { names: readonly string[]; scales: Float64Array; units: readonly string[]; bounds: { lowerBounds: Float64Array; upperBounds: Float64Array } };
     outputSpace: { names: readonly string[]; scales: Float64Array; units: readonly string[] };
     transform: Float64Array;
   };
-  defaultTransform: { transform: Float64Array };
+  defaultTransform: { transform: Float64Array; outputSpace?: { names: readonly string[]; scales: Float64Array } };
   transform: Float64Array;
 }
 
@@ -687,8 +687,24 @@ export class Engine {
     const t = this.transformOf(name);
     if (t === undefined) return undefined;
     const { rank, inputSpace, outputSpace, transform } = t.value;
-    const space = (s: typeof inputSpace) => ({ names: [...s.names], scales: Array.from(s.scales), units: [...s.units] });
-    return { rank, input: space(inputSpace), output: space(outputSpace), matrix: Float64Array.from(transform), defaultMatrix: Float64Array.from(t.defaultTransform.transform) };
+    const space = (s: { names: readonly string[]; scales: Float64Array; units: readonly string[] }) => ({ names: [...s.names], scales: Array.from(s.scales), units: [...s.units] });
+    const { lowerBounds, upperBounds } = inputSpace.bounds;
+    const bounds = Array.from(lowerBounds).every(Number.isFinite) && Array.from(upperBounds).every(Number.isFinite) ? { lower: Array.from(lowerBounds), upper: Array.from(upperBounds) } : undefined;
+    // The source's own transform, in the output space's scales as the current one is: Neuroglancer
+    // keeps it in the source's (a 2 mm image's translation in 2 mm steps), and rescales only the
+    // translation between them (coordinate_transform.ts, convertTransformOutputScales).
+    const defaultMatrix = Float64Array.from(t.defaultTransform.transform);
+    const own = t.defaultTransform.outputSpace;
+    for (let r = 0; r < rank && own !== undefined; ++r) {
+      if (own.names[r] === outputSpace.names[r] && own.scales[r] > 0 && outputSpace.scales[r] > 0) defaultMatrix[rank * (rank + 1) + r] *= own.scales[r] / outputSpace.scales[r];
+    }
+    return {
+      rank,
+      input: { ...space(inputSpace), ...(bounds ? { bounds } : {}) },
+      output: space(outputSpace),
+      matrix: Float64Array.from(transform),
+      defaultMatrix,
+    };
   }
 
   setLayerTransform(name: string, matrix: Float64Array): void {

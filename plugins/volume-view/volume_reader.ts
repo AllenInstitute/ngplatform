@@ -23,6 +23,8 @@ export interface LevelInfo extends VolumeLevel {
   chunk: number[];
   /** Voxels along x, y and z. */
   size: [number, number, number];
+  /** The element type (precomputed images are read as uint8). */
+  type?: string;
 }
 
 interface OpenLevel {
@@ -211,6 +213,7 @@ export class VolumeReader {
           shape: array.shape,
           chunk: chunkShape,
           size: [array.shape[dimOf[0]], array.shape[dimOf[1]], array.shape[dimOf[2]]],
+          type: array.elementType,
         };
         const reader = new ZarrArrayReader(array, read, shardIndexes);
         const fill = Number(array.fillValue ?? 0);
@@ -336,6 +339,47 @@ export class VolumeReader {
       progress?.(++done, indices.length);
     });
     return { data: out, size };
+  }
+
+  /**
+   * A whole level's own values (not windowed to 0..255), x fastest, as
+   * little-endian bytes of its element type: for writing it out.
+   */
+  async rawVolume(index: number, signal: AbortSignal, progress?: Progress): Promise<{ data: Uint8Array; size: [number, number, number]; type: keyof typeof NUMERIC; fill: number }> {
+    const level = this.levels[index];
+    const { chunk: cs, shape, size } = level.info;
+    const { dimOf, type } = level;
+    const bytes = NUMERIC[type].BYTES_PER_ELEMENT;
+    const out = new Uint8Array(size[0] * size[1] * size[2] * bytes);
+    if (level.fill !== 0) new NUMERIC[type](out.buffer).fill(level.fill);
+    const stride = [0, 0, 0];
+    const outStride = [1, size[0], size[0] * size[1]];
+    for (let k = 0; k < 3; ++k) stride[dimOf[k]] = outStride[k];
+    const read = level.rawChunk ?? level.readChunk;
+    const indices: number[][] = [];
+    for (let a = 0; a < level.grid[0]; ++a) for (let b = 0; b < level.grid[1]; ++b) for (let c = 0; c < level.grid[2]; ++c) indices.push([a, b, c]);
+    let done = 0;
+    await each(indices, signal, async (ci) => {
+      const data = await read(ci);
+      if (data !== undefined) {
+        const origin = [0, 1, 2].map((d) => ci[d] * cs[d]);
+        const to = [0, 1, 2].map((d) => Math.min(origin[d] + cs[d], shape[d]));
+        const run = to[2] - origin[2];
+        for (let i = origin[0]; i < to[0]; ++i) {
+          for (let j = origin[1]; j < to[1]; ++j) {
+            const src = ((i - origin[0]) * cs[1] + (j - origin[1])) * cs[2];
+            const dst = i * stride[0] + j * stride[1] + origin[2] * stride[2];
+            if (stride[2] === 1) {
+              out.set(data.subarray(src * bytes, (src + run) * bytes), dst * bytes);
+            } else {
+              for (let k = 0; k < run; ++k) out.set(data.subarray((src + k) * bytes, (src + k + 1) * bytes), (dst + k * stride[2]) * bytes);
+            }
+          }
+        }
+      }
+      progress?.(++done, indices.length);
+    });
+    return { data: out, size, type, fill: level.fill };
   }
 
   /**

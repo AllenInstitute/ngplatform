@@ -234,9 +234,11 @@ export interface ViewerApi {
 
 export interface LayerTransform {
   rank: number;
-  input: { names: string[]; scales: number[]; units: string[] };
+  /** The source's own space; `bounds` is its extent there, in input coordinates, when the source gives one. */
+  input: { names: string[]; scales: number[]; units: string[]; bounds?: { lower: number[]; upper: number[] } };
   output: { names: string[]; scales: number[]; units: string[] };
   matrix: Float64Array;
+  /** The transform the source gives itself, in the same form (and output scales) as `matrix`. */
   defaultMatrix: Float64Array;
 }
 

@@ -10,7 +10,9 @@ import type { Disposer, LayerInfo, PlatformContext, PluginModule } from "@ngplat
 import { VOLUME_PANEL } from "./manifest.js";
 import { invert, multiply } from "./ome.js";
 import { displayOfRas, SolidDrawer } from "./solid.js";
-import { PRECOMPUTED, precomputedUrl } from "./sources.js";
+import { storeOf } from "./sources.js";
+
+export { omeZarrUrl, storeOf } from "./sources.js";
 import { type LevelInfo, type Region, VolumeClient } from "./volume_client.js";
 
 /** Levels up to this many voxels a side are drawn whole; larger ones as a box this many voxels a side around the position. */
@@ -37,26 +39,6 @@ export function readSaved(raw: unknown): Saved {
     threshold: typeof s.threshold === "number" ? s.threshold : 0.2,
     cut: s.cut !== false,
   };
-}
-
-/** The OME-Zarr store an image layer's source names, as an http(s) URL; undefined for other formats. */
-export function omeZarrUrl(source: string | undefined): string | undefined {
-  if (source === undefined) return undefined;
-  let url = source.trim();
-  const scheme = /^(zarr2?|zarr3):\/\//i.exec(url);
-  const pipe = /\|zarr[23]?:?[^|]*$/i.exec(url);
-  if (scheme === null && pipe === null && !/\.ome\.zarr\/?$/i.test(url)) return undefined;
-  if (scheme) url = url.slice(scheme[0].length);
-  if (pipe) url = url.slice(0, pipe.index);
-  url = url.replace(/^gs:\/\/([^/]+)\//, "https://storage.googleapis.com/$1/").replace(/^s3:\/\/([^/]+)\//, "https://$1.s3.amazonaws.com/");
-  if (!/^https?:\/\//.test(url) && !url.startsWith("/")) return undefined;
-  return url.endsWith("/") ? url : `${url}/`;
-}
-
-/** The store the reader opens for an image layer: an OME-Zarr URL or `precomputed:<url>`; undefined for formats it does not read. */
-export function storeOf(source: string | undefined): string | undefined {
-  const pre = precomputedUrl(source);
-  return pre !== undefined ? PRECOMPUTED + pre : omeZarrUrl(source);
 }
 
 type Child = Node | string | null | undefined | false;
