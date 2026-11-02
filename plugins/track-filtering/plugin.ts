@@ -92,6 +92,8 @@ const BATCH_POINTS = 4_000_000;
  */
 const GROUP_STORE_POINTS = 8_000_000;
 const GROUP_STORE_DELAY_MS = 400;
+/** A first look at a big group, from a sample level: about this many points at most. */
+const GROUP_PREVIEW_POINTS = 1_000_000;
 /** A density map's look: a heat colour map, clear where it is zero. */
 const DENSITY_SHADER = `#uicontrol invlerp normalized
 #uicontrol float opacity slider(min=0, max=1, default=0.85)
@@ -1261,29 +1263,39 @@ class TrackGroups {
     if (props === undefined || info === undefined || mask === undefined) return;
     const ids = passingIds(props, mask);
     const signal = entry.controller.signal;
-    let source: string | undefined;
-    if (ids.length > 0) {
-      const total = info.levels[0].vertexCount ?? 0;
-      const perObject = total / Math.max(1, props.ids.length);
-      const estimate = (l: StoreInfo["levels"][number]) => ids.length * perObject * ((l.vertexCount ?? total) / Math.max(1, total));
-      const level = info.levels.find((l) => estimate(l) <= GROUP_STORE_POINTS)?.index ?? info.levels[info.levels.length - 1].index;
-      const curves = await this.readCurves(id, ids, level, undefined, signal);
+    if (ids.length === 0) {
+      this.useGroupStore(id, entry, undefined);
+      return;
+    }
+    const total = info.levels[0].vertexCount ?? 0;
+    const perObject = total / Math.max(1, props.ids.length);
+    const estimate = (l: StoreInfo["levels"][number]) => ids.length * perObject * ((l.vertexCount ?? total) / Math.max(1, total));
+    const level = info.levels.find((l) => estimate(l) <= GROUP_STORE_POINTS)?.index ?? info.levels[info.levels.length - 1].index;
+    // A big group first from a sample level (read in seconds), then whole.
+    const preview = info.levels.find((l) => l.index > level && estimate(l) <= GROUP_PREVIEW_POINTS && estimate(l) >= GROUP_PREVIEW_POINTS / 20)?.index;
+    for (const at of preview === undefined ? [level] : [preview, level]) {
+      const curves = await this.readCurves(id, ids, at, undefined, signal);
       signal.throwIfAborted();
       const group = this.saved.groups.find((g) => g.id === id);
       if (group === undefined) return;
       const file = new File([writeTrk(curves, trkSpace(info))], fileName(group.name, ".trk"));
       const [found] = await this.ctx.workspace.local.open(file, { derived: true });
       signal.throwIfAborted();
-      source = found?.source;
+      if (!this.useGroupStore(id, entry, found?.source)) return;
     }
+  }
+
+  /** Shows a group from a store just made; false (and it is let go) when the group has moved on. */
+  private useGroupStore(id: string, entry: { version: number; controller: AbortController; source?: string }, source: string | undefined): boolean {
     if (this.groupStores.get(id) !== entry) {
       if (source !== undefined) this.ctx.workspace.local.close(source);
-      return;
+      return false;
     }
     const previous = entry.source;
     entry.source = source;
     this.attachGroupStore(id);
     if (previous !== undefined && previous !== source) this.ctx.workspace.local.close(previous);
+    return true;
   }
 
   /**
