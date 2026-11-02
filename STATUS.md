@@ -73,7 +73,7 @@ objects a second), which is what the bulk read replaces.
 
 ## How it is checked
 
-- `npm test`: 168 unit tests (workspace model, store with a fake engine,
+- `npm test`: 170 unit tests (3 of them need `NET=1`) (workspace model, store with a fake engine,
   commands with arguments, key bindings, `when` clauses, schemas, state
   slices, plugin host and switches, the catalogue, the filter computation,
   region geometry, track-group logic, .trk files, groups written into a

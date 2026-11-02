@@ -12,7 +12,7 @@ export const ZARR_VECTORS_MANIFEST: Manifest = {
   version: "0.3.0",
   kind: "datatype",
   enabledByDefault: true,
-  description: "Opens Zarr Vectors stores (points, streamlines, skeletons, graphs and meshes) in Neuroglancer, and tractograms (.trk, .tck, .trx), meshes and surfaces (.obj, .stl, .ply, GIFTI, FreeSurfer), SWC neurons and point tables (.csv, .xyz) as if they were one.",
+  description: "Opens Zarr Vectors stores in Neuroglancer, and tractograms, meshes, SWC neurons and point tables as if they were one.",
   guide: `Zarr Vectors stores vector geometry (point clouds, lines, streamlines, skeletons, graphs and meshes) as a multiscale Zarr store, with per-object and per-vertex attributes. This plugin teaches Neuroglancer to read format 0.9.0 to 0.9.4.
 
 ## Opening a store
