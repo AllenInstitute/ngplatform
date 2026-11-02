@@ -46,7 +46,7 @@ items are done (and say where); the rest are in rough order of work.
   - [x] `.tck` (MRtrix), `.trx`;
   - [x] meshes and surfaces: `.obj`, `.stl`, `.ply`, GIFTI, FreeSurfer *(very large meshes sit in one cell; split into cells next)*;
   - [ ] points and skeletons: `.swc`, CSV points.
-  - [ ] Python twin speed: it builds 200,000 streamlines in 17 s, the browser in 3.4 s (vectorise the binning).
+  - [x] Python twin speed: 200,000 streamlines in 5.9 s (was 17 s; the browser takes 3.4 s).
 - [x] Linked to the Zarr Vectors data type: these files open only when it is on.
 
 ### Repository hygiene
