@@ -18,15 +18,15 @@ ask for a sign-in, kept in the **Auth** tab.
 
 ## Data on your computer
 
-**Open → Open from device**, or **Add → Local**, takes files or a whole
-folder. Nothing is uploaded: the files are read in place, in your browser,
+**Open → Open from device**, **Add → Local**, or dropping files or folders
+anywhere on the window, takes files or a whole folder. Nothing is uploaded: the files are read in place, in your browser,
 only where the views need them. Each one is presented to Neuroglancer as a
 chunked store made from it on the fly, a *virtual store*, so a large file
 is never loaded whole and coarser levels appear first.
 
 | You open | It is shown as | Notes |
 |---|---|---|
-| NIfTI (`.nii`, `.nii.gz`), Analyze (`.hdr` + `.img`) | a virtual OME-Zarr image, with a pyramid | Placed by the sform (else qform). A `.nii.gz` is decompressed once and kept in the browser's private storage for later visits. Colour (RGB) NIfTI shows in colour. |
+| NIfTI (`.nii`, `.nii.gz`), Analyze (`.hdr` + `.img`), FreeSurfer (`.mgz`, `.mgh`) | a virtual OME-Zarr image, with a pyramid | Placed by the sform (else qform). A `.nii.gz` is decompressed once and kept in the browser's private storage for later visits. Colour (RGB) NIfTI shows in colour. |
 | TIFF stacks (`.tif`, `.tiff`), OME-TIFF, ImageJ hyperstacks | a virtual OME-Zarr image, with a pyramid | Classic and BigTIFF; channels and time points from OME and ImageJ metadata. |
 | Tractograms (`.trk`, `.tck`, `.trx`) | a virtual Zarr Vectors streamline store | Split into spatial cells, with a coarse level for large files; track groups work on them. |
 | Meshes (`.obj`, `.stl`, `.ply`), GIFTI and FreeSurfer surfaces (`lh.pial` …) | a virtual Zarr Vectors mesh store | Surfaces are placed in scanner RAS. |
@@ -39,8 +39,7 @@ reading them again); links to them work in the same browser while the tab
 is open.
 
 !!! note "Coming"
-    Drag-and-drop anywhere in the window, FreeSurfer `.mgz`/`.mgh`, LAS/LAZ
-    point clouds, Parquet tables and GraphML are on the
+    LAS/LAZ point clouds, Parquet tables and GraphML are on the
     [work plan](https://github.com/AllenInstitute/ngplatform/blob/main/TODO.md).
 
 ## Exporting
@@ -49,6 +48,10 @@ What can be saved today, and where:
 
 | What | How | Format |
 |---|---|---|
+| A local image | Datasets → the row's ⋯ → **Export as…** | NIfTI (`.nii.gz`, `.nii`), FreeSurfer (`.mgz`, `.mgh`) or an OME-Zarr folder, at full resolution or a coarser level (up to 2 GB) |
+| A local tractogram | the same | TrackVis `.trk` or MRtrix `.tck` |
+| A local mesh or surface | the same | OBJ, PLY, STL, or its vertices as CSV |
+| A local point table or SWC | the same | CSV |
 | A track group's streamlines | Filtering → a group → **Save .trk** | TrackVis `.trk` |
 | A track group's density | Filtering → **Density map** | NIfTI |
 | Group statistics | Filtering → **CSV** | CSV |
@@ -58,8 +61,7 @@ What can be saved today, and where:
 | The workspace itself | the link in the address bar, or **Share** | link or JSON |
 
 !!! note "Coming"
-    **Export as** for any local dataset (images to NIfTI, MGZ/MGH, OME-Zarr
-    or TIFF; vectors to `.trk`, `.tck`, `.trx`, OBJ, STL, PLY or CSV), and a
-    way to save large data without making terabyte files: a region or level
+    Saving large data without making terabyte files: a region or level
     within a size limit, a whole pyramid written chunk by chunk to a folder,
-    or only your edits as a small layer over the original.
+    or only your edits as a small layer over the original; TIFF and `.trx`
+    output.

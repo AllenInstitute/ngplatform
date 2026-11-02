@@ -1,23 +1,40 @@
 /**
  * Export as…: a dataset read from a file on this computer, saved in another
  * format.  Images: NIfTI (.nii.gz, .nii), FreeSurfer (.mgz, .mgh) or an
- * OME-Zarr folder, at full resolution or a coarser level.  The file is read
+ * OME-Zarr folder, at full resolution or a coarser level; tractograms as
+ * .trk or .tck; meshes as OBJ, PLY or STL; points as CSV.  The file is read
  * and written in a worker (src/virtual/out/export_worker.ts); the result is
  * saved where the system's save dialog says, or downloaded.
  */
 import type { DatasetRecord } from "../core/workspace.js";
-import type { ExportFormat } from "../virtual/out/export_worker.js";
+import { type ExportFormat, exportKind } from "../virtual/out/kinds.js";
 import { zipFiles } from "../virtual/out/volume.js";
 import { formDialog, toast } from "./overlays.js";
 import type { Workbench } from "./workbench.js";
 
-const FORMATS: { label: string; format: ExportFormat; suffix: string }[] = [
-  { label: "NIfTI, compressed (.nii.gz)", format: "nii.gz", suffix: ".nii.gz" },
-  { label: "NIfTI (.nii)", format: "nii", suffix: ".nii" },
-  { label: "FreeSurfer, compressed (.mgz)", format: "mgz", suffix: ".mgz" },
-  { label: "FreeSurfer (.mgh)", format: "mgh", suffix: ".mgh" },
-  { label: "OME-Zarr (a folder)", format: "zarr", suffix: ".ome.zarr" },
-];
+type Format = { label: string; format: ExportFormat; suffix: string };
+
+/** What each kind of file can be saved as. */
+const FORMATS: Record<NonNullable<ReturnType<typeof exportKind>>, Format[]> = {
+  image: [
+    { label: "NIfTI, compressed (.nii.gz)", format: "nii.gz", suffix: ".nii.gz" },
+    { label: "NIfTI (.nii)", format: "nii", suffix: ".nii" },
+    { label: "FreeSurfer, compressed (.mgz)", format: "mgz", suffix: ".mgz" },
+    { label: "FreeSurfer (.mgh)", format: "mgh", suffix: ".mgh" },
+    { label: "OME-Zarr (a folder)", format: "zarr", suffix: ".ome.zarr" },
+  ],
+  streamlines: [
+    { label: "TrackVis (.trk)", format: "trk", suffix: ".trk" },
+    { label: "MRtrix (.tck)", format: "tck", suffix: ".tck" },
+  ],
+  mesh: [
+    { label: "Wavefront (.obj)", format: "obj", suffix: ".obj" },
+    { label: "Stanford PLY (.ply)", format: "ply", suffix: ".ply" },
+    { label: "STL (.stl)", format: "stl", suffix: ".stl" },
+    { label: "Vertices as CSV (.csv)", format: "csv", suffix: ".csv" },
+  ],
+  points: [{ label: "CSV (.csv)", format: "csv", suffix: ".csv" }],
+};
 
 /** At most this much is read and written at once: a level finer than it is not offered. */
 const MAX_BYTES = 2 ** 31;
@@ -45,21 +62,49 @@ function request(worker: Worker, message: object, onProgress?: (what: string, do
 
 const sizeText = (bytes: number) => (bytes >= 2 ** 30 ? `${(bytes / 2 ** 30).toFixed(1)} GB` : `${Math.max(0.1, bytes / 2 ** 20).toFixed(1)} MB`);
 
-/** Whether a dataset can be exported: an image read from a file on this computer. */
+const sourceOf = (dataset: DatasetRecord) => (typeof dataset.source === "string" ? dataset.source : String((dataset.source as { url?: string } | undefined)?.url ?? ""));
+
+/** The file name a local dataset's source reads ("brain.nii.gz", "tracts.trk"). */
+function fileNameOf(wb: Workbench, dataset: DatasetRecord): string | undefined {
+  const at = wb.localData.parse(sourceOf(dataset).replace(/^[a-z0-9+]+:\/\/(?=https?:)/, ""));
+  return at?.path.replace(/\/$/, "").split("/").pop();
+}
+
+/** Whether a dataset can be exported: an image, tractogram, mesh or point table read from a file on this computer. */
 export function canExport(wb: Workbench, dataset: DatasetRecord): boolean {
-  const source = typeof dataset.source === "string" ? dataset.source : String((dataset.source as { url?: string } | undefined)?.url ?? "");
-  return wb.localData.parse(source) !== undefined && /\.(nii(\.gz)?|hdr|mg[hz]|tiff?)\/?$/i.test(source.replace(/\/$/, ""));
+  const name = fileNameOf(wb, dataset);
+  return name !== undefined && exportKind(name) !== undefined;
 }
 
 export async function exportDataset(wb: Workbench, dataset: DatasetRecord): Promise<void> {
-  const source = typeof dataset.source === "string" ? dataset.source : String((dataset.source as { url?: string } | undefined)?.url ?? "");
-  const found = await wb.localData.sourceFile(source);
+  const found = await wb.localData.sourceFile(sourceOf(dataset));
   if (found === undefined) {
     toast(`${dataset.name} is not a file on this computer that can be exported.`, "error");
     return;
   }
+  const kind = exportKind(found.file.name);
+  if (kind === undefined) return;
+  const formats = FORMATS[kind];
   const worker = new Worker(new URL("../virtual/out/export_worker.ts", import.meta.url), { type: "module", name: "export" });
   try {
+    if (kind !== "image") {
+      const answer = await formDialog<{ format: string }>(
+        `Export ${dataset.name}`,
+        { type: "object", properties: { format: { type: "string", title: "Format", enum: formats.map((f) => f.label), default: formats[0].label } }, required: ["format"] },
+        {},
+        "Export",
+      );
+      if (answer === undefined) return;
+      const chosen = formats.find((f) => f.label === answer.format)!;
+      const target = await chooseTarget(false, dataset.name + chosen.suffix);
+      if (target === null) return;
+      await wb.jobs.run(`Export ${dataset.name}`, async (control) => {
+        const done = await request(worker, { type: "export", file: found.file, format: chosen.format }, (what, n, total) => control.progress(n / Math.max(1, total), what));
+        await save(new Map<string, Uint8Array>(done.files), dataset.name + chosen.suffix, false, target);
+      });
+      toast(`Exported ${dataset.name} as ${dataset.name}${chosen.suffix}.`);
+      return;
+    }
     const info = await request(worker, { type: "levels", file: found.file });
     const levels = (info.levels as { size: number[]; bytes: number }[]).map((l, i) => ({ ...l, index: i })).filter((l) => l.bytes <= MAX_BYTES);
     if (levels.length === 0) throw new Error("every level is larger than 2 GB");
@@ -69,7 +114,7 @@ export async function exportDataset(wb: Workbench, dataset: DatasetRecord): Prom
       {
         type: "object",
         properties: {
-          format: { type: "string", title: "Format", enum: FORMATS.map((f) => f.label), default: FORMATS[0].label },
+          format: { type: "string", title: "Format", enum: formats.map((f) => f.label), default: formats[0].label },
           level: { type: "string", title: "Resolution", enum: levels.map(levelLabel), default: levelLabel(levels[0]) },
         },
         required: ["format", "level"],
@@ -78,7 +123,7 @@ export async function exportDataset(wb: Workbench, dataset: DatasetRecord): Prom
       "Export",
     );
     if (answer === undefined) return;
-    const chosen = FORMATS.find((f) => f.label === answer.format)!;
+    const chosen = formats.find((f) => f.label === answer.format)!;
     const level = levels.find((l) => levelLabel(l) === answer.level)!;
     const base = `${dataset.name}${level.index > 0 ? `_level${level.index}` : ""}`;
     const target = await chooseTarget(chosen.format === "zarr", base + chosen.suffix);
