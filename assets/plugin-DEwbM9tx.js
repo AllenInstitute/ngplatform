@@ -1,4 +1,4 @@
-import{p as P}from"./sources-BJAQVHmw.js";import{F as V}from"./manifest-eGZvA8Sh.js";/**
+import{p as P}from"./sources-BJAQVHmw.js";import{F as V}from"./manifest-vwdMD32g.js";/**
  * @license
  * Copyright 2026 Google Inc.
  * Licensed under the Apache License, Version 2.0 (the "License");
