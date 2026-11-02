@@ -13,8 +13,8 @@ there yet.
 | File → Load Surface | **Add → Local**: FreeSurfer surfaces, GIFTI, OBJ, STL, PLY |
 | File → Load Tract | **Add → Local**: `.trk`, `.tck`, `.trx` |
 | Layer panel (left) | **Datasets** tab, and the **Layer** tab on the right for the selected one |
-| Colour map, window/level | Layer → **Render**: the shader's contrast slider and colormap |
-| Lookup table (FreeSurferColorLUT) | A segmentation layer's segment colours (lookup-table files coming) |
+| Colour map, window/level | Layer → **Render → Colour map** (grayscale, heat, jet, GE colour, NIH, PET, binary colour and more) and the contrast slider |
+| Lookup table (FreeSurferColorLUT) | Layer → **Render → Lookup table**: FreeSurfer's and other atlases' tables, or a file |
 | Viewport layouts 1×1, 2×2, 1&3 | the layout buttons, or the command palette's *Set the layout* |
 | Coordinates / Info panel | the position at the top left of the views; each layer's value under the mouse |
 | Tools → Transform Volume | the **Registration** plugin (same controls, plus landmark fitting) |
@@ -37,8 +37,6 @@ These are on the [work plan](https://github.com/AllenInstitute/ngplatform/blob/m
 - `.mgz` / `.mgh` volumes, in and out.
 - Values on surfaces (curvature, thickness, overlays, `.annot`, `.label`),
   and surface outlines drawn on the slices.
-- Lookup tables by name (FreeSurferColorLUT and others), label outlines, and
-  a colormap menu (heat, jet, GE colour, NIH, PET).
 - Voxel editing: drawing and erasing labels, fills, recon edits.
 - Measuring: lengths, areas, region and label statistics, line profiles.
 - Diffusion displays: direction-colour maps, tensor and ODF glyphs.

@@ -58,10 +58,45 @@ layers, lets you pick which one.
 | Tab | What it holds |
 |---|---|
 | **Source** | Where the data comes from, its parts (subsources), and its **transform**: the matrix that places it in the scene, editable. |
-| **Render** | How it is drawn: resolution, opacity, blending, and for images the shader (colormap and contrast, with a histogram). |
+| **Render** | How it is drawn: resolution, opacity, blending; for images the **Colour map** and the shader (contrast, with a histogram); for segmentations the **Lookup table**. |
 | **Segments** | For segmentations: search segments by id, label or property, show and hide them, colours. |
 | **Annotations** | For annotation layers: the tools that draw points, lines, boxes, ellipsoids and polylines, and the list of annotations. |
 | **Schema** | For annotation layers: the properties each annotation carries. |
+
+### Colour maps
+
+An image layer's **Render → Shader → Colour map** writes the shader for a
+colour map, keeping the contrast (the `normalized` range and its histogram):
+grayscale, heat, jet, GE colour, NIH, PET, binary colour, hot, cool, viridis,
+magma, inferno, plasma, cividis, turbo, cubehelix and a diverging red-blue.
+
+- **Heat** works as Freeview's: the contrast's range is *min* to *max* of the
+  value's magnitude, and **mid** (a fraction of the way) is where red turns
+  to yellow. Below min nothing is drawn, so the image underneath shows;
+  between min and mid the colour fades in. For signed data (float, signed
+  integers) negative values are drawn in blue to cyan. **opaque** draws
+  black below min instead.
+- **Binary colour** draws one colour (chosen beside it) wherever the value
+  is above the contrast's minimum; **shade** darkens it with the value.
+- GE colour, NIH and PET approximate the scales of those names.
+- Editing the code makes the map **Custom**; choosing Custom changes
+  nothing, so a shader of your own is kept.
+
+### Lookup tables
+
+A segmentation layer's **Render → Colour → Lookup table** names and colours
+its labels from an atlas's table: FreeSurfer (all labels, Desikan-Killiany,
+Destrieux, Yeo networks), Harvard-Oxford, Schaefer 2018 (100 to 1000
+parcels, 7 or 17 networks), and the Allen Mouse CCFv3 (2017) structures,
+which are fetched from the Allen Institute when chosen. **File…** loads a
+table from your computer: FreeSurfer's format (`index name R G B A`),
+FSLeyes and ITK-SNAP tables, FSL atlas XML, the Allen structure graph
+(JSON), or a plain `index name` list (colours are made up). The colours
+become the layer's segment colours; the names show in the Segments tab
+(search them, list them by label), and under the mouse. Both travel with the
+link, a table from your computer included. **None** takes them off again.
+Where each table comes from, and its licence:
+[`data/lookup-tables/`](https://github.com/AllenInstitute/ngplatform/tree/main/data/lookup-tables).
 
 ## 5. Bottom dock
 

@@ -15,6 +15,8 @@ import {
   VolumeRenderingModes,
   VolumeRenderingRenderScaleWidget,
 } from "../neuroglancer.js";
+import { colormapControl } from "./colormap.js";
+import { lookupTableControl } from "./lookup.js";
 import { shaderSection } from "./shader.js";
 import {
   button,
@@ -104,6 +106,7 @@ function imageRender(scope: Scope, l: ImageUserLayer): HTMLElement[] {
       hideInactive: l.hideInactiveShaderControls,
       legendShaderOptions: l.getLegendShaderOptions(),
       help: `${DOCS}/sliceview/image_layer_rendering.md`,
+      rows: [row("Colour map", colormapControl(scope, l), "Writes the shader for a colour map with a contrast control; Custom keeps your own shader")],
     }),
   ];
 }
@@ -197,6 +200,7 @@ function segmentationRender(scope: Scope, l: SegmentationUserLayer): HTMLElement
     ),
     section(
       "Colour",
+      row("Lookup table", lookupTableControl(scope, l), "Colours and names for the label values, from an atlas's lookup table"),
       row("Colour by", mode),
       showWhen(scope, row("Seed", el("div", { class: "ins-inline" }, seedBox, button("Randomise", () => ds.segmentationColorGroupState.value.segmentColorHash.randomize()))), byHash),
       showWhen(scope, row("Colour", colour(scope, fixed)), byFixed),

@@ -94,10 +94,11 @@ export function normaliseUrl(url: string): string {
 /**
  * Which dataset a layer shows.  Layers with a data source share a dataset
  * when their sources match; a layer without one (local annotations) is its
- * own dataset.
+ * own dataset.  A lookup table (`lut://`, segment names) describes how a
+ * layer shows its data, not which data it is.
  */
 export function datasetKey(spec: Json): string {
-  const urls = sourceUrls(spec.source).filter((u) => !u.startsWith("local://") && !DERIVED_LOCAL.test(u));
+  const urls = sourceUrls(spec.source).filter((u) => !u.startsWith("local://") && !u.startsWith("lut://") && !DERIVED_LOCAL.test(u));
   if (urls.length === 0) return `layer:${layerName(spec)}`;
   return urls.map(normaliseUrl).join("\n");
 }
