@@ -34,7 +34,7 @@ items are done (and say where); the rest are in rough order of work.
 
 ### Volume rendering
 - [x] The Volume switch does nothing on the EM image-only examples: make it draw them.
-- [ ] NIfTI (virtual Zarr) in the volume view: types other than uint8, and the transpose codec.
+- [x] NIfTI (virtual Zarr) in the volume view: types other than uint8, and the transpose codec.
 
 ### Neuroglancer fork
 - [x] Resolution histograms: every level of every layer laid out across the full width all the time; only the marker of what is loading moves.
