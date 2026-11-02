@@ -116,8 +116,8 @@ export interface NavigationInfo {
 
 /** Layouts Neuroglancer names; layer-group layouts are kept as "custom". */
 export const LAYOUTS: [string, string][] = [
-  ["4panel", "4 panels"],
-  ["4panel-alt", "4 panels (alt)"],
+  // The 3-D view bottom right, as Freeview and most viewers place it (see the engine's constructor).
+  ["4panel-alt", "4 panels"],
   ["xy-3d", "XY + 3D"],
   ["xz-3d", "XZ + 3D"],
   ["yz-3d", "YZ + 3D"],
@@ -284,6 +284,11 @@ export class Engine {
       showPanelBorders: true,
     });
     this.viewer.coordinateSpace.changed.add(() => this.applyPanelConvention());
+    // Four panels have the 3-D view bottom right here, as in Freeview: Neuroglancer's
+    // "4panel" (3-D bottom left), from a link or its own panel buttons, becomes "4panel-alt".
+    this.viewer.layout.changed.add(() => {
+      if (this.viewer.layout.toJSON() === "4panel") this.viewer.layout.restoreState("4panel-alt");
+    });
     addMomentum(host, this.viewer.perspectiveNavigationState.pose.orientation, () => this.momentum);
     const bindings = this.viewer.inputEventBindings;
     bindings.global.addParent(viewKeyBindings(), Number.NEGATIVE_INFINITY);
