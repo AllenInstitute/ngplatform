@@ -109,3 +109,42 @@ export function parsePointTable(text: string): PointTable {
   const unit = suffix === undefined ? undefined : { um: "micrometer", mm: "millimeter", nm: "nanometer" }[suffix];
   return { positions, columns, unit };
 }
+
+/**
+ * An ASPRS LAS point cloud (versions 1.0 to 1.4, point formats 0 to 10):
+ * the points' scaled and offset coordinates, with intensity and
+ * classification as columns.  LAZ (compressed LAS) is not read.
+ */
+export function parseLas(bytes: Uint8Array): PointTable {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (String.fromCharCode(...bytes.slice(0, 4)) !== "LASF") throw new Error("not a LAS file (no LASF mark)");
+  const headerSize = view.getUint16(94, true);
+  const offset = view.getUint32(96, true);
+  const rawFormat = view.getUint8(104);
+  if (rawFormat & 0xc0) throw new Error("this LAS file is compressed (LAZ), which is not read yet");
+  const format = rawFormat & 0x3f;
+  const length = view.getUint16(105, true);
+  let count = view.getUint32(107, true);
+  // LAS 1.4 keeps a 64-bit count, and leaves the old one 0 when it does not fit.
+  if (headerSize >= 375) count = Number(view.getBigUint64(247, true)) || count;
+  count = Math.min(count, Math.floor((bytes.byteLength - offset) / length));
+  const scale = [0, 1, 2].map((k) => view.getFloat64(131 + 8 * k, true));
+  const shift = [0, 1, 2].map((k) => view.getFloat64(155 + 8 * k, true));
+  const positions = new Float64Array(3 * count);
+  const intensity = new Float32Array(count);
+  const classification = new Float32Array(count);
+  // Formats 6 to 10 keep the classification in its own byte; 0 to 5 in the low five bits of byte 15.
+  const modern = format >= 6;
+  for (let i = 0, at = offset; i < count; ++i, at += length) {
+    for (let k = 0; k < 3; ++k) positions[3 * i + k] = view.getInt32(at + 4 * k, true) * scale[k] + shift[k];
+    intensity[i] = view.getUint16(at + 12, true);
+    classification[i] = modern ? view.getUint8(at + 16) : view.getUint8(at + 15) & 0x1f;
+  }
+  return {
+    positions,
+    columns: [
+      { name: "intensity", values: intensity },
+      { name: "classification", values: classification },
+    ],
+  };
+}

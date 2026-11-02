@@ -71,6 +71,14 @@ export const ZARR_VECTORS_VIRTUAL: VirtualFormat[] = [
     worker,
   },
   {
+    pattern: /\.las$/i,
+    extensions: [".las"],
+    format: "LAS point cloud",
+    kind: "auto",
+    source: (url) => `${url}/|zarr-vectors:`,
+    worker,
+  },
+  {
     pattern: /\.tck$/i,
     extensions: [".tck"],
     format: "MRtrix tractogram",

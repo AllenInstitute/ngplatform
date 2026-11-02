@@ -12,7 +12,7 @@
  */
 import { openImage } from "../images/open.js";
 import { parseMeshFile } from "../vectors/mesh_files.js";
-import { parsePointTable, parseSwc } from "../vectors/point_files.js";
+import { parseLas, parsePointTable, parseSwc } from "../vectors/point_files.js";
 import { parseTckHeader, readTck } from "../vectors/tck.js";
 import type { TrkBatch } from "../vectors/trk.js";
 import { parseTrkHeader, readTrk, TRK_HEADER_SIZE } from "../vectors/trk.js";
@@ -72,7 +72,7 @@ async function exportGeometry(file: Blob & { name: string }, format: GeometryFor
         { name: "parent", values: nodes.map((n) => n.parent) },
       ]);
     }
-    const table = parsePointTable(text);
+    const table = /\.las$/i.test(file.name) ? parseLas(new Uint8Array(await file.arrayBuffer())) : parsePointTable(text);
     return csvFile(table.positions, table.columns);
   }
   throw new Error(`a ${kind ?? "file"} cannot be written as ${format}`);
