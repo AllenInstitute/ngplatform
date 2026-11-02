@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-on-dark.svg" />
-    <img src="docs/logo-on-light.svg" alt="ngplatform" width="313" height="72" />
-  </picture>
+  <img src="docs/logo.svg" alt="ngplatform" width="313" height="72" />
 </p>
 
 A workspace around [Neuroglancer](https://github.com/google/neuroglancer),
