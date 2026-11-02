@@ -159,15 +159,45 @@ export function chooseLevel(levels: LevelChoice[], budget: number): number {
 }
 
 /**
- * How much brighter to draw a level that keeps only a share of level 0's
- * objects, so a picture's brightness changes less as the level changes
- * (light adds up line by line).  Only by the square root of the share: a
- * full correction draws a sparse sample's few lines so bright they turn
- * white, where the dense level would have a glow of many dim ones.
+ * About how many pixels one store unit spans on screen around a point: the
+ * mean over the three axes of a unit step's movement, in pixels.
  */
-export function levelGain(share: number | undefined): number {
-  if (share === undefined || !(share > 0)) return 1;
-  return Math.min(100, 1 / Math.sqrt(share));
+export function pixelsPerUnit(modelToClip: ArrayLike<number>, at: ArrayLike<number>, viewport: [number, number]): number {
+  const c = apply(modelToClip, at);
+  if (!(c[3] > 0)) return 0;
+  let sum = 0;
+  for (let k = 0; k < 3; ++k) {
+    const p = [at[0], at[1], at[2]];
+    p[k] += 1;
+    const d = apply(modelToClip, p);
+    if (!(d[3] > 0)) continue;
+    const dx = ((d[0] / d[3] - c[0] / c[3]) * viewport[0]) / 2;
+    const dy = ((d[1] / d[3] - c[1] / c[3]) * viewport[1]) / 2;
+    sum += Math.hypot(dx, dy);
+  }
+  return sum / 3;
+}
+
+/**
+ * How many times over the lines drawn would cover the view: their length on
+ * screen times their width, over the view's area (`share` of them showing,
+ * for a 2-D view's slab).
+ */
+export function coverage(chunks: { length: number; pointCount: number }[], pixelsPerUnit: number, widthPx: number, area: number, share = 1): number {
+  let covered = 0;
+  for (const c of chunks) covered += c.length * pixelsPerUnit * widthPx + c.pointCount * Math.PI * (widthPx / 2) ** 2;
+  return area > 0 ? (covered * share) / area : 0;
+}
+
+/**
+ * Automatic brightness: lines that would cover the view many times over are
+ * each drawn dimmer, so a dense whole-brain view glows where bundles gather
+ * instead of turning white, and the picture keeps its brightness as levels
+ * of detail (with ten times the lines each) come and go.  Sparse views are
+ * left alone.
+ */
+export function autoGain(cover: number): number {
+  return 1 / Math.max(1, cover / 2) ** 0.85;
 }
 
 /**

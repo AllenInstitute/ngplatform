@@ -44,8 +44,8 @@ export interface LayerStyle {
   slab: number;
   /** About how many vertices to keep loaded for a view, in millions: more is finer and slower. */
   detail: number;
-  /** Brighten coarse levels, which hold fewer lines, so the picture keeps its brightness as levels change. */
-  levelGain: boolean;
+  /** Dim each line by how many times over the lines drawn cover the view, so dense views glow rather than turn white, and keep their brightness as levels change. */
+  autoBrightness: boolean;
 }
 
 export const DEFAULT_STYLE: LayerStyle = {
@@ -61,7 +61,7 @@ export const DEFAULT_STYLE: LayerStyle = {
   toneMap: "aces",
   slab: 4,
   detail: 2,
-  levelGain: false,
+  autoBrightness: true,
 };
 
 const BLENDINGS: Blending[] = ["glow", "glow-through", "emission", "solid"];
@@ -111,7 +111,7 @@ export function readStyle(raw: unknown): LayerStyle {
     toneMap: pick(s.toneMap, TONE_MAPS, d.toneMap),
     slab: num(s.slab, 0.01, 1000, d.slab),
     detail: num(s.detail, 0.1, 50, d.detail),
-    levelGain: s.levelGain === true,
+    autoBrightness: s.autoBrightness !== false,
   };
 }
 

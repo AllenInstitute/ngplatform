@@ -50,6 +50,7 @@ nav:
       - Labels: plugins/labels.md
       - Registration: plugins/registration.md
       - Volume rendering: plugins/volume-rendering.md
+      - Luxar rendering: plugins/luxar.md
       - Ideas for new plugins: plugins/ideas.md
       - Page template: plugins/template.md
   - Contributing: contributing.md

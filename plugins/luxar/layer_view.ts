@@ -10,7 +10,7 @@ import type { DrawUniforms } from "./render_gl.js";
 import { COLORMAP_INDEX, COLOUR_INDEX, type LayerStyle, rgbOf, scalarOf, TONE_INDEX } from "./style.js";
 import { View2d } from "./view2d.js";
 import { View3d } from "./view3d.js";
-import { directionMatrix, levelGain } from "./view_math.js";
+import { autoGain, directionMatrix } from "./view_math.js";
 
 export class LayerView {
   readonly client: StoreClient;
@@ -76,25 +76,33 @@ export class LayerView {
     return TONE_INDEX[this.style.toneMap];
   }
 
-  /** The shared uniforms for a draw at a level, given the view's matrix and size. */
-  uniforms(modelToClip: Float32Array, viewport: [number, number], level: number): DrawUniforms {
+  /** Half the line width, device pixels. */
+  get halfWidth(): number {
+    return (this.style.width * (globalThis.devicePixelRatio || 1)) / 2;
+  }
+
+  /**
+   * The shared uniforms for a draw, given the view's matrix and size and how
+   * many times over its lines cover it (see view_math.coverage).
+   */
+  uniforms(modelToClip: Float32Array, viewport: [number, number], cover: number): DrawUniforms {
     const { style } = this;
     const transform = this.transform();
-    const share = this.client.info?.levels[level]?.objectShare;
-    const gain = 2 ** style.exposure * (style.levelGain ? levelGain(share) : 1);
+    const density = style.autoBrightness ? autoGain(cover) : 1;
+    const gain = 2 ** style.exposure * density;
     const range = style.range ?? this.client.valueRange ?? [0, 1];
     return {
       modelToClip,
       directions: transform ? directionMatrix(transform) : new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
       viewport,
-      halfWidth: (style.width * (globalThis.devicePixelRatio || 1)) / 2,
+      halfWidth: this.halfWidth,
       sharpness: style.sharpness,
       colourBy: COLOUR_INDEX[style.colourBy],
       colour: rgbOf(style.colour),
       colormap: COLORMAP_INDEX[style.colormap],
       range,
       gain,
-      absorption: style.blending === "emission" ? style.absorption * (style.levelGain ? levelGain(share) : 1) : 0,
+      absorption: style.blending === "emission" ? style.absorption * density : 0,
       plane: [0, 0, 0, 0],
       slab: 0,
       depthCut: 0.3,

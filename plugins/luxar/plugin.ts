@@ -305,7 +305,7 @@ class Luxar {
     parts.push(
       this.slider(name, "2-D slab (thickness shown around a section)", "slab", 0.5, 40, 0.5, (v) => `${v} mm`),
       this.slider(name, "Detail (vertices per view)", "detail", 0.25, 12, 0.25, (v) => `${v} M`),
-      el("label", { class: "field check" }, this.checkbox(style.levelGain, (levelGain) => set({ levelGain })), el("span", {}, "Brighten coarse levels (they hold fewer lines)")),
+      el("label", { class: "field check" }, this.checkbox(style.autoBrightness, (autoBrightness) => set({ autoBrightness })), el("span", {}, "Automatic brightness (dimmer lines where they crowd the view)")),
     );
     if (!style.on) parts.push(el("p", { class: "note" }, "Tick the layer above to draw it this way."));
     return el("div", { class: "lx-settings" }, ...parts);

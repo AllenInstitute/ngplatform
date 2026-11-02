@@ -26,6 +26,7 @@ and a *Read more* guide each.
 | [Labels](labels.md) | tool | yes | Labels on the views for figures, in screenshots too. |
 | [Registration](registration.md) | tool | no | Move a layer by hand (as Freeview) or by landmarks; save the transform or the moved image. |
 | [Volume rendering](volume-rendering.md) | tool | no | An image drawn as a solid in the 3-D view, cut open at the position. |
+| [Luxar rendering](luxar.md) | tool | no | Chosen Zarr Vectors layers drawn as Luxar draws lines (HDR glow, mitred joins), in the 2-D and 3-D views. |
 
 ## Switching, adding and writing plugins
 

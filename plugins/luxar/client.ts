@@ -30,6 +30,8 @@ export class StoreClient {
   valueRange: [number, number] | undefined;
   /** Generation: changes when the chunks' values are redone (a new scalar), so views drop their copies. */
   generation = 0;
+  /** Counts the chunks that have come back, so a view can tell when it has something new to draw. */
+  arrivals = 0;
 
   constructor(readonly storeUrl: string) {
     this.worker = new Worker(new URL("./luxar_worker.ts", import.meta.url), { type: "module", name: "luxar" });
@@ -69,6 +71,7 @@ export class StoreClient {
         this.failed.add(msg.key);
         this.error = msg.message;
       }
+      ++this.arrivals;
       this.onChunk?.();
     };
     this.worker.postMessage({ type: "open", storeUrl });

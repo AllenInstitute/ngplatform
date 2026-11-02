@@ -33,6 +33,8 @@ export interface BuiltChunk {
   /** previous, start, end, next per segment; previous == start (next == end) where the line does not go on. */
   segments: Uint32Array;
   segmentCount: number;
+  /** The segments' total length, store units (for judging how much of a view they cover). */
+  length: number;
   /** Vertices drawn as points when there are no segments (a point cloud): the chunk's own. */
   pointCount: number;
   /** The value's 2nd and 98th percentiles, for an attribute. */
@@ -135,6 +137,7 @@ export function buildChunk(input: ChunkInput, scalar: ScalarSource): BuiltChunk 
   };
   const segments = new Uint32Array(m * 4);
   let count = 0;
+  let length = 0;
   for (let e = 0; e < m; ++e) {
     const a = edges[2 * e];
     const b = edges[2 * e + 1];
@@ -143,6 +146,7 @@ export function buildChunk(input: ChunkInput, scalar: ScalarSource): BuiltChunk 
     segments[4 * count + 1] = a;
     segments[4 * count + 2] = b;
     segments[4 * count + 3] = across(b, a);
+    length += Math.hypot(positions[3 * b] - positions[3 * a], positions[3 * b + 1] - positions[3 * a + 1], positions[3 * b + 2] - positions[3 * a + 2]);
     ++count;
   }
   if (n === 0) {
@@ -154,6 +158,7 @@ export function buildChunk(input: ChunkInput, scalar: ScalarSource): BuiltChunk 
     vertexCount: n,
     segments: count === m ? segments : segments.slice(0, count * 4),
     segmentCount: count,
+    length,
     pointCount: count === 0 ? own : 0,
     valueRange: scalar.kind === "attribute" ? percentiles(vertices, n) : undefined,
     lower,

@@ -17,7 +17,7 @@ import type { ViewPanelInfo } from "@ngplatform/sdk";
 import { GpuChunks, selectChunks, type Selection } from "./chunks.js";
 import type { LayerView } from "./layer_view.js";
 import { LightTarget, Renderer } from "./render_gl.js";
-import { apply, boxInFrustum, invertAffine, measurePanel, modelToPanel, multiply } from "./view_math.js";
+import { apply, boxInFrustum, coverage, invertAffine, measurePanel, modelToPanel, multiply, pixelsPerUnit } from "./view_math.js";
 
 const GPU_BYTES = 512 * 1024 * 1024;
 
@@ -34,6 +34,11 @@ export class View2d {
   private readonly offScreenshot: () => void;
   problem: string | undefined;
   selections: Selection[] = [];
+  /** What was last drawn, to skip drawing it again. */
+  private signature = "";
+  private drawnStyle: unknown;
+  /** Chunks were left for the next frame. */
+  private more = false;
 
   constructor(private readonly view: LayerView) {
     this.overlay = view.ctx.ui.overlay();
@@ -130,17 +135,36 @@ export class View2d {
     }
     const style = view.style;
     this.canvas.style.mixBlendMode = style.blending === "glow" || style.blending === "glow-through" ? "plus-lighter" : "normal";
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, width, height);
-    gl.clearColor(0, 0, 0, 0);
-    gl.clearDepth(1);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    if (info === undefined || panels.length === 0 || this.renderer === undefined) return;
     const state = view.ctx.viewer.getState() as { dimensions?: Record<string, [number, string]>; position?: number[] };
     const dims = state.dimensions ?? {};
     const names = Object.keys(dims);
     const globals = { names, scales: names.map((n) => dims[n][0]), units: names.map((n) => dims[n][1]), position: names.map((_, i) => state.position?.[i] ?? 0) };
     const halfSlab = style.slab / 2;
+    const layouts = panels.flatMap((panel) => {
+      const rect = panel.element.getBoundingClientRect();
+      if (rect.width < 2 || rect.height < 2) return [];
+      const m = this.panelMatrices(panel, globals, rect.width, rect.height, halfSlab);
+      return m === undefined ? [] : [{ rect, m }];
+    });
+    // Neuroglancer draws a frame for many reasons (an image's chunks
+    // arriving, say): draw again only when this drawing would change.
+    const signature = JSON.stringify([
+      width,
+      height,
+      view.client.arrivals,
+      view.client.generation,
+      info === undefined,
+      layouts.map(({ rect, m }) => [rect.left, rect.top, rect.width, rect.height, Array.from(m.modelToClip, (v) => +v.toPrecision(9))]),
+    ]);
+    if (signature === this.signature && style === this.drawnStyle && !this.more) return;
+    this.signature = signature;
+    this.drawnStyle = style;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, width, height);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clearDepth(1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    if (info === undefined || layouts.length === 0 || this.renderer === undefined) return;
     const solid = style.blending === "solid";
     const renderer = this.renderer;
     const chunks = this.chunks!;
@@ -166,11 +190,7 @@ export class View2d {
     const selections: Selection[] = [];
     let more = false;
     const want: string[][] = [];
-    panels.forEach((panel) => {
-      const rect = panel.element.getBoundingClientRect();
-      if (rect.width < 2 || rect.height < 2) return;
-      const m = this.panelMatrices(panel, globals, rect.width, rect.height, halfSlab);
-      if (m === undefined) return;
+    layouts.forEach(({ rect, m }) => {
       const selection = selectChunks(info, (lo, hi) => boxInFrustum(m.modelToClip, lo, hi), m.centre, style.detail * 1e6, (k) => chunks.arrived(k));
       selections.push(selection);
       want.push(selection.want);
@@ -183,7 +203,11 @@ export class View2d {
       const h = Math.round(rect.height * dpr);
       gl.viewport(x, y, w, h);
       gl.scissor(x, y, w, h);
-      const uniforms = view.uniforms(Float32Array.from(m.modelToClip), [w, h], selection.level);
+      // Of the chunks' lines, about the slab's share of their depth show.
+      const shape = info.levels[selection.level].chunkShape;
+      const share = m.slab > 0 ? Math.min(1, (2 * m.slab) / ((shape[0] + shape[1] + shape[2]) / 3)) : 1;
+      const cover = coverage(taken.chunks, pixelsPerUnit(m.modelToClip, m.centre, [w, h]), 2 * view.halfWidth, w * h, share);
+      const uniforms = view.uniforms(Float32Array.from(m.modelToClip), [w, h], cover);
       uniforms.plane = m.plane;
       uniforms.slab = m.slab;
       renderer.draw(taken.chunks, solid ? "solid" : "accumulate", { color: 0 }, uniforms);
@@ -217,6 +241,7 @@ export class View2d {
       renderer.composite(target.texture!, { color: 0 }, { toneMap: view.toneIndex, emission, origin: [0, 0] });
       gl.disable(gl.BLEND);
     }
+    this.more = more;
     if (more) this.schedule();
   }
 

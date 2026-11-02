@@ -10,6 +10,7 @@ plugins/
   zarr-vectors/        a data type: Zarr Vectors stores in Neuroglancer (an npm package)
   track-filtering/     a tool: TrackVis-style track groups, saved as .trk
   volume-view/         a tool: a solid, cut-open brain in place of the 3-D panel
+  luxar/               a tool: chosen Zarr Vectors layers drawn as Luxar draws lines, in the 2-D and 3-D views
 ```
 
 ## Adding a plugin

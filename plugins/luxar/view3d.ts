@@ -14,7 +14,7 @@ import type { Drawer3d, Frame3d } from "@ngplatform/sdk";
 import { GpuChunks, selectChunks, type Selection } from "./chunks.js";
 import type { LayerView } from "./layer_view.js";
 import { LightTarget, Renderer } from "./render_gl.js";
-import { apply, boxInFrustum, invertAffine, modelTo, multiply } from "./view_math.js";
+import { apply, boxInFrustum, coverage, invertAffine, modelTo, multiply, pixelsPerUnit } from "./view_math.js";
 
 /** GPU memory for one layer's chunks in the 3-D view. */
 const GPU_BYTES = 768 * 1024 * 1024;
@@ -108,9 +108,10 @@ export class View3d implements Drawer3d {
     view.reportLevel("3d", selection);
     if (drawn.length === 0) return;
 
-    const uniforms = view.uniforms(Float32Array.from(modelToClip), [frame.width, frame.height], selection.level);
     const saved = this.save(gl);
-    uniforms.viewport = [saved.viewport[2], saved.viewport[3]];
+    const size: [number, number] = [saved.viewport[2], saved.viewport[3]];
+    const cover = coverage(drawn, pixelsPerUnit(modelToClip, centre, size), 2 * view.halfWidth, size[0] * size[1]);
+    const uniforms = view.uniforms(Float32Array.from(modelToClip), size, cover);
     const renderer = this.renderer;
     try {
       if (style.blending === "solid" || this.broken) {

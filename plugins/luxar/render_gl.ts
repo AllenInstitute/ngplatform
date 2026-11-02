@@ -65,6 +65,8 @@ export interface GpuChunk {
   segmentCount: number;
   pointCount: number;
   bytes: number;
+  /** The segments' total length, store units. */
+  length: number;
 }
 
 const COMMON = `
@@ -467,6 +469,7 @@ export class Renderer {
       segmentCount: chunk.segmentCount,
       pointCount: chunk.pointCount,
       bytes: chunk.vertices.byteLength + chunk.segmentCount * 16,
+      length: chunk.length,
     };
   }
 
