@@ -278,7 +278,7 @@ interface GroupResult {
 // ------------------------------------------------------------ controller
 
 /** What a dataset is to filtering. */
-type Kind = "zarr-vectors" | "segmentation" | "annotations";
+type Kind = "zarr-vectors" | "segmentation" | "annotations" | "precomputed-annotations";
 
 /** Combines regions' answers: every AND, at least one OR (when there are any), no NOT. */
 export function combineIds(results: { op: RoiOp; ids: string[] }[]): string[] {
@@ -369,6 +369,8 @@ class TrackGroups {
   }
 
   private annotationsSeen = "";
+  /** For precomputed annotations: each group's passing annotations (id, type, points in the source's units, nm per unit). */
+  private passingAnnotations = new Map<string, [string, { type: string; points: number[][]; nm: number[] }][]>();
 
   dispose(): void {
     this.offs.forEach((off) => off());
@@ -431,6 +433,7 @@ class TrackGroups {
     const own = layers.filter((l) => !groups.has(l.name) && l.name !== this.roiLayerName(dataset));
     if (own.some((l) => l.type === "segmentation" && l.sources.some((s) => precomputedUrl(s) !== undefined))) return "segmentation";
     if (own.some((l) => l.type === "annotation" && l.sources.some((s) => /^local:\/\/annotations/.test(s)))) return "annotations";
+    if (own.some((l) => l.type === "annotation" && l.sources.some((s) => precomputedUrl(s) !== undefined))) return "precomputed-annotations";
     return undefined;
   }
 
@@ -493,7 +496,15 @@ class TrackGroups {
     }
     const source = dataset && this.sourceOf(dataset);
     const kind = dataset && this.kindOf(dataset);
-    const url = source && (kind === "zarr-vectors" ? storeUrlOfSource(source) : kind === "segmentation" ? precomputedUrl(source) : kind === "annotations" ? `annotations:${dataset!.id}` : undefined);
+    const url =
+      source &&
+      (kind === "zarr-vectors"
+        ? storeUrlOfSource(source)
+        : kind === "segmentation" || kind === "precomputed-annotations"
+          ? precomputedUrl(source)
+          : kind === "annotations"
+            ? `annotations:${dataset!.id}`
+            : undefined);
     if (url !== this.engineUrl) {
       this.engine?.dispose();
       this.engine = undefined;
@@ -501,7 +512,7 @@ class TrackGroups {
       this.labels = undefined;
       this.info = undefined;
       this.engineUrl = url;
-      if (url !== undefined && kind === "segmentation") {
+      if (url !== undefined && (kind === "segmentation" || kind === "precomputed-annotations")) {
         this.labels = new LabelsEngine(url);
         this.evaluateAll();
       } else if (url !== undefined && kind === "annotations") {
@@ -625,7 +636,7 @@ class TrackGroups {
     let layer: string;
     try {
       const spec: Json =
-        kind === "annotations"
+        kind === "annotations" || kind === "precomputed-annotations"
           ? { name: group.name, type: "annotation", source: "local://annotations", annotations: [], annotationColor: group.colour }
           : kind === "segmentation"
             ? { name: group.name, type: "segmentation", source: url, ignoreNullVisibleSet: false, segmentDefaultColor: group.colour }
@@ -871,7 +882,7 @@ class TrackGroups {
    */
   private evaluateGroup(group: Group, exactNow = false): void {
     const kind = this.kind();
-    if (kind === "segmentation" || kind === "annotations") return this.evaluateOther(group, kind);
+    if (kind === "segmentation" || kind === "annotations" || kind === "precomputed-annotations") return this.evaluateOther(group, kind);
     const props = this.props;
     const rowOf = this.rowOf;
     const dims = this.dims();
@@ -993,7 +1004,7 @@ class TrackGroups {
   }
 
   /** A group of a segmentation's segments or of annotations: each region's objects, combined. */
-  private evaluateOther(group: Group, kind: "segmentation" | "annotations"): void {
+  private evaluateOther(group: Group, kind: "segmentation" | "annotations" | "precomputed-annotations"): void {
     const token = (this.tokens.get(group.id) ?? 0) + 1;
     this.tokens.set(group.id, token);
     const current = () => this.tokens.get(group.id) === token;
@@ -1021,7 +1032,26 @@ class TrackGroups {
       return;
     }
     const prior = this.results.get(group.id);
-    this.setResult(group, { ...(prior ?? { mask: undefined, count: 0 }), state: "computing", detail: "Reading the regions' voxels…" });
+    this.setResult(group, { ...(prior ?? { mask: undefined, count: 0 }), state: "computing", detail: kind === "segmentation" ? "Reading the regions' voxels…" : "Reading the regions' annotations…" });
+    if (kind === "precomputed-annotations") {
+      void Promise.all(regions.map((region) => labels.annotations(region))).then(
+        (results) => {
+          if (!current()) return;
+          const ids = combineIds(results.map((r, i) => ({ op: group.rois[i].op, ids: r.ids })));
+          // The passing annotations themselves, for the group's own layer.
+          const keep = new Set(ids);
+          const shown = new Map<string, { type: string; points: number[][]; nm: number[] }>();
+          for (const r of results) r.ids.forEach((id, k) => keep.has(id) && shown.set(id, { type: r.annotationType, points: r.points[k], nm: r.nm }));
+          this.passingAnnotations.set(group.id, [...shown.entries()]);
+          results.forEach((r, i) => this.roiStatus.set(group.rois[i].id, `${r.ids.length.toLocaleString()} annotations · ${r.chunks} chunks · ${(r.ms / 1000).toFixed(r.ms < 1000 ? 2 : 1)} s`));
+          this.setResult(group, { mask: undefined, ids, count: ids.length, state: "exact", detail: "annotations meeting the regions" });
+        },
+        (e) => {
+          if (current()) this.setResult(group, { mask: undefined, count: 0, state: "error", detail: (e as Error).message });
+        },
+      );
+      return;
+    }
     const old = this.exactTimers.get(group.id);
     if (old !== undefined) clearTimeout(old);
     this.exactTimers.set(
@@ -1059,7 +1089,26 @@ class TrackGroups {
     const layer = this.saved.groups.find((g) => g.id === group.id)?.layer;
     if (layer === undefined || result === undefined) return;
     if (result.ids !== undefined) {
-      if (this.kind() === "annotations") {
+      const kind = this.kind();
+      if (kind === "precomputed-annotations") {
+        // Copies in the viewer's coordinates, in a layer of the group's own.
+        const nmPer = this.nmPerUnit();
+        if (nmPer === undefined) return;
+        const at = (p: number[], nm: number[]) => p.map((v, k) => (v * nm[k]) / nmPer[k]);
+        const annotations = (this.passingAnnotations.get(group.id) ?? []).map(([id, a]) =>
+          a.type === "point"
+            ? { type: "point", id, point: at(a.points[0], a.nm) }
+            : a.type === "ellipsoid"
+              ? { type: "ellipsoid", id, center: at(a.points[0], a.nm), radii: at(a.points[1], a.nm) }
+              : { type: a.type, id, pointA: at(a.points[0], a.nm), pointB: at(a.points[1], a.nm) },
+        );
+        this.ctx.viewer.patchState((ng) => {
+          const target = (ng.layers as Json[] | undefined)?.find((l) => l.name === layer);
+          if (target !== undefined) target.annotations = annotations;
+        });
+        return;
+      }
+      if (kind === "annotations") {
         // The group's layer holds copies of the passing annotations.
         const passing = new Set(result.ids);
         const annotations = this.baseAnnotations().filter((a) => passing.has(String(a.id)));

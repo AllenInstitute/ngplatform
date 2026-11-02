@@ -1,5 +1,17 @@
-/** The main thread's side of ./labels_worker.ts: a region's segment ids as a promise, with progress and cancel. */
+/** The main thread's side of ./labels_worker.ts: a region's segment ids (or annotations) as a promise, with progress and cancel. */
 import type { NmRegion } from "./labels.js";
+
+export interface AnnotationsResult {
+  /** The passing annotations' ids, and their points in the source's coordinates. */
+  ids: string[];
+  points: number[][][];
+  /** Neuroglancer's annotation type ("line", "point", …). */
+  annotationType: string;
+  /** nm per unit of the source's coordinates. */
+  nm: number[];
+  chunks: number;
+  ms: number;
+}
 
 export interface LabelsResult {
   ids: BigUint64Array;
@@ -44,6 +56,20 @@ export class LabelsEngine {
         reject(new DOMException("Aborted", "AbortError"));
       });
       this.worker.postMessage({ type: "evaluate", id, url: this.url, region });
+    });
+  }
+
+  /** Precomputed annotations at `this.url` meeting a region. */
+  annotations(region: NmRegion, signal?: AbortSignal): Promise<AnnotationsResult> {
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve: resolve as never, reject });
+      signal?.addEventListener("abort", () => {
+        if (!this.pending.delete(id)) return;
+        this.worker.postMessage({ type: "cancel", id });
+        reject(new DOMException("Aborted", "AbortError"));
+      });
+      this.worker.postMessage({ type: "annotations", id, url: this.url, region });
     });
   }
 

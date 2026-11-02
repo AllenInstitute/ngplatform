@@ -111,8 +111,6 @@ export const httpRead: RangeRead = async (url, range, signal) => {
 export class PrecomputedScale {
   readonly chunk: [number, number, number];
   readonly grid: [number, number, number];
-  private readonly minishards = new Map<string, Promise<{ ids: bigint[]; starts: number[]; ends: number[] } | undefined>>();
-
   constructor(
     readonly url: string,
     readonly scale: Scale,
@@ -190,10 +188,28 @@ export class PrecomputedScale {
     return this.read(`${this.url}${scale.key}/${name}`, undefined, signal);
   }
 
-  private async readSharded(id: bigint, signal?: AbortSignal): Promise<Uint8Array | undefined> {
-    const sharding = this.scale.sharding!;
-    const { shard, minishard } = shardOf(sharding, id);
-    const file = `${this.url}${this.scale.key}/${shard}`;
+  private sharded: ShardedReader | undefined;
+
+  private readSharded(id: bigint, signal?: AbortSignal): Promise<Uint8Array | undefined> {
+    this.sharded ??= new ShardedReader(`${this.url}${this.scale.key}/`, this.scale.sharding!, this.read);
+    return this.sharded.read(id, signal);
+  }
+}
+
+/** Chunks of a `neuroglancer_uint64_sharded_v1` folder, by id, minishard indexes read once each. */
+export class ShardedReader {
+  private readonly minishards = new Map<string, Promise<{ ids: bigint[]; starts: number[]; ends: number[] } | undefined>>();
+
+  /** `folder`: the URL of the folder of shard files, ending in "/". */
+  constructor(
+    private readonly folder: string,
+    private readonly sharding: Sharding,
+    private readonly fetchRange: RangeRead = httpRead,
+  ) {}
+
+  async read(id: bigint, signal?: AbortSignal): Promise<Uint8Array | undefined> {
+    const { shard, minishard } = shardOf(this.sharding, id);
+    const file = `${this.folder}${shard}`;
     const key = `${shard}#${minishard}`;
     let index = this.minishards.get(key);
     if (index === undefined) {
@@ -205,23 +221,22 @@ export class PrecomputedScale {
     if (entries === undefined) return undefined;
     const i = entries.ids.indexOf(id);
     if (i === -1) return undefined;
-    const bytes = await this.read(file, { offset: entries.starts[i], length: entries.ends[i] - entries.starts[i] }, signal);
+    const bytes = await this.fetchRange(file, { offset: entries.starts[i], length: entries.ends[i] - entries.starts[i] }, signal);
     if (bytes === undefined) return undefined;
-    return sharding.data_encoding === "gzip" ? gunzip(bytes) : bytes;
+    return this.sharding.data_encoding === "gzip" ? gunzip(bytes) : bytes;
   }
 
   private async readMinishard(file: string, minishard: number, signal?: AbortSignal) {
-    const sharding = this.scale.sharding!;
-    const shardIndexSize = 16 * 2 ** sharding.minishard_bits;
-    const at = await this.read(file, { offset: 16 * minishard, length: 16 }, signal);
+    const shardIndexSize = 16 * 2 ** this.sharding.minishard_bits;
+    const at = await this.fetchRange(file, { offset: 16 * minishard, length: 16 }, signal);
     if (at === undefined) return undefined;
     const view = new DataView(at.buffer, at.byteOffset, 16);
     const start = Number(view.getBigUint64(0, true));
     const end = Number(view.getBigUint64(8, true));
     if (start === end) return undefined;
-    let bytes = await this.read(file, { offset: shardIndexSize + start, length: end - start }, signal);
+    let bytes = await this.fetchRange(file, { offset: shardIndexSize + start, length: end - start }, signal);
     if (bytes === undefined) return undefined;
-    if (sharding.minishard_index_encoding === "gzip") bytes = await gunzip(bytes);
+    if (this.sharding.minishard_index_encoding === "gzip") bytes = await gunzip(bytes);
     return decodeMinishardIndex(bytes, shardIndexSize);
   }
 }
