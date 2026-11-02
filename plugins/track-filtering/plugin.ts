@@ -237,6 +237,19 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string,
   return e;
 }
 
+/** A pencil, as the platform's edit icon draws it. */
+function pencil(): SVGSVGElement {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", "M4 20h4L19 9l-4-4L4 16zM14 6l4 4");
+  for (const [k, v] of Object.entries({ fill: "none", stroke: "currentColor", "stroke-width": "1.7", "stroke-linecap": "round", "stroke-linejoin": "round" })) path.setAttribute(k, v);
+  svg.append(path);
+  return svg;
+}
+
 function fmt(v: number): string {
   if (!Number.isFinite(v)) return "–";
   const a = Math.abs(v);
@@ -248,12 +261,16 @@ const STYLE = `
 .tf-intro { margin: 0; color: var(--muted); font-size: 12px; }
 .tf-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .tf-groups { display: grid; gap: 3px; }
-.tf-group { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 5px 6px; border-radius: var(--r); border: 1px solid transparent; cursor: pointer; }
+.tf-group { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 5px 6px; border-radius: var(--r); border: 1px solid transparent; cursor: pointer; }
 .tf-group:hover { background: var(--ink-3); }
 .tf-group.editing { border-color: var(--select); background: var(--select-soft); }
 .tf-group .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .tf-group .count { font: 11px/1 var(--mono); color: var(--muted); white-space: nowrap; }
 .tf-group .count.busy { color: var(--warn); }
+.tf-group .tf-edit { height: 22px; opacity: 0.5; }
+.tf-group:hover .tf-edit, .tf-group.editing .tf-edit { opacity: 1; }
+.tf-edit svg { width: 14px; height: 14px; }
+.tf-rename { font: 500 13px/1.2 var(--ui); height: 22px; min-width: 0; padding: 0 4px; border: 1px solid var(--select); border-radius: 0; background: var(--ink-0); color: var(--text); }
 .tf-swatch { width: 18px; height: 18px; padding: 0; border: 1px solid var(--line-strong); border-radius: 0; background: none; cursor: pointer; }
 .tf-swatch::-webkit-color-swatch-wrapper { padding: 0; }
 .tf-swatch::-webkit-color-swatch { border: 0; border-radius: 0; }
@@ -388,6 +405,8 @@ class TrackGroups {
   private host: HTMLElement | undefined;
   private updaters: (() => void)[] = [];
   private built = "";
+  /** The group whose name is being edited in the list. */
+  private renaming: string | undefined;
   private readonly offs: Disposer[] = [];
 
   constructor(private readonly ctx: PlatformContext) {
@@ -655,6 +674,8 @@ class TrackGroups {
       filter: emptyFilter(),
       ...(source === undefined ? {} : { source: sourceKey(source) }),
     };
+    // Its name selected in the list, ready to be typed over.
+    this.renaming = group.id;
     this.save({ groups: [...this.saved.groups, group], editing: group.id, dataset: dataset?.id });
     this.ensureLayer(group);
     // Show all objects is off once there are groups: the groups are the view.
@@ -673,6 +694,38 @@ class TrackGroups {
     this.results.delete(group.id);
     this.save({ groups, editing: this.saved.editing === group.id ? groups[0]?.id : this.saved.editing });
     this.writeAnnotations();
+  }
+
+  private startRename(group: Group): void {
+    this.renaming = group.id;
+    if (this.saved.editing !== group.id) this.save({ editing: group.id });
+    this.renderPanel();
+  }
+
+  /** The name field a group's row shows while it is renamed: Enter or leaving it keeps the name, Escape does not. */
+  private renameInput(group: Group): HTMLInputElement {
+    const input = el("input", { class: "tf-rename", value: group.name, "aria-label": "Group name", spellcheck: "false" }) as HTMLInputElement;
+    let done = false;
+    const finish = (keep: boolean) => {
+      if (done) return;
+      done = true;
+      this.renaming = undefined;
+      if (keep) this.renameGroup(group, input.value);
+      this.renderPanel();
+    };
+    input.addEventListener("click", (e) => e.stopPropagation());
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter") finish(true);
+      else if (e.key === "Escape") finish(false);
+    });
+    input.addEventListener("blur", () => finish(true));
+    requestAnimationFrame(() => {
+      if (!input.isConnected) return;
+      input.focus();
+      input.select();
+    });
+    return input;
   }
 
   private renameGroup(group: Group, name: string): void {
@@ -1616,6 +1669,7 @@ class TrackGroups {
       this.info !== undefined,
       this.groups().map((g) => [g.id, g.name, g.colour, g.layer, g.rois.map((r) => [r.id, r.shape, r.op])]),
       editing?.id,
+      this.renaming,
       editing?.filter.includeTags,
       editing !== undefined && isEmptyFilter(editing.filter),
     ]);
@@ -1703,14 +1757,19 @@ class TrackGroups {
         count.className = r?.state === "exact" || r?.state === "empty" ? "count" : "count busy";
         count.title = r?.detail ?? "";
       });
+      const rename = (e: Event) => {
+        e.stopPropagation();
+        this.startRename(group);
+      };
       list.append(
         el(
           "div",
           { class: group.id === editing?.id ? "tf-group editing" : "tf-group", title: "Edit this group", onclick: () => this.save({ editing: group.id }) },
           colour,
           eye,
-          el("span", { class: "name" }, group.name),
+          this.renaming === group.id ? this.renameInput(group) : el("span", { class: "name", title: "Double-click to rename", ondblclick: rename }, group.name),
           count,
+          el("button", { class: "btn small icon tf-edit", type: "button", title: "Rename", "aria-label": `Rename ${group.name}`, onclick: rename }, pencil()),
         ),
       );
     }

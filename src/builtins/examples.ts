@@ -58,18 +58,26 @@ const HCP_GROUPS = {
   },
 };
 
-// The MNI152 2009a asymmetric T1w template (brain), as OME-Zarr in RAS mm,
-// hosted beside the app (see plugins/volume-view/tools/).
-const MNI2009A = "zarr://https://andrew-keenlyside.github.io/ngplatform/data/MNI152NLin2009aAsym_T1w_brain.ome.zarr/";
+// SRB 2026a, the Synchrotron Reference Brain: a HiP-CT template of ten
+// brains at 100 µm in MNI 2009b space (OME-Zarr 0.6, five levels), outside
+// the brain 0, which the shader leaves transparent.
+const SRB2026A =
+  "zarr://https://storage.googleapis.com/hip_ct_zarr_vector_03987646472fethdsvdvdfg/zarr_vectors_test/cohort_MNI2009b_2026/cohort_template_N10_100um_MNI_simclip_masked.ome.zarr/";
+const SRB_SHADER = `#uicontrol invlerp normalized(range=[0, 255])
+void main() {
+  if (getDataValue().value == 0u) { emitTransparent(); return; }
+  emitGrayscale(normalized());
+}
+`;
 
 const MICRONS = "precomputed://gs://iarpa_microns/minnie/minnie65";
 
 export const EXAMPLES: ExampleSpec[] = [
   {
     id: "mni-hcp1065",
-    title: "HCP-1065 tractogram on the MNI template",
+    title: "HCP-1065 tractogram on the SRB 2026a template",
     description:
-      "503,085 streamlines (zarr-vectors) on the MNI152 2009a T1w template, with three track groups set up in Filtering.",
+      "503,085 streamlines (zarr-vectors) on SRB 2026a, the HiP-CT template in MNI space, with three track groups set up in Filtering.",
     remote: true,
     state: () => ({
       ng: {
@@ -78,7 +86,7 @@ export const EXAMPLES: ExampleSpec[] = [
         crossSectionScale: 0.6,
         projectionScale: 260,
         layers: [
-          { type: "image", source: MNI2009A, name: "MNI152 2009a" },
+          { type: "image", source: SRB2026A, name: "SRB 2026a", shader: SRB_SHADER },
           { type: "auto", source: HCP1065 + "|zarr-vectors:", name: "HCP-1065", visible: false },
         ],
         selectedLayer: { layer: "HCP-1065" },
