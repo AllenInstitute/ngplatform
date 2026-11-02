@@ -95,6 +95,7 @@ describe("WorkspaceStore", () => {
   it("opens a plain Neuroglancer state as one scene with its datasets", () => {
     const { store, urls } = setup();
     store.open({ ng: { layers: [{ name: "img", type: "image", source: IMAGE }] }, app: {} }, "test");
+    store.noteInput();
     expect(store.state().scenes).toHaveLength(1);
     expect(store.datasets().map((d) => d.name)).toEqual(["img"]);
     expect(urls.at(-1)).toMatch(/^#!/);
@@ -106,6 +107,7 @@ describe("WorkspaceStore", () => {
   it("adds datasets as layers, toggles and renames them, and removes them from the scene only", () => {
     const { store, engine } = setup();
     store.open({ ng: {}, app: {} }, "test");
+    store.noteInput();
     const id = store.addDataset({ source: TRACTS, name: "tracts" });
     expect(engine.selected).toBe("tracts");
     store.setDatasetVisible(id, false);
@@ -125,6 +127,7 @@ describe("WorkspaceStore", () => {
   it("keeps each scene's state when switching, and shares datasets across scenes", () => {
     const { store, engine } = setup();
     store.open({ ng: { layers: [{ name: "img", type: "image", source: IMAGE }], layout: "xy" }, app: {} }, "test");
+    store.noteInput();
     const first = store.state().activeScene;
     const second = store.newScene();
     expect(engine.ng).toEqual({ layout: "xy" });
@@ -147,6 +150,7 @@ describe("WorkspaceStore", () => {
   it("undoes and redoes scene and dataset changes", () => {
     const { store, engine } = setup();
     store.open({ ng: {}, app: {} }, "test");
+    store.noteInput();
     store.addDataset({ source: IMAGE, name: "img" });
     store.newScene({ name: "Other" });
     expect(store.state().scenes).toHaveLength(2);
@@ -162,6 +166,7 @@ describe("WorkspaceStore", () => {
   it("deletes a dataset from every scene", () => {
     const { store, engine } = setup();
     store.open({ ng: {}, app: {} }, "test");
+    store.noteInput();
     const id = store.addDataset({ source: IMAGE, name: "img" });
     store.newScene({ copy: true });
     store.deleteDataset(id);
@@ -174,6 +179,7 @@ describe("WorkspaceStore", () => {
   it("opens a state as a new scene beside the current ones", () => {
     const { store, engine } = setup();
     store.open({ ng: { layers: [{ name: "img", source: IMAGE }] }, app: {} }, "test");
+    store.noteInput();
     store.openAsScene({ layers: [{ name: "t", source: TRACTS }] }, "From link", "a link");
     expect(store.state().scenes.map((s) => s.name)).toEqual(["Scene 1", "From link"]);
     expect(engine.layers().map((l) => l.name)).toEqual(["t"]);
@@ -182,6 +188,7 @@ describe("WorkspaceStore", () => {
   it("keeps plugin slices in the workspace, undoably", () => {
     const { store } = setup();
     store.open({ ng: {}, app: {} }, "test");
+    store.noteInput();
     store.setRawSlice("org.x", 1, { a: 1 });
     expect(store.rawSlice("org.x")).toEqual({ a: 1 });
     expect(JSON.parse(store.serialize()).app["org.x"]).toEqual({ version: 1, data: { a: 1 } });
@@ -194,6 +201,7 @@ describe("undo granularity", () => {
   it("does not make selecting a layer an undo step", () => {
     const { store, engine } = setup();
     store.open({ ng: { layers: [{ name: "a", source: IMAGE }] }, app: {} }, "test");
+    store.noteInput();
     store.setLayerVisible("a", false);
     store.settle();
     engine.setState({ ...engine.ng, selectedLayer: { layer: "a" } });
@@ -204,6 +212,7 @@ describe("undo granularity", () => {
   it("does not make a quiet edit (a plugin's, on the user's behalf) an undo step", () => {
     const { store, engine } = setup();
     store.open({ ng: { layers: [{ name: "a", source: IMAGE }], layout: "xy" }, app: {} }, "test");
+    store.noteInput();
     store.patchState((ng) => {
       ng.layout = "3d";
     });
@@ -218,5 +227,25 @@ describe("undo granularity", () => {
     expect(engine.ng.layout).toBe("xy");
     // The derived source does not make the layer a dataset of its own.
     expect(store.datasets().length).toBe(1);
+  });
+});
+
+describe("opening", () => {
+  it("counts what follows opening on its own as part of opening, until the user acts", () => {
+    const { store, engine } = setup();
+    store.open({ ng: { layers: [{ name: "a", source: IMAGE, type: "auto" }] }, app: {} }, "test");
+    // The engine resolves the layer's type: not a step.
+    engine.setState({ ...engine.ng, layers: [{ name: "a", source: IMAGE, type: "image" }] });
+    store.settle();
+    expect(store.historyRows().map((r) => r.label)).toEqual(["Opened"]);
+    store.noteInput();
+    store.patchState((ng) => {
+      ng.layout = "3d";
+    });
+    store.settle();
+    expect(store.historyRows().map((r) => r.label)).toEqual(["Opened", "Layout: 3d"]);
+    expect(store.goToHistory(0)).toBe(true);
+    expect(engine.ng.layout).toBeUndefined();
+    expect(store.historyRows().map((r) => r.state)).toEqual(["current", "undone"]);
   });
 });

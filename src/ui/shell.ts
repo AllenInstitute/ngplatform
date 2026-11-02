@@ -61,6 +61,7 @@ export class Shell {
   private readonly sceneTabs = h("div", { class: "scene-tabs", role: "tablist", "aria-label": "Scenes" });
   private readonly undoButton = iconButton("undo", "Undo", () => this.wb.run("edit.undo"));
   private readonly redoButton = iconButton("redo", "Redo", () => this.wb.run("edit.redo"));
+  private readonly historyButton: HTMLButtonElement = iconButton("more", "History of changes", () => this.showHistory());
   private wb!: Workbench;
   /** A plugin's view beside Neuroglancer's, and the divider between them. */
   private readonly viewArea = h("div", { class: "engine-view", hidden: true });
@@ -107,7 +108,7 @@ export class Shell {
         ),
       ),
       h("span", { class: "sep hide-narrow" }),
-      h("div", { class: "group hide-phone" }, this.undoButton, this.redoButton),
+      h("div", { class: "group hide-phone" }, this.undoButton, this.redoButton, this.historyButton),
       h("span", { class: "sep hide-narrow" }),
       this.sceneTabs,
       h("span", { class: "spacer" }),
@@ -310,6 +311,8 @@ export class Shell {
     jobs.onChange(() => this.updateStatus());
 
     window.addEventListener("keydown", (e) => this.onKey(e), true);
+    // Changes before the user's first input after opening belong to opening (see WorkspaceStore.noteInput).
+    for (const type of ["keydown", "pointerdown", "wheel"]) window.addEventListener(type, () => this.wb.store.noteInput(), { capture: true, passive: true });
     window.addEventListener("hashchange", () => {
       if (location.hash !== store.currentHash && location.hash !== this.lastHashSeen && location.hash.startsWith("#!")) {
         this.lastHashSeen = location.hash;
@@ -468,6 +471,7 @@ export class Shell {
     // Edit
     add({ id: "edit.undo", title: "Undo", group: "Edit", when: "canUndo", run: () => store.undo() });
     add({ id: "edit.redo", title: "Redo", group: "Edit", when: "canRedo", run: () => store.redo() });
+    add({ id: "edit.history", title: "History of changes…", group: "Edit", run: () => this.showHistory() });
 
     // Scenes
     add({
@@ -1061,6 +1065,29 @@ export class Shell {
     else if (loading > 0) this.setStatus("busy", `Loading ${loading} of ${layers.length}`);
     else if (jobs > 0) this.setStatus("busy", `${jobs} job${jobs === 1 ? "" : "s"} running`);
     else this.setStatus("ok", `${layers.length} layer${layers.length === 1 ? "" : "s"} ready`);
+  }
+
+  /**
+   * The history menu: every change in this workspace, newest at the top,
+   * with what it was and when.  Undone changes are greyed until redone;
+   * choosing a row goes back or forward to it.
+   */
+  private showHistory(): void {
+    const store = this.wb.store;
+    const rows = store.historyRows();
+    const time = (t: number) => new Date(t).toLocaleTimeString(undefined, { hour12: false });
+    const items = rows
+      .map((row, i) => ({
+        label: row.label,
+        detail: time(row.time),
+        muted: row.state === "undone",
+        current: row.state === "current",
+        run: () => {
+          store.goToHistory(i);
+        },
+      }))
+      .reverse();
+    showMenu(this.historyButton, items.length > 0 ? items : [{ label: "No changes yet", disabled: true, run: () => {} }]);
   }
 
   private updateControls(): void {

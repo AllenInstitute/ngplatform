@@ -157,7 +157,8 @@ export interface WorkspaceApi {
    * overrides the layer specification (shader, segments, a different source
    * such as a derived store), which is how a plugin adds a filtered copy.
    */
-  addLayer(datasetId: string, layer?: Json): string;
+  /** With `quiet`, the layer joins the current undo step (one a plugin adds on the user's behalf). */
+  addLayer(datasetId: string, layer?: Json, options?: { quiet?: boolean }): string;
   removeDatasetFromScene(datasetId: string): void;
   /** Removes one layer (a view of a dataset) from the active scene. */
   removeLayer(name: string): void;

@@ -17,6 +17,11 @@ then the Luxar plugin and drawing labels by hand.
 - [x] Track groups showed only their regions, no streamlines: a group was drawn from the dataset's own levels, and S-21-46's coarse levels keep a 10% sample of the objects per level (level 4 about 330 of 3.3 M), so zoomed out a group mostly vanished. A streamline group is now drawn from a store of its own whole streamlines, made in the page once its exact answer settles (a `.trk` read as a virtual Zarr Vectors store; at most 8 M points, else the finest sample level that fits), listed under its dataset (`DERIVED_LOCAL`). The three example groups draw in about 2 min headless; the corpus callosum (52,731) is most of it.
 - [ ] Group stores: show a coarse store at once (a sample level) and the whole one when read, so a big group appears in seconds.
 
+### Asked for during the night
+- [x] A history menu beside undo and redo (the ⋯ button, or *History of changes…* in the palette): every change in the workspace, newest at the top, with a few words saying what it was (worked out from the two states: "Layout: 3d", "Hid SRB 2026a", "Track filtering") and the time; undone changes greyed until redone; choosing a row goes back or forward to it. Up to 200 changes, scrollable. What a plugin does on the user's behalf (a track group's layer, its regions' annotations) and what follows opening before the user's first input join the current step instead of adding their own.
+- [ ] The history as a provenance tree: keep branches when a change is made after going back, show them, and name changes per scene and per dataset. To flesh out with Andrew first.
+- [ ] The 3-D view's feel: momentum (inertia) when rotating and panning with a drag or a finger, as Luxar's camera has, in the engine for every 3-D panel.
+
 ### A. Local data
 - [ ] A1. A core `src/virtual/` module for all local read-in and write-out (the image and vector virtual stores in one place). 2–3 d
 - [ ] A2. Drag-and-drop of files and folders anywhere in the window. 0.5 d

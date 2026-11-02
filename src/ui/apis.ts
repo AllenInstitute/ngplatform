@@ -41,8 +41,8 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
       });
     },
     addDataset: (spec) => store.addDataset(spec),
-    addLayer: (datasetId, layer?: Json) => {
-      const name = store.showDataset(datasetId, layer ?? {});
+    addLayer: (datasetId, layer?: Json, options?: { quiet?: boolean }) => {
+      const name = store.showDataset(datasetId, layer ?? {}, options);
       if (name === undefined) throw new Error(`no dataset ${datasetId}`);
       return name;
     },

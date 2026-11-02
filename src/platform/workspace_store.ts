@@ -9,7 +9,8 @@
  * layers that show it without the UI noticing.
  */
 import { type SliceSpec, readSlice, writeSlice } from "../core/app_state.js";
-import { StateHistory } from "../core/history.js";
+import { describeChange } from "../core/change_label.js";
+import { type HistoryRow, StateHistory } from "../core/history.js";
 import { encodeFragment, type WorkspaceState } from "../core/state_io.js";
 import {
   activeScene,
@@ -198,11 +199,13 @@ export class WorkspaceStore {
     // Selecting a layer or pinning a pick is not an edit: it updates the
     // current undo entry instead of adding one.
     const editKey = editSignature(workspace);
-    if (this.amend || (this.lastEditKey !== undefined && editKey === this.lastEditKey && !this.history.isAdopting)) {
+    if (this.amend || !this.inputSinceOpen || (this.lastEditKey !== undefined && editKey === this.lastEditKey && !this.history.isAdopting)) {
       this.history.replaceCurrent(snapshot);
     } else {
-      this.history.record(snapshot);
+      this.history.record(snapshot, this.nextLabel ?? describeChange(this.lastWorkspace, workspace));
     }
+    this.nextLabel = undefined;
+    this.lastWorkspace = workspace;
     this.lastEditKey = editKey;
     this.amend = false;
     if (!this.options.framed) {
@@ -231,7 +234,11 @@ export class WorkspaceStore {
   /** Replaces the whole workspace. */
   open(state: WorkspaceState, from: string): void {
     this.apply(state);
+    // Opening is one undo step, and what follows on its own is part of it.
+    this.inputSinceOpen = true;
+    this.nextLabel = "Opened";
     this.settle();
+    this.inputSinceOpen = false;
     const n = layersOf(state.ng).length;
     const scenes = this.platform.scenes.length;
     this.options.log(
@@ -288,6 +295,39 @@ export class WorkspaceStore {
     }
   }
 
+  /** The workspace as last settled, to say what the next change was. */
+  private lastWorkspace: { ng: Json; app: Json } | undefined;
+
+  /** The history menu's rows: every change, oldest first, with what and when. */
+  historyRows(): HistoryRow[] {
+    return this.history.rows();
+  }
+
+  /** Goes back or forward to a row of `historyRows()`, as that many undos or redos. */
+  goToHistory(row: number): boolean {
+    this.settle();
+    const rows = this.history.rows();
+    const current = rows.findIndex((r) => r.state === "current");
+    if (current === -1 || row === current || row < 0 || row >= rows.length) return false;
+    const steps = row - current;
+    return this.restore(this.history.move(steps), steps < 0 ? `Went back ${-steps} change${steps === -1 ? "" : "s"}.` : `Went forward ${steps} change${steps === 1 ? "" : "s"}.`);
+  }
+
+  /**
+   * Whether the user has touched anything since the workspace was opened.
+   * Until then every change (layers resolving their types, plugins adding
+   * what they show) is part of opening it, not a step of its own.
+   */
+  private inputSinceOpen = true;
+
+  /** The label of the next recorded step, when the store knows better than a diff. */
+  private nextLabel: string | undefined;
+
+  /** The shell calls this on the user's first key, click or scroll after opening. */
+  noteInput(): void {
+    this.inputSinceOpen = true;
+  }
+
   /** The next settle amends the current undo step (a quiet edit). */
   private amend = false;
 
@@ -340,15 +380,18 @@ export class WorkspaceStore {
   }
 
   /** Shows a workspace dataset in the active scene through a new layer. */
-  showDataset(id: string, overrides: Json = {}): string | undefined {
+  showDataset(id: string, overrides: Json = {}, options: { quiet?: boolean } = {}): string | undefined {
     const dataset = this.dataset(id);
     if (dataset === undefined) return undefined;
+    // A quiet addition (a plugin's, on the user's behalf) joins the current undo step.
+    if (options.quiet && this.settleTimer !== undefined) this.settle();
     const ng = this.ng();
     const spec = { ...layerForDataset(dataset, ng), ...overrides };
     const name = this.engine.addLayer(spec, { select: true });
     // The first data in a scene sets its coordinate space; the view then fits it.
     if (layersOf(ng).length === 0) this.engine.fitWhenLoaded?.(name);
     this.engine.contrastWhenLoaded?.(name);
+    this.amend = options.quiet === true;
     this.settle();
     this.options.log(`Added “${dataset.name}” to the scene.`, "ok");
     return name;

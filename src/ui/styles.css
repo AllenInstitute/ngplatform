@@ -714,6 +714,12 @@ textarea.state-input.tall { min-height: 50vh; }
 .menu-item:hover:not(:disabled), .menu-item:focus-visible { background: var(--ink-3); outline: none; }
 .menu-item:disabled { color: var(--faint); cursor: default; }
 .menu-item.danger { color: var(--err); }
+.menu { max-height: min(70vh, 640px); overflow-y: auto; }
+.menu-item.with-detail { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-width: 300px; }
+.menu-detail { color: var(--faint); font-variant-numeric: tabular-nums; font-size: 12px; }
+.menu-item.muted .menu-label { color: var(--faint); text-decoration: line-through; text-decoration-color: rgba(255, 255, 255, 0.25); }
+.menu-item.current { box-shadow: inset 2px 0 0 var(--accent); }
+.menu-item.current .menu-label { font-weight: 600; }
 .menu-sep { height: 1px; background: var(--line); margin: 4px 2px; }
 
 .toasts {

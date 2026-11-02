@@ -790,7 +790,8 @@ class TrackGroups {
                 ignoreNullVisibleSet: false,
                 segmentDefaultColor: group.colour,
               };
-      layer = this.ctx.workspace.addLayer(dataset.id, spec);
+      // Part of making the group (whose state change is the undo step), not a step of its own.
+      layer = this.ctx.workspace.addLayer(dataset.id, spec, { quiet: true });
       this.saved = { ...this.saved, groups: this.saved.groups.map((g) => (g.id === group.id ? { ...g, layer } : g)) };
       this.save();
     } finally {
@@ -923,7 +924,7 @@ class TrackGroups {
         annotations: desired,
       });
       state.layers = list;
-    });
+       }, { quiet: true });
   }
 
   /**

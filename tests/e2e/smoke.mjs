@@ -172,7 +172,7 @@ await page.keyboard.press("Control+z");
 await page.waitForTimeout(1500);
 const layoutAfterUndo = await page.evaluate(() => window.engine.layout());
 if (layoutAfterUndo !== layoutBefore) {
-  const h = await page.evaluate(() => { const x = window.workbench.store.history; return `past ${x.past.length}, future ${x.future.length}, layouts in past: ${x.past.slice(-4).map((s) => JSON.parse(s).ng.layout).join(",")}, future: ${x.future.map((s) => JSON.parse(s).ng.layout).join(",")}`; });
+  const h = await page.evaluate(() => { const x = window.workbench.store.history; return `past ${x.past.length}, future ${x.future.length}, layouts in past: ${x.past.slice(-4).map((s) => JSON.parse(s.snapshot).ng.layout).join(",")}, future: ${x.future.map((s) => JSON.parse(s.snapshot).ng.layout).join(",")}`; });
   console.log(`  layout before ${layoutBefore}, after undo ${layoutAfterUndo}; history: ${h}`);
 }
 check(layoutAfterUndo === layoutBefore, "undo restored the layout");

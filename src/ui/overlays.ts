@@ -262,6 +262,12 @@ export interface MenuItem {
   icon?: string;
   danger?: boolean;
   disabled?: boolean;
+  /** Shown at the right of the row (a time, a shortcut). */
+  detail?: string;
+  /** Greyed, though still clickable: an undone change, say. */
+  muted?: boolean;
+  /** Marked as where things stand; the menu opens scrolled to it. */
+  current?: boolean;
   run: () => void;
 }
 
@@ -285,7 +291,8 @@ export function showMenu(anchor: HTMLElement | { x: number; y: number }, items: 
       h(
         "button",
         {
-          class: item.danger ? "menu-item danger" : "menu-item",
+          class: ["menu-item", item.danger && "danger", item.muted && "muted", item.current && "current", item.detail !== undefined && "with-detail"].filter(Boolean).join(" "),
+          "aria-current": item.current ? "true" : undefined,
           type: "button",
           role: "menuitem",
           disabled: item.disabled,
@@ -294,11 +301,12 @@ export function showMenu(anchor: HTMLElement | { x: number; y: number }, items: 
             item.run();
           },
         },
-        item.label,
+        ...(item.detail === undefined ? [item.label] : [h("span", { class: "menu-label" }, item.label), h("span", { class: "menu-detail" }, item.detail)]),
       ),
     );
   }
   document.body.append(menu);
+  menu.querySelector<HTMLElement>(".menu-item.current")?.scrollIntoView({ block: "center" });
   const rect = anchor instanceof HTMLElement ? anchor.getBoundingClientRect() : { left: anchor.x, bottom: anchor.y, right: anchor.x };
   const width = menu.offsetWidth;
   const height = menu.offsetHeight;
@@ -307,7 +315,7 @@ export function showMenu(anchor: HTMLElement | { x: number; y: number }, items: 
   menu.style.left = `${Math.max(8, left)}px`;
   menu.style.top = `${Math.max(8, top)}px`;
   openMenu = menu;
-  (menu.querySelector("button:not([disabled])") as HTMLElement | null)?.focus();
+  ((menu.querySelector(".menu-item.current") ?? menu.querySelector("button:not([disabled])")) as HTMLElement | null)?.focus({ preventScroll: true });
   const dismiss = (e: Event) => {
     if (e instanceof KeyboardEvent && e.key !== "Escape") return;
     if (e.target instanceof Node && menu.contains(e.target) && !(e instanceof KeyboardEvent)) return;

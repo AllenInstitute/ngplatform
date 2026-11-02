@@ -49,3 +49,26 @@ describe("StateHistory", () => {
     expect(steps).toBe(3);
   });
 });
+
+describe("the history menu", () => {
+  it("keeps what and when for each change, and moves several steps at once", () => {
+    let clock = 1000;
+    const h = new StateHistory(200, () => clock);
+    h.record("a", "Opened");
+    clock = 2000;
+    h.record("b", "Layout: 3d");
+    clock = 3000;
+    h.record("c", "Hid SRB");
+    expect(h.rows().map((r) => `${r.label}@${r.time}:${r.state}`)).toEqual(["Opened@1000:done", "Layout: 3d@2000:done", "Hid SRB@3000:current"]);
+    expect(h.move(-2)).toBe("a");
+    h.record("a"); // the restored state is adopted, not a new step
+    expect(h.rows().map((r) => r.state)).toEqual(["current", "undone", "undone"]);
+    expect(h.rows()[1].label).toBe("Layout: 3d");
+    expect(h.move(1)).toBe("b");
+    h.record("b");
+    expect(h.rows().map((r) => r.state)).toEqual(["done", "current", "undone"]);
+    // A new change drops what was undone.
+    h.record("d", "Moved");
+    expect(h.rows().map((r) => r.label)).toEqual(["Opened", "Layout: 3d", "Moved"]);
+  });
+});
