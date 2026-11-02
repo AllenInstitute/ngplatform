@@ -43,7 +43,7 @@ import {
 import { FILTERING_PANEL } from "./manifest.js";
 import { groupMask, type Roi, type RoiEnds, type RoiOp, type RoiShape, rowIndex, rowMask } from "./roi.js";
 import { type Curves, type Dimensions, previewLevel, RoiEngine, type RoiResult, type StoreInfo, toStore } from "./roi_client.js";
-import { fileName, millimetres, trkBody, trkHeader, trkSpace } from "./trk.js";
+import { fileName, millimetres, trkBody, trkHeader, trkSpace, writeTrk } from "./trk.js";
 import { groupFiles, mergeGroups, type StoredGroup, withGroupsListed } from "./zv_groups.js";
 
 /**
@@ -83,6 +83,15 @@ export interface Saved {
 
 /** Points per batch when saving .trk: about 48 MB of the file in memory at a time. */
 const BATCH_POINTS = 4_000_000;
+/**
+ * A streamline group is drawn from a store of its own whole streamlines,
+ * made in the page, of at most about this many points (else from the
+ * finest sample level that fits): drawn from the dataset's own levels, a
+ * group mostly vanishes when zoomed out, because a coarse level keeps only
+ * a sample of the objects.
+ */
+const GROUP_STORE_POINTS = 8_000_000;
+const GROUP_STORE_DELAY_MS = 400;
 /** A density map's look: a heat colour map, clear where it is zero. */
 const DENSITY_SHADER = `#uicontrol invlerp normalized
 #uicontrol float opacity slider(min=0, max=1, default=0.85)
@@ -387,6 +396,8 @@ class TrackGroups {
    * and level: what the volume view draws and a .trk save writes are one
    * read.  A read stops early only when everyone waiting on it has given up.
    */
+  /** Each streamline group's own store (see GROUP_STORE_POINTS), by group id. */
+  private groupStores = new Map<string, { version: number; controller: AbortController; timer?: ReturnType<typeof setTimeout>; source?: string }>();
   private curveCache = new Map<string, { promise: Promise<Curves>; controller: AbortController; waiting: number; progress: Set<(done: number, total: number) => void> }>();
   /** The .trk save in progress, if any. */
   private saving: { groupId: string; done: number; total: number; controller: AbortController; what?: string } | undefined;
@@ -692,6 +703,7 @@ class TrackGroups {
     if (group.layer !== undefined && this.layerInfo(group.layer) !== undefined) this.ctx.workspace.removeLayer(group.layer);
     const groups = this.saved.groups.filter((g) => g.id !== group.id);
     this.results.delete(group.id);
+    this.dropGroupStore(group.id);
     this.save({ groups, editing: this.saved.editing === group.id ? groups[0]?.id : this.saved.editing });
     this.writeAnnotations();
   }
@@ -1214,6 +1226,96 @@ class TrackGroups {
     this.notify();
     this.show(group);
     for (const update of this.updaters) update();
+    if (result.state === "exact" || result.state === "empty") this.scheduleGroupStore(group);
+  }
+
+  /** Whether the dataset's groups are drawn from stores of their own: Zarr Vectors streamlines. */
+  private drawsOwnStores(): boolean {
+    return this.kind() === "zarr-vectors" && /^(streamline|polyline|line)$/.test(this.info?.geometry ?? "");
+  }
+
+  /** Makes a group's own store once its exact answer has stayed a moment. */
+  private scheduleGroupStore(group: Group): void {
+    if (!this.drawsOwnStores()) return;
+    const version = this.versions.get(group.id) ?? 0;
+    const current = this.groupStores.get(group.id);
+    if (current?.version === version) return;
+    current?.controller.abort();
+    if (current?.timer !== undefined) clearTimeout(current.timer);
+    const entry: { version: number; controller: AbortController; timer?: ReturnType<typeof setTimeout>; source?: string } = { version, controller: new AbortController(), source: current?.source };
+    this.groupStores.set(group.id, entry);
+    entry.timer = setTimeout(() => {
+      entry.timer = undefined;
+      this.buildGroupStore(group.id, entry).catch((e) => {
+        if (!entry.controller.signal.aborted) this.ctx.log.error(`Could not draw ${group.name}'s streamlines whole: ${(e as Error).message}`);
+      });
+    }, GROUP_STORE_DELAY_MS);
+  }
+
+  private async buildGroupStore(id: string, entry: { version: number; controller: AbortController; source?: string }): Promise<void> {
+    const { props, info } = this;
+    const mask = this.results.get(id)?.mask;
+    if (props === undefined || info === undefined || mask === undefined) return;
+    const ids = passingIds(props, mask);
+    const signal = entry.controller.signal;
+    let source: string | undefined;
+    if (ids.length > 0) {
+      const total = info.levels[0].vertexCount ?? 0;
+      const perObject = total / Math.max(1, props.ids.length);
+      const estimate = (l: StoreInfo["levels"][number]) => ids.length * perObject * ((l.vertexCount ?? total) / Math.max(1, total));
+      const level = info.levels.find((l) => estimate(l) <= GROUP_STORE_POINTS)?.index ?? info.levels[info.levels.length - 1].index;
+      const curves = await this.readCurves(id, ids, level, undefined, signal);
+      signal.throwIfAborted();
+      const group = this.saved.groups.find((g) => g.id === id);
+      if (group === undefined) return;
+      const file = new File([writeTrk(curves, trkSpace(info))], fileName(group.name, ".trk"));
+      const [found] = await this.ctx.workspace.local.open(file, { derived: true });
+      signal.throwIfAborted();
+      source = found?.source;
+    }
+    if (this.groupStores.get(id) !== entry) {
+      if (source !== undefined) this.ctx.workspace.local.close(source);
+      return;
+    }
+    const previous = entry.source;
+    entry.source = source;
+    this.attachGroupStore(id);
+    if (previous !== undefined && previous !== source) this.ctx.workspace.local.close(previous);
+  }
+
+  /**
+   * Points a group's layer at its own store (or back at the dataset's
+   * selection, without one).  The dataset's source stays first, with nothing
+   * of it drawn, so the layer is still listed under the dataset.
+   */
+  private attachGroupStore(id: string): void {
+    const group = this.saved.groups.find((g) => g.id === id);
+    const dataset = this.dataset();
+    const base = dataset && this.sourceOf(dataset);
+    if (group?.layer === undefined || base === undefined || this.layerInfo(group.layer) === undefined) return;
+    const own = this.groupStores.get(id)?.source;
+    const layer = group.layer;
+    this.ctx.viewer.patchState((ng) => {
+      const target = (ng.layers as Json[] | undefined)?.find((l) => l.name === layer);
+      if (target === undefined) return;
+      if (own !== undefined) {
+        target.source = [{ url: base, enableDefaultSubsources: false }, { url: own, subsources: { objects: false, meshes: false } }];
+        target.ignoreNullVisibleSet = true;
+      } else {
+        target.source = { url: base, subsources: { objects: false, meshes: false } };
+        target.ignoreNullVisibleSet = false;
+      }
+    });
+    this.show(group);
+  }
+
+  private dropGroupStore(id: string): void {
+    const entry = this.groupStores.get(id);
+    if (entry === undefined) return;
+    entry.controller.abort();
+    if (entry.timer !== undefined) clearTimeout(entry.timer);
+    this.groupStores.delete(id);
+    if (entry.source !== undefined) this.ctx.workspace.local.close(entry.source);
   }
 
   /** Shows a group's answer in its layer. */
@@ -1221,6 +1323,16 @@ class TrackGroups {
     const result = this.results.get(group.id);
     const layer = this.saved.groups.find((g) => g.id === group.id)?.layer;
     if (layer === undefined || result === undefined) return;
+    if (JSON.stringify(this.ctx.viewer.layerSpec(layer)?.source ?? "").includes("/local/derived-")) {
+      if (this.groupStores.get(group.id)?.source === undefined) {
+        // A store from an earlier visit (made in the page, now gone): back to the dataset until a new one is made.
+        this.attachGroupStore(group.id);
+        return;
+      }
+      // Its own store holds just its streamlines: show them all.
+      this.ctx.viewer.setTemporaryVisibleSegments(layer, new BigUint64Array(0));
+      return;
+    }
     if (result.ids !== undefined) {
       const kind = this.kind();
       if (kind === "precomputed-annotations") {

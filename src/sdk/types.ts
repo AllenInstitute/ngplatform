@@ -181,7 +181,9 @@ export interface WorkspaceApi {
      * Opens a file made in the page (a NIfTI image, a mesh…) as data on this
      * computer, for this visit; the datasets in it, to add with addDataset.
      */
-    open(file: File): Promise<{ source: string; name: string; kind: string }[]>;
+    open(file: File, options?: { derived?: boolean }): Promise<{ source: string; name: string; kind: string }[]>;
+    /** Lets go of a file opened with `open`, given its source. */
+    close(source: string): void;
   };
 }
 

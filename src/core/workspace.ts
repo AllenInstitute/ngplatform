@@ -79,6 +79,13 @@ export function sourceUrls(source: unknown): string[] {
   return list.map(one).filter((u): u is string => u !== undefined && u.trim() !== "");
 }
 
+/**
+ * A file made in the page from another dataset (a track group's own
+ * streamlines): a layer's source under it is a view of that dataset, not a
+ * dataset of its own (see LocalData.openFile).
+ */
+export const DERIVED_LOCAL = /\/local\/derived-[0-9a-f]+\//;
+
 /** A URL in comparable form: trimmed, no trailing slash before a `|` adapter or the end. */
 export function normaliseUrl(url: string): string {
   return url.trim().replace(/\/+(?=\||$)/g, "");
@@ -90,7 +97,7 @@ export function normaliseUrl(url: string): string {
  * own dataset.
  */
 export function datasetKey(spec: Json): string {
-  const urls = sourceUrls(spec.source).filter((u) => !u.startsWith("local://"));
+  const urls = sourceUrls(spec.source).filter((u) => !u.startsWith("local://") && !DERIVED_LOCAL.test(u));
   if (urls.length === 0) return `layer:${layerName(spec)}`;
   return urls.map(normaliseUrl).join("\n");
 }

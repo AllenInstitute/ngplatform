@@ -14,7 +14,8 @@ then the Luxar plugin and drawing labels by hand.
 - [x] Docs: MkDocs site for Read the Docs (`mkdocs.yml`, `.readthedocs.yaml`, `docs/`): the idea, the window tab by tab, loading and exporting data, coming from Freeview / Neuroglancer, a user page per plugin with *Notes from users*, plugin ideas, contributing; a figure at the top of each plugin README; `CONTRIBUTING.md` and issue templates. The Read the Docs project itself is to be created (import the repository at readthedocs.org).
 - [ ] Commit attribution: 28 commits on main and 11 gh-pages deploys carry an email GitHub links to another account (Andrew-K-K). Either move that email to the Andrew-Keenlyside account in GitHub's settings (no history change) or rewrite and force-push. Andrew to choose.
 - [ ] A `LICENSE` file: `package.json` says Apache-2.0 but there is no licence text; the AllenInstitute org may have its own policy. Andrew to decide.
-- [ ] The S-21-46 track groups did not show their streamlines in the 3-D view in a headless run (2-D fine); check in a real browser.
+- [x] Track groups showed only their regions, no streamlines: a group was drawn from the dataset's own levels, and S-21-46's coarse levels keep a 10% sample of the objects per level (level 4 about 330 of 3.3 M), so zoomed out a group mostly vanished. A streamline group is now drawn from a store of its own whole streamlines, made in the page once its exact answer settles (a `.trk` read as a virtual Zarr Vectors store; at most 8 M points, else the finest sample level that fits), listed under its dataset (`DERIVED_LOCAL`). The three example groups draw in about 2 min headless; the corpus callosum (52,731) is most of it.
+- [ ] Group stores: show a coarse store at once (a sample level) and the whole one when read, so a big group appears in seconds.
 
 ### A. Local data
 - [ ] A1. A core `src/virtual/` module for all local read-in and write-out (the image and vector virtual stores in one place). 2–3 d
@@ -33,6 +34,8 @@ then the Luxar plugin and drawing labels by hand.
 - [ ] B19. Surface data: per-vertex values, `.annot` and `.label` coloured by colormap or lookup table; surface outlines on the slices. 5–8 d
 
 ### C. Plugins
+- [ ] Volume rendering: the sections on the cut faces from the full-resolution data the 2-D views already draw, not the solid's coarse level, so zooming into the cut shows fine structure over a coarse solid.
+- [ ] C11 (revised 2026-11-02, night): **Luxar inside the Neuroglancer views, not a separate viewer.** When the plugin is on, a dataset can be drawn the Luxar way (smooth HDR lines, points, meshes, splats; additive and emission/absorption blending) in Neuroglancer's own 2-D and 3-D panels, chosen per dataset: say a Luxar tractogram over a standard or volume-rendered OME-Zarr image. 2-D panels draw the geometry near the section (a slab), as Luxar slices hidden dimensions. Through the fork's draw hooks, one viewer.
 - [ ] C11a. Luxar: a Luxar view (layer mode, its own three.js scene) with the camera following Neuroglancer's 3-D view. 3–4 d
 - [ ] C11b. Luxar: Zarr Vectors to Luxar's format on the fly, in memory, no new files; our levels as its progressive levels. 7–10 d
 - [ ] C11c. Luxar: multiscale OME-Zarr voxels drawn on the fly in the same scene; one level first, then bricks from several levels. 4 + 10–15 d

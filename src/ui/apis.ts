@@ -73,7 +73,8 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
         if (at === undefined) throw new Error(`${url} is not on this computer`);
         await wb.localData.write(at.id, at.path, data as BufferSource | string);
       },
-      open: async (file) => (await wb.localData.openFile(file)).map(({ source, name, kind }) => ({ source, name, kind })),
+      open: async (file, options) => (await wb.localData.openFile(file, options?.derived === true)).map(({ source, name, kind }) => ({ source, name, kind })),
+      close: (source) => wb.localData.close(source),
     },
   };
 

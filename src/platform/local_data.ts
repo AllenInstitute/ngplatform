@@ -102,6 +102,9 @@ async function idb<T>(mode: IDBTransactionMode, work: (store: IDBObjectStore) =>
   });
 }
 
+/** Ids of derived files start so; `DERIVED_LOCAL` finds them in a URL. */
+const DERIVED_PREFIX = "derived-";
+
 /** A short id for URLs. */
 function newId(): string {
   return crypto.randomUUID().replace(/-/g, "").slice(0, 12);
@@ -146,7 +149,7 @@ export class LocalData {
   }
 
   list(): LocalEntry[] {
-    return [...this.entries.values()].map(({ id, name, kind, needsPermission }) => ({ id, name, kind, needsPermission }));
+    return [...this.entries.values()].filter((e) => !e.id.startsWith(DERIVED_PREFIX)).map(({ id, name, kind, needsPermission }) => ({ id, name, kind, needsPermission }));
   }
 
   onChange(listener: () => void): () => void {
@@ -272,15 +275,26 @@ export class LocalData {
 
   /**
    * Opens a file made in the page (a density map, say) as data on this
-   * computer, for this visit only; returns the datasets found in it.
+   * computer, for this visit only; returns the datasets found in it.  A
+   * derived file (a track group's own streamlines, say) is a view of a
+   * dataset that exists elsewhere: it is not listed, and a layer showing it
+   * beside that dataset still counts as that dataset (`DERIVED_LOCAL`).
    */
-  async openFile(file: File): Promise<FoundDataset[]> {
+  async openFile(file: File, derived = false): Promise<FoundDataset[]> {
     await this.start();
-    const id = newId();
+    const id = (derived ? DERIVED_PREFIX : "") + newId();
     this.entries.set(id, { id, name: file.name, kind: "file", files: new Map([[file.name, file]]), needsPermission: false });
     this.register();
     this.changed();
     return this.detect(id);
+  }
+
+  /** Drops a file opened with openFile, given a URL under it. */
+  close(url: string): void {
+    const at = this.parse(url);
+    if (at === undefined || this.entries.get(at.id)?.files === undefined) return;
+    this.entries.delete(at.id);
+    this.changed();
   }
 
   async forget(id: string): Promise<void> {
