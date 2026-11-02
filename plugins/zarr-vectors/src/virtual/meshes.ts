@@ -1,0 +1,281 @@
+/**
+ * A virtual zarr-vectors mesh store: a mesh file's triangles served as a
+ * format 0.9.3 mesh store made from them, nothing written.
+ *
+ * The simplest valid layout: one cell holds the whole mesh, so every face
+ * is a row of `links/0/0.0.0_0.0.0` (three cell-local vertex rows, in the
+ * file's winding).  Each object (an .obj `o`/`g` group, or the whole file)
+ * is one fragment of the vertices and one group of the faces
+ * (`link_fragments`, with the level's `fragment_link_groups`), so the
+ * viewer reads one object's mesh by two byte ranges.  Object ids start at 1
+ * (segment 0 is the background).  A mesh is moved to start at the cell's
+ * corner, the move kept as `coordinate_offset`, which the reader adds back.
+ */
+import type { MeshData } from "./mesh_files.js";
+import { fragmentIndex } from "./streamlines.js";
+
+const MANIFEST_ROWS = 16384;
+const COLUMN_ROWS = 65536;
+
+const json = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
+const bytesOf = (a: ArrayBufferView) => new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+const group = (attributes: Record<string, unknown> = {}) => ({ zarr_format: 3, node_type: "group", attributes });
+
+function element(payload: Uint8Array): Uint8Array {
+  const out = new Uint8Array(8 + payload.byteLength);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, 1, true);
+  view.setUint32(4, payload.byteLength, true);
+  out.set(payload, 8);
+  return out;
+}
+
+function perCell(attributes: Record<string, unknown>): unknown {
+  return {
+    zarr_format: 3,
+    node_type: "array",
+    shape: [1, 1, 1],
+    data_type: "variable_length_bytes",
+    chunk_grid: { name: "regular", configuration: { chunk_shape: [1, 1, 1] } },
+    chunk_key_encoding: { name: "default", configuration: { separator: "/" } },
+    fill_value: "",
+    codecs: [{ name: "vlen-bytes", configuration: {} }],
+    attributes: { nonempty_chunks: ["0.0.0"], chunk_grid_origin: [0, 0, 0], ...attributes },
+  };
+}
+
+function column(n: number, rows: number, dataType: string, fill: unknown, attributes: Record<string, unknown> = {}): unknown {
+  return {
+    zarr_format: 3,
+    node_type: "array",
+    shape: [n],
+    data_type: dataType,
+    chunk_grid: { name: "regular", configuration: { chunk_shape: [rows] } },
+    chunk_key_encoding: { name: "default", configuration: { separator: "/" } },
+    fill_value: fill,
+    codecs: dataType === "variable_length_bytes" ? [{ name: "vlen-bytes", configuration: {} }] : [{ name: "bytes", configuration: { endian: "little" } }],
+    attributes,
+  };
+}
+
+/** A guess at the unit: EM meshes are in nanometres (spans of tens of thousands), others millimetres. */
+export function meshUnit(extent: number): string {
+  return extent > 50_000 ? "nanometer" : "millimeter";
+}
+
+export class MeshStore {
+  private readonly vertices: Float32Array;
+  /** Three int32 cell-local rows per face, object by object. */
+  private readonly faces: Int32Array;
+  private readonly vertexCounts: number[];
+  private readonly faceCounts: number[];
+  private readonly offset: number[];
+  private readonly chunk: number;
+  private readonly lo: number[];
+  private readonly hi: number[];
+  private readonly columns: { name: string; values: Float32Array }[];
+  private readonly directories: Set<string>;
+  readonly count: number;
+
+  constructor(
+    mesh: MeshData,
+    readonly name: string,
+  ) {
+    const objects = mesh.objects.length;
+    // Each object's vertices: those its faces use, in file order (an object's own copy where groups share one).
+    const used = Array.from({ length: objects }, () => new Map<number, number>());
+    const facesOf = Array.from({ length: objects }, () => [] as number[]);
+    for (let t = 0; t < mesh.triangleObject.length; ++t) facesOf[mesh.triangleObject[t]].push(t);
+    for (let o = 0; o < objects; ++o) {
+      const indices = new Set<number>();
+      for (const t of facesOf[o]) for (let k = 0; k < 3; ++k) indices.add(mesh.triangles[3 * t + k]);
+      [...indices].sort((a, b) => a - b).forEach((v, row) => used[o].set(v, row));
+    }
+    // A mesh file with vertices but no faces (a point cloud) keeps its vertices as one object.
+    if (mesh.triangles.length === 0) for (let v = 0; v < mesh.positions.length / 3; ++v) used[0].set(v, v);
+    this.vertexCounts = used.map((m) => m.size);
+    this.faceCounts = facesOf.map((f) => f.length);
+    const totalVertices = this.vertexCounts.reduce((a, b) => a + b, 0);
+    const world = new Float64Array(3 * totalVertices);
+    let base = 0;
+    for (let o = 0; o < objects; ++o) {
+      for (const [v, row] of used[o]) for (let k = 0; k < 3; ++k) world[3 * (base + row) + k] = mesh.positions[3 * v + k];
+      base += this.vertexCounts[o];
+    }
+    const lo = [0, 1, 2].map((k) => {
+      let m = Infinity;
+      for (let i = k; i < world.length; i += 3) m = Math.min(m, world[i]);
+      return Number.isFinite(m) ? m : 0;
+    });
+    // Moved to start at the cell's corner, so one cell holds it however it sits about the origin.
+    this.offset = lo.map((v) => Math.floor(v));
+    this.vertices = new Float32Array(world.length);
+    for (let i = 0; i < world.length; ++i) this.vertices[i] = world[i] - this.offset[i % 3];
+    this.lo = [0, 1, 2].map((k) => {
+      let m = Infinity;
+      for (let i = k; i < this.vertices.length; i += 3) m = Math.min(m, this.vertices[i]);
+      return Number.isFinite(m) ? m : 0;
+    });
+    this.hi = [0, 1, 2].map((k) => {
+      let m = -Infinity;
+      for (let i = k; i < this.vertices.length; i += 3) m = Math.max(m, this.vertices[i]);
+      return Number.isFinite(m) ? m : 0;
+    });
+    // The smallest power of two past every coordinate (strictly: hi == C would be the next cell).
+    this.chunk = 1;
+    while (this.chunk <= Math.max(...this.hi)) this.chunk *= 2;
+    this.faces = new Int32Array(3 * facesOf.reduce((n, f) => n + f.length, 0));
+    let at = 0;
+    base = 0;
+    const area = new Float32Array(objects);
+    for (let o = 0; o < objects; ++o) {
+      let sum = 0;
+      for (const t of facesOf[o]) {
+        const r = [0, 1, 2].map((k) => used[o].get(mesh.triangles[3 * t + k])!);
+        for (let k = 0; k < 3; ++k) this.faces[at++] = base + r[k];
+        const p = r.map((row) => [0, 1, 2].map((k) => world[3 * (base + row) + k]));
+        const u = [0, 1, 2].map((k) => p[1][k] - p[0][k]);
+        const w = [0, 1, 2].map((k) => p[2][k] - p[0][k]);
+        sum += 0.5 * Math.hypot(u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]);
+      }
+      area[o] = sum;
+      base += this.vertexCounts[o];
+    }
+    this.count = objects;
+    this.columns = [
+      { name: "n_vertices", values: Float32Array.from(this.vertexCounts) },
+      { name: "n_faces", values: Float32Array.from(this.faceCounts) },
+      { name: "area", values: area },
+    ];
+    this.directories = new Set();
+    for (const path of ["0/vertices", "0/vertex_fragments", "0/link_fragments", "0/links/0/0.0.0_0.0.0", "0/object_index/manifests", "0/object_index/object_ids", ...this.columns.map((c) => `0/object_attributes/${c.name}`)]) {
+      const parts = path.split("/");
+      for (let i = 1; i <= parts.length; ++i) this.directories.add(parts.slice(0, i).join("/"));
+    }
+  }
+
+  /** Child names (directories end in "/") of a directory key ("" or ending in "/"); undefined when it is not one. */
+  list(prefix: string): string[] | undefined {
+    const dir = prefix.replace(/\/$/, "");
+    if (dir !== "" && !this.directories.has(dir)) return undefined;
+    const base = dir === "" ? "" : `${dir}/`;
+    const names = new Set<string>(["zarr.json"]);
+    for (const d of this.directories) {
+      if (d === dir || !d.startsWith(base)) continue;
+      names.add(`${d.slice(base.length).split("/")[0]}/`);
+    }
+    return [...names].sort();
+  }
+
+  async get(key: string): Promise<Uint8Array | undefined> {
+    const extent = Math.max(...this.hi.map((h, k) => h - this.lo[k]));
+    const c = this.chunk;
+    switch (key) {
+      case "zarr.json":
+        return json(
+          group({
+            zarr_vectors: {
+              zv_version: "0.9.3",
+              format_capabilities: ["fragment_link_groups"],
+              chunk_shape: [c, c, c],
+              bounds: [this.lo, this.hi],
+              coordinate_offset: this.offset,
+              geometry_types: ["mesh"],
+              links_convention: "explicit",
+              object_index_convention: "standard",
+              cross_chunk_strategy: "explicit_links",
+            },
+            multiscales: [
+              {
+                version: "0.4",
+                name: this.name,
+                axes: ["x", "y", "z"].map((n) => ({ name: n, type: "space", unit: meshUnit(extent) })),
+                datasets: [{ path: "0", coordinateTransformations: [{ type: "scale", scale: [1, 1, 1] }, { type: "translation", translation: [c / 2, c / 2, c / 2] }] }],
+                metadata: { format: "zarr_vectors" },
+              },
+            ],
+          }),
+        );
+      case "0/zarr.json":
+        return json(
+          group({
+            zarr_vectors_level: {
+              level: 0,
+              vertex_count: this.vertices.length / 3,
+              arrays_present: ["vertices", "links", "object_index"],
+              object_sparsity: 1,
+              coarsening_method: "none",
+              parent_level: null,
+              fragments_tile: true,
+              fragment_link_groups: true,
+            },
+          }),
+        );
+      case "0/vertices/zarr.json":
+        return json(perCell({ zv_array: "vertices", dtype: "float32", encoding: "raw" }));
+      case "0/vertex_fragments/zarr.json":
+        return json(perCell({ zv_array: "vertex_fragments", encoding: "fragment_index_v1" }));
+      case "0/link_fragments/zarr.json":
+        return json(perCell({ zv_array: "link_fragments", encoding: "fragment_index_v1" }));
+      case "0/links/0/zarr.json": {
+        const n = this.faces.length / 3;
+        return json(group({ zv_array: "links_family", level_delta: 0, link_width: 3, directed: false, store: "canonical", sid_ndim: 3, num_links: n, num_physical_records: n }));
+      }
+      case "0/links/0/0.0.0_0.0.0/zarr.json":
+        return json(perCell({ zv_array: "links", dtype: "int32", offsets: [[0, 0, 0], [0, 0, 0]], has_perm: false, link_width: 3, level_delta: 0 }));
+      case "0/object_index/zarr.json":
+        return json(group({ zv_array: "object_index", num_objects: this.count, num_present: this.count, sid_ndim: 3, layout: "vlen_manifests_v2", object_ids_sorted: true }));
+      case "0/object_index/manifests/zarr.json":
+        return json(column(this.count, MANIFEST_ROWS, "variable_length_bytes", ""));
+      case "0/object_index/object_ids/zarr.json":
+        return json(column(this.count, COLUMN_ROWS, "int64", 0));
+      case "0/vertices/c/0/0/0":
+        return element(bytesOf(this.vertices));
+      case "0/vertex_fragments/c/0/0/0":
+        return element(fragmentIndex(this.vertexCounts));
+      case "0/link_fragments/c/0/0/0":
+        return element(fragmentIndex(this.faceCounts));
+      case "0/links/0/0.0.0_0.0.0/c/0/0/0":
+        return element(bytesOf(this.faces));
+    }
+    const columnJson = /^0\/object_attributes\/([^/]+)\/zarr\.json$/.exec(key);
+    if (columnJson !== null && this.columns.some((col) => col.name === columnJson[1])) {
+      return json(column(this.count, COLUMN_ROWS, "float32", "NaN", { zv_array: "object_attribute", name: columnJson[1], dtype: "float32", shape: [this.count], fill_sentinel_meaning: "absent" }));
+    }
+    if (/^0\/(links|object_attributes)\/zarr\.json$/.test(key)) return json(group());
+    const chunk = /^0\/(object_index\/manifests|object_index\/object_ids|object_attributes\/[^/]+)\/c\/(\d+)$/.exec(key);
+    if (chunk === null) return undefined;
+    const first = Number(chunk[2]) * (chunk[1] === "object_index/manifests" ? MANIFEST_ROWS : COLUMN_ROWS);
+    if (first >= this.count) return undefined;
+    if (chunk[1] === "object_index/manifests") {
+      // Object o is fragment o of cell (0, 0, 0): u32 1 block, int64 x3 cell, u8 mode 0, int64 fragment.
+      const rows = Math.min(MANIFEST_ROWS, this.count - first);
+      const out = new Uint8Array(4 + 4 * MANIFEST_ROWS + rows * 37);
+      const view = new DataView(out.buffer);
+      view.setUint32(0, MANIFEST_ROWS, true);
+      let at = 4;
+      for (let r = 0; r < MANIFEST_ROWS; ++r) {
+        if (r >= rows) {
+          view.setUint32(at, 0, true);
+          at += 4;
+          continue;
+        }
+        view.setUint32(at, 37, true);
+        view.setUint32(at + 4, 1, true);
+        view.setBigInt64(at + 8 + 25, BigInt(first + r), true);
+        at += 4 + 37;
+      }
+      return out;
+    }
+    if (chunk[1] === "object_index/object_ids") {
+      const ids = new BigInt64Array(COLUMN_ROWS);
+      for (let i = 0; i < COLUMN_ROWS && first + i < this.count; ++i) ids[i] = BigInt(first + i + 1);
+      return bytesOf(ids);
+    }
+    const values = this.columns.find((col) => `object_attributes/${col.name}` === chunk[1])?.values;
+    if (values === undefined) return undefined;
+    const out = new Float32Array(COLUMN_ROWS).fill(Number.NaN);
+    out.set(values.subarray(first, first + COLUMN_ROWS));
+    return bytesOf(out);
+  }
+}

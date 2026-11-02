@@ -41,7 +41,7 @@ export async function openFromDevice(wb: Workbench, folder: boolean): Promise<bo
 }
 
 /** What Open from device reads, for messages. */
-const LOCAL_FORMATS = "NIfTI, tractograms (.trk, .tck, .trx), OME-Zarr, zarr-vectors and precomputed";
+const LOCAL_FORMATS = "NIfTI, tractograms (.trk, .tck, .trx), meshes (.obj, .stl, .ply), OME-Zarr, zarr-vectors and precomputed";
 
 export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
   const input = h("textarea", {
@@ -306,7 +306,7 @@ export function showLocalSheet(wb: Workbench, local: LocalData): void {
       status.classList.toggle("bad", choices.length === 0);
       status.textContent = choices.length
         ? `${choices.length} dataset${choices.length === 1 ? "" : "s"} in ${entry.name}.`
-        : `No dataset found in ${entry.name}: it reads OME-Zarr, zarr-vectors, precomputed, NIfTI, .trk, .tck and .trx (a folder of them is fine).`;
+        : `No dataset found in ${entry.name}: it reads OME-Zarr, zarr-vectors, precomputed, NIfTI, tractograms and meshes (a folder of them is fine).`;
     } catch (e) {
       status.textContent = (e as Error).message;
       status.classList.add("bad");
@@ -332,7 +332,7 @@ export function showLocalSheet(wb: Workbench, local: LocalData): void {
         h(
           "p",
           { class: "note" },
-          "A file: NIfTI, or a tractogram (.trk, .tck, .trx), read in place. A folder: an OME-Zarr image, a zarr-vectors store, a precomputed volume, or a folder holding several. ",
+          "A file: NIfTI, a tractogram (.trk, .tck, .trx) or a mesh (.obj, .stl, .ply), read in place. A folder: an OME-Zarr image, a zarr-vectors store, a precomputed volume, or a folder holding several. ",
           "Links to it work only in this browser, while this tab is open.",
           LocalData.canWrite ? "" : " This browser cannot remember folders or write into them: use Chrome or Edge for that.",
         ),
