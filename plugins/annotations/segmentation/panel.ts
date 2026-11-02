@@ -626,7 +626,7 @@ export class Segmentation {
         void this.voxels.levels(store).then(
           (l) => {
             levels = { store, levels: l };
-            draw();
+            update();
           },
           () => {},
         );
@@ -634,11 +634,20 @@ export class Segmentation {
       const children: Node[] = [];
       if (this.sessions.length === 0 || this.showForm) children.push(this.newForm(images, levels?.store === store ? (levels?.levels ?? []) : []));
       if (this.current) children.push(this.sessionView(this.current));
-      host.replaceChildren(...children);
+      // Taking out a field that has the focus fires its change event, whose
+      // handler asks for a redraw: that one waits until this one is done.
+      busy = true;
+      try {
+        host.replaceChildren(...children);
+      } finally {
+        busy = false;
+      }
     };
-    this.update = draw;
+    let busy = false;
+    const update = () => (busy ? queueMicrotask(update) : draw());
+    this.update = update;
     draw();
-    const off = this.ctx.viewer.onLayersChanged(() => draw());
+    const off = this.ctx.viewer.onLayersChanged(() => update());
     return () => {
       off();
       this.update = undefined;

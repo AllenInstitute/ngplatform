@@ -107,8 +107,16 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
       // Every chunk source Neuroglancer has made is in its chunk manager's
       // memo, keyed by its options, which name the store's URL; a volume's
       // chunk sources (all its levels) are found by that.
-      const memo = (engine.viewer.chunkManager.memoize as unknown as { map: Map<string, { invalidateCache?(): void }> }).map;
-      for (const [key, source] of memo) if (key.includes(url)) source.invalidateCache?.();
+      // Each is held a moment: the worker answers an invalidation with an
+      // update, and a source let go before it arrives (a level scrolled out
+      // of view) would leave Neuroglancer an update for nothing.
+      const memo = (engine.viewer.chunkManager.memoize as unknown as { map: Map<string, { invalidateCache?(): void; addRef(): void; dispose(): void }> }).map;
+      for (const [key, source] of memo) {
+        if (!key.includes(url) || source.invalidateCache === undefined) continue;
+        source.addRef();
+        source.invalidateCache();
+        setTimeout(() => source.dispose(), 2000);
+      }
     },
   };
 
