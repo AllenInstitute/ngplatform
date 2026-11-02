@@ -1,0 +1,6 @@
+# neuron B: one dendrite tree; a child listed before its parent, ids not 1..n
+5 1 40.0 30.0 20.0 2.5 -1
+9 4 40.0 34.0 21.0 1.0 5
+3 4 38.0 44.0 22.0 0.6 7
+7 4 41.0 39.0 22.0 0.8 9
+8 4 45.0 41.0 23.0 0.6 7

@@ -12,7 +12,7 @@ export const ZARR_VECTORS_MANIFEST: Manifest = {
   version: "0.3.0",
   kind: "datatype",
   enabledByDefault: true,
-  description: "Opens Zarr Vectors stores (points, streamlines, skeletons, graphs and meshes) in Neuroglancer, and tractograms (.trk, .tck, .trx) and meshes and surfaces (.obj, .stl, .ply, GIFTI, FreeSurfer) as if they were one.",
+  description: "Opens Zarr Vectors stores (points, streamlines, skeletons, graphs and meshes) in Neuroglancer, and tractograms (.trk, .tck, .trx), meshes and surfaces (.obj, .stl, .ply, GIFTI, FreeSurfer), SWC neurons and point tables (.csv, .xyz) as if they were one.",
   guide: `Zarr Vectors stores vector geometry (point clouds, lines, streamlines, skeletons, graphs and meshes) as a multiscale Zarr store, with per-object and per-vertex attributes. This plugin teaches Neuroglancer to read format 0.9.0 to 0.9.4.
 
 ## Opening a store
@@ -27,6 +27,9 @@ A tractogram (TrackVis \`.trk\`, MRtrix \`.tck\` or \`.trx\`) opens in place (Op
 
 ## Meshes on this computer
 A mesh or surface (\`.obj\`, \`.stl\`, \`.ply\`, GIFTI \`.gii\`, FreeSurfer \`lh.pial\` and the like) opens in place too; anatomical GIFTI and FreeSurfer surfaces are moved into scanner RAS as zarr-vectors-tools does: each \`.obj\` object (\`o\`/\`g\`) or the whole file is one object, ids from 1, at the file's coordinates (millimetres, or nanometres when it spans more than 50,000).
+
+## Neurons and points on this computer
+An SWC file opens as skeletons, one object per tree, in micrometres, with each node's radius and type. A point table (\`.csv\`, \`.tsv\`, \`.xyz\`; x, y, z columns by name or the first three) opens as points, its other numeric columns as values; up to 250,000 points each point is an object, so it can be selected and filtered. Columns named \`x_um\`, \`x_mm\` or \`x_nm\` give the unit.
 
 ## What you see
 - **Overview**: every object, drawn from the spatial chunks at the level of detail the view needs. With no segments selected, all objects show.

@@ -1,6 +1,7 @@
 /**
  * Files the Zarr Vectors plugin reads in place, as zarr-vectors stores made
- * from them as they are read (src/virtual/): tractograms and meshes.  Local
+ * from them as they are read (src/virtual/): tractograms, meshes, neuron
+ * skeletons and point tables.  Local
  * data lists them and serves their keys from the worker.
  */
 import type { VirtualFormat } from "@ngplatform/sdk";
@@ -47,6 +48,22 @@ export const ZARR_VECTORS_VIRTUAL: VirtualFormat[] = [
     pattern: FREESURFER_SURFACE,
     extensions: [],
     format: "FreeSurfer surface",
+    kind: "auto",
+    source: (url) => `${url}/|zarr-vectors:`,
+    worker,
+  },
+  {
+    pattern: /\.swc$/i,
+    extensions: [".swc"],
+    format: "SWC neuron skeletons",
+    kind: "auto",
+    source: (url) => `${url}/|zarr-vectors:`,
+    worker,
+  },
+  {
+    pattern: /\.(csv|tsv|xyz)$/i,
+    extensions: [".csv", ".tsv", ".xyz"],
+    format: "Point table",
     kind: "auto",
     source: (url) => `${url}/|zarr-vectors:`,
     worker,
