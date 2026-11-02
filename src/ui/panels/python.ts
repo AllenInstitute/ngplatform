@@ -2,8 +2,9 @@
  * The Python tab: a Python console (Pyodide, CPython compiled to
  * WebAssembly) running in this page, loaded the first time the tab opens.
  * `ngp` drives the workspace: the scene's Neuroglancer state as a dict, its
- * layers, the position, and every command in the palette.  numpy, scipy and
- * the other Pyodide packages load when imported.
+ * layers, the position, and every command in the palette; arrays made here
+ * show as layers (ngp.show).  numpy, scipy and the other Pyodide packages
+ * load when imported.
  */
 import { clear, h } from "../dom.js";
 import type { Workbench } from "../workbench.js";
@@ -31,8 +32,9 @@ import _ngp_bridge as _bridge
 
 class _Workspace:
     """The workspace: ngp.state(), ngp.set_state(d), with ngp.txn() as s: …,
-    ngp.layers(), ngp.add_layer(url), ngp.position, await ngp.invoke(id, args),
-    ngp.commands(), and ngp.viewer (Neuroglancer's JavaScript viewer)."""
+    ngp.layers(), ngp.add_layer(url), await ngp.show(array), ngp.position,
+    await ngp.invoke(id, args), ngp.commands(), and ngp.viewer (Neuroglancer's
+    JavaScript viewer)."""
 
     def state(self):
         """This scene's Neuroglancer state, as a dict."""
@@ -61,6 +63,27 @@ class _Workspace:
     def add_layer(self, source, name=None, kind=None):
         """Adds a dataset by URL (any source Neuroglancer reads); returns its layer's name."""
         return _bridge.addLayer(source, name or "", kind or "auto")
+
+    async def show(self, array, name="array", voxel_size=(1.0, 1.0, 1.0), origin=(0.0, 0.0, 0.0), labels=False):
+        """Shows a numpy array, indexed [x, y, z] (or [x, y] or [x, y, z, t]), as a layer:
+        an image, or with labels=True a segmentation.  voxel_size and origin (the
+        first voxel's centre) are in millimetres.  Returns the layer's name:
+            layer = await ngp.show(np.random.rand(64, 64, 64), voxel_size=(0.5, 0.5, 2))"""
+        import numpy as np
+        from pyodide.ffi import to_js
+        a = np.asarray(array)
+        if a.ndim == 2:
+            a = a[:, :, None]
+        if a.ndim not in (3, 4):
+            raise ValueError("an array of 2 to 4 dimensions: [x, y], [x, y, z] or [x, y, z, t]")
+        if a.dtype == np.bool_:
+            a = a.astype(np.uint8)
+        codes = {"uint8": 2, "int16": 4, "int32": 8, "float32": 16, "float64": 64, "int8": 256, "uint16": 512, "uint32": 768, "int64": 1024, "uint64": 1280}
+        if a.dtype.name not in codes:
+            a = a.astype(np.float32)
+        header = _nifti_header(a, codes[a.dtype.name], voxel_size, origin, 1002 if labels else 0, f"ngp.show: {name}")
+        data = header + np.asfortranarray(a.astype(a.dtype.newbyteorder("<"), copy=False)).tobytes(order="F")
+        return await _bridge.showFile(f"{name}.nii", to_js(data), name, "segmentation" if labels else "image")
 
     @property
     def position(self):
@@ -93,6 +116,29 @@ class _Workspace:
 
     def __repr__(self):
         return "<ngp: the workspace. help(ngp) lists what it does.>"
+
+def _nifti_header(a, datatype, voxel_size, origin, intent, description):
+    """A NIfTI-1 header (352 bytes, "n+1") for an array in x-fastest order: sform and qform to millimetres."""
+    import struct
+    v = [float(x) for x in voxel_size]
+    o = [float(x) for x in origin]
+    dims = list(a.shape) + [1] * (7 - a.ndim)
+    h = bytearray(352)
+    struct.pack_into("<i", h, 0, 348)
+    struct.pack_into("<8h", h, 40, a.ndim, *dims)
+    struct.pack_into("<h", h, 68, intent)
+    struct.pack_into("<hh", h, 70, datatype, a.dtype.itemsize * 8)
+    struct.pack_into("<8f", h, 76, 1.0, *v, 1.0, 1.0, 1.0, 1.0)
+    struct.pack_into("<f", h, 108, 352.0)
+    h[123] = 2 | 8  # millimetres, seconds
+    h[148:148 + 79] = description.encode()[:79].ljust(79, bytes(1))
+    struct.pack_into("<hh", h, 252, 2, 2)  # qform and sform: aligned
+    struct.pack_into("<3f", h, 268, *o)
+    for r in range(3):
+        row = [v[r] if c == r else 0.0 for c in range(3)] + [o[r]]
+        struct.pack_into("<4f", h, 280 + 16 * r, *row)
+    h[344:348] = b"n+1" + bytes(1)
+    return bytes(h)
 
 ngp = _Workspace()
 
@@ -144,6 +190,12 @@ export function loadPython(wb: Workbench): Promise<Pyodide> {
       layers: () => JSON.stringify(engine.layers().map((l) => l.name)),
       addLayer: (source: string, name: string, kind: string) => {
         const id = store.addDataset({ source, name: name || undefined, kind });
+        return store.sceneDatasets().find((d) => d.dataset.id === id)?.layers[0] ?? "";
+      },
+      showFile: async (fileName: string, bytes: Uint8Array, name: string, kind: string) => {
+        const [found] = await wb.localData.openFile(new File([bytes as BlobPart], fileName));
+        if (found === undefined) throw new Error(`${fileName} could not be read`);
+        const id = store.addDataset({ source: found.source, name, kind });
         return store.sceneDatasets().find((d) => d.dataset.id === id)?.layers[0] ?? "";
       },
       position: () => JSON.stringify(engine.navigation().position),
@@ -271,7 +323,7 @@ export function renderPythonPanel(host: HTMLElement, wb: Workbench): () => void 
       clear(out);
       print(
         `Python (Pyodide ${py.version}), running in this page. ngp is the workspace: ngp.state(), ngp.set_state(d), ` +
-          `with ngp.txn() as s: …, ngp.layers(), ngp.add_layer(url), ngp.position, await ngp.invoke(id, args), ngp.commands(). ` +
+          `with ngp.txn() as s: …, ngp.layers(), ngp.add_layer(url), await ngp.show(array), ngp.position, await ngp.invoke(id, args), ngp.commands(). ` +
           `Packages such as numpy load when imported. Ctrl+L clears.`,
         "note",
       );

@@ -70,7 +70,8 @@ items are done (and say where); the rest are in rough order of work.
 - [x] Virtual Zarr: TIFF stacks (TIFF/BigTIFF, strips or tiles, LZW/deflate/PackBits, OME and ImageJ hyperstacks and pixel sizes).
 - [x] A new scene fits its first dataset (centre and zoom, in the data's own units), and image layers take their contrast from the source's OME window (the virtual stores now write one).
 - [ ] Virtual Zarr, next: `.nii.gz` kept decompressed between visits (OPFS); `.hdr`/`.img` pairs; RGB (NIfTI and TIFF); TIFF floating-point predictor.
-- [ ] `memory://` layers (gate G3): data made in the page (Python, a filter result) shown as a layer.
+- [x] Data made in the page shown as a layer, for images: `await ngp.show(array, …)` in the Python console (image or labels), and track density maps; both are NIfTI files made in memory and read as virtual Zarr (`workspace.local.open` for plugins).
+- [ ] `memory://` beyond images: meshes, points and annotations made in the page.
 - [ ] zarr-vectors-tools Z1: `zvtools index`, filter-ready columns (length, bounding box, endpoints, fragment owner), so a region reads only the fragments near it.
 
 ## The build guide's tracks, not started
