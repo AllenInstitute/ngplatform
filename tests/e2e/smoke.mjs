@@ -173,7 +173,8 @@ await page.waitForTimeout(1500);
 const layoutAfterUndo = await page.evaluate(() => window.engine.layout());
 if (layoutAfterUndo !== layoutBefore) {
   const h = await page.evaluate(() => { const x = window.workbench.store.history; return `past ${x.past.length}, future ${x.future.length}, layouts in past: ${x.past.slice(-4).map((s) => JSON.parse(s.snapshot).ng.layout).join(",")}, future: ${x.future.map((s) => JSON.parse(s.snapshot).ng.layout).join(",")}`; });
-  console.log(`  layout before ${layoutBefore}, after undo ${layoutAfterUndo}; history: ${h}`);
+  const rows = await page.evaluate(() => window.workbench.store.historyRows().map((r) => `${r.label} (${r.state})`).join(" | "));
+  console.log(`  layout before ${layoutBefore}, after undo ${layoutAfterUndo}; history: ${h}; rows: ${rows}`);
 }
 check(layoutAfterUndo === layoutBefore, "undo restored the layout");
 check(dataRequests === 0, `undo made no data requests (${dataRequests}${requested.length ? `: ${[...new Set(requested.map((u) => u.replace(/[?#].*/, "").split("/").slice(-4).join("/")))].slice(0, 4).join(", ")}` : ""})`);

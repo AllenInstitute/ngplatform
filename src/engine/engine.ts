@@ -285,7 +285,10 @@ export class Engine {
       externalSidePanels: true,
       showPanelBorders: true,
     });
-    this.viewer.coordinateSpace.changed.add(() => this.applyPanelConvention());
+    this.viewer.coordinateSpace.changed.add(() => {
+      this.preferXyz();
+      this.applyPanelConvention();
+    });
     // Four panels have the 3-D view bottom right here, as in Freeview: Neuroglancer's
     // "4panel" (3-D bottom left), from a link or its own panel buttons, becomes "4panel-alt".
     this.viewer.layout.changed.add(() => {
@@ -675,6 +678,24 @@ export class Engine {
 
   private momentumOn = readMomentum();
   private appliedConvention: PanelConvention = "neuroglancer";
+
+  /**
+   * Shows x, y and z, in that order, when the space has them: OME-Zarr
+   * images list their axes z, y, x (slowest first), and a scene whose first
+   * data is one would otherwise show the z-y plane in the panel named xy,
+   * and the anatomical orientation (applyPanelConvention) would not apply.
+   * Left alone when the scene chose its display dimensions itself.
+   */
+  private preferXyz(): void {
+    const space = this.viewer.coordinateSpace.value;
+    const display = this.viewer.displayDimensions;
+    if (!space.valid || display.toJSON() !== undefined) return;
+    if (!["x", "y", "z"].every((n) => space.names.includes(n))) return;
+    const { displayRank, displayDimensionIndices } = display.value;
+    const shown = Array.from(displayDimensionIndices.slice(0, displayRank)).map((i) => space.names[i]);
+    if (shown.join(",") === "x,y,z") return;
+    display.restoreState(["x", "y", "z"]);
+  }
 
   private applyPanelConvention(): void {
     const space = this.viewer.coordinateSpace.value;

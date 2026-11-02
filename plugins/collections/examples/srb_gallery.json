@@ -1,0 +1,55 @@
+{
+  "ome": {
+    "version": "0.x",
+    "type": "collection",
+    "name": "srb_gallery",
+    "attributes": {
+      "scene": {
+        "coordinateSystems": [
+          {
+            "id": "gallery",
+            "name": "Gallery",
+            "axes": [
+              { "name": "z", "type": "space", "unit": "micrometer" },
+              { "name": "y", "type": "space", "unit": "micrometer" },
+              { "name": "x", "type": "space", "unit": "micrometer" }
+            ]
+          }
+        ],
+        "coordinateTransformations": [
+          { "type": "identity", "input": { "id": "srb-left" }, "output": { "id": "gallery" } },
+          { "type": "translation", "translation": [0, 0, 170000], "input": { "id": "srb-middle" }, "output": { "id": "gallery" } },
+          {
+            "type": "sequence",
+            "input": { "id": "srb-right" },
+            "output": { "id": "gallery" },
+            "transformations": [
+              { "type": "scale", "scale": [1, 1, -1] },
+              { "type": "translation", "translation": [0, 0, 340000] }
+            ]
+          }
+        ]
+      }
+    },
+    "nodes": [
+      {
+        "type": "multiscale",
+        "name": "SRB 2026a",
+        "id": "srb-left",
+        "path": { "type": "zarr", "path": "https://storage.googleapis.com/hip_ct_zarr_vector_03987646472fethdsvdvdfg/zarr_vectors_test/cohort_MNI2009b_2026/cohort_template_N10_100um_MNI_simclip_masked.ome.zarr" }
+      },
+      {
+        "type": "multiscale",
+        "name": "SRB 2026a, moved right",
+        "id": "srb-middle",
+        "path": { "type": "zarr", "path": "https://storage.googleapis.com/hip_ct_zarr_vector_03987646472fethdsvdvdfg/zarr_vectors_test/cohort_MNI2009b_2026/cohort_template_N10_100um_MNI_simclip_masked.ome.zarr" }
+      },
+      {
+        "type": "multiscale",
+        "name": "SRB 2026a, mirrored left to right",
+        "id": "srb-right",
+        "path": { "type": "zarr", "path": "https://storage.googleapis.com/hip_ct_zarr_vector_03987646472fethdsvdvdfg/zarr_vectors_test/cohort_MNI2009b_2026/cohort_template_N10_100um_MNI_simclip_masked.ome.zarr" }
+      }
+    ]
+  }
+}
