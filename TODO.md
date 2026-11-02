@@ -7,45 +7,45 @@ items are done (and say where); the rest are in rough order of work.
 ## From the review of 2026-11-02
 
 ### Top bar, Open, scenes
-- [ ] An **Open in Neuroglancer** button in the top bar: the scene in Google's Neuroglancer in a new tab. When the scene has zarr-vectors (or data on this computer), say that plain Neuroglancer will show only the images.
-- [ ] Half-width window: keep the camera and settings icons; let the side panels be dragged wider or narrower.
-- [ ] **Open from device**: the system file picker, then the chosen NIfTI (or other local file) opens as a dataset.
-- [ ] Open: an **Examples and templates** section whose first entry is **Blank viewer** (an empty scene).
-- [ ] An × on each scene tab (on hover and on the active tab). Closing the last scene opens a blank one, so there is always a scene.
+- [x] An **Open in Neuroglancer** button in the top bar: the scene in Google's Neuroglancer in a new tab. When the scene has zarr-vectors (or data on this computer), say that plain Neuroglancer will show only the images.
+- [x] Half-width window: keep the camera and settings icons; let the side panels be dragged wider or narrower.
+- [x] **Open from device**: the system file picker, then the chosen NIfTI (or other local file) opens as a dataset.
+- [x] Open: an **Examples and templates** section whose first entry is **Blank viewer** (an empty scene).
+- [x] An × on each scene tab (on hover and on the active tab). Closing the last scene opens a blank one, so there is always a scene.
 
 ### Look and wording
-- [ ] Logo: the earlier mark, overlapping and slightly off-angle, with straight lines, and a darker light grey.
-- [ ] Plugin switches: the standard pill-shaped slider (round ends, round knob), green on, grey off. Switches only for plugins.
-- [ ] Elsewhere, tick boxes, as in Neuroglancer: **Selections** (and Volume) beside Sections in the 3-D panel, and other on/off buttons.
-- [ ] Plugins panel spacing: Add no longer sits on the first plugin; even gaps throughout.
-- [ ] Pop-ups: softer grey and border, rounded corners.
-- [ ] Shorter text throughout (descriptions, hints, empty states); keep Read more.
+- [x] Logo: the earlier mark, overlapping and slightly off-angle, with straight lines, and a darker light grey.
+- [x] Plugin switches: the standard pill-shaped slider (round ends, round knob), green on, grey off. Switches only for plugins.
+- [x] Elsewhere, tick boxes, as in Neuroglancer: **Selections** (and Volume) beside Sections in the 3-D panel, and other on/off buttons.
+- [x] Plugins panel spacing: Add no longer sits on the first plugin; even gaps throughout.
+- [x] Pop-ups: softer grey and border, rounded corners.
+- [ ] Shorter text throughout (descriptions, hints, empty states); keep Read more. *(Started: examples, plugins, filtering, volume; more to do.)*
 
 ### Track filtering
-- [ ] "Show all objects" (no bracketed note), off by default.
-- [ ] Dataset: a drop-down of the scene's annotation, segmentation and zarr-vectors datasets.
-- [ ] Filtering applies to anything that is not an image:
-  - [ ] zarr-vectors (streamlines, points, skeletons, meshes): as now;
-  - [ ] local annotation layers (points, lines, boxes, ellipsoids);
-  - [ ] segmentation volumes (precomputed, zarr, e.g. MICrONS): segments present in the region;
+- [x] "Show all objects" (no bracketed note), off by default.
+- [x] Dataset: a drop-down of the scene's annotation, segmentation and zarr-vectors datasets.
+- [x] Filtering applies to anything that is not an image:
+  - [x] zarr-vectors (streamlines, points, skeletons, meshes): as now;
+  - [x] local annotation layers (points, lines, boxes, ellipsoids);
+  - [x] segmentation volumes (precomputed, zarr, e.g. MICrONS): segments present in the region;
   - [ ] precomputed annotations and skeletons: read as virtual zarr-vectors;
-  - [ ] tractograms opened from disk (virtual zarr-vectors, below).
-- [ ] No "no zarr-vectors in this scene" message when other filterable data is there.
+  - [x] tractograms opened from disk (virtual zarr-vectors, below).
+- [x] No "no zarr-vectors in this scene" message when other filterable data is there.
 
 ### Volume rendering
-- [ ] The Volume switch does nothing on the EM image-only examples: make it draw them.
+- [x] The Volume switch does nothing on the EM image-only examples: make it draw them.
 - [ ] NIfTI (virtual Zarr) in the volume view: types other than uint8, and the transpose codec.
 
 ### Neuroglancer fork
-- [ ] Resolution histograms: every level of every layer laid out across the full width all the time; only the marker of what is loading moves.
+- [x] Resolution histograms: every level of every layer laid out across the full width all the time; only the marker of what is loading moves.
 
 ### Virtual zarr-vectors
-- [ ] A `virtual` module in zarr-vectors-tools: a standard file read as a zarr-vectors store on demand, without converting it. Used by ngplatform for files on this computer, and by `zvtools` for serving to any Neuroglancer.
-  - [ ] `.trk` (TrackVis) first;
+- [ ] A `virtual` module in zarr-vectors-tools: a standard file read as a zarr-vectors store on demand, without converting it. *(Built in the Zarr Vectors plugin, in TypeScript, so it runs in the browser without Pyodide: `plugins/zarr-vectors/src/virtual/`; checked against zarr-vectors-py's validator and `zvtools convert`. A Python twin in zarr-vectors-tools, for `zvtools` to serve files to any Neuroglancer, is not built yet.)*
+  - [x] `.trk` (TrackVis) first;
   - [ ] `.tck` (MRtrix), `.trx`;
   - [ ] meshes: `.obj`, `.stl`, `.ply`, GIFTI surfaces, EM meshes;
   - [ ] points and skeletons: `.swc`, CSV points.
-- [ ] Linked to the Zarr Vectors data type: these files open only when it is on.
+- [x] Linked to the Zarr Vectors data type: these files open only when it is on.
 
 ### Repository hygiene
 - [x] No Claude authorship or trailers in new commits; repo text cleaned (`docs/editor_repo_plan.md`).

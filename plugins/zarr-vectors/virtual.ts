@@ -5,6 +5,10 @@
  */
 import type { VirtualFormat } from "@ngplatform/sdk";
 
+/** One worker serves every format here. */
+let shared: Worker | undefined;
+const worker = () => (shared ??= new Worker(new URL("./virtual_worker.ts", import.meta.url), { type: "module", name: "virtual zarr-vectors" }));
+
 export const ZARR_VECTORS_VIRTUAL: VirtualFormat[] = [
   {
     pattern: /\.trk$/i,
@@ -12,6 +16,14 @@ export const ZARR_VECTORS_VIRTUAL: VirtualFormat[] = [
     format: "TrackVis tractogram",
     kind: "auto",
     source: (url) => `${url}/|zarr-vectors:`,
-    worker: () => new Worker(new URL("./virtual_worker.ts", import.meta.url), { type: "module", name: "virtual zarr-vectors" }),
+    worker,
+  },
+  {
+    pattern: /\.tck$/i,
+    extensions: [".tck"],
+    format: "MRtrix tractogram",
+    kind: "auto",
+    source: (url) => `${url}/|zarr-vectors:`,
+    worker,
   },
 ];

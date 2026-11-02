@@ -1,7 +1,7 @@
 /**
  * The virtual streamline store, read by this package's own reader as the
- * viewer and Track filtering read it: a .trk's every streamline comes back
- * from the chunks (with and without bridges) and whole (`readCurves`), as
+ * viewer and Track filtering read it: every streamline of a .trk or .tck
+ * comes back from the chunks (with and without bridges) and whole (`readCurves`), as
  * nibabel reads the file; the coarse level keeps level 0's ids; the object
  * columns list and read; byte ranges and listings answer like a server's.
  */
@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { readSegmentProperties } from "../objects.js";
 import { LevelPipeline, ObjectReader, openZarrVectorsStore, readObjectTable, ShardIndexCache } from "../reader.js";
 import { cellSize, fragmentIndex, StreamlineStore } from "./streamlines.js";
-import { openTrk } from "./store_trk.js";
+import { openTractogram, openTrk } from "./store_trk.js";
 import type { TrkBatch } from "./trk.js";
 
 const DIR = path.resolve(import.meta.dirname, "../../testdata/trk");
@@ -52,7 +52,7 @@ describe("virtual streamline store", () => {
 
   for (const name of Object.keys(expected)) {
     it(`serves ${name} so the reader gets nibabel's streamlines back`, async () => {
-      const store = await openTrk(trk(name), name);
+      const store = await openTractogram(trk(name), name);
       const a = access(store);
       const zv = await openZarrVectorsStore(a as never, []);
       expect(zv.description.geometryKind).toBe("streamline");

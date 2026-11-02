@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { parseTckHeader, readTck } from "./tck.js";
 import { parseTrkHeader, readTrk, type TrkBatch } from "./trk.js";
 
 const DIR = path.resolve(import.meta.dirname, "../../testdata/trk");
@@ -44,7 +45,7 @@ const close = (a: number[][][], b: number[][][]) => {
 };
 
 describe(".trk files", () => {
-  for (const name of Object.keys(expected)) {
+  for (const name of Object.keys(expected).filter((n) => n.endsWith(".trk"))) {
     it(`reads ${name} as nibabel does`, async () => {
       const bytes = new Uint8Array(fs.readFileSync(path.join(DIR, name)));
       const whole = await readAll(bytes);
@@ -82,5 +83,24 @@ describe(".trk files", () => {
 
   it("refuses what is not a .trk", () => {
     expect(() => parseTrkHeader(new Uint8Array(1000))).toThrow(/not a TrackVis/);
+  });
+
+  it("reads a .tck as nibabel does, whole and in slices that split points", async () => {
+    const bytes = new Uint8Array(fs.readFileSync(path.join(DIR, "tracks.tck")));
+    const header = parseTckHeader(bytes.subarray(0, 4096));
+    expect(header.count).toBe(50);
+    for (const slice of [undefined, 37]) {
+      const lines: number[][][] = [];
+      const n = await readTck(new Blob([bytes as BlobPart]), header, (b) => {
+        for (let s = 0; s + 1 < b.offsets.length; ++s) {
+          const line: number[][] = [];
+          for (let p = b.offsets[s]; p < b.offsets[s + 1]; ++p) line.push([b.points[3 * p], b.points[3 * p + 1], b.points[3 * p + 2]]);
+          lines.push(line);
+        }
+      }, { slice });
+      expect(n).toBe(50);
+      close(lines, expected["tracks.tck"].streamlines);
+    }
+    expect(() => parseTckHeader(new TextEncoder().encode("hello"))).toThrow(/not an MRtrix/);
   });
 });

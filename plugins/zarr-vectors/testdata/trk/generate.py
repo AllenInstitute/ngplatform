@@ -1,5 +1,6 @@
-"""Writes the .trk fixtures for the virtual zarr-vectors tests, with nibabel,
-and expected.json: each file's streamlines in RAS+ mm as nibabel reads them.
+"""Writes the .trk and .tck fixtures for the virtual zarr-vectors tests, with
+nibabel, and expected.json: each file's streamlines in RAS+ mm as nibabel
+reads them.
 
     python generate.py
 """
@@ -8,7 +9,7 @@ import os
 
 import nibabel as nib
 import numpy as np
-from nibabel.streamlines import Field, Tractogram, TrkFile
+from nibabel.streamlines import Field, TckFile, Tractogram, TrkFile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 rng = np.random.default_rng(7)
@@ -58,6 +59,12 @@ expected = {
     "lps_header_ras_affine.trk": write("lps_header_ras_affine.trk", ras, "LPS", [145, 174, 145], [1.25, 1.25, 1.25], 30),
     "oblique.trk": write("oblique.trk", oblique, "PRS", [100, 120, 80], [1.5, 1.4, 2.0], 30),
 }
+# The same kind of streamlines as an MRtrix .tck (scanner RAS+ mm, no header geometry).
+tck_lines = streamlines(50, [-60, -80, -40], [60, 60, 70])
+TckFile(Tractogram(tck_lines, affine_to_rasmm=np.eye(4))).save(os.path.join(HERE, "tracks.tck"))
+back = nib.streamlines.load(os.path.join(HERE, "tracks.tck"))
+expected["tracks.tck"] = {"streamlines": [s.tolist() for s in back.streamlines], "fa": None, "weight": None}
+
 with open(os.path.join(HERE, "expected.json"), "w") as f:
     json.dump(expected, f)
 print({k: len(v["streamlines"]) for k, v in expected.items()})
