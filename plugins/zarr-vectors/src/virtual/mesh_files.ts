@@ -1,8 +1,11 @@
 /**
  * Triangle meshes from files: Wavefront .obj (objects by `o`/`g`, polygons
- * fanned into triangles), STL (binary or ASCII; repeated corners merged)
- * and PLY (ASCII or binary, either byte order).  Coordinates are as the file
- * stores them.
+ * fanned into triangles), STL (binary or ASCII; repeated corners merged),
+ * PLY (ASCII or binary, either byte order), GIFTI surfaces and FreeSurfer
+ * surfaces (lh.pial, …).  Coordinates are as the file stores them, except
+ * that anatomical GIFTI and FreeSurfer surfaces are moved into scanner RAS
+ * as zarr-vectors-tools does (the GIFTI matrix to a named space; FreeSurfer's
+ * c_ras), so they sit with the subject's volumes and tractography.
  */
 
 export interface MeshData {
@@ -198,11 +201,125 @@ export function parsePly(bytes: Uint8Array, name = "mesh"): MeshData {
   return single(positions, Uint32Array.from(triangles), name);
 }
 
-/** A mesh file by its name: .obj, .stl or .ply. */
-export function parseMeshFile(bytes: Uint8Array, fileName: string): MeshData {
-  const name = fileName.replace(/\.[^.]+$/, "");
+/** Surfaces in no anatomical space: left where the file puts them. */
+const NOT_ANATOMICAL = /inflated|sphere|flat/i;
+
+/** FreeSurfer surface names (lh.pial, rh.white, …): the files read as surfaces. */
+export const FREESURFER_SURFACE = /^(lh|rh)\.(pial|white|orig|smoothwm|inflated|very_inflated|sphere|sphere\.reg|midthickness|graymid|pial\.T1|orig\.nofix|inflated_pre|qsphere\.nofix)$/i;
+
+/**
+ * A FreeSurfer triangle surface: magic FF FF FE, a "created by" line, then
+ * big-endian counts, float32 vertices and int32 faces, then an optional
+ * footer whose `cras` (when `valid = 1`) moves an anatomical surface into
+ * scanner RAS.
+ */
+export function parseFreeSurfer(bytes: Uint8Array, name: string): MeshData {
+  if (bytes[0] !== 0xff || bytes[1] !== 0xff || bytes[2] !== 0xfe) throw new Error("not a FreeSurfer triangle surface");
+  let at = bytes.indexOf(0x0a, 3);
+  if (at === -1 || bytes[at + 1] !== 0x0a) throw new Error("a FreeSurfer surface without its created-by line");
+  at += 2;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const nv = view.getInt32(at, false);
+  const nf = view.getInt32(at + 4, false);
+  at += 8;
+  const positions = new Float32Array(3 * nv);
+  for (let i = 0; i < 3 * nv; ++i, at += 4) positions[i] = view.getFloat32(at, false);
+  const triangles = new Uint32Array(3 * nf);
+  for (let i = 0; i < 3 * nf; ++i, at += 4) triangles[i] = view.getInt32(at, false);
+  const footer = new TextDecoder("latin1").decode(bytes.subarray(at));
+  const valid = /valid\s*=\s*1/.test(footer);
+  const cras = /cras\s*=\s*(\S+)\s+(\S+)\s+(\S+)/.exec(footer);
+  if (valid && cras !== null && !NOT_ANATOMICAL.test(name)) {
+    const c = [Number(cras[1]), Number(cras[2]), Number(cras[3])];
+    for (let i = 0; i < positions.length; ++i) positions[i] += c[i % 3];
+  }
+  return single(positions, triangles, name);
+}
+
+async function inflate(bytes: Uint8Array): Promise<Uint8Array> {
+  const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(new DecompressionStream("deflate"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+function base64(text: string): Uint8Array {
+  const raw = atob(text.replace(/\s+/g, ""));
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; ++i) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+const cdata = (text: string) => text.replace(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/, "$1").trim();
+
+/**
+ * A GIFTI surface: its POINTSET and TRIANGLE data arrays (ASCII, base64 or
+ * gzipped base64; either byte order and indexing order).  An anatomical
+ * surface is moved by its CoordinateSystemTransformMatrix when that leads to
+ * a named space and is not the identity.
+ */
+export async function parseGifti(text: string, name: string): Promise<MeshData> {
+  if (!/<GIFTI[\s>]/.test(text)) throw new Error("not a GIFTI file");
+  let positions: Float32Array | undefined;
+  let triangles: Uint32Array | undefined;
+  let matrix: number[] | undefined;
+  let geometric = "";
+  for (const m of text.matchAll(/<DataArray\b([^>]*)>([\s\S]*?)<\/DataArray>/g)) {
+    const attr = (key: string) => new RegExp(`${key}\\s*=\\s*"([^"]*)"`).exec(m[1])?.[1] ?? "";
+    const intent = attr("Intent");
+    if (intent !== "NIFTI_INTENT_POINTSET" && intent !== "NIFTI_INTENT_TRIANGLE") continue;
+    const dims = [Number(attr("Dim0")), Number(attr("Dim1") || 1)];
+    const encoding = attr("Encoding");
+    const body = cdata(/<Data>([\s\S]*?)<\/Data>/.exec(m[2])?.[1] ?? "");
+    let values: Float32Array | Int32Array;
+    const float = attr("DataType") === "NIFTI_TYPE_FLOAT32";
+    if (encoding === "ASCII") {
+      const numbers = body.split(/\s+/).filter(Boolean).map(Number);
+      values = float ? Float32Array.from(numbers) : Int32Array.from(numbers);
+    } else if (encoding === "Base64Binary" || encoding === "GZipBase64Binary") {
+      let bytes = base64(body);
+      if (encoding === "GZipBase64Binary") bytes = await inflate(bytes);
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const little = attr("Endian") !== "BigEndian";
+      const n = Math.floor(bytes.byteLength / 4);
+      values = float ? new Float32Array(n) : new Int32Array(n);
+      for (let i = 0; i < n; ++i) values[i] = float ? view.getFloat32(4 * i, little) : view.getInt32(4 * i, little);
+    } else {
+      throw new Error(`a GIFTI array stored as ${encoding || "nothing"} (ASCII and base64 only)`);
+    }
+    if (attr("ArrayIndexingOrder") === "ColumnMajorOrder" && dims[1] > 1) {
+      const rows = new (values.constructor as typeof Float32Array)(values.length);
+      for (let i = 0; i < dims[0]; ++i) for (let k = 0; k < dims[1]; ++k) rows[i * dims[1] + k] = values[k * dims[0] + i];
+      values = rows;
+    }
+    if (intent === "NIFTI_INTENT_POINTSET") {
+      positions = Float32Array.from(values);
+      geometric = /<Name>\s*(?:<!\[CDATA\[)?GeometricType(?:\]\]>)?\s*<\/Name>\s*<Value>\s*(?:<!\[CDATA\[)?([^<\]]*)/.exec(m[2])?.[1] ?? "";
+      const xform = /<CoordinateSystemTransformMatrix>([\s\S]*?)<\/CoordinateSystemTransformMatrix>/.exec(m[2])?.[1];
+      const target = cdata(/<TransformedSpace>([\s\S]*?)<\/TransformedSpace>/.exec(xform ?? "")?.[1] ?? "");
+      const data = cdata(/<MatrixData>([\s\S]*?)<\/MatrixData>/.exec(xform ?? "")?.[1] ?? "").split(/\s+/).filter(Boolean).map(Number);
+      if (data.length === 16 && target !== "" && target !== "NIFTI_XFORM_UNKNOWN") matrix = data;
+    } else {
+      triangles = Uint32Array.from(values);
+    }
+  }
+  if (positions === undefined) throw new Error("a GIFTI file without a surface (no NIFTI_INTENT_POINTSET array)");
+  const identity = matrix?.every((v, i) => Math.abs(v - (i % 5 === 0 ? 1 : 0)) < 1e-6) ?? true;
+  if (matrix !== undefined && !identity && !NOT_ANATOMICAL.test(geometric || name)) {
+    const m = matrix;
+    for (let i = 0; i < positions.length; i += 3) {
+      const [x, y, z] = [positions[i], positions[i + 1], positions[i + 2]];
+      for (let r = 0; r < 3; ++r) positions[i + r] = m[4 * r] * x + m[4 * r + 1] * y + m[4 * r + 2] * z + m[4 * r + 3];
+    }
+  }
+  return single(positions, triangles ?? new Uint32Array(0), name);
+}
+
+/** A mesh file by its name: .obj, .stl, .ply, .gii, or a FreeSurfer surface (lh.pial, …). */
+export async function parseMeshFile(bytes: Uint8Array, fileName: string): Promise<MeshData> {
+  const name = fileName.replace(/\.(surf\.gii|gii|obj|stl|ply)$/i, "");
   if (/\.obj$/i.test(fileName)) return parseObj(new TextDecoder().decode(bytes), name);
   if (/\.stl$/i.test(fileName)) return parseStl(bytes, name);
   if (/\.ply$/i.test(fileName)) return parsePly(bytes, name);
-  throw new Error(`${fileName}: not a mesh file (.obj, .stl or .ply)`);
+  if (/\.gii$/i.test(fileName)) return parseGifti(new TextDecoder().decode(bytes), name);
+  if (FREESURFER_SURFACE.test(fileName)) return parseFreeSurfer(bytes, fileName);
+  throw new Error(`${fileName}: not a mesh file (.obj, .stl, .ply, .gii or a FreeSurfer surface)`);
 }

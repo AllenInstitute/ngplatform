@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE GIFTI SYSTEM "http://www.nitrc.org/frs/download.php/115/gifti.dtd">
+<GIFTI Version="1.0" NumberOfDataArrays="2"><MetaData /><LabelTable /><DataArray Intent="NIFTI_INTENT_POINTSET" DataType="NIFTI_TYPE_FLOAT32" ArrayIndexingOrder="RowMajorOrder" Dimensionality="2" Encoding="ASCII" Endian="LittleEndian" ExternalFileName="" ExternalFileOffset="0" Dim0="12" Dim1="3"><MetaData><MD><Name>GeometricType</Name><Value>Anatomical</Value></MD></MetaData><CoordinateSystemTransformMatrix><DataSpace>NIFTI_XFORM_UNKNOWN</DataSpace><TransformedSpace>NIFTI_XFORM_SCANNER_ANAT</TransformedSpace><MatrixData>  1.000000   0.000000   0.000000   1.500000
+  0.000000   1.000000   0.000000 -17.250000
+  0.000000   0.000000   1.000000  20.000000
+  0.000000   0.000000   0.000000   1.000000</MatrixData></CoordinateSystemTransformMatrix><Data>-20.000000  32.360680   0.000000
+ 20.000000  32.360680   0.000000
+-20.000000 -32.360680   0.000000
+ 20.000000 -32.360680   0.000000
+  0.000000 -20.000000  32.360680
+  0.000000  20.000000  32.360680
+  0.000000 -20.000000 -32.360680
+  0.000000  20.000000 -32.360680
+ 32.360680   0.000000 -20.000000
+ 32.360680   0.000000  20.000000
+-32.360680   0.000000 -20.000000
+-32.360680   0.000000  20.000000</Data></DataArray><DataArray Intent="NIFTI_INTENT_TRIANGLE" DataType="NIFTI_TYPE_INT32" ArrayIndexingOrder="RowMajorOrder" Dimensionality="2" Encoding="ASCII" Endian="LittleEndian" ExternalFileName="" ExternalFileOffset="0" Dim0="20" Dim1="3"><MetaData /><CoordinateSystemTransformMatrix><DataSpace>NIFTI_XFORM_UNKNOWN</DataSpace><TransformedSpace>NIFTI_XFORM_UNKNOWN</TransformedSpace><MatrixData>  1.000000   0.000000   0.000000   0.000000
+  0.000000   1.000000   0.000000   0.000000
+  0.000000   0.000000   1.000000   0.000000
+  0.000000   0.000000   0.000000   1.000000</MatrixData></CoordinateSystemTransformMatrix><Data>0 11 5
+0 5 1
+0 1 7
+0 7 10
+0 10 11
+1 5 9
+5 11 4
+11 10 2
+10 7 6
+7 1 8
+3 9 4
+3 4 2
+3 2 6
+3 6 8
+3 8 9
+4 9 5
+2 4 11
+6 2 10
+8 6 7
+9 8 1</Data></DataArray></GIFTI>

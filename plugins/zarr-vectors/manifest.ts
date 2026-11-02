@@ -12,7 +12,7 @@ export const ZARR_VECTORS_MANIFEST: Manifest = {
   version: "0.3.0",
   kind: "datatype",
   enabledByDefault: true,
-  description: "Opens Zarr Vectors stores (points, streamlines, skeletons, graphs and meshes) in Neuroglancer, and tractograms (.trk, .tck, .trx) and meshes (.obj, .stl, .ply) as if they were one.",
+  description: "Opens Zarr Vectors stores (points, streamlines, skeletons, graphs and meshes) in Neuroglancer, and tractograms (.trk, .tck, .trx) and meshes and surfaces (.obj, .stl, .ply, GIFTI, FreeSurfer) as if they were one.",
   guide: `Zarr Vectors stores vector geometry (point clouds, lines, streamlines, skeletons, graphs and meshes) as a multiscale Zarr store, with per-object and per-vertex attributes. This plugin teaches Neuroglancer to read format 0.9.0 to 0.9.4.
 
 ## Opening a store
@@ -26,7 +26,7 @@ Stores ending in \`.zarrvectors\` are recognised without it. A store on this com
 A tractogram (TrackVis \`.trk\`, MRtrix \`.tck\` or \`.trx\`) opens in place (Open → Open from device), with nothing converted: the file is read once, in a worker, and served as a zarr-vectors store made from it, so it draws, selects and filters like any store. Points are in RAS+ millimetres, as nibabel reads them.
 
 ## Meshes on this computer
-A mesh (\`.obj\`, \`.stl\`, \`.ply\`) opens in place too: each \`.obj\` object (\`o\`/\`g\`) or the whole file is one object, ids from 1, at the file's coordinates (millimetres, or nanometres when it spans more than 50,000).
+A mesh or surface (\`.obj\`, \`.stl\`, \`.ply\`, GIFTI \`.gii\`, FreeSurfer \`lh.pial\` and the like) opens in place too; anatomical GIFTI and FreeSurfer surfaces are moved into scanner RAS as zarr-vectors-tools does: each \`.obj\` object (\`o\`/\`g\`) or the whole file is one object, ids from 1, at the file's coordinates (millimetres, or nanometres when it spans more than 50,000).
 
 ## What you see
 - **Overview**: every object, drawn from the spatial chunks at the level of detail the view needs. With no segments selected, all objects show.

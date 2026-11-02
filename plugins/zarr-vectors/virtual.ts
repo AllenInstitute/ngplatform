@@ -4,6 +4,7 @@
  * data lists them and serves their keys from the worker.
  */
 import type { VirtualFormat } from "@ngplatform/sdk";
+import { FREESURFER_SURFACE } from "./src/virtual/mesh_files.js";
 
 /** One worker serves every format here. */
 let shared: Worker | undefined;
@@ -30,6 +31,22 @@ export const ZARR_VECTORS_VIRTUAL: VirtualFormat[] = [
     pattern: /\.(obj|stl|ply)$/i,
     extensions: [".obj", ".stl", ".ply"],
     format: "Mesh",
+    kind: "auto",
+    source: (url) => `${url}/|zarr-vectors:`,
+    worker,
+  },
+  {
+    pattern: /\.gii$/i,
+    extensions: [".gii"],
+    format: "GIFTI surface",
+    kind: "auto",
+    source: (url) => `${url}/|zarr-vectors:`,
+    worker,
+  },
+  {
+    pattern: FREESURFER_SURFACE,
+    extensions: [],
+    format: "FreeSurfer surface",
     kind: "auto",
     source: (url) => `${url}/|zarr-vectors:`,
     worker,

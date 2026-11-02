@@ -43,7 +43,7 @@ function faceKey(corners: string[]): string {
 describe("virtual mesh store", () => {
   for (const name of Object.keys(expected)) {
     it(`serves ${name}: every face of every object, wound as in the file, at its coordinates`, async () => {
-      const mesh = parseMeshFile(new Uint8Array(fs.readFileSync(path.join(DIR, name))), name);
+      const mesh = await parseMeshFile(new Uint8Array(fs.readFileSync(path.join(DIR, name))), name);
       const store = new MeshStore(mesh, name);
       const a = access(store);
       const zv = await openZarrVectorsStore(a as never, []);
