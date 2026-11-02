@@ -44,3 +44,13 @@ describe("precomputed annotations", () => {
     console.log(`${annotations.length} synapses from ${chunks} chunks, ${inside.length} with an end in the box`);
   }, 120_000);
 });
+
+describe("precomputed sources a region cannot be read from", () => {
+  it("says why for skeletons and meshes", async () => {
+    const { readInfo } = await import("../src/sdk/precomputed.js");
+    const serve = (info: object) => async () => new TextEncoder().encode(JSON.stringify(info));
+    await expect(readInfo("x/", serve({ "@type": "neuroglancer_skeletons" }), undefined, "segmentation")).rejects.toThrow(/skeletons, which have no spatial index/);
+    await expect(readInfo("x/", serve({ "@type": "neuroglancer_multilod_draco" }), undefined, "segmentation")).rejects.toThrow(/meshes/);
+    await expect(readInfo("x/", serve({ type: "image", num_channels: 1 }), undefined, "segmentation")).rejects.toThrow(/a precomputed image, not a segmentation/);
+  });
+});

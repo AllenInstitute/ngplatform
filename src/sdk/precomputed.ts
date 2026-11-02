@@ -246,7 +246,10 @@ export async function readInfo(url: string, read: RangeRead = httpRead, signal?:
   const bytes = await read(`${url}info`, undefined, signal);
   if (bytes === undefined) throw new Error(`${url}: no info file`);
   const info = JSON.parse(new TextDecoder().decode(bytes)) as Info;
-  if (type !== undefined && info.type !== type) throw new Error(`${url}: a precomputed ${info.type}, not an ${type}`);
+  const kind = (info as unknown as { "@type"?: string })["@type"];
+  if (kind === "neuroglancer_skeletons") throw new Error(`${url}: precomputed skeletons, which have no spatial index to read a region from; use the segmentation volume of the same segments`);
+  if (kind === "neuroglancer_multilod_draco" || kind === "neuroglancer_legacy_mesh") throw new Error(`${url}: precomputed meshes, which have no spatial index to read a region from; use the segmentation volume of the same segments`);
+  if (type !== undefined && info.type !== type) throw new Error(`${url}: a precomputed ${info.type ?? "source"}, not ${/^[aeiou]/.test(type) ? "an" : "a"} ${type}`);
   if (info.num_channels !== 1) throw new Error(`${url}: ${info.num_channels} channels (one only)`);
   return info;
 }

@@ -29,7 +29,7 @@ items are done (and say where); the rest are in rough order of work.
   - [x] local annotation layers (points, lines, boxes, ellipsoids);
   - [x] segmentation volumes (precomputed, zarr, e.g. MICrONS): segments present in the region;
   - [x] precomputed annotations (read by their spatial index, in the worker);
-  - [ ] precomputed skeletons (per segment; filter through the segmentation's volume where there is one);
+  - [x] precomputed skeletons: through the segmentation's volume (a segmentation layer showing skeletons filters by its volume, as MICrONS does); a skeleton-only source has no spatial index, and the panel now says so and why;
   - [x] tractograms opened from disk (virtual zarr-vectors, below).
 - [x] No "no zarr-vectors in this scene" message when other filterable data is there.
 - [x] Groups belong to the dataset they filter: a scene with other data no longer lists (or counts against) another dataset's groups. Save .trk only for streamlines.
