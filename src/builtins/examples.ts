@@ -59,13 +59,12 @@ const HCP_GROUPS = {
 };
 
 // SRB 2026a, the Synchrotron Reference Brain: a HiP-CT template of ten
-// brains at 100 µm in MNI 2009b space (OME-Zarr 0.6, five levels), outside
-// the brain 0, which the shader leaves transparent.
+// brains at 100 µm in MNI 2009b space (OME-Zarr 0.6, five levels); outside
+// the brain 0, shown black (transparent, its edge would show as an outline).
 const SRB2026A =
   "zarr://https://storage.googleapis.com/hip_ct_zarr_vector_03987646472fethdsvdvdfg/zarr_vectors_test/cohort_MNI2009b_2026/cohort_template_N10_100um_MNI_simclip_masked.ome.zarr/";
 const SRB_SHADER = `#uicontrol invlerp normalized(range=[0, 255])
 void main() {
-  if (getDataValue().value == 0u) { emitTransparent(); return; }
   emitGrayscale(normalized());
 }
 `;
