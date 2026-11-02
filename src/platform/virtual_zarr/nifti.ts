@@ -202,6 +202,36 @@ const NIFTI_TYPES = new Map<number, DType>([
   [1280, "uint64"],
 ]);
 const UNREAD: Record<number, string> = { 1: "binary", 32: "complex64", 128: "RGB", 1536: "float128", 1792: "complex128", 2048: "complex256", 2304: "RGBA" };
+/** NIfTI's colour types: samples a voxel. */
+const COLOUR: Record<number, number> = { 128: 3, 2304: 4 };
+
+/**
+ * A colour image's voxels (RGB or RGBA bytes from `offset`) as packed
+ * uint32s, alpha 255 for RGB: what the store serves for colour images.
+ */
+export function packedColours(source: ByteSource, offset: number, voxels: number, samples: number): ByteSource {
+  return {
+    size: 4 * voxels,
+    async read(start, end) {
+      const v0 = Math.floor(start / 4);
+      const v1 = Math.min(voxels, Math.ceil(end / 4));
+      const raw = await source.read(offset + samples * v0, offset + samples * v1);
+      const out = new Uint8Array(4 * (v1 - v0));
+      for (let i = 0; i < v1 - v0; ++i) {
+        out[4 * i] = raw[samples * i];
+        out[4 * i + 1] = raw[samples * i + 1];
+        out[4 * i + 2] = raw[samples * i + 2];
+        out[4 * i + 3] = samples === 4 ? raw[samples * i + 3] : 255;
+      }
+      return out.subarray(start - 4 * v0, Math.min(out.length, end - 4 * v0));
+    },
+  };
+}
+
+/** A colour NIfTI's header as the packed store reads it: uint32, the pyramid by nearest voxel (a label intent). */
+function packedHeader(h: NiftiHeader): NiftiHeader {
+  return { ...h, datatype: 768, bitpix: 32, voxOffset: 0, intentCode: 1002, sclSlope: 0, sclInter: 0 };
+}
 const BYTES: Record<DType, number> = { uint8: 1, int8: 1, uint16: 2, int16: 2, uint32: 4, int32: 4, uint64: 8, int64: 8, float32: 4, float64: 8 };
 const ARRAYS = {
   uint8: Uint8Array,
@@ -287,6 +317,8 @@ export class NiftiStore implements VirtualStore {
     readonly header: NiftiHeader,
     private readonly data: () => Promise<ByteSource>,
     readonly name: string,
+    /** rgb: each voxel's colour packed in a uint32 (R lowest), which the group's metadata says. */
+    readonly options: { rgb?: boolean } = {},
   ) {
     const h = header;
     if (h.magic !== "n+1" && h.magic !== "n+2") {
@@ -463,6 +495,7 @@ export class NiftiStore implements VirtualStore {
                 },
               }),
         },
+        ...(this.options.rgb ? { ngplatform: { rendering: "rgb" } } : {}),
         nifti: {
           version: h.version,
           data_type: this.inType,
@@ -652,7 +685,14 @@ export class NiftiStore implements VirtualStore {
 /** A NIfTI file as a store; reads only its header until a chunk is asked for. */
 export async function openNifti(file: Blob, name: string): Promise<NiftiStore> {
   const start = new Uint8Array(await file.slice(0, 540).arrayBuffer());
-  if (isGzip(start)) return new NiftiStore(parseNiftiHeader(await gunzipHead(file, 540)), gunzipSource(file), name);
+  const gz = isGzip(start);
+  const header = parseNiftiHeader(gz ? await gunzipHead(file, 540) : start);
   const whole = blobSource(file);
-  return new NiftiStore(parseNiftiHeader(start), () => Promise.resolve(whole), name);
+  const data = gz ? gunzipSource(file) : () => Promise.resolve(whole);
+  const samples = COLOUR[header.datatype];
+  if (samples !== undefined) {
+    const voxels = header.dim.slice(1, 1 + header.dim[0]).reduce((a, d) => a * Math.max(1, d), 1);
+    return new NiftiStore(packedHeader(header), () => data().then((s) => packedColours(s, header.voxOffset, voxels, samples)), name, { rgb: true });
+  }
+  return new NiftiStore(header, data, name);
 }

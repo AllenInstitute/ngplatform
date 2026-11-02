@@ -118,5 +118,31 @@
    1.0
   ],
   "sha256": "46cff7a77e2c494c3bb1027e81a45e88a06c7f61eee2ba7cc9fd3c2a000d3b5f"
+ },
+ "rgb_lzw.tif": {
+  "dim": [
+   13,
+   9,
+   2
+  ],
+  "size": [
+   1.0,
+   1.0,
+   1.0
+  ],
+  "sha256": "92982d61fbcfc99c88180027092e079459f0a703c142e4792aac046c0b427f4f"
+ },
+ "rgba_tiles.tif": {
+  "dim": [
+   36,
+   40,
+   1
+  ],
+  "size": [
+   1.0,
+   1.0,
+   1.0
+  ],
+  "sha256": "d87bedb8a234ad1cdc407b6837d04cd0c0b62b061e9d9090c98a8393777b1cc8"
  }
 }

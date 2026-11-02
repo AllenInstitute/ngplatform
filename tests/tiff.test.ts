@@ -1,6 +1,7 @@
 /**
  * TIFF stacks read as virtual Zarr: every fixture's voxels (strips, tiles,
- * LZW, deflate, PackBits, the predictor, big-endian, BigTIFF, float32), in
+ * LZW, deflate, PackBits, the predictor, big-endian, BigTIFF, float32, RGB
+ * and RGBA packed in a uint32), in
  * the store's plane order for ImageJ and OME hyperstacks, the voxel sizes,
  * reduced-resolution pages skipped, and the stack served as OME-Zarr.
  * The fixtures and expected.json come from tests/testdata/tiff/generate.py.
@@ -31,7 +32,11 @@ describe("TIFF stacks", () => {
       for (let at = 0; at < source.size; at += 1000) parts.push(await source.read(at, Math.min(source.size, at + 1000)));
       const all = new Uint8Array(source.size);
       parts.reduce((o, p) => (all.set(p, o), o + p.length), 0);
-      expect(source.size).toBe(planes * stack.pages[0].width * stack.pages[0].height * (stack.pages[0].bits / 8));
+      const pixel = stack.pages[0].samples > 1 ? 4 : stack.pages[0].bits / 8;
+      expect(source.size).toBe(planes * stack.pages[0].width * stack.pages[0].height * pixel);
+      if (stack.pages[0].samples > 1) {
+        expect((JSON.parse(new TextDecoder().decode((await store.get("zarr.json"))!))).attributes.ngplatform).toEqual({ rendering: "rgb" });
+      }
       expect(createHash("sha256").update(all).digest("hex")).toBe(want.sha256);
     });
   }

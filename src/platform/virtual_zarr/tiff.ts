@@ -4,8 +4,10 @@
  * byte source that decodes the pages' strips or tiles as rows are asked for.
  *
  * Read: classic TIFF and BigTIFF, either byte order; one sample per pixel,
- * 8 to 64 bits (unsigned, signed or float); strips or tiles; no compression,
- * LZW, deflate or PackBits, with the horizontal predictor.  Pixel sizes come
+ * 8 to 64 bits (unsigned, signed or float), or 8-bit RGB and RGBA (served
+ * packed in one uint32 a pixel, which the app shows in colour); strips or
+ * tiles; no compression, LZW, deflate or PackBits, with the horizontal
+ * predictor.  Pixel sizes come
  * from OME-XML (PhysicalSizeX/Y/Z) or ImageJ's description (spacing, unit)
  * and the resolution tags.  Reduced-resolution pages (thumbnails, pyramid
  * levels) are skipped.
@@ -19,6 +21,8 @@ interface Page {
   width: number;
   height: number;
   bits: number;
+  /** Samples per pixel: 1, or 3 or 4 (RGB, RGBA; interleaved). */
+  samples: number;
   /** 1 unsigned, 2 signed, 3 float. */
   format: number;
   compression: number;
@@ -111,7 +115,11 @@ export async function readTiffStack(file: Blob): Promise<Stack> {
     // A reduced-resolution page (thumbnail, pyramid level): not part of the stack.
     if ((await one(254, 0)) & 1) continue;
     const samples = await one(277, 1);
-    if (samples !== 1) throw new Error(`a TIFF with ${samples} samples per pixel (one only: RGB is not read yet)`);
+    if (samples !== 1) {
+      const bits = await one(258, 8);
+      if (!((samples === 3 || samples === 4) && bits === 8)) throw new Error(`a TIFF with ${samples} samples of ${bits} bits a pixel (one sample, or 8-bit RGB or RGBA, only)`);
+      if ((await one(284, 1)) !== 1) throw new Error("an RGB TIFF with its colours in separate planes (interleaved only)");
+    }
     const width = await one(256, 0);
     const height = await one(257, 0);
     const tiled = tags.has(322);
@@ -119,6 +127,7 @@ export async function readTiffStack(file: Blob): Promise<Stack> {
       width,
       height,
       bits: await one(258, 1),
+      samples,
       format: await one(339, 1),
       compression: await one(259, 1),
       predictor: await one(317, 1),
@@ -233,7 +242,8 @@ async function inflate(bytes: Uint8Array): Promise<Uint8Array> {
 /** A strip or tile's pixels: decompressed, predictor undone, little-endian. */
 async function decodeBlock(stack: Stack, page: Page, raw: Uint8Array, width: number, rows: number): Promise<Uint8Array> {
   const size = page.bits / 8;
-  const expected = width * rows * size;
+  const pixel = size * page.samples;
+  const expected = width * rows * pixel;
   let data: Uint8Array;
   switch (page.compression) {
     case 1: data = raw; break;
@@ -251,15 +261,17 @@ async function decodeBlock(stack: Stack, page: Page, raw: Uint8Array, width: num
     for (let i = 0; i < data.length; i += size) data.subarray(i, i + size).reverse();
   }
   if (page.predictor === 2) {
-    // Horizontal differencing: each sample is the change from its left neighbour.
+    // Horizontal differencing: each sample is the change from the same sample of its left neighbour.
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
     for (let r = 0; r < rows; ++r) {
       for (let x = 1; x < width; ++x) {
-        const at = (r * width + x) * size;
-        const prev = at - size;
-        if (size === 1) data[at] = (data[at] + data[prev]) & 0xff;
-        else if (size === 2) view.setUint16(at, (view.getUint16(at, true) + view.getUint16(prev, true)) & 0xffff, true);
-        else if (size === 4) view.setUint32(at, (view.getUint32(at, true) + view.getUint32(prev, true)) >>> 0, true);
+        for (let k = 0; k < page.samples; ++k) {
+          const at = (r * width + x) * pixel + k * size;
+          const prev = at - pixel;
+          if (size === 1) data[at] = (data[at] + data[prev]) & 0xff;
+          else if (size === 2) view.setUint16(at, (view.getUint16(at, true) + view.getUint16(prev, true)) & 0xffff, true);
+          else if (size === 4) view.setUint32(at, (view.getUint32(at, true) + view.getUint32(prev, true)) >>> 0, true);
+        }
       }
     }
   } else if (page.predictor === 3) {
@@ -275,9 +287,22 @@ async function decodeBlock(stack: Stack, page: Page, raw: Uint8Array, width: num
  */
 export function tiffSource(file: Blob, stack: Stack, pageOf: (plane: number) => number = (p) => p, planes = stack.pages.length): ByteSource {
   const first = stack.pages[0];
-  const size = first.bits / 8;
+  // RGB(A) is served packed, 4 bytes a pixel (alpha 255 for RGB).
+  const size = first.samples > 1 ? 4 : first.bits / 8;
   const rowBytes = first.width * size;
   const planeBytes = rowBytes * first.height;
+  const rgba = (pixels: Uint8Array, samples: number) => {
+    if (samples === 1 || samples === 4) return pixels;
+    const n = pixels.length / samples;
+    const out = new Uint8Array(4 * n);
+    for (let i = 0; i < n; ++i) {
+      out[4 * i] = pixels[samples * i];
+      out[4 * i + 1] = pixels[samples * i + 1];
+      out[4 * i + 2] = pixels[samples * i + 2];
+      out[4 * i + 3] = 255;
+    }
+    return out;
+  };
   const blocks = new Lru<Uint8Array>(128 << 20);
   /** Rows [b·blockHeight, …) of a page, the whole width: one strip, or one row of tiles. */
   const band = (z: number, b: number) =>
@@ -288,7 +313,7 @@ export function tiffSource(file: Blob, stack: Stack, pageOf: (plane: number) => 
         const rows = Math.min(page.blockHeight, page.height - b * page.blockHeight);
         if (!page.tiled) {
           const raw = await bytesAt(file, page.offsets[b], page.offsets[b] + page.counts[b]);
-          return decodeBlock(stack, page, raw, page.width, rows);
+          return rgba(await decodeBlock(stack, page, raw, page.width, rows), page.samples);
         }
         const across = Math.ceil(page.width / page.blockWidth);
         const out = new Uint8Array(rows * rowBytes);
@@ -296,7 +321,7 @@ export function tiffSource(file: Blob, stack: Stack, pageOf: (plane: number) => 
           Array.from({ length: across }, async (_, t) => {
             const index = b * across + t;
             const raw = await bytesAt(file, page.offsets[index], page.offsets[index] + page.counts[index]);
-            const tile = await decodeBlock(stack, page, raw, page.blockWidth, page.blockHeight);
+            const tile = rgba(await decodeBlock(stack, page, raw, page.blockWidth, page.blockHeight), page.samples);
             const x0 = t * page.blockWidth;
             const w = Math.min(page.blockWidth, page.width - x0);
             for (let r = 0; r < rows; ++r) out.set(tile.subarray(r * page.blockWidth * size, (r * page.blockWidth + w) * size), (r * page.width + x0) * size);
@@ -393,7 +418,9 @@ const NIFTI_TYPE: Record<string, number> = { "1/8": 2, "2/8": 256, "1/16": 512, 
 export async function openTiff(file: Blob, name: string): Promise<NiftiStore> {
   const stack = await readTiffStack(file);
   const first = stack.pages[0];
-  const datatype = NIFTI_TYPE[`${first.format}/${first.bits}`];
+  const rgb = first.samples > 1;
+  // RGB(A): packed uint32 (768), its pyramid by the nearest pixel, as for labels (intent 1002).
+  const datatype = rgb ? 768 : NIFTI_TYPE[`${first.format}/${first.bits}`];
   if (datatype === undefined) throw new Error(`a TIFF of ${first.bits}-bit ${first.format === 3 ? "floats" : "integers"} is not read`);
   const { size } = tiffSpacing(stack);
   const layout = tiffLayout(stack);
@@ -413,7 +440,7 @@ export async function openTiff(file: Blob, name: string): Promise<NiftiStore> {
     magic: "n+1",
     dim: layout.c > 1 ? [5, first.width, first.height, layout.z, 1, layout.c, 1, 1] : [layout.t > 1 ? 4 : 3, first.width, first.height, layout.z, layout.t, 1, 1, 1],
     datatype,
-    bitpix: first.bits,
+    bitpix: rgb ? 32 : first.bits,
     pixdim: [1, size[0], size[1], size[2], 0, 0, 0, 0],
     voxOffset: 0,
     sclSlope: 0,
@@ -421,7 +448,7 @@ export async function openTiff(file: Blob, name: string): Promise<NiftiStore> {
     // Micrometres (NIfTI unit code 3).
     xyztUnits: 3,
     toffset: 0,
-    intentCode: 0,
+    intentCode: rgb ? 1002 : 0,
     qformCode: 0,
     sformCode: 0,
     quatern: [0, 0, 0],
@@ -430,5 +457,5 @@ export async function openTiff(file: Blob, name: string): Promise<NiftiStore> {
     description: `TIFF stack, ${stack.pages.length} pages`,
   };
   const source = tiffSource(file, stack, pageOf, layout.z * layout.c * layout.t);
-  return new NiftiStore(header, () => Promise.resolve(source), name);
+  return new NiftiStore(header, () => Promise.resolve(source), name, { rgb });
 }

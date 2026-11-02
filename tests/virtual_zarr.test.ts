@@ -327,10 +327,25 @@ describe("NIfTI as Zarr", () => {
     const pair = nifti({ dim: [2, 2, 2], value });
     pair.set([110, 105, 49, 0], 344);
     await expect(store(pair)).rejects.toThrow(/separate \.img/);
-    const rgb = nifti({ dim: [2, 2, 2], value });
-    new DataView(rgb.buffer).setInt16(70, 128, true);
-    await expect(store(rgb)).rejects.toThrow(/RGB/);
+    const complex = nifti({ dim: [2, 2, 2], value });
+    new DataView(complex.buffer).setInt16(70, 32, true);
+    await expect(store(complex)).rejects.toThrow(/complex64/);
     await expect(store(new Uint8Array(400))).rejects.toThrow(/not a NIfTI/);
+  });
+
+  it("serves RGB as one packed uint32 a voxel, marked for the app to show in colour", async () => {
+    // A uint8 file of 6 x 2 x 2 bytes, relabelled as 2 x 2 x 2 RGB voxels.
+    const bytes = nifti({ dim: [6, 2, 2], datatype: 2, value: (n) => (n * 10) % 256 });
+    const v = new DataView(bytes.buffer);
+    v.setInt16(42, 2, true);
+    v.setInt16(70, 128, true);
+    v.setInt16(72, 24, true);
+    const s = await store(bytes);
+    expect((await json(s, "zarr.json")).attributes.ngplatform).toEqual({ rendering: "rgb" });
+    expect((await json(s, "0/zarr.json")).data_type).toBe("uint32");
+    const chunk = new Uint32Array((await s.get("0/c/0/0/0"))!.slice().buffer);
+    const pack = (r: number, g: number, b: number) => (r | (g << 8) | (b << 16) | (255 << 24)) >>> 0;
+    expect([chunk[0], chunk[1]]).toEqual([pack(0, 10, 20), pack(30, 40, 50)]);
   });
 
   it("answers ranges of a key", async () => {

@@ -190,6 +190,29 @@ function dockPanel(host: HTMLElement, panel: DockablePanel): Disposer {
   };
 }
 
+/** Unpacks a uint32 voxel's bytes as red, green and blue. */
+const RGB_SHADER = `void main() {
+  uint v = getDataValue().value;
+  emitRGB(vec3(float(v & 255u), float((v >> 8u) & 255u), float((v >> 16u) & 255u)) / 255.0);
+}
+`;
+
+/** Whether a layer's source is an OME-Zarr image whose metadata says its voxels are packed colours. */
+async function packedColour(spec: Json): Promise<boolean> {
+  const source = Array.isArray(spec.source) ? spec.source[0] : spec.source;
+  const url = typeof source === "string" ? source : (source as { url?: string } | undefined)?.url;
+  const base = url === undefined ? undefined : /^zarr3?:\/\/(.*?)\/?$/.exec(url)?.[1];
+  if (base === undefined) return false;
+  try {
+    const response = await fetch(`${base}/zarr.json`);
+    if (!response.ok) return false;
+    const group = (await response.json()) as { attributes?: { ngplatform?: { rendering?: string } } };
+    return group.attributes?.ngplatform?.rendering === "rgb";
+  } catch {
+    return false;
+  }
+}
+
 function layerSources(managed: ManagedUserLayer): string[] {
   return managed.layer?.dataSources.map((d) => d.spec.url).filter((u) => u.length > 0) ?? [];
 }
@@ -496,12 +519,18 @@ export class Engine {
    * omero window) once it has loaded, unless its shader or contrast is set.
    */
   contrastWhenLoaded(name: string): void {
-    this.whenLoaded(name, () => true, () => {
+    this.whenLoaded(name, () => true, async () => {
       const layer = this.managed(name)?.layer;
       if (!(layer instanceof ImageUserLayer)) return;
       const spec = layer.toJSON() as Json;
       const controls = (spec.shaderControls ?? {}) as Json;
       if (spec.shader !== undefined || controls.normalized !== undefined) return;
+      // A colour image packed one uint32 a voxel (this app's TIFF and NIfTI stores say so): unpacked to RGB.
+      if (await packedColour(spec)) {
+        // The shader is still the default: the spec has none.
+        layer.fragmentMain.value = RGB_SHADER;
+        return;
+      }
       const load = layer.dataSources[0]?.loadState;
       const channel = load !== undefined && load.error === undefined ? load.dataSource.channelMetadata?.channels?.[0] : undefined;
       if (channel?.range === undefined) return;
@@ -510,7 +539,7 @@ export class Engine {
   }
 
   /** Runs `run` once layer `name` is ready and `also` holds, if within `timeout` ms. */
-  private whenLoaded(name: string, also: () => boolean, run: () => void, timeout = 120_000): void {
+  private whenLoaded(name: string, also: () => boolean, run: () => void | Promise<void>, timeout = 120_000): void {
     const v = this.viewer;
     const offs: Disposer[] = [];
     let done = false;
@@ -524,7 +553,7 @@ export class Engine {
       if (managed === undefined) return finish();
       if (managed.isReady() !== true || !also()) return;
       finish();
-      run();
+      void run();
     };
     const timer = setTimeout(finish, timeout);
     offs.push(v.layerManager.readyStateChanged.add(check), v.layerManager.layersChanged.add(check), v.coordinateSpace.changed.add(check), () => clearTimeout(timer));

@@ -78,5 +78,19 @@ with tifffile.TiffWriter(HERE / "with_thumbnail.tif") as w:
     w.write(s[0, ::2, ::2].copy(), subfiletype=1, photometric="minisblack", contiguous=False)
 note("with_thumbnail.tif", s, (1, 1, 1), (14, 12, 2))
 
+# RGB, LZW with the predictor (per sample), and tiled RGBA: served packed, R lowest, alpha 255 for RGB.
+def packed(rgb):
+    alpha = np.full(rgb.shape[:-1] + (1,), 255, np.uint8) if rgb.shape[-1] == 3 else np.zeros((), np.uint8)
+    rgba = np.concatenate([rgb, alpha], axis=-1) if rgb.shape[-1] == 3 else rgb
+    return rgba.view("<u4")[..., 0]
+
+
+c = ramp((2, 9, 13, 3), np.uint8)
+tifffile.imwrite(HERE / "rgb_lzw.tif", c, photometric="rgb", compression="lzw", predictor=True)
+note("rgb_lzw.tif", packed(c), (1, 1, 1), (13, 9, 2))
+t4 = ramp((1, 40, 36, 4), np.uint8)
+tifffile.imwrite(HERE / "rgba_tiles.tif", t4, photometric="rgb", extrasamples=["unassalpha"], tile=(16, 16))
+note("rgba_tiles.tif", packed(t4), (1, 1, 1), (36, 40, 1))
+
 (HERE / "expected.json").write_text(json.dumps(expected, indent=1) + "\n")
 print("\n".join(f"{k}: {(HERE / k).stat().st_size} bytes" for k in expected))
