@@ -347,29 +347,51 @@ async function chunks(volume: Volume, path: string, files: Map<string, Uint8Arra
 
 const json = (value: unknown) => new TextEncoder().encode(JSON.stringify(value, null, 1));
 
+/** A level of a pyramid: its size and the placement of its voxels. */
+export interface LevelGrid {
+  size: [number, number, number];
+  voxelToRas: Mat4;
+}
+
+/** The levels of a pyramid halved from `grid` down to about `chunk` voxels a side (at most 12), as `halve` places them. */
+export function pyramidGrids(grid: LevelGrid, label: boolean, chunk = CHUNK): LevelGrid[] {
+  const levels = [grid];
+  const step = label ? [2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1] : [2, 0, 0, 0.5, 0, 2, 0, 0.5, 0, 0, 2, 0.5, 0, 0, 0, 1];
+  while (levels.length < 12 && Math.max(...levels[levels.length - 1].size) > chunk) {
+    const l = levels[levels.length - 1];
+    levels.push({ size: l.size.map((n) => Math.ceil(n / 2)) as [number, number, number], voxelToRas: multiply4(l.voxelToRas, Float64Array.from(step)) });
+  }
+  return levels;
+}
+
 /**
- * An OME-Zarr image (Zarr v3) as files by path in the store: a pyramid
- * halved down to about 64 voxels a side, chunks 64³ gzipped.
+ * The metadata of an OME-Zarr image (Zarr v3) of these levels: the group's
+ * zarr.json and each array's, by path.  Chunks are `chunk` voxels a side,
+ * stored with `codecs` (raw bytes, then gzip, unless given).
  */
-export async function omeZarrFiles(volume: Volume, name: string, options: { label?: boolean; window?: [number, number]; description?: string } = {}): Promise<Map<string, Uint8Array>> {
+export function omeZarrMetadata(
+  levels: LevelGrid[],
+  type: VoxelType,
+  name: string,
+  options: { label?: boolean; window?: [number, number]; description?: string; chunk?: number; codecs?: unknown[] } = {},
+): Map<string, Uint8Array> {
   const files = new Map<string, Uint8Array>();
-  const levels = [volume];
-  while (levels.length < 12 && Math.max(...levels[levels.length - 1].size) > CHUNK) levels.push(halve(levels[levels.length - 1], options.label === true));
+  const chunk = options.chunk ?? CHUNK;
+  const codecs = options.codecs ?? [{ name: "bytes", configuration: { endian: "little" } }, { name: "gzip", configuration: { level: 5 } }];
   for (let i = 0; i < levels.length; ++i) {
     const l = levels[i];
     files.set(`${i}/zarr.json`, json({
       zarr_format: 3,
       node_type: "array",
       shape: [l.size[2], l.size[1], l.size[0]],
-      data_type: l.type,
-      chunk_grid: { name: "regular", configuration: { chunk_shape: [CHUNK, CHUNK, CHUNK] } },
+      data_type: type,
+      chunk_grid: { name: "regular", configuration: { chunk_shape: [chunk, chunk, chunk] } },
       chunk_key_encoding: { name: "default", configuration: { separator: "/" } },
       fill_value: 0,
-      codecs: [{ name: "bytes", configuration: { endian: "little" } }, { name: "gzip", configuration: { level: 5 } }],
+      codecs,
       dimension_names: ["z", "y", "x"],
       attributes: {},
     }));
-    await chunks(l, String(i), files);
   }
   const space = (n: string) => ({ name: n, type: "space", unit: "millimeter" });
   const kind = options.label ? "nearest" : "mean";
@@ -395,10 +417,10 @@ export async function omeZarrFiles(volume: Volume, name: string, options: { labe
   } else {
     // 0.6: each level to level 0's voxels ("array"), then an affine to RAS.
     version = "0.6";
-    const m = volume.voxelToRas;
+    const m = levels[0].voxelToRas;
     // Rows x, y, z; columns the array's axes z, y, x, then the offset.
     const affine = [0, 1, 2].map((r) => [m[4 * r + 2], m[4 * r + 1], m[4 * r], m[4 * r + 3]]);
-    const toLevel0 = levels.map((l) => multiply4(invert4(volume.voxelToRas), l.voxelToRas));
+    const toLevel0 = levels.map((l) => multiply4(invert4(m), l.voxelToRas));
     multiscale = {
       name,
       coordinateSystems: [
@@ -423,6 +445,18 @@ export async function omeZarrFiles(volume: Volume, name: string, options: { labe
     };
   }
   files.set("zarr.json", json({ zarr_format: 3, node_type: "group", attributes: { ome: { version, multiscales: [multiscale], ...omero } } }));
+  return files;
+}
+
+/**
+ * An OME-Zarr image (Zarr v3) as files by path in the store: a pyramid
+ * halved down to about 64 voxels a side, chunks 64³ gzipped.
+ */
+export async function omeZarrFiles(volume: Volume, name: string, options: { label?: boolean; window?: [number, number]; description?: string } = {}): Promise<Map<string, Uint8Array>> {
+  const levels = [volume];
+  while (levels.length < 12 && Math.max(...levels[levels.length - 1].size) > CHUNK) levels.push(halve(levels[levels.length - 1], options.label === true));
+  const files = omeZarrMetadata(levels, volume.type, name, options);
+  for (let i = 0; i < levels.length; ++i) await chunks(levels[i], String(i), files);
   return files;
 }
 

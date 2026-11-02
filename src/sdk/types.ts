@@ -237,6 +237,13 @@ export interface ViewerApi {
   layerTransform(layer: string): LayerTransform | undefined;
   /** Sets a layer's transform matrix (same form as `layerTransform`'s), as one undo step. */
   setLayerTransform(layer: string, matrix: Float64Array): void;
+  /**
+   * Has Neuroglancer read again the chunks it holds from under `url` (an
+   * http(s) address): for data a plugin serves and has changed, such as a
+   * label volume being drawn.  Chunks on screen are asked for at once and
+   * replaced as they come; metadata is kept.
+   */
+  reloadData(url: string): void;
 }
 
 export interface LayerTransform {
