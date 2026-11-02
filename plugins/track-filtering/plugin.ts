@@ -448,6 +448,7 @@ class TrackGroups {
   }
 
   private currentKind: Kind | undefined;
+  private currentDataset: DatasetInfo | undefined;
 
   private dataset(): DatasetInfo | undefined {
     const candidates = this.candidates();
@@ -493,6 +494,7 @@ class TrackGroups {
   /** Follows the scene: which dataset, its store, its attributes, its layers. */
   private refresh(): void {
     const dataset = this.dataset();
+    this.currentDataset = dataset;
     this.currentKind = dataset && this.kindOf(dataset);
     const base = dataset && this.baseLayers(dataset)[0];
     if (base !== this.watching) {
@@ -797,9 +799,10 @@ class TrackGroups {
    * drawn there joins the group being edited.
    */
   private readAnnotations(): void {
-    const dataset = this.dataset();
+    // On every view change: the dataset as of the last refresh, and only the regions layer's own state.
+    const dataset = this.currentDataset;
     if (dataset === undefined) return;
-    const spec = ((this.ctx.viewer.getState().layers as Json[] | undefined) ?? []).find((l) => l.name === this.roiLayerName(dataset));
+    const spec = this.ctx.viewer.layerSpec(this.roiLayerName(dataset));
     if (spec === undefined) return;
     const annotations = (spec.annotations as Json[] | undefined) ?? [];
     const byId = new Map(annotations.map((a) => [String(a.id), a]));
