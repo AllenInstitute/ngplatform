@@ -38,6 +38,9 @@ export interface NiftiHeader {
   voxOffset: number;
   sclSlope: number;
   sclInter: number;
+  /** The display range the file asks for (cal_min, cal_max); used when cal_max > cal_min. */
+  calMin?: number;
+  calMax?: number;
   xyztUnits: number;
   toffset: number;
   intentCode: number;
@@ -77,6 +80,8 @@ export function parseNiftiHeader(bytes: Uint8Array): NiftiHeader {
       voxOffset: f32(108, 1)[0],
       sclSlope: f32(112, 1)[0],
       sclInter: f32(116, 1)[0],
+      calMax: f32(124, 1)[0],
+      calMin: f32(128, 1)[0],
       xyztUnits: bytes[123],
       toffset: f32(136, 1)[0],
       description: text(bytes, 148, 80),
@@ -101,6 +106,8 @@ export function parseNiftiHeader(bytes: Uint8Array): NiftiHeader {
     voxOffset: i64(168),
     sclSlope: f64(176, 1)[0],
     sclInter: f64(184, 1)[0],
+    calMax: f64(192, 1)[0],
+    calMin: f64(200, 1)[0],
     toffset: f64(216, 1)[0],
     description: text(bytes, 240, 80),
     qformCode: i32(344),
@@ -370,8 +377,9 @@ export class NiftiStore implements VirtualStore {
 
   /**
    * Each volume's display window (OME's omero window, which Neuroglancer
-   * takes for the contrast): the 0.5th to 99.5th percentile of its middle
-   * plane, and the plane's range.  None for label images.
+   * takes for the contrast): the header's cal_min to cal_max where it sets
+   * them, else the 0.5th to 99.5th percentile of its middle plane; and the
+   * plane's range.  None for label images.
    */
   displayWindows(): Promise<DisplayWindow[] | undefined> {
     return (this.windows ??= this.label ? Promise.resolve(undefined) : this.sampleWindows().catch(() => undefined));
@@ -405,7 +413,10 @@ export class NiftiStore implements VirtualStore {
       const max = sample[sample.length - 1];
       let start = quantile(0.005);
       let end = quantile(0.995);
-      if (!(end > start)) [start, end] = max > min ? [min, max] : [min, min + 1];
+      const { calMin, calMax } = this.header;
+      // The file's own display range, where it gives one.
+      if (calMin !== undefined && calMax !== undefined && Number.isFinite(calMin) && Number.isFinite(calMax) && calMax > calMin) [start, end] = [calMin, calMax];
+      else if (!(end > start)) [start, end] = max > min ? [min, max] : [min, min + 1];
       out.push({ min, max: Math.max(max, end), start, end });
     }
     return out;

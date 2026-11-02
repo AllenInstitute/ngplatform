@@ -171,6 +171,11 @@ export interface WorkspaceApi {
     locate(url: string): { writable: boolean } | undefined;
     /** Writes a file at a URL under local data (asking to edit the folder the first time). */
     write(url: string, data: Uint8Array | string): Promise<void>;
+    /**
+     * Opens a file made in the page (a NIfTI image, a mesh…) as data on this
+     * computer, for this visit; the datasets in it, to add with addDataset.
+     */
+    open(file: File): Promise<{ source: string; name: string; kind: string }[]>;
   };
 }
 

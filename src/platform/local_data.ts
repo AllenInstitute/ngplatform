@@ -270,6 +270,19 @@ export class LocalData {
     return { id, name: entry.name, kind: entry.kind, needsPermission: false };
   }
 
+  /**
+   * Opens a file made in the page (a density map, say) as data on this
+   * computer, for this visit only; returns the datasets found in it.
+   */
+  async openFile(file: File): Promise<FoundDataset[]> {
+    await this.start();
+    const id = newId();
+    this.entries.set(id, { id, name: file.name, kind: "file", files: new Map([[file.name, file]]), needsPermission: false });
+    this.register();
+    this.changed();
+    return this.detect(id);
+  }
+
   async forget(id: string): Promise<void> {
     this.entries.delete(id);
     await idb("readwrite", (s) => s.delete(id)).catch(() => {});

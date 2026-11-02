@@ -23,6 +23,7 @@ import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
 import type { DatasetInfo, Disposer, Json, PlatformContext, PluginModule, SegmentProperties } from "@ngplatform/sdk";
 import { precomputedUrl } from "@ngplatform/sdk/sources";
 import { annotationGeometry, annotationMeets } from "./annotation_regions.js";
+import { addDensity, densityGrid, displayMax, niftiFile } from "./density.js";
 import type { NmRegion } from "./labels.js";
 import { LabelsEngine } from "./labels_client.js";
 import { computeMask, countPassing, emptyFilter, type FilterSpec, histogram, isEmptyFilter, passingIds, tagCounts, toCsv } from "./filter.js";
@@ -69,6 +70,14 @@ export interface Saved {
 
 /** Points per batch when saving .trk: about 48 MB of the file in memory at a time. */
 const BATCH_POINTS = 4_000_000;
+/** A density map's look: a heat colour map, clear where it is zero. */
+const DENSITY_SHADER = `#uicontrol invlerp normalized
+#uicontrol float opacity slider(min=0, max=1, default=0.85)
+void main() {
+  float v = normalized();
+  emitRGBA(getDataValue() > 0.0 ? vec4(colormapJet(clamp(v, 0.0, 1.0)), opacity) : vec4(0.0));
+}
+`;
 const PALETTE = ["#e4572e", "#3fb6c9", "#d4a72c", "#8fd14f", "#b07cd8", "#f08bb3", "#5c8de8", "#e8b05c"];
 const BINS = 40;
 /** How long a region must stay put before the exact answer is computed. */
@@ -343,11 +352,13 @@ class TrackGroups {
    */
   private curveCache = new Map<string, { promise: Promise<Curves>; controller: AbortController; waiting: number; progress: Set<(done: number, total: number) => void> }>();
   /** The .trk save in progress, if any. */
-  private saving: { groupId: string; done: number; total: number; controller: AbortController } | undefined;
+  private saving: { groupId: string; done: number; total: number; controller: AbortController; what?: string } | undefined;
   /** Level saved from: 0 is every streamline. */
   private trkLevel = 0;
   /** What the last save of each group did. */
   private saved_ = new Map<string, string>();
+  /** The density map last made for each group, to save. */
+  private readonly densities = new Map<string, File>();
   /** Region ids last written to the annotation layer: only these can be "deleted in a view". */
   private written = new Set<string>();
   private host: HTMLElement | undefined;
@@ -1281,6 +1292,98 @@ class TrackGroups {
     }
   }
 
+  /**
+   * A group's track density map: how many of its streamlines (read from
+   * `level`, as for .trk) pass through each voxel, shown as an image layer
+   * and offered as a NIfTI file.
+   */
+  async densityMap(group = this.editing(), level = this.trkLevel): Promise<void> {
+    const dataset = this.dataset();
+    const result = group && this.results.get(group.id);
+    const { props, engine, info } = this;
+    if (group === undefined || dataset === undefined || result?.mask === undefined || props === undefined || engine === undefined || info === undefined) {
+      this.ctx.ui.toast("No group with streamlines to map.", "error");
+      return;
+    }
+    if (this.saving !== undefined) {
+      this.ctx.ui.toast("A save is already running.", "error");
+      return;
+    }
+    if (result.state !== "exact") {
+      this.ctx.ui.toast("The group's exact answer is still being worked out; map it once it is.", "error");
+      return;
+    }
+    const ids = passingIds(props, result.mask);
+    if (ids.length === 0) {
+      this.ctx.ui.toast(`${group.name} has no streamlines to map.`, "error");
+      return;
+    }
+    const controller = new AbortController();
+    const saving = { groupId: group.id, done: 0, total: ids.length, controller, what: "Counting streamlines" };
+    this.saving = saving;
+    this.updateAll();
+    const started = performance.now();
+    const grid = densityGrid(info);
+    const voxels = grid.dims[0] * grid.dims[1] * grid.dims[2];
+    const counts = new Float32Array(voxels);
+    const stamp = new Int32Array(voxels);
+    const total = info.levels[level]?.vertexCount ?? info.levels[0].vertexCount ?? 0;
+    const perObject = total / Math.max(1, props.ids.length);
+    const batch = Math.max(1, Math.floor(BATCH_POINTS / Math.max(1, perObject)));
+    try {
+      for (let from = 0; from < ids.length; from += batch) {
+        controller.signal.throwIfAborted();
+        const part = ids.subarray(from, Math.min(ids.length, from + batch));
+        const progress = (done: number, chunks: number) => {
+          saving.done = from + Math.round((done / Math.max(1, chunks)) * part.length);
+          this.updateAll();
+        };
+        const curves =
+          part.length === ids.length
+            ? await this.readCurves(group.id, ids, level, progress, controller.signal)
+            : await engine.curves(part, level, progress, controller.signal);
+        addDensity(curves, grid, counts, stamp, from);
+      }
+      const name = `${dataset.name} ${group.name} density`;
+      const bytes = niftiFile(counts, grid, `track density: ${group.name}`);
+      const file = new File([bytes as BlobPart], fileName(name, ".nii"), { type: "application/octet-stream" });
+      const found = await this.ctx.workspace.local.open(file);
+      if (found[0] !== undefined) {
+        this.ctx.workspace.addDataset({ source: found[0].source, name, kind: "image" });
+        // A heat map over the anatomy: clear where no streamline passes.
+        this.ctx.viewer.patchState((ng) => {
+          const layer = (ng.layers as Json[] | undefined)?.find((l) => l.name === name && l.source === found[0].source);
+          if (layer === undefined) return;
+          layer.shader = DENSITY_SHADER;
+          layer.shaderControls = { normalized: { range: [0, displayMax(counts)] } };
+        });
+      }
+      const seconds = (performance.now() - started) / 1000;
+      const message = `Density map of ${ids.length.toLocaleString()} streamlines on a ${grid.dims.join(" × ")} grid of ${grid.voxel} mm voxels, in ${seconds.toFixed(1)} s.`;
+      this.densities.set(group.id, file);
+      this.saved_.set(group.id, message);
+      this.ctx.log.info(`${group.name}: ${message}`);
+    } catch (e) {
+      this.saved_.set(group.id, controller.signal.aborted ? "Density map cancelled." : `Density map failed: ${(e as Error).message}`);
+      if (!controller.signal.aborted) this.ctx.ui.toast(`Could not map ${group.name}: ${(e as Error).message}`, "error");
+    } finally {
+      this.saving = undefined;
+      this.updateAll();
+    }
+  }
+
+  /** Saves the density map last made for a group as a .nii file. */
+  private async saveDensity(group: Group): Promise<void> {
+    const file = this.densities.get(group.id);
+    if (file === undefined) return;
+    const target = await saveTarget(file.name, "NIfTI image", ".nii");
+    if (target === undefined) return;
+    const stream = await target.open();
+    await stream.write(await file.arrayBuffer());
+    await stream.close();
+    this.ctx.log.info(`Saved ${file.name}.`);
+  }
+
   private updateAll(): void {
     for (const update of this.updaters) update();
   }
@@ -1594,6 +1697,8 @@ class TrackGroups {
   private saveControl(group: Group): HTMLElement {
     const info = this.info;
     const button = el("button", { class: "btn small", type: "button", onclick: () => void this.saveTrk(group) }, "Save .trk") as HTMLButtonElement;
+    const density = el("button", { class: "btn small", type: "button", onclick: () => void this.densityMap(group) }, "Density map") as HTMLButtonElement;
+    const saveNii = el("button", { class: "btn small", type: "button", title: "Save the density map as a NIfTI file", onclick: () => void this.saveDensity(group) }, "Save .nii") as HTMLButtonElement;
     const cancel = el("button", { class: "btn outline small", type: "button", onclick: () => this.saving?.controller.abort() }, "Cancel") as HTMLButtonElement;
     const level = el("select", { "aria-label": "Streamlines to save" }) as HTMLSelectElement;
     const total = info?.levels[0]?.vertexCount;
@@ -1611,17 +1716,20 @@ class TrackGroups {
       const mine = this.saving?.groupId === group.id;
       button.disabled = busy || r?.state !== "exact" || r.count === 0;
       button.title = r?.state === "exact" ? "Save this group's streamlines, whole, as a TrackVis .trk file" : "Available once the group's exact answer is in";
+      density.disabled = button.disabled;
+      density.title = r?.state === "exact" ? "Count the group's streamlines through each voxel, shown as an image layer" : "Available once the group's exact answer is in";
+      saveNii.hidden = !this.densities.has(group.id);
       level.disabled = busy;
       cancel.hidden = !mine;
       if (mine) {
         const s = this.saving!;
-        note.textContent = s.total === 0 ? "Reading the group's manifests…" : `Writing streamlines: ${s.done.toLocaleString()} of ${s.total.toLocaleString()}`;
+        note.textContent = s.total === 0 ? "Reading the group's manifests…" : `${s.what ?? "Writing streamlines"}: ${s.done.toLocaleString()} of ${s.total.toLocaleString()}`;
       } else {
         note.textContent = this.saved_.get(group.id) ?? "";
       }
       note.hidden = note.textContent === "";
     });
-    return el("div", { class: "tf-save" }, button, level, cancel, note);
+    return el("div", { class: "tf-save" }, button, density, level, cancel, saveNii, note);
   }
 
   private editor(group: Group): HTMLElement {
@@ -1902,6 +2010,7 @@ export const plugin: PluginModule = {
     ctx.commands.register("trackFiltering.addBox", () => groups.addBox());
     ctx.commands.register("trackFiltering.exportCsv", () => groups.exportCsv());
     ctx.commands.register("trackFiltering.saveTrk", () => void groups.saveTrk());
+    ctx.commands.register("trackFiltering.densityMap", () => void groups.densityMap());
     ctx.subscriptions.push(ctx.services.provide("trackFiltering.groups", groups.service()));
   },
 };

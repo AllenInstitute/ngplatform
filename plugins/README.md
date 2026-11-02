@@ -224,7 +224,7 @@ it is deactivated. Subscriptions a plugin makes itself go in
 | `ui.toast / confirm / form` | Messages, confirmation, and a dialog generated from a schema. |
 | `workspace` | Scenes, datasets, layers and the selection; add datasets and derived layers, remove layers. |
 | `viewer` | The active scene's Neuroglancer state as JSON (`patchState` applies only what changed, as one undo step), layers, the pointer, the position, a segmentation layer's segment properties, and a temporary set of visible segments (not saved in the link). `draw3d` draws in the 3-D view with a layer (raw WebGL2, Neuroglancer's camera and depth; volume rendering uses it); `panels` and `onRendered` place things over the views; `layerTransform` and `setLayerTransform` read and set a layer's transform (registration). |
-| `workspace.local` | Files of data opened from this computer: whether a URL is one, and writing into it (track filtering saves groups this way). |
+| `workspace.local` | Files of data opened from this computer: whether a URL is one, writing into it (track filtering saves groups this way), and opening a file the plugin made in the page as data (track filtering's density maps). |
 | `state` | The plugin's slice of the workspace state: in the link, undoable, versioned. |
 | `settings` | Per-user settings kept in this browser, never in the link. |
 | `jobs.run` | Long work with progress and cancel, shown in the Jobs tab. |
