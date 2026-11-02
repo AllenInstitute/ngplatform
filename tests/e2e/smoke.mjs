@@ -145,8 +145,14 @@ check(await page.evaluate(() => window.engine.layout() === "3d"), "palette ran L
 await page.screenshot({ path: `${shots}/2-3d.png`, timeout: 120_000 });
 await click(page.locator(".brand")); // focus the page, not an input
 // Undo restores the state in place: nothing is fetched again. (The 3-D
-// panel the layout added may fetch for itself before this.)
+// panel the layout added fetches for itself first: wait until it is quiet,
+// two seconds without a data request, which over the network can take a while.)
 await page.waitForTimeout(3000);
+for (let quiet = 0, seen = dataRequests, waited = 0; quiet < 2000 && waited < 60_000; waited += 250) {
+  await page.waitForTimeout(250);
+  quiet = dataRequests === seen ? quiet + 250 : 0;
+  seen = dataRequests;
+}
 dataRequests = 0;
 requested.length = 0;
 await page.keyboard.press("Control+z");
