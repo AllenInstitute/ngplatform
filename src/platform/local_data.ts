@@ -173,6 +173,9 @@ export class LocalData {
         if (data?.type === "local-read") void this.answer(data, event.ports[0]);
         if (data?.type === "local-has") event.ports[0]?.postMessage(this.entries.has(data.id));
       });
+      // Control can come after start() stops waiting (a busy page): tell the
+      // worker then which data this page holds, so it need not ask around.
+      navigator.serviceWorker.addEventListener("controllerchange", () => this.register());
       const registration = await navigator.serviceWorker.register(new URL("local-sw.js", this.base), { scope: this.base });
       await navigator.serviceWorker.ready;
       if (navigator.serviceWorker.controller === null) {

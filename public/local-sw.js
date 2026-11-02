@@ -43,7 +43,8 @@ async function owner(id) {
     owners.delete(id);
   }
   for (const client of await self.clients.matchAll({ type: "window" })) {
-    if ((await ask(client, { type: "local-has", id }, 2000)) === true) {
+    // A page busy drawing can take a while to answer.
+    if ((await ask(client, { type: "local-has", id }, 10_000)) === true) {
       owners.set(id, client.id);
       return client;
     }
