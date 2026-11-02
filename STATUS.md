@@ -73,7 +73,7 @@ objects a second), which is what the bulk read replaces.
 
 ## How it is checked
 
-- `npm test`: 150 unit tests (workspace model, store with a fake engine,
+- `npm test`: 154 unit tests (workspace model, store with a fake engine,
   commands with arguments, key bindings, `when` clauses, schemas, state
   slices, plugin host and switches, the catalogue, the filter computation,
   region geometry, track-group logic, .trk files, groups written into a
@@ -83,7 +83,7 @@ objects a second), which is what the bulk read replaces.
   chunk against the file, the pyramid, and placement as Neuroglancer and
   the volume view read it; precomputed chunk ids, minishard indexes and
   sharded scales; regions on segmentations and annotations; `NET=1` adds
-  live reads of MICrONS), then the Zarr Vectors plugin's 215 tests (with
+  live reads of MICrONS and the hemibrain's synapses), then the Zarr Vectors plugin's 215 tests (with
   the .trk, .tck and .trx readers against nibabel and trx-python, mesh files, and the virtual store read back by the
   plugin's own reader; codecs, layouts including 0.9.4's dense index,
   pyramids, meshes, objects, worker imports) against upstream Neuroglancer.
@@ -93,8 +93,10 @@ objects a second), which is what the bulk read replaces.
   inside them, the inspector's tabs, that undo makes no data requests,
   scene tabs, that the track groups get exact counts, that a NIfTI opened
   as local data is served as OME-Zarr with the file's voxels and opens as a
-  layer, and that a phone-width window does not scroll sideways. All pass (2026-11-01, Chrome
-  with SwiftShader: `CHROME=/usr/bin/google-chrome SWIFTSHADER=1`). Where
+  layer, and that a phone-width window does not scroll sideways. All 28 pass (2026-11-02, Chrome
+  with SwiftShader: `CHROME=/usr/bin/google-chrome SWIFTSHADER=1`). Under
+  SwiftShader the first shader compile after the heavy HCP scene can hold
+  the page for over a minute, so the local NIfTI is given three. Where
   NVIDIA's driver is installed but the GPU cannot be opened (this build
   sandbox), the script points Chrome's Vulkan loader at its own SwiftShader;
   otherwise Chrome hangs at start.
