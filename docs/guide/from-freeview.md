@@ -9,7 +9,7 @@ there yet.
 
 | In Freeview | In ngplatform |
 |---|---|
-| File → Load Volume | **Open → Open from device**, or **Add → Local** (NIfTI, TIFF; `.mgz` coming) |
+| File → Load Volume | **Open → Open from device**, **Add → Local**, or drop files on the window (NIfTI, `.mgz`/`.mgh`, TIFF, `.npy`); a FreeSurfer subject folder opens as its T1, aparc+aseg and white and pial surfaces |
 | File → Load Surface | **Add → Local**: FreeSurfer surfaces, GIFTI, OBJ, STL, PLY |
 | File → Load Tract | **Add → Local**: `.trk`, `.tck`, `.trx` |
 | Layer panel (left) | **Datasets** tab, and the **Layer** tab on the right for the selected one |
@@ -21,6 +21,9 @@ there yet.
 | Tools → Transform Volume | the **Registration** plugin (same controls, plus landmark fitting) |
 | File → Save Screenshot (`-ss`, magnification, auto-trim) | the camera icon → **Picture…**: magnification and trim |
 | File → Save Movie Frames, Save GIF | the camera icon → **Movie…**: a slice or time sweep, or a 3-D turn, as GIF, WebM, MP4 or PNG frames |
+| File → Save Volume As | Datasets → the row's ⋯ → **Export as…**: NIfTI, `.mgz`/`.mgh` or OME-Zarr |
+| View → Neurological View | Settings → **Which way up the views are**: radiological (as Freeview, the default for anatomy) or neurological |
+| Viewport 2 × 2 | four panels: axial, sagittal, coronal and 3-D bottom right |
 | `freeview -v a.nii b.nii` | a link: the address bar holds the whole workspace |
 
 ## What ngplatform adds
@@ -36,9 +39,8 @@ there yet.
 
 These are on the [work plan](https://github.com/AllenInstitute/ngplatform/blob/main/TODO.md):
 
-- `.mgz` / `.mgh` volumes, in and out.
 - Values on surfaces (curvature, thickness, overlays, `.annot`, `.label`),
-  and surface outlines drawn on the slices.
+  and surface outlines drawn on the slices (surfaces show in 3-D only for now).
 - Voxel editing: drawing and erasing labels, fills, recon edits.
 - Measuring: lengths, areas, region and label statistics, line profiles.
 - Diffusion displays: direction-colour maps, tensor and ODF glyphs.
