@@ -109,12 +109,14 @@ class VolumeRendering {
       ctx.viewer.onLayersChanged(() => this.update()),
       ctx.viewer.onStateChanged(() => {
         // A box around the position follows it, and automatic detail the
-        // zoom, a moment after they stop.
+        // zoom, a moment after they stop (looked at then: reading the view's
+        // state on every change would slow a heavy scene).
         if (!this.saved.on) return;
-        const zoomed = this.saved.solid === 0 && this.autoFor !== this.autoVoxel();
-        if (this.region === undefined && !zoomed) return;
         clearTimeout(this.follow);
-        this.follow = setTimeout(() => this.update(), 400);
+        this.follow = setTimeout(() => {
+          const zoomed = this.saved.solid === 0 && this.autoFor !== this.autoVoxel();
+          if (this.region !== undefined || zoomed) this.update();
+        }, 400);
       }),
       () => clearTimeout(this.follow),
     );
