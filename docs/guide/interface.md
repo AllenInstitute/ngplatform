@@ -20,10 +20,36 @@ all, and the keyboard icon lists the keyboard and mouse bindings.
 | **Neuroglancer** | Open this scene in Google's Neuroglancer in a new tab. It says so when the scene holds data plain Neuroglancer cannot read (Zarr Vectors, files on this computer). |
 | **Undo / Redo** | Undo any change to the workspace: layers, positions, settings, plugin state. |
 | **Scene tabs** | One tab per scene. **+** adds a scene; each tab has a close button (closing the last leaves a blank scene). Rename, duplicate and delete scenes from the command palette. |
-| Camera icon | Screenshot of the views, at a chosen size; labels from the Labels plugin are painted in. |
+| Camera icon | **Capture**: a picture of the views (magnified, borders trimmed), or a movie (a sweep through slices or time, or a turn of the 3-D view) as GIF, WebM, MP4 or PNG frames; and Neuroglancer's own screenshot dialog. See [Capture](#capture). |
 | Gear icon | View settings, reload the scene's layers, or a hard reset that reloads everything fresh. |
 | Keyboard icon | The keyboard and mouse reference. |
 | **Commands** | The command palette (++ctrl+k++). |
+
+### Capture
+
+The camera icon's menu, or the commands *Capture a picture* and *Capture a
+movie*, open one dialog:
+
+- **What**: a **Picture**; a **sweep** along a dimension (z steps through
+  the slices; a dimension the views do not show, such as time, plays it),
+  from, to and step in that dimension's coordinates; or a **turn of the 3-D
+  view** about its own vertical axis, in a number of frames.
+- **View**: all the views, or one of them (a cross-section or the 3-D view).
+- **Magnification**: pixels per screen pixel. 2 doubles the width and
+  height, with the same field of view (as Freeview's `-ss` magnification).
+- **Trim empty borders**: crops to what differs from the background colour
+  (the corners'), keeping a margin; a movie is cropped alike in every frame.
+- **Format** for a movie: an animated **GIF**, **WebM** video, **MP4**
+  (H.264, where the browser has an encoder: Chrome and Edge), or **PNG
+  frames** in a zip or written into a folder you choose (Chrome and Edge).
+  **Frames a second** sets the speed.
+- **Wait for data**: each frame is taken once everything in view has loaded,
+  or after this many seconds (the activity log says how many frames were
+  taken early), so a movie's frames are complete and consistent.
+
+The job runs in **Jobs** (bottom dock), where it can be cancelled. The view
+is put back as it was afterwards, and a capture adds nothing to undo.
+Labels from the Labels plugin are painted into every frame.
 
 ## 2. Left dock
 

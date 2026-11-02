@@ -88,3 +88,5 @@ export { OffscreenTextures, setPerspectiveSectionClip } from "neuroglancer/unsta
 export { addPerspectivePanelToggle } from "neuroglancer/unstable/data_panel_layout.js";
 export { TrackableBoolean } from "neuroglancer/unstable/trackable_boolean.js";
 export { setScreenshotOverlay } from "neuroglancer/unstable/util/screenshot_manager.js";
+// Capturing frames for pictures and movies (./capture.ts).
+export { calculatePanelViewportBounds } from "neuroglancer/unstable/util/viewer_resolution_stats.js";

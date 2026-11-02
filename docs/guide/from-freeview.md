@@ -19,7 +19,8 @@ there yet.
 | Viewport layouts 1×1, 2×2, 1&3 | the layout buttons, or the command palette's *Set the layout* |
 | Coordinates / Info panel | the position at the top left of the views; each layer's value under the mouse |
 | Tools → Transform Volume | the **Registration** plugin (same controls, plus landmark fitting) |
-| File → Save Screenshot | the camera icon in the top bar |
+| File → Save Screenshot (`-ss`, magnification, auto-trim) | the camera icon → **Picture…**: magnification and trim |
+| File → Save Movie Frames, Save GIF | the camera icon → **Movie…**: a slice or time sweep, or a 3-D turn, as GIF, WebM, MP4 or PNG frames |
 | `freeview -v a.nii b.nii` | a link: the address bar holds the whole workspace |
 
 ## What ngplatform adds
@@ -41,4 +42,4 @@ These are on the [work plan](https://github.com/AllenInstitute/ngplatform/blob/m
 - Voxel editing: drawing and erasing labels, fills, recon edits.
 - Measuring: lengths, areas, region and label statistics, line profiles.
 - Diffusion displays: direction-colour maps, tensor and ODF glyphs.
-- Volume filters (mean, median, Gaussian…), movies and GIFs.
+- Volume filters (mean, median, Gaussian…).
