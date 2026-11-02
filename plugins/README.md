@@ -118,10 +118,13 @@ import { serveVirtualStores } from "@ngplatform/sdk/virtual";
 serveVirtualStores((file) => openMyFormat(file)); // { get(key), list?(prefix) }
 ```
 
-Zarr Vectors uses this for `.trk`, `.tck` and `.trx`
-([`zarr-vectors/virtual.ts`](zarr-vectors/virtual.ts)); the platform's
-NIfTI reader is the same kind of worker. `list` answers folder listings
-(directory keys end in "/"), which Neuroglancer's http store reads.
+Zarr Vectors uses this for tractograms, meshes and surfaces, SWC neurons
+and point tables ([`zarr-vectors/virtual.ts`](zarr-vectors/virtual.ts)); the
+platform's NIfTI and TIFF reader is the same kind of worker. `list` answers
+folder listings (directory keys end in "/"), which Neuroglancer's http store
+reads. A text format can set `collect` to offer a folder of its files as one
+dataset (the folder's `@all<extension>`): the worker then gets one text,
+each file after a `# @file <name>` line (SWC does).
 
 `@ngplatform/sdk/precomputed` reads Neuroglancer precomputed volumes in a
 plugin's own worker (images and segmentations, sharded or not);
