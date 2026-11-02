@@ -94,6 +94,31 @@ uses the worker factories in the Neuroglancer the app builds on
 (`setChunkWorkerFactory`, `setAsyncComputationWorkerFactory`); see
 [`zarr-vectors/README.md`](zarr-vectors/README.md).
 
+### Files a data type reads in place
+
+A data type can also read files on this computer without converting them,
+as virtual stores. Its catalogue entry lists them (`virtualFormats`, each a
+`VirtualFormat` from `@ngplatform/sdk`: a file-name pattern, extensions for
+the file pickers, the layer source for the store's URL, and a worker). Local
+data then lists such files in folders and Open from device, and sends every
+key under a file's URL to the worker, which answers with
+`serveVirtualStores` from `@ngplatform/sdk/virtual`:
+
+```ts
+// my_format/worker.ts
+import { serveVirtualStores } from "@ngplatform/sdk/virtual";
+serveVirtualStores((file) => openMyFormat(file)); // { get(key), list?(prefix) }
+```
+
+Zarr Vectors uses this for `.trk`, `.tck` and `.trx`
+([`zarr-vectors/virtual.ts`](zarr-vectors/virtual.ts)); the platform's
+NIfTI reader is the same kind of worker. `list` answers folder listings
+(directory keys end in "/"), which Neuroglancer's http store reads.
+
+`@ngplatform/sdk/precomputed` reads Neuroglancer precomputed volumes in a
+plugin's own worker (images and segmentations, sharded or not);
+`@ngplatform/sdk/sources` recognises source URLs without loading readers.
+
 ## Writing a tool plugin
 
 The types are in [`src/sdk/types.ts`](../src/sdk/types.ts), and the manifest
