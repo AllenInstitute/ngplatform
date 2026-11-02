@@ -1,0 +1,132 @@
+Native outlines for segmentation layers in the 2-D views (not applied).
+
+ngplatform draws outlines today with an image layer that reads the same
+labels (src/engine/outline_shader.ts).  This patch lets the segmentation
+layer do it itself: a new layer setting `outlineWidth` (JSON key
+"outlineWidth"; 0, the default, fills as now), which keeps hover
+highlighting, selected and visible segments, equivalences and stated
+colours exactly as the filled drawing, and needs no second layer.
+
+It uses getDataValueAt, vChunkPosition and uChunkDataSize, which every
+chunk format (uncompressed and compressed_segmentation) defines for the
+slice-view shader.  Untested against the fork's own tests; written against
+the fork as of this branch.  Apply in the fork with:
+    patch -p1 < segmentation-outlines.patch
+
+diff -ru a/src/layer/segmentation/index.ts b/src/layer/segmentation/index.ts
+--- a/src/layer/segmentation/index.ts	2026-11-02 23:08:25.899031923 +0000
++++ b/src/layer/segmentation/index.ts	2026-11-02 23:08:25.905032073 +0000
+@@ -526,6 +526,8 @@
+   selectedAlpha = trackableAlphaValue(0.5);
+   saturation = trackableAlphaValue(1.0);
+   notSelectedAlpha = trackableAlphaValue(0);
++  // 0 fills segments in the 2-D views; above 0 draws only their outlines, this many screen pixels wide.
++  outlineWidth = new TrackableValue<number>(0, verifyFiniteNonNegativeFloat, 0);
+   hoverHighlight = new TrackableBoolean(true, true);
+   silhouetteRendering = new TrackableValue<number>(
+     0,
+@@ -658,6 +660,9 @@
+     this.displayState.notSelectedAlpha.changed.add(
+       this.specificationChanged.dispatch,
+     );
++    this.displayState.outlineWidth.changed.add(
++      this.specificationChanged.dispatch,
++    );
+     this.displayState.objectAlpha.changed.add(
+       this.specificationChanged.dispatch,
+     );
+@@ -981,6 +986,9 @@
+     this.displayState.notSelectedAlpha.restoreState(
+       specification[json_keys.NOT_SELECTED_ALPHA_JSON_KEY],
+     );
++    this.displayState.outlineWidth.restoreState(
++      specification[json_keys.OUTLINE_WIDTH_JSON_KEY],
++    );
+     this.displayState.hoverHighlight.restoreState(
+       specification[json_keys.HOVER_HIGHLIGHT_JSON_KEY],
+     );
+@@ -1048,6 +1056,8 @@
+       this.displayState.selectedAlpha.toJSON();
+     x[json_keys.NOT_SELECTED_ALPHA_JSON_KEY] =
+       this.displayState.notSelectedAlpha.toJSON();
++    x[json_keys.OUTLINE_WIDTH_JSON_KEY] =
++      this.displayState.outlineWidth.toJSON();
+     x[json_keys.SATURATION_JSON_KEY] = this.displayState.saturation.toJSON();
+     x[json_keys.OBJECT_ALPHA_JSON_KEY] = this.displayState.objectAlpha.toJSON();
+     x[json_keys.HOVER_HIGHLIGHT_JSON_KEY] =
+diff -ru a/src/layer/segmentation/json_keys.ts b/src/layer/segmentation/json_keys.ts
+--- a/src/layer/segmentation/json_keys.ts	2026-11-02 23:08:25.899031923 +0000
++++ b/src/layer/segmentation/json_keys.ts	2026-11-02 23:08:25.904032048 +0000
+@@ -1,5 +1,6 @@
+ export const SELECTED_ALPHA_JSON_KEY = "selectedAlpha";
+ export const NOT_SELECTED_ALPHA_JSON_KEY = "notSelectedAlpha";
++export const OUTLINE_WIDTH_JSON_KEY = "outlineWidth";
+ export const OBJECT_ALPHA_JSON_KEY = "objectAlpha";
+ export const SATURATION_JSON_KEY = "saturation";
+ export const HOVER_HIGHLIGHT_JSON_KEY = "hoverHighlight";
+diff -ru a/src/sliceview/volume/segmentation_renderlayer.ts b/src/sliceview/volume/segmentation_renderlayer.ts
+--- a/src/sliceview/volume/segmentation_renderlayer.ts	2026-11-02 23:08:25.899031923 +0000
++++ b/src/sliceview/volume/segmentation_renderlayer.ts	2026-11-02 23:08:25.905032073 +0000
+@@ -73,6 +73,8 @@
+     RenderLayerBaseOptions {
+   selectedAlpha: WatchableValueInterface<number>;
+   notSelectedAlpha: WatchableValueInterface<number>;
++  /** 0: filled; above 0: outlines this many screen pixels wide (optional for other users of this class). */
++  outlineWidth?: WatchableValueInterface<number>;
+   hideSegmentZero: WatchableValueInterface<boolean>;
+   ignoreNullVisibleSet: WatchableValueInterface<boolean>;
+ }
+@@ -203,6 +205,11 @@
+     this.registerDisposer(
+       displayState.notSelectedAlpha.changed.add(this.redrawNeeded.dispatch),
+     );
++    if (displayState.outlineWidth !== undefined) {
++      this.registerDisposer(
++        displayState.outlineWidth.changed.add(this.redrawNeeded.dispatch),
++      );
++    }
+     this.registerDisposer(
+       displayState.ignoreNullVisibleSet.changed.add(this.redrawNeeded.dispatch),
+     );
+@@ -254,8 +261,30 @@
+     builder.addUniform("highp float", "uSelectedAlpha");
+     builder.addUniform("highp float", "uNotSelectedAlpha");
+     builder.addUniform("highp float", "uSaturation");
++    builder.addUniform("highp float", "uOutlineWidth");
++    // Outlines: a pixel is on an outline when the label a set number of
++    // screen pixels away, along the section's own axes (the screen-space
++    // derivatives of the chunk position), differs.  Within a chunk only: a
++    // boundary lying exactly on a chunk face is not seen.
++    builder.addFragmentCode(`
++uint64_t getUint64DataValueAtPosition(highp vec3 q) {
++  highp ivec3 p = ivec3(max(vec3(0.0), min(floor(q), uChunkDataSize - 1.0)));
++  return toUint64(getDataValueAt(p));
++}
++`);
+     let fragmentMain = `
++  highp vec3 outlineDx = dFdx(vChunkPosition) * uOutlineWidth;
++  highp vec3 outlineDy = dFdy(vChunkPosition) * uOutlineWidth;
+   uint64_t baseValue = getUint64DataValue();
++  if (uOutlineWidth > 0.0) {
++    if (getUint64DataValueAtPosition(vChunkPosition + outlineDx).value == baseValue.value &&
++        getUint64DataValueAtPosition(vChunkPosition - outlineDx).value == baseValue.value &&
++        getUint64DataValueAtPosition(vChunkPosition + outlineDy).value == baseValue.value &&
++        getUint64DataValueAtPosition(vChunkPosition - outlineDy).value == baseValue.value) {
++      emit(vec4(0.0));
++      return;
++    }
++  }
+   uint64_t value = getMappedObjectId(baseValue);
+   uint64_t valueForColor = ${
+     parameters.baseSegmentColoring ? "baseValue" : "value"
+@@ -369,6 +398,10 @@
+     );
+     gl.uniform1f(shader.uniform("uSaturation"), displayState.saturation.value);
+     gl.uniform1f(
++      shader.uniform("uOutlineWidth"),
++      displayState.outlineWidth?.value ?? 0,
++    );
++    gl.uniform1f(
+       shader.uniform("uNotSelectedAlpha"),
+       displayState.notSelectedAlpha.value,
+     );

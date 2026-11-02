@@ -10,6 +10,7 @@ import type { Disposer, LayerInfo, PlatformContext, PluginModule } from "@ngplat
 import { VOLUME_PANEL } from "./manifest.js";
 import { invert, multiply } from "./ome.js";
 import { displayOfRas, SolidDrawer } from "./solid.js";
+import { fineSections, layoutType, type SectionPlan } from "./sections.js";
 import { storeOf } from "./sources.js";
 
 export { omeZarrUrl, storeOf } from "./sources.js";
@@ -28,6 +29,11 @@ export interface Saved {
   /** Tissue threshold, 0..1 of difference from the background. */
   threshold: number;
   cut: boolean;
+  /**
+   * The cut's faces from sections of their own (the finest level within a
+   * budget, following the 3-D zoom); off, from the 2-D views' sections.
+   */
+  fine: boolean;
 }
 
 export function readSaved(raw: unknown): Saved {
@@ -38,6 +44,7 @@ export function readSaved(raw: unknown): Saved {
     solid: typeof s.solid === "number" ? s.solid : 0,
     threshold: typeof s.threshold === "number" ? s.threshold : 0.2,
     cut: s.cut !== false,
+    fine: s.fine !== false,
   };
 }
 
@@ -97,7 +104,8 @@ class VolumeRendering {
         clearTimeout(this.follow);
         this.follow = setTimeout(() => {
           const zoomed = this.saved.solid === 0 && this.autoFor !== this.autoVoxel();
-          if (this.region !== undefined || zoomed) this.update();
+          // Fine sections follow the 3-D zoom, and notice Sections switched on.
+          if (this.region !== undefined || zoomed || this.saved.fine) this.update();
         }, 400);
       }),
       () => clearTimeout(this.follow),
@@ -203,6 +211,7 @@ class VolumeRendering {
     const target = saved.on ? this.target() : undefined;
     this.sectionBackground(saved.on && target !== undefined);
     if (!saved.on || target === undefined) {
+      this.fineSections(undefined);
       this.handle?.dispose();
       this.handle = undefined;
       this.handleLayer = undefined;
@@ -214,7 +223,7 @@ class VolumeRendering {
       this.panelUpdate?.();
       return;
     }
-    if (!this.ctx.viewer.getState().layout?.toString().match(/3d|4panel/)) {
+    if (!layoutType(this.ctx.viewer.getState().layout).match(/3d|4panel/)) {
       this.ctx.viewer.patchState((ng) => {
         ng.layout = "xy-3d";
       });
@@ -249,8 +258,81 @@ class VolumeRendering {
         sectionClip: (frame) => this.drawer.sectionClip(frame),
       });
     }
+    this.fineSections(this.levels.length > 0 ? this.fineSectionPlan() : undefined);
     this.handle?.redraw();
     this.panelUpdate?.();
+  }
+
+  /**
+   * Sections of the plugin's own on the cut's faces: Neuroglancer's 3-D view
+   * draws the 2-D views' sections there, at the 2-D views' zoom and only as
+   * far as they reach (and only the xy one in the xy-3d layout).  Three
+   * cross-sections of the layout's own (Neuroglancer's `crossSections`),
+   * following the position and orientation, at the finest level that a
+   * budget of pixels allows around the position and that the 3-D zoom can
+   * show, load and draw instead, as Neuroglancer draws any section: every
+   * layer, its shader, its levels.
+   */
+  private fineSectionPlan(): SectionPlan | undefined {
+    if (!this.saved.fine) return undefined;
+    const state = this.ctx.viewer.getState() as { dimensions?: Record<string, [number, string]>; projectionScale?: number };
+    const dims = state.dimensions;
+    if (dims === undefined) return undefined;
+    const metres = Object.values(dims).filter(([, unit]) => unit === "m").map(([scale]) => scale);
+    if (metres.length === 0) return undefined;
+    const panel = this.ctx.viewer.panels().find((p) => p.kind === "3d");
+    const finest = this.levels[0];
+    const extent = Math.max(...finest.size) * finest.voxelSize;
+    return {
+      finestMm: finest.voxelSize,
+      extentMm: extent,
+      canonicalMetres: Math.min(...metres),
+      projectionScale: state.projectionScale,
+      panelPixels: panel ? Math.max(panel.element.clientWidth, panel.element.clientHeight) : 800,
+    };
+  }
+
+  /** The layout's cross-sections now, so a change is written only when it differs. */
+  private sectionsKey: string | undefined;
+  private hidSlices = false;
+
+  private fineSections(plan: SectionPlan | undefined): void {
+    const state = this.ctx.viewer.getState() as { layout?: unknown; showSlices?: boolean };
+    const wanted = plan === undefined ? undefined : fineSections(plan);
+    const key = JSON.stringify(wanted ?? null);
+    const layout = state.layout;
+    const current = typeof layout === "object" && layout !== null ? (layout as { crossSections?: unknown }).crossSections : undefined;
+    if (wanted !== undefined && state.showSlices !== false && this.sectionsKey !== undefined) {
+      // Sections switched back on in the 3-D view: the 2-D views' sections, not ours.
+      this.saved = { ...this.saved, fine: false };
+      this.ctx.state.set(this.saved);
+      this.fineSections(undefined);
+      this.panelUpdate?.();
+      return;
+    }
+    // Our sections in a state from a link: Sections was hidden for them, to give back.
+    if (current !== undefined && Object.prototype.hasOwnProperty.call(current, "volume-xy") && state.showSlices === false) this.hidSlices = true;
+    if (wanted === undefined && current === undefined && !this.hidSlices) {
+      this.sectionsKey = undefined;
+      return;
+    }
+    if (key === this.sectionsKey && (wanted === undefined) === (current === undefined)) return;
+    this.sectionsKey = wanted === undefined ? undefined : key;
+    this.ctx.viewer.patchState(
+      (ng) => {
+        const type = layoutType(ng.layout);
+        ng.layout = wanted === undefined ? type : { type, crossSections: wanted };
+        if (wanted !== undefined && ng.showSlices !== false) {
+          // Neuroglancer's own sections would lie on ours.
+          ng.showSlices = false;
+          this.hidSlices = true;
+        } else if (wanted === undefined && this.hidSlices) {
+          delete ng.showSlices;
+          this.hidSlices = false;
+        }
+      },
+      { quiet: true },
+    );
   }
 
   private hidBackground = false;
@@ -352,6 +434,9 @@ class VolumeRendering {
       const cut = el("input", { type: "checkbox" }) as HTMLInputElement;
       cut.checked = saved.cut;
       cut.addEventListener("change", () => this.set({ cut: cut.checked }));
+      const fine = el("input", { type: "checkbox" }) as HTMLInputElement;
+      fine.checked = saved.fine;
+      fine.addEventListener("change", () => this.set({ fine: fine.checked }));
       host.replaceChildren(
         el(
           "div",
@@ -362,6 +447,12 @@ class VolumeRendering {
           el("label", { class: "field" }, el("span", {}, "Detail"), detail),
           el("label", { class: "field" }, el("span", {}, "Tissue threshold"), el("div", { class: "vv-row" }, threshold, thresholdValue)),
           el("label", { class: "field check" }, cut, el("span", {}, "Cut away the octant facing the camera")),
+          el(
+            "label",
+            { class: "field check", title: "Sections of their own on the cut's faces, as fine as the 3-D zoom shows (up to the finest level, within 2048 pixels a side around the position). Off: the 2-D views' sections, at their zoom (Sections in the 3-D view)." },
+            fine,
+            el("span", {}, "Fine sections on the cut, following the 3-D zoom"),
+          ),
           this.status ? el("p", { class: "note" }, this.status) : null,
         ),
       );
@@ -375,6 +466,7 @@ class VolumeRendering {
 
   dispose(): void {
     this.offs.forEach((off) => off());
+    this.fineSections(undefined);
     this.loading?.abort();
     this.handle?.dispose();
     this.toggle.dispose();

@@ -57,7 +57,8 @@ What can be saved today, and where:
 | Group statistics | Filtering → **CSV** | CSV |
 | A transform | Registration → **Save transform** | FreeSurfer `.lta`, ITK / ANTs `.txt`, plain 4 × 4 |
 | A moved (registered) image | Registration → **Save image…** | NIfTI (`.nii`, `.nii.gz`) or OME-Zarr |
-| A picture of the views | Camera icon in the top bar | PNG |
+| A picture of the views | Camera icon → **Picture…**: magnified, trimmed | PNG |
+| A movie of the views | Camera icon → **Movie…**: a sweep through slices or time, or a turn of the 3-D view | GIF, WebM, MP4, PNG frames (zip or folder) |
 | The workspace itself | the link in the address bar, or **Share** | link or JSON |
 
 !!! note "Coming"

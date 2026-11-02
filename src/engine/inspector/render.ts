@@ -15,6 +15,9 @@ import {
   VolumeRenderingModes,
   VolumeRenderingRenderScaleWidget,
 } from "../neuroglancer.js";
+import { colormapControl } from "./colormap.js";
+import { lookupTableControl } from "./lookup.js";
+import { hasOutlines, setOutlines } from "../outlines.js";
 import { shaderSection } from "./shader.js";
 import {
   button,
@@ -104,6 +107,7 @@ function imageRender(scope: Scope, l: ImageUserLayer): HTMLElement[] {
       hideInactive: l.hideInactiveShaderControls,
       legendShaderOptions: l.getLegendShaderOptions(),
       help: `${DOCS}/sliceview/image_layer_rendering.md`,
+      rows: [row("Colour map", colormapControl(scope, l), "Writes the shader for a colour map with a contrast control; Custom keeps your own shader")],
     }),
   ];
 }
@@ -140,6 +144,33 @@ function linkedGroup(scope: Scope, group: any): HTMLElement {
     host.replaceChildren(sel);
   });
   return host;
+}
+
+/** Filled or outlined in the 2-D views (see ../outlines.ts). */
+function outlineToggle(scope: Scope, l: SegmentationUserLayer): HTMLElement {
+  const name = () => l.managedLayer.name;
+  const note = el("span", { class: "ins-faint" });
+  const set = (on: boolean) => {
+    try {
+      setOutlines(name(), on);
+      note.textContent = "";
+    } catch (e) {
+      note.textContent = (e as Error).message;
+    }
+  };
+  const group = el(
+    "div",
+    { class: "ins-segmented" },
+    button("Filled", () => set(false), "Fill each segment with its colour"),
+    button("Outlines", () => set(true), "Draw each segment's outline in its colour; the outline layer's shader sets the width, and can fill faintly too"),
+  );
+  const lm = (l.manager as any).layerManager;
+  scope.watchSoon([signal(lm.layersChanged), signal(lm.specificationChanged)], () => {
+    const on = hasOutlines(name());
+    group.children[0].setAttribute("aria-pressed", String(!on));
+    group.children[1].setAttribute("aria-pressed", String(on));
+  });
+  return el("div", { class: "ins-inline" }, group, note);
 }
 
 function segmentationRender(scope: Scope, l: SegmentationUserLayer): HTMLElement[] {
@@ -197,6 +228,7 @@ function segmentationRender(scope: Scope, l: SegmentationUserLayer): HTMLElement
     ),
     section(
       "Colour",
+      row("Lookup table", lookupTableControl(scope, l), "Colours and names for the label values, from an atlas's lookup table"),
       row("Colour by", mode),
       showWhen(scope, row("Seed", el("div", { class: "ins-inline" }, seedBox, button("Randomise", () => ds.segmentationColorGroupState.value.segmentColorHash.randomize()))), byHash),
       showWhen(scope, row("Colour", colour(scope, fixed)), byFixed),
@@ -206,6 +238,7 @@ function segmentationRender(scope: Scope, l: SegmentationUserLayer): HTMLElement
       scope,
       section(
         "2-D views",
+        row("Draw", outlineToggle(scope, l), "Filled, or as outlines in each segment's colour (an image layer above this one draws them)"),
         row("Opacity (on)", slider(scope, ds.selectedAlpha), "Opacity of selected segments in the 2-D views"),
         row("Opacity (off)", slider(scope, ds.notSelectedAlpha), "Opacity of segments that are not selected"),
         row("Resolution (slice)", renderScale(scope, l.sliceViewRenderScaleHistogram, l.sliceViewRenderScaleTarget)),

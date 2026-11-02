@@ -1,0 +1,232 @@
+[
+  {
+    "id": "FreeSurferColorLUT",
+    "title": "FreeSurfer: all labels (FreeSurferColorLUT)",
+    "group": "FreeSurfer",
+    "file": "FreeSurferColorLUT.txt",
+    "description": "Every label FreeSurfer knows: aseg, aparc (Desikan-Killiany), aparc.a2009s (Destrieux), white matter, nuclei and more",
+    "source": "FreeSurfer (MGH)",
+    "licence": "FreeSurfer licence (redistributable, research use; see LICENSE-FreeSurfer.txt)"
+  },
+  {
+    "id": "FreeSurfer_DesikanKilliany",
+    "title": "FreeSurfer: Desikan-Killiany (aparc+aseg)",
+    "group": "FreeSurfer",
+    "file": "FreeSurfer_DesikanKilliany.txt",
+    "description": "Subcortical labels and the 34 Desikan-Killiany cortical regions of each hemisphere",
+    "source": "FreeSurfer (MGH)",
+    "licence": "FreeSurfer licence (redistributable, research use; see LICENSE-FreeSurfer.txt)"
+  },
+  {
+    "id": "FreeSurfer_Destrieux",
+    "title": "FreeSurfer: Destrieux (aparc.a2009s+aseg)",
+    "group": "FreeSurfer",
+    "file": "FreeSurfer_Destrieux.txt",
+    "description": "Subcortical labels and the 74 Destrieux cortical regions of each hemisphere",
+    "source": "FreeSurfer (MGH)",
+    "licence": "FreeSurfer licence (redistributable, research use; see LICENSE-FreeSurfer.txt)"
+  },
+  {
+    "id": "Yeo2011_7Networks",
+    "title": "Yeo 2011: 7 networks",
+    "group": "FreeSurfer",
+    "file": "Yeo2011_7Networks.txt",
+    "source": "FreeSurfer (MGH), Yeo et al. 2011",
+    "licence": "FreeSurfer licence (redistributable, research use; see LICENSE-FreeSurfer.txt)"
+  },
+  {
+    "id": "Yeo2011_17Networks",
+    "title": "Yeo 2011: 17 networks",
+    "group": "FreeSurfer",
+    "file": "Yeo2011_17Networks.txt",
+    "source": "FreeSurfer (MGH), Yeo et al. 2011",
+    "licence": "FreeSurfer licence (redistributable, research use; see LICENSE-FreeSurfer.txt)"
+  },
+  {
+    "id": "HarvardOxford_Cortical",
+    "title": "Harvard-Oxford cortical",
+    "group": "MNI atlases",
+    "file": "HarvardOxford_Cortical.txt",
+    "description": "The 48 cortical regions of FSL's Harvard-Oxford maximum-probability atlas",
+    "source": "Harvard-Oxford atlas (FSL); colours from FSLeyes",
+    "licence": "names CC BY-SA 4.0, colours Apache-2.0 (University of Oxford)"
+  },
+  {
+    "id": "HarvardOxford_Subcortical",
+    "title": "Harvard-Oxford subcortical",
+    "group": "MNI atlases",
+    "file": "HarvardOxford_Subcortical.txt",
+    "description": "The 21 subcortical regions of FSL's Harvard-Oxford maximum-probability atlas",
+    "source": "Harvard-Oxford atlas (FSL); colours from FSLeyes",
+    "licence": "names CC BY-SA 4.0, colours Apache-2.0 (University of Oxford)"
+  },
+  {
+    "id": "Schaefer2018_100Parcels_7Networks",
+    "title": "Schaefer 2018: 100 parcels, 7 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_100Parcels_7Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "Schaefer2018_200Parcels_7Networks",
+    "title": "Schaefer 2018: 200 parcels, 7 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_200Parcels_7Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "Schaefer2018_300Parcels_7Networks",
+    "title": "Schaefer 2018: 300 parcels, 7 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_300Parcels_7Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "Schaefer2018_400Parcels_7Networks",
+    "title": "Schaefer 2018: 400 parcels, 7 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_400Parcels_7Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "Schaefer2018_500Parcels_7Networks",
+    "title": "Schaefer 2018: 500 parcels, 7 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_500Parcels_7Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "Schaefer2018_600Parcels_7Networks",
+    "title": "Schaefer 2018: 600 parcels, 7 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_600Parcels_7Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "Schaefer2018_700Parcels_7Networks",
+    "title": "Schaefer 2018: 700 parcels, 7 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_700Parcels_7Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "Schaefer2018_800Parcels_7Networks",
+    "title": "Schaefer 2018: 800 parcels, 7 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_800Parcels_7Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "Schaefer2018_900Parcels_7Networks",
+    "title": "Schaefer 2018: 900 parcels, 7 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_900Parcels_7Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "Schaefer2018_1000Parcels_7Networks",
+    "title": "Schaefer 2018: 1000 parcels, 7 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_1000Parcels_7Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "Schaefer2018_100Parcels_17Networks",
+    "title": "Schaefer 2018: 100 parcels, 17 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_100Parcels_17Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "Schaefer2018_200Parcels_17Networks",
+    "title": "Schaefer 2018: 200 parcels, 17 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_200Parcels_17Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "Schaefer2018_300Parcels_17Networks",
+    "title": "Schaefer 2018: 300 parcels, 17 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_300Parcels_17Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "Schaefer2018_400Parcels_17Networks",
+    "title": "Schaefer 2018: 400 parcels, 17 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_400Parcels_17Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "Schaefer2018_500Parcels_17Networks",
+    "title": "Schaefer 2018: 500 parcels, 17 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_500Parcels_17Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "Schaefer2018_600Parcels_17Networks",
+    "title": "Schaefer 2018: 600 parcels, 17 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_600Parcels_17Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "Schaefer2018_700Parcels_17Networks",
+    "title": "Schaefer 2018: 700 parcels, 17 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_700Parcels_17Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "Schaefer2018_800Parcels_17Networks",
+    "title": "Schaefer 2018: 800 parcels, 17 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_800Parcels_17Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "Schaefer2018_900Parcels_17Networks",
+    "title": "Schaefer 2018: 900 parcels, 17 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_900Parcels_17Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "Schaefer2018_1000Parcels_17Networks",
+    "title": "Schaefer 2018: 1000 parcels, 17 networks",
+    "group": "MNI atlases",
+    "file": "Schaefer2018_1000Parcels_17Networks.txt",
+    "source": "CBIG, Schaefer et al. 2018",
+    "licence": "MIT (CBIG)"
+  },
+  {
+    "id": "AllenCCF2017",
+    "title": "Allen Mouse CCFv3 (2017) structures",
+    "group": "Mouse",
+    "url": "https://api.brain-map.org/api/v2/structure_graph_download/1.json",
+    "description": "The Allen Mouse Brain Common Coordinate Framework's 1,327 structures, acronyms and full names, fetched from the Allen Institute when chosen",
+    "source": "Allen Institute for Brain Science, api.brain-map.org",
+    "licence": "Allen Institute Terms of Use (fetched, not shipped)"
+  }
+]

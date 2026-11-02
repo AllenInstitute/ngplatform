@@ -36,6 +36,7 @@ import {
   renderStatisticsPanel,
 } from "./panels/misc.js";
 import { CONVENTION_LABELS, type PanelConvention } from "../engine/anatomical.js";
+import { showCaptureSheet } from "./capture.js";
 import { openDropped, showAddDatasetSheet, showEditStateSheet, showLocalSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
 import type { Workbench } from "./workbench.js";
 import { createPlatformApis } from "./apis.js";
@@ -117,7 +118,15 @@ export class Shell {
       h(
         "div",
         { class: "group" },
-        iconButton("camera", "Screenshot", () => this.wb.run("view.screenshot")),
+        iconButton("camera", "Capture: pictures and movies", (e) =>
+          showMenu(e.currentTarget as HTMLElement, [
+            { label: "Picture…", run: () => this.wb.run("view.capture") },
+            { label: "Movie: sweep slices or time…", run: () => this.wb.run("view.captureSweep") },
+            { label: "Movie: turn the 3-D view…", run: () => this.wb.run("view.captureTurntable") },
+            "-",
+            { label: "Neuroglancer's screenshot dialog…", run: () => this.wb.run("view.screenshot") },
+          ]),
+        ),
         iconButton("settings", "Settings and reloading", (e) =>
           showMenu(e.currentTarget as HTMLElement, [
             { label: "View settings…", run: () => this.wb.run("view.settings") },
@@ -741,6 +750,9 @@ export class Shell {
     });
     add({ id: "view.settings", title: "View settings…", group: "View", run: () => showSettingsSheet(wb) });
     add({ id: "view.screenshot", title: "Screenshot…", group: "View", run: () => engine.showScreenshotDialog() });
+    add({ id: "view.capture", title: "Capture a picture (magnified, trimmed)…", group: "View", run: () => showCaptureSheet(wb, "picture") });
+    add({ id: "view.captureSweep", title: "Capture a movie: sweep slices or time…", group: "View", run: () => showCaptureSheet(wb, "sweep") });
+    add({ id: "view.captureTurntable", title: "Capture a movie: turn the 3-D view…", group: "View", run: () => showCaptureSheet(wb, "turntable") });
     const options: [string, string][] = [
       ["showAxisLines", "axis lines"],
       ["showScaleBar", "scale bar"],

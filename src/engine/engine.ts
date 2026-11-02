@@ -35,6 +35,8 @@ import {
 import { looksAnatomical, type PanelConvention, panelRotations } from "./anatomical.js";
 import { addMomentum } from "./momentum.js";
 import { mountInspector } from "./inspector/index.js";
+import { watchOutlines } from "./outlines.js";
+import { type CaptureOptions, type CapturePanel, captureDimensions, capturePanels, CaptureSession } from "./capture.js";
 
 export type Json = Record<string, unknown>;
 
@@ -306,6 +308,8 @@ export class Engine {
       host.removeEventListener("contextmenu", noMenu);
       host.removeEventListener("wheel", noZoom);
     });
+    // Segmentations drawn as outlines keep their outline layers' colours in step.
+    this.disposers.push(watchOutlines(this));
   }
 
   // ------------------------------------------------------------- state
@@ -334,7 +338,45 @@ export class Engine {
   }
 
   onStateChanged(callback: () => void): Disposer {
-    return this.viewer.state.changed.add(deferred(callback));
+    this.stateListeners.add(callback);
+    const off = this.viewer.state.changed.add(
+      deferred(() => {
+        if (this.held > 0) this.missedChanges = true;
+        else callback();
+      }),
+    );
+    return () => {
+      off();
+      this.stateListeners.delete(callback);
+    };
+  }
+
+  private readonly stateListeners = new Set<() => void>();
+  private held = 0;
+  private missedChanges = false;
+
+  /**
+   * Keeps state changes from the workspace's listeners (each would be an
+   * undo step and a new address) until the returned function is called,
+   * which tells them once if anything changed: a capture moves the view
+   * frame by frame and puts it back.
+   */
+  holdStateChanges(): () => void {
+    this.held++;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (--this.held > 0 || !this.missedChanges) return;
+      this.missedChanges = false;
+      for (const listener of this.stateListeners) {
+        try {
+          listener();
+        } catch (e) {
+          console.error("ngplatform listener failed", e);
+        }
+      }
+    };
   }
 
   // ------------------------------------------------------------ layers
@@ -852,6 +894,26 @@ export class Engine {
       for (const painter of this.screenshotPainters) painter(context, canvas);
     });
     return () => this.screenshotPainters.delete(paint);
+  }
+
+  /** Paints the overlays plugins add to screenshots (labels) onto a capture. */
+  paintOverlays(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void {
+    for (const painter of this.screenshotPainters) painter(context, canvas);
+  }
+
+  /** Starts capturing frames (see ./capture.ts); end the session to put the view back. */
+  beginCapture(options: CaptureOptions): CaptureSession {
+    return new CaptureSession(this, options);
+  }
+
+  /** The views a capture can be cropped to. */
+  capturePanels(): CapturePanel[] {
+    return capturePanels(this.viewer);
+  }
+
+  /** The dimensions a capture can sweep. */
+  captureDimensions(): ReturnType<typeof captureDimensions> {
+    return captureDimensions(this.viewer);
   }
 
   /** An element over the views, for drawing beside them in HTML (labels, say). */

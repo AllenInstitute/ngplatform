@@ -67,6 +67,10 @@ export {
   type QueryResult,
 } from "neuroglancer/unstable/segmentation_display_state/property_map.js";
 export { getBaseObjectColor } from "neuroglancer/unstable/segmentation_display_state/frontend.js";
+// Lookup tables (./lookup_tables.ts): a data source of segment names.
+export { registerProvider } from "neuroglancer/unstable/datasource/default_provider.js";
+export { emptyValidCoordinateSpace, makeIdentityTransform } from "neuroglancer/unstable/coordinate_transform.js";
+export { normalizeInlineSegmentPropertyMap, SegmentPropertyMap } from "neuroglancer/unstable/segmentation_display_state/property_map.js";
 export { packColor, serializeColor } from "neuroglancer/unstable/util/color.js";
 export { restoreLegacyTool } from "neuroglancer/unstable/ui/tool.js";
 export { AnnotationSource, AnnotationType, annotationTypeHandlers, type Annotation } from "neuroglancer/unstable/annotation/index.js";
@@ -85,3 +89,5 @@ export { OffscreenTextures, setPerspectiveSectionClip } from "neuroglancer/unsta
 export { addPerspectivePanelToggle } from "neuroglancer/unstable/data_panel_layout.js";
 export { TrackableBoolean } from "neuroglancer/unstable/trackable_boolean.js";
 export { setScreenshotOverlay } from "neuroglancer/unstable/util/screenshot_manager.js";
+// Capturing frames for pictures and movies (./capture.ts).
+export { calculatePanelViewportBounds } from "neuroglancer/unstable/util/viewer_resolution_stats.js";

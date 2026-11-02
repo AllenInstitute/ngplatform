@@ -1,0 +1,54 @@
+# Harvard-Oxford cortical structural atlas (maximum-probability labels, values 1 to 48).
+# Names: Harvard Center for Morphometric Analysis, as released with FSL under CC BY-SA 4.0; this file is CC BY-SA 4.0.
+# Colours: FSLeyes (fsleyes/assets/luts), Copyright 2016-2023 University of Oxford, Apache-2.0.
+# Converted to FreeSurfer's format, names with underscores. Desikan et al. (2006); Makris et al. (2006); Frazier et al. (2005); Goldstein et al. (2007).
+#  No.  Label Name:                                                            R   G   B   A
+     0  Background                                                             0   0   0   0
+     1  Frontal_Pole                                                           0 238   0   0
+     2  Insular_Cortex                                                       160  82  45   0
+     3  Superior_Frontal_Gyrus                                               255 218 185   0
+     4  Middle_Frontal_Gyrus                                                   0 206 209   0
+     5  Inferior_Frontal_Gyrus_pars_triangularis                             127 255 212   0
+     6  Inferior_Frontal_Gyrus_pars_opercularis                              178  34  34   0
+     7  Precentral_Gyrus                                                     238   0   0   0
+     8  Temporal_Pole                                                         34 139  34   0
+     9  Superior_Temporal_Gyrus_anterior_division                            208  32 144   0
+    10  Superior_Temporal_Gyrus_posterior_division                           173 255  47   0
+    11  Middle_Temporal_Gyrus_anterior_division                              240 230 140   0
+    12  Middle_Temporal_Gyrus_posterior_division                             173 216 230   0
+    13  Middle_Temporal_Gyrus_temporooccipital_part                          238 238   0   0
+    14  Inferior_Temporal_Gyrus_anterior_division                             50 205  50   0
+    15  Inferior_Temporal_Gyrus_posterior_division                           255   0 255   0
+    16  Inferior_Temporal_Gyrus_temporooccipital_part                        176  48  96   0
+    17  Postcentral_Gyrus                                                      0 255 127   0
+    18  Superior_Parietal_Lobule                                             245 222 179   0
+    19  Supramarginal_Gyrus_anterior_division                                255 165   0   0
+    20  Supramarginal_Gyrus_posterior_division                               255  69   0   0
+    21  Angular_Gyrus                                                        205  91  69   0
+    22  Lateral_Occipital_Cortex_superior_division                           255 192 203   0
+    23  Lateral_Occipital_Cortex_inferior_division                           152 251 152   0
+    24  Intracalcarine_Cortex                                                100 149 237   0
+    25  Frontal_Medial_Cortex                                                160  32 240   0
+    26  Juxtapositional_Lobule_Cortex_(formerly_Supplementary_Motor_Cortex)  238 130 238   0
+    27  Subcallosal_Cortex                                                   238 201   0   0
+    28  Paracingulate_Gyrus                                                  218 112 214   0
+    29  Cingulate_Gyrus_anterior_division                                    255  62 150   0
+    30  Cingulate_Gyrus_posterior_division                                     0   0 255   0
+    31  Precuneous_Cortex                                                     39  64 139   0
+    32  Cuneal_Cortex                                                        250 128 114   0
+    33  Frontal_Orbital_Cortex                                               255 110 180   0
+    34  Parahippocampal_Gyrus_anterior_division                              255  99  71   0
+    35  Parahippocampal_Gyrus_posterior_division                             255 255   0   0
+    36  Lingual_Gyrus                                                          0 100   0   0
+    37  Temporal_Fusiform_Cortex_anterior_division                           205  92  92   0
+    38  Temporal_Fusiform_Cortex_posterior_division                          165  42  42   0
+    39  Temporal_Occipital_Fusiform_Cortex                                   153  50 204   0
+    40  Occipital_Fusiform_Gyrus                                               0 255 255   0
+    41  Frontal_Operculum_Cortex                                             221 160 221   0
+    42  Central_Opercular_Cortex                                             135 206 235   0
+    43  Parietal_Operculum_Cortex                                            210 180 140   0
+    44  Planum_Polare                                                        255 215   0   0
+    45  Heschls_Gyrus_(includes_H1_and_H2)                                     0   0 128   0
+    46  Planum_Temporale                                                      46 139  87   0
+    47  Supracalcarine_Cortex                                                102 205 170   0
+    48  Occipital_Pole                                                         0 255   0   0

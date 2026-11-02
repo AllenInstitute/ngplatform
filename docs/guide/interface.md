@@ -20,10 +20,36 @@ all, and the keyboard icon lists the keyboard and mouse bindings.
 | **Neuroglancer** | Open this scene in Google's Neuroglancer in a new tab. It says so when the scene holds data plain Neuroglancer cannot read (Zarr Vectors, files on this computer). |
 | **Undo / Redo** | Undo any change to the workspace: layers, positions, settings, plugin state. |
 | **Scene tabs** | One tab per scene. **+** adds a scene; each tab has a close button (closing the last leaves a blank scene). Rename, duplicate and delete scenes from the command palette. |
-| Camera icon | Screenshot of the views, at a chosen size; labels from the Labels plugin are painted in. |
+| Camera icon | **Capture**: a picture of the views (magnified, borders trimmed), or a movie (a sweep through slices or time, or a turn of the 3-D view) as GIF, WebM, MP4 or PNG frames; and Neuroglancer's own screenshot dialog. See [Capture](#capture). |
 | Gear icon | View settings, reload the scene's layers, or a hard reset that reloads everything fresh. |
 | Keyboard icon | The keyboard and mouse reference. |
 | **Commands** | The command palette (++ctrl+k++). |
+
+### Capture
+
+The camera icon's menu, or the commands *Capture a picture* and *Capture a
+movie*, open one dialog:
+
+- **What**: a **Picture**; a **sweep** along a dimension (z steps through
+  the slices; a dimension the views do not show, such as time, plays it),
+  from, to and step in that dimension's coordinates; or a **turn of the 3-D
+  view** about its own vertical axis, in a number of frames.
+- **View**: all the views, or one of them (a cross-section or the 3-D view).
+- **Magnification**: pixels per screen pixel. 2 doubles the width and
+  height, with the same field of view (as Freeview's `-ss` magnification).
+- **Trim empty borders**: crops to what differs from the background colour
+  (the corners'), keeping a margin; a movie is cropped alike in every frame.
+- **Format** for a movie: an animated **GIF**, **WebM** video, **MP4**
+  (H.264, where the browser has an encoder: Chrome and Edge), or **PNG
+  frames** in a zip or written into a folder you choose (Chrome and Edge).
+  **Frames a second** sets the speed.
+- **Wait for data**: each frame is taken once everything in view has loaded,
+  or after this many seconds (the activity log says how many frames were
+  taken early), so a movie's frames are complete and consistent.
+
+The job runs in **Jobs** (bottom dock), where it can be cancelled. The view
+is put back as it was afterwards, and a capture adds nothing to undo.
+Labels from the Labels plugin are painted into every frame.
 
 ## 2. Left dock
 
@@ -58,10 +84,62 @@ layers, lets you pick which one.
 | Tab | What it holds |
 |---|---|
 | **Source** | Where the data comes from, its parts (subsources), and its **transform**: the matrix that places it in the scene, editable. |
-| **Render** | How it is drawn: resolution, opacity, blending, and for images the shader (colormap and contrast, with a histogram). |
+| **Render** | How it is drawn: resolution, opacity, blending; for images the **Colour map** and the shader (contrast, with a histogram); for segmentations the **Lookup table**. |
 | **Segments** | For segmentations: search segments by id, label or property, show and hide them, colours. |
 | **Annotations** | For annotation layers: the tools that draw points, lines, boxes, ellipsoids and polylines, and the list of annotations. |
 | **Schema** | For annotation layers: the properties each annotation carries. |
+
+### Colour maps
+
+An image layer's **Render → Shader → Colour map** writes the shader for a
+colour map, keeping the contrast (the `normalized` range and its histogram):
+grayscale, heat, jet, GE colour, NIH, PET, binary colour, hot, cool, viridis,
+magma, inferno, plasma, cividis, turbo, cubehelix and a diverging red-blue.
+
+- **Heat** works as Freeview's: the contrast's range is *min* to *max* of the
+  value's magnitude, and **mid** (a fraction of the way) is where red turns
+  to yellow. Below min nothing is drawn, so the image underneath shows;
+  between min and mid the colour fades in. For signed data (float, signed
+  integers) negative values are drawn in blue to cyan. **opaque** draws
+  black below min instead.
+- **Binary colour** draws one colour (chosen beside it) wherever the value
+  is above the contrast's minimum; **shade** darkens it with the value.
+- GE colour, NIH and PET approximate the scales of those names.
+- Editing the code makes the map **Custom**; choosing Custom changes
+  nothing, so a shader of your own is kept.
+
+### Lookup tables
+
+A segmentation layer's **Render → Colour → Lookup table** names and colours
+its labels from an atlas's table: FreeSurfer (all labels, Desikan-Killiany,
+Destrieux, Yeo networks), Harvard-Oxford, Schaefer 2018 (100 to 1000
+parcels, 7 or 17 networks), and the Allen Mouse CCFv3 (2017) structures,
+which are fetched from the Allen Institute when chosen. **File…** loads a
+table from your computer: FreeSurfer's format (`index name R G B A`),
+FSLeyes and ITK-SNAP tables, FSL atlas XML, the Allen structure graph
+(JSON), or a plain `index name` list (colours are made up). The colours
+become the layer's segment colours; the names show in the Segments tab
+(search them, list them by label), and under the mouse. Both travel with the
+link, a table from your computer included. **None** takes them off again.
+Where each table comes from, and its licence:
+[`data/lookup-tables/`](https://github.com/AllenInstitute/ngplatform/tree/main/data/lookup-tables).
+
+### Outlines
+
+A segmentation layer's **Render → 2-D views → Draw** shows its segments
+**Filled** or as **Outlines** in the 2-D views, each in its own colour
+(its lookup table's, or the colour from its id), at any angle and zoom.
+Outlines are drawn by an image layer added just above the segmentation,
+"*name* outlines", which reads the same labels; the segmentation's own 2-D
+opacity is set to 0 meanwhile (its meshes are untouched), and **Filled**
+removes the outline layer and gives the opacity back. The outline layer's
+**Render** tab sets the line width in screen pixels (`outline_width`), the
+lines' opacity, and an optional faint fill (`fill_opacity`). It follows the
+segmentation's colours and its shown segments by itself.
+
+Limits: a boundary lying exactly on the face of a data chunk is not drawn
+(the outline has gaps there), and with more than 4,096 coloured or shown
+segments the outlines use the hashed colours or show every segment.
 
 ## 5. Bottom dock
 
