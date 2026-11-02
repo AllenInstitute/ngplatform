@@ -20,6 +20,7 @@
 
 import type { VirtualFormat } from "../sdk/types.js";
 import { MGH_FILE } from "./images/mgh.js";
+import { NPY_FILE } from "./images/npy.js";
 import { listingHtml, pairAsSingleFile, TIFF_FILE, VIRTUAL_FILE } from "./images/store.js";
 import type { VirtualRequest } from "../sdk/virtual.js";
 import { ZARR_VECTORS_VIRTUAL } from "./vectors/formats.js";
@@ -40,6 +41,14 @@ export const MGH_FORMAT: VirtualFormat = {
   pattern: MGH_FILE,
   extensions: [".mgz", ".mgh"],
   format: "FreeSurfer volume",
+};
+
+/** NumPy .npy arrays (2-D to 4-D), read by the same worker (images/npy.ts). */
+export const NPY_FORMAT: VirtualFormat = {
+  ...NIFTI_FORMAT,
+  pattern: NPY_FILE,
+  extensions: [".npy"],
+  format: "NumPy array",
 };
 
 export const TIFF_FORMAT: VirtualFormat = {
@@ -128,7 +137,7 @@ export class LocalData {
   readonly base: string;
   private worker: Promise<ServiceWorker | undefined> | undefined;
   /** Files read as virtual stores, and the workers that serve them. */
-  private formats: VirtualFormat[] = [NIFTI_FORMAT, MGH_FORMAT, TIFF_FORMAT, ...ZARR_VECTORS_VIRTUAL];
+  private formats: VirtualFormat[] = [NIFTI_FORMAT, MGH_FORMAT, NPY_FORMAT, TIFF_FORMAT, ...ZARR_VECTORS_VIRTUAL];
   private readonly virtualWorkers = new Map<VirtualFormat, Worker>();
 
   constructor(base = new URL(".", location.href).href) {
