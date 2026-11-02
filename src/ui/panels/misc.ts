@@ -1,5 +1,5 @@
 /** The smaller panels: Statistics, Jobs and Plugins. */
-import type { LocalPlugins } from "../../platform/local_plugins.js";
+import type { LocalPlugins, UrlPluginOffer } from "../../platform/local_plugins.js";
 import type { Manifest } from "../../sdk/types.js";
 import { clear, h, icon, iconButton } from "../dom.js";
 import { renderMarkdown } from "../markdown.js";
@@ -77,6 +77,76 @@ export function showPluginInfo(manifest: Manifest): void {
   );
 }
 
+/** Asks for a plugin's URL, then (addUrl) whether to run it. */
+function addFromUrl(local: LocalPlugins): void {
+  const input = h("input", {
+    class: "text-input",
+    type: "url",
+    placeholder: "https://…/manifest.json   or   https://…/plugin.js",
+    "aria-label": "Plugin URL",
+    spellcheck: "false",
+  }) as HTMLInputElement;
+  const note = h("p", { class: "note" }, "A tool plugin's manifest.json (its code beside it) or module, served with CORS. Nothing runs until you agree.");
+  const next = h("button", { class: "btn primary", type: "button" }, "Continue") as HTMLButtonElement;
+  const submit = async () => {
+    if (input.value.trim() === "") return;
+    next.disabled = true;
+    note.className = "note";
+    note.textContent = "Reading…";
+    try {
+      await local.addUrl(input.value, confirmPlugin);
+    } catch (e) {
+      note.className = "note error";
+      note.textContent = (e as Error).message;
+      next.disabled = false;
+    }
+  };
+  next.addEventListener("click", () => void submit());
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") void submit();
+  });
+  showSheet(
+    sheet("Add a plugin from a URL", [h("label", { class: "field" }, h("span", {}, "URL"), input), note], [
+      h("button", { class: "btn", type: "button", onclick: () => closeSheet() }, "Cancel"),
+      next,
+    ]),
+  );
+  input.focus();
+}
+
+/** The consent asked for before a plugin from a URL first runs. */
+function confirmPlugin(offer: UrlPluginOffer): Promise<boolean> {
+  return new Promise((resolve) => {
+    let answered = false;
+    const answer = (yes: boolean) => {
+      answered = true;
+      closeSheet();
+      resolve(yes);
+    };
+    const m = offer.manifest;
+    const facts: [string, string][] = [["From", offer.url]];
+    if (m !== undefined) facts.push(["Id", m.id], ["Version", m.version]);
+    showSheet(
+      sheet(
+        m !== undefined ? `Run “${m.name}”?` : "Run this plugin?",
+        [
+          m?.description ? h("p", { class: "lead" }, m.description) : h("span"),
+          h("dl", { class: "facts" }, ...facts.flatMap(([k, v]) => [h("dt", {}, k), h("dd", {}, v)])),
+          h(
+            "p",
+            { class: "note" },
+            "Its code runs in this page, as the app's own plugins do: it can see your workspace, the data you open and your sign-ins to data servers. Add plugins only from people you trust. It loads again on later visits until you remove it.",
+          ),
+        ],
+        [h("button", { class: "btn", type: "button", onclick: () => answer(false) }, "Cancel"), h("button", { class: "btn primary", type: "button", onclick: () => answer(true) }, "Run it")],
+      ),
+      () => {
+        if (!answered) resolve(false);
+      },
+    );
+  });
+}
+
 /** The first sentence of a description, for the one line a card shows. */
 function firstSentence(text: string): string {
   const m = /^(.+?[.!?])(\s|$)/.exec(text);
@@ -91,6 +161,7 @@ export function renderPluginsPanel(host: HTMLElement, wb: Workbench, local: Loca
     showMenu(addButton, [
       { label: "JavaScript or Python file…", run: () => void local.add(false) },
       { label: "Folder with manifest.json…", run: () => void local.add(true) },
+      { label: "From a URL…", run: () => addFromUrl(local) },
       "-",
       { label: "How to write a plugin ↗", run: () => window.open(GUIDE, "_blank", "noopener") },
     ]),
@@ -151,7 +222,7 @@ export function renderPluginsPanel(host: HTMLElement, wb: Workbench, local: Loca
     const locals = local.list();
     clear(
       localList,
-      ...(locals.length ? [h("h3", { class: "section-title" }, "From this computer")] : []),
+      ...(locals.length ? [h("h3", { class: "section-title" }, "Added here")] : []),
       ...locals.map((p) => {
         const record = p.id !== undefined ? records.get(p.id) : undefined;
         const state =
@@ -174,11 +245,15 @@ export function renderPluginsPanel(host: HTMLElement, wb: Workbench, local: Loca
               "span",
               { class: "plugin-actions" },
               record?.manifest ? h("button", { class: "link", type: "button", onclick: () => showPluginInfo(record.manifest) }, "Read more") : null,
-              h("button", { class: "btn small", type: "button", title: "Read the file again and run the new code", onclick: () => void local.reload(p.key) }, "Reload"),
+              h(
+                "button",
+                { class: "btn small", type: "button", title: p.url ? "Fetch it again and run the new code" : "Read the file again and run the new code", onclick: () => void local.reload(p.key) },
+                "Reload",
+              ),
               iconButton("close", "Remove", () => void local.remove(p.key)),
             ),
           ),
-          h("p", { class: p.status === "failed" ? "note error" : "note" }, `${p.name} · ${state}`),
+          h("p", { class: p.status === "failed" ? "note error" : "note" }, `${p.url ? new URL(p.url).host : p.name} · ${state}`),
         );
       }),
     );

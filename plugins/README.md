@@ -52,6 +52,14 @@ file, run in the Python tab's interpreter, where `@ngp.command("Title")`
 adds a function to the command palette. **Reload** reads it again after an
 edit. In Chrome and Edge the file is remembered between visits.
 
+**Add → From a URL…** loads a tool plugin someone has published: the URL of
+its `manifest.json` (the module named by `main` beside it) or of the module
+itself, over https and served with CORS (GitHub Pages and jsDelivr are).
+The manifest is read first and shown, with a warning that the code will run
+in the page with the app's access; nothing runs until the person agrees.
+The URL is remembered and the plugin loads again on later visits until it is
+removed; **Reload** fetches it afresh.
+
 Owning a plugin is owning its folder: another team can amend or replace one
 without touching the platform or the other plugins, and review stays inside
 that folder plus one line in `index.ts`.
