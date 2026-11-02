@@ -5,18 +5,21 @@
 A workspace around [Neuroglancer](https://github.com/google/neuroglancer),
 extended by plugins. Live at https://alleninstitute.github.io/ngplatform/.
 
-The idea is a wrapper for domain-specific tools and toolboxes that work with
-Zarr, OME-Zarr and Zarr Vectors datasets: track filtering, registration,
-annotation and segmentation, filters, new data formats. Tools like these are
-too specialised, or too large, to belong in Neuroglancer itself as pull
-requests, so here each one is a plugin around an unchanged Neuroglancer. The
-platform supplies the workspace (datasets, scenes, the link that holds them),
-files from your own computer read in place as virtual Zarr stores, and an
-SDK (`@ngplatform/sdk`) through which plugins add tabs, commands, views,
-overlays, jobs and data formats.
+ngplatform hosts domain-specific tools for Zarr, OME-Zarr and Zarr Vectors
+datasets (track filtering, registration, annotation and segmentation,
+filters, data formats) as plugins around an unchanged Neuroglancer. Tools
+that are too specialised or too large to add to Neuroglancer itself live
+here instead.
 
-**Docs:** the user guide, a page for each plugin and how to contribute are at
-https://ngplatform.readthedocs.io/ (sources in [`docs/`](docs/)).
+The platform provides:
+
+- **A workspace:** datasets, scenes, and a link that holds them all.
+- **Local data:** files on your computer read in place as virtual Zarr stores.
+- **An SDK** (`@ngplatform/sdk`): plugins add tabs, commands, views,
+  overlays, jobs and data formats through it.
+
+**Docs:** https://ngplatform.readthedocs.io/ has the user guide, a page for
+each plugin and how to contribute (sources in [`docs/`](docs/)).
 
 ## Add a plugin
 

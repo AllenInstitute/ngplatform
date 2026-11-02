@@ -6,7 +6,7 @@ extended by plugins.** It runs in the browser, with nothing to install:
 
 ![The ngplatform window: datasets on the left, Neuroglancer's views in the middle, the selected layer's controls on the right](images/interface.png)
 
-## The idea
+## What it does
 
 Neuroglancer is a fast, scalable viewer for volumetric data: it streams
 multiscale images, segmentations, meshes, skeletons and annotations from the
