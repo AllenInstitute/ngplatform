@@ -160,6 +160,8 @@ export class LocalData {
   /** Files read as virtual stores, and the workers that serve them. */
   private formats: VirtualFormat[] = [NIFTI_FORMAT, MGH_FORMAT, NPY_FORMAT, TIFF_FORMAT, FILTER_FORMAT, ...ZARR_VECTORS_VIRTUAL];
   private readonly virtualWorkers = new Map<VirtualFormat, Worker>();
+  /** Each file's related files (`VirtualFormat.related`), found once: by entry id and path. */
+  private readonly relatedFiles = new Map<string, Promise<Record<string, File>>>();
 
   constructor(base = new URL(".", location.href).href) {
     this.base = base;
@@ -438,7 +440,8 @@ export class LocalData {
       }
       let worker = this.virtualWorkers.get(virtual.format);
       if (worker === undefined) this.virtualWorkers.set(virtual.format, (worker = virtual.format.worker()));
-      const message: VirtualRequest = { type: "get", store: `${request.id}/${virtual.file}`, file, key: virtual.key, range: request.range, head: request.head };
+      const related = virtual.format.related === undefined ? undefined : await this.related(request.id, virtual.file, virtual.format);
+      const message: VirtualRequest = { type: "get", store: `${request.id}/${virtual.file}`, file, related, key: virtual.key, range: request.range, head: request.head };
       worker.postMessage(message, [port]);
       return;
     }
@@ -470,6 +473,38 @@ export class LocalData {
     }
     const body = request.head ? undefined : await file.slice(start, end).arrayBuffer();
     port.postMessage({ status: 200, size, start, body }, body ? [body] : []);
+  }
+
+  /**
+   * The files a format reads beside a file, by path from the file's folder
+   * (handles to them, nothing read); found on the first request for its
+   * store and kept for the visit.
+   */
+  private related(id: string, path: string, format: VirtualFormat): Promise<Record<string, File>> {
+    const key = `${id}/${path}`;
+    let found = this.relatedFiles.get(key);
+    if (found === undefined) {
+      found = (async () => {
+        const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+        const paths = await format.related!(path, (folder) => this.files(id, folder));
+        const out: Record<string, File> = {};
+        await Promise.all(
+          paths.map(async (relative) => {
+            const resolved: string[] = [];
+            for (const part of (dir === "" ? relative : `${dir}/${relative}`).split("/")) {
+              if (part === "..") resolved.pop();
+              else if (part !== "." && part !== "") resolved.push(part);
+            }
+            const file = await this.file(id, resolved.join("/"));
+            if (file !== undefined) out[relative] = file;
+          }),
+        );
+        return out;
+      })();
+      this.relatedFiles.set(key, found);
+      found.catch(() => this.relatedFiles.delete(key));
+    }
+    return found;
   }
 
   /** The text of a JSON file in an entry, parsed; undefined when absent or not JSON. */

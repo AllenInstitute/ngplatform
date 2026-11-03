@@ -21,7 +21,10 @@
  */
 
 import { DENSE_MANIFESTS_LAYOUT } from "./dense_manifests.js";
-import type { ZarrVectorsGeometryDescription } from "./base.js";
+import type {
+  ZarrVectorsGeometryDescription,
+  ZarrVectorsSurfaceInfo,
+} from "./base.js";
 import type { ElementType } from "./dtype.js";
 import {
   attributeDtype,
@@ -68,6 +71,11 @@ export interface ZarrVectorsAttribute {
   components: number;
   /** Category labels of a dictionary-encoded attribute. */
   enumLabels?: string[];
+  /**
+   * A parcellation's table (a surface store's `headers/surface`
+   * `label_tables`): each code's name and colour (r, g, b, a in 0..1).
+   */
+  labels?: { code: number; name: string; rgba: number[] }[];
   /**
    * Not stored per vertex: an object's value, the same on every vertex of
    * it (`obj_<column>`, or `obj_group` for its first group's index).
@@ -603,6 +611,48 @@ async function skeletonLayout(
   return level0.fragmentSegmentIds !== undefined ? "split" : "linked";
 }
 
+// -------------------------------------------------------------- surfaces
+
+/**
+ * A surface store's header (`headers/surface`, as zarr-vectors-tools'
+ * `SurfaceHeader` writes it, plus `surfaces` and `maps` from stores made
+ * from FreeSurfer files in the page); undefined without one.
+ */
+export function surfaceInfo(json: any): ZarrVectorsSurfaceInfo | undefined {
+  const h = json?.attributes;
+  if (h === undefined || h === null || typeof h !== "object") return undefined;
+  const strings = (o: any): Record<string, string> =>
+    Object.fromEntries(
+      Object.entries(o ?? {}).filter(
+        (e): e is [string, string] => typeof e[1] === "string",
+      ),
+    );
+  const labelTables: ZarrVectorsSurfaceInfo["labelTables"] = {};
+  for (const [name, table] of Object.entries<any>(h.label_tables ?? {})) {
+    if (table === null || typeof table !== "object") continue;
+    labelTables[name] = Object.entries<any>(table)
+      .map(([code, entry]) => ({
+        code: Number(code),
+        name: String(entry?.name ?? code),
+        rgba: Array.isArray(entry?.rgba)
+          ? [0, 1, 2, 3].map((i) => Number(entry.rgba[i] ?? 1))
+          : [0.5, 0.5, 0.5, 1],
+      }))
+      .filter((l) => Number.isFinite(l.code))
+      .sort((a, b) => a.code - b.code);
+  }
+  const maps = Array.isArray(h.maps)
+    ? h.maps.map(String)
+    : [...Object.keys(h.scalars ?? {}), ...Object.keys(labelTables)];
+  return {
+    geometry: typeof h.geometry === "string" ? h.geometry : "",
+    alternates: strings(h.alternates),
+    surfaces: strings(h.surfaces),
+    maps,
+    labelTables,
+  };
+}
+
 // -------------------------------------------------------------- levels
 
 function levelPaths(multiscales: any): string[] {
@@ -784,6 +834,17 @@ export async function openZarrVectorsStore(
     warnings,
     signal,
   );
+  const surface =
+    primitive === "triangles"
+      ? surfaceInfo(
+          await readJson(read, "headers/surface/zarr.json", signal).catch(
+            () => undefined,
+          ),
+        )
+      : undefined;
+  if (surface !== undefined) {
+    for (const a of attributes) a.labels = surface.labelTables[a.name];
+  }
   const allLevels = await Promise.all(
     paths.map((path, index) =>
       readLevel(
@@ -844,6 +905,7 @@ export async function openZarrVectorsStore(
           : undefined,
       attributes,
       hasObjects,
+      ...(surface !== undefined ? { surface } : {}),
     },
     lowerBounds: lower.map(Number),
     upperBounds: upper.map(Number),

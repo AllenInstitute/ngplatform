@@ -6,13 +6,18 @@
 import { serveVirtualStores } from "../../sdk/virtual.js";
 import { FREESURFER_SURFACE, parseMeshFile } from "./mesh_files.js";
 import { MeshStore } from "./meshes.js";
+import { surfaceCompanions } from "./surfaces.js";
 import { parseLas, parsePointTable, parseSwc, parseSwcCollection } from "./point_files.js";
 import { pointStore, skeletonStore } from "./points.js";
 import { openTractogram } from "./tractograms.js";
 
-serveVirtualStores(async (file) => {
+serveVirtualStores(async (file, related) => {
   if (/\.(obj|stl|ply|gii)$/i.test(file.name) || FREESURFER_SURFACE.test(file.name)) {
-    return new MeshStore(await parseMeshFile(new Uint8Array(await file.arrayBuffer()), file.name), file.name.replace(/\.(surf\.gii|gii|obj|stl|ply)$/i, ""));
+    const mesh = await parseMeshFile(new Uint8Array(await file.arrayBuffer()), file.name);
+    // A surface's values on its vertices, from the files beside it.
+    const companions = await surfaceCompanions(file.name, related, mesh.positions.length / 3);
+    if (companions.skipped.length > 0) console.info(`${file.name}: files beside it left out: ${companions.skipped.join("; ")}`);
+    return new MeshStore(mesh, file.name.replace(/\.(surf\.gii|gii|obj|stl|ply)$/i, ""), companions);
   }
   if (/^@all\.swc$/i.test(file.name)) {
     // A folder's SWC files, which local data hands over as one text.

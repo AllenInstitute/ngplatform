@@ -98,6 +98,8 @@ export const DEFAULT_MAPS = 8;
 
 function attributeName(raw: string): string {
   let s = raw.replace(/[^A-Za-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+  // Shader names start with a lower-case letter (BA becomes ba).
+  if (/^[A-Z]/.test(s)) s = s.toLowerCase();
   if (!/^[a-z]/.test(s)) s = `m_${s}`;
   return s;
 }
@@ -126,6 +128,8 @@ export interface SurfaceCompanions {
   surfaces: Record<string, string>;
   /** Files left out, and why. */
   skipped: string[];
+  /** The surface's own file name. */
+  fileName?: string;
 }
 
 /**
@@ -155,7 +159,7 @@ export async function surfaceCompanions(surfaceName: string, related: Record<str
       try {
         const fs = freeSurferSurface(base);
         if (fs !== undefined) {
-          surfaces[fs.kind] = path;
+          if (SURFACE_KINDS.includes(fs.kind)) surfaces[fs.kind] = path;
           return;
         }
         if (/\.label$/i.test(base)) {
@@ -209,7 +213,7 @@ export async function surfaceCompanions(surfaceName: string, related: Record<str
   };
   maps.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
   for (const m of maps) m.name = unique(m.name);
-  return { maps, surfaces, skipped };
+  return { maps, surfaces, skipped, fileName: surfaceName };
 }
 
 /** A parcellation's table as zarr-vectors-tools writes it in `headers/surface`: code → name and colour. */

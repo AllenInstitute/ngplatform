@@ -6,6 +6,7 @@
  */
 import type { VirtualFormat } from "../../sdk/types.js";
 import { FREESURFER_SURFACE } from "./mesh_files.js";
+import { surfaceRelated } from "./surfaces.js";
 
 /** One worker serves every format here. */
 let shared: Worker | undefined;
@@ -37,12 +38,15 @@ export const ZARR_VECTORS_VIRTUAL: VirtualFormat[] = [
     worker,
   },
   {
-    pattern: /\.gii$/i,
+    // Surfaces only: shape, functional and label files are values on one (see `related`).
+    pattern: /^(?!.*\.(shape|func|label|time)\.gii$).*\.gii$/i,
     extensions: [".gii"],
     format: "GIFTI surface",
     kind: "auto",
     source: (url) => `${url}/|zarr-vectors:`,
     worker,
+    // Shape, functional and label files beside it, as values on its vertices.
+    related: surfaceRelated,
   },
   {
     pattern: FREESURFER_SURFACE,
@@ -51,6 +55,8 @@ export const ZARR_VECTORS_VIRTUAL: VirtualFormat[] = [
     kind: "auto",
     source: (url) => `${url}/|zarr-vectors:`,
     worker,
+    // Morphometry, overlays, annotations and labels beside it (and in ../label).
+    related: surfaceRelated,
   },
   {
     pattern: /\.swc$/i,
