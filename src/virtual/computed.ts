@@ -18,9 +18,16 @@
  */
 import type { Engine } from "chunkmirage-web/engine";
 import { route } from "chunkmirage-web/routes";
-import type { Ask, PipelineView } from "chunkmirage-web/types";
+import type { Ask, PipelineView as EnginePipeline } from "chunkmirage-web/types";
+import { fitTps, mmPerUnit, type Vec3, warpChunk } from "./warp.js";
 
-export type { PipelineView };
+/**
+ * A pipeline: chunkmirage's (a source, ops, output chunks), or a source
+ * warped by landmark pairs (`warp`: a thin-plate spline from the fixed
+ * points, mm, to the moving ones, the source's mm), which the page computes
+ * itself (./warp.ts).
+ */
+export type PipelineView = EnginePipeline & { warp?: { kind: "tps"; fixed: number[][]; moving: number[][] } };
 
 /** Under the app's base: where pipelines are served. */
 export const COMPUTED_PATH = "virtual/ngp/";
@@ -247,6 +254,10 @@ export class ComputedImages {
         const name = `p${await digest(code)}`;
         const source = /^[a-z][a-z0-9+.-]*:\/\//i.test(spec.source) ? spec.source : new URL(spec.source, this.base).href;
         const view = { [name]: { ...spec, source: readableSource(source, this.base) } };
+        if (spec.warp !== undefined) {
+          await this.serveWarp(name, view[name]);
+          return name;
+        }
         try {
           await (await this.start()).add(view);
         } catch (e) {
@@ -261,6 +272,35 @@ export class ComputedImages {
       served.catch(() => this.served.delete(code));
     }
     return served;
+  }
+
+  /**
+   * A source warped by landmarks: the source opened as a view of its own,
+   * and the warped view computed here, chunk by chunk, on the source's grid
+   * and levels (float32; the first channel).
+   */
+  private async serveWarp(name: string, spec: PipelineView): Promise<void> {
+    const warp = spec.warp!;
+    const tps = fitTps(warp.fixed as Vec3[], warp.moving as Vec3[]);
+    const engine = await this.start();
+    const from = `${name}s`;
+    await engine.add({ [from]: { source: spec.source, chunk: spec.chunk, ...(spec.select ? { select: spec.select } : {}) } });
+    const info = engine.sources[from];
+    const xyz = info.axes.map((a) => ["x", "y", "z"].indexOf(a.name));
+    if (xyz.some((k) => k === -1)) throw new Error(`a warp needs an image with x, y and z axes, not ${info.axes.map((a) => a.name).join(", ")}`);
+    const mm = info.axes.map((a) => mmPerUnit(a.unit));
+    const typed = (dtype: string, buffer: ArrayBuffer): ArrayLike<number> => {
+      const ctor = { uint8: Uint8Array, int8: Int8Array, uint16: Uint16Array, int16: Int16Array, uint32: Uint32Array, int32: Int32Array, float32: Float32Array, float64: Float64Array }[dtype];
+      if (ctor !== undefined) return new ctor(buffer);
+      // 64-bit integers: as numbers.
+      return Array.from(dtype === "int64" ? new BigInt64Array(buffer) : new BigUint64Array(buffer), Number);
+    };
+    engine.serve(name, { ...info, channels: 1, out: "float32", halo: [0, 0, 0], lead: 0, kind: "image" }, spec.chunk, async (level, index) => {
+      const l = info.levels[level];
+      const grid = { shape: l.shape, voxel: l.voxel, origin: l.origin, xyz, mm };
+      const out = await warpChunk(grid, spec.chunk, index, tps, async (lo, hi) => typed(info.dtype, await engine.read(from, level, lo, hi)));
+      return out.buffer as ArrayBuffer;
+    });
   }
 
   /** Asks once per pipeline whether to run its Python; allowed, it is remembered in this browser. */

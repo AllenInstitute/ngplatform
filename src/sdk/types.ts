@@ -256,6 +256,12 @@ export interface ComputedPipeline {
   chunk: number[];
   /** Non-spatial axes pinned: {c: 1, t: 0}. */
   select?: Record<string, number>;
+  /**
+   * The source warped by landmark pairs instead of ops: a thin-plate spline
+   * from the fixed points (mm, the global space) to the moving ones (mm, the
+   * source's own space); the output keeps the source's grid and levels.
+   */
+  warp?: { kind: "tps"; fixed: number[][]; moving: number[][] };
 }
 
 export interface ViewerApi {

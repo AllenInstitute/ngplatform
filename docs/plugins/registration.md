@@ -25,6 +25,11 @@ transform, or the moved image.
 - **Landmarks:** ++alt+f++ places a fixed point and ++alt+m++ the matching
   moving point. Fit as translation, rigid, similarity or affine, with the
   residual of each pair.
+- **Warp through the pairs:** a new layer of the moving image bent so each
+  fixed point lands exactly on its pair and smoothly between (a thin-plate
+  spline; four pairs or more, not all in one plane). It is computed as you
+  view it, nothing written, and its link carries the pairs. The moving
+  layer stays as it was.
 - **Transform files:** save or import FreeSurfer `.lta` (RAS to RAS with
   both volumes' geometry), ITK / ANTs `.txt`, or a plain 4 × 4 matrix;
   import MNI `.xfm` (FreeSurfer's `talairach.xfm`), ANTs' binary `.mat`

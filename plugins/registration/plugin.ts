@@ -458,6 +458,54 @@ class Registration {
   }
 
   private straightenNote = "";
+  private warpNote = "";
+
+  /**
+   * A new layer of the moving image warped by the pairs (a thin-plate
+   * spline through them: each fixed point lands on its moving partner,
+   * smoothly between), computed as it is viewed by chunkmirage's engine;
+   * the moving layer is left as it is.
+   */
+  private async warp(): Promise<void> {
+    const name = this.layer();
+    const t = name ? this.ctx.viewer.layerTransform(name) : undefined;
+    const source = name ? sourceUrl(this.ctx.viewer.layerSpec(name)) : undefined;
+    const pairs = this.saved.pairs.filter((q) => q.on && q.fixed && q.moving);
+    if (!name || !t || source === undefined) return;
+    if (pairs.length < 4) {
+      this.warpNote = `A warp needs four complete pairs or more, not all in one plane; there ${pairs.length === 1 ? "is" : "are"} ${pairs.length}.`;
+      this.panelUpdate?.();
+      return;
+    }
+    // Pairs in x, y, z order: fixed in the layer's output dimensions', moving in its own.
+    const order = (names: string[]) => ["x", "y", "z"].map((a) => names.indexOf(a));
+    const pick = (v: Vec3, o: number[]) => (o.every((i) => i >= 0) ? o.map((i) => v[i]) : [...v]);
+    const fo = order(t.output.names);
+    const mo = order(t.input.names);
+    try {
+      const url = await this.ctx.workspace.computed.url({
+        source,
+        chunk: [64, 64, 64],
+        warp: { kind: "tps", fixed: pairs.map((q) => pick(q.fixed!, fo)), moving: pairs.map((q) => pick(q.moving!, mo)) },
+      });
+      const warped = `${name} (warped, ${pairs.length} pairs)`;
+      this.ctx.workspace.addDataset({ source: url, name: warped, kind: "image" });
+      const shader = (this.ctx.viewer.layerSpec(name) as { shader?: unknown } | undefined)?.shader;
+      if (typeof shader === "string") {
+        this.ctx.viewer.patchState(
+          (ng) => {
+            const l = ((ng.layers as Json[] | undefined) ?? []).find((x) => x.name === warped);
+            if (l !== undefined) l.shader = shader;
+          },
+          { quiet: true },
+        );
+      }
+      this.warpNote = `Added ${warped}: the moving image warped through the pairs, computed as you view it.`;
+    } catch (e) {
+      this.warpNote = `Could not warp: ${(e as Error).message}`;
+    }
+    this.panelUpdate?.();
+  }
 
   /** Freeview's Move Center to Current Cursor Location: the translation that puts the volume's centre at the views' centre. */
   private centreToCursor(): void {
@@ -1051,6 +1099,16 @@ class Registration {
             el("button", { class: "btn small", type: "button", disabled: !hasLayer || saved.live, onclick: () => this.apply() }, "Apply"),
             el("button", { class: "btn outline small", type: "button", disabled: !saved.pairs.length, onclick: () => this.save({ pairs: [] }) }, "Clear pairs"),
           ),
+          el(
+            "div",
+            { class: "rg-row" },
+            el(
+              "button",
+              { class: "btn outline small", type: "button", disabled: !hasLayer, title: "A new layer: the moving image warped so each fixed point lands on its pair (a thin-plate spline, four pairs or more)", onclick: () => void this.warp() },
+              "Warp through the pairs",
+            ),
+          ),
+          this.warpNote ? el("p", { class: "note rg-tight" }, this.warpNote) : null,
           this.saveControls(name),
         ),
       );

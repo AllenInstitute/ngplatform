@@ -22,6 +22,15 @@ Balbastre (transform files, moving-to-fixed RAS mm).
 | `save_worker.ts` | Reads a layer's store (with the volume view's reader) and writes it moved, off the main thread |
 | `tests/` | `npm test` runs them |
 
+**Warp through the pairs** adds a layer computed by chunkmirage's engine
+(the platform's `workspace.computed`, with a `warp` in place of ops): a
+thin-plate spline from the fixed points to the moving ones
+(`src/virtual/warp.ts`), each output voxel (on the moving image's grid and
+levels, in the fixed space) sampled trilinearly where the spline takes it;
+a chunk reads only the box of the moving level it maps into. The pairs are
+taken in x, y, z order (fixed by the layer's output dimensions' names,
+moving by its own).
+
 Neuroglancer keeps a layer transform's linear part as a ratio of physical
 lengths and its translation in multiples of the output scales; `physical()`
 and `neuroglancer()` in `plugin.ts` convert to and from millimetres.

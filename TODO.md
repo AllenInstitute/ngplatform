@@ -18,6 +18,8 @@ items are done (and say where); the rest are in rough order of work.
 - [ ] Time series gaps (an agent): a layer's local time axis, coarse levels while moving, playing without undo steps, CIFTI time series on surfaces.
 - [ ] Luxar gaps (an agent): selected segments, track groups by id, bloom, meshes.
 - [ ] Waiting on Andrew: a Google OAuth client ID; the Allen CATMAID address; S-21-46's source data and leave to upload a rebuild with even coarse levels; copy-on-write editing of a large segmentation (agree first); the deploy.
+- [x] Registration: Warp through the pairs (a thin-plate spline from landmark pairs, a layer computed by chunkmirage's engine; `src/virtual/warp.ts`).
+- [x] Time series: a CIFTI series shown as the overlay with a button (`viewer.setSurfaceOverlay`), its time point kept in the link. Atlas: a file's hierarchy kept in the link.
 - [ ] Not done, smaller: local formats still served by the platform's own stores, not `Engine.serve`; very large local meshes in cells with simplified levels (deferred: surfaces and most meshes are fine whole).
 
 ## The plan agreed on 2026-11-02, evening
