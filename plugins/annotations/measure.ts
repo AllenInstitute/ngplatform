@@ -17,6 +17,8 @@ export interface AnnotationJson {
   center?: number[];
   radii?: number[];
   points?: number[][];
+  /** Values of the layer's annotation properties, in their order. */
+  props?: (number | string)[];
 }
 
 export type Quantity = "length" | "area" | "volume";
