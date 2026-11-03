@@ -826,6 +826,9 @@ void emitDefault() {
 `);
     }
     builder.addFragmentCode(glsl_COLORMAPS);
+    // So a shader can draw a surface's outline on the sections apart from
+    // its faces in 3-d (`#ifdef ZV_SECTION`).
+    if (sections) builder.addFragmentCode("#define ZV_SECTION 1\n");
     addControlsToBuilder(state, builder);
     addStringShaderSupport(builder);
     builder.addFragmentCode(`
@@ -947,6 +950,40 @@ zvUserMain();
     this.gpuStated?.dispose();
     super.disposed();
   }
+}
+
+/** Where the mouse state keeps the dense layer's picked vertex. */
+const PICKED_VERTEX = Symbol("zarr-vectors.pickedVertex");
+
+/**
+ * The values of the vertex under the mouse, when one of `renderLayers`
+ * drew it: each attribute's (the first component of a wide one) by id.
+ */
+export function pickedVertexValues(
+  mouseState: MouseSelectionState,
+  renderLayers: readonly unknown[],
+): Record<string, number> | undefined {
+  const pick = (mouseState as any)[PICKED_VERTEX] as
+    | { renderLayer: any; chunk: ZarrVectorsDenseChunk; vertex: number }
+    | undefined;
+  if (
+    pick === undefined ||
+    !mouseState.active ||
+    (mouseState as any).pickedRenderLayer !== pick.renderLayer ||
+    !renderLayers.includes(pick.renderLayer)
+  ) {
+    return undefined;
+  }
+  const values = pick.chunk.attributeValues;
+  if (values === undefined) return undefined;
+  const layout: { id: string; components: number }[] =
+    pick.renderLayer.helper.attributes;
+  const out: Record<string, number> = {};
+  layout.forEach((a, i) => {
+    const v = values[i]?.[pick.vertex * a.components];
+    if (v !== undefined) out[a.id] = v;
+  });
+  return out;
 }
 
 const positionSampler = Symbol("zarr-vectors.positions");
@@ -1116,6 +1153,8 @@ function DenseRenderLayer<
   class C extends (Base as AnyConstructor<PerspectiveViewRenderLayer>) {
     shared: ZarrVectorsDenseLayer;
     helper: DenseRenderHelper;
+    /** The chunks last drawn, for the values a control's range comes from. */
+    drawnChunks: ZarrVectorsDenseChunk[] = [];
     declare backend: ChunkRenderLayerFrontend;
 
     constructor(...args: any[]) {
@@ -1421,6 +1460,7 @@ function DenseRenderLayer<
         histogram.add(physicalSpacing, pixelSpacing, 0, 1, true);
       }
       void (attachment as VisibleLayerInfo<LayerView, DenseAttachmentState>);
+      this.drawnChunks = chunks;
       if (chunks.length === 0) return;
       if (targetIsSliceView && (this.shared.drawMask.value & DRAWS_2D) === 0)
         return;
@@ -1616,6 +1656,12 @@ function DenseRenderLayer<
       mouseState.pickedValue =
         BigInt(ids[pickedOffset * 2]) |
         (BigInt(ids[pickedOffset * 2 + 1]) << 32n);
+      // The vertex itself, for its values (`pickedVertexValues`).
+      (mouseState as any)[PICKED_VERTEX] = {
+        renderLayer: this,
+        chunk,
+        vertex: pickedOffset,
+      };
     }
   }
   return C as unknown as AnyConstructor<RenderLayer> & {

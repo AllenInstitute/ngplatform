@@ -33,6 +33,8 @@ export interface Colormap {
   label: string;
   /** The shader for this map, given the contrast directive to keep. */
   shader(invlerp: string, options: ColormapOptions): string;
+  /** `vec3 colormap(float x)` (x from 0 to 1), for maps that are one function; others (heat, binary) have none. */
+  definition?: string;
 }
 
 /** Nodes "r g b, r g b, …" (0..1) evenly spaced over 0..1, as a GLSL function of x. */
@@ -62,6 +64,7 @@ function mapped(id: string, label: string, definition: string): Colormap {
   return {
     id,
     label,
+    definition,
     shader: (invlerp) => `${invlerp}
 // Colour map: ${id}
 ${definition}

@@ -67,6 +67,27 @@ export const DIRECTION_SHADER = `void main() {
 `;
 
 /**
+ * A surface with curvature, as Freeview first shows one: curvature in two
+ * greys in 3-d (sulci, positive curvature, dark), the outline on the
+ * sections in the layer's colour.  The text is what the platform's Surface
+ * controls write for this choice (src/engine/surface_shader.ts), so they
+ * show it as theirs.
+ */
+export function curvatureShader(attribute: string): string {
+  return `// Surface: {"curvature":"${attribute}"}
+void main() {
+#ifdef ZV_SECTION
+  // The outline on the 2-D views in the layer's colour, as Freeview draws it.
+  emitDefault();
+  return;
+#endif
+  vec3 colour = prop_${attribute}() > 0.0 ? vec3(0.38) : vec3(0.62);
+  emitRGB(colour);
+}
+`;
+}
+
+/**
  * The kind a store's arrays hold, from its declared `geometry_types`.
  *
  * A failed `zarr_vectors.composite.add_geometry()` call records a second type

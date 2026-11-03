@@ -84,7 +84,7 @@ layers, lets you pick which one.
 | Tab | What it holds |
 |---|---|
 | **Source** | Where the data comes from, its parts (subsources), and its **transform**: the matrix that places it in the scene, editable. |
-| **Render** | How it is drawn: resolution, opacity, blending; for images the **Colour map** and the shader (contrast, with a histogram); for segmentations the **Lookup table**. |
+| **Render** | How it is drawn: resolution, opacity, blending; for images the **Colour map** and the shader (contrast, with a histogram); for segmentations the **Lookup table**; for surfaces the **Surface** controls. |
 | **Segments** | For segmentations: search segments by id, label or property, show and hide them, colours. |
 | **Annotations** | For annotation layers: the tools that draw points, lines, boxes, ellipsoids and polylines, and the list of annotations. |
 | **Schema** | For annotation layers: the properties each annotation carries. |
@@ -140,6 +140,50 @@ segmentation's colours and its shown segments by itself.
 Limits: a boundary lying exactly on the face of a data chunk is not drawn
 (the outline has gaps there), and with more than 4,096 coloured or shown
 segments the outlines use the hashed colours or show every segment.
+
+### Surfaces
+
+A cortical surface is drawn as Freeview draws it: filled and lit in the 3-D
+view, as its outline where it crosses each 2-D view (white yellow, pial red),
+and coloured by the values on its vertices. A FreeSurfer surface opened from
+your computer brings the files beside it: the morphometry in `surf/`
+(`lh.curv`, `lh.sulc`, `lh.thickness`, `lh.area`, `lh.volume` and the rest of
+FreeSurfer's curvature-format files), overlays as `.mgh`/`.mgz` with one value
+per vertex, the parcellations in `../label/` (`lh.aparc.annot`,
+`lh.aparc.a2009s.annot`, `lh.BA_exvivo.annot`), and the `.label` files there,
+put together as one parcellation named `labels` (a vertex in several labels
+takes the smallest, so V1 shows inside cortex). A GIFTI surface brings the
+same hemisphere's `.shape.gii`, `.func.gii` and `.label.gii` files beside it.
+Only files with the surface's vertex count are used. A Zarr Vectors surface
+store written by zarr-vectors-tools (`zvtools convert` of a FreeSurfer
+subject or GIFTI files) works the same, its parcellations' names and colours
+coming from the store.
+
+A surface with curvature opens showing it in two greys, Freeview's binary
+curvature (sulci dark, gyri light). Its layer's **Render → Surface** section
+holds Freeview's surface controls:
+
+| Control | What it does |
+|---|---|
+| **Surface** | Which of the hemisphere's surfaces is drawn: white, pial, inflated, sphere, orig, smoothwm (those in the folder). They share their vertices, so the values stay. |
+| **Colour** | Under the overlay: **Binary curvature** (from `curv`, else `sulc`) or the layer's own colour. |
+| **Overlay** | A value drawn in colour where it passes the threshold: thickness, sulcal depth, an overlay. Maps the store holds but does not show at first are listed with "(load)". |
+| **Colour map** | **Heat** as Freeview's (red to yellow from the threshold to the top, blue to cyan for negative values), or jet, viridis and the other maps, from the threshold to the top. |
+| **Parcellation** | An `.annot`, the labels or a GIFTI label file in its own colours, over the rest. |
+| **2-D outlines** | Coloured by the values too, rather than in the layer's colour. |
+| **Under the mouse** | The values of the vertex under the mouse, and its parcel's name. |
+
+The overlay's **threshold** and **top**, and the parcellation's opacity, are
+sliders among the shader's controls below: dragging them is immediate.
+The controls write the layer's shader, so the choices are saved with the
+workspace and travel in a link; editing the shader by hand keeps working,
+as `prop_<name>()` gives a value on the vertex and `lut_<name>(code)` a
+parcellation's colour.
+
+Limits: Freeview's overlay settings beyond threshold and top (mid point,
+truncate, inverse, custom colour scales), label outlines, and several
+overlays at once are not there. In a store split into many chunks, the
+faces that cross from one chunk to the next are not drawn in the overview.
 
 ## 5. Bottom dock
 

@@ -10,7 +10,13 @@ there yet.
 | In Freeview | In ngplatform |
 |---|---|
 | File → Load Volume | **Open → Open from device**, **Add → Local**, or drop files on the window (NIfTI, `.mgz`/`.mgh`, TIFF, `.npy`); a FreeSurfer subject folder opens as its T1, aparc+aseg and white and pial surfaces |
-| File → Load Surface | **Add → Local**: FreeSurfer surfaces, GIFTI, OBJ, STL, PLY |
+| File → Load Surface | **Add → Local**: FreeSurfer surfaces, GIFTI, OBJ, STL, PLY; a surface brings the curvature, thickness, overlays (`.mgh`/`.mgz`), `.annot` and `.label` files beside it |
+| Surface panel: main surface (white, pial, inflated, sphere) | Layer → **Render → Surface → Surface** |
+| Curvature (binary colour) | on by default for a surface with `?h.curv`; **Render → Surface → Colour** |
+| Overlay: Configure (threshold, max, heat, colour wheel…) | **Render → Surface → Overlay** and **Colour map** (heat as Freeview's, jet, viridis and more); the threshold and top are sliders in the shader's controls |
+| Annotation (`aparc`, `aparc.a2009s`), label | **Render → Surface → Parcellation**, in the annotation's colours; the `.label` files together as `labels` |
+| Surface outlines on the slices (edge colour) | drawn by default, white yellow, pial red; **2-D outlines** can colour them by the overlay |
+| Vertex info (curvature, overlay, annotation name) | **Render → Surface → Under the mouse** |
 | File → Load Tract | **Add → Local**: `.trk`, `.tck`, `.trx` |
 | Layer panel (left) | **Datasets** tab, and the **Layer** tab on the right for the selected one |
 | Colour map, window/level | Layer → **Render → Colour map** (grayscale, heat, jet, GE colour, NIH, PET, binary colour and more) and the contrast slider |
@@ -39,8 +45,11 @@ there yet.
 
 These are on the [work plan](https://github.com/AllenInstitute/ngplatform/blob/main/TODO.md):
 
-- Values on surfaces (curvature, thickness, overlays, `.annot`, `.label`),
-  and surface outlines drawn on the slices (surfaces show in 3-D only for now).
+- Surfaces: an overlay's mid point, truncate and inverse, custom colour
+  scales and the colour wheel; several overlays at once; label outlines;
+  the inflated surfaces moved apart as Freeview places them; a surface
+  switch for Zarr Vectors stores that keep other surfaces as `coords_*`
+  attributes.
 - Voxel editing: drawing and erasing labels, fills, recon edits.
 - Measuring: lengths, areas, region and label statistics, line profiles.
 - Diffusion displays: direction-colour maps, tensor and ODF glyphs.
