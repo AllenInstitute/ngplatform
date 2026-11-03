@@ -29,6 +29,8 @@ zoom in and the finer level's glyphs load in and take their place.
   Six can also be order-2 harmonics: choose it here.
 - **SH basis**: DIPY writes `descoteaux07` (its legacy form unless told
   otherwise), MRtrix3 `tournier07`. A wrong basis gives scrambled glyphs.
+  **SH glyph**: the ODF's shape, or lines along its peaks (up to three, each
+  over half the largest).
 - **Tensor order**: FSL (Dxx Dxy Dxz Dyy Dyz Dzz), DIPY (Dxx Dxy Dyy Dxz Dyz
   Dzz) or MRtrix (Dxx Dyy Dzz Dxy Dxz Dyz). **Tensor glyph**: an ellipsoid,
   or a line along the principal direction.
@@ -37,9 +39,11 @@ zoom in and the finer level's glyphs load in and take their place.
   way.
 - **Normalise**: each glyph scaled to its own range (as FURY), or to its
   maximum, or all to the largest in the view so sizes compare.
+- **Hide below anisotropy**: leave out glyphs whose GFA (spherical
+  harmonics) or FA (tensors) is lower, outside the white matter say.
 - **Size** (1 fills a voxel), **Spacing** (glyphs at least this many pixels
   apart: the level is the finest that keeps them so), **Most glyphs per
-  view** (beyond it, zoom in).
+  view** (beyond it, a coarser level; beyond the coarsest, zoom in).
 - **2-D views**, **3-D view**: where glyphs are drawn. In the 3-D view they
   sit on the 2-D views' sections; with only a 3-D view, on three planes
   through the position.
@@ -49,7 +53,13 @@ zoom in and the finer level's glyphs load in and take their place.
   has a brightness slider.
 
 Glyphs are drawn into screenshots taken with Neuroglancer's screenshot
-button.
+button, and follow the layer when it is moved (Registration).
+
+A 4-D NIfTI opened from this computer works too (its coarser levels are
+means, which for spherical harmonics are mean ODFs); its fourth axis is
+made the layer's own (`t'`) so the views do not step through components.
+Direction colour needs the components stored together, as OME-Zarr with
+whole chunks along `c`; the plugin's README says how to write one.
 
 ## Notes from users
 

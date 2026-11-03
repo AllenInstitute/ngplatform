@@ -123,6 +123,21 @@ glyphs stay aligned on oblique or flipped images. "Flip x/y/z" negates a
 data axis, as mrview and DSI Studio offer, for b-vectors with the wrong
 sign.
 
+A layer moved from where its store puts it (Registration, or its transform
+edited) moves its glyphs too: the change from the layer's default transform
+to its current one (`ViewerApi.layerTransform`) is applied after placing
+each glyph from the store, in the 2-D views and the 3-D view.
+
+### ODF shapes and peaks
+
+An ODF is drawn as its shape (the default) or as lines along its peaks:
+the sphere's vertices (642, about 8° apart) at least as high as all their
+neighbours, positive, at least half the highest, one of each opposite pair,
+up to three, each as long as its value over the voxel's highest (as MRtrix's
+`sh2peaks` with its defaults, roughly). "Hide below anisotropy" leaves out
+voxels whose GFA (SH) or FA (tensors) is lower, for a quieter picture
+outside the white matter.
+
 ### Tensors
 
 Six components in one of three orders: FSL `dtifit` (Dxx Dxy Dxz Dyy Dyz
@@ -139,10 +154,15 @@ the finest whose voxels are at least **Spacing** pixels apart (the coarsest
 when none is); the voxels read are those of a box around what the view
 shows (with a quarter's margin, so panning does not read again at once)
 that lie in the section's slab (the plane's voxels: one per line across
-it). A level that would give more than **Most glyphs per view** is not
-drawn ("zoom in"). A read starts once the view has settled for 100 ms; the
+it). Where that level would give more than **Most glyphs per view**, the
+next coarser that does not is used, and none when even the coarsest would
+("zoom in"); nor are glyphs drawn under 4 pixels apart. A read starts once the view has settled for 100 ms; the
 glyphs shown stay until the new ones arrive, so zooming in shows the coarse
 glyphs until the finer load in below. Chunks are cached in the worker.
+
+Each 2-D view's glyphs are redrawn, on the plugin's canvas, only when the
+view moves or new glyphs arrive (Neuroglancer draws many frames while
+chunks load), and into Neuroglancer's screenshots (`ui.screenshotOverlay`).
 
 The plugin never coarsens: a store's levels are taken as they are. For SH
 the mean of a box's coefficients is the mean ODF of the box (SH are linear),
@@ -169,6 +189,13 @@ vector; tensors: the principal eigenvector by power iteration, weighted by
 FA; SH: the principal eigenvector of the order-2 terms' quadratic form,
 weighted by GFA).
 
+Neuroglancer shows a channel dimension only when each chunk holds all of
+it, so direction colour needs stores chunked whole along `c` (as
+`make_dipy_example.py` and the synthetic stores are). A 4-D NIfTI read in
+place stores one component per chunk, so it gets glyphs but not direction
+colour; its fourth axis, `t`, is made a local dimension of the layer (`t'`)
+when the plugin opens it, so the views do not step through components.
+
 ## A real example
 
 `tools/make_dipy_example.py` fits DIPY's Stanford HARDI sample (2 mm, 150
@@ -180,7 +207,8 @@ python3 -m venv dipy-env && dipy-env/bin/pip install dipy zarr
 dipy-env/bin/python plugins/orientations/tools/make_dipy_example.py OUT [--slab]
 ```
 
-(about 300 MB for the whole brain; `--slab` fits 24 axial slices). Serve
+(about 40 MB for the whole brain, in a minute or so; `--slab` fits 24
+axial slices). Serve
 `OUT` over http with CORS and add `zarr3://http://…/stanford_hardi_csd.ome.zarr/`.
 
 ## Tests
@@ -189,9 +217,14 @@ dipy-env/bin/python plugins/orientations/tools/make_dipy_example.py OUT [--slab]
 fits, quadratic forms and GFA; tensor orders, eigenvectors, FA; synthetic
 multiscale stores (crossing fibres as SH, a tensor field, a vector field;
 `tests/synthetic.ts`) read through the reader by slab, and their glyphs; the
-level chosen by zoom, a section's geometry. With
+level chosen by zoom and the cap, a section's geometry, a moved layer, ODF
+peaks. With
 `ORIENTATIONS_WRITE=<folder>` the synthetic stores are also written to disk,
 to serve and look at.
+
+The plugin also offers a service, `orientations.status`, with the lines its
+panel shows and counts of reads and draws, which is how the headless browser
+checks read what each view shows.
 
 ## Owner
 
