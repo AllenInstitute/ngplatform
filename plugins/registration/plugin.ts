@@ -609,16 +609,20 @@ class Registration {
       name: r.name,
       label,
       maxBytes: MAX_BYTES,
+      // A folder to write into: the full resolution is then saved in blocks if it is larger than fits.
+      ...(folder ? { folder, folderName: base + suffix } : {}),
     };
     try {
       this.note("Reading…");
-      const saved = await this.worker().request<{ files: [string, Uint8Array][]; level: number; voxelSize: number; size: number[] }>(
+      const saved = await this.worker().request<{ files: [string, Uint8Array][]; level: number; voxelSize: number; size: number[]; written?: boolean }>(
         { type: "save", ...request },
         (what, done, total) => this.note(total > 1 ? `${what}: ${Math.round((100 * done) / total)}%` : `${what}…`),
         controller.signal,
       );
       let where: string;
-      if (format === "zarr") {
+      if (saved.written) {
+        where = `${folder!.name}/${base}${suffix}`;
+      } else if (format === "zarr") {
         const files = new Map(saved.files);
         if (folder) {
           const root = await folder.getDirectoryHandle(base + suffix, { create: true });

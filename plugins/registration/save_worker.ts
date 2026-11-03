@@ -7,14 +7,15 @@
  *      { type: "save", id, store, grid?, move, header, method, format, name, label, maxBytes }
  *      { type: "cancel", id }
  * Out: { type: "geometry", id, size, voxelToRas, voxelSize, levels }
- *      { type: "saved", id, files: [path, bytes][], level, voxelSize, size }
+ *      { type: "saved", id, files: [path, bytes][], level, voxelSize, size, written }
  *      { type: "progress", id, what, done, total }
  *      { type: "error", id, message }
  */
 import { setAsyncComputationWorkerFactory } from "neuroglancer/unstable/worker_factories.js";
 import { asyncComputationWorker } from "@ngplatform/sdk/workers";
 import { VolumeReader } from "../volume-view/volume_reader.js";
-import { multiply4 } from "./fit.js";
+import { saveInBlocks } from "./blocks.js";
+import { identity4, multiply4 } from "./fit.js";
 import { ARRAYS, displayWindow, ENLARGE, enlargedGrid, gzip, type Method, mghFile, niftiFile, omeZarrFiles, resample, typed, type Volume, type VoxelType } from "./volume_io.js";
 
 // zstd and the other codecs decode in the platform's async-computation worker.
@@ -39,17 +40,78 @@ export interface SaveRequest {
   label: boolean;
   /** The finest level of at most this many bytes is read (and, resampled, written as many again). */
   maxBytes: number;
+  /**
+   * OME-Zarr: the folder to write it into (as `name`), here, as it is
+   * made; then the full resolution is saved in blocks however large it is.
+   */
+  folder?: FileSystemDirectoryHandle;
+  folderName?: string;
 }
 
 const controllers = new Map<number, AbortController>();
 
 
 
+const levelBytes = (l: { size: number[]; type?: string }) => l.size[0] * l.size[1] * l.size[2] * (ARRAYS[(l.type ?? "uint8") as VoxelType]?.BYTES_PER_ELEMENT ?? 8);
+
 /** The finest level (they are finest first) of at most `max` bytes, or the coarsest. */
 function levelFor(levels: { size: number[]; type?: string }[], max: number): number {
-  const bytes = (l: { type?: string }) => ARRAYS[(l.type ?? "uint8") as VoxelType]?.BYTES_PER_ELEMENT ?? 8;
-  const i = levels.findIndex((l) => l.size[0] * l.size[1] * l.size[2] * bytes(l) <= max);
+  const i = levels.findIndex((l) => levelBytes(l) <= max);
   return i === -1 ? levels.length - 1 : i;
+}
+
+/** Writes files into `root`, making the folders on their paths. */
+function folderWriter(root: FileSystemDirectoryHandle): (files: [string, Uint8Array][]) => Promise<void> {
+  const dirs = new Map<string, Promise<FileSystemDirectoryHandle>>([["", Promise.resolve(root)]]);
+  const dir = (path: string): Promise<FileSystemDirectoryHandle> => {
+    let d = dirs.get(path);
+    if (d === undefined) {
+      const at = path.lastIndexOf("/");
+      d = dir(path.slice(0, Math.max(0, at))).then((parent) => parent.getDirectoryHandle(path.slice(at + 1), { create: true }));
+      dirs.set(path, d);
+    }
+    return d;
+  };
+  return async (files) => {
+    await Promise.all(
+      files.map(async ([path, bytes]) => {
+        const at = path.lastIndexOf("/");
+        const writable = await (await (await dir(path.slice(0, Math.max(0, at)))).getFileHandle(path.slice(at + 1), { create: true })).createWritable();
+        await writable.write(bytes as unknown as BufferSource);
+        await writable.close();
+      }),
+    );
+  };
+}
+
+/**
+ * The full resolution, however large, into the folder, block by block (see
+ * blocks.ts): for OME-Zarr when the full resolution is more than fits.
+ */
+async function saveLarge(msg: SaveRequest & { id: number }, reader: VolumeReader, levels: Awaited<ReturnType<VolumeReader["open"]>>["levels"], signal: AbortSignal): Promise<void> {
+  const level = levels[0];
+  const type = (level.type ?? "uint8") as VoxelType;
+  if (ARRAYS[type] === undefined) throw new Error(`${type} images cannot be saved in blocks`);
+  const own = { size: level.size, voxelToRas: level.voxelToRas };
+  const move = Float64Array.from(msg.move);
+  let grid = own;
+  if (!msg.header && msg.grid === ENLARGE) grid = enlargedGrid(own, move);
+  else if (!msg.header && msg.grid !== undefined) {
+    const g = (await new VolumeReader().open([msg.grid], undefined, signal)).levels[0];
+    grid = { size: g.size, voxelToRas: g.voxelToRas };
+  }
+  const root = await msg.folder!.getDirectoryHandle(msg.folderName!, { create: true });
+  await saveInBlocks(
+    { size: level.size, voxelToRas: level.voxelToRas, type, read: async (lo, hi) => (await reader.rawRegion(0, { lo, hi }, signal)).data },
+    grid,
+    // Voxels kept: the image onto its own grid unmoved, the new placement written.
+    msg.header ? identity4() : move,
+    { method: msg.method, label: msg.label, name: msg.name, description: `${msg.name}, moved by ngplatform registration`, placement: msg.header ? multiply4(move, level.voxelToRas) : undefined },
+    folderWriter(root),
+    (done, total) => postMessage({ type: "progress", id: msg.id, what: "Saving in blocks", done, total }),
+    signal,
+  );
+  postMessage({ type: "saved", id: msg.id, files: [], level: 0, voxelSize: level.voxelSize, size: grid.size, written: true });
 }
 
 async function save(msg: SaveRequest & { id: number }, signal: AbortSignal): Promise<void> {
@@ -57,6 +119,7 @@ async function save(msg: SaveRequest & { id: number }, signal: AbortSignal): Pro
   const reader = new VolumeReader();
   const { levels } = await reader.open([msg.store], undefined, signal);
   const index = levelFor(levels, msg.maxBytes);
+  if (levelBytes(levels[0]) > msg.maxBytes && msg.format === "zarr" && msg.folder !== undefined) return saveLarge(msg, reader, levels, signal);
   const level = levels[index];
   const raw = await reader.rawVolume(index, signal, progress("Reading"));
   const source: Volume = { data: typed(raw.type as VoxelType, raw.data), size: raw.size, type: raw.type as VoxelType, voxelToRas: level.voxelToRas };

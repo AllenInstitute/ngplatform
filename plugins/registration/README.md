@@ -18,6 +18,7 @@ Balbastre (transform files, moving-to-fixed RAS mm).
 | `fit.ts` | Translation, rigid and similarity (Horn's quaternion method), affine (least squares); residuals |
 | `formats.ts` | Plain 4 × 4, ITK / ANTs `.txt`, FreeSurfer `.lta` (RAS to RAS with both volumes' geometry; VOX to VOX read); read only: MNI `.xfm`, ANTs binary `.mat`, `register.dat` and FSL `.mat` (with both volumes' geometry) |
 | `volume_io.ts` | Resampling (nearest, trilinear, cubic B-spline with its prefilter) and the enlarged grid; the writers (NIfTI, MGH, OME-Zarr, zip) are the platform's (`src/virtual/out/volume.ts`) |
+| `blocks.ts` | Saving OME-Zarr at full resolution however large: 256³ blocks, each resampled from the source box it needs, levels 0–2 written per block, the coarser ones from level 3 in memory |
 | `save_worker.ts` | Reads a layer's store (with the volume view's reader) and writes it moved, off the main thread |
 | `tests/` | `npm test` runs them |
 
