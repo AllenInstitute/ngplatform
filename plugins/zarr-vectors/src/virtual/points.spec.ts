@@ -209,4 +209,34 @@ describe("virtual point store", () => {
     expect(total).toBe(n);
     expect(seen.every((c) => c === 1)).toBe(true);
   });
+
+  it("gives a large point cloud nested coarser levels: one point in 8, 64 … while each keeps about 20,000", async () => {
+    const n = 1_500_000;
+    const positions = new Float64Array(3 * n);
+    for (let i = 0; i < positions.length; ++i) positions[i] = ((i * 7919) % 1000) - 300;
+    const values = Float32Array.from({ length: n }, (_, i) => i);
+    const store = pointStore({ positions, columns: [{ name: "row", values }] }, "cloud");
+    const a = access(store);
+    const zv = await openZarrVectorsStore(a as never, undefined);
+    // 1.5 M, 187,500, 23,438: one more (2,930) would hold too few.
+    expect(zv.levels.length).toBe(3);
+    expect(zv.levels.map((l) => l.vertexCount)).toEqual([n, Math.ceil(n / 8), Math.ceil(n / 64)]);
+    const level = zv.levels[2];
+    expect(level.chunkShape[0]).toBe(zv.levels[0].chunkShape[0] * 4);
+    const cells = level.chunkShape.map((c, k) => Math.floor(zv.upperBounds[k] / c) + 1);
+    const pipeline = new LevelPipeline(a as never, zv.description, level);
+    let total = 0;
+    for (let x = 0; x < cells[0]; ++x) {
+      for (let y = 0; y < cells[1]; ++y) {
+        for (let z = 0; z < cells[2]; ++z) {
+          const data = await pipeline.download([x, y, z], signal, { bridges: false });
+          if (data === undefined) continue;
+          // Every point kept is one in 64 of the table's, with its own values.
+          for (let v = 0; v < data.numOwnVertices; ++v) expect(data.attributes[0][v] % 64).toBe(0);
+          total += data.numOwnVertices;
+        }
+      }
+    }
+    expect(total).toBe(Math.ceil(n / 64));
+  }, 60_000);
 });

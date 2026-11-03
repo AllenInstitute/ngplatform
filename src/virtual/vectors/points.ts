@@ -110,6 +110,13 @@ export class CellStore {
   /** Each cell's rows, in order, by its key ("i.j.k"); one cell unless the spec asks for more. */
   private readonly cells = new Map<string, Uint32Array>();
   private readonly shape: number[];
+  /**
+   * Coarser levels of a point cloud that is not objects: one point in 8, 64,
+   * 512 … of level 0's (each a subset of the one before), in cells twice,
+   * four times … as large, while a level keeps about 20,000 points or more,
+   * so a large cloud shows at once when zoomed out.
+   */
+  private readonly coarse: { chunk: number; cells: Map<string, Uint32Array>; shape: number[]; count: number }[] = [];
   /** Objects (0 when the rows are not objects). */
   readonly count: number;
 
@@ -163,6 +170,24 @@ export class CellStore {
     }
     this.shape = [0, 1, 2].map((k) => Math.floor(this.hi[k] / this.chunk) + 1);
     this.count = spec.objectRows?.length ?? 0;
+    if (spec.cellsAcross !== undefined && this.count === 0 && spec.links === undefined) {
+      for (let k = 1, every = 8; k <= 5 && n / every >= 20_000; ++k, every *= 8) {
+        const chunk = this.chunk * 2 ** k;
+        const cells = new Map<string, number[]>();
+        for (let v = 0; v < n; v += every) {
+          const key = [0, 1, 2].map((d) => Math.floor(this.vertices[3 * v + d] / chunk)).join(".");
+          let rows = cells.get(key);
+          if (rows === undefined) cells.set(key, (rows = []));
+          rows.push(v);
+        }
+        this.coarse.push({
+          chunk,
+          cells: new Map([...cells].sort(([a], [b]) => (a < b ? -1 : 1)).map(([key, rows]) => [key, Uint32Array.from(rows)])),
+          shape: [0, 1, 2].map((d) => Math.floor(this.hi[d] / chunk) + 1),
+          count: Math.ceil(n / every),
+        });
+      }
+    }
     const paths = ["0/vertices", "0/vertex_fragments", ...spec.vertexAttributes.map((a) => `0/vertex_attributes/${a.name}`)];
     if (spec.kind === "skeleton") paths.push("0/links/0/0.0.0");
     if (this.count > 0) {
@@ -170,6 +195,7 @@ export class CellStore {
       paths.push(...spec.objectColumns.map((c) => `0/object_attributes/${c.name}`));
       paths.push(...(spec.textColumns ?? []).map((c) => `0/object_attributes/${c.name}`));
     }
+    this.coarse.forEach((_, i) => paths.push(...["vertices", "vertex_fragments", ...spec.vertexAttributes.map((a) => `vertex_attributes/${a.name}`)].map((a) => `${i + 1}/${a}`)));
     for (const path of paths) {
       const parts = path.split("/");
       for (let i = 1; i <= parts.length; ++i) this.directories.add(parts.slice(0, i).join("/"));
@@ -198,6 +224,8 @@ export class CellStore {
     const cellArray = (attributes: Record<string, unknown>) => json(perCell(this.shape, [...this.cells.keys()], attributes));
     const cell = /^0\/(vertices|vertex_fragments|vertex_attributes\/[^/]+|links\/0\/0\.0\.0|fragment_attributes\/object_id)\/c\/(\d+)\/(\d+)\/(\d+)$/.exec(key);
     if (cell !== null) return this.cellChunk(cell[1], this.cells.get(`${cell[2]}.${cell[3]}.${cell[4]}`));
+    const coarse = /^([1-9])\//.exec(key);
+    if (coarse !== null) return this.coarseKey(Number(coarse[1]), key.slice(coarse[0].length));
     switch (key) {
       case "zarr.json":
         return json(
@@ -220,7 +248,10 @@ export class CellStore {
                 version: "0.4",
                 name: this.name,
                 axes: ["x", "y", "z"].map((n) => ({ name: n, type: "space", ...(spec.unit ? { unit: spec.unit } : {}) })),
-                datasets: [{ path: "0", coordinateTransformations: [{ type: "scale", scale: [1, 1, 1] }, { type: "translation", translation: [c / 2, c / 2, c / 2] }] }],
+                datasets: [c, ...this.coarse.map((l) => l.chunk)].map((size, i) => ({
+                  path: String(i),
+                  coordinateTransformations: [{ type: "scale", scale: [1, 1, 1] }, { type: "translation", translation: [size / 2, size / 2, size / 2] }],
+                })),
                 metadata: { format: "zarr_vectors" },
               },
             ],
@@ -327,6 +358,36 @@ export class CellStore {
   }
 
   /** A cell's chunk of a per-cell array: its rows' vertices or values, its fragments, its links. */
+  /** A key of coarse level `k` (1 and up): its own group, cell arrays and cells. */
+  private coarseKey(k: number, key: string): Uint8Array | undefined {
+    const level = this.coarse[k - 1];
+    if (level === undefined) return undefined;
+    const cellArray = (attributes: Record<string, unknown>) => json(perCell(level.shape, [...level.cells.keys()], attributes));
+    if (key === "zarr.json") {
+      return json(
+        group({
+          zarr_vectors_level: {
+            level: k,
+            vertex_count: level.count,
+            chunk_shape: [level.chunk, level.chunk, level.chunk],
+            arrays_present: ["vertices", "vertex_attributes"],
+            object_sparsity: 1 / 8 ** k,
+            coarsening_method: "subsample",
+            parent_level: k - 1,
+            fragments_tile: true,
+          },
+        }),
+      );
+    }
+    if (key === "vertices/zarr.json") return cellArray({ zv_array: "vertices", dtype: "float32", encoding: "raw" });
+    if (key === "vertex_fragments/zarr.json") return cellArray({ zv_array: "vertex_fragments", encoding: "fragment_index_v1" });
+    if (key === "vertex_attributes/zarr.json") return json(group());
+    const attribute = /^vertex_attributes\/([^/]+)\/zarr\.json$/.exec(key);
+    if (attribute !== null) return this.spec.vertexAttributes.some((a) => a.name === attribute[1]) ? cellArray({ zv_array: "attribute", name: attribute[1], dtype: "float32", row_shape: [] }) : undefined;
+    const cell = /^(vertices|vertex_fragments|vertex_attributes\/[^/]+)\/c\/(\d+)\/(\d+)\/(\d+)$/.exec(key);
+    return cell === null ? undefined : this.cellChunk(cell[1], level.cells.get(`${cell[2]}.${cell[3]}.${cell[4]}`));
+  }
+
   private cellChunk(array: string, rows: Uint32Array | undefined): Uint8Array | undefined {
     if (rows === undefined) return undefined;
     const { spec } = this;
