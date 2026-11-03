@@ -15,6 +15,12 @@ import { parseLas, parsePointParquet, parsePointTable, parseSwc, parseSwcCollect
 import { surfaceCompanions } from "./surfaces.js";
 import { pointStore, skeletonStore } from "./points.js";
 import { openTractogram } from "./tractograms.js";
+import { setSpillSettings, type SpillSettings } from "./spill.js";
+
+// The page's limits (Settings → View settings): memory for decoded cells.
+self.addEventListener("message", (event: MessageEvent<{ type?: string; settings?: SpillSettings }>) => {
+  if (event.data?.type === "settings" && event.data.settings !== undefined) setSpillSettings(event.data.settings);
+});
 
 serveVirtualStores(async (file, related) => {
   if (/\.(obj|stl|ply|gii)$/i.test(file.name) || FREESURFER_SURFACE.test(file.name)) {

@@ -6,7 +6,7 @@
  * place (stored entries a slice at a time; deflated ones decompressed once),
  * handed on in the same batches as a .trk.
  */
-import type { TrkBatch } from "./trk.js";
+import { gather, readRanges, type TrkBatch } from "./trk.js";
 
 interface ZipEntry {
   name: string;
@@ -180,34 +180,141 @@ export async function openTrxInfo(file: Blob): Promise<TrxInfo> {
   };
 }
 
-/** Reads every streamline, `perBatch` streamlines at a time; resolves to how many there were. */
+/** Where an entry's data starts in the zip. */
+async function dataOffset(file: Blob, entry: ZipEntry): Promise<number> {
+  const local = new DataView((await bytesAt(file, entry.localOffset, entry.localOffset + 30)).buffer);
+  if (u32(local, 0) !== 0x04034b50) throw new Error(`${entry.name}: a broken zip entry`);
+  return entry.localOffset + 30 + u16(local, 26) + u16(local, 28);
+}
+
+/**
+ * Reads an entry from its start, `n` bytes at a time: a stored entry
+ * straight from the file, a deflated one through a decompressing stream,
+ * so neither is held whole.
+ */
+async function entryStream(file: Blob, entry: ZipEntry): Promise<(n: number) => Promise<Uint8Array>> {
+  const data = await dataOffset(file, entry);
+  if (entry.method === 0) {
+    let at = 0;
+    return async (n) => {
+      const out = await bytesAt(file, data + at, data + Math.min(entry.size, at + n));
+      at += out.byteLength;
+      return out;
+    };
+  }
+  if (entry.method !== 8) throw new Error(`${entry.name}: zip compression ${entry.method} is not read (stored and deflate only)`);
+  const reader = file.slice(data, data + entry.compressedSize).stream().pipeThrough(new DecompressionStream("deflate-raw")).getReader();
+  let parts: Uint8Array[] = [];
+  let held = 0;
+  let ended = false;
+  return async (n) => {
+    while (held < n && !ended) {
+      const { done, value } = await reader.read();
+      if (done) ended = true;
+      else {
+        parts.push(value);
+        held += value.byteLength;
+      }
+    }
+    const take = Math.min(n, held);
+    const out = new Uint8Array(take);
+    let at = 0;
+    const rest: Uint8Array[] = [];
+    for (const part of parts) {
+      if (at >= take) rest.push(part);
+      else if (at + part.byteLength <= take) {
+        out.set(part, at);
+        at += part.byteLength;
+      } else {
+        out.set(part.subarray(0, take - at), at);
+        rest.push(part.subarray(take - at));
+        at = take;
+      }
+    }
+    parts = rest;
+    held -= take;
+    return out;
+  };
+}
+
+/** Reads every streamline, `perBatch` streamlines at a time, each array streamed; resolves to how many there were. */
 export async function readTrx(file: Blob, info: TrxInfo, onBatch: (batch: TrkBatch) => void | Promise<void>, options: { perBatch?: number } = {}): Promise<number> {
   const perBatch = options.perBatch ?? 100_000;
-  const offsetsReader = await entryReader(file, info.offsets.entry);
-  let offsets = decode(await offsetsReader(0, info.offsets.entry.size), info.offsets.dtype);
+  const offsetSize = SIZES[info.offsets.dtype];
   const positionSize = 3 * SIZES[info.positions.dtype];
   const vertices = info.vertices || info.positions.entry.size / positionSize;
+  const entryCount = info.offsets.entry.size / offsetSize;
   // Offsets are each streamline's start; some writers add the end too.
-  const count = info.count || offsets.length;
-  if (offsets.length === count) offsets = Float64Array.from([...offsets, vertices]);
-  const positions = await entryReader(file, info.positions.entry);
-  const scalars = await Promise.all(info.scalars.map(async (s) => ({ ...s, read: await entryReader(file, s.entry), size: SIZES[s.dtype] })));
-  const properties = await Promise.all(info.properties.map(async (p) => decode(await (await entryReader(file, p.entry))(0, p.entry.size), p.dtype)));
+  const count = info.count || entryCount;
+  const offsets = await entryStream(file, info.offsets.entry);
+  const positions = await entryStream(file, info.positions.entry);
+  const scalars = await Promise.all(info.scalars.map(async (s) => ({ ...s, read: await entryStream(file, s.entry), size: SIZES[s.dtype] })));
+  const properties = await Promise.all(info.properties.map(async (p) => ({ ...p, read: await entryStream(file, p.entry), size: SIZES[p.dtype] })));
+  let next = decode(await offsets(offsetSize), info.offsets.dtype)[0] ?? 0;
   for (let first = 0; first < count; first += perBatch) {
     const last = Math.min(count, first + perBatch);
-    const v0 = offsets[first];
-    const v1 = offsets[last];
-    const points = Float32Array.from(decode(await positions(v0 * positionSize, v1 * positionSize), info.positions.dtype));
+    // This batch's starts, and the next one's (the end, past the last streamline).
+    const more = decode(await offsets((last - first) * offsetSize), info.offsets.dtype);
+    const starts = new Float64Array(last - first + 1);
+    starts[0] = next;
+    for (let s = 1; s <= last - first; ++s) starts[s] = s - 1 < more.length && first + s < count ? more[s - 1] : vertices;
+    next = starts[last - first];
+    const v0 = starts[0];
+    const v1 = starts[last - first];
+    const points = Float32Array.from(decode(await positions((v1 - v0) * positionSize), info.positions.dtype));
     const values = new Float32Array((v1 - v0) * scalars.length);
     for (let k = 0; k < scalars.length; ++k) {
-      const column = decode(await scalars[k].read(v0 * scalars[k].size, v1 * scalars[k].size), scalars[k].dtype);
+      const column = decode(await scalars[k].read((v1 - v0) * scalars[k].size), scalars[k].dtype);
       for (let i = 0; i < column.length; ++i) values[i * scalars.length + k] = column[i];
     }
     const batchOffsets = new Uint32Array(last - first + 1);
-    for (let s = first; s <= last; ++s) batchOffsets[s - first] = offsets[s] - v0;
+    for (let s = 0; s <= last - first; ++s) batchOffsets[s] = starts[s] - v0;
     const props = new Float32Array((last - first) * properties.length);
-    for (let k = 0; k < properties.length; ++k) for (let s = first; s < last; ++s) props[(s - first) * properties.length + k] = properties[k][s];
-    await onBatch({ points, offsets: batchOffsets, scalars: values, properties: props });
+    for (let k = 0; k < properties.length; ++k) {
+      const column = decode(await properties[k].read((last - first) * properties[k].size), properties[k].dtype);
+      for (let s = 0; s < column.length; ++s) props[s * properties.length + k] = column[s];
+    }
+    await onBatch({ points, offsets: batchOffsets, scalars: values, properties: props, starts });
   }
   return count;
+}
+
+/** Whether a TRX's streamlines can be read by id in place: its offsets and positions stored, not deflated. */
+export function trxInPlace(info: TrxInfo): boolean {
+  return info.offsets.entry.method === 0 && info.positions.entry.method === 0;
+}
+
+/**
+ * Streamlines `ids` (sorted) of a TRX whose offsets and positions are
+ * stored: each one's offsets, then its points, read from the file in place.
+ */
+export async function readTrxStreamlines(file: Blob, info: TrxInfo, ids: Uint32Array): Promise<{ offsets: Uint32Array; points: Float32Array }> {
+  const offsetSize = SIZES[info.offsets.dtype];
+  const positionSize = 3 * SIZES[info.positions.dtype];
+  const vertices = info.vertices || info.positions.entry.size / positionSize;
+  const entryCount = info.offsets.entry.size / offsetSize;
+  const count = info.count || entryCount;
+  const offsetsAt = await dataOffset(file, info.offsets.entry);
+  const positionsAt = await dataOffset(file, info.positions.entry);
+  // Each id's start and end (the next start, or the end of the positions).
+  const spans = new Float64Array(2 * ids.length);
+  await readRanges(
+    file,
+    Array.from(ids, (id) => ({ start: offsetsAt + id * offsetSize, end: offsetsAt + Math.min(entryCount, id + 2) * offsetSize })),
+    (k, bytes, at) => {
+      const values = decode(bytes.subarray(at, at + 2 * offsetSize), info.offsets.dtype);
+      spans[2 * k] = values[0];
+      spans[2 * k + 1] = values.length > 1 && ids[k] + 1 < count ? values[1] : vertices;
+    },
+  );
+  const found = new Map<number, Float32Array>();
+  await readRanges(
+    file,
+    Array.from(ids, (_, k) => ({ start: positionsAt + spans[2 * k] * positionSize, end: positionsAt + spans[2 * k + 1] * positionSize })),
+    (k, bytes, at) => {
+      const n = spans[2 * k + 1] - spans[2 * k];
+      found.set(ids[k], Float32Array.from(decode(bytes.subarray(at, at + n * positionSize), info.positions.dtype)));
+    },
+  );
+  return gather(ids, found);
 }

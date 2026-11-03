@@ -9,6 +9,7 @@ import { closeSheet, sheet, showSheet, toast } from "./overlays.js";
 import { collectDropped, LocalData, type FoundDataset, type LocalEntry } from "../virtual/local_data.js";
 import { clear, h, icon, keyLabel } from "./dom.js";
 import { kindLabel } from "./panels/format.js";
+import { setVectorCacheMegabytes, vectorCacheMegabytes } from "../virtual/vectors/formats.js";
 import type { Workbench } from "./workbench.js";
 
 // -------------------------------------------------------------------- open
@@ -361,12 +362,26 @@ export function showLocalSheet(wb: Workbench, local: LocalData): void {
 export function showSettingsSheet(wb: Workbench): void {
   const panel = h("div", { class: "ng-host settings-host" });
   let unmount: (() => void) | undefined;
+  // Kept in this browser, not the workspace: what the tab may hold of large local files.
+  const cache = h("input", { class: "text-input", type: "number", min: "0", step: "64", value: String(vectorCacheMegabytes()), "aria-label": "Memory for tractogram cells, MB" }) as HTMLInputElement;
+  cache.addEventListener("change", () => setVectorCacheMegabytes(Math.max(0, Number(cache.value) || 0)));
   showSheet(
     sheet(
       "View settings",
       [
         panel,
         h("p", { class: "note" }, "Saved with the workspace, so a shared link shows the same. Memory limits apply to this browser tab."),
+        h(
+          "label",
+          { class: "field" },
+          h("span", {}, "Tractograms on this computer: memory for decoded cells, MB (0: automatic, 1/32 of this device's memory, 64 to 512 MB)"),
+          cache,
+        ),
+        h(
+          "p",
+          { class: "note" },
+          "Kept in this browser. A large tractogram's points are copied into cells in the browser's private storage while it is open (about 1.5 times the file's size; deleted when it closes); only an index and the cells last used stay in memory.",
+        ),
       ],
       [h("button", { class: "btn primary", type: "button", onclick: () => closeSheet() }, "Done")],
     ),

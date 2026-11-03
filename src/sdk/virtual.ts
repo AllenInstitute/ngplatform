@@ -48,7 +48,11 @@ export function serveVirtualStores(open: (file: File, related: Record<string, Fi
     let store = stores.get(key);
     if (store === undefined) {
       // The file changed: forget what was made from it before.
-      for (const old of stores.keys()) if (old.startsWith(`${request.store}\n`)) stores.delete(old);
+      for (const [old, made] of stores) {
+        if (!old.startsWith(`${request.store}\n`)) continue;
+        stores.delete(old);
+        made.then((s) => s.close?.(), () => {});
+      }
       store = open(request.file, request.related ?? {});
       stores.set(key, store);
       store.catch(() => stores.delete(key));

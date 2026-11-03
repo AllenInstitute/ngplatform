@@ -125,6 +125,12 @@ export interface TrkBatch {
   scalars: Float32Array;
   /** Per-streamline values, `propertyNames.length` each. */
   properties: Float32Array;
+  /**
+   * Where each streamline is in the file (a .trk or .tck's byte offset, a
+   * TRX's first vertex), and after them where the last one ends: for
+   * reading streamlines by id later without reading the file through.
+   */
+  starts?: Float64Array;
 }
 
 /**
@@ -172,28 +178,39 @@ export async function readTrk(
       p += size;
     }
     if (starts.length === 0 && fresh.byteLength === 0) throw new Error(`the file ends inside a streamline (${bytes.byteLength} bytes left)`);
+    const base = at - bytes.byteLength;
     const batch: TrkBatch = {
       points: new Float32Array(points * 3),
       offsets: new Uint32Array(starts.length + 1),
       scalars: new Float32Array(points * ns),
       properties: new Float32Array(starts.length * np),
+      starts: new Float64Array(starts.length + 1),
     };
+    // Records are 4-byte aligned: read them as floats (big-endian ones swapped first).
+    let floats: Float32Array;
+    if (little && bytes.byteOffset % 4 === 0) floats = new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength >> 2);
+    else {
+      floats = new Float32Array(p >> 2);
+      for (let i = 0; i < floats.length; ++i) floats[i] = view.getFloat32(4 * i, little);
+    }
     let point = 0;
     for (let s = 0; s < starts.length; ++s) {
-      let q = starts[s] + 4;
+      let q = (starts[s] + 4) >> 2;
       batch.offsets[s] = point;
+      batch.starts![s] = base + starts[s];
       for (let i = 0; i < counts[s]; ++i, ++point) {
-        const x = view.getFloat32(q, little);
-        const y = view.getFloat32(q + 4, little);
-        const z = view.getFloat32(q + 8, little);
-        q += 12;
+        const x = floats[q];
+        const y = floats[q + 1];
+        const z = floats[q + 2];
+        q += 3;
         batch.points[3 * point] = toRas[0] * x + toRas[1] * y + toRas[2] * z + toRas[3];
         batch.points[3 * point + 1] = toRas[4] * x + toRas[5] * y + toRas[6] * z + toRas[7];
         batch.points[3 * point + 2] = toRas[8] * x + toRas[9] * y + toRas[10] * z + toRas[11];
-        for (let k = 0; k < ns; ++k, q += 4) batch.scalars[point * ns + k] = view.getFloat32(q, little);
+        for (let k = 0; k < ns; ++k, ++q) batch.scalars[point * ns + k] = floats[q];
       }
-      for (let k = 0; k < np; ++k, q += 4) batch.properties[s * np + k] = view.getFloat32(q, little);
+      for (let k = 0; k < np; ++k, ++q) batch.properties[s * np + k] = floats[q];
     }
+    batch.starts![starts.length] = base + p;
     batch.offsets[starts.length] = point;
     streamlines += starts.length;
     if (starts.length > 0) await onBatch(batch);
@@ -202,4 +219,88 @@ export async function readTrk(
     if (fresh.byteLength === 0 && carry.byteLength > 0) throw new Error(`the file ends inside a streamline (${carry.byteLength} bytes left)`);
   }
   return streamlines;
+}
+
+/**
+ * Coalesces sorted byte ranges into windows read at once (ranges closer than
+ * `gap` share a read), and hands each range's bytes on.
+ */
+export async function readRanges(
+  file: Blob,
+  ranges: { start: number; end: number }[],
+  each: (index: number, bytes: Uint8Array, at: number) => void,
+  gap = 64 * 1024,
+  window = 16 * 1024 * 1024,
+): Promise<void> {
+  let i = 0;
+  while (i < ranges.length) {
+    let j = i + 1;
+    let end = ranges[i].end;
+    while (j < ranges.length && ranges[j].start - end <= gap && ranges[j].end - ranges[i].start <= window) end = Math.max(end, ranges[j++].end);
+    const start = ranges[i].start;
+    const bytes = new Uint8Array(await file.slice(start, end).arrayBuffer());
+    for (let k = i; k < j; ++k) each(k, bytes, ranges[k].start - start);
+    i = j;
+  }
+}
+
+/**
+ * Streamlines `ids` (sorted) of a .trk, whole, in RAS+ mm: each found from
+ * the checkpoint before it (every `every`-th streamline's byte offset, the
+ * last entry the end of the data) by walking the records between.
+ */
+export async function readTrkStreamlines(file: Blob, header: TrkHeader, ids: Uint32Array, checkpoints: Float64Array, every: number): Promise<{ offsets: Uint32Array; points: Float32Array }> {
+  const ns = header.scalarNames.length;
+  const np = header.propertyNames.length;
+  const little = header.littleEndian;
+  const toRas = header.toRas;
+  // One range per checkpoint block holding a wanted id.
+  const blocks: { start: number; end: number; block: number }[] = [];
+  for (const id of ids) {
+    const block = Math.floor(id / every);
+    if (blocks.length > 0 && blocks[blocks.length - 1].block === block) continue;
+    blocks.push({ start: checkpoints[block], end: checkpoints[Math.min(block + 1, checkpoints.length - 1)], block });
+  }
+  const found = new Map<number, Float32Array>();
+  let next = 0;
+  await readRanges(file, blocks, (k, bytes, at) => {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let id = blocks[k].block * every;
+    let q = at;
+    while (next < ids.length && Math.floor(ids[next] / every) === blocks[k].block) {
+      const want = ids[next];
+      // Walk to the wanted record.
+      for (; id < want; ++id) q += 4 + 4 * (view.getInt32(q, little) * (3 + ns) + np);
+      const n = view.getInt32(q, little);
+      const out = new Float32Array(3 * n);
+      let r = q + 4;
+      for (let i = 0; i < n; ++i, r += 4 * (3 + ns)) {
+        const x = view.getFloat32(r, little);
+        const y = view.getFloat32(r + 4, little);
+        const z = view.getFloat32(r + 8, little);
+        out[3 * i] = toRas[0] * x + toRas[1] * y + toRas[2] * z + toRas[3];
+        out[3 * i + 1] = toRas[4] * x + toRas[5] * y + toRas[6] * z + toRas[7];
+        out[3 * i + 2] = toRas[8] * x + toRas[9] * y + toRas[10] * z + toRas[11];
+      }
+      found.set(want, out);
+      ++next;
+    }
+  });
+  return gather(ids, found);
+}
+
+/** Streamlines found by id, in the order of `ids`, as offsets and points. */
+export function gather(ids: Uint32Array, found: Map<number, Float32Array>): { offsets: Uint32Array; points: Float32Array } {
+  const offsets = new Uint32Array(ids.length + 1);
+  let total = 0;
+  ids.forEach((id, i) => {
+    total += (found.get(id)?.length ?? 0) / 3;
+    offsets[i + 1] = total;
+  });
+  const points = new Float32Array(3 * total);
+  ids.forEach((id, i) => {
+    const line = found.get(id);
+    if (line !== undefined) points.set(line, 3 * offsets[i]);
+  });
+  return { offsets, points };
 }
