@@ -1,7 +1,8 @@
 /**
  * The Annotations plugin's manifest: everything added to annotate a
- * dataset, in one tab with four sections: labels on the views for figures
- * (./labels.ts), measurements (./measure.ts), statistics of an image in a
+ * dataset, in one tab with five sections: annotations with groups, values
+ * and comments (./annotate.ts, listed in the annotation table in the bottom
+ * dock), labels on the views for figures (./labels.ts), measurements (./measure.ts), statistics of an image in a
  * region (./statistics.ts) and label volumes drawn by hand
  * (./segmentation/).
  *
@@ -13,17 +14,32 @@ import type { Manifest } from "@ngplatform/sdk";
 /** The tab (its id from when it held only labels). */
 export const ANNOTATIONS_PANEL = "annotations.labels";
 
+/** The annotation table, in the bottom dock. */
+export const TABLE_PANEL = "annotations.table";
+
 /** Set while a drawing tool is on in the views. */
 export const PAINTING = "annotations.painting";
 
 export const ANNOTATIONS_MANIFEST: Manifest = {
   id: "org.ngplatform.annotations",
   name: "Annotations",
-  version: "0.2.0",
+  version: "0.3.0",
   kind: "tool",
   enabledByDefault: true,
-  description: "Labels and annotations: labels on the views for figures, measurements, statistics in a region, and label volumes drawn by hand.",
-  guide: `Everything you add to annotate a dataset, in the **Annotations** tab: four sections.
+  description: "Annotations with groups, values and comments in a table; labels on the views for figures, measurements, statistics in a region, and label volumes drawn by hand.",
+  guide: `Everything you add to annotate a dataset, in the **Annotations** tab (five sections), and the **Annotation table** in the bottom dock.
+
+## Annotate
+Points, lines, boxes, ellipsoids and polylines in a local annotation layer, organised as in WebKnossos and Neuroglass.
+- Choose the **layer** (or **+ New layer**) and a **tool**, then Ctrl+click in a view (Ctrl+double-click ends a polyline). The new annotation is selected in the annotation table, ready for its values.
+- **Groups**: named, nested; tick to show or hide one (and the groups in it), pick its colour, choose the group new annotations go to, and **Colour by** group or by a field.
+- **Fields**: values each annotation has: a **list** of values (cell types, say), a **number**, **text**, or an **ontology term** (from a lookup table such as the Allen structures, or a list, OBO or JSON file). Lists and numbers are kept as Neuroglancer annotation properties; text and terms in this plugin's state.
+
+## Annotation table
+Every annotation of the scene's local annotation layers: type, name, group, values, size and comments.
+- **Find**: words anywhere, or \`column:text\`, \`column=text\` (\`group=\` for none), \`column>n\`, \`-word\`; a column is its title without spaces (\`celltype:basket\`, \`size>2\`). A term is also found by the structures it is within.
+- Click a heading to sort; click a row to go to the annotation and select it; edit its description, group, values and **comments** beside the table, or delete it. Pointing at an annotation in a view shows its values and comments.
+- **Save CSV** writes the rows found (with coordinates); **Open CSV…** updates the annotations a CSV names and adds the others.
 
 ## Labels
 Names on the views, as an anatomy atlas draws them: a pin on the structure, a thin leader line, and its name beside it or lined up at the edge of the view.
@@ -47,12 +63,19 @@ Label volumes drawn by hand, shown as a segmentation layer that updates as you d
 - **Save** as NIfTI (.nii.gz) or an OME-Zarr folder; only the painted box, if you ask.
 
 A label volume lives in this page until saved. It is also kept in this browser while you draw, so a reload brings it back; save it all the same.`,
-  links: [{ title: "WebKnossos volume annotation (what this follows)", url: "https://docs.webknossos.org/webknossos/volume_annotation/index.html" }],
+  links: [
+    { title: "WebKnossos volume annotation (what segmentation follows)", url: "https://docs.webknossos.org/webknossos/volume_annotation/index.html" },
+    { title: "WebKnossos skeleton annotation: trees, groups, comments", url: "https://docs.webknossos.org/webknossos/skeleton_annotation/index.html" },
+    { title: "Neuroglass (annotation table, values from ontologies)", url: "https://www.neuroglass.com/" },
+  ],
   license: "Apache-2.0",
   activation: ["onStartup"],
   provides: { services: ["annotations.quickSelect"] },
   contributes: {
-    panels: [{ id: ANNOTATIONS_PANEL, title: "Annotations", slot: "left", order: 60 }],
+    panels: [
+      { id: ANNOTATIONS_PANEL, title: "Annotations", slot: "left", order: 60 },
+      { id: TABLE_PANEL, title: "Annotation table", slot: "bottom", order: 15 },
+    ],
     appState: { key: "labels", version: 1 },
     contextKeys: [PAINTING],
     commands: [
@@ -66,6 +89,7 @@ A label volume lives in this page until saved. It is also kept in this browser w
       { id: "annotations.redoStroke", title: "Redo a stroke", group: "Annotations", when: PAINTING },
       { id: "annotations.stopDrawing", title: "Stop drawing", group: "Annotations", when: PAINTING },
       { id: "annotations.exportMeasurements", title: "Save measurements as CSV", group: "Annotations" },
+      { id: "annotations.showTable", title: "Show the annotation table", group: "Annotations" },
     ],
     keybindings: [
       { key: "b", command: "annotations.tool", args: { tool: "brush" }, when: PAINTING },

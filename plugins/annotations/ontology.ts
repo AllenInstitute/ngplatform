@@ -111,17 +111,20 @@ export function lookupTerms(table: LookupTable): Term[] {
 /** A term's label in lists: its name, and its short name when it has one. */
 export const termLabel = (t: Term) => (t.short ? `${t.name} (${t.short})` : t.name);
 
+/** Text as compared with terms: no case, underscores as spaces (FreeSurfer's names have no spaces). */
+const plain = (s: string) => s.trim().toLowerCase().replace(/[_\s]+/g, " ");
+
 /**
  * Terms matching typed text, best first: an exact id, name or short name,
  * then names starting with it, then names containing it.
  */
 export function searchTerms(terms: Term[], text: string, limit = 50): Term[] {
-  const q = text.trim().toLowerCase();
+  const q = plain(text);
   if (q === "") return terms.slice(0, limit);
   const scored: [number, Term][] = [];
   for (const t of terms) {
-    const name = t.name.toLowerCase();
-    const short = t.short?.toLowerCase() ?? "";
+    const name = plain(t.name);
+    const short = plain(t.short ?? "");
     const id = t.id.toLowerCase();
     const score = id === q || name === q || short === q ? 0 : name.startsWith(q) || short.startsWith(q) ? 1 : name.includes(q) || short.includes(q) || id.includes(q) ? 2 : -1;
     if (score >= 0) scored.push([score, t]);
@@ -132,11 +135,11 @@ export function searchTerms(terms: Term[], text: string, limit = 50): Term[] {
     .map(([, t]) => t);
 }
 
-/** The term typed: one whose label, name, short name or id is the text (case aside). */
+/** The term typed: one whose label, name, short name or id is the text (case and underscores aside). */
 export function findTerm(terms: Term[], text: string): Term | undefined {
-  const q = text.trim().toLowerCase();
+  const q = plain(text);
   if (q === "") return undefined;
-  return terms.find((t) => termLabel(t).toLowerCase() === q) ?? terms.find((t) => t.name.toLowerCase() === q || t.short?.toLowerCase() === q || t.id.toLowerCase() === q);
+  return terms.find((t) => plain(termLabel(t)) === q) ?? terms.find((t) => plain(t.name) === q || plain(t.short ?? "") === q || t.id.toLowerCase() === q);
 }
 
 /** A term's ancestors' names, nearest first (a search for a structure finds the terms within it). */

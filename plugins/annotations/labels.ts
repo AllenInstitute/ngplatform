@@ -159,7 +159,8 @@ export class Labels {
 
   private write(labels: Label[]): void {
     this.labels = labels;
-    this.ctx.state.set({ labels });
+    // The slice holds the Annotate section's record too (under `annotate`).
+    this.ctx.state.set({ ...(this.ctx.state.get<object>() ?? {}), labels });
   }
 
   private update(id: string, patch: Partial<Label>): void {

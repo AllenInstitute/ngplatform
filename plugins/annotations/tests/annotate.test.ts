@@ -307,5 +307,9 @@ describe("ontologies", () => {
     expect(findTerm(terms, "Cortical plate (CTXpl)")?.id).toBe("695");
     expect(findTerm(terms, "315")?.name).toBe("Isocortex");
     expect(ancestorNames(terms, "315")).toEqual(["Cortical plate", "CTXpl"]);
+    // FreeSurfer-style names, underscores for spaces.
+    const fs = [{ id: "1", name: "Frontal_Pole" }];
+    expect(findTerm(fs, "frontal pole")?.id).toBe("1");
+    expect(searchTerms(fs, "frontal p").map((t) => t.id)).toEqual(["1"]);
   });
 });
