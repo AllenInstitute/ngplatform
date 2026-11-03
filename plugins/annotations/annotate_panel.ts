@@ -10,7 +10,7 @@ import { addGroup, groupOf, groupPath, groupsOf, groupTree, hiddenValues, moveGr
 import { TABLE_PANEL } from "./manifest.js";
 import { parseTerms } from "./ontology.js";
 import { button, el, select } from "./ui.js";
-import { addField, type Field, fieldsOf, type FieldKind, GROUP, type OntologyRef, removeField, updateField } from "./values.js";
+import { addField, type Field, fieldsOf, type FieldKind, GROUP, type Group, type LayerMeta, type OntologyRef, removeField, updateField } from "./values.js";
 
 const KINDS: [FieldKind, string][] = [
   ["list", "List of values"],
@@ -91,8 +91,13 @@ export class AnnotatePanel {
     const groups = groupsOf(spec, meta);
     const counts = new Map<number, number>();
     for (const a of spec.annotations) counts.set(groupOf(spec, a), (counts.get(groupOf(spec, a)) ?? 0) + 1);
-    const write = (next: typeof groups, active = meta.activeGroup, moved?: { from: number; to: number }) => {
-      const [s, m] = writeGroups(spec, meta, next, active, moved);
+    // Each change starts from the layer as it is now: its annotations' values may have changed since this was drawn.
+    type Change = { groups: Group[]; active?: number; moved?: { from: number; to: number }; colourBy?: string };
+    const write = (edit: (groups: Group[], meta: LayerMeta) => Change) => {
+      const now = this.model.layer(name);
+      if (now === undefined) return;
+      const c = edit(groupsOf(now.spec, now.meta), now.meta);
+      const [s, m] = writeGroups(now.spec, "colourBy" in c ? { ...now.meta, colourBy: c.colourBy } : now.meta, c.groups, "active" in c ? c.active : now.meta.activeGroup, c.moved);
       this.model.write(name, s, m);
     };
     // Groups hidden with a group they are in.
@@ -100,22 +105,19 @@ export class AnnotatePanel {
     const rows = groupTree(groups).map(({ group: g, depth }) => {
       const shown = el("input", { type: "checkbox", title: "Shown in the views" }) as HTMLInputElement;
       shown.checked = !g.hidden;
-      shown.addEventListener("change", () => write(groups.map((x) => (x.value === g.value ? { ...x, hidden: !shown.checked } : x))));
+      shown.addEventListener("change", () => write((gs) => ({ groups: gs.map((x) => (x.value === g.value ? { ...x, hidden: !shown.checked } : x)) })));
       const colour = el("input", { type: "color", value: g.colour, title: "Its colour, when the layer is coloured by group" }) as HTMLInputElement;
-      colour.addEventListener("change", () => {
-        const next = groups.map((x) => (x.value === g.value ? { ...x, colour: colour.value } : x));
-        const [s, m] = writeGroups(spec, { ...meta, colourBy: meta.colourBy ?? GROUP }, next);
-        this.model.write(name, s, m);
-      });
+      colour.addEventListener("change", () => write((gs, m) => ({ groups: gs.map((x) => (x.value === g.value ? { ...x, colour: colour.value } : x)), colourBy: m.colourBy ?? GROUP })));
       const title = el("input", { class: "text-input", value: g.name, "aria-label": "Group name" }) as HTMLInputElement;
       title.addEventListener("change", () => {
-        const text = title.value.trim().replace(/\s*\/\s*/g, " - ");
-        if (text) write(groups.map((x) => (x.value === g.value ? { ...x, name: text } : x)));
+        // " / " separates a path's groups.
+        const text = title.value.trim().replace(/\s+\/\s+/g, " - ");
+        if (text) write((gs) => ({ groups: gs.map((x) => (x.value === g.value ? { ...x, name: text } : x)) }));
       });
       // Not into itself, or a group within it.
       const within = withinGroup(groups, g.value);
       const parents: [string, string][] = [["", "Move to the top"], ...groups.filter((x) => !within.has(x.value)).map((x) => [String(x.value), `Move into ${groupPath(groups, x.value)}`] as [string, string])];
-      const parent = select(parents, g.parent === undefined ? "" : String(g.parent), (v) => write(moveGroup(groups, g.value, v === "" ? undefined : Number(v))), "Move");
+      const parent = select(parents, g.parent === undefined ? "" : String(g.parent), (v) => write((gs) => ({ groups: moveGroup(gs, g.value, v === "" ? undefined : Number(v)) })), "Move");
       parent.className = "an-group-parent";
       parent.title = "Move it to the top, or into another group";
       return el(
@@ -126,29 +128,32 @@ export class AnnotatePanel {
         title,
         el("span", { class: "an-faint an-count", title: "Annotations in it" }, String(counts.get(g.value) ?? 0)),
         parent,
-        button("+", () => write(addGroup(groups, "", g.value).groups), "A group within this one", "btn outline small icon"),
-        button("×", () => {
-          const { groups: rest, moveTo } = removeGroup(groups, g.value);
-          write(rest, meta.activeGroup === g.value ? moveTo : meta.activeGroup, { from: g.value, to: moveTo });
-        }, "Remove the group (its annotations go to the group it is in)", "btn outline small icon"),
+        button("+", () => write((gs) => ({ groups: addGroup(gs, "", g.value).groups })), "A group within this one", "btn outline small icon"),
+        button(
+          "×",
+          () =>
+            write((gs, m) => {
+              const { groups: rest, moveTo } = removeGroup(gs, g.value);
+              return { groups: rest, active: m.activeGroup === g.value ? moveTo : m.activeGroup, moved: { from: g.value, to: moveTo } };
+            }),
+          "Remove the group (its annotations go to the group it is in)",
+          "btn outline small icon",
+        ),
       );
     });
     const fields = fieldsOf(spec, meta);
     const colourable: [string, string][] = [["", "Layer colour"], ...(groups.length ? [[GROUP, "Group"] as [string, string]] : []), ...fields.filter((f) => f.storage === "property").map((f) => [f.id, f.title] as [string, string])];
-    const colourBy = select(colourable, meta.colourBy ?? "", (v) => {
-      const m = { ...meta, colourBy: v || undefined };
-      this.model.write(name, spec, m);
-    }, "Colour by");
-    const active = select([["0", "No group"], ...groups.map((g) => [String(g.value), g.name] as [string, string])], String(meta.activeGroup ?? 0), (v) => write(groups, Number(v) || undefined), "New annotations go to");
+    const colourBy = select(colourable, meta.colourBy ?? "", (v) => write((gs) => ({ groups: gs, colourBy: v || undefined })), "Colour by");
+    const active = select([["0", "No group"], ...groupTree(groups).map(({ group: g }) => [String(g.value), groupPath(groups, g.value)] as [string, string])], String(meta.activeGroup ?? 0), (v) => write((gs) => ({ groups: gs, active: Number(v) || undefined })), "New annotations go to");
     return el(
       "div",
       { class: "an-block" },
       el("h4", { class: "an-sub" }, "Groups"),
       groups.length ? el("div", { class: "an-groups" }, ...rows) : el("p", { class: "an-hint" }, "Put annotations in named groups, nested if you like: shown or hidden together, and coloured."),
-      el("div", { class: "an-row" }, button("+ Group", () => {
-        const { groups: next, value } = addGroup(groups, "");
-        write(next, meta.activeGroup ?? value);
-      }, "A new group; new annotations go to it if none is chosen")),
+      el("div", { class: "an-row" }, button("+ Group", () => write((gs, m) => {
+        const { groups: next, value } = addGroup(gs, "");
+        return { groups: next, active: m.activeGroup ?? value };
+      }), "A new group; new annotations go to it if none is chosen")),
       groups.length ? el("div", { class: "an-grid2" }, el("label", { class: "field" }, el("span", {}, "New annotations go to"), active), el("label", { class: "field" }, el("span", {}, "Colour by"), colourBy)) : el("label", { class: "field" }, el("span", {}, "Colour by"), colourBy),
     );
   }

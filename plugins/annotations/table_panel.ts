@@ -33,15 +33,21 @@ export class TablePanel {
   private view(): { layers: TableLayer[]; rows: Row[]; all: number; columns: Column[]; fields: Field[] } {
     const layers = this.model.layers().filter((l) => this.layer === "" || l.spec.name === this.layer);
     const fields = layers.flatMap((l) => fieldsOf(l.spec, l.meta));
-    const builtin = BUILTIN_COLUMNS.filter((c) => c.key !== "id" && (c.key !== "layer" || layers.length > 1));
-    // Fields after the name and group, before the size.
-    const columns = [...builtin.slice(0, 3), ...fieldColumns(fields), ...builtin.slice(3)];
+    // Fields after the name and group, before the size; the layer when there are several.
+    const columnsOf = (f: Field[], several: boolean) => {
+      const builtin = BUILTIN_COLUMNS.filter((c) => c.key !== "id" && (c.key !== "layer" || several));
+      return [...builtin.slice(0, 3), ...fieldColumns(f), ...builtin.slice(3)];
+    };
     const all = this.model.rows(layers);
     const terms = parseQuery(this.query);
-    let rows = terms.length ? all.filter((r) => matches(r, terms, [...columns, BUILTIN_COLUMNS.find((c) => c.key === "id")!])) : all;
+    let rows = terms.length ? all.filter((r) => matches(r, terms, [...columnsOf(fields, true), BUILTIN_COLUMNS.find((c) => c.key === "id")!])) : all;
+    // The fields of the layers whose annotations are found.
+    const found = new Set(rows.map((r) => r.layer));
+    const shown = rows.length ? layers.filter((l) => found.has(l.spec.name)).flatMap((l) => fieldsOf(l.spec, l.meta)) : fields;
+    const columns = columnsOf(shown, (rows.length ? found.size : layers.length) > 1);
     const sortBy = this.sort && columns.find((c) => c.key === this.sort!.key);
     if (sortBy) rows = sortRows(rows, sortBy, this.sort!.descending);
-    return { layers, rows, all: all.length, columns, fields };
+    return { layers, rows, all: all.length, columns, fields: shown };
   }
 
   render(host: HTMLElement): Disposer {
@@ -164,6 +170,7 @@ export class TablePanel {
         if (c.key === "size") return el("td", { class: "num" }, r.size ? physical(r.size.value, POWER[r.size.quantity]) : "");
         if (c.key === "comments") return el("td", { class: "num", title: r.comments.map((x) => x.text).join("\n") }, r.comments.length ? String(r.comments.length) : "");
         if (c.key === "type") return el("td", { class: "an-faint" }, c.text(r));
+        if (c.number) return el("td", { class: "num" }, c.text(r));
         return el("td", {}, c.text(r));
       });
       body.append(el("tr", { class: "an-click", "data-key": `${r.layer}|${r.id}`, onclick: () => this.model.select({ layer: r.layer, id: r.id }) }, ...cells));
@@ -180,7 +187,10 @@ export class TablePanel {
   private drawEditor(host: HTMLElement, selected: Selected | undefined): void {
     const l = selected && this.model.layer(selected.layer);
     const a = l?.spec.annotations.find((x) => x.id === selected!.id);
-    host.dataset.key = selected ? `${selected.layer}|${selected.id}` : "";
+    const key = selected ? `${selected.layer}|${selected.id}` : "";
+    // Another annotation's editor starts at its top.
+    if (host.dataset.key !== key) host.scrollTop = 0;
+    host.dataset.key = key;
     if (!selected || l === undefined || a === undefined) {
       host.replaceChildren(el("p", { class: "an-hint" }, "Click a row to go to its annotation and edit it here; a new annotation drawn in a view comes here too."));
       return;
@@ -326,9 +336,7 @@ export class TablePanel {
 
   private exportCsv(): void {
     const v = this.view();
-    // The fields of the layers whose rows are saved.
-    const saved = new Set(v.rows.map((r) => r.layer));
-    const titles = [...new Set(v.layers.filter((l) => saved.has(l.spec.name)).flatMap((l) => fieldsOf(l.spec, l.meta).map((f) => f.title)))];
+    const titles = [...new Set(v.fields.map((f) => f.title))];
     const name = v.layers.length === 1 ? v.layers[0].spec.name : "annotations";
     download(new Blob([csv(tableCsv(v.rows, titles))], { type: "text/csv" }), `${fileName(name)}.csv`);
   }
@@ -336,7 +344,11 @@ export class TablePanel {
   private async importFile(file: File): Promise<void> {
     const layers = new Map(this.model.layers().map((l) => [l.spec.name, l]));
     const target = this.layer || this.model.chosen();
-    const result = importCsv(await file.text(), layers, target, () => crypto.randomUUID().replace(/-/g, ""));
+    const terms = (f: Field) => {
+      const list = this.model.termList(f);
+      return typeof list === "string" ? undefined : list;
+    };
+    const result = importCsv(await file.text(), layers, target, () => crypto.randomUUID().replace(/-/g, ""), terms);
     for (const [name, l] of result.layers) this.model.write(name, l.spec, l.meta);
     const message = `${file.name}: ${result.added} added, ${result.updated} updated${result.skipped ? `, ${result.skipped} skipped` : ""}.`;
     this.ctx.ui.toast([message, ...result.notes.slice(0, 3)].join(" "), result.skipped && !result.added && !result.updated ? "error" : "info");

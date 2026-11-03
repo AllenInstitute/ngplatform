@@ -363,9 +363,16 @@ const rankOfLayer = (spec: LayerSpec) => {
  * other row with a type and coordinates is a new annotation, in its layer
  * when the scene has it, else in `target`.  Groups are made from their
  * paths; a column no field has becomes one (a number when all its values
- * are, a list otherwise); a list gains values it lacks.
+ * are, a list otherwise); a list gains values it lacks; an ontology's term
+ * is found by its name or id in `termsOf(field)`.
  */
-export function importCsv(text: string, layers: Map<string, TableLayer>, target: string | undefined, newId: () => string): ImportResult {
+export function importCsv(
+  text: string,
+  layers: Map<string, TableLayer>,
+  target: string | undefined,
+  newId: () => string,
+  termsOf: (field: Field) => Term[] | undefined = (f) => f.ontology?.terms,
+): ImportResult {
   const result: ImportResult = { layers: new Map(), added: 0, updated: 0, skipped: 0, notes: [] };
   const table = parseCsv(text);
   if (table.length < 2) {
@@ -450,7 +457,7 @@ export function importCsv(text: string, layers: Map<string, TableLayer>, target:
       let value = 0;
       if (path) {
         let parent: number | undefined;
-        for (const part of path.split("/").map((p) => p.trim()).filter((p) => p !== "")) {
+        for (const part of path.split(/\s+\/\s+/).map((p) => p.trim()).filter((p) => p !== "")) {
           const found = groups.find((g) => g.name === part && g.parent === parent);
           if (found) value = found.value;
           else ({ groups, value } = addGroup(groups, part, parent));
@@ -467,7 +474,9 @@ export function importCsv(text: string, layers: Map<string, TableLayer>, target:
       const raw = rec[title.toLowerCase()].trim();
       let value: string | number | TermValue | undefined = raw;
       if (field.kind === "ontology" && raw) {
-        const t = field.ontology?.terms ? findTerm(field.ontology.terms, raw) : undefined;
+        // A term by its name or id, when the terms are at hand; else the text as both.
+        const terms = termsOf(field);
+        const t = terms ? findTerm(terms, raw) : undefined;
         value = t ? { id: t.id, name: t.name } : { id: raw, name: raw };
       }
       [spec, meta] = setValue(spec, meta, [annotationId], field, value);

@@ -259,6 +259,13 @@ describe("table", () => {
     expect(result.notes.join(" ")).toContain("no type");
   });
 
+  it("reads an ontology's term by its name", () => {
+    const result = importCsv("layer,id,Region\ncells,p1,isocortex\ncells,p3,Elsewhere\n", new Map([["cells", l]]), undefined, () => "n");
+    const changed = result.layers.get("cells")!;
+    expect(changed.meta.values.p1.region).toEqual({ id: "2", name: "Isocortex" });
+    expect(changed.meta.values.p3.region).toEqual({ id: "Elsewhere", name: "Elsewhere" });
+  });
+
   it("leaves layers another plugin keeps alone", () => {
     const managed: TableLayer = { ...l, managed: true };
     const result = importCsv("layer,id,description\ncells,p1,x\n", new Map([["cells", managed]]), undefined, () => "n");
