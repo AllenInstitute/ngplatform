@@ -13,7 +13,7 @@ export const TIME_SERIES_MANIFEST: Manifest = {
   version: "0.1.0",
   kind: "tool",
   enabledByDefault: false,
-  description: "Plots the time course of the voxel under the mouse in an image with a time axis (a 4-D NIfTI, OME-Zarr with t), keeps pinned voxels and region means, and plays through time.",
+  description: "Plots the time course of the voxel under the mouse in an image with a time axis (a 4-D NIfTI, OME-Zarr with t), keeps pinned voxels and region means, and plays through time; on a surface with a CIFTI time series, the vertex under the mouse and pinned vertices.",
   guide: `The **Time series** tab (in the bottom dock) plots an image's values along time: at the voxel under the mouse, at pinned voxels, and as the mean over a region. Images with a time axis are 4-D NIfTI files (their fourth axis is time, in the header's unit, one step every pixdim[4]) and OME-Zarr images with a \`t\` axis; Neuroglancer shows time as the dimension \`t\`.
 
 ## Plotting
@@ -30,6 +30,10 @@ export const TIME_SERIES_MANIFEST: Manifest = {
 - **Play** steps through time at the chosen rate (time points a second), looping when **Loop** is on; the buttons beside it go to the first, previous, next and last time point. **Alt+Shift+P** plays and pauses. Neuroglancer's \`[\` and \`]\` also step through time.
 - The readout gives the time shown, in seconds (or the image's unit) and as a time point.
 
+## Surfaces
+- A GIFTI surface opened from this computer with a CIFTI time series (\`.dtseries.nii\`) beside it: choose the series in **Image** ("surface: name_t (file)") and press **Show name_t as the overlay**. The play and step buttons change the time point the surface shows.
+- Move the mouse onto the surface: the plot shows the nearest vertex's values (within 4 mm of the mouse). **Pin**, **Alt+P**, **% change** and **Save CSV** work as for voxels. A vertex on the medial wall has no values.
+
 ## Saving
 - **Save CSV**: a row per time point (its index and time), a column per plotted series, with the values as read.
 - A movie of the time-lapse: the camera icon → **Movie…**, a sweep along \`t\`.`,
@@ -38,7 +42,7 @@ export const TIME_SERIES_MANIFEST: Manifest = {
   contributes: {
     panels: [{ id: TIME_SERIES_PANEL, title: "Time series", slot: "bottom", order: 50 }],
     commands: [
-      { id: "timeSeries.pin", title: "Time series: pin the voxel under the mouse", group: "Time series" },
+      { id: "timeSeries.pin", title: "Time series: pin the voxel or vertex under the mouse", group: "Time series" },
       { id: "timeSeries.play", title: "Time series: play or pause", group: "Time series" },
       { id: "timeSeries.saveCsv", title: "Time series: save the plotted series as CSV", group: "Time series" },
     ],

@@ -14,7 +14,7 @@ import { ChunkCache, describePlan, levelVoxel, movingPlan, readBytes, type Serie
 import { inside, regionVoxels, shapeOf } from "../region.js";
 import { coordinateOf, formatTime, freeColour, indexAt, nextIndex, percentChange, seriesCsv, stepIndex, type TimeAxis, timeAxis, timeOf, timesOf, voxelAt, voxelLabel } from "../series.js";
 import { type GlobalSpace, invert, LayerMap, placeOf } from "../space.js";
-import { surfaceAxis, surfaceSeriesOf, zarrVectorsStore } from "../surface.js";
+import { nearestOf, storeDistance, storePoint, surfaceAxis, surfaceSeriesOf, vertexLabel, zarrVectorsStore } from "../surface.js";
 
 const FIXTURE = path.join(__dirname, "fixtures", "tiny.nii.gz");
 /** The fixture's value at voxel (x, y, z), time point t. */
@@ -470,5 +470,31 @@ describe("time series on surfaces", () => {
     const axis = surfaceAxis(series);
     expect([axis.count, axis.dim, axis.unit.label]).toEqual([7, -1, "s"]);
     expect(timeOf(axis, 5)).toBeCloseTo(3.6);
+  });
+
+  it("takes the mouse to the store's coordinates through the surface layer's transform (its coordinate_offset, a move), and millimetres to its units", () => {
+    // A Zarr Vectors surface in millimetres, its coordinate_offset (-60, -110, -45) as the default transform's translation.
+    const surface = (translation: number[], turn = false): LayerTransform => ({
+      rank: 3,
+      input: { names: ["x", "y", "z"], scales: [1e-3, 1e-3, 1e-3], units: ["m", "m", "m"] },
+      output: { names: ["x", "y", "z"], scales: [1e-3, 1e-3, 1e-3], units: ["m", "m", "m"] },
+      matrix: columnMajor(turn ? [[0, -1, 0, translation[0]], [1, 0, 0, translation[1]], [0, 0, 1, translation[2]]] : [[1, 0, 0, translation[0]], [0, 1, 0, translation[1]], [0, 0, 1, translation[2]]]),
+      defaultMatrix: new Float64Array(16),
+    });
+    const mm: GlobalSpace = { names: ["x", "y", "z"], scales: [1e-3, 1e-3, 1e-3], units: ["m", "m", "m"] };
+    const offset = surface([-60, -110, -45]);
+    // A file position (-20, -100, 10) mm is stored at it less the offset.
+    storePoint(new LayerMap(offset, mm), [-20, -100, 10])!.forEach((v, i) => expect(v).toBeCloseTo([40, 10, 55][i], 9));
+    // Global dimensions of 0.5 mm count twice as many; a time dimension first is passed by.
+    const half: GlobalSpace = { names: ["t", "x", "y", "z"], scales: [2, 5e-4, 5e-4, 5e-4], units: ["s", "m", "m", "m"] };
+    storePoint(new LayerMap(offset, half), [3, -40, -200, 20])!.forEach((v, i) => expect(v).toBeCloseTo([40, 10, 55][i], 9));
+    // A surface turned a quarter round about z (by Registration, say) is read where it shows.
+    storePoint(new LayerMap(surface([0, 0, 0], true), mm), [-10, 40, 55])!.forEach((v, i) => expect(v).toBeCloseTo([40, 10, 55][i], 9));
+    expect(storeDistance(offset, 4)).toBeCloseTo(4);
+    expect(storeDistance({ ...offset, input: { ...offset.input, scales: [1e-6, 1e-6, 1e-6] } }, 4)).toBeCloseTo(4000);
+    expect(storeDistance({ ...offset, input: { ...offset.input, units: ["", "", ""], scales: [1, 1, 1] } }, 4)).toBe(4);
+    expect(nearestOf({ series: "rest_t", vertex: 7, distance: 1.5, position: [0, 0, 0] })).toEqual({ vertex: 7, distance: 1.5 });
+    expect(nearestOf({ series: "rest_t", vertex: null })).toBeUndefined();
+    expect(vertexLabel(7)).toBe("vertex 7");
   });
 });
