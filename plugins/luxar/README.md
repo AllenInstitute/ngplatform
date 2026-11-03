@@ -22,6 +22,7 @@ point tables). Nothing is converted and no files are written.
 | `view3d.ts` | The 3-D view, through `viewer.draw3d`: the float target, tone mapping, depth |
 | `view2d.ts` | The 2-D views, on a canvas over them (the platform's overlay), with each panel's camera |
 | `render_gl.ts` | WebGL2: the line and point shaders, upload, the tone-mapping composite |
+| `mesh_gl.ts` | A mesh's shaders: lit triangles in 3-D, the outline where the section cuts them in 2-D |
 | `bloom.ts` | Bloom: the bright pass and the separable Gaussian blur at three scales |
 | `chunks.ts` | Levels of detail and which chunks a view reads and draws; the per-context GPU cache |
 | `client.ts`, `luxar_worker.ts` | Reading a store's chunks with the Zarr Vectors reader, in a worker |
@@ -76,6 +77,40 @@ data formats directly:
   window), the thickness being a per-layer control.
 
 `@luxar/viewer` is not a dependency: nothing of three.js is bundled.
+
+### Meshes
+
+A Zarr Vectors `mesh` store (a surface) is drawn from the reader's dense
+chunks, whose faces include those reaching into a neighbour chunk (their
+corners there as copies). Each chunk keeps its triangles and a normal per
+vertex (the area-weighted mean of its faces' in the chunk), an RGBA32F
+texture beside the vertex texture (`chunk_build.ts`, `mesh_gl.ts`). The
+faces that span chunks are found only by listing the store's link arrays,
+so the worker reads with listing on (`httpAccess(url, { listing: true })`
+in the Zarr Vectors reader: a Cloud Storage bucket's JSON API, or the
+HTML index a server or the app's local data gives for a directory); where
+a server gives neither, those faces are missing and the surface shows
+gaps along chunk faces.
+
+- **3-D**: each triangle drawn (two-sided) and lit by a light at the eye
+  (the eye found from the view's matrix: the point it maps to clip
+  x = y = w = 0, or for an orthographic view, the direction it looks
+  along). *Glow* adds `0.2 + 0.6 f + 0.6 (1 - f)^3` of the colour (`f`
+  how squarely the surface faces the eye: lit, with a rim where it turns
+  away) into the same float target as lines and points, tone mapped and
+  depth-tested the same way, so the surface reads as a lit, glowing shell
+  and other Luxar layers composite with it; *emission and absorption*
+  also absorbs `absorption / max(f, 0.2)` (a longer path through a surface
+  seen edge on); *solid* draws it opaque (`0.25 + 0.75 f`, a highlight),
+  depth-written, into the view. Colour by direction is by the normal.
+  Automatic brightness counts a surface's area on screen (half of it,
+  seen at all angles).
+- **2-D**: each triangle the section cuts is drawn as the segment where it
+  crosses (one instanced quad per triangle, as Neuroglancer draws a mesh in
+  a section), the layer's width across, with the line's cross-section:
+  the surface's outline, glowing.
+
+The layer's chosen segments and colours apply as for lines.
 
 ### How it sits in Neuroglancer's frame (3-D)
 
@@ -249,11 +284,11 @@ momentum in the engine.
 
 ## What is left
 
-- **Meshes** (Zarr Vectors `mesh` stores) are drawn as their vertices
-  (points): the reader's dense chunks (`LevelPipeline.download`) carry no
-  faces, which soft-shaded triangles need (the decoder has them, as
-  `DecodedChunk.faces`; exposing them is a change to the Zarr Vectors
-  reader). Point clouds and every line kind are drawn fully.
+- **Meshes**: normals are per chunk (the faces in it), so where a surface
+  crosses a chunk face the shading can show a faint seam, as Neuroglancer's
+  own drawing of the chunks does; the surface is not sorted, so emission
+  and absorption is the order-independent sum, as for lines; nothing of a
+  mesh is picked (the pointer's position lands on it, no vertex values).
 - **A few chosen segments** are read as the chunks that hold them, whole:
   a handful of streamlines out of a whole brain reads the chunks of a
   level about four times the Detail, and coarse levels show only those of

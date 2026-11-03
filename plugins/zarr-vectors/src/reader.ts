@@ -26,6 +26,7 @@ import { LevelPipeline, setVertexCellCacheBytes } from "./chunk_pipeline.js";
 import { ObjectReader } from "./object_reader.js";
 import type { ZarrVectorsLevel, ZarrVectorsStore, ZarrVectorsStoreAccess } from "./store.js";
 import { kvStoreAccess, openZarrVectorsStore } from "./store.js";
+import { listHttpDirectories } from "./http_listing.js";
 
 export type { DenseChunkData, ZarrVectorsLevel, ZarrVectorsStore, ZarrVectorsStoreAccess };
 export { LevelPipeline, ObjectReader, openZarrVectorsStore, setVertexCellCacheBytes };
@@ -41,9 +42,12 @@ export { openZarrArray, ShardIndexCache, ZarrArrayReader } from "./zarr_array.js
 
 /**
  * Store access over `fetch`, with byte ranges.  Listing is not offered
- * (a static host cannot list); the reader then probes instead.
+ * (a static host cannot list) unless asked for (`listing`: a Cloud Storage
+ * bucket's JSON API, or a server's HTML directory index, as
+ * ./http_listing.ts reads them, which a mesh's faces spanning chunks
+ * need); without it, or where it fails, the reader probes instead.
  */
-export function httpAccess(storeUrl: string): ZarrVectorsStoreAccess {
+export function httpAccess(storeUrl: string, options: { listing?: boolean } = {}): ZarrVectorsStoreAccess {
   return kvStoreAccess(
     {
       async read(url, options: { signal?: AbortSignal; byteRange?: { offset: number; length: number } | { suffixLength: number } }) {
@@ -63,8 +67,9 @@ export function httpAccess(storeUrl: string): ZarrVectorsStoreAccess {
         else if (response.status === 206 && range !== undefined && "offset" in range) offset = range.offset;
         return { response, offset };
       },
-      async list() {
-        throw new Error("listing is not supported over plain HTTP");
+      async list(url: string, listOptions: { signal?: AbortSignal }) {
+        if (!options.listing) throw new Error("listing is not supported over plain HTTP");
+        return { directories: await listHttpDirectories(url, listOptions?.signal) };
       },
     },
     storeUrl,

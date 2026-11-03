@@ -6,7 +6,7 @@
 **Luxar** tab, and a command ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/luxar)
 
-Draws a Zarr Vectors layer (a tractogram, skeletons, a point cloud, or a
+Draws a Zarr Vectors layer (a tractogram, skeletons, a point cloud, a mesh, or a
 `.trk`, `.tck`, `.trx` or SWC file opened in place) the way the
 [Luxar](https://github.com/royerlab/luxar) viewer draws lines: as light,
 added up and tone mapped, with smooth thick lines and mitred joins. It
@@ -51,9 +51,12 @@ is converted.
   follows it.
 - Hiding the layer hides its Luxar drawing too. A link opened where the
   plugin is off shows the layer drawn by Neuroglancer as usual.
+- **Meshes** (surfaces): lit in the 3-D view and, with Glow or Emission,
+  added up as light the way lines are (so other Luxar layers' lines and
+  splats mix with them); Solid draws them opaque. In the 2-D views the
+  outline where the section cuts them glows.
 
-Not yet: meshes, and fitted Gaussian splats (Luxar's GPU
-fit, which makes new files).
+Not yet: fitted Gaussian splats (Luxar's GPU fit, which makes new files).
 
 ## Images as splats
 

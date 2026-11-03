@@ -15,7 +15,7 @@ import { GpuChunks, selectChunks, type Selection } from "./chunks.js";
 import type { LayerView } from "./layer_view.js";
 import { Bloom } from "./bloom.js";
 import { DepthTarget, LightTarget, Renderer } from "./render_gl.js";
-import { apply, boxInFrustum, coverage, invertAffine, modelTo, multiply, pixelsPerUnit, screenArea, shownShare } from "./view_math.js";
+import { apply, boxInFrustum, coverage, eyeOf, invertAffine, modelTo, multiply, pixelsPerUnit, screenArea, shownShare } from "./view_math.js";
 
 /** GPU memory for one layer's chunks in the 3-D view. */
 const GPU_BYTES = 768 * 1024 * 1024;
@@ -121,8 +121,10 @@ export class View3d implements Drawer3d {
     const saved = this.save(gl);
     const size: [number, number] = [saved.viewport[2], saved.viewport[3]];
     // Over the part of the view the data can cover, not the whole view: a small brain in a large view is as dense as a large one.
-    const cover = coverage(drawn, pixelsPerUnit(modelToClip, centre, size), 2 * view.halfWidth, screenArea(modelToClip, info.bounds.lower, info.bounds.upper, size));
+    const cover = coverage(drawn, pixelsPerUnit(modelToClip, centre, size), 2 * view.halfWidth, screenArea(modelToClip, info.bounds.lower, info.bounds.upper, size), 1, true);
     const uniforms = view.uniforms(Float32Array.from(modelToClip), size, cover);
+    // A mesh is lit from the eye.
+    uniforms.eye = eyeOf(modelToClip);
     const renderer = this.renderer;
     try {
       if (style.blending === "solid" || this.broken) {

@@ -11,7 +11,7 @@ export type { StoreInfo };
 /** Built chunks kept on this side, for the views to upload (a view keeps its own GPU copy). */
 const CPU_BYTES = 384 * 1024 * 1024;
 
-const bytesOf = (c: BuiltChunk) => c.vertices.byteLength + c.segments.byteLength + c.slots.byteLength + c.objectIds.byteLength + c.objectWeight.byteLength;
+const bytesOf = (c: BuiltChunk) => c.vertices.byteLength + c.segments.byteLength + c.slots.byteLength + c.objectIds.byteLength + c.objectWeight.byteLength + c.triangles.byteLength + c.normals.byteLength;
 
 export class StoreClient {
   private worker: Worker;

@@ -235,19 +235,50 @@ export function screenArea(modelToClip: ArrayLike<number>, lower: number[], uppe
  * screen times their width, over the view's area (`share` of them showing,
  * for a 2-D view's slab).
  */
-export function coverage(chunks: { length: number; pointCount: number; shown?: number }[], pixelsPerUnit: number, widthPx: number, area: number, share = 1): number {
+export function coverage(chunks: { length: number; pointCount: number; shown?: number; area?: number }[], pixelsPerUnit: number, widthPx: number, area: number, share = 1, surfaces = false): number {
   let covered = 0;
   // Of a chunk whose objects are not all shown (a layer's chosen segments), its share shown.
-  for (const c of chunks) covered += (c.length * pixelsPerUnit * widthPx + c.pointCount * Math.PI * (1.5 * widthPx) ** 2) * (c.shown ?? 1);
+  // A surface (3-D) covers its area on screen, half of it on average (seen at all angles).
+  for (const c of chunks) {
+    const surface = surfaces ? 0.5 * (c.area ?? 0) * pixelsPerUnit ** 2 : 0;
+    covered += (c.length * pixelsPerUnit * widthPx + c.pointCount * Math.PI * (1.5 * widthPx) ** 2 + surface) * (c.shown ?? 1);
+  }
   return area > 0 ? (covered * share) / area : 0;
 }
 
+/**
+ * Where the eye is, in the coordinates `modelToClip` maps from: the point
+ * that maps to clip x = y = w = 0 (w 1), or for an orthographic view, the
+ * direction along which x and y do not change (w 0).
+ */
+export function eyeOf(modelToClip: ArrayLike<number>): [number, number, number, number] {
+  const m = modelToClip;
+  const row = (r: number) => [m[r], m[4 + r], m[8 + r], m[12 + r]];
+  const [a, b, c] = [row(0), row(1), row(3)];
+  const det = a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0]);
+  const cross = (u: number[], v: number[]) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  const scale = Math.max(...a.slice(0, 3).map(Math.abs), ...b.slice(0, 3).map(Math.abs), ...c.slice(0, 3).map(Math.abs), 1e-30);
+  if (Math.abs(det) > 1e-9 * scale ** 3) {
+    // Cramer's rule on [a; b; c] x = -(translations).
+    const rhs = [-a[3], -b[3], -c[3]];
+    const col = (k: number) => [a[k], b[k], c[k]];
+    const solve = (k: number) => {
+      const cols = [0, 1, 2].map((j) => (j === k ? rhs : col(j)));
+      const [x, y, z] = cols;
+      return (x[0] * (y[1] * z[2] - y[2] * z[1]) - y[0] * (x[1] * z[2] - x[2] * z[1]) + z[0] * (x[1] * y[2] - x[2] * y[1])) / det;
+    };
+    return [solve(0), solve(1), solve(2), 1];
+  }
+  const d = cross(a.slice(0, 3), b.slice(0, 3));
+  return [d[0], d[1], d[2], 0];
+}
+
 /** The share of these chunks' lines and points shown (a layer's chosen segments), by weight; 1 with none. */
-export function shownShare(chunks: { length: number; pointCount: number; shown?: number }[]): number {
+export function shownShare(chunks: { length: number; pointCount: number; shown?: number; area?: number }[]): number {
   let total = 0;
   let shown = 0;
   for (const c of chunks) {
-    const w = c.length + c.pointCount;
+    const w = c.length + c.pointCount + (c.area ?? 0);
     total += w;
     shown += w * (c.shown ?? 1);
   }

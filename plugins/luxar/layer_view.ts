@@ -157,6 +157,7 @@ export class LayerView {
       depthCut: 0.3,
       depthNear: false,
       objectTable: needsTable(this.objectShading()),
+      eye: [0, 0, 1, 0],
     };
   }
 

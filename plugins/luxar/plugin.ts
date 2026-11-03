@@ -358,10 +358,12 @@ class Luxar {
       parts.push(el("label", { class: "field" }, el("span", {}, "Line colour"), colour));
     }
     const points = info?.primitive === "points";
+    const mesh = info?.primitive === "triangles";
+    if (mesh) parts.push(el("p", { class: "note" }, "A mesh: lit surfaces in the 3-D view (direction colours by the surface's normal), and in the 2-D views the outline where the section cuts it."));
     parts.push(
       points
         ? this.slider(name, "Point size (pixels)", "width", 0.5, 12, 0.25, (v) => `${3 * v} px`)
-        : this.slider(name, "Width (pixels)", "width", 0.5, 12, 0.25, (v) => `${v} px`),
+        : this.slider(name, mesh ? "Outline width in 2-D (pixels)" : "Width (pixels)", "width", 0.5, 12, 0.25, (v) => `${v} px`),
       this.slider(name, "Brightness (stops)", "exposure", -8, 8, 0.25, (v) => (v > 0 ? `+${v}` : `${v}`)),
       this.slider(name, "Sharpness", "sharpness", 0, 1, 0.05, (v) => v.toFixed(2)),
     );
