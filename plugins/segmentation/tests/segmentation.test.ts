@@ -9,7 +9,9 @@ import { openNifti } from "../../../src/virtual/images/nifti.js";
 import { VolumeReader } from "../../volume-view/volume_reader.js";
 import { chooseUndo, History, Stroke } from "../history.js";
 import { ballReach, ballShape, dabsBetween, distance2d, floodFill, type ImageBlock, inRange, interpolate, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "../kernels.js";
+import { badLabel } from "../editor.js";
 import { LabelVolume } from "../label_volume.js";
+import { omeZarrMetadata } from "../../registration/volume_io.js";
 import { component, otsu, THRESHOLD_SELECT } from "../quick_select.js";
 import { cropped, niftiGz, omeZarr } from "../save.js";
 
@@ -404,6 +406,51 @@ describe("quick select", () => {
     const n = mask.data.reduce((a, b) => a + b, 0);
     expect(n).toBeGreaterThan(40);
     expect(n).toBeLessThan(60);
+  });
+});
+
+describe("copying labels above 2^24", () => {
+  /** A one-level label store of `type` (raw chunks, 4 a side), its first voxels `values` (x fastest). */
+  async function store(type: "uint32" | "uint64", values: bigint[]) {
+    const files = omeZarrMetadata([{ size: [4, 4, 4], voxelToRas: PLACE }], "uint32", "labels", { label: true, chunk: 4, codecs: [{ name: "bytes", configuration: { endian: "little" } }] });
+    const array = JSON.parse(new TextDecoder().decode(files.get("0/zarr.json")!));
+    array.data_type = type;
+    files.set("0/zarr.json", new TextEncoder().encode(JSON.stringify(array)));
+    const chunk = type === "uint64" ? new BigUint64Array(64) : new Uint32Array(64);
+    values.forEach((v, i) => (chunk[i] = (type === "uint64" ? v : Number(v)) as never));
+    files.set("0/c/0/0/0", new Uint8Array(chunk.buffer));
+    const base = `https://example.org/${type}.ome.zarr/`;
+    serve((key) => files.get(key), base);
+    const reader = new VolumeReader();
+    const { levels } = await reader.open([base], undefined);
+    return { reader, levels };
+  }
+  const box = { lo: [0, 0, 0] as Vec3, hi: [4, 1, 1] as Vec3 };
+  const big = [2n ** 24n + 1n, 2n ** 31n + 5n, 4294967295n, 0n];
+
+  it("reads 32-bit labels exactly, where 32-bit floats round them", async () => {
+    const { reader } = await store("uint32", big);
+    const signal = new AbortController().signal;
+    expect(Array.from((await reader.exactRegion(0, box, signal)).data)).toEqual(big.map(Number));
+    expect((await reader.rawRegion(0, box, signal)).data[0]).toBe(2 ** 24);
+  });
+
+  it("reads 64-bit labels narrowed to 32 bits, exactly; past 32 bits, an error", async () => {
+    const { reader, levels } = await store("uint64", big);
+    expect(levels[0].type).toBe("uint32");
+    expect(Array.from((await reader.exactRegion(0, box, new AbortController().signal)).data)).toEqual(big.map(Number));
+    const wide = await store("uint64", [1n, 2n ** 32n + 1n]);
+    await expect(wide.reader.exactRegion(0, box, new AbortController().signal)).rejects.toThrow(/past what 32 bits hold/);
+  });
+
+  it("puts them into a 32-bit volume as they are, and refuses what is not a label", () => {
+    const v = vol([4, 4, 4], "uint32");
+    v.addBlock([0, 0, 0], [4, 1, 1], Float64Array.from(big.map(Number)));
+    expect([0, 1, 2, 3].map((x) => v.get(x, 0, 0))).toEqual(big.map(Number));
+    expect(badLabel(Float64Array.from([0, 2 ** 24 + 1, NaN, 4294967295]), 4294967295)).toBeUndefined();
+    expect(badLabel([3, 300], 255)).toBe(300);
+    expect(badLabel([1, -2], 255)).toBe(-2);
+    expect(badLabel([1, 2.5], 255)).toBe(2.5);
   });
 });
 

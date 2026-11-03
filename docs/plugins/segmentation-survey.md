@@ -67,7 +67,7 @@ Neuroglancer reads its chunks again (see the plugin's README).
 |---|---|---|
 | Tool bar over the views; Move as the default tool; tools by key (B, E, F, I, Q; W to cycle) | The same tool bar and keys while a layer is edited; Move (`M`, `Escape`) leaves the views to Neuroglancer | Now |
 | Brush, its size (Shift + wheel) | **Brush**: a ball, or its disc in the section; radius in voxels, mm or µm (round in space on any voxels); **Alt + wheel** (Neuroglancer's Shift + wheel steps ten sections), `[` and `]`, the bar's − and + | Now |
-| A new volume layer, empty or over an existing segmentation | **New segmentation layer** on an image's or a segmentation's grid, at a level; or a **copy** of a segmentation's labels at a level to edit (WebKnossos edits a fallback segmentation in place; here a copy, up to 512 M voxels) | Now |
+| A new volume layer, empty or over an existing segmentation | **New segmentation layer** on an image's or a segmentation's grid, at a level; or a **copy** of a segmentation's labels at a level to edit (WebKnossos edits a fallback segmentation in place; here a copy, up to 512 M voxels, its labels exact to 32 bits) | Now |
 | Eraser | **Erase**: any label, or only the active one | Now |
 | Overwrite modes | **Paint over**: any label, or unlabelled only | Now |
 | Fill 2-D / 3-D by labels | **Fill 2-D** (the section) and **Fill 3-D** (a box a set reach round the click), by the label clicked | Now |

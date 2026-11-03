@@ -140,9 +140,12 @@ section shown.
 view's reader reads: OME-Zarr, NIfTI, MGH, precomputed) into a new label
 volume, in blocks of 256 × 256 × 64 voxels as a job that can be cancelled,
 up to 512 M voxels; chunks with no label are not made. The type follows the
-source's (8 and 16 bits as they are, anything else 32). The reader gives
-values as 32-bit floats, so labels above 2²⁴ are refused rather than
-rounded. Names and colours come from the source's lookup table when it has
+source's (8 and 16 bits as they are, anything else 32). Labels are read
+exactly (`Voxels.labels`: the reader's `exactRegion`, 64-bit floats, which
+hold every 32-bit label), so labels above 2²⁴ copy as they are; 64-bit
+labels (uint64, int64, precomputed) are narrowed to 32 bits as the volume
+view's reader does (`narrow`), and one past 32 bits, or a negative or
+fractional value, stops the copy with an error. Names and colours come from the source's lookup table when it has
 one, otherwise from its layer's segment colours. The source is hidden and
 not changed. Editing a large segmentation in place (copy-on-write over the
 source) is not done: see *Large data*.

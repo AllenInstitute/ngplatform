@@ -6,12 +6,12 @@
  *
  * In:  { type: "open", id, store }
  *      { type: "points", id, store, level, points, method }
- *      { type: "block", id, store, level, lo, size, affine? }
+ *      { type: "block", id, store, level, lo, size, affine?, exact? }
  *      { type: "stats", id, store, level, lo, hi, region }
  *      { type: "cancel", id }
  * Out: { type: "opened", id, levels: [{ size, voxelToRas, voxelSize, type }] }
  *      { type: "points", id, values }
- *      { type: "block", id, data }
+ *      { type: "block", id, data }  (Float32Array; Float64Array when exact)
  *      { type: "stats", id, summary }
  *      { type: "progress", id, done, total }
  *      { type: "error", id, message }
@@ -44,12 +44,14 @@ const isIdentity = (a: number[]) => a.every((v, i) => Math.abs(v - IDENTITY[i]) 
 /**
  * The image's values on another grid's block (`size` voxels from `lo`, x
  * fastest): each voxel's nearest image voxel, through `affine` (that grid's
- * voxels to the image's).
+ * voxels to the image's).  `exact` reads 64-bit floats, which hold labels
+ * above 2^24 exactly, where 32-bit ones would round them.
  */
-async function block(reader: VolumeReader, level: number, lo: number[], size: number[], affine: number[], signal: AbortSignal): Promise<Float32Array> {
+async function block(reader: VolumeReader, level: number, lo: number[], size: number[], affine: number[], signal: AbortSignal, exact = false): Promise<Float32Array | Float64Array> {
   const hi = lo.map((v, k) => v + size[k]);
+  const read = (box: { lo: [number, number, number]; hi: [number, number, number] }) => (exact ? reader.exactRegion(level, box, signal) : reader.rawRegion(level, box, signal));
   if (isIdentity(affine)) {
-    const { data } = await reader.rawRegion(level, { lo: lo as [number, number, number], hi: hi as [number, number, number] }, signal);
+    const { data } = await read({ lo: lo as [number, number, number], hi: hi as [number, number, number] });
     return data;
   }
   const at = (p: number[], r: number) => affine[4 * r] * p[0] + affine[4 * r + 1] * p[1] + affine[4 * r + 2] * p[2] + affine[4 * r + 3];
@@ -63,8 +65,10 @@ async function block(reader: VolumeReader, level: number, lo: number[], size: nu
       b[r] = Math.max(b[r], Math.ceil(v) + 1);
     }
   }
-  const region = await reader.rawRegion(level, { lo: a as [number, number, number], hi: b as [number, number, number] }, signal);
-  const out = new Float32Array(size[0] * size[1] * size[2]).fill(NaN);
+  const region = await read({ lo: a as [number, number, number], hi: b as [number, number, number] });
+  const n = size[0] * size[1] * size[2];
+  const out = exact ? new Float64Array(n) : new Float32Array(n);
+  out.fill(NaN);
   const rs = region.size;
   let i = 0;
   for (let z = lo[2]; z < hi[2]; ++z) {
@@ -98,7 +102,7 @@ self.onmessage = (event: MessageEvent) => {
       const values = await reader.rawPoints(msg.level, msg.points, msg.method, signal);
       postMessage({ type: "points", id: msg.id, values }, { transfer: [values.buffer] });
     } else if (msg.type === "block") {
-      const data = await block(reader, msg.level, msg.lo, msg.size, msg.affine ?? IDENTITY, signal);
+      const data = await block(reader, msg.level, msg.lo, msg.size, msg.affine ?? IDENTITY, signal, msg.exact === true);
       postMessage({ type: "block", id: msg.id, data }, { transfer: [data.buffer] });
     } else if (msg.type === "stats") {
       const { data, size } = await reader.rawRegion(msg.level, { lo: msg.lo, hi: msg.hi }, signal, progress);
@@ -106,7 +110,8 @@ self.onmessage = (event: MessageEvent) => {
       if (region.kind === "segmentation") {
         // The segmentation's labels on the image's block, nearest.
         const seg = await open(region.store);
-        const labels = await block(seg.reader, region.level, msg.lo, size, region.affine, signal);
+        // Exactly: a label above 2^24 would round as a 32-bit float, and match its neighbour's.
+        const labels = await block(seg.reader, region.level, msg.lo, size, region.affine, signal, true);
         region = { kind: "label", affine: IDENTITY, labels, origin: msg.lo, size, value: region.value };
       }
       const inside = valuesInside(data, msg.lo, size, regionTest(region));

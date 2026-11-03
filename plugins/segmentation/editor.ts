@@ -42,8 +42,6 @@ import { brushes, cycle, draws, stepRadius, type Tool, TOOLS } from "./tools.js"
 export const MAX_NIFTI = 2 * 2 ** 30;
 /** Voxels read to open a label image or copy a segmentation. */
 export const MAX_COPY = 512 * 2 ** 20;
-/** Labels are read as 32-bit floats, exact to here. */
-const EXACT = 2 ** 24;
 /** The block a copy is read in, in voxels. */
 const COPY_BLOCK: Vec3 = [256, 256, 64];
 
@@ -478,12 +476,10 @@ export class Editor implements LabelVolumes {
         job.progress(i / blocks.length, `Reading block ${i + 1} of ${blocks.length}`);
         const lo = blocks[i];
         const extent = lo.map((v, k) => Math.min(COPY_BLOCK[k], size[k] - v)) as Vec3;
-        const data = await this.voxels.block(store, level, lo, extent);
-        for (let j = 0; j < data.length; ++j) {
-          const v = data[j];
-          if (v > max) throw new Error(`label ${v} is more than a ${volume.type} volume holds`);
-          if (v > EXACT) throw new Error(`labels above ${EXACT.toLocaleString()} are not read exactly`);
-        }
+        // Exactly: 32-bit labels as they are, 64-bit ones narrowed to 32 bits (an error past them).
+        const data = await this.voxels.labels(store, level, lo, extent);
+        const bad = badLabel(data, max);
+        if (bad !== undefined) throw new Error(bad > max ? `label ${bad} is more than a ${volume.type} volume holds` : `${bad} is not a label (a whole number from 0)`);
         volume.addBlock(lo, extent, data);
       }
     });
@@ -1025,6 +1021,16 @@ interface Brushing {
 function dominant(n: Vec3): number {
   const a = n.map(Math.abs);
   return a.indexOf(Math.max(...a));
+}
+
+/** The first value of a block that is not a label a volume holding up to `max` takes; NaN (outside the image) is none. */
+export function badLabel(data: ArrayLike<number>, max: number): number | undefined {
+  for (let j = 0; j < data.length; ++j) {
+    const v = data[j];
+    if (v !== v) continue;
+    if (v < 0 || v > max || v !== Math.floor(v)) return v;
+  }
+  return undefined;
 }
 
 /** The label type that holds a stored type's values: 8 and 16 bits as they are, anything else in 32. */

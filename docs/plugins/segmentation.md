@@ -26,7 +26,9 @@ In the Segmentation tab, under **New segmentation layer**:
   edit** copy its labels at that level into the new layer, with the names
   and colours of its lookup table if it has one. The original is hidden and
   not changed. Copies are limited to 512 million voxels: choose a coarser
-  level for a larger segmentation.
+  level for a larger segmentation. Labels copy exactly up to 4,294,967,295
+  (32 bits; 64-bit labels within that range too); a label past 32 bits
+  stops the copy with an error.
 - **Open NIfTI…** reads a label image from your computer to edit.
 
 The new layer opens with the tool bar shown and the brush chosen. Each

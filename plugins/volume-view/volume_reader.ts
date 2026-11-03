@@ -482,12 +482,27 @@ export class VolumeReader {
    * voxels outside the level are NaN.  For measuring: line profiles, label
    * statistics, a brush limited to an intensity range.
    */
-  async rawRegion(index: number, region: Region, signal: AbortSignal, progress?: Progress): Promise<{ data: Float32Array; size: [number, number, number] }> {
+  rawRegion(index: number, region: Region, signal: AbortSignal, progress?: Progress): Promise<{ data: Float32Array; size: [number, number, number] }> {
+    return this.region(index, region, signal, progress, (n) => new Float32Array(n));
+  }
+
+  /**
+   * A box of a level's own values as 64-bit floats, which hold every 32-bit
+   * integer exactly (64-bit labels come narrowed to 32 bits, an error past
+   * them): labels read for copying, where 32-bit floats would round those
+   * above 2^24.  Voxels outside the level are NaN.
+   */
+  exactRegion(index: number, region: Region, signal: AbortSignal, progress?: Progress): Promise<{ data: Float64Array; size: [number, number, number] }> {
+    return this.region(index, region, signal, progress, (n) => new Float64Array(n));
+  }
+
+  private async region<T extends Float32Array | Float64Array>(index: number, region: Region, signal: AbortSignal, progress: Progress | undefined, make: (n: number) => T): Promise<{ data: T; size: [number, number, number] }> {
     const level = this.levels[index];
     const { chunk: cs, shape } = level.info;
     const { dimOf, type } = level;
     const size = [0, 1, 2].map((k) => Math.max(0, region.hi[k] - region.lo[k])) as [number, number, number];
-    const out = new Float32Array(size[0] * size[1] * size[2]).fill(NaN);
+    const out = make(size[0] * size[1] * size[2]);
+    out.fill(NaN);
     const aLo = [0, 0, 0];
     const aHi = [0, 0, 0];
     const stride = [0, 0, 0];
