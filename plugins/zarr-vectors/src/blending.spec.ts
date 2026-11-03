@@ -15,7 +15,11 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { emitsPremultipliedAlpha, glslZvEmit } from "./blending.js";
+import {
+  emitsPremultipliedAlpha,
+  glslZvEmit,
+  linesDrawVertexDiscs,
+} from "./blending.js";
 
 type RGB = [number, number, number];
 type RGBA = [number, number, number, number];
@@ -93,5 +97,36 @@ describe("zvEmit", () => {
     const got = sliceViewComposite(emitted(glsl, colour, 0.5), [0, 0, 0]);
     expect(got[0]).toBeCloseTo(0.25, 6);
     expect(over(colour, 0.5, [0, 0, 0])[0]).toBeCloseTo(0.5, 6);
+  });
+});
+
+describe("linesDrawVertexDiscs", () => {
+  it("draws the points asked for, in every view", () => {
+    for (const targetIsSliceView of [true, false]) {
+      for (const transparent of [true, false]) {
+        expect(
+          linesDrawVertexDiscs({ linesAndPoints: true, targetIsSliceView, transparent }),
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("leaves lines alone without discs wherever colour is blended", () => {
+    // A cross-section always blends.
+    for (const transparent of [true, false]) {
+      expect(
+        linesDrawVertexDiscs({ linesAndPoints: false, targetIsSliceView: true, transparent }),
+      ).toBe(false);
+    }
+    // 3-d at partial opacity: the transparent pass.
+    expect(
+      linesDrawVertexDiscs({ linesAndPoints: false, targetIsSliceView: false, transparent: true }),
+    ).toBe(false);
+  });
+
+  it("fills the bends of opaque lines in 3-d", () => {
+    expect(
+      linesDrawVertexDiscs({ linesAndPoints: false, targetIsSliceView: false, transparent: false }),
+    ).toBe(true);
   });
 });

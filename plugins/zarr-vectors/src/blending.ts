@@ -45,3 +45,21 @@ void zvEmit(vec3 rgb, float alpha, highp uint pickId) {
 }
 `;
 }
+
+/**
+ * Whether a layer of lines draws a disc at each vertex as well as its
+ * segments.  Lines and points always do (the points are what is asked for).
+ * Lines alone do only where nothing is blended (3-d drawn opaque), where a
+ * disc as wide as the line fills the notch at each bend of a wide line.
+ * Where colour is blended (every cross-section, the 3-d view's transparent
+ * pass) a vertex's disc lays its colour over the segments' a second time,
+ * and every vertex shows as a dot, the more so the lower the opacity.
+ */
+export function linesDrawVertexDiscs(options: {
+  linesAndPoints: boolean;
+  targetIsSliceView: boolean;
+  transparent: boolean;
+}): boolean {
+  if (options.linesAndPoints) return true;
+  return !options.targetIsSliceView && !options.transparent;
+}

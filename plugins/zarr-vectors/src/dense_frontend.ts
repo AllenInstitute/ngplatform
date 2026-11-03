@@ -44,7 +44,11 @@ import {
   ZARR_VECTORS_DENSE_RENDER_LAYER_UPDATE_SOURCES_RPC_ID,
   ZarrVectorsGeometryChunkSourceParameters,
 } from "./base.js";
-import { emitsPremultipliedAlpha, glslZvEmit } from "./blending.js";
+import {
+  emitsPremultipliedAlpha,
+  glslZvEmit,
+  linesDrawVertexDiscs,
+} from "./blending.js";
 import {
   addStringShaderSupport,
   setShaderControls,
@@ -1601,7 +1605,16 @@ function DenseRenderLayer<
         );
         passes.push({ shader, edges: true });
       }
-      if (!(helper.triangles && targetIsSliceView)) {
+      // Lines alone draw their vertices' discs only where nothing blends.
+      const vertexDiscs =
+        helper.primitive !== "lines" ||
+        linesDrawVertexDiscs({
+          linesAndPoints:
+            renderOptions.mode.value === SkeletonRenderMode.LINES_AND_POINTS,
+          targetIsSliceView,
+          transparent: this.isTransparent,
+        });
+      if (!(helper.triangles && targetIsSliceView) && vertexDiscs) {
         const { shader, parameters } = helper.nodeShaderGetter(
           renderContext.emitter,
         );
