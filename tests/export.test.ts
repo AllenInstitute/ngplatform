@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { openMgh } from "../src/virtual/images/mgh.js";
 import { openNifti } from "../src/virtual/images/nifti.js";
-import { readLevel, storeLevels } from "../src/virtual/out/read_level.js";
+import { readLevel, regionAround, storeLevels } from "../src/virtual/out/read_level.js";
 import { csvFile, objFile, plyFile, stlFile, tckFile, trkFile } from "../src/virtual/out/vectors.js";
 import { mghFile, niftiFile } from "../src/virtual/out/volume.js";
 import { parseMeshFile } from "../src/virtual/vectors/mesh_files.js";
@@ -102,5 +102,22 @@ describe("export of geometry", () => {
     const text = new TextDecoder().decode(csvFile([1, 2, 3, 4, 5, 6], [{ name: "a", values: [7, 8] }]));
     expect(text).toBe("x,y,z,a\n1,2,3,7\n4,5,6,8\n");
     expect(parsePointTable(text).positions.length).toBe(6);
+  });
+});
+
+describe("export of a region", () => {
+  it("reads just a box of a level, placed where it is in the whole", async () => {
+    const store = await openMgh(new Blob([readFileSync(new URL("short.mgz", DIR))]), "short");
+    const { levels } = await storeLevels(store);
+    const whole = await readLevel(store, levels[0]);
+    const box = await readLevel(store, levels[0], undefined, { lo: [2, 1, 1], hi: [6, 4, 3] });
+    expect(box.size).toEqual([4, 3, 2]);
+    for (let z = 0; z < 2; ++z) for (let y = 0; y < 3; ++y) for (let x = 0; x < 4; ++x) expect(box.data[x + 4 * (y + 3 * z)]).toBe(whole.data[x + 2 + 7 * (y + 1 + 6 * (z + 1))]);
+    // Voxel (0, 0, 0) of the box is voxel (2, 1, 1) of the whole.
+    const at = (m: Float64Array, p: number[]) => [0, 1, 2].map((r) => m[4 * r] * p[0] + m[4 * r + 1] * p[1] + m[4 * r + 2] * p[2] + m[4 * r + 3]);
+    at(box.voxelToRas, [0, 0, 0]).forEach((v, k) => expect(v).toBeCloseTo(at(whole.voxelToRas, [2, 1, 1])[k], 5));
+    // A box around a point, kept inside the image.
+    const centre = at(whole.voxelToRas, [6, 5, 4]);
+    expect(regionAround(levels[0], centre, 4)).toEqual({ lo: [3, 2, 1], hi: [7, 6, 5] });
   });
 });

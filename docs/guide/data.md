@@ -48,7 +48,7 @@ What can be saved today, and where:
 
 | What | How | Format |
 |---|---|---|
-| A local image | Datasets → the row's ⋯ → **Export as…** | NIfTI (`.nii.gz`, `.nii`), FreeSurfer (`.mgz`, `.mgh`) or an OME-Zarr folder, at full resolution or a coarser level (up to 2 GB) |
+| A local image | Datasets → the row's ⋯ → **Export as…** | NIfTI (`.nii.gz`, `.nii`), FreeSurfer (`.mgz`, `.mgh`) or an OME-Zarr folder: the whole image at full resolution or a coarser level (up to 2 GB), or a box of 256 voxels a side around the position at any level, for images too large to save whole |
 | A local tractogram | the same | TrackVis `.trk` or MRtrix `.tck` |
 | A local mesh or surface | the same | OBJ, PLY, STL, or its vertices as CSV |
 | A local point table or SWC | the same | CSV |
@@ -62,7 +62,6 @@ What can be saved today, and where:
 | The workspace itself | the link in the address bar, or **Share** | link or JSON |
 
 !!! note "Coming"
-    Saving large data without making terabyte files: a region or level
-    within a size limit, a whole pyramid written chunk by chunk to a folder,
-    or only your edits as a small layer over the original; TIFF and `.trx`
-    output.
+    Saving large data without making terabyte files: a whole pyramid
+    written chunk by chunk to a folder, or only your edits as a small layer
+    over the original; remote images; TIFF and `.trx` output.

@@ -106,30 +106,48 @@ export async function exportDataset(wb: Workbench, dataset: DatasetRecord): Prom
       return;
     }
     const info = await request(worker, { type: "levels", file: found.file });
-    const levels = (info.levels as { size: number[]; bytes: number }[]).map((l, i) => ({ ...l, index: i })).filter((l) => l.bytes <= MAX_BYTES);
-    if (levels.length === 0) throw new Error("every level is larger than 2 GB");
+    const all = (info.levels as { size: number[]; bytes: number; type: string }[]).map((l, i) => ({ ...l, index: i }));
     const levelLabel = (l: { index: number; size: number[]; bytes: number }) => `${l.index === 0 ? "Full resolution" : `Level ${l.index}`}: ${l.size.join(" × ")} (${sizeText(l.bytes)})`;
-    const answer = await formDialog<{ format: string; level: string }>(
+    // A box around the position, for images too large to save whole: any level, the box within the limit.
+    const BOX = 256;
+    const boxLabel = (l: { index: number; size: number[]; bytes: number }) => {
+      const n = l.size.map((s) => Math.min(s, BOX));
+      return `${l.index === 0 ? "Full resolution" : `Level ${l.index}`}: a box of ${n.join(" × ")} around the position (${sizeText((l.bytes / (l.size[0] * l.size[1] * l.size[2])) * n[0] * n[1] * n[2])})`;
+    };
+    const choices = [
+      ...all.filter((l) => l.bytes <= MAX_BYTES).map((l) => ({ label: levelLabel(l), level: l.index, box: false })),
+      ...all.filter((l) => l.size.some((s) => s > BOX)).map((l) => ({ label: boxLabel(l), level: l.index, box: true })),
+    ];
+    if (choices.length === 0) throw new Error("every level is larger than 2 GB");
+    const answer = await formDialog<{ format: string; what: string }>(
       `Export ${dataset.name}`,
       {
         type: "object",
         properties: {
           format: { type: "string", title: "Format", enum: formats.map((f) => f.label), default: formats[0].label },
-          level: { type: "string", title: "Resolution", enum: levels.map(levelLabel), default: levelLabel(levels[0]) },
+          what: { type: "string", title: "What", enum: choices.map((c) => c.label), default: choices[0].label },
         },
-        required: ["format", "level"],
+        required: ["format", "what"],
       },
       {},
       "Export",
     );
     if (answer === undefined) return;
     const chosen = formats.find((f) => f.label === answer.format)!;
-    const level = levels.find((l) => levelLabel(l) === answer.level)!;
-    const base = `${dataset.name}${level.index > 0 ? `_level${level.index}` : ""}`;
+    const choice = choices.find((c) => c.label === answer.what)!;
+    const level = all[choice.level];
+    // The position, as RAS millimetres, for a box around it.
+    const nav = wb.engine.navigation();
+    const centre = ["x", "y", "z"].map((n) => {
+      const i = nav.names.indexOf(n);
+      return i === -1 ? 0 : nav.position[i] * nav.scales[i] * (nav.units[i] === "m" ? 1000 : 1);
+    });
+    const region = choice.box ? { centre, size: BOX } : undefined;
+    const base = `${dataset.name}${level.index > 0 ? `_level${level.index}` : ""}${choice.box ? "_box" : ""}`;
     const target = await chooseTarget(chosen.format === "zarr", base + chosen.suffix);
     if (target === null) return;
     await wb.jobs.run(`Export ${dataset.name}`, async (control) => {
-      const done = await request(worker, { type: "export", file: found.file, format: chosen.format, level: level.index }, (what, n, total) => control.progress(n / Math.max(1, total), what));
+      const done = await request(worker, { type: "export", file: found.file, format: chosen.format, level: level.index, region }, (what, n, total) => control.progress(n / Math.max(1, total), what));
       await save(new Map<string, Uint8Array>(done.files), base + chosen.suffix, chosen.format === "zarr", target);
     });
     toast(`Exported ${dataset.name} as ${base}${chosen.suffix}.`);

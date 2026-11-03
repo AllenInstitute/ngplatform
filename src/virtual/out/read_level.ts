@@ -6,7 +6,7 @@
  * and the level's scale and translation).  Works on any store that writes
  * OME-Zarr 0.6 as the platform's image stores do.
  */
-import { type Mat4, multiply4 } from "../../core/mat4.js";
+import { invert4, type Mat4, multiply4 } from "../../core/mat4.js";
 import type { VirtualStore } from "../images/store.js";
 import { ARRAYS, type Volume, type VoxelType } from "./volume.js";
 
@@ -81,28 +81,33 @@ export async function storeLevels(store: VirtualStore): Promise<{ levels: LevelI
 }
 
 /**
- * Reads one level whole (the first time point or component of a 4-D
- * image), x fastest.
+ * Reads one level whole, or the box `region` of it (voxel indices, `hi`
+ * exclusive), x fastest; the first time point or component of a 4-D image.
  */
-export async function readLevel(store: VirtualStore, level: LevelInfo, onProgress?: (done: number, total: number) => void): Promise<Volume> {
+export async function readLevel(store: VirtualStore, level: LevelInfo, onProgress?: (done: number, total: number) => void, region?: { lo: number[]; hi: number[] }): Promise<Volume> {
   const meta = await json(store, `${level.path}/zarr.json`);
   const shape: number[] = meta.shape;
   const chunk: number[] = meta.chunk_grid.configuration.chunk_shape;
   const order: number[] = meta.codecs.find((c: any) => c.name === "transpose")?.configuration.order ?? shape.map((_: number, d: number) => d);
   const rank = shape.length;
   const spatial = [rank - 3, rank - 2, rank - 1];
-  const [ni, nj] = level.size;
+  const lo = [0, 1, 2].map((k) => Math.max(0, Math.min(level.size[k], Math.floor(region?.lo[k] ?? 0))));
+  const hi = [0, 1, 2].map((k) => Math.max(lo[k], Math.min(level.size[k], Math.ceil(region?.hi[k] ?? level.size[k]))));
+  const size = [0, 1, 2].map((k) => hi[k] - lo[k]) as [number, number, number];
+  const [ni, nj] = size;
   const Array_ = ARRAYS[level.type];
   if (Array_ === undefined) throw new Error(`${level.type} images cannot be written yet`);
-  const out = new Array_(level.size[0] * level.size[1] * level.size[2]);
-  const grid = shape.map((n, d) => (d < rank - 3 ? 1 : Math.ceil(n / chunk[d])));
+  const out = new Array_(size[0] * size[1] * size[2]);
+  // The chunks the box touches, along each axis.
+  const first = shape.map((_, d) => (d < rank - 3 ? 0 : Math.floor(lo[d - (rank - 3)] / chunk[d])));
+  const grid = shape.map((n, d) => (d < rank - 3 ? 1 : Math.max(0, Math.ceil(hi[d - (rank - 3)] / chunk[d]) - first[d])));
   const total = grid.reduce((a, b) => a * b, 1);
   let done = 0;
   const index = shape.map(() => 0);
   for (let n = 0; n < total; ++n) {
     let rest = n;
     for (let d = rank - 1; d >= 0; --d) {
-      index[d] = rest % grid[d];
+      index[d] = first[d] + (rest % grid[d]);
       rest = Math.floor(rest / grid[d]);
     }
     const bytes = await store.get(`${level.path}/c/${index.join("/")}`);
@@ -110,8 +115,8 @@ export async function readLevel(store: VirtualStore, level: LevelInfo, onProgres
       const data = new Array_(bytes.slice().buffer);
       const local = chunk.map(() => 0);
       for (let flat = 0; flat < data.length; ++flat) {
-        const g = spatial.map((d) => index[d] * chunk[d] + local[d]);
-        if (local.slice(0, rank - 3).every((v) => v === 0) && g[0] < shape[spatial[0]] && g[1] < shape[spatial[1]] && g[2] < shape[spatial[2]]) {
+        const g = spatial.map((d, k) => index[d] * chunk[d] + local[d] - lo[k]);
+        if (local.slice(0, rank - 3).every((v) => v === 0) && g.every((v, k) => v >= 0 && v < size[k])) {
           out[g[0] + ni * (g[1] + nj * g[2])] = data[flat];
         }
         // The next element in stored order: the last stored axis fastest.
@@ -124,5 +129,14 @@ export async function readLevel(store: VirtualStore, level: LevelInfo, onProgres
     }
     onProgress?.(++done, total);
   }
-  return { data: out, size: level.size, type: level.type, voxelToRas: level.voxelToRas };
+  const shift = Float64Array.from([1, 0, 0, lo[0], 0, 1, 0, lo[1], 0, 0, 1, lo[2], 0, 0, 0, 1]);
+  return { data: out, size, type: level.type, voxelToRas: multiply4(level.voxelToRas, shift) };
+}
+
+/** The box of `size` voxels (along each axis, at most the level's) of a level centred on a point (RAS mm). */
+export function regionAround(level: LevelInfo, centre: number[], size: number): { lo: number[]; hi: number[] } {
+  const inverse = invert4(level.voxelToRas);
+  const at = [0, 1, 2].map((r) => inverse[4 * r] * centre[0] + inverse[4 * r + 1] * centre[1] + inverse[4 * r + 2] * centre[2] + inverse[4 * r + 3]);
+  const lo = at.map((v, k) => Math.max(0, Math.min(level.size[k] - Math.min(size, level.size[k]), Math.round(v - size / 2))));
+  return { lo, hi: lo.map((v, k) => Math.min(level.size[k], v + size)) };
 }

@@ -4,7 +4,7 @@
  * and written out.
  *
  * In:  { type: "levels", id, file }
- *      { type: "export", id, file, format, level }
+ *      { type: "export", id, file, format, level, region?: { centre (RAS mm), size (voxels) } }
  * Out: { type: "levels", id, levels: { size, type, bytes }[], label }
  *      { type: "progress", id, what, done, total }
  *      { type: "done", id, files: [path, bytes][] }
@@ -18,7 +18,7 @@ import type { TrkBatch } from "../vectors/trk.js";
 import { parseTrkHeader, readTrk, TRK_HEADER_SIZE } from "../vectors/trk.js";
 import { openTrxInfo, readTrx } from "../vectors/trx.js";
 import { exportKind, type GeometryFormat, type ImageFormat } from "./kinds.js";
-import { readLevel, storeLevels } from "./read_level.js";
+import { readLevel, regionAround, storeLevels } from "./read_level.js";
 import { csvFile, type Curves, objFile, plyFile, stlFile, tckFile, trkFile } from "./vectors.js";
 import { displayWindow, gzip, mghFile, niftiFile, omeZarrFiles } from "./volume.js";
 
@@ -96,7 +96,9 @@ self.onmessage = async (event: MessageEvent) => {
     }
     const level = levels[msg.level];
     if (level === undefined) throw new Error(`no level ${msg.level}`);
-    const volume = await readLevel(store, level, (done, total) => post({ type: "progress", what: "Reading", done, total }));
+    // A box around a point (RAS mm), or the whole level.
+    const region = msg.region === undefined ? undefined : regionAround(level, msg.region.centre, msg.region.size);
+    const volume = await readLevel(store, level, (done, total) => post({ type: "progress", what: "Reading", done, total }), region);
     post({ type: "progress", what: "Writing", done: 0, total: 1 });
     const description = `${store.name}, exported by ngplatform`;
     const format = msg.format as ImageFormat;
