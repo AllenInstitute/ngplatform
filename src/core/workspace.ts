@@ -34,6 +34,11 @@ export interface DatasetRecord {
 export interface SceneRecord {
   id: string;
   name: string;
+  /**
+   * A scene of a kind a plugin contributes (`contributes.sceneKinds`), such
+   * as the Collections tab; an ordinary scene has none.
+   */
+  kind?: string;
   /** Neuroglancer state of an inactive scene; the active scene's is the workspace `ng`. */
   ng?: Json;
   /**
@@ -142,7 +147,13 @@ export function readPlatform(app: Json, makeId: IdMaker = randomId): PlatformSta
   const p = raw as Partial<PlatformState>;
   const scenes = (Array.isArray(p.scenes) ? p.scenes : [])
     .filter((s): s is SceneRecord => typeof s === "object" && s !== null && typeof s.id === "string")
-    .map((s) => ({ id: s.id, name: typeof s.name === "string" ? s.name : "Scene", ...(s.ng ? { ng: s.ng } : {}) }));
+    .map((s) => ({
+      id: s.id,
+      name: typeof s.name === "string" ? s.name : "Scene",
+      ...(typeof s.kind === "string" ? { kind: s.kind } : {}),
+      ...(s.ng ? { ng: s.ng } : {}),
+      ...(s.app ? { app: s.app } : {}),
+    }));
   if (scenes.length === 0) return { ...emptyPlatform(makeId), datasets: readDatasets(p.datasets) };
   const activeScene = scenes.some((s) => s.id === p.activeScene) ? (p.activeScene as string) : scenes[0].id;
   return { version: 1, scenes, activeScene, datasets: readDatasets(p.datasets) };
@@ -307,7 +318,7 @@ export function switchScene(p: PlatformState, currentNg: Json, id: string, curre
 export function addScene(
   p: PlatformState,
   currentNg: Json,
-  options: { copy?: boolean; name?: string } = {},
+  options: { copy?: boolean; name?: string; kind?: string } = {},
   makeId: IdMaker = randomId,
   currentApp: Json = {},
 ): { platform: PlatformState; ng: Json; app: Json; id: string } {
@@ -320,7 +331,8 @@ export function addScene(
   const app = options.copy ? structuredClone(currentApp) : {};
   const index = p.scenes.findIndex((s) => s.id === p.activeScene);
   const scenes = p.scenes.map((s) => (s.id === p.activeScene ? { ...s, ng: currentNg, app: currentApp } : s));
-  scenes.splice(index + 1, 0, { id, name });
+  // A copy is an ordinary scene, whatever the kind of the one copied.
+  scenes.splice(index + 1, 0, options.kind !== undefined && !options.copy ? { id, name, kind: options.kind } : { id, name });
   return { platform: { ...p, scenes, activeScene: id }, ng, app, id };
 }
 

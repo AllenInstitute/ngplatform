@@ -6,6 +6,7 @@ import {
   datasetOfLayer,
   emptyPlatform,
   type PlatformState,
+  PLATFORM_KEY,
   layerForDataset,
   layersOf,
   moveScene,
@@ -196,5 +197,21 @@ describe("plugin state per scene", () => {
     const removed = removeScene(toB.platform, {}, "b", undefined, { x: { version: 1, data: "b's" } });
     expect(removed.platform.activeScene).toBe("a");
     expect(removed.app).toEqual({ x: { version: 1, data: "a's" } });
+  });
+});
+
+describe("scene kinds", () => {
+  it("makes a scene of a plugin's kind, keeps its kind and plugin state through a reload, and copies it as an ordinary scene", () => {
+    let n = 0;
+    const ids = (prefix: string) => `${prefix}${++n}`;
+    const p0: PlatformState = { version: 1, scenes: [{ id: "a", name: "A" }], activeScene: "a", datasets: [] };
+    const made = addScene(p0, { layers: [] }, { name: "Collections", kind: "collection" }, ids);
+    expect(made.platform.scenes.find((s) => s.id === made.id)).toEqual({ id: made.id, name: "Collections", kind: "collection" });
+    const saved = { ...made.platform, scenes: made.platform.scenes.map((s) => (s.id === "a" ? { ...s, app: { x: { version: 1, data: 1 } } } : s)) };
+    const read = readPlatform({ [PLATFORM_KEY]: saved as unknown as Record<string, never> });
+    expect(read.scenes.find((s) => s.id === made.id)?.kind).toBe("collection");
+    expect(read.scenes.find((s) => s.id === "a")?.app).toEqual({ x: { version: 1, data: 1 } });
+    const copy = addScene(read, { layers: [] }, { copy: true, kind: "collection" }, ids);
+    expect(copy.platform.scenes.find((s) => s.id === copy.id)?.kind).toBeUndefined();
   });
 });

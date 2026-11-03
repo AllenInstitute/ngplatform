@@ -122,6 +122,12 @@ export interface Manifest {
     settings?: Record<string, Schema>;
     /** Context keys the plugin sets, so `when` clauses can be checked. */
     contextKeys?: string[];
+    /**
+     * Kinds of scene the plugin adds: each a tab in the scene bar (`title`)
+     * while the plugin is on, which makes the scene the first time it is
+     * clicked; switching to one shows `panel`.
+     */
+    sceneKinds?: { kind: string; title: string; panel?: string }[];
   };
 }
 
@@ -131,6 +137,8 @@ export interface SceneInfo {
   id: string;
   name: string;
   active: boolean;
+  /** A scene kind a plugin contributes (`contributes.sceneKinds`); none for an ordinary scene. */
+  kind?: string;
 }
 
 export interface DatasetInfo {
@@ -162,7 +170,8 @@ export interface LayerInfo {
 export interface WorkspaceApi {
   scenes(): SceneInfo[];
   switchScene(id: string): void;
-  newScene(options?: { copy?: boolean; name?: string }): string;
+  /** A new scene (blank, or a copy of the active one); `kind` makes it a scene of a kind the plugin contributes. */
+  newScene(options?: { copy?: boolean; name?: string; kind?: string }): string;
 
   /** Every dataset the workspace knows, shown in any scene or none. */
   datasets(): DatasetInfo[];

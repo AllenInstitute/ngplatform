@@ -181,3 +181,95 @@ export function graph(root: CollectionNode): { systems: { node: string; id: stri
   visit(root);
   return { systems, transforms };
 }
+
+/** The inverse of an affine 4 × 4 (row-major), or undefined when it is singular. */
+export function invert(m: Mat4): Mat4 | undefined {
+  const [a, b, c, d, e, f, g, h, i, j, k, l] = m;
+  const det = a * (f * k - g * j) - b * (e * k - g * i) + c * (e * j - f * i);
+  if (Math.abs(det) < 1e-12) return undefined;
+  const r = [
+    (f * k - g * j) / det, (c * j - b * k) / det, (b * g - c * f) / det,
+    (g * i - e * k) / det, (a * k - c * i) / det, (c * e - a * g) / det,
+    (e * j - f * i) / det, (b * i - a * j) / det, (a * f - b * e) / det,
+  ];
+  return [
+    r[0], r[1], r[2], -(r[0] * d + r[1] * h + r[2] * l),
+    r[3], r[4], r[5], -(r[3] * d + r[4] * h + r[5] * l),
+    r[6], r[7], r[8], -(r[6] * d + r[7] * h + r[8] * l),
+    0, 0, 0, 1,
+  ];
+}
+
+/** The axes a system id names in the tree (x, y, z when it is not a system: a member's own space). */
+function axesOf(root: CollectionNode, id: string): string[] {
+  return graph(root).systems.find((s) => s.id === id)?.axes ?? ["x", "y", "z"];
+}
+
+/**
+ * Where `member` sits in coordinate system `system`: the transforms of the
+ * tree from the member (its id, name or one of its systems) to `system`,
+ * walked either way (a transform walked backwards is inverted) and
+ * composed, shortest first.  Undefined when no chain of transforms this can
+ * compose (affine ones) joins them.
+ */
+export function placeInto(root: CollectionNode, member: CollectionNode, system: string): Mat4 | undefined {
+  const edges = graph(root).transforms.flatMap((t) => {
+    const m = transformMatrix(t.raw, axesOf(root, t.output));
+    if (m === undefined) return [];
+    const back = invert(m);
+    return [{ from: t.input, to: t.output, m }, ...(back ? [{ from: t.output, to: t.input, m: back }] : [])];
+  });
+  const starts = [member.id, member.name, ...member.systems.map((s) => s.id)].filter((k): k is string => !!k);
+  const seen = new Map<string, Mat4>(starts.map((s) => [s, [...IDENTITY]]));
+  const queue = [...starts];
+  while (queue.length > 0) {
+    const at = queue.shift()!;
+    const here = seen.get(at)!;
+    if (at === system) return here;
+    for (const e of edges) {
+      if (e.from !== at || seen.has(e.to)) continue;
+      seen.set(e.to, multiply(e.m, here));
+      queue.push(e.to);
+    }
+  }
+  return undefined;
+}
+
+/** The coordinate systems of the tree members can be placed in: a collection's own (its scene's). */
+export function sceneSystems(root: CollectionNode): { id: string; name?: string; axes: string[]; units: string[]; node: string }[] {
+  const out: { id: string; name?: string; axes: string[]; units: string[]; node: string }[] = [];
+  const visit = (n: CollectionNode) => {
+    if (n.type === "collection") for (const s of n.systems) out.push({ ...s, node: n.name });
+    n.nodes.forEach(visit);
+  };
+  visit(root);
+  return out;
+}
+
+/**
+ * The folders above an image's URL where a collection holding it may be:
+ * its parent Zarr groups, nearest first, up to `depth` of them, below the
+ * bucket or host.
+ */
+export function parentGroups(url: string, depth = 6): string[] {
+  const clean = url.replace(/\|.*$/, "").replace(/^(zarr3?|zarr2|n5|ome-zarr):\/\//, "").replace(/\/+$/, "");
+  let u: URL;
+  try {
+    u = new URL(clean.replace(/^gs:\/\/([^/]+)/, "https://storage.googleapis.com/$1").replace(/^s3:\/\/([^/]+)/, "https://$1.s3.amazonaws.com"));
+  } catch {
+    return [];
+  }
+  if (!/^https?:$/.test(u.protocol)) return [];
+  const parts = u.pathname.split("/").filter(Boolean);
+  // Below the bucket on Cloud Storage; below the host elsewhere.
+  const floor = u.hostname === "storage.googleapis.com" ? 1 : 0;
+  const out: string[] = [];
+  for (let n = parts.length - 1; n > floor && out.length < depth; --n) out.push(`${u.origin}/${parts.slice(0, n).join("/")}`);
+  return out;
+}
+
+/** Whether a Zarr group's metadata (its zarr.json) is an OME collection. */
+export function isCollection(document: any): boolean {
+  const ome = document?.attributes?.ome ?? document?.ome;
+  return ome !== undefined && ome !== null && (ome.type === "collection" || Array.isArray(ome.nodes));
+}

@@ -1,14 +1,19 @@
 /**
- * The collections plugin: the Collections tab (open a collection, its tree,
- * coordinate systems and transforms) and a scene of its images, each placed
- * where the collection puts it.  The model is ./collection.ts.
+ * The collections plugin: a Collections tab in the scene bar (a scene of the
+ * plugin's own kind) whose viewer shows only a collection's images, each
+ * placed by its transforms in the coordinate system chosen, and the
+ * Collections panel beside it: the collection found for the workspace's
+ * data (or opened by URL), the graph of its coordinate systems and the
+ * transforms between them (click a system to view in it), its tree, and the
+ * transforms as written.  In an ordinary scene the panel offers the
+ * collections that scene's data belongs to.  The model is ./collection.ts.
  */
 import type { PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { describeTransform } from "@ngplatform/sdk/ome";
 import { neuroglancer, physical } from "../registration/plugin.js";
-import { type CollectionNode, graph, type Mat4, members, readCollection } from "./collection.js";
+import { type CollectionNode, graph, isCollection, type Mat4, members, parentGroups, placeInto, readCollection, sceneSystems } from "./collection.js";
 import example from "./examples/srb_gallery.json";
-import { COLLECTIONS_PANEL } from "./manifest.js";
+import { COLLECTION_KIND, COLLECTIONS_PANEL } from "./manifest.js";
 
 type Child = Node | string | null | undefined | false;
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
@@ -23,10 +28,27 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string,
   return e;
 }
 
-const EXAMPLE_URL = "https://alleninstitute.github.io/ngplatform/collections/srb_gallery.json";
+const SVG = "http://www.w3.org/2000/svg";
+function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: (SVGElement | string)[]): SVGElementTagNameMap[K] {
+  const e = document.createElementNS(SVG, tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2), v as EventListener);
+    else e.setAttribute(k, String(v));
+  }
+  e.append(...children);
+  return e;
+}
+
+export const EXAMPLE_URL = "https://alleninstitute.github.io/ngplatform/collections/srb_gallery.json";
 
 /** Millimetres in one unit of a coordinate system's axis. */
 const MM: Record<string, number> = { meter: 1000, millimeter: 1, micrometer: 1e-3, nanometer: 1e-6 };
+
+/** What the plugin keeps per scene: the collection a Collections tab shows, and the system it is viewed in. */
+interface Saved {
+  url?: string;
+  system?: string;
+}
 
 const STYLE = `
 .cl { display: grid; gap: 10px; padding: 10px 12px; font-size: 12px; }
@@ -39,6 +61,16 @@ const STYLE = `
 .cl-table { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 10px; }
 .cl-table > :nth-child(odd) { color: var(--muted); }
 .cl-value { font: 11px var(--mono); overflow-wrap: anywhere; }
+.cl-found { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; }
+.cl-graph { width: 100%; height: auto; display: block; }
+.cl-graph .cl-sys { cursor: pointer; }
+.cl-graph .cl-sys rect { fill: var(--ink-3); stroke: var(--line-strong); }
+.cl-graph .cl-sys.on rect { stroke: var(--select); stroke-width: 2; }
+.cl-graph .cl-sys:hover rect { fill: var(--ink-4); }
+.cl-graph .cl-mem rect { fill: var(--ink-2); stroke: var(--line); }
+.cl-graph text { fill: var(--text); font: 11px var(--ui); }
+.cl-graph .cl-edge { stroke: var(--muted); fill: none; }
+.cl-graph .cl-edge-label { fill: var(--faint); font: 10px var(--mono); }
 `;
 
 class Collections {
@@ -47,15 +79,44 @@ class Collections {
   private error = "";
   private busy = false;
   private update?: () => void;
+  /** Collections found above the workspace's images: group URL to its name (null: none there). */
+  private found = new Map<string, string | null>();
+  private looking = new Set<string>();
 
-  constructor(private readonly ctx: PlatformContext) {}
+  constructor(private readonly ctx: PlatformContext) {
+    ctx.subscriptions.push(
+      ctx.workspace.onChanged(() => {
+        void this.follow();
+        void this.discover();
+        this.update?.();
+      }),
+    );
+    void this.follow();
+    void this.discover();
+  }
 
-  async open(url: string, document?: unknown): Promise<void> {
+  private inCollectionScene(): boolean {
+    return this.ctx.workspace.scenes().find((s) => s.active)?.kind === COLLECTION_KIND;
+  }
+
+  private saved(): Saved {
+    return this.ctx.state.get<Saved>() ?? {};
+  }
+
+  /** In a Collections tab, the collection it shows (read again after a reload or a scene switch). */
+  private async follow(): Promise<void> {
+    if (!this.inCollectionScene()) return;
+    const { url } = this.saved();
+    if (url === undefined || url === this.documentUrl || this.busy) return;
+    await this.read(url);
+  }
+
+  private async read(url: string): Promise<boolean> {
     this.busy = true;
     this.error = "";
     this.update?.();
     try {
-      let doc = document;
+      let doc: unknown = url === EXAMPLE_URL ? example : undefined;
       if (doc === undefined) {
         const base = url.replace(/\/$/, "");
         const response = await fetch(/\.json$/i.test(base) ? base : `${base}/zarr.json`);
@@ -64,62 +125,187 @@ class Collections {
       }
       this.root = readCollection(doc, /\.json$/i.test(url) ? url : `${url.replace(/\/$/, "")}/zarr.json`);
       this.documentUrl = url;
+      return true;
     } catch (e) {
       this.error = `Could not read the collection: ${(e as Error).message}`;
+      return false;
     } finally {
       this.busy = false;
       this.update?.();
     }
   }
 
-  /** A scene of the collection's images, each placed where the collection puts it. */
-  async showInScene(): Promise<void> {
+  /**
+   * Looks for collections above the workspace's images: a parent Zarr
+   * group whose metadata is an OME collection.  Each group is asked once.
+   */
+  private async discover(): Promise<void> {
+    const sources = this.ctx.workspace
+      .datasets()
+      .map((d) => (typeof d.source === "string" ? d.source : typeof (d.source as { url?: unknown })?.url === "string" ? (d.source as { url: string }).url : ""))
+      .filter((s) => /^(zarr3?|zarr2|ome-zarr):\/\/|\.zarr\/?$/.test(s));
+    for (const source of sources) {
+      for (const group of parentGroups(source)) {
+        if (this.found.has(group) || this.looking.has(group)) continue;
+        this.looking.add(group);
+        try {
+          const response = await fetch(`${group}/zarr.json`);
+          const doc = response.ok ? await response.json().catch(() => undefined) : undefined;
+          this.found.set(group, doc !== undefined && isCollection(doc) ? readCollection(doc, `${group}/zarr.json`).name : null);
+        } catch {
+          this.found.set(group, null);
+        } finally {
+          this.looking.delete(group);
+        }
+        if (this.found.get(group)) this.update?.();
+      }
+    }
+  }
+
+  /** The collections found for the active scene's images (or, in a Collections tab, the workspace's). */
+  private foundHere(): { url: string; name: string }[] {
+    const scene = this.inCollectionScene() ? this.ctx.workspace.datasets() : this.ctx.workspace.sceneDatasets();
+    const sources = scene.map((d) => (typeof d.source === "string" ? d.source : typeof (d.source as { url?: unknown })?.url === "string" ? (d.source as { url: string }).url : ""));
+    const groups = new Set(sources.flatMap((s) => parentGroups(s)));
+    return [...this.found].filter(([g, name]) => name && groups.has(g)).map(([url, name]) => ({ url, name: name! }));
+  }
+
+  /** Opens `url` in the Collections tab (made if there is none), showing its images. */
+  async openInTab(url: string): Promise<void> {
+    const tab = this.ctx.workspace.scenes().find((s) => s.kind === COLLECTION_KIND);
+    if (tab === undefined) this.ctx.workspace.newScene({ name: "Collections", kind: COLLECTION_KIND });
+    else if (!tab.active) this.ctx.workspace.switchScene(tab.id);
+    if (!(await this.read(url))) return;
+    const root = this.root!;
+    const system = sceneSystems(root)[0]?.id;
+    this.ctx.state.set<Saved>({ url, system });
+    await this.show(system);
+  }
+
+  /** The tab's images: the collection's members, its other layers gone, each placed in `system`. */
+  private async show(system: string | undefined): Promise<void> {
     const root = this.root;
     if (root === undefined) return;
-    // The collection's own space's unit (its first coordinate system's), in millimetres.
-    const unit = MM[root.systems[0]?.units.find((u) => u !== "") ?? "millimeter"] ?? 1;
-    this.ctx.workspace.newScene({ name: `Collection: ${root.name}` });
-    const placed: { layer: string; placement?: Mat4 }[] = [];
+    for (const layer of this.ctx.viewer.layers()) this.ctx.workspace.removeLayer(layer.name);
     for (const m of members(root)) {
       if (m.node.location === undefined) continue;
       const id = this.ctx.workspace.addDataset({ source: `zarr://${m.node.location.url}/`, name: m.node.name, kind: "image" });
       const added = this.ctx.workspace.sceneDatasets().find((d) => d.id === id)?.layers.at(-1)?.name;
       // Members sharing an image are views of one dataset: name each layer after its member.
-      const layer = added === undefined ? undefined : added === m.node.name ? added : this.ctx.workspace.renameLayer(added, m.node.name);
-      if (layer !== undefined) placed.push({ layer, placement: m.placement });
+      if (added !== undefined && added !== m.node.name) this.ctx.workspace.renameLayer(added, m.node.name);
     }
-    // Place each once Neuroglancer knows its transform.
-    for (const { layer, placement } of placed) {
-      if (placement === undefined) continue;
-      for (let i = 0; i < 100; ++i) {
-        const t = this.ctx.viewer.layerTransform(layer);
-        const p = t && physical(t, t.defaultMatrix);
-        if (t && p) {
-          const names = t.output.names;
-          const order = ["x", "y", "z"].map((n) => names.indexOf(n));
-          if (order.some((k) => k === -1)) break;
-          // The placement in millimetres, in the layer's output order.
-          const a = new Float64Array(16);
-          a[15] = 1;
-          order.forEach((r, i2) => {
-            order.forEach((c, j) => (a[4 * r + c] = placement[4 * i2 + j]));
-            a[4 * r + 3] = placement[4 * i2 + 3] * unit;
-          });
-          const out = new Float64Array(16);
-          for (let r = 0; r < 4; ++r) for (let c = 0; c < 4; ++c) for (let k = 0; k < 4; ++k) out[4 * r + c] += a[4 * r + k] * p[4 * k + c];
-          this.ctx.viewer.setLayerTransform(layer, neuroglancer(t, out));
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 200));
+    await this.place(system);
+    this.ctx.log.info(`Showing ${root.name} in the Collections tab.`);
+  }
+
+  /** Places each member's layer in `system`, by the chain of transforms to it; a member with none is hidden. */
+  private async place(system: string | undefined): Promise<void> {
+    const root = this.root;
+    if (root === undefined || system === undefined) return;
+    const unit = MM[sceneSystems(root).find((s) => s.id === system)?.units.find((u) => u !== "") ?? "millimeter"] ?? 1;
+    for (const m of members(root)) {
+      const layer = m.node.name;
+      const placement = placeInto(root, m.node, system);
+      this.ctx.viewer.patchState(
+        (ng) => {
+          const spec = ((ng as { layers?: Record<string, unknown>[] }).layers ?? []).find((l) => l.name === layer);
+          if (spec !== undefined) spec.visible = placement !== undefined;
+        },
+        { quiet: true },
+      );
+      if (placement !== undefined) await this.setPlacement(layer, placement, unit);
+    }
+    this.update?.();
+  }
+
+  /** Sets a layer's transform to its own (from its metadata) followed by `placement` (in units of `unit` mm). */
+  private async setPlacement(layer: string, placement: Mat4, unit: number): Promise<void> {
+    // Neuroglancer knows the layer's transform once it has read its metadata.
+    for (let i = 0; i < 100; ++i) {
+      const t = this.ctx.viewer.layerTransform(layer);
+      const p = t && physical(t, t.defaultMatrix);
+      if (t && p) {
+        const order = ["x", "y", "z"].map((n) => t.output.names.indexOf(n));
+        if (order.some((k) => k === -1)) return;
+        // The placement in millimetres, in the layer's output order.
+        const a = new Float64Array(16);
+        a[15] = 1;
+        order.forEach((r, i2) => {
+          order.forEach((c, j) => (a[4 * r + c] = placement[4 * i2 + j]));
+          a[4 * r + 3] = placement[4 * i2 + 3] * unit;
+        });
+        const out = new Float64Array(16);
+        for (let r = 0; r < 4; ++r) for (let c = 0; c < 4; ++c) for (let k = 0; k < 4; ++k) out[4 * r + c] += a[4 * r + k] * p[4 * k + c];
+        this.ctx.viewer.setLayerTransform(layer, neuroglancer(t, out));
+        return;
       }
+      await new Promise((resolve) => setTimeout(resolve, 200));
     }
-    this.ctx.log.info(`Showed ${placed.length} image${placed.length === 1 ? "" : "s"} of ${root.name} in a scene of their own.`);
+  }
+
+  private async choose(system: string): Promise<void> {
+    this.ctx.state.set<Saved>({ ...this.saved(), system });
+    await this.place(system);
+  }
+
+  /**
+   * The coordinate systems as a graph: members on the left, the
+   * collections' systems on the right, each transform an edge; the system
+   * the tab is viewed in is outlined, and clicking one views in it.
+   */
+  private graphView(root: CollectionNode): SVGSVGElement {
+    const systems = sceneSystems(root);
+    const mems = members(root).map((m) => m.node);
+    const g = graph(root);
+    const keyOf = new Map<string, string>();
+    for (const m of mems) for (const k of [m.id, m.name, ...m.systems.map((s) => s.id)]) if (k) keyOf.set(k, `m:${m.name}`);
+    for (const s of systems) keyOf.set(s.id, `s:${s.id}`);
+    const W = 300;
+    const rowH = 26;
+    const rows = Math.max(mems.length, systems.length, 1);
+    const H = rows * rowH + 10;
+    const at = new Map<string, { x: number; y: number }>();
+    mems.forEach((m, i) => at.set(`m:${m.name}`, { x: 6, y: 5 + i * rowH + (rows - mems.length) * rowH * 0.5 }));
+    systems.forEach((s, i) => at.set(`s:${s.id}`, { x: W - 116, y: 5 + i * rowH + (rows - systems.length) * rowH * 0.5 }));
+    const chosen = this.saved().system;
+    const box = (key: string, label: string, cls: string, onclick?: () => void) => {
+      const p = at.get(key)!;
+      return svg(
+        "g",
+        { class: cls, ...(onclick ? { onclick, role: "button", tabindex: 0 } : {}) },
+        svg("rect", { x: p.x, y: p.y, width: 110, height: rowH - 6, rx: 4 }),
+        svg("text", { x: p.x + 6, y: p.y + rowH / 2 + 1 }, label.length > 17 ? `${label.slice(0, 16)}…` : label),
+        svg("title", {}, label),
+      );
+    };
+    const edges = g.transforms.flatMap((t) => {
+      const a = at.get(keyOf.get(t.input) ?? "");
+      const b = at.get(keyOf.get(t.output) ?? "");
+      if (!a || !b) return [];
+      const ax = a.x + 110;
+      const ay = a.y + (rowH - 6) / 2;
+      const bx = b.x;
+      const by = b.y + (rowH - 6) / 2;
+      const same = a.x === b.x;
+      const d = same ? `M${a.x + 110},${ay} C${a.x + 150},${ay} ${b.x + 150},${by} ${b.x + 110},${by}` : `M${ax},${ay} C${(ax + bx) / 2},${ay} ${(ax + bx) / 2},${by} ${bx},${by}`;
+      // The label by the edge's start, where edges into one system do not overlap.
+      return [svg("path", { class: "cl-edge", d, "marker-end": "url(#cl-arrow)" }), svg("text", { class: "cl-edge-label", x: same ? a.x + 116 : ax + 4, y: ay - 3 }, t.type)];
+    });
+    return svg(
+      "svg",
+      { class: "cl-graph", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Coordinate systems and transforms" },
+      svg("defs", {}, svg("marker", { id: "cl-arrow", viewBox: "0 0 8 8", refX: 8, refY: 4, markerWidth: 6, markerHeight: 6, orient: "auto" }, svg("path", { d: "M0,0 L8,4 L0,8 z", fill: "currentColor" }))),
+      ...edges,
+      ...mems.map((m) => box(`m:${m.name}`, m.name, "cl-mem")),
+      ...systems.map((s) => box(`s:${s.id}`, s.name ?? s.id, `cl-sys${s.id === chosen ? " on" : ""}`, () => void this.choose(s.id))),
+    );
   }
 
   render(host: HTMLElement): () => void {
     const url = el("input", { type: "text", placeholder: "https://…/collection.json or a Zarr group", value: this.documentUrl }) as HTMLInputElement;
     const draw = () => {
-      const root = this.root;
+      const tab = this.inCollectionScene();
+      const root = tab ? this.root : undefined;
       const tree = (n: CollectionNode, depth: number): HTMLElement[] => [
         el(
           "div",
@@ -131,33 +317,51 @@ class Collections {
         ...n.nodes.flatMap((c) => tree(c, depth + 1)),
       ];
       const g = root && graph(root);
-      const placed = root ? members(root) : [];
+      const found = this.foundHere();
+      const chosen = root && sceneSystems(root).find((s) => s.id === this.saved().system);
       host.replaceChildren(
         el(
           "div",
           { class: "cl" },
+          found.length
+            ? el(
+                "div",
+                { class: "cl-found" },
+                el("span", {}, tab ? "Collections holding the workspace's images:" : "This scene's images belong to:"),
+                ...found.map((f) =>
+                  el(
+                    "div",
+                    { class: "cl-row" },
+                    el("strong", {}, f.name),
+                    el("button", { class: "btn small", type: "button", disabled: this.busy || (tab && f.url === this.documentUrl), onclick: () => void this.openInTab(f.url) }, tab ? "Show" : "Open in the Collections tab"),
+                  ),
+                ),
+              )
+            : null,
           el(
             "div",
             { class: "cl-row" },
             url,
-            el("button", { class: "btn small", type: "button", disabled: this.busy, onclick: () => void this.open(url.value.trim()) }, "Open"),
-            el("button", { class: "btn outline small", type: "button", disabled: this.busy, onclick: () => void this.open(EXAMPLE_URL, example) }, "Example"),
+            el("button", { class: "btn small", type: "button", disabled: this.busy, onclick: () => void this.openInTab(url.value.trim()) }, "Open"),
+            el("button", { class: "btn outline small", type: "button", disabled: this.busy, onclick: () => void this.openInTab(EXAMPLE_URL) }, "Example"),
           ),
           this.error ? el("p", { class: "note err" }, this.error) : null,
-          root ? el("h3", { class: "section-title" }, `Members of ${root.name}`) : el("p", { class: "note" }, "Open a collection (OME-NGFF RFC-8, draft) by its URL, or the example."),
-          root ? el("div", { class: "cl-tree" }, ...tree(root, 0)) : null,
-          root
+          !root
             ? el(
-                "button",
-                { class: "btn small", type: "button", disabled: placed.length === 0, onclick: () => void this.showInScene() },
-                `Show its ${placed.length} image${placed.length === 1 ? "" : "s"} in a new scene`,
+                "p",
+                { class: "note" },
+                tab
+                  ? "This tab shows a collection (OME-NGFF RFC-8, draft): its images, each placed by its transforms. Open one by its URL, one found above your data, or the example."
+                  : "Open a collection (OME-NGFF RFC-8, draft) by its URL, or the example: it is shown in the Collections tab.",
               )
             : null,
-          g && g.systems.length ? el("h3", { class: "section-title" }, "Coordinate systems") : null,
-          g && g.systems.length ? el("div", { class: "cl-table" }, ...g.systems.flatMap((s) => [el("span", {}, `${s.id} (${s.node})`), el("span", { class: "cl-value" }, s.axes.join(", "))])) : null,
+          root ? el("h3", { class: "section-title" }, `${root.name}: coordinate systems`) : null,
+          root ? this.graphView(root) : null,
+          root ? el("p", { class: "note" }, chosen ? `Viewed in ${chosen.name ?? chosen.id} (${chosen.axes.join(", ")}${chosen.units.some(Boolean) ? `; ${[...new Set(chosen.units.filter(Boolean))].join(", ")}` : ""}). Click another system to view in it.` : "Click a system to view the images in it.") : null,
+          root ? el("h3", { class: "section-title" }, "Members") : null,
+          root ? el("div", { class: "cl-tree" }, ...tree(root, 0)) : null,
           g && g.transforms.length ? el("h3", { class: "section-title" }, "Transforms") : null,
           g && g.transforms.length ? el("div", { class: "cl-table" }, ...g.transforms.flatMap((t) => [el("span", {}, `${t.input} → ${t.output}`), el("span", { class: "cl-value" }, describeTransform(t.raw))])) : null,
-          placed.some((m) => m.placement !== undefined) ? el("p", { class: "note" }, "Each image is placed by its transform into the collection's space when shown in a scene.") : null,
         ),
       );
     };

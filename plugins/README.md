@@ -204,6 +204,12 @@ export const MANIFEST: Manifest = {
 - **Activation**: using a declared contribution loads the plugin. Activation
   events (`onStartup`, `onCommand:<id>`, `onView:<panel>`,
   `onDatasetKind:<kind>`, `onOpen:<regex>`) load it earlier.
+- **Scene kinds** (`contributes.sceneKinds: [{kind, title, panel}]`): a
+  kind of scene the plugin adds, shown in the scene bar while the plugin is
+  on. Before one exists its tab (dashed) makes it; switching to it shows
+  `panel`. The plugin sees the active scene's `kind` in
+  `workspace.scenes()` and makes one with `workspace.newScene({kind})`; its
+  state slice is that scene's, as in any scene. The Collections tab is one.
 - **`when` clauses** read context keys: the platform's own (`hasLayers`,
   `sceneIsEmpty`, `sceneCount`, `selectedLayer`, `selectedLayerType`,
   `datasetKind`, `sourceFormat`, `canUndo`, `canRedo`, `framed`) and any the

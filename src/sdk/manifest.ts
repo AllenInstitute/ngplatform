@@ -84,6 +84,10 @@ export const MANIFEST_SCHEMA: Schema = {
         appState: { type: "object", required: ["key", "version"], properties: { key: id, version: { type: "integer", minimum: 1 } } },
         settings: { type: "object" },
         contextKeys: { type: "array", items: { type: "string" } },
+        sceneKinds: {
+          type: "array",
+          items: { type: "object", required: ["kind", "title"], properties: { kind: id, title: { type: "string" }, panel: id } },
+        },
       },
     },
   },

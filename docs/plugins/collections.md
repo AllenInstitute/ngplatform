@@ -8,22 +8,34 @@ An OME-Zarr collection groups images (and other collections) with the
 coordinate systems they share and the transforms between them. This plugin
 reads collections as [RFC-8](https://ngff.openmicroscopy.org/rfc/8/) of
 OME-NGFF drafts them ("Collections and Extensibility", under review in
-October 2026), lists what they hold, and shows their images together.
+October 2026) and shows them in a **Collections** tab of their own, beside
+the scenes.
 
-## Using it
+## The Collections tab
 
+With the plugin on, the scene bar has a **Collections** tab (dashed until
+first opened). It is a scene whose viewer shows only a collection's images,
+each placed by its transforms, with the **Collections** panel beside it.
+
+- **Found above your data**: when an image in the workspace sits in a Zarr
+  group that is a collection (a parent `zarr.json` of type `collection`),
+  the panel offers it. In an ordinary scene it offers the collections that
+  scene's images belong to, to open in the Collections tab.
 - **Open** a collection by its URL: a `.json` document, or a Zarr group
   whose `zarr.json` holds it. **Example** opens a small gallery of the SRB
   2026a template placed three times (as is, moved, and mirrored).
-- The tab lists the **members** (each node's type, name and where it is),
-  every **coordinate system** with its axes, and every **transform**, from
-  which system to which.
-- **Show its images in a new scene** opens a scene of its own with every
-  image of the collection, each placed by its transform into the
-  collection's space.
+- **Coordinate systems**: a graph of the collection's images (left) and its
+  coordinate systems (right), each transform an arrow. Click a system to
+  view the images in it: each is placed by the chain of transforms leading
+  to it (a transform walked backwards is inverted); an image with no chain
+  to it is hidden.
+- **Members** and **Transforms**: the tree (each node's type, name and
+  where it is) and every transform as written.
 
-An image's own coordinate systems and transforms (OME-Zarr 0.4 to 0.6) are
-also shown in its Layer → **Source** tab, under the layer's transform.
+The tab keeps its collection and chosen system, like any scene, in the
+link. An image's own coordinate systems and transforms (OME-Zarr 0.4 to
+0.6) are also shown in its Layer → **Source** tab, under the layer's
+transform.
 
 ## Notes from users
 

@@ -342,6 +342,7 @@ export class Shell {
       this.updateContext();
       this.updateStatus();
       this.renderSceneTabs();
+      this.showKindPanel();
       this.updateControls();
     };
     store.onChange(refresh);
@@ -1086,10 +1087,11 @@ export class Shell {
             "-",
             { label: "Close", run: () => close(scene.id, scene.name) },
           ]);
+        const kind = scene.kind === undefined ? undefined : this.sceneKinds().find((k) => k.kind === scene.kind);
         return h(
           "div",
           {
-            class: "scene-tab",
+            class: scene.kind === undefined ? "scene-tab" : `scene-tab scene-kind scene-kind-${scene.kind}`,
             role: "tab",
             tabindex: active ? 0 : -1,
             "aria-selected": String(active),
@@ -1110,6 +1112,7 @@ export class Shell {
               if (k.key === "Delete") close(scene.id, scene.name);
             },
           },
+          kind ? h("span", { class: "scene-kind-mark", title: kind.title, "aria-hidden": "true" }) : null,
           h("span", { class: "scene-tab-name" }, scene.name),
           h(
             "button",
@@ -1128,8 +1131,43 @@ export class Shell {
         );
       }),
       iconButton("plus", "New scene", () => this.wb.run("scene.new"), { class: "btn icon scene-add" }),
+      // Kinds of scene the plugins that are on add, not made yet: a tab that makes one.
+      ...this.sceneKinds()
+        .filter((k) => !p.scenes.some((s) => s.kind === k.kind))
+        .map((k) =>
+          h(
+            "div",
+            {
+              class: `scene-tab scene-kind scene-kind-${k.kind} scene-kind-new`,
+              role: "tab",
+              tabindex: -1,
+              "aria-selected": "false",
+              title: `Open ${k.title}`,
+              onclick: () => store.newScene({ name: k.title, kind: k.kind }),
+            },
+            h("span", { class: "scene-kind-mark", "aria-hidden": "true" }),
+            h("span", { class: "scene-tab-name" }, k.title),
+          ),
+        ),
     );
   }
+
+  /** The kinds of scene the plugins that are on contribute. */
+  private sceneKinds(): { kind: string; title: string; panel?: string }[] {
+    const s = this.wb.pluginSwitches;
+    return s.manifests.filter((m) => s.enabled.has(m.id)).flatMap((m) => m.contributes?.sceneKinds ?? []);
+  }
+
+  /** On switching to a scene of a plugin's kind, its panel. */
+  private showKindPanel(): void {
+    const scene = activeScene(this.wb.store.state());
+    if (scene.id === this.kindShownFor) return;
+    this.kindShownFor = scene.id;
+    const panel = scene.kind === undefined ? undefined : this.sceneKinds().find((k) => k.kind === scene.kind)?.panel;
+    if (panel !== undefined) this.docks.show(panel);
+  }
+
+  private kindShownFor: string | undefined;
 
   /** Shown only while something loads or has failed; "ready" says nothing worth the space. */
   private setStatus(kind: "ok" | "busy" | "err" | "idle", text: string): void {

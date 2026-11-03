@@ -30,7 +30,7 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
   const workspace: WorkspaceApi = {
     scenes: () => {
       const p = store.state();
-      return p.scenes.map((s) => ({ id: s.id, name: s.name, active: s.id === p.activeScene }));
+      return p.scenes.map((s) => ({ id: s.id, name: s.name, active: s.id === p.activeScene, ...(s.kind !== undefined ? { kind: s.kind } : {}) }));
     },
     switchScene: (id) => store.switchScene(id),
     newScene: (options) => store.newScene(options),

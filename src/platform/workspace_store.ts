@@ -361,7 +361,7 @@ export class WorkspaceStore {
     this.changePlatform(platform, ng, app);
   }
 
-  newScene(options: { copy?: boolean; name?: string } = {}): string {
+  newScene(options: { copy?: boolean; name?: string; kind?: string } = {}): string {
     const { platform, ng, app, id } = addScene(this.platform, this.ng(), options, undefined, this.app);
     this.changePlatform(platform, ng, app);
     this.options.log(`Added the scene “${activeScene(this.platform).name}”.`);

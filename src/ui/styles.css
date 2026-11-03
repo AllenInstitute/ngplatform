@@ -169,6 +169,13 @@ a.btn { text-decoration: none; }
 .scene-tab:hover .scene-close, .scene-tab[aria-selected="true"] .scene-close { visibility: visible; }
 .scene-close:hover { color: var(--text); background: var(--ink-4); }
 .scene-add { color: var(--muted); }
+/* a scene of a kind a plugin adds (Collections): marked, and before it is made, quieter */
+.scene-kind .scene-kind-mark {
+  width: 9px; height: 9px; flex: none; margin-right: 5px; border-radius: 2px;
+  border: 1.5px solid var(--select); box-shadow: 2px 2px 0 -0.5px var(--ink-1, transparent), 2px 2px 0 0.5px var(--select);
+}
+.scene-kind-new { border-style: dashed; border-color: var(--line); padding-right: 12px; }
+.scene-kind-new .scene-tab-name { font-style: italic; }
 
 .palette-trigger {
   display: flex; align-items: center; gap: 10px; flex: none;

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { graph, members, readCollection, resolvePath, transformMatrix } from "../collection.js";
+import { graph, invert, isCollection, members, parentGroups, placeInto, readCollection, resolvePath, sceneSystems, transformMatrix } from "../collection.js";
 
 const example = JSON.parse(readFileSync(new URL("../examples/srb_gallery.json", import.meta.url), "utf8"));
 
@@ -27,5 +27,50 @@ describe("OME-Zarr collections (RFC-8 draft)", () => {
     expect(a).toEqual([4, 0, 0, 3, 0, 3, 0, 2, 0, 0, 2, 1, 0, 0, 0, 1]);
     expect(transformMatrix({ type: "displacements" })).toBeUndefined();
     expect(() => readCollection({ hello: 1 }, "https://x/")).toThrow(/not an OME collection/);
+  });
+});
+
+describe("placing members in a chosen coordinate system", () => {
+  const doc = {
+    ome: {
+      type: "collection",
+      name: "two spaces",
+      attributes: {
+        scene: {
+          coordinateSystems: [
+            { id: "physical", axes: [{ name: "z", unit: "micrometer" }, { name: "y", unit: "micrometer" }, { name: "x", unit: "micrometer" }] },
+            { id: "atlas", axes: [{ name: "z", unit: "micrometer" }, { name: "y", unit: "micrometer" }, { name: "x", unit: "micrometer" }] },
+          ],
+          coordinateTransformations: [
+            { type: "translation", translation: [0, 0, 10], input: { id: "a" }, output: { id: "physical" } },
+            { type: "scale", scale: [2, 2, 2], input: { id: "atlas" }, output: { id: "physical" } },
+          ],
+        },
+      },
+      nodes: [{ type: "multiscale", name: "A", id: "a", path: { type: "zarr", path: "a.ome.zarr" } }],
+    },
+  };
+
+  it("composes the chain of transforms, walking one backwards as its inverse", () => {
+    const root = readCollection(doc, "https://example.org/c/zarr.json");
+    const a = root.nodes[0];
+    expect(placeInto(root, a, "physical")).toEqual([1, 0, 0, 10, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    // a → physical (x + 10), then physical → atlas (the inverse of × 2): (x + 10) / 2.
+    expect(placeInto(root, a, "atlas")).toEqual([0.5, 0, 0, 5, 0, 0.5, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 1]);
+    expect(placeInto(root, a, "nowhere")).toBeUndefined();
+    expect(sceneSystems(root).map((s) => s.id)).toEqual(["physical", "atlas"]);
+    expect(invert([2, 0, 0, 1, 0, 4, 0, 2, 0, 0, 1, 3, 0, 0, 0, 1])).toEqual([0.5, 0, 0, -0.5, 0, 0.25, 0, -0.5, 0, 0, 1, -3, 0, 0, 0, 1]);
+  });
+
+  it("looks for a collection in the groups above an image", () => {
+    expect(parentGroups("zarr://gs://bucket/study/collection.zarr/images/a.ome.zarr/|zarr2:")).toEqual([
+      "https://storage.googleapis.com/bucket/study/collection.zarr/images",
+      "https://storage.googleapis.com/bucket/study/collection.zarr",
+      "https://storage.googleapis.com/bucket/study",
+    ]);
+    expect(parentGroups("https://host/a/b.zarr/")).toEqual(["https://host/a"]);
+    expect(parentGroups("local://annotations")).toEqual([]);
+    expect(isCollection({ zarr_format: 3, attributes: { ome: { type: "collection", nodes: [] } } })).toBe(true);
+    expect(isCollection({ zarr_format: 3, attributes: { ome: { multiscales: [] } } })).toBe(false);
   });
 });
