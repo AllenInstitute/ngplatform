@@ -8,7 +8,7 @@
  * voxels of the level computed: a coarse level is a preview.
  */
 
-export type StepKind = "gaussian" | "mean" | "median" | "dog" | "frangi" | "threshold" | "morphology";
+export type StepKind = "gaussian" | "mean" | "median" | "dog" | "frangi" | "threshold" | "morphology" | "python";
 
 export interface Step {
   kind: StepKind;
@@ -26,6 +26,8 @@ export interface Step {
   high: number;
   /** Morphology: open or close. */
   operation: "open" | "close";
+  /** Python of one's own: chunkmirage's python op (apply(block) on each block, its #halo and #output lines). */
+  code: string;
 }
 
 export const STEP_KINDS: [StepKind, string][] = [
@@ -36,10 +38,21 @@ export const STEP_KINDS: [StepKind, string][] = [
   ["frangi", "Frangi vesselness"],
   ["threshold", "Threshold"],
   ["morphology", "Morphology (open, close)"],
+  ["python", "Python (your own)"],
 ];
 
+/** A python step's code to start from: chunkmirage's directives, and a block passed through. */
+export const PYTHON_START = `#halo 0
+#output float32 image
+# apply gets each block (a NumPy array, z, y, x) with #halo voxels of context
+# on each side, and returns the block computed. numpy is np; scipy and
+# scikit-image can be imported.
+def apply(block):
+    return block.astype(np.float32)
+`;
+
 export function newStep(kind: StepKind = "gaussian"): Step {
-  return { kind, sigma: 1, radius: 1, sigmaLow: 1, sigmaHigh: 3, bright: true, low: 100, high: Number.NaN, operation: "open" };
+  return { kind, sigma: 1, radius: 1, sigmaLow: 1, sigmaHigh: 3, bright: true, low: 100, high: Number.NaN, operation: "open", code: PYTHON_START };
 }
 
 export const MEDIAN = `#halo 1
@@ -91,6 +104,8 @@ export function opOf(s: Step): Record<string, unknown> {
       return { op: "threshold", low: s.low, ...(Number.isFinite(s.high) ? { high: s.high } : {}) };
     case "morphology":
       return { op: "morphology", operation: s.operation, radius: Math.max(1, Math.round(s.radius)) };
+    case "python":
+      return { op: "python", code: s.code };
   }
 }
 
@@ -114,6 +129,8 @@ export function describe(s: Step): string {
       return Number.isFinite(s.high) ? `${s.low} ≤ v < ${s.high}` : `≥ ${s.low}`;
     case "morphology":
       return `${s.operation} r ${s.radius}`;
+    case "python":
+      return "python";
   }
 }
 

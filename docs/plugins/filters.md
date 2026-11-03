@@ -26,9 +26,16 @@ full-resolution result.
      voxel looks like part of a tube (vessels, fibres, axons), 0 to 1.
    - **Threshold** (from, below): a mask, added as a segmentation.
    - **Morphology** (open or close, radius): cleans a mask.
+   - **Python (your own)**: code with `apply(block)`, run on each block
+     (a NumPy array, z, y, x). Its first lines say what it needs:
+     `#halo 2` (voxels of context on each side), `#output float32 image`
+     (what it returns: a dtype, then image, label or mask). NumPy is `np`;
+     SciPy and scikit-image can be imported.
 3. **Add filtered view**. The layer's link carries the steps, so it opens
    wherever the image can be read. Median and Frangi load Python (SciPy,
    scikit-image) in the page the first time, which takes a few seconds.
+   Someone opening a link with your own Python is shown the code and asked
+   before it runs.
 
 ## Notes from users
 

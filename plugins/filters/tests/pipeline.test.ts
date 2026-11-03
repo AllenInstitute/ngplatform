@@ -29,3 +29,10 @@ describe("filter steps", () => {
     expect(makesLabels([newStep("median")])).toBe(false);
   });
 });
+
+describe("a python step", () => {
+  it("is chunkmirage's python op with the code as written", () => {
+    expect(opOf({ ...newStep("python"), code: "def apply(block):\n    return block\n" })).toEqual({ op: "python", code: "def apply(block):\n    return block\n" });
+    expect(String(opOf(newStep("python")).code)).toMatch(/^#halo 0\n#output float32 image\n/);
+  });
+});

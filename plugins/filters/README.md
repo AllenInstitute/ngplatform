@@ -16,7 +16,7 @@ the whole pipeline, so its link works wherever the image can be read.
 | File | What |
 |---|---|
 | `manifest.ts` | The Filters tab |
-| `pipeline.ts` | Steps as chunkmirage ops: its own (`gaussian`, `uniform`, `dog`, `threshold`, `morphology`), and median and Frangi as `python` ops (SciPy, scikit-image) whose code is the plugin's, their settings as the code's sliders and their `#halo` set from them |
+| `pipeline.ts` | Steps as chunkmirage ops: its own (`gaussian`, `uniform`, `dog`, `threshold`, `morphology`), median and Frangi as `python` ops (SciPy, scikit-image) whose code is the plugin's, their settings as the code's sliders and their `#halo` set from them, and a Python step of one's own (the code as written) |
 | `plugin.ts` | The tab: an image, the steps, **Add filtered view**; the new layer keeps the image's shader and range when the steps only smooth |
 | `tests/pipeline.test.ts` | Steps to ops |
 

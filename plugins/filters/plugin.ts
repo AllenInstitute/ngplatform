@@ -29,6 +29,8 @@ const STYLE = `
 .fl-step { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--border, #3334); border-radius: 6px; }
 .fl-step-head { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: end; }
 .fl-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.fl-code { grid-column: 1 / -1; }
+.fl-code-text { width: 100%; height: auto; min-height: 140px; resize: vertical; font: 11px/1.45 var(--mono); white-space: pre; tab-size: 4; }
 `;
 
 /** Output chunks: 64 voxels a side. */
@@ -40,10 +42,12 @@ class Filters {
   private note = "";
   private images: string[] = [];
   private update?: () => void;
+  private updateStatus?: () => void;
 
   constructor(private readonly ctx: PlatformContext) {
     ctx.subscriptions.push(ctx.viewer.onLayersChanged(() => this.refresh()));
-    ctx.subscriptions.push(ctx.workspace.computed.onChanged(() => this.update?.()));
+    // The engine's counts change with every chunk: only the status line follows them, so a code box keeps its focus.
+    ctx.subscriptions.push(ctx.workspace.computed.onChanged(() => this.updateStatus?.()));
     this.refresh();
   }
 
@@ -134,7 +138,16 @@ class Filters {
                   ),
                   number("Radius (voxels)", s.radius, (v) => (s.radius = Math.max(1, Math.round(v))), "1", "1"),
                 ]
-              : [number("Radius (voxels)", s.radius, (v) => (s.radius = Math.max(1, Math.round(v))), "1", "1")];
+              : s.kind === "python"
+                ? [
+                    el(
+                      "label",
+                      { class: "fl-code" },
+                      el("span", {}, "Python: apply(block) on each block"),
+                      el("textarea", { class: "text-input fl-code-text", spellcheck: "false", rows: "10", oninput: (e: Event) => (s.code = (e.target as HTMLTextAreaElement).value) }, s.code),
+                    ),
+                  ]
+                : [number("Radius (voxels)", s.radius, (v) => (s.radius = Math.max(1, Math.round(v))), "1", "1")];
     const kind = el(
       "select",
       {
@@ -165,7 +178,19 @@ class Filters {
   render(host: HTMLElement): () => void {
     const draw = () => {
       const image = el("select", { onchange: (e: Event) => (this.image = (e.target as HTMLSelectElement).value) }, ...this.images.map((n) => el("option", { value: n, ...(n === this.image ? { selected: "" } : {}) }, n)));
-      const status = this.ctx.workspace.computed.status();
+      const statusLine = el("div", { class: "fl-status" });
+      const showStatus = () => {
+        const status = this.ctx.workspace.computed.status();
+        statusLine.replaceChildren(
+          ...[
+            status.status ? el("p", { class: "note" }, status.status) : null,
+            status.computed + status.failed > 0 ? el("p", { class: "note" }, `Chunks computed ${status.computed}, dropped ${status.dropped}, failed ${status.failed}.`) : null,
+            status.failure ? el("p", { class: "note" }, `Last failure: ${status.failure.message}`) : null,
+          ].filter((n): n is HTMLParagraphElement => n !== null),
+        );
+      };
+      this.updateStatus = showStatus;
+      showStatus();
       host.replaceChildren(
         el(
           "div",
@@ -190,15 +215,16 @@ class Filters {
             el("button", { class: "btn small primary", type: "button", disabled: this.images.length === 0, onclick: () => void this.add() }, "Add filtered view"),
           ),
           this.note ? el("p", { class: "note" }, this.note) : null,
-          status.status ? el("p", { class: "note" }, status.status) : null,
-          status.computed + status.failed > 0 ? el("p", { class: "note" }, `Chunks computed ${status.computed}, dropped ${status.dropped}, failed ${status.failed}.`) : null,
-          status.failure ? el("p", { class: "note" }, `Last failure: ${status.failure.message}`) : null,
+          statusLine,
         ),
       );
     };
     this.update = draw;
     draw();
-    return () => (this.update = undefined);
+    return () => {
+      this.update = undefined;
+      this.updateStatus = undefined;
+    };
   }
 }
 
