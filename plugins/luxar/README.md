@@ -22,6 +22,7 @@ point tables). Nothing is converted and no files are written.
 | `view3d.ts` | The 3-D view, through `viewer.draw3d`: the float target, tone mapping, depth |
 | `view2d.ts` | The 2-D views, on a canvas over them (the platform's overlay), with each panel's camera |
 | `render_gl.ts` | WebGL2: the line and point shaders, upload, the tone-mapping composite |
+| `bloom.ts` | Bloom: the bright pass and the separable Gaussian blur at three scales |
 | `chunks.ts` | Levels of detail and which chunks a view reads and draws; the per-context GPU cache |
 | `client.ts`, `luxar_worker.ts` | Reading a store's chunks with the Zarr Vectors reader, in a worker |
 | `chunk_build.ts` | A decoded chunk made ready to draw: a vertex texture, (previous, start, end, next) segments, and each vertex's object as a slot in the chunk's list of objects |
@@ -156,6 +157,28 @@ brightness as levels come and go. A correction by each level's share of
 the objects was tried first: it makes a sparse sample's few lines glare.
 *Brightness* is in stops on top.
 
+### Bloom
+
+Luxar's glow around bright light (*Bloom*, an amount per layer, 0 is off,
+the default; lines, points and splats, in the 3-D view and the 2-D views).
+After the light is added up in the float target and before it is tone
+mapped (`bloom.ts`):
+
+1. a bright pass keeps what is brighter than 1 (light the tone map shows
+   at about 0.8), with a soft knee from 0.5 to 1.5 so the glow fades in;
+   with emission and absorption, of the light as it is shown (screened by
+   its own absorption); it is taken at half the view's size (each pixel
+   the mean of four);
+2. it is blurred by a separable Gaussian (sigma 2 pixels, 13 taps, across
+   then down) at half, a quarter and an eighth of the view's size, each
+   scale made from the one before: glows of about 4, 8 and 16 pixels;
+3. the composite adds the mean of the three scales (read with bilinear
+   filtering), times the amount, to the light, then tone maps.
+
+So a bright bundle bleeds light into what is around it, the wider the
+brighter. In the 2-D views the blur runs over the whole canvas, so a
+panel's glow can reach a few pixels into the next. Solid tubes have none.
+
 ### Setting Neuroglancer's own drawing aside
 
 While a layer is drawn here, Neuroglancer's drawing of it is hidden
@@ -239,7 +262,6 @@ momentum in the engine.
   `curves(id, n)`) would draw them whole at any zoom, as Neuroglancer's
   per-object skeletons do. Objects not chosen are not drawn at all, even
   when the layer's *notSelectedAlpha* would show them faintly.
-- **Bloom** (Luxar's glow around bright light) is not done.
 - **Free line ends** are square: Luxar's soft cap would need to know which
   chunk-boundary ends continue in the next chunk (the reader's
   `linkedVertices`), or caps would brighten every chunk face.

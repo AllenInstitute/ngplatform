@@ -51,6 +51,8 @@ export interface LayerStyle {
   detail: number;
   /** Dim each line by how many times over the lines drawn cover the view, so dense views glow rather than turn white, and keep their brightness as levels change. */
   autoBrightness: boolean;
+  /** Luxar's bloom: how much of the bright light, blurred, glows around it (0, off, to 3). */
+  bloom: number;
 }
 
 export const DEFAULT_STYLE: LayerStyle = {
@@ -67,6 +69,7 @@ export const DEFAULT_STYLE: LayerStyle = {
   slab: 4,
   detail: 2,
   autoBrightness: true,
+  bloom: 0,
 };
 
 const BLENDINGS: Blending[] = ["glow", "glow-through", "emission", "solid"];
@@ -119,6 +122,7 @@ export function readStyle(raw: unknown): LayerStyle {
     slab: num(s.slab, 0.01, 1000, d.slab),
     detail: num(s.detail, 0.1, 50, d.detail),
     autoBrightness: s.autoBrightness !== false,
+    bloom: num(s.bloom, 0, 3, d.bloom),
   };
 }
 

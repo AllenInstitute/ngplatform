@@ -261,7 +261,7 @@ class Luxar {
   }
 
   /** A slider that draws as it moves and saves when let go. */
-  private slider(name: string, label: string, key: "width" | "exposure" | "sharpness" | "absorption" | "slab" | "detail", min: number, max: number, step: number, format: (v: number) => string): HTMLElement {
+  private slider(name: string, label: string, key: "width" | "exposure" | "sharpness" | "absorption" | "slab" | "detail" | "bloom", min: number, max: number, step: number, format: (v: number) => string): HTMLElement {
     const style = this.styleOf(name);
     const input = el("input", { type: "range", min, max, step, value: style[key], "aria-label": label }) as HTMLInputElement;
     const shown = el("span", { class: "lx-value" }, format(style[key]));
@@ -271,6 +271,11 @@ class Luxar {
     });
     input.addEventListener("change", () => this.setStyle(name, { [key]: Number(input.value) }));
     return el("label", { class: "field" }, el("span", {}, label), el("div", { class: "lx-row" }, input, shown));
+  }
+
+  /** Bloom: how much of the bright light glows around it, 0 off. */
+  private bloomSlider(name: string): HTMLElement {
+    return this.slider(name, "Bloom (glow around bright light)", "bloom", 0, 3, 0.05, (v) => (v === 0 ? "off" : v.toFixed(2)));
   }
 
   /** An image's settings: splats coloured by intensity or one colour, brightness, tone map, detail. */
@@ -294,6 +299,7 @@ class Luxar {
       this.slider(name, "Brightness (stops)", "exposure", -8, 8, 0.25, (v) => (v > 0 ? `+${v}` : `${v}`)),
       ...(style.blending === "emission" ? [this.slider(name, "Absorption", "absorption", 0, 8, 0.05, (v) => v.toFixed(2))] : []),
       this.select("Tone map", style.toneMap, TONE_LABELS, (toneMap) => set({ toneMap })),
+      this.bloomSlider(name),
       this.slider(name, "Detail (splats per view)", "detail", 0.25, 12, 0.25, (v) => `${v} M`),
     );
     if (!style.on) parts.push(el("p", { class: "note" }, "Tick the layer above to draw it this way."));
@@ -360,7 +366,7 @@ class Luxar {
       this.slider(name, "Sharpness", "sharpness", 0, 1, 0.05, (v) => v.toFixed(2)),
     );
     if (style.blending === "emission") parts.push(this.slider(name, "Absorption", "absorption", 0, 8, 0.05, (v) => v.toFixed(2)));
-    if (style.blending !== "solid") parts.push(this.select("Tone map", style.toneMap, TONE_LABELS, (toneMap) => set({ toneMap })));
+    if (style.blending !== "solid") parts.push(this.select("Tone map", style.toneMap, TONE_LABELS, (toneMap) => set({ toneMap })), this.bloomSlider(name));
     parts.push(
       this.slider(name, "2-D slab (thickness shown around a section)", "slab", 0.5, 40, 0.5, (v) => `${v} mm`),
       this.slider(name, "Detail (vertices per view)", "detail", 0.25, 12, 0.25, (v) => `${v} M`),

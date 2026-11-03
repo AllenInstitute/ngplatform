@@ -20,6 +20,7 @@ import type { Disposer, Frame3d, PlatformContext } from "@ngplatform/sdk";
 import { displayOfRas } from "../volume-view/solid.js";
 import { selectChunks, type Selection } from "./chunks.js";
 import type { StoreInfo } from "./luxar_worker.js";
+import { Bloom } from "./bloom.js";
 import { LightTarget, Renderer } from "./render_gl.js";
 import { type GpuSplats, SplatRenderer } from "./splat_gl.js";
 import { SplatView2d } from "./splat_view2d.js";
@@ -52,6 +53,7 @@ export class SplatView {
   private renderer: SplatRenderer | undefined;
   private composite: Renderer | undefined;
   private target: LightTarget | undefined;
+  private bloom: Bloom | undefined;
   private gl: WebGL2RenderingContext | undefined;
   private gpuBytes = 0;
   private frame = 0;
@@ -138,9 +140,10 @@ export class SplatView {
     for (const b of this.blocks.values()) b.gpu = undefined;
     this.gpuBytes = 0;
     this.target?.release();
+    this.bloom?.release();
     this.renderer?.dispose();
     this.composite?.dispose();
-    this.renderer = this.composite = this.target = undefined;
+    this.renderer = this.composite = this.target = this.bloom = undefined;
     this.gl = undefined;
   }
 
@@ -154,6 +157,7 @@ export class SplatView {
       this.renderer = new SplatRenderer(gl);
       this.composite = new Renderer(gl);
       this.target = new LightTarget(gl, this.composite.floatTargets);
+      this.bloom = new Bloom(this.composite, this.composite.floatTargets);
     }
     const toDisplay = displayOfRas(frame.dimensions);
     if (toDisplay === undefined) {
@@ -200,6 +204,7 @@ export class SplatView {
       depthMask: gl.getParameter(gl.DEPTH_WRITEMASK) as boolean,
       depthFunc: gl.getParameter(gl.DEPTH_FUNC) as number,
       stencil: gl.isEnabled(gl.STENCIL_TEST),
+      scissor: gl.isEnabled(gl.SCISSOR_TEST),
     };
     while (saved.drawBuffers.length > 1 && saved.drawBuffers[saved.drawBuffers.length - 1] === gl.NONE) saved.drawBuffers.pop();
     const [x, y, width, height] = saved.viewport;
@@ -232,14 +237,17 @@ export class SplatView {
           colour: style.colourBy === "solid" ? rgbOf(style.colour) : undefined,
         });
       }
+      // Bloom: the bright light blurred, added by the composite.
+      const bloom = style.bloom > 0 ? this.bloom!.run(this.target!.texture!, width, height, emission) : undefined;
       // Tone mapped onto the view's colour only.
+      gl.enable(gl.BLEND);
       gl.bindFramebuffer(gl.FRAMEBUFFER, saved.framebuffer);
       gl.viewport(x, y, width, height);
       gl.drawBuffers(saved.drawBuffers.map((b, i) => (i === frame.outputs.color ? b : gl.NONE)));
       gl.disable(gl.DEPTH_TEST);
       if (emission) gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       else gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-      this.composite!.composite(this.target!.texture!, frame.outputs, { toneMap: TONE_INDEX[style.toneMap], emission, origin: [x, y] });
+      this.composite!.composite(this.target!.texture!, frame.outputs, { toneMap: TONE_INDEX[style.toneMap], emission, origin: [x, y], bloom: bloom && { textures: bloom, amount: style.bloom } });
     } finally {
       gl.bindFramebuffer(gl.FRAMEBUFFER, saved.framebuffer);
       gl.drawBuffers(saved.drawBuffers);
@@ -251,6 +259,7 @@ export class SplatView {
       gl.depthMask(saved.depthMask);
       gl.depthFunc(saved.depthFunc);
       if (saved.stencil) gl.enable(gl.STENCIL_TEST);
+      if (saved.scissor) gl.enable(gl.SCISSOR_TEST);
       gl.blendFunc(gl.ONE, gl.ZERO);
     }
   }

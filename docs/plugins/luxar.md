@@ -31,6 +31,9 @@ is converted.
   hard edge) and the **Tone map**. **Automatic brightness** dims lines where
   many crowd the view, so a whole brain glows rather than turning white and
   zooming in (finer levels, more lines) keeps the picture's brightness.
+- **Bloom**: a glow around bright light, as Luxar has: the brightest
+  parts, blurred, are added back around them (0 is off). For lines,
+  points and images drawn as splats, in 2-D and 3-D.
 - **2-D slab**: in a 2-D view, lines within half this distance of the
   section show, fading away from it, as Luxar slices by proximity.
 - **Detail**: about how many vertices a view reads. The coarsest level shows
@@ -49,7 +52,7 @@ is converted.
 - Hiding the layer hides its Luxar drawing too. A link opened where the
   plugin is off shows the layer drawn by Neuroglancer as usual.
 
-Not yet: meshes, Luxar's bloom, and fitted Gaussian splats (Luxar's GPU
+Not yet: meshes, and fitted Gaussian splats (Luxar's GPU
 fit, which makes new files).
 
 ## Images as splats

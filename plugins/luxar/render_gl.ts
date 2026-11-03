@@ -421,6 +421,7 @@ uniform int uToneMap;
 uniform bool uEmission;
 uniform float uCut;
 uniform bool uNear;
+${depth ? "" : "uniform highp sampler2D uBloom0;\nuniform highp sampler2D uBloom1;\nuniform highp sampler2D uBloom2;\nuniform float uBloom;"}
 ${outs}
 
 // ACES filmic, Narkowicz's fit.
@@ -443,6 +444,16 @@ vec3 tone(vec3 x) {
 
 void main() {
   vec4 light = texelFetch(uLight, ivec2(gl_FragCoord.xy) - uOrigin, 0);
+  // Bloom (./bloom.ts): the bright light blurred at three scales, added before tone mapping.
+  vec3 bloom = vec3(0.0);
+  ${
+    depth
+      ? ""
+      : `if (uBloom > 0.0) {
+    vec2 uv = (vec2(ivec2(gl_FragCoord.xy) - uOrigin) + 0.5) / vec2(textureSize(uLight, 0));
+    bloom = uBloom * (texture(uBloom0, uv).rgb + texture(uBloom1, uv).rgb + texture(uBloom2, uv).rgb) / 3.0;
+  }`
+  }
   vec4 shown;
   if (uEmission) {
     // Emission and absorption, order-independent: the light emitted, each
@@ -451,11 +462,11 @@ void main() {
     float tau = max(light.a, 0.0);
     float through = exp(-tau);
     float screen = tau < 1e-3 ? 1.0 - 0.5 * tau : (1.0 - through) / tau;
-    vec3 c = tone(light.rgb * screen);
+    vec3 c = tone(light.rgb * screen + bloom);
     shown = vec4(c, 1.0 - through);
     ${depth ? "shown.a = max(shown.a, max(c.r, max(c.g, c.b)));" : ""}
   } else {
-    vec3 c = tone(light.rgb);
+    vec3 c = tone(light.rgb + bloom);
     shown = vec4(c, max(c.r, max(c.g, c.b)));
   }
   ${write}
@@ -649,7 +660,14 @@ export class Renderer {
   composite(
     texture: WebGLTexture,
     outputs: Outputs,
-    options: { toneMap: number; emission: boolean; origin: [number, number]; depth?: { texture: WebGLTexture; cut: number; near: boolean } },
+    options: {
+      toneMap: number;
+      emission: boolean;
+      origin: [number, number];
+      depth?: { texture: WebGLTexture; cut: number; near: boolean };
+      /** Bloom's blurred light (bloom.ts), finest first, and how much of it to add. */
+      bloom?: { textures: WebGLTexture[]; amount: number };
+    },
   ): void {
     const { gl } = this;
     const depth = options.depth;
@@ -665,6 +683,17 @@ export class Renderer {
       gl.uniform1f(this.uniform(p, "uCut"), depth.cut);
       gl.uniform1i(this.uniform(p, "uNear"), depth.near ? 1 : 0);
     }
+    if (!depth) {
+      // Bound whether used or not (no other kind of texture left on a sampler's unit).
+      const bloom = options.bloom;
+      for (let i = 0; i < 3; ++i) {
+        gl.activeTexture(gl.TEXTURE1 + i);
+        gl.bindTexture(gl.TEXTURE_2D, bloom?.textures[i] ?? null);
+        gl.uniform1i(this.uniform(p, `uBloom${i}`), 1 + i);
+      }
+      gl.uniform1f(this.uniform(p, "uBloom"), bloom !== undefined && bloom.textures.length >= 3 ? bloom.amount : 0);
+      gl.activeTexture(gl.TEXTURE0);
+    }
     gl.uniform2i(this.uniform(p, "uOrigin"), options.origin[0], options.origin[1]);
     gl.uniform1i(this.uniform(p, "uToneMap"), options.toneMap);
     gl.uniform1i(this.uniform(p, "uEmission"), options.emission ? 1 : 0);
@@ -675,8 +704,40 @@ export class Renderer {
     if (depth) {
       gl.bindTexture(gl.TEXTURE_2D, null);
       gl.activeTexture(gl.TEXTURE0);
+    } else {
+      for (let i = 3; i >= 1; --i) {
+        gl.activeTexture(gl.TEXTURE0 + i);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+      }
+      gl.activeTexture(gl.TEXTURE0);
     }
     gl.bindTexture(gl.TEXTURE_2D, null);
+  }
+
+  /**
+   * Draws a full-screen triangle with a program of its own (bloom's passes):
+   * `textures` on units 0, 1, … by sampler name, `ints` as ivec2 uniforms.
+   */
+  fullScreen(key: string, vs: string, fs: string, textures: Record<string, WebGLTexture>, ints: Record<string, [number, number]> = {}, floats: Record<string, number> = {}): void {
+    const { gl } = this;
+    const p = this.compile(key, vs, fs);
+    gl.useProgram(p.program);
+    const names = Object.keys(textures);
+    names.forEach((name, i) => {
+      gl.activeTexture(gl.TEXTURE0 + i);
+      gl.bindTexture(gl.TEXTURE_2D, textures[name]);
+      gl.uniform1i(this.uniform(p, name), i);
+    });
+    for (const [name, v] of Object.entries(ints)) gl.uniform2i(this.uniform(p, name), v[0], v[1]);
+    for (const [name, v] of Object.entries(floats)) gl.uniform1f(this.uniform(p, name), v);
+    this.emptyVao ??= gl.createVertexArray()!;
+    gl.bindVertexArray(this.emptyVao);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindVertexArray(null);
+    for (let i = names.length - 1; i >= 0; --i) {
+      gl.activeTexture(gl.TEXTURE0 + i);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+    }
   }
 
   dispose(): void {
