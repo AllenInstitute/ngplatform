@@ -44,13 +44,13 @@ describe("resampling", () => {
     expect(out[11]).toBe(0);
   });
 
-  it("interpolates halfway between voxels, linearly and (on a linear ramp, exactly) by cubic", () => {
+  it("interpolates halfway between voxels: linearly exactly on a ramp, by cubic B-spline nearly (its mirrored edges bend a ramp a little)", () => {
     const half = translation(-1, 1, 0); // half a voxel along +i and +j
     const at = (data: ArrayLike<number>, x: number, y: number, z: number) => data[x + 12 * (y + 10 * z)];
-    for (const method of ["linear", "cubic"] as const) {
+    for (const [method, digits] of [["linear", 4], ["cubic", 2]] as const) {
       const out = resample(v, grid, half, method);
       // out at (x, y) samples v at (x - 0.5, y - 0.5).
-      expect(at(out, 5, 5, 3)).toBeCloseTo(4.5 + 45 + 300, 4);
+      expect(at(out, 5, 5, 3)).toBeCloseTo(4.5 + 45 + 300, digits);
     }
   });
 
