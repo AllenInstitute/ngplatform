@@ -30,6 +30,7 @@ and a *Read more* guide each.
 | [Collections](collections.md) | tool | no | OME-Zarr collections (RFC-8, draft): members, coordinate systems, transforms, and a scene of them. |
 | [Luxar rendering](luxar.md) | tool | no | Chosen Zarr Vectors layers drawn as Luxar draws lines (HDR glow, mitred joins), in the 2-D and 3-D views. |
 | [Orientations](orientations.md) | tool | no | ODF glyphs from spherical harmonics, tensor ellipsoids and peak lines over an image, finer as you zoom in; direction colour. |
+| [Atlas](atlas.md) | tool | no | A segmentation's regions as a tree (Allen CCF hierarchy, FreeSurfer grouped): search, show a region with its parts, go to it, the region under the cursor, volumes. |
 
 ## Switching, adding and writing plugins
 

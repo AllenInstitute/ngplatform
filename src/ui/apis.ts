@@ -3,6 +3,7 @@
  * engine.  They hand out plain data (names, ids, JSON), never Neuroglancer
  * objects.
  */
+import { catalogueUrl, loadLookupTable, LOOKUP_TABLES, lookupTitle } from "../engine/lookup_tables.js";
 import type { DatasetInfo, Json, LayerInfo, SceneDatasetInfo, ViewerApi, WorkspaceApi } from "../sdk/types.js";
 import type { Workbench } from "./workbench.js";
 
@@ -118,6 +119,16 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
         source.invalidateCache();
         setTimeout(() => source.dispose(), 2000);
       }
+    },
+    lookupTables: {
+      catalogue: () => LOOKUP_TABLES.map((t) => ({ url: catalogueUrl(t), title: t.title, group: t.group, description: t.description, fetched: t.url !== undefined })),
+      load: (url) => loadLookupTable(url),
+      title: (url) => lookupTitle(url),
+      of: (layer) => engine.lookupTable(layer),
+      apply: async (layer, url) => {
+        await engine.setLookupTable(layer, url);
+        store.scheduleSettle();
+      },
     },
   };
 

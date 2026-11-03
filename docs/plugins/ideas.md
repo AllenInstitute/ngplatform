@@ -25,7 +25,7 @@ the *Plugin idea* template.
 |---|---|---|
 | **Neuron tracing and review** | Trace axons and dendrites as skeletons, edit them (split, join, reroot), mark synapses and review a neuron node by node | CATMAID, WebKnossos, Knossos, neuTube, Vaa3D |
 | **Proofreading** | Merge and split segments of a segmentation, with history and multi-user locks | CAVE / FlyWire, WebKnossos, NeuTu |
-| **Atlas** | An atlas's hierarchy (Allen CCF, Waxholm, DK/Destrieux): search a region, show it and its children, read the region under the cursor | Allen Brain Explorer, brainrender, ITK-SNAP label tables |
+| **Atlas** (begun, see [Atlas](atlas.md)) | An atlas's hierarchy (Allen CCF, Waxholm, DK/Destrieux): search a region, show it and its children, read the region under the cursor | Allen Brain Explorer, brainrender, ITK-SNAP label tables |
 | **Surfaces** | Cortical surfaces with curvature, thickness, overlays, `.annot` and `.label`; outlines on the slices; inflated and sphere views | Freeview, Connectome Workbench, SurfIce |
 | **Tract statistics** | Profiles along a tract (FA, length), bundle comparison, tract-to-region connectivity | DIPY AFQ, TractSeg, DSI Studio |
 | **Connectome** | Region-by-region matrices and graphs linked to the regions in the views | Freeview's connectome view, BrainNet Viewer, NetworkX |

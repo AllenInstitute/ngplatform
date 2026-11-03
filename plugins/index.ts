@@ -7,6 +7,7 @@
  */
 import type { Manifest, PluginModule, VirtualFormat } from "@ngplatform/sdk";
 import { ANNOTATIONS_MANIFEST } from "./annotations/manifest.js";
+import { ATLAS_MANIFEST } from "./atlas/manifest.js";
 import { LABEL_STORE_FORMAT } from "./annotations/segmentation/store_format.js";
 import { COLLECTIONS_MANIFEST } from "./collections/manifest.js";
 import { FILTERS_MANIFEST } from "./filters/manifest.js";
@@ -38,4 +39,5 @@ export const CATALOGUE: CatalogueEntry[] = [
   { manifest: REGISTRATION_MANIFEST, load: async () => (await import("./registration/plugin.js")).plugin },
   { manifest: LUXAR_MANIFEST, load: async () => (await import("./luxar/plugin.js")).plugin },
   { manifest: ORIENTATIONS_MANIFEST, load: async () => (await import("./orientations/plugin.js")).plugin },
+  { manifest: ATLAS_MANIFEST, load: async () => (await import("./atlas/plugin.js")).plugin },
 ];

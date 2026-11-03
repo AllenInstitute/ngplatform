@@ -33,6 +33,7 @@ import {
   ViewerSettingsPanel,
 } from "./neuroglancer.js";
 import { looksAnatomical, type PanelConvention, panelRotations } from "./anatomical.js";
+import { applyLookupTable, layerLookupSource } from "./lookup_tables.js";
 import { addMomentum } from "./momentum.js";
 import { mountInspector } from "./inspector/index.js";
 import { watchOutlines } from "./outlines.js";
@@ -816,6 +817,19 @@ export class Engine {
       off();
       current?.();
     };
+  }
+
+  /** The `lut://` source naming a segmentation layer's lookup table, if it has one. */
+  lookupTable(name: string): string | undefined {
+    const layer = this.segmentationLayer(name);
+    return layer && layerLookupSource(layer);
+  }
+
+  /** Gives a segmentation layer a lookup table, as its Render tab does (see lookup_tables.ts). */
+  async setLookupTable(name: string, url: string | undefined): Promise<void> {
+    const layer = this.segmentationLayer(name);
+    if (layer === undefined) throw new Error(`${name} is not a segmentation layer`);
+    await applyLookupTable(layer, url);
   }
 
   /**
