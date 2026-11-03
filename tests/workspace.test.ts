@@ -5,6 +5,7 @@ import {
   datasetKey,
   datasetOfLayer,
   emptyPlatform,
+  type PlatformState,
   layerForDataset,
   layersOf,
   moveScene,
@@ -164,5 +165,36 @@ describe("scenes", () => {
     expect(p.scenes).toEqual([{ id: "s1", name: "A" }]);
     expect(p.activeScene).toBe("s1");
     expect(p.datasets[0]).toMatchObject({ id: "d", key: "k", name: "k", kind: "auto" });
+  });
+});
+
+describe("plugin state per scene", () => {
+  const base = (): PlatformState => ({ version: 1, scenes: [{ id: "a", name: "A" }, { id: "b", name: "B" }], activeScene: "a", datasets: [] });
+
+  it("keeps each scene's plugin state: switching away stores it, switching back brings it", () => {
+    const groups = { trackFiltering: { version: 1, data: { groups: ["g1"] } } };
+    const toB = switchScene(base(), { layers: [] }, "b", groups);
+    expect(toB.app).toEqual({});
+    expect(toB.platform.scenes.find((s) => s.id === "a")?.app).toEqual(groups);
+    const back = switchScene(toB.platform, {}, "a", { other: { version: 1, data: 2 } });
+    expect(back.app).toEqual(groups);
+    expect(back.platform.scenes.find((s) => s.id === "b")?.app).toEqual({ other: { version: 1, data: 2 } });
+    // The active scene's state is the workspace's, not kept twice.
+    expect(back.platform.scenes.find((s) => s.id === "a")?.app).toBeUndefined();
+  });
+
+  it("starts a new scene without plugin state, and a copied one with a copy of it", () => {
+    const app = { annotations: { version: 1, data: { n: 1 } } };
+    expect(addScene(base(), {}, {}, () => "c", app).app).toEqual({});
+    const copy = addScene(base(), {}, { copy: true }, () => "c", app);
+    expect(copy.app).toEqual(app);
+    expect(copy.app).not.toBe(app);
+  });
+
+  it("deleting the active scene brings in its neighbour's plugin state", () => {
+    const toB = switchScene(base(), {}, "b", { x: { version: 1, data: "a's" } });
+    const removed = removeScene(toB.platform, {}, "b", undefined, { x: { version: 1, data: "b's" } });
+    expect(removed.platform.activeScene).toBe("a");
+    expect(removed.app).toEqual({ x: { version: 1, data: "a's" } });
   });
 });

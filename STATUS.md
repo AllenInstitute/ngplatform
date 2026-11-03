@@ -40,6 +40,8 @@
   every dataset. It is also a plain Neuroglancer link to the scene on show.
 - A **scene** is one view of the data: which datasets, drawn how, from
   where, in what layout. Scenes are the tabs in the top bar.
+  Each scene keeps its own plugin state (groups, labels, styles), as if it
+  were a viewer of its own.
 - A **dataset** is a piece of data, matched to layers by its source URL. It
   belongs to the workspace, so any scene can show it.
 - A **layer** is one way a scene shows a dataset; a dataset can have several

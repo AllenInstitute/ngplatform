@@ -35,6 +35,12 @@ export interface SceneRecord {
   name: string;
   /** Neuroglancer state of an inactive scene; the active scene's is the workspace `ng`. */
   ng?: Json;
+  /**
+   * The plugins' state of an inactive scene (their slices, by key); the
+   * active scene's is the workspace's.  Each scene keeps its own, as if it
+   * were a viewer of its own: groups, labels, styles and the rest.
+   */
+  app?: Json;
 }
 
 export interface PlatformState {
@@ -280,18 +286,18 @@ export function emptySceneFrom(ng: Json): Json {
  * to show; `currentNg` (the active scene's live state) is stored on the scene
  * it came from.
  */
-export function switchScene(p: PlatformState, currentNg: Json, id: string): { platform: PlatformState; ng: Json } {
+export function switchScene(p: PlatformState, currentNg: Json, id: string, currentApp: Json = {}): { platform: PlatformState; ng: Json; app: Json } {
   const target = p.scenes.find((s) => s.id === id);
-  if (target === undefined || id === p.activeScene) return { platform: p, ng: currentNg };
+  if (target === undefined || id === p.activeScene) return { platform: p, ng: currentNg, app: currentApp };
   const scenes = p.scenes.map((s) => {
-    if (s.id === p.activeScene) return { ...s, ng: currentNg };
+    if (s.id === p.activeScene) return { ...s, ng: currentNg, app: currentApp };
     if (s.id === id) {
-      const { ng: _ng, ...rest } = s;
+      const { ng: _ng, app: _app, ...rest } = s;
       return rest;
     }
     return s;
   });
-  return { platform: { ...p, scenes, activeScene: id }, ng: target.ng ?? {} };
+  return { platform: { ...p, scenes, activeScene: id }, ng: target.ng ?? {}, app: target.app ?? {} };
 }
 
 /** Adds a scene after the active one and switches to it: empty, or a copy of the current scene. */
@@ -300,16 +306,19 @@ export function addScene(
   currentNg: Json,
   options: { copy?: boolean; name?: string } = {},
   makeId: IdMaker = randomId,
-): { platform: PlatformState; ng: Json; id: string } {
+  currentApp: Json = {},
+): { platform: PlatformState; ng: Json; app: Json; id: string } {
   const id = makeId("s-");
   const current = activeScene(p);
   const base = options.name ?? (options.copy ? `${current.name} copy` : `Scene ${p.scenes.length + 1}`);
   const name = uniqueName(base, p.scenes.map((s) => s.name));
   const ng = options.copy ? structuredClone(currentNg) : emptySceneFrom(currentNg);
+  // A copy keeps the plugins' state too; a new scene starts without any.
+  const app = options.copy ? structuredClone(currentApp) : {};
   const index = p.scenes.findIndex((s) => s.id === p.activeScene);
-  const scenes = p.scenes.map((s) => (s.id === p.activeScene ? { ...s, ng: currentNg } : s));
+  const scenes = p.scenes.map((s) => (s.id === p.activeScene ? { ...s, ng: currentNg, app: currentApp } : s));
   scenes.splice(index + 1, 0, { id, name });
-  return { platform: { ...p, scenes, activeScene: id }, ng, id };
+  return { platform: { ...p, scenes, activeScene: id }, ng, app, id };
 }
 
 export function renameScene(p: PlatformState, id: string, name: string): PlatformState {
@@ -323,19 +332,19 @@ export function renameScene(p: PlatformState, id: string, name: string): Platfor
  * whose state is returned as `ng`; removing the only scene leaves a blank
  * one in its place, so there is always a scene.
  */
-export function removeScene(p: PlatformState, currentNg: Json, id: string, makeId: IdMaker = randomId): { platform: PlatformState; ng: Json } {
-  if (!p.scenes.some((s) => s.id === id)) return { platform: p, ng: currentNg };
+export function removeScene(p: PlatformState, currentNg: Json, id: string, makeId: IdMaker = randomId, currentApp: Json = {}): { platform: PlatformState; ng: Json; app: Json } {
+  if (!p.scenes.some((s) => s.id === id)) return { platform: p, ng: currentNg, app: currentApp };
   if (p.scenes.length === 1) {
     const blank = { id: makeId("s-"), name: "Scene 1" };
-    return { platform: { ...p, scenes: [blank], activeScene: blank.id }, ng: emptySceneFrom(currentNg) };
+    return { platform: { ...p, scenes: [blank], activeScene: blank.id }, ng: emptySceneFrom(currentNg), app: {} };
   }
   const index = p.scenes.findIndex((s) => s.id === id);
   if (id !== p.activeScene) {
-    return { platform: { ...p, scenes: p.scenes.filter((s) => s.id !== id) }, ng: currentNg };
+    return { platform: { ...p, scenes: p.scenes.filter((s) => s.id !== id) }, ng: currentNg, app: currentApp };
   }
   const neighbour = p.scenes[index + 1] ?? p.scenes[index - 1];
-  const switched = switchScene(p, currentNg, neighbour.id);
-  return { platform: { ...switched.platform, scenes: switched.platform.scenes.filter((s) => s.id !== id) }, ng: switched.ng };
+  const switched = switchScene(p, currentNg, neighbour.id, currentApp);
+  return { platform: { ...switched.platform, scenes: switched.platform.scenes.filter((s) => s.id !== id) }, ng: switched.ng, app: switched.app };
 }
 
 export function moveScene(p: PlatformState, id: string, toIndex: number): PlatformState {

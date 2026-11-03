@@ -344,21 +344,26 @@ export class WorkspaceStore {
 
   // -------------------------------------------------------------- scenes
 
-  private changePlatform(platform: PlatformState, ng?: Json): void {
+  private changePlatform(platform: PlatformState, ng?: Json, app?: Json): void {
     this.platform = platform;
     if (ng !== undefined) this.engine.setState(ng);
+    if (app !== undefined) {
+      // The scene's own plugin state: plugins see it change as after an undo.
+      this.app = app;
+      this.notifySlices();
+    }
     this.settle();
   }
 
   switchScene(id: string): void {
     if (id === this.platform.activeScene) return;
-    const { platform, ng } = switchScene(this.platform, this.ng(), id);
-    this.changePlatform(platform, ng);
+    const { platform, ng, app } = switchScene(this.platform, this.ng(), id, this.app);
+    this.changePlatform(platform, ng, app);
   }
 
   newScene(options: { copy?: boolean; name?: string } = {}): string {
-    const { platform, ng, id } = addScene(this.platform, this.ng(), options);
-    this.changePlatform(platform, ng);
+    const { platform, ng, app, id } = addScene(this.platform, this.ng(), options, undefined, this.app);
+    this.changePlatform(platform, ng, app);
     this.options.log(`Added the scene “${activeScene(this.platform).name}”.`);
     return id;
   }
@@ -369,9 +374,10 @@ export class WorkspaceStore {
 
   deleteScene(id: string): void {
     const scene = this.platform.scenes.find((s) => s.id === id);
-    const { platform, ng } = removeScene(this.platform, this.ng(), id);
+    const { platform, ng, app } = removeScene(this.platform, this.ng(), id, undefined, this.app);
     if (platform === this.platform) return;
-    this.changePlatform(platform, id === this.platform.activeScene ? ng : undefined);
+    const active = id === this.platform.activeScene;
+    this.changePlatform(platform, active ? ng : undefined, active ? app : undefined);
     this.options.log(`Deleted the scene “${scene?.name}”.`);
   }
 
