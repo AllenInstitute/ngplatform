@@ -13,6 +13,8 @@ export const EDITING = "segmentation.editing";
 export const DRAWING = "segmentation.drawing";
 /** Set while the brush or the eraser is the tool. */
 export const BRUSHING = "segmentation.brushing";
+/** Set while quick select's proposed mask waits for Enter (paint it) or Escape (drop it). */
+export const PREVIEWING = "segmentation.previewing";
 
 const tool = (key: string, id: string) => ({ key, command: "segmentation.tool", args: { tool: id }, when: EDITING });
 
@@ -32,7 +34,7 @@ export const SEGMENTATION_MANIFEST: Manifest = {
 
 ## The tool bar
 While a label volume is edited, a tool bar shows at the top of the views:
-- **Move** (\`M\`): the views as usual. **Brush** (\`B\`) and **Erase** (\`E\`): the left button paints the active segment, or 0; a ring shows the brush; **Alt+wheel** or \`[\` \`]\` change its size. **Fill** (\`F\`): the region clicked, in its section (2-D) or in a box round it (3-D, \`Shift+F\`). **Pick segment** (\`I\`). **Quick select** (\`Q\`): drag a box round a structure, or click it.
+- **Move** (\`M\`): the views as usual. **Brush** (\`B\`) and **Erase** (\`E\`): the left button paints the active segment, or 0; a ring shows the brush; **Alt+wheel** or \`[\` \`]\` change its size. **Fill** (\`F\`): the region clicked, in its section (2-D) or in a box round it (3-D, \`Shift+F\`). **Pick segment** (\`I\`). **Quick select** (\`Q\`): drag a box round a structure, or click it; its mask shows first, \`Enter\` paints it and \`Escape\` drops it (or paint at once, in the tab).
 - \`W\` and \`Shift+W\` step through the tools; hold **Space** to move the view with the left button while a drawing tool is on; \`Escape\` goes back to Move.
 - **New segment** (\`C\`), the active segment's colour and name; **Undo** and **Redo** (\`Ctrl+Z\`, \`Ctrl+Y\`: strokes and workspace changes as one history); **Interpolate** (\`V\`) fills the sections between two where the segment is drawn; **Save**.
 
@@ -47,7 +49,7 @@ NIfTI (.nii.gz) or an OME-Zarr folder (only painted chunks written), the whole g
   provides: { services: ["segmentation.quickSelect", "segmentation.labelVolumes"] },
   contributes: {
     panels: [{ id: SEGMENTATION_PANEL, title: "Segmentation", slot: "left", order: 61 }],
-    contextKeys: [EDITING, DRAWING, BRUSHING],
+    contextKeys: [EDITING, DRAWING, BRUSHING, PREVIEWING],
     commands: [
       { id: "segmentation.newLayer", title: "New segmentation layer", group: "Segmentation" },
       { id: "segmentation.openNifti", title: "Open a NIfTI label image to edit", group: "Segmentation" },
@@ -60,6 +62,8 @@ NIfTI (.nii.gz) or an OME-Zarr folder (only painted chunks written), the whole g
       { id: "segmentation.undo", title: "Undo the last stroke or workspace change, whichever came last", group: "Segmentation", when: EDITING },
       { id: "segmentation.redo", title: "Redo a stroke or workspace change, in the order undone", group: "Segmentation", when: EDITING },
       { id: "segmentation.stopEditing", title: "Stop editing the label volume (hide the tool bar)", group: "Segmentation", when: EDITING },
+      { id: "segmentation.acceptPreview", title: "Paint quick select's proposed mask", group: "Segmentation", when: PREVIEWING },
+      { id: "segmentation.cancelPreview", title: "Drop quick select's proposed mask", group: "Segmentation", when: PREVIEWING },
     ],
     keybindings: [
       tool("m", "move"),
@@ -79,6 +83,9 @@ NIfTI (.nii.gz) or an OME-Zarr folder (only painted chunks written), the whole g
       { key: "mod+z", command: "segmentation.undo", when: EDITING },
       { key: "mod+y", command: "segmentation.redo", when: EDITING },
       { key: "mod+shift+z", command: "segmentation.redo", when: EDITING },
+      // After Escape's Move above: a key bound later wins, so Escape drops a proposed mask first.
+      { key: "enter", command: "segmentation.acceptPreview", when: PREVIEWING },
+      { key: "escape", command: "segmentation.cancelPreview", when: PREVIEWING },
     ],
   },
 };

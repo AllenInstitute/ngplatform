@@ -55,7 +55,10 @@ export const STYLE =
 .sg-segment-select { max-width: 150px; height: 24px; background: var(--ink-0); color: var(--text); border: 1px solid var(--line); font: 12px var(--ui); }
 .sg-dims button { height: 24px; padding: 0 8px; font-size: 12px; }
 .sg-bar .sg-icon.sg-unsaved { color: var(--warn); }
+.sg-bar .sg-icon.sg-accept { color: var(--ok, #7bd88f); }
 
 .sg-ring { position: absolute; pointer-events: none; border: 1.5px solid rgba(255, 255, 255, 0.85); border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5); }
 .sg-box { position: absolute; pointer-events: none; border: 1.5px dashed #ffd166; background: rgba(255, 209, 102, 0.08); }
+.sg-preview { position: absolute; left: 0; top: 0; pointer-events: none; }
+.sg-preview[hidden] { display: none; }
 `;

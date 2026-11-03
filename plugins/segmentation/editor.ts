@@ -30,9 +30,10 @@ import { chooseUndo, Stroke } from "./history.js";
 import { ballReach, ballShape, dabsBetween, floodFill, type ImageBlock, inRange, interpolate, type Paint, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "./kernels.js";
 import { discard, type KeptInfo, kept, restore } from "./keep.js";
 import { LABEL_MAX, type LabelType, LabelVolume } from "./label_volume.js";
-import { BRUSHING, DRAWING, EDITING, SEGMENTATION_PANEL } from "./manifest.js";
+import { BRUSHING, DRAWING, EDITING, PREVIEWING, SEGMENTATION_PANEL } from "./manifest.js";
 import { Painter, type ViewPoint } from "./painter.js";
-import { type Prompt, QuickSelectRegistry } from "./quick_select.js";
+import { maskCount, PreviewOverlay } from "./preview.js";
+import { type Mask, type Prompt, QuickSelectRegistry } from "./quick_select.js";
 import { cropped, niftiBytes, niftiGz, omeZarr } from "./save.js";
 import { isVisible, nextSegment, type SegmentRow, segmentRows, type SegmentsState, withVisibility } from "./segments.js";
 import { type Reference, Session } from "./session.js";
@@ -71,6 +72,7 @@ export class Editor implements LabelVolumes {
   editing = false;
   readonly quickSelect = new QuickSelectRegistry();
   private readonly painter: Painter;
+  private readonly previewOverlay: PreviewOverlay;
   private readonly offs: Disposer[] = [];
   private readonly listeners = new Set<() => void>();
 
@@ -93,6 +95,10 @@ export class Editor implements LabelVolumes {
   reach = 32;
   method = "threshold";
   tolerance = 0.1;
+  /** Quick select shows its mask first (Enter paints it, Escape drops it), or paints at once. */
+  quickMode: "preview" | "paint" = "preview";
+  /** Quick select's mask waiting to be accepted or cancelled. */
+  pending: { session: Session; mask: Mask; voxels: number } | undefined;
   saveFormat: "nii.gz" | "zarr" = "nii.gz";
   saveCrop = false;
   /** What the last save (or the one under way) said. */
@@ -129,6 +135,13 @@ export class Editor implements LabelVolumes {
         return true;
       },
     });
+    this.previewOverlay = new PreviewOverlay(ctx, {
+      preview: () => {
+        const p = this.pending;
+        const placement = p?.session.placement();
+        return p === undefined || placement === undefined || p.session !== this.current ? undefined : { mask: p.mask, placement, colour: p.session.colour(this.value) };
+      },
+    });
     this.offs.push(ctx.services.provide("segmentation.quickSelect", this.quickSelect), ctx.services.provide("segmentation.labelVolumes", this as LabelVolumes), this.quickSelect.onChanged(() => this.changed()));
     const c = ctx.commands;
     c.register("segmentation.newLayer", () => ctx.ui.showPanel(SEGMENTATION_PANEL));
@@ -146,6 +159,8 @@ export class Editor implements LabelVolumes {
     c.register("segmentation.redo", () => this.undo(true));
     c.register("segmentation.interpolate", () => this.interpolate());
     c.register("segmentation.stopEditing", () => this.setEditing(false));
+    c.register("segmentation.acceptPreview", () => this.acceptPreview());
+    c.register("segmentation.cancelPreview", () => this.cancelPreview());
     // Each scene shows its own label volumes, as if it were a viewer of its
     // own: a layer removed (or another scene shown) ends editing the volume
     // it showed, and the scene's first volume becomes the current one.  A
@@ -153,6 +168,7 @@ export class Editor implements LabelVolumes {
     this.offs.push(
       ctx.viewer.onLayersChanged(() => {
         const here = this.inScene();
+        if (this.pending !== undefined && !here.includes(this.pending.session)) this.cancelPreview();
         if (this.current !== undefined && !here.includes(this.current)) {
           this.current = here[0];
           if (this.current) this.value = this.rows()[0]?.value ?? 1;
@@ -188,6 +204,7 @@ export class Editor implements LabelVolumes {
   dispose(): void {
     this.offs.forEach((off) => off());
     this.painter.dispose();
+    this.previewOverlay.dispose();
     for (const s of this.sessions) s.dispose();
     clearTimeout(this.countsTimer);
   }
@@ -200,6 +217,7 @@ export class Editor implements LabelVolumes {
       this.ctx.ui.showPanel(SEGMENTATION_PANEL);
       return;
     }
+    if (tool !== this.tool) this.cancelPreview();
     this.tool = tool;
     if (draws(tool)) this.editing = true;
     this.apply();
@@ -209,7 +227,10 @@ export class Editor implements LabelVolumes {
   setEditing(on: boolean): void {
     if (on && this.current === undefined) on = false;
     this.editing = on;
-    if (!on) this.tool = "move";
+    if (!on) {
+      this.tool = "move";
+      this.cancelPreview();
+    }
     else if (this.current) this.ctx.workspace.selectLayer(this.current.layer);
     this.apply();
   }
@@ -237,6 +258,7 @@ export class Editor implements LabelVolumes {
   }
 
   setCurrent(session: Session): void {
+    if (session !== this.current) this.cancelPreview();
     this.current = session;
     this.value = this.rows()[0]?.value ?? 1;
     if (this.editing) this.ctx.workspace.selectLayer(session.layer);
@@ -829,6 +851,44 @@ export class Editor implements LabelVolumes {
       return;
     }
     const mask = await method.run({ prompt, image, axis: start.axis, tolerance: this.tolerance }, new AbortController().signal);
+    const voxels = maskCount(mask);
+    if (voxels === 0) {
+      this.ctx.ui.toast("Quick select found nothing there.");
+      return;
+    }
+    if (this.quickMode === "paint") {
+      this.paintMask(session, mask);
+      return;
+    }
+    // Shown first: Enter (or Accept) paints it, Escape (or Cancel) drops it; a new prompt replaces it.
+    this.pending = { session, mask, voxels };
+    this.ctx.context.set(PREVIEWING, true);
+    this.previewOverlay.draw();
+    this.changed();
+  }
+
+  /** Paints quick select's proposed mask with the active segment (as Paint over says). */
+  acceptPreview(): void {
+    const p = this.pending;
+    if (p === undefined) return;
+    this.clearPreview();
+    this.enqueue(() => this.paintMask(p.session, p.mask));
+  }
+
+  /** Drops quick select's proposed mask. */
+  cancelPreview(): void {
+    if (this.pending !== undefined) this.clearPreview();
+  }
+
+  private clearPreview(): void {
+    this.pending = undefined;
+    this.ctx.context.set(PREVIEWING, false);
+    this.previewOverlay.draw();
+    this.changed();
+  }
+
+  /** Paints a mask with the active segment, as one stroke. */
+  private paintMask(session: Session, mask: Mask): void {
     const stroke = new Stroke(session.volume);
     const only = this.overwrite === "empty" ? 0 : undefined;
     let i = 0;
@@ -845,8 +905,8 @@ export class Editor implements LabelVolumes {
         }
       }
     }
-    if (stroke.changes === 0) this.ctx.ui.toast("Quick select found nothing there.");
-    this.commit(stroke);
+    if (stroke.changes === 0) this.ctx.ui.toast("Nothing to paint: the mask is painted already (or only over empty voxels, as Paint over says).");
+    this.commit(stroke, session);
   }
 
   /**

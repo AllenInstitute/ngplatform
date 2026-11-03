@@ -45,6 +45,7 @@ with WebKnossos.
 | `session.ts` | A volume being drawn: its layer, history, colours, the image that limits the tools |
 | `kernels.ts`, `history.ts` | Brush, fills and their limits, interpolation between sections (signed distances); strokes, undo and redo (pure) |
 | `quick_select.ts` | The quick select interface, the threshold method, the registry other plugins add to |
+| `preview.ts` | Quick select's proposed mask over the 2-D views (its sections, tinted with an outline), until Enter or Escape |
 | `save.ts` | NIfTI and OME-Zarr out, the painted box |
 | `keep.ts` | Volumes kept in the browser (OPFS) while drawn, brought back after a reload |
 | `style.ts` | The tab's and the tool bar's styles |
@@ -57,6 +58,17 @@ reads the volumes drawn here through the `segmentation.labelVolumes`
 service.
 
 ## The tools and Neuroglancer
+
+Quick select shows its mask before painting it (the tab's **Result**, or
+**Preview** / **At once** on the bar, chooses): the mask waits in the
+editor (`pending`), `preview.ts` draws its sections over the 2-D views on
+a canvas (each view the section along the voxel axis nearest its normal,
+at its position; a pixel a voxel, placed by the screen's affine map of the
+section's voxels from the view's projection, so it follows panning, zoom
+and rotation), and the context key `segmentation.previewing` gives
+`Enter` (paint it with the active segment, as **Paint over** says) and
+`Escape` (drop it) to the editor. A new prompt replaces it; another tool,
+another volume or hiding the bar drops it.
 
 The editor keeps the tool and whether a volume is edited; `Painter`
 (`painter.ts`) takes the mouse in the 2-D views while a tool that draws is
@@ -79,7 +91,7 @@ bar), `E` (rotate), `V` (default annotations), `F`, `I`, `M`, `Q`, `W`,
 last stroke or the last workspace change, whichever came last, see
 below); `[` and `]`
 (time steps) with Brush or Erase; `Escape` (Neuroglancer's tool) with a
-drawing tool. Hiding the tool bar (its ×, or **Editing** in the tab) gives
+drawing tool; `Enter` and `Escape` while quick select's mask waits. Hiding the tool bar (its ×, or **Editing** in the tab) gives
 them back.
 
 Strokes have an undo of their own (`history.ts`, chunk copies within a
@@ -180,14 +192,14 @@ drawn.
 
 ## What it uses from the platform
 
-`ui.overlay()` (the tool bar, the brush ring), `viewer.panels()`,
+`ui.overlay()` (the tool bar, the brush ring, quick select's preview), `viewer.panels()`,
 `viewer.onRendered()`, `viewer.cursor()`, `viewer.layerTransform()`,
 `viewer.patchState()`, `viewer.setPosition()`, `viewer.lookupTables`,
 `viewer.reloadData(url)`, `workspace.local.open/close`,
 `workspace.undoSteps()`, `commands.invoke` (`edit.undo`, `edit.redo`), `services`
 (`segmentation.quickSelect` and `segmentation.labelVolumes`, which it
 provides), `context` (`segmentation.editing`, `segmentation.drawing`,
-`segmentation.brushing`), `jobs`.
+`segmentation.brushing`, `segmentation.previewing`), `jobs`.
 
 `viewer.reloadData(url)` (`src/sdk/types.ts`, `src/ui/apis.ts`) has
 Neuroglancer invalidate every chunk source in its chunk manager whose key

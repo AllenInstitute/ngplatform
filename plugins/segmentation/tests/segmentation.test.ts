@@ -12,6 +12,7 @@ import { ballReach, ballShape, dabsBetween, distance2d, floodFill, type ImageBlo
 import { badLabel } from "../editor.js";
 import { LabelVolume } from "../label_volume.js";
 import { omeZarrMetadata } from "../../registration/volume_io.js";
+import { maskCount, maskSection } from "../preview.js";
 import { component, otsu, THRESHOLD_SELECT } from "../quick_select.js";
 import { cropped, niftiGz, omeZarr } from "../save.js";
 
@@ -406,6 +407,24 @@ describe("quick select", () => {
     const n = mask.data.reduce((a, b) => a + b, 0);
     expect(n).toBeGreaterThan(40);
     expect(n).toBeLessThan(60);
+  });
+
+  it("previews a mask as its sections: inside, and the outline", () => {
+    // A 4 × 3 block in section z = 7 of a mask 6 × 5 × 2 from (10, 20, 6).
+    const data = new Uint8Array(6 * 5 * 2);
+    for (let y = 1; y < 4; ++y) for (let x = 1; x < 5; ++x) data[x + 6 * (y + 5 * 1)] = 1;
+    const mask = { lo: [10, 20, 6] as Vec3, size: [6, 5, 2] as Vec3, data };
+    expect(maskCount(mask)).toBe(12);
+    expect(maskSection(mask, 2, 6)).toBeUndefined();
+    expect(maskSection(mask, 2, 9)).toBeUndefined();
+    const s = maskSection(mask, 2, 7)!;
+    expect([s.u, s.w, s.width, s.height]).toEqual([0, 1, 6, 5]);
+    const rows = [0, 1, 2, 3, 4].map((j) => Array.from(s.data.slice(6 * j, 6 * j + 6)).join(""));
+    expect(rows).toEqual(["000000", "022220", "021120", "022220", "000000"]);
+    // Across y: x along the image, z down it.
+    const t = maskSection(mask, 1, 22)!;
+    expect([t.u, t.w, t.width, t.height]).toEqual([0, 2, 6, 2]);
+    expect(Array.from(t.data.slice(6))).toEqual([0, 2, 2, 2, 2, 0]);
   });
 });
 

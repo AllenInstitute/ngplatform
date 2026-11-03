@@ -362,7 +362,27 @@ export class Panel {
           e.changed();
         }, "Method"), methods.find((m) => m.id === e.method)?.description),
         field("Tolerance", numberInput(e.tolerance, (v) => (e.tolerance = Math.max(0, Math.min(1, v))), { min: 0, max: 1, step: 0.01 }), "For a click: how far from its value, as a fraction of the range"),
+        field("Result", select([["preview", "Preview first (Enter paints, Escape drops)"], ["paint", "Paint at once"]], e.quickMode, (v) => {
+          e.quickMode = v as "preview" | "paint";
+          e.changed();
+        }, "Result")),
+        field("Paint over", select([["all", "Any segment"], ["empty", "Empty voxels only"]], e.overwrite, (v) => {
+          e.overwrite = v as "all" | "empty";
+          e.changed();
+        }, "Paint over")),
       );
+      if (e.pending) {
+        options.append(
+          el(
+            "div",
+            { class: "an-row" },
+            el("span", { class: "an-faint" }, `Proposed: ${e.pending.voxels.toLocaleString()} voxels`),
+            el("span", { class: "an-spacer" }),
+            button("Accept", () => e.acceptPreview(), "Paint the mask with the active segment (Enter)", "btn primary small"),
+            button("Cancel", () => e.cancelPreview(), "Drop the mask (Escape)"),
+          ),
+        );
+      }
     } else if (e.tool === "move") {
       return el("p", { class: "an-hint" }, "Move: the views as Neuroglancer moves them. Pick a tool to draw; Escape comes back here.");
     }

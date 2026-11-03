@@ -47,7 +47,7 @@ While a segmentation layer is edited, a tool bar shows at the top of the
 | **Erase** | ++e++ | Paints 0: any segment, or only the active one |
 | **Fill** | ++f++, ++shift+f++ | Fills the region clicked with the active segment: **2-D** in its section (++f++), or **3-D** in a box round the click (++shift+f++) |
 | **Pick segment** | ++i++ | The segment clicked becomes the active one |
-| **Quick select** | ++q++ | Drag a box round a structure in a 2-D view (Otsu's threshold inside it), or click it (values near the one clicked) |
+| **Quick select** | ++q++ | Drag a box round a structure in a 2-D view (Otsu's threshold inside it), or click it (values near the one clicked). The mask shows first, tinted with its outline: ++enter++ (or ✓ on the bar) paints it with the active segment, ++escape++ (or ×) drops it |
 
 - **Brush size**: ++alt++ + wheel over a 2-D view, ++bracket-left++ and
   ++bracket-right++, or **−** and **+** on the tool bar. The size is in
@@ -68,6 +68,13 @@ undo as one history; ++ctrl+y++ (or ++ctrl+shift+z++) redoes them in the
 order they were undone. Hover **Undo** on the bar to see what it will
 take back. Merge, Delete, fills, quick select and interpolation are
 strokes too.
+
+**Quick select** shows its mask before painting it, as WebKnossos does:
+check it, then ++enter++ paints it and ++escape++ drops it; a new box or
+click replaces it, and the active segment can be changed (++c++, or the
+list) before ++enter++. **Preview** / **At once** on the bar (or
+**Result** in the tab) switches to painting at once, as before; undo
+takes a mask painted at once back.
 
 **Interpolate**: draw the active segment in two sections a few apart (in
 the same 2-D view), then press ++v++: each section between gets a shape
@@ -97,7 +104,8 @@ in its row.
 Under **Tool**, the active tool's settings: the brush's radius, unit and
 shape and whether it **paints over** other segments or only empty voxels;
 what a fill follows (the segment clicked, or a range of the image's
-values) and a 3-D fill's reach; quick select's method and tolerance.
+values) and a 3-D fill's reach; quick select's method, tolerance, result
+(preview first, or paint at once) and what it paints over.
 
 **Image values**: the image whose values limit the tools (by default the
 one the grid came from), a **range**, and whether the brush and eraser keep

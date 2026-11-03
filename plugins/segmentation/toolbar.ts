@@ -106,6 +106,24 @@ export class Toolbar {
         } }, label));
       }
       option = group(dims);
+    } else if (e.tool === "quick" && e.pending) {
+      // The proposed mask, shown over the views: paint it or drop it.
+      const accept = iconButton("check", "Accept: paint the mask with the active segment (Enter)", () => e.acceptPreview());
+      accept.classList.add("sg-accept");
+      option = group(
+        el("span", { class: "sg-value", title: "The voxels quick select proposes" }, `${e.pending.voxels.toLocaleString()} voxels`),
+        accept,
+        iconButton("close", "Cancel: drop the mask (Escape)", () => e.cancelPreview()),
+      );
+    } else if (e.tool === "quick") {
+      const modes = el("div", { class: "segmented sg-dims" });
+      for (const [mode, label, title] of [["preview", "Preview", "Show the mask first: Enter paints it, Escape drops it"], ["paint", "At once", "Paint the mask at once (undo takes it back)"]] as const) {
+        modes.append(el("button", { type: "button", title, "aria-pressed": String(e.quickMode === mode), onclick: () => {
+          e.quickMode = mode;
+          e.changed();
+        } }, label));
+      }
+      option = group(modes);
     }
 
     // The active segment: its colour, id and name, the others to choose from, and New segment.
