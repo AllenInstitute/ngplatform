@@ -22,6 +22,15 @@ own formats are listed in `local_data.ts`; a data type plugin can add more
 `0/c/0/3/2/1` reads only the bytes of those voxels; a tractogram is read
 once, binned into spatial cells, then every key is made from that.
 
+A format can name files beside its file that its store reads too
+(`related`): a FreeSurfer or GIFTI surface's morphometry, overlays,
+annotations and labels (`vectors/surfaces.ts`, read by
+`vectors/surface_values.ts`), served as the mesh store's vertex
+attributes with a `headers/surface` group. Local data finds them once, by
+name, and hands them to the worker with each request, unread; the store
+reads a few bytes of each to check its vertex count, and a file's values
+when they are first asked for.
+
 Every store has coarser levels, so a view of the whole thing loads quickly:
 an image's pyramid (means of the finer level; the first voxel for labels),
 a tractogram's sample level (one streamline in ten).

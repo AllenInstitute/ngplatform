@@ -266,8 +266,28 @@ others fine no strip of surface goes missing or is drawn twice. Chunks hold
 every object's faces; where a level is stamped `fragment_link_groups` (one face
 group per vertex fragment, as zarr-vectors-py's `write_mesh` and `zvtools
 pyramid` write), an object's faces and vertices are read alone, by byte range,
-otherwise the whole cell is read and filtered. The dense overview draws a mesh
-store's vertices and reads no faces.
+otherwise the whole cell is read and filtered.
+
+The dense overview draws a mesh store's faces from its chunks: in 3-d filled
+and lit (vertex normals from the faces, Neuroglancer's mesh lighting), in a
+cross-section as the line where each face crosses the section, both
+through the layer's skeleton shader, so `prop_<attribute>()` colours them
+(on a section, the value where the face crosses it). Faces that cross from
+one chunk to another are not in either chunk's links, so a store split into
+many chunks shows seams there.
+
+Surfaces. A store with `headers/surface` (zarr-vectors-tools' surface
+header: `label_tables`, `alternates`, `scalars`; and, from stores the
+platform makes from FreeSurfer files, `surfaces` and `maps`) keeps it in
+the description (`surface`), and an attribute with a label table carries
+it (`labels`): the shader gets `lut_<attribute>(code)`, the code's colour,
+and the faces take the nearest corner's code so borders stay sharp. A mesh
+store with vertex attributes or a surface header has `meshes` off by
+default, so the dense layer draws it in colour; a surface with `curv` (or
+`sulc`) starts with binary curvature as its shader
+(`curvatureShader`, `geometry_kind.ts`). The zarr-vectors segmentation
+layers answer `zarrVectorsSurface()` (attributes, header, the values drawn
+and those under the mouse) for the platform's Surface controls.
 
 Caches: decoded chunks (384 MB), raw vertex cells (128 MB) and the bytes of
 byte-range reads (256 MB; objects requested in later waves find their rows in
