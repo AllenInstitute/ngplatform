@@ -4,6 +4,7 @@ import type { Manifest } from "../../sdk/types.js";
 import { clear, h, icon, iconButton } from "../dom.js";
 import { renderMarkdown } from "../markdown.js";
 import { closeSheet, sheet, showMenu, showSheet } from "../overlays.js";
+import { renderRunnerSection } from "../runner.js";
 import type { Workbench } from "../workbench.js";
 
 // -------------------------------------------------------------- statistics
@@ -18,7 +19,8 @@ export function renderStatisticsPanel(host: HTMLElement, wb: Workbench): () => v
 
 export function renderJobsPanel(host: HTMLElement, wb: Workbench): () => void {
   const list = h("div", { class: "jobs" });
-  host.append(list);
+  const runner = renderRunnerSection(wb, wb.runner);
+  host.append(h("div", { class: "section" }, h("h3", { class: "section-title" }, "In this page"), list), runner.element);
   const render = () => {
     const jobs = wb.jobs.list();
     if (jobs.length === 0) {
@@ -45,7 +47,10 @@ export function renderJobsPanel(host: HTMLElement, wb: Workbench): () => void {
   };
   const off = wb.jobs.onChange(render);
   render();
-  return off;
+  return () => {
+    off();
+    runner.dispose();
+  };
 }
 
 // ----------------------------------------------------------------- plugins

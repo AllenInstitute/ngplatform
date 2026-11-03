@@ -15,6 +15,7 @@ import { accountLabel, type GoogleSignIn, googleProvider } from "../platform/goo
 import { googleTokenTable, sourceWithRules } from "../core/sign_in_rules.js";
 import { applyRulesToNewLayers, type SignInRules } from "../platform/sign_in_rules.js";
 import { JobService } from "../platform/jobs.js";
+import { RunnerService } from "../platform/runner.js";
 import { ComputedImages } from "../virtual/computed.js";
 import { LocalData } from "../virtual/local_data.js";
 import { LocalPlugins } from "../platform/local_plugins.js";
@@ -41,6 +42,7 @@ import {
 } from "./panels/misc.js";
 import { CONVENTION_LABELS, type PanelConvention } from "../engine/anatomical.js";
 import { showCaptureSheet } from "./capture.js";
+import { offerRunnerForLarge, pairFromLink, runnerApi } from "./runner.js";
 import { openDropped, showAddDatasetSheet, showEditStateSheet, showLocalSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
 import type { Workbench } from "./workbench.js";
 import { createPlatformApis } from "./apis.js";
@@ -195,6 +197,7 @@ export class Shell {
     const examples = new ExampleRegistry();
     const openHandlers = new OpenHandlerRegistry();
     const jobs = new JobService();
+    const runner = new RunnerService(localStorage);
     const services = new ServiceRegistry();
     const auth = new AuthRegistry(localStorage);
     const authEnvironment = browserAuthEnvironment();
@@ -234,6 +237,7 @@ export class Shell {
       examples,
       openHandlers,
       jobs,
+      runner,
       services,
       auth,
       google,
@@ -298,6 +302,7 @@ export class Shell {
         set: (key, value) => prefs.set(key, JSON.stringify(value)),
       },
       jobs,
+      runner: runnerApi(() => wb, runner),
       services,
       auth,
       log: (message, level, source) => log.add(message, level, source),
@@ -395,6 +400,10 @@ export class Shell {
     engine.onSelectionChanged(refresh);
     commands.onChange(() => this.updateControls());
     jobs.onChange(() => this.updateStatus());
+    runner.onChange(() => this.updateStatus());
+    // A link the runner printed pairs this browser (after asking); the fragment is removed.
+    pairFromLink(wb, runner);
+    if (runner.pairing() !== undefined) void runner.refresh();
 
     window.addEventListener("keydown", (e) => this.onKey(e), true);
     this.acceptDrops();
@@ -1227,7 +1236,7 @@ export class Shell {
   private updateStatus(): void {
     if (this.wb === undefined) return;
     const layers = this.wb.engine.layers();
-    const jobs = this.wb.jobs.running();
+    const jobs = this.wb.jobs.running() + this.wb.runner.jobs().filter((j) => j.state === "running" && j.kind !== "serve").length;
     const failed = layers.filter((l) => l.error !== undefined).length;
     const loading = layers.filter((l) => !l.ready && l.error === undefined).length;
     const n = layersOf(this.wb.store.ng()).length;
@@ -1276,6 +1285,12 @@ export class Shell {
         depth = 0;
         hint.hidden = true;
         this.wb.store.noteInput();
+        // A tractogram too large for the browser goes to the runner on this computer instead.
+        const files = Array.from(e.dataTransfer!.files).map((f) => ({ name: f.name, size: f.size }));
+        if (offerRunnerForLarge.applies(files)) {
+          void offerRunnerForLarge(this.wb, this.wb.runner, files).catch((err) => toast((err as Error).message, "error"));
+          return;
+        }
         openDropped(this.wb, e.dataTransfer!).catch((err) => toast(`Could not open what was dropped: ${(err as Error).message}`, "error"));
       },
       { capture: true },

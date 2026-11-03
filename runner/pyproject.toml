@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ngplatform-runner"
+version = "0.1.0"
+description = "Runs zarr-vectors-tools jobs on this computer for ngplatform, and serves files to its viewer."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+# The runner itself needs only the standard library.  Its jobs run
+# zarr-vectors-tools (and numpy), in the Python given with --python
+# (by default the runner's own).
+dependencies = []
+
+[project.optional-dependencies]
+jobs = ["zarr-vectors-tools"]
+
+[project.scripts]
+ngplatform-runner = "ngplatform_runner.__main__:main"
+
+[tool.setuptools]
+packages = ["ngplatform_runner", "ngplatform_runner.tasks"]

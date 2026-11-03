@@ -20,7 +20,7 @@
  * It uses only the plugin API and the Zarr Vectors package's reader.
  */
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
-import type { DatasetInfo, Disposer, Json, PlatformContext, PluginModule, SegmentProperties } from "@ngplatform/sdk";
+import type { DatasetInfo, Disposer, Json, PlatformContext, PluginModule, RunnerJob, SegmentProperties } from "@ngplatform/sdk";
 import { precomputedUrl } from "@ngplatform/sdk/sources";
 import { annotationGeometry, annotationMeets } from "./annotation_regions.js";
 import { addDensity, densityGrid, displayMax, niftiFile } from "./density.js";
@@ -45,6 +45,7 @@ import { multiply, placement } from "../annotations/geometry.js";
 import { layerStore, readableImages } from "../annotations/voxels.js";
 import { groupMask, type MaskSource, type Roi, type RoiEnds, type RoiGeometry, type RoiOp, type RoiShape, rowIndex, rowMask } from "./roi.js";
 import { type Curves, type Dimensions, previewLevel, RoiEngine, type RoiResult, type StoreInfo, toStore } from "./roi_client.js";
+import { cannotRun, groupPredicate, type JobRegion, safeName, type ZvfDocument } from "./runner_job.js";
 import { fileName, millimetres, trkBody, trkHeader, trkSpace, writeTrk } from "./trk.js";
 import { groupFiles, mergeGroups, type StoredGroup, withGroupsListed } from "./zv_groups.js";
 
@@ -459,6 +460,7 @@ class TrackGroups {
         this.refresh();
       }),
       ctx.workspace.onChanged(() => this.refresh()),
+      ctx.runner.onChanged(() => this.updateAll()),
       ctx.viewer.onLayersChanged(() => this.notify()),
       ctx.viewer.onStateChanged(() => {
         this.readAnnotations();
@@ -1730,6 +1732,124 @@ class TrackGroups {
     this.ctx.log.info(`Saved ${file.name}.`);
   }
 
+  /**
+   * Sends the group to the runner on this computer as a filter job: the
+   * whole tractogram is tested there (a Python process), writing a new .trk,
+   * a Zarr Vectors store with levels and/or a density map, which are opened
+   * as layers when it is done.
+   */
+  async runOnComputer(group = this.editing()): Promise<void> {
+    const runner = this.ctx.runner;
+    const toast = this.ctx.ui.toast;
+    if (group === undefined) return;
+    if (!runner.available()) {
+      toast("Pair the runner on this computer first: Jobs tab, This computer.", "error");
+      return;
+    }
+    const reason = cannotRun(group.filter);
+    const dataset = this.currentDataset;
+    const source = dataset && this.sourceOf(dataset);
+    const dims = this.dims();
+    const info = this.info;
+    const engine = this.engine;
+    if (reason !== undefined || this.kind() !== "zarr-vectors" || source === undefined || dims === undefined || info === undefined || engine === undefined) {
+      toast(reason ?? "Only a Zarr Vectors dataset's groups (a tractogram or a store) run on this computer, once it is open.", "error");
+      return;
+    }
+    let filter: ZvfDocument;
+    try {
+      const regions: JobRegion[] = [];
+      for (const roi of group.rois) {
+        const geometry = toStore(roi, dims, info);
+        if (roi.shape !== "mask") {
+          regions.push({ op: roi.op, geometry });
+          continue;
+        }
+        if (this.maskLevelsOf(roi) === undefined) await this.loadMaskLevels(roi, engine);
+        regions.push({ op: roi.op, geometry, mask: await engine.maskVolume(this.maskSource(roi, dims, info)) });
+      }
+      filter = groupPredicate(regions, group.filter);
+    } catch (e) {
+      toast(`Cannot run ${group.name}: ${(e as Error).message}`, "error");
+      return;
+    }
+    // The tractogram or store on this computer: known when the runner serves it, else chosen.
+    let input = await runner.pathOf(source).catch(() => undefined);
+    if (input === undefined) {
+      const file = await this.ctx.workspace.local.sourceFile(source).catch(() => undefined);
+      const name = file?.name ?? source.replace(/\|.*$/, "").replace(/\/+$/, "").split("/").pop() ?? "";
+      input = await runner
+        .choose({
+          title: `Where is ${name || dataset!.name} on this computer?`,
+          mode: "open",
+          ...(name ? { find: { name, ...(file ? { size: file.size } : {}) } } : {}),
+          note: "The job reads the tractogram (or store) itself, under the runner's folders.",
+        })
+        .catch((e) => {
+          toast((e as Error).message, "error");
+          return undefined;
+        });
+      if (input === undefined) return;
+    }
+    const folder = input.replace(/[\\/]+$/, "").replace(/[\\/][^\\/]*$/, "");
+    const options = await this.ctx.ui.form<{ folder: string; name: string; trk: boolean; store: boolean; density: boolean; open: boolean }>(
+      `Run ${group.name} on this computer`,
+      {
+        type: "object",
+        properties: {
+          folder: { type: "string", title: "Folder", description: "Where the files go: under the runner's folders" },
+          name: { type: "string", title: "Name", description: "The files' name, before .trk, .zarr and _density.nii.gz" },
+          trk: { type: "boolean", title: "A TrackVis .trk" },
+          store: { type: "boolean", title: "A Zarr Vectors store with coarser levels" },
+          density: { type: "boolean", title: "A density map (1 mm voxels, .nii.gz)" },
+          open: { type: "boolean", title: "Open the results here when the job is done" },
+        },
+        required: ["folder", "name"],
+      },
+      { folder, name: safeName(group.name), trk: true, store: true, density: false, open: true },
+    );
+    if (options === undefined) return;
+    if (!options.trk && !options.store && !options.density) {
+      toast("Choose at least one output.", "error");
+      return;
+    }
+    const base = `${options.folder.replace(/[\\/]+$/, "")}/${safeName(options.name)}`;
+    const args: Record<string, unknown> = { input, filter, name: group.name, levels: 3 };
+    if (options.trk) args.trk = `${base}.trk`;
+    if (options.store) args.store = `${base}.zarr`;
+    if (options.density) args.density = `${base}_density.nii.gz`;
+    let job: RunnerJob;
+    try {
+      job = await runner.start("filter", args);
+    } catch (e) {
+      toast(`The runner did not start the job: ${(e as Error).message}`, "error");
+      return;
+    }
+    toast(`${job.title}: started on this computer${job.pid !== null ? ` (PID ${job.pid})` : ""}; it shows in the Jobs tab.`);
+    this.runs.set(group.id, job);
+    this.updateAll();
+    const done = await runner.wait(job.id, (now) => {
+      this.runs.set(group.id, now);
+      this.updateAll();
+    });
+    this.runs.set(group.id, done);
+    this.updateAll();
+    if (done.state === "failed") toast(`${done.title} failed: ${done.message}`, "error");
+    if (done.state !== "done" || !options.open) return;
+    // The store shows the whole result at any zoom; the .trk when there is no store.
+    const wanted = done.outputs.filter((o) => o.type === "nifti" || o.type === (options.store ? "zarr-vectors" : "trk"));
+    for (const output of wanted) {
+      try {
+        await runner.open(output.path, { name: output.type === "nifti" ? `${group.name} density` : `${group.name} (on this computer)` });
+      } catch (e) {
+        toast(`Could not open ${output.path}: ${(e as Error).message}`, "error");
+      }
+    }
+  }
+
+  /** Each group's last job on this computer. */
+  private runs = new Map<string, RunnerJob>();
+
   private updateAll(): void {
     for (const update of this.updaters) update();
   }
@@ -2118,6 +2238,8 @@ class TrackGroups {
     const density = el("button", { class: "btn small", type: "button", onclick: () => void this.densityMap(group) }, "Density map") as HTMLButtonElement;
     const saveNii = el("button", { class: "btn small", type: "button", title: "Save the density map as a NIfTI file", onclick: () => void this.saveDensity(group) }, "Save .nii") as HTMLButtonElement;
     const cancel = el("button", { class: "btn outline small", type: "button", onclick: () => this.saving?.controller.abort() }, "Cancel") as HTMLButtonElement;
+    const run = el("button", { class: "btn small tf-run-local", type: "button", onclick: () => void this.runOnComputer(group) }, "Run on this computer") as HTMLButtonElement;
+    const runNote = el("div", { class: "tf-run-status" });
     const level = el("select", { "aria-label": "Streamlines to save" }) as HTMLSelectElement;
     const total = info?.levels[0]?.vertexCount;
     for (const l of info?.levels ?? [{ index: 0, vertexCount: undefined, chunkShape: [] }]) {
@@ -2146,8 +2268,21 @@ class TrackGroups {
         note.textContent = this.saved_.get(group.id) ?? "";
       }
       note.hidden = note.textContent === "";
+      const runner = this.ctx.runner;
+      const job = this.runs.get(group.id);
+      const reason = cannotRun(group.filter);
+      run.hidden = !runner.available();
+      run.disabled = reason !== undefined || (job !== undefined && (job.state === "queued" || job.state === "running"));
+      run.title = reason ?? "Filter the whole tractogram in a Python job on this computer, writing a new .trk, a Zarr Vectors store or a density map";
+      runNote.textContent =
+        job === undefined
+          ? ""
+          : job.state === "running" || job.state === "queued"
+            ? `On this computer: ${job.state === "queued" ? "waiting" : job.progress === null ? "running" : `${Math.round(job.progress * 100)}%`}${job.pid !== null ? ` (PID ${job.pid})` : ""}${job.message ? `, ${job.message}` : ""}`
+            : `On this computer: ${job.state}${job.state === "failed" ? `: ${job.message}` : job.state === "done" ? `: ${job.outputs.map((o) => o.path.split("/").pop()).join(", ")}` : ""}`;
+      runNote.hidden = runNote.textContent === "";
     });
-    return el("div", { class: "tf-save" }, button, density, level, cancel, saveNii, note);
+    return el("div", { class: "tf-save" }, button, density, level, cancel, saveNii, run, note, runNote);
   }
 
   private editor(group: Group): HTMLElement {
@@ -2481,6 +2616,7 @@ export const plugin: PluginModule = {
     ctx.commands.register("trackFiltering.exportCsv", () => groups.exportCsv());
     ctx.commands.register("trackFiltering.saveTrk", () => void groups.saveTrk());
     ctx.commands.register("trackFiltering.densityMap", () => void groups.densityMap());
+    ctx.commands.register("trackFiltering.runOnComputer", () => void groups.runOnComputer());
     ctx.commands.register("trackFiltering.exportStatistics", () => groups.exportStatistics());
     ctx.subscriptions.push(ctx.services.provide("trackFiltering.groups", groups.service()));
   },

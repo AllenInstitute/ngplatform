@@ -24,6 +24,7 @@ import type {
   Manifest,
   PlatformContext,
   PluginModule,
+  RunnerApi,
   ViewerApi,
   WorkspaceApi,
 } from "../sdk/types.js";
@@ -58,6 +59,21 @@ export interface OpenHandlerSpec {
   open(text: string): Promise<void> | void;
 }
 
+const unpaired = () => Promise.reject(new Error("No runner: this app is not paired with one"));
+/** The runner API where the host has none. */
+const NO_RUNNER: RunnerApi = {
+  available: () => false,
+  onChanged: () => () => {},
+  folders: () => [],
+  jobs: () => [],
+  start: unpaired,
+  wait: unpaired,
+  cancel: unpaired,
+  pathOf: async () => undefined,
+  choose: unpaired,
+  open: unpaired,
+};
+
 /** What the platform gives the host; the shell supplies it, tests fake it. */
 export interface HostServices {
   commands: CommandRegistry;
@@ -85,6 +101,8 @@ export interface HostServices {
   };
   settings: { get(key: string): unknown; set(key: string, value: unknown): void };
   jobs: { run<T>(title: string, work: (control: JobControl) => Promise<T>, owner?: string): Promise<T> };
+  /** The runner on this computer; none (tests): a runner that is never available. */
+  runner?: RunnerApi;
   services: ServiceRegistry;
   auth: { register(provider: AuthProvider, owner?: string): Disposer };
   log(message: string, level: "info" | "error", source?: string): void;
@@ -458,6 +476,7 @@ export class PluginHost {
       },
       context: { set: (key, value) => s.context.set(key, value) },
       jobs: { run: (title, work) => s.jobs.run(title, work, owner) },
+      runner: s.runner === undefined ? NO_RUNNER : { ...s.runner, onChanged: (callback) => own(s.runner!.onChanged(callback)) },
       services: {
         provide: (name, implementation) => own(s.services.provide(name, implementation, owner)),
         get: (name) => s.services.get(name),

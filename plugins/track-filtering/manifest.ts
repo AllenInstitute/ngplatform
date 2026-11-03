@@ -23,6 +23,7 @@ export const TRACK_FILTERING_MANIFEST: Manifest = {
 - **Save .trk**: the group's streamlines, whole, as a TrackVis file (all of them, or a level's sample). It is written in batches straight to the file, so a large group takes time (the reading dominates) but not memory.
 - **Density map**: how many of the group's streamlines pass through each voxel (1 mm for a brain), shown as an image layer; **Save .nii** keeps it as a NIfTI file in the store's RAS+ millimetres.
 - **Save groups into the store**: for a zarr-vectors folder opened from this computer (Add → Local, in Chrome or Edge), the groups are written into the store itself (level 0's \`groups\`, with names and counts, as zarr-vectors-py writes them), where other tools, and the viewer as tags, see them.
+- **Run on this computer**: with the runner on this computer paired (Jobs tab), the group goes to a Python job that tests the whole tractogram there and writes a new .trk, a Zarr Vectors store with coarser levels and/or a density map, then opens them here. For tractograms too large to save from the browser. Regions (spheres, boxes, disks, masks, with their end modes) and attribute ranges go with it; tags do not yet.
 - **Export CSV**: the group's objects and their attributes.
 - **Statistics** (below the groups): each group's count and an attribute's mean ± SD and median; **CSV** gives every attribute's n, mean, SD, median and range for every group.
 
@@ -45,6 +46,7 @@ Regions read only the chunks they overlap, at level 0, cached as they are read, 
       { id: "trackFiltering.exportCsv", title: "Export the edited group's objects as CSV", group: "Filtering" },
       { id: "trackFiltering.saveTrk", title: "Save the edited group's streamlines as .trk", group: "Filtering" },
       { id: "trackFiltering.densityMap", title: "Make a density map of the edited group's streamlines", group: "Filtering" },
+      { id: "trackFiltering.runOnComputer", title: "Run the edited group on this computer (a job writing a .trk, store or density map)", group: "Filtering" },
       { id: "trackFiltering.exportStatistics", title: "Export every group's statistics as CSV", group: "Filtering" },
     ],
     keybindings: [{ key: "alt+shift+s", command: "trackFiltering.addSphere" }],

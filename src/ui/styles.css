@@ -509,6 +509,28 @@ textarea.text-input { height: auto; padding: 8px 10px; }
 @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(330%); } }
 .job .sub { grid-column: 1 / -1; color: var(--faint); font-size: 12px; }
 
+/* the runner: jobs on this computer */
+.runner-section { margin-top: 18px; }
+.runner-connection[data-state="connected"] { color: var(--ok); }
+.runner-connection[data-state="unreachable"], .runner-connection[data-state="refused"] { color: var(--err); }
+.runner-pair-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.runner-pair-row .runner-address { flex: 1 1 200px; }
+.runner-pair-row .runner-token { flex: 2 1 260px; }
+.runner-actions { display: flex; gap: 4px; align-items: center; }
+.runner-outputs { grid-column: 1 / -1; margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.runner-outputs li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.runner-output-path { font: 11px/1.4 var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.runner-log { grid-column: 1 / -1; margin: 4px 0 0; max-height: 220px; overflow: auto; padding: 8px; background: var(--ink-2, rgba(0, 0, 0, 0.25)); font: 11px/1.4 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.runner-files { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 340px; overflow: auto; }
+.runner-files li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 6px; }
+.runner-files li.chosen { background: var(--accent-soft, rgba(90, 140, 255, 0.18)); }
+.runner-files li.store > button { font-weight: 500; }
+.linkish { background: none; border: 0; padding: 0; color: var(--text); font: 12px/1.6 var(--mono); cursor: pointer; text-align: left; overflow-wrap: anywhere; }
+.linkish:hover { color: var(--accent); }
+.mono { font-family: var(--mono); }
+.lead { margin: 0; }
+.track-run-note { font-size: 12px; color: var(--muted); }
+
 /* python console */
 .dock-pane.py-host { display: flex; flex-direction: column; padding: 0; height: 100%; }
 .py-out { flex: 1; min-height: 0; overflow: auto; padding: 8px 12px; font: 12px/1.45 var(--mono); }

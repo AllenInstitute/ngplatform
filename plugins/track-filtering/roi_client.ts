@@ -3,7 +3,7 @@
  * promises with progress, results cached by region geometry and level, and
  * conversion between the viewer's global coordinates and the store's.
  */
-import { type Roi, type RoiGeometry, roiKey } from "./roi.js";
+import { type MaskSource, type MaskVolume, type Roi, type RoiGeometry, roiKey } from "./roi.js";
 import type { StoreInfo } from "./roi_worker.js";
 
 export type { StoreInfo };
@@ -148,6 +148,11 @@ export class RoiEngine {
   /** An image's levels (for a mask): voxels along x, y, z, and voxel indices to RAS mm. */
   maskLevels(store: string): Promise<{ size: [number, number, number]; voxelToRas: number[] }[]> {
     return this.call("maskLevels", { store });
+  }
+
+  /** A mask's voxels as the region tests read them. */
+  maskVolume(source: MaskSource): Promise<MaskVolume> {
+    return this.call("maskVolume", { source });
   }
 
   /** A level's groups as stored: their names and members (object ids). */
