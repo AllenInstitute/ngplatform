@@ -12,6 +12,8 @@ import { readSegmentProperties } from "../objects.js";
 import { LevelPipeline, ObjectReader, openZarrVectorsStore, readObjectTable, ShardIndexCache } from "../reader.js";
 import { parseMeshFile } from "../../../../src/virtual/vectors/mesh_files.js";
 import { MeshStore } from "../../../../src/virtual/vectors/meshes.js";
+import { surfaceCompanions, surfaceRelated } from "../../../../src/virtual/vectors/surfaces.js";
+import { fixtureListDirectories, fixtureRead } from "../test_fixtures.js";
 
 const DIR = path.resolve(import.meta.dirname, "../../testdata/meshes");
 const expected = JSON.parse(fs.readFileSync(path.join(DIR, "expected.json"), "utf8"));
@@ -92,3 +94,97 @@ describe("virtual mesh store", () => {
 function want(name: string) {
   return expected[name];
 }
+
+describe("virtual surface store", () => {
+  const SUBJECT = path.resolve(DIR, "subject");
+  const values = JSON.parse(fs.readFileSync(path.join(SUBJECT, "expected.json"), "utf8"));
+  const file = (p: string) => new File([fs.readFileSync(path.join(SUBJECT, "surf", p))], p.split("/").pop()!);
+
+  async function surfaceStore() {
+    const related = await surfaceRelated("surf/lh.white", async (folder) => fs.readdirSync(path.join(SUBJECT, folder)).sort());
+    const files = Object.fromEntries(related.map((p) => [p, file(p)]));
+    const mesh = await parseMeshFile(new Uint8Array(fs.readFileSync(path.join(SUBJECT, "surf/lh.white"))), "lh.white");
+    return new MeshStore(mesh, "lh.white", await surfaceCompanions("lh.white", files, mesh.positions.length / 3));
+  }
+
+  it("serves the values beside a surface as vertex attributes, with label tables and sibling surfaces in its header", async () => {
+    const store = await surfaceStore();
+    const a = access(store);
+    const zv = await openZarrVectorsStore(a as never, undefined);
+    const names = zv.description.attributes.map((x) => x.name);
+    expect(names).toEqual(["aparc", "avg_curv", "labels", "old", "overlay", "sulc", "thickness", "w_g_pct"]);
+    const surface = zv.description.surface!;
+    expect(surface.geometry).toBe("white");
+    expect(surface.surfaces).toEqual({ white: "../lh.white/", pial: "../lh.pial/", inflated: "../lh.inflated/" });
+    expect(surface.maps).toEqual(["sulc", "thickness", "aparc", "labels", "avg_curv", "old", "overlay", "w_g_pct"]);
+    const aparc = zv.description.attributes.find((x) => x.name === "aparc")!;
+    expect(aparc.labels!.map((l) => [l.code, l.name])).toEqual(values["label/lh.aparc.annot"].labels.map((l: { code: number; name: string }) => [l.code, l.name]));
+    expect(zv.description.attributes.find((x) => x.name === "thickness")!.labels).toBeUndefined();
+
+    // The overview chunk's attributes, vertex by vertex as the files have them.
+    const d = (await new LevelPipeline(a as never, zv.description, zv.levels[0]).download([0, 0, 0], signal))!;
+    const wanted: Record<string, number[]> = {
+      thickness: values["surf/lh.thickness"].values,
+      sulc: values["surf/lh.sulc"].values,
+      aparc: values["label/lh.aparc.annot"].values,
+      overlay: values["surf/lh.overlay.mgz"].values,
+    };
+    for (const [name, list] of Object.entries(wanted)) {
+      const got = d.attributes[names.indexOf(name)];
+      list.forEach((v, i) => expect(got[i]).toBeCloseTo(v, 4));
+    }
+  });
+
+  it("reads the same subject as zarr-vectors-tools writes it: label tables, alternates, values by vertex", async () => {
+    const a = { read: fixtureRead("surface_fs"), listDirectories: fixtureListDirectories("surface_fs"), shardIndexes: new ShardIndexCache() };
+    const zv = await openZarrVectorsStore(a as never, undefined);
+    const names = zv.description.attributes.map((x) => x.name);
+    expect(names).toEqual(expect.arrayContaining(["aparc", "sulc", "thickness", "coords_pial", "coords_inflated", "zv_join_key"]));
+    const surface = zv.description.surface!;
+    expect(surface.geometry).toBe("white");
+    expect(surface.alternates).toEqual({ coords_pial: "pial", coords_inflated: "inflated" });
+    const aparc = zv.description.attributes.find((x) => x.name === "aparc")!;
+    // zarr-vectors-tools adds -1, "unassigned", transparent.
+    expect(aparc.labels![0]).toEqual({ code: -1, name: "unassigned", rgba: [0, 0, 0, 0] });
+    expect(aparc.labels!.slice(1).map((l) => [l.code, l.name])).toEqual(values["label/lh.aparc.annot"].labels.map((l: { code: number; name: string }) => [l.code, l.name]));
+    // Every chunk's vertices, matched to the files' by the join key (vertex number, left hemisphere).
+    const pipeline = new LevelPipeline(a as never, zv.description, zv.levels[0]);
+    const cells = (zv.levels[0].arrays.vertices.attributes.nonempty_chunks as string[]).map((k) => k.split(".").map(Number));
+    let seen = 0;
+    for (const cell of cells) {
+      const d = await pipeline.download(cell, signal);
+      if (d === undefined) continue;
+      const key = d.attributes[names.indexOf("zv_join_key")];
+      for (let v = 0; v < d.numOwnVertices; ++v, ++seen) {
+        const source = key[v];
+        expect(d.attributes[names.indexOf("thickness")][v]).toBeCloseTo(values["surf/lh.thickness"].values[source], 4);
+        expect(d.attributes[names.indexOf("aparc")][v]).toBe(values["label/lh.aparc.annot"].values[source]);
+      }
+    }
+    expect(seen).toBe(12);
+
+    // Faces reaching into other chunks too: every face exactly once over the
+    // chunks, its far corners where the neighbour has them.
+    const corners = (d: { positions: Float32Array }, v: number) => Array.from(d.positions.subarray(3 * v, 3 * v + 3), (x) => x.toFixed(3)).join(",");
+    const faces: string[] = [];
+    for (const cell of cells) {
+      const d = await pipeline.download(cell, signal);
+      if (d === undefined) continue;
+      expect(Math.max(...d.faces)).toBeLessThan(d.numVertices);
+      // A far corner carries its own values, read from its chunk.
+      const key = d.attributes[names.indexOf("zv_join_key")];
+      for (let v = d.numOwnVertices; v < d.numVertices; ++v) {
+        expect(d.attributes[names.indexOf("thickness")][v]).toBeCloseTo(values["surf/lh.thickness"].values[key[v]], 4);
+      }
+      for (let f = 0; f < d.faces.length; f += 3) faces.push([0, 1, 2].map((k) => corners(d, d.faces[f + k])).sort().join(" | "));
+    }
+    expect(faces.length).toBe(20);
+    expect(new Set(faces).size).toBe(20);
+  });
+
+  it("serves a map that is not shown by default when asked for by name", async () => {
+    const store = await surfaceStore();
+    const zv = await openZarrVectorsStore(access(store) as never, ["overlay"]);
+    expect(zv.description.attributes.map((x) => x.name)).toEqual(["overlay"]);
+  });
+});

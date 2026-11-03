@@ -26,15 +26,20 @@
  * is the only time the subclass is needed.
  */
 
-import type { ZarrVectorsGeometryDescription } from "./base.js";
+import type {
+  ZarrVectorsGeometryDescription,
+  ZarrVectorsSurfaceInfo,
+} from "./base.js";
 import type { ZarrVectorsDenseDisplayState } from "./dense_frontend.js";
 import {
+  pickedVertexValues,
   PerspectiveViewZarrVectorsDenseLayer,
   SliceViewPanelZarrVectorsDenseLayer,
   ZarrVectorsMultiscaleGeometrySource,
 } from "./dense_frontend.js";
 import { ZarrVectorsLazyPropertyMap } from "./frontend.js";
 import {
+  curvatureShader,
   DIRECTION_SHADER,
   KIND_CAPABILITIES,
 } from "./geometry_kind.js";
@@ -55,6 +60,23 @@ import {
   makeCachedDerivedWatchableValue,
   WatchableValue,
 } from "neuroglancer/unstable/trackable_value.js";
+
+/** What `zarrVectorsSurface()` tells the platform's Surface controls. */
+export interface ZarrVectorsSurfaceView {
+  attributes: {
+    id: string;
+    name: string;
+    components: number;
+    labels?: { code: number; name: string; rgba: number[] }[];
+  }[];
+  surface: ZarrVectorsSurfaceInfo | undefined;
+  /** The store's URL (a kvstore URL ending in "/"). */
+  storeUrl: string;
+  /** An attribute's values on the vertices drawn last in 3-d. */
+  values(id: string): number[];
+  /** The values of the vertex under the mouse, by attribute id, when this layer drew it. */
+  picked(mouseState: unknown): Record<string, number> | undefined;
+}
 
 /** Subsource ids that draw selected objects at full resolution. */
 const OBJECT_SUBSOURCE_IDS = new Set(["objects", "meshes"]);
@@ -103,6 +125,56 @@ export class ZarrVectorsSegmentationUserLayer extends SegmentationUserLayer {
     const skeletonLayer = this.getSkeletonLayer;
     (this as any).getSkeletonLayer = () =>
       skeletonLayer() ?? this.denseShaderAttributes();
+  }
+
+  /**
+   * A mesh layer's surface, for the platform's Surface controls: its
+   * per-vertex attributes (a parcellation's with its table), the store's
+   * surface header and URL, the values drawn (for a control's range) and
+   * the values of the vertex under the mouse.  Undefined for other layers.
+   */
+  zarrVectorsSurface(): ZarrVectorsSurfaceView | undefined {
+    for (const layer of this.renderLayers) {
+      if (!(layer instanceof PerspectiveViewZarrVectorsDenseLayer)) continue;
+      const dense = layer as any;
+      const source: ZarrVectorsMultiscaleGeometrySource = dense.options.source;
+      const description = source.description;
+      if (KIND_CAPABILITIES[description.geometryKind].primitive !== "triangles") {
+        return undefined;
+      }
+      const renderLayers = this.renderLayers;
+      return {
+        attributes: description.attributes
+          .filter((a) => a.objectValue === undefined)
+          .map((a) => ({
+            id: a.id,
+            name: a.name,
+            components: a.components,
+            labels: a.labels,
+          })),
+        surface: description.surface,
+        storeUrl: source.levels[0]?.parameters.storeUrl ?? "",
+        values(id: string) {
+          const i = dense.helper.attributes.findIndex(
+            (a: { id: string }) => a.id === id,
+          );
+          const width = dense.helper.attributes[i]?.components ?? 1;
+          const out: number[] = [];
+          for (const chunk of dense.drawnChunks as {
+            attributeValues?: Float32Array[];
+            numOwnVertices: number;
+          }[]) {
+            const values = chunk.attributeValues?.[i];
+            if (values === undefined) continue;
+            for (let v = 0; v < chunk.numOwnVertices; ++v) out.push(values[v * width]);
+          }
+          return out;
+        },
+        picked: (mouseState: unknown) =>
+          pickedVertexValues(mouseState as never, renderLayers),
+      };
+    }
+    return undefined;
   }
 
   /** The dense layer's shader inputs, as the skeleton shader editor lists them. */
@@ -213,15 +285,20 @@ export class ZarrVectorsSegmentationUserLayer extends SegmentationUserLayer {
       }, this.displayState.segmentationGroupState.value);
     }
     if (directionDefault) {
-      this.adoptDirectionShader();
+      this.adoptDefaultShader(DIRECTION_SHADER);
       this.adoptThinLines();
+    }
+    // A surface with curvature shows it, as Freeview does.
+    for (const loadedSubsource of dense) {
+      const { description } = denseSource(loadedSubsource)!;
+      if (KIND_CAPABILITIES[description.geometryKind].primitive !== "triangles") continue;
+      const curvature = ["curv", "sulc"]
+        .map((name) => description.attributes.find((a) => a.name === name && a.components === 1))
+        .find((a) => a !== undefined);
+      if (curvature !== undefined) this.adoptDefaultShader(curvatureShader(curvature.id));
     }
   }
 
-  /**
-   * Colour curves by direction unless the user has chosen a shader.  Moving
-   * the default with the value keeps an untouched shader out of saved state.
-   */
   /**
    * Tractograms show as plain lines one pixel wide in cross-sections too, as
    * TrackVis and most tractography viewers draw them, rather than
@@ -241,12 +318,17 @@ export class ZarrVectorsSegmentationUserLayer extends SegmentationUserLayer {
     }
   }
 
-  private adoptDirectionShader() {
+  /**
+   * A kind of data's own shader (curves by direction, a surface's
+   * curvature) unless the user has chosen one.  Moving the default with the
+   * value keeps an untouched shader out of saved state.
+   */
+  private adoptDefaultShader(text: string) {
     const { shader } = this.displayState.skeletonRenderingOptions;
     if (shader.value !== shader.defaultValue) return;
-    if (shader.value === DIRECTION_SHADER) return;
-    shader.defaultValue = DIRECTION_SHADER;
-    shader.value = DIRECTION_SHADER;
+    if (shader.value === text) return;
+    shader.defaultValue = text;
+    shader.value = text;
   }
 }
 

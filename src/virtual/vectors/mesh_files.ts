@@ -250,27 +250,33 @@ function base64(text: string): Uint8Array {
 
 const cdata = (text: string) => text.replace(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/, "$1").trim();
 
-/**
- * A GIFTI surface: its POINTSET and TRIANGLE data arrays (ASCII, base64 or
- * gzipped base64; either byte order and indexing order).  An anatomical
- * surface is moved by its CoordinateSystemTransformMatrix when that leads to
- * a named space and is not the identity.
- */
-export async function parseGifti(text: string, name: string): Promise<MeshData> {
+/** One GIFTI data array, decoded, rows in row-major order. */
+export interface GiftiArray {
+  intent: string;
+  /** Rows, and values per row (1 for a vector). */
+  dims: [number, number];
+  values: Float32Array | Int32Array;
+  /** Its `Name` metadata, or "". */
+  name: string;
+  /** The array's XML, for metadata and transforms. */
+  xml: string;
+}
+
+const metaValue = (xml: string, key: string) =>
+  new RegExp(`<Name>\\s*(?:<!\\[CDATA\\[)?${key}(?:\\]\\]>)?\\s*<\\/Name>\\s*<Value>\\s*(?:<!\\[CDATA\\[)?([^<\\]]*)`).exec(xml)?.[1] ?? "";
+
+/** A GIFTI file's data arrays (ASCII, base64 or gzipped base64; either byte order and indexing order). */
+export async function giftiArrays(text: string): Promise<GiftiArray[]> {
   if (!/<GIFTI[\s>]/.test(text)) throw new Error("not a GIFTI file");
-  let positions: Float32Array | undefined;
-  let triangles: Uint32Array | undefined;
-  let matrix: number[] | undefined;
-  let geometric = "";
+  const out: GiftiArray[] = [];
   for (const m of text.matchAll(/<DataArray\b([^>]*)>([\s\S]*?)<\/DataArray>/g)) {
     const attr = (key: string) => new RegExp(`${key}\\s*=\\s*"([^"]*)"`).exec(m[1])?.[1] ?? "";
-    const intent = attr("Intent");
-    if (intent !== "NIFTI_INTENT_POINTSET" && intent !== "NIFTI_INTENT_TRIANGLE") continue;
-    const dims = [Number(attr("Dim0")), Number(attr("Dim1") || 1)];
+    const dims: [number, number] = [Number(attr("Dim0")), Number(attr("Dim1") || 1)];
     const encoding = attr("Encoding");
     const body = cdata(/<Data>([\s\S]*?)<\/Data>/.exec(m[2])?.[1] ?? "");
+    const type = attr("DataType");
+    const float = type === "NIFTI_TYPE_FLOAT32" || type === "NIFTI_TYPE_FLOAT64";
     let values: Float32Array | Int32Array;
-    const float = attr("DataType") === "NIFTI_TYPE_FLOAT32";
     if (encoding === "ASCII") {
       const numbers = body.split(/\s+/).filter(Boolean).map(Number);
       values = float ? Float32Array.from(numbers) : Int32Array.from(numbers);
@@ -279,9 +285,20 @@ export async function parseGifti(text: string, name: string): Promise<MeshData> 
       if (encoding === "GZipBase64Binary") bytes = await inflate(bytes);
       const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
       const little = attr("Endian") !== "BigEndian";
-      const n = Math.floor(bytes.byteLength / 4);
+      const size = type === "NIFTI_TYPE_UINT8" || type === "NIFTI_TYPE_INT8" ? 1 : type === "NIFTI_TYPE_FLOAT64" ? 8 : type === "NIFTI_TYPE_INT16" || type === "NIFTI_TYPE_UINT16" ? 2 : 4;
+      const n = Math.floor(bytes.byteLength / size);
       values = float ? new Float32Array(n) : new Int32Array(n);
-      for (let i = 0; i < n; ++i) values[i] = float ? view.getFloat32(4 * i, little) : view.getInt32(4 * i, little);
+      for (let i = 0; i < n; ++i) {
+        const at = size * i;
+        values[i] =
+          type === "NIFTI_TYPE_FLOAT32" ? view.getFloat32(at, little)
+          : type === "NIFTI_TYPE_FLOAT64" ? view.getFloat64(at, little)
+          : type === "NIFTI_TYPE_UINT8" ? view.getUint8(at)
+          : type === "NIFTI_TYPE_INT8" ? view.getInt8(at)
+          : type === "NIFTI_TYPE_INT16" ? view.getInt16(at, little)
+          : type === "NIFTI_TYPE_UINT16" ? view.getUint16(at, little)
+          : view.getInt32(at, little);
+      }
     } else {
       throw new Error(`a GIFTI array stored as ${encoding || "nothing"} (ASCII and base64 only)`);
     }
@@ -290,15 +307,31 @@ export async function parseGifti(text: string, name: string): Promise<MeshData> 
       for (let i = 0; i < dims[0]; ++i) for (let k = 0; k < dims[1]; ++k) rows[i * dims[1] + k] = values[k * dims[0] + i];
       values = rows;
     }
-    if (intent === "NIFTI_INTENT_POINTSET") {
-      positions = Float32Array.from(values);
-      geometric = /<Name>\s*(?:<!\[CDATA\[)?GeometricType(?:\]\]>)?\s*<\/Name>\s*<Value>\s*(?:<!\[CDATA\[)?([^<\]]*)/.exec(m[2])?.[1] ?? "";
-      const xform = /<CoordinateSystemTransformMatrix>([\s\S]*?)<\/CoordinateSystemTransformMatrix>/.exec(m[2])?.[1];
+    out.push({ intent: attr("Intent"), dims, values, name: metaValue(m[2], "Name"), xml: m[2] });
+  }
+  return out;
+}
+
+/**
+ * A GIFTI surface: its POINTSET and TRIANGLE data arrays.  An anatomical
+ * surface is moved by its CoordinateSystemTransformMatrix when that leads to
+ * a named space and is not the identity.
+ */
+export async function parseGifti(text: string, name: string): Promise<MeshData> {
+  let positions: Float32Array | undefined;
+  let triangles: Uint32Array | undefined;
+  let matrix: number[] | undefined;
+  let geometric = "";
+  for (const a of await giftiArrays(text)) {
+    if (a.intent === "NIFTI_INTENT_POINTSET") {
+      positions = Float32Array.from(a.values);
+      geometric = metaValue(a.xml, "GeometricType");
+      const xform = /<CoordinateSystemTransformMatrix>([\s\S]*?)<\/CoordinateSystemTransformMatrix>/.exec(a.xml)?.[1];
       const target = cdata(/<TransformedSpace>([\s\S]*?)<\/TransformedSpace>/.exec(xform ?? "")?.[1] ?? "");
       const data = cdata(/<MatrixData>([\s\S]*?)<\/MatrixData>/.exec(xform ?? "")?.[1] ?? "").split(/\s+/).filter(Boolean).map(Number);
       if (data.length === 16 && target !== "" && target !== "NIFTI_XFORM_UNKNOWN") matrix = data;
-    } else {
-      triangles = Uint32Array.from(values);
+    } else if (a.intent === "NIFTI_INTENT_TRIANGLE") {
+      triangles = Uint32Array.from(a.values);
     }
   }
   if (positions === undefined) throw new Error("a GIFTI file without a surface (no NIFTI_INTENT_POINTSET array)");

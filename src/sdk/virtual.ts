@@ -21,6 +21,8 @@ export interface VirtualRequest {
   /** The file's place: its local entry and path. */
   store: string;
   file: File;
+  /** Files its format reads besides it (`VirtualFormat.related`), by path from its folder, unread. */
+  related?: Record<string, File>;
   /** The key in the store: "zarr.json", "0/c/0/1/2", … */
   key: string;
   range?: Range;
@@ -32,15 +34,16 @@ export interface VirtualRequest {
  * (once; again when the file changes, by size or time) with `open`.  Replies
  * go straight back to the service worker, on the port each request brings.
  */
-export function serveVirtualStores(open: (file: File) => Promise<VirtualStore>): void {
+export function serveVirtualStores(open: (file: File, related: Record<string, File>) => Promise<VirtualStore>): void {
   const stores = new Map<string, Promise<VirtualStore>>();
   const storeFor = (request: VirtualRequest) => {
-    const key = `${request.store}\n${request.file.size}\n${request.file.lastModified}`;
+    const related = Object.entries(request.related ?? {}).map(([path, f]) => `${path}:${f.size}:${f.lastModified}`).sort().join("|");
+    const key = `${request.store}\n${request.file.size}\n${request.file.lastModified}\n${related}`;
     let store = stores.get(key);
     if (store === undefined) {
       // The file changed: forget what was made from it before.
       for (const old of stores.keys()) if (old.startsWith(`${request.store}\n`)) stores.delete(old);
-      store = open(request.file);
+      store = open(request.file, request.related ?? {});
       stores.set(key, store);
       store.catch(() => stores.delete(key));
     }

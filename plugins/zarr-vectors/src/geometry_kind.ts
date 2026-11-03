@@ -67,6 +67,27 @@ export const DIRECTION_SHADER = `void main() {
 `;
 
 /**
+ * A surface with curvature, as Freeview first shows one: curvature in two
+ * greys in 3-d (sulci, positive curvature, dark), the outline on the
+ * sections in the layer's colour.  The text is what the platform's Surface
+ * controls write for this choice (src/engine/surface_shader.ts), so they
+ * show it as theirs.
+ */
+export function curvatureShader(attribute: string): string {
+  return `// Surface: {"curvature":"${attribute}"}
+void main() {
+#ifdef ZV_SECTION
+  // The outline on the 2-D views in the layer's colour, as Freeview draws it.
+  emitDefault();
+  return;
+#endif
+  vec3 colour = prop_${attribute}() > 0.0 ? vec3(0.38) : vec3(0.62);
+  emitRGB(colour);
+}
+`;
+}
+
+/**
  * The kind a store's arrays hold, from its declared `geometry_types`.
  *
  * A failed `zarr_vectors.composite.add_geometry()` call records a second type
@@ -100,4 +121,18 @@ export function resolveGeometryKind(
   });
   const kind = consistent[0] ?? known[0];
   return { kind, ignored: declared.filter((g) => g !== kind) };
+}
+
+/**
+ * The attribute a shader places vertices by (`#define ZV_POSITION <name>`,
+ * a vec3 attribute: another surface of the same vertices), as an index
+ * into `attributes`; -1 for their own positions.
+ */
+export function positionAttribute(
+  code: string,
+  attributes: readonly { id: string; components: number }[],
+): number {
+  const name = /^[ \t]*#define[ \t]+ZV_POSITION[ \t]+(\w+)/m.exec(code)?.[1];
+  if (name === undefined) return -1;
+  return attributes.findIndex((a) => a.id === name && a.components === 3);
 }

@@ -186,9 +186,16 @@ function meshSubsourceEntry(
     new ZarrVectorsMeshSourceParameters(),
     fields,
   );
+  // A surface (a mesh with values on its vertices) is drawn by the dense
+  // layer, filled, lit and coloured by those values; Neuroglancer's meshes,
+  // one colour each, are there to switch on (they draw selected objects at
+  // full resolution, in place of the dense layer).
+  const surface =
+    fields.description.surface !== undefined ||
+    fields.description.attributes.length > 0;
   return {
     id: "meshes",
-    default: true,
+    default: !surface,
     subsource: {
       mesh: chunkManager.getChunkSource(ZarrVectorsMeshSource, {
         sharedKvStoreContext: context,

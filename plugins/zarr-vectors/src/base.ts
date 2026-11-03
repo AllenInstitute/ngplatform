@@ -45,6 +45,22 @@ export interface ZarrVectorsGeometryDescription {
    * attributes (`ZarrVectorsAttribute.objectValue`): level 0's path.
    */
   objectValuesPath?: string;
+  /** A cortical surface store's header (`headers/surface`), when it has one. */
+  surface?: ZarrVectorsSurfaceInfo;
+}
+
+/** What a surface store's header says beyond its arrays. */
+export interface ZarrVectorsSurfaceInfo {
+  /** The surface the geometry is ("white", "midthickness"), or "". */
+  geometry: string;
+  /** Other surfaces of the same topology stored as vertex attributes: attribute → surface name (`coords_inflated` → inflated). */
+  alternates: Record<string, string>;
+  /** Sibling stores of the same vertices: surface name → store URL relative to this store ("../lh.pial/"). */
+  surfaces: Record<string, string>;
+  /** Every per-vertex map the store holds, shown or not (`#attributes=` shows others). */
+  maps: string[];
+  /** The maps that are parcellations, with their tables. */
+  labelTables: Record<string, { code: number; name: string; rgba: number[] }[]>;
 }
 
 class ZarrVectorsSourceParameters {

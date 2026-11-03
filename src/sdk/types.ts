@@ -69,6 +69,15 @@ export interface VirtualFormat {
    * as a dataset of its own.
    */
   companion?: (name: string) => string[];
+  /**
+   * Files beside it that its store reads too (a surface's thickness and
+   * parcellation): given the file's path from the picked folder and a way
+   * to name the files in a folder, their paths relative to the file's
+   * folder ("lh.thickness", "../label/lh.aparc.annot").  Found once per
+   * file; the worker gets them unread with every request
+   * (`VirtualRequest.related`) and reads what it needs.
+   */
+  related?(path: string, list: (folder: string) => Promise<string[]>): Promise<string[]>;
 }
 
 export interface Manifest {

@@ -39,8 +39,10 @@ import {
 } from "./chunk_decode.js";
 import type { ElementType } from "./dtype.js";
 import {
+  attributeDtype,
   decodeFloat32,
   ELEMENT_BYTES,
+  isElementType,
 } from "./dtype.js";
 import { KIND_CAPABILITIES } from "./geometry_kind.js";
 import { LevelCells } from "./level_cells.js";
@@ -91,6 +93,16 @@ const vertexCells = new AsyncLru<Uint8Array | undefined>(
   (b) => b?.byteLength ?? 0,
 );
 let nextPipelineId = 0;
+
+/**
+ * A neighbour's attribute cells, decoded, for the corners of faces reaching
+ * into it (read again when that chunk is drawn too, so kept a while).
+ */
+const neighbourAttributes = new AsyncLru<Float32Array | undefined>(
+  Infinity,
+  64 * 1024 * 1024,
+  (a) => a?.byteLength ?? 0,
+);
 
 /**
  * Caps the raw vertex cells kept between reads (256 MiB by default).  A
@@ -217,6 +229,8 @@ interface Ghost {
   vertex: number;
   /** Whether the host comes first in the curve's walk. */
   hostIsPredecessor: boolean;
+  /** A corner of a face reaching into another chunk, not the end of a bridge (no edge). */
+  corner?: boolean;
 }
 
 export class LevelPipeline {
@@ -242,7 +256,8 @@ export class LevelPipeline {
     private isRequested: (chunk: readonly number[]) => boolean = () => false,
   ) {
     this.cells = LevelCells.forLevel(access, level, description);
-    if (KIND_CAPABILITIES[description.geometryKind].primitive === "lines") {
+    // Lines bridge to their neighbours' vertices; a mesh's faces reach them.
+    if (KIND_CAPABILITIES[description.geometryKind].primitive !== "points") {
       this.links = new CrossChunkLinks({
         cells: this.cells,
         listDirectories: (path) =>
@@ -421,6 +436,39 @@ export class LevelPipeline {
     }
 
     const ghosts: Ghost[] = [];
+    // Faces with corners in other chunks: those corners as ghosts (one per
+    // vertex), placed where the neighbour has them, carrying a local
+    // corner's segment and values; ghosts are written as -1 - index.
+    const crossFaces: number[] = [];
+    const cornerGhosts = new Map<string, number>();
+    for (const { endpoints } of links) {
+      if (endpoints.length !== 3) continue;
+      const local = endpoints.find((e) => isLocal(e.chunkCoords));
+      if (local === undefined || local.vertexIndex >= decoded.numVertices) {
+        continue;
+      }
+      for (const e of endpoints) {
+        if (isLocal(e.chunkCoords)) {
+          crossFaces.push(e.vertexIndex);
+          continue;
+        }
+        const chunkKey = e.chunkCoords.join(".");
+        const key = `${chunkKey}:${e.vertexIndex}`;
+        let g = cornerGhosts.get(key);
+        if (g === undefined) {
+          g = ghosts.length;
+          cornerGhosts.set(key, g);
+          ghosts.push({
+            host: local.vertexIndex,
+            chunkKey,
+            vertex: e.vertexIndex,
+            hostIsPredecessor: true,
+            corner: true,
+          });
+        }
+        crossFaces.push(-1 - g);
+      }
+    }
     for (const { endpoints } of links) {
       if (endpoints.length !== 2) continue;
       const [a, b] = endpoints;
@@ -436,7 +484,10 @@ export class LevelPipeline {
         hostIsPredecessor: aLocal,
       });
     }
-    const ghostPositions = await this.ghostPositions(ghosts, signal);
+    const [ghostPositions, cornerValues] = await Promise.all([
+      this.ghostPositions(ghosts, signal),
+      this.cornerValues(ghosts),
+    ]);
     await fillObjectValues(
       this.access,
       description,
@@ -444,7 +495,58 @@ export class LevelPipeline {
       segmentIds,
       decoded.numVertices,
     );
-    return assembleChunk(decoded, segmentIds, ghosts, ghostPositions);
+    return assembleChunk(
+      decoded,
+      segmentIds,
+      ghosts,
+      ghostPositions,
+      crossFaces,
+      cornerValues,
+    );
+  }
+
+  /**
+   * The values of the corner ghosts (faces reaching into another chunk) as
+   * that chunk stores them, per ghost and attribute (undefined where the
+   * host's are kept: bridges, object values, unreadable cells), so another
+   * surface kept as an attribute (`coords_inflated`) joins up across chunks.
+   */
+  private async cornerValues(
+    ghosts: readonly Ghost[],
+  ): Promise<(Float32Array | undefined)[][]> {
+    const out: (Float32Array | undefined)[][] = ghosts.map(() => []);
+    const attributes = this.description.attributes;
+    if (attributes.length === 0) return out;
+    const keys = [...new Set(ghosts.filter((g) => g.corner).map((g) => g.chunkKey))];
+    await mapConcurrent(keys, 8, async (key) => {
+      await Promise.all(
+        attributes.map(async (a, i) => {
+          if (a.objectValue !== undefined) return;
+          const path = `vertex_attributes/${a.name}`;
+          const values = await neighbourAttributes
+            .get(`${this.id}|${path}|${key}`, async () => {
+              // Shared: the cached cell outlives this request.
+              const bytes = await this.cells.readCell(path, key, SHARED_SIGNAL);
+              if (bytes === undefined) return undefined;
+              const json = (await this.cells.reader(path))?.array.attributes;
+              const type = json ? attributeDtype({ attributes: json }) : a.dtype;
+              if (!isElementType(type)) return undefined;
+              const count = Math.floor(bytes.byteLength / ELEMENT_BYTES[type]);
+              return decodeFloat32(bytes, type, count);
+            })
+            .catch(() => undefined);
+          if (values === undefined) return;
+          ghosts.forEach((g, gi) => {
+            if (!g.corner || g.chunkKey !== key) return;
+            const start = g.vertex * a.components;
+            if (start + a.components <= values.length) {
+              out[gi][i] = values.subarray(start, start + a.components);
+            }
+          });
+        }),
+      );
+    });
+    return out;
   }
 
   /** Positions of the requested neighbour vertices (NaN where unreadable). */
@@ -503,26 +605,34 @@ export class LevelPipeline {
 
 /**
  * The final chunk arrays, one allocation each: the decoded vertices, then a
- * ghost per bridge carrying its host's segment id and attributes, with a
- * tangent along the bridge in the curve's walk direction.
+ * ghost per bridge (or corner of a face reaching into another chunk)
+ * carrying its host's segment id and attributes, with a tangent along the
+ * bridge in the curve's walk direction; the faces, then those reaching
+ * across (`crossFaces`, ghosts as -1 - index), where every corner was found.
  */
 function assembleChunk(
   decoded: DecodedChunk,
   segmentIds: Uint32Array,
   ghosts: readonly Ghost[],
   ghostPositions: Float32Array,
+  crossFaces: readonly number[] = [],
+  cornerValues: readonly (Float32Array | undefined)[][] = [],
 ): DenseChunkData {
   const own = decoded.numVertices;
   const kept = ghosts
     .map((g, i) => ({ ...g, i }))
     .filter((g) => !Number.isNaN(ghostPositions[3 * g.i]));
   const total = own + kept.length;
+  const row = new Int32Array(ghosts.length).fill(-1);
+  kept.forEach((g, k) => (row[g.i] = own + k));
   const positions = new Float32Array(total * 3);
   positions.set(decoded.positions.subarray(0, own * 3));
   const ids = new Uint32Array(total * 2);
   ids.set(segmentIds.subarray(0, own * 2));
-  const edges = new Uint32Array(decoded.edges.length + kept.length * 2);
+  const bridges = kept.filter((g) => !g.corner).length;
+  const edges = new Uint32Array(decoded.edges.length + bridges * 2);
   edges.set(decoded.edges);
+  let edgeAt = decoded.edges.length;
   const sources = [...decoded.attributes];
   if (decoded.tangents !== undefined) sources.push(decoded.tangents);
   const widths = sources.map((src) => (own === 0 ? 1 : src.length / own));
@@ -537,12 +647,16 @@ function assembleChunk(
     positions.set(ghostPositions.subarray(3 * g.i, 3 * g.i + 3), 3 * v);
     ids[2 * v] = ids[2 * g.host];
     ids[2 * v + 1] = ids[2 * g.host + 1];
-    edges[decoded.edges.length + 2 * k] = g.host;
-    edges[decoded.edges.length + 2 * k + 1] = v;
+    if (!g.corner) {
+      edges[edgeAt++] = g.host;
+      edges[edgeAt++] = v;
+    }
     attributes.forEach((out, i) => {
       const width = widths[i];
       if (i !== tangentIndex) {
-        out.copyWithin(v * width, g.host * width, (g.host + 1) * width);
+        const own = cornerValues[g.i]?.[i];
+        if (own !== undefined && own.length === width) out.set(own, v * width);
+        else out.copyWithin(v * width, g.host * width, (g.host + 1) * width);
         return;
       }
       // Along the bridge, in walk order, so interpolating from the host's
@@ -557,13 +671,27 @@ function assembleChunk(
       }
     });
   });
+  let faces = decoded.faces;
+  if (crossFaces.length > 0) {
+    const across: number[] = [];
+    for (let f = 0; f + 3 <= crossFaces.length; f += 3) {
+      const corners = [0, 1, 2].map((k) => {
+        const c = crossFaces[f + k];
+        return c >= 0 ? c : row[-1 - c];
+      });
+      if (corners.every((c) => c >= 0)) across.push(...corners);
+    }
+    faces = new Uint32Array(decoded.faces.length + across.length);
+    faces.set(decoded.faces);
+    faces.set(across, decoded.faces.length);
+  }
   return {
     numVertices: total,
     numOwnVertices: own,
     positions,
     segmentIds: ids,
     edges,
-    faces: decoded.faces,
+    faces,
     attributes,
   };
 }

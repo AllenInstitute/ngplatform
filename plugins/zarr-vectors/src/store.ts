@@ -21,7 +21,10 @@
  */
 
 import { DENSE_MANIFESTS_LAYOUT } from "./dense_manifests.js";
-import type { ZarrVectorsGeometryDescription } from "./base.js";
+import type {
+  ZarrVectorsGeometryDescription,
+  ZarrVectorsSurfaceInfo,
+} from "./base.js";
 import type { ElementType } from "./dtype.js";
 import {
   attributeDtype,
@@ -68,6 +71,11 @@ export interface ZarrVectorsAttribute {
   components: number;
   /** Category labels of a dictionary-encoded attribute. */
   enumLabels?: string[];
+  /**
+   * A parcellation's table (a surface store's `headers/surface`
+   * `label_tables`): each code's name and colour (r, g, b, a in 0..1).
+   */
+  labels?: { code: number; name: string; rgba: number[] }[];
   /**
    * Not stored per vertex: an object's value, the same on every vertex of
    * it (`obj_<column>`, or `obj_group` for its first group's index).
@@ -459,6 +467,7 @@ async function selectAttributes(
   synthesisesTangent: boolean,
   warnings: string[],
   signal?: AbortSignal,
+  surface?: ZarrVectorsSurfaceInfo,
 ): Promise<{ attributes: ZarrVectorsAttribute[]; json: any[] }> {
   let names: string[];
   // Declared in the root's attribute_specs but perhaps not written yet:
@@ -501,7 +510,17 @@ async function selectAttributes(
     // Where the renderer synthesises `tangent`, a stored one would shadow it.
     if (synthesisesTangent) found.delete("tangent");
     names = [...found].sort();
-    if (names.length > DEFAULT_ATTRIBUTE_LIMIT) {
+    if (names.length > DEFAULT_ATTRIBUTE_LIMIT && surface !== undefined) {
+      // A surface's maps: the ones a surface is first looked at with, the
+      // rest offered by name (the platform's Surface controls load them).
+      const kept = surfaceDefaults(names, surface).slice(0, DEFAULT_ATTRIBUTE_LIMIT);
+      warnings.push(
+        `surface store has ${names.length} vertex attributes; showing ` +
+          `${kept.join(", ")}. Append #attributes=a,b,c to the source URL ` +
+          `for others (up to ${MAX_ATTRIBUTES})`,
+      );
+      names = kept;
+    } else if (names.length > DEFAULT_ATTRIBUTE_LIMIT) {
       // A gene panel would fetch that many cells per chunk; let the user choose.
       warnings.push(
         `store has ${names.length} vertex attributes; none load by default. ` +
@@ -601,6 +620,76 @@ async function skeletonLayout(
   const swc = await readJson(access.read, "headers/swc/zarr.json", signal);
   if (swc !== undefined) return "linked";
   return level0.fragmentSegmentIds !== undefined ? "split" : "linked";
+}
+
+// -------------------------------------------------------------- surfaces
+
+/**
+ * A surface store's header (`headers/surface`, as zarr-vectors-tools'
+ * `SurfaceHeader` writes it, plus `surfaces` and `maps` from stores made
+ * from FreeSurfer files in the page); undefined without one.
+ */
+export function surfaceInfo(json: any): ZarrVectorsSurfaceInfo | undefined {
+  const h = json?.attributes;
+  if (h === undefined || h === null || typeof h !== "object") return undefined;
+  const strings = (o: any): Record<string, string> =>
+    Object.fromEntries(
+      Object.entries(o ?? {}).filter(
+        (e): e is [string, string] => typeof e[1] === "string",
+      ),
+    );
+  const labelTables: ZarrVectorsSurfaceInfo["labelTables"] = {};
+  for (const [name, table] of Object.entries<any>(h.label_tables ?? {})) {
+    if (table === null || typeof table !== "object") continue;
+    labelTables[name] = Object.entries<any>(table)
+      .map(([code, entry]) => ({
+        code: Number(code),
+        name: String(entry?.name ?? code),
+        rgba: Array.isArray(entry?.rgba)
+          ? [0, 1, 2, 3].map((i) => Number(entry.rgba[i] ?? 1))
+          : [0.5, 0.5, 0.5, 1],
+      }))
+      .filter((l) => Number.isFinite(l.code))
+      .sort((a, b) => a.code - b.code);
+  }
+  const maps = Array.isArray(h.maps)
+    ? h.maps.map(String)
+    : [...Object.keys(h.scalars ?? {}), ...Object.keys(labelTables)];
+  return {
+    geometry: typeof h.geometry === "string" ? h.geometry : "",
+    alternates: strings(h.alternates),
+    surfaces: strings(h.surfaces),
+    maps,
+    labelTables,
+  };
+}
+
+/** Maps a surface is first looked at with, in this order. */
+const SURFACE_FIRST = ["curv", "sulc", "thickness", "area"];
+const SURFACE_SHAPES = ["inflated", "pial", "white", "sphere"];
+
+/**
+ * A surface store's attributes, most wanted first: curvature and thickness,
+ * the parcellations, the other surfaces (`coords_inflated`…), then the
+ * rest; never the join key.
+ */
+export function surfaceDefaults(
+  names: readonly string[],
+  surface: ZarrVectorsSurfaceInfo,
+): string[] {
+  const rank = (name: string) => {
+    const first = SURFACE_FIRST.indexOf(name);
+    if (first !== -1) return first;
+    if (surface.labelTables[name] !== undefined) return 10;
+    const shape = SURFACE_SHAPES.indexOf(surface.alternates[name] ?? "");
+    if (shape !== -1) return 20 + shape;
+    return 30;
+  };
+  return names
+    .filter((n) => n !== "zv_join_key")
+    .map((n, i) => ({ n, i, r: rank(n) }))
+    .sort((a, b) => a.r - b.r || a.i - b.i)
+    .map((x) => x.n);
 }
 
 // -------------------------------------------------------------- levels
@@ -773,6 +862,14 @@ export async function openZarrVectorsStore(
       ? intraLinksPath(linkWidth)
       : undefined;
 
+  const surface =
+    primitive === "triangles"
+      ? surfaceInfo(
+          await readJson(read, "headers/surface/zarr.json", signal).catch(
+            () => undefined,
+          ),
+        )
+      : undefined;
   const { attributes, json } = await selectAttributes(
     access,
     paths[0],
@@ -783,7 +880,11 @@ export async function openZarrVectorsStore(
     KIND_CAPABILITIES[kind].tangent !== undefined,
     warnings,
     signal,
+    surface,
   );
+  if (surface !== undefined) {
+    for (const a of attributes) a.labels = surface.labelTables[a.name];
+  }
   const allLevels = await Promise.all(
     paths.map((path, index) =>
       readLevel(
@@ -844,6 +945,7 @@ export async function openZarrVectorsStore(
           : undefined,
       attributes,
       hasObjects,
+      ...(surface !== undefined ? { surface } : {}),
     },
     lowerBounds: lower.map(Number),
     upperBounds: upper.map(Number),

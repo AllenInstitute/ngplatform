@@ -13,6 +13,7 @@
  */
 import type { MeshData } from "./mesh_files.js";
 import { fragmentIndex } from "./streamlines.js";
+import { DEFAULT_MAPS, labelTable, type SurfaceCompanions, type SurfaceMap } from "./surfaces.js";
 
 const MANIFEST_ROWS = 16384;
 const COLUMN_ROWS = 65536;
@@ -75,11 +76,22 @@ export class MeshStore {
   private readonly hi: number[];
   private readonly columns: { name: string; values: Float32Array }[];
   private readonly directories: Set<string>;
+  /** The file's vertex number of each stored vertex, object by object. */
+  private readonly sourceVertex: Uint32Array;
+  /** Each map's values in stored order, made when first asked for. */
+  private readonly attributeBytes = new Map<string, Promise<Uint8Array>>();
   readonly count: number;
 
+  /**
+   * `companions`: a surface's values on its vertices (served as vertex
+   * attributes, the first `DEFAULT_MAPS` declared, any asked for by name)
+   * and its sibling surfaces, both described in `headers/surface` as
+   * zarr-vectors-tools writes a surface store's header.
+   */
   constructor(
     mesh: MeshData,
     readonly name: string,
+    private readonly companions: SurfaceCompanions = { maps: [], surfaces: {}, skipped: [] },
   ) {
     const objects = mesh.objects.length;
     // Each object's vertices: those its faces use, in file order (an object's own copy where groups share one).
@@ -97,9 +109,13 @@ export class MeshStore {
     this.faceCounts = facesOf.map((f) => f.length);
     const totalVertices = this.vertexCounts.reduce((a, b) => a + b, 0);
     const world = new Float64Array(3 * totalVertices);
+    this.sourceVertex = new Uint32Array(totalVertices);
     let base = 0;
     for (let o = 0; o < objects; ++o) {
-      for (const [v, row] of used[o]) for (let k = 0; k < 3; ++k) world[3 * (base + row) + k] = mesh.positions[3 * v + k];
+      for (const [v, row] of used[o]) {
+        for (let k = 0; k < 3; ++k) world[3 * (base + row) + k] = mesh.positions[3 * v + k];
+        this.sourceVertex[base + row] = v;
+      }
       base += this.vertexCounts[o];
     }
     const lo = [0, 1, 2].map((k) => {
@@ -148,10 +164,78 @@ export class MeshStore {
       { name: "area", values: area },
     ];
     this.directories = new Set();
-    for (const path of ["0/vertices", "0/vertex_fragments", "0/link_fragments", "0/links/0/0.0.0_0.0.0", "0/object_index/manifests", "0/object_index/object_ids", ...this.columns.map((c) => `0/object_attributes/${c.name}`)]) {
+    const surface = this.hasHeader ? ["headers/surface"] : [];
+    const attributes = this.declared.map((m) => `0/vertex_attributes/${m.name}`);
+    for (const path of ["0/vertices", "0/vertex_fragments", "0/link_fragments", "0/links/0/0.0.0_0.0.0", "0/object_index/manifests", "0/object_index/object_ids", ...this.columns.map((c) => `0/object_attributes/${c.name}`), ...attributes, ...surface]) {
       const parts = path.split("/");
       for (let i = 1; i <= parts.length; ++i) this.directories.add(parts.slice(0, i).join("/"));
     }
+  }
+
+  /** The maps a reader shows without being asked: the first few (the reader takes at most that many by default). */
+  private get declared(): SurfaceMap[] {
+    return this.companions.maps.slice(0, DEFAULT_MAPS);
+  }
+
+  private get hasHeader(): boolean {
+    return this.companions.maps.length > 0 || Object.keys(this.companions.surfaces).length > 1;
+  }
+
+  /** A map's values in stored vertex order, NaN where the file has none. */
+  private attribute(map: SurfaceMap): Promise<Uint8Array> {
+    let bytes = this.attributeBytes.get(map.name);
+    if (bytes === undefined) {
+      bytes = map.load().then(({ values }) => {
+        const out = new Float32Array(this.sourceVertex.length);
+        for (let i = 0; i < out.length; ++i) {
+          const v = this.sourceVertex[i];
+          out[i] = v < values.length ? values[v] : Number.NaN;
+        }
+        return element(bytesOf(out));
+      });
+      this.attributeBytes.set(map.name, bytes);
+      bytes.catch(() => this.attributeBytes.delete(map.name));
+    }
+    return bytes;
+  }
+
+  /**
+   * The surface header as zarr-vectors-tools writes it (`headers/surface`:
+   * scalars, label tables), with what only a store made from files can say:
+   * the hemisphere's other surfaces (`surfaces`, store URLs relative to this
+   * one) and every map that can be asked for by name (`maps`).
+   */
+  private async header(): Promise<Record<string, unknown>> {
+    const { maps, surfaces } = this.companions;
+    const tables: Record<string, unknown> = {};
+    await Promise.all(
+      maps
+        .filter((m) => m.parcellation)
+        .map(async (m) => {
+          const labels = (await m.load().catch(() => undefined))?.labels;
+          if (labels !== undefined) tables[m.name] = labelTable(labels);
+        }),
+    );
+    const own = Object.entries(surfaces).find(([, path]) => path === this.fileName)?.[0];
+    const hemi = /^(lh|rh)\./i.exec(this.fileName)?.[1] ?? /(?:^|[._-])(?:hemi-)?(L|R)(?=[._-])/.exec(this.fileName)?.[1];
+    return {
+      format_name: "surface",
+      source: /\.gii$/i.test(this.fileName) ? "gifti" : "freesurfer",
+      geometry: own ?? this.name,
+      hemispheres:
+        hemi === undefined
+          ? []
+          : [{ object_id: 1, hemisphere: /^l/i.test(hemi) ? "left" : "right", n_vertices: this.sourceVertex.length, n_faces: this.faces.length / 3 }],
+      scalars: Object.fromEntries(maps.filter((m) => !m.parcellation).map((m) => [m.name, m.source])),
+      label_tables: tables,
+      surfaces: Object.fromEntries(Object.entries(surfaces).map(([kind, path]) => [kind, `../${path}/`])),
+      maps: maps.map((m) => m.name),
+    };
+  }
+
+  /** The surface file's own name (lh.white), for the header. */
+  get fileName(): string {
+    return this.companions.fileName ?? this.name;
   }
 
   /** Child names (directories end in "/") of a directory key ("" or ending in "/"); undefined when it is not one. */
@@ -181,6 +265,7 @@ export class MeshStore {
               bounds: [this.lo, this.hi],
               coordinate_offset: this.offset,
               geometry_types: ["mesh"],
+              ...(this.declared.length > 0 ? { attribute_specs: { vertex: Object.fromEntries(this.declared.map((m) => [m.name, { dtype: "float32" }])) } } : {}),
               links_convention: "explicit",
               object_index_convention: "standard",
               cross_chunk_strategy: "explicit_links",
@@ -202,7 +287,7 @@ export class MeshStore {
             zarr_vectors_level: {
               level: 0,
               vertex_count: this.vertices.length / 3,
-              arrays_present: ["vertices", "links", "object_index"],
+              arrays_present: ["vertices", "links", "object_index", ...(this.declared.length > 0 ? ["vertex_attributes"] : [])],
               object_sparsity: 1,
               coarsening_method: "none",
               parent_level: null,
@@ -237,6 +322,17 @@ export class MeshStore {
         return element(fragmentIndex(this.faceCounts));
       case "0/links/0/0.0.0_0.0.0/c/0/0/0":
         return element(bytesOf(this.faces));
+    }
+    if (this.hasHeader && key === "headers/zarr.json") return json(group());
+    if (this.hasHeader && key === "headers/surface/zarr.json") return json(group(await this.header()));
+    if (this.companions.maps.length > 0 && key === "0/vertex_attributes/zarr.json") return json(group());
+    const attribute = /^0\/vertex_attributes\/([^/]+)\/(zarr\.json|c\/0\/0\/0)$/.exec(key);
+    if (attribute !== null) {
+      // Any map can be asked for by name (`#attributes=`), declared or not.
+      const map = this.companions.maps.find((m) => m.name === attribute[1]);
+      if (map === undefined) return undefined;
+      if (attribute[2] === "zarr.json") return json(perCell({ zv_array: "attribute", name: map.name, dtype: "float32", row_shape: [] }));
+      return this.attribute(map);
     }
     const columnJson = /^0\/object_attributes\/([^/]+)\/zarr\.json$/.exec(key);
     if (columnJson !== null && this.columns.some((col) => col.name === columnJson[1])) {

@@ -554,7 +554,8 @@ describe("vertex cell reads", () => {
     );
     const data = await pipeline.download([0, 0, 0], signal);
     expect(data?.numVertices).toBeGreaterThan(0);
-    expect(reads.filter((r) => /^0\/links\/.*\/c\//.test(r)).length).toBe(1);
+    // The chunk's own faces in one read (those reaching other chunks are read too).
+    expect(reads.filter((r) => /^0\/links\/0\/0\.0\.0_0\.0\.0\/c\//.test(r)).length).toBe(1);
     // Whole triangles, three vertex indices each, within the chunk's vertices.
     expect(data!.faces.length % 3).toBe(0);
     expect(data!.faces.length).toBeGreaterThan(0);
