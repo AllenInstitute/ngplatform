@@ -255,7 +255,7 @@ export function shownShare(chunks: { length: number; pointCount: number; shown?:
 }
 
 /** At most this many times the Detail is read for a view showing a few of a layer's objects. */
-export const MAX_SELECTION_BOOST = 8;
+export const MAX_SELECTION_BOOST = 4;
 
 /**
  * The vertex budget for a view: the Detail, raised when only a share of the

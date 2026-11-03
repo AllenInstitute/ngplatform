@@ -41,12 +41,16 @@ is converted.
   its Segments tab or in the link, or another tool's choice, such as a
   track-filtering group), only those are drawn. *Colour: the layer's
   segment colours* colours each object as Neuroglancer does.
+- **Track filtering's groups**: tick a group's layer and it is drawn in the
+  group's colour, its streamlines picked by id from the whole tractogram
+  until track filtering has made the group a store of its own, then from
+  that store. The group's answer can change (move a region) and Luxar
+  follows it.
 - Hiding the layer hides its Luxar drawing too. A link opened where the
   plugin is off shows the layer drawn by Neuroglancer as usual.
 
-Not yet: meshes, track filtering's groups by id (a group layer that has its
-own store is drawn whole, which is the group), Luxar's bloom, and fitted
-Gaussian splats (Luxar's GPU fit, which makes new files).
+Not yet: meshes, Luxar's bloom, and fitted Gaussian splats (Luxar's GPU
+fit, which makes new files).
 
 ## Images as splats
 

@@ -26,6 +26,7 @@ point tables). Nothing is converted and no files are written.
 | `client.ts`, `luxar_worker.ts` | Reading a store's chunks with the Zarr Vectors reader, in a worker |
 | `chunk_build.ts` | A decoded chunk made ready to draw: a vertex texture, (previous, start, end, next) segments, and each vertex's object as a slot in the chunk's list of objects |
 | `segments.ts` | Which of a chunk's objects show and their colours: the table the shaders look each vertex's object up in |
+| `sources.ts` | Which of a layer's sources it draws (a source with its parts off draws nothing) |
 | `view_math.ts` | Matrices, frustum and slab tests, level choice |
 | `camera.ts` | Optional momentum on rotating the 3-D view |
 | `style.ts` | The per-layer style kept in the workspace |
@@ -191,9 +192,28 @@ share of a chunk's lines that shows.
 
 Coarse levels of a tractogram hold a sample of the streamlines, so few of
 the chosen ones may be in them. A view showing a share of the objects
-reads more vertices (the Detail over that share, at most eight times the
+reads more vertices (the Detail over that share, at most four times the
 Detail), which picks a finer level; the share is the least it has seen for
 these segments, so the level settles.
+
+### Track filtering's groups
+
+A group is a segmentation layer of its own, in the group's colour (its
+`segmentDefaultColor`). Ticked here, it is drawn in that colour (a layer
+whose segments have colours of their own starts with *Colour: the layer's
+segment colours*), and:
+
+- until track filtering has made the group a store of its own, from the
+  dataset's store, showing only the group's streamlines (track filtering
+  gives them as the layer's temporary set, by id);
+- once it has (streamline groups get one a moment after their exact
+  answer), from that store, whole. The layer then keeps the dataset as a
+  first source with its parts off (for its segment properties); a source
+  whose parts are all off draws nothing, so the store drawn is the
+  group's own (`sources.ts`).
+
+Each new answer is a new temporary set, which the engine keeps behind the
+hidden drawing, so Neuroglancer's own drawing of the group stays hidden.
 
 ### Momentum
 
@@ -213,7 +233,7 @@ momentum in the engine.
   reader). Point clouds and every line kind are drawn fully.
 - **A few chosen segments** are read as the chunks that hold them, whole:
   a handful of streamlines out of a whole brain reads the chunks of a
-  level about eight times the Detail, and coarse levels show only those of
+  level about four times the Detail, and coarse levels show only those of
   them in their sample. Reading the chosen objects alone (the reader's
   `ObjectReader`, or track filtering's `trackFiltering.groups` service,
   `curves(id, n)`) would draw them whole at any zoom, as Neuroglancer's

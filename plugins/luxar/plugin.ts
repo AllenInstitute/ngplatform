@@ -18,6 +18,7 @@ import { Momentum } from "./camera.js";
 import { storeOf } from "../volume-view/sources.js";
 import { LayerView } from "./layer_view.js";
 import { SplatView } from "./splat_view.js";
+import { drawnSources } from "./sources.js";
 import { LUXAR_PANEL } from "./manifest.js";
 import {
   BLENDING_LABELS,
@@ -50,10 +51,15 @@ export function imageOfLayer(layer: LayerInfo): string | undefined {
   return layer.type === "image" ? storeOf(layer.sources[0]) : undefined;
 }
 
-/** The store a layer reads, when it is a Zarr Vectors layer this plugin can draw. */
-export function storeOfLayer(layer: LayerInfo): string | undefined {
+/**
+ * The store a layer draws, when it is a Zarr Vectors layer this plugin can
+ * draw: its first source that draws anything (`spec`, the layer's
+ * specification, says which draw nothing: a track-filtering group with a
+ * store of its own keeps the dataset's source beside it, drawing nothing).
+ */
+export function storeOfLayer(layer: LayerInfo, spec?: { source?: unknown }): string | undefined {
   if (layer.type !== "segmentation" && layer.type !== "auto") return undefined;
-  for (const source of layer.sources) {
+  for (const source of drawnSources(layer.sources, spec)) {
     const url = storeUrlOfSource(source);
     if (url !== undefined) return url;
   }
@@ -93,7 +99,11 @@ class Luxar {
   }
 
   candidates(): LayerInfo[] {
-    return this.ctx.viewer.layers().filter((l) => storeOfLayer(l) !== undefined || imageOfLayer(l) !== undefined);
+    return this.ctx.viewer.layers().filter((l) => this.storeOf(l) !== undefined || imageOfLayer(l) !== undefined);
+  }
+
+  private storeOf(layer: LayerInfo): string | undefined {
+    return storeOfLayer(layer, this.ctx.viewer.layerSpec(layer.name) as { source?: unknown } | undefined);
   }
 
   private write(saved: Saved): void {
@@ -109,7 +119,11 @@ class Luxar {
     if (saved !== undefined) return saved;
     const layer = this.ctx.viewer.layers().find((l) => l.name === name);
     if (layer !== undefined && imageOfLayer(layer) !== undefined) return { ...DEFAULT_STYLE, on: false, blending: "emission", colourBy: "attribute", colormap: "grey", absorption: 0.3 };
-    return { ...DEFAULT_STYLE, on: false };
+    // A layer whose segments have colours of their own (a track-filtering group's colour, colours chosen
+    // for segments) is drawn in them.
+    const spec = this.ctx.viewer.layerSpec(name) as { segmentDefaultColor?: unknown; segmentColors?: unknown } | undefined;
+    const coloured = spec?.segmentDefaultColor !== undefined || (typeof spec?.segmentColors === "object" && spec.segmentColors !== null && Object.keys(spec.segmentColors).length > 0);
+    return { ...DEFAULT_STYLE, on: false, ...(coloured ? { colourBy: "segment" as const } : {}) };
   }
 
   setStyle(name: string, patch: Partial<LayerStyle>, save = true): void {
@@ -134,7 +148,7 @@ class Luxar {
     for (const [name, view] of this.views) {
       const layer = layers.get(name);
       const style = this.saved.layers[name];
-      const store = layer && (storeOfLayer(layer) ?? imageOfLayer(layer));
+      const store = layer && (this.storeOf(layer) ?? imageOfLayer(layer));
       if (layer === undefined || style === undefined || !style.on || store !== view.storeUrl) {
         view.dispose();
         this.views.delete(name);
@@ -143,7 +157,7 @@ class Luxar {
     for (const [name, style] of Object.entries(this.saved.layers)) {
       const layer = layers.get(name);
       if (layer === undefined || !style.on) continue;
-      const store = storeOfLayer(layer);
+      const store = this.storeOf(layer);
       const image = store === undefined ? imageOfLayer(layer) : undefined;
       if (store === undefined && image === undefined) continue;
       let view = this.views.get(name);

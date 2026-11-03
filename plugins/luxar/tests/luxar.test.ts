@@ -7,6 +7,7 @@ import { keyOf, selectChunks } from "../chunks.js";
 import type { StoreInfo } from "../client.js";
 import { LUXAR_MANIFEST } from "../manifest.js";
 import { idOf, needsTable, objectTable } from "../segments.js";
+import { drawnSources } from "../sources.js";
 import { DEFAULT_STYLE, readSaved, readStyle, rgbOf, scalarOf } from "../style.js";
 import { apply, autoGain, boxInFrustum, chooseLevel, chunkRange, coverage, directionMatrix, invertAffine, MAX_SELECTION_BOOST, measurePanel, modelTo, modelToPanel, multiply, pixelsPerUnit, screenArea, shownShare, storeToGlobal, vertexBudget } from "../view_math.js";
 
@@ -183,6 +184,21 @@ describe("a layer's chosen segments", () => {
     expect(vertexBudget(2, 0)).toBe(2e6 * MAX_SELECTION_BOOST);
     // Only the share of a chunk's lines shown counts toward how much of the view they cover.
     expect(coverage([{ length: 10, pointCount: 0, shown: 0.1 }], 1, 1, 10)).toBeCloseTo(0.1);
+  });
+});
+
+describe("which sources a layer draws", () => {
+  it("leaves out a source with its parts off, as a track-filtering group keeps its dataset beside its own store", () => {
+    const base = "https://host/a.zarrvectors/|zarr-vectors:";
+    const own = "http://localhost/local/derived-1/g.trk/|zarr-vectors:";
+    const spec = { source: [{ url: base, enableDefaultSubsources: false }, { url: own, subsources: { objects: false, meshes: false } }] };
+    expect(drawnSources([base, own], spec)).toEqual([own]);
+    // Without its own store the group draws the dataset (its parts other than objects on).
+    expect(drawnSources([base], { source: { url: base, subsources: { objects: false, meshes: false } } })).toEqual([base]);
+    expect(drawnSources([base], { source: base })).toEqual([base]);
+    expect(drawnSources([base], undefined)).toEqual([base]);
+    // A part switched on draws.
+    expect(drawnSources([base], { source: { url: base, enableDefaultSubsources: false, subsources: { default: true } } })).toEqual([base]);
   });
 });
 
