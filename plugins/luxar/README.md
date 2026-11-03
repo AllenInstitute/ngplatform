@@ -371,11 +371,14 @@ hidden drawing, so Neuroglancer's own drawing of the group stays hidden.
 changes, its view of the store before keeps drawing what it drew (frozen:
 the group's streamlines, even though the layer now shows every object of
 its new store), and the new store's view reads without drawing (*held*)
-until it has all it wants for its views, then takes over; after 30 s it
-takes over whatever it has. A big group's first store of its own is a
-sample of its streamlines (track filtering's preview, from a sample
-level); a store with fewer objects than the view before drew whole does
-not take over, and waits for the group's whole store.
+until it has all it wants for its views, then takes over. When the view
+before drew chunks, the new one takes over after 30 s whatever it has;
+when it drew the chosen objects whole, by id, it stays until the new one
+has read everything (what it draws is right meanwhile). A big group's
+first store of its own is a sample of its streamlines (track filtering's
+preview, from a sample level); a store with fewer objects than the view
+before drew whole never takes over, and is dropped, unseen, when the
+group's whole store comes.
 
 ### Momentum
 

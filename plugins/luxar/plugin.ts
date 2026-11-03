@@ -150,10 +150,11 @@ class Luxar {
   /**
    * Hands a layer's drawing over from its view of the store it drew before
    * to the view of its new one, once that one has all it wants to draw, or
-   * after OUTGOING_MS whatever it has; but not to a store with fewer
-   * objects than the one before drew whole (a big track-filtering group's
-   * preview store, a sample of its streamlines, while they were all drawn
-   * by id): that one waits for the next.
+   * after OUTGOING_MS whatever it has.  When the one before drew the chosen
+   * objects whole, by id, it stays until the new one has read all it
+   * wants, and stays for good over a store with fewer objects than it drew
+   * (a big track-filtering group's preview store, a sample of its
+   * streamlines): that one waits for the next.
    */
   private handOver(name: string): void {
     const out = this.outgoing.get(name);
@@ -161,9 +162,11 @@ class Luxar {
     const view = this.views.get(name);
     // A track-filtering group's first store of its own may be a sample of its streamlines (a big
     // group's preview): while the store before showed more of them whole, it stays.
+    // Nor, while the store before drew the chosen objects whole, to a store still reading:
+    // what is drawn is right meanwhile, and only slower to come by chunks.
     const before = out.view.objectsShown;
     const after = view instanceof LayerView ? view.client.info?.levels[0]?.objects : undefined;
-    if (view instanceof LayerView && view.held && before !== undefined && after !== undefined && after < before) {
+    if (view instanceof LayerView && view.held && before !== undefined && (!view.ready || (after !== undefined && after < before))) {
       clearTimeout(out.timer);
       out.timer = setTimeout(() => this.handOver(name), OUTGOING_MS);
       return;
@@ -199,6 +202,8 @@ class Luxar {
         if (view instanceof LayerView && !view.held && style?.on && layer?.visible && store !== undefined && this.storeOf(layer) !== undefined) {
           this.finishHandOver(name);
           view.freeze();
+          // While Neuroglancer made the layer afresh it may have seemed hidden for a moment.
+          view.setVisible(true);
           this.outgoing.set(name, { view, timer: setTimeout(() => this.handOver(name), OUTGOING_MS) });
         } else view.dispose();
       }
@@ -234,7 +239,10 @@ class Luxar {
       } else if (view.style !== style) view.setStyle(style);
       view.setVisible(layer.visible);
       const out = this.outgoing.get(name);
-      if (out !== undefined && out.view.style !== style) out.view.setStyle(style);
+      if (out !== undefined) {
+        if (out.view.style !== style) out.view.setStyle(style);
+        out.view.setVisible(layer.visible);
+      }
     }
     // A layer is drawn either by Neuroglancer or here, not both: its own
     // drawing is hidden (not in the link) while ours is on; asked each time,
