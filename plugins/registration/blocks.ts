@@ -8,7 +8,7 @@
  * level 3, an eighth a side, is kept in memory and the coarser levels are
  * made from it at the end, with the metadata.
  */
-import { displayWindow, gzip, halve, type LevelGrid, omeZarrMetadata, pyramidGrids } from "@ngplatform/sdk/volume_out";
+import { displayWindow, gzip, halve, type LevelGrid, MGH_FOOTER_BYTES, mghBody, mghHeader, niftiHeader, omeZarrMetadata, pyramidGrids } from "@ngplatform/sdk/volume_out";
 import { invert4, type Mat4, multiply4 } from "./fit.js";
 import { ARRAYS, type Method, resample, type TypedArray, type Volume, type VoxelType } from "./volume_io.js";
 
@@ -79,6 +79,61 @@ function paste(into: Volume, block: Volume, origin: number[]): void {
   }
 }
 
+/** Margin of source voxels around a box, for the interpolation (and the B-spline prefilter). */
+const marginFor = (method: Method) => (method === "cubic" ? 16 : method === "linear" ? 2 : 1);
+
+/** The output voxels from `lo` to `hi` (exclusive) of `grid`, resampled from only the source box they need. */
+async function resampleBox(source: BlockSource, grid: LevelGrid, move: Mat4, method: Method, lo: number[], hi: number[], toSource: Mat4, margin: number): Promise<Volume> {
+  const size = hi.map((v, k) => v - lo[k]) as [number, number, number];
+  const block: Volume = { data: new ARRAYS[source.type](size[0] * size[1] * size[2]), size, type: source.type, voxelToRas: multiply4(grid.voxelToRas, translate(lo)) };
+  const box = sourceBox(toSource, lo, hi, margin, source.size);
+  if (box === undefined) return block;
+  const region: Volume = { data: (await source.read(box.lo, box.hi)) as unknown as TypedArray, size: box.hi.map((v, k) => v - box.lo[k]) as [number, number, number], type: source.type, voxelToRas: multiply4(source.voxelToRas, translate(box.lo)) };
+  return { ...block, data: resample(region, block, move, method) };
+}
+
+/**
+ * The moved image on `grid` as one NIfTI (`.nii`) or MGH file, handed to
+ * `write` in order (header, then the voxels a slab of z planes at a time,
+ * each slab read from only the source box it needs; for MGH the footer),
+ * so a file of any size is written without being held.  The display window
+ * in a NIfTI header is `window` (from a coarse level: the voxels are not all
+ * seen before the header is written).
+ */
+export async function saveInSlabs(
+  source: BlockSource,
+  grid: LevelGrid,
+  move: Mat4,
+  options: { method: Method; label: boolean; format: "nii" | "mgh"; description: string; window?: [number, number]; placement?: Mat4; slabVoxels?: number },
+  write: (bytes: Uint8Array) => Promise<void>,
+  progress: (done: number, total: number) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const toSource = multiply4(invert4(source.voxelToRas), multiply4(invert4(move), grid.voxelToRas));
+  const method = options.label ? "nearest" : options.method;
+  const margin = marginFor(method);
+  const placed = { size: grid.size, type: source.type, voxelToRas: options.placement ?? grid.voxelToRas };
+  await write(options.format === "nii" ? niftiHeader(placed, { label: options.label, window: options.label ? undefined : options.window, description: options.description.slice(0, 79) }) : mghHeader(placed));
+  // Slabs of about `slabVoxels` voxels, whole planes, at most a block deep; each made of
+  // tiles a block across, so a turned image reads only a block's worth of source at once.
+  const [nx, ny, nz] = grid.size;
+  const depth = Math.max(1, Math.min(nz, BLOCK, Math.floor((options.slabVoxels ?? 32 * 2 ** 20) / (nx * ny))));
+  for (let z = 0; z < nz; z += depth) {
+    signal.throwIfAborted();
+    const d = Math.min(nz, z + depth) - z;
+    const slab: Volume = { data: new ARRAYS[source.type](nx * ny * d), size: [nx, ny, d], type: source.type, voxelToRas: grid.voxelToRas };
+    for (let y = 0; y < ny; y += BLOCK) {
+      for (let x = 0; x < nx; x += BLOCK) {
+        const tile = await resampleBox(source, grid, move, method, [x, y, z], [Math.min(nx, x + BLOCK), Math.min(ny, y + BLOCK), z + d], toSource, margin);
+        paste(slab, tile, [x, y, 0]);
+      }
+    }
+    await write(options.format === "nii" ? new Uint8Array(slab.data.buffer, slab.data.byteOffset, slab.data.byteLength) : mghBody(slab.data, source.type));
+    progress(Math.min(grid.size[2], z + depth), grid.size[2]);
+  }
+  if (options.format === "mgh") await write(new Uint8Array(MGH_FOOTER_BYTES));
+}
+
 export interface BlockSource {
   /** The source level's voxels along x, y, z and their placement. */
   size: [number, number, number];
@@ -106,7 +161,7 @@ export async function saveInBlocks(
 ): Promise<void> {
   const toSource = multiply4(invert4(source.voxelToRas), multiply4(invert4(move), grid.voxelToRas));
   const method = options.label ? "nearest" : options.method;
-  const margin = method === "cubic" ? 16 : method === "linear" ? 2 : 1;
+  const margin = marginFor(method);
   const levels = pyramidGrids({ size: grid.size, voxelToRas: options.placement ?? grid.voxelToRas }, options.label);
   const kept = Math.min(BLOCK_LEVELS, levels.length - 1);
   // The first level made whole, in memory: an eighth a side.
@@ -121,12 +176,7 @@ export async function saveInBlocks(
         const lo = [bx, by, bz].map((b) => b * BLOCK);
         const hi = lo.map((v, k) => Math.min(grid.size[k], v + BLOCK));
         const size = hi.map((v, k) => v - lo[k]) as [number, number, number];
-        const box = sourceBox(toSource, lo, hi, margin, source.size);
-        let block: Volume = { data: new ARRAYS[source.type](size[0] * size[1] * size[2]), size, type: source.type, voxelToRas: multiply4(grid.voxelToRas, translate(lo)) };
-        if (box !== undefined) {
-          const region: Volume = { data: (await source.read(box.lo, box.hi)) as unknown as TypedArray, size: box.hi.map((v, k) => v - box.lo[k]) as [number, number, number], type: source.type, voxelToRas: multiply4(source.voxelToRas, translate(box.lo)) };
-          block = { ...block, data: resample(region, block, move, method) };
-        }
+        let block = await resampleBox(source, grid, move, method, lo, hi, toSource, margin);
         let origin = lo;
         for (let l = 0; ; ++l) {
           if (l === kept) {

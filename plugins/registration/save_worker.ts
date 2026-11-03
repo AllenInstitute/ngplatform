@@ -14,7 +14,7 @@
 import { setAsyncComputationWorkerFactory } from "neuroglancer/unstable/worker_factories.js";
 import { asyncComputationWorker } from "@ngplatform/sdk/workers";
 import { VolumeReader } from "../volume-view/volume_reader.js";
-import { saveInBlocks } from "./blocks.js";
+import { saveInBlocks, saveInSlabs } from "./blocks.js";
 import { identity4, multiply4 } from "./fit.js";
 import { ARRAYS, displayWindow, ENLARGE, enlargedGrid, gzip, type Method, mghFile, niftiFile, omeZarrFiles, resample, typed, type Volume, type VoxelType } from "./volume_io.js";
 
@@ -46,6 +46,8 @@ export interface SaveRequest {
    */
   folder?: FileSystemDirectoryHandle;
   folderName?: string;
+  /** NIfTI and MGH: the file to write, here, slab by slab; then the full resolution is saved however large. */
+  file?: FileSystemFileHandle;
 }
 
 const controllers = new Map<number, AbortController>();
@@ -114,12 +116,61 @@ async function saveLarge(msg: SaveRequest & { id: number }, reader: VolumeReader
   postMessage({ type: "saved", id: msg.id, files: [], level: 0, voxelSize: level.voxelSize, size: grid.size, written: true });
 }
 
+/**
+ * The full resolution, however large, into the chosen NIfTI or MGH file,
+ * slab by slab (see blocks.ts), gzipped on the way for .nii.gz and .mgz.
+ */
+async function saveLargeFile(msg: SaveRequest & { id: number }, reader: VolumeReader, levels: Awaited<ReturnType<VolumeReader["open"]>>["levels"], signal: AbortSignal): Promise<void> {
+  const level = levels[0];
+  const type = (level.type ?? "uint8") as VoxelType;
+  if (ARRAYS[type] === undefined) throw new Error(`${type} images cannot be saved in slabs`);
+  const own = { size: level.size, voxelToRas: level.voxelToRas };
+  const move = Float64Array.from(msg.move);
+  let grid = own;
+  if (!msg.header && msg.grid === ENLARGE) grid = enlargedGrid(own, move);
+  else if (!msg.header && msg.grid !== undefined) {
+    const g = (await new VolumeReader().open([msg.grid], undefined, signal)).levels[0];
+    grid = { size: g.size, voxelToRas: g.voxelToRas };
+  }
+  // The header's display window, from the coarsest level (the header is written before the voxels are seen).
+  let window: [number, number] | undefined;
+  if (!msg.label) {
+    const coarse = await reader.rawVolume(levels.length - 1, signal);
+    window = displayWindow(typed(coarse.type as VoxelType, coarse.data));
+  }
+  const writable = await msg.file!.createWritable();
+  const gz = msg.format === "nii.gz" || msg.format === "mgz";
+  const compress = gz ? new CompressionStream("gzip") : undefined;
+  const piped = compress?.readable.pipeTo(writable);
+  const writer = compress?.writable.getWriter();
+  try {
+    await saveInSlabs(
+      { size: level.size, voxelToRas: level.voxelToRas, type, read: async (lo, hi) => (await reader.rawRegion(0, { lo, hi }, signal)).data },
+      grid,
+      msg.header ? identity4() : move,
+      { method: msg.method, label: msg.label, format: /^nii/.test(msg.format) ? "nii" : "mgh", description: `${msg.name}, moved by ngplatform registration`, window, placement: msg.header ? multiply4(move, level.voxelToRas) : undefined },
+      async (bytes) => (writer ? writer.write(bytes as unknown as BufferSource) : writable.write(bytes as unknown as BufferSource)),
+      (done, total) => postMessage({ type: "progress", id: msg.id, what: "Saving in slabs", done, total }),
+      signal,
+    );
+    if (writer) {
+      await writer.close();
+      await piped;
+    } else await writable.close();
+  } catch (e) {
+    await (writer ? writer.abort(e) : writable.abort(e)).catch(() => {});
+    throw e;
+  }
+  postMessage({ type: "saved", id: msg.id, files: [], level: 0, voxelSize: level.voxelSize, size: grid.size, written: true });
+}
+
 async function save(msg: SaveRequest & { id: number }, signal: AbortSignal): Promise<void> {
   const progress = (what: string) => (done: number, total: number) => postMessage({ type: "progress", id: msg.id, what, done, total });
   const reader = new VolumeReader();
   const { levels } = await reader.open([msg.store], undefined, signal);
   const index = levelFor(levels, msg.maxBytes);
   if (levelBytes(levels[0]) > msg.maxBytes && msg.format === "zarr" && msg.folder !== undefined) return saveLarge(msg, reader, levels, signal);
+  if (levelBytes(levels[0]) > msg.maxBytes && msg.format !== "zarr" && msg.file !== undefined) return saveLargeFile(msg, reader, levels, signal);
   const level = levels[index];
   const raw = await reader.rawVolume(index, signal, progress("Reading"));
   const source: Volume = { data: typed(raw.type as VoxelType, raw.data), size: raw.size, type: raw.type as VoxelType, voxelToRas: level.voxelToRas };

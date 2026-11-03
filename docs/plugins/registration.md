@@ -35,10 +35,12 @@ transform, or the moved image.
 - **Save image:** NIfTI, FreeSurfer `.mgz`/`.mgh` or OME-Zarr, resampled
   (nearest, trilinear or cubic; onto its own grid, its own grid enlarged to
   hold all of the moved image, or another image's) or with the voxels
-  unchanged and the new placement in the header. NIfTI and FreeSurfer
-  files are made from the finest level that fits in memory (512 MB); an
-  OME-Zarr saved into a folder is made at full resolution however large,
-  block by block, reading only the part of the image each block needs.
+  unchanged and the new placement in the header. Saved into a file or
+  folder you choose (Chrome, Edge), the image is made at full resolution
+  however large: NIfTI and FreeSurfer files slab by slab, gzipped as they
+  are written, and OME-Zarr block by block, each part reading only the
+  source it needs. Downloaded instead, it is made from the finest level
+  that fits in memory (512 MB).
 
 Checked against FreeSurfer 7: `lta_convert` reads the transforms, and
 `mri_vol2vol` resamples to the same image.

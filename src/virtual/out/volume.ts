@@ -123,9 +123,17 @@ export function displayWindow(data: TypedArray): [number, number] {
 
 /** A NIfTI-1 single file (.nii): the volume with `voxelToRas` as its sform (and qform where it can be one). */
 export function niftiFile(volume: Volume, options: { description?: string; label?: boolean; window?: [number, number] } = {}): Uint8Array {
-  const [code, bitpix] = NIFTI[volume.type];
   const body = new Uint8Array(volume.data.buffer, volume.data.byteOffset, volume.data.byteLength);
   const out = new Uint8Array(352 + body.byteLength);
+  out.set(niftiHeader(volume, options));
+  out.set(body, 352);
+  return out;
+}
+
+/** A NIfTI-1 file's 352 bytes before its voxels (header and an empty extension flag), for a volume of this size, type and placement. */
+export function niftiHeader(volume: Omit<Volume, "data">, options: { description?: string; label?: boolean; window?: [number, number] } = {}): Uint8Array {
+  const [code, bitpix] = NIFTI[volume.type];
+  const out = new Uint8Array(352);
   const v = new DataView(out.buffer);
   const m = volume.voxelToRas;
   const q = quaternionOf(m);
@@ -154,7 +162,6 @@ export function niftiFile(volume: Volume, options: { description?: string; label
   v.setInt16(254, 2, true); // sform_code: aligned
   for (let r = 0; r < 3; ++r) for (let c = 0; c < 4; ++c) v.setFloat32(280 + 16 * r + 4 * c, m[4 * r + c], true);
   out.set([110, 43, 49, 0], 344); // "n+1"
-  out.set(body, 352);
   return out;
 }
 
@@ -195,11 +202,38 @@ const MGH_TYPES: Record<VoxelType, { code: number; as: VoxelType }> = {
  * TE, TI, FoV), here zero, as nibabel writes them.
  */
 export function mghFile(volume: Volume): Uint8Array {
-  const { code, as } = MGH_TYPES[volume.type];
-  const [ni, nj, nk] = volume.size;
-  const n = ni * nj * nk;
+  const body = mghBody(volume.data, volume.type);
+  const out = new Uint8Array(MGH_HEADER_BYTES + body.byteLength + MGH_FOOTER_BYTES);
+  out.set(mghHeader(volume));
+  out.set(body, MGH_HEADER_BYTES);
+  return out;
+}
+
+export const MGH_HEADER_BYTES = 284;
+/** After the voxels: TR, flip angle, TE, TI and field of view, here zero. */
+export const MGH_FOOTER_BYTES = 5 * 4;
+
+/** Voxels as an MGH file stores them: big-endian, in the type MGH has for theirs. */
+export function mghBody(src: ArrayLike<number>, type: VoxelType): Uint8Array {
+  const { as } = MGH_TYPES[type];
   const per = ARRAYS[as].BYTES_PER_ELEMENT;
-  const out = new Uint8Array(284 + n * per + 5 * 4);
+  const out = new Uint8Array(src.length * per);
+  const view = new DataView(out.buffer);
+  for (let i = 0, at = 0; i < src.length; ++i, at += per) {
+    const v = src[i];
+    if (as === "uint8") view.setUint8(at, v);
+    else if (as === "int16") view.setInt16(at, v, false);
+    else if (as === "int32") view.setInt32(at, v, false);
+    else view.setFloat32(at, v, false);
+  }
+  return out;
+}
+
+/** An MGH file's 284 bytes before its voxels. */
+export function mghHeader(volume: Omit<Volume, "data">): Uint8Array {
+  const { code } = MGH_TYPES[volume.type];
+  const [ni, nj, nk] = volume.size;
+  const out = new Uint8Array(MGH_HEADER_BYTES);
   const view = new DataView(out.buffer);
   [1, ni, nj, nk, 1, code, 0].forEach((v, k) => view.setInt32(4 * k, v, false));
   view.setInt16(28, 1, false);
@@ -209,14 +243,6 @@ export function mghFile(volume: Volume): Uint8Array {
   for (let c = 0; c < 3; ++c) for (let r = 0; r < 3; ++r) view.setFloat32(42 + 12 * c + 4 * r, m[4 * r + c] / spacing[c], false);
   const centre = [0, 1, 2].map((r) => m[4 * r] * (ni / 2) + m[4 * r + 1] * (nj / 2) + m[4 * r + 2] * (nk / 2) + m[4 * r + 3]);
   centre.forEach((v, k) => view.setFloat32(78 + 4 * k, v, false));
-  const src = volume.data;
-  for (let i = 0, at = 284; i < n; ++i, at += per) {
-    const v = src[i];
-    if (as === "uint8") view.setUint8(at, v);
-    else if (as === "int16") view.setInt16(at, v, false);
-    else if (as === "int32") view.setInt32(at, v, false);
-    else view.setFloat32(at, v, false);
-  }
   return out;
 }
 

@@ -611,6 +611,8 @@ class Registration {
       maxBytes: MAX_BYTES,
       // A folder to write into: the full resolution is then saved in blocks if it is larger than fits.
       ...(folder ? { folder, folderName: base + suffix } : {}),
+      // A file to write into: likewise, in slabs.
+      ...(file ? { file } : {}),
     };
     try {
       this.note("Reading…");
@@ -621,7 +623,7 @@ class Registration {
       );
       let where: string;
       if (saved.written) {
-        where = `${folder!.name}/${base}${suffix}`;
+        where = folder ? `${folder.name}/${base}${suffix}` : file!.name;
       } else if (format === "zarr") {
         const files = new Map(saved.files);
         if (folder) {
