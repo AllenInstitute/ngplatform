@@ -13,9 +13,10 @@
  */
 import type { Disposer, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { omeZarrUrl } from "../volume-view/sources.js";
-import { SeriesClient, type SeriesInfo } from "./client.js";
+import { type ReadPlan, SeriesClient, type SeriesInfo } from "./client.js";
 import { TIME_SERIES_PANEL } from "./manifest.js";
 import { Plot, type PlotSeries } from "./plot.js";
+import { describePlan, movingPlan } from "./reader.js";
 import { type AnnotationJson, regionVoxels, shapeOf } from "./region.js";
 import {
   COLOURS,
@@ -99,6 +100,8 @@ const STYLE = `
 .ts-plot .ts-axis { stroke: var(--line-strong); stroke-width: 1; }
 .ts-plot .ts-tick { fill: var(--faint); font: 10px var(--mono); }
 .ts-plot .ts-line { fill: none; stroke-width: 2; stroke-linejoin: round; }
+.ts-plot .ts-coarse { stroke-dasharray: 5 3; }
+.ts-plot .ts-coarse-note { fill: var(--warn); }
 .ts-plot .ts-now { stroke: var(--warn); stroke-width: 1.5; }
 .ts-plot .ts-cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 2; }
 .ts-plot .ts-dot { stroke: var(--ink-2); stroke-width: 2; }
@@ -134,9 +137,24 @@ function readSaved(value: unknown): Saved {
 interface Read {
   key: string;
   values?: Float32Array;
+  /** The values are a coarse read (what, in words) until the finest replace them. */
+  coarse?: string;
   error?: string;
   controller?: AbortController;
 }
+
+/** The voxel under the mouse and its series. */
+interface Cursor {
+  voxel: number[];
+  read: Read;
+  /** The finest values are read, or being read. */
+  fine: boolean;
+  /** The quick read (cached finest values, else a coarse read) while it runs. */
+  quick?: Promise<void>;
+}
+
+/** How long the mouse rests on a voxel before its finest values are read, when they are slow to read. */
+const REST_MS = 400;
 
 /** The colour of the series under the mouse: the docks' text colour, apart from the pins'. */
 const CURSOR_COLOUR = "#dedede";
@@ -153,8 +171,9 @@ class TimeSeries {
   private axis: TimeAxis | undefined;
   private axisNote: string | undefined;
   private current = 0;
-  private cursor: { voxel: number[]; read: Read } | undefined;
+  private cursor: Cursor | undefined;
   private cursorTimer: ReturnType<typeof setTimeout> | undefined;
+  private restTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly pinned = new Map<number, Read>();
   private status = "";
   private statusError = false;
@@ -193,9 +212,12 @@ class TimeSeries {
       }),
       ctx.viewer.onCursorChanged(() => {
         clearTimeout(this.cursorTimer);
+        clearTimeout(this.restTimer);
         this.cursorTimer = setTimeout(() => this.readCursor(), 80);
+        this.restTimer = setTimeout(() => this.readCursorFine(), REST_MS);
       }),
       () => clearTimeout(this.cursorTimer),
+      () => clearTimeout(this.restTimer),
       () => this.pause(),
       () => this.client.dispose(),
     );
@@ -312,7 +334,7 @@ class TimeSeries {
 
   // ------------------------------------------------------------- reading
 
-  /** Reads a mean time course into `read`, then redraws. */
+  /** Reads a mean time course (the finest level's) into `read`, then redraws. */
   private readInto(read: Read, voxels: Int32Array, what: string): void {
     const url = this.infoUrl;
     if (url === undefined) return;
@@ -333,6 +355,7 @@ class TimeSeries {
       .then(
         (values) => {
           read.values = values;
+          read.coarse = undefined;
           read.error = undefined;
           read.controller = undefined;
           this.setStatus("");
@@ -351,25 +374,85 @@ class TimeSeries {
       );
   }
 
-  /** The voxel under the mouse: its time course, unless it is the one shown. */
-  private readCursor(): void {
+  /** The image voxel under the mouse, if it is over the image. */
+  private cursorVoxel(): number[] | undefined {
     const cursor = this.ctx.viewer.cursor();
     const { map, info } = this;
-    if (!cursor.active || map === undefined || info === undefined) return;
+    if (!cursor.active || map === undefined || info === undefined) return undefined;
     // The mouse's position, ordered as the state's dimensions; the layer's local ones where it is.
     const place = this.place();
     const position = place.space.names.map((n, i) => {
       const at = cursor.names.indexOf(n);
       return at === -1 ? place.position[i] : cursor.position[at];
     });
-    const voxel = voxelAt(map, info, position);
-    if (voxel === undefined) return;
+    return voxelAt(map, info, position);
+  }
+
+  /**
+   * The voxel under the mouse: its time course, unless it is the one
+   * shown.  When the finest level's series is slow to read (a long series
+   * in large chunks), the mouse moving reads it only if it is in the cache
+   * already, else a coarse read (`movingPlan`: a coarser level, or one time
+   * chunk in several); the finest is read once the mouse rests.
+   */
+  private readCursor(): void {
+    const info = this.info;
+    const voxel = this.cursorVoxel();
+    if (voxel === undefined || info === undefined) return;
     if (this.cursor !== undefined && this.cursor.voxel.join() === voxel.join()) return;
     this.cursor?.read.controller?.abort();
     const read: Read = { key: voxel.join() };
-    this.cursor = { voxel, read };
-    this.readInto(read, Int32Array.from(voxel), "the voxel under the mouse");
+    const plan = movingPlan(info);
+    const cursor: Cursor = { voxel, read, fine: plan === undefined };
+    this.cursor = cursor;
+    if (plan === undefined) this.readInto(read, Int32Array.from(voxel), "the voxel under the mouse");
+    else cursor.quick = this.readQuick(cursor, plan);
     this.update?.();
+  }
+
+  /** The finest values if the worker has them, else a coarse read. */
+  private async readQuick(cursor: Cursor, plan: ReadPlan): Promise<void> {
+    const url = this.infoUrl;
+    const info = this.info;
+    if (url === undefined || info === undefined) return;
+    const { read, voxel } = cursor;
+    const controller = (read.controller = new AbortController());
+    const { signal } = controller;
+    try {
+      const cached = await this.client.meanIfCached(url, Int32Array.from(voxel), signal);
+      if (signal.aborted) return;
+      if (cached !== undefined) {
+        cursor.fine = true;
+        read.values = cached;
+        read.coarse = undefined;
+      } else {
+        const values = await this.client.mean(url, Int32Array.from(voxel), { signal, plan });
+        if (signal.aborted) return;
+        read.values = values;
+        read.coarse = describePlan(info, plan);
+      }
+      read.error = undefined;
+      read.controller = undefined;
+      this.drawPlot();
+    } catch (e) {
+      if (signal.aborted) return;
+      read.controller = undefined;
+      read.error = (e as Error).message;
+      this.setStatus(`Could not read the voxel under the mouse: ${read.error}`, true);
+    }
+  }
+
+  /** The mouse at rest: the finest values of the voxel under it, after any coarse read running. */
+  private readCursorFine(): void {
+    const cursor = this.cursor;
+    if (cursor === undefined || cursor.fine) return;
+    // Only for the voxel still under the mouse (not the last one before it left the image).
+    if (this.cursorVoxel()?.join() !== cursor.voxel.join()) return;
+    cursor.fine = true;
+    void (cursor.quick ?? Promise.resolve()).finally(() => {
+      const done = cursor.read.values !== undefined && cursor.read.coarse === undefined;
+      if (this.cursor === cursor && !done) this.readInto(cursor.read, Int32Array.from(cursor.voxel), "the voxel under the mouse");
+    });
   }
 
   /** The voxels a pin averages over, or why there are none. */
@@ -414,7 +497,7 @@ class TimeSeries {
       const read: Read = { key };
       this.pinned.set(pin.id, read);
       // A pinned voxel already read under the mouse needs no reading again.
-      if (pin.voxel !== undefined && this.cursor?.voxel.join() === pin.voxel.join() && this.cursor.read.values !== undefined) {
+      if (pin.voxel !== undefined && this.cursor?.voxel.join() === pin.voxel.join() && this.cursor.read.values !== undefined && this.cursor.read.coarse === undefined) {
         read.values = this.cursor.read.values;
         continue;
       }
@@ -553,7 +636,10 @@ class TimeSeries {
   private plotted(): (PlotSeries & { id?: number })[] {
     const out: (PlotSeries & { id?: number })[] = [];
     const info = this.info;
-    if (this.cursor?.read.values !== undefined && info !== undefined) out.push({ label: `Mouse (${voxelLabel(info, this.cursor.voxel)})`, values: this.cursor.read.values, colour: CURSOR_COLOUR });
+    const read = this.cursor?.read;
+    if (read?.values !== undefined && info !== undefined) {
+      out.push({ label: `Mouse (${voxelLabel(info, this.cursor!.voxel)})${read.coarse !== undefined ? " coarse" : ""}`, values: read.values, colour: CURSOR_COLOUR, coarse: read.coarse });
+    }
     for (const pin of this.saved.pins) {
       const values = this.pinned.get(pin.id)?.values;
       if (pin.layer === this.layer() && values !== undefined) out.push({ id: pin.id, label: pin.label, values, colour: COLOURS[pin.colour] });
@@ -665,7 +751,8 @@ class TimeSeries {
       // The legend: every series plotted or pinned, pins removable.
       const keys: Node[] = [];
       if (this.cursor !== undefined && this.info !== undefined) {
-        keys.push(el("span", { class: "ts-key" }, swatch(CURSOR_COLOUR), `Mouse: ${voxelLabel(this.info, this.cursor.voxel)}`));
+        const coarse = this.cursor.read.coarse;
+        keys.push(el("span", { class: "ts-key", title: coarse === undefined ? "" : "Read coarsely while the mouse moves; the finest values are read when it rests" }, swatch(CURSOR_COLOUR), `Mouse: ${voxelLabel(this.info, this.cursor.voxel)}${coarse !== undefined ? ` (coarse: ${coarse})` : ""}`));
       } else if (ready) {
         keys.push(el("span", { class: "ts-key" }, "Move the mouse over the image to plot its time course."));
       }

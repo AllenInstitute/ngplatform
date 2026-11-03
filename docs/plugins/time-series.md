@@ -51,7 +51,11 @@ sweep along `t`.
 
 The finest resolution is read, chunk by chunk along time; the first voxel
 in a new part of a long series takes a moment (the tab shows the
-progress), and voxels near it are then immediate.
+progress), and voxels near it are then immediate. When that read is large
+(a long series in large chunks), the voxel under the moving mouse is read
+coarsely first: a sample of the time points, or a coarser resolution
+where that is cheaper. The plot draws it dashed and says **coarse** until
+the mouse rests on a voxel for a moment and its full values arrive.
 
 ## Notes from users
 

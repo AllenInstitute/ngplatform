@@ -4,10 +4,11 @@
  * one chunk cache.
  *
  * In:  { type: "open", id, url }
- *      { type: "mean", id, url, voxels: Int32Array }
+ *      { type: "mean", id, url, voxels: Int32Array, plan?: ReadPlan }
+ *      { type: "cached", id, url, voxels: Int32Array }  (the finest level's mean if no chunk need be read)
  *      { type: "cancel", id }
  * Out: { type: "opened", id, info }
- *      { type: "mean", id, values: Float32Array }
+ *      { type: "mean", id, values: Float32Array | null }
  *      { type: "progress", id, done, total }
  *      { type: "error", id, message }
  */
@@ -47,8 +48,12 @@ self.onmessage = (event: MessageEvent) => {
     work = readerOf(msg.url).then((r) => postMessage({ type: "opened", id: msg.id, info: r.info }));
   } else if (msg.type === "mean") {
     work = readerOf(msg.url)
-      .then((r) => r.mean(msg.voxels, signal, progress))
+      .then((r) => r.mean(msg.voxels, signal, progress, msg.plan))
       .then((values) => postMessage({ type: "mean", id: msg.id, values }, { transfer: [values.buffer] }));
+  } else if (msg.type === "cached") {
+    work = readerOf(msg.url)
+      .then((r) => r.meanIfCached(msg.voxels))
+      .then((values) => postMessage({ type: "mean", id: msg.id, values: values ?? null }, { transfer: values ? [values.buffer] : [] }));
   } else {
     work = Promise.reject(new Error(`unknown request ${msg.type}`));
   }

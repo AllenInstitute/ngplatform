@@ -22,9 +22,9 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
 | `space.ts` | Positions (global, and a layer's local dimensions after them: `Place`) to a layer's source coordinates and back, in any number of dimensions (`LayerMap`). |
 | `series.ts` | The time axis as the views show it (its global dimension, start, step and unit), the voxel at a position, stepping, colours, percent change, CSV. |
 | `region.ts` | Boxes and ellipsoids from annotation layers; the image voxels whose centres are inside one. |
-| `reader.ts` | `SeriesReader`: an OME-Zarr image's finest level read along time at some voxels, averaged; a byte-bounded chunk cache. |
+| `reader.ts` | `SeriesReader`: an OME-Zarr image's levels read along time at some voxels, averaged (the finest, or a coarse read while the mouse moves: `movingPlan`); a byte-bounded chunk cache. |
 | `worker.ts`, `client.ts` | The reader in a worker. |
-| `plot.ts` | The SVG plot: ticks, lines broken at missing values, the current time, a crosshair readout, click to pick a time. |
+| `plot.ts` | The SVG plot: ticks, lines broken at missing values (a coarse series dashed and joined across them), the current time, a crosshair readout, click to pick a time. |
 | `tests/` | `time_series.test.ts`; `fixtures/tiny.nii.gz` (6 × 5 × 4 voxels × 12 time points, from `fixtures/generate.py` with nibabel). |
 
 ## How it works
@@ -63,6 +63,25 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   again. A region's voxels are grouped by chunk and averaged per time point
   (missing values left out). The pointer is read 80 ms after it stops; a
   newer voxel cancels the older read.
+- **Coarse reads while the mouse moves.** When one voxel's full read of
+  the finest level would decode more than 32 MB (a long series in large
+  chunks: 1200 time points of 64³ float32 chunks is 1.26 GB), the voxel
+  under a moving mouse is read cheaply first: the finest values if every
+  chunk they need is in the cache already, else `movingPlan` (`reader.ts`):
+  the densest sampling of time, and at it the finest level, whose read
+  fits in 32 MB, keeping at least 16 time points (one time chunk in 2, 4,
+  8… along time, the others left out; a coarser level only where its chunks
+  hold fewer voxels, a level being read at the voxel whose centre is
+  nearest). Only coarser levels with every time point are used; their
+  place in the finest level's voxels comes from the datasets' scales and
+  translations (else from the shapes). The plot draws such a series dashed,
+  joined across the time points not read, says "coarse (…) until the
+  finest values are read" at its top right, and the legend says
+  "(coarse: …)". When the mouse rests 400 ms on a voxel, its finest
+  values are read (after any coarse read running), with the progress
+  shown. A NIfTI read in place has chunks of 64³ at every level, so a
+  coarser level is no cheaper there and the coarse read is a sample of
+  time points.
 - **Playing.** Each time point shown moves the position with
   `setPosition(…, { quiet: true })`: the workspace store
   (`WorkspaceStore.quietly`) amends the current undo step with it rather
@@ -99,13 +118,13 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   (`t'`): the time point shown is the layer's local position, the value at
   the mouse equals Neuroglancer's and nibabel's, Next and Play move the
   local position, and four ticks of playing at 1/s add no undo step.
+  A long NIfTI (64 × 64 × 48 × 200 int16, 157 MB a voxel decoded): the
+  moving mouse plots one time point in 8, dashed and marked coarse; at
+  rest the finest values replace it, equal to nibabel's at every time
+  point; moving within the chunks read plots the finest at once.
 
 ## Not done
 
-- **Coarser levels.** Only the finest level is read: a long series with
-  large chunks (1200 time points of 64³ float32 chunks) reads about a
-  gigabyte the first time the mouse enters a chunk. Reading a coarser level
-  while the mouse moves, then the finest when it rests, would help.
 - **CIFTI time series on surfaces.** A `.dtseries.nii` beside a GIFTI
   surface is served as each vertex's mean and SD over time
   (`src/virtual/vectors/surfaces.ts`, `ciftiSeriesStats` in `cifti.ts`).
