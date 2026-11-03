@@ -2,12 +2,9 @@ name: CI
 
 # Unit tests and type-check, then a build of the app against the pinned
 # commit of the zarr-vectors Neuroglancer fork.  While this is pilot work it
-# runs only on pushes to main that change code (the tests also run locally
-# before every push), or by hand from the Actions tab.
+# runs only by hand, from the Actions tab (the tests run locally before every
+# push).
 on:
-  push:
-    branches: [main]
-    paths-ignore: ["**.md", "docs/**"]
   workflow_dispatch:
 
 # A newer push to the same branch replaces a run still in progress.
