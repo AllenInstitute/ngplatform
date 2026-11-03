@@ -62,8 +62,10 @@ button, and follow the layer when it is moved (Registration).
 A 4-D NIfTI opened from this computer works too (its coarser levels are
 means, which for spherical harmonics are mean ODFs); its fourth axis is
 made the layer's own (`t'`) so the views do not step through components.
-Direction colour needs the components stored together, as OME-Zarr with
-whole chunks along `c`; the plugin's README says how to write one.
+Direction colour works on it when its header does not mark the fourth axis
+as time (no time unit and step), since the app then keeps up to 128
+components together in each chunk; otherwise write it as OME-Zarr with
+whole chunks along `c` (the plugin's README says how).
 
 ## Notes from users
 

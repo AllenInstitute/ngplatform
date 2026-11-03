@@ -321,6 +321,19 @@ describe("NIfTI as Zarr", () => {
     expect(level.at(1, 2, 3, 1)).toBe((1 + 6 * (2 + 5 * (3 + 4 * 1))) % 250);
   });
 
+  it("keeps a short 4th axis that is not a time series whole in each chunk (as spherical harmonics)", async () => {
+    const dim = [70, 9, 8, 45];
+    const s = await store(nifti({ dim, value: (n) => n % 251, datatype: 2 }));
+    const array = await json(s, "0/zarr.json");
+    expect(array.chunk_grid.configuration.chunk_shape).toEqual([45, 28, 9, 8]);
+    const level = await readLevel(s, 0);
+    expect(level.at(69, 8, 7, 44)).toBe((70 * 9 * 8 * 45 - 1) % 251);
+    expect(level.at(40, 3, 2, 17)).toBe((40 + 70 * (3 + 9 * (2 + 8 * 17))) % 251);
+    // A time series of the same length keeps one volume a chunk.
+    const series = await store(nifti({ dim, pixdim: [1, 1, 1, 2], units: 2 | 8, value: (n) => n % 251, datatype: 2 }));
+    expect((await json(series, "0/zarr.json")).chunk_grid.configuration.chunk_shape).toEqual([1, 64, 9, 8]);
+  });
+
   it("reads .nii.gz, decompressing only the header until a chunk is asked for", async () => {
     const bytes = nifti({ dim: [20, 19, 18], value });
     const gz = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer());

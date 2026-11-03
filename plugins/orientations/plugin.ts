@@ -746,7 +746,7 @@ class Orientations {
     const level0 = opened.levels[0];
     if (level0.componentChunk < level0.components) {
       // Neuroglancer's shaders see a channel dimension only whole in one chunk.
-      this.ctx.ui.toast(`Direction colour needs each voxel's ${level0.components} components in one chunk; this image stores ${level0.componentChunk} per chunk (a 4-D NIfTI read in place stores one). Write it as OME-Zarr with whole channel chunks (see the plugin's README).`, "error");
+      this.ctx.ui.toast(`Direction colour needs each voxel's ${level0.components} components in one chunk; this image stores ${level0.componentChunk} per chunk (a 4-D NIfTI whose header marks its 4th axis as time stores one). Write it as OME-Zarr with whole channel chunks (see the plugin's README).`, "error");
       return;
     }
     const edit = this.channelEdit(target.name, "^");

@@ -263,6 +263,8 @@ export interface DisplayWindow {
 const LABEL_INTENTS = new Set([1002, 1003]);
 const CHUNK = 64;
 const CHUNK_2D = 256;
+/** A 4th axis this long or shorter, and not a time series, is kept whole in each chunk. */
+const WHOLE_EXTRA = 128;
 
 interface Level {
   /** Voxels along i, j, k. */
@@ -301,6 +303,13 @@ export class NiftiStore implements VirtualStore {
   readonly shape: number[];
   /** The axis before the spatial ones: time points, components (vectors, tensors), or none. */
   readonly extra: { name: "t" | "c"; size: number } | undefined;
+  /**
+   * Whether each chunk holds the whole extra axis: always for components,
+   * and for a short 4th axis that is not a time series (no time unit and
+   * step in the header), such as spherical-harmonic coefficients or
+   * tensors, so they can be read together (as a channel) in one chunk.
+   */
+  private readonly wholeExtra: boolean;
   readonly inType: DType;
   readonly outType: DType;
   readonly label: boolean;
@@ -339,6 +348,8 @@ export class NiftiStore implements VirtualStore {
     const nc = n(5) * n(6) * n(7);
     if (nt > 1 && nc > 1) throw new Error("NIfTI images with both time points and components are not read yet");
     this.extra = nt > 1 ? { name: "t", size: nt } : nc > 1 ? { name: "c", size: nc } : undefined;
+    const timeSeries = timeUnit(h) !== undefined && Number.isFinite(h.pixdim[4]) && h.pixdim[4] > 0;
+    this.wholeExtra = this.extra !== undefined && (this.extra.name === "c" || (this.extra.size <= WHOLE_EXTRA && !timeSeries));
     const slope = h.sclSlope;
     const inter = Number.isFinite(h.sclInter) ? h.sclInter : 0;
     this.scale = Number.isFinite(slope) && slope !== 0 && (slope !== 1 || inter !== 0) ? { slope, inter } : undefined;
@@ -361,7 +372,10 @@ export class NiftiStore implements VirtualStore {
   private pyramid(): Level[] {
     const m = this.affine.matrix;
     const spacing = [0, 1, 2].map((a) => Math.hypot(m[0][a], m[1][a], m[2][a]) || 1);
-    const chunk = this.shape[2] > 1 ? [CHUNK, CHUNK, CHUNK] : [CHUNK_2D, CHUNK_2D, 1];
+    // With the extra axis whole, smaller spatial chunks: about four single-volume chunks' voxels each.
+    const volumes = this.wholeExtra ? this.extra!.size : 1;
+    const side = (c: number, d: number) => Math.max(8, Math.min(c, Math.floor(((4 * c ** d) / volumes) ** (1 / d))));
+    const chunk = this.shape[2] > 1 ? [side(CHUNK, 3), side(CHUNK, 3), side(CHUNK, 3)] : [side(CHUNK_2D, 2), side(CHUNK_2D, 2), 1];
     const levels: Level[] = [{ size: this.shape, factor: [1, 1, 1], step: [1, 1, 1], chunk: chunk.map((c, a) => Math.min(c, this.shape[a])) }];
     while (levels.length < 16) {
       const last = levels[levels.length - 1];
@@ -536,7 +550,7 @@ export class NiftiStore implements VirtualStore {
       node_type: "array",
       shape: [...extra, ...size],
       data_type: this.outType,
-      chunk_grid: { name: "regular", configuration: { chunk_shape: [...(this.extra?.name === "c" ? extra : this.extra ? [1] : []), ...chunk] } },
+      chunk_grid: { name: "regular", configuration: { chunk_shape: [...(this.wholeExtra ? extra : this.extra ? [1] : []), ...chunk] } },
       chunk_key_encoding: { name: "default", configuration: { separator: "/" } },
       fill_value: 0,
       codecs: [
@@ -564,7 +578,7 @@ export class NiftiStore implements VirtualStore {
     const at = chunk[2].split("/").map(Number);
     if (at.length !== (this.extra ? 4 : 3)) return undefined;
     const e = this.extra ? at[0] : 0;
-    if (this.extra !== undefined && e >= (this.extra.name === "t" ? this.extra.size : 1)) return undefined;
+    if (this.extra !== undefined && e >= (this.wholeExtra ? 1 : this.extra.size)) return undefined;
     const b = at.slice(at.length - 3);
     if (b.some((v, a) => v * level.chunk[a] >= level.size[a])) return undefined;
     return this.chunk(index, e, b);
@@ -572,7 +586,7 @@ export class NiftiStore implements VirtualStore {
 
   /** The 3-D volumes (in file order) in chunks with extra index `e`. */
   private volumesOf(e: number): number[] {
-    if (this.extra?.name === "c") return Array.from({ length: this.extra.size }, (_, c) => c);
+    if (this.wholeExtra) return Array.from({ length: this.extra!.size }, (_, c) => c);
     return [e];
   }
 

@@ -194,8 +194,9 @@ weighted by GFA).
 Neuroglancer shows a channel dimension only when each chunk holds all of
 it, so direction colour needs stores chunked whole along `c` (as
 `make_dipy_example.py` and the synthetic stores are). A 4-D NIfTI read in
-place stores one component per chunk, so it gets glyphs but not direction
-colour; its fourth axis, `t`, is made a local dimension of the layer (`t'`)
+place keeps its fourth axis whole in each chunk when it is short (≤ 128)
+and the header does not mark it as time, so it gets direction colour too;
+a time series stores one volume per chunk and gets glyphs only. Its fourth axis, `t`, is made a local dimension of the layer (`t'`)
 when the plugin opens it, so the views do not step through components.
 
 ### Under the cursor
