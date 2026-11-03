@@ -98,11 +98,14 @@ is to come).
   drawing (the workspace's own undo otherwise).
 - **Labels** lists the labels painted, with voxels and volume; click one to
   draw with it. Choose each label's colour and name beside the label number;
-  **New label** takes the next unused one.
+  **New label** takes the next unused one. **Erase label** removes the
+  active label everywhere, **Merge into…** gives its voxels another label
+  (both undoable).
 - **Save**: NIfTI (.nii.gz, marked as labels) or an OME-Zarr folder (in a
   zip where the browser cannot write folders). **Only the painted box**
   saves the box round what is painted, placed where it was. OME-Zarr writes
-  only the painted chunks, so it suits large grids; NIfTI holds every voxel.
+  only the painted chunks, so it suits large grids, and carries the labels'
+  names and colours (OME-NGFF `image-label`); NIfTI holds every voxel.
 
 !!! warning "Save before you leave"
     A label volume lives in the page until saved. While you draw it is also

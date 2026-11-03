@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { openNifti } from "../../../src/virtual/images/nifti.js";
 import { VolumeReader } from "../../volume-view/volume_reader.js";
 import { History, Stroke } from "../segmentation/history.js";
-import { ballReach, ballShape, dabsBetween, distance2d, floodFill, type ImageBlock, inRange, interpolate, paintBall, sameLabel, type Vec3, voxelIndex } from "../segmentation/kernels.js";
+import { ballReach, ballShape, dabsBetween, distance2d, floodFill, type ImageBlock, inRange, interpolate, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "../segmentation/kernels.js";
 import { LabelVolume } from "../segmentation/label_volume.js";
 import { component, otsu, THRESHOLD_SELECT } from "../segmentation/quick_select.js";
 import { cropped, niftiGz, omeZarr } from "../segmentation/save.js";
@@ -226,6 +226,31 @@ describe("fills", () => {
   });
 });
 
+describe("relabelling", () => {
+  it("merges one label into another, and erases one, undoably", () => {
+    const v = vol();
+    const s = new Stroke(v);
+    paintBall(s, [10, 10, 10], ballShape(2, "voxels"), { value: 1 });
+    paintBall(s, [80, 70, 60], ballShape(2, "voxels"), { value: 2 });
+    s.finish();
+    const history = new History();
+    const m = new Stroke(v);
+    expect(relabel(m, 2, 1)).toBe(33);
+    m.finish();
+    history.push(m);
+    expect(count(v, 1)).toBe(66);
+    expect(count(v, 2)).toBe(0);
+    const e = new Stroke(v);
+    relabel(e, 1, 0);
+    e.finish();
+    expect(v.chunkCount).toBe(0);
+    history.push(e);
+    history.undo();
+    history.undo();
+    expect(count(v, 2)).toBe(33);
+  });
+});
+
 describe("interpolation between sections", () => {
   it("measures Euclidean distances to the nearest set pixel", () => {
     const seed = new Uint8Array(25);
@@ -379,7 +404,9 @@ describe("saving", () => {
     const s = new Stroke(v);
     s.set(250, 150, 90, 4);
     s.finish();
-    const files = await omeZarr(v);
+    const files = await omeZarr(v, undefined, undefined, [{ value: 4, name: "Soma", colour: "#ff8000" }]);
+    const group = JSON.parse(new TextDecoder().decode(files.get("zarr.json")));
+    expect(group.attributes.ome["image-label"]).toEqual({ colors: [{ "label-value": 4, rgba: [255, 128, 0, 255] }], properties: [{ "label-value": 4, name: "Soma" }] });
     const chunks = [...files.keys()].filter((k) => k.includes("/c/"));
     // Four levels: 300 voxels halved to 38, under a chunk's side.
     expect(chunks).toEqual(["0/c/1/2/3", "1/c/0/1/1", "2/c/0/0/0", "3/c/0/0/0"]);

@@ -211,6 +211,25 @@ export function floodFill(
   return { changed, reached, limited };
 }
 
+/** Every voxel of label `from` becomes `to` (0 erases it): a merge, or a label removed.  Returns the voxels changed. */
+export function relabel(stroke: Stroke, from: number, to: number): number {
+  const volume = stroke.volume;
+  if (from === to || from === 0) return 0;
+  let changed = 0;
+  for (const key of volume.keys()) {
+    const c = volume.chunk(key)!;
+    const [cx, cy, cz] = volume.coords(key);
+    for (let i = 0; i < c.length; ++i) {
+      if (c[i] !== from) continue;
+      const x = cx * 64 + (i & 63);
+      const y = cy * 64 + ((i >> 6) & 63);
+      const z = cz * 64 + (i >> 12);
+      if (stroke.set(x, y, z, to)) ++changed;
+    }
+  }
+  return changed;
+}
+
 // ------------------------------------------------------------ interpolation
 
 /** Squared distances along a line to the nearest zero of `f` (0 where set, Infinity elsewhere): Felzenszwalb and Huttenlocher's lower envelope. */

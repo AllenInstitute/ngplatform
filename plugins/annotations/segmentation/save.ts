@@ -29,8 +29,23 @@ export async function niftiGz(volume: LabelVolume, description = ""): Promise<Ui
 }
 
 /** An OME-Zarr (Zarr v3, gzipped chunks) of the volume's pyramid, as files by path; chunks not painted are left out. */
-export async function omeZarr(volume: LabelVolume, description?: string, progress?: (done: number, total: number) => void): Promise<Map<string, Uint8Array>> {
+export async function omeZarr(
+  volume: LabelVolume,
+  description?: string,
+  progress?: (done: number, total: number) => void,
+  labels: { value: number; name?: string; colour?: string }[] = [],
+): Promise<Map<string, Uint8Array>> {
   const files = omeZarrMetadata(volume.levels, volume.type, volume.name, { label: true, chunk: CHUNK, description });
+  if (labels.length) {
+    // Names and colours as OME-NGFF's label images carry them ("image-label").
+    const group = JSON.parse(new TextDecoder().decode(files.get("zarr.json")));
+    const rgba = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).concat(255);
+    group.attributes.ome["image-label"] = {
+      colors: labels.filter((l) => l.colour).map((l) => ({ "label-value": l.value, rgba: rgba(l.colour!) })),
+      properties: labels.map((l) => ({ "label-value": l.value, ...(l.name ? { name: l.name } : {}) })),
+    };
+    files.set("zarr.json", new TextEncoder().encode(JSON.stringify(group, null, 1)));
+  }
   const todo: [number, number, number, number][] = [];
   for (let level = 0; level < volume.levels.length; ++level) {
     const seen = new Set<string>();

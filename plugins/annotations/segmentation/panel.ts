@@ -21,7 +21,7 @@ import { button, download, el, field, fileName, fmt, numberInput, physical, sele
 import { type ImageLevel, layerStore, readableImages, type Voxels } from "../voxels.js";
 import { storeOf } from "../../volume-view/sources.js";
 import { Stroke } from "./history.js";
-import { ballReach, ballShape, dabsBetween, floodFill, type ImageBlock, inRange, interpolate, type Paint, paintBall, sameLabel, type Vec3, voxelIndex } from "./kernels.js";
+import { ballReach, ballShape, dabsBetween, floodFill, type ImageBlock, inRange, interpolate, type Paint, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "./kernels.js";
 import { LABEL_MAX, type LabelType, LabelVolume } from "./label_volume.js";
 import { Painter, type ViewPoint } from "./painter.js";
 import { type Prompt, QuickSelectRegistry } from "./quick_select.js";
@@ -590,6 +590,26 @@ export class Segmentation {
     });
   }
 
+  /** The active label, everywhere, becomes another (asked for when not given; 0 erases it). */
+  private async relabelActive(to?: number): Promise<void> {
+    const session = this.current;
+    if (session === undefined) return;
+    const from = this.value;
+    if (to === undefined) {
+      const answer = await this.ctx.ui.form<{ label: number }>(`Merge label ${from} into`, { type: "object", properties: { label: { type: "integer", title: "Label", minimum: 1, maximum: LABEL_MAX[session.volume.type] } }, required: ["label"] }, { label: from === 1 ? 2 : 1 });
+      if (answer === undefined) return;
+      to = answer.label;
+    } else if (!(await this.ctx.ui.confirm(`Erase label ${from} everywhere? (Undo brings it back.)`))) return;
+    const target = to;
+    this.enqueue(() => {
+      const stroke = new Stroke(session.volume);
+      const n = relabel(stroke, from, target);
+      this.ctx.ui.toast(target === 0 ? `Erased label ${from}: ${n.toLocaleString()} voxels.` : `Label ${from} is now ${target}: ${n.toLocaleString()} voxels.`);
+      if (target > 0) this.value = target;
+      this.commit(stroke, session, target);
+    });
+  }
+
   /** Counts the labels a little after strokes stop. */
   private recount(): void {
     clearTimeout(this.countsTimer);
@@ -634,7 +654,8 @@ export class Segmentation {
     try {
       let where: string;
       if (zarr) {
-        const files = await omeZarr(out, description, (done, total) => this.setNote(`Writing: ${Math.round((100 * done) / total)}%`));
+        const labels = [...session.counts.keys()].sort((a, b) => a - b).map((value) => ({ value, name: session.labels.get(value)?.name || undefined, colour: session.colour(value) }));
+        const files = await omeZarr(out, description, (done, total) => this.setNote(`Writing: ${Math.round((100 * done) / total)}%`), labels);
         if (folder) {
           const root = await folder.getDirectoryHandle(base + suffix, { create: true });
           for (const [path, bytes] of files) {
@@ -838,7 +859,9 @@ export class Segmentation {
       this.update?.();
     });
     const next = button("New label", () => {
-      const used = new Set([...this.counts.keys(), ...session.labels.keys()]);
+      // Counted now: the counts shown may wait for the last stroke.
+      session.counts = session.volume.counts();
+      const used = new Set([...session.counts.keys(), ...session.labels.keys()]);
       let v = 1;
       while (used.has(v) && v < max) ++v;
       this.value = v;
@@ -947,6 +970,14 @@ export class Segmentation {
       intensity,
       el("h4", { class: "an-sub" }, "Labels"),
       table,
+      rows.length
+        ? el(
+            "div",
+            { class: "an-row" },
+            button(`Erase label ${this.value}`, () => void this.relabelActive(0), "Remove this label everywhere (undoable)"),
+            button(`Merge ${this.value} into…`, () => void this.relabelActive(), "Give this label's voxels another label (undoable)"),
+          )
+        : "",
       el("h4", { class: "an-sub" }, "Save"),
       el(
         "div",

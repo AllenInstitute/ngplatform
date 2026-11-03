@@ -78,6 +78,7 @@ Neuroglancer reads its chunks again (see the plugin's README).
 | Undo / redo | **Undo**, **Redo** of strokes (`Ctrl+Z`, `Ctrl+Shift+Z` while drawing), within a memory budget | Now |
 | Trace (lasso) | Draw an outline with the brush and **Fill 2-D** inside it; a lasso tool proper | Later |
 | Interpolation between sections (V) | **Interpolate** (++v++): shape-based (signed distances, weighted by nearness) through the unlabelled sections between drawn sections of the active label, across the view last drawn in | Now |
+| 3-D flood fill to relabel a segment (fixing splits and merges by hand) | **Merge into…** and **Erase label** on the active label, everywhere | Now |
 | Segments list, statistics, CSV | **Labels** table (voxels, volume); names and colours; the **Statistics** section (an image's values in a label) with CSV | Now |
 | Import / export | **Open** a NIfTI label image; **Save** as NIfTI (.nii.gz, label intent) or OME-Zarr (only painted chunks written), optionally only the painted box | Now |
 | Pen tablet | Pointer events would give pressure; not yet used | Later |
