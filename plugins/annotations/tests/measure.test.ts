@@ -149,6 +149,9 @@ describe("formatting", () => {
     expect(physical(0.0042)).toBe("4.2 µm");
     expect(physical(0.5, 3)).toBe("0.5 mm³");
     expect(physical(2e-9, 3)).toBe("2 µm³");
+    // A stroke on EM: 0.089 µm³, not 8.9e+7 nm³.
+    expect(physical(8.9e-11, 3)).toBe("0.089 µm³");
+    expect(physical(0.02, 2)).toBe("0.02 mm²");
   });
 
   it("quotes CSV fields that need it", () => {

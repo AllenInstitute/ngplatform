@@ -69,8 +69,10 @@ export function physical(mm: number, power: 1 | 2 | 3 = 1): string {
   ];
   const sup = power === 1 ? "" : power === 2 ? "²" : "³";
   const a = Math.abs(mm);
+  // The largest unit the value is not too small in: 0.1 of a length, 0.001 of a volume.
+  const least = 0.1 ** power;
   for (const [name, size] of units) {
-    if (a >= size ** power * 0.1 || name === "nm") return `${fmt(mm / size ** power)} ${name}${sup}`;
+    if (a >= size ** power * least || name === "nm") return `${fmt(mm / size ** power)} ${name}${sup}`;
   }
   return `${fmt(mm)} mm${sup}`;
 }

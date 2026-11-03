@@ -24,6 +24,16 @@ export interface Paint {
   where?: (x: number, y: number, z: number) => boolean;
 }
 
+/**
+ * The voxel a coordinate (integers at voxel centres) is in, as Neuroglancer
+ * shows it: a position on the boundary between two (as a view's position
+ * often is, voxel centres being at halves) belongs to the upper one, with a
+ * little room for rounding on the way.
+ */
+export function voxelIndex(c: number): number {
+  return Math.floor(c + 0.5 + 1e-3);
+}
+
 function allowed(volume: LabelVolume, paint: Paint, x: number, y: number, z: number): boolean {
   if (paint.only !== undefined && volume.get(x, y, z) !== paint.only) return false;
   return paint.where === undefined || paint.where(x, y, z);
@@ -76,7 +86,7 @@ export function paintBall(stroke: Stroke, centre: Vec3, q: Mat3, paint: Paint, p
     normal = plane.map((v) => v / n) as Vec3;
     const axis = normal.map(Math.abs).indexOf(Math.max(...normal.map(Math.abs)));
     // The section shown is the layer of voxels the centre is in.
-    c[axis] = Math.round(c[axis]);
+    c[axis] = voxelIndex(c[axis]);
     tolerance = 0.5 * Math.abs(normal[axis]);
   }
   c = c as Vec3;

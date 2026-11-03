@@ -72,7 +72,7 @@ is to come).
   sections); hold ++space++ to move the view with the left button.
   ++escape++ stops drawing.
 - Tools (keys while drawing):
-    - **Brush** (++b++): a disc in the section, or a ball; its radius in mm
+    - **Brush** (++b++): a disc in the section, or a ball; its radius in mm or µm
       (round in space whatever the voxels) or in voxels; ++bracket-left++
       and ++bracket-right++ change it. **Paint over** any label, or only
       unlabelled voxels.

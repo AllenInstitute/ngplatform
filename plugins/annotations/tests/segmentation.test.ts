@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { openNifti } from "../../../src/virtual/images/nifti.js";
 import { VolumeReader } from "../../volume-view/volume_reader.js";
 import { History, Stroke } from "../segmentation/history.js";
-import { ballReach, ballShape, dabsBetween, distance2d, floodFill, type ImageBlock, inRange, interpolate, paintBall, sameLabel, type Vec3 } from "../segmentation/kernels.js";
+import { ballReach, ballShape, dabsBetween, distance2d, floodFill, type ImageBlock, inRange, interpolate, paintBall, sameLabel, type Vec3, voxelIndex } from "../segmentation/kernels.js";
 import { LabelVolume } from "../segmentation/label_volume.js";
 import { component, otsu, THRESHOLD_SELECT } from "../segmentation/quick_select.js";
 import { cropped, niftiGz, omeZarr } from "../segmentation/save.js";
@@ -152,6 +152,10 @@ describe("the brush", () => {
     expect(count(v, 1)).toBe(29);
     expect(v.get(50, 40, 30)).toBe(1);
     expect(v.get(50, 40, 31)).toBe(0);
+    // On a boundary between sections (a view's position often is), the upper one, as Neuroglancer shows it, rounding or not.
+    expect(voxelIndex(30.5)).toBe(31);
+    expect(voxelIndex(30.49999)).toBe(31);
+    expect(voxelIndex(30.4)).toBe(30);
   });
 
   it("paints only within an intensity range, and only over what is allowed", () => {

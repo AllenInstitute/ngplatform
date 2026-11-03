@@ -21,7 +21,7 @@ import { button, download, el, field, fileName, fmt, numberInput, physical, sele
 import { type ImageLevel, layerStore, readableImages, type Voxels } from "../voxels.js";
 import { storeOf } from "../../volume-view/sources.js";
 import { Stroke } from "./history.js";
-import { ballReach, ballShape, dabsBetween, floodFill, type ImageBlock, inRange, interpolate, type Paint, paintBall, sameLabel, type Vec3 } from "./kernels.js";
+import { ballReach, ballShape, dabsBetween, floodFill, type ImageBlock, inRange, interpolate, type Paint, paintBall, sameLabel, type Vec3, voxelIndex } from "./kernels.js";
 import { LABEL_MAX, type LabelType, LabelVolume } from "./label_volume.js";
 import { Painter, type ViewPoint } from "./painter.js";
 import { type Prompt, QuickSelectRegistry } from "./quick_select.js";
@@ -62,7 +62,7 @@ export class Segmentation {
   tool: Tool = "brush";
   value = 1;
   radius = 1;
-  unit: "mm" | "voxels" = "mm";
+  unit: "mm" | "µm" | "voxels" = "mm";
   shape: "ball" | "disc" = "disc";
   overwrite: "all" | "empty" = "all";
   eraseOnly = false;
@@ -329,12 +329,15 @@ export class Segmentation {
     const normal = [0, 1, 2].map((k) => placed.dims.reduce((s, d, r) => s + (p.depthPerUnit!.get(d) ?? 0) * m[4 * r + k], 0)) as Vec3;
     if (Math.hypot(...normal) === 0) return { voxel };
     this.axis = dominant(normal);
+    // The section shown, exactly: the stroke must land in it, not the next.
+    voxel[this.axis] = voxelIndex(voxel[this.axis]);
     return { voxel, normal };
   }
 
   /** The brush's shape in voxels. */
   private shapeQ() {
-    return ballShape(this.radius, this.unit, this.current?.placement()?.voxelToMm ?? this.current?.volume.voxelToRas);
+    const radius = this.unit === "µm" ? this.radius / 1000 : this.radius;
+    return ballShape(radius, this.unit === "voxels" ? "voxels" : "mm", this.current?.placement()?.voxelToMm ?? this.current?.volume.voxelToRas);
   }
 
   private ring(p: ViewPoint): number | undefined {
@@ -345,7 +348,7 @@ export class Segmentation {
     for (const [d, px] of p.pixelsPerUnit) if (px > 0 && sp.units[d] === "m") perMm = Math.max(perMm, px / mmOf(sp.scales[d], "m"));
     if (!(perMm > 0)) return undefined;
     const edges = voxelEdges(this.current.placement()?.voxelToMm ?? this.current.volume.voxelToRas);
-    const mm = this.unit === "mm" ? this.radius : this.radius * Math.min(...edges);
+    const mm = this.unit === "mm" ? this.radius : this.unit === "µm" ? this.radius / 1000 : this.radius * Math.min(...edges);
     return mm * perMm;
   }
 
@@ -848,7 +851,7 @@ export class Segmentation {
       options.append(
         field("Radius", el("div", { class: "an-inline" }, numberInput(this.radius, (v) => {
           this.radius = Math.max(0.01, v);
-        }, { min: 0.01, step: "any", "aria-label": "Radius" }), select([["mm", "mm"], ["voxels", "voxels"]], this.unit, (v) => (this.unit = v as "mm" | "voxels"), "Unit"))),
+        }, { min: 0.01, step: "any", "aria-label": "Radius" }), select([["mm", "mm"], ["µm", "µm"], ["voxels", "voxels"]], this.unit, (v) => (this.unit = v as "mm" | "µm" | "voxels"), "Unit"))),
         field("Shape", select([["disc", "Disc in the section"], ["ball", "Ball"]], this.shape, (v) => (this.shape = v as "ball" | "disc"), "Shape")),
         this.tool === "brush"
           ? field("Paint over", select([["all", "Any label"], ["empty", "Unlabelled only"]], this.overwrite, (v) => (this.overwrite = v as "all" | "empty"), "Paint over"))
@@ -968,7 +971,7 @@ export class Segmentation {
       return;
     }
     const position = cursor.active ? cursor.position : ((this.ctx.viewer.getState() as { position?: number[] }).position ?? []);
-    const v = toVoxel(placed, position).map(Math.round) as Vec3;
+    const v = toVoxel(placed, position).map(voxelIndex) as Vec3;
     const around = await session.imageBox(v.map((x) => x - 8) as Vec3, v.map((x) => x + 9) as Vec3);
     if (around === undefined) return;
     const centre = v.map((x, k) => x - around.lo[k]);

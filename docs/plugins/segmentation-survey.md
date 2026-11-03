@@ -66,7 +66,7 @@ Neuroglancer reads its chunks again (see the plugin's README).
 
 | WebKnossos | Here | When |
 |---|---|---|
-| Brush, its size | **Brush**: a ball, or its disc in the section; radius in mm (round in space on any voxels) or voxels; `[` and `]` | Now |
+| Brush, its size | **Brush**: a ball, or its disc in the section; radius in mm or µm (round in space on any voxels) or voxels; `[` and `]` | Now |
 | Eraser | **Erase**: any label, or only the active one | Now |
 | Overwrite modes | **Paint over**: any label, or unlabelled only | Now |
 | Fill 2-D / 3-D by labels | **Fill 2-D** (the section) and **Fill 3-D** (a box a set reach round the click), by the label clicked | Now |
