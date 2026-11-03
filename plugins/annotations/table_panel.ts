@@ -110,7 +110,6 @@ export class TablePanel {
           this.drawEditor(editor, selected);
         }
       }
-      if (selected && (key !== shown || force)) tableWrap.querySelector(`tr.an-current`)?.scrollIntoView({ block: "nearest" });
     };
     draw();
     let last: string | undefined;
