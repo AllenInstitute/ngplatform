@@ -16,10 +16,13 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  curvatureShader,
   DIRECTION_SHADER,
   KIND_CAPABILITIES,
+  positionAttribute,
   resolveGeometryKind,
 } from "./geometry_kind.js";
+import { surfaceDefaults, surfaceInfo } from "./store.js";
 
 describe("KIND_CAPABILITIES", () => {
   it("draws point clouds as points and meshes as triangles", () => {
@@ -93,5 +96,42 @@ describe("resolveGeometryKind", () => {
     expect(() =>
       resolveGeometryKind(["volume"], { present: false, width: undefined }),
     ).toThrow(/no recognised geometry type/);
+  });
+});
+
+describe("surfaces", () => {
+  const attributes = [
+    { id: "curv", components: 1 },
+    { id: "coords_inflated", components: 3 },
+    { id: "coords_bad", components: 1 },
+  ];
+
+  it("draws vertices at the vec3 attribute a shader names", () => {
+    expect(positionAttribute("void main() {}", attributes)).toBe(-1);
+    expect(positionAttribute("// x\n#define ZV_POSITION coords_inflated\nvoid main() {}", attributes)).toBe(1);
+    // Only a vec3 can place vertices.
+    expect(positionAttribute("#define ZV_POSITION coords_bad\n", attributes)).toBe(-1);
+    expect(positionAttribute("#define ZV_POSITION missing\n", attributes)).toBe(-1);
+  });
+
+  it("starts a surface with curvature, outlines in the layer's colour", () => {
+    expect(curvatureShader("curv")).toMatch(/prop_curv\(\) > 0\.0/);
+    expect(curvatureShader("curv")).toMatch(/#ifdef ZV_SECTION\n  \/\/.*\n  emitDefault\(\);/);
+  });
+
+  it("shows a surface store's most wanted maps first, never the join key", () => {
+    const info = surfaceInfo({
+      attributes: {
+        geometry: "white",
+        alternates: { coords_pial: "pial", coords_inflated: "inflated", coords_sphere: "sphere" },
+        scalars: { thickness: "lh.thickness", curv: "lh.curv", jacobian_white: "x", area: "a", sulc: "s" },
+        label_tables: { aparc: { "-1": { name: "unassigned", rgba: [0, 0, 0, 0] }, "0": { name: "unknown", rgba: [0.1, 0, 0.1, 1] } } },
+      },
+    })!;
+    expect(info.maps).toEqual(["thickness", "curv", "jacobian_white", "area", "sulc", "aparc"]);
+    expect(info.labelTables.aparc.map((l) => l.code)).toEqual([-1, 0]);
+    const names = ["aparc", "area", "coords_inflated", "coords_pial", "coords_sphere", "curv", "jacobian_white", "sulc", "thickness", "zv_join_key"];
+    expect(surfaceDefaults(names, info)).toEqual(["curv", "sulc", "thickness", "area", "aparc", "coords_inflated", "coords_pial", "coords_sphere", "jacobian_white"]);
+    expect(surfaceInfo(undefined)).toBeUndefined();
   });
 });

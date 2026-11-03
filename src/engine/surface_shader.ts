@@ -14,6 +14,8 @@
 import { COLORMAPS } from "./colormaps.js";
 
 export interface SurfaceLook {
+  /** Another surface of the same vertices to draw them at (a vec3 attribute, `coords_inflated`), as zarr-vectors-tools keeps them. */
+  position?: string;
   /** The attribute drawn as binary curvature (curv, or sulc), or none: the layer's colour. */
   curvature?: string;
   /** The overlay's attribute. */
@@ -46,6 +48,7 @@ function num(v: number): string {
 /** The shader for `look`; `prop_<name>()` and `lut_<name>()` are the layer's (see dense_frontend.ts). */
 export function surfaceShader(look: SurfaceLook): string {
   const lines = [`${HEADER}${JSON.stringify(look)}`];
+  if (look.position !== undefined) lines.push(`#define ZV_POSITION ${look.position}`);
   const body: string[] = [];
   if (look.outlines !== true) {
     body.push(

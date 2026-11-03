@@ -55,7 +55,7 @@ import {
   DRAWS_3D,
   selectDenseLevel,
 } from "./dense_lod.js";
-import { KIND_CAPABILITIES } from "./geometry_kind.js";
+import { KIND_CAPABILITIES, positionAttribute } from "./geometry_kind.js";
 import type { HashMapUint64 } from "neuroglancer/unstable/gpu_hash/hash_table.js";
 import { GPUHashTable, HashSetShaderManager } from "neuroglancer/unstable/gpu_hash/shader.js";
 import { WithSharedKvStoreContext } from "neuroglancer/unstable/kvstore/chunk_source_frontend.js";
@@ -181,6 +181,30 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
   faceBuffer: GLBuffer | undefined;
   /** A mesh's vertex normals, for shading its faces in 3-d. */
   normalTexture: WebGLTexture | null = null;
+  /** Normals of other surfaces of the same vertices, by attribute index, made when first drawn. */
+  private alternateNormals = new Map<number, WebGLTexture | null>();
+
+  /** The normals for vertices placed by attribute `position` (-1: their positions). */
+  normalTextureFor(gl: GL, position: number): WebGLTexture | null {
+    if (position === -1) return this.normalTexture;
+    let texture = this.alternateNormals.get(position);
+    if (texture === undefined) {
+      const coords = this.uploads?.attributes[position];
+      texture = null;
+      if (coords !== undefined && this.uploads !== undefined) {
+        texture = gl.createTexture();
+        gl.bindTexture(WebGL2RenderingContext.TEXTURE_2D, texture);
+        setOneDimensionalTextureData(
+          gl,
+          POSITION_FORMAT,
+          vertexNormals(coords, this.uploads.faces, this.numVertices),
+        );
+        gl.bindTexture(WebGL2RenderingContext.TEXTURE_2D, null);
+      }
+      this.alternateNormals.set(position, texture);
+    }
+    return texture;
+  }
 
   /** The chunk's attribute values on the CPU, for what is under the mouse. */
   get attributeValues(): Float32Array[] | undefined {
@@ -260,6 +284,8 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
       gl.deleteTexture(t);
     }
     this.positionTexture = this.segmentTexture = this.normalTexture = null;
+    for (const t of this.alternateNormals.values()) gl.deleteTexture(t);
+    this.alternateNormals.clear();
     this.attributeTextures = [];
     this.edgeBuffer?.dispose();
     this.edgeBuffer = undefined;
@@ -615,6 +641,18 @@ class DenseRenderHelper extends RefCounted {
         ),
       );
     });
+    // Where vertices are drawn: their positions, or another surface of the
+    // same vertices kept as a vec3 attribute (`coords_inflated`), as the
+    // shader names it.
+    const position = positionAttribute(
+      state.parseResult.code,
+      this.attributes,
+    );
+    builder.addVertexCode(`
+highp vec3 zvPosition(highp uint i) {
+  return ${position === -1 ? "readPosition(i)" : `readAttribute${position}(i)`};
+}
+`);
     builder.addVarying("highp uvec2", "vSegment", "flat");
     if (!faces) builder.addVarying("highp uint", "vPickID", "flat");
     let vertexMain: string;
@@ -645,7 +683,7 @@ class DenseRenderHelper extends RefCounted {
       vertexMain = `
 highp uint corner = uint(gl_VertexID);
 highp uint vertexIndex = corner == 0u ? aTriangle.x : (corner == 1u ? aTriangle.y : aTriangle.z);
-gl_Position = uProjection * vec4(readPosition(vertexIndex), 1.0);
+gl_Position = uProjection * vec4(zvPosition(vertexIndex), 1.0);
 vNormal = uNormalMatrix * readNormal(vertexIndex);
 vBarycentric = vec3(corner == 0u ? 1.0 : 0.0, corner == 1u ? 1.0 : 0.0, corner == 2u ? 1.0 : 0.0);
 vCorners = aTriangle;
@@ -676,9 +714,9 @@ float zvNearest(vec3 values) {
       builder.addAttribute("highp uvec3", "aTriangle");
       builder.addUniform("highp float", "uLineWidth");
       vertexMain = `
-highp vec3 p0 = readPosition(aTriangle.x);
-highp vec3 p1 = readPosition(aTriangle.y);
-highp vec3 p2 = readPosition(aTriangle.z);
+highp vec3 p0 = zvPosition(aTriangle.x);
+highp vec3 p1 = zvPosition(aTriangle.y);
+highp vec3 p2 = zvPosition(aTriangle.z);
 highp float d0 = (uProjection * vec4(p0, 1.0)).z;
 highp float d1 = (uProjection * vec4(p1, 1.0)).z;
 highp float d2 = (uProjection * vec4(p2, 1.0)).z;
@@ -714,8 +752,8 @@ vPickID = uPickID + vertexIndex;
       builder.addAttribute("highp uvec2", "aVertexIndex");
       builder.addUniform("highp float", "uLineWidth");
       vertexMain = `
-highp vec3 vertexA = readPosition(aVertexIndex.x);
-highp vec3 vertexB = readPosition(aVertexIndex.y);
+highp vec3 vertexA = zvPosition(aVertexIndex.x);
+highp vec3 vertexB = zvPosition(aVertexIndex.y);
 emitLine(uProjection, vertexA, vertexB, uLineWidth);
 highp uint endpoint = getLineEndpointIndex();
 highp uint vertexIndex = aVertexIndex.x * (1u - endpoint) + aVertexIndex.y * endpoint;
@@ -727,7 +765,7 @@ vPickID = uPickID + aVertexIndex.x;
       builder.addUniform("highp float", "uNodeDiameter");
       vertexMain = `
 highp uint vertexIndex = uint(gl_InstanceID);
-emitCircle(uProjection * vec4(readPosition(vertexIndex), 1.0), uNodeDiameter, 0.0);
+emitCircle(uProjection * vec4(zvPosition(vertexIndex), 1.0), uNodeDiameter, 0.0);
 vSegment = readSegment(vertexIndex).value;
 vPickID = uPickID + vertexIndex;
 `;
@@ -929,7 +967,11 @@ zvUserMain();
     this.vertexIdHelper.disable();
   }
 
-  bindChunk(shader: ShaderProgram, chunk: ZarrVectorsDenseChunk) {
+  bindChunk(
+    shader: ShaderProgram,
+    chunk: ZarrVectorsDenseChunk,
+    position = -1,
+  ) {
     const { gl } = this;
     const bind = (symbol: symbol, texture: WebGLTexture | null) => {
       gl.activeTexture(
@@ -940,7 +982,7 @@ zvUserMain();
     bind(positionSampler, chunk.positionTexture);
     bind(segmentSampler, chunk.segmentTexture);
     if (shader.textureUnit(normalSampler) !== undefined) {
-      bind(normalSampler, chunk.normalTexture);
+      bind(normalSampler, chunk.normalTextureFor(gl, position));
     }
     chunk.attributeTextures.forEach((t, i) => bind(attributeSampler(i), t));
   }
@@ -1572,6 +1614,10 @@ function DenseRenderLayer<
         });
         passes.push({ shader, edges: false });
       }
+      const position = positionAttribute(
+        displayState.skeletonRenderingOptions.shader.value,
+        helper.attributes,
+      );
       for (const { shader, edges, sections, faces } of passes) {
         shader.bind();
         helper.beginLayer(shader, mvp, visibleAlpha);
@@ -1580,7 +1626,7 @@ function DenseRenderLayer<
             ? renderContext.pickIDs.register(this, chunk.numVertices, 0n, chunk)
             : 0;
           gl.uniform1ui(shader.uniform("uPickID"), pickID);
-          helper.bindChunk(shader, chunk);
+          helper.bindChunk(shader, chunk, position);
           if (faces) {
             if (chunk.faceBuffer === undefined) continue;
             const aTriangle = shader.attribute("aTriangle");

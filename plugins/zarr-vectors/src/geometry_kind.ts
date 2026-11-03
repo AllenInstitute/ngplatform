@@ -122,3 +122,17 @@ export function resolveGeometryKind(
   const kind = consistent[0] ?? known[0];
   return { kind, ignored: declared.filter((g) => g !== kind) };
 }
+
+/**
+ * The attribute a shader places vertices by (`#define ZV_POSITION <name>`,
+ * a vec3 attribute: another surface of the same vertices), as an index
+ * into `attributes`; -1 for their own positions.
+ */
+export function positionAttribute(
+  code: string,
+  attributes: readonly { id: string; components: number }[],
+): number {
+  const name = /^[ \t]*#define[ \t]+ZV_POSITION[ \t]+(\w+)/m.exec(code)?.[1];
+  if (name === undefined) return -1;
+  return attributes.findIndex((a) => a.id === name && a.components === 3);
+}

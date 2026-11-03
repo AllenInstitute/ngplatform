@@ -467,6 +467,7 @@ async function selectAttributes(
   synthesisesTangent: boolean,
   warnings: string[],
   signal?: AbortSignal,
+  surface?: ZarrVectorsSurfaceInfo,
 ): Promise<{ attributes: ZarrVectorsAttribute[]; json: any[] }> {
   let names: string[];
   // Declared in the root's attribute_specs but perhaps not written yet:
@@ -509,7 +510,17 @@ async function selectAttributes(
     // Where the renderer synthesises `tangent`, a stored one would shadow it.
     if (synthesisesTangent) found.delete("tangent");
     names = [...found].sort();
-    if (names.length > DEFAULT_ATTRIBUTE_LIMIT) {
+    if (names.length > DEFAULT_ATTRIBUTE_LIMIT && surface !== undefined) {
+      // A surface's maps: the ones a surface is first looked at with, the
+      // rest offered by name (the platform's Surface controls load them).
+      const kept = surfaceDefaults(names, surface).slice(0, DEFAULT_ATTRIBUTE_LIMIT);
+      warnings.push(
+        `surface store has ${names.length} vertex attributes; showing ` +
+          `${kept.join(", ")}. Append #attributes=a,b,c to the source URL ` +
+          `for others (up to ${MAX_ATTRIBUTES})`,
+      );
+      names = kept;
+    } else if (names.length > DEFAULT_ATTRIBUTE_LIMIT) {
       // A gene panel would fetch that many cells per chunk; let the user choose.
       warnings.push(
         `store has ${names.length} vertex attributes; none load by default. ` +
@@ -651,6 +662,34 @@ export function surfaceInfo(json: any): ZarrVectorsSurfaceInfo | undefined {
     maps,
     labelTables,
   };
+}
+
+/** Maps a surface is first looked at with, in this order. */
+const SURFACE_FIRST = ["curv", "sulc", "thickness", "area"];
+const SURFACE_SHAPES = ["inflated", "pial", "white", "sphere"];
+
+/**
+ * A surface store's attributes, most wanted first: curvature and thickness,
+ * the parcellations, the other surfaces (`coords_inflated`…), then the
+ * rest; never the join key.
+ */
+export function surfaceDefaults(
+  names: readonly string[],
+  surface: ZarrVectorsSurfaceInfo,
+): string[] {
+  const rank = (name: string) => {
+    const first = SURFACE_FIRST.indexOf(name);
+    if (first !== -1) return first;
+    if (surface.labelTables[name] !== undefined) return 10;
+    const shape = SURFACE_SHAPES.indexOf(surface.alternates[name] ?? "");
+    if (shape !== -1) return 20 + shape;
+    return 30;
+  };
+  return names
+    .filter((n) => n !== "zv_join_key")
+    .map((n, i) => ({ n, i, r: rank(n) }))
+    .sort((a, b) => a.r - b.r || a.i - b.i)
+    .map((x) => x.n);
 }
 
 // -------------------------------------------------------------- levels
@@ -823,6 +862,14 @@ export async function openZarrVectorsStore(
       ? intraLinksPath(linkWidth)
       : undefined;
 
+  const surface =
+    primitive === "triangles"
+      ? surfaceInfo(
+          await readJson(read, "headers/surface/zarr.json", signal).catch(
+            () => undefined,
+          ),
+        )
+      : undefined;
   const { attributes, json } = await selectAttributes(
     access,
     paths[0],
@@ -833,15 +880,8 @@ export async function openZarrVectorsStore(
     KIND_CAPABILITIES[kind].tangent !== undefined,
     warnings,
     signal,
+    surface,
   );
-  const surface =
-    primitive === "triangles"
-      ? surfaceInfo(
-          await readJson(read, "headers/surface/zarr.json", signal).catch(
-            () => undefined,
-          ),
-        )
-      : undefined;
   if (surface !== undefined) {
     for (const a of attributes) a.labels = surface.labelTables[a.name];
   }

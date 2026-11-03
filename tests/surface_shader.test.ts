@@ -24,6 +24,10 @@ describe("surface shader", () => {
     const viridis = surfaceShader({ ...look, colormap: "viridis", outlines: true });
     expect(viridis).toMatch(/vec3 colormap\(float x\)/);
     expect(viridis).not.toMatch(/ZV_SECTION/);
+    // Another surface of the same vertices, named for the layer's vertex shader.
+    const inflated = surfaceShader({ curvature: "curv", position: "coords_inflated" });
+    expect(inflated.split("\n")[1]).toBe("#define ZV_POSITION coords_inflated");
+    expect(surfaceLookOf(inflated)).toEqual({ curvature: "curv", position: "coords_inflated" });
     expect(SURFACE_COLORMAPS[0].id).toBe("heat");
     expect(SURFACE_COLORMAPS.some((m) => m.id === "jet")).toBe(true);
   });

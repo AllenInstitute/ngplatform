@@ -15,7 +15,7 @@ import { button, el, note, row, type Scope, section, select, type Watch } from "
 
 interface SurfaceView {
   attributes: { id: string; name: string; components: number; labels?: { code: number; name: string; rgba: number[] }[] }[];
-  surface: { geometry: string; surfaces: Record<string, string>; maps: string[]; labelTables: Record<string, unknown> } | undefined;
+  surface: { geometry: string; alternates: Record<string, string>; surfaces: Record<string, string>; maps: string[]; labelTables: Record<string, unknown> } | undefined;
   storeUrl: string;
   values(id: string): number[];
   picked(mouseState: unknown): Record<string, number> | undefined;
@@ -109,6 +109,22 @@ function build(scope: Scope, l: SegmentationUserLayer, view: SurfaceView): HTMLE
       b.setAttribute("aria-pressed", String(kind === view.surface?.geometry));
       group.append(b);
     }
+    rows.push(row("Surface", group, "Which of the hemisphere's surfaces is drawn, as Freeview's Surface menu"));
+  }
+  // Or the other surfaces the store keeps as attributes (zarr-vectors-tools'
+  // coords_inflated…): the vertices are drawn at those instead.
+  const alternates = Object.entries(view.surface?.alternates ?? {}).filter(([id]) => view.attributes.some((a) => a.id === id && a.components === 3));
+  if (surfaces.length <= 1 && alternates.length > 0) {
+    const group = el("div", { class: "ins-segmented" });
+    const choices: [string | undefined, string][] = [[undefined, view.surface?.geometry || "geometry"], ...alternates.sort((a, b) => rank(a[1]) - rank(b[1]))];
+    const buttons = choices.map(([id, kind]) => {
+      const b = button(kind, () => write({ ...look(), position: id }), `Draw the ${kind} surface (the same vertices, so the same values)`);
+      group.append(b);
+      return [id, b] as const;
+    });
+    scope.watch(shader, () => {
+      for (const [id, b] of buttons) b.setAttribute("aria-pressed", String(look().position === id));
+    });
     rows.push(row("Surface", group, "Which of the hemisphere's surfaces is drawn, as Freeview's Surface menu"));
   }
 
