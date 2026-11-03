@@ -179,6 +179,31 @@ export function pixelsPerUnit(modelToClip: ArrayLike<number>, at: ArrayLike<numb
 }
 
 /**
+ * The area (pixels) of the view that a box (store coordinates) can cover:
+ * its corners' bounding rectangle on screen, within the view; the whole
+ * view when a corner is behind the camera.
+ */
+export function screenArea(modelToClip: ArrayLike<number>, lower: number[], upper: number[], viewport: [number, number]): number {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (let c = 0; c < 8; ++c) {
+    const p = apply(modelToClip, [c & 1 ? upper[0] : lower[0], c & 2 ? upper[1] : lower[1], c & 4 ? upper[2] : lower[2]]);
+    if (!(p[3] > 0)) return viewport[0] * viewport[1];
+    const x = p[0] / p[3];
+    const y = p[1] / p[3];
+    x0 = Math.min(x0, x);
+    x1 = Math.max(x1, x);
+    y0 = Math.min(y0, y);
+    y1 = Math.max(y1, y);
+  }
+  const w = Math.max(0, Math.min(1, x1) - Math.max(-1, x0)) / 2;
+  const h = Math.max(0, Math.min(1, y1) - Math.max(-1, y0)) / 2;
+  return Math.max(1, w * viewport[0] * h * viewport[1]);
+}
+
+/**
  * How many times over the lines drawn would cover the view: their length on
  * screen times their width, over the view's area (`share` of them showing,
  * for a 2-D view's slab).
@@ -197,7 +222,7 @@ export function coverage(chunks: { length: number; pointCount: number }[], pixel
  * left alone.
  */
 export function autoGain(cover: number): number {
-  return 1 / Math.max(1, cover / 2) ** 0.85;
+  return 1 / Math.max(1, cover);
 }
 
 /**

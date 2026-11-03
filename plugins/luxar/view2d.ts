@@ -17,7 +17,7 @@ import type { ViewPanelInfo } from "@ngplatform/sdk";
 import { GpuChunks, selectChunks, type Selection } from "./chunks.js";
 import type { LayerView } from "./layer_view.js";
 import { LightTarget, Renderer } from "./render_gl.js";
-import { apply, boxInFrustum, coverage, invertAffine, measurePanel, modelToPanel, multiply, pixelsPerUnit } from "./view_math.js";
+import { apply, boxInFrustum, coverage, invertAffine, measurePanel, modelToPanel, multiply, pixelsPerUnit, screenArea } from "./view_math.js";
 
 const GPU_BYTES = 512 * 1024 * 1024;
 
@@ -206,7 +206,7 @@ export class View2d {
       // Of the chunks' lines, about the slab's share of their depth show.
       const shape = info.levels[selection.level].chunkShape;
       const share = m.slab > 0 ? Math.min(1, (2 * m.slab) / ((shape[0] + shape[1] + shape[2]) / 3)) : 1;
-      const cover = coverage(taken.chunks, pixelsPerUnit(m.modelToClip, m.centre, [w, h]), 2 * view.halfWidth, w * h, share);
+      const cover = coverage(taken.chunks, pixelsPerUnit(m.modelToClip, m.centre, [w, h]), 2 * view.halfWidth, screenArea(m.modelToClip, info.bounds.lower, info.bounds.upper, [w, h]), share);
       const uniforms = view.uniforms(Float32Array.from(m.modelToClip), [w, h], cover);
       uniforms.plane = m.plane;
       uniforms.slab = m.slab;

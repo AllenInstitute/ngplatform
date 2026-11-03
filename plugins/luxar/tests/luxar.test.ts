@@ -7,7 +7,7 @@ import { keyOf, selectChunks } from "../chunks.js";
 import type { StoreInfo } from "../client.js";
 import { LUXAR_MANIFEST } from "../manifest.js";
 import { DEFAULT_STYLE, readSaved, readStyle, rgbOf, scalarOf } from "../style.js";
-import { apply, autoGain, boxInFrustum, chooseLevel, chunkRange, coverage, directionMatrix, invertAffine, measurePanel, modelTo, modelToPanel, multiply, pixelsPerUnit } from "../view_math.js";
+import { apply, autoGain, boxInFrustum, chooseLevel, chunkRange, coverage, directionMatrix, invertAffine, measurePanel, modelTo, modelToPanel, multiply, pixelsPerUnit, screenArea } from "../view_math.js";
 
 const identityTransform = (offset = [0, 0, 0], scale = 1): LayerTransform => {
   const m = new Float64Array(16);
@@ -169,8 +169,12 @@ describe("view geometry", () => {
     // 4000 units of 2 px line at 10 px a unit over 200 × 200 px: twice over.
     expect(coverage([{ length: 4000, pointCount: 0 }], 10, 2, 40000)).toBeCloseTo(2);
     expect(coverage([{ length: 4000, pointCount: 0 }], 10, 2, 40000, 0.5)).toBeCloseTo(1);
+    // A box a quarter of the view across is a sixteenth of its area; one past its edges, all of it.
+    expect(screenArea(ortho, [0, 0, 0], [5, 5, 1], [200, 200])).toBeCloseTo(40000 / 16);
+    expect(screenArea(ortho, [-50, -50, 0], [50, 50, 1], [200, 200])).toBeCloseTo(40000);
     expect(autoGain(0.5)).toBe(1);
-    expect(autoGain(2)).toBe(1);
+    expect(autoGain(1)).toBe(1);
+    expect(autoGain(4)).toBe(0.25);
     expect(autoGain(40)).toBeLessThan(0.1);
     expect(autoGain(400)).toBeLessThan(autoGain(40));
   });

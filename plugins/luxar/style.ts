@@ -18,7 +18,7 @@ export type ColourBy = "direction" | "object" | "attribute" | "solid";
 
 export type Colormap = "viridis" | "magma" | "inferno" | "plasma" | "turbo" | "grey";
 
-export type ToneMap = "aces" | "reinhard" | "clamp";
+export type ToneMap = "aces-hue" | "aces" | "reinhard" | "clamp";
 
 export interface LayerStyle {
   on: boolean;
@@ -58,7 +58,7 @@ export const DEFAULT_STYLE: LayerStyle = {
   exposure: 0,
   sharpness: 0.5,
   absorption: 1,
-  toneMap: "aces",
+  toneMap: "aces-hue",
   slab: 4,
   detail: 2,
   autoBrightness: true,
@@ -67,7 +67,7 @@ export const DEFAULT_STYLE: LayerStyle = {
 const BLENDINGS: Blending[] = ["glow", "glow-through", "emission", "solid"];
 const COLOUR_BY: ColourBy[] = ["direction", "object", "attribute", "solid"];
 const COLORMAPS: Colormap[] = ["viridis", "magma", "inferno", "plasma", "turbo", "grey"];
-const TONE_MAPS: ToneMap[] = ["aces", "reinhard", "clamp"];
+const TONE_MAPS: ToneMap[] = ["aces-hue", "aces", "reinhard", "clamp"];
 
 export const BLENDING_LABELS: [Blending, string][] = [
   ["glow", "Glow (additive, behind things in front)"],
@@ -83,7 +83,8 @@ export const COLOUR_LABELS: [ColourBy, string][] = [
 ];
 export const COLORMAP_LABELS: [Colormap, string][] = COLORMAPS.map((c) => [c, c === "grey" ? "Grey" : c[0].toUpperCase() + c.slice(1)]);
 export const TONE_LABELS: [ToneMap, string][] = [
-  ["aces", "ACES filmic"],
+  ["aces-hue", "ACES filmic, keeping colour"],
+  ["aces", "ACES filmic (bright light turns white)"],
   ["reinhard", "Reinhard"],
   ["clamp", "None (clamp)"],
 ];
@@ -138,7 +139,7 @@ export function rgbOf(hex: string): [number, number, number] {
 }
 
 export const COLORMAP_INDEX: Record<Colormap, number> = { viridis: 0, magma: 1, inferno: 2, plasma: 3, turbo: 4, grey: 5 };
-export const TONE_INDEX: Record<ToneMap, number> = { aces: 0, reinhard: 1, clamp: 2 };
+export const TONE_INDEX: Record<ToneMap, number> = { aces: 0, reinhard: 1, clamp: 2, "aces-hue": 3 };
 export const COLOUR_INDEX: Record<ColourBy, number> = { direction: 0, object: 1, attribute: 2, solid: 3 };
 
 /**

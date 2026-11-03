@@ -1,6 +1,6 @@
 # Luxar rendering
 
-![The HCP-1065 tractogram drawn Luxar-style over the SRB 2026a template, in a 2-D section and the 3-D view](../../docs/images/plugins/luxar.png)
+![The HCP-1065 tractogram drawn Luxar-style over the SRB 2026a template: glowing in a 2-D section, and in the 3-D view inside the volume-rendering plugin's cut-open solid](../../docs/images/plugins/luxar.png)
 
 Draws chosen Zarr Vectors layers the way the [Luxar](https://github.com/royerlab/luxar)
 viewer draws lines and points (light added up in HDR and tone mapped,
@@ -54,7 +54,9 @@ data formats directly:
   Points are round sprites with the same profile. A line thinner than
   1.5 px is drawn that wide and dimmer, so its light is kept.
 - **Blending**: *glow* adds light in a float (RGBA16F) target and tone maps
-  it (ACES filmic, Reinhard or a clamp), Luxar's "luminous" (depth-tested)
+  it (ACES filmic on the brightest channel, keeping the colour where many
+  lines add up, the default; ACES per channel, as three.js does, which
+  turns bright light white; Reinhard; or a clamp), Luxar's "luminous" (depth-tested)
   and "additive" (over everything) modes; *emission and absorption* adds
   emission and optical depth in the same target and composites with
   Luxar's self-screening `(1 - e^-τ)/τ` and transmittance `e^-τ`. Luxar
@@ -146,7 +148,7 @@ how many times over the drawn lines would cover the view (their length on
 screen, from each chunk's total segment length and the view's pixels per
 unit, times their width, over the view's area; for a 2-D view, times the
 slab's share of a chunk's depth) and dims each line by
-`1 / max(1, cover / 2)^0.85`. So a dense view glows where bundles gather,
+`1 / max(1, cover)`. So a dense view glows where bundles gather,
 a sparse one is left alone, and the picture keeps about the same
 brightness as levels come and go. A correction by each level's share of
 the objects was tried first: it makes a sparse sample's few lines glare.
@@ -195,8 +197,10 @@ momentum in the engine.
 - **Free line ends** are square: Luxar's soft cap would need to know which
   chunk-boundary ends continue in the next chunk (the reader's
   `linkedVertices`), or caps would brighten every chunk face.
-- An oblique 2-D view's chunk test uses the slab's bounding box, which can
-  read more chunks than the slab needs.
+- A 2-D view reads whole chunks for a thin slab, so it reads (and draws,
+  though the vertex shader drops what is outside the slab at once) many
+  more lines than show. A store chunked finer, or reading only the
+  vertex rows near the plane, would cut that.
 
 ## Gaussian splats (not done)
 

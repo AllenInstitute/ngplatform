@@ -390,10 +390,19 @@ uniform float uCut;
 uniform bool uNear;
 ${outs}
 
+// ACES filmic, Narkowicz's fit.
+vec3 aces(vec3 x) {
+  return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
+
 vec3 tone(vec3 x) {
-  if (uToneMap == 0) {
-    // ACES filmic, Narkowicz's fit.
-    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+  if (uToneMap == 0) return aces(x);
+  if (uToneMap == 3) {
+    // The same curve on the brightest channel, the colour scaled with it:
+    // where many lines add up the light stays their colour instead of
+    // every channel reaching white.
+    float m = max(x.r, max(x.g, x.b));
+    return m > 0.0 ? x * (aces(vec3(m)).r / m) : vec3(0.0);
   }
   if (uToneMap == 1) return x / (1.0 + x);
   return clamp(x, 0.0, 1.0);
