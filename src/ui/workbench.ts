@@ -8,6 +8,7 @@ import type { KeybindingTable } from "../core/keybindings.js";
 import type { FragmentParser } from "../core/state_io.js";
 import type { ContextKeys } from "../core/when.js";
 import type { Engine } from "../engine/engine.js";
+import type { AuthRegistry } from "../platform/auth.js";
 import type { JobService } from "../platform/jobs.js";
 import type { ComputedImages } from "../virtual/computed.js";
 import type { LocalData } from "../virtual/local_data.js";
@@ -30,6 +31,8 @@ export interface Workbench {
   openHandlers: OpenHandlerRegistry;
   jobs: JobService;
   services: ServiceRegistry;
+  /** The sign-in methods (the Auth tab's). */
+  auth: AuthRegistry;
   plugins: PluginHost;
   /** Which plugins are on, and switching them (which reloads the page). */
   pluginSwitches: {

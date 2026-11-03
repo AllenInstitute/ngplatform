@@ -1,9 +1,20 @@
 /**
- * Sign-in: the middleauth provider against a fake browser (fetch, storage,
- * a sign-in window that posts its token), and the registry.
+ * Sign-in: the middleauth and ngauth providers against a fake browser
+ * (fetch, storage, a sign-in window that posts its token), and the
+ * registry with its lists.
  */
-import { describe, expect, it } from "vitest";
-import { type AuthEnvironment, AuthRegistry, MIDDLEAUTH_TOKEN_PREFIX, middleauthApps, middleauthProvider, normaliseServer } from "../src/platform/auth.js";
+import { describe, expect, it, vi } from "vitest";
+import { GOOGLE_SIGN_IN, PUBLIC_GS } from "../src/core/source_auth.js";
+import {
+  type AuthEnvironment,
+  AuthRegistry,
+  MIDDLEAUTH_TOKEN_PREFIX,
+  middleauthApps,
+  middleauthProvider,
+  ngauthProvider,
+  ngauthUses,
+  normaliseServer,
+} from "../src/platform/auth.js";
 
 function memoryStorage() {
   const map = new Map<string, string>();
@@ -21,6 +32,8 @@ function memoryStorage() {
 
 const LOGIN = "https://auth.example.org/sticky_auth";
 const APP = "https://data.example.org";
+const NGAUTH = "https://ngauth.example.org";
+const HERE = "https://app.example.org";
 
 function environment() {
   const storage = memoryStorage();
@@ -33,13 +46,19 @@ function environment() {
     },
   } as { closed: boolean; close(): void };
   const requests: { url: string; auth?: string }[] = [];
+  /** Whether the ngauth server has its sign-in cookie. */
+  const ngauth = { signedIn: false };
   const env: AuthEnvironment = {
     storage,
+    origin: HERE,
     fetch: (async (input: string, init?: RequestInit) => {
       const url = String(input);
       const auth = (init?.headers as Record<string, string> | undefined)?.Authorization;
       requests.push({ url, auth });
       if (url === `${APP}/auth_info`) return new Response(JSON.stringify({ login_url: LOGIN }));
+      if (url === `${NGAUTH}/token` && init?.method === "POST" && init.credentials === "include") {
+        return ngauth.signedIn ? new Response("user-token") : new Response("Not logged in", { status: 401 });
+      }
       if (url === `${LOGIN}/api/v1/user/cache`) {
         return auth === "Bearer good" ? new Response(JSON.stringify({ email: "me@example.org", name: "Me" })) : new Response("", { status: 401 });
       }
@@ -54,10 +73,10 @@ function environment() {
       return () => listeners.delete(listener);
     },
   };
-  const post = (data: unknown, source: unknown = popup) => {
-    for (const l of [...listeners]) l({ data, source } as MessageEvent);
+  const post = (data: unknown, source: unknown = popup, origin = "") => {
+    for (const l of [...listeners]) l({ data, source, origin } as MessageEvent);
   };
-  return { env, storage, opened, popup, post, requests };
+  return { env, storage, opened, popup, post, requests, ngauth };
 }
 
 describe("middleauth", () => {
@@ -115,23 +134,99 @@ describe("middleauth", () => {
   });
 });
 
+describe("ngauth", () => {
+  it("finds the servers of gs+ngauth+https:// sources with their buckets, and those added by hand", async () => {
+    expect([...ngauthUses([`precomputed://gs+ngauth+${NGAUTH}/bucket/seg`, `{"url":"gs+ngauth+${NGAUTH}/other/x"}`, "gs://public/x"])]).toEqual([
+      [NGAUTH, new Set(["gs://bucket", "gs://other"])],
+    ]);
+    const { env } = environment();
+    const provider = ngauthProvider(env);
+    const services = await provider.services({ sources: [`gs+ngauth+${NGAUTH}/bucket/seg`], manual: ["https://typed.example.org/some/path"] });
+    expect(services.map((s) => [s.id, s.manual])).toEqual([
+      [`ngauth:${NGAUTH}`, []],
+      ["ngauth:https://typed.example.org", ["https://typed.example.org/some/path"]],
+    ]);
+    expect(services[0].detail).toMatch(/gs:\/\/bucket/);
+    expect(provider.sourceSignIns!({ sources: [`gs+ngauth+${NGAUTH}/bucket/seg`], manual: [] }).map((s) => s.id)).toEqual([`ngauth:${NGAUTH}`]);
+  });
+
+  it("asks the server whether its cookie signs in, and signs in through its login window", async () => {
+    const { env, opened, post, ngauth } = environment();
+    const [service] = await ngauthProvider(env).services({ sources: [], manual: [NGAUTH] });
+    expect((await service.status()).state).toBe("signed-out");
+    const signingIn = service.signIn!();
+    expect(opened).toEqual([`${NGAUTH}/login?origin=${encodeURIComponent(HERE)}`]);
+    // Only the server's own answer counts.
+    post({ token: "x" }, undefined, "https://elsewhere.example.org");
+    ngauth.signedIn = true;
+    post({ token: "temporary" }, undefined, NGAUTH);
+    await signingIn;
+    expect((await service.status()).state).toBe("signed-in");
+  });
+
+  it("says when the server does not take this site", async () => {
+    const { env, post } = environment();
+    const [service] = await ngauthProvider(env).services({ sources: [], manual: [NGAUTH] });
+    const signingIn = service.signIn!();
+    post("badorigin", undefined, NGAUTH);
+    await expect(signingIn).rejects.toThrow(/does not take sign-ins from https:\/\/app\.example\.org/);
+  });
+});
+
 describe("the registry", () => {
-  it("keeps servers added by hand, normalised, and tells listeners", () => {
+  it("keeps servers added by hand, normalised, for the provider they were added for, and tells listeners", () => {
     const storage = memoryStorage();
     const auth = new AuthRegistry(storage);
     let changes = 0;
     auth.onChanged(() => ++changes);
     const off = auth.register({ id: "p", title: "P", accepts: () => true, services: async () => [] });
-    auth.addManual("data.example.org/");
+    const other = auth.register({ id: "q", title: "Q", accepts: (s) => s.includes("q."), services: async () => [] });
+    expect(auth.addManual("data.example.org/")).toBe("p");
     auth.addManual("middleauth+https://data.example.org");
-    expect(auth.manual()).toEqual(["https://data.example.org"]);
+    expect(auth.addManual("https://q.example.org", "q")).toBe("q");
+    expect(auth.manual("p")).toEqual(["https://data.example.org"]);
+    expect(auth.manual("q")).toEqual(["https://q.example.org"]);
+    expect(auth.accepting("q.example.org").map((p) => p.id)).toEqual(["p", "q"]);
     auth.removeManual("https://data.example.org");
-    expect(auth.manual()).toEqual([]);
+    expect(auth.manual("p")).toEqual([]);
     expect(() => auth.addManual("ftp://x")).toThrow();
+    expect(() => auth.addManual("https://data.example.org", "q")).toThrow(/No sign-in method/);
     expect(() => auth.register({ id: "p", title: "again", services: async () => [] })).toThrow();
     off();
+    other();
     expect(auth.list()).toEqual([]);
-    expect(changes).toBe(5);
+    expect(changes).toBe(8);
+  });
+
+  it("reads servers added before they named their provider as middleauth's", () => {
+    const storage = memoryStorage();
+    storage.setItem("ngplatform.auth.servers", JSON.stringify(["https://cave.example.org"]));
+    expect(new AuthRegistry(storage).manual("middleauth")).toEqual(["https://cave.example.org"]);
+  });
+
+  it("lists the ways a layer can read its data: anonymously, then each provider's sign-ins", () => {
+    const storage = memoryStorage();
+    const auth = new AuthRegistry(storage);
+    const { env } = environment();
+    auth.register({ id: "google", title: "Google", sourceSignIns: () => [GOOGLE_SIGN_IN], services: async () => [] });
+    auth.register(middleauthProvider(env));
+    auth.register(ngauthProvider(env));
+    // A plugin's that fails is left out, and logged.
+    auth.register({ id: "broken", title: "Broken", sourceSignIns: () => { throw new Error("no"); }, services: async () => [] });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    auth.addManual(NGAUTH, "ngauth");
+    const list = auth.sourceSignIns([`gs+ngauth+https://other.example.org/b/x`]);
+    expect(list.map((s) => [s.storage, s.id])).toEqual([
+      ["gs", "public"],
+      ["http", "public"],
+      ["gs", "google"],
+      ["http", "middleauth"],
+      ["gs", `ngauth:${NGAUTH}`],
+      ["gs", "ngauth:https://other.example.org"],
+    ]);
+    expect(list[0]).toBe(PUBLIC_GS);
+    expect(logged).toHaveBeenCalledOnce();
+    logged.mockRestore();
   });
 
   it("normalises addresses", () => {

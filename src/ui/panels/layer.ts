@@ -2,12 +2,14 @@
  * The Layer tab: the selected dataset's controls, as Neuroglancer's own
  * layer tabs (Source, Render, Seg., Annotations…, whatever its type has),
  * at full height and directly editable.  A one-line header names the
- * dataset and, when it is shown through several layers, which one.
+ * dataset and, when it is shown through several layers, which one; below
+ * it, the sign-in the layer reads its data with, as in the Auth tab.
  */
 import type { DatasetInfo, LayerInfo } from "../../sdk/types.js";
 import { clear, h } from "../dom.js";
 import { promptDialog } from "../overlays.js";
 import type { Workbench } from "../workbench.js";
+import { signInSelect } from "./auth.js";
 import { kindLabel } from "./format.js";
 
 export interface LayerTarget {
@@ -59,6 +61,7 @@ export function renderLayerPanel(host: HTMLElement, wb: Workbench): () => void {
       return;
     }
     const views = store.sceneDatasets().find((d) => d.dataset.id === dataset?.id)?.layers ?? [layer.name];
+    const signIn = signInSelect(wb, wb.auth, layer.name);
     clear(
       head,
       h(
@@ -86,6 +89,7 @@ export function renderLayerPanel(host: HTMLElement, wb: Workbench): () => void {
             ),
           )
         : null,
+      signIn !== null ? h("label", { class: "layer-sign-in" }, h("span", {}, "Sign-in"), signIn) : null,
     );
     mount(layer.name);
   };

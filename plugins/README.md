@@ -258,11 +258,14 @@ it is deactivated. Subscriptions a plugin makes itself go in
 
 ### Sign-in
 
-The Auth tab lists what the workspace's data needs a sign-in for, with who
-is signed in, and buttons to sign in, sign out and check. Middleauth (the
-Google sign-in CAVE-style servers use, for `middleauth+https://` data) is
-built in and keeps its tokens where Neuroglancer does, so either can sign in
-for the other. A plugin adds another check with an `AuthProvider`:
+The Auth tab lists the sign-ins available, with who is signed in, and
+buttons to sign in, sign out and check; below them, each layer of the
+active scene has a drop-down of the sign-ins its data can be read with.
+Built in are Google (for the browser, read as `gs+google://`), middleauth
+(the Google sign-in CAVE-style servers use, for `middleauth+https://` data,
+with its tokens where Neuroglancer keeps them, so either can sign in for the
+other) and ngauth (`gs+ngauth+https://`). A plugin adds another with an
+`AuthProvider`:
 
 ```ts
 ctx.auth.register({
@@ -271,7 +274,7 @@ ctx.auth.register({
   accepts: (server) => server.startsWith("https://data.my-lab.org"),
   async services({ sources, manual }) {
     // One service per thing to sign in to, found from the workspace's
-    // data sources and the servers typed into the Auth tab.
+    // data sources and the servers typed into the Auth tab for this provider.
     return [{
       id: "my-lab:main",
       title: "data.my-lab.org",
@@ -286,6 +289,24 @@ ctx.auth.register({
 `signIn` is called straight from the click, so a window it opens before its
 first `await` is not blocked. Data that a viewer layer already opened keeps
 the sign-in it had; the tab offers a reload, which keeps the workspace.
+
+A provider whose sign-in a layer chooses by its source's scheme (as
+Neuroglancer chooses credentials) adds `sourceSignIns`, which the layers'
+drop-downs offer. Each says how to turn a plain address (`gs://bucket/path`
+or `https://host/path`) into one read with it, and back:
+
+```ts
+sourceSignIns: () => [{
+  id: "my-lab",
+  title: "My lab",
+  storage: "http",
+  wrap: (plain) => `mylab+${plain}`,
+  unwrap: (address) => address.match(/^mylab\+(https?:\/\/.*)$/)?.[1],
+}],
+```
+
+The scheme itself (`mylab+https://`) is registered with Neuroglancer by a
+data type plugin.
 
 ### Failure and trust
 
