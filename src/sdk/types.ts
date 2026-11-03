@@ -282,11 +282,23 @@ export interface ComputedPipeline {
    * x + D(x) = q), then `after`, to its place in the source (mm).
    * `components` names the axes of the vector's components in order (by
    * default the field's spatial axes); displacements are in the field's
-   * spatial unit.
+   * spatial unit.  `fields`: several such parts, one after another (a
+   * chain through more than one field).
    */
   warp?:
     | { kind: "tps"; fixed: number[][]; moving: number[][] }
-    | { kind: "field"; url: string; before?: number[][]; after?: number[][]; invert?: boolean; components?: string[] };
+    | FieldWarpPart
+    | { kind: "fields"; parts: FieldWarpPart[] };
+}
+
+/** A displacement field between affines, as a warp or a part of one (see `ComputedPipeline.warp`). */
+export interface FieldWarpPart {
+  kind: "field";
+  url: string;
+  before?: number[][];
+  after?: number[][];
+  invert?: boolean;
+  components?: string[];
 }
 
 export interface ViewerApi {

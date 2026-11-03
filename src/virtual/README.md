@@ -91,6 +91,9 @@ reads only that (`Engine.read`), then samples each voxel there
 - `{kind: "tps", fixed, moving}`: a thin-plate spline through landmark
   pairs (mm), each output place taken to its place in the source. The
   Registration plugin's "Warp through the pairs".
+- `{kind: "fields", parts: [...]}`: several `field` warps applied one
+  after another (`ChainWarp`): each part reads the box its places need,
+  its places being where the parts before it took the chunk.
 - `{kind: "field", url, before, after, invert, components}`: a
   displacement field (OME-NGFF 0.6's `displacements`: an OME-Zarr
   multiscale group at `url`, its displacement axis before z, y, x). An

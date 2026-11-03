@@ -53,9 +53,10 @@ What OME-NGFF 0.6 (RFC-5, the spec's draft of October 2026) says of a
 How the plugin uses it: for the system chosen, a member whose chain of
 transforms holds a displacement field (alone, or in a sequence with
 affines) is not placed by a layer transform. `chainInto` finds the chain
-(affines and at most one field, either way round); `fieldWarp` turns it
-into a layer computed as it is viewed (`workspace.computed.url` with a
-`{kind: "field"}` warp, src/virtual/warp.ts): on the member's own grid,
+(affines and up to three fields, `MAX_FIELDS`, either way round);
+`fieldWarp` turns it into a layer computed as it is viewed
+(`workspace.computed.url` with a `{kind: "field"}` warp, or `{kind:
+"fields"}` with a part per field, applied in turn, src/virtual/warp.ts): on the member's own grid,
 placed by the chain's affines (the field left out), each voxel taken back
 through the chain to the member (the affines undone, then the field) and
 the member sampled there. A field walked as written (fixed to member, the
@@ -68,7 +69,8 @@ Limits: the field is looked up trilinearly whatever `interpolation` says;
 past its edge the edge's displacement holds; the displacement axis must
 come before z, y, x (the order the spec now asks for; an earlier draft had
 it last), and component values are read in the field's spatial unit. A
-chain needing two fields and `coordinates` maps are not applied. A
+chain needing more than three fields and `coordinates` maps are not
+applied. A
 transform walked backwards is read as its inverse (`inverseOf`): a sequence
 reversed, each part inverted, and a `bijection`, alone or inside a
 sequence, by its stated `inverse`. The warped layer keeps the member's grid, so a

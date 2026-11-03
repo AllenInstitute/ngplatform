@@ -1,7 +1,7 @@
 /** Images warped by landmarks (the thin-plate spline) and by displacement fields, and a chunk resampled through them. */
 import { describe, expect, it } from "vitest";
 import { fieldAxes } from "../src/virtual/computed.js";
-import { type Affine, applyTps, FieldWarp, fitTps, type Vec3, warpChunk } from "../src/virtual/warp.js";
+import { ChainWarp, type Affine, applyTps, FieldWarp, fitTps, type Vec3, warpChunk } from "../src/virtual/warp.js";
 
 const close = (a: ArrayLike<number>, b: ArrayLike<number>, tol = 1e-6) => Array.from(a).every((v, i) => Math.abs(v - b[i]) < tol);
 
@@ -90,6 +90,14 @@ describe("a displacement field", () => {
     };
     return { warp: new FieldWarp({ before, after, invert, grid: fieldGrid, components: [2, 1, 0], mm: 1 }, reader), reads };
   };
+
+  it("chained, applies each in turn (two shifts add up)", async () => {
+    const { warp: one } = field(() => [1, 0, 0]);
+    const { warp: two } = field(() => [0.5, 0, 0]);
+    const out = await warpChunk(grid, [n, n, n], [0, 0, 0], new ChainWarp([one, two]), read);
+    expect(at(out, 3, 2, 1)).toBeCloseTo(2.5, 5);
+    expect(at(out, 0, 0, 5)).toBeCloseTo(6.5, 5);
+  });
 
   it("as a constant shift is the affine shift", async () => {
     const { warp } = field(() => [1.5, 0, 0]);

@@ -399,6 +399,35 @@ export class FieldWarp implements Warp {
   }
 }
 
+/**
+ * Warps one after another (a chain through several displacement fields):
+ * each part reads what its places need, its places being where the parts
+ * before it took the chunk's lattice.
+ */
+export class ChainWarp implements Warp {
+  constructor(readonly parts: Warp[]) {}
+
+  async forChunk(lattice: number[][]): Promise<PointMap> {
+    const maps: PointMap[] = [];
+    let places = lattice;
+    for (const part of this.parts) {
+      const map = await part.forChunk(places);
+      maps.push(map);
+      places = places.map((p) => map(p, [0, 0, 0]));
+    }
+    const a = [0, 0, 0];
+    const b = [0, 0, 0];
+    return (p, out) => {
+      let from: ArrayLike<number> = p;
+      maps.forEach((map, i) => {
+        const into = i === maps.length - 1 ? out : i % 2 === 0 ? a : b;
+        from = map(from, into);
+      });
+      return maps.length === 0 ? Array.from(p, Number) : out;
+    };
+  }
+}
+
 /** Millimetres in one unit of an axis (OME's names). */
 export function mmPerUnit(unit: string): number {
   const u = unit.toLowerCase();

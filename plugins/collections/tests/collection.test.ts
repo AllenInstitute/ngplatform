@@ -122,8 +122,9 @@ describe("members warped by a displacement field (RFC-5 displacements)", () => {
     const steps = chainInto(root, a, "atlas")!;
     expect(steps.map((s) => (s.kind === "field" ? `field${s.inverse ? " inverted" : ""}` : "affine"))).toEqual(["affine", "field inverted"]);
     expect(chainInto(root, a, "physical")).toEqual([{ kind: "affine", m: [1, 0, 0, 10, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] }]);
-    // Into "other" would take two fields.
-    expect(chainInto(root, a, "other")).toBeUndefined();
+    // Into "other": through two fields.
+    const other = chainInto(root, a, "other")!;
+    expect(other.filter((s) => s.kind === "field").length).toBe(2);
   });
 
   it("shows such a member placed by the chain's affines and resampled back through the chain", () => {
@@ -139,7 +140,22 @@ describe("members warped by a displacement field (RFC-5 displacements)", () => {
       components: ["z", "y", "x"],
     });
     // A field walked as written (member to system) is undone by its inverse.
-    expect(fieldWarp([{ kind: "field", url: "f", inverse: false }], 1)?.warp.invert).toBe(true);
+    expect((fieldWarp([{ kind: "field", url: "f", inverse: false }], 1)?.warp as { invert?: boolean }).invert).toBe(true);
+    // Two fields: two parts, back from the system, each with the affines before it.
+    const two = fieldWarp(
+      [
+        { kind: "field", url: "f1", inverse: false },
+        { kind: "affine", m: [1, 0, 0, 2, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] },
+        { kind: "field", url: "f2", inverse: true },
+      ],
+      1,
+    )!.warp as { kind: string; parts: { url: string; invert: boolean; before: number[][]; after: number[][] }[] };
+    expect(two.kind).toBe("fields");
+    expect(two.parts.map((p) => [p.url, p.invert, p.before.length, p.after.length])).toEqual([
+      ["f2", false, 1, 0],
+      ["f1", true, 1, 0],
+    ]);
+    expect(two.parts[1].before[0][3]).toBe(-2);
     expect(fieldWarp(chainInto(root, a, "physical")!, 1)).toBeUndefined();
   });
 

@@ -308,10 +308,13 @@ export function invertSteps(steps: Step[]): Step[] | undefined {
 
 /**
  * The chain of steps taking `member` into `system`, as `placeInto` finds
- * it but through displacement fields too (at most one in the chain; a
+ * it but through displacement fields too (at most MAX_FIELDS in the chain; a
  * field walked backwards is its inverse; a `bijection` walked backwards is
  * its `inverse` as written), shortest first.  Undefined when none joins them.
  */
+/** The most displacement fields a chain may go through (each read box by box as the image is viewed). */
+export const MAX_FIELDS = 3;
+
 export function chainInto(root: CollectionNode, member: CollectionNode, system: string): Step[] | undefined {
   const known = (id: string) => graph(root).systems.find((s) => s.id === id)?.axes;
   const edges = graph(root).transforms.flatMap((t) => {
@@ -335,7 +338,7 @@ export function chainInto(root: CollectionNode, member: CollectionNode, system: 
       if (e.from !== at) continue;
       const next = [...steps, ...e.steps];
       const n = fields(next);
-      if (n > 1 || seen.has(`${n}:${e.to}`)) continue;
+      if (n > MAX_FIELDS || seen.has(`${n}:${e.to}`)) continue;
       seen.set(`${n}:${e.to}`, next);
       queue.push({ at: e.to, steps: next });
     }
@@ -355,28 +358,36 @@ const inMm = (m: Mat4, unit: number): Mat4 => m.map((v, i) => (i % 4 === 3 && i 
  * mm `before` the field, the field, inverted when the chain walks it
  * forwards, and affines `after`).  Undefined when the chain has no field.
  */
-export function fieldWarp(steps: Step[], unit: number): { placement: Mat4; warp: { kind: "field"; url: string; before: Mat4[]; after: Mat4[]; invert: boolean; components?: string[] } } | undefined {
-  const at = steps.findIndex((s) => s.kind === "field");
-  if (at === -1) return undefined;
-  const field = steps[at] as Extract<Step, { kind: "field" }>;
-  const affines = (part: Step[]) => part.map((s) => (s as Extract<Step, { kind: "affine" }>).m);
-  const placement = affines(steps.filter((s) => s.kind === "affine")).reduce((m, step) => multiply(step, m), [...IDENTITY]);
-  // From the placed layer back to the member: the placement, then each step undone, last first.
-  const after = invertSteps(steps.slice(0, at));
-  const before = invertSteps(steps.slice(at + 1));
-  if (after === undefined || before === undefined) return undefined;
-  return {
-    placement,
-    warp: {
-      kind: "field",
-      url: field.url,
-      before: [placement, ...affines(before)].map((m) => inMm(m, unit)),
-      after: affines(after).map((m) => inMm(m, unit)),
-      // Undoing x → x + D(x) is the field's inverse; undoing its inverse is the field.
-      invert: !field.inverse,
-      ...(field.components ? { components: field.components } : {}),
-    },
-  };
+export function fieldWarp(steps: Step[], unit: number): { placement: Mat4; warp: FieldPart | { kind: "fields"; parts: FieldPart[] } } | undefined {
+  if (!steps.some((s) => s.kind === "field")) return undefined;
+  const placement = steps.filter((s): s is Extract<Step, { kind: "affine" }> => s.kind === "affine").reduce((m, step) => multiply(step.m, m), [...IDENTITY]);
+  // From the placed layer back to the member: the placement, then each step undone, last first;
+  // cut at each field into parts (its affines before it, the field; the last part's after them).
+  const back = invertSteps(steps);
+  if (back === undefined) return undefined;
+  const parts: FieldPart[] = [];
+  let pending: Mat4[] = [placement];
+  for (const s of back) {
+    if (s.kind === "affine") {
+      pending.push(s.m);
+      continue;
+    }
+    // Undoing x → x + D(x) is the field's inverse (invertSteps has turned the flag); undoing its inverse is the field.
+    parts.push({ kind: "field", url: s.url, before: pending.map((m) => inMm(m, unit)), after: [], invert: s.inverse, ...(s.components ? { components: s.components } : {}) });
+    pending = [];
+  }
+  parts[parts.length - 1].after = pending.map((m) => inMm(m, unit));
+  return { placement, warp: parts.length === 1 ? parts[0] : { kind: "fields", parts } };
+}
+
+/** One displacement field between affines (mm), as the platform's warps take it. */
+export interface FieldPart {
+  kind: "field";
+  url: string;
+  before: Mat4[];
+  after: Mat4[];
+  invert: boolean;
+  components?: string[];
 }
 
 const DTYPE_RANGE: Record<string, [number, number]> = {

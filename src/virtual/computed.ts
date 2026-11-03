@@ -19,7 +19,7 @@
 import type { Engine } from "chunkmirage-web/engine";
 import { route } from "chunkmirage-web/routes";
 import type { Ask, PipelineView as EnginePipeline } from "chunkmirage-web/types";
-import { FieldWarp, fitTps, mmPerUnit, type Tps, type Vec3, type Warp, warpChunk } from "./warp.js";
+import { ChainWarp, FieldWarp, fitTps, mmPerUnit, type Tps, type Vec3, type Warp, warpChunk } from "./warp.js";
 
 /** A buffer the engine read as numbers of its dtype. */
 function typed(dtype: string, buffer: ArrayBuffer): ArrayLike<number> {
@@ -56,7 +56,7 @@ export interface FieldWarpSpec {
  * pairs (a thin-plate spline from the fixed points, mm, to the moving ones,
  * the source's mm), or through a displacement field.
  */
-export type PipelineView = EnginePipeline & { warp?: { kind: "tps"; fixed: number[][]; moving: number[][] } | FieldWarpSpec };
+export type PipelineView = EnginePipeline & { warp?: { kind: "tps"; fixed: number[][]; moving: number[][] } | FieldWarpSpec | { kind: "fields"; parts: FieldWarpSpec[] } };
 
 /**
  * A displacement field's axes from its group's metadata (zarr.json's
@@ -343,7 +343,12 @@ export class ComputedImages {
     const xyz = info.axes.map((a) => ["x", "y", "z"].indexOf(a.name));
     if (xyz.some((k) => k === -1)) throw new Error(`a warp needs an image with x, y and z axes, not ${info.axes.map((a) => a.name).join(", ")}`);
     const mm = info.axes.map((a) => mmPerUnit(a.unit));
-    const by: Tps | Warp = warp.kind === "field" ? await this.fieldWarp(name, warp) : fitTps(warp.fixed as Vec3[], warp.moving as Vec3[]);
+    const by: Tps | Warp =
+      warp.kind === "field"
+        ? await this.fieldWarp(name, warp)
+        : warp.kind === "fields"
+          ? new ChainWarp(await Promise.all(warp.parts.map((part, i) => this.fieldWarp(`${name}p${i}`, part))))
+          : fitTps(warp.fixed as Vec3[], warp.moving as Vec3[]);
     engine.serve(name, { ...info, channels: 1, out: "float32", halo: [0, 0, 0], lead: 0, kind: "image" }, spec.chunk, async (level, index) => {
       const l = info.levels[level];
       const grid = { shape: l.shape, voxel: l.voxel, origin: l.origin, xyz, mm };
