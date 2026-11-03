@@ -18,6 +18,10 @@ transform, or the moved image.
   cursor**; **Restore to original**. **Apply to all visible volumes** moves
   every other visible image and segmentation with it (clear it to put them
   back).
+- **Straighten with landmarks** (as Freeview's): mark four points on the
+  image, then turn the line #1 → #2 onto an axis (the AC to the PC onto
+  P → A, say) and #3 → #4 as near another as it can, about the volume's
+  centre.
 - **Landmarks:** ++alt+f++ places a fixed point and ++alt+m++ the matching
   moving point. Fit as translation, rigid, similarity or affine, with the
   residual of each pair.

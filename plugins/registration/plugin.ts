@@ -33,6 +33,7 @@ import {
 } from "./manual.js";
 import { REGISTRATION_PANEL } from "./manifest.js";
 import type { SaveRequest } from "./save_worker.js";
+import { DIRECTIONS, type Direction, straighten } from "./straighten.js";
 import { ENLARGE, type Method, zipFiles } from "./volume_io.js";
 
 interface Pair {
@@ -57,6 +58,9 @@ export interface Saved {
   start?: number[];
   /** Freeview's "Apply to all visible volumes": the other visible 3-D layers follow the moving one. */
   all?: boolean;
+  /** Straightening landmarks #1 to #4 (mm along the layer's output dimensions), and where the two lines go. */
+  marks?: (number[] | null)[];
+  lines?: [Direction, Direction];
 }
 
 export function readSaved(raw: unknown): Saved {
@@ -70,6 +74,8 @@ export function readSaved(raw: unknown): Saved {
     manual: readManual(s.manual),
     start: Array.isArray(s.start) ? s.start : undefined,
     all: s.all === true,
+    marks: Array.isArray(s.marks) ? s.marks : undefined,
+    lines: Array.isArray(s.lines) && s.lines.length === 2 && s.lines.every((d) => DIRECTIONS.includes(d)) ? s.lines : undefined,
   };
 }
 
@@ -411,6 +417,47 @@ class Registration {
     }
     return m;
   }
+
+  /** Marks straightening landmark `i` (0 to 3) at the views' centre. */
+  private markHere(i: number): void {
+    const name = this.layer();
+    const t = name && this.ctx.viewer.layerTransform(name);
+    const here = t && this.here(t, false);
+    if (!here) return;
+    const marks = [...(this.saved.marks ?? [null, null, null, null])];
+    marks[i] = [...here];
+    this.save({ marks });
+    this.panelUpdate?.();
+  }
+
+  /**
+   * Freeview's landmark straightening: the line #1 → #2 turned onto one
+   * axis, #3 → #4 as nearly as it can onto another, about the volume's
+   * centre (./straighten.ts).
+   */
+  private straightenNow(): void {
+    const name = this.layer();
+    const t = name && this.ctx.viewer.layerTransform(name);
+    const marks = this.saved.marks;
+    if (!name || !t || t.rank !== 3 || !marks || marks.length < 4 || marks.some((m) => !m)) return;
+    const order = axisOrder(t.output.names);
+    const toXyz = (v: ArrayLike<number>): Vec3 => [v[order[0]], v[order[1]], v[order[2]]];
+    const [first, second] = this.saved.lines ?? ["P→A", "I→S"];
+    try {
+      const centre = toXyz(this.volumeCentre(t, t.matrix) ?? [0, 0, 0]);
+      const r = straighten(marks.map((m) => toXyz(m!)) as [Vec3, Vec3, Vec3, Vec3], first, second, centre);
+      if (this.saved.base === undefined) this.save({ base: Array.from(t.matrix) });
+      this.placed(name, neuroglancer(t, multiply4(permute(r, order), physical(t)!)));
+      // The marks were on the image as it was; they no longer are.
+      this.save({ marks: undefined });
+      this.straightenNote = `Straightened: #1 → #2 now points ${first}, #3 → #4 as near ${second} as it can.`;
+    } catch (e) {
+      this.straightenNote = `Could not straighten: ${(e as Error).message}.`;
+    }
+    this.panelUpdate?.();
+  }
+
+  private straightenNote = "";
 
   /** Freeview's Move Center to Current Cursor Location: the translation that puts the volume's centre at the views' centre. */
   private centreToCursor(): void {
@@ -929,6 +976,47 @@ class Registration {
             }),
             el("span", {}, "Apply to all visible volumes"),
           ),
+          el("h3", { class: "section-title" }, "Straighten with landmarks"),
+          el("p", { class: "note rg-tight" }, "As Freeview's landmarks: mark four points on the image (the views' centre), then turn the line #1 → #2 onto one axis and #3 → #4 as near another as it can, about the volume's centre (for example the AC to the PC onto P → A)."),
+          el(
+            "div",
+            { class: "rg-row" },
+            ...[0, 1, 2, 3].map((i) =>
+              el(
+                "button",
+                { class: "btn outline small", type: "button", disabled: !hasLayer, title: saved.marks?.[i] ? `#${i + 1}: ${saved.marks[i]!.map((v) => v.toFixed(1)).join(", ")} mm` : `Mark #${i + 1} at the views' centre`, onclick: () => this.markHere(i) },
+                saved.marks?.[i] ? `#${i + 1} ✓` : `#${i + 1} here`,
+              ),
+            ),
+          ),
+          el(
+            "div",
+            { class: "rg-grid2" },
+            ...([0, 1] as const).map((k) =>
+              el(
+                "label",
+                { class: "field" },
+                el("span", {}, k === 0 ? "#1 → #2 points" : "#3 → #4 points"),
+                el(
+                  "select",
+                  {
+                    onchange: (e: Event) => {
+                      const lines = [...(saved.lines ?? ["P→A", "I→S"])] as [Direction, Direction];
+                      lines[k] = (e.target as HTMLSelectElement).value as Direction;
+                      this.save({ lines });
+                    },
+                  },
+                  ...DIRECTIONS.map((d) => el("option", { value: d, ...(d === (saved.lines ?? ["P→A", "I→S"])[k] ? { selected: "" } : {}) }, d)),
+                ),
+              ),
+            ),
+          ),
+          el(
+            "div",
+            { class: "rg-row" },
+            el("button", { class: "btn small", type: "button", disabled: !hasLayer || !saved.marks || saved.marks.length < 4 || saved.marks.some((m) => !m), onclick: () => this.straightenNow() }, "Straighten"),
+          ),
+          this.straightenNote ? el("p", { class: "note" }, this.straightenNote) : null,
           el("h3", { class: "section-title" }, "Landmarks"),
           el("p", { class: "note rg-tight" }, "Point at a feature in the fixed data, Alt+F; the same feature in the moving layer, Alt+M."),
           el(
