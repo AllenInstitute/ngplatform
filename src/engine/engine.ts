@@ -8,6 +8,7 @@
  * class and shown by the platform, which mounts Neuroglancer's own widgets
  * (layer controls, settings, help, statistics) in its docks and dialogs.
  */
+import { setSurfaceOverlay } from "./inspector/surface.js";
 import type { Drawer3d } from "../sdk/types.js";
 import { draw3d } from "./draw3d.js";
 import {
@@ -368,6 +369,12 @@ export class Engine {
       const tool = (managed.layer as unknown as { tool?: { value?: { inProgressAnnotation?: { value?: unknown } } } } | null)?.tool?.value;
       return tool?.inProgressAnnotation?.value !== undefined;
     });
+  }
+
+  /** Shows a surface map as a surface layer's overlay (Render → Surface's Overlay); false when the layer is not a surface. */
+  setSurfaceOverlay(name: string, map: string): boolean {
+    const layer = this.segmentationLayer(name);
+    return layer !== undefined && setSurfaceOverlay(layer, map);
   }
 
   /** Layers whose own drawing a plugin hides: their opacity as it was (its value, and as saved). */

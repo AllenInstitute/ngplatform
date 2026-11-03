@@ -263,3 +263,39 @@ function safeId(name: string): string {
   if (!/^[a-z]/.test(base)) base = `a_${base}`;
   return base.replace(/__+/g, "_");
 }
+
+/**
+ * Shows a surface map as the layer's overlay, as the Surface section's
+ * Overlay menu does: a map the layer does not show yet is asked for in the
+ * source (the layer reloads), and its range is set once its values are
+ * drawn.  False when the layer is not a surface.
+ */
+export function setSurfaceOverlay(l: SegmentationUserLayer, name: string): boolean {
+  const view = surfaceViewOf(l);
+  if (view === undefined) return false;
+  const shader = (l.displayState as any).skeletonRenderingOptions.shader as Watch<string>;
+  const look = surfaceLookOf(shader.value) ?? {};
+  const next: SurfaceLook = { ...look, overlay: name, range: undefined, threshold: undefined, max: undefined };
+  const text = surfaceShader(next);
+  if (text !== shader.value) shader.value = text;
+  if (!view.attributes.some((a) => a.name === name)) {
+    const source = (l as any).dataSources?.[0];
+    if (source !== undefined) {
+      const names = [...view.attributes.map((a) => a.name), name].slice(-MAX_SHOWN);
+      const base = String(source.spec.url).replace(/#.*$/, "");
+      source.spec = { ...source.spec, url: `${base}#attributes=${names.map(encodeURIComponent).join(",")}`, setManually: true };
+    }
+  }
+  let tries = 0;
+  const fill = () => {
+    const current = surfaceLookOf(shader.value);
+    const now = surfaceViewOf(l);
+    if (current?.overlay !== name || current.range !== undefined) return;
+    const values = now?.values(name) ?? [];
+    if (values.length > 0) shader.value = surfaceShader({ ...current, ...overlayRange(values, current.colormap ?? "heat") });
+    else if (++tries < 40) setTimeout(fill, 500);
+  };
+  fill();
+  return true;
+}
+

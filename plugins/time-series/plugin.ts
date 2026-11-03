@@ -876,11 +876,15 @@ class TimeSeries {
       // The legend: every series plotted or pinned, pins removable.
       const keys: Node[] = [];
       if (surface !== undefined) {
+        const layer = this.chosen()?.layer;
         keys.push(
           el(
             "span",
             { class: "ts-key ts-note" },
-            `${this.chosen()?.layer} shows the time point chosen here as its values ${surface.series.name}: choose ${surface.series.name} as the overlay in Render → Surface. (Vertices' time courses are not plotted.)`,
+            `${layer} shows the time point chosen here as its values ${surface.series.name}. (Vertices' time courses are not plotted.) `,
+            layer === undefined
+              ? null
+              : el("button", { class: "btn small", type: "button", onclick: () => this.ctx.viewer.setSurfaceOverlay(layer, surface.series.name) }, `Show ${surface.series.name} as the overlay`),
           ),
         );
       } else if (this.cursor !== undefined && this.info !== undefined) {

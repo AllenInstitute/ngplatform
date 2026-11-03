@@ -61,9 +61,9 @@ the mouse rests on a voxel for a moment and its full values arrive.
 
 A GIFTI surface opened from this computer with a CIFTI time series
 (`.dtseries.nii`) beside it can be stepped through in time. Choose the
-series in **Image** (it reads "surface: name_t (file)"), and in the
-surface layer's Render → Surface choose **name_t** as the overlay: it
-holds the values at the time point the Time series tab shows, and the play
+series in **Image** (it reads "surface: name_t (file)"), and press **Show
+name_t as the overlay** (or choose it in the surface layer's Render →
+Surface): it holds the values at the time point the Time series tab shows, and the play
 and step buttons and clicks on the plot change it. Stepping is not an undo
 step and is not kept in the link. The time courses of vertices are not
 plotted yet.
