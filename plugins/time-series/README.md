@@ -100,9 +100,11 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   point is sent to the surface's store (`WorkspaceApi.local.send`, the
   store's `message`), then `ViewerApi.reloadData(store)` has Neuroglancer
   read the surface's values again. The surface shows them when `<stem>_t`
-  is its overlay (Render → Surface). Nothing in the views' state changes,
-  so stepping makes no undo step; the time point is not in the link (the
-  store starts at 0, and the panel asks it which time point it serves).
+  is its overlay (Render → Surface, or the panel's button, through
+  `viewer.setSurfaceOverlay`). The time point is kept in the plugin's state
+  (`surfaceTimes`, by store and series) once stepping settles, not while
+  playing: in the link, so the store (which starts at 0) is sent it again
+  when the workspace opens, and an undo shows the one before.
 - **State.** Pins (voxel indices, or an annotation layer and annotation id
   for a region) and the chosen image are in the plugin's state, in the
   link; their values are read again when it is opened. A region pin is

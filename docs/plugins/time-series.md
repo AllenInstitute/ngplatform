@@ -64,8 +64,9 @@ A GIFTI surface opened from this computer with a CIFTI time series
 series in **Image** (it reads "surface: name_t (file)"), and press **Show
 name_t as the overlay** (or choose it in the surface layer's Render →
 Surface): it holds the values at the time point the Time series tab shows, and the play
-and step buttons and clicks on the plot change it. Stepping is not an undo
-step and is not kept in the link. The time courses of vertices are not
+and step buttons and clicks on the plot change it. The time point is kept in
+the link (shown again when the workspace opens) and each step is an undo
+step, as for images; playing makes none until it stops. The time courses of vertices are not
 plotted yet.
 
 ## Notes from users

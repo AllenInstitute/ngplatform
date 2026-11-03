@@ -130,12 +130,18 @@ interface Pin {
 interface Saved {
   layer?: string;
   pins: Pin[];
+  /** The time point each surface series shows, by `store|series`: kept in the link, so it opens there again. */
+  surfaceTimes?: Record<string, number>;
 }
+
+/** A surface series' key in the saved state. */
+const surfaceKey = (surface: SurfaceStep) => `${surface.store}|${surface.series.name}`;
 
 function readSaved(value: unknown): Saved {
   const v = (value ?? {}) as Partial<Saved>;
   const pins = Array.isArray(v.pins) ? v.pins.filter((p) => typeof p?.id === "number" && typeof p.layer === "string" && (Array.isArray(p.voxel) || p.region !== undefined)) : [];
-  return { layer: typeof v.layer === "string" ? v.layer : undefined, pins };
+  const times = Object.entries(v.surfaceTimes ?? {}).filter((e): e is [string, number] => Number.isInteger(e[1]) && e[1] >= 0);
+  return { layer: typeof v.layer === "string" ? v.layer : undefined, pins, ...(times.length ? { surfaceTimes: Object.fromEntries(times) } : {}) };
 }
 
 /** A series being read or read. */
@@ -227,6 +233,9 @@ class TimeSeries {
         if (JSON.stringify(next) === JSON.stringify(this.saved)) return;
         this.saved = next;
         void this.refresh();
+        // An undo (or a link) that changes a surface series' time point shows it.
+        const kept = this.surface === undefined ? undefined : next.surfaceTimes?.[surfaceKey(this.surface)];
+        if (kept !== undefined && kept !== this.current && this.playing === undefined) void this.showOnSurface(kept);
       }),
       ctx.viewer.onLayersChanged(() => void this.refresh()),
       ctx.viewer.onStateChanged(() => {
@@ -684,6 +693,9 @@ class TimeSeries {
       if (this.surface !== surface || typeof answer?.time !== "number") return;
       this.current = answer.time;
       this.updateTime?.();
+      // The time point the link keeps, shown again (a reload starts the store at 0).
+      const kept = this.saved.surfaceTimes?.[surfaceKey(surface)];
+      if (kept !== undefined && kept !== answer.time) void this.showOnSurface(kept);
     } catch (e) {
       if (this.surface === surface) this.setStatus(`Could not reach ${surface.series.name}: ${(e as Error).message}`, true);
     }
@@ -710,6 +722,8 @@ class TimeSeries {
         this.ctx.viewer.reloadData(surface.store);
         this.current = answer.time;
         this.updateTime?.();
+        // Kept in the link when it settles: not each frame while playing (each would be a change).
+        if (this.playing === undefined) this.keepSurfaceTime();
       }
     } catch (e) {
       this.setStatus(`Could not show time point ${i}: ${(e as Error).message}`, true);
@@ -749,7 +763,17 @@ class TimeSeries {
     clearTimeout(this.playing);
     if (this.playing === undefined) return;
     this.playing = undefined;
+    this.keepSurfaceTime();
     this.update?.();
+  }
+
+  /** Keeps the surface series' time point in the plugin's state (the link). */
+  private keepSurfaceTime(): void {
+    const surface = this.surface;
+    if (surface === undefined) return;
+    const key = surfaceKey(surface);
+    if (this.saved.surfaceTimes?.[key] === this.current) return;
+    this.save({ surfaceTimes: { ...this.saved.surfaceTimes, [key]: this.current } });
   }
 
   // ------------------------------------------------------------- plot and CSV
