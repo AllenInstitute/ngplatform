@@ -42,6 +42,7 @@ nav:
       - The window, tab by tab: guide/interface.md
       - Loading and exporting data: guide/data.md
       - Signing in: guide/signing-in.md
+      - Jobs on this computer: guide/local-jobs.md
       - Coming from Freeview: guide/from-freeview.md
       - Coming from Neuroglancer: guide/from-neuroglancer.md
   - Plugins:

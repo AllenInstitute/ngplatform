@@ -191,6 +191,6 @@ overlays at once are not there.
 | Tab | What it holds |
 |---|---|
 | **Activity** | A log of what the workspace did, newest first: datasets added, plugins started, errors. |
-| **Jobs** | Long tasks from plugins (filters, statistics, saving), with progress and a cancel button. |
+| **Jobs** | Long tasks from plugins (filters, statistics, saving), with progress and a cancel button. Under **This computer**: jobs run as Python processes on your own computer through the runner, with their process id, progress, log, Cancel and Open (see [Jobs on this computer](local-jobs.md)). |
 | **Chunk statistics** | Neuroglancer's chunk statistics: what is being downloaded, from where, and how fast. |
 | **Python** | A Python console running in the page (Pyodide). `ngp` drives the workspace; `await ngp.show(array, voxel_size=…)` shows a numpy array as a layer; `ngp.show_points(xyz, values=…)`, `ngp.show_lines(lines)` and `ngp.show_mesh(vertices, faces)` show points, streamlines and meshes made in Python (as Zarr Vectors, so Track filtering works on them), and `ngp.annotate(points=…, lines=…, boxes=…, ellipsoids=…)` adds an annotation layer. |

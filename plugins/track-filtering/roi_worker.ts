@@ -280,6 +280,12 @@ async function curves(id: number, level: number, ids: BigUint64Array): Promise<v
 
 /** Small questions about the store, answered with `{type: "answer", id, value}`. */
 const calls: Record<string, (msg: any) => Promise<{ value: unknown; transfer?: Transferable[] }>> = {
+  /** A mask's voxels as the region tests read them (for a job on this computer); a copy, sent whole. */
+  async maskVolume({ source }: { source: MaskSource }) {
+    const mask = await maskVolume(source);
+    const bits = mask.bits.slice();
+    return { value: { ...mask, bits }, transfer: [bits.buffer] };
+  },
   /** An image's levels, for a mask on it: each one's voxels along x, y, z and their placement (voxel indices to RAS mm). */
   async maskLevels({ store: url }: { store: string }) {
     const { levels } = await new VolumeReader().open([url], undefined);

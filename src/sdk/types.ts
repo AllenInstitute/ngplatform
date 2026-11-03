@@ -540,6 +540,73 @@ export interface JobControl {
   readonly cancelled: boolean;
 }
 
+// ------------------------------------------------------------------ runner
+
+/** A file a runner job writes. */
+export interface RunnerOutput {
+  path: string;
+  /** "zarr-vectors" (a store folder), "trk", "nifti" or "file". */
+  type: string;
+}
+
+/** A job on the runner (a Python process on this computer; see docs/guide/local-jobs.md). */
+export interface RunnerJob {
+  id: string;
+  /** "convert", "filter", "density", or "serve" (a file served to the viewer). */
+  kind: string;
+  title: string;
+  args: Record<string, unknown>;
+  /** The process id, once started. */
+  pid: number | null;
+  state: "queued" | "running" | "done" | "failed" | "cancelled";
+  /** Seconds since 1970. */
+  created: number;
+  started: number | null;
+  finished: number | null;
+  /** 0 to 1, when the job reports it. */
+  progress: number | null;
+  message: string;
+  outputs: RunnerOutput[];
+  returncode?: number | null;
+  serve?: { id: string; url: string };
+}
+
+/**
+ * The runner: Python jobs on the user's own computer (`python -m
+ * ngplatform_runner`), which the app is paired with in the Jobs tab.  Jobs
+ * read and write files only under the folders the runner was started with.
+ */
+export interface RunnerApi {
+  /** Whether the app is paired with a runner that answers. */
+  available(): boolean;
+  onChanged(callback: () => void): Disposer;
+  /** The folders the runner may read and write. */
+  folders(): string[];
+  /** The runner's jobs, newest first (as last fetched). */
+  jobs(): RunnerJob[];
+  /**
+   * Starts a job of a kind the runner knows ("convert", "filter",
+   * "density"); resolves with it as started (queued or running).  Fails
+   * when the runner refuses the arguments (a path outside its folders, an
+   * output that exists).
+   */
+  start(kind: string, args: Record<string, unknown>): Promise<RunnerJob>;
+  /** The job once it has finished (done, failed or cancelled); `onProgress` is called as it runs. */
+  wait(id: string, onProgress?: (job: RunnerJob) => void, signal?: AbortSignal): Promise<RunnerJob>;
+  cancel(id: string): Promise<void>;
+  /** The path on this computer a layer source reads, when the runner serves it (else undefined). */
+  pathOf(source: string): Promise<string | undefined>;
+  /**
+   * Asks the user for a path under the runner's folders: a file or store
+   * to read ("open"), or a new file to write ("save", with a suggested
+   * name); undefined when cancelled.  `find` looks for a file of that name
+   * under the folders first.
+   */
+  choose(options: { title: string; mode: "open" | "save"; suggested?: string; find?: { name: string; size?: number }; note?: string }): Promise<string | undefined>;
+  /** Adds a file or store under the runner's folders to the active scene, served by the runner; resolves with the dataset's id. */
+  open(path: string, options?: { name?: string }): Promise<string>;
+}
+
 export interface PlatformContext {
   readonly plugin: { id: string; version: string; manifest: Manifest };
   commands: {
@@ -586,6 +653,8 @@ export interface PlatformContext {
   };
   context: { set(key: string, value: unknown): void };
   jobs: { run<T>(title: string, work: (control: JobControl) => Promise<T>): Promise<T> };
+  /** Jobs on this computer, through the runner the app is paired with (see RunnerApi). */
+  runner: RunnerApi;
   services: {
     provide<T>(name: string, implementation: T): Disposer;
     get<T>(name: string): Promise<T>;

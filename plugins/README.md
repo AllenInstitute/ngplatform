@@ -261,6 +261,7 @@ it is deactivated. Subscriptions a plugin makes itself go in
 | `state` | The plugin's slice of the workspace state: in the link, undoable, versioned. |
 | `settings` | Per-user settings kept in this browser, never in the link. |
 | `jobs.run` | Long work with progress and cancel, shown in the Jobs tab. |
+| `runner` | Jobs on the user's own computer, through the runner they paired in the Jobs tab (see below). |
 | `services.provide / get` | Share an API with other plugins (`get` waits for the provider). |
 | `open.handler` | Handle pasted text matching a declared pattern. |
 | `log` | Lines in the Activity tab, tagged with the plugin. |
@@ -323,6 +324,47 @@ The sign-in rules of the Auth tab (an address prefix and a sign-in, kept in
 the browser) can name a provider's source sign-in by its `id`: a layer from
 an address a rule covers is given that sign-in when it is added or its
 workspace opens, through `wrap`. Keep `id`s stable, since rules store them.
+
+### Jobs on this computer
+
+Work too large for the page (a whole tractogram filtered into a new file,
+a conversion) runs as a Python process on the user's computer, through the
+runner (`runner/` in this repository; [the guide](../docs/guide/local-jobs.md)).
+The runner offers known job kinds only (`convert`, `filter`, `density`),
+reads and writes only under the folders it was started with, and the app
+must be paired with it in the Jobs tab. `ctx.runner` is the plugin's way to
+it:
+
+```ts
+if (!ctx.runner.available()) return; // not paired, or not running
+// The file behind a layer the runner serves; else ask the user for it.
+const input = (await ctx.runner.pathOf(source)) ?? (await ctx.runner.choose({ title: "The tractogram", mode: "open", find: { name: "tracks.trk" } }));
+if (input === undefined) return;
+const job = await ctx.runner.start("filter", {
+  input,
+  filter: { format: "zvf-predicate", version: 1, tree: { op: "passes", mode: "path", region: { type: "sphere", center: [10, 0, 0], radius: 8 } } },
+  trk: input.replace(/\.trk$/, "_sphere.trk"),
+});
+const done = await ctx.runner.wait(job.id, (now) => console.log(now.progress, now.message));
+if (done.state === "done") await ctx.runner.open(done.outputs[0].path); // a layer, served by the runner
+```
+
+| Call | What |
+|---|---|
+| `available()`, `onChanged(cb)` | Whether a paired runner answers, and a callback when that or its jobs change |
+| `folders()` | The folders the runner may read and write |
+| `jobs()` | Its jobs as last fetched: `id, kind, title, args, pid, state` (queued, running, done, failed, cancelled), `progress` (0–1 or null), `message, outputs` (`[{path, type}]`) |
+| `start(kind, args)` | Starts a job; rejects with the runner's reason when it refuses the arguments (a path outside its folders, an output that exists) |
+| `wait(id, onProgress?, signal?)` | The job once it has finished |
+| `cancel(id)` | Ends the job's process and what it started |
+| `pathOf(source)` | The path behind a layer source the runner serves |
+| `choose({title, mode, suggested?, find?, note?})` | A dialog for a path under the runner's folders: one to read (`"open"`, with `find` looking for a file by name and size first) or a new one to write (`"save"`) |
+| `open(path, {name?})` | Adds a store, tractogram or NIfTI under the runner's folders to the active scene, served by the runner |
+
+A `filter` job's `filter` is zarr-vectors-tools' filter tree, in the
+coordinates the viewer shows the input in (Track filtering's
+`runner_job.ts` turns a group into one). The kinds and their arguments are
+in [runner/README.md](../runner/README.md).
 
 ### Failure and trust
 
