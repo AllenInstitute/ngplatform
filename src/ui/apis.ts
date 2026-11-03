@@ -113,6 +113,7 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
     onSegmentPropertiesChanged: (layer, callback) => engine.onSegmentPropertiesChanged(layer, callback),
     setTemporaryVisibleSegments: (layer, ids) => engine.setTemporaryVisibleSegments(layer, ids),
     hideLayerDrawing: (layer, hidden) => engine.hideDrawing(layer, hidden),
+    annotationInProgress: () => engine.annotationInProgress(),
     setTemporaryBackground: (rgb) => engine.setTemporaryBackground(rgb),
     draw3d: (layer, drawer) => engine.draw3d(layer, drawer),
     panels: () => engine.panels(),

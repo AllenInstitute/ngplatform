@@ -8,7 +8,7 @@ items are done (and say where); the rest are in rough order of work.
 
 - [x] chunkmirage (JaneliaSciComp, pinned as `vendor/chunkmirage`) as the engine for computed images: one service worker (local data, chunkmirage's relay, gs+google:// for the engine), pipelines carried in their links, Python from a link run only once allowed in a dialog that shows it, a fresh engine when Pyodide loads without its packages; the Filters tab as a pipeline of steps over any image, a Python step of one's own; one Pyodide (0.28.3) for the Python panel and the engine.
 - [x] Segmentation as its own plugin and tab (tool bar, segment list, new layers on a grid or a copy).
-- [x] Annotations as Neuroglass and WebKnossos organise them: an annotation table, groups, values from lists or ontologies, comments, search, CSV; a renamed layer keeps its record; the table's dock has room.
+- [x] Annotations as Neuroglass and WebKnossos organise them: an annotation table, groups, values from lists or ontologies, comments, search, CSV; a renamed layer keeps its record; the table's dock has room; edits wait while an annotation is being drawn.
 - [x] Auth tab: Google sign-in, gs+google:// buckets, ngauth and middleauth servers, a sign-in per layer; Neuroglancer links say what they will not show.
 - [x] Collections tab beside the scenes (a scene kind plugins contribute), images placed in the coordinate system chosen from a graph (checked with two systems), collections found above the data.
 - [x] Local data after a reload: no 410 (reads wait for remembered folders), several dropped items remembered, a note for layers whose files are gone, reconnected when reopened.
@@ -18,7 +18,7 @@ items are done (and say where); the rest are in rough order of work.
 - [ ] Time series gaps (an agent): a layer's local time axis, coarse levels while moving, playing without undo steps, CIFTI time series on surfaces.
 - [ ] Luxar gaps (an agent): selected segments, track groups by id, bloom, meshes.
 - [ ] Waiting on Andrew: a Google OAuth client ID; the Allen CATMAID address; S-21-46's source data and leave to upload a rebuild with even coarse levels; copy-on-write editing of a large segmentation (agree first); the deploy.
-- [ ] Not done, smaller: editing an annotation while a polyline is half drawn interrupts it; local formats still served by the platform's own stores, not `Engine.serve`; very large local meshes in cells with simplified levels (deferred: surfaces and most meshes are fine whole).
+- [ ] Not done, smaller: local formats still served by the platform's own stores, not `Engine.serve`; very large local meshes in cells with simplified levels (deferred: surfaces and most meshes are fine whole).
 
 ## The plan agreed on 2026-11-02, evening
 

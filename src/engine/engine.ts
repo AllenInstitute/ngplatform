@@ -358,6 +358,18 @@ export class Engine {
     colour.value = temporary as typeof colour.value;
   }
 
+  /**
+   * Whether an annotation is being drawn: a tool that places it in steps
+   * (a polyline, a line, a box, an ellipsoid) has started one.  Restoring the
+   * layer's annotations meanwhile would lose it.
+   */
+  annotationInProgress(): boolean {
+    return this.viewer.layerManager.managedLayers.some((managed) => {
+      const tool = (managed.layer as unknown as { tool?: { value?: { inProgressAnnotation?: { value?: unknown } } } } | null)?.tool?.value;
+      return tool?.inProgressAnnotation?.value !== undefined;
+    });
+  }
+
   /** Layers whose own drawing a plugin hides: their opacity as it was (its value, and as saved). */
   private readonly hiddenDrawing = new Map<string, { value: number; json: Json[string]; off: () => void; target: object }>();
 

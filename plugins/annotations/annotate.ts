@@ -81,6 +81,7 @@ export class Annotate {
   }
 
   dispose(): void {
+    if (this.waiting !== undefined) clearInterval(this.waiting);
     this.offs.forEach((off) => off());
     this.overlay.dispose();
   }
@@ -185,6 +186,12 @@ export class Annotate {
    * undo step.
    */
   write(name: string, spec: LayerSpec, meta: LayerMeta): void {
+    // An annotation half drawn (a polyline, say) would be lost by rewriting the layer: the edit waits.
+    if (this.ctx.viewer.annotationInProgress()) {
+      this.pending.set(name, { spec, meta });
+      this.waitForDrawing();
+      return;
+    }
     const current = this.layer(name);
     if (current === undefined) return;
     const fields = fieldsOf(spec, meta);
@@ -202,6 +209,28 @@ export class Annotate {
     this.remember();
     const saved = this.saved();
     this.save({ ...saved, layers: { ...saved.layers, [name]: prune(next, meta) } });
+  }
+
+  /** Edits waiting for an annotation being drawn, by layer (the latest of each). */
+  private readonly pending = new Map<string, { spec: LayerSpec; meta: LayerMeta }>();
+  private waiting: ReturnType<typeof setInterval> | undefined;
+
+  private waitForDrawing(): void {
+    if (this.waiting !== undefined) return;
+    this.waiting = setInterval(() => {
+      if (this.ctx.viewer.annotationInProgress()) return;
+      clearInterval(this.waiting);
+      this.waiting = undefined;
+      const edits = [...this.pending];
+      this.pending.clear();
+      // The annotation drawn meanwhile is in the layer now: each edit is applied to the layer as it is.
+      for (const [name, { spec, meta }] of edits) {
+        const now = this.layer(name)?.spec;
+        const known = new Set(spec.annotations.map((a) => a.id));
+        const drawn = (now?.annotations ?? []).filter((a) => !known.has(a.id));
+        this.write(name, { ...spec, annotations: [...spec.annotations, ...drawn] }, meta);
+      }
+    }, 250);
   }
 
   /** Writes only a layer's record (comments, text and terms). */

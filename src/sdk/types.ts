@@ -287,6 +287,8 @@ export interface ViewerApi {
    * opacity there), and kept hidden through undo and scene switches.
    */
   hideLayerDrawing(layer: string, hidden: boolean): void;
+  /** Whether an annotation is being drawn in steps (a polyline, a line, a box): a plugin's edits to annotation layers wait for it. */
+  annotationInProgress(): boolean;
   /** Sets the 2-D views' background (rgb, 0 to 1) for a while, or puts it back (`undefined`): not saved in the link. */
   setTemporaryBackground(rgb: [number, number, number] | undefined): void;
   /**

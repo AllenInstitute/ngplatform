@@ -82,6 +82,11 @@ annotations take the properties' defaults, which is how a new annotation
 goes to the chosen group without being written again. Changing a field's
 list keeps each annotation's value by name.
 
+An edit rewrites the layer's annotations in the state; while an annotation
+is being drawn in steps (a polyline, a line, a box: the platform's
+`viewer.annotationInProgress()`), edits wait and are applied, with the
+annotation drawn added, once it is finished, so drawing is never cut short.
+
 The plugin's state is the scene's (each scene keeps its own slice), keyed by
 layer name; a layer renamed (in Neuroglancer or the platform) keeps its
 record: the new name holding the same annotations, by id, takes it over. Values and comments of annotations deleted are dropped the
