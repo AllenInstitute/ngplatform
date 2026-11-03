@@ -5,6 +5,8 @@
  */
 import { serveVirtualStores } from "../../sdk/virtual.js";
 import { EDGE_LIST } from "./formats.js";
+import { lazToLas } from "./laz.js";
+import { lazPerf } from "./laz_module.js";
 import { FREESURFER_SURFACE, parseMeshFile } from "./mesh_files.js";
 import { MeshStore } from "./meshes.js";
 import { graphStore, parseEdgeList, parseGraphml, splitEdgeList } from "./graphs.js";
@@ -30,6 +32,7 @@ serveVirtualStores(async (file) => {
   }
   if (/\.parquet$/i.test(file.name)) return pointStore(await parsePointParquet(file), file.name.replace(/\.parquet$/i, ""));
   if (/\.las$/i.test(file.name)) return pointStore(parseLas(new Uint8Array(await file.arrayBuffer())), file.name.replace(/\.las$/i, ""));
+  if (/\.laz$/i.test(file.name)) return pointStore(parseLas(lazToLas(new Uint8Array(await file.arrayBuffer()), await lazPerf())), file.name.replace(/\.laz$/i, ""));
   if (/\.(csv|tsv|xyz)$/i.test(file.name)) return pointStore(parsePointTable(await file.text()), file.name.replace(/\.(csv|tsv|xyz)$/i, ""));
   return openTractogram(file, file.name);
 });

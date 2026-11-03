@@ -17,3 +17,18 @@ describe("LAS", () => {
     });
   }
 });
+
+describe("LAZ", () => {
+  for (const name of ["points_v12.laz", "points_v14.laz"]) {
+    it(`reads ${name} (laspy's LAZ of the same points) to the same points`, async () => {
+      const { lazToLas } = await import("../src/virtual/vectors/laz.js");
+      const { createLazPerf } = await import("laz-perf/lib/node/index.js");
+      const las = lazToLas(new Uint8Array(readFileSync(new URL(name, DIR))), (await createLazPerf()) as never);
+      const table = parseLas(las);
+      const want = expected[name.replace(".laz", ".las")];
+      Array.from(table.positions).forEach((v, i) => expect(v).toBeCloseTo(want.positions[i], 5));
+      expect(Array.from(table.columns[0].values)).toEqual(want.intensity);
+      expect(Array.from(table.columns[1].values)).toEqual(want.classification);
+    });
+  }
+});

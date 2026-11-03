@@ -100,8 +100,8 @@ export const ZARR_VECTORS_VIRTUAL: VirtualFormat[] = [
     worker,
   },
   {
-    pattern: /\.las$/i,
-    extensions: [".las"],
+    pattern: /\.la[sz]$/i,
+    extensions: [".las", ".laz"],
     format: "LAS point cloud",
     kind: "auto",
     source: (url) => `${url}/|zarr-vectors:`,

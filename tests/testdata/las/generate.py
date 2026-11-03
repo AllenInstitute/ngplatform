@@ -1,6 +1,7 @@
 """Makes the LAS test files with laspy: point formats 1 (LAS 1.2) and 6
 (LAS 1.4), scaled and offset coordinates, intensity and classification.
-Run with a Python that has laspy: python generate.py"""
+Each is also written compressed (.laz, the same points), which needs
+lazrs. Run with a Python that has laspy and lazrs: python generate.py"""
 import json
 import laspy
 import numpy as np
@@ -26,3 +27,7 @@ for name, version, fmt in [("points_v12.las", "1.2", 1), ("points_v14.las", "1.4
         "classification": np.asarray(back.classification).tolist(),
     }
 json.dump(expected, open("expected.json", "w"))
+
+# The same points compressed: LAZ.
+for name in ["points_v12.las", "points_v14.las"]:
+    laspy.read(name).write(name.replace(".las", ".laz"), laz_backend=laspy.LazBackend.Lazrs)

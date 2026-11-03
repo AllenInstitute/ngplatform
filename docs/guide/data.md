@@ -34,7 +34,7 @@ is never loaded whole and coarser levels appear first.
 | Meshes (`.obj`, `.stl`, `.ply`), GIFTI and FreeSurfer surfaces (`lh.pial` …) | a virtual Zarr Vectors mesh store | Surfaces are placed in scanner RAS. |
 | Neurons (`.swc`, or a folder of them) | a virtual Zarr Vectors skeleton store | One object per tree, with cable length and branch points. |
 | Graphs: GraphML (`.graphml`), or an edge list (`…edges.csv`, rows of `source, target`) dropped with its node table beside it (`…nodes.csv`, rows of `node_id, x, y, z`) | a virtual Zarr Vectors graph store | One object per connected component, every edge drawn (cycles too); node positions from `x`, `y`, `z`; each node's degree and other numeric values become properties. |
-| Point tables (`.csv`, `.tsv`, `.xyz`, `.parquet`) and LAS point clouds (`.las`) | a virtual Zarr Vectors point store | x, y, z from columns named so (or `x_location`, `x_um` …, as Xenium writes transcripts); other numeric columns become properties. Large clouds get coarse levels. |
+| Point tables (`.csv`, `.tsv`, `.xyz`, `.parquet`) and LAS point clouds (`.las`, and compressed `.laz`) | a virtual Zarr Vectors point store | x, y, z from columns named so (or `x_location`, `x_um` …, as Xenium writes transcripts); other numeric columns become properties. Large clouds get coarse levels. |
 | A folder of OME-Zarr, Zarr Vectors or precomputed data | the stores themselves | Read file by file. |
 
 Chrome and Edge remember local files between visits (you are asked to allow
@@ -42,7 +42,7 @@ reading them again); links to them work in the same browser while the tab
 is open.
 
 !!! note "Coming"
-    LAZ (compressed LAS), CIFTI and surface values (thickness,
+    CIFTI and surface values (thickness,
     curvature, parcellations) are on the
     [work plan](https://github.com/AllenInstitute/ngplatform/blob/main/TODO.md).
 

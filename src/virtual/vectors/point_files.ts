@@ -170,7 +170,8 @@ export function parsePointTable(text: string): PointTable {
 /**
  * An ASPRS LAS point cloud (versions 1.0 to 1.4, point formats 0 to 10):
  * the points' scaled and offset coordinates, with intensity and
- * classification as columns.  LAZ (compressed LAS) is not read.
+ * classification as columns.  LAZ (compressed LAS) is decompressed to
+ * LAS first (laz.ts).
  */
 export function parseLas(bytes: Uint8Array): PointTable {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -178,7 +179,7 @@ export function parseLas(bytes: Uint8Array): PointTable {
   const headerSize = view.getUint16(94, true);
   const offset = view.getUint32(96, true);
   const rawFormat = view.getUint8(104);
-  if (rawFormat & 0xc0) throw new Error("this LAS file is compressed (LAZ), which is not read yet");
+  if (rawFormat & 0xc0) throw new Error("this LAS file is compressed (LAZ); name it .laz to have it decompressed");
   const format = rawFormat & 0x3f;
   const length = view.getUint16(105, true);
   let count = view.getUint32(107, true);
