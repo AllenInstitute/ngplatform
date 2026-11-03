@@ -18,6 +18,9 @@ then the Luxar plugin and drawing labels by hand.
 - [x] Group stores: a big group shows first from a sample level (up to about a million points), then whole.
 
 ### Asked for during the night
+- [x] Four panels with the 3-D view bottom right (axial, sagittal, coronal, 3-D), as Freeview's 2 × 2.
+- [x] OME-Zarr images listing their axes z, y, x show x, y, z in that order.
+- [ ] Mesh and point-table levels (A4's remainder), and saving large data (A5b).
 - [x] Views the right way up for anatomy: Neuroglancer's panels put +y and +z down, so RAS data showed axial anterior-down, coronal upside down, sagittal on its side. Now radiological (as Freeview) for x, y, z in mm or µm, Neuroglancer's for EM; Settings → Which way up the views are. Needs the fork's `setNamedPanelOrientation` (FORK_SHA bumped). Data placement itself was right (NIfTI/MGH against nibabel and FreeSurfer, .trk against nibabel).
 - [x] A `working` branch for review; main only after Andrew's QC.
 - [x] A history menu beside undo and redo (the ⋯ button, or *History of changes…* in the palette): every change in the workspace, newest at the top, with a few words saying what it was (worked out from the two states: "Layout: 3d", "Hid SRB 2026a", "Track filtering") and the time; undone changes greyed until redone; choosing a row goes back or forward to it. Up to 200 changes, scrollable. What a plugin does on the user's behalf (a track group's layer, its regions' annotations) and what follows opening before the user's first input join the current step instead of adding their own.
@@ -27,7 +30,7 @@ then the Luxar plugin and drawing labels by hand.
 ### A. Local data
 - [x] A1. A core `src/virtual/` module for all local read-in and write-out: `local_data.ts`, `images/`, `vectors/`, `out/` (README there).
 - [x] A2. Drag-and-drop of files and folders anywhere in the window.
-- [ ] A3. Formats to match zarr-vectors-tools (done: `.mgz`/`.mgh`): `.mgz`/`.mgh`, LAS/LAZ, Parquet/Feather, GraphML and edge lists, `.npy`/`.npz`, CIFTI, a FreeSurfer subject folder (with thickness, curv, sulc, area, aparc). 4–6 d
+- [ ] A3. Formats to match zarr-vectors-tools (done: `.mgz`/`.mgh`, `.npy`, LAS, a FreeSurfer subject folder; images named as labels open as segmentations; left: LAZ, Parquet/Feather, GraphML and edge lists, CIFTI, surface morphometry and `.annot`): `.mgz`/`.mgh`, LAS/LAZ, Parquet/Feather, GraphML and edge lists, `.npy`/`.npz`, CIFTI, a FreeSurfer subject folder (with thickness, curv, sulc, area, aparc). 4–6 d
 - [ ] A4. Coarse levels for every virtual vector store (done: streamlines, nested levels of 1 in 10, 100, 1000 while each keeps about 2,000): streamlines 2–3 levels, meshes in cells with simplified levels, points subsampled, all within a time budget so opening stays fast. 3–4 d
 - [x] A5. **Export as** for local data (done except TIFF and `.trx` out): images to `.nii`, `.nii.gz`, `.mgz`, `.mgh`, OME-Zarr, TIFF; vectors to `.trk`, `.tck`, `.trx`, OBJ, STL, PLY, CSV. 3–4 d
 - [ ] A5b. Saving large data: (a) a region or level within a size limit, (b) a whole pyramid written chunk by chunk into a local folder, (c) edits only, as a small layer over the read-only source; (d) zvtools for very large jobs. 3–5 d
@@ -35,13 +38,13 @@ then the Luxar plugin and drawing labels by hand.
 - [x] A7. Tractograms (any Zarr Vectors streamlines) show as lines, 1 px, in cross-sections too.
 
 ### B. Display
-- [ ] B8. `data/lookup-tables/`: FreeSurferColorLUT, Allen CCF, Harvard-Oxford, JHU, AAL, Brainnetome, Schaefer as `.txt` (each table's licence checked), applied to segmentations by name and colour. 2–3 d
-- [ ] B9. A colormap menu in Render → Shader: grayscale, heat (min/mid/max), jet, GE colour, NIH, PET, binary, viridis and others. 1–2 d
-- [ ] B10. Segmentations filled or as outlines (the fork's segmentation shader). 3–5 d
-- [ ] B19. Surface data: per-vertex values, `.annot` and `.label` coloured by colormap or lookup table; surface outlines on the slices. 5–8 d
+- [x] B8. (Lookup tables in Render: FreeSurferColorLUT and its Desikan/Destrieux/Yeo subsets, Schaefer 2018, Harvard-Oxford bundled with their licences; Allen CCF fetched on demand; JHU, AAL3, Brainnetome by File… only, for their licences; any table file loads.) `data/lookup-tables/`: FreeSurferColorLUT, Allen CCF, Harvard-Oxford, JHU, AAL, Brainnetome, Schaefer as `.txt` (each table's licence checked), applied to segmentations by name and colour. 2–3 d
+- [x] B9. (17 maps in Render → Shader → Colour map.) A colormap menu in Render → Shader: grayscale, heat (min/mid/max), jet, GE colour, NIH, PET, binary, viridis and others. 1–2 d
+- [x] B10. (Render → 2-D views → Draw: Outlines, without a fork change; a fork patch for a native outline is in `docs/fork-patches/`.) Segmentations filled or as outlines (the fork's segmentation shader). 3–5 d
+- [ ] B19. (Done: surfaces drawn as their outlines on the sections, in Freeview's colours. Left: per-vertex values, `.annot`, `.label`, colouring surfaces in 3-D.) Surface data: per-vertex values, `.annot` and `.label` coloured by colormap or lookup table; surface outlines on the slices. 5–8 d
 
 ### C. Plugins
-- [ ] Volume rendering: the sections on the cut faces from the full-resolution data the 2-D views already draw, not the solid's coarse level, so zooming into the cut shows fine structure over a coarse solid.
+- [x] Volume rendering: the sections on the cut faces from the full-resolution data the 2-D views already draw, not the solid's coarse level, so zooming into the cut shows fine structure over a coarse solid.
 - [ ] C11 (revised 2026-11-02, night): **Luxar inside the Neuroglancer views, not a separate viewer.** When the plugin is on, a dataset can be drawn the Luxar way (smooth HDR lines, points, meshes, splats; additive and emission/absorption blending) in Neuroglancer's own 2-D and 3-D panels, chosen per dataset: say a Luxar tractogram over a standard or volume-rendered OME-Zarr image. 2-D panels draw the geometry near the section (a slab), as Luxar slices hidden dimensions. Through the fork's draw hooks, one viewer.
 - [ ] C11a. Luxar: a Luxar view (layer mode, its own three.js scene) with the camera following Neuroglancer's 3-D view. 3–4 d
 - [ ] C11b. Luxar: Zarr Vectors to Luxar's format on the fly, in memory, no new files; our levels as its progressive levels. 7–10 d
@@ -50,10 +53,10 @@ then the Luxar plugin and drawing labels by hand.
 - [ ] C12. Annotations (Labels renamed): labels, measuring (lengths, areas, line profiles), contours, statistics per label or region. 5–7 d
 - [ ] C13. Segmentation, in Annotations: a WebKnossos survey (brush, lasso, fill, quick select by threshold and AI, interpolation, proofreading, AI jobs), then a scaffold: an editable label layer, sphere brush add/erase, threshold-limited brush, 2-D/3-D fill, undo, save to local. 0.5 + 8–10 d
 - [ ] C14. Orientations: vector fields, DTI ellipsoids and FA colour, spherical-harmonic ODF glyphs (as FURY draws them), multiscale: coarse levels' ODFs replaced by finer ones as you zoom. 15–20 d
-- [ ] C15. Filters: mean, median, Gaussian, Frangi, on the fly as a virtual store over any OME-Zarr, per chunk and per level. 8–10 d
-- [ ] C16. Registration: apply to all visible volumes; straightening with landmarks alone (Freeview's landmarks-to-axes); save without cropping; `.mgz`; B-spline cubic; `.dat`/`.xfm`/FSL `.mat`; levels over 512 MB in blocks. The Source tab shows an OME-Zarr's coordinate systems and transforms (0.6, RFC-5) under the layer's transform. 6–8 d
-- [ ] C17. Collections: a tab beside the scenes for an OME-Zarr collection (RFC-8): its images, coordinate systems and transforms, with a viewer. 5 d
-- [ ] C18. Capture (screenshots expanded): GIF, video (WebM / MP4), movie frames, slice sweeps, 3-D rotations, magnification and trimming. 4–6 d
+- [x] C15. (The Filters plugin; local images for now, remote OME-Zarr to come.) Filters: mean, median, Gaussian, Frangi, on the fly as a virtual store over any OME-Zarr, per chunk and per level. 8–10 d
+- [ ] C16. (Done: apply to all visible volumes, save without cropping, `.mgz`/`.mgh` out, MNI `.xfm` in, the OME coordinate systems in the Source tab. Left: landmarks to axes, B-spline cubic, `.dat` and FSL `.mat` (need both geometries), levels over 512 MB in blocks.) Registration: apply to all visible volumes; straightening with landmarks alone (Freeview's landmarks-to-axes); save without cropping; `.mgz`; B-spline cubic; `.dat`/`.xfm`/FSL `.mat`; levels over 512 MB in blocks. The Source tab shows an OME-Zarr's coordinate systems and transforms (0.6, RFC-5) under the layer's transform. 6–8 d
+- [x] C17. (The Collections plugin, following RFC-8's draft of October 2026.) Collections: a tab beside the scenes for an OME-Zarr collection (RFC-8): its images, coordinate systems and transforms, with a viewer. 5 d
+- [x] C18. (Picture, slice/time sweeps and 3-D turns as GIF, WebM, MP4 or PNG frames; magnification and trim.) Capture (screenshots expanded): GIF, video (WebM / MP4), movie frames, slice sweeps, 3-D rotations, magnification and trimming. 4–6 d
 
 Possible future plugins (neuron tracing and review as CATMAID, proofreading,
 atlas, surfaces, tract statistics, connectome, time series, spatial
