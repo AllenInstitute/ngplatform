@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { graph, invert, isCollection, members, parentGroups, placeInto, readCollection, resolvePath, sceneSystems, transformMatrix } from "../collection.js";
+import { chainInto, displayRangeOf, fieldWarp, firstLevel, graph, invert, isCollection, members, parentGroups, placeInto, readCollection, resolvePath, sceneSystems, transformMatrix, transformSteps } from "../collection.js";
 
 const example = JSON.parse(readFileSync(new URL("../examples/srb_gallery.json", import.meta.url), "utf8"));
 
@@ -72,5 +72,83 @@ describe("placing members in a chosen coordinate system", () => {
     expect(parentGroups("local://annotations")).toEqual([]);
     expect(isCollection({ zarr_format: 3, attributes: { ome: { type: "collection", nodes: [] } } })).toBe(true);
     expect(isCollection({ zarr_format: 3, attributes: { ome: { multiscales: [] } } })).toBe(false);
+  });
+});
+
+describe("members warped by a displacement field (RFC-5 displacements)", () => {
+  const axes = [{ name: "z", unit: "micrometer" }, { name: "y", unit: "micrometer" }, { name: "x", unit: "micrometer" }];
+  const doc = {
+    ome: {
+      type: "collection",
+      name: "warped",
+      attributes: {
+        scene: {
+          coordinateSystems: [
+            { id: "physical", axes },
+            { id: "atlas", axes },
+            { id: "other", axes },
+          ],
+          coordinateTransformations: [
+            { type: "translation", translation: [0, 0, 10], input: { id: "a" }, output: { id: "physical" } },
+            // As registration writes it: from the fixed space (atlas) to the moving image's.
+            {
+              type: "sequence",
+              input: { id: "atlas" },
+              output: { id: "a" },
+              transformations: [{ type: "displacements", path: "coordinateTransformations/swirl" }, { type: "translation", translation: [0, 0, -10] }],
+            },
+            { type: "displacements", path: "coordinateTransformations/second", input: { id: "atlas" }, output: { id: "other" } },
+          ],
+        },
+      },
+      nodes: [{ type: "multiscale", name: "A", id: "a", path: { type: "zarr", path: "a.ome.zarr" } }],
+    },
+  };
+  const root = readCollection(doc, "https://example.org/c.zarr/zarr.json");
+  const a = root.nodes[0];
+
+  it("reads a sequence holding a field as steps, its path resolved against the document", () => {
+    const t = graph(root).transforms[1];
+    expect(transformSteps(t.raw, ["z", "y", "x"], t.document)).toEqual([
+      { kind: "field", url: "https://example.org/c.zarr/coordinateTransformations/swirl", inverse: false, components: ["z", "y", "x"] },
+      { kind: "affine", m: [1, 0, 0, -10, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] },
+    ]);
+    expect(transformSteps({ type: "coordinates", path: "c" }, undefined, t.document)).toBeUndefined();
+  });
+
+  it("finds the chain through a field (one at most), which affine placement does not", () => {
+    expect(placeInto(root, a, "atlas")).toBeUndefined();
+    // a → atlas walks atlas → a backwards: the translation undone, then the field's inverse.
+    const steps = chainInto(root, a, "atlas")!;
+    expect(steps.map((s) => (s.kind === "field" ? `field${s.inverse ? " inverted" : ""}` : "affine"))).toEqual(["affine", "field inverted"]);
+    expect(chainInto(root, a, "physical")).toEqual([{ kind: "affine", m: [1, 0, 0, 10, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] }]);
+    // Into "other" would take two fields.
+    expect(chainInto(root, a, "other")).toBeUndefined();
+  });
+
+  it("shows such a member placed by the chain's affines and resampled back through the chain", () => {
+    const shown = fieldWarp(chainInto(root, a, "atlas")!, 1e-3)!;
+    expect(shown.placement).toEqual([1, 0, 0, 10, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    // Back from the atlas to a: q → q + D(q) (the field as written), then x − 10 µm.
+    expect(shown.warp).toEqual({
+      kind: "field",
+      url: "https://example.org/c.zarr/coordinateTransformations/swirl",
+      before: [[1, 0, 0, 0.01, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]],
+      after: [[1, 0, 0, -0.01, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]],
+      invert: false,
+      components: ["z", "y", "x"],
+    });
+    // A field walked as written (member to system) is undone by its inverse.
+    expect(fieldWarp([{ kind: "field", url: "f", inverse: false }], 1)?.warp.invert).toBe(true);
+    expect(fieldWarp(chainInto(root, a, "physical")!, 1)).toBeUndefined();
+  });
+
+  it("shows a warped copy (float32) with the image's own contrast", () => {
+    const group = { attributes: { ome: { multiscales: [{ datasets: [{ path: "0" }] }] } } };
+    expect(firstLevel(group)).toBe("0");
+    expect(displayRangeOf(group, { data_type: "uint16" })).toEqual([0, 65535]);
+    expect(displayRangeOf({ multiscales: [], omero: { channels: [{ window: { start: 10, end: 900 } }] } }, { dtype: "<u2" })).toEqual([10, 900]);
+    expect(displayRangeOf(group, { dtype: "|u1" })).toEqual([0, 255]);
+    expect(displayRangeOf(group, { data_type: "float32" })).toBeUndefined();
   });
 });

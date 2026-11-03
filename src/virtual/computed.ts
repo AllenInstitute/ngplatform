@@ -19,15 +19,69 @@
 import type { Engine } from "chunkmirage-web/engine";
 import { route } from "chunkmirage-web/routes";
 import type { Ask, PipelineView as EnginePipeline } from "chunkmirage-web/types";
-import { fitTps, mmPerUnit, type Vec3, warpChunk } from "./warp.js";
+import { FieldWarp, fitTps, mmPerUnit, type Tps, type Vec3, type Warp, warpChunk } from "./warp.js";
+
+/** A buffer the engine read as numbers of its dtype. */
+function typed(dtype: string, buffer: ArrayBuffer): ArrayLike<number> {
+  const ctor = { uint8: Uint8Array, int8: Int8Array, uint16: Uint16Array, int16: Int16Array, uint32: Uint32Array, int32: Int32Array, float32: Float32Array, float64: Float64Array }[dtype];
+  if (ctor !== undefined) return new ctor(buffer);
+  // 64-bit integers: as numbers.
+  return Array.from(dtype === "int64" ? new BigInt64Array(buffer) : new BigUint64Array(buffer), Number);
+}
+
+/**
+ * A source warped through a displacement field (OME-NGFF 0.6's
+ * `displacements`), between affine steps: the output voxel's place p (mm;
+ * x, y, z) goes through `before`, then q → q + D(q) (D the field, looked up
+ * at q, trilinear; its inverse with `invert`), then `after`, to its place
+ * in the source (mm).
+ */
+export interface FieldWarpSpec {
+  kind: "field";
+  /** The field: an OME-Zarr multiscale group whose displacement axis comes before z, y, x (its finest level is read). */
+  url: string;
+  /** 4 × 4 affines (16 numbers, row-major, mm) applied in order before the field. */
+  before?: number[][];
+  /** And after it. */
+  after?: number[][];
+  /** The field's inverse (x with x + D(x) = q, by iteration): a field written from the source's side. */
+  invert?: boolean;
+  /** The axes the vector's components are, in order (["z", "y", "x"]); by default the field's spatial axes. */
+  components?: string[];
+}
 
 /**
  * A pipeline: chunkmirage's (a source, ops, output chunks), or a source
- * warped by landmark pairs (`warp`: a thin-plate spline from the fixed
- * points, mm, to the moving ones, the source's mm), which the page computes
- * itself (./warp.ts).
+ * warped (`warp`), which the page computes itself (./warp.ts): by landmark
+ * pairs (a thin-plate spline from the fixed points, mm, to the moving ones,
+ * the source's mm), or through a displacement field.
  */
-export type PipelineView = EnginePipeline & { warp?: { kind: "tps"; fixed: number[][]; moving: number[][] } };
+export type PipelineView = EnginePipeline & { warp?: { kind: "tps"; fixed: number[][]; moving: number[][] } | FieldWarpSpec };
+
+/**
+ * A displacement field's axes from its group's metadata (zarr.json's
+ * attributes, or .zattrs): every axis's name, and the displacement axis
+ * (typed `displacement`, else the one axis not t, z, y or x).
+ */
+export function fieldAxes(attrs: any): { names: string[]; displacement: string } {
+  const ome = attrs?.attributes?.ome ?? attrs?.ome ?? attrs?.attributes ?? attrs;
+  const ms = (ome?.multiscales ?? [])[0];
+  if (ms === undefined) throw new Error("the displacement field is not an OME-Zarr multiscale group");
+  let axes: any[] = ms.axes ?? [];
+  if (Array.isArray(ms.coordinateSystems) && ms.coordinateSystems.length > 0) {
+    const wanted = ms.datasets?.[0]?.coordinateTransformations?.find((t: any) => t?.output)?.output;
+    const name = typeof wanted === "string" ? wanted : wanted?.name;
+    axes = (ms.coordinateSystems.find((s: any) => name === undefined || s.name === name) ?? ms.coordinateSystems[0]).axes ?? [];
+  }
+  const names = axes.map((a) => String(typeof a === "string" ? a : a?.name));
+  const typed = axes.find((a) => a?.type === "displacement");
+  const others = names.filter((n) => !["t", "z", "y", "x"].includes(n));
+  const displacement = typed !== undefined ? String(typed.name) : others.length === 1 ? others[0] : undefined;
+  if (displacement === undefined) throw new Error(`the displacement field has no displacement axis (axes ${names.join(", ")})`);
+  const at = names.indexOf(displacement);
+  if (names.slice(at + 1).join("") !== "zyx") throw new Error(`the displacement field's axes are ${names.join(", ")}: its displacement axis must come just before z, y, x, as OME-NGFF 0.6 has it`);
+  return { names, displacement };
+}
 
 /** Under the app's base: where pipelines are served. */
 export const COMPUTED_PATH = "virtual/ngp/";
@@ -275,13 +329,13 @@ export class ComputedImages {
   }
 
   /**
-   * A source warped by landmarks: the source opened as a view of its own,
-   * and the warped view computed here, chunk by chunk, on the source's grid
-   * and levels (float32; the first channel).
+   * A warped source: the source opened as a view of its own (and a
+   * displacement field's components as views too), and the warped view
+   * computed here, chunk by chunk, on the source's grid and levels
+   * (float32; the first channel).
    */
   private async serveWarp(name: string, spec: PipelineView): Promise<void> {
     const warp = spec.warp!;
-    const tps = fitTps(warp.fixed as Vec3[], warp.moving as Vec3[]);
     const engine = await this.start();
     const from = `${name}s`;
     await engine.add({ [from]: { source: spec.source, chunk: spec.chunk, ...(spec.select ? { select: spec.select } : {}) } });
@@ -289,18 +343,45 @@ export class ComputedImages {
     const xyz = info.axes.map((a) => ["x", "y", "z"].indexOf(a.name));
     if (xyz.some((k) => k === -1)) throw new Error(`a warp needs an image with x, y and z axes, not ${info.axes.map((a) => a.name).join(", ")}`);
     const mm = info.axes.map((a) => mmPerUnit(a.unit));
-    const typed = (dtype: string, buffer: ArrayBuffer): ArrayLike<number> => {
-      const ctor = { uint8: Uint8Array, int8: Int8Array, uint16: Uint16Array, int16: Int16Array, uint32: Uint32Array, int32: Int32Array, float32: Float32Array, float64: Float64Array }[dtype];
-      if (ctor !== undefined) return new ctor(buffer);
-      // 64-bit integers: as numbers.
-      return Array.from(dtype === "int64" ? new BigInt64Array(buffer) : new BigUint64Array(buffer), Number);
-    };
+    const by: Tps | Warp = warp.kind === "field" ? await this.fieldWarp(name, warp) : fitTps(warp.fixed as Vec3[], warp.moving as Vec3[]);
     engine.serve(name, { ...info, channels: 1, out: "float32", halo: [0, 0, 0], lead: 0, kind: "image" }, spec.chunk, async (level, index) => {
       const l = info.levels[level];
       const grid = { shape: l.shape, voxel: l.voxel, origin: l.origin, xyz, mm };
-      const out = await warpChunk(grid, spec.chunk, index, tps, async (lo, hi) => typed(info.dtype, await engine.read(from, level, lo, hi)));
+      const out = await warpChunk(grid, spec.chunk, index, by, async (lo, hi) => typed(info.dtype, await engine.read(from, level, lo, hi)));
       return out.buffer as ArrayBuffer;
     });
+  }
+
+  /**
+   * A displacement field as a warp: its metadata read for the displacement
+   * axis, then each component opened as a view of the engine (that axis
+   * pinned), read box by box at its finest level.
+   */
+  private async fieldWarp(name: string, warp: FieldWarpSpec): Promise<FieldWarp> {
+    const engine = await this.start();
+    const stripped = engineSource(warp.url).replace(/\/+$/, "");
+    const url = readableSource(/^[a-z][a-z0-9+.-]*:\/\//i.test(stripped) ? stripped : new URL(stripped, this.base).href, this.base);
+    const metadata = async (): Promise<unknown> => {
+      for (const key of ["zarr.json", ".zattrs"]) {
+        const response = await fetch(`${url}/${key}`).catch(() => undefined);
+        if (response?.ok) return response.json();
+      }
+      throw new Error(`could not read the displacement field at ${warp.url}`);
+    };
+    const { displacement } = fieldAxes(await metadata());
+    const views = [0, 1, 2].map((k) => `${name}f${k}`);
+    await engine.add(Object.fromEntries(views.map((v, k) => [v, { source: url, chunk: [64, 64, 64], select: { [displacement]: k } }])));
+    const info = engine.sources[views[0]];
+    const level = info.levels[0];
+    const xyz = info.axes.map((a) => ["x", "y", "z"].indexOf(a.name));
+    if (xyz.some((k) => k === -1)) throw new Error(`a displacement field needs x, y and z axes, not ${info.axes.map((a) => a.name).join(", ")}`);
+    const components = (warp.components ?? info.axes.map((a) => a.name)).map((n) => ["x", "y", "z"].indexOf(n));
+    if (components.length !== 3 || components.some((k) => k === -1)) throw new Error(`a displacement field's components must be x, y and z, not ${(warp.components ?? []).join(", ")}`);
+    const grid = { shape: level.shape, voxel: level.voxel, origin: level.origin, xyz, mm: info.axes.map((a) => mmPerUnit(a.unit)) };
+    return new FieldWarp(
+      { before: warp.before ?? [], after: warp.after ?? [], invert: warp.invert === true, grid, components, mm: grid.mm[0] },
+      (lo, hi) => Promise.all(views.map(async (v) => typed(info.dtype, await engine.read(v, 0, lo, hi)))),
+    );
   }
 
   /** Asks once per pipeline whether to run its Python; allowed, it is remembered in this browser. */

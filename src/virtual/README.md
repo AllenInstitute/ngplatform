@@ -11,6 +11,7 @@ to the page, and a worker here answers it from the file.
 | `local_data.ts` | Local files and folders: picking, remembering, the URLs under `<app>/local/<id>/`, answering the service worker, files made in the page (`openFile`, derived files) |
 | `images/` | Images as OME-Zarr 0.6: NIfTI and Analyze (`nifti.ts`), TIFF stacks (`tiff.ts`), the store and its pyramid (`store.ts`), the worker (`worker.ts`) |
 | `computed.ts` | Images computed as they are viewed by [chunkmirage](https://github.com/JaneliaSciComp/chunkmirage)'s browser engine (`vendor/chunkmirage`, a submodule): a pipeline of its ops over any image, served under `<app>/virtual/ngp/<pipeline>/` |
+| `warp.ts` | Images resampled through a smooth map as they are viewed, for `computed.ts`: a thin-plate spline from landmark pairs, or a displacement field between affines |
 | `vectors/` | Geometry as Zarr Vectors: tractograms (`trk.ts`, `tck.ts`, `trx.ts` → `streamlines.ts`), meshes and surfaces (`mesh_files.ts` → `meshes.ts`), SWC neurons and point tables (`point_files.ts` → `points.ts`), the formats (`formats.ts`) and the worker (`worker.ts`) |
 
 ## Reading in
@@ -79,6 +80,31 @@ the first time and passes the request on to it. Chunks are computed at the
 level the viewer shows, in Pyodide workers when ops need Python, and
 dropped when the viewer stops waiting. Plugins reach it as
 `workspace.computed` (the Filters tab).
+
+A pipeline can instead carry a `warp` (`warp.ts`, computed by the page, not
+by chunkmirage's ops): the source resampled through a smooth map of places,
+on the source's own grid and levels, as float32. Each chunk maps a lattice
+of its voxels through the map to find the box of the source it needs,
+reads only that (`Engine.read`), then samples each voxel there
+(trilinear; 0 outside the source). Two kinds:
+
+- `{kind: "tps", fixed, moving}`: a thin-plate spline through landmark
+  pairs (mm), each output place taken to its place in the source. The
+  Registration plugin's "Warp through the pairs".
+- `{kind: "field", url, before, after, invert, components}`: a
+  displacement field (OME-NGFF 0.6's `displacements`: an OME-Zarr
+  multiscale group at `url`, its displacement axis before z, y, x). An
+  output place p (mm; x, y, z) goes through the affines `before` (4 × 4,
+  row-major, mm), then q → q + D(q), D the field looked up at q
+  (trilinear, the edge's value past it), then the affines `after`. With
+  `invert`, the field's inverse instead: the x with x + D(x) = q, by
+  iteration. The field's components are opened as engine views (the
+  displacement axis pinned) and each chunk reads only the box of the field
+  its places look up (widened by the largest displacement in it when
+  inverting). `components` names the axes of the vector's components in
+  order (by default the field's spatial axes); displacements are in the
+  field's spatial unit. The Collections plugin uses it for images whose
+  chain of transforms holds a field.
 
 A `python` op runs the code it carries: from a link made elsewhere, only
 code the platform marks as its own (`ownPython`, whatever its `#halo`) or

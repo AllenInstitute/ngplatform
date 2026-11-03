@@ -29,6 +29,15 @@ each placed by its transforms, with the **Collections** panel beside it.
   view the images in it: each is placed by the chain of transforms leading
   to it (a transform walked backwards is inverted); an image with no chain
   to it is hidden.
+- **Displacement fields**: when the chain from an image to the chosen
+  system holds a displacement field (OME-NGFF 0.6's `displacements`: a
+  field of shifts stored as a Zarr array, often after an affine from a
+  registration), the image is shown resampled through it, computed as you
+  view it, and marked **warped** in the graph (dashed) and under
+  **Members**. A field written from the system to the image (as
+  registration tools write it) is applied as it is; one written the other
+  way is inverted by iteration. One field per chain; coordinate maps
+  (`coordinates`) are not applied yet.
 - **Members** and **Transforms**: the tree (each node's type, name and
   where it is) and every transform as written.
 
