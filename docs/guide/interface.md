@@ -143,6 +143,8 @@ segments the outlines use the hashed colours or show every segment.
 
 ### Surfaces
 
+![A FreeSurfer subject: thickness on the left white surface over its binary curvature, the right in curvature alone, and the white surfaces' outlines on the sections](../images/surfaces.png)
+
 A cortical surface is drawn as Freeview draws it: filled and lit in the 3-D
 view, as its outline where it crosses each 2-D view (white yellow, pial red),
 and coloured by the values on its vertices. A FreeSurfer surface opened from
@@ -165,7 +167,7 @@ holds Freeview's surface controls:
 
 | Control | What it does |
 |---|---|
-| **Surface** | Which of the hemisphere's surfaces is drawn: white, pial, inflated, sphere, orig, smoothwm (those in the folder). They share their vertices, so the values stay. |
+| **Surface** | Which of the hemisphere's surfaces is drawn: white, pial, inflated, sphere, orig, smoothwm (those in the folder; for a store, those it keeps as `coords_*`). They share their vertices, so the values stay. |
 | **Colour** | Under the overlay: **Binary curvature** (from `curv`, else `sulc`) or the layer's own colour. |
 | **Overlay** | A value drawn in colour where it passes the threshold: thickness, sulcal depth, an overlay. Maps the store holds but does not show at first are listed with "(load)". |
 | **Colour map** | **Heat** as Freeview's (red to yellow from the threshold to the top, blue to cyan for negative values), or jet, viridis and the other maps, from the threshold to the top. |
