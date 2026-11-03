@@ -11,7 +11,8 @@
  * Tools draw in the 2-D views only: the 3-D view stays Neuroglancer's (the
  * left button rotates it).  The point under the pointer is found from the
  * view's own projection (exact, at once, at any zoom).  A ring shows the
- * brush's size, and a dragged box is drawn for quick select.
+ * brush's size, a dragged box is drawn for quick select, and the lasso's
+ * outline as it is drawn.
  */
 import type { Disposer, PlatformContext, ViewPanelInfo } from "@ngplatform/sdk";
 import { unprojector } from "../annotations/geometry.js";
@@ -35,6 +36,8 @@ export interface PainterHandler {
   ring(p: ViewPoint): number | undefined;
   /** Dragging draws a box (quick select) rather than a stroke. */
   boxDrag(): boolean;
+  /** Dragging draws an outline, closed back to its start (the lasso). */
+  pathDrag(): boolean;
   /** Alt+wheel over a 2-D view, in notches (up is positive); returns whether it was used. */
   wheel(notches: number): boolean;
 }
@@ -47,6 +50,10 @@ export class Painter {
   private readonly ringElement: HTMLElement;
   private readonly boxElement: HTMLElement;
   private boxStart: [number, number] | undefined;
+  private readonly pathElement: SVGSVGElement;
+  private readonly pathShape: SVGPolygonElement;
+  /** The lasso's outline so far, in the overlay's pixels; undefined when not drawing one. */
+  private path: [number, number][] | undefined;
   /** The last pointer event over a view, to redraw the ring when the brush changes. */
   private lastMove: MouseEvent | undefined;
   private readonly offs: Disposer[] = [];
@@ -60,7 +67,12 @@ export class Painter {
     this.ringElement.className = "sg-ring";
     this.boxElement = document.createElement("div");
     this.boxElement.className = "sg-box";
-    this.overlay.element.append(this.ringElement, this.boxElement);
+    const NS = "http://www.w3.org/2000/svg";
+    this.pathElement = document.createElementNS(NS, "svg");
+    this.pathElement.setAttribute("class", "sg-path");
+    this.pathShape = document.createElementNS(NS, "polygon");
+    this.pathElement.append(this.pathShape);
+    this.overlay.element.append(this.ringElement, this.boxElement, this.pathElement);
     const listen = <K extends keyof WindowEventMap>(target: Window | Document, type: K, f: (e: WindowEventMap[K]) => void) => {
       target.addEventListener(type, f as EventListener, true);
       this.offs.push(() => target.removeEventListener(type, f as EventListener, true));
@@ -119,6 +131,7 @@ export class Painter {
   private hide(): void {
     this.ringElement.hidden = true;
     this.boxElement.hidden = true;
+    this.pathElement.style.display = "none";
   }
 
   /** The view under the pointer, if the event is over one. */
@@ -165,6 +178,9 @@ export class Painter {
     if (this.handler.boxDrag()) {
       this.boxStart = [e.clientX, e.clientY];
       this.drawBox(e.clientX, e.clientY);
+    } else if (this.handler.pathDrag()) {
+      this.path = [];
+      this.drawPath(e.clientX, e.clientY);
     }
     this.handler.down(p, e);
   }
@@ -192,6 +208,7 @@ export class Painter {
     if (p === undefined) return;
     if (this.dragging !== undefined) {
       if (this.boxStart !== undefined) this.drawBox(e.clientX, e.clientY);
+      if (this.path !== undefined) this.drawPath(e.clientX, e.clientY);
       this.handler.drag(p, e);
     }
     const radius = this.handler.ring(p);
@@ -218,11 +235,21 @@ export class Painter {
     this.boxElement.hidden = false;
   }
 
+  /** Adds a point to the lasso's outline and draws it, closed back to its start. */
+  private drawPath(x: number, y: number): void {
+    const base = this.overlay.element.getBoundingClientRect();
+    this.path!.push([x - base.left, y - base.top]);
+    this.pathShape.setAttribute("points", this.path!.map(([a, b]) => `${a},${b}`).join(" "));
+    this.pathElement.style.display = "";
+  }
+
   private onUp(): void {
     if (this.dragging === undefined) return;
     this.dragging = undefined;
     this.boxStart = undefined;
     this.boxElement.hidden = true;
+    this.path = undefined;
+    this.pathElement.style.display = "none";
     this.handler.up();
   }
 }

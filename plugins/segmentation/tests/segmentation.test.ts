@@ -7,9 +7,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openNifti } from "../../../src/virtual/images/nifti.js";
 import { VolumeReader } from "../../volume-view/volume_reader.js";
-import { History, Stroke } from "../history.js";
-import { ballReach, ballShape, dabsBetween, distance2d, floodFill, type ImageBlock, inRange, interpolate, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "../kernels.js";
+import { chooseUndo, History, Stroke } from "../history.js";
+import { ballReach, ballShape, dabsBetween, distance2d, fillOutline, floodFill, polygonRuns, type ImageBlock, inRange, interpolate, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "../kernels.js";
+import { badLabel } from "../editor.js";
 import { LabelVolume } from "../label_volume.js";
+import { omeZarrMetadata } from "../../registration/volume_io.js";
+import { maskCount, maskSection } from "../preview.js";
 import { component, otsu, THRESHOLD_SELECT } from "../quick_select.js";
 import { cropped, niftiGz, omeZarr } from "../save.js";
 
@@ -226,6 +229,61 @@ describe("fills", () => {
   });
 });
 
+describe("the lasso", () => {
+  const rows = (runs: { w: number; from: number; to: number }[]) => runs.map((r) => `${r.w}:${r.from}-${r.to}`);
+
+  it("finds the voxels whose centres are inside an outline, row by row", () => {
+    // A square from (1.5, 1.5) to (4.5, 4.5): centres 2, 3, 4 each way.
+    expect(rows(polygonRuns([[1.5, 1.5], [4.5, 1.5], [4.5, 4.5], [1.5, 4.5]]))).toEqual(["2:2-5", "3:2-5", "4:2-5"]);
+    // A triangle: narrower towards its top.
+    expect(rows(polygonRuns([[0, 0], [8, 0], [4, 8]]))).toEqual(["0:0-8", "1:1-8", "2:1-7", "3:2-7", "4:2-6", "5:3-6", "6:3-5", "7:4-5", "8:4-4"].filter((r) => !r.endsWith("4-4")));
+    // Fewer than three points hold nothing.
+    expect(polygonRuns([[0, 0], [5, 5]])).toEqual([]);
+  });
+
+  it("fills both loops of a figure of eight, and not the gap of a ring drawn as one outline", () => {
+    const eight = polygonRuns([[0, 0], [4, 4], [8, 0], [8, 4], [4, 0], [0, 4]].map(([u, w]) => [u + 0.5, w + 0.5] as [number, number]));
+    const cells = new Set(eight.flatMap((r) => Array.from({ length: r.to - r.from }, (_, i) => `${r.from + i},${r.w}`)));
+    expect(cells.has("1,2")).toBe(true);
+    expect(cells.has("7,2")).toBe(true);
+    // A square with a square hole, the outline going round both (a cut joins them).
+    const ring = polygonRuns([[0.5, 0.5], [10.5, 0.5], [10.5, 10.5], [0.5, 10.5], [0.5, 3.5], [3.5, 3.5], [3.5, 7.5], [7.5, 7.5], [7.5, 3.5], [0.5, 3.5]]);
+    const filled = new Set(ring.flatMap((r) => Array.from({ length: r.to - r.from }, (_, i) => `${r.from + i},${r.w}`)));
+    expect(filled.has("5,5")).toBe(false);
+    expect(filled.has("2,5")).toBe(true);
+    expect(filled.has("9,9")).toBe(true);
+  });
+
+  it("paints inside the outline in its section, as Paint over and an intensity range allow", () => {
+    const v = vol([20, 20, 10]);
+    // Segment 3 already in a corner of the square, in section z = 4.
+    const before = new Stroke(v);
+    before.set(2, 2, 4, 3);
+    before.finish();
+    const square: [number, number][] = [[1.5, 1.5], [6.5, 1.5], [6.5, 6.5], [1.5, 6.5]];
+    // Over empty voxels only: segment 3 stays.
+    const s = new Stroke(v);
+    expect(fillOutline(s, 2, 4, square, { value: 1, only: 0 })).toBe(24);
+    s.finish();
+    expect(v.get(2, 2, 4)).toBe(3);
+    expect(v.get(4, 4, 4)).toBe(1);
+    expect(v.get(4, 4, 3)).toBe(0);
+    expect(v.get(7, 4, 4)).toBe(0);
+    // Across x (a sagittal view): (u, w) are (y, z); only where an image's values are in range.
+    const image: ImageBlock = { lo: [0, 0, 0], size: [20, 20, 10], data: new Float32Array(4000).map((_, i) => (Math.floor(i / 20) % 20 < 4 ? 100 : 0)) };
+    const t = new Stroke(v);
+    const n = fillOutline(t, 0, 10, [[1.5, 1.5], [6.5, 1.5], [6.5, 6.5], [1.5, 6.5]], { value: 2, where: inRange(image, 50, 150) });
+    expect(n).toBe(2 * 5);
+    expect(v.get(10, 2, 3)).toBe(2);
+    expect(v.get(10, 5, 3)).toBe(0);
+    // Erasing inside an outline: only the active segment.
+    const e = new Stroke(v);
+    fillOutline(e, 2, 4, square, { value: 0, only: 1 });
+    expect(v.get(4, 4, 4)).toBe(0);
+    expect(v.get(2, 2, 4)).toBe(3);
+  });
+});
+
 describe("relabelling", () => {
   it("merges one label into another, and erases one, undoably", () => {
     const v = vol();
@@ -341,6 +399,41 @@ describe("undo and redo", () => {
     history.undo();
     expect(history.canUndo).toBe(false);
   });
+
+  it("times strokes, and undoes them with the workspace's changes as one history (Ctrl+Z while editing)", () => {
+    let clock = 1000;
+    const v = vol();
+    const history = new History(undefined, () => clock);
+    const stroke = (at: number) => {
+      const s = new Stroke(v);
+      s.set(at, 0, 0, 1);
+      s.finish();
+      history.push(s);
+    };
+    // A stroke at 1000, a workspace change at 2000, a stroke at 3000.
+    stroke(1);
+    clock = 3000;
+    stroke(2);
+    let workspace: { undo?: number; redo?: number } = { undo: 2000 };
+    const undo = () => {
+      const which = chooseUndo(history.undoTime, workspace.undo, false);
+      if (which === "stroke") history.undo();
+      else if (which === "workspace") workspace = { redo: workspace.undo };
+      return which;
+    };
+    const redo = () => {
+      const which = chooseUndo(history.redoTime, workspace.redo, true);
+      if (which === "stroke") history.redo();
+      else if (which === "workspace") workspace = { undo: workspace.redo };
+      return which;
+    };
+    expect([undo(), undo(), undo(), undo()]).toEqual(["stroke", "workspace", "stroke", undefined]);
+    expect([redo(), redo(), redo(), redo()]).toEqual(["stroke", "workspace", "stroke", undefined]);
+    expect(history.undoTime).toBe(3000);
+    // With no stroke, the workspace's; with no workspace step, the stroke's.
+    expect(chooseUndo(undefined, 5, false)).toBe("workspace");
+    expect(chooseUndo(5, undefined, true)).toBe("stroke");
+  });
 });
 
 describe("quick select", () => {
@@ -369,6 +462,69 @@ describe("quick select", () => {
     const n = mask.data.reduce((a, b) => a + b, 0);
     expect(n).toBeGreaterThan(40);
     expect(n).toBeLessThan(60);
+  });
+
+  it("previews a mask as its sections: inside, and the outline", () => {
+    // A 4 × 3 block in section z = 7 of a mask 6 × 5 × 2 from (10, 20, 6).
+    const data = new Uint8Array(6 * 5 * 2);
+    for (let y = 1; y < 4; ++y) for (let x = 1; x < 5; ++x) data[x + 6 * (y + 5 * 1)] = 1;
+    const mask = { lo: [10, 20, 6] as Vec3, size: [6, 5, 2] as Vec3, data };
+    expect(maskCount(mask)).toBe(12);
+    expect(maskSection(mask, 2, 6)).toBeUndefined();
+    expect(maskSection(mask, 2, 9)).toBeUndefined();
+    const s = maskSection(mask, 2, 7)!;
+    expect([s.u, s.w, s.width, s.height]).toEqual([0, 1, 6, 5]);
+    const rows = [0, 1, 2, 3, 4].map((j) => Array.from(s.data.slice(6 * j, 6 * j + 6)).join(""));
+    expect(rows).toEqual(["000000", "022220", "021120", "022220", "000000"]);
+    // Across y: x along the image, z down it.
+    const t = maskSection(mask, 1, 22)!;
+    expect([t.u, t.w, t.width, t.height]).toEqual([0, 2, 6, 2]);
+    expect(Array.from(t.data.slice(6))).toEqual([0, 2, 2, 2, 2, 0]);
+  });
+});
+
+describe("copying labels above 2^24", () => {
+  /** A one-level label store of `type` (raw chunks, 4 a side), its first voxels `values` (x fastest). */
+  async function store(type: "uint32" | "uint64", values: bigint[]) {
+    const files = omeZarrMetadata([{ size: [4, 4, 4], voxelToRas: PLACE }], "uint32", "labels", { label: true, chunk: 4, codecs: [{ name: "bytes", configuration: { endian: "little" } }] });
+    const array = JSON.parse(new TextDecoder().decode(files.get("0/zarr.json")!));
+    array.data_type = type;
+    files.set("0/zarr.json", new TextEncoder().encode(JSON.stringify(array)));
+    const chunk = type === "uint64" ? new BigUint64Array(64) : new Uint32Array(64);
+    values.forEach((v, i) => (chunk[i] = (type === "uint64" ? v : Number(v)) as never));
+    files.set("0/c/0/0/0", new Uint8Array(chunk.buffer));
+    const base = `https://example.org/${type}.ome.zarr/`;
+    serve((key) => files.get(key), base);
+    const reader = new VolumeReader();
+    const { levels } = await reader.open([base], undefined);
+    return { reader, levels };
+  }
+  const box = { lo: [0, 0, 0] as Vec3, hi: [4, 1, 1] as Vec3 };
+  const big = [2n ** 24n + 1n, 2n ** 31n + 5n, 4294967295n, 0n];
+
+  it("reads 32-bit labels exactly, where 32-bit floats round them", async () => {
+    const { reader } = await store("uint32", big);
+    const signal = new AbortController().signal;
+    expect(Array.from((await reader.exactRegion(0, box, signal)).data)).toEqual(big.map(Number));
+    expect((await reader.rawRegion(0, box, signal)).data[0]).toBe(2 ** 24);
+  });
+
+  it("reads 64-bit labels narrowed to 32 bits, exactly; past 32 bits, an error", async () => {
+    const { reader, levels } = await store("uint64", big);
+    expect(levels[0].type).toBe("uint32");
+    expect(Array.from((await reader.exactRegion(0, box, new AbortController().signal)).data)).toEqual(big.map(Number));
+    const wide = await store("uint64", [1n, 2n ** 32n + 1n]);
+    await expect(wide.reader.exactRegion(0, box, new AbortController().signal)).rejects.toThrow(/past what 32 bits hold/);
+  });
+
+  it("puts them into a 32-bit volume as they are, and refuses what is not a label", () => {
+    const v = vol([4, 4, 4], "uint32");
+    v.addBlock([0, 0, 0], [4, 1, 1], Float64Array.from(big.map(Number)));
+    expect([0, 1, 2, 3].map((x) => v.get(x, 0, 0))).toEqual(big.map(Number));
+    expect(badLabel(Float64Array.from([0, 2 ** 24 + 1, NaN, 4294967295]), 4294967295)).toBeUndefined();
+    expect(badLabel([3, 300], 255)).toBe(300);
+    expect(badLabel([1, -2], 255)).toBe(-2);
+    expect(badLabel([1, 2.5], 255)).toBe(2.5);
   });
 });
 

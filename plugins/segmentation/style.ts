@@ -25,6 +25,17 @@ export const STYLE =
 .sg-segment input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
 .sg-segment input[type="color"]::-webkit-color-swatch { border: 0; }
 .sg-id { font: 11px var(--mono); color: var(--muted); }
+.sg-group-head { display: grid; grid-template-columns: 16px 22px 20px minmax(0, 1fr) auto auto; gap: 6px; align-items: center; padding: 2px 4px 2px 2px; font-size: 12px; background: var(--ink-2, rgba(255, 255, 255, 0.03)); border-top: 1px solid var(--line); }
+.sg-group-head:first-child { border-top: 0; }
+.sg-group-head.sg-ungrouped { grid-template-columns: 16px minmax(0, 1fr) auto; }
+.sg-group-head.sg-drop { outline: 1px dashed var(--select); outline-offset: -2px; }
+.sg-group-head .text-input.sg-name { height: 22px; min-width: 0; width: 100%; font-weight: 600; }
+.sg-group-head input[type="color"] { width: 18px; height: 18px; padding: 0; border: 1px solid rgba(255, 255, 255, 0.3); background: none; cursor: pointer; }
+.sg-group-head input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.sg-group-head input[type="color"]::-webkit-color-swatch { border: 0; }
+.sg-group-head .sg-icon[aria-pressed="false"] { color: var(--faint); }
+.sg-caret { width: 16px; padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 11px; }
+.sg-segment.sg-in-group { padding-left: 14px; }
 .sg-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sg-segment .text-input.sg-name { height: 22px; min-width: 0; width: 100%; }
 .sg-count { font: 11px var(--mono); color: var(--muted); text-align: right; }
@@ -55,7 +66,12 @@ export const STYLE =
 .sg-segment-select { max-width: 150px; height: 24px; background: var(--ink-0); color: var(--text); border: 1px solid var(--line); font: 12px var(--ui); }
 .sg-dims button { height: 24px; padding: 0 8px; font-size: 12px; }
 .sg-bar .sg-icon.sg-unsaved { color: var(--warn); }
+.sg-bar .sg-icon.sg-accept { color: var(--ok, #7bd88f); }
 
 .sg-ring { position: absolute; pointer-events: none; border: 1.5px solid rgba(255, 255, 255, 0.85); border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5); }
 .sg-box { position: absolute; pointer-events: none; border: 1.5px dashed #ffd166; background: rgba(255, 209, 102, 0.08); }
+.sg-path { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.sg-path polygon { fill: rgba(255, 209, 102, 0.12); stroke: #ffd166; stroke-width: 1.5; stroke-linejoin: round; }
+.sg-preview { position: absolute; left: 0; top: 0; pointer-events: none; }
+.sg-preview[hidden] { display: none; }
 `;

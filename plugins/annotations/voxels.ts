@@ -95,6 +95,15 @@ export class Voxels {
     return (await this.request<{ data: Float32Array }>({ type: "block", store, level, lo, size, affine: affine && Array.from(affine) }, { signal })).data;
   }
 
+  /**
+   * A label image's values on another grid's block, as `block`, read exactly
+   * (64-bit floats: labels above 2^24, which 32-bit floats would round; 64-bit
+   * labels narrowed to 32 bits, an error past them).
+   */
+  async labels(store: string, level: number, lo: number[], size: number[], affine?: Mat4, signal?: AbortSignal): Promise<Float64Array> {
+    return (await this.request<{ data: Float64Array }>({ type: "block", store, level, lo, size, affine: affine && Array.from(affine), exact: true }, { signal })).data;
+  }
+
   async stats(store: string, level: number, box: { lo: number[]; hi: number[] }, region: Region, progress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Summary> {
     return (await this.request<{ summary: Summary }>({ type: "stats", store, level, lo: box.lo, hi: box.hi, region }, { progress, signal })).summary;
   }

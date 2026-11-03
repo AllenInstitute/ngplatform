@@ -12,14 +12,17 @@ their history) and that section was taken out of Annotations.
   placement); or a copy of a segmentation's labels at a level, to edit (the
   original is hidden, not changed); or a NIfTI label image opened from this
   computer.
-- **The tool bar** over the views while a volume is edited: Move (the
-  views as Neuroglancer moves them; the default), Brush, Erase, Fill (2-D or
-  3-D), Pick segment and Quick select; the brush's size; the active
+- **The tool bar** over the 2-D views while a volume is edited (centred
+  over the top row of 2-D views, so it never covers the 3-D view): Move (the
+  views as Neuroglancer moves them; the default), Brush, Erase, Lasso, Fill
+  (2-D or 3-D), Pick segment and Quick select; the brush's size; the active
   segment and New segment; Undo, Redo, Interpolate, Save; and a button that
   hides it.
 - **The segment list**: each segment's colour, name, voxels (and volume, on
   hover) and visibility; the active one marked; Go to, Merge into the
-  active segment, Delete.
+  active segment, Delete. **Segment groups**: named groups (made, renamed,
+  coloured, folded, deleted), segments put in one by dragging or by the
+  active segment's **Group**, a whole group hidden or shown.
 - **Save** as NIfTI or OME-Zarr (only painted chunks written), the whole
   grid or the painted box; at the top of the tab and on the tool bar.
 - Each scene shows its own label volumes: the tab and the tool bar follow
@@ -38,12 +41,14 @@ with WebKnossos.
 | `toolbar.ts`, `icons.ts` | The tool bar over the views, its icons |
 | `tools.ts` | The tools, cycling through them, the brush's size steps (pure) |
 | `segments.ts` | The segment list's rows, new ids, which segments a layer shows (pure) |
-| `painter.ts` | The mouse in the 2-D views: drawing, the brush ring, Alt+wheel, the quick-select box |
+| `segment_groups.ts` | Segment groups: made, renamed, coloured, folded, removed, segments assigned, the list in sections (pure) |
+| `painter.ts` | The mouse in the 2-D views: drawing, the brush ring, Alt+wheel, the quick-select box, the lasso's outline |
 | `label_volume.ts` | The label volume held in the page: chunks, counts by chunk, a segment's centre, its pyramid, the OME-Zarr store it answers |
 | `store_format.ts` | Serving those stores to Neuroglancer through local data (loaded with the catalogue) |
 | `session.ts` | A volume being drawn: its layer, history, colours, the image that limits the tools |
-| `kernels.ts`, `history.ts` | Brush, fills and their limits, interpolation between sections (signed distances); strokes, undo and redo (pure) |
+| `kernels.ts`, `history.ts` | Brush, fills and their limits, the lasso's inside (`polygonRuns`, `fillOutline`), interpolation between sections (signed distances); strokes, undo and redo (pure) |
 | `quick_select.ts` | The quick select interface, the threshold method, the registry other plugins add to |
+| `preview.ts` | Quick select's proposed mask over the 2-D views (its sections, tinted with an outline), until Enter or Escape |
 | `save.ts` | NIfTI and OME-Zarr out, the painted box |
 | `keep.ts` | Volumes kept in the browser (OPFS) while drawn, brought back after a reload |
 | `style.ts` | The tab's and the tool bar's styles |
@@ -56,6 +61,27 @@ reads the volumes drawn here through the `segmentation.labelVolumes`
 service.
 
 ## The tools and Neuroglancer
+
+The lasso keeps the points of its outline in the voxels of the section it
+started in (the voxel axis nearest the view's normal, at the position
+there), a quarter voxel apart or more, while the painter draws the outline
+on the screen. When the button is let go the outline closes back to its
+start and `fillOutline` paints the voxels whose centres are inside it (the
+even-odd rule, row by row), as one stroke: the active segment over what
+**Paint over** allows, or (Erase) 0 over what **Erase** allows; with
+**Brush, eraser and lasso only within the range** on, only where the
+image's values (read for the outline's box in that section) are in range.
+
+Quick select shows its mask before painting it (the tab's **Result**, or
+**Preview** / **At once** on the bar, chooses): the mask waits in the
+editor (`pending`), `preview.ts` draws its sections over the 2-D views on
+a canvas (each view the section along the voxel axis nearest its normal,
+at its position; a pixel a voxel, placed by the screen's affine map of the
+section's voxels from the view's projection, so it follows panning, zoom
+and rotation), and the context key `segmentation.previewing` gives
+`Enter` (paint it with the active segment, as **Paint over** says) and
+`Escape` (drop it) to the editor. A new prompt replaces it; another tool,
+another volume or hiding the bar drops it.
 
 The editor keeps the tool and whether a volume is edited; `Painter`
 (`painter.ts`) takes the mouse in the 2-D views while a tool that draws is
@@ -73,17 +99,46 @@ on, and gives everything else to Neuroglancer:
 
 While a volume is edited (the tool bar shows), these keys are the tools'
 rather than Neuroglancer's or the workspace's: `B` (Neuroglancer: scale
-bar), `E` (rotate), `V` (default annotations), `F`, `I`, `M`, `Q`, `W`,
-`C`, `Ctrl+Z` (the workspace's undo; here strokes), `Ctrl+Y`; `[` and `]`
+bar), `E` (rotate), `L` (new colours for segments), `V` (default
+annotations), `F`, `I`, `M`, `Q`, `W`,
+`C`, `Ctrl+Z` and `Ctrl+Y` (the workspace's undo and redo; here the
+last stroke or the last workspace change, whichever came last, see
+below); `[` and `]`
 (time steps) with Brush or Erase; `Escape` (Neuroglancer's tool) with a
-drawing tool. Hiding the tool bar (its ×, or **Editing** in the tab) gives
+drawing tool; `Enter` and `Escape` while quick select's mask waits. Hiding the tool bar (its ×, or **Editing** in the tab) gives
 them back.
+
+Strokes have an undo of their own (`history.ts`, chunk copies within a
+memory budget), beside the workspace's (state snapshots). While the tool
+bar shows, `Ctrl+Z` undoes whichever came last: each stroke is timed when
+kept, and `workspace.undoSteps()` says when the workspace's change undo
+would take back was made (`chooseUndo`). `Ctrl+Y` redoes whichever of the
+two undone came first, so they redo in the order they were undone. The
+quiet changes a stroke makes to the layer (its segment's colour, its
+visibility) amend the workspace's current step, not a new one; a change of
+the user's still settling when a stroke ends is recorded before the stroke
+is timed.
 
 A segment's visibility is Neuroglancer's own list of visible segments
 (`segments`, with `!id` for one listed but hidden): with nothing hidden the
 list is empty and every segment shows; hiding one lists the others and sets
 `ignoreNullVisibleSet` to false, so a segment painted later is added as it
 is painted.
+
+## Segment groups
+
+A volume's groups are kept in the plugin's slice of the workspace state
+(`appState` key `segmentation`): `{ groups: { [volume id]: { groups:
+[{ id, name, colour, collapsed? }], of: { [segment]: group id } } } }`,
+by the volume's id (`Session.id`, which a volume kept in the browser keeps
+through a reload). The slice is per scene, so each scene has its own
+groups; it is in the link, and each edit is a workspace undo step (so
+`Ctrl+Z` with the tool bar showing undoes it in turn with strokes). A
+segment is in one group at most. Hiding a group sets each of its segments
+hidden in Neuroglancer's list of visible segments, as one change; a
+group's colour is given to each of its segments (their own colours, which
+can then be changed one by one). Deleting or merging away a segment takes
+it out of its group. Groups are not written into saved files.
 
 ## How a label volume reaches Neuroglancer
 
@@ -126,9 +181,12 @@ section shown.
 view's reader reads: OME-Zarr, NIfTI, MGH, precomputed) into a new label
 volume, in blocks of 256 × 256 × 64 voxels as a job that can be cancelled,
 up to 512 M voxels; chunks with no label are not made. The type follows the
-source's (8 and 16 bits as they are, anything else 32). The reader gives
-values as 32-bit floats, so labels above 2²⁴ are refused rather than
-rounded. Names and colours come from the source's lookup table when it has
+source's (8 and 16 bits as they are, anything else 32). Labels are read
+exactly (`Voxels.labels`: the reader's `exactRegion`, 64-bit floats, which
+hold every 32-bit label), so labels above 2²⁴ copy as they are; 64-bit
+labels (uint64, int64, precomputed) are narrowed to 32 bits as the volume
+view's reader does (`narrow`), and one past 32 bits, or a negative or
+fractional value, stops the copy with an error. Names and colours come from the source's lookup table when it has
 one, otherwise from its layer's segment colours. The source is hidden and
 not changed. Editing a large segmentation in place (copy-on-write over the
 source) is not done: see *Large data*.
@@ -163,13 +221,14 @@ drawn.
 
 ## What it uses from the platform
 
-`ui.overlay()` (the tool bar, the brush ring), `viewer.panels()`,
+`ui.overlay()` (the tool bar, the brush ring, quick select's preview), `viewer.panels()`,
 `viewer.onRendered()`, `viewer.cursor()`, `viewer.layerTransform()`,
 `viewer.patchState()`, `viewer.setPosition()`, `viewer.lookupTables`,
-`viewer.reloadData(url)`, `workspace.local.open/close`, `services`
+`viewer.reloadData(url)`, `state` (segment groups), `workspace.local.open/close`,
+`workspace.undoSteps()`, `commands.invoke` (`edit.undo`, `edit.redo`), `services`
 (`segmentation.quickSelect` and `segmentation.labelVolumes`, which it
 provides), `context` (`segmentation.editing`, `segmentation.drawing`,
-`segmentation.brushing`), `jobs`.
+`segmentation.brushing`, `segmentation.previewing`), `jobs`.
 
 `viewer.reloadData(url)` (`src/sdk/types.ts`, `src/ui/apis.ts`) has
 Neuroglancer invalidate every chunk source in its chunk manager whose key

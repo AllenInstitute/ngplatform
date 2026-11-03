@@ -65,9 +65,9 @@ Neuroglancer reads its chunks again (see the plugin's README).
 
 | WebKnossos | Here | When |
 |---|---|---|
-| Tool bar over the views; Move as the default tool; tools by key (B, E, F, I, Q; W to cycle) | The same tool bar and keys while a layer is edited; Move (`M`, `Escape`) leaves the views to Neuroglancer | Now |
+| Tool bar over the views; Move as the default tool; tools by key (B, E, L, F, I, Q; W to cycle) | The same tool bar and keys while a layer is edited; Move (`M`, `Escape`) leaves the views to Neuroglancer | Now |
 | Brush, its size (Shift + wheel) | **Brush**: a ball, or its disc in the section; radius in voxels, mm or µm (round in space on any voxels); **Alt + wheel** (Neuroglancer's Shift + wheel steps ten sections), `[` and `]`, the bar's − and + | Now |
-| A new volume layer, empty or over an existing segmentation | **New segmentation layer** on an image's or a segmentation's grid, at a level; or a **copy** of a segmentation's labels at a level to edit (WebKnossos edits a fallback segmentation in place; here a copy, up to 512 M voxels) | Now |
+| A new volume layer, empty or over an existing segmentation | **New segmentation layer** on an image's or a segmentation's grid, at a level; or a **copy** of a segmentation's labels at a level to edit (WebKnossos edits a fallback segmentation in place; here a copy, up to 512 M voxels, its labels exact to 32 bits) | Now |
 | Eraser | **Erase**: any label, or only the active one | Now |
 | Overwrite modes | **Paint over**: any label, or unlabelled only | Now |
 | Fill 2-D / 3-D by labels | **Fill 2-D** (the section) and **Fill 3-D** (a box a set reach round the click), by the label clicked | Now |
@@ -76,12 +76,13 @@ Neuroglancer reads its chunks again (see the plugin's README).
 | Create new segment ID (C) | **New segment** (`C`): one more than the largest id used | Now |
 | Quick select, threshold | **Quick select** with a box (Otsu's threshold, the side the box's middle is on, its connected part) or a click (a tolerance round the value) | Now |
 | Quick select, AI (SAM) | The same tool takes other methods through the `segmentation.quickSelect` service: a method gets the prompt and the image's values round it on the label grid, and returns a mask. A Segment Anything method served elsewhere (or in the page with ONNX Runtime Web) can plug in without changing the tool | Later |
-| Preview, Enter / Escape | Quick select paints at once (undo takes it back) | Later |
-| Undo / redo | **Undo**, **Redo** of strokes (`Ctrl+Z`, `Ctrl+Y` while a layer is edited), within a memory budget | Now |
-| Trace (lasso) | Draw an outline with the brush and **Fill 2-D** inside it; a lasso tool proper | Later |
+| Preview, Enter / Escape | Quick select's mask shows over the 2-D views (tinted, outlined) until **Enter** paints it or **Escape** drops it; **At once** paints straight away | Now |
+| Undo / redo | **Undo**, **Redo** (`Ctrl+Z`, `Ctrl+Y` while a layer is edited): strokes (within a memory budget) and the workspace's changes as one history, whichever came last | Now |
+| Trace (lasso) | **Lasso** (`L`): an outline drawn in a 2-D view, closed when the button is let go, its inside painted (or erased) in that section, as **Paint over** and the intensity range allow | Now |
 | Interpolation between sections (V) | **Interpolate** (++v++): shape-based (signed distances, weighted by nearness) through the sections between drawn sections of the active segment (over any segment, or empty voxels only, as **Paint over** says), across the view last drawn in | Now |
 | 3-D flood fill to relabel a segment (fixing splits and merges by hand) | **Merge** (a segment into the active one) and **Delete**, everywhere | Now |
 | Segments list: active segment, names, colours, visibility, go to; statistics, CSV | **Segments** list: the active one marked, names, colours, voxels and volume, shown or hidden, **Go to**; Annotations' **Statistics** section (an image's values in a segment) with CSV | Now |
+| Segment groups | **Groups** in the segment list: made, renamed, coloured (each segment in it), folded, hidden or shown whole; segments dragged in (or the active one's group chosen); kept in the scene's state and the link, undoable. Not written into saved files | Now |
 | Import / export | **Open** a NIfTI label image; **Save** as NIfTI (.nii.gz, label intent) or OME-Zarr (only painted chunks written), optionally only the painted box | Now |
 | Pen tablet | Pointer events would give pressure; not yet used | Later |
 | Proofreading: merge and split agglomerates | Needs a supervoxel graph and an editable mapping: for CAVE / graphene segmentations Neuroglancer already has its own merge and split tools; for others, later | Later |

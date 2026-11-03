@@ -26,7 +26,9 @@ In the Segmentation tab, under **New segmentation layer**:
   edit** copy its labels at that level into the new layer, with the names
   and colours of its lookup table if it has one. The original is hidden and
   not changed. Copies are limited to 512 million voxels: choose a coarser
-  level for a larger segmentation.
+  level for a larger segmentation. Labels copy exactly up to 4,294,967,295
+  (32 bits; 64-bit labels within that range too); a label past 32 bits
+  stops the copy with an error.
 - **Open NIfTI…** reads a label image from your computer to edit.
 
 The new layer opens with the tool bar shown and the brush chosen. Each
@@ -35,16 +37,18 @@ scene has its own segmentation layers; the tab shows the scene you are in.
 ## The tool bar
 
 While a segmentation layer is edited, a tool bar shows at the top of the
-views. Hover a button for its name and key.
+2-D views (in a layout with a 3-D view, such as xy-3d, it stays over the
+2-D view). Hover a button for its name and key.
 
 | Tool | Key | What it does |
 |---|---|---|
 | **Move** | ++m++ | The views as usual: drag to move, wheel through sections. ++escape++ comes back here |
 | **Brush** | ++b++ | The left button paints the active segment: a disc in the section (or a ball). A ring shows its size |
 | **Erase** | ++e++ | Paints 0: any segment, or only the active one |
+| **Lasso** | ++l++ | Hold the left button and draw round a structure in a 2-D view: when you let go, the outline closes and its inside is painted with the active segment in that section (as **Paint over** says, and within the image's range when that is on). **Erase** on the bar erases inside it instead |
 | **Fill** | ++f++, ++shift+f++ | Fills the region clicked with the active segment: **2-D** in its section (++f++), or **3-D** in a box round the click (++shift+f++) |
 | **Pick segment** | ++i++ | The segment clicked becomes the active one |
-| **Quick select** | ++q++ | Drag a box round a structure in a 2-D view (Otsu's threshold inside it), or click it (values near the one clicked) |
+| **Quick select** | ++q++ | Drag a box round a structure in a 2-D view (Otsu's threshold inside it), or click it (values near the one clicked). The mask shows first, tinted with its outline: ++enter++ (or ✓ on the bar) paints it with the active segment, ++escape++ (or ×) drops it |
 
 - **Brush size**: ++alt++ + wheel over a 2-D view, ++bracket-left++ and
   ++bracket-right++, or **−** and **+** on the tool bar. The size is in
@@ -58,14 +62,30 @@ views. Hover a button for its name and key.
   **Redo** (++ctrl+y++); **Interpolate** (++v++); **Save**; and **×**,
   which hides the bar. **Edit** in the tab shows it again.
 
+**Undo and redo** while the tool bar shows: ++ctrl+z++ undoes whichever
+came last, the last stroke or the last change to the workspace (a layer
+hidden, the view moved, a segment hidden), so strokes and other changes
+undo as one history; ++ctrl+y++ (or ++ctrl+shift+z++) redoes them in the
+order they were undone. Hover **Undo** on the bar to see what it will
+take back. Merge, Delete, fills, quick select and interpolation are
+strokes too.
+
+**Quick select** shows its mask before painting it, as WebKnossos does:
+check it, then ++enter++ paints it and ++escape++ drops it; a new box or
+click replaces it, and the active segment can be changed (++c++, or the
+list) before ++enter++. **Preview** / **At once** on the bar (or
+**Result** in the tab) switches to painting at once, as before; undo
+takes a mask painted at once back.
+
 **Interpolate**: draw the active segment in two sections a few apart (in
 the same 2-D view), then press ++v++: each section between gets a shape
 between the two drawn. Check the result, as with any interpolation.
 
 While the tool bar shows, the keys above are the tools'. Some are
-Neuroglancer's otherwise (++b++ scale bar, ++e++ rotate, ++v++ default
-annotations, ++space++ layout, ++escape++, ++alt++ + wheel) and ++ctrl+z++
-is the workspace's undo; hide the tool bar to have them back.
+Neuroglancer's otherwise (++b++ scale bar, ++e++ rotate, ++l++ new segment
+colours, ++v++ default
+annotations, ++space++ layout, ++escape++, ++alt++ + wheel); hide the tool
+bar to have them back.
 
 ## Segments
 
@@ -81,16 +101,31 @@ in its row.
 - **Merge** gives a segment's voxels to the active segment; **Delete**
   erases them. Both can be undone.
 
+**Groups**, as in WebKnossos's segment list:
+
+- **+ New group** makes an empty group (*Group 1*, …); type in its name to
+  rename it.
+- Drag a segment's row onto a group to put it there (onto *No group* to
+  take it out), or choose the active segment's group under the list. A
+  segment is in one group at most.
+- The group's eye hides or shows all its segments; its colour square gives
+  them all that colour; ▾ folds its rows away; the bin deletes the group
+  (its segments stay, in no group).
+- Groups belong to the scene, are kept in the link, and can be undone like
+  other changes. They are not written into saved NIfTI or OME-Zarr files.
+
 ## Tool settings and image values
 
 Under **Tool**, the active tool's settings: the brush's radius, unit and
 shape and whether it **paints over** other segments or only empty voxels;
 what a fill follows (the segment clicked, or a range of the image's
-values) and a 3-D fill's reach; quick select's method and tolerance.
+values) and a 3-D fill's reach; whether the lasso paints or erases
+inside, and over what; quick select's method, tolerance, result
+(preview first, or paint at once) and what it paints over.
 
 **Image values**: the image whose values limit the tools (by default the
-one the grid came from), a **range**, and whether the brush and eraser keep
-to it. **Range from the cursor** sets it round the value under the pointer.
+one the grid came from), a **range**, and whether the brush, eraser and
+lasso keep to it. **Range from the cursor** sets it round the value under the pointer.
 
 ## Saving
 

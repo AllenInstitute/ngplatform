@@ -13,7 +13,8 @@
  *    (./quick_select.ts).  Brush and fills can be limited to an intensity
  *    range of an image.
  *  - Segments (./segments.ts): the active one, new ones, names, colours,
- *    shown or hidden, gone to, merged and deleted.
+ *    shown or hidden, gone to, merged and deleted; and their groups
+ *    (./segment_groups.ts), kept in the plugin's per-scene state.
  *  - Undo and redo of strokes; Save as NIfTI or OME-Zarr (./save.ts).
  *
  * The volume lives in the page (./label_volume.ts) and shows as a
@@ -26,14 +27,16 @@ import { download, el, fileName, fmt } from "../annotations/ui.js";
 import { type ImageLevel, layerStore, readableImages, type Voxels } from "../annotations/voxels.js";
 import { zipFiles } from "../registration/volume_io.js";
 import { storeOf } from "../volume-view/sources.js";
-import { Stroke } from "./history.js";
-import { ballReach, ballShape, dabsBetween, floodFill, type ImageBlock, inRange, interpolate, type Paint, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "./kernels.js";
+import { chooseUndo, Stroke } from "./history.js";
+import { ballReach, ballShape, dabsBetween, fillOutline, floodFill, type ImageBlock, inRange, interpolate, type Paint, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "./kernels.js";
 import { discard, type KeptInfo, kept, restore } from "./keep.js";
 import { LABEL_MAX, type LabelType, LabelVolume } from "./label_volume.js";
-import { BRUSHING, DRAWING, EDITING, SEGMENTATION_PANEL } from "./manifest.js";
+import { BRUSHING, DRAWING, EDITING, PREVIEWING, SEGMENTATION_PANEL } from "./manifest.js";
 import { Painter, type ViewPoint } from "./painter.js";
-import { type Prompt, QuickSelectRegistry } from "./quick_select.js";
+import { maskCount, PreviewOverlay } from "./preview.js";
+import { type Mask, type Prompt, QuickSelectRegistry } from "./quick_select.js";
 import { cropped, niftiBytes, niftiGz, omeZarr } from "./save.js";
+import { addGroup, assign, editGroup, members, readGroups, removeGroup, type SegmentationSaved, type VolumeGroups } from "./segment_groups.js";
 import { isVisible, nextSegment, type SegmentRow, segmentRows, type SegmentsState, withVisibility } from "./segments.js";
 import { type Reference, Session } from "./session.js";
 import { brushes, cycle, draws, stepRadius, type Tool, TOOLS } from "./tools.js";
@@ -42,8 +45,6 @@ import { brushes, cycle, draws, stepRadius, type Tool, TOOLS } from "./tools.js"
 export const MAX_NIFTI = 2 * 2 ** 30;
 /** Voxels read to open a label image or copy a segmentation. */
 export const MAX_COPY = 512 * 2 ** 20;
-/** Labels are read as 32-bit floats, exact to here. */
-const EXACT = 2 ** 24;
 /** The block a copy is read in, in voxels. */
 const COPY_BLOCK: Vec3 = [256, 256, 64];
 
@@ -73,6 +74,7 @@ export class Editor implements LabelVolumes {
   editing = false;
   readonly quickSelect = new QuickSelectRegistry();
   private readonly painter: Painter;
+  private readonly previewOverlay: PreviewOverlay;
   private readonly offs: Disposer[] = [];
   private readonly listeners = new Set<() => void>();
 
@@ -88,6 +90,8 @@ export class Editor implements LabelVolumes {
   shape: "ball" | "disc" = "disc";
   overwrite: "all" | "empty" = "all";
   eraseOnly = false;
+  /** The lasso paints the active segment, or erases (as Erase does: any segment, or the active one only). */
+  lassoErase = false;
   limit = false;
   low = 0;
   high = 255;
@@ -95,6 +99,10 @@ export class Editor implements LabelVolumes {
   reach = 32;
   method = "threshold";
   tolerance = 0.1;
+  /** Quick select shows its mask first (Enter paints it, Escape drops it), or paints at once. */
+  quickMode: "preview" | "paint" = "preview";
+  /** Quick select's mask waiting to be accepted or cancelled. */
+  pending: { session: Session; mask: Mask; voxels: number } | undefined;
   saveFormat: "nii.gz" | "zarr" = "nii.gz";
   saveCrop = false;
   /** What the last save (or the one under way) said. */
@@ -111,6 +119,8 @@ export class Editor implements LabelVolumes {
   private axis = 2;
   private quickStart: { voxel: Vec3; axis?: number } | undefined;
   private quickEnd: Vec3 | undefined;
+  /** The lasso's outline being drawn: the section (across `axis`, at `index`) and its points (u, w) in voxels. */
+  private lasso: { session: Session; axis: number; index: number; points: [number, number][] } | undefined;
   private countsTimer: ReturnType<typeof setTimeout> | undefined;
   /** Volumes already looked for after a reload. */
   private readonly sought = new Set<string>();
@@ -125,10 +135,18 @@ export class Editor implements LabelVolumes {
       up: () => this.up(),
       ring: (p) => this.ring(p),
       boxDrag: () => this.tool === "quick",
+      pathDrag: () => this.tool === "lasso",
       wheel: (notches) => {
         if (!brushes(this.tool)) return false;
         this.brushSize(notches);
         return true;
+      },
+    });
+    this.previewOverlay = new PreviewOverlay(ctx, {
+      preview: () => {
+        const p = this.pending;
+        const placement = p?.session.placement();
+        return p === undefined || placement === undefined || p.session !== this.current ? undefined : { mask: p.mask, placement, colour: p.session.colour(this.value) };
       },
     });
     this.offs.push(ctx.services.provide("segmentation.quickSelect", this.quickSelect), ctx.services.provide("segmentation.labelVolumes", this as LabelVolumes), this.quickSelect.onChanged(() => this.changed()));
@@ -148,6 +166,8 @@ export class Editor implements LabelVolumes {
     c.register("segmentation.redo", () => this.undo(true));
     c.register("segmentation.interpolate", () => this.interpolate());
     c.register("segmentation.stopEditing", () => this.setEditing(false));
+    c.register("segmentation.acceptPreview", () => this.acceptPreview());
+    c.register("segmentation.cancelPreview", () => this.cancelPreview());
     // Each scene shows its own label volumes, as if it were a viewer of its
     // own: a layer removed (or another scene shown) ends editing the volume
     // it showed, and the scene's first volume becomes the current one.  A
@@ -155,6 +175,7 @@ export class Editor implements LabelVolumes {
     this.offs.push(
       ctx.viewer.onLayersChanged(() => {
         const here = this.inScene();
+        if (this.pending !== undefined && !here.includes(this.pending.session)) this.cancelPreview();
         if (this.current !== undefined && !here.includes(this.current)) {
           this.current = here[0];
           if (this.current) this.value = this.rows()[0]?.value ?? 1;
@@ -166,6 +187,8 @@ export class Editor implements LabelVolumes {
         void this.restoreLost();
         this.changed();
       }),
+      // Groups are in the workspace state: undo, redo and another scene change them.
+      ctx.state.onChanged(() => this.changed()),
     );
     void this.restoreLost();
     void this.refreshKept();
@@ -190,6 +213,7 @@ export class Editor implements LabelVolumes {
   dispose(): void {
     this.offs.forEach((off) => off());
     this.painter.dispose();
+    this.previewOverlay.dispose();
     for (const s of this.sessions) s.dispose();
     clearTimeout(this.countsTimer);
   }
@@ -202,6 +226,7 @@ export class Editor implements LabelVolumes {
       this.ctx.ui.showPanel(SEGMENTATION_PANEL);
       return;
     }
+    if (tool !== this.tool) this.cancelPreview();
     this.tool = tool;
     if (draws(tool)) this.editing = true;
     this.apply();
@@ -211,7 +236,10 @@ export class Editor implements LabelVolumes {
   setEditing(on: boolean): void {
     if (on && this.current === undefined) on = false;
     this.editing = on;
-    if (!on) this.tool = "move";
+    if (!on) {
+      this.tool = "move";
+      this.cancelPreview();
+    }
     else if (this.current) this.ctx.workspace.selectLayer(this.current.layer);
     this.apply();
   }
@@ -239,6 +267,7 @@ export class Editor implements LabelVolumes {
   }
 
   setCurrent(session: Session): void {
+    if (session !== this.current) this.cancelPreview();
     this.current = session;
     this.value = this.rows()[0]?.value ?? 1;
     if (this.editing) this.ctx.workspace.selectLayer(session.layer);
@@ -307,10 +336,17 @@ export class Editor implements LabelVolumes {
 
   /** Shows or hides a segment in its layer (Neuroglancer's visible segments). */
   show(session: Session, value: number, visible: boolean, quiet = false): void {
-    const state = this.segmentsState(session);
-    if (isVisible(state, value) === visible) return;
-    const known = [...new Set([...session.counts.keys(), ...session.labels.keys(), this.value])];
-    const next = withVisibility(state, known, value, visible);
+    this.showSegments(session, [value], visible, quiet);
+  }
+
+  /** Shows or hides several segments (a group) in its layer, as one change. */
+  showSegments(session: Session, values: number[], visible: boolean, quiet = false): void {
+    let state = this.segmentsState(session);
+    const change = values.filter((v) => isVisible(state, v) !== visible);
+    if (change.length === 0) return;
+    const known = [...new Set([...session.counts.keys(), ...session.labels.keys(), this.value, ...values])];
+    for (const v of change) state = withVisibility(state, known, v, visible);
+    const next = state as Required<SegmentsState>;
     this.ctx.viewer.patchState(
       (ng) => {
         const layer = ((ng.layers as Record<string, unknown>[] | undefined) ?? []).find((l) => l.name === session.layer);
@@ -322,6 +358,68 @@ export class Editor implements LabelVolumes {
       { quiet },
     );
     this.changed();
+  }
+
+  // ------------------------------------------------------------ groups
+
+  /** The current volume's segment groups (from the plugin's state for this scene). */
+  groups(session = this.current): VolumeGroups {
+    if (session === undefined) return readGroups(undefined);
+    return readGroups(this.ctx.state.get<SegmentationSaved>()?.groups?.[session.id]);
+  }
+
+  private setGroups(session: Session, next: VolumeGroups): void {
+    const saved = this.ctx.state.get<SegmentationSaved>() ?? {};
+    this.ctx.state.set<SegmentationSaved>({ ...saved, groups: { ...saved.groups, [session.id]: next } });
+    this.changed();
+  }
+
+  /** A new, empty group; returns its id. */
+  newGroup(name?: string): string | undefined {
+    const s = this.current;
+    if (s === undefined) return undefined;
+    const { next, id } = addGroup(this.groups(s), name);
+    this.setGroups(s, next);
+    return id;
+  }
+
+  renameGroup(id: string, name: string): void {
+    const s = this.current;
+    if (s) this.setGroups(s, editGroup(this.groups(s), id, { name }));
+  }
+
+  foldGroup(id: string, collapsed: boolean): void {
+    const s = this.current;
+    if (s) this.setGroups(s, editGroup(this.groups(s), id, { collapsed }));
+  }
+
+  /** Gives a group, and every segment in it, a colour. */
+  recolourGroup(id: string, colour: string): void {
+    const s = this.current;
+    if (s === undefined) return;
+    const values = members(this.groups(s), id, this.rows().map((r) => r.value));
+    for (const v of values) s.labels.set(v, { name: s.labels.get(v)?.name ?? "", colour });
+    s.changed([]);
+    s.applyColours(values);
+    this.setGroups(s, editGroup(this.groups(s), id, { colour }));
+  }
+
+  /** Takes a group away; its segments stay, in no group. */
+  deleteGroup(id: string): void {
+    const s = this.current;
+    if (s) this.setGroups(s, removeGroup(this.groups(s), id));
+  }
+
+  /** Puts segments in a group (undefined: in none). */
+  assignGroup(values: number[], id: string | undefined): void {
+    const s = this.current;
+    if (s) this.setGroups(s, assign(this.groups(s), values, id));
+  }
+
+  /** Shows or hides every segment of a group. */
+  showGroup(id: string, visible: boolean): void {
+    const s = this.current;
+    if (s) this.showSegments(s, members(this.groups(s), id, this.rows().map((r) => r.value)), visible);
   }
 
   /** Moves the views to a segment: its voxel nearest its centre. */
@@ -348,6 +446,7 @@ export class Editor implements LabelVolumes {
       const stroke = new Stroke(s.volume);
       relabel(stroke, value, 0);
       s.labels.delete(value);
+      if (this.groups(s).of[String(value)] !== undefined) this.assignGroup([value], undefined);
       s.changed([]);
       this.commit(stroke, s, 0);
       if (this.value === value) this.value = this.rows().find((r) => r.value !== value)?.value ?? 1;
@@ -363,6 +462,7 @@ export class Editor implements LabelVolumes {
       const stroke = new Stroke(s.volume);
       const n = relabel(stroke, from, into);
       s.labels.delete(from);
+      if (this.groups(s).of[String(from)] !== undefined) this.assignGroup([from], undefined);
       s.changed([]);
       this.ctx.ui.toast(`Merged segment ${from} into ${into}: ${n.toLocaleString()} voxels.`);
       this.commit(stroke, s, into);
@@ -478,12 +578,10 @@ export class Editor implements LabelVolumes {
         job.progress(i / blocks.length, `Reading block ${i + 1} of ${blocks.length}`);
         const lo = blocks[i];
         const extent = lo.map((v, k) => Math.min(COPY_BLOCK[k], size[k] - v)) as Vec3;
-        const data = await this.voxels.block(store, level, lo, extent);
-        for (let j = 0; j < data.length; ++j) {
-          const v = data[j];
-          if (v > max) throw new Error(`label ${v} is more than a ${volume.type} volume holds`);
-          if (v > EXACT) throw new Error(`labels above ${EXACT.toLocaleString()} are not read exactly`);
-        }
+        // Exactly: 32-bit labels as they are, 64-bit ones narrowed to 32 bits (an error past them).
+        const data = await this.voxels.labels(store, level, lo, extent);
+        const bad = badLabel(data, max);
+        if (bad !== undefined) throw new Error(bad > max ? `label ${bad} is more than a ${volume.type} volume holds` : `${bad} is not a label (a whole number from 0)`);
         volume.addBlock(lo, extent, data);
       }
     });
@@ -690,6 +788,13 @@ export class Editor implements LabelVolumes {
         this.quickStart = { voxel, axis: normal ? dominant(normal) : undefined };
         this.quickEnd = voxel;
         break;
+      case "lasso": {
+        if (normal === undefined) return;
+        const axis = dominant(normal);
+        const [u, w] = [0, 1, 2].filter((k) => k !== axis);
+        this.lasso = { session, axis, index: voxelIndex(voxel[axis]), points: [[voxel[u], voxel[w]]] };
+        break;
+      }
     }
   }
 
@@ -718,6 +823,16 @@ export class Editor implements LabelVolumes {
   }
 
   private drag(p: ViewPoint): void {
+    if (this.tool === "lasso") {
+      const lasso = this.lasso;
+      const where = lasso && this.locate(p);
+      if (lasso === undefined || where === undefined) return;
+      const [u, w] = [0, 1, 2].filter((k) => k !== lasso.axis);
+      const [lu, lw] = lasso.points[lasso.points.length - 1];
+      // A point a quarter voxel or more from the last: enough for the outline, not one per pixel.
+      if (Math.hypot(where.voxel[u] - lu, where.voxel[w] - lw) >= 0.25) lasso.points.push([where.voxel[u], where.voxel[w]]);
+      return;
+    }
     if (this.tool === "quick") {
       const where = this.locate(p);
       if (where) this.quickEnd = where.voxel;
@@ -734,6 +849,12 @@ export class Editor implements LabelVolumes {
   }
 
   private up(): void {
+    if (this.lasso !== undefined) {
+      const lasso = this.lasso;
+      this.lasso = undefined;
+      this.enqueue(() => this.fillLasso(lasso));
+      return;
+    }
     if (this.tool === "quick" && this.quickStart !== undefined) {
       const start = this.quickStart;
       const end = this.quickEnd ?? start.voxel;
@@ -751,16 +872,48 @@ export class Editor implements LabelVolumes {
   private commit(stroke: Stroke, session = this.current, value = this.value): void {
     stroke.finish();
     if (session === undefined || stroke.changes === 0) return;
-    session.history.push(stroke);
-    session.changed(stroke.keys());
-    session.unsaved++;
-    session.refresh();
     if (value > 0) {
+      // Before the stroke is timed: a change of the user's still settling is recorded first, as its own step.
       session.applyColours([value]);
       // A segment painted shows, even where others are hidden.
       this.show(session, value, true, true);
     }
+    session.history.push(stroke);
+    session.changed(stroke.keys());
+    session.unsaved++;
+    session.refresh();
     this.recount();
+  }
+
+  /**
+   * Paints inside the lasso's outline, in its section: the active segment
+   * over what Paint over allows (or 0, erasing, as Erase allows), within the
+   * image's range when the brush is limited to it.
+   */
+  private async fillLasso(lasso: { session: Session; axis: number; index: number; points: [number, number][] }): Promise<void> {
+    const { session, axis, index, points } = lasso;
+    if (points.length < 3) {
+      this.ctx.ui.toast("Draw round what to fill: hold the button down and come back near the start.");
+      return;
+    }
+    const paint: Paint = this.lassoErase ? { value: 0, only: this.eraseOnly ? this.value : undefined } : { value: this.value, only: this.overwrite === "empty" ? 0 : undefined };
+    if (this.limit && session.reference) {
+      const [u, w] = [0, 1, 2].filter((k) => k !== axis);
+      const lo: Vec3 = [0, 0, 0];
+      const hi: Vec3 = [0, 0, 0];
+      lo[axis] = index;
+      hi[axis] = index + 1;
+      lo[u] = Math.floor(Math.min(...points.map((p) => p[0])));
+      hi[u] = Math.ceil(Math.max(...points.map((p) => p[0]))) + 1;
+      lo[w] = Math.floor(Math.min(...points.map((p) => p[1])));
+      hi[w] = Math.ceil(Math.max(...points.map((p) => p[1]))) + 1;
+      const block = await session.imageBox(lo, hi);
+      if (block) paint.where = inRange(block, this.low, this.high);
+    }
+    const stroke = new Stroke(session.volume);
+    const n = fillOutline(stroke, axis, index, points, paint);
+    if (n === 0) this.ctx.ui.toast(this.lassoErase ? "Nothing to erase inside the outline." : "Nothing painted: the outline holds no voxel it may paint (Paint over, the image's range).");
+    this.commit(stroke, session, paint.value);
   }
 
   private async fill(seed: Vec3, normal: Vec3 | undefined): Promise<void> {
@@ -832,6 +985,44 @@ export class Editor implements LabelVolumes {
       return;
     }
     const mask = await method.run({ prompt, image, axis: start.axis, tolerance: this.tolerance }, new AbortController().signal);
+    const voxels = maskCount(mask);
+    if (voxels === 0) {
+      this.ctx.ui.toast("Quick select found nothing there.");
+      return;
+    }
+    if (this.quickMode === "paint") {
+      this.paintMask(session, mask);
+      return;
+    }
+    // Shown first: Enter (or Accept) paints it, Escape (or Cancel) drops it; a new prompt replaces it.
+    this.pending = { session, mask, voxels };
+    this.ctx.context.set(PREVIEWING, true);
+    this.previewOverlay.draw();
+    this.changed();
+  }
+
+  /** Paints quick select's proposed mask with the active segment (as Paint over says). */
+  acceptPreview(): void {
+    const p = this.pending;
+    if (p === undefined) return;
+    this.clearPreview();
+    this.enqueue(() => this.paintMask(p.session, p.mask));
+  }
+
+  /** Drops quick select's proposed mask. */
+  cancelPreview(): void {
+    if (this.pending !== undefined) this.clearPreview();
+  }
+
+  private clearPreview(): void {
+    this.pending = undefined;
+    this.ctx.context.set(PREVIEWING, false);
+    this.previewOverlay.draw();
+    this.changed();
+  }
+
+  /** Paints a mask with the active segment, as one stroke. */
+  private paintMask(session: Session, mask: Mask): void {
     const stroke = new Stroke(session.volume);
     const only = this.overwrite === "empty" ? 0 : undefined;
     let i = 0;
@@ -848,14 +1039,33 @@ export class Editor implements LabelVolumes {
         }
       }
     }
-    if (stroke.changes === 0) this.ctx.ui.toast("Quick select found nothing there.");
-    this.commit(stroke);
+    if (stroke.changes === 0) this.ctx.ui.toast("Nothing to paint: the mask is painted already (or only over empty voxels, as Paint over says).");
+    this.commit(stroke, session);
+  }
+
+  /**
+   * What undo (or redo) takes now: the current volume's last stroke or the
+   * workspace's last change, whichever came last (for redo, the one undone
+   * first), so the two undo as one history (`chooseUndo`).
+   */
+  undoTarget(redo: boolean): { kind: "stroke" } | { kind: "workspace"; label: string } | undefined {
+    const h = this.current?.history;
+    const steps = this.ctx.workspace.undoSteps();
+    const workspace = redo ? steps.redo : steps.undo;
+    const which = chooseUndo(redo ? h?.redoTime : h?.undoTime, workspace?.time, redo);
+    return which === "workspace" ? { kind: "workspace", label: workspace!.label } : which && { kind: which };
   }
 
   undo(redo: boolean): void {
     const session = this.current;
-    if (session === undefined) return;
-    this.enqueue(() => {
+    // After strokes still being drawn are kept.
+    this.enqueue(async () => {
+      const target = this.undoTarget(redo);
+      if (target?.kind === "workspace" || session === undefined) {
+        if (target === undefined || (await this.ctx.commands.invoke(redo ? "edit.redo" : "edit.undo")) === undefined) this.ctx.ui.toast(redo ? "Nothing to redo." : "Nothing to undo.");
+        this.changed();
+        return;
+      }
       const keys = redo ? session.history.redo() : session.history.undo();
       if (keys.length === 0) {
         this.ctx.ui.toast(redo ? "Nothing to redo." : "Nothing to undo.");
@@ -1005,6 +1215,16 @@ interface Brushing {
 function dominant(n: Vec3): number {
   const a = n.map(Math.abs);
   return a.indexOf(Math.max(...a));
+}
+
+/** The first value of a block that is not a label a volume holding up to `max` takes; NaN (outside the image) is none. */
+export function badLabel(data: ArrayLike<number>, max: number): number | undefined {
+  for (let j = 0; j < data.length; ++j) {
+    const v = data[j];
+    if (v !== v) continue;
+    if (v < 0 || v > max || v !== Math.floor(v)) return v;
+  }
+  return undefined;
 }
 
 /** The label type that holds a stored type's values: 8 and 16 bits as they are, anything else in 32. */

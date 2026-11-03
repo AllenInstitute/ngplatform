@@ -12,6 +12,8 @@ import { floodFill, paintBall, relabel, sameLabel, type Vec3 } from "../kernels.
 import { LabelVolume } from "../label_volume.js";
 import { SEGMENTATION_MANIFEST } from "../manifest.js";
 import { isVisible, nextSegment, segmentName, segmentRows, withVisibility } from "../segments.js";
+import { addGroup, assign, editGroup, groupOf, grouped, members, noGroups, readGroups, removeGroup } from "../segment_groups.js";
+import { barSpan } from "../toolbar.js";
 import { brushes, cycle, draws, stepRadius, TOOLS } from "../tools.js";
 import { checkManifest } from "../../../src/sdk/manifest.js";
 
@@ -29,7 +31,8 @@ describe("the tools", () => {
     expect(cycle("move", 1)).toBe("brush");
     expect(cycle("quick", 1)).toBe("move");
     expect(cycle("move", -1)).toBe("quick");
-    expect(cycle("fill", -2)).toBe("brush");
+    expect(cycle("fill", -2)).toBe("erase");
+    expect(cycle("erase", 1)).toBe("lasso");
   });
 
   it("steps the brush by a quarter, and in whole voxels by at least one", () => {
@@ -53,6 +56,24 @@ describe("the tools", () => {
     expect(keys.get("mod+z")?.command).toBe("segmentation.undo");
     expect(keys.get("mod+y")?.command).toBe("segmentation.redo");
     for (const k of keys.values()) expect(k.when).toMatch(/^segmentation\./);
+  });
+});
+
+describe("the tool bar's place", () => {
+  const panel = (kind: "2d" | "3d", left: number, top: number, right: number, bottom: number) => ({ kind, rect: { left, top, right, bottom } });
+
+  it("spans the 2-D view beside a 3-D one (xy-3d), not the 3-D view", () => {
+    expect(barSpan([panel("2d", 0, 40, 550, 750), panel("3d", 550, 40, 1100, 750)])).toEqual({ left: 0, right: 550, top: 40 });
+  });
+
+  it("spans the top row of 2-D views in four panels", () => {
+    const four = [panel("2d", 0, 40, 550, 395), panel("2d", 550, 40, 1100, 395), panel("2d", 0, 395, 550, 750), panel("3d", 550, 395, 1100, 750)];
+    expect(barSpan(four)).toEqual({ left: 0, right: 1100, top: 40 });
+  });
+
+  it("takes the widest 2-D view when a 3-D view sits between them, and every view with no 2-D view", () => {
+    expect(barSpan([panel("2d", 0, 40, 300, 750), panel("3d", 300, 40, 700, 750), panel("2d", 700, 40, 1100, 750)])).toEqual({ left: 700, right: 1100, top: 40 });
+    expect(barSpan([panel("3d", 0, 40, 1100, 750)])).toEqual({ left: 0, right: 1100, top: 40 });
   });
 });
 
@@ -225,5 +246,55 @@ describe("what the segment list asks of a volume", () => {
     expect(v.get(15, 15, 2)).toBe(3);
     expect(v.get(15, 15, 3)).toBe(2);
     expect(v.get(4, 4, 2)).toBe(0);
+  });
+});
+
+describe("segment groups", () => {
+  it("makes groups with names and colours of their own, renames, folds and recolours them", () => {
+    let vg = noGroups();
+    const a = addGroup(vg);
+    vg = a.next;
+    const b = addGroup(vg, "  Ventricles ");
+    vg = b.next;
+    expect(vg.groups.map((g) => g.name)).toEqual(["Group 1", "Ventricles"]);
+    expect(vg.groups[0].colour).not.toBe(vg.groups[1].colour);
+    expect(a.id).not.toBe(b.id);
+    vg = editGroup(vg, a.id, { name: "Left", collapsed: true });
+    vg = editGroup(vg, b.id, { name: "   ", colour: "#123456" });
+    expect(vg.groups).toEqual([
+      { id: a.id, name: "Left", colour: vg.groups[0].colour, collapsed: true },
+      { id: b.id, name: "Ventricles", colour: "#123456" },
+    ]);
+    // The next "Group n" is the smallest not taken.
+    expect(addGroup(editGroup(vg, a.id, { name: "Group 2" })).next.groups[2].name).toBe("Group 1");
+  });
+
+  it("puts each segment in one group at most, lists the groups' rows, and keeps segments when a group goes", () => {
+    let vg = noGroups();
+    const g1 = addGroup(vg);
+    const g2 = addGroup(g1.next);
+    vg = g2.next;
+    vg = assign(vg, [1, 2, 5], g1.id);
+    vg = assign(vg, [2], g2.id);
+    expect(groupOf(vg, 2)?.id).toBe(g2.id);
+    expect(members(vg, g1.id, [1, 2, 3, 5])).toEqual([1, 5]);
+    expect(assign(vg, [3], "nope")).toBe(vg);
+    const rows = [1, 2, 3, 4, 5].map((value) => ({ value }));
+    expect(grouped(vg, rows).map((s) => `${s.group?.name ?? "none"}:${s.rows.map((r) => r.value).join(",")}`)).toEqual(["Group 1:1,5", "Group 2:2", "none:3,4"]);
+    vg = removeGroup(vg, g1.id);
+    expect(vg.groups.length).toBe(1);
+    expect(groupOf(vg, 1)).toBeUndefined();
+    expect(groupOf(vg, 2)?.id).toBe(g2.id);
+    vg = assign(vg, [2], undefined);
+    expect(vg.of).toEqual({});
+  });
+
+  it("reads saved groups, dropping what does not fit", () => {
+    expect(readGroups(undefined)).toEqual(noGroups());
+    const raw = { groups: [{ id: "g1", name: "A", colour: "#ff0000" }, { id: 3, name: "bad" }, { id: "g2", name: "B" }], of: { "7": "g1", "8": "gone", x: "g1", "9": "g2" } };
+    const vg = readGroups(raw);
+    expect(vg.groups.map((g) => g.id)).toEqual(["g1", "g2"]);
+    expect(vg.groups[1].colour).toMatch(/^#/);
+    expect(vg.of).toEqual({ "7": "g1", "9": "g2" });
   });
 });

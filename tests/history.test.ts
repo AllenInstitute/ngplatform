@@ -67,8 +67,13 @@ describe("the history menu", () => {
     expect(h.move(1)).toBe("b");
     h.record("b");
     expect(h.rows().map((r) => r.state)).toEqual(["done", "current", "undone"]);
+    expect(h.ends()).toEqual({ undo: { label: "Layout: 3d", time: 2000 }, redo: { label: "Hid SRB", time: 3000 } });
     // A new change drops what was undone.
+    clock = 4000;
     h.record("d", "Moved");
     expect(h.rows().map((r) => r.label)).toEqual(["Opened", "Layout: 3d", "Moved"]);
+    expect(h.ends()).toEqual({ undo: { label: "Moved", time: 4000 }, redo: undefined });
+    h.move(-2);
+    expect(h.ends()).toEqual({ undo: undefined, redo: { label: "Layout: 3d", time: 2000 } });
   });
 });

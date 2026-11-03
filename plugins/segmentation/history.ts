@@ -13,6 +13,8 @@ export class Stroke {
   after: Map<number, LabelArray | undefined> | undefined;
   /** Voxels changed. */
   changes = 0;
+  /** When it was kept for undo (ms since 1970). */
+  time = 0;
   /** Chunks changed since `flush`, to tell the volume (and the viewer). */
   private readonly dirty = new Set<number>();
 
@@ -77,7 +79,10 @@ export class History {
   private done: Stroke[] = [];
   private undone: Stroke[] = [];
 
-  constructor(private readonly budget = 512 * 2 ** 20) {}
+  constructor(
+    private readonly budget = 512 * 2 ** 20,
+    private readonly now: () => number = Date.now,
+  ) {}
 
   get canUndo(): boolean {
     return this.done.length > 0;
@@ -87,8 +92,19 @@ export class History {
     return this.undone.length > 0;
   }
 
+  /** When the stroke undo would take back was made. */
+  get undoTime(): number | undefined {
+    return this.done[this.done.length - 1]?.time;
+  }
+
+  /** When the stroke redo would bring back was made. */
+  get redoTime(): number | undefined {
+    return this.undone[this.undone.length - 1]?.time;
+  }
+
   push(stroke: Stroke): void {
     if (stroke.changes === 0) return;
+    stroke.time = this.now();
     this.done.push(stroke);
     this.undone = [];
     let total = this.done.reduce((n, s) => n + s.bytes, 0);
@@ -116,4 +132,18 @@ export class History {
     this.done = [];
     this.undone = [];
   }
+}
+
+/**
+ * Which undo Ctrl+Z (or Ctrl+Y, `redo`) takes while a label volume is
+ * edited, from when the stroke and the workspace's change it could undo
+ * were made: undo takes back whichever came last, and redo brings back
+ * whichever of the two undone came first, so strokes and workspace
+ * changes undo and redo as one history.  Undefined when neither can.
+ */
+export function chooseUndo(stroke: number | undefined, workspace: number | undefined, redo: boolean): "stroke" | "workspace" | undefined {
+  if (stroke === undefined) return workspace === undefined ? undefined : "workspace";
+  if (workspace === undefined) return "stroke";
+  // A tie (the same millisecond) goes to the stroke: the tool bar is showing.
+  return (redo ? stroke <= workspace : stroke >= workspace) ? "stroke" : "workspace";
 }

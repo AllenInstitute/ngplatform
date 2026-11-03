@@ -12,6 +12,7 @@ import { type Editor, fmtBytes, type ImageLevel, labelTypeOf, MAX_COPY, MAX_NIFT
 import { iconButton } from "./icons.js";
 import { LABEL_MAX, type LabelType } from "./label_volume.js";
 import { niftiBytes } from "./save.js";
+import { groupOf, grouped } from "./segment_groups.js";
 import { segmentName } from "./segments.js";
 import type { Session } from "./session.js";
 import { brushes, TOOLS } from "./tools.js";
@@ -24,6 +25,8 @@ export class Panel {
   private newName = "";
   private newCopy = true;
   private showForm = false;
+  /** A segment row is being dragged (onto a group): the list waits to be redrawn. */
+  private dragging = false;
   private levels: { store: string; levels: ImageLevel[] } | undefined;
 
   constructor(
@@ -60,6 +63,11 @@ export class Panel {
         const active = document.activeElement;
         if (active instanceof HTMLInputElement && active.type === "text" && host.contains(active)) {
           active.addEventListener("blur", () => update(), { once: true });
+          return;
+        }
+        // Not while a segment is dragged onto a group: the row dragged must stay.
+        if (this.dragging) {
+          document.addEventListener("dragend", () => update(), { once: true });
           return;
         }
         if (busy) queueMicrotask(update);
@@ -224,7 +232,7 @@ export class Panel {
       el("h4", { class: "an-sub" }, "Image values"),
       this.intensity(session),
       el("p", { class: "an-hint" }, `In the page: ${volume.chunkCount} chunks, ${fmtBytes(volume.bytes)}. ${session.unsaved ? `${session.unsaved} change${session.unsaved === 1 ? "" : "s"} not saved.` : "Nothing unsaved."}`),
-      e.editing ? null : el("p", { class: "an-hint" }, "Edit shows the tool bar over the views; B, E, F, I, Q pick tools there."),
+      e.editing ? null : el("p", { class: "an-hint" }, "Edit shows the tool bar over the views; B, E, L, F, I, Q pick tools there."),
     );
   }
 
@@ -257,8 +265,54 @@ export class Panel {
     const e = this.editor;
     const voxelMm3 = voxelVolume(session.placement()?.voxelToMm ?? session.volume.voxelToRas);
     const rows = e.rows();
+    const vg = e.groups(session);
     const table = el("div", { class: "sg-segments", role: "list" });
-    for (const r of rows) {
+    /** A segment dragged onto a group's head joins it ("No group": leaves its group). */
+    const dropTarget = (target: HTMLElement, id: string | undefined) => {
+      target.addEventListener("dragover", (ev) => {
+        if (!ev.dataTransfer?.types.includes("application/x-ngp-segment")) return;
+        ev.preventDefault();
+        target.classList.add("sg-drop");
+      });
+      target.addEventListener("dragleave", () => target.classList.remove("sg-drop"));
+      target.addEventListener("drop", (ev) => {
+        target.classList.remove("sg-drop");
+        const value = Number(ev.dataTransfer?.getData("application/x-ngp-segment"));
+        if (!(value > 0)) return;
+        ev.preventDefault();
+        e.assignGroup([value], id);
+      });
+    };
+    const head = (group: (typeof vg.groups)[number] | undefined, count: number, shown: number) => {
+      if (group === undefined) {
+        const h = el("div", { class: "sg-group-head sg-ungrouped", role: "listitem", title: "Segments in no group: drag one here to take it out of its group" }, el("span", { class: "sg-caret" }), el("span", { class: "sg-name an-faint" }, "No group"), el("span", { class: "sg-count" }, String(count)));
+        dropTarget(h, undefined);
+        return h;
+      }
+      const colour = el("input", { type: "color", value: group.colour, title: "The group's colour: given to every segment in it", "aria-label": `Colour of group ${group.name}` }) as HTMLInputElement;
+      colour.addEventListener("change", () => e.recolourGroup(group.id, colour.value));
+      const name = el("input", { class: "text-input sg-name", type: "text", value: group.name, "aria-label": `Name of group ${group.name}` }) as HTMLInputElement;
+      name.addEventListener("change", () => e.renameGroup(group.id, name.value));
+      name.addEventListener("keydown", (k) => {
+        if (k.key === "Enter") name.blur();
+      });
+      const visible = shown > 0;
+      const eye = iconButton(visible ? "eye" : "eyeOff", visible ? "Hide the group" : "Show the group", () => e.showGroup(group.id, !visible), visible);
+      eye.disabled = count === 0;
+      const h = el(
+        "div",
+        { class: "sg-group-head", role: "listitem", "data-group": group.id, title: "A group of segments: drag segments here to add them" },
+        el("button", { type: "button", class: "sg-caret", title: group.collapsed ? "Show its segments" : "Fold its segments away", "aria-expanded": String(!group.collapsed), onclick: () => e.foldGroup(group.id, !group.collapsed) }, group.collapsed ? "▸" : "▾"),
+        eye,
+        colour,
+        name,
+        el("span", { class: "sg-count", title: `${count} segment${count === 1 ? "" : "s"}` }, String(count)),
+        el("span", { class: "sg-actions" }, iconButton("trash", "Delete the group (its segments stay, in no group)", () => e.deleteGroup(group.id))),
+      );
+      dropTarget(h, group.id);
+      return h;
+    };
+    const segmentRow = (r: (typeof rows)[number], grouped: boolean) => {
       const active = r.value === e.value;
       const colour = el("input", { type: "color", value: r.colour, title: "Colour", "aria-label": `Colour of segment ${r.value}` }) as HTMLInputElement;
       colour.addEventListener("change", () => e.recolour(r.value, colour.value));
@@ -275,7 +329,7 @@ export class Panel {
       }
       const row = el(
         "div",
-        { class: `sg-segment${active ? " sg-active" : ""}`, role: "listitem", title: active ? "The active segment: tools paint it" : "Click to paint with it" },
+        { class: `sg-segment${active ? " sg-active" : ""}${grouped ? " sg-in-group" : ""}`, role: "listitem", draggable: "true", title: active ? "The active segment: tools paint it" : "Click to paint with it; drag onto a group to put it there" },
         iconButton(r.visible ? "eye" : "eyeOff", r.visible ? "Hide" : "Show", () => e.show(session, r.value, !r.visible), r.visible),
         colour,
         el("span", { class: "sg-id" }, String(r.value)),
@@ -293,7 +347,21 @@ export class Panel {
         if ((ev.target as Element).closest("button, input")) return;
         e.activate(r.value);
       });
-      table.append(row);
+      row.addEventListener("dragstart", (ev) => {
+        ev.dataTransfer?.setData("application/x-ngp-segment", String(r.value));
+        if (ev.dataTransfer) ev.dataTransfer.effectAllowed = "move";
+        this.dragging = true;
+      });
+      row.addEventListener("dragend", () => (this.dragging = false));
+      return row;
+    };
+    if (vg.groups.length === 0) {
+      for (const r of rows) table.append(segmentRow(r, false));
+    } else {
+      for (const section of grouped(vg, rows)) {
+        table.append(head(section.group, section.rows.length, section.rows.filter((r) => r.visible).length));
+        if (!section.group?.collapsed) for (const r of section.rows) table.append(segmentRow(r, true));
+      }
     }
     const max = LABEL_MAX[session.volume.type];
     return el(
@@ -303,11 +371,20 @@ export class Panel {
         "div",
         { class: "an-row" },
         button("+ New segment", () => e.newSegment(), "One more than the largest id used (C)"),
+        button("+ New group", () => e.newGroup(), "A named group of segments: drag segments onto it"),
         el("span", { class: "an-spacer" }),
         el("span", { class: "an-faint" }, "Active"),
         numberInput(e.value, (v) => e.activate(v), { min: 1, max, step: 1, "aria-label": "Active segment" }),
       ),
       table,
+      vg.groups.length
+        ? el(
+            "div",
+            { class: "an-row" },
+            el("span", { class: "an-faint" }, `Segment ${e.value} in`),
+            select([["", "No group"], ...vg.groups.map((g): [string, string] => [g.id, g.name])], groupOf(vg, e.value)?.id ?? "", (v) => e.assignGroup([e.value], v || undefined), "Group of the active segment"),
+          )
+        : null,
       rows.every((r) => r.voxels === 0) ? el("p", { class: "an-hint" }, "Nothing painted yet: choose Brush (B) and draw in a view.") : null,
     );
   }
@@ -338,6 +415,19 @@ export class Panel {
             }, "Paint over"))
           : field("Erase", select([["any", "Any segment"], ["only", "The active segment only"]], e.eraseOnly ? "only" : "any", (v) => (e.eraseOnly = v === "only"), "Erase")),
       );
+    } else if (e.tool === "lasso") {
+      options.append(
+        field("Inside", select([["paint", "Paint the active segment"], ["erase", "Erase"]], e.lassoErase ? "erase" : "paint", (v) => {
+          e.lassoErase = v === "erase";
+          e.changed();
+        }, "Inside the outline")),
+        e.lassoErase
+          ? field("Erase", select([["any", "Any segment"], ["only", "The active segment only"]], e.eraseOnly ? "only" : "any", (v) => (e.eraseOnly = v === "only"), "Erase"))
+          : field("Paint over", select([["all", "Any segment"], ["empty", "Empty voxels only"]], e.overwrite, (v) => {
+              e.overwrite = v as "all" | "empty";
+              e.changed();
+            }, "Paint over")),
+      );
     } else if (e.tool === "fill") {
       options.append(
         field("Fill", select([["2d", "2-D: the section"], ["3d", "3-D: a box round the click"]], e.fill3d ? "3d" : "2d", (v) => {
@@ -362,7 +452,27 @@ export class Panel {
           e.changed();
         }, "Method"), methods.find((m) => m.id === e.method)?.description),
         field("Tolerance", numberInput(e.tolerance, (v) => (e.tolerance = Math.max(0, Math.min(1, v))), { min: 0, max: 1, step: 0.01 }), "For a click: how far from its value, as a fraction of the range"),
+        field("Result", select([["preview", "Preview first (Enter paints, Escape drops)"], ["paint", "Paint at once"]], e.quickMode, (v) => {
+          e.quickMode = v as "preview" | "paint";
+          e.changed();
+        }, "Result")),
+        field("Paint over", select([["all", "Any segment"], ["empty", "Empty voxels only"]], e.overwrite, (v) => {
+          e.overwrite = v as "all" | "empty";
+          e.changed();
+        }, "Paint over")),
       );
+      if (e.pending) {
+        options.append(
+          el(
+            "div",
+            { class: "an-row" },
+            el("span", { class: "an-faint" }, `Proposed: ${e.pending.voxels.toLocaleString()} voxels`),
+            el("span", { class: "an-spacer" }),
+            button("Accept", () => e.acceptPreview(), "Paint the mask with the active segment (Enter)", "btn primary small"),
+            button("Cancel", () => e.cancelPreview(), "Drop the mask (Escape)"),
+          ),
+        );
+      }
     } else if (e.tool === "move") {
       return el("p", { class: "an-hint" }, "Move: the views as Neuroglancer moves them. Pick a tool to draw; Escape comes back here.");
     }
@@ -391,7 +501,7 @@ export class Panel {
         }, "Image"), ref ? `Level ${ref.level}: ${physical(ref.levels[ref.level].voxelSize)} voxels` : undefined),
         field("Range", el("div", { class: "an-inline" }, numberInput(e.low, (v) => (e.low = v), { step: "any", "aria-label": "Low" }), el("span", { class: "an-faint" }, "to"), numberInput(e.high, (v) => (e.high = v), { step: "any", "aria-label": "High" }))),
       ),
-      el("label", { class: "field check" }, limit, el("span", {}, "Brush and eraser only within the range")),
+      el("label", { class: "field check" }, limit, el("span", {}, "Brush, eraser and lasso only within the range")),
       el("div", { class: "an-row" }, button("Range from the cursor", () => void e.rangeFromCursor(), "The value under the pointer, ± the tolerance of the range there")),
     );
   }

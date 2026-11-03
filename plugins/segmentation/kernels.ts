@@ -211,6 +211,65 @@ export function floodFill(
   return { changed, reached, limited };
 }
 
+/**
+ * The voxels whose centres lie inside a closed outline in a section (the
+ * even-odd rule: a figure of eight fills both loops), as runs along u: for
+ * each row w, the u from
+ * `from` up to `to` (exclusive).  Points are (u, w) voxel coordinates,
+ * integers at voxel centres; the outline closes from the last back to the
+ * first.
+ */
+export function polygonRuns(points: readonly (readonly [number, number])[]): { w: number; from: number; to: number }[] {
+  const runs: { w: number; from: number; to: number }[] = [];
+  if (points.length < 3) return runs;
+  let low = Infinity;
+  let high = -Infinity;
+  for (const [, w] of points) {
+    low = Math.min(low, w);
+    high = Math.max(high, w);
+  }
+  const crossings: number[] = [];
+  for (let w = Math.ceil(low); w <= Math.floor(high); ++w) {
+    crossings.length = 0;
+    for (let i = 0; i < points.length; ++i) {
+      const [ua, wa] = points[i];
+      const [ub, wb] = points[(i + 1) % points.length];
+      // Half-open in w, so a vertex on the row counts once.
+      if (wa <= w !== wb <= w) crossings.push(ua + ((w - wa) * (ub - ua)) / (wb - wa));
+    }
+    crossings.sort((a, b) => a - b);
+    for (let k = 0; k + 1 < crossings.length; k += 2) {
+      const from = Math.ceil(crossings[k]);
+      const to = Math.ceil(crossings[k + 1]);
+      if (to > from) runs.push({ w, from, to });
+    }
+  }
+  return runs;
+}
+
+/**
+ * Paints inside a closed outline drawn in the section `index` across voxel
+ * `axis` (the lasso): `points` are (u, w) voxel coordinates along the two
+ * other axes in order.  Returns the voxels changed.
+ */
+export function fillOutline(stroke: Stroke, axis: number, index: number, points: readonly (readonly [number, number])[], paint: Paint): number {
+  const volume = stroke.volume;
+  const [u, w] = [0, 1, 2].filter((k) => k !== axis);
+  if (index < 0 || index >= volume.size[axis]) return 0;
+  const v: Vec3 = [0, 0, 0];
+  v[axis] = index;
+  let changed = 0;
+  for (const run of polygonRuns(points)) {
+    if (run.w < 0 || run.w >= volume.size[w]) continue;
+    v[w] = run.w;
+    for (let i = Math.max(0, run.from); i < Math.min(volume.size[u], run.to); ++i) {
+      v[u] = i;
+      if (allowed(volume, paint, v[0], v[1], v[2]) && stroke.set(v[0], v[1], v[2], paint.value)) ++changed;
+    }
+  }
+  return changed;
+}
+
 /** Every voxel of label `from` becomes `to` (0 erases it): a merge, or a label removed.  Returns the voxels changed. */
 export function relabel(stroke: Stroke, from: number, to: number): number {
   const volume = stroke.volume;
