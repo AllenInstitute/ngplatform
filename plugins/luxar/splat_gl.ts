@@ -5,8 +5,9 @@
  * splats still cover one, and cut at three standard deviations.  Each
  * fragment adds the splat's light, its weight through the colormap times
  * the Gaussian there, into a float target that the lines' composite then
- * tone maps (./render_gl.ts): splats need no depth sort when light is
- * added up.
+ * tone maps (./render_gl.ts), and for emission and absorption its optical
+ * depth in alpha (composited as the lines' is, order-independent): splats
+ * need no depth sort.
  */
 import { COLORMAP_GLSL } from "./render_gl.js";
 
@@ -51,6 +52,7 @@ void main() {
 const FS = `#version 300 es
 precision highp float;
 uniform float uGain;
+uniform float uAbsorption;
 uniform int uColormap;
 uniform bool uOneColour;
 uniform vec3 uColour;
@@ -64,9 +66,10 @@ ${COLORMAP_GLSL}
 void main() {
   float power = -0.5 * (vInvCov.x * vOffset.x * vOffset.x + 2.0 * vInvCov.y * vOffset.x * vOffset.y + vInvCov.z * vOffset.y * vOffset.y);
   if (power < -4.5) discard;
-  float a = exp(power) * vWeight * uGain;
+  float g = exp(power) * vWeight;
   vec3 colour = uOneColour ? uColour : colormap(uColormap, vWeight);
-  outLight = vec4(colour * a, a);
+  // Light, and (for emission and absorption) optical depth.
+  outLight = vec4(colour * g * uGain, g * uAbsorption);
 }`;
 
 export interface GpuSplats {
@@ -80,6 +83,8 @@ export interface SplatUniforms {
   modelToClip: Float32Array;
   viewport: [number, number];
   gain: number;
+  /** Optical depth per unit of light (0: glow only). */
+  absorption: number;
   colormap: number;
   /** One colour (rgb 0..1) rather than the colormap. */
   colour?: [number, number, number];
@@ -151,6 +156,7 @@ export class SplatRenderer {
     gl.uniformMatrix4fv(this.u("uModelToClip"), false, u.modelToClip);
     gl.uniform2fv(this.u("uViewport"), u.viewport);
     gl.uniform1f(this.u("uGain"), u.gain);
+    gl.uniform1f(this.u("uAbsorption"), u.absorption);
     gl.uniform1i(this.u("uColormap"), u.colormap);
     gl.uniform1i(this.u("uOneColour"), u.colour ? 1 : 0);
     gl.uniform3fv(this.u("uColour"), u.colour ?? [1, 1, 1]);

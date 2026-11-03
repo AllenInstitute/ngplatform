@@ -29,6 +29,8 @@ import { apply, boxInFrustum, invertAffine, multiply } from "./view_math.js";
 const GPU_BYTES = 512 * 1024 * 1024;
 /** Light per splat, times its cell's share of the image's extent: a ray through solid tissue sums to about this. */
 const DEPTH_GAIN = 1.5;
+/** Likewise optical depth, at Absorption 1: a ray through solid tissue is mostly absorbed. */
+const DEPTH_ABSORPTION = 4;
 /** Of a level's cells, about this share is taken to hold tissue, for the budget. */
 const FILL = 0.3;
 
@@ -193,11 +195,13 @@ export class SplatView {
       gl.enable(gl.DEPTH_TEST);
       gl.depthFunc(gl.LEQUAL);
       const style = this.style;
+      const emission = style.blending === "emission";
       for (const [level, splats] of drawn) {
         this.renderer!.draw(splats, {
           modelToClip: Float32Array.from(rasToClip),
           viewport: [width, height],
           gain: 2 ** style.exposure * DEPTH_GAIN * ((CELL * info.levels[level].voxelSize) / extent),
+          absorption: emission ? style.absorption * DEPTH_ABSORPTION * ((CELL * info.levels[level].voxelSize) / extent) : 0,
           colormap: COLORMAP_INDEX[style.colormap],
           colour: style.colourBy === "solid" ? rgbOf(style.colour) : undefined,
         });
@@ -207,8 +211,9 @@ export class SplatView {
       gl.viewport(x, y, width, height);
       gl.drawBuffers(saved.drawBuffers.map((b, i) => (i === frame.outputs.color ? b : gl.NONE)));
       gl.disable(gl.DEPTH_TEST);
-      gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-      this.composite!.composite(this.target!.texture!, frame.outputs, { toneMap: TONE_INDEX[style.toneMap], emission: false, origin: [x, y] });
+      if (emission) gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      else gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      this.composite!.composite(this.target!.texture!, frame.outputs, { toneMap: TONE_INDEX[style.toneMap], emission, origin: [x, y] });
     } finally {
       gl.bindFramebuffer(gl.FRAMEBUFFER, saved.framebuffer);
       gl.drawBuffers(saved.drawBuffers);

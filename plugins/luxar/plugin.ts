@@ -104,9 +104,13 @@ class Luxar {
     this.panelUpdate?.();
   }
 
-  /** A layer's style as saved, or the default for a layer not yet drawn. */
+  /** A layer's style as saved, or the default for a layer not yet drawn (an image: grey splats that absorb, so tissue looks solid). */
   styleOf(name: string): LayerStyle {
-    return this.saved.layers[name] ?? { ...DEFAULT_STYLE, on: false };
+    const saved = this.saved.layers[name];
+    if (saved !== undefined) return saved;
+    const layer = this.ctx.viewer.layers().find((l) => l.name === name);
+    if (layer !== undefined && imageOfLayer(layer) !== undefined) return { ...DEFAULT_STYLE, on: false, blending: "emission", colourBy: "attribute", colormap: "grey" };
+    return { ...DEFAULT_STYLE, on: false };
   }
 
   setStyle(name: string, patch: Partial<LayerStyle>, save = true): void {
@@ -266,7 +270,8 @@ class Luxar {
     const solid = style.colourBy === "solid";
     const parts: Child[] = [
       el("h3", { class: "lx-heading" }, `Settings: ${name}`),
-      el("p", { class: "note" }, "Drawn as Gaussian splats made from its voxels as they are read, each level of the image giving its own: light added up and tone mapped, in the 3-D view."),
+      el("p", { class: "note" }, "Drawn as Gaussian splats made from its voxels as they are read, each level of the image giving its own, in the 3-D view."),
+      this.select("Blending", style.blending === "emission" ? "emission" : "glow", [["emission", "Emission and absorption (looks solid)"], ["glow", "Glow (light added up)"]] as ["emission" | "glow", string][], (blending) => set({ blending })),
       this.select("Colour", solid ? "solid" : "attribute", [["attribute", "By intensity, through a colormap"], ["solid", "One colour"]] as ["attribute" | "solid", string][], (v) => set({ colourBy: v })),
     ];
     if (solid) {
@@ -277,6 +282,7 @@ class Luxar {
     } else parts.push(this.select("Colormap", style.colormap, COLORMAP_LABELS, (colormap) => set({ colormap })));
     parts.push(
       this.slider(name, "Brightness (stops)", "exposure", -8, 8, 0.25, (v) => (v > 0 ? `+${v}` : `${v}`)),
+      ...(style.blending === "emission" ? [this.slider(name, "Absorption", "absorption", 0, 8, 0.05, (v) => v.toFixed(2))] : []),
       this.select("Tone map", style.toneMap, TONE_LABELS, (toneMap) => set({ toneMap })),
       this.slider(name, "Detail (splats per view)", "detail", 0.25, 12, 0.25, (v) => `${v} M`),
     );
