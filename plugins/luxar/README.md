@@ -202,28 +202,34 @@ momentum in the engine.
   more lines than show. A store chunked finer, or reading only the
   vertex rows near the plane, would cut that.
 
-## Gaussian splats (not done)
+## Gaussian splats
 
-Luxar renders image volumes as fitted anisotropic Gaussians. That is a
-fit, not a view: `luxar fit` optimises positions, covariances, colours and
-opacities against the voxels on a GPU (CUDA or Apple MPS, with a
-cross-validated splat budget), then builds levels of detail, and writes a
-new archive. For an OME-Zarr image here it would take:
+An image layer with Luxar on is drawn as Gaussian splats in place of
+Neuroglancer's own drawing of it, in the 3-D view and the 2-D views. The
+splats are made from the voxels as they are read, not fitted: each 32³
+block of a level is cut into cells of 4³ voxels, and each cell above the
+threshold becomes one Gaussian with the cell's moments (centre, covariance)
+and its intensity as the weight (`splats.ts`, in `splat_worker.ts`). Each
+level of the image's pyramid gives its own, so a file read in place (a
+TIFF as virtual Zarr) is splatted at every resolution.
 
-1. an offline step (Python, GPU) running Luxar's `cal → fit → lod` on the
-   image (or one of its levels), per time point and channel, writing the
-   splats beside it, for example as a Zarr Vectors point store with
-   per-point covariance (6 floats), colour and opacity attributes, so this
-   plugin's reader and levels of detail apply unchanged;
-2. a splat program here: each point an instanced quad sized from its
-   projected 2-D covariance, the Gaussian evaluated per fragment, depth
-   sorted back to front per chunk (or the same order-independent
-   emission–absorption sum used for lines);
-3. for the 2-D views, slicing each 3-D Gaussian by the section plane (a
-   conditional Gaussian) rather than by distance.
+- **3-D** (`splat_view.ts`): each splat an instanced quad, its covariance
+  projected through the view's Jacobian (EWA), light and optical depth
+  added in a float target (no depth sort), tone mapped onto the view.
+- **2-D** (`splat_view2d.ts`): each splat cut by the section (the
+  conditional Gaussian: its peak there, its centre and covariance in the
+  plane), widened three times in area with its total kept so the cells read
+  as one image, and clamped rather than tone mapped, so a section shows the
+  image's own values (on the SRB template, 0.99 of Neuroglancer's drawing).
+  Only blocks within a slab around each section are read.
+- Neuroglancer's drawing of the image is hidden while its splats are on
+  (`viewer.hideLayerDrawing`: its opacity 0, not saved in the link), and
+  the 2-D views' background is black (`viewer.setTemporaryBackground`), as
+  under the image.
 
-The fitting is the expensive part (minutes to hours per volume on a GPU)
-and makes new files, which is why it is not done here.
+Fitted splats (Luxar's `luxar fit`, which optimises the Gaussians against
+the voxels on a GPU and writes a new archive) would be sharper at the same
+count; that is an offline step that makes new files, not done here.
 
 ## Credits
 

@@ -66,6 +66,8 @@ class Luxar {
   private readonly views = new Map<string, LayerView | SplatView>();
   /** Layers whose drawing is set aside, so it can be given back. */
   private readonly hidden = new Map<string, string>();
+  /** Images whose own drawing is hidden while their splats are drawn. */
+  private readonly imagesHidden = new Set<string>();
   private panelUpdate: (() => void) | undefined;
   private statusUpdate: (() => void) | undefined;
   /** The layer whose settings the panel shows. */
@@ -165,8 +167,21 @@ class Luxar {
         if (layers.has(name)) this.ctx.viewer.setTemporaryVisibleSegments(name, undefined);
       }
     }
+    // An image is drawn either by Neuroglancer or as splats, not both: its own drawing is hidden
+    // (not in the link) while its splats are on; asked each time, as a layer made afresh shows again.
+    for (const name of [...this.imagesHidden]) {
+      if (this.views.get(name) instanceof SplatView) continue;
+      this.imagesHidden.delete(name);
+      if (layers.has(name)) this.ctx.viewer.hideLayerDrawing(name, false);
+    }
     for (const [name, view] of this.views) {
-      // Images (splats) keep Neuroglancer's own drawing.
+      if (!(view instanceof SplatView)) continue;
+      this.imagesHidden.add(name);
+      this.ctx.viewer.hideLayerDrawing(name, true);
+    }
+    // Splats add light to the 2-D views: on black, as the image they stand for is drawn.
+    this.ctx.viewer.setTemporaryBackground(this.imagesHidden.size > 0 ? [0, 0, 0] : undefined);
+    for (const [name, view] of this.views) {
       if (!(view instanceof LayerView)) continue;
       // Once its data has loaded, too: a layer still loading may not take the set yet.
       const layer = layers.get(name)!;
@@ -270,7 +285,7 @@ class Luxar {
     const solid = style.colourBy === "solid";
     const parts: Child[] = [
       el("h3", { class: "lx-heading" }, `Settings: ${name}`),
-      el("p", { class: "note" }, "Drawn as Gaussian splats made from its voxels as they are read, each level of the image giving its own, in the 3-D view."),
+      el("p", { class: "note" }, "Drawn as Gaussian splats made from its voxels as they are read, each level of the image giving its own: in the 3-D view, and cut by each section in the 2-D views, in place of Neuroglancer's drawing of it."),
       this.select("Blending", style.blending === "emission" ? "emission" : "glow", [["emission", "Emission and absorption (looks solid)"], ["glow", "Glow (light added up)"]] as ["emission" | "glow", string][], (blending) => set({ blending })),
       this.select("Colour", solid ? "solid" : "attribute", [["attribute", "By intensity, through a colormap"], ["solid", "One colour"]] as ["attribute" | "solid", string][], (v) => set({ colourBy: v })),
     ];
@@ -364,6 +379,9 @@ class Luxar {
     this.offs.forEach((off) => off());
     for (const view of this.views.values()) view.dispose();
     for (const name of this.hidden.keys()) this.ctx.viewer.setTemporaryVisibleSegments(name, undefined);
+    for (const name of this.imagesHidden) this.ctx.viewer.hideLayerDrawing(name, false);
+    if (this.imagesHidden.size > 0) this.ctx.viewer.setTemporaryBackground(undefined);
+    this.imagesHidden.clear();
     this.views.clear();
     this.hidden.clear();
     this.momentum.dispose();

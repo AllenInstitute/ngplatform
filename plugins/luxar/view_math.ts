@@ -309,3 +309,44 @@ export function modelToPanel(transform: LayerTransform, globalNames: string[], r
   }
   return out;
 }
+
+/** The global dimensions and the view's position, as a 2-D view's camera needs them. */
+export interface Globals {
+  names: string[];
+  scales: number[];
+  units: string[];
+  position: number[];
+}
+
+/**
+ * RAS millimetres to a 2-D view's (x px, y px, depth), column-major: the
+ * global dimensions named x, y and z are RAS (as Neuroglancer shows NIfTI
+ * and OME-Zarr in mm), the others held at the view's position.
+ */
+export function rasToPanel(globals: Globals, rows: number[][]): Float64Array {
+  const R = globals.names.length;
+  const out = new Float64Array(16);
+  out[15] = 1;
+  for (let i = 0; i < 3; ++i) {
+    let constant = rows[i][R];
+    for (let g = 0; g < R; ++g) {
+      const axis = ["x", "y", "z"].indexOf(globals.names[g]);
+      // Global units per millimetre on this dimension.
+      const perMm = (globals.units[g] === "m" ? 1e-3 : 1) / globals.scales[g];
+      if (axis === -1) constant += rows[i][g] * globals.position[g];
+      else out[4 * axis + i] += rows[i][g] * perMm;
+    }
+    out[12 + i] = constant;
+  }
+  return out;
+}
+
+/** The section of a view as a plane on RAS mm (mm from it), from its RAS-to-panel map's depth row. */
+export function sectionPlane(toPanel: ArrayLike<number>): [number, number, number, number] | undefined {
+  const a = toPanel[2];
+  const b = toPanel[6];
+  const c = toPanel[10];
+  const norm = Math.hypot(a, b, c);
+  if (!(norm > 0)) return undefined;
+  return [a / norm, b / norm, c / norm, toPanel[14] / norm];
+}

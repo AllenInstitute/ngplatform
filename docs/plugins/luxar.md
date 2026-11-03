@@ -42,8 +42,17 @@ is converted.
 
 Not yet: meshes, a layer's selected segments and track filtering's groups
 by id (a group layer that has its own store is drawn whole, which is the
-group), Luxar's bloom, and Gaussian splats (they need a GPU fit that makes
-new files).
+group), Luxar's bloom, and fitted Gaussian splats (Luxar's GPU fit, which
+makes new files).
+
+## Images as splats
+
+Tick an image layer and it is drawn as Gaussian splats made from its voxels
+as they are read, in place of Neuroglancer's drawing of it: in the 3-D view
+as a glowing or absorbing cloud, and in the 2-D views as the splats cut by
+each section, which look like the image itself. Untick it and Neuroglancer
+draws it again. The link keeps the layer as it was (its opacity
+included).
 
 ## Notes from users
 

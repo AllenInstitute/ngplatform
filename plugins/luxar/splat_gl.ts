@@ -19,14 +19,39 @@ layout(location = 2) in vec3 aCovB;
 layout(location = 3) in float aWeight;
 uniform mat4 uModelToClip;
 uniform vec2 uViewport;
+// A 2-D view's section: millimetres from it, as dot(xyz, centre) + w (model units are mm); off in 3-D.
+uniform bool uSection;
+uniform vec4 uPlane;
+// In a section, each Gaussian widened by this (its total kept), so a grid of cells reads as one image.
+uniform float uWiden;
 out vec2 vOffset;
 out vec3 vInvCov;
 out float vWeight;
+out float vColourAt;
 
 void main() {
   // The quad's corner, (±1, ±1).
   vec2 corner = vec2(float(gl_VertexID & 1), float((gl_VertexID >> 1) & 1)) * 2.0 - 1.0;
-  vec4 c = uModelToClip * vec4(aCentre, 1.0);
+  mat3 S = mat3(aCovA.x, aCovA.y, aCovA.z, aCovA.y, aCovB.x, aCovB.y, aCovA.z, aCovB.y, aCovB.z);
+  vec3 centre = aCentre;
+  float weight = aWeight;
+  if (uSection) {
+    // The Gaussian cut by the section: its peak there (the weight times the Gaussian along
+    // the plane's normal), its centre and covariance in the plane given where it is cut.
+    vec3 n = uPlane.xyz;
+    vec3 Sn = S * n;
+    float s = max(dot(n, Sn), 1e-6);
+    float d = dot(n, aCentre) + uPlane.w;
+    if (d * d > 9.0 * s) {
+      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+      return;
+    }
+    // Light, not intensity times light: the colour says the intensity.
+    weight = exp(-0.5 * d * d / s) / uWiden;
+    centre -= Sn * (d / s);
+    S = (S - outerProduct(Sn, Sn) / s) * uWiden;
+  }
+  vec4 c = uModelToClip * vec4(centre, 1.0);
   if (c.w <= 0.0) {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
@@ -37,7 +62,6 @@ void main() {
   vec2 j0 = hv * (uModelToClip[0].xy - ndc * uModelToClip[0].w) / c.w;
   vec2 j1 = hv * (uModelToClip[1].xy - ndc * uModelToClip[1].w) / c.w;
   vec2 j2 = hv * (uModelToClip[2].xy - ndc * uModelToClip[2].w) / c.w;
-  mat3 S = mat3(aCovA.x, aCovA.y, aCovA.z, aCovA.y, aCovB.x, aCovB.y, aCovA.z, aCovB.y, aCovB.z);
   mat3x2 J = mat3x2(j0, j1, j2);
   mat2 P = J * S * transpose(J) + mat2(0.3, 0.0, 0.0, 0.3);
   float det = P[0][0] * P[1][1] - P[0][1] * P[1][0];
@@ -45,7 +69,8 @@ void main() {
   // Three standard deviations along each screen axis.
   vec2 extent = 3.0 * sqrt(vec2(P[0][0], P[1][1]));
   vOffset = corner * extent;
-  vWeight = aWeight;
+  vWeight = weight;
+  vColourAt = aWeight;
   gl_Position = vec4(c.xy + vOffset / hv * c.w, c.z, c.w);
 }`;
 
@@ -59,6 +84,7 @@ uniform vec3 uColour;
 in vec2 vOffset;
 in vec3 vInvCov;
 in float vWeight;
+in float vColourAt;
 out vec4 outLight;
 
 ${COLORMAP_GLSL}
@@ -67,7 +93,7 @@ void main() {
   float power = -0.5 * (vInvCov.x * vOffset.x * vOffset.x + 2.0 * vInvCov.y * vOffset.x * vOffset.y + vInvCov.z * vOffset.y * vOffset.y);
   if (power < -4.5) discard;
   float g = exp(power) * vWeight;
-  vec3 colour = uOneColour ? uColour : colormap(uColormap, vWeight);
+  vec3 colour = uOneColour ? uColour : colormap(uColormap, vColourAt);
   // Light, and (for emission and absorption) optical depth.
   outLight = vec4(colour * g * uGain, g * uAbsorption);
 }`;
@@ -88,6 +114,10 @@ export interface SplatUniforms {
   colormap: number;
   /** One colour (rgb 0..1) rather than the colormap. */
   colour?: [number, number, number];
+  /** A 2-D view's section (mm from it, as a plane on the model's mm): each splat cut by it. */
+  plane?: [number, number, number, number];
+  /** In a section, how much wider each Gaussian is drawn (its total kept). */
+  widen?: number;
 }
 
 export class SplatRenderer {
@@ -160,6 +190,9 @@ export class SplatRenderer {
     gl.uniform1i(this.u("uColormap"), u.colormap);
     gl.uniform1i(this.u("uOneColour"), u.colour ? 1 : 0);
     gl.uniform3fv(this.u("uColour"), u.colour ?? [1, 1, 1]);
+    gl.uniform1i(this.u("uSection"), u.plane ? 1 : 0);
+    gl.uniform4fv(this.u("uPlane"), u.plane ?? [0, 0, 0, 0]);
+    gl.uniform1f(this.u("uWiden"), u.widen ?? 1);
     for (const s of splats) {
       gl.bindVertexArray(s.vao);
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, s.count);

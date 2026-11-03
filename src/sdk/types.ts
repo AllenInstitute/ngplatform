@@ -281,6 +281,14 @@ export interface ViewerApi {
    */
   setTemporaryVisibleSegments(layer: string, ids: BigUint64Array | undefined): void;
   /**
+   * Hides an image layer's own drawing, or shows it again, for a plugin that
+   * draws the layer itself: not saved in the link (the layer keeps its
+   * opacity there), and kept hidden through undo and scene switches.
+   */
+  hideLayerDrawing(layer: string, hidden: boolean): void;
+  /** Sets the 2-D views' background (rgb, 0 to 1) for a while, or puts it back (`undefined`): not saved in the link. */
+  setTemporaryBackground(rgb: [number, number, number] | undefined): void;
+  /**
    * Draws in Neuroglancer's 3-D view, as part of a layer: `drawer.draw` runs
    * in each frame the 3-D panel draws while the layer is visible, between
    * Neuroglancer's own opaque drawing, so depth tests both ways.  Returns

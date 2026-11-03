@@ -319,7 +319,85 @@ export class Engine {
   // ------------------------------------------------------------- state
 
   getState(): Json {
-    return this.viewer.state.toJSON() as Json;
+    const ng = this.viewer.state.toJSON() as Json;
+    // The 2-D views' background a plugin set for a while is saved as it was.
+    if (this.background !== undefined) {
+      if (this.background.json === undefined) delete ng.crossSectionBackgroundColor;
+      else ng.crossSectionBackgroundColor = this.background.json;
+    }
+    // A layer whose drawing a plugin hides is saved as it was.
+    if (this.hiddenDrawing.size > 0 && Array.isArray(ng.layers)) {
+      for (const layer of ng.layers as Json[]) {
+        const hidden = this.hiddenDrawing.get(String(layer.name));
+        if (hidden === undefined) continue;
+        if (hidden.json === undefined) delete layer.opacity;
+        else layer.opacity = hidden.json;
+      }
+    }
+    return ng;
+  }
+
+  /** The 2-D views' background as it was while a plugin sets another (its value, and as saved). */
+  private background: { value: Float32Array; json: Json[string]; temporary: Float32Array } | undefined;
+
+  /**
+   * Sets the 2-D views' background for a while (Luxar's splats in place of an
+   * image need black), or (`undefined`) puts it back: not saved in the link.
+   */
+  setTemporaryBackground(rgb: [number, number, number] | undefined): void {
+    const colour = this.viewer.crossSectionBackgroundColor;
+    if (rgb === undefined) {
+      if (this.background === undefined) return;
+      const before = this.background;
+      this.background = undefined;
+      colour.value = before.value as typeof colour.value;
+      return;
+    }
+    const temporary = Float32Array.from(rgb);
+    this.background = this.background !== undefined ? { ...this.background, temporary } : { value: Float32Array.from(colour.value), json: (this.viewer.state.toJSON() as Json).crossSectionBackgroundColor, temporary };
+    colour.value = temporary as typeof colour.value;
+  }
+
+  /** Layers whose own drawing a plugin hides: their opacity as it was (its value, and as saved). */
+  private readonly hiddenDrawing = new Map<string, { value: number; json: Json[string]; off: () => void; target: object }>();
+
+  /**
+   * Hides an image layer's own drawing (its opacity 0), or shows it again,
+   * for a plugin that draws the layer itself (Luxar's splats).  Not saved:
+   * the state keeps the opacity the layer had, and a change to it while
+   * hidden (an undo, the opacity slider) becomes the opacity it returns to.
+   */
+  hideDrawing(name: string, hide: boolean): void {
+    const known = this.hiddenDrawing.get(name);
+    if (!hide) {
+      if (known === undefined) return;
+      known.off();
+      this.hiddenDrawing.delete(name);
+      const opacity = this.opacityOf(name);
+      if (opacity !== undefined) opacity.value = known.value;
+      return;
+    }
+    const opacity = this.opacityOf(name);
+    if (opacity === undefined || known?.target === opacity) return;
+    // A layer made afresh (its sources changed) is hidden again, keeping the opacity it had.
+    known?.off();
+    const json = known !== undefined ? known.json : (this.managed(name)?.toJSON() as Json | undefined)?.opacity;
+    const entry = { value: known !== undefined && opacity.value === 0 ? known.value : opacity.value, json, off: () => {}, target: opacity as object };
+    this.hiddenDrawing.set(name, entry);
+    const rezero = () => {
+      const now = this.opacityOf(name);
+      if (now === undefined || now.value === 0) return;
+      entry.value = now.value;
+      entry.json = now.value;
+      now.value = 0;
+    };
+    entry.off = opacity.changed.add(rezero);
+    opacity.value = 0;
+  }
+
+  private opacityOf(name: string): { value: number; changed: { add(f: () => void): () => void } } | undefined {
+    const layer = this.managed(name)?.layer as unknown as { opacity?: { value: number; changed: { add(f: () => void): () => void } } } | null | undefined;
+    return typeof layer?.opacity?.value === "number" ? layer.opacity : undefined;
   }
 
   /**
@@ -336,6 +414,19 @@ export class Engine {
       else child.reset();
     }
     state.restoreState(ng);
+    // A background set for a while stays (the state restored has the one saved).
+    if (this.background !== undefined) {
+      const colour = this.viewer.crossSectionBackgroundColor;
+      this.background = { value: Float32Array.from(colour.value), json: (ng as Json).crossSectionBackgroundColor, temporary: this.background.temporary };
+      colour.value = this.background.temporary as typeof colour.value;
+    }
+    // Layers whose drawing a plugin hides stay hidden (their layer objects may be new).
+    for (const [name, hidden] of [...this.hiddenDrawing]) {
+      const opacity = this.opacityOf(name);
+      hidden.off();
+      this.hiddenDrawing.delete(name);
+      if (opacity !== undefined) this.hideDrawing(name, true);
+    }
     // Docked panels draw only while their location is visible; a restored
     // state without them would hide them.
     if (this.docked.statistics > 0) this.viewer.statisticsDisplayState.location.visible = true;

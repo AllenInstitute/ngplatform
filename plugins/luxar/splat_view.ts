@@ -1,8 +1,8 @@
 /**
- * An image layer drawn as Gaussian splats in the 3-D view, made from its
- * voxels as they are read (./splats.ts, ./splat_worker.ts): no file is
- * written, and each level of the image's pyramid (a file read in place
- * included) gives its own splats.
+ * An image layer drawn as Gaussian splats in the 3-D view (and, through
+ * ./splat_view2d.ts, the 2-D views), made from its voxels as they are read
+ * (./splats.ts, ./splat_worker.ts): no file is written, and each level of
+ * the image's pyramid (a file read in place included) gives its own splats.
  *
  * Levels of detail as for lines (./chunks.ts): the view reads the finest
  * level whose blocks in view hold about the Detail budget of splats, nearest
@@ -22,6 +22,7 @@ import { selectChunks, type Selection } from "./chunks.js";
 import type { StoreInfo } from "./luxar_worker.js";
 import { LightTarget, Renderer } from "./render_gl.js";
 import { type GpuSplats, SplatRenderer } from "./splat_gl.js";
+import { SplatView2d } from "./splat_view2d.js";
 import { BLOCK, CELL, type SplatImageInfo } from "./splat_worker.js";
 import { COLORMAP_INDEX, type LayerStyle, rgbOf, TONE_INDEX } from "./style.js";
 import { apply, boxInFrustum, invertAffine, multiply } from "./view_math.js";
@@ -45,6 +46,9 @@ export class SplatView {
   private readonly blocks = new Map<string, { gpu?: GpuSplats; data?: { centres: Float32Array; covariances: Float32Array; weights: Float32Array }; used: number }>();
   private readonly empty = new Set<string>();
   private wanted: string[] = [];
+  /** Blocks each kind of view wants read, merged for the worker. */
+  private readonly wants = new Map<"3d" | "2d", string[]>();
+  private readonly view2d: SplatView2d;
   private renderer: SplatRenderer | undefined;
   private composite: Renderer | undefined;
   private target: LightTarget | undefined;
@@ -71,6 +75,7 @@ export class SplatView {
       else if (msg.type === "empty") this.empty.add(msg.key);
       else if (msg.type === "error") this.error = msg.message;
       this.handle.redraw();
+      this.view2d.schedule();
       this.onStatus?.();
     };
     this.worker.postMessage({ type: "open", store: storeUrl });
@@ -80,17 +85,42 @@ export class SplatView {
       afterSections: true,
       dispose: () => this.release(),
     });
+    this.view2d = new SplatView2d(this);
   }
 
   setStyle(style: LayerStyle): void {
     this.style = style;
     this.handle.redraw();
+    this.view2d.schedule();
   }
 
-  setVisible(_visible: boolean): void {}
+  setVisible(visible: boolean): void {
+    this.view2d.setVisible(visible);
+  }
+
+  /** Whether a block has been read (splats or none). */
+  arrived(key: string): boolean {
+    return this.blocks.has(key) || this.empty.has(key);
+  }
+
+  /** A block's splats as read, while kept. */
+  blockData(key: string): { centres: Float32Array; covariances: Float32Array; weights: Float32Array } | undefined {
+    const b = this.blocks.get(key);
+    if (b !== undefined) b.used = this.frame;
+    return b?.data;
+  }
+
+  /** The blocks a kind of view wants read (those not read yet), merged for the worker, the 3-D view's first. */
+  want(kind: "3d" | "2d", keys: string[]): void {
+    this.wants.set(kind, keys.filter((k) => !this.arrived(k)));
+    const merged = [...new Set([...(this.wants.get("3d") ?? []), ...(this.wants.get("2d") ?? [])])];
+    if (merged.join() === this.wanted.join()) return;
+    this.wanted = merged;
+    this.worker.postMessage({ type: "want", keys: merged });
+  }
 
   /** The image's levels as the lines' chunk choice takes them: blocks in level 0's voxels, splats as vertices. */
-  private storeInfo(info: SplatImageInfo): StoreInfo {
+  storeInfo(info: SplatImageInfo): StoreInfo {
     const base = info.levels[0];
     const edge = (m: number[], k: number) => Math.hypot(m[k], m[4 + k], m[8 + k]);
     return {
@@ -137,14 +167,9 @@ export class SplatView {
     const toVoxel = invertAffine(multiply(columnMajor(toDisplay), columnMajor(info.levels[0].voxelToRas)));
     const centre = toVoxel ? apply(toVoxel, frame.position).slice(0, 3) : info.levels[0].size.map((s) => s / 2);
     const store = this.storeInfo(info);
-    const arrived = (key: string) => this.blocks.has(key) || this.empty.has(key);
-    const selection = selectChunks(store, (lo, hi) => boxInFrustum(voxelToClip, lo, hi), centre, this.style.detail * 1e6, arrived);
+    const selection = selectChunks(store, (lo, hi) => boxInFrustum(voxelToClip, lo, hi), centre, this.style.detail * 1e6, (key) => this.arrived(key));
     this.selection = selection;
-    const wanted = selection.want.filter((k) => !arrived(k));
-    if (wanted.join() !== this.wanted.join()) {
-      this.wanted = wanted;
-      this.worker.postMessage({ type: "want", keys: wanted });
-    }
+    this.want("3d", selection.want);
     // By level: a coarser level's splats are larger and fewer along a ray,
     // so each is scaled by its voxels' size against level 0's (coarse blocks
     // standing in for fine ones look about as they will).
@@ -235,7 +260,7 @@ export class SplatView {
     if (this.gpuBytes <= GPU_BYTES) return;
     const old = [...this.blocks.entries()].filter(([, b]) => b.gpu !== undefined).sort((a, b) => a[1].used - b[1].used);
     for (const [key, b] of old) {
-      if (this.gpuBytes <= GPU_BYTES * 0.8 || b.used === this.frame) break;
+      if (this.gpuBytes <= GPU_BYTES * 0.8 || b.used >= this.frame - 1) break;
       this.renderer!.release(b.gpu!);
       this.gpuBytes -= b.gpu!.bytes;
       this.blocks.delete(key);
@@ -246,7 +271,9 @@ export class SplatView {
     if (this.error !== undefined && this.info === undefined) return `Could not open the image: ${this.error}`;
     if (this.info === undefined) return "Opening the image…";
     if (this.problem) return this.problem;
-    const s = this.selection;
+    if (this.view2d.problem) return this.view2d.problem;
+    // The 3-D view's choice, or (with no 3-D view) the first 2-D view's.
+    const s = this.selection ?? this.view2d.selections[0];
     if (s === undefined) return "";
     const level = this.info.levels[s.level];
     const size = level.voxelSize >= 0.1 ? `${+level.voxelSize.toFixed(2)} mm` : `${+(level.voxelSize * 1000).toFixed(1)} µm`;
@@ -258,6 +285,7 @@ export class SplatView {
   dispose(): void {
     this.offs.forEach((off) => off());
     this.handle.dispose();
+    this.view2d.dispose();
     this.worker.terminate();
   }
 }
