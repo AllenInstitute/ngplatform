@@ -27,6 +27,12 @@ export interface VirtualStore {
    * that list (zarr-vectors' object attributes).
    */
   list?(prefix: string): string[] | undefined;
+  /**
+   * Answers a message from the page (`WorkspaceApi.local.send`): for a
+   * store whose values the page chooses, such as the time point a CIFTI
+   * series on a surface serves.
+   */
+  message?(body: unknown): unknown;
 }
 
 /** Random access to a file's bytes. */

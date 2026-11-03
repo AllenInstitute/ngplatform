@@ -5,7 +5,10 @@
  * CSV.
  *
  * Values are read by a worker (./worker.ts) from the image's OME-Zarr
- * store (a NIfTI opened from this computer is one, read in place).  Where
+ * store (a NIfTI opened from this computer is one, read in place).  A
+ * CIFTI time series beside a surface opened from this computer is stepped
+ * through instead (./surface.ts): its store serves the values at the time
+ * point the transport chooses.  Where
  * a position is in the image, and which time point the views show, come
  * from the layer's transform (./space.ts), so a moved layer reads where it
  * shows.  Pins are kept in the plugin's state (in the link); their values
@@ -37,6 +40,7 @@ import {
   voxelLabel,
 } from "./series.js";
 import { LayerMap, type Place, placeOf } from "./space.js";
+import { type SurfaceSeries, surfaceAxis, surfaceSeriesOf, zarrVectorsStore } from "./surface.js";
 
 type Child = Node | string | null | undefined | false;
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
@@ -91,6 +95,7 @@ const STYLE = `
 .ts-actions { display: flex; align-items: center; gap: 4px 8px; flex: none; }
 .ts-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; flex: 1; min-width: 0; min-height: 24px; }
 .ts-key { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); white-space: nowrap; }
+.ts-key.ts-note { white-space: normal; }
 .ts-key button { border: 0; background: transparent; color: var(--faint); cursor: pointer; padding: 0 2px; font-size: 14px; line-height: 1; }
 .ts-key button:hover { color: var(--text); }
 .ts-swatch { display: inline-block; width: 12px; height: 2px; vertical-align: middle; }
@@ -156,14 +161,37 @@ interface Cursor {
 /** How long the mouse rests on a voxel before its finest values are read, when they are slow to read. */
 const REST_MS = 400;
 
+/** What can be chosen in the Image menu: an image layer with time, or a time series on a surface layer. */
+interface Candidate {
+  /** The layer's name for an image; the layer's and the series' for a surface. */
+  id: string;
+  label: string;
+  layer: string;
+  surface?: SurfaceStep;
+}
+
+/** A surface's time series, stepped through in its store. */
+interface SurfaceStep {
+  /** The surface's store (its URL, ending in /). */
+  store: string;
+  series: SurfaceSeries;
+}
+
 /** The colour of the series under the mouse: the docks' text colour, apart from the pins'. */
 const CURSOR_COLOUR = "#dedede";
 
 class TimeSeries {
   private saved: Saved;
   private readonly client = new SeriesClient();
-  /** Image layers with a time dimension. */
-  private candidates: string[] = [];
+  /** Image layers with a time dimension, and time series on surface layers. */
+  private candidates: Candidate[] = [];
+  /** Each local surface store's time series, from its header, once read. */
+  private readonly surfaceHeaders = new Map<string, SurfaceSeries[] | "reading">();
+  /** The surface series chosen, when one is. */
+  private surface: SurfaceStep | undefined;
+  /** A time point to show on the surface after the one being sent. */
+  private surfaceWanted: number | undefined;
+  private surfaceSending = false;
   private info: SeriesInfo | undefined;
   private infoUrl: string | undefined;
   private openError: string | undefined;
@@ -203,7 +231,7 @@ class TimeSeries {
       ctx.viewer.onLayersChanged(() => void this.refresh()),
       ctx.viewer.onStateChanged(() => {
         // A layer's source loading (its transform known) can make it an image with time.
-        if (this.findCandidates().join("\n") !== this.candidates.join("\n")) {
+        if (this.findCandidates().map((c) => c.id).join("\n") !== this.candidates.map((c) => c.id).join("\n")) {
           void this.refresh();
           return;
         }
@@ -249,23 +277,62 @@ class TimeSeries {
     return omeZarrUrl(url);
   }
 
-  /** Image layers that show a time dimension (one in seconds, or named t). */
-  private findCandidates(): string[] {
-    return this.ctx.viewer
-      .layers()
+  /**
+   * Image layers that show a time dimension (one in seconds, or named t),
+   * then the time series on surfaces opened from this computer (their
+   * stores' headers read once, in the background).
+   */
+  private findCandidates(): Candidate[] {
+    const layers = this.ctx.viewer.layers();
+    const images: Candidate[] = layers
       .filter((l) => l.type === "image")
       .map((l) => l.name)
       .filter((name) => {
         const t = this.ctx.viewer.layerTransform(name);
         return t !== undefined && t.input.names.some((n, i) => t.input.units[i] === "s" || n.replace(/['^]$/, "") === "t") && this.sourceOf(name) !== undefined;
-      });
+      })
+      .map((name) => ({ id: name, label: name, layer: name }));
+    const surfaces: Candidate[] = [];
+    for (const l of layers) {
+      if (l.type === "image") continue;
+      const s = this.ctx.viewer.layerSpec(l.name)?.source;
+      const store = zarrVectorsStore(typeof s === "string" ? s : typeof (s as { url?: unknown })?.url === "string" ? (s as { url: string }).url : undefined);
+      if (store === undefined || this.ctx.workspace.local.locate(store) === undefined) continue;
+      const known = this.surfaceHeaders.get(store);
+      if (known === undefined) this.readSurfaceHeader(store);
+      if (!Array.isArray(known)) continue;
+      for (const series of known) surfaces.push({ id: `${l.name} · ${series.name}`, label: `${l.name}: ${series.name} (${series.source.split("/").pop()})`, layer: l.name, surface: { store, series } });
+    }
+    return [...images, ...surfaces];
+  }
+
+  /** A surface store's time series, from its header; the candidates again once read. */
+  private readSurfaceHeader(store: string): void {
+    this.surfaceHeaders.set(store, "reading");
+    fetch(`${store}headers/surface/zarr.json`)
+      .then((r) => (r.ok ? r.json() : undefined))
+      .then(
+        (json) => this.surfaceHeaders.set(store, surfaceSeriesOf(json)),
+        () => this.surfaceHeaders.set(store, []),
+      )
+      .then(() => void this.refresh());
+  }
+
+  /** The candidate chosen: the saved one when it is still there, else the first. */
+  private chosen(): Candidate | undefined {
+    return this.candidates.find((c) => c.id === this.saved.layer) ?? this.candidates[0];
   }
 
   /** The layers, the chosen image, and its metadata, after any change to them. */
   private async refresh(): Promise<void> {
     this.candidates = this.findCandidates();
-    const layer = this.layer();
-    const url = layer === undefined ? undefined : this.sourceOf(layer);
+    const chosen = this.chosen();
+    const url = chosen === undefined || chosen.surface !== undefined ? undefined : this.sourceOf(chosen.layer);
+    const surface = chosen?.surface;
+    if (surface?.store !== this.surface?.store || surface?.series.name !== this.surface?.series.name) {
+      this.surface = surface;
+      if (surface !== undefined) void this.surfaceTime(surface);
+    }
     if (url !== this.infoUrl) {
       this.infoUrl = url;
       this.info = undefined;
@@ -288,9 +355,9 @@ class TimeSeries {
     this.update?.();
   }
 
-  /** The image layer chosen: the saved one when it is still there, else the first with time. */
+  /** The image layer chosen (its name), or a surface's series (the candidate's id). */
   private layer(): string | undefined {
-    return this.saved.layer !== undefined && this.candidates.includes(this.saved.layer) ? this.saved.layer : this.candidates[0];
+    return this.chosen()?.id;
   }
 
   private choose(layer: string): void {
@@ -300,6 +367,16 @@ class TimeSeries {
 
   /** The layer's map and time axis, and the time point shown, after the state changed. */
   private placeChanged(): void {
+    if (this.surface !== undefined) {
+      // A surface's series: its own time axis, the time point its store serves.
+      const before = this.axis;
+      this.map = undefined;
+      this.axis = surfaceAxis(this.surface.series);
+      this.axisNote = undefined;
+      if (JSON.stringify(before) !== JSON.stringify(this.axis)) this.drawPlot();
+      this.updateTime?.();
+      return;
+    }
     const layer = this.layer();
     const info = this.info;
     const t = layer === undefined ? undefined : this.ctx.viewer.layerTransform(layer);
@@ -585,6 +662,10 @@ class TimeSeries {
    * step of it.
    */
   private show(i: number, quiet = false): void {
+    if (this.surface !== undefined) {
+      void this.showOnSurface(i);
+      return;
+    }
     const { map, axis } = this;
     if (map === undefined || axis === undefined) return;
     const layer = this.layer();
@@ -594,6 +675,47 @@ class TimeSeries {
     // A local time axis (`t'`) is moved in the layer's own position.
     if (axis.dim < globalRank) this.ctx.viewer.setPosition(target.slice(0, globalRank), { quiet });
     else if (layer !== undefined) this.ctx.viewer.setLocalPosition(layer, target.slice(globalRank), { quiet });
+  }
+
+  /** The time point a surface's store serves now. */
+  private async surfaceTime(surface: SurfaceStep): Promise<void> {
+    try {
+      const answer = (await this.ctx.workspace.local.send(surface.store, { series: surface.series.name })) as { time?: number };
+      if (this.surface !== surface || typeof answer?.time !== "number") return;
+      this.current = answer.time;
+      this.updateTime?.();
+    } catch (e) {
+      if (this.surface === surface) this.setStatus(`Could not reach ${surface.series.name}: ${(e as Error).message}`, true);
+    }
+  }
+
+  /**
+   * Shows time point `i` on the surface: its store is told to serve it,
+   * then the viewer reads the surface's values again.  Steps asked for
+   * while one is sent are taken together (the last one is shown).  The
+   * views' state does not change, so it makes no undo step.
+   */
+  private async showOnSurface(i: number): Promise<void> {
+    const surface = this.surface;
+    if (surface === undefined) return;
+    this.surfaceWanted = i;
+    if (this.surfaceSending) return;
+    this.surfaceSending = true;
+    try {
+      while (this.surfaceWanted !== undefined && this.surface === surface) {
+        const time = this.surfaceWanted;
+        this.surfaceWanted = undefined;
+        const answer = (await this.ctx.workspace.local.send(surface.store, { series: surface.series.name, time })) as { time: number };
+        if (this.surface !== surface) break;
+        this.ctx.viewer.reloadData(surface.store);
+        this.current = answer.time;
+        this.updateTime?.();
+      }
+    } catch (e) {
+      this.setStatus(`Could not show time point ${i}: ${(e as Error).message}`, true);
+    } finally {
+      this.surfaceSending = false;
+    }
   }
 
   private step(delta: number): void {
@@ -701,10 +823,13 @@ class TimeSeries {
       const layer = this.layer();
       const axis = this.axis;
       const ready = axis !== undefined;
+      const surface = this.surface;
+      // Plotting, pins and regions are the images'.
+      const plots = ready && surface === undefined;
       const image = el(
         "select",
         { class: "text-input", "aria-label": "Image", title: "The image plotted", onchange: (e: Event) => this.choose((e.target as HTMLSelectElement).value) },
-        ...this.candidates.map((n) => el("option", { value: n, selected: n === layer }, n)),
+        ...this.candidates.map((c) => el("option", { value: c.id, selected: c.id === layer }, c.label)),
       );
       const rate = el(
         "select",
@@ -724,12 +849,12 @@ class TimeSeries {
       );
       const note =
         this.candidates.length === 0
-          ? "Open an image with a time axis (a 4-D NIfTI, or OME-Zarr with t) to plot its time courses."
+          ? "Open an image with a time axis (a 4-D NIfTI, or OME-Zarr with t) to plot its time courses, or a surface with a CIFTI time series beside it to step through."
           : this.openError !== undefined
             ? `Could not read ${layer}: ${this.openError}`
             : this.axisNote !== undefined
               ? `Time is not shown: ${this.axisNote}.`
-              : this.info === undefined
+              : this.info === undefined && surface === undefined
                 ? "Opening…"
                 : "";
       side.replaceChildren(
@@ -745,12 +870,20 @@ class TimeSeries {
           rate,
         ),
         el("div", { class: "ts-row ts-spread" }, time, loop),
-        regions.length > 0 && ready ? el("div", { class: "ts-row ts-region" }, region, el("button", { class: "btn outline small", type: "button", title: "Pin the mean over the region's voxels", onclick: () => this.pinRegion() }, "Pin mean")) : "",
+        regions.length > 0 && plots ? el("div", { class: "ts-row ts-region" }, region, el("button", { class: "btn outline small", type: "button", title: "Pin the mean over the region's voxels", onclick: () => this.pinRegion() }, "Pin mean")) : "",
         el("div", { class: `ts-status${this.statusError ? " error" : ""}` }, note || this.status),
       );
       // The legend: every series plotted or pinned, pins removable.
       const keys: Node[] = [];
-      if (this.cursor !== undefined && this.info !== undefined) {
+      if (surface !== undefined) {
+        keys.push(
+          el(
+            "span",
+            { class: "ts-key ts-note" },
+            `${this.chosen()?.layer} shows the time point chosen here as its values ${surface.series.name}: choose ${surface.series.name} as the overlay in Render → Surface. (Vertices' time courses are not plotted.)`,
+          ),
+        );
+      } else if (this.cursor !== undefined && this.info !== undefined) {
         const coarse = this.cursor.read.coarse;
         keys.push(el("span", { class: "ts-key", title: coarse === undefined ? "" : "Read coarsely while the mouse moves; the finest values are read when it rests" }, swatch(CURSOR_COLOUR), `Mouse: ${voxelLabel(this.info, this.cursor.voxel)}${coarse !== undefined ? ` (coarse: ${coarse})` : ""}`));
       } else if (ready) {
@@ -770,15 +903,20 @@ class TimeSeries {
         );
       }
       legend.replaceChildren(...keys);
+      // A surface's series is stepped through, not plotted: nothing to pin or save.
       actions.replaceChildren(
-        el(
-          "label",
-          { class: "field check", title: "Plot each series as its change from its own mean, in percent (CSV keeps the values)" },
-          el("input", { type: "checkbox", checked: this.change, onchange: (e: Event) => ((this.change = (e.target as HTMLInputElement).checked), this.ctx.settings.set("change", this.change), this.drawPlot()) }),
-          "% change",
-        ),
-        el("button", { class: "btn outline small", type: "button", title: "Pin the voxel under the mouse (Alt+P)", onclick: () => this.pinCursor(), disabled: !ready }, "Pin"),
-        el("button", { class: "btn outline small", type: "button", title: "Save the plotted series as CSV", onclick: () => this.saveCsv(), disabled: !ready }, "Save CSV"),
+        ...(surface !== undefined
+          ? []
+          : [
+              el(
+                "label",
+                { class: "field check", title: "Plot each series as its change from its own mean, in percent (CSV keeps the values)" },
+                el("input", { type: "checkbox", checked: this.change, onchange: (e: Event) => ((this.change = (e.target as HTMLInputElement).checked), this.ctx.settings.set("change", this.change), this.drawPlot()) }),
+                "% change",
+              ),
+              el("button", { class: "btn outline small", type: "button", title: "Pin the voxel under the mouse (Alt+P)", onclick: () => this.pinCursor(), disabled: !plots }, "Pin"),
+              el("button", { class: "btn outline small", type: "button", title: "Save the plotted series as CSV", onclick: () => this.saveCsv(), disabled: !plots }, "Save CSV"),
+            ]),
       );
       this.updateTime?.();
     };

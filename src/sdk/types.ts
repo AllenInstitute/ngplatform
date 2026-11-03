@@ -214,6 +214,13 @@ export interface WorkspaceApi {
     close(source: string): void;
     /** The file on this computer a layer's source reads (an image or tractogram opened from it), if any. */
     sourceFile(source: string): Promise<File | undefined>;
+    /**
+     * Sends a message to the store a format's worker serves from a file on
+     * this computer (`url` under it), and returns its answer: for stores
+     * whose values the page chooses, such as the time point of a CIFTI
+     * series on a surface (then `ViewerApi.reloadData` shows them).
+     */
+    send(url: string, message: unknown): Promise<unknown>;
   };
 
   /**

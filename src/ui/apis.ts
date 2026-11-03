@@ -78,6 +78,7 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
       open: async (file, options) => (await wb.localData.openFile(file, options?.derived === true)).map(({ source, name, kind }) => ({ source, name, kind })),
       close: (source) => wb.localData.close(source),
       sourceFile: async (source) => (await wb.localData.sourceFile(source))?.file,
+      send: (url, message) => wb.localData.send(url, message),
     },
     computed: {
       url: async (pipeline) => {

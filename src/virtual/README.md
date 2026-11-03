@@ -32,6 +32,17 @@ name, and hands them to the worker with each request, unread; the store
 reads a few bytes of each to check its vertex count, and a file's values
 when they are first asked for.
 
+A CIFTI time series (`.dtseries.nii`) beside a GIFTI surface gives three
+maps: its mean and standard deviation over time (`<stem>_mean`,
+`<stem>_sd`) and its values at one time point (`<stem>_t`), listed in the
+header's `time_series` (time points, start, step, unit). The page chooses
+that time point with a message to the store (`WorkspaceApi.local.send`,
+which local data passes to the format's worker as a `"message"` request,
+answered by `VirtualStore.message`), then has the viewer read the values
+again (`ViewerApi.reloadData`); the Time series plugin's transport does
+both. The hemisphere's part of the file is read once, when a time point is
+first asked for, and kept by time point (up to 1 GB).
+
 Every store has coarser levels, so a view of the whole thing loads quickly:
 an image's pyramid (means of the finer level; the first voxel for labels),
 a tractogram's sample level (one streamline in ten).

@@ -21,6 +21,7 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
 | `plugin.ts` | The panel: the image, transport, pins and regions, the legend; the voxel under the mouse; playing; CSV. |
 | `space.ts` | Positions (global, and a layer's local dimensions after them: `Place`) to a layer's source coordinates and back, in any number of dimensions (`LayerMap`). |
 | `series.ts` | The time axis as the views show it (its global dimension, start, step and unit), the voxel at a position, stepping, colours, percent change, CSV. |
+| `surface.ts` | Time series on surfaces: a Zarr Vectors layer's store, the series its surface header lists (`time_series`), their time axis. |
 | `region.ts` | Boxes and ellipsoids from annotation layers; the image voxels whose centres are inside one. |
 | `reader.ts` | `SeriesReader`: an OME-Zarr image's levels read along time at some voxels, averaged (the finest, or a coarse read while the mouse moves: `movingPlan`); a byte-bounded chunk cache. |
 | `worker.ts`, `client.ts` | The reader in a worker. |
@@ -89,6 +90,19 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   next key, click or scroll settles it first. The first, previous, next and
   last buttons and clicks on the plot are ordinary moves, an undo step
   each.
+- **CIFTI time series on surfaces.** A GIFTI surface opened from this
+  computer with a `.dtseries.nii` beside it has a map `<stem>_t` (as well
+  as `<stem>_mean` and `<stem>_sd`) holding the values at one time point,
+  listed in its store's `headers/surface` under `time_series` (time points,
+  start, step, unit; `src/virtual/vectors/surfaces.ts`, `CiftiSeries` in
+  `cifti.ts`). Such a series is offered in the Image menu
+  ("layer: wave_t (file)"); the transport then steps through it: each time
+  point is sent to the surface's store (`WorkspaceApi.local.send`, the
+  store's `message`), then `ViewerApi.reloadData(store)` has Neuroglancer
+  read the surface's values again. The surface shows them when `<stem>_t`
+  is its overlay (Render → Surface). Nothing in the views' state changes,
+  so stepping makes no undo step; the time point is not in the link (the
+  store starts at 0, and the panel asks it which time point it serves).
 - **State.** Pins (voxel indices, or an annotation layer and annotation id
   for a region) and the chosen image are in the plugin's state, in the
   link; their values are read again when it is opened. A region pin is
@@ -122,19 +136,16 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   moving mouse plots one time point in 8, dashed and marked coarse; at
   rest the finest values replace it, equal to nibabel's at every time
   point; moving within the chunks read plots the finest at once.
+  A 2562-vertex sphere (GIFTI) with a 24-time-point CIFTI series beside it
+  (nibabel; a wave around the sphere, the vertices below z = −40 mm left
+  out): the series is offered in the Image menu, with `wave_t` as the
+  overlay the colours turn a quarter round after six Next clicks, the
+  store's `wave_t` equals the file's row at each time point checked, and
+  stepping and playing add no undo step.
 
 ## Not done
 
-- **CIFTI time series on surfaces.** A `.dtseries.nii` beside a GIFTI
-  surface is served as each vertex's mean and SD over time
-  (`src/virtual/vectors/surfaces.ts`, `ciftiSeriesStats` in `cifti.ts`).
-  Stepping through its time points would need, in that store: one more map,
-  `<stem>_t`, whose values are one row of the matrix, the row chosen by a
-  message from the page to the worker serving the store, and
-  `viewer.reloadData(url)` after each step so Neuroglancer reads the
-  attribute again; a vertex's time
-  course is a column of the matrix (each structure's columns are
-  contiguous, so the read is one strided pass over the rows). The plot,
-  pins and CSV here would take a vertex index in place of a voxel. Not
-  attempted: the surface store is the platform's, shared with the other
-  surface maps, and the change needs its own tests.
+- **Vertices' time courses.** A CIFTI series on a surface is stepped
+  through, not plotted: the plot, pins and CSV would take a vertex index
+  (the vertex under the mouse) in place of a voxel, and the store a request
+  for a vertex's column of the matrix.

@@ -12,8 +12,9 @@ import { openNifti } from "../../../src/virtual/images/nifti.js";
 import { linePath, ticks, valueRange } from "../plot.js";
 import { ChunkCache, describePlan, levelVoxel, movingPlan, readBytes, type SeriesInfo, type SeriesLevel, SeriesReader, timeAxisOf } from "../reader.js";
 import { inside, regionVoxels, shapeOf } from "../region.js";
-import { coordinateOf, formatTime, freeColour, indexAt, nextIndex, percentChange, seriesCsv, stepIndex, type TimeAxis, timeAxis, timesOf, voxelAt, voxelLabel } from "../series.js";
+import { coordinateOf, formatTime, freeColour, indexAt, nextIndex, percentChange, seriesCsv, stepIndex, type TimeAxis, timeAxis, timeOf, timesOf, voxelAt, voxelLabel } from "../series.js";
 import { type GlobalSpace, invert, LayerMap, placeOf } from "../space.js";
+import { surfaceAxis, surfaceSeriesOf, zarrVectorsStore } from "../surface.js";
 
 const FIXTURE = path.join(__dirname, "fixtures", "tiny.nii.gz");
 /** The fixture's value at voxel (x, y, z), time point t. */
@@ -453,5 +454,21 @@ describe("the plot's numbers", () => {
     expect(d).toBe("M0.0,1.0M20.0,2.0L30.0,3.0");
     // A series read at some time points only is joined across the others.
     expect(linePath([0, 1, 2, 3], [1, NaN, 2, 3], (x) => x * 10, (y) => y, true)).toBe("M0.0,1.0L20.0,2.0L30.0,3.0");
+  });
+});
+
+describe("time series on surfaces", () => {
+  it("finds a Zarr Vectors layer's store, and the series its surface header lists", () => {
+    expect(zarrVectorsStore("http://h/local/ab/sub.L.white.surf.gii/|zarr-vectors:#attributes=rest_t")).toBe("http://h/local/ab/sub.L.white.surf.gii/");
+    expect(zarrVectorsStore("http://h/local/ab/sub.L.white.surf.gii|zarr-vectors:")).toBe("http://h/local/ab/sub.L.white.surf.gii/");
+    expect(zarrVectorsStore("zarr3://http://h/a.nii/")).toBeUndefined();
+    const header = { attributes: { maps: ["rest_mean", "rest_t"], time_series: { rest_t: { source: "sub.rest.dtseries.nii", n_time_points: 7, start: 0, step: 0.72, unit: "second" }, bad: { n_time_points: 0 } } } };
+    const [series, ...rest] = surfaceSeriesOf(header);
+    expect(rest).toEqual([]);
+    expect(series).toEqual({ name: "rest_t", source: "sub.rest.dtseries.nii", count: 7, start: 0, step: 0.72, unit: "second" });
+    expect(surfaceSeriesOf({ attributes: { maps: [] } })).toEqual([]);
+    const axis = surfaceAxis(series);
+    expect([axis.count, axis.dim, axis.unit.label]).toEqual([7, -1, "s"]);
+    expect(timeOf(axis, 5)).toBeCloseTo(3.6);
   });
 });

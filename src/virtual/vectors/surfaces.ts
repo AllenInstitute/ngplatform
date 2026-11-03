@@ -10,7 +10,7 @@
  * each to check its vertex count when the store opens, a file's values when
  * that attribute is first asked for.
  */
-import { CIFTI_FILE, CORTEX, ciftiMap, ciftiSeriesStats, parseCiftiHeader } from "./cifti.js";
+import { CIFTI_FILE, CORTEX, CiftiSeries, ciftiMap, ciftiSeriesStats, parseCiftiHeader } from "./cifti.js";
 import { gunzipHead, isGzip } from "../images/store.js";
 import { MGH_HEADER } from "../images/mgh.js";
 import { FREESURFER_SURFACE } from "./mesh_files.js";
@@ -92,6 +92,25 @@ export interface SurfaceMap {
   /** A parcellation (its codes name labels), not a continuous value. */
   parcellation: boolean;
   load(): Promise<SurfaceValues>;
+  /** For a map whose values change (a series at the time point chosen): which values `load` gives now. */
+  version?(): number;
+}
+
+/**
+ * A time series on the surface (a CIFTI `.dtseries.nii` beside it), served
+ * a time point at a time as one map, `<stem>_t`: the time point is chosen
+ * by a message to the store (`MeshStore.message`).
+ */
+export interface SurfaceSeries {
+  /** The map that serves the values at the time point chosen. */
+  map: SurfaceMap;
+  /** Time points, the first one's time and the step (in `unit`, "second" for fMRI). */
+  count: number;
+  start: number;
+  step: number;
+  unit: string;
+  /** The time point served. */
+  time: number;
 }
 
 const MAP_ORDER = ["curv", "sulc", "thickness", "area", "aparc", "aparc_a2009s", "labels", "volume"];
@@ -130,6 +149,8 @@ export interface SurfaceCompanions {
   surfaces: Record<string, string>;
   /** Files left out, and why. */
   skipped: string[];
+  /** Time series, a time point at a time. */
+  series?: SurfaceSeries[];
   /** The surface's own file name. */
   fileName?: string;
 }
@@ -144,6 +165,7 @@ export async function surfaceCompanions(surfaceName: string, related: Record<str
   const maps: SurfaceMap[] = [];
   const surfaces: Record<string, string> = {};
   const skipped: string[] = [];
+  const series: SurfaceSeries[] = [];
   const used = new Set<string>();
   const unique = (raw: string) => {
     let name = attributeName(raw);
@@ -194,6 +216,17 @@ export async function surfaceCompanions(surfaceName: string, related: Record<str
             const stats = once(() => ciftiSeriesStats(file, header, structure, vertexCount));
             maps.push({ name: `${stem}_mean`, source: path, parcellation: false, load: async () => ({ values: (await stats()).mean }) });
             maps.push({ name: `${stem}_sd`, source: path, parcellation: false, load: async () => ({ values: (await stats()).sd }) });
+            // And its values at the time point chosen.
+            const values = new CiftiSeries(file, header, structure, vertexCount);
+            const axis = header.seriesAxis ?? { start: 0, step: 1, unit: "second" };
+            const entry: SurfaceSeries = {
+              map: { name: `${stem}_t`, source: path, parcellation: false, load: async () => ({ values: await values.at(entry.time) }), version: () => entry.time },
+              count: header.rows,
+              ...axis,
+              time: 0,
+            };
+            maps.push(entry.map);
+            series.push(entry);
             return;
           }
           const bytes = once(() => whole(file));
@@ -240,7 +273,7 @@ export async function surfaceCompanions(surfaceName: string, related: Record<str
   };
   maps.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
   for (const m of maps) m.name = unique(m.name);
-  return { maps, surfaces, skipped, fileName: surfaceName };
+  return { maps, surfaces, skipped, fileName: surfaceName, series };
 }
 
 /** A parcellation's table as zarr-vectors-tools writes it in `headers/surface`: code → name and colour. */
