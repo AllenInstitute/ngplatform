@@ -126,6 +126,11 @@ reads. A text format can set `collect` to offer a folder of its files as one
 dataset (the folder's `@all<extension>`): the worker then gets one text,
 each file after a `# @file <name>` line (SWC does).
 
+A tool plugin can list a virtual format too, for data it makes in the page:
+Annotations serves the label volumes being drawn this way (a format whose
+"worker" answers in the page), and calls `viewer.reloadData(url)` after each
+stroke so Neuroglancer reads the changed store again.
+
 `@ngplatform/sdk/precomputed` reads Neuroglancer precomputed volumes in a
 plugin's own worker (images and segmentations, sharded or not);
 `@ngplatform/sdk/sources` recognises source URLs without loading readers.
@@ -226,7 +231,7 @@ it is deactivated. Subscriptions a plugin makes itself go in
 | `ui.overlay / screenshotOverlay` | An element over the views, and painting into Neuroglancer's screenshots (labels use both). |
 | `ui.toast / confirm / form` | Messages, confirmation, and a dialog generated from a schema. |
 | `workspace` | Scenes, datasets, layers and the selection; add datasets and derived layers, remove layers. |
-| `viewer` | The active scene's Neuroglancer state as JSON (`patchState` applies only what changed, as one undo step), layers, the pointer, the position, a segmentation layer's segment properties, and a temporary set of visible segments (not saved in the link). `draw3d` draws in the 3-D view with a layer (raw WebGL2, Neuroglancer's camera and depth; volume rendering uses it); `panels` and `onRendered` place things over the views; `layerTransform` and `setLayerTransform` read and set a layer's transform (registration). |
+| `viewer` | The active scene's Neuroglancer state as JSON (`patchState` applies only what changed, as one undo step), layers, the pointer, the position, a segmentation layer's segment properties, and a temporary set of visible segments (not saved in the link). `draw3d` draws in the 3-D view with a layer (raw WebGL2, Neuroglancer's camera and depth; volume rendering uses it); `panels` and `onRendered` place things over the views; `layerTransform` and `setLayerTransform` read and set a layer's transform (registration); `reloadData` has Neuroglancer read again what it holds from a URL (data a plugin serves and changed: Annotations' label volumes). |
 | `workspace.local` | Files of data opened from this computer: whether a URL is one, writing into it (track filtering saves groups this way), and opening a file the plugin made in the page as data (track filtering's density maps). |
 | `state` | The plugin's slice of the workspace state: in the link, undoable, versioned. |
 | `settings` | Per-user settings kept in this browser, never in the link. |

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { LayerTransform } from "@ngplatform/sdk";
 import { annotationToGlobal, distanceMm, type GlobalSpace, placement, toGlobal, toVoxel, unprojector, voxelVolume } from "../geometry.js";
-import { measure, measureAll, sampleCount, samplePoints, spanned } from "../measure.js";
+import { measure, measureAll, sampleCount, samplePath, samplePoints, spanned } from "../measure.js";
 import { csv, physical } from "../ui.js";
 
 /** Global x, y, z in mm, as the app's MNI examples have it. */
@@ -78,6 +78,15 @@ describe("profiles", () => {
     expect(positions.length).toBe(11);
     expect(positions[5]).toEqual([5, 0, 0]);
     expect(distances[10]).toBeCloseTo(10);
+  });
+
+  it("samples a polyline evenly along its length, through its corners", () => {
+    const { positions, distances } = samplePath([[0, 0, 0], [10, 0, 0], [10, 10, 0]], 5, MM);
+    expect(distances).toEqual([0, 5, 10, 15, 20]);
+    expect(positions[1]).toEqual([5, 0, 0]);
+    expect(positions[2]).toEqual([10, 0, 0]);
+    expect(positions[3]).toEqual([10, 5, 0]);
+    expect(positions[4]).toEqual([10, 10, 0]);
   });
 
   it("takes about one sample a voxel", () => {
