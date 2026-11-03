@@ -78,6 +78,7 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
       open: async (file, options) => (await wb.localData.openFile(file, options?.derived === true)).map(({ source, name, kind }) => ({ source, name, kind })),
       close: (source) => wb.localData.close(source),
       sourceFile: async (source) => (await wb.localData.sourceFile(source))?.file,
+      send: (url, message) => wb.localData.send(url, message),
     },
     computed: {
       url: async (pipeline) => {
@@ -108,7 +109,9 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
       return { active: c.active, position: c.position, names: c.names, units: c.units, values: c.values };
     },
     onCursorChanged: (callback) => engine.onCursorChanged(callback),
-    setPosition: (position) => engine.setPosition(position),
+    setPosition: (position, options) => (options?.quiet ? store.quietly(() => engine.setPosition(position)) : engine.setPosition(position)),
+    localPosition: (layer) => engine.localPosition(layer),
+    setLocalPosition: (layer, position, options) => (options?.quiet ? store.quietly(() => engine.setLocalPosition(layer, position)) : engine.setLocalPosition(layer, position)),
     segmentProperties: (layer) => engine.segmentProperties(layer),
     onSegmentPropertiesChanged: (layer, callback) => engine.onSegmentPropertiesChanged(layer, callback),
     setTemporaryVisibleSegments: (layer, ids) => engine.setTemporaryVisibleSegments(layer, ids),

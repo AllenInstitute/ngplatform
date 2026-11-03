@@ -20,7 +20,7 @@ const UNITS: Record<string, [string, number]> = {
 export interface TimeAxis {
   /** Time points. */
   count: number;
-  /** The global dimension it is shown along. */
+  /** The dimension it is shown along: a global one, or the layer's local one after them (see Place). */
   dim: number;
   /** The source dimension it is. */
   input: number;
@@ -57,7 +57,7 @@ export function timeAxis(map: LayerMap, info: SeriesInfo, position: ArrayLike<nu
   const moves = (g: number) => Number.isFinite(g0[g]) && Number.isFinite(g1[g]) && Math.abs(g1[g] - g0[g]) > 1e-12;
   const seconds = g0.findIndex((_, g) => moves(g) && map.space.units[g] === "s");
   const dim = seconds !== -1 ? seconds : g0.findIndex((_, g) => moves(g));
-  if (dim === -1) return `the image's time axis (${info.axes[info.timeAxis]}) is not one of the views' dimensions; it may be a local dimension of the layer`;
+  if (dim === -1) return `the image's time axis (${info.axes[info.timeAxis]}) is not one of the views' dimensions or the layer's local ones`;
   const [label, inSeconds] = seconds !== -1 ? (UNITS[info.timeUnit ?? "second"] ?? UNITS.second) : ["", 1];
   const scale = seconds !== -1 ? map.space.scales[dim] / inSeconds : 1;
   return {

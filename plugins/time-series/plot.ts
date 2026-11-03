@@ -42,13 +42,16 @@ export function valueRange(series: ArrayLike<number>[]): [number, number] {
   return [lo - pad, hi + pad];
 }
 
-/** An SVG path through the points, broken where a value is missing. */
-export function linePath(xs: ArrayLike<number>, ys: ArrayLike<number>, sx: (x: number) => number, sy: (y: number) => number): string {
+/**
+ * An SVG path through the points, broken where a value is missing; with
+ * `bridge`, joined across them (a series read at some time points only).
+ */
+export function linePath(xs: ArrayLike<number>, ys: ArrayLike<number>, sx: (x: number) => number, sy: (y: number) => number, bridge = false): string {
   let d = "";
   let pen = false;
   for (let i = 0; i < xs.length; ++i) {
     if (!Number.isFinite(ys[i])) {
-      pen = false;
+      if (!bridge) pen = false;
       continue;
     }
     d += `${pen ? "L" : "M"}${sx(xs[i]).toFixed(1)},${sy(ys[i]).toFixed(1)}`;
@@ -68,6 +71,12 @@ export interface PlotSeries {
   label: string;
   values: ArrayLike<number>;
   colour: string;
+  /**
+   * Read coarsely while the mouse moves (what, in words): drawn dashed,
+   * joined across the time points not read, and named at the plot's top
+   * right until the finest values replace it.
+   */
+  coarse?: string;
 }
 
 export interface PlotData {
@@ -179,7 +188,13 @@ export class Plot {
     this.marker = svg("line", { y1: pad.top, y2: pad.top + h, class: "ts-now", visibility: "hidden" });
     root.append(this.marker);
     for (const s of series) {
-      root.append(svg("path", { d: linePath(times, s.values, sx, sy), class: "ts-line", stroke: s.colour }));
+      root.append(svg("path", { d: linePath(times, s.values, sx, sy, s.coarse !== undefined), class: `ts-line${s.coarse !== undefined ? " ts-coarse" : ""}`, stroke: s.colour }));
+    }
+    const coarse = series.find((s) => s.coarse !== undefined);
+    if (coarse !== undefined) {
+      const note = svg("text", { x: pad.left + w - 4, y: pad.top + 12, class: "ts-tick ts-coarse-note", "text-anchor": "end" });
+      note.textContent = `coarse (${coarse.coarse}) until the finest values are read`;
+      root.append(note);
     }
     const cross = svg("line", { y1: pad.top, y2: pad.top + h, class: "ts-cross", visibility: "hidden" });
     const dots = series.map((s) => svg("circle", { r: 3.5, class: "ts-dot", fill: s.colour, visibility: "hidden" }));

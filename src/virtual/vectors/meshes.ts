@@ -78,7 +78,7 @@ export class MeshStore {
   private readonly directories: Set<string>;
   /** The file's vertex number of each stored vertex, object by object. */
   private readonly sourceVertex: Uint32Array;
-  /** Each map's values in stored order, made when first asked for. */
+  /** Each map's values in stored order, made when first asked for (a series' map, for the time point it was made at). */
   private readonly attributeBytes = new Map<string, Promise<Uint8Array>>();
   readonly count: number;
 
@@ -183,8 +183,11 @@ export class MeshStore {
 
   /** A map's values in stored vertex order, NaN where the file has none. */
   private attribute(map: SurfaceMap): Promise<Uint8Array> {
-    let bytes = this.attributeBytes.get(map.name);
+    const key = map.version === undefined ? map.name : `${map.name}@${map.version()}`;
+    let bytes = this.attributeBytes.get(key);
     if (bytes === undefined) {
+      // A series' map keeps only the time point asked for last.
+      if (map.version !== undefined) for (const old of this.attributeBytes.keys()) if (old.startsWith(`${map.name}@`)) this.attributeBytes.delete(old);
       bytes = map.load().then(({ values }) => {
         const out = new Float32Array(this.sourceVertex.length);
         for (let i = 0; i < out.length; ++i) {
@@ -193,17 +196,37 @@ export class MeshStore {
         }
         return element(bytesOf(out));
       });
-      this.attributeBytes.set(map.name, bytes);
-      bytes.catch(() => this.attributeBytes.delete(map.name));
+      this.attributeBytes.set(key, bytes);
+      bytes.catch(() => this.attributeBytes.delete(key));
     }
     return bytes;
+  }
+
+  /**
+   * A message from the page (`WorkspaceApi.local.send`): `{ series, time }`
+   * chooses the time point a series' map (`series`, its name) serves;
+   * without `time`, nothing changes.  Answers the series as it is then:
+   * `{ series, time, count }`.  The page then has the viewer read the map
+   * again (`ViewerApi.reloadData`).
+   */
+  message(body: unknown): unknown {
+    const { series: name, time } = (body ?? {}) as { series?: unknown; time?: unknown };
+    const series = this.companions.series?.find((s) => s.map.name === name);
+    if (series === undefined) throw new Error(`no time series ${String(name)} on this surface`);
+    if (time !== undefined) {
+      if (!(Number.isInteger(time) && (time as number) >= 0 && (time as number) < series.count)) throw new Error(`time point ${String(time)} is outside 0–${series.count - 1}`);
+      series.time = time as number;
+    }
+    return { series: series.map.name, time: series.time, count: series.count };
   }
 
   /**
    * The surface header as zarr-vectors-tools writes it (`headers/surface`:
    * scalars, label tables), with what only a store made from files can say:
    * the hemisphere's other surfaces (`surfaces`, store URLs relative to this
-   * one) and every map that can be asked for by name (`maps`).
+   * one), every map that can be asked for by name (`maps`), and the time
+   * series served a time point at a time (`time_series`: by map name, the
+   * file, time points, the first one's time, the step and its unit).
    */
   private async header(): Promise<Record<string, unknown>> {
     const { maps, surfaces } = this.companions;
@@ -230,6 +253,9 @@ export class MeshStore {
       label_tables: tables,
       surfaces: Object.fromEntries(Object.entries(surfaces).map(([kind, path]) => [kind, `../${path}/`])),
       maps: maps.map((m) => m.name),
+      ...(this.companions.series?.length
+        ? { time_series: Object.fromEntries(this.companions.series.map((s) => [s.map.name, { source: s.map.source, n_time_points: s.count, start: s.start, step: s.step, unit: s.unit }])) }
+        : {}),
     };
   }
 

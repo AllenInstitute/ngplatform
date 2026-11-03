@@ -15,9 +15,13 @@ import { answer, type Range, type VirtualStore } from "../virtual/images/store.j
 
 export { answer, blobSource, type ByteSource, jsonBytes, Lru, type Range, type VirtualStore } from "../virtual/images/store.js";
 
-/** What local data sends a format's worker for each key, with the reply port. */
+/**
+ * What local data sends a format's worker for each key, with the reply
+ * port; or, with type "message", a message from the page for the store
+ * (`VirtualStore.message`), in `body`.
+ */
 export interface VirtualRequest {
-  type: "get";
+  type: "get" | "message";
   /** The file's place: its local entry and path. */
   store: string;
   file: File;
@@ -25,6 +29,8 @@ export interface VirtualRequest {
   related?: Record<string, File>;
   /** The key in the store: "zarr.json", "0/c/0/1/2", … */
   key: string;
+  /** A message's content. */
+  body?: unknown;
   range?: Range;
   head?: boolean;
 }
@@ -52,7 +58,20 @@ export function serveVirtualStores(open: (file: File, related: Record<string, Fi
   self.addEventListener("message", (event: MessageEvent<VirtualRequest>) => {
     const request = event.data;
     const port = event.ports[0];
-    if (request?.type !== "get" || port === undefined) return;
+    if (port === undefined) return;
+    if (request?.type === "message") {
+      void (async () => {
+        try {
+          const store = await storeFor(request);
+          if (store.message === undefined) throw new Error("the store takes no messages");
+          port.postMessage({ status: 200, value: await store.message(request.body) });
+        } catch (e) {
+          port.postMessage({ status: 500, message: `${request.file.name}: ${e instanceof Error ? e.message : String(e)}` });
+        }
+      })();
+      return;
+    }
+    if (request?.type !== "get") return;
     void (async () => {
       try {
         const reply = await answer(await storeFor(request), request.key, request.range, request.head ?? false);

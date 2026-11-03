@@ -19,12 +19,13 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
 |---|---|
 | `manifest.ts` | Id, the bottom-dock panel, commands (pin, play, save CSV) and keys, the user guide. |
 | `plugin.ts` | The panel: the image, transport, pins and regions, the legend; the voxel under the mouse; playing; CSV. |
-| `space.ts` | Global positions to a layer's source coordinates and back, in any number of dimensions (`LayerMap`). |
+| `space.ts` | Positions (global, and a layer's local dimensions after them: `Place`) to a layer's source coordinates and back, in any number of dimensions (`LayerMap`). |
 | `series.ts` | The time axis as the views show it (its global dimension, start, step and unit), the voxel at a position, stepping, colours, percent change, CSV. |
+| `surface.ts` | Time series on surfaces: a Zarr Vectors layer's store, the series its surface header lists (`time_series`), their time axis. |
 | `region.ts` | Boxes and ellipsoids from annotation layers; the image voxels whose centres are inside one. |
-| `reader.ts` | `SeriesReader`: an OME-Zarr image's finest level read along time at some voxels, averaged; a byte-bounded chunk cache. |
+| `reader.ts` | `SeriesReader`: an OME-Zarr image's levels read along time at some voxels, averaged (the finest, or a coarse read while the mouse moves: `movingPlan`); a byte-bounded chunk cache. |
 | `worker.ts`, `client.ts` | The reader in a worker. |
-| `plot.ts` | The SVG plot: ticks, lines broken at missing values, the current time, a crosshair readout, click to pick a time. |
+| `plot.ts` | The SVG plot: ticks, lines broken at missing values (a coarse series dashed and joined across them), the current time, a crosshair readout, click to pick a time. |
 | `tests/` | `time_series.test.ts`; `fixtures/tiny.nii.gz` (6 × 5 × 4 voxels × 12 time points, from `fixtures/generate.py` with nibabel). |
 
 ## How it works
@@ -47,6 +48,14 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   starts, shows the later one, as Neuroglancer draws it). Moving to a time
   point sets `t` to its centre. Times shown are the global coordinate times
   its scale, in the store's unit (seconds for NIfTI).
+- **Time as a local dimension.** When the layer shows time as a local
+  dimension (`t'`, out of the global ones, as Orientations does with a
+  component axis), each layer has its own position along it. The map then
+  runs between the global dimensions followed by the layer's local ones
+  (`Place` in `space.ts`, from `ViewerApi.localPosition`) and the source:
+  the time point shown is the one at the layer's local position, and
+  moving to a time point sets that (`ViewerApi.setLocalPosition`), not the
+  global position.
 - **Reading.** The worker reads the finest level, chunk by chunk along
   time at the chunk holding the voxel (a NIfTI read in place has one time
   point per chunk; stored transposed, read in stored order as the volume
@@ -55,6 +64,45 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   again. A region's voxels are grouped by chunk and averaged per time point
   (missing values left out). The pointer is read 80 ms after it stops; a
   newer voxel cancels the older read.
+- **Coarse reads while the mouse moves.** When one voxel's full read of
+  the finest level would decode more than 32 MB (a long series in large
+  chunks: 1200 time points of 64³ float32 chunks is 1.26 GB), the voxel
+  under a moving mouse is read cheaply first: the finest values if every
+  chunk they need is in the cache already, else `movingPlan` (`reader.ts`):
+  the densest sampling of time, and at it the finest level, whose read
+  fits in 32 MB, keeping at least 16 time points (one time chunk in 2, 4,
+  8… along time, the others left out; a coarser level only where its chunks
+  hold fewer voxels, a level being read at the voxel whose centre is
+  nearest). Only coarser levels with every time point are used; their
+  place in the finest level's voxels comes from the datasets' scales and
+  translations (else from the shapes). The plot draws such a series dashed,
+  joined across the time points not read, says "coarse (…) until the
+  finest values are read" at its top right, and the legend says
+  "(coarse: …)". When the mouse rests 400 ms on a voxel, its finest
+  values are read (after any coarse read running), with the progress
+  shown. A NIfTI read in place has chunks of 64³ at every level, so a
+  coarser level is no cheaper there and the coarse read is a sample of
+  time points.
+- **Playing.** Each time point shown moves the position with
+  `setPosition(…, { quiet: true })`: the workspace store
+  (`WorkspaceStore.quietly`) amends the current undo step with it rather
+  than adding one, so playing makes no undo steps, at any rate; the user's
+  next key, click or scroll settles it first. The first, previous, next and
+  last buttons and clicks on the plot are ordinary moves, an undo step
+  each.
+- **CIFTI time series on surfaces.** A GIFTI surface opened from this
+  computer with a `.dtseries.nii` beside it has a map `<stem>_t` (as well
+  as `<stem>_mean` and `<stem>_sd`) holding the values at one time point,
+  listed in its store's `headers/surface` under `time_series` (time points,
+  start, step, unit; `src/virtual/vectors/surfaces.ts`, `CiftiSeries` in
+  `cifti.ts`). Such a series is offered in the Image menu
+  ("layer: wave_t (file)"); the transport then steps through it: each time
+  point is sent to the surface's store (`WorkspaceApi.local.send`, the
+  store's `message`), then `ViewerApi.reloadData(store)` has Neuroglancer
+  read the surface's values again. The surface shows them when `<stem>_t`
+  is its overlay (Render → Surface). Nothing in the views' state changes,
+  so stepping makes no undo step; the time point is not in the link (the
+  store starts at 0, and the panel asks it which time point it serves).
 - **State.** Pins (voxel indices, or an annotation layer and annotation id
   for a region) and the chosen image are in the plugin's state, in the
   link; their values are read again when it is opened. A region pin is
@@ -80,30 +128,24 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   nibabel's mean over the voxels inside; playing and stepping move `t`.
   An OME-Zarr 0.4 image served over http (t, z, y, x in µm; Zarr v2,
   blosc zstd, five time points a chunk) plots the values written and
-  Neuroglancer's own at the mouse.
+  Neuroglancer's own at the mouse. The same NIfTI with `t` made local
+  (`t'`): the time point shown is the layer's local position, the value at
+  the mouse equals Neuroglancer's and nibabel's, Next and Play move the
+  local position, and four ticks of playing at 1/s add no undo step.
+  A long NIfTI (64 × 64 × 48 × 200 int16, 157 MB a voxel decoded): the
+  moving mouse plots one time point in 8, dashed and marked coarse; at
+  rest the finest values replace it, equal to nibabel's at every time
+  point; moving within the chunks read plots the finest at once.
+  A 2562-vertex sphere (GIFTI) with a 24-time-point CIFTI series beside it
+  (nibabel; a wave around the sphere, the vertices below z = −40 mm left
+  out): the series is offered in the Image menu, with `wave_t` as the
+  overlay the colours turn a quarter round after six Next clicks, the
+  store's `wave_t` equals the file's row at each time point checked, and
+  stepping and playing add no undo step.
 
 ## Not done
 
-- **Time as a local dimension.** When the layer's `t` is local (`t'`, as
-  Orientations makes a component axis), the panel says time is not shown;
-  reading the layer's local position would cover it.
-- **Coarser levels.** Only the finest level is read: a long series with
-  large chunks (1200 time points of 64³ float32 chunks) reads about a
-  gigabyte the first time the mouse enters a chunk. Reading a coarser level
-  while the mouse moves, then the finest when it rests, would help.
-- **Undo while playing.** Each time point shown is a change of position;
-  at 2 time points a second or slower each becomes an undo step (faster
-  ones settle into one).
-- **CIFTI time series on surfaces.** A `.dtseries.nii` beside a GIFTI
-  surface is served as each vertex's mean and SD over time
-  (`src/virtual/vectors/surfaces.ts`, `ciftiSeriesStats` in `cifti.ts`).
-  Stepping through its time points would need, in that store: one more map,
-  `<stem>_t`, whose values are one row of the matrix, the row chosen by a
-  message from the page to the worker serving the store, and
-  `viewer.reloadData(url)` after each step so Neuroglancer reads the
-  attribute again; a vertex's time
-  course is a column of the matrix (each structure's columns are
-  contiguous, so the read is one strided pass over the rows). The plot,
-  pins and CSV here would take a vertex index in place of a voxel. Not
-  attempted: the surface store is the platform's, shared with the other
-  surface maps, and the change needs its own tests.
+- **Vertices' time courses.** A CIFTI series on a surface is stepped
+  through, not plotted: the plot, pins and CSV would take a vertex index
+  (the vertex under the mouse) in place of a voxel, and the store a request
+  for a vertex's column of the matrix.

@@ -1,7 +1,13 @@
-/** CIFTI-2 dense scalars and labels beside a GIFTI surface: each map on the hemisphere's vertices, as nibabel wrote them. */
+/**
+ * CIFTI-2 dense scalars, labels and a time series beside a GIFTI surface:
+ * each map on the hemisphere's vertices, as nibabel wrote them; the series
+ * also a time point at a time, chosen by a message to the surface's store.
+ */
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { parseMeshFile } from "../../../../src/virtual/vectors/mesh_files.js";
+import { MeshStore } from "../../../../src/virtual/vectors/meshes.js";
 import { surfaceCompanions, surfaceRelated } from "../../../../src/virtual/vectors/surfaces.js";
 
 const DIR = path.resolve(import.meta.dirname, "../../../../tests/testdata/cifti");
@@ -33,11 +39,40 @@ describe("CIFTI on a surface", () => {
 
   it("gives a time series' mean and standard deviation over time on each vertex", async () => {
     const { maps } = await surfaceCompanions("sub.L.midthickness.surf.gii", { "sub.rest.dtseries.nii": file("sub.rest.dtseries.nii") }, 12);
-    expect(maps.map((m) => m.name)).toEqual(["rest_mean", "rest_sd"]);
-    for (const m of maps) {
+    expect(maps.map((m) => m.name)).toEqual(["rest_mean", "rest_sd", "rest_t"]);
+    for (const m of maps.filter((m) => m.name !== "rest_t")) {
       const { values } = await m.load();
       (expected[m.name] as (number | null)[]).forEach((v, i) => (v === null ? expect(values[i]).toBeNaN() : expect(values[i]).toBeCloseTo(v, 3)));
     }
+  });
+
+  it("serves a time series a time point at a time, the time point chosen by a message to the store", async () => {
+    const companions = await surfaceCompanions("sub.L.midthickness.surf.gii", { "sub.rest.dtseries.nii": file("sub.rest.dtseries.nii") }, 12);
+    const [series] = companions.series!;
+    expect([series.map.name, series.count, series.start, series.step, series.unit, series.time]).toEqual(["rest_t", 7, 0, expect.closeTo(0.72, 6), "second", 0]);
+    const mesh = await parseMeshFile(new Uint8Array(fs.readFileSync(path.join(DIR, "sub.L.midthickness.surf.gii"))), "sub.L.midthickness.surf.gii");
+    const store = new MeshStore(mesh, "sub.L.midthickness", companions);
+    const header = JSON.parse(new TextDecoder().decode(await store.get("headers/surface/zarr.json"))).attributes;
+    expect(header.maps).toContain("rest_t");
+    expect(header.time_series.rest_t).toEqual({ source: "sub.rest.dtseries.nii", n_time_points: 7, start: 0, step: expect.closeTo(0.72, 6), unit: "second" });
+    const spec = JSON.parse(new TextDecoder().decode(await store.get("zarr.json"))).attributes.zarr_vectors.attribute_specs.vertex;
+    expect(Object.keys(spec)).toContain("rest_t");
+    // The attribute's values, in the file's vertex order (the store keeps the file's order for one object).
+    const values = async () => {
+      const bytes = (await store.get("0/vertex_attributes/rest_t/c/0/0/0"))!;
+      return Array.from(new Float32Array(bytes.slice(8).buffer));
+    };
+    const rows = expected.rest_t as (number | null)[][];
+    const check = (got: number[], row: (number | null)[]) => row.forEach((v, i) => (v === null ? expect(got[i]).toBeNaN() : expect(got[i]).toBeCloseTo(v, 4)));
+    check(await values(), rows[0]);
+    expect(store.message({ series: "rest_t", time: 5 })).toEqual({ series: "rest_t", time: 5, count: 7 });
+    check(await values(), rows[5]);
+    // Asking without a time changes nothing; a time outside the series, or another series, is refused.
+    expect(store.message({ series: "rest_t" })).toEqual({ series: "rest_t", time: 5, count: 7 });
+    expect(() => store.message({ series: "rest_t", time: 7 })).toThrow(/outside/);
+    expect(() => store.message({ series: "other", time: 0 })).toThrow(/no time series/);
+    expect(store.message({ series: "rest_t", time: 6 })).toEqual({ series: "rest_t", time: 6, count: 7 });
+    check(await values(), rows[6]);
   });
 
   it("leaves a file out when its hemisphere has another vertex count", async () => {

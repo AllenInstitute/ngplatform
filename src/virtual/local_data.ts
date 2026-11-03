@@ -518,6 +518,30 @@ export class LocalData {
     }
   }
 
+  /**
+   * Sends a message to the virtual store serving `url` (a file on this
+   * computer read by a format's worker), opening it if need be; its answer.
+   */
+  async send(url: string, body: unknown): Promise<unknown> {
+    const at = this.parse(url.replace(/^[a-z0-9+]+:\/\/(?=https?:)/, ""));
+    if (at === undefined) throw new Error(`${url} is not on this computer`);
+    const virtual = splitVirtual(`${at.path.replace(/\/$/, "")}/`, this.formats);
+    if (virtual === undefined) throw new Error(`${url} is not a store read from a file`);
+    const file = await this.virtualFile(at.id, virtual);
+    if (file === undefined) throw new Error(`${url}: the file is not open`);
+    let worker = this.virtualWorkers.get(virtual.format);
+    if (worker === undefined) this.virtualWorkers.set(virtual.format, (worker = virtual.format.worker()));
+    const related = virtual.format.related === undefined ? undefined : await this.related(at.id, virtual.file, virtual.format);
+    const channel = new MessageChannel();
+    const reply = new Promise<{ status: number; value?: unknown; message?: string }>((resolve) => (channel.port1.onmessage = (e) => resolve(e.data)));
+    const message: VirtualRequest = { type: "message", store: `${at.id}/${virtual.file}`, file, related, key: "", body };
+    worker.postMessage(message, [channel.port2]);
+    const answer = await reply;
+    channel.port1.close();
+    if (answer.status !== 200) throw new Error(answer.message ?? `status ${answer.status}`);
+    return answer.value;
+  }
+
   private async answer(request: { id: string; path: string; range?: { start?: number; end?: number; suffix?: number }; head?: boolean }, port: MessagePort): Promise<void> {
     const entry = this.entries.get(request.id);
     if (entry === undefined) {

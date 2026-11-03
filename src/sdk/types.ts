@@ -215,6 +215,13 @@ export interface WorkspaceApi {
     close(source: string): void;
     /** The file on this computer a layer's source reads (an image or tractogram opened from it), if any. */
     sourceFile(source: string): Promise<File | undefined>;
+    /**
+     * Sends a message to the store a format's worker serves from a file on
+     * this computer (`url` under it), and returns its answer: for stores
+     * whose values the page chooses, such as the time point of a CIFTI
+     * series on a surface (then `ViewerApi.reloadData` shows them).
+     */
+    send(url: string, message: unknown): Promise<unknown>;
   };
 
   /**
@@ -268,7 +275,21 @@ export interface ViewerApi {
   onLayersChanged(callback: () => void): Disposer;
   cursor(): { active: boolean; position: number[]; names: string[]; units: string[]; values: Record<string, unknown> };
   onCursorChanged(callback: () => void): Disposer;
-  setPosition(position: number[]): void;
+  /**
+   * Moves the global position (NaN leaves a dimension where it is).  With
+   * `quiet`, the move makes no undo step of its own: it amends the current
+   * one, as a run of quiet moves does (playing through time), until the
+   * user next acts.
+   */
+  setPosition(position: number[], options?: { quiet?: boolean }): void;
+  /**
+   * A layer's local dimensions (those its sources name with a trailing
+   * `'`, such as `t'`: each layer has its own position along them) and
+   * its position there, in their coordinates; undefined until it loads.
+   */
+  localPosition(layer: string): { names: string[]; scales: number[]; units: string[]; position: number[] } | undefined;
+  /** Moves a layer's local position (NaN leaves a dimension where it is); `quiet` as for setPosition. */
+  setLocalPosition(layer: string, position: number[], options?: { quiet?: boolean }): void;
   /**
    * A segmentation layer's segment properties (one row per segment: numeric
    * columns, and tags), once its source has supplied them.

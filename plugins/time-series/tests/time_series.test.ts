@@ -10,10 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LayerTransform } from "@ngplatform/sdk";
 import { openNifti } from "../../../src/virtual/images/nifti.js";
 import { linePath, ticks, valueRange } from "../plot.js";
-import { ChunkCache, type SeriesInfo, SeriesReader, timeAxisOf } from "../reader.js";
+import { ChunkCache, describePlan, levelVoxel, movingPlan, readBytes, type SeriesInfo, type SeriesLevel, SeriesReader, timeAxisOf } from "../reader.js";
 import { inside, regionVoxels, shapeOf } from "../region.js";
-import { coordinateOf, formatTime, freeColour, indexAt, nextIndex, percentChange, seriesCsv, stepIndex, type TimeAxis, timeAxis, timesOf, voxelAt, voxelLabel } from "../series.js";
-import { type GlobalSpace, invert, LayerMap } from "../space.js";
+import { coordinateOf, formatTime, freeColour, indexAt, nextIndex, percentChange, seriesCsv, stepIndex, type TimeAxis, timeAxis, timeOf, timesOf, voxelAt, voxelLabel } from "../series.js";
+import { type GlobalSpace, invert, LayerMap, placeOf } from "../space.js";
+import { surfaceAxis, surfaceSeriesOf, zarrVectorsStore } from "../surface.js";
 
 const FIXTURE = path.join(__dirname, "fixtures", "tiny.nii.gz");
 /** The fixture's value at voxel (x, y, z), time point t. */
@@ -111,6 +112,113 @@ describe("reading time courses", () => {
   });
 });
 
+describe("coarse reads while the mouse moves", () => {
+  /**
+   * A two-level OME-Zarr 0.4 store (Zarr v2): t, z, y, x, 8 time points of
+   * 4 × 4 × 4, one time point a chunk; level 1 halves z, y, x (each voxel
+   * the mean of the 2 × 2 × 2 under it), and a level 2 that halves time too
+   * is left out.  Level 0's value is 1000 t + 100 z + 10 y + x.
+   */
+  function pyramid(): Map<string, Uint8Array | string> {
+    const files = new Map<string, Uint8Array | string>();
+    files.set(
+      ".zattrs",
+      JSON.stringify({
+        multiscales: [
+          {
+            version: "0.4",
+            axes: [{ name: "t", type: "time", unit: "second" }, { name: "z", type: "space" }, { name: "y", type: "space" }, { name: "x", type: "space" }],
+            datasets: [
+              { path: "0", coordinateTransformations: [{ type: "scale", scale: [2, 1, 1, 1] }] },
+              { path: "1", coordinateTransformations: [{ type: "scale", scale: [2, 2, 2, 2] }, { type: "translation", translation: [0, 0.5, 0.5, 0.5] }] },
+              { path: "2", coordinateTransformations: [{ type: "scale", scale: [4, 4, 4, 4] }] },
+            ],
+          },
+        ],
+      }),
+    );
+    const fine = (t: number, z: number, y: number, x: number) => 1000 * t + 100 * z + 10 * y + x;
+    const level = (path: string, shape: number[], value: (t: number, z: number, y: number, x: number) => number) => {
+      const [nt, n] = [shape[0], shape[1]];
+      files.set(`${path}/.zarray`, JSON.stringify({ zarr_format: 2, shape, chunks: [1, n, n, n], dtype: "<f4", compressor: null, fill_value: 0, order: "C", filters: null }));
+      for (let t = 0; t < nt; ++t) {
+        const data = new Float32Array(n * n * n);
+        let i = 0;
+        for (let z = 0; z < n; ++z) for (let y = 0; y < n; ++y) for (let x = 0; x < n; ++x) data[i++] = value(t, z, y, x);
+        files.set(`${path}/${t}.0.0.0`, new Uint8Array(data.buffer));
+      }
+    };
+    level("0", [8, 4, 4, 4], fine);
+    // The mean of the 2 × 2 × 2 fine voxels: their corner's value plus (100 + 10 + 1) / 2.
+    level("1", [8, 2, 2, 2], (t, z, y, x) => fine(t, 2 * z, 2 * y, 2 * x) + 55.5);
+    level("2", [4, 1, 1, 1], () => -1);
+    return files;
+  }
+
+  async function open(): Promise<{ reader: SeriesReader; info: SeriesInfo; fetched: string[] }> {
+    const files = pyramid();
+    const fetched: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      const key = String(url).replace("http://pyramid.test/", "");
+      fetched.push(key);
+      const data = files.get(key);
+      return data === undefined ? new Response(null, { status: 404 }) : new Response(data as BodyInit);
+    });
+    const reader = new SeriesReader(new ChunkCache(1 << 20));
+    return { reader, info: await reader.open("http://pyramid.test/"), fetched };
+  }
+
+  it("finds the levels with every time point, and where their voxels are", async () => {
+    const { info } = await open();
+    expect(info.levels.map((l) => l.path)).toEqual(["0", "1"]);
+    expect(info.levels[1].factor).toEqual([1, 2, 2, 2]);
+    expect(info.levels[1].offset).toEqual([0, 0.5, 0.5, 0.5]);
+    expect(info.levels[1].chunk).toEqual([1, 2, 2, 2]);
+    // Fine voxels 0 and 1 are in coarse voxel 0, 2 and 3 in 1.
+    expect(levelVoxel(info.levels[1], [0, 0, 1, 2])).toEqual([0, 0, 0, 1]);
+    expect(levelVoxel(info.levels[1], [0, 3, 2, 3])).toEqual([0, 1, 1, 1]);
+  });
+
+  it("reads a coarser level, or one time chunk in several, and the finest only from the cache when asked", async () => {
+    const { reader, fetched } = await open();
+    const signal = new AbortController().signal;
+    const voxel = () => Int32Array.from([0, 3, 2, 1]);
+    const coarse = await reader.mean(voxel(), signal, undefined, { level: 1, stride: 1 });
+    expect(Array.from(coarse)).toEqual(Array.from({ length: 8 }, (_, t) => 1000 * t + 100 * 2 + 10 * 2 + 0 + 55.5));
+    const sparse = await reader.mean(voxel(), signal, undefined, { level: 0, stride: 3 });
+    expect(Array.from(sparse).map((v) => (Number.isNaN(v) ? null : v))).toEqual([321, null, null, 3321, null, null, 6321, null]);
+    // Time points 1, 2, 4… of the finest level are not read yet.
+    expect(fetched.filter((k) => /^0\/\d/.test(k)).sort()).toEqual(["0/0.0.0.0", "0/3.0.0.0", "0/6.0.0.0"]);
+    expect(await reader.meanIfCached(voxel())).toBeUndefined();
+    const fine = await reader.mean(voxel(), signal);
+    expect(Array.from(fine)).toEqual(Array.from({ length: 8 }, (_, t) => 1000 * t + 321));
+    const before = fetched.length;
+    expect(Array.from((await reader.meanIfCached(voxel()))!)).toEqual(Array.from(fine));
+    expect(fetched.length).toBe(before);
+  });
+
+  it("plans a cheaper read for a long series in large chunks", () => {
+    const level = (shape: number[], chunk: number[], f: number): SeriesLevel => ({ path: String(f), shape, chunk, factor: [1, f, f, f], offset: [0, (f - 1) / 2, (f - 1) / 2, (f - 1) / 2] });
+    const long = (levels: SeriesLevel[]): SeriesInfo => ({ ...INFO, axes: ["t", "z", "y", "x"], shape: levels[0].shape, levels });
+    // 1200 time points of 64³ float32 chunks: 1.26 GB for one voxel.
+    const big = long([level([1200, 256, 256, 256], [1, 64, 64, 64], 1), level([1200, 128, 128, 128], [1, 64, 64, 64], 2), level([1200, 64, 64, 64], [1, 64, 64, 64], 4)]);
+    expect(readBytes(big, { level: 0, stride: 1 })).toBe(1200 * 64 ** 3 * 4);
+    // Every level's chunks are as large: one time point in 64 (19 of them, 19 MB).
+    expect(movingPlan(big)).toEqual({ level: 0, stride: 64 });
+    expect(describePlan(big, { level: 0, stride: 64 })).toBe("1 in 64 time points");
+    // A level whose one chunk is smaller is read whole instead.
+    const smaller = long([...big.levels, level([1200, 16, 16, 16], [1, 16, 16, 16], 16)]);
+    expect(movingPlan(smaller)).toEqual({ level: 3, stride: 1 });
+    expect(describePlan(smaller, { level: 3, stride: 1 })).toBe("level 3");
+    // A short series (30 MB) is read whole at once.
+    expect(movingPlan(long([level([30, 256, 256, 256], [1, 64, 64, 64], 1)]))).toBeUndefined();
+    // Time chunks of 100 time points: one in eight of them (26 MB).
+    const blocks = long([level([1200, 64, 64, 64], [100, 32, 32, 32], 1)]);
+    expect(movingPlan(blocks)).toEqual({ level: 0, stride: 8 });
+    expect(describePlan(blocks, { level: 0, stride: 8 })).toBe("100 in 800 time points");
+  });
+});
+
 /** Column-major homogeneous matrix from rows (n × (n + 1)). */
 function columnMajor(rows: number[][]): Float64Array {
   const n = rows.length;
@@ -137,7 +245,7 @@ function imageTransform(rows?: number[][]): LayerTransform {
     defaultMatrix: matrix,
   };
 }
-const INFO: SeriesInfo = { url: "http://nifti.test/", path: "0", name: "tiny", axes: ["t", "x", "y", "z"], shape: [12, 6, 5, 4], timeAxis: 0, timeUnit: "second", type: "int16" };
+const INFO: SeriesInfo = { url: "http://nifti.test/", path: "0", name: "tiny", axes: ["t", "x", "y", "z"], shape: [12, 6, 5, 4], timeAxis: 0, timeUnit: "second", type: "int16", levels: [{ path: "0", shape: [12, 6, 5, 4], chunk: [1, 6, 5, 4], factor: [1, 1, 1, 1], offset: [0, 0, 0, 0] }] };
 
 describe("positions, voxels and time points", () => {
   const map = new LayerMap(imageTransform(), SPACE);
@@ -197,10 +305,26 @@ describe("positions, voxels and time points", () => {
     expect(voxelAt(turned, INFO, [-4, 2, 0, 2])).toEqual([0, 1, 2, 0]);
   });
 
-  it("says when time is not a global dimension", () => {
+  it("reads time from the layer's local position when it is a local dimension (t')", () => {
     const t = imageTransform();
-    const local = new LayerMap({ ...t, output: { ...t.output, names: ["t'", "x", "y", "z"] } }, SPACE);
-    expect(typeof timeAxis(local, INFO, [0, 0, 0, 0])).toBe("string");
+    const transform = { ...t, output: { ...t.output, names: ["t'", "x", "y", "z"] } };
+    // Without the layer's local dimensions, time is not shown.
+    expect(typeof timeAxis(new LayerMap(transform, SPACE), INFO, [0, 0, 0, 0])).toBe("string");
+    const ng = { dimensions: { x: [1e-3, "m"], y: [1e-3, "m"], z: [1e-3, "m"] }, position: [-2.4, 2.9, 4.6] };
+    const place = placeOf(ng, { names: ["t'"], scales: [1.5], units: ["s"], position: [5.5] });
+    expect(place.space.names).toEqual(["x", "y", "z", "t'"]);
+    expect(place.globalRank).toBe(3);
+    expect(place.position).toEqual([-2.4, 2.9, 4.6, 5.5]);
+    const map = new LayerMap(transform, place.space);
+    const axis = timeAxis(map, INFO, place.position) as TimeAxis;
+    expect(axis.dim).toBe(3);
+    expect(axis.unit.label).toBe("s");
+    expect(axis.step).toBeCloseTo(1.5);
+    expect(indexAt(map, axis, place.position)).toBe(6);
+    expect(coordinateOf(map, axis, place.position, 2)).toBeCloseTo(2);
+    expect(voxelAt(map, INFO, place.position)).toEqual([0, 2, 3, 1]);
+    // A state with no local dimensions is the global space alone.
+    expect(placeOf(ng).space.names).toEqual(["x", "y", "z"]);
   });
 
   it("inverts matrices, and finds none for a singular one", () => {
@@ -328,5 +452,23 @@ describe("the plot's numbers", () => {
   it("breaks a line where values are missing", () => {
     const d = linePath([0, 1, 2, 3], [1, NaN, 2, 3], (x) => x * 10, (y) => y);
     expect(d).toBe("M0.0,1.0M20.0,2.0L30.0,3.0");
+    // A series read at some time points only is joined across the others.
+    expect(linePath([0, 1, 2, 3], [1, NaN, 2, 3], (x) => x * 10, (y) => y, true)).toBe("M0.0,1.0L20.0,2.0L30.0,3.0");
+  });
+});
+
+describe("time series on surfaces", () => {
+  it("finds a Zarr Vectors layer's store, and the series its surface header lists", () => {
+    expect(zarrVectorsStore("http://h/local/ab/sub.L.white.surf.gii/|zarr-vectors:#attributes=rest_t")).toBe("http://h/local/ab/sub.L.white.surf.gii/");
+    expect(zarrVectorsStore("http://h/local/ab/sub.L.white.surf.gii|zarr-vectors:")).toBe("http://h/local/ab/sub.L.white.surf.gii/");
+    expect(zarrVectorsStore("zarr3://http://h/a.nii/")).toBeUndefined();
+    const header = { attributes: { maps: ["rest_mean", "rest_t"], time_series: { rest_t: { source: "sub.rest.dtseries.nii", n_time_points: 7, start: 0, step: 0.72, unit: "second" }, bad: { n_time_points: 0 } } } };
+    const [series, ...rest] = surfaceSeriesOf(header);
+    expect(rest).toEqual([]);
+    expect(series).toEqual({ name: "rest_t", source: "sub.rest.dtseries.nii", count: 7, start: 0, step: 0.72, unit: "second" });
+    expect(surfaceSeriesOf({ attributes: { maps: [] } })).toEqual([]);
+    const axis = surfaceAxis(series);
+    expect([axis.count, axis.dim, axis.unit.label]).toEqual([7, -1, "s"]);
+    expect(timeOf(axis, 5)).toBeCloseTo(3.6);
   });
 });

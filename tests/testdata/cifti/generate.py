@@ -6,7 +6,8 @@ medial wall) and its label table.
     sub.L.midthickness.surf.gii   the surface
     sub.thickness.dscalar.nii     two maps (thickness, myelin), float32
     sub.aparc.dlabel.nii          one parcellation with a label table
-    sub.rest.dtseries.nii         7 time points; expected: each vertex's mean and SD (ddof 1)
+    sub.rest.dtseries.nii         7 time points, 0.72 s apart; expected: each vertex's mean and SD (ddof 1),
+                                  and its values at each time point (rest_t)
 
     python generate.py   (needs nibabel)
 """
@@ -60,6 +61,7 @@ expected = {
     "aparc": on_left(codes[0], 0.0),
     "rest_mean": on_left(series.astype(np.float64).mean(axis=0), None),
     "rest_sd": on_left(series.astype(np.float64).std(axis=0, ddof=1), None),
+    "rest_t": [on_left(row, None) for row in series],
     "aparc_labels": {str(k): [name, list(rgba)] for k, (name, rgba) in table.items()},
 }
 with open(os.path.join(HERE, "expected.json"), "w") as f:
