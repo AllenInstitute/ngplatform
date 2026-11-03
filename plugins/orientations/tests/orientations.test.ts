@@ -194,6 +194,30 @@ describe("glyphs", () => {
     expect(none.count).toBe(0);
   });
 
+  it("finds an ODF's peaks: two at a crossing, one along a single fibre", async () => {
+    vi.stubGlobal("fetch", storeFetch(stores));
+    const reader = new OrientationReader();
+    const opened = await reader.open("http://synthetic.test/sh.ome.zarr/");
+    const voxels = await reader.voxels(0, { lo: [4, 12, 2], hi: [21, 13, 3] }, new AbortController().signal);
+    const pick = (x: number) => [...Array(voxels.count).keys()].find((k) => voxels.indices[3 * k] === x)!;
+    const values = new Float32Array(90);
+    values.set(voxels.values.subarray(45 * pick(20), 45 * pick(20) + 45), 0);
+    values.set(voxels.values.subarray(45 * pick(4), 45 * pick(4) + 45), 45);
+    const set = computeGlyphs([20, 12, 2, 4, 12, 2], values, 45, opened.levels[0].voxelToRas, options({ shGlyph: "peaks" }));
+    expect(set.shape).toBe("lines");
+    // The crossing's two peaks, then the single fibre's one.
+    expect(set.count).toBe(3);
+    const d = Array.from(set.dirs!);
+    const along = (k: number) => [0, 1, 2].reduce((best, a) => (Math.abs(d[3 * k + a]) > Math.abs(d[3 * k + best]) ? a : best), 0);
+    expect([along(0), along(1)].sort()).toEqual([0, 1]);
+    expect(along(2)).toBe(0);
+    // Each within 10° of its axis.
+    for (let k = 0; k < 3; ++k) {
+      const n = Math.hypot(d[3 * k], d[3 * k + 1], d[3 * k + 2]);
+      expect(Math.abs(d[3 * k + along(k)]) / n).toBeGreaterThan(Math.cos((10 * Math.PI) / 180));
+    }
+  });
+
   it("averages a coarse level's crossing from its finer voxels", async () => {
     vi.stubGlobal("fetch", storeFetch(stores));
     const reader = new OrientationReader();

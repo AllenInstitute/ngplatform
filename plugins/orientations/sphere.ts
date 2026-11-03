@@ -13,6 +13,8 @@ export interface Sphere {
   faces: Uint32Array;
   /** Per vertex: neighbours a, b, c, d in order around it (a opposite c, b opposite d). */
   around: Uint32Array;
+  /** Per vertex: every neighbour, in order around it. */
+  rings: number[][];
   count: number;
 }
 
@@ -100,6 +102,7 @@ export function icosphere(subdivisions: number): Sphere {
     next[c].set(a, b);
   }
   const around = new Uint32Array(4 * count);
+  const rings: number[][] = [];
   for (let i = 0; i < count; ++i) {
     const ring: number[] = [];
     let at = next[i].keys().next().value as number;
@@ -107,13 +110,14 @@ export function icosphere(subdivisions: number): Sphere {
       ring.push(at);
       at = next[i].get(at)!;
     }
+    rings.push(ring);
     const n = ring.length;
     around[4 * i] = ring[0];
     around[4 * i + 1] = ring[Math.round(n / 4)];
     around[4 * i + 2] = ring[Math.round(n / 2)];
     around[4 * i + 3] = ring[Math.round((3 * n) / 4) % n];
   }
-  const sphere: Sphere = { vertices: Float32Array.from(verts.flat()), faces: Uint32Array.from(faces.flat()), around, count };
+  const sphere: Sphere = { vertices: Float32Array.from(verts.flat()), faces: Uint32Array.from(faces.flat()), around, rings, count };
   cache.set(subdivisions, sphere);
   return sphere;
 }

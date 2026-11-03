@@ -32,6 +32,8 @@ export interface Saved {
   flips: [boolean, boolean, boolean];
   normalise: Normalise;
   tensorGlyph: "ellipsoid" | "line";
+  /** Spherical harmonics as ODF shapes, or as lines along their peaks. */
+  shGlyph: "odf" | "peaks";
   /** A glyph's size: 1 fills its voxel. */
   size: number;
   /** Glyphs at least this many pixels apart: the level is the finest that keeps them so. */
@@ -61,6 +63,7 @@ export function readSaved(raw: unknown): Saved {
     flips: flips as [boolean, boolean, boolean],
     normalise: pick(s.normalise, ["minmax", "max", "none"], "minmax"),
     tensorGlyph: pick(s.tensorGlyph, ["ellipsoid", "line"], "ellipsoid"),
+    shGlyph: pick(s.shGlyph, ["odf", "peaks"], "odf"),
     size: num(s.size, 0.2, 3, 1),
     spacing: num(s.spacing, 4, 200, 24),
     maxGlyphs: num(s.maxGlyphs, 100, 50000, 8000),
@@ -390,7 +393,7 @@ class Orientations {
     const said = String(opened.metadata?.order ?? "");
     const tensorOrder: TensorOrder = this.saved.tensorOrder !== "auto" ? this.saved.tensorOrder : said === "dipy" || said === "mrtrix" ? said : "fsl";
     const toData = withFlips(frame === "voxel" ? voxelFrame(level0.voxelToRas) : [1, 0, 0, 0, 1, 0, 0, 0, 1], this.saved.flips);
-    return { kind, basis, tensorOrder, toData, normalise: this.saved.normalise, tensorGlyph: this.saved.tensorGlyph, subdivisions, minAnisotropy: this.saved.minAnisotropy };
+    return { kind, basis, tensorOrder, toData, normalise: this.saved.normalise, tensorGlyph: this.saved.tensorGlyph, shGlyph: this.saved.shGlyph, subdivisions, minAnisotropy: this.saved.minAnisotropy };
   }
 
   // ------------------------------------------------------------- frames
@@ -861,6 +864,17 @@ class Orientations {
           ),
           kind === "sh" || saved.kind === "auto"
             ? select("SH basis", saved.basis, [["auto", "Automatic (the store's, else DIPY's)"], ...SH_BASES], (v) => this.set({ basis: v as Saved["basis"] }))
+            : null,
+          kind === "sh"
+            ? select(
+                "SH glyph",
+                saved.shGlyph,
+                [
+                  ["odf", "ODF shape"],
+                  ["peaks", "Peaks (up to 3, over half the largest)"],
+                ],
+                (v) => this.set({ shGlyph: v as Saved["shGlyph"] }),
+              )
             : null,
           kind === "tensor" ? select("Tensor order", saved.tensorOrder, [["auto", "Automatic (the store's, else FSL's)"], ...TENSOR_ORDERS], (v) => this.set({ tensorOrder: v as Saved["tensorOrder"] })) : null,
           kind === "tensor"

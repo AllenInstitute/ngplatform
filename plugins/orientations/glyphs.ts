@@ -17,7 +17,7 @@
  * it, and the tests check it.
  */
 import { evaluate, gfa, lmaxOf, type ShBasis, shMatrix } from "./sh.js";
-import { icosphere } from "./sphere.js";
+import { icosphere, type Sphere } from "./sphere.js";
 import { eigenSymmetric, fractionalAnisotropy, type TensorOrder, tensorMatrix } from "./tensor.js";
 
 export type OrientationKind = "sh" | "tensor" | "vector" | "peaks";
@@ -32,6 +32,8 @@ export interface GlyphOptions {
   normalise: Normalise;
   /** Tensors as ellipsoids, or as lines along the principal direction. */
   tensorGlyph: "ellipsoid" | "line";
+  /** Spherical harmonics as ODF shapes, or as lines along each ODF's peaks (as MRtrix's sh2peaks). */
+  shGlyph?: "odf" | "peaks";
   /** The sphere's subdivisions (2: 162 vertices, 3: 642). */
   subdivisions: number;
   /** Leave out glyphs less anisotropic than this (GFA for SH, FA for tensors), 0..1. */
@@ -137,6 +139,36 @@ export function computeGlyphs(indices: ArrayLike<number>, values: Float32Array, 
     return centres;
   };
   const { kind, toData } = options;
+  if (kind === "sh" && options.shGlyph === "peaks") {
+    const lmax = lmaxOf(components);
+    if (lmax === undefined) throw new Error(`${components} components is not a spherical-harmonic order (6, 15, 28, 45, 66, …)`);
+    // Peaks want a fine sphere whatever the glyphs' size: 642 points, about 8° apart.
+    const sphere = icosphere(3);
+    const matrix = basisAtSphere(options.basis, lmax, 3, toData);
+    const row = new Float32Array(sphere.count);
+    const lines: { voxel: number; v: number; length: number }[] = [];
+    let globalMax = 0;
+    for (const i of kept) {
+      evaluate(matrix, components, values, i * components, row);
+      const peaks = odfPeaks(row, sphere);
+      if (peaks.length === 0) continue;
+      const top = peaks[0].value;
+      globalMax = Math.max(globalMax, top);
+      for (const p of peaks) lines.push({ voxel: i, v: p.vertex, length: options.normalise === "none" ? p.value : p.value / top });
+    }
+    const centres = centresOf(lines.map((l) => l.voxel));
+    const dirs = new Float32Array(3 * lines.length);
+    const colours = new Float32Array(3 * lines.length);
+    lines.forEach(({ v, length }, k) => {
+      const scale = options.normalise === "none" ? (globalMax > 0 ? length / globalMax : 0) : length;
+      for (let r = 0; r < 3; ++r) {
+        const d = sphere.vertices[3 * v + r];
+        dirs[3 * k + r] = d * scale;
+        colours[3 * k + r] = Math.abs(d);
+      }
+    });
+    return { shape: "lines", count: lines.length, centres, dirs, colours };
+  }
   if (kind === "sh") {
     const lmax = lmaxOf(components);
     if (lmax === undefined) throw new Error(`${components} components is not a spherical-harmonic order (6, 15, 28, 45, 66, …)`);
@@ -253,4 +285,54 @@ export function computeGlyphs(indices: ArrayLike<number>, values: Float32Array, 
     }
   });
   return { shape: "lines", count: lines.length, centres, dirs, colours };
+}
+
+const antipodes = new Map<Sphere, Uint32Array>();
+
+/** Each vertex's opposite (an icosphere has one for every vertex). */
+function antipodeOf(sphere: Sphere): Uint32Array {
+  let out = antipodes.get(sphere);
+  if (out === undefined) {
+    const { vertices: v, count } = sphere;
+    out = new Uint32Array(count);
+    for (let i = 0; i < count; ++i) {
+      let best = 0;
+      let bestDot = Infinity;
+      for (let j = 0; j < count; ++j) {
+        const dot = v[3 * i] * v[3 * j] + v[3 * i + 1] * v[3 * j + 1] + v[3 * i + 2] * v[3 * j + 2];
+        if (dot < bestDot) [best, bestDot] = [j, dot];
+      }
+      out[i] = best;
+    }
+    antipodes.set(sphere, out);
+  }
+  return out;
+}
+
+/**
+ * An ODF's peaks: the sphere's vertices at least as high as every
+ * neighbour, positive, and at least `relative` of the highest, one of each
+ * opposite pair, highest first, at most `most`.  Directions are the
+ * vertices' (RAS: the values were evaluated at RAS directions).
+ */
+export function odfPeaks(values: ArrayLike<number>, sphere: Sphere, relative = 0.5, most = 3): { vertex: number; value: number }[] {
+  const opposite = antipodeOf(sphere);
+  const found: { vertex: number; value: number }[] = [];
+  for (let v = 0; v < sphere.count; ++v) {
+    const value = values[v];
+    if (!(value > 0)) continue;
+    if (sphere.rings[v].every((n) => values[n] <= value)) found.push({ vertex: v, value });
+  }
+  found.sort((a, b) => b.value - a.value);
+  const out: { vertex: number; value: number }[] = [];
+  const taken = new Set<number>();
+  for (const p of found) {
+    if (out.length >= most || p.value < relative * (found[0]?.value ?? 0)) break;
+    if (taken.has(p.vertex) || taken.has(opposite[p.vertex])) continue;
+    // Plateaus give neighbouring maxima: keep only one.
+    if (sphere.rings[p.vertex].some((n) => taken.has(n) || taken.has(opposite[n]))) continue;
+    taken.add(p.vertex);
+    out.push(p);
+  }
+  return out;
 }
