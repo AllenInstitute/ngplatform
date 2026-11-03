@@ -15,7 +15,7 @@
 import type { Json, LayerTransform, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { storeOf } from "../volume-view/sources.js";
 import { apply4, describe, fit, type Fit, identity4, invert4, type Mat4, MINIMUM, type Model, multiply4, type Vec3 } from "./fit.js";
-import { readTransformFile, type VolumeGeometry, writeItk, writeLta, writePlain } from "./formats.js";
+import { needsGeometry, readTransformFile, type VolumeGeometry, writeItk, writeLta, writePlain } from "./formats.js";
 import {
   axisOrder,
   identityManual,
@@ -544,7 +544,15 @@ class Registration {
     const d = t && physical(t, t.defaultMatrix);
     if (!name || !t || !d) return;
     try {
-      const r = permute(readTransformFile(file.name, await file.text()), axisOrder(t.output.names));
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let geometry: { moving?: VolumeGeometry; fixed?: VolumeGeometry } | undefined;
+      if (needsGeometry(file.name, bytes)) {
+        // register.dat and FSL .mat are relative to both voxel grids: this layer's, and the fixed image chosen under "Onto the grid of".
+        if (!this.grid || this.grid === ENLARGE) throw new Error("it is relative to both images; choose the fixed image under “Onto the grid of” first");
+        geometry = { moving: await this.geometry(name), fixed: await this.geometry(this.grid) };
+        if (!geometry.moving || !geometry.fixed) throw new Error("the images' voxel grids could not be read");
+      }
+      const r = permute(readTransformFile(file.name, bytes, geometry), axisOrder(t.output.names));
       if (this.saved.base === undefined) this.save({ base: Array.from(t.matrix) });
       this.placed(name, neuroglancer(t, multiply4(r, d)));
       this.ctx.log.info(`Placed ${name} with ${file.name}.`);
@@ -811,7 +819,7 @@ class Registration {
       return el("label", { class: "field" }, el("span", {}, label), s);
     };
     const redraw = () => this.panelUpdate?.(true);
-    const file = el("input", { type: "file", accept: ".txt,.lta,.mat,.tfm,.xfm", hidden: true }) as HTMLInputElement;
+    const file = el("input", { type: "file", accept: ".txt,.lta,.mat,.tfm,.xfm,.dat", hidden: true }) as HTMLInputElement;
     file.addEventListener("change", () => file.files?.[0] && void this.importFile(file.files[0]));
     const segmentation = this.ctx.viewer.layers().find((l) => l.name === name)?.type === "segmentation";
     const grids = this.grids(name);
@@ -835,7 +843,7 @@ class Registration {
         "div",
         { class: "rg-row" },
         el("button", { class: "btn small", type: "button", disabled: !has, title: "The layer's new placement, relative to its file's, moving to fixed RAS mm", onclick: () => void this.exportFile(this.transformFormat) }, "Save transform"),
-        el("button", { class: "btn outline small", type: "button", disabled: !has, onclick: () => file.click() }, "Import…"),
+        el("button", { class: "btn outline small", type: "button", disabled: !has, title: "LTA, ITK / ANTs (.txt, .mat), 4 × 4 text, MNI .xfm; register.dat and FSL .mat with the fixed image chosen under “Onto the grid of”", onclick: () => file.click() }, "Import…"),
         file,
       ),
       el("h3", { class: "section-title" }, "Image"),

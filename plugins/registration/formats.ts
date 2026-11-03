@@ -11,6 +11,11 @@
  *   written, with the volumes' geometry when known (as Freeview's Save Reg
  *   writes it, so FreeSurfer's tools need no other file); VOX to VOX (type
  *   0, Freeview's own) read through the geometry it carries.
+ * - MNI `.xfm`: RAS to RAS, as written.
+ * - FreeSurfer `register.dat` (tkregister) and FSL FLIRT `.mat`: relative
+ *   to both volumes' voxel grids, so read with both geometries.
+ * - ANTs `.mat` (binary, as antsRegistration's 0GenericAffine.mat): the
+ *   ITK parameters in a MATLAB v4 file.
  */
 import { apply4, identity4, invert4, type Mat4, multiply4 } from "./fit.js";
 
@@ -169,8 +174,103 @@ export function readXfm(text: string): Mat4 {
   return Float64Array.from([...numbers.slice(0, 12), 0, 0, 0, 1]);
 }
 
-/** Reads a file by its name and contents, in whichever of the formats it is. */
-export function readTransformFile(name: string, text: string): Mat4 {
+/** tkregister's voxel-to-RAS: the volume's voxel sizes, laid out as a conformed (LIA) volume, centred on 0. */
+function tkrVoxelToRas(g: VolumeGeometry): Mat4 {
+  const m = g.voxelToRas;
+  const [dx, dy, dz] = [0, 1, 2].map((k) => Math.hypot(m[k], m[4 + k], m[8 + k]));
+  const [nx, ny, nz] = g.size;
+  return Float64Array.from([-dx, 0, 0, (dx * nx) / 2, 0, 0, dz, (-dz * nz) / 2, 0, -dy, 0, (dy * ny) / 2, 0, 0, 0, 1]);
+}
+
+/**
+ * FreeSurfer's register.dat (tkregister, bbregister): after four header
+ * lines (subject, in-plane and between-plane resolution, intensity), a
+ * 4 × 4 from the fixed volume's tkregister RAS to the moving one's.
+ */
+export function readRegisterDat(text: string, moving: VolumeGeometry, fixed: VolumeGeometry): Mat4 {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim() !== "");
+  if (lines.length < 8) throw new Error("a register.dat has 4 header lines and 4 matrix rows");
+  const r = fromRows(lines.slice(4, 8).flatMap((l) => numbers(l)));
+  // fixed RAS <- fixed tkRAS <- moving tkRAS <- moving RAS
+  return multiply4(fixed.voxelToRas, multiply4(invert4(tkrVoxelToRas(fixed)), multiply4(invert4(r), multiply4(tkrVoxelToRas(moving), invert4(moving.voxelToRas)))));
+}
+
+/** FSL's scaled voxel coordinates: voxel sizes along each axis, x reversed when the voxel-to-RAS keeps handedness. */
+function fslVoxelToCoords(g: VolumeGeometry): Mat4 {
+  const m = g.voxelToRas;
+  const d = [0, 1, 2].map((k) => Math.hypot(m[k], m[4 + k], m[8 + k]));
+  const det =
+    m[0] * (m[5] * m[10] - m[6] * m[9]) - m[1] * (m[4] * m[10] - m[6] * m[8]) + m[2] * (m[4] * m[9] - m[5] * m[8]);
+  const s = Float64Array.from([d[0], 0, 0, 0, 0, d[1], 0, 0, 0, 0, d[2], 0, 0, 0, 0, 1]);
+  if (det > 0) {
+    s[0] = -d[0];
+    s[3] = (g.size[0] - 1) * d[0];
+  }
+  return s;
+}
+
+/** FSL FLIRT's .mat: a 4 × 4 from the moving (input) volume's FSL coordinates to the fixed (reference) one's. */
+export function readFslMat(text: string, moving: VolumeGeometry, fixed: VolumeGeometry): Mat4 {
+  const f = readPlain(text);
+  return multiply4(fixed.voxelToRas, multiply4(invert4(fslVoxelToCoords(fixed)), multiply4(f, multiply4(fslVoxelToCoords(moving), invert4(moving.voxelToRas)))));
+}
+
+/** The variables in a MATLAB v4 file of doubles (as ITK writes ANTs' .mat), each as its values. */
+function readMatV4(bytes: Uint8Array): Map<string, Float64Array> {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const out = new Map<string, Float64Array>();
+  for (let at = 0; at + 20 <= bytes.length; ) {
+    let little = true;
+    let type = view.getInt32(at, true);
+    if (type < 0 || type > 4052) {
+      little = false;
+      type = view.getInt32(at, false);
+    }
+    const [rows, cols, imaginary, nameLength] = [4, 8, 12, 16].map((o) => view.getInt32(at + o, little));
+    const precision = Math.floor(type / 10) % 10;
+    if (precision !== 0 && precision !== 1) throw new Error("only double and single precision MATLAB v4 variables are read");
+    const name = new TextDecoder().decode(bytes.subarray(at + 20, at + 20 + nameLength - 1));
+    const size = precision === 0 ? 8 : 4;
+    const n = rows * cols * (imaginary ? 2 : 1);
+    let p = at + 20 + nameLength;
+    if (p + n * size > bytes.length) throw new Error("the file ends inside a variable");
+    const values = new Float64Array(rows * cols);
+    for (let i = 0; i < values.length; ++i, p += size) values[i] = size === 8 ? view.getFloat64(p, little) : view.getFloat32(p, little);
+    out.set(name, values);
+    at = at + 20 + nameLength + n * size;
+  }
+  return out;
+}
+
+/** ANTs' binary .mat (ITK's MATLAB transform file): the affine's parameters and its centre, as the ITK text file. */
+export function readAntsMat(bytes: Uint8Array): Mat4 {
+  const variables = readMatV4(bytes);
+  const key = [...variables.keys()].find((k) => /^(Affine|MatrixOffset)Transform_(double|float)_3_3$/.test(k));
+  if (key === undefined) throw new Error(`no 3-D affine in the file (found ${[...variables.keys()].join(", ") || "nothing"})`);
+  const fixed = variables.get("fixed") ?? [0, 0, 0];
+  return readItk(`Transform: ${key}\nParameters: ${Array.from(variables.get(key)!).join(" ")}\nFixedParameters: ${Array.from(fixed).join(" ")}\n`);
+}
+
+/** What a transform file needs besides itself: both volumes' geometry (register.dat, FSL .mat). */
+export function needsGeometry(name: string, bytes: Uint8Array): boolean {
+  return /\.dat$/i.test(name) || (/\.mat$/i.test(name) && !isBinary(bytes));
+}
+
+const isBinary = (bytes: Uint8Array) => bytes.subarray(0, 512).includes(0);
+
+/**
+ * Reads a file by its name and contents, in whichever of the formats it
+ * is; register.dat and FSL .mat need `geometry`.
+ */
+export function readTransformFile(name: string, contents: string | Uint8Array, geometry?: { moving?: VolumeGeometry; fixed?: VolumeGeometry }): Mat4 {
+  const bytes = typeof contents === "string" ? new TextEncoder().encode(contents) : contents;
+  if (/\.mat$/i.test(name) && isBinary(bytes)) return readAntsMat(bytes);
+  const text = typeof contents === "string" ? contents : new TextDecoder().decode(contents);
+  if (needsGeometry(name, bytes)) {
+    const { moving, fixed } = geometry ?? {};
+    if (moving === undefined || fixed === undefined) throw new Error("this file is relative to both images' voxel grids, so both are needed");
+    return /\.dat$/i.test(name) ? readRegisterDat(text, moving, fixed) : readFslMat(text, moving, fixed);
+  }
   if (/\.xfm$/i.test(name) || /Linear_Transform\s*=/.test(text)) return readXfm(text);
   if (/\.lta$/i.test(name) || /^\s*type\s*=/m.test(text)) return readLta(text);
   if (/^Transform:/m.test(text) || /^Parameters:/m.test(text)) return readItk(text);

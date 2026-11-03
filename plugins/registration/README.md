@@ -16,7 +16,7 @@ Balbastre (transform files, moving-to-fixed RAS mm).
 | `plugin.ts` | The panel: moving by hand, pairs, fitting and applying, landmark layers, import, saving |
 | `manual.ts` | Freeview's translate, rotate, scale and flip, composed as `LayerMRI::DoTransform` does; its slider ranges |
 | `fit.ts` | Translation, rigid and similarity (Horn's quaternion method), affine (least squares); residuals |
-| `formats.ts` | Plain 4 × 4, ITK / ANTs `.txt`, FreeSurfer `.lta` (RAS to RAS with both volumes' geometry; VOX to VOX read), MNI `.xfm` read |
+| `formats.ts` | Plain 4 × 4, ITK / ANTs `.txt`, FreeSurfer `.lta` (RAS to RAS with both volumes' geometry; VOX to VOX read); read only: MNI `.xfm`, ANTs binary `.mat`, `register.dat` and FSL `.mat` (with both volumes' geometry) |
 | `volume_io.ts` | Resampling (nearest, trilinear, cubic B-spline with its prefilter) and the enlarged grid; the writers (NIfTI, MGH, OME-Zarr, zip) are the platform's (`src/virtual/out/volume.ts`) |
 | `save_worker.ts` | Reads a layer's store (with the volume view's reader) and writes it moved, off the main thread |
 | `tests/` | `npm test` runs them |
@@ -25,7 +25,9 @@ Neuroglancer keeps a layer transform's linear part as a ratio of physical
 lengths and its translation in multiples of the output scales; `physical()`
 and `neuroglancer()` in `plugin.ts` convert to and from millimetres.
 
-Checked against FreeSurfer 7: `lta_convert` reads the LTAs written here
+Checked against FreeSurfer 7: `register.dat` and FSL `.mat` read to the
+matrices `lta_convert --inreg` / `--infsl` give (in `tests/fixtures`);
+`lta_convert` reads the LTAs written here
 (its VOX to VOX and ITK conversions read back to the same matrix), and
 `mri_vol2vol --lta` resamples to the same image as Save image (trilinear to
 about 1e-6, nearest neighbour identical, cubic B-spline to the rounding of

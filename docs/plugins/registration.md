@@ -27,7 +27,11 @@ transform, or the moved image.
   residual of each pair.
 - **Transform files:** save or import FreeSurfer `.lta` (RAS to RAS with
   both volumes' geometry), ITK / ANTs `.txt`, or a plain 4 × 4 matrix;
-  import MNI `.xfm` (FreeSurfer's `talairach.xfm`) too.
+  import MNI `.xfm` (FreeSurfer's `talairach.xfm`), ANTs' binary `.mat`
+  (`0GenericAffine.mat`), FreeSurfer `register.dat` (tkregister,
+  bbregister) and FSL FLIRT `.mat` too. The last two are relative to both
+  images' voxel grids: choose the fixed image under *Onto the grid of*
+  before importing.
 - **Save image:** NIfTI, FreeSurfer `.mgz`/`.mgh` or OME-Zarr, resampled
   (nearest, trilinear or cubic; onto its own grid, its own grid enlarged to
   hold all of the moved image, or another image's) or with the voxels

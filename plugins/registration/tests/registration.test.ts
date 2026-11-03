@@ -112,3 +112,35 @@ describe("MNI .xfm", () => {
     expect(Array.from(readTransformFile("talairach.xfm", text))).toEqual([1.1, 0.02, -0.01, -2.5, -0.03, 1.05, 0.2, -18, 0.01, -0.15, 1.2, 3, 0, 0, 0, 1]);
   });
 });
+
+describe("transforms relative to both voxel grids", () => {
+  const fixtures = new URL("./fixtures/", import.meta.url);
+  const geometry = (g: { size: number[]; voxelToRas: number[] }) => ({ size: g.size as [number, number, number], voxelToRas: Float64Array.from(g.voxelToRas) });
+
+  it("reads register.dat and FSL .mat as FreeSurfer's lta_convert does", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { readTransformFile } = await import("../formats.js");
+    const f = JSON.parse(readFileSync(new URL("tkreg_fsl.json", fixtures), "utf8"));
+    for (const m of ["mov", "movlas"]) {
+      const g = { moving: geometry(f.moving[m]), fixed: geometry(f.fixed) };
+      for (const [kind, name, text] of [["dat", "register.dat", f.registerDat], ["fsl", "flirt.mat", f.flirtMat]]) {
+        const got = Array.from(readTransformFile(name, text, g));
+        f.expected[`${kind}_${m}`].forEach((v: number, i: number) => expect(got[i]).toBeCloseTo(v, 3));
+      }
+    }
+  });
+
+  it("asks for both geometries for register.dat and FSL .mat", async () => {
+    const { readTransformFile } = await import("../formats.js");
+    expect(() => readTransformFile("a.mat", "1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n")).toThrow(/both/);
+  });
+
+  it("reads ANTs' binary .mat as its text twin", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { readTransformFile } = await import("../formats.js");
+    const binary = new Uint8Array(readFileSync(new URL("ants_affine.mat", fixtures)));
+    const text = readFileSync(new URL("ants_affine.txt", fixtures), "utf8");
+    const a = Array.from(readTransformFile("0GenericAffine.mat", binary));
+    Array.from(readTransformFile("a.txt", text)).forEach((v, i) => expect(a[i]).toBeCloseTo(v, 12));
+  });
+});
