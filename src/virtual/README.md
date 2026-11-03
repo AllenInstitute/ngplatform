@@ -115,7 +115,7 @@ and the levels the budget keeps are written into the cache. Memory stays at
 about one slab per level. Until it is done, chunks are made on request as
 above, and a cancelled build resumes from the levels already kept. The
 platform offers the build when an image of 1 GB or more is first viewed
-("Build the overview of this 16 GB image in the background? … about
+("Build the overview of this 16 GB image in the background? … at most
 330 MB is kept"), and the Datasets row menu has it too (`src/ui/overview.ts`).
 
 **A TIFF's own pyramid** (`images/tiff.ts`). Each page's SubIFDs (pyramidal

@@ -39,7 +39,7 @@ export async function buildOverview(wb: Workbench, url: string, name: string): P
     const result = await wb.jobs.run(`Overview of ${name}`, async (control) => {
       let asked = false;
       while (s.state === "building") {
-        control.progress(s.total > 0 ? s.done / s.total : 0, `Reading ${sizeText(s.fileBytes)} once; keeping ${sizeText(s.kept.bytes)}`);
+        control.progress(s.total > 0 ? s.done / s.total : 0, `Reading ${sizeText(s.fileBytes)} once; ${sizeText(s.cached.bytes)} kept of at most ${sizeText(s.budget)}`);
         await new Promise((resolve) => setTimeout(resolve, 500));
         if (control.cancelled && !asked) {
           asked = true;
@@ -73,7 +73,9 @@ export function offerOverviews(wb: Workbench): void {
     void (async () => {
       const s = await status(wb, url, "status").catch(() => undefined);
       if (s === undefined || s.noCache || s.built || s.state === "building" || s.kept.whole.length === 0) return;
-      offer(`Build the overview of this ${sizeText(file.size)} image in the background? The file is read once; about ${sizeText(s.kept.bytes)} is kept for later visits.`, [
+      // The budget, or all the computed levels when they take less.
+      const kept = Math.min(s.budget, s.levels.reduce((n, l) => n + (l.from === "computed" ? l.bytes : 0), 0));
+      offer(`Build the overview of this ${sizeText(file.size)} image in the background? The file is read once; at most ${sizeText(kept)} is kept for later visits.`, [
         { label: "Not now" },
         { label: "Build", primary: true, run: () => void buildOverview(wb, url, file.name) },
       ]);

@@ -345,10 +345,24 @@ export class OverviewCache {
    * when no other worker has it; undefined where there is no OPFS.  Others'
    * caches beyond the total are dropped, least recently used first.
    */
-  static async open(key: string, info: { name: string; size: number; lastModified: number }, budget: (free: number | undefined) => Promise<{ budget: number; floor: number }>): Promise<OverviewCache | undefined> {
+  static open(key: string, info: { name: string; size: number; lastModified: number }, budget: (free: number | undefined) => Promise<{ budget: number; floor: number }>): Promise<OverviewCache | undefined> {
+    // One cache a file in this worker, whichever store (the file opened again) asks.
+    const dirName = cacheName(key);
+    let cache = openCaches.get(dirName);
+    if (cache === undefined) {
+      cache = OverviewCache.openNew(dirName, info, budget);
+      openCaches.set(dirName, cache);
+      cache.then(
+        (c) => c === undefined && openCaches.delete(dirName),
+        () => openCaches.delete(dirName),
+      );
+    }
+    return cache;
+  }
+
+  private static async openNew(dirName: string, info: { name: string; size: number; lastModified: number }, budget: (free: number | undefined) => Promise<{ budget: number; floor: number }>): Promise<OverviewCache | undefined> {
     const parent = await root();
     if (parent === undefined) return undefined;
-    const dirName = cacheName(key);
     const writer = await takeLock(`${ROOT}/${dirName}`);
     const dir = await parent.getDirectoryHandle(dirName, { create: writer });
     const index = await readJson<CacheIndex>(dir, INDEX);
@@ -451,6 +465,9 @@ export class OverviewCache {
     }, 1000);
   }
 }
+
+/** The caches this worker has open, by directory. */
+const openCaches = new Map<string, Promise<OverviewCache | undefined>>();
 
 /** Takes the Web Lock `name` for as long as this worker lives; false when another holds it. */
 function takeLock(name: string): Promise<boolean> {
