@@ -18,6 +18,10 @@ The platform provides:
 - **An SDK** (`@ngplatform/sdk`): plugins add tabs, commands, views,
   overlays, jobs and data formats through it.
 
+<p align="center">
+  <img src="docs/images/architecture.webp" alt="How ngplatform fits together: the user and plugins (from GitHub or this computer) work through ngplatform; it computes locally and in the cloud, saves to local data, and shows data in Neuroglancer, local data as virtual Zarr" width="640" />
+</p>
+
 **Docs:** https://ngplatform.readthedocs.io/ has the user guide, a page for
 each plugin and how to contribute (sources in [`docs/`](docs/)).
 
