@@ -2,10 +2,26 @@
 import { MGH_FILE, openMgh } from "./mgh.js";
 import { type NiftiStore, openNifti } from "./nifti.js";
 import { NPY_FILE, openNpy } from "./npy.js";
-import { LABEL_NAME } from "./store.js";
+import { FilteredStore, parseFilterName } from "./filters.js";
+import { LABEL_NAME, type VirtualStore } from "./store.js";
 import { openTiff, TIFF_FILE } from "./tiff.js";
 
-export function openImage(file: Blob & { name: string }): Promise<NiftiStore> {
+/**
+ * A filtered view of an image is a file named `<image's file name>~<filter>.vfilter`
+ * holding the image's own bytes: opened as the image, filtered on the fly (filters.ts).
+ */
+export const FILTER_FILE = /^(.*)~([^~]+)\.vfilter$/;
+
+export async function openImage(file: Blob & { name: string }): Promise<VirtualStore & { name: string }> {
+  const filtered = FILTER_FILE.exec(file.name);
+  if (filtered !== null) {
+    const source = await openImage(new File([file], filtered[1]));
+    return FilteredStore.open(source, parseFilterName(filtered[2]), `${source.name} (${filtered[2].split("-")[0]})`);
+  }
+  return openUnfiltered(file);
+}
+
+function openUnfiltered(file: Blob & { name: string }): Promise<NiftiStore> {
   const label = LABEL_NAME.test(file.name);
   if (TIFF_FILE.test(file.name)) return openTiff(file, file.name.replace(/(\.ome)?\.tiff?$/i, ""));
   if (NPY_FILE.test(file.name)) return openNpy(file, file.name.replace(NPY_FILE, ""));

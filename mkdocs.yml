@@ -51,6 +51,7 @@ nav:
       - Registration: plugins/registration.md
       - Volume rendering: plugins/volume-rendering.md
       - Collections: plugins/collections.md
+      - Filters: plugins/filters.md
       - Ideas for new plugins: plugins/ideas.md
       - Page template: plugins/template.md
   - Contributing: contributing.md

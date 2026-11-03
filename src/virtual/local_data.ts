@@ -43,6 +43,14 @@ export const MGH_FORMAT: VirtualFormat = {
   format: "FreeSurfer volume",
 };
 
+/** A filtered view of an image (images/filters.ts), read by the same worker. */
+export const FILTER_FORMAT: VirtualFormat = {
+  ...NIFTI_FORMAT,
+  pattern: /\.vfilter$/i,
+  extensions: [],
+  format: "Filtered image",
+};
+
 /** NumPy .npy arrays (2-D to 4-D), read by the same worker (images/npy.ts). */
 export const NPY_FORMAT: VirtualFormat = {
   ...NIFTI_FORMAT,
@@ -150,7 +158,7 @@ export class LocalData {
   readonly base: string;
   private worker: Promise<ServiceWorker | undefined> | undefined;
   /** Files read as virtual stores, and the workers that serve them. */
-  private formats: VirtualFormat[] = [NIFTI_FORMAT, MGH_FORMAT, NPY_FORMAT, TIFF_FORMAT, ...ZARR_VECTORS_VIRTUAL];
+  private formats: VirtualFormat[] = [NIFTI_FORMAT, MGH_FORMAT, NPY_FORMAT, TIFF_FORMAT, FILTER_FORMAT, ...ZARR_VECTORS_VIRTUAL];
   private readonly virtualWorkers = new Map<VirtualFormat, Worker>();
 
   constructor(base = new URL(".", location.href).href) {

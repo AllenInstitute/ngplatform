@@ -185,6 +185,8 @@ export interface WorkspaceApi {
     open(file: File, options?: { derived?: boolean }): Promise<{ source: string; name: string; kind: string }[]>;
     /** Lets go of a file opened with `open`, given its source. */
     close(source: string): void;
+    /** The file on this computer a layer's source reads (an image or tractogram opened from it), if any. */
+    sourceFile(source: string): Promise<File | undefined>;
   };
 }
 

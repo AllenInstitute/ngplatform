@@ -35,6 +35,9 @@ import {
   sceneDatasets,
   switchScene,
   syncDatasets,
+  sourceUrls,
+  DERIVED_LOCAL,
+  normaliseUrl,
   uniqueName,
   unusedDatasets,
 } from "../core/workspace.js";
@@ -199,7 +202,8 @@ export class WorkspaceStore {
     // Selecting a layer or pinning a pick is not an edit: it updates the
     // current undo entry instead of adding one.
     const editKey = editSignature(workspace);
-    if (this.amend || !this.inputSinceOpen || (this.lastEditKey !== undefined && editKey === this.lastEditKey && !this.history.isAdopting)) {
+    const echo = performance.now() - this.quietSince < QUIET_ECHO_MS && this.lastInput < this.quietSince;
+    if (this.amend || echo || !this.inputSinceOpen || (this.lastEditKey !== undefined && editKey === this.lastEditKey && !this.history.isAdopting)) {
       this.history.replaceCurrent(snapshot);
     } else {
       this.history.record(snapshot, this.nextLabel ?? describeChange(this.lastWorkspace, workspace));
@@ -289,6 +293,8 @@ export class WorkspaceStore {
     this.engine.setState(ng);
     if (options.quiet) {
       this.amend = true;
+      // What Neuroglancer does next on its own (normalising a new source as it loads) belongs to this edit too.
+      this.quietSince = performance.now();
       this.settle();
     } else {
       this.scheduleSettle();
@@ -326,7 +332,12 @@ export class WorkspaceStore {
   /** The shell calls this on the user's first key, click or scroll after opening. */
   noteInput(): void {
     this.inputSinceOpen = true;
+    this.lastInput = performance.now();
   }
+
+  /** When the user last pressed a key, clicked or scrolled; and when a plugin last made a quiet edit. */
+  private lastInput = 0;
+  private quietSince = -Infinity;
 
   /** The next settle amends the current undo step (a quiet edit). */
   private amend = false;
@@ -529,9 +540,28 @@ export class WorkspaceStore {
 }
 
 /** The workspace without the parts that only record what is selected. */
+/** How long after a quiet edit changes with no user input between are taken as its echo. */
+const QUIET_ECHO_MS = 3000;
+
+/**
+ * What counts as an edit: the state without the selection, and each layer's
+ * source as just its URLs.  Neuroglancer rewrites a source's form as it
+ * loads (listing its parts, its transform), sometimes long after the edit,
+ * and a track group swaps its own store in and out of its layer's sources
+ * (a derived file, DERIVED_LOCAL); neither is the user's doing, so neither
+ * makes an undo step.  (A layer's parts switched on or off join the current
+ * step rather than making their own.)
+ */
 function editSignature(workspace: { ng: Json; app: Json }): string {
   const { selectedLayer: _selectedLayer, selection: _selection, ...ng } = workspace.ng;
-  return JSON.stringify({ ng, app: workspace.app });
+  const layers = Array.isArray(ng.layers)
+    ? (ng.layers as Json[]).map((l) => {
+        // ignoreNullVisibleSet flips with a track group's own store too.
+        const { source, ignoreNullVisibleSet: _ignore, ...rest } = l;
+        return { ...rest, source: sourceUrls(source).filter((u) => !DERIVED_LOCAL.test(u)).map(normaliseUrl) };
+      })
+    : ng.layers;
+  return JSON.stringify({ ng: { ...ng, layers }, app: workspace.app });
 }
 
 function defaultWriteUrl(hash: string): void {
