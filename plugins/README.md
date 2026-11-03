@@ -271,7 +271,8 @@ it is deactivated. Subscriptions a plugin makes itself go in
 The Auth tab lists the sign-ins available, with who is signed in, and
 buttons to sign in, sign out and check; below them, each layer of the
 active scene has a drop-down of the sign-ins its data can be read with.
-Built in are Google (for the browser, read as `gs+google://`), middleauth
+Built in are Google (one or more accounts for the browser, read as
+`gs+google://`, with rules choosing the account per bucket), middleauth
 (the Google sign-in CAVE-style servers use, for `middleauth+https://` data,
 with its tokens where Neuroglancer keeps them, so either can sign in for the
 other) and ngauth (`gs+ngauth+https://`). A plugin adds another with an
@@ -317,6 +318,11 @@ sourceSignIns: () => [{
 
 The scheme itself (`mylab+https://`) is registered with Neuroglancer by a
 data type plugin.
+
+The sign-in rules of the Auth tab (an address prefix and a sign-in, kept in
+the browser) can name a provider's source sign-in by its `id`: a layer from
+an address a rule covers is given that sign-in when it is added or its
+workspace opens, through `wrap`. Keep `id`s stable, since rules store them.
 
 ### Failure and trust
 

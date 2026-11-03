@@ -59,7 +59,7 @@ Labels from the Labels plugin are painted into every frame.
 | **Filtering** | The Track filtering plugin: TrackVis-style track groups. See [Track filtering](../plugins/track-filtering.md). |
 | **Annotations** | The Annotations plugin: labels (named pins and callouts for figures), measurements, statistics in a region, and label volumes drawn by hand. See [Annotations](../plugins/annotations.md). |
 | **Registration** | When the Registration plugin is on: move a layer by hand or by landmarks, and save the transform or the moved image. See [Registration](../plugins/registration.md). |
-| **Auth** | The sign-ins available (Google for this browser, and CAVE, CATMAID and ngauth servers), with who is signed in, and for each layer of the scene the sign-in it reads its data with. See [Signing in](signing-in.md). |
+| **Auth** | The sign-ins available (one or more Google accounts for this browser, and CAVE, CATMAID and ngauth servers), with who is signed in; rules saying which sign-in and which Google account reads which bucket or server; and for each layer of the scene the sign-in it reads its data with. See [Signing in](signing-in.md). |
 | **Plugins** | Every plugin, with a switch, a one-line description and a *Read more* guide. **Add** loads a plugin from your computer or a URL. See [Plugins](../plugins/index.md). |
 
 ## 3. The views
