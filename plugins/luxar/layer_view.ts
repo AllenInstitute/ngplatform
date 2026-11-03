@@ -10,13 +10,33 @@
 let shadingVersions = 0;
 import type { Disposer, LayerTransform, PlatformContext } from "@ngplatform/sdk";
 import type { Selection } from "./chunks.js";
+import { SAMPLES } from "./chunk_build.js";
 import { StoreClient } from "./client.js";
+import { type ObjectPlan, objectPlan } from "./objects.js";
 import type { DrawUniforms } from "./render_gl.js";
 import { needsTable, type ObjectShading } from "./segments.js";
 import { COLORMAP_INDEX, COLOUR_INDEX, type LayerStyle, rgbOf, scalarOf, TONE_INDEX } from "./style.js";
 import { View2d } from "./view2d.js";
 import { View3d } from "./view3d.js";
 import { autoGain, directionMatrix, vertexBudget } from "./view_math.js";
+
+/** What a layer draws now, and how (LayerView.drawing). */
+export interface LayerDrawing {
+  /** Changes whenever what is shown or the colours change. */
+  version: number;
+  /** The spatial chunks are read and drawn with this shading; undefined: no chunk is read (the chosen objects are read whole, and the others not drawn). */
+  chunks: ObjectShading | undefined;
+  /** The chosen objects read whole are drawn with this shading; undefined when they are not read whole. */
+  sets: ObjectShading | undefined;
+  /** How many segments are chosen (0: every object shows). */
+  size: number;
+  /** How the chosen objects are read whole, if they are. */
+  plan: ObjectPlan | undefined;
+  /** How strongly the objects not chosen are drawn (the layer's notSelectedAlpha; 0 when every object shows). */
+  others: number;
+  /** The shaders look each vertex's object up in its chunk's table. */
+  table: boolean;
+}
 
 export class LayerView {
   readonly client: StoreClient;
@@ -26,12 +46,20 @@ export class LayerView {
   private readonly levels = new Map<string, Selection>();
   private transformCache: { at: number; value: LayerTransform | undefined } | undefined;
   private readonly offs: Disposer[] = [];
-  private shading: (ObjectShading & { segmentColours: boolean; size: number }) | undefined;
+  private current: (LayerDrawing & { key: string }) | undefined;
   private readonly colours = new Map<bigint, [number, number, number]>();
   /** Per view, the share of what it last drew that showed (a layer's chosen segments). */
   private readonly shares = new Map<string, { version: number; share: number }>();
+  /** Per view, how many samples of the chosen objects read whole it draws. */
+  private readonly samples = new Map<string, number>();
   /** Called when what the panel shows about this layer changes. */
   onStatus: (() => void) | undefined;
+  /** Reads but does not draw: the view of the store the layer drew before still draws (plugin.ts). */
+  held = false;
+  /** Draws what it drew when frozen, whatever the layer shows now (the view of a store the layer has left). */
+  private frozen = false;
+  /** The last drawing of chosen segments, and when it was last current (see freeze). */
+  private chosen: { drawing: LayerDrawing & { key: string }; ids: BigUint64Array | undefined; at: number } | undefined;
 
   constructor(
     readonly ctx: PlatformContext,
@@ -52,7 +80,8 @@ export class LayerView {
     // What the layer shows, or its colours, changed: tables are made again.
     this.offs.push(
       ctx.viewer.onSegmentsChanged(name, () => {
-        this.shading = undefined;
+        if (this.frozen) return;
+        this.current = undefined;
         this.colours.clear();
         this.redraw();
         this.onStatus?.();
@@ -93,15 +122,25 @@ export class LayerView {
   }
 
   /**
-   * The objects the layer shows and their colours: every object, or the
-   * chosen segments (`visibleSegments`), each in the layer's colour for it
-   * when the style colours by segment.
+   * What the layer shows and how it is read: every object, or the chosen
+   * segments (`visibleSegments`), each in the layer's colour for it when
+   * the style colours by segment, the others at the layer's
+   * notSelectedAlpha.  A few chosen objects are read whole, by id
+   * (./objects.ts), and the spatial chunks are then read only for the
+   * others' faint drawing; otherwise the chunks are read and their tables
+   * pick out what shows.
    */
-  objectShading(): ObjectShading {
+  drawing(): LayerDrawing {
     const segmentColours = this.style.colourBy === "segment";
-    if (this.shading !== undefined && this.shading.segmentColours === segmentColours) return this.shading;
+    // Made again also once the chosen objects read whole can be measured (objectPlan).
+    const measured = this.client.objects.measured();
+    const key = `${segmentColours}|${this.style.detail}|${this.client.scalarName}|${this.client.info !== undefined}|${measured !== undefined}`;
+    if (this.current !== undefined && (this.current.key === key || this.frozen)) {
+      if (this.chosen?.drawing === this.current) this.chosen.at = performance.now();
+      return this.current;
+    }
     const visible = this.ctx.viewer.visibleSegments(this.name);
-    const { ctx, name, colours } = this;
+    const { ctx, name, colours, client } = this;
     const colour = (id: bigint): [number, number, number] => {
       let c = colours.get(id);
       if (c === undefined) {
@@ -110,15 +149,56 @@ export class LayerView {
       }
       return c;
     };
-    this.shading = {
+    const all = visible === undefined || visible.all;
+    const size = all ? 0 : visible.size;
+    const others = all ? 0 : Math.min(1, Math.max(0, visible.notSelectedAlpha ?? 0));
+    const plan = all || client.info === undefined ? undefined : objectPlan(client.info, size, client.scalarName, this.style.detail, measured);
+    const base = {
       version: ++shadingVersions,
-      all: visible === undefined || visible.all,
-      has: (id) => visible === undefined || visible.has(id),
+      all,
+      has: (id: bigint) => visible === undefined || visible.has(id),
       colour: segmentColours ? colour : undefined,
-      segmentColours,
-      size: visible?.size ?? 0,
     };
-    return this.shading;
+    const chunks: ObjectShading | undefined = plan === undefined ? { ...base, chosenAlpha: 1, othersAlpha: others } : others > 0 ? { ...base, chosenAlpha: 0, othersAlpha: others } : undefined;
+    const sets: ObjectShading | undefined = plan === undefined ? undefined : { ...base, chosenAlpha: 1, othersAlpha: 0 };
+    const ids = plan === undefined ? undefined : visible?.ids();
+    client.objects.want(ids, plan, client.scalarName);
+    // A view that reads no chunks now says no level.
+    if (chunks === undefined) this.levels.clear();
+    this.current = { key, version: base.version, chunks, sets, size, plan, others, table: chunks === undefined || needsTable(chunks) };
+    if (size > 0) this.chosen = { drawing: this.current, ids, at: performance.now() };
+    return this.current;
+  }
+
+  /**
+   * Keeps drawing what it draws now, whatever the layer shows from here on:
+   * the layer has moved to another store, whose view takes over once it has
+   * read what it wants.  A track-filtering group's layer shows every object
+   * of its own store, and that may be seen here first: what it drew a
+   * moment before (the group's streamlines) is kept, not the whole dataset.
+   */
+  freeze(): void {
+    const chosen = this.chosen;
+    if (this.current?.size === 0 && chosen !== undefined && performance.now() - chosen.at < 3000) {
+      this.current = chosen.drawing;
+      this.client.objects.want(chosen.ids, chosen.drawing.plan, this.client.scalarName);
+      this.levels.clear();
+    }
+    this.frozen = true;
+    this.redraw();
+  }
+
+  /** How many objects it draws whole, by id (undefined when it draws chunks). */
+  get objectsShown(): number | undefined {
+    return this.drawing().plan === undefined ? undefined : this.client.objects.progress().read;
+  }
+
+  /** Whether it has read all it wants to draw now (for taking over from the view of the layer's previous store). */
+  get ready(): boolean {
+    if (this.client.info === undefined || !this.objectsReady) return false;
+    if (this.drawing().chunks === undefined) return true;
+    const selections = [...this.levels.values()];
+    return selections.length > 0 && selections.every((s) => s.complete);
   }
 
   get toneIndex(): number {
@@ -156,16 +236,16 @@ export class LayerView {
       slab: 0,
       depthCut: 0.3,
       depthNear: false,
-      objectTable: needsTable(this.objectShading()),
+      objectTable: this.drawing().table,
       eye: [0, 0, 1, 0],
     };
   }
 
   /** The vertices a view reads: the Detail, more when it shows only some of the objects. */
   budget(view: string): number {
-    const shading = this.objectShading();
+    const shading = this.drawing().chunks;
     const known = this.shares.get(view);
-    return vertexBudget(this.style.detail, shading.all || known?.version !== shading.version ? 1 : known.share);
+    return vertexBudget(this.style.detail, shading === undefined || shading.all || known?.version !== shading.version ? 1 : known.share);
   }
 
   /**
@@ -174,13 +254,20 @@ export class LayerView {
    * grows and the level settles rather than going back and forth.
    */
   reportShare(view: string, share: number): void {
-    const { version } = this.objectShading();
+    const { version } = this.drawing();
     const known = this.shares.get(view);
     const old = known?.version === version ? known.share : 1;
     if (share >= old) return;
     this.shares.set(view, { version, share });
     // A new budget may choose another level: draw again.
     if (vertexBudget(1, share) > 1.01 * vertexBudget(1, old)) this.redraw();
+  }
+
+  /** How many of the SAMPLES samples of the chosen objects read whole a view draws (the Detail), for the panel. */
+  reportSamples(view: string, samples: number): void {
+    if (this.samples.get(view) === samples) return;
+    this.samples.set(view, samples);
+    this.onStatus?.();
   }
 
   /** What a view read and drew, for the panel. */
@@ -203,11 +290,29 @@ export class LayerView {
     };
     const levels = [...this.levels.entries()].map(([view, s]) => `${view === "3d" ? "3-D" : "2-D"} level ${s.level}${share(s.level)}${s.complete ? "" : " (loading)"}`);
     const parts = [...new Set(levels)];
-    const shading = this.objectShading();
-    if (!shading.all) parts.unshift(this.shading!.size === 1 ? "1 segment shown" : `${this.shading!.size.toLocaleString()} segments shown`);
+    const drawing = this.drawing();
+    if (drawing.size > 0) {
+      const shown = drawing.size === 1 ? "1 segment shown" : `${drawing.size.toLocaleString()} segments shown`;
+      if (drawing.plan === undefined) parts.unshift(shown);
+      else {
+        // Read whole, by id: how far it has got.
+        const p = client.objects.progress();
+        const whole = p.pending > 0 ? `reading them whole: ${p.read.toLocaleString()} of ${(p.wanted - p.absent).toLocaleString()}` : `read whole (level ${drawing.plan.level})`;
+        // A view with more of their lines than its Detail draws a sample of them.
+        const sampled = [...this.samples.entries()].filter(([, k]) => k < SAMPLES).map(([v, k]) => `${v === "3d" ? "3-D" : "2-D"} view ${k} in ${SAMPLES} of them (Detail)`);
+        parts.unshift(`${shown}, ${whole}${p.absent > 0 ? ` (${p.absent.toLocaleString()} not in the store)` : ""}`, ...sampled);
+        if (drawing.chunks !== undefined) parts.splice(1, 0, `the others at ${+(drawing.others * 100).toPrecision(2)}%`);
+      }
+    }
     if (client.pending > 0) parts.push(`${client.pending} chunks to read`);
     if (client.error !== undefined) parts.push(`a chunk failed: ${client.error}`);
+    if (client.objects.error !== undefined) parts.push(`reading objects whole failed: ${client.objects.error}`);
     return [...problems, parts.join(" · ")].filter((p) => p).join(" ");
+  }
+
+  /** Whether the chosen objects read whole are all here. */
+  get objectsReady(): boolean {
+    return this.drawing().plan === undefined || !this.client.objects.busy;
   }
 
   /** The 2-D views stop drawing when the layer is hidden (the 3-D one stops with the layer). */

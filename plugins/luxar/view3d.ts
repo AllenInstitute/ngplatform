@@ -11,14 +11,18 @@
  * straight into the view, depth-tested like any opaque layer.
  */
 import type { Drawer3d, Frame3d } from "@ngplatform/sdk";
+import { SAMPLES } from "./chunk_build.js";
 import { GpuChunks, selectChunks, type Selection } from "./chunks.js";
+import { samplesFor } from "./objects.js";
 import type { LayerView } from "./layer_view.js";
 import { Bloom } from "./bloom.js";
-import { DepthTarget, LightTarget, Renderer } from "./render_gl.js";
+import { DepthTarget, type DrawUniforms, type GpuChunk, LightTarget, type Outputs, type Pass, Renderer } from "./render_gl.js";
 import { apply, boxInFrustum, coverage, eyeOf, invertAffine, modelTo, multiply, pixelsPerUnit, screenArea, shownShare } from "./view_math.js";
 
 /** GPU memory for one layer's chunks in the 3-D view. */
 const GPU_BYTES = 768 * 1024 * 1024;
+/** GPU memory for its chosen objects read whole. */
+const GPU_SET_BYTES = 512 * 1024 * 1024;
 
 interface SavedState {
   framebuffer: WebGLFramebuffer | null;
@@ -35,6 +39,7 @@ interface SavedState {
 export class View3d implements Drawer3d {
   private renderer: Renderer | undefined;
   private chunks: GpuChunks | undefined;
+  private sets: GpuChunks | undefined;
   private target: LightTarget | undefined;
   private nearest: DepthTarget | undefined;
   private bloom: Bloom | undefined;
@@ -46,7 +51,7 @@ export class View3d implements Drawer3d {
   constructor(private readonly view: LayerView) {}
 
   isReady(): boolean {
-    return this.selection === undefined || this.selection.complete;
+    return (this.selection === undefined || this.selection.complete) && this.view.objectsReady;
   }
 
   private save(gl: WebGL2RenderingContext): SavedState {
@@ -104,34 +109,65 @@ export class View3d implements Drawer3d {
     }
     this.problem = undefined;
     this.chunks ??= new GpuChunks(this.renderer, view.client, GPU_BYTES);
+    this.sets ??= new GpuChunks(this.renderer, view.client.objects, GPU_SET_BYTES);
     const chunks = this.chunks;
     const modelToClip = multiply(frame.viewProjection, toDisplay);
     const toModel = invertAffine(toDisplay);
     const centre = toModel ? apply(toModel, frame.position) : [0, 0, 0];
     const style = view.style;
-    const selection = selectChunks(info, (lo, hi) => boxInFrustum(modelToClip, lo, hi), centre, view.budget("3d"), (k) => chunks.arrived(k));
-    this.selection = selection;
-    view.client.want("3d", selection.want);
-    const { chunks: drawn, more } = chunks.take(selection.draw, view.objectShading());
+    const drawing = view.drawing();
+    let drawn: GpuChunk[] = [];
+    let more = false;
+    if (drawing.chunks !== undefined) {
+      const selection = selectChunks(info, (lo, hi) => boxInFrustum(modelToClip, lo, hi), centre, view.budget("3d"), (k) => chunks.arrived(k));
+      this.selection = selection;
+      view.client.want("3d", selection.want);
+      ({ chunks: drawn, more } = chunks.take(selection.draw, drawing.chunks));
+      view.reportLevel("3d", selection);
+      if (drawn.length > 0) view.reportShare("3d", shownShare(drawn));
+    } else {
+      this.selection = undefined;
+      view.client.want("3d", []);
+    }
+    // The chosen objects read whole.
+    let sets: GpuChunk[] = [];
+    if (drawing.sets !== undefined) {
+      const taken = this.sets.take(view.client.objects.drawn(), drawing.sets);
+      sets = taken.chunks;
+      more ||= taken.more;
+    }
     if (more) view.redraw();
-    view.reportLevel("3d", selection);
-    if (drawn.length > 0) view.reportShare("3d", shownShare(drawn));
-    if (drawn.length === 0) return;
+    // Held: reading, while the view of the layer's previous store draws.
+    if (view.held || (drawn.length === 0 && sets.length === 0)) return;
 
     const saved = this.save(gl);
     const size: [number, number] = [saved.viewport[2], saved.viewport[3]];
     // Over the part of the view the data can cover, not the whole view: a small brain in a large view is as dense as a large one.
-    const cover = coverage(drawn, pixelsPerUnit(modelToClip, centre, size), 2 * view.halfWidth, screenArea(modelToClip, info.bounds.lower, info.bounds.upper, size), 1, true);
-    const uniforms = view.uniforms(Float32Array.from(modelToClip), size, cover);
+    const ppu = pixelsPerUnit(modelToClip, centre, size);
+    const area = screenArea(modelToClip, info.bounds.lower, info.bounds.upper, size);
+    const inView = (lo: number[], hi: number[]) => boxInFrustum(modelToClip, lo, hi);
+    // More of the chosen objects' lines in view than the Detail: a sample of them, whole.
+    const samples = samplesFor(sets, inView, style.detail * 1e6);
+    view.reportSamples("3d", sets.length > 0 ? samples : SAMPLES);
+    const setCover = coverage(sets, ppu, 2 * view.halfWidth, area, samples / SAMPLES, true);
+    const chunkCover = coverage(drawn, ppu, 2 * view.halfWidth, area, 1, true);
+    const matrix = Float32Array.from(modelToClip);
+    // The chosen objects read whole are dimmed only by their own cover; the chunks (with any faint others) by all.
+    const chunkUniforms = view.uniforms(matrix, size, chunkCover + setCover);
+    const setUniforms = view.uniforms(matrix, size, setCover);
     // A mesh is lit from the eye.
-    uniforms.eye = eyeOf(modelToClip);
+    chunkUniforms.eye = setUniforms.eye = eyeOf(modelToClip);
     const renderer = this.renderer;
+    const drawAll = (pass: Pass, outputs: Outputs, patch: Partial<DrawUniforms> = {}) => {
+      if (drawn.length > 0) renderer.draw(drawn, pass, outputs, { ...chunkUniforms, ...patch });
+      if (sets.length > 0) renderer.draw(sets, pass, outputs, { ...setUniforms, ...patch }, inView, samples);
+    };
     try {
       if (style.blending === "solid" || this.broken) {
         gl.disable(gl.BLEND);
         gl.enable(gl.DEPTH_TEST);
         gl.depthMask(true);
-        renderer.draw(drawn, "solid", frame.outputs, uniforms);
+        drawAll("solid", frame.outputs);
         return;
       }
       const depthBuffer = (gl.getFramebufferAttachmentParameter(gl.DRAW_FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.FRAMEBUFFER_ATTACHMENT_OBJECT_NAME) ??
@@ -156,7 +192,7 @@ export class View3d implements Drawer3d {
         gl.enable(gl.DEPTH_TEST);
         gl.depthFunc(gl.LEQUAL);
       }
-      renderer.draw(drawn, "accumulate", { color: 0 }, uniforms);
+      drawAll("accumulate", { color: 0 });
 
       // The nearest line at each pixel, for the depth written below.
       const nearest = this.nearest!;
@@ -164,7 +200,7 @@ export class View3d implements Drawer3d {
         gl.disable(gl.BLEND);
         gl.enable(gl.DEPTH_TEST);
         gl.depthFunc(gl.LESS);
-        renderer.draw(drawn, "depth", { color: 0 }, { ...uniforms, depthCut: 0.05, depthNear: false });
+        drawAll("depth", { color: 0 }, { depthCut: 0.05, depthNear: false });
       }
 
       // Bloom: the bright light blurred, added by the composite.
@@ -213,6 +249,8 @@ export class View3d implements Drawer3d {
 
   dispose(): void {
     this.chunks?.clear();
+    this.sets?.clear();
+    this.sets = undefined;
     this.target?.release();
     this.nearest?.release();
     this.nearest = undefined;

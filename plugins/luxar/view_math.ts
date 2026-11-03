@@ -235,13 +235,14 @@ export function screenArea(modelToClip: ArrayLike<number>, lower: number[], uppe
  * screen times their width, over the view's area (`share` of them showing,
  * for a 2-D view's slab).
  */
-export function coverage(chunks: { length: number; pointCount: number; shown?: number; area?: number }[], pixelsPerUnit: number, widthPx: number, area: number, share = 1, surfaces = false): number {
+export function coverage(chunks: { length: number; pointCount: number; shown?: number; light?: number; area?: number }[], pixelsPerUnit: number, widthPx: number, area: number, share = 1, surfaces = false): number {
   let covered = 0;
-  // Of a chunk whose objects are not all shown (a layer's chosen segments), its share shown.
+  // Of a chunk whose objects are not all shown (a layer's chosen segments), its share shown,
+  // each object counted at how strongly it is drawn (the others faint, at the layer's notSelectedAlpha).
   // A surface (3-D) covers its area on screen, half of it on average (seen at all angles).
   for (const c of chunks) {
     const surface = surfaces ? 0.5 * (c.area ?? 0) * pixelsPerUnit ** 2 : 0;
-    covered += (c.length * pixelsPerUnit * widthPx + c.pointCount * Math.PI * (1.5 * widthPx) ** 2 + surface) * (c.shown ?? 1);
+    covered += (c.length * pixelsPerUnit * widthPx + c.pointCount * Math.PI * (1.5 * widthPx) ** 2 + surface) * (c.light ?? c.shown ?? 1);
   }
   return area > 0 ? (covered * share) / area : 0;
 }

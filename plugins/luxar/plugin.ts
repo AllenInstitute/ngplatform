@@ -32,6 +32,9 @@ import {
   TONE_LABELS,
 } from "./style.js";
 
+/** At most this long a layer's view of its previous store keeps drawing while the new one reads. */
+const OUTGOING_MS = 30_000;
+
 type Child = Node | string | null | undefined | false;
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -69,6 +72,8 @@ export function storeOfLayer(layer: LayerInfo, spec?: { source?: unknown }): str
 class Luxar {
   private saved: Saved;
   private readonly views = new Map<string, LayerView | SplatView>();
+  /** A layer's view of the store it drew before, drawing until its new store's view is ready (see sync). */
+  private readonly outgoing = new Map<string, { view: LayerView; timer: ReturnType<typeof setTimeout> }>();
   /** Layers whose own drawing is hidden while this plugin draws them. */
   private readonly drawingHidden = new Set<string>();
   private panelUpdate: (() => void) | undefined;
@@ -142,6 +147,46 @@ class Luxar {
     this.editing = name;
   }
 
+  /**
+   * Hands a layer's drawing over from its view of the store it drew before
+   * to the view of its new one, once that one has all it wants to draw, or
+   * after OUTGOING_MS whatever it has.  When the one before drew the chosen
+   * objects whole, by id, it stays until the new one has read all it
+   * wants, and stays for good over a store with fewer objects than it drew
+   * (a big track-filtering group's preview store, a sample of its
+   * streamlines): that one waits for the next.
+   */
+  private handOver(name: string): void {
+    const out = this.outgoing.get(name);
+    if (out === undefined) return;
+    const view = this.views.get(name);
+    // A track-filtering group's first store of its own may be a sample of its streamlines (a big
+    // group's preview): while the store before showed more of them whole, it stays.
+    // Nor, while the store before drew the chosen objects whole, to a store still reading:
+    // what is drawn is right meanwhile, and only slower to come by chunks.
+    const before = out.view.objectsShown;
+    const after = view instanceof LayerView ? view.client.info?.levels[0]?.objects : undefined;
+    if (view instanceof LayerView && view.held && before !== undefined && (!view.ready || (after !== undefined && after < before))) {
+      clearTimeout(out.timer);
+      out.timer = setTimeout(() => this.handOver(name), OUTGOING_MS);
+      return;
+    }
+    this.finishHandOver(name);
+  }
+
+  private finishHandOver(name: string): void {
+    const out = this.outgoing.get(name);
+    if (out === undefined) return;
+    this.outgoing.delete(name);
+    clearTimeout(out.timer);
+    out.view.dispose();
+    const view = this.views.get(name);
+    if (view instanceof LayerView && view.held) {
+      view.held = false;
+      view.redraw();
+    }
+  }
+
   /** Makes the layer views match the state and the scene's layers. */
   private sync(): void {
     const layers = new Map(this.ctx.viewer.layers().map((l) => [l.name, l]));
@@ -150,9 +195,23 @@ class Luxar {
       const style = this.saved.layers[name];
       const store = layer && (this.storeOf(layer) ?? imageOfLayer(layer));
       if (layer === undefined || style === undefined || !style.on || store !== view.storeUrl) {
-        view.dispose();
         this.views.delete(name);
+        // The layer now reads another store (a track-filtering group's own, made after its
+        // streamlines were shown by id): what was drawn stays until the new store's view has
+        // read what it wants, so the layer does not go blank in between.
+        if (view instanceof LayerView && !view.held && style?.on && layer?.visible && store !== undefined && this.storeOf(layer) !== undefined) {
+          this.finishHandOver(name);
+          view.freeze();
+          // While Neuroglancer made the layer afresh it may have seemed hidden for a moment.
+          view.setVisible(true);
+          this.outgoing.set(name, { view, timer: setTimeout(() => this.handOver(name), OUTGOING_MS) });
+        } else view.dispose();
       }
+    }
+    // A view kept for a layer no longer drawn here goes.
+    for (const name of [...this.outgoing.keys()]) {
+      const style = this.saved.layers[name];
+      if (!layers.has(name) || style === undefined || !style.on) this.finishHandOver(name);
     }
     for (const [name, style] of Object.entries(this.saved.layers)) {
       const layer = layers.get(name);
@@ -163,11 +222,27 @@ class Luxar {
       let view = this.views.get(name);
       if (view === undefined) {
         // An image is drawn as splats made from its voxels; a Zarr Vectors layer as lines and points.
-        view = image !== undefined ? new SplatView(this.ctx, name, image, style) : new LayerView(this.ctx, name, store!, style);
-        view.onStatus = () => this.statusUpdate?.();
+        if (image !== undefined) {
+          view = new SplatView(this.ctx, name, image, style);
+          view.onStatus = () => this.statusUpdate?.();
+        } else {
+          const lines = new LayerView(this.ctx, name, store!, style);
+          // Held (reading, not drawing) while the view of the store before it still draws.
+          lines.held = this.outgoing.has(name);
+          lines.onStatus = () => {
+            if (lines.held && lines.ready && this.views.get(name) === lines) this.handOver(name);
+            this.statusUpdate?.();
+          };
+          view = lines;
+        }
         this.views.set(name, view);
       } else if (view.style !== style) view.setStyle(style);
       view.setVisible(layer.visible);
+      const out = this.outgoing.get(name);
+      if (out !== undefined) {
+        if (out.view.style !== style) out.view.setStyle(style);
+        out.view.setVisible(layer.visible);
+      }
     }
     // A layer is drawn either by Neuroglancer or here, not both: its own
     // drawing is hidden (not in the link) while ours is on; asked each time,
@@ -216,7 +291,9 @@ class Luxar {
       const status = el("p", { class: "note lx-status" });
       const updateStatus = () => {
         const view = this.editing === undefined ? undefined : this.views.get(this.editing);
-        status.textContent = view ? view.status() : "";
+        // While the view of the layer's previous store still draws, both say how they are.
+        const out = this.editing === undefined ? undefined : this.outgoing.get(this.editing);
+        status.textContent = view === undefined ? "" : out !== undefined ? `${out.view.status()} — its new store, not drawn until read: ${view.status()}` : view.status();
       };
       this.statusUpdate = updateStatus;
       updateStatus();
@@ -380,6 +457,7 @@ class Luxar {
 
   dispose(): void {
     this.offs.forEach((off) => off());
+    for (const name of [...this.outgoing.keys()]) this.finishHandOver(name);
     for (const view of this.views.values()) view.dispose();
     const splats = [...this.views.values()].some((v) => v instanceof SplatView);
     for (const name of this.drawingHidden) this.ctx.viewer.hideLayerDrawing(name, false);

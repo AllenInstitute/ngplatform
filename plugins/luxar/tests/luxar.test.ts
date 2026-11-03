@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { LayerTransform } from "@ngplatform/sdk";
 import { checkManifest } from "@ngplatform/sdk";
 import { conjugate, damped, fromRotationVector, multiplyQuat, toRotationVector } from "../camera.js";
-import { buildChunk, objectKey, TEXTURE_WIDTH } from "../chunk_build.js";
+import { buildChunk, curvesInput, objectKey, PIECE_STRIDE, SAMPLES, skeletonsInput, sortIntoPieces, TEXTURE_WIDTH } from "../chunk_build.js";
 import { keyOf, selectChunks } from "../chunks.js";
 import type { StoreInfo } from "../client.js";
 import { LUXAR_MANIFEST } from "../manifest.js";
-import { idOf, needsTable, objectTable } from "../segments.js";
+import { BATCH, FIRST_BATCH, MAX_CURVES, MAX_SKELETONS, ObjectSets, objectPlan, planBatches, samplesFor } from "../objects.js";
+import { alphaByte, alphaOf, idOf, needsTable, objectTable } from "../segments.js";
 import { drawnSources } from "../sources.js";
 import { DEFAULT_STYLE, readSaved, readStyle, rgbOf, scalarOf } from "../style.js";
 import { apply, autoGain, boxInFrustum, chooseLevel, chunkRange, coverage, directionMatrix, invertAffine, MAX_SELECTION_BOOST, measurePanel, modelTo, modelToPanel, multiply, pixelsPerUnit, screenArea, shownShare, storeToGlobal, vertexBudget } from "../view_math.js";
@@ -302,14 +303,15 @@ describe("choosing chunks", () => {
     axisScales: [0.001, 0.001, 0.001],
     bounds: { lower: [0, 0, 0], upper: [39.9, 9.9, 9.9] },
     levels: [
-      { index: 0, vertexCount: 4e6, chunkShape: [10, 10, 10], objectShare: 1 },
-      { index: 1, vertexCount: 4e5, chunkShape: [10, 10, 10], objectShare: 0.1 },
-      { index: 2, vertexCount: 4e4, chunkShape: [20, 10, 10], objectShare: 0.01 },
+      { index: 0, vertexCount: 4e6, chunkShape: [10, 10, 10], objectShare: 1, objects: 40000 },
+      { index: 1, vertexCount: 4e5, chunkShape: [10, 10, 10], objectShare: 0.1, objects: 4000 },
+      { index: 2, vertexCount: 4e4, chunkShape: [20, 10, 10], objectShare: 0.01, objects: 400 },
     ],
     geometry: "streamline",
     primitive: "lines",
     attributes: [],
     warnings: [],
+    objectRead: "curves",
   };
   const everywhere = () => true;
 
@@ -334,6 +336,249 @@ describe("choosing chunks", () => {
   it("reads only what is in view", () => {
     const s = selectChunks(info, (lo) => lo[0] < 10, [0, 0, 0], 0.5e6, () => false);
     expect(s.want.filter((k) => k.startsWith("1|"))).toEqual([keyOf(1, [0, 0, 0])]);
+  });
+});
+
+describe("reading the chosen objects whole", () => {
+  // 100 vertices an object at level 0; coarser levels keep a tenth of the objects each.
+  const levels = [
+    { index: 0, vertexCount: 4e6, chunkShape: [10, 10, 10], objectShare: 1, objects: 40000 },
+    { index: 1, vertexCount: 4e5, chunkShape: [10, 10, 10], objectShare: 0.1, objects: 4000 },
+  ];
+  const curves = { levels, objectRead: "curves" as const };
+
+  it("reads a few chosen objects whole at level 0, and leaves many, or every object, to the chunks", () => {
+    expect(objectPlan(curves, 18, "object", 2)).toEqual({ level: 0, mode: "curves" });
+    // 8 M vertices (four times the Detail) is 80 000 objects of 100 vertices.
+    expect(objectPlan(curves, 80_000, "object", 2)).toEqual({ level: 0, mode: "curves" });
+    expect(objectPlan(curves, 80_001, "object", 2)).toBeUndefined();
+    // However large the Detail, no more than MAX_CURVES.
+    expect(objectPlan(curves, MAX_CURVES, "object", 12)).toEqual({ level: 0, mode: "curves" });
+    expect(objectPlan(curves, MAX_CURVES + 1, "object", 12)).toBeUndefined();
+    // A smaller Detail: 0.25 M x 4 = 1 M vertices, 10 000 objects.
+    expect(objectPlan(curves, 10_000, "object", 0.25)).toEqual({ level: 0, mode: "curves" });
+    expect(objectPlan(curves, 10_001, "object", 0.25)).toBeUndefined();
+    expect(objectPlan(curves, 0, "object", 2)).toBeUndefined();
+  });
+
+  it("judges by the chosen objects' own vertices once some are read", () => {
+    // 50 000 objects at the level's mean (100) is 5 M: read whole; measured at 400 each, 20 M > 2 x 8 M: chunks.
+    expect(objectPlan(curves, 50_000, "object", 2)).toEqual({ level: 0, mode: "curves" });
+    expect(objectPlan(curves, 50_000, "object", 2, { level: 0, perObject: 400 })).toBeUndefined();
+    // Up to twice the budget once measured, so it does not go back and forth.
+    expect(objectPlan(curves, 50_000, "object", 2, { level: 0, perObject: 200 })).toEqual({ level: 0, mode: "curves" });
+    const sets = new ObjectSets(() => {}, 1);
+    expect(sets.measured()).toBeUndefined();
+    const ids = Array.from({ length: FIRST_BATCH }, (_, i) => BigInt(i));
+    sets.want(BigUint64Array.from(ids), { level: 0, mode: "curves" }, "object");
+    sets.arrived("o0", built(ids), ids);
+    expect(sets.measured()).toEqual({ level: 0, perObject: 2 });
+  });
+
+  it("never reads them from a level that keeps only a sample of the objects", () => {
+    // Level 0 over budget, level 1 within it but a sample: the chunks instead.
+    expect(objectPlan(curves, 30_000, "object", 0.25)).toBeUndefined();
+    // A level that simplifies the lines but keeps every object is used.
+    const all = { levels: [levels[0], { ...levels[1], objectShare: 1, objects: 40000 }], objectRead: "curves" as const };
+    expect(objectPlan(all, 30_000, "object", 0.25)).toEqual({ level: 1, mode: "curves" });
+  });
+
+  it("reads skeletons one at a time, fewer of them, as it does curves coloured by a vertex attribute", () => {
+    expect(objectPlan(curves, 100, "attribute:fa", 2)).toEqual({ level: 0, mode: "skeletons" });
+    expect(objectPlan(curves, MAX_SKELETONS + 1, "attribute:fa", 2)).toBeUndefined();
+    expect(objectPlan({ levels, objectRead: "skeletons" }, 100, "object", 2)).toEqual({ level: 0, mode: "skeletons" });
+    // A mesh, or a store without an object index: chunks.
+    expect(objectPlan({ levels, objectRead: undefined }, 5, "object", 2)).toBeUndefined();
+  });
+
+  it("asks for the objects not read yet, in order, a small batch first", () => {
+    const wanted = BigUint64Array.from([5n, 3n, 9n, 1n]);
+    expect(planBatches(wanted, () => false, true)).toEqual([[1n, 3n, 5n, 9n]]);
+    expect(planBatches(wanted, (id) => id === 3n || id === 9n, false)).toEqual([[1n, 5n]]);
+    const many = BigUint64Array.from({ length: FIRST_BATCH + BATCH + 1 }, (_, i) => BigInt(1000 - i));
+    const batches = planBatches(many, () => false, true);
+    expect(batches.map((b) => b.length)).toEqual([FIRST_BATCH, BATCH, 1]);
+    expect(batches[0][0] < batches[0][1]).toBe(true);
+    expect(batches[1][0] > batches[0][FIRST_BATCH - 1]).toBe(true);
+    // With something read already, no small first batch.
+    expect(planBatches(many, () => false, false).map((b) => b.length)).toEqual([BATCH, FIRST_BATCH + 1]);
+  });
+
+  const built = (ids: bigint[]) =>
+    buildChunk(
+      curvesInput(
+        ids,
+        Uint32Array.from({ length: ids.length + 1 }, (_, i) => 2 * i),
+        Float32Array.from({ length: 6 * ids.length }, (_, i) => i),
+      ),
+      { kind: "object" },
+    );
+
+  it("keeps what it has read by object, and asks only for the new ones when the selection changes", () => {
+    const sent: { key: string; ids: bigint[] }[] = [];
+    const sets = new ObjectSets((key, _plan, ids) => sent.push({ key, ids: Array.from(ids) }), 1);
+    const plan = { level: 0, mode: "curves" as const };
+    sets.want(BigUint64Array.from([1n, 2n, 3n]), plan, "object");
+    expect(sent).toEqual([{ key: "o0", ids: [1n, 2n, 3n] }]);
+    expect(sets.busy).toBe(true);
+    // Object 3 is not in the store.
+    sets.arrived("o0", built([1n, 2n]), [1n, 2n]);
+    expect(sets.progress()).toEqual({ wanted: 3, read: 2, absent: 1, pending: 0 });
+    expect(sets.drawn()).toEqual(["o0"]);
+    expect(sets.busy).toBe(false);
+    // 2 stays, 4 is new: only 4 is asked for (and 3, not in the store, is not asked again).
+    sets.want(BigUint64Array.from([2n, 3n, 4n]), plan, "object");
+    expect(sent.slice(1)).toEqual([{ key: "o1", ids: [4n] }]);
+    expect(sets.drawn()).toEqual(["o0"]);
+    sets.arrived("o1", built([4n]), [4n]);
+    expect(new Set(sets.drawn())).toEqual(new Set(["o0", "o1"]));
+    // Back to 1: read already, nothing to ask; only its set is drawn.
+    sets.want(BigUint64Array.from([1n]), plan, "object");
+    expect(sent.length).toBe(2);
+    expect(sets.drawn()).toEqual(["o0"]);
+    // Nothing chosen to read whole: nothing drawn, nothing asked, what was read kept.
+    sets.want(undefined, undefined, "object");
+    expect(sets.drawn()).toEqual([]);
+    expect(sets.has("o0")).toBe(true);
+    // Another level (or another colouring) starts again.
+    const generation = sets.generation;
+    sets.want(BigUint64Array.from([1n]), { level: 1, mode: "curves" }, "object");
+    expect(sets.generation).toBe(generation + 1);
+    expect(sent[2]).toEqual({ key: "o2", ids: [1n] });
+    // An answer to what was asked before is ignored.
+    sets.arrived("o1", built([4n]), [4n]);
+    expect(sets.has("o1")).toBe(false);
+  });
+
+  it("asks a batch at a time, so a new selection is not stuck behind the old one's", () => {
+    const sent: bigint[][] = [];
+    const sets = new ObjectSets((_key, _plan, ids) => sent.push(Array.from(ids)), 1);
+    const plan = { level: 0, mode: "curves" as const };
+    const many = BigUint64Array.from({ length: FIRST_BATCH + 2 * BATCH }, (_, i) => BigInt(i));
+    sets.want(many, plan, "object");
+    expect(sent.length).toBe(1);
+    // The selection changes before the rest are asked for: the queue is the new selection's.
+    sets.want(BigUint64Array.from([1n, 99999n]), plan, "object");
+    sets.arrived("o0", built([0n, 1n]), [0n, 1n]);
+    expect(sent[1]).toEqual([99999n]);
+  });
+
+  it("lets go of sets no chosen object is in when memory is short", () => {
+    const sets = new ObjectSets(() => {}, 4, 1);
+    const plan = { level: 0, mode: "curves" as const };
+    sets.want(BigUint64Array.from([1n, 2n]), plan, "object");
+    sets.arrived("o0", built([1n, 2n]), [1n, 2n]);
+    expect(sets.has("o0")).toBe(true);
+    sets.want(BigUint64Array.from([5n]), plan, "object");
+    sets.arrived("o1", built([5n]), [5n]);
+    expect(sets.has("o0")).toBe(false);
+    expect(sets.has("o1")).toBe(true);
+  });
+
+  it("builds curves read whole as one chunk, each joined vertex to vertex", () => {
+    const input = curvesInput([7n, (2n << 32n) | 1n], new Uint32Array([0, 3, 5]), new Float32Array(15));
+    expect(Array.from(input.edges)).toEqual([0, 1, 1, 2, 3, 4]);
+    expect(Array.from(input.segmentIds)).toEqual([7, 0, 7, 0, 7, 0, 1, 2, 1, 2]);
+    const s = skeletonsInput(
+      [
+        { id: 3n, positions: new Float32Array(6), edges: new Uint32Array([0, 1]), attributes: [new Float32Array([1, 2])] },
+        { id: 4n, positions: new Float32Array(9), edges: new Uint32Array([0, 1, 1, 2]), attributes: [new Float32Array([3, 4, 5])] },
+      ],
+      [1],
+    );
+    expect(Array.from(s.edges)).toEqual([0, 1, 2, 3, 3, 4]);
+    expect(Array.from(s.attributes[0])).toEqual([1, 2, 3, 4, 5]);
+    expect(Array.from(s.segmentIds.filter((_, i) => i % 2 === 0))).toEqual([3, 3, 4, 4, 4]);
+  });
+
+  it("sorts a set's segments into pieces of space, so a 2-D view draws only those in its slab", () => {
+    // One line along x from 0 to 40, a vertex every unit.
+    const n = 41;
+    const positions = Float32Array.from({ length: 3 * n }, (_, i) => (i % 3 === 0 ? i / 3 : 0));
+    const c = buildChunk(curvesInput([1n], new Uint32Array([0, n]), positions), { kind: "none" });
+    sortIntoPieces(c, 10);
+    const pieces = c.pieces!;
+    expect(pieces.length / PIECE_STRIDE).toBe(4);
+    let total = 0;
+    for (let i = 0; i < pieces.length; i += PIECE_STRIDE) {
+      const [start, count, lx, , , ux] = pieces.slice(i, i + 8);
+      total += count;
+      // The samples' ends run up to the piece's count.
+      expect(pieces[i + 7 + SAMPLES]).toBe(count);
+      // Every segment of a piece lies within its bounds, and the joints are kept (previous and next).
+      for (let s = start; s < start + count; ++s) {
+        const a = c.segments[4 * s + 1];
+        const b = c.segments[4 * s + 2];
+        expect(c.vertices[4 * a]).toBeGreaterThanOrEqual(lx);
+        expect(c.vertices[4 * b]).toBeLessThanOrEqual(ux);
+        if (a > 0) expect(c.segments[4 * s]).toBe(a - 1);
+      }
+    }
+    expect(total).toBe(n - 1);
+    // A slab around x = 25 meets one piece.
+    const met = [];
+    for (let i = 0; i < pieces.length; i += PIECE_STRIDE) if (pieces[i + 2] <= 25 && pieces[i + 5] >= 25) met.push(i);
+    expect(met.length).toBe(1);
+  });
+
+  it("orders each piece by samples of whole objects, so a view over its Detail draws a sample of them", () => {
+    // 200 short lines across the same 2 x 1 x 1 box: two pieces along x.
+    const ids = Array.from({ length: 200 }, (_, i) => BigInt(i + 1));
+    const offsets = Uint32Array.from({ length: 201 }, (_, i) => 3 * i);
+    const positions = Float32Array.from({ length: 200 * 9 }, (_, i) => (i % 3 === 0 ? (Math.floor(i / 3) % 3) * 0.99 : (i % 3) * 0.5));
+    const c = buildChunk(curvesInput(ids, offsets, positions), { kind: "none" });
+    sortIntoPieces(c, 1);
+    const p = c.pieces!;
+    expect(p.length / PIECE_STRIDE).toBe(2);
+    // In every piece, the first k samples hold the segments of the same objects: those whose key is below k / SAMPLES.
+    for (let i = 0; i < p.length; i += PIECE_STRIDE) {
+      for (let k = 1; k <= SAMPLES; ++k) {
+        const n = p[i + 7 + k];
+        for (let s = p[i]; s < p[i] + p[i + 1]; ++s) {
+          const slot = c.slots[c.segments[4 * s + 1]];
+          const sample = Math.floor(objectKey(c.objectIds[2 * slot], c.objectIds[2 * slot + 1]) * SAMPLES);
+          expect(s - p[i] < n).toBe(sample < k);
+        }
+      }
+    }
+    // Roughly an eighth of the objects in each sample.
+    expect(p[8] + p[PIECE_STRIDE + 8]).toBeGreaterThan(400 / SAMPLES / 2);
+    expect(p[8] + p[PIECE_STRIDE + 8]).toBeLessThan((400 / SAMPLES) * 2);
+    const everywhere = () => true;
+    expect(samplesFor([c], everywhere, 1000)).toBe(SAMPLES);
+    expect(samplesFor([c], everywhere, 200)).toBe(4);
+    expect(samplesFor([c], everywhere, 1)).toBe(1);
+    // Only the pieces in view count.
+    expect(samplesFor([c], (lo) => lo[0] > 0.9, 200)).toBe(SAMPLES);
+  });
+});
+
+describe("the objects not chosen, faintly", () => {
+  const input = {
+    numVertices: 4,
+    numOwnVertices: 4,
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 5, 5, 5, 5, 6, 5]),
+    segmentIds: new Uint32Array([7, 0, 7, 0, 9, 0, 9, 0]),
+    edges: new Uint32Array([0, 1, 2, 3]),
+    attributes: [],
+  };
+
+  it("draws the others at the layer's notSelectedAlpha, and leaves the chosen ones out when they are read whole", () => {
+    const c = buildChunk(input, { kind: "none" });
+    const chosen = (id: bigint) => id === 7n;
+    expect(alphaByte(0)).toBe(0);
+    expect(alphaByte(0.001)).toBe(1);
+    expect(alphaByte(1)).toBe(255);
+    const faint = objectTable(c.objectIds, c.objectWeight, { version: 1, all: false, has: chosen, othersAlpha: 0.2 });
+    expect([faint.table[3], faint.table[7]]).toEqual([255, 51]);
+    expect(faint.shown).toBe(1);
+    expect(faint.light).toBeCloseTo(0.5 + 0.5 * (51 / 255));
+    const others = objectTable(c.objectIds, c.objectWeight, { version: 2, all: false, has: chosen, chosenAlpha: 0, othersAlpha: 0.2 });
+    expect([others.table[3], others.table[7]]).toEqual([0, 51]);
+    expect(others.shown).toBeCloseTo(0.5);
+    expect(alphaOf({ version: 3, all: true, has: () => false }, 9n)).toBe(1);
+    // Faint lines count for less light when judging how much of the view they cover.
+    expect(coverage([{ length: 10, pointCount: 0, shown: 1, light: 0.1 }], 1, 1, 10)).toBeCloseTo(0.1);
   });
 });
 

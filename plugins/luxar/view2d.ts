@@ -14,13 +14,16 @@
  * (CSS `plus-lighter`) for glow, or laid over them for emission and solid.
  */
 import type { ViewPanelInfo } from "@ngplatform/sdk";
+import { SAMPLES } from "./chunk_build.js";
 import { GpuChunks, selectChunks, type Selection } from "./chunks.js";
+import { samplesFor } from "./objects.js";
 import type { LayerView } from "./layer_view.js";
 import { Bloom } from "./bloom.js";
 import { type GpuChunk, LightTarget, Renderer } from "./render_gl.js";
 import { apply, boxInFrustum, coverage, invertAffine, measurePanel, modelToPanel, multiply, pixelsPerUnit, screenArea, shownShare } from "./view_math.js";
 
 const GPU_BYTES = 512 * 1024 * 1024;
+const GPU_SET_BYTES = 384 * 1024 * 1024;
 
 export class View2d {
   private readonly overlay: { element: HTMLElement; dispose(): void };
@@ -28,6 +31,7 @@ export class View2d {
   private gl: WebGL2RenderingContext | null = null;
   private renderer: Renderer | undefined;
   private chunks: GpuChunks | undefined;
+  private sets: GpuChunks | undefined;
   private target: LightTarget | undefined;
   private bloom: Bloom | undefined;
   private queued = false;
@@ -51,7 +55,7 @@ export class View2d {
     this.offScreenshot = view.ctx.ui.screenshotOverlay((context, canvas) => this.paint(context, canvas));
     this.canvas.addEventListener("webglcontextlost", (e) => {
       e.preventDefault();
-      this.renderer = this.chunks = this.target = this.bloom = undefined;
+      this.renderer = this.chunks = this.sets = this.target = this.bloom = undefined;
     });
     this.canvas.addEventListener("webglcontextrestored", () => {
       this.gl = null;
@@ -156,7 +160,10 @@ export class View2d {
       height,
       view.client.arrivals,
       view.client.generation,
-      view.objectShading().version,
+      view.client.objects.arrivals,
+      view.client.objects.generation,
+      view.drawing().version,
+      view.held,
       view.budget("2d"),
       info === undefined,
       layouts.map(({ rect, m }) => [rect.left, rect.top, rect.width, rect.height, Array.from(m.modelToClip, (v) => +v.toPrecision(9))]),
@@ -197,29 +204,71 @@ export class View2d {
     const want: string[][] = [];
     const budget = view.budget("2d");
     const drawnAll: GpuChunk[] = [];
-    layouts.forEach(({ rect, m }) => {
-      const selection = selectChunks(info, (lo, hi) => boxInFrustum(m.modelToClip, lo, hi), m.centre, budget, (k) => chunks.arrived(k));
-      selections.push(selection);
-      want.push(selection.want);
-      const taken = chunks.take(selection.draw, view.objectShading());
+    const drawing = view.drawing();
+    // The chosen objects read whole: the same sets in every panel, each drawing the pieces in its slab.
+    let sets: GpuChunk[] = [];
+    // The fewest samples of the chosen objects a panel draws, for the panel.
+    let fewest = SAMPLES;
+    if (drawing.sets !== undefined) {
+      this.sets ??= new GpuChunks(renderer, view.client.objects, GPU_SET_BYTES);
+      const taken = this.sets.take(view.client.objects.drawn(), drawing.sets);
+      sets = taken.chunks;
       more ||= taken.more;
-      if (taken.chunks.length === 0) return;
-      drawnAll.push(...taken.chunks);
+    }
+    layouts.forEach(({ rect, m }) => {
+      let drawn: GpuChunk[] = [];
+      let share = 1;
+      if (drawing.chunks !== undefined) {
+        const selection = selectChunks(info, (lo, hi) => boxInFrustum(m.modelToClip, lo, hi), m.centre, budget, (k) => chunks.arrived(k));
+        selections.push(selection);
+        want.push(selection.want);
+        const taken = chunks.take(selection.draw, drawing.chunks);
+        more ||= taken.more;
+        drawn = taken.chunks;
+        drawnAll.push(...drawn);
+        // Of the chunks' lines, about the slab's share of their depth show.
+        const shape = info.levels[selection.level].chunkShape;
+        share = m.slab > 0 ? Math.min(1, (2 * m.slab) / ((shape[0] + shape[1] + shape[2]) / 3)) : 1;
+      }
+      // Held: reading, while the view of the layer's previous store draws.
+      if (view.held || (drawn.length === 0 && sets.length === 0)) return;
       const x = Math.round((rect.left - base.left) * dpr);
       const y = Math.round((base.bottom - rect.bottom) * dpr);
       const w = Math.round(rect.width * dpr);
       const h = Math.round(rect.height * dpr);
       gl.viewport(x, y, w, h);
       gl.scissor(x, y, w, h);
-      // Of the chunks' lines, about the slab's share of their depth show.
-      const shape = info.levels[selection.level].chunkShape;
-      const share = m.slab > 0 ? Math.min(1, (2 * m.slab) / ((shape[0] + shape[1] + shape[2]) / 3)) : 1;
-      const cover = coverage(taken.chunks, pixelsPerUnit(m.modelToClip, m.centre, [w, h]), 2 * view.halfWidth, screenArea(m.modelToClip, info.bounds.lower, info.bounds.upper, [w, h]), share);
-      const uniforms = view.uniforms(Float32Array.from(m.modelToClip), [w, h], cover);
-      uniforms.plane = m.plane;
-      uniforms.slab = m.slab;
-      renderer.draw(taken.chunks, solid ? "solid" : "accumulate", { color: 0 }, uniforms);
+      const ppu = pixelsPerUnit(m.modelToClip, m.centre, [w, h]);
+      const area = screenArea(m.modelToClip, info.bounds.lower, info.bounds.upper, [w, h]);
+      const inSlab = (lo: number[], hi: number[]) => boxInFrustum(m.modelToClip, lo, hi);
+      // More of the chosen objects' lines near the section than the Detail: a sample of them,
+      // whole.  The pieces in the slab are thicker than it (half a level-0 chunk): about the
+      // slab's share of their lines show.
+      const piece = Math.min(...info.levels[0].chunkShape) / 2;
+      const slabShare = m.slab > 0 ? Math.min(1, (2 * m.slab) / piece) : 1;
+      const samples = sets.length > 0 ? samplesFor(sets, inSlab, (style.detail * 1e6) / slabShare) : SAMPLES;
+      fewest = Math.min(fewest, samples);
+      // Of a set's lines, about the slab's share of the set's depth show.
+      const setCover = sets.reduce((sum, s) => {
+        const extent = (s.upper[0] - s.lower[0] + s.upper[1] - s.lower[1] + s.upper[2] - s.lower[2]) / 3;
+        const setShare = m.slab > 0 && extent > 0 ? Math.min(1, (2 * m.slab) / extent) : 1;
+        return sum + coverage([s], ppu, 2 * view.halfWidth, area, (setShare * samples) / SAMPLES);
+      }, 0);
+      const chunkCover = coverage(drawn, ppu, 2 * view.halfWidth, area, share);
+      const pass = solid ? "solid" : "accumulate";
+      const matrix = Float32Array.from(m.modelToClip);
+      for (const [list, cover, cull] of [
+        [drawn, chunkCover + setCover, undefined],
+        [sets, setCover, inSlab],
+      ] as const) {
+        if (list.length === 0) continue;
+        const uniforms = view.uniforms(matrix, [w, h], cover);
+        uniforms.plane = m.plane;
+        uniforms.slab = m.slab;
+        renderer.draw(list as GpuChunk[], pass, { color: 0 }, uniforms, cull, samples);
+      }
     });
+    view.reportSamples("2d", fewest);
     gl.disable(gl.SCISSOR_TEST);
     // One list for the reader, the panels' in turn.
     const merged: string[] = [];
@@ -272,6 +321,7 @@ export class View2d {
     this.offScreenshot();
     this.offRendered();
     this.chunks?.clear();
+    this.sets?.clear();
     this.target?.release();
     this.bloom?.release();
     this.renderer?.dispose();

@@ -24,7 +24,7 @@
  * (BSD-3-Clause, Copyright (c) 2024-2026, Loic A. Royer and Luxar
  * Contributors; see ./README.md); the code is written for this plugin.
  */
-import { TEXTURE_WIDTH, type BuiltChunk } from "./chunk_build.js";
+import { type BuiltChunk, PIECE_STRIDE, SAMPLES, TEXTURE_WIDTH } from "./chunk_build.js";
 import { cutVertexShader, meshFragmentShader, meshVertexShader } from "./mesh_gl.js";
 import { needsTable, type ObjectShading, objectTable } from "./segments.js";
 
@@ -84,8 +84,15 @@ export interface GpuChunk {
   /** Per object, its colour and whether it shows (RGBA8), made for `tableVersion`. */
   objects: WebGLTexture | undefined;
   tableVersion: number;
-  /** The share of the chunk's lines (or points, or triangles) shown: 0 skips it. */
+  /** The share of the chunk's lines (or points, or triangles) drawn at all: 0 skips it. */
   shown: number;
+  /** The same share, each object counted at how strongly it is drawn (for automatic brightness). */
+  light: number;
+  /** The vertices' bounds, store coordinates. */
+  lower: [number, number, number];
+  upper: [number, number, number];
+  /** Objects read whole: the segments' pieces of space (BuiltChunk.pieces), so a view draws only those it can show. */
+  pieces: Float64Array | undefined;
   /** A mesh's triangles, their normals per vertex, and the arrays that draw them in 3-D and (cut by the section) in 2-D. */
   triangleCount: number;
   area: number;
@@ -164,12 +171,19 @@ uniform float uSlab;
 uniform highp usampler2D uSlots;
 uniform lowp sampler2D uObjects;
 uniform bool uObjectTable;
+// Drawn opaque (solid): an object drawn faintly (the layer's notSelectedAlpha) is left out.
+uniform bool uOpaque;
 
 vec4 vertexAt(uint i) {
   return texelFetch(uVertices, ivec2(int(i % ${TEXTURE_WIDTH}u), int(i / ${TEXTURE_WIDTH}u)), 0);
 }
 
-// A vertex's object: its colour (as the layer colours segments) and whether it shows (alpha).
+// Whether an object (its table entry, from objectAt) is not drawn: not shown, or faint and drawn opaque.
+bool hidden(vec4 object) {
+  return object.a < 0.5 / 255.0 || (uOpaque && object.a < 254.5 / 255.0);
+}
+
+// A vertex's object: its colour (as the layer colours segments) and how strongly it is drawn (alpha; 0 not at all).
 vec4 objectAt(uint i) {
   if (!uObjectTable) return vec4(1.0);
   uint slot = texelFetch(uSlots, ivec2(int(i % ${TEXTURE_WIDTH}u), int(i / ${TEXTURE_WIDTH}u)), 0).r;
@@ -238,7 +252,7 @@ void main() {
   bool joinA = aSegment.x != aSegment.y;
   bool joinB = aSegment.w != aSegment.z;
   vec4 object = objectAt(aSegment.y);
-  if (object.a < 0.5) {
+  if (hidden(object)) {
     hide();
     return;
   }
@@ -297,7 +311,8 @@ void main() {
 
   // Thinner than a pixel and a half, a line is drawn that wide and dimmer, so its light is kept.
   float halfWidth = max(uHalfWidth, 0.75);
-  vFade = uHalfWidth / halfWidth;
+  // A faint object (the layer's notSelectedAlpha) gives that share of the light.
+  vFade = uHalfWidth / halfWidth * object.a;
 
   vec4 c = atEnd ? cB : cA;
   c.xy += offset * side * halfWidth / (0.5 * uViewport) * c.w;
@@ -324,12 +339,12 @@ void main() {
   float d = sectionDistance(v.xyz);
   vec4 c = uModelToClip * vec4(v.xyz, 1.0);
   vec4 object = objectAt(uint(gl_InstanceID));
-  if ((uSlab > 0.0 && abs(d) > uSlab) || c.w < 1e-6 || object.a < 0.5) {
+  if ((uSlab > 0.0 && abs(d) > uSlab) || c.w < 1e-6 || hidden(object)) {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
   }
   float radius = max(uHalfWidth, 0.75);
-  vFade = (uHalfWidth / radius) * (uHalfWidth / radius);
+  vFade = (uHalfWidth / radius) * (uHalfWidth / radius) * object.a;
   c.xy += corner * radius / (0.5 * uViewport) * c.w;
   gl_Position = c;
   vCorner = corner;
@@ -608,6 +623,10 @@ export class Renderer {
       objects: undefined,
       tableVersion: -1,
       shown: 1,
+      light: 1,
+      lower: chunk.lower,
+      upper: chunk.upper,
+      pieces: chunk.pieces,
       triangleCount: chunk.triangleCount,
       area: chunk.area,
       normals,
@@ -625,12 +644,13 @@ export class Renderer {
     if (chunk.tableVersion === shading.version) return;
     chunk.tableVersion = shading.version;
     if (!needsTable(shading)) {
-      chunk.shown = 1;
+      chunk.shown = chunk.light = 1;
       return;
     }
     const { gl } = this;
-    const { table, rows, shown } = objectTable(chunk.objectIds, chunk.objectWeight, shading);
+    const { table, rows, shown, light } = objectTable(chunk.objectIds, chunk.objectWeight, shading);
     chunk.shown = shown;
+    chunk.light = light;
     chunk.objects ??= gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, chunk.objects);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
@@ -653,8 +673,13 @@ export class Renderer {
     if (chunk.cutVao) gl.deleteVertexArray(chunk.cutVao);
   }
 
-  /** Draws chunks in one pass. The caller sets the target, blending and depth state. */
-  draw(chunks: GpuChunk[], pass: Pass, outputs: Outputs, u: DrawUniforms): void {
+  /**
+   * Draws chunks in one pass. The caller sets the target, blending and
+   * depth state.  A chunk cut into pieces of space (objects read whole)
+   * draws only the pieces `visible` says can show, and of them the first
+   * `samples` of SAMPLES samples of its objects.
+   */
+  draw(chunks: GpuChunk[], pass: Pass, outputs: Outputs, u: DrawUniforms, visible?: (lower: number[], upper: number[]) => boolean, samples = SAMPLES): void {
     const { gl } = this;
     // Lines, points, and a mesh's triangles: lit in 3-D, cut by the section in 2-D.
     for (const kind of ["lines", "points", "triangles"] as const) {
@@ -689,6 +714,7 @@ export class Renderer {
       gl.uniform1i(this.uniform(p, "uSlots"), 1);
       gl.uniform1i(this.uniform(p, "uObjects"), 2);
       gl.uniform1i(this.uniform(p, "uObjectTable"), u.objectTable ? 1 : 0);
+      gl.uniform1i(this.uniform(p, "uOpaque"), pass === "solid" ? 1 : 0);
       gl.uniform1i(this.uniform(p, "uNormals"), 3);
       gl.uniform4fv(this.uniform(p, "uEye"), u.eye);
       for (const chunk of some) {
@@ -711,6 +737,22 @@ export class Renderer {
         } else if (cut) {
           gl.bindVertexArray(chunk.cutVao!);
           gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, chunk.triangleCount);
+        } else if (chunk.pieces !== undefined && chunk.segments !== undefined) {
+          // Only the pieces that can show: each a run of the sorted segments, the attribute pointed at its start.
+          gl.bindVertexArray(chunk.vao);
+          gl.bindBuffer(gl.ARRAY_BUFFER, chunk.segments);
+          const { pieces } = chunk;
+          const k = Math.max(1, Math.min(SAMPLES, Math.round(samples)));
+          for (let i = 0; i + PIECE_STRIDE <= pieces.length; i += PIECE_STRIDE) {
+            if (visible !== undefined && !visible([pieces[i + 2], pieces[i + 3], pieces[i + 4]], [pieces[i + 5], pieces[i + 6], pieces[i + 7]])) continue;
+            // The first k samples of the objects: whole objects, the same ones in every piece.
+            const n = pieces[i + 7 + k];
+            if (n === 0) continue;
+            gl.vertexAttribIPointer(0, 4, gl.UNSIGNED_INT, 0, pieces[i] * 16);
+            gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, n);
+          }
+          gl.vertexAttribIPointer(0, 4, gl.UNSIGNED_INT, 0, 0);
+          gl.bindBuffer(gl.ARRAY_BUFFER, null);
         } else {
           gl.bindVertexArray(chunk.vao);
           gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, chunk.segmentCount);

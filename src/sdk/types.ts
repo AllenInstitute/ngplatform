@@ -363,9 +363,10 @@ export interface ViewerApi {
    * the layer itself: not saved in the link, and kept hidden through undo
    * and scene switches.  An image layer's opacity is set to 0 (the link
    * keeps its own); a segmentation layer's segments are shown as a
-   * temporary set naming no object, so Neuroglancer neither draws nor reads
-   * its chunks, while `visibleSegments` still says what it shows (a
-   * plugin's temporary set made meanwhile included).
+   * temporary set naming no object, and its notSelectedAlpha set to 0 (the
+   * link keeps its own), so Neuroglancer neither draws nor reads its
+   * chunks, while `visibleSegments` still says what it shows (a plugin's
+   * temporary set made meanwhile included, and its notSelectedAlpha).
    */
   hideLayerDrawing(layer: string, hidden: boolean): void;
   /** Shows a surface map (an attribute of a surface layer's store) as its overlay, as Render → Surface's Overlay does; false when the layer is not a surface. */
@@ -514,6 +515,14 @@ export interface VisibleSegments {
   /** How many segments are chosen. */
   size: number;
   has(id: bigint): boolean;
+  /** The chosen segments' ids. */
+  ids(): BigUint64Array;
+  /**
+   * How strongly Neuroglancer draws the segments not chosen when some are
+   * (the layer's `notSelectedAlpha`, "Opacity (off)"), 0 to 1: the layer's
+   * own, also while its drawing is hidden.
+   */
+  notSelectedAlpha: number;
 }
 
 export interface SegmentProperties {
