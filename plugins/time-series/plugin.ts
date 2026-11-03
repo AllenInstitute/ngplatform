@@ -183,6 +183,11 @@ class TimeSeries {
       }),
       ctx.viewer.onLayersChanged(() => void this.refresh()),
       ctx.viewer.onStateChanged(() => {
+        // A layer's source loading (its transform known) can make it an image with time.
+        if (this.findCandidates().join("\n") !== this.candidates.join("\n")) {
+          void this.refresh();
+          return;
+        }
         this.placeChanged();
         this.readPins();
       }),
@@ -332,7 +337,11 @@ class TimeSeries {
           this.drawPlot();
         },
         (e: Error) => {
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted) {
+            // A newer read took its place: its progress is not news.
+            if (this.status.startsWith(`Reading ${what}`)) this.setStatus("");
+            return;
+          }
           read.controller = undefined;
           read.error = e.message;
           this.setStatus(`Could not read ${what}: ${e.message}`, true);

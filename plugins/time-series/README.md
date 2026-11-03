@@ -78,6 +78,9 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   under the mouse, and Neuroglancer's own value at the mouse at that time
   (also at a position halfway between time points); a box's mean equals
   nibabel's mean over the voxels inside; playing and stepping move `t`.
+  An OME-Zarr 0.4 image served over http (t, z, y, x in µm; Zarr v2,
+  blosc zstd, five time points a chunk) plots the values written and
+  Neuroglancer's own at the mouse.
 
 ## Not done
 
