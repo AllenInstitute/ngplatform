@@ -11,7 +11,7 @@
  */
 import { overlayRange, SURFACE_COLORMAPS, type SurfaceLook, surfaceLookOf, surfaceShader } from "../surface_shader.js";
 import { changeLayerName, type SegmentationUserLayer } from "../neuroglancer.js";
-import { button, el, note, row, type Scope, section, select, type Watch } from "./ui.js";
+import { button, el, note, row, type Scope, section, select, showWhen, type Watch } from "./ui.js";
 
 interface SurfaceView {
   attributes: { id: string; name: string; components: number; labels?: { code: number; name: string; rgba: number[] }[] }[];
@@ -176,16 +176,25 @@ function build(scope: Scope, l: SegmentationUserLayer, view: SurfaceView): HTMLE
       ),
       "Values drawn in colour where they pass the threshold (thickness, sulcal depth, a statistic)",
     ),
-    row(
-      "Colour map",
-      select<string>(
-        scope,
-        SURFACE_COLORMAPS.map((m) => ({ value: m.id, label: m.label })),
-        () => look().colormap ?? "heat",
-        (v) => write(withRange({ ...look(), colormap: v })),
-        changed,
+    showWhen(
+      scope,
+      row(
+        "Colour map",
+        select<string>(
+          scope,
+          SURFACE_COLORMAPS.map((m) => ({ value: m.id, label: m.label })),
+          () => look().colormap ?? "heat",
+          (v) => write(withRange({ ...look(), colormap: v })),
+          changed,
+        ),
+        "Heat is Freeview's: red to yellow above the threshold, blue to cyan below its negative; others run from the threshold to the top",
       ),
-      "Heat is Freeview's: red to yellow above the threshold, blue to cyan below its negative; others run from the threshold to the top",
+      {
+        get value() {
+          return look().overlay !== undefined;
+        },
+        changed: shader.changed,
+      },
     ),
   );
   rows.push(
