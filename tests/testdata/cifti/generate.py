@@ -6,6 +6,7 @@ medial wall) and its label table.
     sub.L.midthickness.surf.gii   the surface
     sub.thickness.dscalar.nii     two maps (thickness, myelin), float32
     sub.aparc.dlabel.nii          one parcellation with a label table
+    sub.rest.dtseries.nii         7 time points; expected: each vertex's mean and SD (ddof 1)
 
     python generate.py   (needs nibabel)
 """
@@ -42,6 +43,10 @@ table = {0: ("???", (0, 0, 0, 0)), 1: ("precentral", (0.2, 0.4, 0.8, 1)), 2: ("p
 ci.Cifti2Image(codes, header=(ci.LabelAxis(["aparc"], [table]), axis)).to_filename(os.path.join(HERE, "sub.aparc.dlabel.nii"))
 
 
+series = rng.normal(100, 10, size=(7, columns)).astype(np.float32)
+ci.Cifti2Image(series, header=(ci.SeriesAxis(0, 0.72, 7), axis)).to_filename(os.path.join(HERE, "sub.rest.dtseries.nii"))
+
+
 def on_left(row, fill):
     out = [fill] * N
     for k, v in enumerate(left):
@@ -53,6 +58,8 @@ expected = {
     "thickness": on_left(scalars[0], None),
     "myelin": on_left(scalars[1], None),
     "aparc": on_left(codes[0], 0.0),
+    "rest_mean": on_left(series.astype(np.float64).mean(axis=0), None),
+    "rest_sd": on_left(series.astype(np.float64).std(axis=0, ddof=1), None),
     "aparc_labels": {str(k): [name, list(rgba)] for k, (name, rgba) in table.items()},
 }
 with open(os.path.join(HERE, "expected.json"), "w") as f:

@@ -10,7 +10,7 @@
  * each to check its vertex count when the store opens, a file's values when
  * that attribute is first asked for.
  */
-import { CIFTI_FILE, CORTEX, ciftiMap, parseCiftiHeader } from "./cifti.js";
+import { CIFTI_FILE, CORTEX, ciftiMap, ciftiSeriesStats, parseCiftiHeader } from "./cifti.js";
 import { gunzipHead, isGzip } from "../images/store.js";
 import { MGH_HEADER } from "../images/mgh.js";
 import { FREESURFER_SURFACE } from "./mesh_files.js";
@@ -188,6 +188,14 @@ export async function surfaceCompanions(surfaceName: string, related: Record<str
           const model = header.models.find((m) => m.structure === structure);
           if (structure === undefined || model === undefined) throw new Error("no cortex of this hemisphere in it");
           if (model.surfaceVertices !== vertexCount) throw new Error("another vertex count");
+          if (header.series) {
+            // A time series: its mean and spread over time on each vertex.
+            const stem = base.replace(CIFTI_FILE, "").replace(/^.*[._-](?=[^._-]+$)/, "") || "series";
+            const stats = once(() => ciftiSeriesStats(file, header, structure, vertexCount));
+            maps.push({ name: `${stem}_mean`, source: path, parcellation: false, load: async () => ({ values: (await stats()).mean }) });
+            maps.push({ name: `${stem}_sd`, source: path, parcellation: false, load: async () => ({ values: (await stats()).sd }) });
+            return;
+          }
           const bytes = once(() => whole(file));
           header.maps.forEach((m, row) => {
             const name = header.maps.length === 1 ? base.replace(CIFTI_FILE, "").replace(/^.*[._-](?=[^._-]+$)/, "") || m.name : m.name;

@@ -11,7 +11,7 @@ const file = (name: string) => new File([fs.readFileSync(path.join(DIR, name))],
 describe("CIFTI on a surface", () => {
   it("is found beside a GIFTI surface of a known hemisphere", async () => {
     const related = await surfaceRelated("sub.L.midthickness.surf.gii", async () => fs.readdirSync(DIR));
-    expect(related.sort()).toEqual(["sub.aparc.dlabel.nii", "sub.thickness.dscalar.nii"]);
+    expect(related.sort()).toEqual(["sub.aparc.dlabel.nii", "sub.rest.dtseries.nii", "sub.thickness.dscalar.nii"]);
   });
 
   it("gives each map's values on the left cortex's vertices, the medial wall empty, and a parcellation's table", async () => {
@@ -29,6 +29,15 @@ describe("CIFTI on a surface", () => {
     expect(Array.from(values)).toEqual(expected.aparc);
     expect(labels!.map((l) => [l.code, l.name])).toEqual(Object.entries(expected.aparc_labels).map(([k, v]) => [Number(k), (v as [string])[0]]));
     labels!.forEach((l) => expect(l.rgba.map((c) => Math.round(c * 100) / 100)).toEqual(expected.aparc_labels[String(l.code)][1]));
+  });
+
+  it("gives a time series' mean and standard deviation over time on each vertex", async () => {
+    const { maps } = await surfaceCompanions("sub.L.midthickness.surf.gii", { "sub.rest.dtseries.nii": file("sub.rest.dtseries.nii") }, 12);
+    expect(maps.map((m) => m.name)).toEqual(["rest_mean", "rest_sd"]);
+    for (const m of maps) {
+      const { values } = await m.load();
+      (expected[m.name] as (number | null)[]).forEach((v, i) => (v === null ? expect(values[i]).toBeNaN() : expect(values[i]).toBeCloseTo(v, 3)));
+    }
   });
 
   it("leaves a file out when its hemisphere has another vertex count", async () => {

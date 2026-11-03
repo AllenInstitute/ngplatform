@@ -31,7 +31,7 @@ is never loaded whole and coarser levels appear first.
 | NumPy arrays (`.npy`, 2-D to 4-D) | a virtual OME-Zarr image, with a pyramid | Indexed [z, y, x] as Python imaging code does (the last axis is x); 1-unit voxels. |
 | A FreeSurfer subject folder (with `mri/` and `surf/`) | its T1, aparc+aseg and white and pial surfaces | Surfaces in Freeview's colours, drawn as outlines on the slices. |
 | Tractograms (`.trk`, `.tck`, `.trx`) | a virtual Zarr Vectors streamline store | Split into spatial cells, with a coarse level for large files; track groups work on them. |
-| Meshes (`.obj`, `.stl`, `.ply`), GIFTI and FreeSurfer surfaces (`lh.pial` …) | a virtual Zarr Vectors mesh store | Surfaces are placed in scanner RAS. A surface brings the values beside it (curvature, thickness, `.mgh` overlays, `.annot` and `.label` parcellations, GIFTI shape and label files, and CIFTI `.dscalar.nii` and `.dlabel.nii` beside a GIFTI surface whose name gives its hemisphere, each map on that hemisphere's cortex); see [Surfaces](interface.md#surfaces). |
+| Meshes (`.obj`, `.stl`, `.ply`), GIFTI and FreeSurfer surfaces (`lh.pial` …) | a virtual Zarr Vectors mesh store | Surfaces are placed in scanner RAS. A surface brings the values beside it (curvature, thickness, `.mgh` overlays, `.annot` and `.label` parcellations, GIFTI shape and label files, and CIFTI beside a GIFTI surface whose name gives its hemisphere: each map of a `.dscalar.nii` or `.dlabel.nii`, and a `.dtseries.nii`'s mean and standard deviation over time, on that hemisphere's cortex); see [Surfaces](interface.md#surfaces). |
 | Neurons (`.swc`, or a folder of them) | a virtual Zarr Vectors skeleton store | One object per tree, with cable length and branch points. |
 | Graphs: GraphML (`.graphml`), or an edge list (`…edges.csv`, rows of `source, target`) dropped with its node table beside it (`…nodes.csv`, rows of `node_id, x, y, z`) | a virtual Zarr Vectors graph store | One object per connected component, every edge drawn (cycles too); node positions from `x`, `y`, `z`; each node's degree and other numeric values become properties. |
 | Point tables (`.csv`, `.tsv`, `.xyz`, `.parquet`) and LAS point clouds (`.las`, and compressed `.laz`) | a virtual Zarr Vectors point store | x, y, z from columns named so (or `x_location`, `x_um` …, as Xenium writes transcripts); other numeric columns become properties. Large clouds get coarse levels. |
@@ -42,7 +42,7 @@ reading them again); links to them work in the same browser while the tab
 is open.
 
 !!! note "Coming"
-    CIFTI time series (`.dtseries.nii`) and Feather tables are on the
+    Stepping through a CIFTI time series, and Feather tables, are on the
     [work plan](https://github.com/AllenInstitute/ngplatform/blob/main/TODO.md).
 
 ## Exporting
