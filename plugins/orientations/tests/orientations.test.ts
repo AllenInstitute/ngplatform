@@ -58,6 +58,17 @@ const options = (patch: Partial<GlyphOptions> = {}): GlyphOptions => ({
   ...patch,
 });
 
+/** An ellipsoid glyph's radius along a unit direction: 1 / √Σ (d·a)² / |a|⁴ over its semi-axes a. */
+function ellipsoidRadius(axes: Float32Array, glyph: number, d: Vec3): number {
+  let s = 0;
+  for (let k = 0; k < 3; ++k) {
+    const a = axes.subarray(9 * glyph + 3 * k, 9 * glyph + 3 * k + 3);
+    const aa = a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
+    s += (d[0] * a[0] + d[1] * a[1] + d[2] * a[2]) ** 2 / (aa * aa);
+  }
+  return 1 / Math.sqrt(s);
+}
+
 /** The sphere vertex nearest a direction, and the radius there. */
 function radiusToward(radii: Float32Array, glyph: number, d: Vec3, subdivisions = 2): number {
   const { vertices, count } = icosphere(subdivisions);
@@ -293,9 +304,16 @@ describe("glyphs", () => {
     const d = Float32Array.from([0.3, 0, 0, 1.7, 0, 0.3]);
     const voxelToRas = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
     const set = computeGlyphs([0, 0, 0], d, 6, voxelToRas, options({ kind: "tensor" }));
-    expect(set.shape).toBe("surface");
-    expect(radiusToward(set.radii!, 0, [0, 1, 0])).toBeCloseTo(1, 2);
-    expect(radiusToward(set.radii!, 0, [1, 0, 0])).toBeCloseTo(0.3 / 1.7, 2);
+    // Three semi-axes for the renderer to ray-cast: no mesh.
+    expect(set.shape).toBe("ellipsoids");
+    expect(set.radii).toBeUndefined();
+    expect(set.axes!.length).toBe(9);
+    expect(ellipsoidRadius(set.axes!, 0, [0, 1, 0])).toBeCloseTo(1, 6);
+    expect(ellipsoidRadius(set.axes!, 0, [1, 0, 0])).toBeCloseTo(0.3 / 1.7, 6);
+    expect(ellipsoidRadius(set.axes!, 0, [0, 0, 1])).toBeCloseTo(0.3 / 1.7, 6);
+    // The semi-axes are orthogonal (the renderer inverts them so).
+    const ax = set.axes!;
+    for (const [i, j] of [[0, 1], [0, 2], [1, 2]]) expect(ax[3 * i] * ax[3 * j] + ax[3 * i + 1] * ax[3 * j + 1] + ax[3 * i + 2] * ax[3 * j + 2]).toBeCloseTo(0, 9);
     // Green (y), bright for an FA of 0.8.
     const [r, g, b] = Array.from(set.colours!);
     expect(g).toBeGreaterThan(0.8);
@@ -307,7 +325,16 @@ describe("glyphs", () => {
     // The same tensor in DIPY's order reads the same.
     const dipy = Float32Array.from([0.3, 0, 1.7, 0, 0, 0.3]);
     const again = computeGlyphs([0, 0, 0], dipy, 6, voxelToRas, options({ kind: "tensor", tensorOrder: "dipy" }));
-    expect(radiusToward(again.radii!, 0, [0, 1, 0])).toBeCloseTo(1, 2);
+    expect(ellipsoidRadius(again.axes!, 0, [0, 1, 0])).toBeCloseTo(1, 6);
+    // Turned by the frame: data axis y is RAS x here.
+    const turned = computeGlyphs([0, 0, 0], d, 6, voxelToRas, options({ kind: "tensor", toData: [0, 1, 0, 1, 0, 0, 0, 0, 1] }));
+    expect(ellipsoidRadius(turned.axes!, 0, [1, 0, 0])).toBeCloseTo(1, 6);
+    expect(ellipsoidRadius(turned.axes!, 0, [0, 1, 0])).toBeCloseTo(0.3 / 1.7, 6);
+    // A flat disc keeps a thickness; scaled to the largest in the set when not normalised.
+    const two = Float32Array.from([1, 0, 0, 1, 0, 0, 0.5, 0, 0, 0.5, 0, 0.5]);
+    const flat = computeGlyphs([0, 0, 0, 1, 0, 0], two, 6, voxelToRas, options({ kind: "tensor", normalise: "none" }));
+    expect(ellipsoidRadius(flat.axes!, 0, [0, 0, 1])).toBeCloseTo(0.08, 6);
+    expect(ellipsoidRadius(flat.axes!, 1, [1, 0, 0])).toBeCloseTo(0.5, 6);
   });
 
   it("draws peaks as lines, each scaled to the voxel's largest", () => {

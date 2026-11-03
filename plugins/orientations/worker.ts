@@ -43,7 +43,7 @@ self.onmessage = (event: MessageEvent) => {
     work = reader.voxels(msg.level, msg.request, signal).then((voxels) => {
       const level = levels[msg.level];
       const set = computeGlyphs(voxels.indices, voxels.values, level.components, level.voxelToRas, msg.options);
-      const transfer = [set.centres.buffer, set.radii?.buffer, set.dirs?.buffer, set.colours?.buffer].filter((b): b is ArrayBuffer => b !== undefined);
+      const transfer = [set.centres.buffer, set.radii?.buffer, set.axes?.buffer, set.dirs?.buffer, set.colours?.buffer].filter((b): b is ArrayBuffer => b !== undefined);
       postMessage({ type: "glyphs", id: msg.id, set, voxels: voxels.count }, { transfer });
     });
   } else if (msg.type === "values") {

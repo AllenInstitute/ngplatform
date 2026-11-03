@@ -22,8 +22,8 @@ User guide: [docs/plugins/orientations.md](../../docs/plugins/orientations.md)
 | `plugin.ts` | The panel and settings; which level and voxels each view wants; the 3-D drawing. |
 | `view.ts` | A 2-D view's section in RAS mm (from `panel.project`), the level for its zoom, the voxel box and slab to read. |
 | `overlay.ts` | The WebGL2 canvas over the 2-D views (one context, a viewport per view). |
-| `render.ts` | Drawing glyph sets, in that canvas and in Neuroglancer's 3-D view (`draw3d`). |
-| `glyphs.ts` | Voxels to glyphs: SH on a sphere, tensor ellipsoids, lines. |
+| `render.ts` | Drawing glyph sets, in that canvas and in Neuroglancer's 3-D view (`draw3d`): ODFs as instanced meshes, tensor ellipsoids ray-cast, lines as quads. |
+| `glyphs.ts` | Voxels to glyphs: SH on a sphere, tensor ellipsoids (their semi-axes), lines. |
 | `sh.ts` | Real symmetric spherical harmonics in four bases; least-squares fit; the order-2 quadratic forms. |
 | `tensor.ts` | Tensor component orders, Jacobi eigen-decomposition, FA, MD. (Log-Euclidean means, for coarser levels, are the app's: `src/virtual/images/tensors.ts`.) |
 | `sphere.ts` | Icospheres with each vertex's ring of neighbours (for normals). |
@@ -69,12 +69,56 @@ User guide: [docs/plugins/orientations.md](../../docs/plugins/orientations.md)
   map of the principal direction weighted by FA; lines for vectors.
 
 The plugin follows FURY's slicer: one glyph per voxel of the section,
-mesh-based (instanced: one sphere mesh, a texture of each glyph's radii),
-min-max normalised by default, coloured by direction; peaks and vectors as
-lines through the centre; tensors as ellipsoids coloured by the principal
-direction, dimmed by FA. Ray-casting the SH in the fragment shader (as
-FURY's new glyphs do) would let far more glyphs draw at once; with a cap
-of a few thousand per view, instanced meshes are enough for now.
+min-max normalised by default, coloured by direction; ODFs as meshes
+(instanced: one sphere mesh, a texture of each glyph's radii); peaks and
+vectors as lines through the centre; tensors as ellipsoids coloured by the
+principal direction, dimmed by FA, ray-cast (below). Ray-casting the SH
+themselves (as FURY's new glyphs do, after Peters et al.) is not done: it
+needs a root-finder per pixel on an order-8 function, a much larger shader;
+ODFs stay meshes, and the cap of a few thousand per view keeps them quick.
+
+### Ray-cast ellipsoids
+
+A tensor glyph is its three semi-axes (9 numbers, from `glyphs.ts`), not a
+mesh. `render.ts` draws one quad per glyph: the vertex shader takes the
+projection's derivative at the glyph's centre and gives the quad the axes
+of the ellipse the ellipsoid projects to (exact for the 2-D views, which
+are orthographic; under the 3-D view's perspective a little larger, by the
+glyph's size over its distance, plus two pixels). The fragment shader casts
+the pixel's ray (the inverse projection of the pixel at the near and far
+planes, and at the centre's depth for a point near the glyph) into the
+frame where the ellipsoid is the unit sphere, solves the quadratic, and
+from the nearer meeting gets the surface normal (the inverse semi-axes'
+transpose times the point) and the depth, which it writes, so glyphs hide
+each other and sit in Neuroglancer's 3-D view as a mesh did (the same lift
+towards the eye). Lighting and colour are the mesh's: the colour by
+principal direction dimmed by FA, `0.3 + 0.7 |n·v|` and a small highlight.
+On the 2-D views' canvas (multisampled) the edge is smoothed by alpha to
+coverage, from how far the ray passes from the ellipsoid in pixels; in
+the 3-D view, whose buffers Neuroglancer owns, the edge is hard, as the
+mesh's was.
+
+Measured on a page drawing the same random tensors, in a grid filling a
+1000 × 700 canvas, with the mesh renderer as it was and with ray-casting,
+each frame timed to a `readPixels`, in headless Chrome on SwiftShader (a
+CPU renderer, so only the ratios mean anything):
+
+| Glyphs | Mesh, 162 vertices | Mesh, 642 vertices | Ray-cast |
+|---|---|---|---|
+| 1 000 (26 px) | 120 ms | 460 ms | 22 ms |
+| 4 000 (13 px) | 500 ms | 1 810 ms | 56 ms |
+| 16 000 (7 px) | 1 850 ms | | 210 ms |
+| 50 000 (4 px) | 5 630 ms | | 760 ms |
+| 100 000 (3 px) | 11 200 ms | | 1 240 ms |
+
+So in the time the mesh drew 1 000 glyphs, ray-casting draws about 9 000;
+against the finer mesh used for big glyphs (642 vertices), about 20 times
+as many. On a GPU both are far faster; the vertex work the ray-cast saves
+is the larger part there too. The worker's work per glyph also drops (9
+numbers instead of a radius per sphere vertex). In the app (a DTI NIfTI of
+DIPY's Stanford HARDI sample, four panels, about 240 glyphs at 2 mm, the
+same scene before and after) the plugin's five draws took 302 ms with
+meshes and 19 ms ray-cast, and the pictures match.
 
 ### Spherical harmonic bases
 
@@ -161,6 +205,9 @@ next coarser that does not is used, and none when even the coarsest would
 ("zoom in"); nor are glyphs drawn under 4 pixels apart. A read starts once the view has settled for 100 ms; the
 glyphs shown stay until the new ones arrive, so zooming in shows the coarse
 glyphs until the finer load in below. Chunks are cached in the worker.
+
+Tensors' ellipsoids are cheap to draw (above), so for them the cap limits
+reading and the worker's work more than drawing.
 
 Each 2-D view's glyphs are redrawn, on the plugin's canvas, only when the
 view moves or new glyphs arrive (Neuroglancer draws many frames while

@@ -35,7 +35,9 @@ zoom in and the finer level's glyphs load in and take their place.
   Dzz) or MRtrix (Dxx Dyy Dzz Dxy Dxz Dyz). Automatic takes the store's
   word, DIPY's for a NIfTI whose header says symmetric matrix (intent
   1005), else FSL's. **Tensor glyph**: an ellipsoid, or a line along the
-  principal direction.
+  principal direction. Ellipsoids are drawn exactly (each pixel's ray meets
+  the ellipsoid), not as a mesh of triangles, so they are smooth at any
+  size and many thousands draw quickly.
 - **Frame**: directions along the voxel axes (DIPY, FSL) or along the
   world's x, y, z (MRtrix). **Flip x, y, z** when glyphs point the wrong
   way.
