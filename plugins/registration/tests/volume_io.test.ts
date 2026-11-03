@@ -147,6 +147,46 @@ describe("OME-Zarr", () => {
   }
 });
 
+describe("64-bit labels", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** A one-level uint64 or int64 label store (no compression), chunks 4 a side. */
+  async function labels(type: "uint64" | "int64", values: bigint[], size: [number, number, number]) {
+    const { omeZarrMetadata } = await import("../volume_io.js");
+    const files = omeZarrMetadata([{ size, voxelToRas: identity4() }], "uint32", "labels", { label: true, chunk: 4, codecs: [{ name: "bytes", configuration: { endian: "little" } }] });
+    const array = JSON.parse(new TextDecoder().decode(files.get("0/zarr.json")!));
+    array.data_type = type;
+    files.set("0/zarr.json", new TextEncoder().encode(JSON.stringify(array)));
+    // One chunk (the whole 4³ grid), z, y, x order, x fastest.
+    const chunk = type === "uint64" ? new BigUint64Array(64) : new BigInt64Array(64);
+    values.forEach((v, i) => (chunk[i] = v));
+    files.set("0/c/0/0/0", new Uint8Array(chunk.buffer));
+    const base = `https://example.org/${type}.ome.zarr/`;
+    vi.stubGlobal("fetch", async (input: string | URL) => {
+      const bytes = files.get(String(input).slice(base.length));
+      return bytes === undefined ? new Response(null, { status: 404 }) : new Response(bytes as BodyInit, { status: 200 });
+    });
+    const reader = new VolumeReader();
+    const { levels } = await reader.open([base], undefined);
+    return { levels, raw: () => reader.rawVolume(0, new AbortController().signal) };
+  }
+
+  it("reads uint64 and int64 labels as 32-bit ones, for saving", async () => {
+    const u = await labels("uint64", [0n, 1n, 4294967295n, 70000n], [4, 4, 4]);
+    expect(u.levels[0].type).toBe("uint32");
+    const raw = await u.raw();
+    expect(raw.type).toBe("uint32");
+    expect(Array.from(new Uint32Array(raw.data.buffer).slice(0, 4))).toEqual([0, 1, 4294967295, 70000]);
+    const i = await labels("int64", [-5n, 2n, 2147483647n], [4, 4, 4]);
+    expect(Array.from(new Int32Array((await i.raw()).data.buffer).slice(0, 3))).toEqual([-5, 2, 2147483647]);
+  });
+
+  it("refuses a label past 32 bits rather than wrapping it", async () => {
+    const u = await labels("uint64", [1n, 4294967296n], [4, 4, 4]);
+    await expect(u.raw()).rejects.toThrow(/4294967296 is past what 32 bits hold/);
+  });
+});
+
 describe("LTA volume geometry", () => {
   it("records each volume's size, voxel sizes, directions and centre; a VOX to VOX file reads back to the same RAS to RAS", () => {
     const src = { size: [91, 109, 91] as [number, number, number], voxelToRas: Float64Array.from([-2, 0, 0, 90, 0, 2, 0, -126, 0, 0, 2, -72, 0, 0, 0, 1]), filename: "mni" };

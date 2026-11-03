@@ -41,7 +41,7 @@ then the Luxar plugin and drawing labels by hand.
 - [x] B8. (Lookup tables in Render: FreeSurferColorLUT and its Desikan/Destrieux/Yeo subsets, Schaefer 2018, Harvard-Oxford bundled with their licences; Allen CCF fetched on demand; JHU, AAL3, Brainnetome by File… only, for their licences; any table file loads.) `data/lookup-tables/`: FreeSurferColorLUT, Allen CCF, Harvard-Oxford, JHU, AAL, Brainnetome, Schaefer as `.txt` (each table's licence checked), applied to segmentations by name and colour. 2–3 d
 - [x] B9. (17 maps in Render → Shader → Colour map.) A colormap menu in Render → Shader: grayscale, heat (min/mid/max), jet, GE colour, NIH, PET, binary, viridis and others. 1–2 d
 - [x] B10. (Render → 2-D views → Draw: Outlines, without a fork change; a fork patch for a native outline is in `docs/fork-patches/`.) Segmentations filled or as outlines (the fork's segmentation shader). 3–5 d
-- [ ] B19. (Done: surfaces drawn as their outlines on the sections, in Freeview's colours. Left: per-vertex values, `.annot`, `.label`, colouring surfaces in 3-D.) Surface data: per-vertex values, `.annot` and `.label` coloured by colormap or lookup table; surface outlines on the slices. 5–8 d
+- [x] B19. (Done: surfaces drawn as their outlines on the sections, in Freeview's colours; per-vertex values, `.annot`, `.label`, CIFTI, filled surfaces in 3-D with overlays and parcellations.) Surface data: per-vertex values, `.annot` and `.label` coloured by colormap or lookup table; surface outlines on the slices. 5–8 d
 
 ### C. Plugins
 - [x] Volume rendering: the sections on the cut faces from the full-resolution data the 2-D views already draw, not the solid's coarse level, so zooming into the cut shows fine structure over a coarse solid.
@@ -71,7 +71,7 @@ models, story): `docs/plugins/ideas.md`.
 - [x] The default tractogram: S-21-46 (50 µm HiP-CT, BRIDGE anatomically constrained, MNI space; 3.3 M streamlines) converted to zarr-vectors (`zvtools convert`, as HCP-1065: RAS mm, five levels keeping the longest tenth each, length, orientation, tortuosity) and hosted beside it on GCS; HCP-1065 stays as an example.
 - [x] Track filtering: a rename (pencil) button on each group; a new group's name is selected, ready to type over.
 - [x] README logo: black word mark (it showed white on GitHub's light theme when the computer was in dark mode).
-- [ ] Registration, next: saving segmentations held as uint64.
+- [x] Registration: saving segmentations held as uint64 or int64 (read as 32-bit; a label past 32 bits is refused).
 
 ## From the review of 2026-11-02
 

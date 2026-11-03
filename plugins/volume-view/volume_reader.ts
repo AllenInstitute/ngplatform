@@ -80,6 +80,25 @@ const NUMERIC = {
   float64: Float64Array,
 } as const;
 
+/** 64-bit integer labels are read as 32-bit ones (labels past 2^32 are refused, not wrapped). */
+const NARROWED = { uint64: "uint32", int64: "int32" } as const;
+
+/** A chunk of 64-bit integers (little-endian) as 32-bit ones; an error if one does not fit. */
+export function narrow(bytes: Uint8Array, type: "uint64" | "int64"): Uint8Array {
+  const n = Math.floor(bytes.byteLength / 8);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const out = type === "uint64" ? new Uint32Array(n) : new Int32Array(n);
+  for (let i = 0; i < n; ++i) {
+    const low = view.getUint32(8 * i, true);
+    const high = view.getInt32(8 * i + 4, true);
+    // Fits when the high word is all copies of the low word's sign (int64), or zero (uint64).
+    const fits = type === "uint64" ? high === 0 : high === (low & 0x80000000 ? -1 : 0);
+    if (!fits) throw new Error(`a label of ${type === "uint64" ? view.getBigUint64(8 * i, true) : view.getBigInt64(8 * i, true)} is past what 32 bits hold`);
+    out[i] = type === "uint64" ? low : low | 0;
+  }
+  return new Uint8Array(out.buffer);
+}
+
 /** A chunk's bytes (little-endian) as numbers. */
 function values(bytes: Uint8Array, type: keyof typeof NUMERIC): ArrayLike<number> {
   const Type = NUMERIC[type];
@@ -204,7 +223,8 @@ export class VolumeReader {
         if (stored !== undefined) level = { ...level, axes: stored.axes };
         const array = await openZarrArray(read, level.path, signal);
         if (array === undefined) throw new Error(`${level.url}${level.path}: no array`);
-        if (!(array.elementType in NUMERIC)) throw new Error(`${level.url}${level.path}: ${array.elementType} images are not drawn`);
+        const wide = array.elementType in NARROWED ? (array.elementType as keyof typeof NARROWED) : undefined;
+        if (!(array.elementType in NUMERIC) && wide === undefined) throw new Error(`${level.url}${level.path}: ${array.elementType} images are not drawn`);
         if (array.shape.length !== 3) throw new Error(`${level.url}${level.path}: ${array.shape.length}-D images are not drawn (3-D only)`);
         const dimOf = [0, 1, 2].map((k) => level.axes.indexOf("xyz"[k])) as [number, number, number];
         const chunkShape = array.readChunkShape;
@@ -213,19 +233,23 @@ export class VolumeReader {
           shape: array.shape,
           chunk: chunkShape,
           size: [array.shape[dimOf[0]], array.shape[dimOf[1]], array.shape[dimOf[2]]],
-          type: array.elementType,
+          type: wide === undefined ? array.elementType : NARROWED[wide],
         };
         const reader = new ZarrArrayReader(array, read, shardIndexes);
         const fill = Number(array.fillValue ?? 0);
-        const type = array.elementType as keyof typeof NUMERIC;
+        const type = (wide === undefined ? array.elementType : NARROWED[wide]) as keyof typeof NUMERIC;
+        const raw = async (index: number[]) => {
+          const bytes = await reader.readChunk(index);
+          return bytes === undefined || wide === undefined ? bytes : narrow(bytes, wide);
+        };
         return {
           info,
           readChunk: async (index) => {
-            const bytes = await reader.readChunk(index);
+            const bytes = await raw(index);
             // Other types than uint8: through the image's window, to 0..255.
             return bytes === undefined || type === "uint8" ? bytes : toUint8(values(bytes, type), this.window);
           },
-          rawChunk: (index) => reader.readChunk(index),
+          rawChunk: raw,
           type,
           fill: Number.isFinite(fill) ? fill : 0,
           dimOf,
@@ -250,7 +274,8 @@ export class VolumeReader {
     const step = Math.max(1, Math.floor(chunks.length / 64));
     for (let i = 0; i < chunks.length; i += step) {
       signal?.throwIfAborted();
-      const raw = await level.rawChunk?.(chunks[i]);
+      // A chunk that cannot be read as numbers (a label past 32 bits) is left out of the sample.
+      const raw = await level.rawChunk?.(chunks[i]).catch(() => undefined);
       if (raw === undefined) continue;
       const v = values(raw, level.type);
       const stride = Math.max(1, Math.floor(v.length / 20000));
