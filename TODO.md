@@ -4,6 +4,37 @@ What has been asked for or agreed and is not built yet, newest first. Ticked
 items are done (and say where); the rest are in rough order of work.
 `STATUS.md` says what exists.
 
+## Overnight plan (approved 2026-11-03, 23:00 GMT)
+
+Run in waves of up to three worktree agents; each merged after tests, build
+and headless checks; deploy after major features. Summary to Andrew at
+07:00 CET (06:00 GMT). Keep going past the end of a night; expand the list
+when it runs out. Proofreading and axon segmentation last.
+
+**Wave A (large data)**
+- [ ] A1. Images: dynamic pyramids for huge TIFF/BigTIFF/NIfTI with a small, bounded cache (only the coarse levels worth keeping, a cap such as a few % of the source, LRU; finer levels recomputed), a streaming background build (Jobs, cancel), a TIFF's own reduced pages as levels, Export → OME-Zarr from it; compared with tifffile's `aszarr`, bioformats2raw, ngff-zarr / ome-zarr-py, kerchunk / VirtualiZarr, refkv; measured on a generated multi-GB BigTIFF.
+- [ ] A2. Local job runner: a Python process on this computer (`ngplatform-runner`, bound to 127.0.0.1, paired by a token) that the app's Jobs panel talks to: jobs with their PID, log, progress, cancel; job kinds: zarr-vectors-tools filtering of a tractogram into a new `.trk` or Zarr Vectors store, conversion with a filter-ready index, `zvtools virtual serve` for files too large for the browser; brainhops usable there if the user installs it (no redistribution).
+- [ ] A3. Zarr Vectors at scale in the browser: tractograms binned by streaming in bounded memory (capped spill), meshes in spatial cells with simplified levels; past the browser's limits, the app offers the local runner; aim: a 20 GB tractogram usable for interactive fibre tracing (regions, groups) with jobs to write the results.
+
+**Wave B**
+- [ ] B1. History as a provenance tree (branches kept after going back, a tree to jump in, changes named by scene and dataset).
+- [ ] B2. Editing a large segmentation in place (copy-on-write).
+- [ ] B3. AI quick select (a SAM-style model in the page, ONNX Runtime Web).
+
+**Wave C**
+- [ ] C1. Ray-cast SH ODF glyphs; Luxar glow on folded surfaces; region and parcel time courses on surfaces; vertex reach by mesh spacing.
+- [ ] C2. Defaults: every plugin off except Zarr Vectors, with one-click offers when data a plugin handles is opened.
+- [ ] C3. Plugin-by-plugin audit (bugs, half-done features, verbose UI), scorecards.
+
+**Wave D**
+- [ ] D1. UI tidy (shorter text, consistent controls, empty and error states).
+- [ ] D2. Speed (startup, bundle, time to first image, memory, drawing), before and after.
+- [ ] D3. Code review (shared helpers in the SDK, dead code, test gaps).
+- [ ] D4. UX workflows: about ten common tasks, interactions counted, quicker paths built, counted again.
+- [ ] D5. Examples report (every feature, screenshots, measurements).
+
+**Last**: proofreading; axon segmentation and tracing.
+
 ## Asked for on 2026-11-03
 
 - [x] chunkmirage (JaneliaSciComp, pinned as `vendor/chunkmirage`) as the engine for computed images: one service worker (local data, chunkmirage's relay, gs+google:// for the engine), pipelines carried in their links, Python from a link run only once allowed in a dialog that shows it, a fresh engine when Pyodide loads without its packages; the Filters tab as a pipeline of steps over any image, a Python step of one's own; one Pyodide (0.28.3) for the Python panel and the engine.
