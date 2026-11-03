@@ -13,13 +13,62 @@ collection).
 | File | What |
 |---|---|
 | `manifest.ts` | The Collections panel, the Collections scene kind and the state slice (per scene: the collection's URL and the system it is viewed in) |
-| `plugin.ts` | The panel (found collections, the systems graph, members, transforms) and the Collections tab's layers and placements |
-| `collection.ts` | The model: reading the tree, resolving paths, members, transforms as 4 × 4 on x, y, z, a member placed in any system by the chain of transforms (inverted where walked backwards), the groups above an image to look in (pure, unit-tested) |
+| `plugin.ts` | The panel (found collections, the systems graph, members, transforms, which members are warped or hidden) and the Collections tab's layers and placements |
+| `collection.ts` | The model: reading the tree, resolving paths, members, transforms as 4 × 4 on x, y, z, a member placed in any system by the chain of transforms (inverted where walked backwards), chains through a displacement field and the warp that shows them, the groups above an image to look in (pure, unit-tested) |
 | `examples/srb_gallery.json` | A small collection: the SRB 2026a template as is, moved and mirrored |
 | `tests/` | `npm test` runs them |
 
 The RFC is a draft and has no implementations yet; this follows its text of
-October 2026 and reads what it can (scale, translation, affine, identity
-and sequences of them; displacement fields and coordinate maps are listed,
-not applied). Placements use the Registration plugin's conversion between
-millimetre matrices and Neuroglancer's layer transforms.
+October 2026 and reads what it can: scale, translation, affine, identity,
+sequences of them, and displacement fields (below). Coordinate maps
+(`coordinates`) are listed, not applied. Placements use the Registration
+plugin's conversion between millimetre matrices and Neuroglancer's layer
+transforms.
+
+## Displacement fields
+
+What OME-NGFF 0.6 (RFC-5, the spec's draft of October 2026) says of a
+`displacements` transform:
+
+- It is `{"type": "displacements", "path": ..., "input", "output"}`, with
+  an optional `interpolation` (`linear` by default; `nearest`,
+  `bspline-cubic`) for looking the field up between its samples. `path` is
+  "the location of the multiscale group in this (or another) container";
+  the spec suggests a `coordinateTransformations` group beside the images.
+  Here it is resolved against the document the transform is written in
+  (`coll.zarr/zarr.json` + `coordinateTransformations/swirl`).
+- The field is an OME-Zarr multiscale image with one axis more than the
+  input system: an axis of `"type": "displacement"` (`discrete: true`),
+  placed after a time axis and before the spatial axes (`c, z, y, x`), of
+  length N (the number of axes). Component i is the displacement along the
+  i-th axis of the output system. Its own `coordinateTransformations` (a
+  scale, a translation) place its samples in the input system.
+- Like every transform it maps points forwards, input to output: a point x
+  of the input goes to x + D(x), D looked up (interpolated) at x. It is
+  not invertible in closed form; implementations may estimate the inverse.
+  To render an image into a fixed space, the transform the spec expects is
+  the one from the fixed space to the image (registration tools write that
+  one), applied directly.
+
+How the plugin uses it: for the system chosen, a member whose chain of
+transforms holds a displacement field (alone, or in a sequence with
+affines) is not placed by a layer transform. `chainInto` finds the chain
+(affines and at most one field, either way round); `fieldWarp` turns it
+into a layer computed as it is viewed (`workspace.computed.url` with a
+`{kind: "field"}` warp, src/virtual/warp.ts): on the member's own grid,
+placed by the chain's affines (the field left out), each voxel taken back
+through the chain to the member (the affines undone, then the field) and
+the member sampled there. A field walked as written (fixed to member, the
+usual case) is applied directly; one walked against its direction (member
+to fixed) is inverted by iteration (x ← q − D(x)). The panel marks such
+members **warped**. The warped layer is float32; it takes the image's
+contrast (its omero window, or its integer type's range).
+
+Limits: the field is looked up trilinearly whatever `interpolation` says;
+past its edge the edge's displacement holds; the displacement axis must
+come before z, y, x (the order the spec now asks for; an earlier draft had
+it last), and component values are read in the field's spatial unit. A
+chain needing two fields, `coordinates` maps, and `bijection`s inside a
+sequence are not applied (a `bijection` on its own is, its `inverse` used
+when walked backwards). The warped layer keeps the member's grid, so a
+part pushed by the field beyond that grid is cut off.

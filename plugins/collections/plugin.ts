@@ -11,7 +11,7 @@
 import type { PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { describeTransform } from "@ngplatform/sdk/ome";
 import { neuroglancer, physical } from "../registration/plugin.js";
-import { type CollectionNode, graph, isCollection, type Mat4, members, parentGroups, placeInto, readCollection, sceneSystems } from "./collection.js";
+import { chainInto, type CollectionNode, displayRangeOf, fieldWarp, firstLevel, graph, isCollection, type Mat4, members, parentGroups, placeInto, readCollection, sceneSystems } from "./collection.js";
 import example from "./examples/srb_gallery.json";
 import { COLLECTION_KIND, COLLECTIONS_PANEL } from "./manifest.js";
 
@@ -44,6 +44,26 @@ export const EXAMPLE_URL = "https://alleninstitute.github.io/ngplatform/collecti
 /** Millimetres in one unit of a coordinate system's axis. */
 const MM: Record<string, number> = { meter: 1000, millimeter: 1, micrometer: 1e-3, nanometer: 1e-6 };
 
+/** The contrast range an image (a Zarr group's URL) is shown with by default (`displayRangeOf`), read once per image. */
+const ranges = new Map<string, Promise<[number, number] | undefined>>();
+function displayRange(url: string): Promise<[number, number] | undefined> {
+  let range = ranges.get(url);
+  if (range === undefined) {
+    const json = async (key: string): Promise<unknown> => {
+      const response = await fetch(`${url}/${key}`).catch(() => undefined);
+      return response?.ok ? response.json().catch(() => undefined) : undefined;
+    };
+    range = (async () => {
+      const group = (await json("zarr.json")) ?? (await json(".zattrs"));
+      const level = firstLevel(group);
+      const array = level === undefined ? undefined : ((await json(`${level}/zarr.json`)) ?? (await json(`${level}/.zarray`)));
+      return displayRangeOf(group, array);
+    })();
+    ranges.set(url, range);
+  }
+  return range;
+}
+
 /** What the plugin keeps per scene: the collection a Collections tab shows, and the system it is viewed in. */
 interface Saved {
   url?: string;
@@ -68,6 +88,10 @@ const STYLE = `
 .cl-graph .cl-sys.on rect { stroke: var(--select); stroke-width: 2; }
 .cl-graph .cl-sys:hover rect { fill: var(--ink-4); }
 .cl-graph .cl-mem rect { fill: var(--ink-2); stroke: var(--line); }
+.cl-graph .cl-mem.warped rect { stroke: var(--select); stroke-dasharray: 4 2; }
+.cl-graph .cl-mem.hidden text { fill: var(--faint); }
+.cl-tag { margin-left: 6px; padding: 0 5px; border: 1px dashed var(--select); border-radius: 3px; font: 10px var(--mono); color: var(--muted); }
+.cl-tag.off { border-color: var(--line); color: var(--faint); }
 .cl-graph text { fill: var(--text); font: 11px var(--ui); }
 .cl-graph .cl-edge { stroke: var(--muted); fill: none; }
 .cl-graph .cl-edge-label { fill: var(--faint); font: 10px var(--mono); }
@@ -108,7 +132,19 @@ class Collections {
     if (!this.inCollectionScene()) return;
     const { url } = this.saved();
     if (url === undefined || url === this.documentUrl || this.busy) return;
-    await this.read(url);
+    if (!(await this.read(url)) || this.root === undefined) return;
+    // The layers are the scene's already: which members are warped or hidden, for the panel.
+    const system = this.saved().system;
+    this.warped.clear();
+    this.hidden.clear();
+    if (system !== undefined) {
+      for (const m of members(this.root)) {
+        if (m.node.location === undefined || placeInto(this.root, m.node, system) !== undefined) continue;
+        const steps = chainInto(this.root, m.node, system);
+        (steps && fieldWarp(steps, 1) ? this.warped : this.hidden).add(m.node.name);
+      }
+    }
+    this.update?.();
   }
 
   private async read(url: string): Promise<boolean> {
@@ -187,25 +223,81 @@ class Collections {
     const root = this.root;
     if (root === undefined) return;
     for (const layer of this.ctx.viewer.layers()) this.ctx.workspace.removeLayer(layer.name);
-    for (const m of members(root)) {
-      if (m.node.location === undefined) continue;
-      const id = this.ctx.workspace.addDataset({ source: `zarr://${m.node.location.url}/`, name: m.node.name, kind: "image" });
-      const added = this.ctx.workspace.sceneDatasets().find((d) => d.id === id)?.layers.at(-1)?.name;
-      // Members sharing an image are views of one dataset: name each layer after its member.
-      if (added !== undefined && added !== m.node.name) this.ctx.workspace.renameLayer(added, m.node.name);
-    }
+    for (const m of members(root)) if (m.node.location !== undefined) await this.setSource(m.node.name, `zarr://${m.node.location.url}/`);
     await this.place(system);
     this.ctx.log.info(`Showing ${root.name} in the Collections tab.`);
   }
 
-  /** Places each member's layer in `system`, by the chain of transforms to it; a member with none is hidden. */
+  /**
+   * A member's layer showing `source` (the layer replaced when it shows
+   * another), named after the member.  A warped layer (`warpedFrom`: the
+   * member's image) is float32, whose default range would show it white:
+   * it keeps the contrast the layer had, or takes the image's own.
+   */
+  private async setSource(layer: string, source: string, warpedFrom?: string): Promise<void> {
+    const spec = this.ctx.viewer.layerSpec(layer) as { source?: unknown; shader?: unknown; shaderControls?: { normalized?: unknown } } | undefined;
+    const now = typeof spec?.source === "string" ? spec.source : (spec?.source as { url?: string } | undefined)?.url;
+    if (spec !== undefined && now === source) return;
+    if (spec !== undefined) this.ctx.workspace.removeLayer(layer);
+    const id = this.ctx.workspace.addDataset({ source, name: warpedFrom === undefined ? layer : `${layer} (warped)`, kind: "image" });
+    const added = this.ctx.workspace.sceneDatasets().find((d) => d.id === id)?.layers.at(-1)?.name;
+    // Members sharing an image are views of one dataset: name each layer after its member.
+    if (added !== undefined && added !== layer) this.ctx.workspace.renameLayer(added, layer);
+    if (warpedFrom === undefined) return;
+    const kept = spec?.shaderControls?.normalized !== undefined ? spec.shaderControls : undefined;
+    const range = kept === undefined ? await displayRange(warpedFrom) : undefined;
+    if (kept === undefined && range === undefined && typeof spec?.shader !== "string") return;
+    this.ctx.viewer.patchState(
+      (ng) => {
+        const l = ((ng as { layers?: Record<string, unknown>[] }).layers ?? []).find((x) => x.name === layer);
+        if (l === undefined) return;
+        if (typeof spec?.shader === "string") l.shader = spec.shader;
+        if (kept !== undefined) l.shaderControls = structuredClone(kept);
+        else if (range !== undefined) l.shaderControls = { ...((l.shaderControls as object) ?? {}), normalized: { range } };
+      },
+      { quiet: true },
+    );
+  }
+
+  /** Members shown warped through a displacement field in the system viewed, and members hidden (no chain this can apply), by name. */
+  private warped = new Set<string>();
+  private hidden = new Set<string>();
+
+  /**
+   * Places each member's layer in `system`, by the chain of transforms to
+   * it: affine chains as the layer's transform; a chain through a
+   * displacement field as a layer computed as it is viewed (the member
+   * resampled back through the chain), placed by the chain's affines; a
+   * member with no chain is hidden.
+   */
   private async place(system: string | undefined): Promise<void> {
     const root = this.root;
     if (root === undefined || system === undefined) return;
     const unit = MM[sceneSystems(root).find((s) => s.id === system)?.units.find((u) => u !== "") ?? "millimeter"] ?? 1;
+    this.warped.clear();
+    this.hidden.clear();
     for (const m of members(root)) {
       const layer = m.node.name;
-      const placement = placeInto(root, m.node, system);
+      if (m.node.location === undefined) continue;
+      const plain = `zarr://${m.node.location.url}/`;
+      let placement = placeInto(root, m.node, system);
+      let source = plain;
+      if (placement === undefined) {
+        const steps = chainInto(root, m.node, system);
+        const shown = steps && fieldWarp(steps, unit);
+        if (shown !== undefined) {
+          placement = shown.placement;
+          try {
+            source = await this.ctx.workspace.computed.url({ source: plain, chunk: [64, 64, 64], warp: shown.warp });
+            this.warped.add(layer);
+          } catch (e) {
+            this.ctx.log.error(`Could not warp ${layer}: ${(e as Error).message}`);
+            placement = undefined;
+          }
+        }
+      }
+      if (placement === undefined) this.hidden.add(layer);
+      else await this.setSource(layer, source, this.warped.has(layer) ? m.node.location.url : undefined);
       this.ctx.viewer.patchState(
         (ng) => {
           const spec = ((ng as { layers?: Record<string, unknown>[] }).layers ?? []).find((l) => l.name === layer);
@@ -275,28 +367,31 @@ class Collections {
         { class: cls, ...(onclick ? { onclick, role: "button", tabindex: 0 } : {}) },
         svg("rect", { x: p.x, y: p.y, width: 110, height: rowH - 6, rx: 4 }),
         svg("text", { x: p.x + 6, y: p.y + rowH / 2 + 1 }, label.length > 17 ? `${label.slice(0, 16)}…` : label),
-        svg("title", {}, label),
+        svg("title", {}, cls.includes("warped") ? `${label}: warped through a displacement field` : label),
       );
     };
     const edges = g.transforms.flatMap((t) => {
       const a = at.get(keyOf.get(t.input) ?? "");
       const b = at.get(keyOf.get(t.output) ?? "");
       if (!a || !b) return [];
-      const ax = a.x + 110;
+      // A transform from a system to a member (as registration writes a field) runs right to left.
+      const back = a.x > b.x;
+      const ax = back ? a.x : a.x + 110;
       const ay = a.y + (rowH - 6) / 2;
-      const bx = b.x;
+      const bx = back ? b.x + 110 : b.x;
       const by = b.y + (rowH - 6) / 2;
       const same = a.x === b.x;
       const d = same ? `M${a.x + 110},${ay} C${a.x + 150},${ay} ${b.x + 150},${by} ${b.x + 110},${by}` : `M${ax},${ay} C${(ax + bx) / 2},${ay} ${(ax + bx) / 2},${by} ${bx},${by}`;
-      // The label by the edge's start, where edges into one system do not overlap.
-      return [svg("path", { class: "cl-edge", d, "marker-end": "url(#cl-arrow)" }), svg("text", { class: "cl-edge-label", x: same ? a.x + 116 : ax + 4, y: ay - 3 }, t.type)];
+      // The label by the member's end, where edges into one system do not overlap.
+      const label = same ? { x: a.x + 116, y: ay - 3 } : back ? { x: bx + 4, y: by + 11 } : { x: ax + 4, y: ay - 3 };
+      return [svg("path", { class: "cl-edge", d, "marker-end": "url(#cl-arrow)" }), svg("text", { class: "cl-edge-label", ...label }, t.type)];
     });
     return svg(
       "svg",
       { class: "cl-graph", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Coordinate systems and transforms" },
       svg("defs", {}, svg("marker", { id: "cl-arrow", viewBox: "0 0 8 8", refX: 8, refY: 4, markerWidth: 6, markerHeight: 6, orient: "auto" }, svg("path", { d: "M0,0 L8,4 L0,8 z", fill: "currentColor" }))),
       ...edges,
-      ...mems.map((m) => box(`m:${m.name}`, m.name, "cl-mem")),
+      ...mems.map((m) => box(`m:${m.name}`, m.name, `cl-mem${this.warped.has(m.name) ? " warped" : ""}${this.hidden.has(m.name) ? " hidden" : ""}`)),
       ...systems.map((s) => box(`s:${s.id}`, s.name ?? s.id, `cl-sys${s.id === chosen ? " on" : ""}`, () => void this.choose(s.id))),
     );
   }
@@ -311,7 +406,13 @@ class Collections {
           "div",
           { class: "cl-node", style: `padding-left: ${depth * 12}px` },
           el("span", { class: "cl-kind" }, n.type),
-          el("span", {}, n.name),
+          el(
+            "span",
+            {},
+            n.name,
+            this.warped.has(n.name) ? el("span", { class: "cl-tag", title: "Resampled through the displacement field in its chain, computed as you view it" }, "warped") : null,
+            this.hidden.has(n.name) ? el("span", { class: "cl-tag off", title: "No chain of transforms to this system that can be applied" }, "hidden") : null,
+          ),
           n.location ? el("span", { class: "cl-where" }, n.location.url) : null,
         ),
         ...n.nodes.flatMap((c) => tree(c, depth + 1)),
@@ -358,6 +459,10 @@ class Collections {
           root ? el("h3", { class: "section-title" }, `${root.name}: coordinate systems`) : null,
           root ? this.graphView(root) : null,
           root ? el("p", { class: "note" }, chosen ? `Viewed in ${chosen.name ?? chosen.id} (${chosen.axes.join(", ")}${chosen.units.some(Boolean) ? `; ${[...new Set(chosen.units.filter(Boolean))].join(", ")}` : ""}). Click another system to view in it.` : "Click a system to view the images in it.") : null,
+          root && this.warped.size
+            ? el("p", { class: "note" }, `Warped through a displacement field (computed as you view it, placed by the chain's affines): ${[...this.warped].join(", ")}.`)
+            : null,
+          root && this.hidden.size ? el("p", { class: "note" }, `Hidden, with no chain of transforms to this system that can be applied: ${[...this.hidden].join(", ")}.`) : null,
           root ? el("h3", { class: "section-title" }, "Members") : null,
           root ? el("div", { class: "cl-tree" }, ...tree(root, 0)) : null,
           g && g.transforms.length ? el("h3", { class: "section-title" }, "Transforms") : null,

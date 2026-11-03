@@ -33,6 +33,8 @@ export interface Transform {
   output: string;
   /** The transform as written, for showing and composing. */
   raw: any;
+  /** The URL of the document it is written in, which a displacement field's `path` is relative to. */
+  document: string;
 }
 
 const IDENTITY: Mat4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
@@ -70,6 +72,7 @@ function readNode(n: any, documentUrl: string): CollectionNode {
     input: refId(t.input),
     output: refId(t.output),
     raw: t,
+    document: documentUrl,
   }));
   const path = n.path;
   return {
@@ -170,12 +173,12 @@ export function members(root: CollectionNode): Member[] {
 }
 
 /** Every coordinate system and transform in the tree, with the node each belongs to. */
-export function graph(root: CollectionNode): { systems: { node: string; id: string; axes: string[] }[]; transforms: { node: string; input: string; output: string; type: string; raw: any }[] } {
+export function graph(root: CollectionNode): { systems: { node: string; id: string; axes: string[] }[]; transforms: { node: string; input: string; output: string; type: string; raw: any; document: string }[] } {
   const systems: { node: string; id: string; axes: string[] }[] = [];
-  const transforms: { node: string; input: string; output: string; type: string; raw: any }[] = [];
+  const transforms: { node: string; input: string; output: string; type: string; raw: any; document: string }[] = [];
   const visit = (n: CollectionNode) => {
     for (const s of n.systems) systems.push({ node: n.name, id: s.id, axes: s.axes });
-    for (const t of n.transforms) transforms.push({ node: n.name, input: t.input, output: t.output, type: t.type, raw: t.raw });
+    for (const t of n.transforms) transforms.push({ node: n.name, input: t.input, output: t.output, type: t.type, raw: t.raw, document: t.document });
     n.nodes.forEach(visit);
   };
   visit(root);
@@ -233,6 +236,158 @@ export function placeInto(root: CollectionNode, member: CollectionNode, system: 
     }
   }
   return undefined;
+}
+
+/**
+ * A step of a chain of transforms on x, y, z: an affine, or a displacement
+ * field (RFC-5's `displacements`: x → x + D(x), D the field at `url`;
+ * `inverse`: the inverse of that).  `components`: the axes of the field's
+ * vector components in order (its transform's output system's), when the
+ * tree names that system.
+ */
+export type Step = { kind: "affine"; m: Mat4 } | { kind: "field"; url: string; inverse: boolean; components?: string[] };
+
+/**
+ * A transform as steps on x, y, z (the axes in `axes` order, its output
+ * system's when known): affines, and displacement fields alone or in a
+ * sequence; a field's `path` resolved against `document`.  Undefined for
+ * kinds this cannot apply (coordinate maps, among others).
+ */
+export function transformSteps(t: any, axes: string[] | undefined, document: string): Step[] | undefined {
+  if (t?.type === "displacements") {
+    if (typeof t.path !== "string") return undefined;
+    return [{ kind: "field", url: resolvePath(t.path, document), inverse: false, ...(axes ? { components: axes } : {}) }];
+  }
+  if (t?.type === "sequence") {
+    const out: Step[] = [];
+    for (const inner of t.transformations ?? []) {
+      const steps = transformSteps(inner, axes, document);
+      if (steps === undefined) return undefined;
+      out.push(...steps);
+    }
+    return out;
+  }
+  const m = transformMatrix(t, axes);
+  return m === undefined ? undefined : [{ kind: "affine", m }];
+}
+
+/** Steps walked backwards: in reverse order, each inverted (undefined when an affine is singular). */
+export function invertSteps(steps: Step[]): Step[] | undefined {
+  const out: Step[] = [];
+  for (const s of [...steps].reverse()) {
+    if (s.kind === "field") out.push({ ...s, inverse: !s.inverse });
+    else {
+      const m = invert(s.m);
+      if (m === undefined) return undefined;
+      out.push({ kind: "affine", m });
+    }
+  }
+  return out;
+}
+
+/**
+ * The chain of steps taking `member` into `system`, as `placeInto` finds
+ * it but through displacement fields too (at most one in the chain; a
+ * field walked backwards is its inverse; a `bijection` walked backwards is
+ * its `inverse` as written), shortest first.  Undefined when none joins them.
+ */
+export function chainInto(root: CollectionNode, member: CollectionNode, system: string): Step[] | undefined {
+  const known = (id: string) => graph(root).systems.find((s) => s.id === id)?.axes;
+  const edges = graph(root).transforms.flatMap((t) => {
+    const bijection = t.raw?.type === "bijection";
+    // A system the tree does not name (a member's own) has the axes of the other side.
+    const output = known(t.output) ?? known(t.input);
+    const input = known(t.input) ?? known(t.output);
+    const there = transformSteps(bijection ? t.raw.forward : t.raw, output, t.document);
+    const back = bijection ? transformSteps(t.raw.inverse, input, t.document) : there && invertSteps(there);
+    return [...(there ? [{ from: t.input, to: t.output, steps: there }] : []), ...(back ? [{ from: t.output, to: t.input, steps: back }] : [])];
+  });
+  const fields = (steps: Step[]) => steps.filter((s) => s.kind === "field").length;
+  const starts = [member.id, member.name, ...member.systems.map((s) => s.id)].filter((k): k is string => !!k);
+  // States: a system and how many fields the chain to it has (0 or 1).
+  const seen = new Map<string, Step[]>(starts.map((s) => [`0:${s}`, []]));
+  const queue = starts.map((s) => ({ at: s, steps: [] as Step[] }));
+  while (queue.length > 0) {
+    const { at, steps } = queue.shift()!;
+    if (at === system) return steps;
+    for (const e of edges) {
+      if (e.from !== at) continue;
+      const next = [...steps, ...e.steps];
+      const n = fields(next);
+      if (n > 1 || seen.has(`${n}:${e.to}`)) continue;
+      seen.set(`${n}:${e.to}`, next);
+      queue.push({ at: e.to, steps: next });
+    }
+  }
+  return undefined;
+}
+
+/** A matrix in system units (its translation) as millimetres, `unit` mm a unit (no −0s, for a tidy link). */
+const inMm = (m: Mat4, unit: number): Mat4 => m.map((v, i) => (i % 4 === 3 && i < 12 ? v * unit : v) + 0);
+
+/**
+ * How a member whose chain into a system holds a displacement field is
+ * shown: its layer placed by `placement` (the chain's affines, the field
+ * left out: a 4 × 4 in the system's units), and resampled through a
+ * computed warp that takes each place of the placed layer back through the
+ * chain to the member (the Platform's `{kind: "field"}` warp: affines in
+ * mm `before` the field, the field, inverted when the chain walks it
+ * forwards, and affines `after`).  Undefined when the chain has no field.
+ */
+export function fieldWarp(steps: Step[], unit: number): { placement: Mat4; warp: { kind: "field"; url: string; before: Mat4[]; after: Mat4[]; invert: boolean; components?: string[] } } | undefined {
+  const at = steps.findIndex((s) => s.kind === "field");
+  if (at === -1) return undefined;
+  const field = steps[at] as Extract<Step, { kind: "field" }>;
+  const affines = (part: Step[]) => part.map((s) => (s as Extract<Step, { kind: "affine" }>).m);
+  const placement = affines(steps.filter((s) => s.kind === "affine")).reduce((m, step) => multiply(step, m), [...IDENTITY]);
+  // From the placed layer back to the member: the placement, then each step undone, last first.
+  const after = invertSteps(steps.slice(0, at));
+  const before = invertSteps(steps.slice(at + 1));
+  if (after === undefined || before === undefined) return undefined;
+  return {
+    placement,
+    warp: {
+      kind: "field",
+      url: field.url,
+      before: [placement, ...affines(before)].map((m) => inMm(m, unit)),
+      after: affines(after).map((m) => inMm(m, unit)),
+      // Undoing x → x + D(x) is the field's inverse; undoing its inverse is the field.
+      invert: !field.inverse,
+      ...(field.components ? { components: field.components } : {}),
+    },
+  };
+}
+
+const DTYPE_RANGE: Record<string, [number, number]> = {
+  uint8: [0, 255],
+  int8: [-128, 127],
+  uint16: [0, 65535],
+  int16: [-32768, 32767],
+  uint32: [0, 4294967295],
+  int32: [-2147483648, 2147483647],
+};
+const V2_DTYPE: Record<string, string> = { u1: "uint8", i1: "int8", u2: "uint16", i2: "int16", u4: "uint32", i4: "int32" };
+
+/**
+ * The contrast range an image is shown with by default, from its group's
+ * metadata (`group`: zarr.json or .zattrs) and its first level's (`array`:
+ * zarr.json or .zarray): OME's omero window, else its integer type's whole
+ * range (Neuroglancer's default for it); undefined for floats, which a
+ * warped copy (float32 too) shows the same way by default.
+ */
+export function displayRangeOf(group: any, array: any): [number, number] | undefined {
+  const ome = group?.attributes?.ome ?? group?.ome ?? group?.attributes ?? group;
+  const w = ome?.omero?.channels?.[0]?.window;
+  if (Number.isFinite(w?.start) && Number.isFinite(w?.end) && w.end > w.start) return [w.start, w.end];
+  const dtype = typeof array?.data_type === "string" ? array.data_type : V2_DTYPE[String(array?.dtype ?? "").replace(/^[<>|=]/, "")];
+  return dtype === undefined ? undefined : DTYPE_RANGE[dtype];
+}
+
+/** The path of an image's first (finest) level, from its group's metadata. */
+export function firstLevel(group: any): string | undefined {
+  const ome = group?.attributes?.ome ?? group?.ome ?? group?.attributes ?? group;
+  const path = ome?.multiscales?.[0]?.datasets?.[0]?.path;
+  return typeof path === "string" ? path : undefined;
 }
 
 /** The coordinate systems of the tree members can be placed in: a collection's own (its scene's). */
