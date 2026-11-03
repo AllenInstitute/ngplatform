@@ -42,7 +42,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
   /** "Local" for data on this computer; nothing for data from the web. */
   const where = (url: string) => (wb.localData.parse(url.replace(/^[a-z0-9+]+:\/\/(?=https?:)/, "")) !== undefined ? "Local" : "");
   const list = h("div", { class: "datasets" });
-  const others = h("div", { class: "section" });
+  const others = h("div", { class: "section ds-others" });
   const addButton = h("button", { class: "btn outline small", type: "button", "aria-haspopup": "menu" }, icon("plus"), "Add");
   addButton.addEventListener("click", () => showAddMenu(addButton, wb));
   const permission = h(

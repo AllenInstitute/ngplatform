@@ -290,6 +290,8 @@ kbd {
 
 /* --------------------------------------------------------------- content */
 .section + .section { margin-top: 18px; }
+/* Datasets other scenes show: apart from the scene's own list (or its empty state) above. */
+.ds-others:not(:empty) { margin-top: 22px; }
 .section-title {
   margin: 0 0 8px;
   font: 600 11px/1 var(--ui);
