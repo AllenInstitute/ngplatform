@@ -493,7 +493,10 @@ export class Shell {
       hint: "For Neuroglancer itself, without this app",
       run: async () => {
         const { url, viewer } = neuroglancerLink(store.ng(), this.pluginFormatsIn(), location.href);
-        if (await copyText(url, "the link")) toast(`Neuroglancer link copied (${viewer}).`);
+        if (!(await copyText(url, "the link"))) return;
+        // Google's Neuroglancer reads neither this site's sign-in nor what this site computes or serves.
+        const missing = viewer.includes("appspot") ? this.unreadableElsewhere() : this.unreadableElsewhere().filter((m) => !m.startsWith("gs+google"));
+        toast(`Neuroglancer link copied (${viewer}).${missing.length ? ` It will not show ${missing.join(" or ")}.` : ""}`);
       },
     });
     add({
@@ -504,11 +507,7 @@ export class Shell {
       run: () => {
         const { url } = neuroglancerLink(store.ng(), [], location.href);
         window.open(url, "_blank", "noopener");
-        const missing = [
-          ...this.pluginFormatsIn().map((f) => (f === "zarr-vectors" ? "Zarr Vectors" : f)),
-          ...(this.usesLocalData() ? ["data on this computer"] : []),
-          ...(this.wb.engine.layers().some((l) => l.sources.some((s) => s.includes("gs+google://"))) ? ["gs+google:// (this site's Google sign-in)"] : []),
-        ];
+        const missing = [...this.pluginFormatsIn().map((f) => (f === "zarr-vectors" ? "Zarr Vectors" : f)), ...this.unreadableElsewhere()];
         if (missing.length) toast(`Neuroglancer doesn't read ${missing.join(" or ")}, so only the other layers (images) are likely to show there.`);
         wb.log.add("Opened this scene in Neuroglancer.");
       },
@@ -1166,6 +1165,20 @@ export class Shell {
           ),
         ),
     );
+  }
+
+  /**
+   * What a Neuroglancer elsewhere cannot read of this scene: data on this
+   * computer, images this site computes (they are answered by this tab), and
+   * gs+google:// data (this site's sign-in).
+   */
+  private unreadableElsewhere(): string[] {
+    const sources = this.wb.engine.layers().flatMap((l) => l.sources);
+    return [
+      ...(this.usesLocalData() ? ["data on this computer"] : []),
+      ...(sources.some((s) => s.includes("/virtual/ngp/")) ? ["images computed in this tab (Filters)"] : []),
+      ...(sources.some((s) => s.includes("gs+google://")) ? ["gs+google:// data (this site's Google sign-in)"] : []),
+    ];
   }
 
   /** The kinds of scene the plugins that are on contribute. */
