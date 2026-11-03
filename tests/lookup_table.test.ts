@@ -113,6 +113,8 @@ describe("lookup tables", () => {
       [997n, "root", "root", "#ffffff"],
       [8n, "grey", "Basic cell groups and regions", "#bfdae3"],
     ]);
+    // The hierarchy: each structure's parent.
+    expect(entries.map((e) => e.parent)).toEqual([undefined, 997n]);
   });
 
   it("keeps the last entry for a repeated value, and rejects a file with none", () => {

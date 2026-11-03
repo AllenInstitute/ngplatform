@@ -19,6 +19,8 @@ export interface LookupEntry {
   colour: [number, number, number];
   /** A longer name, when the table gives one (the Allen ontology's full names). */
   description?: string;
+  /** The value of the structure this one is part of, when the table is a hierarchy (the Allen ontology). */
+  parent?: bigint;
 }
 
 export interface LookupTable {
@@ -138,13 +140,14 @@ function parseAllenJson(data: unknown): LookupTable | undefined {
   const list = Array.isArray(root) ? root : [root];
   if (!list.every((s) => typeof s === "object" && s !== null && typeof (s as AllenStructure).id === "number")) return undefined;
   const entries: LookupEntry[] = [];
-  const visit = (s: AllenStructure) => {
+  const visit = (s: AllenStructure, parent: bigint | undefined) => {
     const hex = /^#?([0-9a-f]{6})$/i.exec(s.color_hex_triplet ?? "");
     const rgb = hex ? [0, 2, 4].map((k) => parseInt(hex[1].slice(k, k + 2), 16)) : [128, 128, 128];
-    entries.push({ value: BigInt(s.id), name: s.acronym ?? s.name ?? String(s.id), colour: rgb as [number, number, number], description: s.acronym ? s.name : undefined });
-    for (const child of s.children ?? []) visit(child);
+    const value = BigInt(s.id);
+    entries.push({ value, name: s.acronym ?? s.name ?? String(s.id), colour: rgb as [number, number, number], description: s.acronym ? s.name : undefined, ...(parent !== undefined ? { parent } : {}) });
+    for (const child of s.children ?? []) visit(child, value);
   };
-  for (const s of list) visit(s as AllenStructure);
+  for (const s of list) visit(s as AllenStructure, undefined);
   return { entries };
 }
 

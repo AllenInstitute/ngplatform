@@ -15,9 +15,10 @@
  * Either kind is switched on or off in the Plugins tab, which reloads the
  * page with the same link.
  */
+import type { LookupEntry, LookupTable } from "../core/lookup_table.js";
 import type { Schema } from "../core/schema.js";
 
-export type { Schema };
+export type { LookupEntry, LookupTable, Schema };
 export type Disposer = () => void;
 export type Json = Record<string, unknown>;
 
@@ -264,6 +265,37 @@ export interface ViewerApi {
    * replaced as they come; metadata is kept.
    */
   reloadData(url: string): void;
+  /**
+   * Label lookup tables, the names and colours of a segmentation's values:
+   * those that come with the app, the one a layer has, and giving a layer
+   * one as its Render → Lookup table does.  A table is named by its
+   * `lut://` URL.
+   */
+  lookupTables: LookupTablesApi;
+}
+
+export interface LookupTableInfo {
+  /** Its `lut://` URL. */
+  url: string;
+  title: string;
+  /** For grouping in menus ("FreeSurfer", "Mouse"). */
+  group: string;
+  description?: string;
+  /** Fetched from its publisher when chosen (its licence does not let the app ship it). */
+  fetched: boolean;
+}
+
+export interface LookupTablesApi {
+  /** The tables that come with the app, or that it fetches from their publishers. */
+  catalogue(): LookupTableInfo[];
+  /** A table, read once a visit (an Allen structure graph gives each entry its `parent`). */
+  load(url: string): Promise<LookupTable>;
+  /** A table's title: the catalogue's, or its file's name. */
+  title(url: string): string;
+  /** The table a segmentation layer has, if any. */
+  of(layer: string): string | undefined;
+  /** Gives a segmentation layer a table (names and colours), or takes it off with undefined. */
+  apply(layer: string, url: string | undefined): Promise<void>;
 }
 
 export interface LayerTransform {

@@ -288,25 +288,41 @@ export class VolumeReader {
     return hi > lo ? [lo, hi] : [lo, lo + 1];
   }
 
-  /** A Neuroglancer precomputed image: its scales, finest first, as arrays in z, y, x order. */
+  /**
+   * A Neuroglancer precomputed image or segmentation: its scales, finest
+   * first, as arrays in z, y, x order.  A segmentation's labels are read as
+   * 32-bit ones, as 64-bit labels in OME-Zarr are.
+   */
   private async openPrecomputed(url: string, signal?: AbortSignal): Promise<{ levels: LevelInfo[]; name: string }> {
-    const info = await readInfo(url, undefined, signal, "image");
+    const info = await readInfo(url, undefined, signal);
+    if (info.type !== "image" && info.type !== "segmentation") throw new Error(`${url}: a precomputed ${info.type ?? "source"}, not an image or segmentation`);
+    const labels = info.type === "segmentation";
     this.levels = info.scales
       .map((scale): OpenLevel => {
         const reader = new PrecomputedScale(url, scale, info.data_type);
         const [cx, cy, cz] = reader.chunk;
         const [sx, sy, sz] = scale.size;
+        const level: LevelInfo = { ...scaleLevel(url, scale), shape: [sz, sy, sx], chunk: [cz, cy, cx], size: [sx, sy, sz] };
+        const common = { fill: 0, dimOf: [2, 1, 0] as [number, number, number], grid: [reader.grid[2], reader.grid[1], reader.grid[0]] };
+        if (!labels) return { info: level, readChunk: ([z, y, x]) => reader.readChunk([x, y, z]), type: "uint8", ...common };
+        const raw = async ([z, y, x]: number[]) => {
+          const ids = await reader.readLabels([x, y, z]);
+          return ids && narrow(new Uint8Array(ids.buffer, ids.byteOffset, ids.byteLength), "uint64");
+        };
         return {
-          info: { ...scaleLevel(url, scale), shape: [sz, sy, sx], chunk: [cz, cy, cx], size: [sx, sy, sz] },
-          readChunk: ([z, y, x]) => reader.readChunk([x, y, z]),
-          type: "uint8",
-          fill: 0,
-          dimOf: [2, 1, 0],
-          grid: [reader.grid[2], reader.grid[1], reader.grid[0]],
+          info: { ...level, type: "uint32" },
+          readChunk: async (index) => {
+            const bytes = await raw(index);
+            return bytes && toUint8(values(bytes, "uint32"), this.window);
+          },
+          rawChunk: raw,
+          type: "uint32",
+          ...common,
         };
       })
       .sort((a, b) => a.info.voxelSize - b.info.voxelSize);
     this.reset();
+    this.window = [0, 255];
     return { levels: this.levels.map((l) => l.info), name: url.replace(/\/$/, "").split("/").pop() ?? "" };
   }
 
@@ -405,6 +421,60 @@ export class VolumeReader {
       progress?.(++done, indices.length);
     });
     return { data: out, size, type, fill: level.fill };
+  }
+
+  /**
+   * A level's own values, chunk by chunk, for a pass over every voxel
+   * (counting labels): `visit` gets each stored chunk's values (in the
+   * array's order and full chunk shape), the box of voxels (x, y, z) it
+   * covers inside the level, `lo` up to `hi`, and the steps through
+   * `values` of one voxel along x, y and z, from `values[start]` at `lo`.
+   * Only chunks meeting `region`, when it is given; chunks not stored (all
+   * the fill value) are left out.
+   */
+  async eachRawChunk(
+    index: number,
+    signal: AbortSignal,
+    visit: (values: ArrayLike<number>, box: { lo: [number, number, number]; hi: [number, number, number]; start: number; stride: [number, number, number] }) => void,
+    progress?: Progress,
+    region?: Region,
+  ): Promise<void> {
+    const level = this.levels[index];
+    const { chunk: cs, shape, size } = level.info;
+    const { dimOf, type } = level;
+    const lo = region?.lo ?? [0, 0, 0];
+    const hi = region?.hi ?? size;
+    const aLo = [0, 0, 0];
+    const aHi = [0, 0, 0];
+    for (let k = 0; k < 3; ++k) {
+      aLo[dimOf[k]] = Math.max(0, lo[k]);
+      aHi[dimOf[k]] = Math.min(shape[dimOf[k]], hi[k]);
+    }
+    if (aLo.some((v, d) => v >= aHi[d])) return;
+    const steps = [cs[1] * cs[2], cs[2], 1];
+    const stride = [0, 1, 2].map((k) => steps[dimOf[k]]) as [number, number, number];
+    const read = level.rawChunk ?? level.readChunk;
+    const first = [0, 1, 2].map((d) => Math.floor(aLo[d] / cs[d]));
+    const last = [0, 1, 2].map((d) => Math.ceil(aHi[d] / cs[d]) - 1);
+    const indices: number[][] = [];
+    for (let a = first[0]; a <= last[0]; ++a) for (let b = first[1]; b <= last[1]; ++b) for (let c = first[2]; c <= last[2]; ++c) indices.push([a, b, c]);
+    let done = 0;
+    await each(indices, signal, async (ci) => {
+      const bytes = await read(ci);
+      if (bytes !== undefined && !signal.aborted) {
+        const data = values(bytes, level.rawChunk ? type : "uint8");
+        const from = [0, 1, 2].map((d) => Math.max(ci[d] * cs[d], aLo[d]));
+        const to = [0, 1, 2].map((d) => Math.min((ci[d] + 1) * cs[d], aHi[d]));
+        const start = (from[0] - ci[0] * cs[0]) * steps[0] + (from[1] - ci[1] * cs[1]) * steps[1] + (from[2] - ci[2] * cs[2]);
+        visit(data, {
+          lo: [0, 1, 2].map((k) => from[dimOf[k]]) as [number, number, number],
+          hi: [0, 1, 2].map((k) => to[dimOf[k]]) as [number, number, number],
+          start,
+          stride,
+        });
+      }
+      progress?.(++done, indices.length);
+    });
   }
 
   /**
