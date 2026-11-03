@@ -5,6 +5,9 @@ import { NPY_FILE, openNpy } from "./npy.js";
 import { FilteredStore, parseFilterName } from "./filters.js";
 import { LABEL_NAME, type VirtualStore } from "./store.js";
 import { openTiff, TIFF_FILE } from "./tiff.js";
+import { openVzip } from "../refkv/store.js";
+
+export const VZIP_FILE = /\.vzip$/i;
 
 /**
  * A filtered view of an image is a file named `<image's file name>~<filter>.vfilter`
@@ -12,7 +15,9 @@ import { openTiff, TIFF_FILE } from "./tiff.js";
  */
 export const FILTER_FILE = /^(.*)~([^~]+)\.vfilter$/;
 
-export async function openImage(file: Blob & { name: string }): Promise<VirtualStore & { name: string }> {
+export async function openImage(file: Blob & { name: string }, related: Record<string, File> = {}): Promise<VirtualStore & { name: string }> {
+  // A Zarr hierarchy in a refkv vzip archive, its references read from the files beside it.
+  if (VZIP_FILE.test(file.name)) return openVzip(file, related);
   const filtered = FILTER_FILE.exec(file.name);
   if (filtered !== null) {
     const source = await openImage(new File([file], filtered[1]));

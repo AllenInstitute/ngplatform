@@ -66,6 +66,24 @@ export const TIFF_FORMAT: VirtualFormat = {
   format: "TIFF stack",
 };
 
+/**
+ * A refkv vzip archive: a Zarr hierarchy whose chunks reference byte ranges
+ * of other files (TIFF, CZI, ND2, HDF5 … zarrified by refkv), served by the
+ * same worker; the files beside it are handed over for its references.
+ */
+export const VZIP_FORMAT: VirtualFormat = {
+  ...NIFTI_FORMAT,
+  pattern: /\.vzip$/i,
+  extensions: [".vzip"],
+  format: "Zarr archive (refkv vzip)",
+  source: (url) => `zarr://${url}/`,
+  related: async (path, list) => {
+    const name = path.split("/").pop()!;
+    const dir = path.slice(0, path.length - name.length).replace(/\/$/, "");
+    return (await list(dir)).filter((f) => f !== name);
+  },
+};
+
 type Handle = FileSystemFileHandle | FileSystemDirectoryHandle;
 type Permissioned = Handle & {
   queryPermission?(o: { mode: "read" | "readwrite" }): Promise<PermissionState>;
@@ -158,7 +176,7 @@ export class LocalData {
   readonly base: string;
   private worker: Promise<ServiceWorker | undefined> | undefined;
   /** Files read as virtual stores, and the workers that serve them. */
-  private formats: VirtualFormat[] = [NIFTI_FORMAT, MGH_FORMAT, NPY_FORMAT, TIFF_FORMAT, FILTER_FORMAT, ...ZARR_VECTORS_VIRTUAL];
+  private formats: VirtualFormat[] = [NIFTI_FORMAT, MGH_FORMAT, NPY_FORMAT, TIFF_FORMAT, VZIP_FORMAT, FILTER_FORMAT, ...ZARR_VECTORS_VIRTUAL];
   private readonly virtualWorkers = new Map<VirtualFormat, Worker>();
   /** Each file's related files (`VirtualFormat.related`), found once: by entry id and path. */
   private readonly relatedFiles = new Map<string, Promise<Record<string, File>>>();

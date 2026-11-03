@@ -7,4 +7,4 @@ import { openImage } from "./open.js";
 
 export type { VirtualRequest } from "../../sdk/virtual.js";
 
-serveVirtualStores((file) => openImage(file));
+serveVirtualStores((file, related) => openImage(file, related));

@@ -37,5 +37,21 @@
   "refkv_source/tree/zarr.json": "7c14c143880e4e8ffa4a3aa19b9ba65b57f47c38de8b1e87692c54c924cf4ef2",
   "refkv_source/zarr.json": "3e496dd186c78cf033fbe171ded4952ff934f5d7dacab7d578244914ef439e44",
   "zarr.json": "2c7b3a13ae18f6a4692b8530245ac7558ad23ec118eebd12cbd3c52fff2be585"
+ },
+ "lzw_delta": {
+  "0/c/0/0": "7c5be7974091fbd8b94b4581f19d959a6ef46c6e6a8f0ccc437567d19a5be1b8",
+  "0/c/1/0": "7c72f3f58e549e9f5eb304fd04d6231975225510ba1c376c957dfbaac0dcd85b",
+  "0/c/2/0": "3d7819983ff7165441f8f6f56afa4fd832ce7e7b786762313a764db2fad36985",
+  "0/c/3/0": "3ff6d05af941051cc5462abf6e1470cd4b01a834c8e0544a870d66ec0502e514",
+  "0/c/4/0": "025ec9f560b1a809e73ba8e806da951a3ad619d3e88a5f9faaf9ad570753a41c",
+  "0/zarr.json": "bbb8db1deff7d2bf607e21fa38070024981b30218a1fb03439defa2249b9885e",
+  "refkv_source/ir/rows/c/0/0": "c5a15c43986b0769fc8c0f79b532a0e1d61ac369e889a9b853eacffb00c63096",
+  "refkv_source/ir/rows/zarr.json": "36e9b866c2c5c4a26df651c1af0f1edfd983f5f30671f272b96a97c509ba3634",
+  "refkv_source/ir/tables/c/0/0": "eaeba3c575f364282ecc561a1bd61b3e60099446fd57ecb572a7f1f025cdde7b",
+  "refkv_source/ir/tables/zarr.json": "306ac929081c2c70de3dd0f15ba2d4ad423e31393e4f46669b2cecd24bf9d71a",
+  "refkv_source/ir/zarr.json": "5a74c13c504faff64ffd30ee6ce868cb0e9ee4d47b55184ee05bf31e008c2b4a",
+  "refkv_source/tree/zarr.json": "3090aec712d46f781065dc05570be4bceb37fbfaf59a8663951249af6c49b0e3",
+  "refkv_source/zarr.json": "480c40cc855afd86b526d8db0a3d352fd25213656b94cbfbef819e9043bb3e9b",
+  "zarr.json": "3f7c1c8647e2d7eaac5239a73df46ea621f27ceac233f2fac79196cced9326e2"
  }
 }
