@@ -26,6 +26,8 @@ only where the views need them. Each one is presented to Neuroglancer as a
 chunked store made from it on the fly, a *virtual store*, so a large file
 is never loaded whole and coarser levels appear first.
 
+![How a file on this computer becomes a virtual Zarr store: the header is read, the metadata written from it, and chunks made when the viewer asks](../images/virtual-zarr.webp)
+
 | You open | It is shown as | Notes |
 |---|---|---|
 | NIfTI (`.nii`, `.nii.gz`), Analyze (`.hdr` + `.img`), FreeSurfer (`.mgz`, `.mgh`) | a virtual OME-Zarr image, with a pyramid | Placed by the sform (else qform). A `.nii.gz` is decompressed once and kept in the browser's private storage for later visits. Colour (RGB) NIfTI shows in colour. |
