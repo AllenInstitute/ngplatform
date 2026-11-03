@@ -44,6 +44,17 @@ again (`ViewerApi.reloadData`); the Time series plugin's transport does
 both. The hemisphere's part of the file is read once, when a time point is
 first asked for, and kept by time point (up to 1 GB).
 
+Two more messages serve a vertex's time course. `{ series, nearest:
+[x, y, z], within }` answers the vertex nearest a point in the store's
+coordinates (as `0/vertices` holds them: the file's less
+`coordinate_offset`, which is the layer's source space), and its distance,
+or `vertex: null` when none is within `within`; a grid over the vertices
+(`vectors/vertex_grid.ts`, made at the first such message) keeps a lookup
+on a 160 000-vertex surface to microseconds. `{ series, vertex }` answers
+that vertex's values at every time point (a `Float32Array`, NaN on the
+medial wall): its column of the file, read alone, or from the time points
+already read.
+
 Every store has coarser levels, so a view of the whole thing loads quickly:
 an image's pyramid (means of the finer level; the first voxel for labels),
 a tractogram's sample level (one streamline in ten).

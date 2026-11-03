@@ -7,8 +7,9 @@ series** tab in the bottom dock plots the values of the voxel under the
 mouse at every time point, keeps pinned voxels and the mean over a region
 (a box or ellipsoid in an annotation layer) beside it, marks the time the
 views show, plays and steps through time, and saves the plotted series as
-CSV. After FSLeyes' time series panel, Freeview's time course and napari's
-time slider.
+CSV; for a CIFTI time series beside a surface, the same for the vertex
+under the mouse and pinned vertices. After FSLeyes' time series panel,
+Freeview's time course and napari's time slider.
 
 User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
 (and the manifest's `guide`, shown in the Plugins tab).
@@ -21,7 +22,7 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
 | `plugin.ts` | The panel: the image, transport, pins and regions, the legend; the voxel under the mouse; playing; CSV. |
 | `space.ts` | Positions (global, and a layer's local dimensions after them: `Place`) to a layer's source coordinates and back, in any number of dimensions (`LayerMap`). |
 | `series.ts` | The time axis as the views show it (its global dimension, start, step and unit), the voxel at a position, stepping, colours, percent change, CSV. |
-| `surface.ts` | Time series on surfaces: a Zarr Vectors layer's store, the series its surface header lists (`time_series`), their time axis. |
+| `surface.ts` | Time series on surfaces: a Zarr Vectors layer's store, the series its surface header lists (`time_series`), their time axis; the mouse in the store's coordinates, 4 mm in its units, the nearest-vertex answer. |
 | `region.ts` | Boxes and ellipsoids from annotation layers; the image voxels whose centres are inside one. |
 | `reader.ts` | `SeriesReader`: an OME-Zarr image's levels read along time at some voxels, averaged (the finest, or a coarse read while the mouse moves: `movingPlan`); a byte-bounded chunk cache. |
 | `worker.ts`, `client.ts` | The reader in a worker. |
@@ -105,6 +106,23 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   (`surfaceTimes`, by store and series) once stepping settles, not while
   playing: in the link, so the store (which starts at 0) is sent it again
   when the workspace opens, and an undo shows the one before.
+- **A vertex's time course.** When a surface's series is chosen, the
+  pointer's global position (`ViewerApi.cursor`: in the 3-D view the point
+  picked on the mesh, in a 2-D view the point on the section) goes through
+  the inverse of the surface layer's transform (`LayerMap`, as for images)
+  to the store's coordinates: the file's less `coordinate_offset`, which
+  the layer's default transform adds back, so a moved layer is read where
+  it shows. The store is asked for the vertex nearest that point within
+  4 mm (`{ series, nearest, within }`, `storeDistance` turning millimetres
+  into the source's units; a grid over the vertices answers it,
+  `src/virtual/vectors/vertex_grid.ts`), then for that vertex's values at
+  every time point (`{ series, vertex }`: its column of the CIFTI file).
+  An answer to an older lookup is dropped. Off the surface the last vertex
+  stays (so it can be pinned from the panel). A vertex pin keeps the
+  store, the series and the vertex number (the surface file's), and is
+  read again the same way when the link is opened. A vertex the file has
+  no column for (the medial wall) gets NaN at every time point: the legend
+  says "no values" and nothing is plotted or saved for it.
 - **State.** Pins (voxel indices, or an annotation layer and annotation id
   for a region) and the chosen image are in the plugin's state, in the
   link; their values are read again when it is opened. A region pin is
@@ -144,10 +162,30 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   overlay the colours turn a quarter round after six Next clicks, the
   store's `wave_t` equals the file's row at each time point checked, and
   stepping and playing add no undo step.
+  `plugins/zarr-vectors/src/virtual/cifti.spec.ts`: the nearest vertex
+  message (each vertex of the 12-vertex fixture found from a point near
+  it, in the store's coordinates; none beyond `within`) and each vertex's
+  values at every time point equal nibabel's (NaN on the medial wall),
+  read from the file a column at a time and after the series was read
+  whole. `vertex_grid.spec.ts`: the grid against a search of every vertex
+  (points in a box, on a sphere, on a plane, outside the box, with a
+  limit); on a 160 000-vertex sphere it is made in about 45 ms and a
+  lookup takes a few microseconds.
+  In the browser (the same sphere and series): hovering vertices in the
+  3-D view plots the nearest vertex to the picked point (checked against
+  nibabel's coordinates), and the saved CSV equals nibabel's values at
+  each pinned vertex (worst difference 5e-7); a vertex below z = −40 mm
+  says it has no values; Pin and Alt+P keep vertices in the state; Next
+  moves the time marker; in a 2-D view the vertex at the outline is found;
+  after moving the layer 20 mm, the vertex shown under the mouse is still
+  the one plotted.
 
 ## Not done
 
-- **Vertices' time courses.** A CIFTI series on a surface is stepped
-  through, not plotted: the plot, pins and CSV would take a vertex index
-  (the vertex under the mouse) in place of a voxel, and the store a request
-  for a vertex's column of the matrix.
+- **Vertices' coarse reads and regions.** A vertex's column is read whole
+  (a few kilobytes even for 1200 time points), so there is no coarse read;
+  there is no region mean on a surface (a parcel's mean from a `.dlabel`
+  would be the natural one).
+- **The other hemisphere.** A CIFTI file holds both hemispheres; each
+  surface's store serves its own, so the right one's vertices are plotted
+  only when its surface is open with the file beside it.

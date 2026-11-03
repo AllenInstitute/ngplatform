@@ -111,6 +111,8 @@ export interface SurfaceSeries {
   unit: string;
   /** The time point served. */
   time: number;
+  /** A vertex's values at every time point (NaN where the file has none for it). */
+  course(vertex: number): Promise<Float32Array>;
 }
 
 const MAP_ORDER = ["curv", "sulc", "thickness", "area", "aparc", "aparc_a2009s", "labels", "volume"];
@@ -224,6 +226,7 @@ export async function surfaceCompanions(surfaceName: string, related: Record<str
               count: header.rows,
               ...axis,
               time: 0,
+              course: (vertex) => values.course(vertex),
             };
             maps.push(entry.map);
             series.push(entry);

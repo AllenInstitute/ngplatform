@@ -8,7 +8,8 @@
  * store (a NIfTI opened from this computer is one, read in place).  A
  * CIFTI time series beside a surface opened from this computer is stepped
  * through instead (./surface.ts): its store serves the values at the time
- * point the transport chooses.  Where
+ * point the transport chooses, finds the vertex nearest the mouse and
+ * sends a vertex's values at every time point.  Where
  * a position is in the image, and which time point the views show, come
  * from the layer's transform (./space.ts), so a moved layer reads where it
  * shows.  Pins are kept in the plugin's state (in the link); their values
@@ -40,7 +41,7 @@ import {
   voxelLabel,
 } from "./series.js";
 import { LayerMap, type Place, placeOf } from "./space.js";
-import { type SurfaceSeries, surfaceAxis, surfaceSeriesOf, zarrVectorsStore } from "./surface.js";
+import { nearestOf, storeDistance, storePoint, type SurfaceSeries, surfaceAxis, surfaceSeriesOf, VERTEX_REACH_MM, vertexLabel, zarrVectorsStore } from "./surface.js";
 
 type Child = Node | string | null | undefined | false;
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
@@ -114,18 +115,25 @@ const STYLE = `
 .ts-readout { flex: none; color: var(--muted); font: 11px/1.5 var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 `;
 
-/** A pinned series: a voxel, or the mean over a region drawn in an annotation layer. */
+/** A pinned series: a voxel, the mean over a region drawn in an annotation layer, or a surface's vertex. */
 interface Pin {
   id: number;
   /** Its colour, an index into COLOURS. */
   colour: number;
-  /** The image layer it was pinned in. */
+  /** The image layer it was pinned in (for a surface's vertex, the Image menu's entry: the layer's and the series' names). */
   layer: string;
   label: string;
   /** The voxel's index along each image axis (the metadata's order). */
   voxel?: number[];
   region?: { layer: string; annotation: string };
+  /** A vertex of a surface: its store, the series (its map's name) and the vertex as the surface file numbers it. */
+  vertex?: { store: string; series: string; index: number };
 }
+
+const isVertexPin = (v: unknown): boolean => {
+  const p = v as Pin["vertex"];
+  return typeof p?.store === "string" && typeof p.series === "string" && Number.isInteger(p.index) && p.index >= 0;
+};
 
 interface Saved {
   layer?: string;
@@ -139,7 +147,7 @@ const surfaceKey = (surface: SurfaceStep) => `${surface.store}|${surface.series.
 
 function readSaved(value: unknown): Saved {
   const v = (value ?? {}) as Partial<Saved>;
-  const pins = Array.isArray(v.pins) ? v.pins.filter((p) => typeof p?.id === "number" && typeof p.layer === "string" && (Array.isArray(p.voxel) || p.region !== undefined)) : [];
+  const pins = Array.isArray(v.pins) ? v.pins.filter((p) => typeof p?.id === "number" && typeof p.layer === "string" && (Array.isArray(p.voxel) || p.region !== undefined || isVertexPin(p.vertex))) : [];
   const times = Object.entries(v.surfaceTimes ?? {}).filter((e): e is [string, number] => Number.isInteger(e[1]) && e[1] >= 0);
   return { layer: typeof v.layer === "string" ? v.layer : undefined, pins, ...(times.length ? { surfaceTimes: Object.fromEntries(times) } : {}) };
 }
@@ -162,6 +170,15 @@ interface Cursor {
   fine: boolean;
   /** The quick read (cached finest values, else a coarse read) while it runs. */
   quick?: Promise<void>;
+}
+
+/** The vertex under the mouse, on a surface whose series is chosen, and its series. */
+interface VertexCursor {
+  /** The surface's store and series it is on. */
+  store: string;
+  series: string;
+  vertex: number;
+  read: Read;
 }
 
 /** How long the mouse rests on a voxel before its finest values are read, when they are slow to read. */
@@ -206,6 +223,10 @@ class TimeSeries {
   private axisNote: string | undefined;
   private current = 0;
   private cursor: Cursor | undefined;
+  /** The vertex under the mouse, when a surface's series is chosen. */
+  private vertexCursor: VertexCursor | undefined;
+  /** Counts the nearest-vertex lookups sent, so an answer to an older one is dropped. */
+  private vertexLookups = 0;
   private cursorTimer: ReturnType<typeof setTimeout> | undefined;
   private restTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly pinned = new Map<number, Read>();
@@ -340,6 +361,7 @@ class TimeSeries {
     const surface = chosen?.surface;
     if (surface?.store !== this.surface?.store || surface?.series.name !== this.surface?.series.name) {
       this.surface = surface;
+      this.vertexCursor = undefined;
       if (surface !== undefined) void this.surfaceTime(surface);
     }
     if (url !== this.infoUrl) {
@@ -460,18 +482,71 @@ class TimeSeries {
       );
   }
 
-  /** The image voxel under the mouse, if it is over the image. */
-  private cursorVoxel(): number[] | undefined {
+  /** The mouse's position, ordered as a Place's dimensions (the layer's local ones where it is); undefined when it is not in a view. */
+  private cursorPosition(place: Place): number[] | undefined {
     const cursor = this.ctx.viewer.cursor();
-    const { map, info } = this;
-    if (!cursor.active || map === undefined || info === undefined) return undefined;
-    // The mouse's position, ordered as the state's dimensions; the layer's local ones where it is.
-    const place = this.place();
-    const position = place.space.names.map((n, i) => {
+    if (!cursor.active) return undefined;
+    return place.space.names.map((n, i) => {
       const at = cursor.names.indexOf(n);
       return at === -1 ? place.position[i] : cursor.position[at];
     });
-    return voxelAt(map, info, position);
+  }
+
+  /** The image voxel under the mouse, if it is over the image. */
+  private cursorVoxel(): number[] | undefined {
+    const { map, info } = this;
+    if (map === undefined || info === undefined) return undefined;
+    const position = this.cursorPosition(this.place());
+    return position === undefined ? undefined : voxelAt(map, info, position);
+  }
+
+  /**
+   * The vertex under the mouse, on the surface whose series is chosen: the
+   * mouse's position through the inverse of the surface layer's transform
+   * to the store's coordinates, the store asked for the vertex nearest it
+   * (within VERTEX_REACH_MM), then for that vertex's values at every time
+   * point.  Away from the surface, the last vertex stays plotted (so it can
+   * be pinned from the panel).
+   */
+  private async readVertexCursor(): Promise<void> {
+    const surface = this.surface;
+    const layer = this.chosen()?.layer;
+    const t = layer === undefined ? undefined : this.ctx.viewer.layerTransform(layer);
+    if (surface === undefined || layer === undefined || t === undefined) return;
+    const place = this.place(layer);
+    const position = this.cursorPosition(place);
+    const point = position === undefined ? undefined : storePoint(new LayerMap(t, place.space), position);
+    if (point === undefined) return;
+    const lookup = ++this.vertexLookups;
+    let found: { vertex: number; distance: number } | undefined;
+    try {
+      found = nearestOf(await this.ctx.workspace.local.send(surface.store, { series: surface.series.name, nearest: point, within: storeDistance(t, VERTEX_REACH_MM) }));
+    } catch (e) {
+      if (lookup === this.vertexLookups && this.surface === surface) this.setStatus(`Could not find the vertex under the mouse: ${(e as Error).message}`, true);
+      return;
+    }
+    if (lookup !== this.vertexLookups || this.surface !== surface || found === undefined) return;
+    const known = this.vertexCursor;
+    if (known !== undefined && known.store === surface.store && known.series === surface.series.name && known.vertex === found.vertex) return;
+    const read: Read = { key: `${surface.store}|${surface.series.name}|${found.vertex}` };
+    this.vertexCursor = { store: surface.store, series: surface.series.name, vertex: found.vertex, read };
+    this.readVertexInto(read, surface.store, surface.series.name, found.vertex, "the vertex under the mouse");
+    this.update?.();
+  }
+
+  /** Reads a surface vertex's values at every time point from its store into `read`, then redraws. */
+  private async readVertexInto(read: Read, store: string, series: string, vertex: number, what: string): Promise<void> {
+    try {
+      const values = ((await this.ctx.workspace.local.send(store, { series, vertex })) as { values?: unknown } | undefined)?.values;
+      if (!(values instanceof Float32Array)) throw new Error("the store sent no values");
+      read.values = values;
+      // A vertex the file has no column for (the medial wall).
+      read.error = values.some((v) => !Number.isNaN(v)) ? undefined : "no values: not in the series";
+      this.drawPlot();
+    } catch (e) {
+      read.error = (e as Error).message;
+      this.setStatus(`Could not read ${what}: ${read.error}`, true);
+    }
   }
 
   /**
@@ -482,6 +557,10 @@ class TimeSeries {
    * chunk in several); the finest is read once the mouse rests.
    */
   private readCursor(): void {
+    if (this.surface !== undefined) {
+      void this.readVertexCursor();
+      return;
+    }
     const info = this.info;
     const voxel = this.cursorVoxel();
     if (voxel === undefined || info === undefined) return;
@@ -561,6 +640,7 @@ class TimeSeries {
 
   /** What a pin reads: its voxel, or its region's annotation as it is now (so a region moved is read again). */
   private pinKey(pin: Pin): string {
+    if (pin.vertex !== undefined) return `${pin.vertex.store}|${pin.vertex.series}|${pin.vertex.index}`;
     if (pin.voxel !== undefined) return `${this.infoUrl}|${pin.voxel.join()}`;
     const layers = (this.ctx.viewer.getState() as { layers?: { name: string; annotations?: AnnotationJson[] }[] }).layers ?? [];
     const annotation = layers.find((l) => l.name === pin.region?.layer)?.annotations?.find((a) => a.id === pin.region?.annotation);
@@ -573,7 +653,7 @@ class TimeSeries {
     const live = new Set<number>();
     let changed = false;
     for (const pin of this.saved.pins) {
-      if (pin.layer !== layer || this.map === undefined) continue;
+      if (pin.layer !== layer || (pin.vertex === undefined ? this.map === undefined : this.surface === undefined)) continue;
       live.add(pin.id);
       const key = this.pinKey(pin);
       const known = this.pinned.get(pin.id);
@@ -582,6 +662,13 @@ class TimeSeries {
       known?.controller?.abort();
       const read: Read = { key };
       this.pinned.set(pin.id, read);
+      if (pin.vertex !== undefined) {
+        // A vertex already read under the mouse needs no reading again.
+        const under = this.vertexCursor;
+        if (under?.read.values !== undefined && `${under.store}|${under.series}|${under.vertex}` === key) Object.assign(read, { values: under.read.values, error: under.read.error });
+        else void this.readVertexInto(read, pin.vertex.store, pin.vertex.series, pin.vertex.index, pin.label);
+        continue;
+      }
       // A pinned voxel already read under the mouse needs no reading again.
       if (pin.voxel !== undefined && this.cursor?.voxel.join() === pin.voxel.join() && this.cursor.read.values !== undefined && this.cursor.read.coarse === undefined) {
         read.values = this.cursor.read.values;
@@ -620,6 +707,18 @@ class TimeSeries {
 
   /** Pins the voxel under the mouse (else the one at the views' centre). */
   pinCursor(): void {
+    const surface = this.surface;
+    if (surface !== undefined) {
+      // On a surface: the vertex under the mouse (or the last one it was on).
+      const under = this.vertexCursor;
+      if (under === undefined) {
+        this.ctx.ui.toast("Move the mouse onto the surface first.");
+        return;
+      }
+      if (this.saved.pins.some((p) => p.layer === this.layer() && p.vertex?.store === under.store && p.vertex.series === under.series && p.vertex.index === under.vertex)) return;
+      this.addPin({ label: vertexLabel(under.vertex), vertex: { store: under.store, series: under.series, index: under.vertex } });
+      return;
+    }
     const { map, info } = this;
     if (map === undefined || info === undefined) {
       this.ctx.ui.toast("Choose an image with a time axis in the Time series tab first.");
@@ -778,16 +877,20 @@ class TimeSeries {
 
   // ------------------------------------------------------------- plot and CSV
 
-  /** The series plotted: the voxel under the mouse, then the pins. */
+  /** The series plotted: the voxel (or a surface's vertex) under the mouse, then the pins. */
   private plotted(): (PlotSeries & { id?: number })[] {
     const out: (PlotSeries & { id?: number })[] = [];
     const info = this.info;
     const read = this.cursor?.read;
-    if (read?.values !== undefined && info !== undefined) {
+    const under = this.surface === undefined ? undefined : this.vertexCursor;
+    if (under?.read.values !== undefined && under.read.error === undefined) {
+      out.push({ label: `Mouse (${vertexLabel(under.vertex)})`, values: under.read.values, colour: CURSOR_COLOUR });
+    } else if (read?.values !== undefined && info !== undefined) {
       out.push({ label: `Mouse (${voxelLabel(info, this.cursor!.voxel)})${read.coarse !== undefined ? " coarse" : ""}`, values: read.values, colour: CURSOR_COLOUR, coarse: read.coarse });
     }
     for (const pin of this.saved.pins) {
-      const values = this.pinned.get(pin.id)?.values;
+      const read = this.pinned.get(pin.id);
+      const values = read?.error === undefined ? read?.values : undefined;
       if (pin.layer === this.layer() && values !== undefined) out.push({ id: pin.id, label: pin.label, values, colour: COLOURS[pin.colour] });
     }
     return out;
@@ -848,8 +951,9 @@ class TimeSeries {
       const axis = this.axis;
       const ready = axis !== undefined;
       const surface = this.surface;
-      // Plotting, pins and regions are the images'.
-      const plots = ready && surface === undefined;
+      // An image's voxels or a surface's vertices are plotted and pinned; regions are the images'.
+      const plots = ready && (surface !== undefined || this.info !== undefined);
+      const regionsToo = plots && surface === undefined;
       const image = el(
         "select",
         { class: "text-input", "aria-label": "Image", title: "The image plotted", onchange: (e: Event) => this.choose((e.target as HTMLSelectElement).value) },
@@ -873,7 +977,7 @@ class TimeSeries {
       );
       const note =
         this.candidates.length === 0
-          ? "Open an image with a time axis (a 4-D NIfTI, or OME-Zarr with t) to plot its time courses, or a surface with a CIFTI time series beside it to step through."
+          ? "Open an image with a time axis (a 4-D NIfTI, or OME-Zarr with t) to plot its time courses, or a surface with a CIFTI time series beside it to step through and plot its vertices."
           : this.openError !== undefined
             ? `Could not read ${layer}: ${this.openError}`
             : this.axisNote !== undefined
@@ -894,7 +998,7 @@ class TimeSeries {
           rate,
         ),
         el("div", { class: "ts-row ts-spread" }, time, loop),
-        regions.length > 0 && plots ? el("div", { class: "ts-row ts-region" }, region, el("button", { class: "btn outline small", type: "button", title: "Pin the mean over the region's voxels", onclick: () => this.pinRegion() }, "Pin mean")) : "",
+        regions.length > 0 && regionsToo ? el("div", { class: "ts-row ts-region" }, region, el("button", { class: "btn outline small", type: "button", title: "Pin the mean over the region's voxels", onclick: () => this.pinRegion() }, "Pin mean")) : "",
         el("div", { class: `ts-status${this.statusError ? " error" : ""}` }, note || this.status),
       );
       // The legend: every series plotted or pinned, pins removable.
@@ -905,12 +1009,15 @@ class TimeSeries {
           el(
             "span",
             { class: "ts-key ts-note" },
-            `${layer} shows the time point chosen here as its values ${surface.series.name}. (Vertices' time courses are not plotted.) `,
+            `${layer} shows the time point chosen here as its values ${surface.series.name}. `,
             layer === undefined
               ? null
               : el("button", { class: "btn small", type: "button", onclick: () => this.ctx.viewer.setSurfaceOverlay(layer, surface.series.name) }, `Show ${surface.series.name} as the overlay`),
           ),
         );
+        const under = this.vertexCursor;
+        if (under === undefined) keys.push(el("span", { class: "ts-key" }, "Move the mouse onto the surface to plot a vertex's time course."));
+        else keys.push(el("span", { class: "ts-key", title: under.read.error ?? "" }, swatch(CURSOR_COLOUR), `Mouse: ${vertexLabel(under.vertex)}${under.read.error ? ` (${under.read.error})` : under.read.values === undefined ? " …" : ""}`));
       } else if (this.cursor !== undefined && this.info !== undefined) {
         const coarse = this.cursor.read.coarse;
         keys.push(el("span", { class: "ts-key", title: coarse === undefined ? "" : "Read coarsely while the mouse moves; the finest values are read when it rests" }, swatch(CURSOR_COLOUR), `Mouse: ${voxelLabel(this.info, this.cursor.voxel)}${coarse !== undefined ? ` (coarse: ${coarse})` : ""}`));
@@ -931,20 +1038,15 @@ class TimeSeries {
         );
       }
       legend.replaceChildren(...keys);
-      // A surface's series is stepped through, not plotted: nothing to pin or save.
       actions.replaceChildren(
-        ...(surface !== undefined
-          ? []
-          : [
-              el(
-                "label",
-                { class: "field check", title: "Plot each series as its change from its own mean, in percent (CSV keeps the values)" },
-                el("input", { type: "checkbox", checked: this.change, onchange: (e: Event) => ((this.change = (e.target as HTMLInputElement).checked), this.ctx.settings.set("change", this.change), this.drawPlot()) }),
-                "% change",
-              ),
-              el("button", { class: "btn outline small", type: "button", title: "Pin the voxel under the mouse (Alt+P)", onclick: () => this.pinCursor(), disabled: !plots }, "Pin"),
-              el("button", { class: "btn outline small", type: "button", title: "Save the plotted series as CSV", onclick: () => this.saveCsv(), disabled: !plots }, "Save CSV"),
-            ]),
+        el(
+          "label",
+          { class: "field check", title: "Plot each series as its change from its own mean, in percent (CSV keeps the values)" },
+          el("input", { type: "checkbox", checked: this.change, onchange: (e: Event) => ((this.change = (e.target as HTMLInputElement).checked), this.ctx.settings.set("change", this.change), this.drawPlot()) }),
+          "% change",
+        ),
+        el("button", { class: "btn outline small", type: "button", title: `Pin the ${surface !== undefined ? "vertex" : "voxel"} under the mouse (Alt+P)`, onclick: () => this.pinCursor(), disabled: !plots }, "Pin"),
+        el("button", { class: "btn outline small", type: "button", title: "Save the plotted series as CSV", onclick: () => this.saveCsv(), disabled: !plots }, "Save CSV"),
       );
       this.updateTime?.();
     };

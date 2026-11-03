@@ -75,6 +75,45 @@ describe("CIFTI on a surface", () => {
     check(await values(), rows[6]);
   });
 
+  it("finds the vertex nearest a point in the store's coordinates, and answers a vertex's values at every time point", async () => {
+    const companions = await surfaceCompanions("sub.L.midthickness.surf.gii", { "sub.rest.dtseries.nii": file("sub.rest.dtseries.nii") }, 12);
+    const mesh = await parseMeshFile(new Uint8Array(fs.readFileSync(path.join(DIR, "sub.L.midthickness.surf.gii"))), "sub.L.midthickness.surf.gii");
+    const store = new MeshStore(mesh, "sub.L.midthickness", companions);
+    // The store holds the file's positions less coordinate_offset (whole millimetres, here not 0).
+    const offset = JSON.parse(new TextDecoder().decode(await store.get("zarr.json"))).attributes.zarr_vectors.coordinate_offset as number[];
+    expect(offset.some((o) => o !== 0)).toBe(true);
+    const stored = (v: number) => [0, 1, 2].map((k) => mesh.positions[3 * v + k] - offset[k]);
+    // Half the smallest distance between two vertices: a point that near a vertex has it nearest.
+    let gap = Infinity;
+    for (let a = 0; a < 12; ++a) for (let b = a + 1; b < 12; ++b) gap = Math.min(gap, Math.hypot(...[0, 1, 2].map((k) => mesh.positions[3 * a + k] - mesh.positions[3 * b + k])));
+    for (let v = 0; v < 12; ++v) {
+      const near = stored(v).map((x, k) => x + (k === v % 3 ? 0.4 * gap : 0));
+      const answer = (await store.message({ series: "rest_t", nearest: near, within: gap })) as { vertex: number; distance: number; position: number[] };
+      expect(answer.vertex).toBe(v);
+      expect(answer.distance).toBeCloseTo(0.4 * gap, 4);
+      answer.position.forEach((x, k) => expect(x).toBeCloseTo(stored(v)[k], 4));
+    }
+    // Nothing within the distance asked: no vertex.
+    expect(await store.message({ series: "rest_t", nearest: stored(0).map((x) => x + 1000), within: 5 })).toEqual({ series: "rest_t", vertex: null });
+    expect(() => store.message({ series: "rest_t", nearest: [0, 0] })).toThrow(/point/);
+    // Each vertex's values at every time point, as nibabel wrote them; NaN on the medial wall (3 and 4).
+    const rows = expected.rest_t as (number | null)[][];
+    const checkCourse = async () => {
+      for (let v = 0; v < 12; ++v) {
+        const answer = (await store.message({ series: "rest_t", vertex: v })) as { series: string; vertex: number; values: Float32Array };
+        expect([answer.series, answer.vertex, answer.values.length]).toEqual(["rest_t", v, 7]);
+        rows.forEach((row, t) => (row[v] === null ? expect(answer.values[t]).toBeNaN() : expect(answer.values[t]).toBeCloseTo(row[v]!, 4)));
+      }
+    };
+    // Read from the file a column at a time, then from the series read whole for stepping.
+    await checkCourse();
+    store.message({ series: "rest_t", time: 3 });
+    await store.get("0/vertex_attributes/rest_t/c/0/0/0");
+    await checkCourse();
+    await expect(store.message({ series: "rest_t", vertex: 12 }) as Promise<unknown>).rejects.toThrow(/outside/);
+    expect(() => store.message({ series: "rest_t", vertex: 1.5 })).toThrow(/not a vertex/);
+  });
+
   it("leaves a file out when its hemisphere has another vertex count", async () => {
     const { maps, skipped } = await surfaceCompanions("sub.L.midthickness.surf.gii", { "sub.thickness.dscalar.nii": file("sub.thickness.dscalar.nii") }, 40);
     expect(maps).toEqual([]);

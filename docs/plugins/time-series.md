@@ -60,14 +60,25 @@ the mouse rests on a voxel for a moment and its full values arrive.
 ## Time series on surfaces
 
 A GIFTI surface opened from this computer with a CIFTI time series
-(`.dtseries.nii`) beside it can be stepped through in time. Choose the
-series in **Image** (it reads "surface: name_t (file)"), and press **Show
-name_t as the overlay** (or choose it in the surface layer's Render →
-Surface): it holds the values at the time point the Time series tab shows, and the play
-and step buttons and clicks on the plot change it. The time point is kept in
-the link (shown again when the workspace opens) and each step is an undo
-step, as for images; playing makes none until it stops. The time courses of vertices are not
-plotted yet.
+(`.dtseries.nii`) beside it can be stepped through in time, and its
+vertices' time courses plotted. Choose the series in **Image** (it reads
+"surface: name_t (file)"), and press **Show name_t as the overlay** (or
+choose it in the surface layer's Render → Surface): it holds the values at
+the time point the Time series tab shows, and the play and step buttons
+and clicks on the plot change it. The time point is kept in the link
+(shown again when the workspace opens) and each step is an undo step, as
+for images; playing makes none until it stops.
+
+Move the mouse onto the surface, in the 3-D view or near its outline in a
+2-D one: the plot shows the values of the nearest vertex at every time
+point, if one is within 4 mm of the mouse (the legend names the vertex by
+its number in the surface file). Off the surface, the last vertex stays
+plotted. **Pin** (or **Alt+P**) keeps the vertex, **Save CSV** saves the
+plotted vertices, and **% change** works as for voxels; pins are kept in
+the link with the surface and the vertex number. A vertex on the medial
+wall has no values in the file: the legend says so and nothing is drawn.
+The surface layer may be moved (Registration, the Source tab's transform):
+the vertex is the one shown under the mouse.
 
 ## Notes from users
 
