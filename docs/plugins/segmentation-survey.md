@@ -82,6 +82,7 @@ Neuroglancer reads its chunks again (see the plugin's README).
 | Interpolation between sections (V) | **Interpolate** (++v++): shape-based (signed distances, weighted by nearness) through the sections between drawn sections of the active segment (over any segment, or empty voxels only, as **Paint over** says), across the view last drawn in | Now |
 | 3-D flood fill to relabel a segment (fixing splits and merges by hand) | **Merge** (a segment into the active one) and **Delete**, everywhere | Now |
 | Segments list: active segment, names, colours, visibility, go to; statistics, CSV | **Segments** list: the active one marked, names, colours, voxels and volume, shown or hidden, **Go to**; Annotations' **Statistics** section (an image's values in a segment) with CSV | Now |
+| Segment groups | **Groups** in the segment list: made, renamed, coloured (each segment in it), folded, hidden or shown whole; segments dragged in (or the active one's group chosen); kept in the scene's state and the link, undoable. Not written into saved files | Now |
 | Import / export | **Open** a NIfTI label image; **Save** as NIfTI (.nii.gz, label intent) or OME-Zarr (only painted chunks written), optionally only the painted box | Now |
 | Pen tablet | Pointer events would give pressure; not yet used | Later |
 | Proofreading: merge and split agglomerates | Needs a supervoxel graph and an editable mapping: for CAVE / graphene segmentations Neuroglancer already has its own merge and split tools; for others, later | Later |

@@ -101,6 +101,19 @@ in its row.
 - **Merge** gives a segment's voxels to the active segment; **Delete**
   erases them. Both can be undone.
 
+**Groups**, as in WebKnossos's segment list:
+
+- **+ New group** makes an empty group (*Group 1*, …); type in its name to
+  rename it.
+- Drag a segment's row onto a group to put it there (onto *No group* to
+  take it out), or choose the active segment's group under the list. A
+  segment is in one group at most.
+- The group's eye hides or shows all its segments; its colour square gives
+  them all that colour; ▾ folds its rows away; the bin deletes the group
+  (its segments stay, in no group).
+- Groups belong to the scene, are kept in the link, and can be undone like
+  other changes. They are not written into saved NIfTI or OME-Zarr files.
+
 ## Tool settings and image values
 
 Under **Tool**, the active tool's settings: the brush's radius, unit and

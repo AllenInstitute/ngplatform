@@ -39,7 +39,7 @@ While a label volume is edited, a tool bar shows at the top of the views:
 - **New segment** (\`C\`), the active segment's colour and name; **Undo** and **Redo** (\`Ctrl+Z\`, \`Ctrl+Y\`: strokes and workspace changes as one history); **Interpolate** (\`V\`) fills the sections between two where the segment is drawn; **Save**.
 
 ## Segments
-Each segment's colour, name, voxels and volume; the active one is marked. Click one to paint with it; the eye shows or hides it; **Go to** moves the views to it; **Merge** gives its voxels to the active segment; **Delete** erases it. All undoable.
+Each segment's colour, name, voxels and volume; the active one is marked. **+ New group** makes a named group: drag segments onto it (or choose the active segment's **Group**); a group's eye shows or hides all its segments, its colour square colours them all, and its name can be typed. Click one to paint with it; the eye shows or hides it; **Go to** moves the views to it; **Merge** gives its voxels to the active segment; **Delete** erases it. All undoable.
 
 ## Saving
 NIfTI (.nii.gz) or an OME-Zarr folder (only painted chunks written), the whole grid or only the painted box. A label volume lives in this page until saved; it is also kept in this browser while you draw, so a reload brings it back.`,
@@ -50,6 +50,8 @@ NIfTI (.nii.gz) or an OME-Zarr folder (only painted chunks written), the whole g
   contributes: {
     panels: [{ id: SEGMENTATION_PANEL, title: "Segmentation", slot: "left", order: 61 }],
     contextKeys: [EDITING, DRAWING, BRUSHING, PREVIEWING],
+    // Segment groups, by label volume (./segment_groups.ts).
+    appState: { key: "segmentation", version: 1 },
     commands: [
       { id: "segmentation.newLayer", title: "New segmentation layer", group: "Segmentation" },
       { id: "segmentation.openNifti", title: "Open a NIfTI label image to edit", group: "Segmentation" },

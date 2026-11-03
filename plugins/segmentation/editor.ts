@@ -13,7 +13,8 @@
  *    (./quick_select.ts).  Brush and fills can be limited to an intensity
  *    range of an image.
  *  - Segments (./segments.ts): the active one, new ones, names, colours,
- *    shown or hidden, gone to, merged and deleted.
+ *    shown or hidden, gone to, merged and deleted; and their groups
+ *    (./segment_groups.ts), kept in the plugin's per-scene state.
  *  - Undo and redo of strokes; Save as NIfTI or OME-Zarr (./save.ts).
  *
  * The volume lives in the page (./label_volume.ts) and shows as a
@@ -35,6 +36,7 @@ import { Painter, type ViewPoint } from "./painter.js";
 import { maskCount, PreviewOverlay } from "./preview.js";
 import { type Mask, type Prompt, QuickSelectRegistry } from "./quick_select.js";
 import { cropped, niftiBytes, niftiGz, omeZarr } from "./save.js";
+import { addGroup, assign, editGroup, members, readGroups, removeGroup, type SegmentationSaved, type VolumeGroups } from "./segment_groups.js";
 import { isVisible, nextSegment, type SegmentRow, segmentRows, type SegmentsState, withVisibility } from "./segments.js";
 import { type Reference, Session } from "./session.js";
 import { brushes, cycle, draws, stepRadius, type Tool, TOOLS } from "./tools.js";
@@ -185,6 +187,8 @@ export class Editor implements LabelVolumes {
         void this.restoreLost();
         this.changed();
       }),
+      // Groups are in the workspace state: undo, redo and another scene change them.
+      ctx.state.onChanged(() => this.changed()),
     );
     void this.restoreLost();
     void this.refreshKept();
@@ -332,10 +336,17 @@ export class Editor implements LabelVolumes {
 
   /** Shows or hides a segment in its layer (Neuroglancer's visible segments). */
   show(session: Session, value: number, visible: boolean, quiet = false): void {
-    const state = this.segmentsState(session);
-    if (isVisible(state, value) === visible) return;
-    const known = [...new Set([...session.counts.keys(), ...session.labels.keys(), this.value])];
-    const next = withVisibility(state, known, value, visible);
+    this.showSegments(session, [value], visible, quiet);
+  }
+
+  /** Shows or hides several segments (a group) in its layer, as one change. */
+  showSegments(session: Session, values: number[], visible: boolean, quiet = false): void {
+    let state = this.segmentsState(session);
+    const change = values.filter((v) => isVisible(state, v) !== visible);
+    if (change.length === 0) return;
+    const known = [...new Set([...session.counts.keys(), ...session.labels.keys(), this.value, ...values])];
+    for (const v of change) state = withVisibility(state, known, v, visible);
+    const next = state as Required<SegmentsState>;
     this.ctx.viewer.patchState(
       (ng) => {
         const layer = ((ng.layers as Record<string, unknown>[] | undefined) ?? []).find((l) => l.name === session.layer);
@@ -347,6 +358,68 @@ export class Editor implements LabelVolumes {
       { quiet },
     );
     this.changed();
+  }
+
+  // ------------------------------------------------------------ groups
+
+  /** The current volume's segment groups (from the plugin's state for this scene). */
+  groups(session = this.current): VolumeGroups {
+    if (session === undefined) return readGroups(undefined);
+    return readGroups(this.ctx.state.get<SegmentationSaved>()?.groups?.[session.id]);
+  }
+
+  private setGroups(session: Session, next: VolumeGroups): void {
+    const saved = this.ctx.state.get<SegmentationSaved>() ?? {};
+    this.ctx.state.set<SegmentationSaved>({ ...saved, groups: { ...saved.groups, [session.id]: next } });
+    this.changed();
+  }
+
+  /** A new, empty group; returns its id. */
+  newGroup(name?: string): string | undefined {
+    const s = this.current;
+    if (s === undefined) return undefined;
+    const { next, id } = addGroup(this.groups(s), name);
+    this.setGroups(s, next);
+    return id;
+  }
+
+  renameGroup(id: string, name: string): void {
+    const s = this.current;
+    if (s) this.setGroups(s, editGroup(this.groups(s), id, { name }));
+  }
+
+  foldGroup(id: string, collapsed: boolean): void {
+    const s = this.current;
+    if (s) this.setGroups(s, editGroup(this.groups(s), id, { collapsed }));
+  }
+
+  /** Gives a group, and every segment in it, a colour. */
+  recolourGroup(id: string, colour: string): void {
+    const s = this.current;
+    if (s === undefined) return;
+    const values = members(this.groups(s), id, this.rows().map((r) => r.value));
+    for (const v of values) s.labels.set(v, { name: s.labels.get(v)?.name ?? "", colour });
+    s.changed([]);
+    s.applyColours(values);
+    this.setGroups(s, editGroup(this.groups(s), id, { colour }));
+  }
+
+  /** Takes a group away; its segments stay, in no group. */
+  deleteGroup(id: string): void {
+    const s = this.current;
+    if (s) this.setGroups(s, removeGroup(this.groups(s), id));
+  }
+
+  /** Puts segments in a group (undefined: in none). */
+  assignGroup(values: number[], id: string | undefined): void {
+    const s = this.current;
+    if (s) this.setGroups(s, assign(this.groups(s), values, id));
+  }
+
+  /** Shows or hides every segment of a group. */
+  showGroup(id: string, visible: boolean): void {
+    const s = this.current;
+    if (s) this.showSegments(s, members(this.groups(s), id, this.rows().map((r) => r.value)), visible);
   }
 
   /** Moves the views to a segment: its voxel nearest its centre. */
@@ -373,6 +446,7 @@ export class Editor implements LabelVolumes {
       const stroke = new Stroke(s.volume);
       relabel(stroke, value, 0);
       s.labels.delete(value);
+      if (this.groups(s).of[String(value)] !== undefined) this.assignGroup([value], undefined);
       s.changed([]);
       this.commit(stroke, s, 0);
       if (this.value === value) this.value = this.rows().find((r) => r.value !== value)?.value ?? 1;
@@ -388,6 +462,7 @@ export class Editor implements LabelVolumes {
       const stroke = new Stroke(s.volume);
       const n = relabel(stroke, from, into);
       s.labels.delete(from);
+      if (this.groups(s).of[String(from)] !== undefined) this.assignGroup([from], undefined);
       s.changed([]);
       this.ctx.ui.toast(`Merged segment ${from} into ${into}: ${n.toLocaleString()} voxels.`);
       this.commit(stroke, s, into);

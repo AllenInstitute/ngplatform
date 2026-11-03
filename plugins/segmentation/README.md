@@ -20,7 +20,9 @@ their history) and that section was taken out of Annotations.
   hides it.
 - **The segment list**: each segment's colour, name, voxels (and volume, on
   hover) and visibility; the active one marked; Go to, Merge into the
-  active segment, Delete.
+  active segment, Delete. **Segment groups**: named groups (made, renamed,
+  coloured, folded, deleted), segments put in one by dragging or by the
+  active segment's **Group**, a whole group hidden or shown.
 - **Save** as NIfTI or OME-Zarr (only painted chunks written), the whole
   grid or the painted box; at the top of the tab and on the tool bar.
 - Each scene shows its own label volumes: the tab and the tool bar follow
@@ -39,6 +41,7 @@ with WebKnossos.
 | `toolbar.ts`, `icons.ts` | The tool bar over the views, its icons |
 | `tools.ts` | The tools, cycling through them, the brush's size steps (pure) |
 | `segments.ts` | The segment list's rows, new ids, which segments a layer shows (pure) |
+| `segment_groups.ts` | Segment groups: made, renamed, coloured, folded, removed, segments assigned, the list in sections (pure) |
 | `painter.ts` | The mouse in the 2-D views: drawing, the brush ring, Alt+wheel, the quick-select box, the lasso's outline |
 | `label_volume.ts` | The label volume held in the page: chunks, counts by chunk, a segment's centre, its pyramid, the OME-Zarr store it answers |
 | `store_format.ts` | Serving those stores to Neuroglancer through local data (loaded with the catalogue) |
@@ -121,6 +124,21 @@ A segment's visibility is Neuroglancer's own list of visible segments
 list is empty and every segment shows; hiding one lists the others and sets
 `ignoreNullVisibleSet` to false, so a segment painted later is added as it
 is painted.
+
+## Segment groups
+
+A volume's groups are kept in the plugin's slice of the workspace state
+(`appState` key `segmentation`): `{ groups: { [volume id]: { groups:
+[{ id, name, colour, collapsed? }], of: { [segment]: group id } } } }`,
+by the volume's id (`Session.id`, which a volume kept in the browser keeps
+through a reload). The slice is per scene, so each scene has its own
+groups; it is in the link, and each edit is a workspace undo step (so
+`Ctrl+Z` with the tool bar showing undoes it in turn with strokes). A
+segment is in one group at most. Hiding a group sets each of its segments
+hidden in Neuroglancer's list of visible segments, as one change; a
+group's colour is given to each of its segments (their own colours, which
+can then be changed one by one). Deleting or merging away a segment takes
+it out of its group. Groups are not written into saved files.
 
 ## How a label volume reaches Neuroglancer
 
@@ -206,7 +224,7 @@ drawn.
 `ui.overlay()` (the tool bar, the brush ring, quick select's preview), `viewer.panels()`,
 `viewer.onRendered()`, `viewer.cursor()`, `viewer.layerTransform()`,
 `viewer.patchState()`, `viewer.setPosition()`, `viewer.lookupTables`,
-`viewer.reloadData(url)`, `workspace.local.open/close`,
+`viewer.reloadData(url)`, `state` (segment groups), `workspace.local.open/close`,
 `workspace.undoSteps()`, `commands.invoke` (`edit.undo`, `edit.redo`), `services`
 (`segmentation.quickSelect` and `segmentation.labelVolumes`, which it
 provides), `context` (`segmentation.editing`, `segmentation.drawing`,
