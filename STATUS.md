@@ -1,6 +1,6 @@
 # Status
 
-*As of 2026-11-02.*
+*As of 2026-11-03. The `working` branch holds the night's work, below, for review before it goes to `main`.*
 
 ## Where things stand
 
@@ -19,6 +19,19 @@
 | **Examples** | S-21-46 on SRB 2026a (the default: BRIDGE's anatomically constrained tractogram of the 50 µm HiP-CT brain S-21-46 in MNI space, 3.3 M streamlines as zarr-vectors, on SRB 2026a, the HiP-CT template of ten brains at 100 µm in MNI 2009b space; both from Andrew's public GCS bucket), HCP-1065 on SRB 2026a, and MICrONS minnie65 (EM and v1300 segmentation). The HiP-CT samples Ha1, Hb1, i74 and I80 are not referenced by the app or bundled with it. |
 | **Neuroglancer** | google/neuroglancer `master` plus commits on `Andrew-Keenlyside/neuroglancer` branch `ngplatform-upstream`: application-supplied workers, host-owned side panels, incremental layer restore, GCS listing, a one-byte GET where a bucket's CORS blocks HEAD (without it no chunk of the HCP store loaded), switches beside Sections and sections clipped to a box, a screenshot overlay, and resolution histograms laid out by resolution (every level keeps its place; the target line moves). |
 | **Filter oracle and engines, step C0** | In `zarr-vectors-tools`, on its branch `working`. |
+
+## New on the `working` branch (2026-11-02 to 03), for review
+
+| Area | What |
+|---|---|
+| **Local data (`src/virtual/`)** | One core module for reading local files in and writing them out (README there). New formats: FreeSurfer `.mgz`/`.mgh`, NumPy `.npy`, LAS point clouds; a FreeSurfer subject folder opens as its T1, aparc+aseg and white/pial surfaces; images named as labels (aseg, aparc, dseg, labels) open as segmentations. Files and folders can be dropped anywhere on the window. Large tractograms and point clouds get nested coarse levels. |
+| **Export as…** | For any local dataset (Datasets → ⋯): images to NIfTI, `.mgz`/`.mgh` or OME-Zarr (the whole image at a level, or a 256-voxel box around the position at any level); tractograms to `.trk`/`.tck`; meshes to OBJ/PLY/STL; points to CSV. Checked against nibabel and FreeSurfer. |
+| **Views** | Anatomy the right way up, as Freeview shows it (radiological by default for mm/µm data; Settings → Which way up the views are), needing the fork's `setNamedPanelOrientation`; four panels with the 3-D view bottom right; x, y, z shown in that order for zyx OME-Zarr; the 3-D view keeps turning after a drag (momentum). |
+| **History** | The ⋯ beside undo/redo: every change with what it was and when, undone ones greyed, go back or forward to any. Plugin bookkeeping and Neuroglancer's own rewriting of sources are not undo steps. |
+| **Display** | Lookup tables (FreeSurfer, Schaefer, Harvard-Oxford bundled; Allen fetched; any file), 17 colour maps, segmentation outlines, surfaces as outlines on the slices in Freeview's colours, Capture (GIF, WebM, MP4, PNG frames, magnified pictures). |
+| **Track filtering** | Groups drawn from their own whole streamlines (they had shown only their regions), a sample level first. |
+| **Plugins** | Registration (apply to all visible volumes, straighten with landmarks, save without cropping, `.mgz` out, `.xfm` in, cubic B-spline as FreeSurfer's); Annotations (Labels, Measure, Statistics, Segmentation drawing); Luxar rendering; Filters (mean, median, Gaussian, Frangi on the fly); Collections (RFC-8 draft); OME coordinate systems in the Source tab; volume rendering with sharp sections on the cut. |
+| **Docs** | MkDocs site for Read the Docs (`mkdocs.yml`, `docs/`), plugin pages, contributing guide, issue templates. |
 
 ## Scenes, datasets and the link
 
