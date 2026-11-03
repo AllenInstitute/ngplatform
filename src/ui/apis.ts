@@ -109,6 +109,8 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
     },
     onCursorChanged: (callback) => engine.onCursorChanged(callback),
     setPosition: (position, options) => (options?.quiet ? store.quietly(() => engine.setPosition(position)) : engine.setPosition(position)),
+    localPosition: (layer) => engine.localPosition(layer),
+    setLocalPosition: (layer, position, options) => (options?.quiet ? store.quietly(() => engine.setLocalPosition(layer, position)) : engine.setLocalPosition(layer, position)),
     segmentProperties: (layer) => engine.segmentProperties(layer),
     onSegmentPropertiesChanged: (layer, callback) => engine.onSegmentPropertiesChanged(layer, callback),
     setTemporaryVisibleSegments: (layer, ids) => engine.setTemporaryVisibleSegments(layer, ids),

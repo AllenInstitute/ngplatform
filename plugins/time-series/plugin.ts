@@ -35,7 +35,7 @@ import {
   voxelAt,
   voxelLabel,
 } from "./series.js";
-import { globalSpace, LayerMap } from "./space.js";
+import { LayerMap, type Place, placeOf } from "./space.js";
 
 type Child = Node | string | null | undefined | false;
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
@@ -288,9 +288,7 @@ class TimeSeries {
       this.updateTime?.();
       return;
     }
-    const ng = this.ctx.viewer.getState() as { position?: number[] };
-    const space = globalSpace(ng);
-    const position = ng.position ?? space.names.map(() => 0);
+    const { space, position } = this.place(layer);
     const map = new LayerMap(t, space);
     const axis = timeAxis(map, info, position);
     const before = this.axis;
@@ -303,9 +301,13 @@ class TimeSeries {
     this.updateTime?.();
   }
 
+  /** The global dimensions and the layer's local ones (a local time axis, `t'`), and the position along them. */
+  private place(layer = this.layer()): Place {
+    return placeOf(this.ctx.viewer.getState(), layer === undefined ? undefined : this.ctx.viewer.localPosition(layer));
+  }
+
   private position(): number[] {
-    const ng = this.ctx.viewer.getState() as { position?: number[] };
-    return ng.position ?? [];
+    return this.place().position;
   }
 
   // ------------------------------------------------------------- reading
@@ -354,9 +356,12 @@ class TimeSeries {
     const cursor = this.ctx.viewer.cursor();
     const { map, info } = this;
     if (!cursor.active || map === undefined || info === undefined) return;
-    // The mouse's position, ordered as the state's dimensions.
-    const names = globalSpace(this.ctx.viewer.getState()).names;
-    const position = names.map((n) => cursor.position[cursor.names.indexOf(n)] ?? NaN);
+    // The mouse's position, ordered as the state's dimensions; the layer's local ones where it is.
+    const place = this.place();
+    const position = place.space.names.map((n, i) => {
+      const at = cursor.names.indexOf(n);
+      return at === -1 ? place.position[i] : cursor.position[at];
+    });
     const voxel = voxelAt(map, info, position);
     if (voxel === undefined) return;
     if (this.cursor !== undefined && this.cursor.voxel.join() === voxel.join()) return;
@@ -499,10 +504,13 @@ class TimeSeries {
   private show(i: number, quiet = false): void {
     const { map, axis } = this;
     if (map === undefined || axis === undefined) return;
-    const position = this.position();
+    const layer = this.layer();
+    const { position, globalRank } = this.place(layer);
     const target = new Array(position.length).fill(NaN);
     target[axis.dim] = coordinateOf(map, axis, position, i);
-    this.ctx.viewer.setPosition(target, { quiet });
+    // A local time axis (`t'`) is moved in the layer's own position.
+    if (axis.dim < globalRank) this.ctx.viewer.setPosition(target.slice(0, globalRank), { quiet });
+    else if (layer !== undefined) this.ctx.viewer.setLocalPosition(layer, target.slice(globalRank), { quiet });
   }
 
   private step(delta: number): void {

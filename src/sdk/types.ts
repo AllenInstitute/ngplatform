@@ -275,6 +275,14 @@ export interface ViewerApi {
    */
   setPosition(position: number[], options?: { quiet?: boolean }): void;
   /**
+   * A layer's local dimensions (those its sources name with a trailing
+   * `'`, such as `t'`: each layer has its own position along them) and
+   * its position there, in their coordinates; undefined until it loads.
+   */
+  localPosition(layer: string): { names: string[]; scales: number[]; units: string[]; position: number[] } | undefined;
+  /** Moves a layer's local position (NaN leaves a dimension where it is); `quiet` as for setPosition. */
+  setLocalPosition(layer: string, position: number[], options?: { quiet?: boolean }): void;
+  /**
    * A segmentation layer's segment properties (one row per segment: numeric
    * columns, and tags), once its source has supplied them.
    */

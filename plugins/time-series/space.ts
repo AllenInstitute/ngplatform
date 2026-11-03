@@ -24,6 +24,39 @@ export function globalSpace(ng: unknown): GlobalSpace {
   return { names: entries.map(([n]) => n), scales: entries.map(([, [s]]) => s), units: entries.map(([, [, u]]) => u) };
 }
 
+/** A layer's local dimensions (`t'`) and its position along them, as the viewer gives them. */
+export interface LocalPosition {
+  names: string[];
+  scales: number[];
+  units: string[];
+  position: number[];
+}
+
+/**
+ * Where the views are for one layer: the global dimensions, then the
+ * layer's local ones (named as the layer names them, `t'`), and the
+ * position along all of them.  A layer whose time axis is local shows the
+ * time point at its local position, not at the global one.
+ */
+export interface Place {
+  space: GlobalSpace;
+  position: number[];
+  /** How many of the dimensions are global (the local ones follow). */
+  globalRank: number;
+}
+
+export function placeOf(ng: unknown, local?: LocalPosition): Place {
+  const global = globalSpace(ng);
+  const position = ((ng as { position?: number[] })?.position ?? global.names.map(() => 0)).slice(0, global.names.length);
+  while (position.length < global.names.length) position.push(0);
+  if (local === undefined || local.names.length === 0) return { space: global, position, globalRank: global.names.length };
+  return {
+    space: { names: [...global.names, ...local.names], scales: [...global.scales, ...local.scales], units: [...global.units, ...local.units] },
+    position: [...position, ...local.position],
+    globalRank: global.names.length,
+  };
+}
+
 /** A square matrix's inverse (row-major rows), or undefined when it has none. */
 export function invert(m: number[][]): number[][] | undefined {
   const n = m.length;
@@ -44,13 +77,11 @@ export function invert(m: number[][]): number[][] | undefined {
   return a.map((row) => row.slice(n));
 }
 
-/** A layer's output dimension name as a global one: a local (`t'`) or channel (`c^`) dimension is not global. */
-const isGlobal = (name: string) => !/['^]$/.test(name);
-
 /**
- * A layer's map between global positions and its source coordinates.  Its
- * output dimensions that are not global (local or channel ones) are taken
- * at 0.
+ * A layer's map between positions in a space (the global one, or a Place's
+ * with the layer's local dimensions after it) and its source coordinates.
+ * Its output dimensions not in the space (channel ones, `c^`, and local
+ * ones when the space has none) are taken at 0.
  */
 export class LayerMap {
   /** For each output dimension, the global dimension it is (-1 when none). */
@@ -65,7 +96,7 @@ export class LayerMap {
   ) {
     const n = transform.rank;
     const m = transform.matrix;
-    this.dims = transform.output.names.map((name) => (isGlobal(name) ? space.names.indexOf(name) : -1));
+    this.dims = transform.output.names.map((name) => space.names.indexOf(name));
     this.linear = Array.from({ length: n }, (_, r) => Array.from({ length: n }, (_, c) => m[(n + 1) * c + r]));
     this.inverse = invert(this.linear);
   }

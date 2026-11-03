@@ -13,7 +13,7 @@ import { linePath, ticks, valueRange } from "../plot.js";
 import { ChunkCache, type SeriesInfo, SeriesReader, timeAxisOf } from "../reader.js";
 import { inside, regionVoxels, shapeOf } from "../region.js";
 import { coordinateOf, formatTime, freeColour, indexAt, nextIndex, percentChange, seriesCsv, stepIndex, type TimeAxis, timeAxis, timesOf, voxelAt, voxelLabel } from "../series.js";
-import { type GlobalSpace, invert, LayerMap } from "../space.js";
+import { type GlobalSpace, invert, LayerMap, placeOf } from "../space.js";
 
 const FIXTURE = path.join(__dirname, "fixtures", "tiny.nii.gz");
 /** The fixture's value at voxel (x, y, z), time point t. */
@@ -197,10 +197,26 @@ describe("positions, voxels and time points", () => {
     expect(voxelAt(turned, INFO, [-4, 2, 0, 2])).toEqual([0, 1, 2, 0]);
   });
 
-  it("says when time is not a global dimension", () => {
+  it("reads time from the layer's local position when it is a local dimension (t')", () => {
     const t = imageTransform();
-    const local = new LayerMap({ ...t, output: { ...t.output, names: ["t'", "x", "y", "z"] } }, SPACE);
-    expect(typeof timeAxis(local, INFO, [0, 0, 0, 0])).toBe("string");
+    const transform = { ...t, output: { ...t.output, names: ["t'", "x", "y", "z"] } };
+    // Without the layer's local dimensions, time is not shown.
+    expect(typeof timeAxis(new LayerMap(transform, SPACE), INFO, [0, 0, 0, 0])).toBe("string");
+    const ng = { dimensions: { x: [1e-3, "m"], y: [1e-3, "m"], z: [1e-3, "m"] }, position: [-2.4, 2.9, 4.6] };
+    const place = placeOf(ng, { names: ["t'"], scales: [1.5], units: ["s"], position: [5.5] });
+    expect(place.space.names).toEqual(["x", "y", "z", "t'"]);
+    expect(place.globalRank).toBe(3);
+    expect(place.position).toEqual([-2.4, 2.9, 4.6, 5.5]);
+    const map = new LayerMap(transform, place.space);
+    const axis = timeAxis(map, INFO, place.position) as TimeAxis;
+    expect(axis.dim).toBe(3);
+    expect(axis.unit.label).toBe("s");
+    expect(axis.step).toBeCloseTo(1.5);
+    expect(indexAt(map, axis, place.position)).toBe(6);
+    expect(coordinateOf(map, axis, place.position, 2)).toBeCloseTo(2);
+    expect(voxelAt(map, INFO, place.position)).toEqual([0, 2, 3, 1]);
+    // A state with no local dimensions is the global space alone.
+    expect(placeOf(ng).space.names).toEqual(["x", "y", "z"]);
   });
 
   it("inverts matrices, and finds none for a singular one", () => {

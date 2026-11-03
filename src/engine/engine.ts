@@ -638,6 +638,31 @@ export class Engine {
     pos.value = value;
   }
 
+  /**
+   * A layer's local dimensions (those its sources name `t'`, out of the
+   * global ones) and its position along them, in their coordinates;
+   * undefined until the layer has loaded.
+   */
+  localPosition(name: string): { names: string[]; scales: number[]; units: string[]; position: number[] } | undefined {
+    const layer = this.managed(name)?.layer;
+    if (layer === null || layer === undefined) return undefined;
+    const space = layer.localCoordinateSpace.value;
+    if (!space.valid) return undefined;
+    return { names: [...space.names], scales: Array.from(space.scales), units: [...space.units], position: Array.from(layer.localPosition.value) };
+  }
+
+  /** Moves a layer's local position (NaN leaves a dimension where it is). */
+  setLocalPosition(name: string, position: number[]): void {
+    const layer = this.managed(name)?.layer;
+    if (layer === null || layer === undefined) return;
+    const pos = layer.localPosition;
+    const value = new Float32Array(pos.value);
+    position.forEach((x, i) => {
+      if (i < value.length && Number.isFinite(x)) value[i] = x;
+    });
+    pos.value = value;
+  }
+
   /** Multiplies the 2D and 3D zoom (a scale is the size of one screen pixel). */
   zoom(factor: number): void {
     const v = this.viewer;

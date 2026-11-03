@@ -12,7 +12,11 @@ with the time shown in the views marked; and playing through time. It works
 on images with a time axis: a 4-D NIfTI opened from this computer (fMRI,
 say: its fourth axis is time, one step every repetition time) and OME-Zarr
 images with a `t` axis. Neuroglancer shows time as the dimension `t`, and
-`[` and `]` step through it.
+`[` and `]` step through it. When a layer shows time as a local
+dimension of its own (`t'`, in the layer's position controls rather than
+the global ones; the Orientations plugin makes a 4-D image's fourth axis
+one), the plot and the play and step buttons use the layer's own position
+along it.
 
 ## Using it
 

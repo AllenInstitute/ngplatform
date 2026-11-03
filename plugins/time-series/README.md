@@ -19,7 +19,7 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
 |---|---|
 | `manifest.ts` | Id, the bottom-dock panel, commands (pin, play, save CSV) and keys, the user guide. |
 | `plugin.ts` | The panel: the image, transport, pins and regions, the legend; the voxel under the mouse; playing; CSV. |
-| `space.ts` | Global positions to a layer's source coordinates and back, in any number of dimensions (`LayerMap`). |
+| `space.ts` | Positions (global, and a layer's local dimensions after them: `Place`) to a layer's source coordinates and back, in any number of dimensions (`LayerMap`). |
 | `series.ts` | The time axis as the views show it (its global dimension, start, step and unit), the voxel at a position, stepping, colours, percent change, CSV. |
 | `region.ts` | Boxes and ellipsoids from annotation layers; the image voxels whose centres are inside one. |
 | `reader.ts` | `SeriesReader`: an OME-Zarr image's finest level read along time at some voxels, averaged; a byte-bounded chunk cache. |
@@ -47,6 +47,14 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   starts, shows the later one, as Neuroglancer draws it). Moving to a time
   point sets `t` to its centre. Times shown are the global coordinate times
   its scale, in the store's unit (seconds for NIfTI).
+- **Time as a local dimension.** When the layer shows time as a local
+  dimension (`t'`, out of the global ones, as Orientations does with a
+  component axis), each layer has its own position along it. The map then
+  runs between the global dimensions followed by the layer's local ones
+  (`Place` in `space.ts`, from `ViewerApi.localPosition`) and the source:
+  the time point shown is the one at the layer's local position, and
+  moving to a time point sets that (`ViewerApi.setLocalPosition`), not the
+  global position.
 - **Reading.** The worker reads the finest level, chunk by chunk along
   time at the chunk holding the voxel (a NIfTI read in place has one time
   point per chunk; stored transposed, read in stored order as the volume
@@ -87,13 +95,13 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   nibabel's mean over the voxels inside; playing and stepping move `t`.
   An OME-Zarr 0.4 image served over http (t, z, y, x in µm; Zarr v2,
   blosc zstd, five time points a chunk) plots the values written and
-  Neuroglancer's own at the mouse.
+  Neuroglancer's own at the mouse. The same NIfTI with `t` made local
+  (`t'`): the time point shown is the layer's local position, the value at
+  the mouse equals Neuroglancer's and nibabel's, Next and Play move the
+  local position, and four ticks of playing at 1/s add no undo step.
 
 ## Not done
 
-- **Time as a local dimension.** When the layer's `t` is local (`t'`, as
-  Orientations makes a component axis), the panel says time is not shown;
-  reading the layer's local position would cover it.
 - **Coarser levels.** Only the finest level is read: a long series with
   large chunks (1200 time points of 64³ float32 chunks) reads about a
   gigabyte the first time the mouse enters a chunk. Reading a coarser level
