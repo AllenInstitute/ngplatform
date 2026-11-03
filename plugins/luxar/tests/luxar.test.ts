@@ -7,7 +7,7 @@ import { keyOf, selectChunks } from "../chunks.js";
 import type { StoreInfo } from "../client.js";
 import { LUXAR_MANIFEST } from "../manifest.js";
 import { DEFAULT_STYLE, readSaved, readStyle, rgbOf, scalarOf } from "../style.js";
-import { apply, autoGain, boxInFrustum, chooseLevel, chunkRange, coverage, directionMatrix, invertAffine, measurePanel, modelTo, modelToPanel, multiply, pixelsPerUnit, screenArea } from "../view_math.js";
+import { apply, autoGain, boxInFrustum, chooseLevel, chunkRange, coverage, directionMatrix, invertAffine, measurePanel, modelTo, modelToPanel, multiply, pixelsPerUnit, screenArea, storeToGlobal } from "../view_math.js";
 
 const identityTransform = (offset = [0, 0, 0], scale = 1): LayerTransform => {
   const m = new Float64Array(16);
@@ -129,6 +129,30 @@ describe("view geometry", () => {
     expect(modelTo(identityTransform(), ["x", "y", "t"])).toBeUndefined();
     const inv = invertAffine(m)!;
     expect(apply(inv, [22, 11, 33]).slice(0, 3).map((v) => Math.round(v * 1e9) / 1e9)).toEqual([1, 2, 3]);
+  });
+
+  it("counts a store's units in the global dimensions' scales, as Neuroglancer does", () => {
+    // A 1 mm tractogram in a scene whose global x, y, z are 0.5 mm (another layer set them): Neuroglancer
+    // keeps the identity matrix (physical terms) and the translation in global units.
+    const t = identityTransform([4, 0, -2]);
+    t.output = { ...t.output, scales: [0.0005, 0.0005, 0.0005] };
+    expect(Array.from(storeToGlobal(t))).toEqual([2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 4, 0, -2, 1]);
+    // (60, -40, 30) mm is (120, -80, 60) global units, plus the translation.
+    const m = modelTo(t, ["x", "y", "z"])!;
+    expect(apply(m, [60, -40, 30]).slice(0, 3)).toEqual([124, -80, 58]);
+    // Anisotropic input scales (a 0.1 × 0.1 × 0.2 mm store in 1 mm global dimensions), swapped axes.
+    const a = identityTransform();
+    a.input = { ...a.input, scales: [0.0001, 0.0001, 0.0002] };
+    expect(apply(modelTo(a, ["z", "x", "y"])!, [10, 20, 30]).slice(0, 3).map((v) => +v.toFixed(9))).toEqual([6, 1, 2]);
+    // The same in a 2-D view: 4 px a global unit, centred on (120, -80).
+    const project = (g: number[]) => ({ x: 4 * (g[0] - 120) + 200, y: -4 * (g[1] + 80) + 150, depth: g[2] - 60 });
+    const rows = measurePanel(project, [120, -80, 60])!;
+    const p = apply(modelToPanel(t, ["x", "y", "z"], rows), [58, -40, 31]);
+    expect(p.slice(0, 3).map((v) => Math.round(v * 1e9) / 1e9)).toEqual([200, 150, 0]);
+    // Directions stay physical: a store step is 1 mm whatever the global scale.
+    const d = directionMatrix(t);
+    expect(d[0]).toBeCloseTo(0.001);
+    expect(d[4]).toBeCloseTo(0.001);
   });
 
   it("colours by direction in physical axes", () => {
