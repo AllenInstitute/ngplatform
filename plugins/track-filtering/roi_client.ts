@@ -114,6 +114,15 @@ export class RoiEngine {
    * chunk read once.  Aborting `signal` stops the reads.
    */
   curves(ids: BigUint64Array, level: number, progress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Curves> {
+    if (this.direct !== undefined) {
+      // Read from the file itself (a tractogram on this computer): no chunks.
+      const started = performance.now();
+      return this.direct(ids, level).then((c) => {
+        signal?.throwIfAborted();
+        progress?.(1, 1);
+        return { ...c, level, ms: performance.now() - started };
+      });
+    }
     const id = this.nextId++;
     return new Promise<Curves>((resolve, reject) => {
       if (signal?.aborted) {
@@ -131,6 +140,13 @@ export class RoiEngine {
   }
 
   private readonly pendingCalls = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+
+  /**
+   * Whole streamlines read another way than from the chunks: a virtual
+   * store of a tractogram on this computer reads them from the file by id
+   * (its `curves` message), which reads only those streamlines' bytes.
+   */
+  direct: ((ids: BigUint64Array, level: number) => Promise<{ ids: BigUint64Array; offsets: Uint32Array; positions: Float32Array }>) | undefined;
 
   private call<T>(op: string, args: object): Promise<T> {
     const id = this.nextId++;
