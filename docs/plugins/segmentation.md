@@ -45,6 +45,7 @@ While a segmentation layer is edited, a tool bar shows at the top of the
 | **Move** | ++m++ | The views as usual: drag to move, wheel through sections. ++escape++ comes back here |
 | **Brush** | ++b++ | The left button paints the active segment: a disc in the section (or a ball). A ring shows its size |
 | **Erase** | ++e++ | Paints 0: any segment, or only the active one |
+| **Lasso** | ++l++ | Hold the left button and draw round a structure in a 2-D view: when you let go, the outline closes and its inside is painted with the active segment in that section (as **Paint over** says, and within the image's range when that is on). **Erase** on the bar erases inside it instead |
 | **Fill** | ++f++, ++shift+f++ | Fills the region clicked with the active segment: **2-D** in its section (++f++), or **3-D** in a box round the click (++shift+f++) |
 | **Pick segment** | ++i++ | The segment clicked becomes the active one |
 | **Quick select** | ++q++ | Drag a box round a structure in a 2-D view (Otsu's threshold inside it), or click it (values near the one clicked). The mask shows first, tinted with its outline: ++enter++ (or ✓ on the bar) paints it with the active segment, ++escape++ (or ×) drops it |
@@ -81,7 +82,8 @@ the same 2-D view), then press ++v++: each section between gets a shape
 between the two drawn. Check the result, as with any interpolation.
 
 While the tool bar shows, the keys above are the tools'. Some are
-Neuroglancer's otherwise (++b++ scale bar, ++e++ rotate, ++v++ default
+Neuroglancer's otherwise (++b++ scale bar, ++e++ rotate, ++l++ new segment
+colours, ++v++ default
 annotations, ++space++ layout, ++escape++, ++alt++ + wheel); hide the tool
 bar to have them back.
 
@@ -104,12 +106,13 @@ in its row.
 Under **Tool**, the active tool's settings: the brush's radius, unit and
 shape and whether it **paints over** other segments or only empty voxels;
 what a fill follows (the segment clicked, or a range of the image's
-values) and a 3-D fill's reach; quick select's method, tolerance, result
+values) and a 3-D fill's reach; whether the lasso paints or erases
+inside, and over what; quick select's method, tolerance, result
 (preview first, or paint at once) and what it paints over.
 
 **Image values**: the image whose values limit the tools (by default the
-one the grid came from), a **range**, and whether the brush and eraser keep
-to it. **Range from the cursor** sets it round the value under the pointer.
+one the grid came from), a **range**, and whether the brush, eraser and
+lasso keep to it. **Range from the cursor** sets it round the value under the pointer.
 
 ## Saving
 

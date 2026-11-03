@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { openNifti } from "../../../src/virtual/images/nifti.js";
 import { VolumeReader } from "../../volume-view/volume_reader.js";
 import { chooseUndo, History, Stroke } from "../history.js";
-import { ballReach, ballShape, dabsBetween, distance2d, floodFill, type ImageBlock, inRange, interpolate, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "../kernels.js";
+import { ballReach, ballShape, dabsBetween, distance2d, fillOutline, floodFill, polygonRuns, type ImageBlock, inRange, interpolate, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "../kernels.js";
 import { badLabel } from "../editor.js";
 import { LabelVolume } from "../label_volume.js";
 import { omeZarrMetadata } from "../../registration/volume_io.js";
@@ -226,6 +226,61 @@ describe("fills", () => {
     expect(w.get(15, 15, 21)).toBe(0);
     const limited = floodFill(new Stroke(vol([30, 30, 30])), [15, 15, 15], inRange(image, 50, 200), { value: 5 }, { maxVoxels: 100 });
     expect(limited).toMatchObject({ changed: 100, limited: true });
+  });
+});
+
+describe("the lasso", () => {
+  const rows = (runs: { w: number; from: number; to: number }[]) => runs.map((r) => `${r.w}:${r.from}-${r.to}`);
+
+  it("finds the voxels whose centres are inside an outline, row by row", () => {
+    // A square from (1.5, 1.5) to (4.5, 4.5): centres 2, 3, 4 each way.
+    expect(rows(polygonRuns([[1.5, 1.5], [4.5, 1.5], [4.5, 4.5], [1.5, 4.5]]))).toEqual(["2:2-5", "3:2-5", "4:2-5"]);
+    // A triangle: narrower towards its top.
+    expect(rows(polygonRuns([[0, 0], [8, 0], [4, 8]]))).toEqual(["0:0-8", "1:1-8", "2:1-7", "3:2-7", "4:2-6", "5:3-6", "6:3-5", "7:4-5", "8:4-4"].filter((r) => !r.endsWith("4-4")));
+    // Fewer than three points hold nothing.
+    expect(polygonRuns([[0, 0], [5, 5]])).toEqual([]);
+  });
+
+  it("fills both loops of a figure of eight, and not the gap of a ring drawn as one outline", () => {
+    const eight = polygonRuns([[0, 0], [4, 4], [8, 0], [8, 4], [4, 0], [0, 4]].map(([u, w]) => [u + 0.5, w + 0.5] as [number, number]));
+    const cells = new Set(eight.flatMap((r) => Array.from({ length: r.to - r.from }, (_, i) => `${r.from + i},${r.w}`)));
+    expect(cells.has("1,2")).toBe(true);
+    expect(cells.has("7,2")).toBe(true);
+    // A square with a square hole, the outline going round both (a cut joins them).
+    const ring = polygonRuns([[0.5, 0.5], [10.5, 0.5], [10.5, 10.5], [0.5, 10.5], [0.5, 3.5], [3.5, 3.5], [3.5, 7.5], [7.5, 7.5], [7.5, 3.5], [0.5, 3.5]]);
+    const filled = new Set(ring.flatMap((r) => Array.from({ length: r.to - r.from }, (_, i) => `${r.from + i},${r.w}`)));
+    expect(filled.has("5,5")).toBe(false);
+    expect(filled.has("2,5")).toBe(true);
+    expect(filled.has("9,9")).toBe(true);
+  });
+
+  it("paints inside the outline in its section, as Paint over and an intensity range allow", () => {
+    const v = vol([20, 20, 10]);
+    // Segment 3 already in a corner of the square, in section z = 4.
+    const before = new Stroke(v);
+    before.set(2, 2, 4, 3);
+    before.finish();
+    const square: [number, number][] = [[1.5, 1.5], [6.5, 1.5], [6.5, 6.5], [1.5, 6.5]];
+    // Over empty voxels only: segment 3 stays.
+    const s = new Stroke(v);
+    expect(fillOutline(s, 2, 4, square, { value: 1, only: 0 })).toBe(24);
+    s.finish();
+    expect(v.get(2, 2, 4)).toBe(3);
+    expect(v.get(4, 4, 4)).toBe(1);
+    expect(v.get(4, 4, 3)).toBe(0);
+    expect(v.get(7, 4, 4)).toBe(0);
+    // Across x (a sagittal view): (u, w) are (y, z); only where an image's values are in range.
+    const image: ImageBlock = { lo: [0, 0, 0], size: [20, 20, 10], data: new Float32Array(4000).map((_, i) => (Math.floor(i / 20) % 20 < 4 ? 100 : 0)) };
+    const t = new Stroke(v);
+    const n = fillOutline(t, 0, 10, [[1.5, 1.5], [6.5, 1.5], [6.5, 6.5], [1.5, 6.5]], { value: 2, where: inRange(image, 50, 150) });
+    expect(n).toBe(2 * 5);
+    expect(v.get(10, 2, 3)).toBe(2);
+    expect(v.get(10, 5, 3)).toBe(0);
+    // Erasing inside an outline: only the active segment.
+    const e = new Stroke(v);
+    fillOutline(e, 2, 4, square, { value: 0, only: 1 });
+    expect(v.get(4, 4, 4)).toBe(0);
+    expect(v.get(2, 2, 4)).toBe(3);
   });
 });
 

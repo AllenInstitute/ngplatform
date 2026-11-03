@@ -14,8 +14,8 @@ their history) and that section was taken out of Annotations.
   computer.
 - **The tool bar** over the 2-D views while a volume is edited (centred
   over the top row of 2-D views, so it never covers the 3-D view): Move (the
-  views as Neuroglancer moves them; the default), Brush, Erase, Fill (2-D or
-  3-D), Pick segment and Quick select; the brush's size; the active
+  views as Neuroglancer moves them; the default), Brush, Erase, Lasso, Fill
+  (2-D or 3-D), Pick segment and Quick select; the brush's size; the active
   segment and New segment; Undo, Redo, Interpolate, Save; and a button that
   hides it.
 - **The segment list**: each segment's colour, name, voxels (and volume, on
@@ -39,11 +39,11 @@ with WebKnossos.
 | `toolbar.ts`, `icons.ts` | The tool bar over the views, its icons |
 | `tools.ts` | The tools, cycling through them, the brush's size steps (pure) |
 | `segments.ts` | The segment list's rows, new ids, which segments a layer shows (pure) |
-| `painter.ts` | The mouse in the 2-D views: drawing, the brush ring, Alt+wheel, the quick-select box |
+| `painter.ts` | The mouse in the 2-D views: drawing, the brush ring, Alt+wheel, the quick-select box, the lasso's outline |
 | `label_volume.ts` | The label volume held in the page: chunks, counts by chunk, a segment's centre, its pyramid, the OME-Zarr store it answers |
 | `store_format.ts` | Serving those stores to Neuroglancer through local data (loaded with the catalogue) |
 | `session.ts` | A volume being drawn: its layer, history, colours, the image that limits the tools |
-| `kernels.ts`, `history.ts` | Brush, fills and their limits, interpolation between sections (signed distances); strokes, undo and redo (pure) |
+| `kernels.ts`, `history.ts` | Brush, fills and their limits, the lasso's inside (`polygonRuns`, `fillOutline`), interpolation between sections (signed distances); strokes, undo and redo (pure) |
 | `quick_select.ts` | The quick select interface, the threshold method, the registry other plugins add to |
 | `preview.ts` | Quick select's proposed mask over the 2-D views (its sections, tinted with an outline), until Enter or Escape |
 | `save.ts` | NIfTI and OME-Zarr out, the painted box |
@@ -58,6 +58,16 @@ reads the volumes drawn here through the `segmentation.labelVolumes`
 service.
 
 ## The tools and Neuroglancer
+
+The lasso keeps the points of its outline in the voxels of the section it
+started in (the voxel axis nearest the view's normal, at the position
+there), a quarter voxel apart or more, while the painter draws the outline
+on the screen. When the button is let go the outline closes back to its
+start and `fillOutline` paints the voxels whose centres are inside it (the
+even-odd rule, row by row), as one stroke: the active segment over what
+**Paint over** allows, or (Erase) 0 over what **Erase** allows; with
+**Brush, eraser and lasso only within the range** on, only where the
+image's values (read for the outline's box in that section) are in range.
 
 Quick select shows its mask before painting it (the tab's **Result**, or
 **Preview** / **At once** on the bar, chooses): the mask waits in the
@@ -86,7 +96,8 @@ on, and gives everything else to Neuroglancer:
 
 While a volume is edited (the tool bar shows), these keys are the tools'
 rather than Neuroglancer's or the workspace's: `B` (Neuroglancer: scale
-bar), `E` (rotate), `V` (default annotations), `F`, `I`, `M`, `Q`, `W`,
+bar), `E` (rotate), `L` (new colours for segments), `V` (default
+annotations), `F`, `I`, `M`, `Q`, `W`,
 `C`, `Ctrl+Z` and `Ctrl+Y` (the workspace's undo and redo; here the
 last stroke or the last workspace change, whichever came last, see
 below); `[` and `]`

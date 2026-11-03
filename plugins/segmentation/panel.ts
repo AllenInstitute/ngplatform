@@ -224,7 +224,7 @@ export class Panel {
       el("h4", { class: "an-sub" }, "Image values"),
       this.intensity(session),
       el("p", { class: "an-hint" }, `In the page: ${volume.chunkCount} chunks, ${fmtBytes(volume.bytes)}. ${session.unsaved ? `${session.unsaved} change${session.unsaved === 1 ? "" : "s"} not saved.` : "Nothing unsaved."}`),
-      e.editing ? null : el("p", { class: "an-hint" }, "Edit shows the tool bar over the views; B, E, F, I, Q pick tools there."),
+      e.editing ? null : el("p", { class: "an-hint" }, "Edit shows the tool bar over the views; B, E, L, F, I, Q pick tools there."),
     );
   }
 
@@ -338,6 +338,19 @@ export class Panel {
             }, "Paint over"))
           : field("Erase", select([["any", "Any segment"], ["only", "The active segment only"]], e.eraseOnly ? "only" : "any", (v) => (e.eraseOnly = v === "only"), "Erase")),
       );
+    } else if (e.tool === "lasso") {
+      options.append(
+        field("Inside", select([["paint", "Paint the active segment"], ["erase", "Erase"]], e.lassoErase ? "erase" : "paint", (v) => {
+          e.lassoErase = v === "erase";
+          e.changed();
+        }, "Inside the outline")),
+        e.lassoErase
+          ? field("Erase", select([["any", "Any segment"], ["only", "The active segment only"]], e.eraseOnly ? "only" : "any", (v) => (e.eraseOnly = v === "only"), "Erase"))
+          : field("Paint over", select([["all", "Any segment"], ["empty", "Empty voxels only"]], e.overwrite, (v) => {
+              e.overwrite = v as "all" | "empty";
+              e.changed();
+            }, "Paint over")),
+      );
     } else if (e.tool === "fill") {
       options.append(
         field("Fill", select([["2d", "2-D: the section"], ["3d", "3-D: a box round the click"]], e.fill3d ? "3d" : "2d", (v) => {
@@ -411,7 +424,7 @@ export class Panel {
         }, "Image"), ref ? `Level ${ref.level}: ${physical(ref.levels[ref.level].voxelSize)} voxels` : undefined),
         field("Range", el("div", { class: "an-inline" }, numberInput(e.low, (v) => (e.low = v), { step: "any", "aria-label": "Low" }), el("span", { class: "an-faint" }, "to"), numberInput(e.high, (v) => (e.high = v), { step: "any", "aria-label": "High" }))),
       ),
-      el("label", { class: "field check" }, limit, el("span", {}, "Brush and eraser only within the range")),
+      el("label", { class: "field check" }, limit, el("span", {}, "Brush, eraser and lasso only within the range")),
       el("div", { class: "an-row" }, button("Range from the cursor", () => void e.rangeFromCursor(), "The value under the pointer, ± the tolerance of the range there")),
     );
   }

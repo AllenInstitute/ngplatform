@@ -30,7 +30,8 @@ describe("the tools", () => {
     expect(cycle("move", 1)).toBe("brush");
     expect(cycle("quick", 1)).toBe("move");
     expect(cycle("move", -1)).toBe("quick");
-    expect(cycle("fill", -2)).toBe("brush");
+    expect(cycle("fill", -2)).toBe("erase");
+    expect(cycle("erase", 1)).toBe("lasso");
   });
 
   it("steps the brush by a quarter, and in whole voxels by at least one", () => {

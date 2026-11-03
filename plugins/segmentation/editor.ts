@@ -27,7 +27,7 @@ import { type ImageLevel, layerStore, readableImages, type Voxels } from "../ann
 import { zipFiles } from "../registration/volume_io.js";
 import { storeOf } from "../volume-view/sources.js";
 import { chooseUndo, Stroke } from "./history.js";
-import { ballReach, ballShape, dabsBetween, floodFill, type ImageBlock, inRange, interpolate, type Paint, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "./kernels.js";
+import { ballReach, ballShape, dabsBetween, fillOutline, floodFill, type ImageBlock, inRange, interpolate, type Paint, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "./kernels.js";
 import { discard, type KeptInfo, kept, restore } from "./keep.js";
 import { LABEL_MAX, type LabelType, LabelVolume } from "./label_volume.js";
 import { BRUSHING, DRAWING, EDITING, PREVIEWING, SEGMENTATION_PANEL } from "./manifest.js";
@@ -88,6 +88,8 @@ export class Editor implements LabelVolumes {
   shape: "ball" | "disc" = "disc";
   overwrite: "all" | "empty" = "all";
   eraseOnly = false;
+  /** The lasso paints the active segment, or erases (as Erase does: any segment, or the active one only). */
+  lassoErase = false;
   limit = false;
   low = 0;
   high = 255;
@@ -115,6 +117,8 @@ export class Editor implements LabelVolumes {
   private axis = 2;
   private quickStart: { voxel: Vec3; axis?: number } | undefined;
   private quickEnd: Vec3 | undefined;
+  /** The lasso's outline being drawn: the section (across `axis`, at `index`) and its points (u, w) in voxels. */
+  private lasso: { session: Session; axis: number; index: number; points: [number, number][] } | undefined;
   private countsTimer: ReturnType<typeof setTimeout> | undefined;
   /** Volumes already looked for after a reload. */
   private readonly sought = new Set<string>();
@@ -129,6 +133,7 @@ export class Editor implements LabelVolumes {
       up: () => this.up(),
       ring: (p) => this.ring(p),
       boxDrag: () => this.tool === "quick",
+      pathDrag: () => this.tool === "lasso",
       wheel: (notches) => {
         if (!brushes(this.tool)) return false;
         this.brushSize(notches);
@@ -708,6 +713,13 @@ export class Editor implements LabelVolumes {
         this.quickStart = { voxel, axis: normal ? dominant(normal) : undefined };
         this.quickEnd = voxel;
         break;
+      case "lasso": {
+        if (normal === undefined) return;
+        const axis = dominant(normal);
+        const [u, w] = [0, 1, 2].filter((k) => k !== axis);
+        this.lasso = { session, axis, index: voxelIndex(voxel[axis]), points: [[voxel[u], voxel[w]]] };
+        break;
+      }
     }
   }
 
@@ -736,6 +748,16 @@ export class Editor implements LabelVolumes {
   }
 
   private drag(p: ViewPoint): void {
+    if (this.tool === "lasso") {
+      const lasso = this.lasso;
+      const where = lasso && this.locate(p);
+      if (lasso === undefined || where === undefined) return;
+      const [u, w] = [0, 1, 2].filter((k) => k !== lasso.axis);
+      const [lu, lw] = lasso.points[lasso.points.length - 1];
+      // A point a quarter voxel or more from the last: enough for the outline, not one per pixel.
+      if (Math.hypot(where.voxel[u] - lu, where.voxel[w] - lw) >= 0.25) lasso.points.push([where.voxel[u], where.voxel[w]]);
+      return;
+    }
     if (this.tool === "quick") {
       const where = this.locate(p);
       if (where) this.quickEnd = where.voxel;
@@ -752,6 +774,12 @@ export class Editor implements LabelVolumes {
   }
 
   private up(): void {
+    if (this.lasso !== undefined) {
+      const lasso = this.lasso;
+      this.lasso = undefined;
+      this.enqueue(() => this.fillLasso(lasso));
+      return;
+    }
     if (this.tool === "quick" && this.quickStart !== undefined) {
       const start = this.quickStart;
       const end = this.quickEnd ?? start.voxel;
@@ -780,6 +808,37 @@ export class Editor implements LabelVolumes {
     session.unsaved++;
     session.refresh();
     this.recount();
+  }
+
+  /**
+   * Paints inside the lasso's outline, in its section: the active segment
+   * over what Paint over allows (or 0, erasing, as Erase allows), within the
+   * image's range when the brush is limited to it.
+   */
+  private async fillLasso(lasso: { session: Session; axis: number; index: number; points: [number, number][] }): Promise<void> {
+    const { session, axis, index, points } = lasso;
+    if (points.length < 3) {
+      this.ctx.ui.toast("Draw round what to fill: hold the button down and come back near the start.");
+      return;
+    }
+    const paint: Paint = this.lassoErase ? { value: 0, only: this.eraseOnly ? this.value : undefined } : { value: this.value, only: this.overwrite === "empty" ? 0 : undefined };
+    if (this.limit && session.reference) {
+      const [u, w] = [0, 1, 2].filter((k) => k !== axis);
+      const lo: Vec3 = [0, 0, 0];
+      const hi: Vec3 = [0, 0, 0];
+      lo[axis] = index;
+      hi[axis] = index + 1;
+      lo[u] = Math.floor(Math.min(...points.map((p) => p[0])));
+      hi[u] = Math.ceil(Math.max(...points.map((p) => p[0]))) + 1;
+      lo[w] = Math.floor(Math.min(...points.map((p) => p[1])));
+      hi[w] = Math.ceil(Math.max(...points.map((p) => p[1]))) + 1;
+      const block = await session.imageBox(lo, hi);
+      if (block) paint.where = inRange(block, this.low, this.high);
+    }
+    const stroke = new Stroke(session.volume);
+    const n = fillOutline(stroke, axis, index, points, paint);
+    if (n === 0) this.ctx.ui.toast(this.lassoErase ? "Nothing to erase inside the outline." : "Nothing painted: the outline holds no voxel it may paint (Paint over, the image's range).");
+    this.commit(stroke, session, paint.value);
   }
 
   private async fill(seed: Vec3, normal: Vec3 | undefined): Promise<void> {

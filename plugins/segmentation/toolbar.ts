@@ -97,6 +97,15 @@ export class Toolbar {
         el("span", { class: "sg-value", title: "The brush's radius" }, `${e.radius} ${unit}`),
         iconButton("plus", "Larger brush (] or Alt+wheel)", () => e.brushSize(1)),
       );
+    } else if (e.tool === "lasso") {
+      const modes = el("div", { class: "segmented sg-dims" });
+      for (const [erase, label, title] of [[false, "Paint", "Paint inside the outline with the active segment"], [true, "Erase", "Erase inside the outline"]] as const) {
+        modes.append(el("button", { type: "button", title, "aria-pressed": String(e.lassoErase === erase), onclick: () => {
+          e.lassoErase = erase;
+          e.changed();
+        } }, label));
+      }
+      option = group(modes);
     } else if (e.tool === "fill") {
       const dims = el("div", { class: "segmented sg-dims" });
       for (const [three, label, title] of [[false, "2-D", "Fill the section clicked (F)"], [true, "3-D", "Fill in a box round the click (Shift+F)"]] as const) {
