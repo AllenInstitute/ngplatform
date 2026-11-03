@@ -19,6 +19,7 @@ items are done (and say where); the rest are in rough order of work.
 - [x] Luxar gaps: only a layer's chosen segments, track groups by id then from their stores, bloom, meshes (lit in 3-D, outlines in 2-D). Left: fitted splats; reading only the chosen objects (few chosen read whole chunks); `notSelectedAlpha`.
 - [x] Time series: a surface vertex's CIFTI time course under the mouse, pinned, CSV (the nearest vertex by a grid over the surface).
 - [x] Luxar: a layer's few chosen objects read whole by id at full resolution (a sample of whole objects past the Detail), the others at `notSelectedAlpha`, a smooth hand-over to Track filtering's own stores.
+- [x] Auth: several Google accounts (Google's account chooser, its pill button), sign-in rules by bucket, folder or web address choosing the sign-in and the Google account, kept in the browser, never in links.
 - [ ] Left, smaller: ray-cast SH ODF glyphs (Orientations); Luxar glow saturating on folded surfaces; AI quick select (the interface exists) and proofreading (Segmentation).
 - [ ] brainhops (neuroscales/brainhops) for reading non-linear warp files (ANTs, FSL, SPM, NiftyReg…) in the page: no licence in its repository yet, not on PyPI; a Pyodide feasibility test is ready in the scratchpad, waiting for Andrew.
 - [ ] Waiting on Andrew: a Google OAuth client ID; the Allen CATMAID address; S-21-46's source data and leave to upload a rebuild with even coarse levels; copy-on-write editing of a large segmentation (agree first).

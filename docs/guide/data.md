@@ -14,7 +14,7 @@ its usual prefixes, plus Zarr Vectors stores:
 | Others Neuroglancer supports (graphene, DVID, BOSS, render, deep zoom) | as in Neuroglancer |
 
 `gs://` and `s3://` buckets are read directly. Private Google Cloud buckets
-are read with a sign-in from the **Auth** tab (`gs+google://` with Google,
+are read with a sign-in from the **Auth** tab (`gs+google://` with a Google account,
 or `gs+ngauth+https://` with an ngauth server), and CAVE-style servers with
 middleauth (`middleauth+https://`): see [Signing in](signing-in.md).
 

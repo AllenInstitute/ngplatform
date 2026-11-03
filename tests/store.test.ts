@@ -311,6 +311,35 @@ describe("sign-ins", () => {
     expect(store.datasets()).toHaveLength(1);
   });
 
+  it("gives sources their rule's sign-in before the layers open, as part of opening or adding", () => {
+    const { store, engine } = setup();
+    store.sourceRules = (source) => (typeof source === "string" ? source.replace("gs://b/", "gs+google://b/") : source);
+    store.open({ ng: { layers: [{ name: "img", type: "image", source: IMAGE }] }, app: {} }, "test");
+    expect((engine.ng.layers as Json[])[0].source).toBe("precomputed://gs+google://b/image");
+    expect(store.opened).toBe(1);
+    store.addDataset({ source: "zarr://gs://b/other.zarr", name: "other" });
+    expect((engine.ng.layers as Json[]).map((l) => l.source)).toEqual(["precomputed://gs+google://b/image", "zarr://gs+google://b/other.zarr"]);
+    expect(store.historyRows().map((r) => r.label)).toEqual(["Opened"]);
+  });
+
+  it("rewrites several layers quietly (amending the step) or as one named step", () => {
+    const { store, engine } = setup();
+    store.open({ ng: { layers: [{ name: "a", type: "image", source: IMAGE }, { name: "b", type: "image", source: "gs://b/two" }] }, app: {} }, "test");
+    store.noteInput();
+    store.addDataset({ source: "gs://b/three", name: "c" });
+    store.setLayerSources(new Map([["c", "gs+google://b/three"]]), { quiet: true });
+    expect(store.historyRows().map((r) => r.label)).toHaveLength(2);
+    expect(store.datasets().find((d) => d.name === "c")?.source).toBe("gs+google://b/three");
+    store.noteInput();
+    store.setLayerSources(new Map([["a", "precomputed://gs+google://b/image"], ["b", "gs+google://b/two"]]), { label: "Sign-in for all of gs://b/: Google" });
+    expect((engine.ng.layers as Json[]).map((l) => l.source)).toEqual(["precomputed://gs+google://b/image", "gs+google://b/two", "gs+google://b/three"]);
+    expect(store.historyRows().at(-1)?.label).toBe("Sign-in for all of gs://b/: Google");
+    // One undo takes the added layer and its rule's sign-in back together.
+    store.undo();
+    store.undo();
+    expect((engine.ng.layers as Json[]).map((l) => l.name)).toEqual(["a", "b"]);
+  });
+
   it("points layers and datasets at local data opened again under a new id, as one step", () => {
     const { store, engine } = setup();
     const OLD = "https://app/local/aaa/";

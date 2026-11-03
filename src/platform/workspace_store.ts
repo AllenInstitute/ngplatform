@@ -235,8 +235,34 @@ export class WorkspaceStore {
     this.notifySlices();
   }
 
+  /** Bumped each time a whole workspace is opened (sign-in rules apply to its layers afresh). */
+  opened = 0;
+
+  /**
+   * Gives a layer's source the sign-in this browser's rules name (set by
+   * the shell: see src/platform/sign_in_rules.ts), before the layer opens,
+   * so a layer opened or added here never first reads with another.
+   */
+  sourceRules: ((source: unknown) => unknown) | undefined;
+
+  private withRules(ng: Json): Json {
+    const rules = this.sourceRules;
+    if (rules === undefined || !Array.isArray(ng.layers)) return ng;
+    let changed = false;
+    const layers = (ng.layers as unknown[]).map((layer) => {
+      if (typeof layer !== "object" || layer === null || (layer as Json).source === undefined) return layer;
+      const source = rules((layer as Json).source);
+      if (source === (layer as Json).source) return layer;
+      changed = true;
+      return { ...(layer as Json), source };
+    });
+    return changed ? { ...ng, layers } : ng;
+  }
+
   /** Replaces the whole workspace. */
   open(state: WorkspaceState, from: string): void {
+    this.opened++;
+    state = { ...state, ng: this.withRules(state.ng) };
     this.apply(state);
     // Opening is one undo step, and what follows on its own is part of it.
     this.inputSinceOpen = true;
@@ -424,6 +450,7 @@ export class WorkspaceStore {
     if (options.quiet && this.settleTimer !== undefined) this.settle();
     const ng = this.ng();
     const spec = { ...layerForDataset(dataset, ng), ...overrides };
+    if (this.sourceRules !== undefined && spec.source !== undefined) spec.source = this.sourceRules(spec.source) as Json[string];
     const name = this.engine.addLayer(spec, { select: true });
     // The first data in a scene sets its coordinate space; the view then fits it.
     if (layersOf(ng).length === 0) this.engine.fitWhenLoaded?.(name);
@@ -546,6 +573,35 @@ export class WorkspaceStore {
     this.platform = { ...this.platform, datasets: this.platform.datasets.map((d) => (d.key === key ? { ...d, source } : d)) };
     this.engine.setState(ng);
     this.nextLabel = label;
+    this.settle();
+  }
+
+  /**
+   * Points several layers at the same data read another way: one undo
+   * step named `label` (a sign-in rule the user applies), or quiet,
+   * amending the current step (a rule applied to layers as they appear, as
+   * Neuroglancer's own normalising of a source would).
+   */
+  setLayerSources(sources: Map<string, unknown>, options: { quiet: true } | { label: string }): void {
+    const ng = structuredClone(this.ng());
+    const keys = new Map<string, unknown>();
+    for (const spec of Array.isArray(ng.layers) ? (ng.layers as Json[]) : []) {
+      const source = sources.get(String(spec.name));
+      if (source === undefined || JSON.stringify(spec.source) === JSON.stringify(source)) continue;
+      spec.source = source as Json;
+      keys.set(datasetKey(spec), source);
+    }
+    if (keys.size === 0) return;
+    // A change of the user's still settling is recorded first, as its own step.
+    if (this.settleTimer !== undefined && !this.amend) this.settle();
+    this.platform = { ...this.platform, datasets: this.platform.datasets.map((d) => (keys.has(d.key) ? { ...d, source: keys.get(d.key) } : d)) };
+    this.engine.setState(ng);
+    if ("quiet" in options) {
+      this.amend = true;
+      this.quietSince = performance.now();
+    } else {
+      this.nextLabel = options.label;
+    }
     this.settle();
   }
 
