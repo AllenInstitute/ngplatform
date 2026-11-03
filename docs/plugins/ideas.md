@@ -29,7 +29,7 @@ the *Plugin idea* template.
 | **Surfaces** | Cortical surfaces with curvature, thickness, overlays, `.annot` and `.label`; outlines on the slices; inflated and sphere views | Freeview, Connectome Workbench, SurfIce |
 | **Tract statistics** | Profiles along a tract (FA, length), bundle comparison, tract-to-region connectivity | DIPY AFQ, TractSeg, DSI Studio |
 | **Connectome** | Region-by-region matrices and graphs linked to the regions in the views | Freeview's connectome view, BrainNet Viewer, NetworkX |
-| **Time series** | Plot a voxel's or region's time course; play time-lapses; fMRI statistics overlays | Freeview's time course, FSLeyes, napari |
+| **Time series** (begun, see [Time series](time-series.md)) | Plot a voxel's or region's time course; play time-lapses; fMRI statistics overlays | Freeview's time course, FSLeyes, napari |
 | **Spatial transcriptomics** | Gene expression points (MERFISH, Xenium, Visium) by gene, cluster and cell type, from AnnData | napari-spatialdata, Vitessce, TissUUmaps |
 | **Probe tracks** | Electrode and Neuropixels trajectories, with the regions each channel passes | IBL's atlas tools, Pinpoint, HERBS |
 | **DICOM** | Read a DICOM series as a virtual OME-Zarr | 3D Slicer, Horos, OHIF |

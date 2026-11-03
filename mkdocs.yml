@@ -56,6 +56,7 @@ nav:
       - Luxar rendering: plugins/luxar.md
       - Orientations: plugins/orientations.md
       - Atlas: plugins/atlas.md
+      - Time series: plugins/time-series.md
       - Ideas for new plugins: plugins/ideas.md
       - Page template: plugins/template.md
   - Contributing: contributing.md

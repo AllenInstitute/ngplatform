@@ -14,6 +14,7 @@ import { FILTERS_MANIFEST } from "./filters/manifest.js";
 import { LUXAR_MANIFEST } from "./luxar/manifest.js";
 import { ORIENTATIONS_MANIFEST } from "./orientations/manifest.js";
 import { REGISTRATION_MANIFEST } from "./registration/manifest.js";
+import { TIME_SERIES_MANIFEST } from "./time-series/manifest.js";
 import { TRACK_FILTERING_MANIFEST } from "./track-filtering/manifest.js";
 import { VOLUME_VIEW_MANIFEST } from "./volume-view/manifest.js";
 import { ZARR_VECTORS_MANIFEST } from "./zarr-vectors/manifest.js";
@@ -40,4 +41,5 @@ export const CATALOGUE: CatalogueEntry[] = [
   { manifest: LUXAR_MANIFEST, load: async () => (await import("./luxar/plugin.js")).plugin },
   { manifest: ORIENTATIONS_MANIFEST, load: async () => (await import("./orientations/plugin.js")).plugin },
   { manifest: ATLAS_MANIFEST, load: async () => (await import("./atlas/plugin.js")).plugin },
+  { manifest: TIME_SERIES_MANIFEST, load: async () => (await import("./time-series/plugin.js")).plugin },
 ];

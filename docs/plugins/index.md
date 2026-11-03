@@ -31,6 +31,7 @@ and a *Read more* guide each.
 | [Luxar rendering](luxar.md) | tool | no | Chosen Zarr Vectors layers drawn as Luxar draws lines (HDR glow, mitred joins), in the 2-D and 3-D views. |
 | [Orientations](orientations.md) | tool | no | ODF glyphs from spherical harmonics, tensor ellipsoids and peak lines over an image, finer as you zoom in; direction colour. |
 | [Atlas](atlas.md) | tool | no | A segmentation's regions as a tree (Allen CCF hierarchy, FreeSurfer grouped): search, show a region with its parts, go to it, the region under the cursor, volumes. |
+| [Time series](time-series.md) | tool | no | The time course of the voxel under the mouse, pinned voxels and region means in a 4-D image; playing through time; CSV. |
 
 ## Switching, adding and writing plugins
 
