@@ -13,6 +13,9 @@
  * the coarsest brick level, each split into the next finer level's bricks
  * while its voxels show larger than a pixel (bricks on the cut's faces as
  * if twice as near), the most needed first, while the atlas has slots.
+ * A brick behind the tissue's near surface is not wanted: every ray from
+ * the camera to it (its centre and corners) meets tissue first, by the
+ * coarse level, outside the cut-away octant.
  * They load nearest first; a slot goes to a new brick from the brick least
  * recently wanted.  A brick of one value takes no slot.
  *
@@ -251,6 +254,15 @@ export class BrickSet {
     this.toContext = invert(context.voxelToRas);
   }
 
+  /** Whether a coarse-level voxel position is tissue. */
+  private inTissue(p: Vec3, threshold: number): boolean {
+    const { data, size, darkBackground } = this.context;
+    const [x, y, z] = p.map(Math.round);
+    if (x < 0 || y < 0 || z < 0 || x >= size[0] || y >= size[1] || z >= size[2]) return false;
+    const raw = data[(z * size[1] + y) * size[0] + x];
+    return (darkBackground ? raw : 255 - raw) >= threshold * 255;
+  }
+
   /** A brick's id from its level and place in the level's grid. */
   id(level: number, b: ArrayLike<number>): number {
     const g = this.layout.grids[level];
@@ -338,6 +350,43 @@ export class BrickSet {
     return [least, most];
   }
 
+  /** The camera and display-to-coarse-voxel map while bricks are chosen, when hidden bricks can be told (a perspective view from outside the tissue). */
+  private occlusion: { eye: Vec3; toContext: Mat4; view: BrickView } | undefined;
+
+  /** Whether a box is hidden: every ray from the camera to its centre and corners meets tissue first. */
+  hidden(corners: Vec3[]): boolean {
+    const o = this.occlusion;
+    if (o === undefined) return false;
+    const centre: Vec3 = [0, 1, 2].map((k) => corners.reduce((s, c) => s + c[k], 0) / corners.length) as Vec3;
+    return [centre, ...corners].every((p) => this.blocked(o.eye, p));
+  }
+
+  /** Whether the coarse level has tissue (outside the cut-away octant) between the camera and a display point, a few voxels short of it. */
+  private blocked(eye: Vec3, target: Vec3): boolean {
+    const o = this.occlusion!;
+    const { data, size, darkBackground } = this.context;
+    const a = applyRow(o.toContext, eye);
+    const b = applyRow(o.toContext, target);
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    const threshold = o.view.threshold * 255;
+    const cut = o.view.cut;
+    for (let d = 1; d < length - 3; d += 1.5) {
+      const t = d / length;
+      const x = Math.round(a[0] + (b[0] - a[0]) * t);
+      const y = Math.round(a[1] + (b[1] - a[1]) * t);
+      const z = Math.round(a[2] + (b[2] - a[2]) * t);
+      if (x < 0 || y < 0 || z < 0 || x >= size[0] || y >= size[1] || z >= size[2]) continue;
+      const raw = data[(z * size[1] + y) * size[0] + x];
+      if ((darkBackground ? raw : 255 - raw) < threshold) continue;
+      if (cut !== undefined) {
+        const p = [0, 1, 2].map((k) => eye[k] + (target[k] - eye[k]) * t);
+        if ([0, 1, 2].every((k) => (p[k] - cut.point[k]) * cut.side[k] >= 0)) continue;
+      }
+      return true;
+    }
+    return false;
+  }
+
   /** A brick of `level` as the view sees it; undefined when it is not needed. */
   private candidate(level: number, b: Vec3, view: BrickView, voxel: number, toDisplay: Mat4): Candidate | undefined {
     const id = this.id(level, b);
@@ -363,6 +412,7 @@ export class BrickSet {
     const [least, most] = this.tissueNear(id);
     const threshold = view.threshold * 255;
     if (most < threshold || (least >= threshold && !onCut)) return undefined;
+    if (this.hidden(corners)) return undefined;
     // A pixel's size at its nearest corner (in depth: the least w).
     let nearest = clips[0];
     let at = corners[0];
@@ -392,6 +442,11 @@ export class BrickSet {
     const toDisplay = this.levels.map((l) => multiply(view.toDisplay, l.voxelToRas));
     const voxel = toDisplay.map((m) => Math.min(...[0, 1, 2].map((c) => Math.hypot(m[c], m[4 + c], m[8 + c]))));
     const cost = (c: Candidate) => (this.constants.has(c.id) ? 0 : 1);
+    // Hidden bricks are told from the camera, when it is a point outside the tissue.
+    const eye = eyeOf(view.viewProjection);
+    const displayToContext = multiply(this.toContext, invert(view.toDisplay));
+    this.occlusion = eye === undefined ? undefined : { eye, toContext: displayToContext, view };
+    if (eye !== undefined && this.inTissue(applyRow(displayToContext, eye), view.threshold)) this.occlusion = undefined;
     // From the coarsest level's bricks.
     const top = L - 1;
     const seen = new Set<number>();
@@ -591,4 +646,19 @@ class Heap<T> {
     }
     return top;
   }
+}
+
+/**
+ * The camera of a perspective view, display coordinates: the point clip
+ * space puts at x = y = w = 0 (vp column-major).  Undefined for an
+ * orthographic view (no such point).
+ */
+export function eyeOf(vp: ArrayLike<number>): Vec3 | undefined {
+  const rows = [0, 1, 3].map((r) => [vp[r], vp[4 + r], vp[8 + r], vp[12 + r]]);
+  const m = rows.map((r) => r.slice(0, 3));
+  const rhs = rows.map((r) => -r[3]);
+  const det = (a: number[][]) => a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+  const D = det(m);
+  if (Math.abs(D) < 1e-12) return undefined;
+  return [0, 1, 2].map((k) => det(m.map((row, i) => row.map((v, j) => (j === k ? rhs[i] : v)))) / D) as Vec3;
 }

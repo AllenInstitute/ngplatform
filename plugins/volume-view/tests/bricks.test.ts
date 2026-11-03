@@ -3,7 +3,7 @@
  * wants, and how slots are given and taken back.
  */
 import { describe, expect, it } from "vitest";
-import { ABSENT, BRICK, type BrickLevel, brickLevels, brickRegion, BrickSet, type BrickView, CONSTANT, fillSlot, packPages, RESIDENT, SLOT, type Vec3 } from "../bricks.js";
+import { ABSENT, BRICK, type BrickLevel, brickLevels, brickRegion, BrickSet, type BrickView, CONSTANT, eyeOf, fillSlot, packPages, RESIDENT, SLOT, type Vec3 } from "../bricks.js";
 import { identity, invert, type Mat4, multiply } from "../ome.js";
 
 // A 256 mm image: levels of 0.5, 1 and 2 mm voxels, and a whole level of 4 mm.
@@ -165,6 +165,28 @@ describe("choosing bricks", () => {
         expect(a.lo.every((v, k) => v < b.hi[k] && b.lo[k] < a.hi[k])).toBe(false);
       }
     }
+  });
+
+  it("leave out bricks behind the tissue's near surface, unless the cut opens them to the camera", () => {
+    const { levels: kept, layout: pages } = layout();
+    const set = new BrickSet(kept, pages, 16, ball(), never);
+    const wanted = set.choose(at(eye, 300));
+    // The camera is at y = -400: bricks beyond the ball's centre and well inside its outline are behind its near half
+    // (near the outline a brick's corners can be seen past the ball).
+    const behind = (id: number) => {
+      const { centre } = boxOf(set, id);
+      return centre[1] > 30 && Math.hypot(centre[0], centre[2]) < 50;
+    };
+    expect(wanted.some(behind)).toBe(false);
+    expect(wanted.length).toBeGreaterThan(10);
+    // The octant towards the camera cut away: bricks at the ball's middle can be seen.
+    const cut = new BrickSet(kept, pages, 16, ball(), never);
+    const opened = cut.choose(at(eye, 300, { cut: { point: [0, 0, 0], side: [1, -1, 1] } }));
+    expect(opened.some((id) => boxOf(cut, id).centre[1] > 0 && Math.hypot(boxOf(cut, id).centre[0], boxOf(cut, id).centre[2]) < 50)).toBe(true);
+    // With the camera inside the tissue nothing is taken as hidden.
+    const inside = new BrickSet(kept, pages, 16, ball(), never);
+    expect(inside.choose(at([0, -10, 0], 300)).some((id) => boxOf(inside, id).centre[1] > 30)).toBe(true);
+    expect(eyeOf(camera([3, -400, 7]).viewProjection)!.map((v) => +v.toFixed(6))).toEqual([3, -400, 7]);
   });
 
   it("all coarse when the view is small, all finest when it is large", () => {

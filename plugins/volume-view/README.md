@@ -32,8 +32,11 @@ voxel size, and takes the whole level where no brick is held.
 Bricks are chosen a moment after the view settles: those in the frustum,
 not inside the cut-away octant, with tissue near them in the whole level and
 background or the cut near them too (a ray stops at the first tissue it
-meets, so the inside of the tissue is seen only on the cut). From the
-coarsest brick level, a brick is split into the next finer level's bricks
+meets, so the inside of the tissue is seen only on the cut), and not hidden
+behind the tissue's near surface: a brick is left out when every ray from
+the camera to its centre and corners meets tissue first in the whole level
+(outside the cut-away octant; not done with the camera inside tissue). From
+the coarsest brick level, a brick is split into the next finer level's bricks
 while its voxels show larger than a pixel at its nearest corner (bricks on
 the cut's faces count as twice as near), the most needed first, while the
 atlas has slots. They are read through the worker (`client.volume` on a
