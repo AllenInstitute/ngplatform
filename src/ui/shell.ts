@@ -41,6 +41,9 @@ import { openDropped, showAddDatasetSheet, showEditStateSheet, showLocalSheet, s
 import type { Workbench } from "./workbench.js";
 import { createPlatformApis } from "./apis.js";
 
+/** The code, linked from the top bar. */
+const REPOSITORY = "https://github.com/AllenInstitute/ngplatform";
+
 /** Inside a frame (such as an artifact viewer), a link cannot carry the state. */
 const framed = (() => {
   try {
@@ -118,6 +121,7 @@ export class Shell {
       h(
         "div",
         { class: "group" },
+        h("a", { class: "btn icon", href: REPOSITORY, target: "_blank", rel: "noopener noreferrer", title: "ngplatform on GitHub", "aria-label": "ngplatform on GitHub" }, icon("github")),
         iconButton("camera", "Capture: pictures and movies", (e) =>
           showMenu(e.currentTarget as HTMLElement, [
             { label: "Picture…", run: () => this.wb.run("view.capture") },

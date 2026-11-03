@@ -129,6 +129,7 @@ button.link:disabled { color: var(--faint); cursor: default; text-decoration: no
   cursor: pointer;
   white-space: nowrap;
 }
+a.btn { text-decoration: none; }
 .btn:hover:not(:disabled) { background: var(--ink-3); }
 .btn:disabled { color: var(--faint); cursor: default; }
 .btn.primary { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
