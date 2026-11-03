@@ -61,6 +61,14 @@ export interface VirtualFormat {
    * text after a `# @file <name>` line (for text formats such as SWC).
    */
   collect?: { extension: string; label: string };
+  /**
+   * Another file the store needs, beside it in the same folder (an edge
+   * list's node table): candidate names for it, given the file's name; the
+   * first found is used.  The worker gets the file's text, a `# @file
+   * <name>` line, then the other file's text; the other file is not listed
+   * as a dataset of its own.
+   */
+  companion?: (name: string) => string[];
 }
 
 export interface Manifest {

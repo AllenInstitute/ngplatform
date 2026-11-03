@@ -2,7 +2,7 @@
  * Export as…: a dataset read from a file on this computer, saved in another
  * format.  Images: NIfTI (.nii.gz, .nii), FreeSurfer (.mgz, .mgh) or an
  * OME-Zarr folder, at full resolution or a coarser level; tractograms as
- * .trk or .tck; meshes as OBJ, PLY or STL; points as CSV.  The file is read
+ * .trk or .tck; meshes as OBJ, PLY or STL; points as CSV; graphs as GraphML.  The file is read
  * and written in a worker (src/virtual/out/export_worker.ts); the result is
  * saved where the system's save dialog says, or downloaded.
  */
@@ -34,6 +34,10 @@ const FORMATS: Record<NonNullable<ReturnType<typeof exportKind>>, Format[]> = {
     { label: "Vertices as CSV (.csv)", format: "csv", suffix: ".csv" },
   ],
   points: [{ label: "CSV (.csv)", format: "csv", suffix: ".csv" }],
+  graph: [
+    { label: "GraphML (.graphml)", format: "graphml", suffix: ".graphml" },
+    { label: "Nodes as CSV (.csv)", format: "csv", suffix: ".csv" },
+  ],
 };
 
 /** At most this much is read and written at once: a level finer than it is not offered. */

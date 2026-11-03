@@ -1,11 +1,13 @@
 /**
  * Serves files on this computer as virtual zarr-vectors stores (see
- * ./virtual.ts): a tractogram, mesh, SWC file or point table is read once, when its store is first
+ * ./virtual.ts): a tractogram, mesh, SWC file, graph or point table is read once, when its store is first
  * asked for, then every key is made from what was read.
  */
 import { serveVirtualStores } from "../../sdk/virtual.js";
+import { EDGE_LIST } from "./formats.js";
 import { FREESURFER_SURFACE, parseMeshFile } from "./mesh_files.js";
 import { MeshStore } from "./meshes.js";
+import { graphStore, parseEdgeList, parseGraphml, splitEdgeList } from "./graphs.js";
 import { parseLas, parsePointParquet, parsePointTable, parseSwc, parseSwcCollection } from "./point_files.js";
 import { pointStore, skeletonStore } from "./points.js";
 import { openTractogram } from "./tractograms.js";
@@ -21,6 +23,11 @@ serveVirtualStores(async (file) => {
     return skeletonStore(nodes, "neurons", { names: files, fileOf });
   }
   if (/\.swc$/i.test(file.name)) return skeletonStore(parseSwc(await file.text()), file.name.replace(/\.swc$/i, ""));
+  if (/\.graphml$/i.test(file.name)) return graphStore(parseGraphml(await file.text()), file.name.replace(/\.graphml$/i, ""));
+  if (EDGE_LIST.test(file.name)) {
+    const { edges, nodes } = splitEdgeList(await file.text());
+    return graphStore(parseEdgeList(edges, nodes), file.name.replace(/[_\-. ]?edges?\.(csv|tsv)$/i, "") || "graph");
+  }
   if (/\.parquet$/i.test(file.name)) return pointStore(await parsePointParquet(file), file.name.replace(/\.parquet$/i, ""));
   if (/\.las$/i.test(file.name)) return pointStore(parseLas(new Uint8Array(await file.arrayBuffer())), file.name.replace(/\.las$/i, ""));
   if (/\.(csv|tsv|xyz)$/i.test(file.name)) return pointStore(parsePointTable(await file.text()), file.name.replace(/\.(csv|tsv|xyz)$/i, ""));

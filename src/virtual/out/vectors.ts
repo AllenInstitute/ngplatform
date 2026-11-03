@@ -140,6 +140,24 @@ export function plyFile(mesh: MeshData): Uint8Array {
   return out;
 }
 
+/** A GraphML graph: each node's x, y, z and other values, and the edges (undirected). */
+export function graphmlFile(positions: ArrayLike<number>, edges: ArrayLike<number>, columns: { name: string; values: ArrayLike<number> }[] = []): Uint8Array {
+  const names = ["x", "y", "z", ...columns.map((c) => c.name)];
+  const lines = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    ...names.map((n, i) => `  <key id="d${i}" for="node" attr.name="${n}" attr.type="double"/>`),
+    '  <graph edgedefault="undirected">',
+  ];
+  for (let i = 0; i < positions.length / 3; ++i) {
+    const values = [positions[3 * i], positions[3 * i + 1], positions[3 * i + 2], ...columns.map((c) => c.values[i])];
+    lines.push(`    <node id="n${i}">${values.map((v, k) => `<data key="d${k}">${v}</data>`).join("")}</node>`);
+  }
+  for (let e = 0; e < edges.length; e += 2) lines.push(`    <edge source="n${edges[e]}" target="n${edges[e + 1]}"/>`);
+  lines.push("  </graph>", "</graphml>");
+  return new TextEncoder().encode(lines.join("\n") + "\n");
+}
+
 /** A CSV of points: x, y, z and any other columns. */
 export function csvFile(positions: ArrayLike<number>, columns: { name: string; values: ArrayLike<number> }[] = []): Uint8Array {
   const lines = [["x", "y", "z", ...columns.map((c) => c.name)].join(",")];

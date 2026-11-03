@@ -12,6 +12,7 @@
  */
 import { openImage } from "../images/open.js";
 import { parseMeshFile } from "../vectors/mesh_files.js";
+import { parseEdgeList, parseGraphml, splitEdgeList } from "../vectors/graphs.js";
 import { parseLas, parsePointParquet, parsePointTable, parseSwc } from "../vectors/point_files.js";
 import { parseTckHeader, readTck } from "../vectors/tck.js";
 import type { TrkBatch } from "../vectors/trk.js";
@@ -19,7 +20,7 @@ import { parseTrkHeader, readTrk, TRK_HEADER_SIZE } from "../vectors/trk.js";
 import { openTrxInfo, readTrx } from "../vectors/trx.js";
 import { exportKind, type GeometryFormat, type ImageFormat } from "./kinds.js";
 import { readLevel, regionAround, storeLevels } from "./read_level.js";
-import { csvFile, type Curves, objFile, plyFile, stlFile, tckFile, trkFile } from "./vectors.js";
+import { csvFile, type Curves, graphmlFile, objFile, plyFile, stlFile, tckFile, trkFile } from "./vectors.js";
 import { displayWindow, gzip, mghFile, niftiFile, omeZarrFiles } from "./volume.js";
 
 /** Every streamline of a tractogram file, RAS mm. */
@@ -58,6 +59,12 @@ async function exportGeometry(file: Blob & { name: string }, format: GeometryFor
     if (format === "stl") return stlFile(mesh);
     if (format === "ply") return plyFile(mesh);
     if (format === "csv") return csvFile(mesh.positions);
+  }
+  if (kind === "graph") {
+    const text = await file.text();
+    const graph = /\.graphml$/i.test(file.name) ? parseGraphml(text) : (({ edges, nodes }) => parseEdgeList(edges, nodes))(splitEdgeList(text));
+    if (format === "graphml") return graphmlFile(graph.positions, graph.edges, graph.columns);
+    if (format === "csv") return csvFile(graph.positions, graph.columns);
   }
   if (kind === "points" && format === "csv") {
     if (/\.swc$/i.test(file.name)) {

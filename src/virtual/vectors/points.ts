@@ -83,7 +83,7 @@ function column(n: number, rows: number, dataType: string, fill: unknown, attrib
 }
 
 export interface CellStoreSpec {
-  kind: "point_cloud" | "skeleton";
+  kind: "point_cloud" | "skeleton" | "graph";
   /** World x, y, z per row, the rows in store order (each object's together). */
   positions: Float64Array;
   /** Rows per object, each object one fragment; none: the rows are one fragment and not objects. */
@@ -92,7 +92,7 @@ export interface CellStoreSpec {
   objectColumns: { name: string; values: Float32Array }[];
   /** Text per object (a neuron's file name, say). */
   textColumns?: { name: string; values: string[] }[];
-  /** Skeletons: `[child, parent]` row pairs where the parent is not the row before. */
+  /** Skeletons: `[child, parent]` row pairs where the parent is not the row before.  Graphs: every edge's row pair. */
   links?: Int32Array;
   /** The axes' unit, if known. */
   unit?: string;
@@ -189,7 +189,7 @@ export class CellStore {
       }
     }
     const paths = ["0/vertices", "0/vertex_fragments", ...spec.vertexAttributes.map((a) => `0/vertex_attributes/${a.name}`)];
-    if (spec.kind === "skeleton") paths.push("0/links/0/0.0.0");
+    if (spec.links !== undefined) paths.push("0/links/0/0.0.0");
     if (this.count > 0) {
       paths.push("0/object_index/manifests", "0/object_index/object_ids", "0/object_attributes/segment_id", "0/fragment_attributes/object_id");
       paths.push(...spec.objectColumns.map((c) => `0/object_attributes/${c.name}`));
@@ -236,7 +236,7 @@ export class CellStore {
               chunk_shape: [c, c, c],
               bounds: [this.lo, this.hi],
               geometry_types: [spec.kind],
-              links_convention: skeleton ? "implicit_sequential_with_branches" : "implicit_sequential",
+              links_convention: skeleton ? "implicit_sequential_with_branches" : spec.kind === "graph" ? "explicit" : "implicit_sequential",
               object_index_convention: "standard",
               cross_chunk_strategy: "explicit_links",
               coordinate_offset: this.offset,
@@ -263,7 +263,7 @@ export class CellStore {
             zarr_vectors_level: {
               level: 0,
               vertex_count: this.vertices.length / 3,
-              arrays_present: skeleton ? ["vertices", "links", "object_index"] : ["vertices", "vertex_attributes", ...(this.count > 0 ? ["object_index"] : [])],
+              arrays_present: spec.links !== undefined ? ["vertices", "links", "object_index", ...(skeleton ? [] : ["vertex_attributes"])] : ["vertices", "vertex_attributes", ...(this.count > 0 ? ["object_index"] : [])],
               object_sparsity: 1,
               coarsening_method: "none",
               parent_level: null,

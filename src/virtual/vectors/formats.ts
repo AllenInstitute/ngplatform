@@ -1,11 +1,14 @@
 /**
  * Files the Zarr Vectors plugin reads in place, as zarr-vectors stores made
  * from them as they are read (src/virtual/): tractograms, meshes, neuron
- * skeletons and point tables.  Local
+ * skeletons, graphs and point tables.  Local
  * data lists them and serves their keys from the worker.
  */
 import type { VirtualFormat } from "../../sdk/types.js";
 import { FREESURFER_SURFACE } from "./mesh_files.js";
+
+/** An edge list's name: edges.csv, graph_edges.csv, graph-edge.tsv … (its node table beside it: nodes.csv …). */
+export const EDGE_LIST = /(^|[_\-. ])edges?\.(csv|tsv)$/i;
 
 /** One worker serves every format here. */
 let shared: Worker | undefined;
@@ -61,6 +64,24 @@ export const ZARR_VECTORS_VIRTUAL: VirtualFormat[] = [
     worker,
     // A folder of neurons opens as one store, each neuron's file a property.
     collect: { extension: ".swc", label: "SWC files" },
+  },
+  {
+    pattern: /\.graphml$/i,
+    extensions: [".graphml"],
+    format: "GraphML graph",
+    kind: "auto",
+    source: (url) => `${url}/|zarr-vectors:`,
+    worker,
+  },
+  {
+    // Before point tables: an edge list is a table too.
+    pattern: EDGE_LIST,
+    extensions: [],
+    format: "Graph edge list",
+    kind: "auto",
+    source: (url) => `${url}/|zarr-vectors:`,
+    worker,
+    companion: (name) => ["nodes", "node", "vertices"].map((n) => name.replace(/edges?(\.(csv|tsv))$/i, `${n}$1`)),
   },
   {
     pattern: /\.(csv|tsv|xyz)$/i,

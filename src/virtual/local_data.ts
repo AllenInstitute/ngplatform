@@ -370,7 +370,21 @@ export class LocalData {
       const img = await this.file(id, virtual.file.replace(/\.hdr$/i, ".img"));
       file = img === undefined ? undefined : await pairAsSingleFile(file, img, file.name.replace(/\.hdr$/i, ".nii"));
     }
+    // A file another beside it completes (an edge list's node table): the two as one text.
+    const companion = file === undefined ? undefined : await this.companion(id, virtual.file, virtual.format);
+    if (file !== undefined && companion !== undefined) file = new File([file, `\n# @file ${companion.name}\n`, companion], file.name);
     return file;
+  }
+
+  /** The first of a format's companion files for `path` that is beside it. */
+  private async companion(id: string, path: string, format: VirtualFormat): Promise<File | undefined> {
+    const at = path.lastIndexOf("/");
+    const dir = path.slice(0, at + 1);
+    for (const name of format.companion?.(path.slice(at + 1)) ?? []) {
+      const file = await this.file(id, dir + name);
+      if (file !== undefined) return file;
+    }
+    return undefined;
   }
 
   /**
@@ -511,9 +525,11 @@ export class LocalData {
         out.push({ ...this.virtual(id, path, format), name: `${folder} (${count} ${collect.label})` });
         if (count > 10) collected.add(format);
       }
+      // Files another file's format reads with it (an edge list's node table) are not datasets of their own.
+      const companions = new Set(files.flatMap((f) => this.formatOf(f)?.companion?.(f) ?? []));
       for (const f of files) {
         const format = this.formatOf(f);
-        if (format !== undefined && !collected.has(format)) out.push(this.virtual(id, dir === "" ? f : `${dir}/${f}`, format));
+        if (format !== undefined && !collected.has(format) && !companions.has(f)) out.push(this.virtual(id, dir === "" ? f : `${dir}/${f}`, format));
       }
       return out;
     };

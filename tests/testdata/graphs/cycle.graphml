@@ -1,0 +1,71 @@
+<?xml version='1.0' encoding='utf-8'?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd">
+  <key id="d5" for="edge" attr.name="weight" attr.type="double" />
+  <key id="d4" for="node" attr.name="label" attr.type="string" />
+  <key id="d3" for="node" attr.name="radius" attr.type="double" />
+  <key id="d2" for="node" attr.name="z" attr.type="double" />
+  <key id="d1" for="node" attr.name="y" attr.type="double" />
+  <key id="d0" for="node" attr.name="x" attr.type="double" />
+  <graph edgedefault="undirected">
+    <node id="a">
+      <data key="d0">0.0</data>
+      <data key="d1">0.0</data>
+      <data key="d2">0.0</data>
+      <data key="d3">1.5</data>
+      <data key="d4">cell &lt;a&gt;</data>
+    </node>
+    <node id="b">
+      <data key="d0">10.0</data>
+      <data key="d1">0.0</data>
+      <data key="d2">0.0</data>
+      <data key="d3">1.5</data>
+      <data key="d4">cell &lt;b&gt;</data>
+    </node>
+    <node id="c">
+      <data key="d0">10.0</data>
+      <data key="d1">10.0</data>
+      <data key="d2">0.0</data>
+      <data key="d3">1.5</data>
+      <data key="d4">cell &lt;c&gt;</data>
+    </node>
+    <node id="d">
+      <data key="d0">0.0</data>
+      <data key="d1">10.0</data>
+      <data key="d2">5.0</data>
+      <data key="d3">1.5</data>
+      <data key="d4">cell &lt;d&gt;</data>
+    </node>
+    <node id="e">
+      <data key="d0">50.0</data>
+      <data key="d1">50.0</data>
+      <data key="d2">50.0</data>
+      <data key="d3">1.5</data>
+      <data key="d4">cell &lt;e&gt;</data>
+    </node>
+    <node id="f">
+      <data key="d0">60.0</data>
+      <data key="d1">50.0</data>
+      <data key="d2">50.0</data>
+      <data key="d3">1.5</data>
+      <data key="d4">cell &lt;f&gt;</data>
+    </node>
+    <edge source="a" target="b">
+      <data key="d5">2.0</data>
+    </edge>
+    <edge source="a" target="d">
+      <data key="d5">2.0</data>
+    </edge>
+    <edge source="a" target="c">
+      <data key="d5">2.0</data>
+    </edge>
+    <edge source="b" target="c">
+      <data key="d5">2.0</data>
+    </edge>
+    <edge source="c" target="d">
+      <data key="d5">2.0</data>
+    </edge>
+    <edge source="e" target="f">
+      <data key="d5">2.0</data>
+    </edge>
+  </graph>
+</graphml>
