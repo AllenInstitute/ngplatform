@@ -83,6 +83,8 @@ export class Editor implements LabelVolumes {
   value = 1;
   radius = 5;
   unit: "mm" | "µm" | "voxels" = "voxels";
+  /** The radius is still the one chosen for the volume's size (none set by hand). */
+  private autoRadius = true;
   shape: "ball" | "disc" = "disc";
   overwrite: "all" | "empty" = "all";
   eraseOnly = false;
@@ -226,7 +228,12 @@ export class Editor implements LabelVolumes {
   }
 
   brushSize(notches: number): void {
-    this.radius = stepRadius(this.radius, notches, this.unit);
+    this.setRadius(stepRadius(this.radius, notches, this.unit));
+  }
+
+  setRadius(radius: number): void {
+    this.radius = radius;
+    this.autoRadius = false;
     this.painter.refresh();
     this.changed();
   }
@@ -509,6 +516,8 @@ export class Editor implements LabelVolumes {
     session.counts = session.volume.counts();
     this.value = [...session.counts.keys()].sort((a, b) => a - b)[0] ?? 1;
     session.applyColours([...session.counts.keys(), this.value]);
+    // A brush that shows at the scale of the whole grid: a two-hundredth of its largest side.
+    if (this.autoRadius && this.unit === "voxels") this.radius = Math.max(2, Math.round(Math.max(...session.volume.size) / 200));
     if (edit) {
       // A new layer opens with the brush, as WebKnossos's volume layers do.
       this.editing = true;
@@ -589,10 +598,9 @@ export class Editor implements LabelVolumes {
       return undefined;
     }
     const voxel = toVoxel(placed, p.global);
-    if (p.depthPerUnit === undefined) return { voxel };
     // The depth's gradient over voxel indices: through the voxels' map to the global dimensions.
     const m = placed.voxelToGlobal;
-    const normal = [0, 1, 2].map((k) => placed.dims.reduce((s, d, r) => s + (p.depthPerUnit!.get(d) ?? 0) * m[4 * r + k], 0)) as Vec3;
+    const normal = [0, 1, 2].map((k) => placed.dims.reduce((s, d, r) => s + (p.depthPerUnit.get(d) ?? 0) * m[4 * r + k], 0)) as Vec3;
     if (Math.hypot(...normal) === 0) return { voxel };
     this.axis = dominant(normal);
     // The section shown, exactly: the stroke must land in it, not the next.
@@ -607,7 +615,7 @@ export class Editor implements LabelVolumes {
   }
 
   private ring(p: ViewPoint): number | undefined {
-    if (!brushes(this.tool) || this.current === undefined || p.pixelsPerUnit === undefined) return undefined;
+    if (!brushes(this.tool) || this.current === undefined) return undefined;
     const sp = spaceOf(this.ctx);
     // Pixels per millimetre in the view's plane.
     let perMm = 0;
@@ -691,6 +699,7 @@ export class Editor implements LabelVolumes {
     if (session === undefined) return;
     const value = this.value;
     const axis = this.axis;
+    const only = this.overwrite === "empty" ? 0 : undefined;
     this.enqueue(() => {
       const box = session.volume.paintedBox(value);
       if (box === undefined) {
@@ -698,8 +707,12 @@ export class Editor implements LabelVolumes {
         return;
       }
       const stroke = new Stroke(session.volume);
-      const sections = interpolate(stroke, value, axis, box);
-      this.ctx.ui.toast(sections ? `Filled ${sections} section${sections === 1 ? "" : "s"} of segment ${value} between those drawn.` : `Segment ${value} has no gaps between drawn sections along ${"xyz"[axis]}: draw it in two sections a few apart.`);
+      const sections = interpolate(stroke, value, axis, box, only);
+      this.ctx.ui.toast(
+        sections
+          ? `Filled ${sections} section${sections === 1 ? "" : "s"} of segment ${value} between those drawn: ${stroke.changes.toLocaleString()} voxels${only === 0 ? " (empty ones only)" : ""}.`
+          : `Segment ${value} has no gaps between drawn sections along ${"xyz"[axis]}: draw it in two sections a few apart.`,
+      );
       this.commit(stroke, session, value);
     });
   }

@@ -267,11 +267,12 @@ describe("interpolation between sections", () => {
     const s = new Stroke(v);
     paintBall(s, [20, 20, 2], ballShape(4, "voxels"), { value: 5 }, [0, 0, 1]);
     paintBall(s, [20, 20, 6], ballShape(8, "voxels"), { value: 5 }, [0, 0, 1]);
-    // Another label in section 4 is left alone.
+    // Another label in section 4 is left alone when only empty voxels are painted.
     s.set(20, 20, 4, 9);
+    s.set(20, 21, 4, 9);
     s.finish();
     const t = new Stroke(v);
-    expect(interpolate(t, 5, 2, { lo: [0, 0, 0], hi: [40, 40, 10] })).toBe(3);
+    expect(interpolate(t, 5, 2, { lo: [0, 0, 0], hi: [40, 40, 10] }, 0)).toBe(3);
     t.finish();
     const radius = (z: number) => {
       let r = 0;
@@ -284,6 +285,14 @@ describe("interpolation between sections", () => {
     expect(v.get(21, 20, 4)).toBe(5);
     expect(v.get(20, 20, 1)).toBe(0);
     expect(v.get(20, 20, 7)).toBe(0);
+    // Undone, and done over any label: the other label is painted over.
+    const h = new History();
+    h.push(t);
+    h.undo();
+    const all = new Stroke(v);
+    interpolate(all, 5, 2, { lo: [0, 0, 0], hi: [40, 40, 10] });
+    all.finish();
+    expect(v.get(20, 21, 4)).toBe(5);
   });
 });
 

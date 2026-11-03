@@ -7,7 +7,7 @@
 import type { Disposer, PlatformContext } from "@ngplatform/sdk";
 import { el } from "../annotations/ui.js";
 import type { Editor } from "./editor.js";
-import { icon, iconButton } from "./icons.js";
+import { iconButton } from "./icons.js";
 import { LABEL_MAX } from "./label_volume.js";
 import { segmentName } from "./segments.js";
 import { brushes, TOOLS } from "./tools.js";
@@ -56,7 +56,8 @@ export class Toolbar {
     const key = `${Math.round(top)}/${Math.round((left + right) / 2)}`;
     if (key === this.placed) return;
     this.placed = key;
-    this.bar.style.top = `${Math.round(top) + 6}px`;
+    // Below the views' corner buttons (maximise, layout), which it would cover.
+    this.bar.style.top = `${Math.round(top) + 30}px`;
     this.bar.style.left = `${Math.round((left + right) / 2)}px`;
   }
 
@@ -108,16 +109,17 @@ export class Toolbar {
     undo.disabled = !session.history.canUndo;
     const redo = iconButton("redo", "Redo (Ctrl+Y)", () => e.undo(true));
     redo.disabled = !session.history.canRedo;
+    const save = iconButton("save", `Save ${session.layer} (${e.saveFormat === "zarr" ? "OME-Zarr" : "NIfTI"}; the format is in the Segmentation tab)${session.unsaved ? `: ${session.unsaved} change${session.unsaved === 1 ? "" : "s"} not saved` : ""}`, () => void e.save());
+    save.classList.toggle("sg-unsaved", session.unsaved > 0);
     const actions = group(
       undo,
       redo,
       iconButton("interpolate", "Interpolate (V): fill the sections between two where the active segment is drawn, across the view last drawn in", () => e.interpolate()),
-      iconButton("save", `Save ${session.layer} (${e.saveFormat === "zarr" ? "OME-Zarr" : "NIfTI"}; the format is in the Segmentation tab)`, () => void e.save()),
+      save,
     );
-    const unsaved = session.unsaved > 0 ? el("span", { class: "sg-unsaved", title: `${session.unsaved} change${session.unsaved === 1 ? "" : "s"} not saved` }, icon("save")) : null;
 
     this.bar.replaceChildren(
-      ...[tools, option, segment, actions, unsaved].filter((x): x is HTMLElement => x !== null),
+      ...[tools, option, segment, actions].filter((x): x is HTMLElement => x !== null),
       group(iconButton("close", "Stop editing: hide the tool bar (the Segmentation tab shows it again)", () => e.setEditing(false))),
     );
     this.placed = "";

@@ -40,7 +40,7 @@ export const STYLE =
 
 .sg-bar {
   position: absolute; transform: translateX(-50%); pointer-events: auto; z-index: 2;
-  display: flex; align-items: center; gap: 2px; padding: 3px; max-width: calc(100% - 16px); flex-wrap: wrap; justify-content: center;
+  display: flex; align-items: center; gap: 2px; padding: 3px; width: max-content; max-width: calc(100% - 16px); flex-wrap: wrap; justify-content: center;
   background: rgba(12, 12, 12, 0.9); border: 1px solid var(--line-strong); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
   font: 12px var(--ui); color: var(--text);
 }
@@ -54,8 +54,7 @@ export const STYLE =
 .sg-chip { width: 14px; height: 14px; border: 1px solid rgba(255, 255, 255, 0.4); margin: 0 2px 0 4px; flex: none; }
 .sg-segment-select { max-width: 150px; height: 24px; background: var(--ink-0); color: var(--text); border: 1px solid var(--line); font: 12px var(--ui); }
 .sg-dims button { height: 24px; padding: 0 8px; font-size: 12px; }
-.sg-unsaved { display: inline-grid; place-items: center; width: 14px; color: var(--warn); }
-.sg-unsaved svg { width: 11px; height: 11px; }
+.sg-bar .sg-icon.sg-unsaved { color: var(--warn); }
 
 .sg-ring { position: absolute; pointer-events: none; border: 1.5px solid rgba(255, 255, 255, 0.85); border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5); }
 .sg-box { position: absolute; pointer-events: none; border: 1.5px dashed #ffd166; background: rgba(255, 209, 102, 0.08); }

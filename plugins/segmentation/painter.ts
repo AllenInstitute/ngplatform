@@ -8,24 +8,23 @@
  * drawing).  Alt+wheel over a 2-D view sizes the brush, in place of
  * Neuroglancer's depth range of annotations.
  *
- * In a 2-D view the point under the pointer is found from the view's own
- * projection (exact, at once); in the 3-D view it is Neuroglancer's picked
- * point (on a surface or a section).  A ring shows the brush's size in
- * 2-D views, and a dragged box is drawn for quick select.
+ * Tools draw in the 2-D views only: the 3-D view stays Neuroglancer's (the
+ * left button rotates it).  The point under the pointer is found from the
+ * view's own projection (exact, at once, at any zoom).  A ring shows the
+ * brush's size, and a dragged box is drawn for quick select.
  */
 import type { Disposer, PlatformContext, ViewPanelInfo } from "@ngplatform/sdk";
 import { unprojector } from "../annotations/geometry.js";
 
 export interface ViewPoint {
-  kind: "2d" | "3d";
   /** The global position under the pointer. */
   global: number[];
   /** Pixels from the view's top left. */
   x: number;
   y: number;
-  /** For 2-D views: depth through the section per unit of each global dimension, and pixels per unit in its plane. */
-  depthPerUnit?: Map<number, number>;
-  pixelsPerUnit?: Map<number, number>;
+  /** Depth through the section per unit of each global dimension, and pixels per unit in its plane. */
+  depthPerUnit: Map<number, number>;
+  pixelsPerUnit: Map<number, number>;
 }
 
 export interface PainterHandler {
@@ -72,7 +71,7 @@ export class Painter {
     // Clicks after a stroke would select segments in Neuroglancer.
     for (const type of ["click", "dblclick"] as const) {
       listen(document, type, (e) => {
-        if (this.on && !this.space && e.button === 0 && this.panelAt(e) !== undefined) {
+        if (this.on && !this.space && e.button === 0 && this.panelAt(e)?.kind === "2d") {
           e.stopPropagation();
           e.preventDefault();
         }
@@ -141,16 +140,11 @@ export class Painter {
     const r = panel.element.getBoundingClientRect();
     const x = e.clientX - r.left;
     const y = e.clientY - r.top;
-    if (panel.kind === "3d") {
-      const cursor = this.ctx.viewer.cursor();
-      return cursor.active ? { kind: "3d", global: cursor.position, x, y } : undefined;
-    }
     const position = (this.ctx.viewer.getState() as { position?: number[] }).position;
     if (position === undefined) return undefined;
     const u = unprojector(panel.project, position);
     if (u === undefined) return undefined;
     return {
-      kind: "2d",
       global: u.at(x, y),
       x,
       y,
@@ -162,13 +156,13 @@ export class Painter {
   private onDown(e: MouseEvent): void {
     if (!this.on || this.space || e.button !== 0 || e.ctrlKey || e.metaKey) return;
     const panel = this.panelAt(e);
-    if (panel === undefined) return;
+    if (panel?.kind !== "2d") return;
     e.preventDefault();
     e.stopPropagation();
     const p = this.point(panel, e);
     if (p === undefined) return;
     this.dragging = panel;
-    if (this.handler.boxDrag() && panel.kind === "2d") {
+    if (this.handler.boxDrag()) {
       this.boxStart = [e.clientX, e.clientY];
       this.drawBox(e.clientX, e.clientY);
     }
@@ -189,7 +183,7 @@ export class Painter {
   private onMove(e: MouseEvent): void {
     if (!this.on) return;
     const panel = this.dragging ?? this.panelAt(e);
-    if (panel === undefined || this.space) {
+    if (panel?.kind !== "2d" || this.space) {
       this.ringElement.hidden = true;
       return;
     }
@@ -200,7 +194,7 @@ export class Painter {
       if (this.boxStart !== undefined) this.drawBox(e.clientX, e.clientY);
       this.handler.drag(p, e);
     }
-    const radius = panel.kind === "2d" ? this.handler.ring(p) : undefined;
+    const radius = this.handler.ring(p);
     if (radius === undefined || this.boxStart !== undefined) {
       this.ringElement.hidden = true;
       return;

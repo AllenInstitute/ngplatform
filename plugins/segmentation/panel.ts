@@ -326,10 +326,7 @@ export class Panel {
     const options = el("div", { class: "an-grid2" });
     if (brushes(e.tool)) {
       options.append(
-        field("Radius", el("div", { class: "an-inline" }, numberInput(e.radius, (v) => {
-          e.radius = Math.max(0.01, v);
-          e.changed();
-        }, { min: 0.01, step: "any", "aria-label": "Radius" }), select([["voxels", "voxels"], ["mm", "mm"], ["µm", "µm"]], e.unit, (v) => {
+        field("Radius", el("div", { class: "an-inline" }, numberInput(e.radius, (v) => e.setRadius(Math.max(0.01, v)), { min: 0.01, step: "any", "aria-label": "Radius" }), select([["voxels", "voxels"], ["mm", "mm"], ["µm", "µm"]], e.unit, (v) => {
           e.unit = v as "mm" | "µm" | "voxels";
           e.changed();
         }, "Unit")), "Alt+wheel, [ and ] in the views"),
