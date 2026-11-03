@@ -16,6 +16,7 @@
  * Everything here is a pure function of plain JSON, so it is tested without
  * a viewer.
  */
+import { withoutSignIn } from "./source_auth.js";
 
 export type Json = Record<string, unknown>;
 
@@ -106,12 +107,13 @@ export function normaliseUrl(url: string): string {
  * Which dataset a layer shows.  Layers with a data source share a dataset
  * when their sources match; a layer without one (local annotations) is its
  * own dataset.  A lookup table (`lut://`, segment names) describes how a
- * layer shows its data, not which data it is.
+ * layer shows its data, not which data it is; nor does the sign-in it reads
+ * the data with (`gs+google://` for `gs://`: see ./source_auth.ts).
  */
 export function datasetKey(spec: Json): string {
   const urls = sourceUrls(spec.source).filter((u) => !u.startsWith("local://") && !u.startsWith("lut://") && !DERIVED_LOCAL.test(u));
   if (urls.length === 0) return `layer:${layerName(spec)}`;
-  return urls.map(normaliseUrl).join("\n");
+  return urls.map((u) => normaliseUrl(withoutSignIn(u))).join("\n");
 }
 
 export function uniqueName(base: string, taken: Iterable<string>): string {
@@ -150,7 +152,8 @@ function readDatasets(raw: unknown): DatasetRecord[] {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((d): d is DatasetRecord => typeof d === "object" && d !== null && typeof d.id === "string" && typeof d.key === "string")
-    .map((d) => ({ id: d.id, key: d.key, name: String(d.name ?? d.key), source: d.source, kind: String(d.kind ?? "auto") }));
+    // A key from before sign-ins were left out of keys (a `middleauth+` source's) is made over.
+    .map((d) => ({ id: d.id, key: d.key.split("\n").map(withoutSignIn).join("\n"), name: String(d.name ?? d.key), source: d.source, kind: String(d.kind ?? "auto") }));
 }
 
 /** The resolved type of each layer, by name, as the viewer reports it. */

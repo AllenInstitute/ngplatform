@@ -10,7 +10,8 @@ import { InputError, layerNameFor, neuroglancerLink, parseInput, type FragmentPa
 import { ContextKeys } from "../core/when.js";
 import { activeScene, layersOf } from "../core/workspace.js";
 import { type Engine, LAYOUTS } from "../engine/engine.js";
-import { AuthRegistry, browserAuthEnvironment, middleauthProvider } from "../platform/auth.js";
+import { AuthRegistry, browserAuthEnvironment, middleauthProvider, ngauthProvider } from "../platform/auth.js";
+import { type GoogleSignIn, googleProvider } from "../platform/google_auth.js";
 import { JobService } from "../platform/jobs.js";
 import { LocalData } from "../virtual/local_data.js";
 import { LocalPlugins } from "../platform/local_plugins.js";
@@ -73,6 +74,7 @@ export class Shell {
   private readonly viewSplit = h("div", { class: "engine-split", hidden: true, role: "separator", "aria-orientation": "vertical", title: "Drag to resize" });
   private view: { owner: string; dispose: () => void } | undefined;
   private auth: AuthRegistry | undefined;
+  private google: GoogleSignIn | undefined;
   private localPlugins: LocalPlugins | undefined;
   private lastHashSeen = "";
 
@@ -180,6 +182,7 @@ export class Shell {
     parseFragment: FragmentParser,
     defaultExample: string,
     plugins: { catalogue: CatalogueEntry[]; choices: Choices; resolution: Resolution },
+    google: GoogleSignIn,
   ): void {
     const log = new ActivityLog();
     const commands = new CommandRegistry();
@@ -190,8 +193,24 @@ export class Shell {
     const jobs = new JobService();
     const services = new ServiceRegistry();
     const auth = new AuthRegistry(localStorage);
-    auth.register(middleauthProvider(browserAuthEnvironment()), "platform");
+    const authEnvironment = browserAuthEnvironment();
+    auth.register(googleProvider(google), "platform");
+    auth.register(middleauthProvider(authEnvironment), "platform");
+    auth.register(ngauthProvider(authEnvironment), "platform");
     this.auth = auth;
+    this.google = google;
+    // Data waiting for the Google sign-in says so once a sign-in, and gets the sign-in ready for the click.
+    let told = false;
+    google.onChanged(() => {
+      if (google.token() !== undefined) told = false;
+      auth.changed();
+    });
+    google.onNeeded(() => {
+      if (google.clientId() !== undefined) void google.prepare().catch(() => {});
+      if (told) return;
+      told = true;
+      toast("Sign in with Google in the Auth tab: data from Google Cloud Storage (gs+google://) waits for it.");
+    });
     const store = new WorkspaceStore(engine, {
       framed,
       log: (message, level) => log.add(message, level),
@@ -207,6 +226,7 @@ export class Shell {
       openHandlers,
       jobs,
       services,
+      auth,
       plugins: undefined as unknown as PluginHost,
       pluginSwitches: {
         manifests: plugins.catalogue.map((e) => e.manifest),
@@ -356,7 +376,7 @@ export class Shell {
     const wb = this.wb;
     const add = (tab: DockTab) => this.docks.addTab(tab);
     add({ id: "datasets", title: "Datasets", slot: "left", order: 10, render: (host) => renderDatasetsPanel(host, wb) });
-    add({ id: "auth", title: "Auth", slot: "left", order: 80, render: (host) => renderAuthPanel(host, wb, this.auth!) });
+    add({ id: "auth", title: "Auth", slot: "left", order: 80, render: (host) => renderAuthPanel(host, wb, this.auth!, this.google!) });
     add({ id: "plugins", title: "Plugins", slot: "left", order: 90, render: (host) => renderPluginsPanel(host, wb, this.localPlugins!) });
     add({ id: "layer", title: "Layer", slot: "right", order: 10, render: (host) => renderLayerPanel(host, wb) });
     add({
@@ -453,6 +473,7 @@ export class Shell {
         const missing = [
           ...this.pluginFormatsIn().map((f) => (f === "zarr-vectors" ? "Zarr Vectors" : f)),
           ...(this.usesLocalData() ? ["data on this computer"] : []),
+          ...(this.wb.engine.layers().some((l) => l.sources.some((s) => s.includes("gs+google://"))) ? ["gs+google:// (this site's Google sign-in)"] : []),
         ];
         if (missing.length) toast(`Neuroglancer doesn't read ${missing.join(" or ")}, so only the other layers (images) are likely to show there.`);
         wb.log.add("Opened this scene in Neuroglancer.");

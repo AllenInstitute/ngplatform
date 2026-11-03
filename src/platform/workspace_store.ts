@@ -511,6 +511,24 @@ export class WorkspaceStore {
     this.scheduleSettle();
   }
 
+  /**
+   * Points a layer at the same data read another way (with the sign-in
+   * chosen for it in the Auth tab): one undo step, named `label`.  The
+   * dataset keeps the new source too, for the next layer made from it.
+   */
+  setLayerSource(name: string, source: unknown, label: string): void {
+    if (this.settleTimer !== undefined) this.settle();
+    const ng = structuredClone(this.ng());
+    const spec = Array.isArray(ng.layers) ? (ng.layers as Json[]).find((l) => l.name === name) : undefined;
+    if (spec === undefined || JSON.stringify(spec.source) === JSON.stringify(source)) return;
+    spec.source = source;
+    const key = datasetKey(spec);
+    this.platform = { ...this.platform, datasets: this.platform.datasets.map((d) => (d.key === key ? { ...d, source } : d)) };
+    this.engine.setState(ng);
+    this.nextLabel = label;
+    this.settle();
+  }
+
   // -------------------------------------------------------- plugin slices
 
   getSlice<T>(spec: SliceSpec<T>): T {

@@ -1,14 +1,19 @@
 /**
  * Sign-in.  Providers say which services the workspace needs signing in to
  * (from its data sources and the servers added by hand in the Auth tab);
- * the tab shows each one's status and signs in and out.  Middleauth (the
- * Google-backed sign-in CAVE and similar servers use) is built in; plugins
- * add others through `context.auth.register`.
+ * the tab shows each one's status and signs in and out.  Built in are
+ * Google (./google_auth.ts), middleauth (the Google-backed sign-in CAVE and
+ * similar servers use) and ngauth (tokens for Google Cloud Storage from a
+ * server); plugins add others through `context.auth.register`.
+ *
+ * Providers also say how a layer reads its data with their sign-in (a URL
+ * scheme: see ../core/source_auth.ts), for the tab's drop-down per layer.
  *
  * Tokens are kept where Neuroglancer keeps them, so a sign-in here is the
  * one the viewer uses, and one the viewer asked for shows here.
  */
-import type { AuthProvider, AuthService, AuthStatus, Disposer } from "../sdk/types.js";
+import { MIDDLEAUTH_SIGN_IN, ngauthSignIn, PUBLIC_GS, PUBLIC_HTTP } from "../core/source_auth.js";
+import type { AuthProvider, AuthService, AuthStatus, Disposer, SourceSignIn } from "../sdk/types.js";
 
 /** What the providers need from the browser; tests give fakes. */
 export interface AuthEnvironment {
@@ -18,6 +23,8 @@ export interface AuthEnvironment {
   openWindow(url: string): Window | null;
   /** Messages posted to this window. */
   onMessage(listener: (event: MessageEvent) => void): Disposer;
+  /** This page's origin, which an ngauth server must allow. */
+  origin: string;
 }
 
 export function browserAuthEnvironment(): AuthEnvironment {
@@ -35,10 +42,17 @@ export function browserAuthEnvironment(): AuthEnvironment {
       window.addEventListener("message", listener);
       return () => window.removeEventListener("message", listener);
     },
+    origin: location.origin,
   };
 }
 
 const MANUAL_KEY = "ngplatform.auth.servers";
+
+/** A server added by hand, and the provider it was added for. */
+export interface ManualServer {
+  provider: string;
+  server: string;
+}
 
 export class AuthRegistry {
   private providers = new Map<string, { provider: AuthProvider; owner?: string }>();
@@ -63,27 +77,69 @@ export class AuthRegistry {
   }
 
   /** Servers added by hand, kept in this browser. */
-  manual(): string[] {
+  manualServers(): ManualServer[] {
     try {
       const list = JSON.parse(this.storage.getItem(MANUAL_KEY) ?? "[]");
-      return Array.isArray(list) ? list.map(String) : [];
+      if (!Array.isArray(list)) return [];
+      // A plain address is from before servers named their provider: middleauth was the only one.
+      return list
+        .map((e) => (typeof e === "string" ? { provider: "middleauth", server: e } : e))
+        .filter((e): e is ManualServer => typeof e?.provider === "string" && typeof e?.server === "string");
     } catch {
       return [];
     }
   }
 
-  addManual(server: string): void {
+  /** The servers added by hand for one provider. */
+  manual(provider: string): string[] {
+    return this.manualServers()
+      .filter((e) => e.provider === provider)
+      .map((e) => e.server);
+  }
+
+  /** The providers that take a server typed in, by the address. */
+  accepting(server: string): AuthProvider[] {
+    const url = normaliseServer(server);
+    return url === undefined ? [] : this.list().filter((p) => p.accepts?.(url));
+  }
+
+  /** Adds a server for `provider` (by default the first that takes it); returns the provider's id. */
+  addManual(server: string, provider?: string): string {
     const url = normaliseServer(server);
     if (url === undefined) throw new Error(`Not a server address: ${server}`);
-    if (!this.list().some((p) => p.accepts?.(url))) throw new Error(`No sign-in method takes ${url}`);
-    const list = this.manual();
-    if (!list.includes(url)) this.storage.setItem(MANUAL_KEY, JSON.stringify([...list, url]));
+    const takers = this.accepting(url);
+    const taker = provider === undefined ? takers[0] : takers.find((p) => p.id === provider);
+    if (taker === undefined) throw new Error(`No sign-in method takes ${url}`);
+    const list = this.manualServers();
+    if (!list.some((e) => e.provider === taker.id && e.server === url)) {
+      this.storage.setItem(MANUAL_KEY, JSON.stringify([...list, { provider: taker.id, server: url }]));
+    }
+    this.changed();
+    return taker.id;
+  }
+
+  removeManual(server: string, provider?: string): void {
+    const kept = this.manualServers().filter((e) => e.server !== server || (provider !== undefined && e.provider !== provider));
+    this.storage.setItem(MANUAL_KEY, JSON.stringify(kept));
     this.changed();
   }
 
-  removeManual(server: string): void {
-    this.storage.setItem(MANUAL_KEY, JSON.stringify(this.manual().filter((s) => s !== server)));
-    this.changed();
+  /**
+   * The ways a layer can read its data: anonymously, or with each
+   * provider's sign-ins (Google, an ngauth server, middleauth…).
+   */
+  sourceSignIns(sources: string[]): SourceSignIn[] {
+    const all = [PUBLIC_GS, PUBLIC_HTTP];
+    for (const provider of this.list()) {
+      try {
+        for (const signIn of provider.sourceSignIns?.({ sources, manual: this.manual(provider.id) }) ?? []) {
+          if (!all.some((s) => s.storage === signIn.storage && s.id === signIn.id)) all.push(signIn);
+        }
+      } catch (e) {
+        console.error(`${provider.id}: sourceSignIns failed`, e);
+      }
+    }
+    return all;
   }
 
   onChanged(listener: () => void): Disposer {
@@ -98,7 +154,7 @@ export class AuthRegistry {
 
 /** A server address as https://host[:port][/path], without a trailing slash. */
 export function normaliseServer(text: string): string | undefined {
-  let t = text.trim().replace(/^middleauth\+/, "");
+  let t = text.trim().replace(/^(middleauth|gs\+ngauth)\+/, "");
   if (t === "") return undefined;
   if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(t)) t = `https://${t}`;
   try {
@@ -190,39 +246,17 @@ export function middleauthProvider(env: AuthEnvironment): AuthProvider {
       }
     },
     signIn() {
-      // Opened before anything is awaited, so the browser counts it as the click's.
-      const popup = env.openWindow(`${server}/api/v1/authorize`);
-      if (popup === null) return Promise.reject(new Error("The sign-in window was blocked: allow pop-ups for this site and try again."));
-      return new Promise<void>((resolve, reject) => {
-        let finished = false;
-        const done = (error?: Error) => {
-          if (finished) return;
-          finished = true;
-          off();
-          clearInterval(poll);
-          if (error) reject(error);
-          else resolve();
+      return signInWindow(env, `${server}/api/v1/authorize`, (event) => {
+        const data = event.data as { token?: unknown; app_urls?: unknown };
+        if (typeof data?.token !== "string") return new Error("The sign-in window answered without a token.");
+        const token: MiddleAuthToken = {
+          tokenType: "Bearer",
+          accessToken: data.token,
+          url: server,
+          appUrls: Array.isArray(data.app_urls) ? data.app_urls.map(String) : [],
         };
-        const off = env.onMessage((event) => {
-          if (event.source !== popup) return;
-          const data = event.data as { token?: unknown; app_urls?: unknown };
-          if (typeof data?.token !== "string") {
-            done(new Error("The sign-in window answered without a token."));
-            return;
-          }
-          const token: MiddleAuthToken = {
-            tokenType: "Bearer",
-            accessToken: data.token,
-            url: server,
-            appUrls: Array.isArray(data.app_urls) ? data.app_urls.map(String) : [],
-          };
-          env.storage.setItem(MIDDLEAUTH_TOKEN_PREFIX + server, JSON.stringify(token));
-          popup.close();
-          done();
-        });
-        const poll = setInterval(() => {
-          if (popup.closed) done(new Error("The sign-in window was closed before signing in."));
-        }, 500);
+        env.storage.setItem(MIDDLEAUTH_TOKEN_PREFIX + server, JSON.stringify(token));
+        return true;
       });
     },
     async signOut() {
@@ -235,6 +269,7 @@ export function middleauthProvider(env: AuthEnvironment): AuthProvider {
     title: "Middleauth",
     description: "Google sign-in through a middleauth server (as CAVE uses), for middleauth+https:// data.",
     accepts: (server) => normaliseServer(server) !== undefined,
+    sourceSignIns: () => [{ ...MIDDLEAUTH_SIGN_IN, title: "Middleauth (CAVE, CATMAID…)" }],
     async services({ sources, manual }) {
       // Sign-in servers, and what uses each.
       const users = new Map<string, Set<string>>();
@@ -273,6 +308,119 @@ export function middleauthProvider(env: AuthEnvironment): AuthProvider {
   };
 }
 
+/**
+ * Opens a server's sign-in window and waits for it to post its answer.
+ * `answer` takes each message from the window: true when signed in, an
+ * Error when the sign-in failed, false to keep waiting.  The window is
+ * opened before anything is awaited, so the browser counts it as the
+ * click's.
+ */
+function signInWindow(env: AuthEnvironment, url: string, answer: (event: MessageEvent) => boolean | Error): Promise<void> {
+  const popup = env.openWindow(url);
+  if (popup === null) return Promise.reject(new Error("The sign-in window was blocked: allow pop-ups for this site and try again."));
+  return new Promise<void>((resolve, reject) => {
+    let finished = false;
+    const done = (error?: Error) => {
+      if (finished) return;
+      finished = true;
+      off();
+      clearInterval(poll);
+      if (error) reject(error);
+      else resolve();
+    };
+    const off = env.onMessage((event) => {
+      if (event.source !== popup) return;
+      const result = answer(event);
+      if (result === false) return;
+      if (result === true) popup.close();
+      done(result === true ? undefined : result);
+    });
+    const poll = setInterval(() => {
+      if (popup.closed) done(new Error("The sign-in window was closed before signing in."));
+    }, 500);
+  });
+}
+
+// ---------------------------------------------------------------- ngauth
+
+/** An ngauth server's address: its origin, as `gs+ngauth+https://server/bucket/…` names it. */
+export function ngauthOrigin(server: string): string | undefined {
+  const url = normaliseServer(server);
+  return url === undefined ? undefined : new URL(url).origin;
+}
+
+/** The ngauth servers of a workspace's data sources, with the buckets read through each. */
+export function ngauthUses(sources: string[]): Map<string, Set<string>> {
+  const uses = new Map<string, Set<string>>();
+  for (const source of sources) {
+    for (const m of source.matchAll(/gs\+ngauth\+(https?:\/\/[^/|\s"]+)\/([^/|\s"]+)/g)) {
+      const server = ngauthOrigin(m[1]);
+      if (server === undefined) continue;
+      if (!uses.has(server)) uses.set(server, new Set());
+      uses.get(server)!.add(`gs://${m[2]}`);
+    }
+  }
+  return uses;
+}
+
+/**
+ * ngauth: a server that signs in with Google and hands out tokens for the
+ * Google Cloud Storage buckets it serves (`gs+ngauth+https://server/bucket/…`).
+ * The sign-in is the server's cookie; Neuroglancer asks the server for a
+ * token itself, so signing in here is all it needs.  Signing out is done on
+ * the server's own page.
+ */
+export function ngauthProvider(env: AuthEnvironment): AuthProvider {
+  const service = (server: string, buckets: string[], manual: string[]): AuthService => ({
+    id: `ngauth:${server}`,
+    title: new URL(server).host,
+    detail: `${buckets.length > 0 ? `Google Cloud Storage for ${buckets.join(", ")}` : server}; sign out at ${server}/`,
+    manual,
+    async status(signal) {
+      try {
+        const r = await env.fetch(`${server}/token`, { method: "POST", credentials: "include", signal });
+        if (r.ok) return { state: "signed-in" };
+        if (r.status === 401) return { state: "signed-out" };
+        if (r.status === 403) return { state: "error", detail: `The server does not take sign-ins from ${env.origin}: its administrator can add it.` };
+        return { state: "error", detail: `The server answered ${r.status}.` };
+      } catch (e) {
+        if (signal?.aborted) throw e;
+        return { state: "error", detail: `Could not reach the server (${(e as Error).message}).` };
+      }
+    },
+    signIn() {
+      return signInWindow(env, `${server}/login?origin=${encodeURIComponent(env.origin)}`, (event) => {
+        if (event.origin !== server) return false;
+        if (event.data === "badorigin") return new Error(`The server does not take sign-ins from ${env.origin}: its administrator can add it.`);
+        return typeof (event.data as { token?: unknown })?.token === "string" ? true : new Error("The sign-in window answered without a token.");
+      });
+    },
+  });
+
+  /** Servers from the data and added by hand, with the buckets and addresses that led to each. */
+  const servers = (sources: string[], manual: string[]) => {
+    const found = new Map([...ngauthUses(sources)].map(([server, buckets]) => [server, { buckets: [...buckets].sort(), manual: [] as string[] }]));
+    for (const address of manual) {
+      const server = ngauthOrigin(address);
+      if (server === undefined) continue;
+      if (!found.has(server)) found.set(server, { buckets: [], manual: [] });
+      found.get(server)!.manual.push(address);
+    }
+    return [...found].sort(([a], [b]) => a.localeCompare(b));
+  };
+
+  return {
+    id: "ngauth",
+    title: "ngauth",
+    description: "Google Cloud Storage through an ngauth server, for gs+ngauth+https:// data.",
+    accepts: (server) => normaliseServer(server) !== undefined,
+    sourceSignIns: ({ sources, manual }) => servers(sources, manual).map(([server]) => ngauthSignIn(server)),
+    async services({ sources, manual }) {
+      return servers(sources, manual).map(([server, use]) => service(server, use.buckets, use.manual));
+    },
+  };
+}
+
 /** A status's one-word label. */
 export function statusLabel(status: AuthStatus | undefined): string {
   switch (status?.state) {
@@ -282,6 +430,8 @@ export function statusLabel(status: AuthStatus | undefined): string {
       return "Signed out";
     case "expired":
       return "Expired";
+    case "unconfigured":
+      return "Not set up";
     case "error":
       return "Error";
     case "unknown":

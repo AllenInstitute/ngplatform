@@ -249,3 +249,19 @@ describe("opening", () => {
     expect(store.historyRows().map((r) => r.state)).toEqual(["current", "undone"]);
   });
 });
+
+describe("sign-ins", () => {
+  it("rewrites a layer's source as one undo step, in the link, keeping its dataset", () => {
+    const { store, engine, urls } = setup();
+    store.open({ ng: { layers: [{ name: "img", type: "image", source: IMAGE }] }, app: {} }, "test");
+    store.noteInput();
+    store.setLayerSource("img", "precomputed://gs+google://b/image", "Sign-in for “img”: Google");
+    expect(engine.ng.layers).toEqual([{ name: "img", type: "image", source: "precomputed://gs+google://b/image" }]);
+    expect(store.datasets().map((d) => [d.name, d.source])).toEqual([["img", "precomputed://gs+google://b/image"]]);
+    expect(decodeURIComponent(urls.at(-1)!)).toContain("gs+google://b/image");
+    expect(store.historyRows().map((r) => r.label)).toEqual(["Opened", "Sign-in for “img”: Google"]);
+    expect(store.undo()).toBe(true);
+    expect((engine.ng.layers as Json[])[0].source).toBe(IMAGE);
+    expect(store.datasets()).toHaveLength(1);
+  });
+});

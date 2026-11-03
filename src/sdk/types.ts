@@ -452,7 +452,8 @@ export interface PlatformContext {
 
 /** Where a service's sign-in stands. */
 export interface AuthStatus {
-  state: "signed-in" | "signed-out" | "expired" | "unknown" | "error";
+  /** "unconfigured": the sign-in needs setting up before it can be used (Google without a client ID). */
+  state: "signed-in" | "signed-out" | "expired" | "unconfigured" | "unknown" | "error";
   /** Who is signed in, when the service says. */
   user?: string;
   detail?: string;
@@ -483,7 +484,27 @@ export interface AuthProvider {
   description?: string;
   /** Whether this provider takes a server typed into the Auth tab (a URL). */
   accepts?(server: string): boolean;
+  /** Its services, from the workspace's data sources and the servers added to it by hand. */
   services(input: { sources: string[]; manual: string[] }): Promise<AuthService[]>;
+  /** The ways it lets a layer read its data, offered in the Auth tab's drop-down for each layer. */
+  sourceSignIns?(input: { sources: string[]; manual: string[] }): SourceSignIn[];
+}
+
+/**
+ * A way of reading a layer's data with a sign-in, as Neuroglancer's URL
+ * schemes choose one: `gs+google://bucket/path` for `gs://bucket/path`.
+ */
+export interface SourceSignIn {
+  /** Unique among the sign-ins for its storage ("public" reads anonymously). */
+  id: string;
+  /** Its name in the drop-down. */
+  title: string;
+  /** What it reads: Google Cloud Storage buckets (`gs://`) or web servers (`https://`). */
+  storage: "gs" | "http";
+  /** The address that reads a plain one (`gs://bucket/path`, `https://host/path`) with this sign-in. */
+  wrap(plain: string): string;
+  /** The plain address of one that uses this sign-in, or undefined when it does not. */
+  unwrap(address: string): string | undefined;
 }
 
 export interface PluginModule {

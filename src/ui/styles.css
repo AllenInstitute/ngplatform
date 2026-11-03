@@ -429,9 +429,22 @@ textarea.text-input { height: auto; padding: 8px 10px; }
 .auth-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
 .chip.auth-signed-in { color: var(--ok); border-color: #2f4f2f; }
 .chip.auth-expired, .chip.auth-error { color: var(--err); border-color: #5a2f2f; }
+.chip.auth-unconfigured { color: var(--warn); }
 .auth-add { display: flex; gap: 6px; margin-top: 10px; }
 .auth-add .text-input { flex: 1; min-width: 0; }
+.auth-add-server { flex-wrap: wrap; margin-top: 0; }
+.auth-add-server > input.text-input { flex-basis: 100%; }
 .auth-reload { margin: 8px 0 0; }
+.auth-layers-title .type { text-transform: none; letter-spacing: 0; margin-left: 4px; }
+.auth-layer { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); align-items: center; gap: 8px; }
+.auth-layer-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.auth-select { height: 28px; padding: 0 6px; }
+.auth-scopes { padding-left: 18px; display: grid; gap: 2px; margin-top: 6px; }
+.auth-scopes code, .auth-google .note code { font: 11px var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.auth-field { display: grid; gap: 4px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.auth-field .auth-add { margin-top: 0; }
+.layer-sign-in { display: flex; align-items: center; gap: 8px; flex-basis: 100%; font-size: 12px; color: var(--muted); }
+.layer-sign-in .auth-select { flex: 1; min-width: 0; color: var(--text); }
 
 .jobs { display: grid; gap: 8px; }
 .job { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px 10px; }
