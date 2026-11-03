@@ -35,6 +35,7 @@ class _Workspace:
     ngp.layers(), ngp.add_layer(url), await ngp.show(array),
     await ngp.show_points(xyz), await ngp.show_lines(lines),
     await ngp.show_mesh(vertices, faces), ngp.annotate(points=…), ngp.position,
+    @ngp.command(title), @ngp.panel(title),
     await ngp.invoke(id, args), ngp.commands(), and ngp.viewer (Neuroglancer's
     JavaScript viewer)."""
 
@@ -185,6 +186,17 @@ class _Workspace:
     def viewer(self):
         return _bridge.viewer()
 
+    def panel(self, title, id=None, slot="left"):
+        """Adds a tab (slot "left", "right" or "bottom") drawn by a function given the
+        tab's element, when shown and again whenever the workspace changes:
+        @ngp.panel("My tab")
+        def draw(host): host.textContent = f"{len(ngp.layers())} layers"
+        """
+        def register(function):
+            _bridge.registerPanel(id or function.__name__, title, slot, function)
+            return function
+        return register
+
     def command(self, title, id=None):
         """Adds a function to the command palette:
         @ngp.command("Count my layers")
@@ -303,6 +315,46 @@ export function loadPython(wb: Workbench): Promise<Pyodide> {
           },
         });
         own.set(id, () => {
+          off();
+          kept.destroy?.();
+        });
+      },
+      registerPanel: (id: string, title: string, slot: string, fn: { (host: HTMLElement): unknown; destroy?(): void; copy?(): typeof fn }) => {
+        const owner = pythonOwner;
+        const own = pythonCommands.get(owner) ?? new Map<string, () => void>();
+        pythonCommands.set(owner, own);
+        const tab = `python.${owner}.${id}`.replace(/[^A-Za-z0-9_.-]/g, "_");
+        own.get(tab)?.();
+        const kept = fn.copy?.() ?? fn;
+        const off = wb.docks.addTab({
+          id: tab,
+          title,
+          slot: (["left", "right", "bottom"].includes(slot) ? slot : "left") as "left" | "right" | "bottom",
+          order: 95,
+          owner: owner === "console" ? "python" : `python:${owner}`,
+          // Drawn when shown, and again (a moment later) whenever the workspace changes.
+          render: (host) => {
+            const draw = () => {
+              try {
+                host.replaceChildren();
+                kept(host);
+              } catch (e) {
+                host.textContent = `${title}: ${(e as Error).message}`;
+              }
+            };
+            draw();
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const offChange = store.onChange(() => {
+              clearTimeout(timer);
+              timer = setTimeout(draw, 150);
+            });
+            return () => {
+              clearTimeout(timer);
+              offChange();
+            };
+          },
+        });
+        own.set(tab, () => {
           off();
           kept.destroy?.();
         });
