@@ -12,7 +12,7 @@ import { openNifti } from "../../../src/virtual/images/nifti.js";
 import { linePath, ticks, valueRange } from "../plot.js";
 import { ChunkCache, type SeriesInfo, SeriesReader, timeAxisOf } from "../reader.js";
 import { inside, regionVoxels, shapeOf } from "../region.js";
-import { coordinateOf, formatTime, freeColour, indexAt, nextIndex, seriesCsv, stepIndex, type TimeAxis, timeAxis, timesOf, voxelAt, voxelLabel } from "../series.js";
+import { coordinateOf, formatTime, freeColour, indexAt, nextIndex, percentChange, seriesCsv, stepIndex, type TimeAxis, timeAxis, timesOf, voxelAt, voxelLabel } from "../series.js";
 import { type GlobalSpace, invert, LayerMap } from "../space.js";
 
 const FIXTURE = path.join(__dirname, "fixtures", "tiny.nii.gz");
@@ -60,6 +60,48 @@ describe("reading time courses", () => {
     const controller = new AbortController();
     controller.abort();
     await expect(reader.mean(Int32Array.from([0, 1, 1, 1]), controller.signal)).rejects.toThrow();
+  });
+
+  it("reads OME-Zarr 0.4 (Zarr v2) with several time points to a chunk, partly filled", async () => {
+    // Axes t, z, y, x; shape 10 × 3 × 4 × 5, chunks 4 × 2 × 3 × 3; value 1000 t + 100 z + 10 y + x.
+    const shape = [10, 3, 4, 5];
+    const chunks = [4, 2, 3, 3];
+    const files = new Map<string, Uint8Array | string>();
+    files.set(
+      ".zattrs",
+      JSON.stringify({
+        multiscales: [
+          {
+            version: "0.4",
+            name: "v2",
+            axes: [{ name: "t", type: "time", unit: "millisecond" }, { name: "z", type: "space" }, { name: "y", type: "space" }, { name: "x", type: "space" }],
+            datasets: [{ path: "0", coordinateTransformations: [{ type: "scale", scale: [250, 1, 1, 1] }] }],
+          },
+        ],
+      }),
+    );
+    files.set("0/.zarray", JSON.stringify({ zarr_format: 2, shape, chunks, dtype: "<f4", compressor: null, fill_value: 0, order: "C", filters: null }));
+    const grid = shape.map((s, d) => Math.ceil(s / chunks[d]));
+    for (let a = 0; a < grid[0]; ++a)
+      for (let b = 0; b < grid[1]; ++b)
+        for (let c = 0; c < grid[2]; ++c)
+          for (let d = 0; d < grid[3]; ++d) {
+            const data = new Float32Array(chunks[0] * chunks[1] * chunks[2] * chunks[3]);
+            let i = 0;
+            for (let t = 0; t < chunks[0]; ++t) for (let z = 0; z < chunks[1]; ++z) for (let y = 0; y < chunks[2]; ++y) for (let x = 0; x < chunks[3]; ++x) data[i++] = 1000 * (a * 4 + t) + 100 * (b * 2 + z) + 10 * (c * 3 + y) + (d * 3 + x);
+            files.set(`0/${a}.${b}.${c}.${d}`, new Uint8Array(data.buffer));
+          }
+    vi.stubGlobal("fetch", async (url: string) => {
+      const data = files.get(String(url).replace("http://v2.test/", ""));
+      return data === undefined ? new Response(null, { status: 404 }) : new Response(data as BodyInit);
+    });
+    const v2 = new SeriesReader();
+    const opened = await v2.open("http://v2.test/");
+    expect(opened.axes).toEqual(["t", "z", "y", "x"]);
+    expect(opened.timeUnit).toBe("millisecond");
+    // Voxel x 4, y 3, z 2: in the last, partial chunk along each axis.
+    const values = await v2.mean(Int32Array.from([0, 2, 3, 4]), new AbortController().signal);
+    expect(Array.from(values)).toEqual(Array.from({ length: 10 }, (_, t) => 1000 * t + 234));
   });
 
   it("names the time axis by type, else by name", () => {
@@ -253,6 +295,11 @@ describe("stepping, colours and CSV", () => {
     expect(formatTime(1.25, "s")).toBe("1.25 s");
     expect(formatTime(1234.5678, "ms")).toBe("1235 ms");
     expect(formatTime(17, "")).toBe("17");
+  });
+
+  it("gives a series as its change from its mean, in percent", () => {
+    expect(Array.from(percentChange([90, 110, NaN, 100]))).toEqual([-10, 10, NaN, 0]);
+    expect(Array.from(percentChange([0, 0])).every(Number.isNaN)).toBe(true);
   });
 
   it("writes the series as CSV: a row per time point, a column per series", () => {

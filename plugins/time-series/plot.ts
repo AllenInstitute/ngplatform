@@ -75,6 +75,8 @@ export interface PlotData {
   times: ArrayLike<number>;
   unit: string;
   series: PlotSeries[];
+  /** After each value on the y axis and in the readout ("%"), if anything. */
+  valueUnit?: string;
 }
 
 export class Plot {
@@ -145,7 +147,7 @@ export class Plot {
     this.marker = undefined;
     if (width < 40 || height < 40) return;
     root.setAttribute("viewBox", `0 0 ${width} ${height}`);
-    const { times, unit, series } = this.data;
+    const { times, unit, series, valueUnit = "" } = this.data;
     const pad = { left: 52, right: 10, top: 8, bottom: 22 };
     const w = width - pad.left - pad.right;
     const h = height - pad.top - pad.bottom;
@@ -159,7 +161,7 @@ export class Plot {
     for (const t of ticks(lo, hi, Math.max(3, Math.floor(h / 30)))) {
       root.append(svg("line", { x1: pad.left, x2: pad.left + w, y1: sy(t), y2: sy(t), class: "ts-grid" }));
       const label = svg("text", { x: pad.left - 5, y: sy(t) + 3, class: "ts-tick", "text-anchor": "end" });
-      label.textContent = fmt(t);
+      label.textContent = `${fmt(t)}${valueUnit}`;
       root.append(label);
     }
     if (times.length > 0) {
@@ -215,7 +217,7 @@ export class Plot {
           const swatch = document.createElement("span");
           swatch.className = "ts-swatch";
           swatch.style.background = s.colour;
-          return ["  ", swatch, ` ${s.label} ${fmt(s.values[i])}`];
+          return ["  ", swatch, ` ${s.label} ${fmt(s.values[i])}${valueUnit}`];
         }),
       );
     });

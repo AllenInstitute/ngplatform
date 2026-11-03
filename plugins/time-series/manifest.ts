@@ -19,6 +19,7 @@ export const TIME_SERIES_MANIFEST: Manifest = {
 ## Plotting
 - Choose the **Image**. Move the mouse over it in the views: the plot shows that voxel's values at every time point (the finest level, as stored). The vertical line is the time shown in the views; the x axis is in the image's time unit.
 - Point at the plot to read every series at a time; click it to show that time.
+- **% change** plots each series as its change from its own mean, in percent.
 
 ## Pinning
 - **Pin** (or **Alt+P** over the views) keeps the voxel under the mouse as a series of its own, in its own colour, until removed (**×**). Up to eight pins.
@@ -30,7 +31,8 @@ export const TIME_SERIES_MANIFEST: Manifest = {
 - The readout gives the time shown, in seconds (or the image's unit) and as a time point.
 
 ## Saving
-- **Save CSV**: a row per time point (its index and time), a column per plotted series.`,
+- **Save CSV**: a row per time point (its index and time), a column per plotted series, with the values as read.
+- A movie of the time-lapse: the camera icon → **Movie…**, a sweep along \`t\`.`,
   license: "Apache-2.0",
   activation: [`onView:${TIME_SERIES_PANEL}`, "onCommand:timeSeries.pin", "onCommand:timeSeries.play"],
   contributes: {

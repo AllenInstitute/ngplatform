@@ -30,6 +30,7 @@ and a *Read more* guide each.
 | [Collections](collections.md) | tool | no | OME-Zarr collections (RFC-8, draft): members, coordinate systems, transforms, and a scene of them. |
 | [Luxar rendering](luxar.md) | tool | no | Chosen Zarr Vectors layers drawn as Luxar draws lines (HDR glow, mitred joins), in the 2-D and 3-D views. |
 | [Orientations](orientations.md) | tool | no | ODF glyphs from spherical harmonics, tensor ellipsoids and peak lines over an image, finer as you zoom in; direction colour. |
+| [Time series](time-series.md) | tool | no | The time course of the voxel under the mouse, pinned voxels and region means in a 4-D image; playing through time; CSV. |
 
 ## Switching, adding and writing plugins
 

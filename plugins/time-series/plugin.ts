@@ -24,6 +24,7 @@ import {
   freeColour,
   indexAt,
   nextIndex,
+  percentChange,
   RATES,
   seriesCsv,
   stepIndex,
@@ -86,7 +87,7 @@ const STYLE = `
 .ts-spread { justify-content: space-between; flex-wrap: nowrap; }
 .ts-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 6px 10px 4px; }
 .ts-head { display: flex; align-items: flex-start; gap: 12px; flex: none; }
-.ts-actions { display: flex; gap: 4px; flex: none; }
+.ts-actions { display: flex; align-items: center; gap: 4px 8px; flex: none; }
 .ts-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; flex: 1; min-width: 0; min-height: 24px; }
 .ts-key { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); white-space: nowrap; }
 .ts-key button { border: 0; background: transparent; color: var(--faint); cursor: pointer; padding: 0 2px; font-size: 14px; line-height: 1; }
@@ -160,6 +161,8 @@ class TimeSeries {
   private playing: ReturnType<typeof setTimeout> | undefined;
   private rate: number;
   private loop: boolean;
+  /** Plot each series as its change from its mean, in percent. */
+  private change: boolean;
   private region = "";
   private plot: Plot | undefined;
   private update: (() => void) | undefined;
@@ -170,6 +173,7 @@ class TimeSeries {
     this.saved = readSaved(ctx.state.get());
     this.rate = ctx.settings.get<number>("rate") ?? 2;
     this.loop = ctx.settings.get<boolean>("loop") ?? true;
+    this.change = ctx.settings.get<boolean>("change") ?? false;
     this.offs.push(
       ctx.state.onChanged(() => {
         const next = readSaved(ctx.state.get());
@@ -539,7 +543,13 @@ class TimeSeries {
 
   private drawPlot(): void {
     const axis = this.axis;
-    this.plot?.set({ times: axis ? timesOf(axis) : [], unit: axis?.unit.label ?? "", series: axis ? this.plotted() : [] });
+    const series = axis ? this.plotted() : [];
+    this.plot?.set({
+      times: axis ? timesOf(axis) : [],
+      unit: axis?.unit.label ?? "",
+      series: this.change ? series.map((s) => ({ ...s, values: percentChange(s.values) })) : series,
+      valueUnit: this.change ? "%" : "",
+    });
     this.plot?.setCurrent(this.current);
     this.update?.();
   }
@@ -654,6 +664,12 @@ class TimeSeries {
       }
       legend.replaceChildren(...keys);
       actions.replaceChildren(
+        el(
+          "label",
+          { class: "field check", title: "Plot each series as its change from its own mean, in percent (CSV keeps the values)" },
+          el("input", { type: "checkbox", checked: this.change, onchange: (e: Event) => ((this.change = (e.target as HTMLInputElement).checked), this.ctx.settings.set("change", this.change), this.drawPlot()) }),
+          "% change",
+        ),
         el("button", { class: "btn outline small", type: "button", title: "Pin the voxel under the mouse (Alt+P)", onclick: () => this.pinCursor(), disabled: !ready }, "Pin"),
         el("button", { class: "btn outline small", type: "button", title: "Save the plotted series as CSV", onclick: () => this.saveCsv(), disabled: !ready }, "Save CSV"),
       );

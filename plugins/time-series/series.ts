@@ -159,6 +159,19 @@ export function freeColour(used: number[]): number | undefined {
   return i === -1 ? undefined : i;
 }
 
+/** A series as its change from its own mean (of the values it has), in percent; NaN throughout when the mean is 0. */
+export function percentChange(values: ArrayLike<number>): Float32Array {
+  let sum = 0;
+  let n = 0;
+  for (let i = 0; i < values.length; ++i) {
+    if (!Number.isFinite(values[i])) continue;
+    sum += values[i];
+    n++;
+  }
+  const mean = n > 0 ? sum / n : NaN;
+  return Float32Array.from(values, (v) => (mean !== 0 ? (100 * (v - mean)) / mean : NaN));
+}
+
 // ------------------------------------------------------------------- CSV
 
 export interface NamedSeries {
