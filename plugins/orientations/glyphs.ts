@@ -94,7 +94,7 @@ export function withFlips(toData: number[], flips: [boolean, boolean, boolean]):
 const matrices = new Map<string, Float32Array>();
 
 /** The basis at the sphere's vertices turned into the data's frame (cached: the same for every set). */
-function basisAtSphere(basis: ShBasis, lmax: number, subdivisions: number, toData: number[]): Float32Array {
+export function basisAtSphere(basis: ShBasis, lmax: number, subdivisions: number, toData: number[]): Float32Array {
   const key = `${basis}|${lmax}|${subdivisions}|${toData.map((v) => v.toFixed(6)).join(",")}`;
   let m = matrices.get(key);
   if (m === undefined) {

@@ -1,6 +1,6 @@
 /** The main thread's side of the orientations worker: requests as promises, with cancel. */
 import type { GlyphOptions, GlyphSet } from "./glyphs.js";
-import type { Opened, VoxelRequest } from "./reader.js";
+import type { Opened, VoxelRequest, Voxels } from "./reader.js";
 
 interface Pending {
   resolve: (value: any) => void;
@@ -42,6 +42,11 @@ export class OrientationClient {
 
   glyphs(level: number, request: VoxelRequest, options: GlyphOptions, signal?: AbortSignal): Promise<{ set: GlyphSet; voxels: number }> {
     return this.request({ type: "glyphs", level, request, options }, signal);
+  }
+
+  /** The voxels of a box within its slabs, with every component. */
+  values(level: number, request: VoxelRequest, signal?: AbortSignal): Promise<Voxels> {
+    return this.request({ type: "values", level, request }, signal);
   }
 
   dispose(): void {

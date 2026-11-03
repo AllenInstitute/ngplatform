@@ -17,6 +17,7 @@ import { GlyphOverlay, type PanelDraw } from "./overlay.js";
 import type { Opened, OrientationLevel } from "./reader.js";
 import { GlyphRenderer } from "./render.js";
 import { lmaxOf, SH_BASES, type ShBasis } from "./sh.js";
+import { describeVoxel } from "./readout.js";
 import { directionShader } from "./shader.js";
 import { TENSOR_ORDERS, type TensorOrder } from "./tensor.js";
 import { type Box, chooseLevel, layerMove, type SectionPlan, contains, invert4, planesAround, planSection, type Section, sectionOf, type Slab, type Vec3, applyAffine } from "./view.js";
@@ -186,6 +187,11 @@ class Orientations {
         this.schedule();
       }),
       ctx.viewer.onRendered(() => this.schedule()),
+      ctx.viewer.onCursorChanged(() => {
+        clearTimeout(this.cursorTimer);
+        this.cursorTimer = setTimeout(() => this.readCursor(), 120);
+      }),
+      () => clearTimeout(this.cursorTimer),
       ctx.ui.screenshotOverlay((context, canvas) => this.paintScreenshot(context, canvas)),
       () => clearTimeout(this.timer),
     );
@@ -598,6 +604,54 @@ class Orientations {
     );
   }
 
+  // ------------------------------------------------------------- under the cursor
+
+  private cursorTimer: ReturnType<typeof setTimeout> | undefined;
+  private cursorRead: AbortController | undefined;
+  /** What the voxel under the cursor holds, in words. */
+  private cursorLine: string | undefined;
+
+  /** Reads the finest level's voxel under the cursor, for the panel. */
+  private readCursor(): void {
+    const opened = this.opened;
+    const client = this.client;
+    const cursor = this.ctx.viewer.cursor();
+    const space = this.space;
+    if (!this.saved.on || opened === undefined || client === undefined || space === undefined || !cursor.active) return;
+    const ras: number[] = [NaN, NaN, NaN];
+    cursor.names.forEach((name, i) => {
+      const axis = ["x", "y", "z"].indexOf(name);
+      const k = space.names.indexOf(name);
+      if (axis === -1 || k === -1) return;
+      ras[axis] = space.units[k] === "m" ? cursor.position[i] * space.scales[k] * 1e3 : cursor.position[i] * space.scales[k];
+    });
+    if (!ras.every(Number.isFinite)) return;
+    const at = this.move === undefined ? ras : applyAffine(invert4(this.move), ras);
+    const level = opened.levels[0];
+    const voxel = applyAffine(invert4(level.voxelToRas), at).map(Math.round) as Vec3;
+    const inside = voxel.every((v, k) => v >= 0 && v < level.size[k]);
+    this.cursorRead?.abort();
+    if (!inside) {
+      this.setCursorLine(undefined);
+      return;
+    }
+    const controller = (this.cursorRead = new AbortController());
+    const options = this.options(2)!;
+    client.values(0, { lo: voxel, hi: voxel.map((v) => v + 1) as Vec3 }, controller.signal).then(
+      (voxels) => {
+        if (controller.signal.aborted || voxels.count === 0) return;
+        this.setCursorLine(`Voxel ${voxel.join(", ")} (${mm(level.voxelSize)}): ${describeVoxel(voxels.values, level.components, options)}`);
+      },
+      () => {},
+    );
+  }
+
+  private setCursorLine(line: string | undefined): void {
+    if (line === this.cursorLine) return;
+    this.cursorLine = line;
+    this.panelUpdate?.();
+  }
+
   // ------------------------------------------------------------- 3-D view
 
   private draw3d(frame: Frame3d): void {
@@ -838,7 +892,7 @@ class Orientations {
           }),
         ),
       );
-      const status = [this.openError, ...this.describe()].filter((s): s is string => !!s);
+      const status = [this.openError, ...this.describe(), this.cursorLine].filter((s): s is string => !!s);
       host.replaceChildren(
         el(
           "div",
