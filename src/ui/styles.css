@@ -429,7 +429,7 @@ textarea.text-input { height: auto; padding: 8px 10px; }
 
 /* sign-in */
 .auth-list { display: grid; gap: 8px; }
-.auth-service { border: 1px solid var(--line); border-radius: var(--r); padding: 10px; display: grid; gap: 4px; }
+.auth-service { border: 1px solid var(--line); border-radius: var(--r); padding: 10px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
 .auth-service .note, .auth-service .empty { margin: 0; overflow-wrap: anywhere; }
 .auth-head { display: flex; align-items: center; gap: 8px; }
 .auth-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
@@ -443,7 +443,53 @@ textarea.text-input { height: auto; padding: 8px 10px; }
 .auth-add-server > input.text-input { flex-basis: 100%; }
 .auth-reload { margin: 8px 0 0; }
 .auth-layers-title .type { text-transform: none; letter-spacing: 0; margin-left: 4px; }
-.auth-layer { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); align-items: center; gap: 8px; }
+.auth-layers { gap: 10px; }
+.auth-layer { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
+.auth-layer-name { font-weight: 600; }
+.auth-layer-control { display: flex; flex-wrap: wrap; gap: 4px 6px; min-width: 0; }
+.auth-layer-control .auth-select { flex: 1 1 140px; min-width: 0; }
+.auth-layer-control .auth-use-for-all { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; height: 28px; }
+.auth-layer-differs { flex-basis: 100%; margin: 0; color: var(--warn); }
+.chip.auth-default { color: var(--text); border-color: var(--line-strong); }
+.auth-account .auth-head { flex-wrap: wrap; }
+.auth-account .auth-title { white-space: normal; overflow-wrap: anywhere; flex: 1 1 auto; }
+.auth-add-account { margin-top: 10px; }
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.section-head .section-title { margin-bottom: 0; }
+.auth-rules { display: grid; gap: 6px; margin-top: 8px; }
+.auth-rule { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 6px; }
+.auth-rule-prefix { grid-column: 1 / -1; font: 12px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.auth-rule .auth-select { min-width: 0; }
+.auth-rule-apply { grid-column: 1 / -1; justify-self: start; }
+.auth-rule-editor { margin-top: 8px; display: grid; gap: 6px; }
+.auth-rule-new { margin-top: 0; flex-wrap: wrap; }
+.auth-rule-new > input.text-input { flex-basis: 100%; }
+.auth-rule-target { flex: 1; display: flex; min-width: 0; }
+.auth-rule-target .auth-select { flex: 1; min-width: 0; }
+
+/* Google's "Sign in with Google" button, as its sign-in branding guidelines
+   draw it: a pill 40px tall, the four-colour G (never recoloured) and the
+   words in Roboto Medium.  Dark is the app's theme; outline is for a light
+   page, neutral the third of Google's themes. */
+.gsi-pill {
+  --gsi-fill: #131314; --gsi-border: #8e918f; --gsi-text: #e3e3e3;
+  position: relative; display: inline-flex; align-items: center; gap: 10px;
+  height: 40px; padding: 0 16px 0 12px; border-radius: 20px;
+  background: var(--gsi-fill); border: 1px solid var(--gsi-border); color: var(--gsi-text);
+  font: 500 14px/20px Roboto, var(--ui); letter-spacing: 0.25px; white-space: nowrap;
+  cursor: pointer; overflow: hidden; max-width: 100%;
+}
+.gsi-pill.gsi-outline { --gsi-fill: #ffffff; --gsi-border: #747775; --gsi-text: #1f1f1f; }
+.gsi-pill.gsi-neutral { --gsi-fill: #f2f2f2; --gsi-border: transparent; --gsi-text: #1f1f1f; }
+:root[data-theme="light"] .gsi-pill:not(.gsi-dark):not(.gsi-neutral) { --gsi-fill: #ffffff; --gsi-border: #747775; --gsi-text: #1f1f1f; }
+.gsi-pill::after { content: ""; position: absolute; inset: 0; background: var(--gsi-text); opacity: 0; transition: opacity 0.218s; pointer-events: none; }
+.gsi-pill:hover:not(:disabled)::after { opacity: 0.08; }
+.gsi-pill:active:not(:disabled)::after { opacity: 0.12; }
+.gsi-pill:focus-visible { outline: 2px solid #4285f4; outline-offset: 2px; }
+.gsi-pill:disabled { opacity: 0.38; cursor: default; }
+.gsi-pill-logo { display: inline-flex; width: 20px; height: 20px; flex: none; }
+.gsi-pill-logo svg { width: 20px; height: 20px; display: block; }
+.gsi-pill-text { overflow: hidden; text-overflow: ellipsis; }
 .auth-layer-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .auth-select { height: 28px; padding: 0 6px; }
 .auth-scopes { padding-left: 18px; display: grid; gap: 2px; margin-top: 6px; }

@@ -9,6 +9,8 @@ import type { FragmentParser } from "../core/state_io.js";
 import type { ContextKeys } from "../core/when.js";
 import type { Engine } from "../engine/engine.js";
 import type { AuthRegistry } from "../platform/auth.js";
+import type { GoogleSignIn } from "../platform/google_auth.js";
+import type { SignInRules } from "../platform/sign_in_rules.js";
 import type { JobService } from "../platform/jobs.js";
 import type { ComputedImages } from "../virtual/computed.js";
 import type { LocalData } from "../virtual/local_data.js";
@@ -33,6 +35,10 @@ export interface Workbench {
   services: ServiceRegistry;
   /** The sign-in methods (the Auth tab's). */
   auth: AuthRegistry;
+  /** The Google accounts of this browser. */
+  google: GoogleSignIn;
+  /** This browser's sign-in rules: which sign-in (and Google account) reads which bucket or server. */
+  rules: SignInRules;
   plugins: PluginHost;
   /** Which plugins are on, and switching them (which reloads the page). */
   pluginSwitches: {

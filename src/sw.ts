@@ -16,17 +16,20 @@
  *
  * - <app>/gcs-google/<bucket>/<object>: Cloud Storage read with the Google
  *   sign-in, for the engine's reader (a `gs+google://` source in a
- *   pipeline): fetched through the JSON API with the token the page gives
- *   this worker (`google-token`), ranges passed on.
+ *   pipeline): fetched through the JSON API with the token of the bucket's
+ *   account, from the tokens the page gives this worker (`google-tokens`:
+ *   the default account's, and one per sign-in rule naming an account; the
+ *   longest rule prefix wins), ranges passed on.
  */
 import { relay } from "chunkmirage-web/relay";
+import { type GoogleTokenTable, tokenFromTable } from "./core/sign_in_rules.js";
 
 declare const self: ServiceWorkerGlobalScope;
 
 const PREFIX = new URL("./local/", self.registration.scope).pathname;
 const GOOGLE_PREFIX = new URL("./gcs-google/", self.registration.scope).pathname;
-/** The Google sign-in's access token, from the page (none: signed out). */
-let googleToken: string | undefined;
+/** The Google accounts' access tokens, from the page (none: signed out). */
+let googleTokens: GoogleTokenTable = { default: null, rules: [] };
 /** The page (client id) that holds each picked folder or file. */
 const owners = new Map<string, string>();
 /** The tab last in use, which computed images are asked of first: every tab can compute them, and one should. */
@@ -41,7 +44,7 @@ self.addEventListener("message", (event) => {
   if (data?.type === "local-register" && source && data.id !== undefined) owners.set(data.id, source.id);
   if (data?.type === "local-claim") event.waitUntil(self.clients.claim());
   if (data?.type === "ngp-active" && source) active = source.id;
-  if (data?.type === "google-token") googleToken = (data as { token?: string | null }).token ?? undefined;
+  if (data?.type === "google-tokens") googleTokens = (data as { tokens?: GoogleTokenTable }).tokens ?? { default: null, rules: [] };
 });
 
 /** How long a page may take over one read: a large .nii.gz is decompressed on its first. */
@@ -156,13 +159,14 @@ self.addEventListener("fetch", (event) => {
   if (url.pathname.includes("/virtual/")) event.respondWith(computed(request, url));
 });
 
-/** A Cloud Storage object read with the Google sign-in (401 until the page has given a token). */
+/** A Cloud Storage object read with its bucket's Google account (401 until the page has given that account's token). */
 async function google(request: Request, url: URL): Promise<Response> {
   const rest = decodeURIComponent(url.pathname.slice(GOOGLE_PREFIX.length));
   const slash = rest.indexOf("/");
   const bucket = slash === -1 ? rest : rest.slice(0, slash);
   const object = slash === -1 ? "" : rest.slice(slash + 1);
-  if (googleToken === undefined) return new Response("Sign in with Google in the Auth tab to read this bucket.", { status: 401 });
+  const googleToken = tokenFromTable(googleTokens, bucket, object);
+  if (googleToken === null) return new Response("Sign in with Google in the Auth tab to read this bucket (with the account its sign-in rule names).", { status: 401 });
   const headers: Record<string, string> = { authorization: `Bearer ${googleToken}` };
   const range = request.headers.get("range");
   if (range !== null) headers.range = range;

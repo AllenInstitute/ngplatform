@@ -8,10 +8,12 @@ import { CommandError, CommandRegistry } from "../core/commands.js";
 import { KeybindingTable } from "../core/keybindings.js";
 import { InputError, layerNameFor, neuroglancerLink, parseInput, type FragmentParser, workspaceLink } from "../core/state_io.js";
 import { ContextKeys } from "../core/when.js";
-import { activeScene, layersOf } from "../core/workspace.js";
+import { activeScene, layersOf, sourceUrls } from "../core/workspace.js";
 import { type Engine, LAYOUTS } from "../engine/engine.js";
 import { AuthRegistry, browserAuthEnvironment, middleauthProvider, ngauthProvider } from "../platform/auth.js";
-import { type GoogleSignIn, googleProvider } from "../platform/google_auth.js";
+import { accountLabel, type GoogleSignIn, googleProvider } from "../platform/google_auth.js";
+import { googleTokenTable, sourceWithRules } from "../core/sign_in_rules.js";
+import { applyRulesToNewLayers, type SignInRules } from "../platform/sign_in_rules.js";
 import { JobService } from "../platform/jobs.js";
 import { ComputedImages } from "../virtual/computed.js";
 import { LocalData } from "../virtual/local_data.js";
@@ -184,6 +186,7 @@ export class Shell {
     defaultExample: string,
     plugins: { catalogue: CatalogueEntry[]; choices: Choices; resolution: Resolution },
     google: GoogleSignIn,
+    rules: SignInRules,
   ): void {
     const log = new ActivityLog();
     const commands = new CommandRegistry();
@@ -200,17 +203,22 @@ export class Shell {
     auth.register(ngauthProvider(authEnvironment), "platform");
     this.auth = auth;
     this.google = google;
-    // Data waiting for the Google sign-in says so once a sign-in, and gets the sign-in ready for the click.
-    let told = false;
+    // Data waiting for a Google account says so once per account, and gets the sign-in ready for the click.
+    const told = new Set<string>();
     google.onChanged(() => {
-      if (google.token() !== undefined) told = false;
+      for (const account of told) if (google.token(account || undefined) !== undefined) told.delete(account);
       auth.changed();
     });
-    google.onNeeded(() => {
+    rules.onChanged(() => auth.changed());
+    google.onNeeded((account) => {
       if (google.clientId() !== undefined) void google.prepare().catch(() => {});
-      if (told) return;
-      told = true;
-      toast("Sign in with Google in the Auth tab: data from Google Cloud Storage (gs+google://) waits for it.");
+      if (told.has(account ?? "")) return;
+      told.add(account ?? "");
+      toast(
+        account === undefined
+          ? "Sign in with Google in the Auth tab: data from Google Cloud Storage (gs+google://) waits for it."
+          : `Sign in as ${accountLabel(account)} in the Auth tab: data from Google Cloud Storage (gs+google://) waits for it.`,
+      );
     });
     const store = new WorkspaceStore(engine, {
       framed,
@@ -228,6 +236,8 @@ export class Shell {
       jobs,
       services,
       auth,
+      google,
+      rules,
       plugins: undefined as unknown as PluginHost,
       pluginSwitches: {
         manifests: plugins.catalogue.map((e) => e.manifest),
@@ -322,13 +332,20 @@ export class Shell {
         code.map((c) => (c.length > 4000 ? `${c.slice(0, 4000)}\n…` : c)).join("\n# ----\n"),
       );
     wb.computed.onAllowed = () => store.reloadLayers();
-    // The engine's reader reads gs+google:// sources with the sign-in's token.
+    // The engine's reader reads gs+google:// sources with each bucket's account's token.
     if (this.google !== undefined) {
       const google = this.google;
-      const give = () => wb.computed.setGoogleToken(google.token()?.accessToken);
+      const give = () =>
+        wb.computed.setGoogleTokens(googleTokenTable(wb.rules.list(), google.token()?.accessToken, (account) => google.token(account)?.accessToken));
       google.onChanged(give);
+      wb.rules.onChanged(give);
       give();
     }
+    // Sign-in rules give the layers a workspace opens with, or that are added, their sign-in:
+    // before they open when the platform opens them, else (Neuroglancer's own
+    // layer controls) as soon as they appear.
+    store.sourceRules = (source) => sourceWithRules(source, wb.rules.list(), wb.auth.sourceSignIns(sourceUrls(source)));
+    applyRulesToNewLayers(store, wb.rules, (sources) => wb.auth.sourceSignIns(sources));
     void wb.localData.start();
     // Local data opened again (dropped files go with a reload): the layers
     // that read it before read it again, under its new id.
@@ -410,7 +427,7 @@ export class Shell {
     const wb = this.wb;
     const add = (tab: DockTab) => this.docks.addTab(tab);
     add({ id: "datasets", title: "Datasets", slot: "left", order: 10, render: (host) => renderDatasetsPanel(host, wb) });
-    add({ id: "auth", title: "Auth", slot: "left", order: 80, render: (host) => renderAuthPanel(host, wb, this.auth!, this.google!) });
+    add({ id: "auth", title: "Auth", slot: "left", order: 80, render: (host) => renderAuthPanel(host, wb) });
     add({ id: "plugins", title: "Plugins", slot: "left", order: 90, render: (host) => renderPluginsPanel(host, wb, this.localPlugins!) });
     add({ id: "layer", title: "Layer", slot: "right", order: 10, render: (host) => renderLayerPanel(host, wb) });
     add({

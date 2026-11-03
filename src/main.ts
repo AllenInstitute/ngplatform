@@ -9,7 +9,8 @@ import { registerGoogleCredentials } from "./engine/google_credentials.js";
 import { urlSafeParse } from "./engine/neuroglancer.js";
 import { loadDataTypePlugins } from "./engine/plugins.js";
 import { revalidateFetches } from "./engine/workers/plugins.js";
-import { browserGoogleEnvironment, GoogleSignIn } from "./platform/google_auth.js";
+import { browserGoogleEnvironment, GoogleSignIn, googleTokens } from "./platform/google_auth.js";
+import { SignInRules } from "./platform/sign_in_rules.js";
 import { loadChoices, resolveEnabled } from "./platform/plugin_switches.js";
 import { CATALOGUE } from "../plugins/index.js";
 import { Shell } from "./ui/shell.js";
@@ -39,10 +40,13 @@ await loadDataTypePlugins(
   { revalidate },
 );
 
-// Google sign-in for the browser, behind gs+google:// data: its credentials
-// must be registered before the viewer exists.
-const google = new GoogleSignIn(browserGoogleEnvironment(), import.meta.env.VITE_GOOGLE_CLIENT_ID);
-registerGoogleCredentials(google);
+// Google sign-in for the browser (its accounts, and the rules saying which
+// reads which bucket), behind gs+google:// data: its credentials must be
+// registered before the viewer exists.
+const googleEnvironment = browserGoogleEnvironment();
+const google = new GoogleSignIn(googleEnvironment, import.meta.env.VITE_GOOGLE_CLIENT_ID);
+const rules = new SignInRules(localStorage, googleEnvironment.onStorage);
+registerGoogleCredentials(googleTokens(google, rules));
 
 const shell = new Shell(document.getElementById("app")!);
 const engine = new Engine(shell.engineHost);
@@ -50,4 +54,4 @@ const engine = new Engine(shell.engineHost);
 (window as unknown as { viewer: unknown; engine: unknown }).viewer = engine.viewer;
 (window as unknown as { engine: unknown }).engine = engine;
 
-shell.attach(engine, urlSafeParse, import.meta.env.VITE_DEFAULT_EXAMPLE ?? "s2146-mni", { catalogue: CATALOGUE, choices, resolution }, google);
+shell.attach(engine, urlSafeParse, import.meta.env.VITE_DEFAULT_EXAMPLE ?? "s2146-mni", { catalogue: CATALOGUE, choices, resolution }, google, rules);

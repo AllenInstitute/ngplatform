@@ -16,6 +16,7 @@
  * elsewhere runs them only once this browser has allowed that pipeline
  * (`allow`), or when the code is one of the platform's own (`OWN_PYTHON`).
  */
+import type { GoogleTokenTable } from "../core/sign_in_rules.js";
 import type { Engine } from "chunkmirage-web/engine";
 import { route } from "chunkmirage-web/routes";
 import type { Ask, PipelineView as EnginePipeline } from "chunkmirage-web/types";
@@ -140,7 +141,8 @@ export function readableSource(source: string, base: string): string {
 /**
  * Under the app's base: Cloud Storage read with the Google sign-in
  * (<app>/gcs-google/<bucket>/<object>), which the service worker fetches
- * with the token this page gives it, so the engine's reader reads a
+ * with the token of the bucket's account (its sign-in rule's, else the
+ * default), from the tokens this page gives it, so the engine's reader reads a
  * `gs+google://` image as any other URL.
  */
 export const GOOGLE_PATH = "gcs-google/";
@@ -238,17 +240,20 @@ export class ComputedImages {
    * every open tab of the app; src/sw.ts), and tells the worker when this
    * tab is the one in use, which it asks first.
    */
-  /** Gives the service worker the Google token for <app>/gcs-google/ (or none). */
-  setGoogleToken(token: string | undefined): void {
-    this.googleToken = token;
-    navigator.serviceWorker?.controller?.postMessage({ type: "google-token", token: token ?? null });
+  /**
+   * Gives the service worker the Google tokens for <app>/gcs-google/: the
+   * default account's, and one per sign-in rule naming an account.
+   */
+  setGoogleTokens(tokens: GoogleTokenTable): void {
+    this.googleTokens = tokens;
+    navigator.serviceWorker?.controller?.postMessage({ type: "google-tokens", tokens });
   }
 
-  private googleToken: string | undefined;
+  private googleTokens: GoogleTokenTable = { default: null, rules: [] };
 
   listen(): void {
     if (!("serviceWorker" in navigator) || !window.isSecureContext) return;
-    navigator.serviceWorker.addEventListener("controllerchange", () => this.setGoogleToken(this.googleToken));
+    navigator.serviceWorker.addEventListener("controllerchange", () => this.setGoogleTokens(this.googleTokens));
     route(`/${COMPUTED_PATH}`, (ask, port) => void this.reply(ask, port));
     const active = () => {
       if (document.visibilityState === "visible") navigator.serviceWorker.controller?.postMessage({ type: "ngp-active" });
