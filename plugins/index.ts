@@ -10,6 +10,7 @@ import { ANNOTATIONS_MANIFEST } from "./annotations/manifest.js";
 import { LABEL_STORE_FORMAT } from "./annotations/segmentation/store_format.js";
 import { COLLECTIONS_MANIFEST } from "./collections/manifest.js";
 import { FILTERS_MANIFEST } from "./filters/manifest.js";
+import { LUXAR_MANIFEST } from "./luxar/manifest.js";
 import { REGISTRATION_MANIFEST } from "./registration/manifest.js";
 import { TRACK_FILTERING_MANIFEST } from "./track-filtering/manifest.js";
 import { VOLUME_VIEW_MANIFEST } from "./volume-view/manifest.js";
@@ -34,4 +35,5 @@ export const CATALOGUE: CatalogueEntry[] = [
   { manifest: COLLECTIONS_MANIFEST, load: async () => (await import("./collections/plugin.js")).plugin },
   { manifest: FILTERS_MANIFEST, load: async () => (await import("./filters/plugin.js")).plugin },
   { manifest: REGISTRATION_MANIFEST, load: async () => (await import("./registration/plugin.js")).plugin },
+  { manifest: LUXAR_MANIFEST, load: async () => (await import("./luxar/plugin.js")).plugin },
 ];

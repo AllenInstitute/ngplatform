@@ -28,6 +28,7 @@ and a *Read more* guide each.
 | [Volume rendering](volume-rendering.md) | tool | no | An image drawn as a solid in the 3-D view, cut open at the position. |
 | [Filters](filters.md) | tool | no | An image filtered on the fly (mean, median, Gaussian, Frangi vesselness) as a layer of its own. |
 | [Collections](collections.md) | tool | no | OME-Zarr collections (RFC-8, draft): members, coordinate systems, transforms, and a scene of them. |
+| [Luxar rendering](luxar.md) | tool | no | Chosen Zarr Vectors layers drawn as Luxar draws lines (HDR glow, mitred joins), in the 2-D and 3-D views. |
 
 ## Switching, adding and writing plugins
 

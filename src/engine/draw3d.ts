@@ -42,6 +42,8 @@ function frameOf(renderContext: PerspectiveViewRenderContext): Omit<Frame3d, "gl
     height: p.height,
     outputs: { color: OffscreenTextures.COLOR, z: OffscreenTextures.Z, pick: OffscreenTextures.PICK },
     moving: renderContext.isContinuousCameraMotionInProgress,
+    // Set by a Neuroglancer that draws `drawsAfterSections` layers after its sections.
+    sectionsDrawn: (renderContext as { sectionsDrawn?: boolean }).sectionsDrawn === true,
   };
 }
 
@@ -63,6 +65,8 @@ class PluginRenderLayer extends PerspectiveViewRenderLayer {
     private readonly drawer: Drawer3d,
   ) {
     super();
+    // Read by a Neuroglancer that can draw a layer after its sections; others ignore it.
+    (this as { drawsAfterSections?: boolean }).drawsAfterSections = drawer.afterSections === true;
   }
 
   isReady(): boolean {
@@ -107,6 +111,7 @@ export function draw3d(viewer: Viewer, name: string, drawer: Drawer3d): { redraw
     draw: (f) => drawer.draw(f),
     isReady: () => drawer.isReady?.() ?? true,
     sectionClip: (f) => drawer.sectionClip?.(f),
+    afterSections: drawer.afterSections,
   };
   const detach = () => {
     if (attached === undefined) return;

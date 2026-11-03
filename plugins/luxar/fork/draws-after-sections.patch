@@ -1,0 +1,66 @@
+diff -ru a/src/perspective_view/panel.ts b/src/perspective_view/panel.ts
+--- a/src/perspective_view/panel.ts	2026-11-02 23:48:38.436081225 +0000
++++ b/src/perspective_view/panel.ts	2026-11-02 23:48:50.842385763 +0000
+@@ -1024,11 +1024,14 @@
+     let hasVolumeRenderingPick = false;
+     let hasAnnotation = false;
+     let hasVolumeRendering = false;
++    let hasAfterSections = false;
+ 
+     // Draw fully-opaque layers first.
+     for (const [renderLayer, attachment] of visibleLayers) {
+       if (!renderLayer.isTransparent) {
+-        if (!renderLayer.isAnnotation) {
++        if (renderLayer.drawsAfterSections) {
++          hasAfterSections = true;
++        } else if (!renderLayer.isAnnotation) {
+           renderLayer.draw(renderContext, attachment);
+         } else {
+           hasAnnotation = true;
+@@ -1049,6 +1052,17 @@
+     this.hasVolumeRendering = hasVolumeRendering;
+     this.drawSliceViews(renderContext);
+ 
++    // Opaque layers that composite over the cross-sections.
++    if (hasAfterSections) {
++      renderContext.sectionsDrawn = true;
++      for (const [renderLayer, attachment] of visibleLayers) {
++        if (!renderLayer.isTransparent && renderLayer.drawsAfterSections) {
++          renderLayer.draw(renderContext, attachment);
++        }
++      }
++      renderContext.sectionsDrawn = false;
++    }
++
+     if (hasAnnotation) {
+       // Render annotations with blending enabled.
+ 
+diff -ru a/src/perspective_view/render_layer.ts b/src/perspective_view/render_layer.ts
+--- a/src/perspective_view/render_layer.ts	2026-11-02 23:48:38.436081225 +0000
++++ b/src/perspective_view/render_layer.ts	2026-11-02 23:48:45.021242898 +0000
+@@ -67,6 +67,12 @@
+   isContinuousCameraMotionInProgress: boolean;
+ 
+   /**
++   * True while layers with `drawsAfterSections` draw: the cross-sections
++   * are already in the colour and depth buffers.
++   */
++  sectionsDrawn?: boolean;
++
++  /**
+    * Usually, the histogram in 3D is disabled during camera movement
+    * This flag is used to force 3D histogram rendering during camera movement
+    */
+@@ -119,6 +125,12 @@
+ export interface PerspectiveViewRenderLayer<AttachmentState = unknown> {
+   isTransparent: boolean | undefined;
+   isAnnotation: boolean | undefined;
++  /**
++   * An opaque layer that draws after the cross-sections rather than before
++   * them, so it can composite over them (light added to a section) while
++   * still depth-testing against them.
++   */
++  drawsAfterSections: boolean | undefined;
+   backend: SharedObject | undefined;
+   isVolumeRendering: boolean | undefined;
+ }

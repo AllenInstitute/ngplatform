@@ -290,6 +290,11 @@ export interface Frame3d {
   outputs: { color: number; z: number; pick: number };
   /** The camera is moving: draw something cheaper if there is a choice. */
   moving: boolean;
+  /**
+   * The cross-sections are already drawn (in colour and depth): the drawer
+   * asked for `afterSections` and this Neuroglancer honours it.
+   */
+  sectionsDrawn?: boolean;
 }
 
 export interface Drawer3d {
@@ -302,6 +307,14 @@ export interface Drawer3d {
   sectionClip?(frame: Omit<Frame3d, "gl">): { lower: number[]; upper: number[] } | undefined;
   /** False while it has nothing to draw yet (screenshots wait for it). */
   isReady?(): boolean;
+  /**
+   * Draw after Neuroglancer's cross-sections rather than before them, so
+   * light can be added over a section, depth-tested against it.  Needs a
+   * Neuroglancer whose 3-D panel draws such layers then; elsewhere the
+   * drawer draws with the other opaque layers, and `frame.sectionsDrawn`
+   * says which happened.
+   */
+  afterSections?: boolean;
   dispose?(): void;
 }
 
