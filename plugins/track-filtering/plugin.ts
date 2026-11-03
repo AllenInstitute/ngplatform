@@ -431,6 +431,13 @@ class TrackGroups {
   private readonly densities = new Map<string, File>();
   /** Region ids last written to the annotation layer: only these can be "deleted in a view". */
   private written = new Set<string>();
+  /**
+   * Regions the layer has been seen holding since they were written: only
+   * these count as deleted in the view when they go.  One missing that was
+   * never seen was lost on its way (a layer made at the same moment can put
+   * an older state back), and is written again.
+   */
+  private seen = new Set<string>();
   private host: HTMLElement | undefined;
   private updaters: (() => void)[] = [];
   private built = "";
@@ -749,7 +756,13 @@ class TrackGroups {
       if (e.key === "Enter") finish(true);
       else if (e.key === "Escape") finish(false);
     });
-    input.addEventListener("blur", () => finish(true));
+    // Leaving it by a click (on + Sphere, say): kept once that click has landed, not before,
+    // or the panel is drawn again under the pointer and the click is lost.
+    input.addEventListener("blur", () => {
+      const keep = () => finish(true);
+      window.addEventListener("click", () => setTimeout(keep, 0), { once: true, capture: true });
+      setTimeout(keep, 400);
+    });
     requestAnimationFrame(() => {
       if (!input.isConnected) return;
       input.focus();
@@ -978,17 +991,21 @@ class TrackGroups {
     const tolerance = (v: number) => Math.max(1e-4, Math.abs(v) * 1e-5);
     const close = (a: number[], b: number[]) => a.every((v, i) => Math.abs(v - b[i]) <= tolerance(v));
     let changed = false;
+    let lost = false;
+    for (const id of byId.keys()) this.seen.add(id);
     const groups = this.saved.groups.map((group) => {
       let groupChanged = false;
       const rois: Roi[] = [];
       for (const roi of group.rois) {
         const a = byId.get(roi.id);
         if (a === undefined) {
-          // Deleted in the view (only regions the layer was showing).
-          if (shownIds.has(roi.id)) {
+          // Deleted in the view: only regions the layer was showing, and had been seen holding.
+          if (shownIds.has(roi.id) && this.seen.has(roi.id)) {
+            this.seen.delete(roi.id);
             changed = groupChanged = true;
             continue;
           }
+          if (shownIds.has(roi.id)) lost = true;
           rois.push(roi);
           continue;
         }
@@ -1032,7 +1049,12 @@ class TrackGroups {
         });
       }
     }
-    for (const id of [...this.written]) if (!byId.has(id)) this.written.delete(id);
+    if (lost) {
+      // Written but never there: write the regions again (written ids stay, so they are kept meanwhile).
+      queueMicrotask(() => this.writeAnnotations());
+      if (!changed && drawn.length === 0) return;
+    }
+    for (const id of [...this.written]) if (!byId.has(id) && !(lost && this.groups().some((g) => g.rois.some((r) => r.id === id)))) this.written.delete(id);
     for (const roi of drawn) this.written.add(roi.id);
     if (!changed && drawn.length === 0) return;
     const next = groups.map((g) => (editing !== undefined && g.id === editing.id && drawn.length > 0 ? { ...g, rois: [...g.rois, ...drawn] } : g));
