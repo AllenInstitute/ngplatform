@@ -79,6 +79,10 @@ labels = GiftiDataArray(codes, intent="NIFTI_INTENT_LABEL", datatype="NIFTI_TYPE
                         meta=GiftiMetaData({"Name": "lobes"}))
 nib.save(GiftiImage(darrays=[labels], labeltable=table), os.path.join(SURF, "lh.aparc.label.gii"))
 image = nib.load(os.path.join(SURF, "lh.aparc.label.gii"))
+# The white surface as GIFTI too, so its shape and label files are found beside it.
+coords = GiftiDataArray(verts, intent="NIFTI_INTENT_POINTSET", datatype="NIFTI_TYPE_FLOAT32", encoding="GIFTI_ENCODING_B64BIN")
+tris = GiftiDataArray(faces, intent="NIFTI_INTENT_TRIANGLE", datatype="NIFTI_TYPE_INT32", encoding="GIFTI_ENCODING_B64BIN")
+nib.save(GiftiImage(darrays=[coords, tris]), os.path.join(SURF, "lh.white.surf.gii"))
 expected["surf/lh.aparc.label.gii"] = {"lobes": {
     "values": image.darrays[0].data.astype(float).tolist(),
     "labels": [{"code": lab.key, "name": lab.label, "rgba": [float(c) for c in lab.rgba]} for lab in image.labeltable.labels]}}

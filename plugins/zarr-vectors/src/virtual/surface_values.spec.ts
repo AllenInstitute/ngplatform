@@ -89,6 +89,15 @@ describe("surface values", () => {
     expect(surfaces).toEqual({ white: "lh.white", pial: "lh.pial", inflated: "lh.inflated" });
     close((await maps[1].load()).values, expected["surf/lh.thickness"].values);
     close((await maps.find((m) => m.name === "overlay")!.load()).values, expected["surf/lh.overlay.mgz"].values);
+    // A GIFTI surface: the same hemisphere's shape and label files beside it.
+    const gifti = await surfaceRelated("subject/surf/lh.white.surf.gii", list);
+    expect(gifti.sort()).toEqual(["lh.aparc.label.gii", "lh.thickness.shape.gii"]);
+    const giftiFiles = Object.fromEntries(gifti.map((p) => [p, new File([bytes(path.posix.join("surf", p))], p)]));
+    const fromGifti = await surfaceCompanions("lh.white.surf.gii", giftiFiles, 12);
+    expect(fromGifti.skipped).toEqual([]);
+    expect(fromGifti.maps.map((m) => [m.name, m.parcellation])).toEqual([["thickness", false], ["lobes", true]]);
+    close((await fromGifti.maps[0].load()).values, expected["surf/lh.thickness"].values);
+
     const wrong = await surfaceCompanions("lh.white", files, 13);
     expect(wrong.maps.map((m) => m.name)).toEqual(["labels"]);
     expect(wrong.skipped.length).toBe(7);
