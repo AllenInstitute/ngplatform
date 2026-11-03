@@ -274,8 +274,19 @@ export interface ComputedPipeline {
    * The source warped by landmark pairs instead of ops: a thin-plate spline
    * from the fixed points (mm, the global space) to the moving ones (mm, the
    * source's own space); the output keeps the source's grid and levels.
+   * Or warped through a displacement field (OME-NGFF 0.6's
+   * `displacements`, an OME-Zarr multiscale group at `url`, its
+   * displacement axis before z, y, x): the output voxel's place p (mm; x,
+   * y, z) goes through the affines `before` (4 × 4, 16 numbers row-major,
+   * mm, in order), then q → q + D(q) (or, with `invert`, the x with
+   * x + D(x) = q), then `after`, to its place in the source (mm).
+   * `components` names the axes of the vector's components in order (by
+   * default the field's spatial axes); displacements are in the field's
+   * spatial unit.
    */
-  warp?: { kind: "tps"; fixed: number[][]; moving: number[][] };
+  warp?:
+    | { kind: "tps"; fixed: number[][]; moving: number[][] }
+    | { kind: "field"; url: string; before?: number[][]; after?: number[][]; invert?: boolean; components?: string[] };
 }
 
 export interface ViewerApi {
