@@ -4,6 +4,7 @@
  * asked for, then every key is made from what was read.
  */
 import { serveVirtualStores } from "../../sdk/virtual.js";
+import { featherPoints } from "./feather.js";
 import { EDGE_LIST } from "./formats.js";
 import { lazToLas } from "./laz.js";
 import { lazPerf } from "./laz_module.js";
@@ -36,6 +37,7 @@ serveVirtualStores(async (file, related) => {
     return graphStore(parseEdgeList(edges, nodes), file.name.replace(/[_\-. ]?edges?\.(csv|tsv)$/i, "") || "graph");
   }
   if (/\.parquet$/i.test(file.name)) return pointStore(await parsePointParquet(file), file.name.replace(/\.parquet$/i, ""));
+  if (/\.(feather|arrow)$/i.test(file.name)) return pointStore(featherPoints(new Uint8Array(await file.arrayBuffer())), file.name.replace(/\.(feather|arrow)$/i, ""));
   if (/\.las$/i.test(file.name)) return pointStore(parseLas(new Uint8Array(await file.arrayBuffer())), file.name.replace(/\.las$/i, ""));
   if (/\.laz$/i.test(file.name)) return pointStore(parseLas(lazToLas(new Uint8Array(await file.arrayBuffer()), await lazPerf())), file.name.replace(/\.laz$/i, ""));
   if (/\.(csv|tsv|xyz)$/i.test(file.name)) return pointStore(parsePointTable(await file.text()), file.name.replace(/\.(csv|tsv|xyz)$/i, ""));

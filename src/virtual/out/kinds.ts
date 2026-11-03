@@ -10,6 +10,6 @@ export function exportKind(name: string): "image" | "streamlines" | "mesh" | "po
   if (/\.(trk|tck|trx)$/i.test(name)) return "streamlines";
   if (/\.(obj|stl|ply|gii)$/i.test(name) || /^[lr]h\.[a-z0-9_.-]+$/i.test(name)) return "mesh";
   if (/\.graphml$/i.test(name) || /(^|[_\-. ])edges?\.(csv|tsv)$/i.test(name)) return "graph";
-  if (/\.(csv|tsv|xyz|swc|las|laz|parquet)$/i.test(name)) return "points";
+  if (/\.(csv|tsv|xyz|swc|las|laz|parquet|feather|arrow)$/i.test(name)) return "points";
   return undefined;
 }

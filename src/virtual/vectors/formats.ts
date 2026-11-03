@@ -106,6 +106,14 @@ export const ZARR_VECTORS_VIRTUAL: VirtualFormat[] = [
     worker,
   },
   {
+    pattern: /\.(feather|arrow)$/i,
+    extensions: [".feather", ".arrow"],
+    format: "Feather (Arrow) table of points",
+    kind: "auto",
+    source: (url) => `${url}/|zarr-vectors:`,
+    worker,
+  },
+  {
     pattern: /\.la[sz]$/i,
     extensions: [".las", ".laz"],
     format: "LAS point cloud",

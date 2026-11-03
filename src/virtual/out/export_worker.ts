@@ -12,6 +12,7 @@
  */
 import { openImage } from "../images/open.js";
 import { parseMeshFile } from "../vectors/mesh_files.js";
+import { featherPoints } from "../vectors/feather.js";
 import { parseEdgeList, parseGraphml, splitEdgeList } from "../vectors/graphs.js";
 import { lazToLas } from "../vectors/laz.js";
 import { lazPerf } from "../vectors/laz_module.js";
@@ -80,7 +81,9 @@ async function exportGeometry(file: Blob & { name: string }, format: GeometryFor
         { name: "parent", values: nodes.map((n) => n.parent) },
       ]);
     }
-    const table = /\.laz$/i.test(file.name)
+    const table = /\.(feather|arrow)$/i.test(file.name)
+      ? featherPoints(new Uint8Array(await file.arrayBuffer()))
+      : /\.laz$/i.test(file.name)
       ? parseLas(lazToLas(new Uint8Array(await file.arrayBuffer()), await lazPerf()))
       : /\.las$/i.test(file.name)
         ? parseLas(new Uint8Array(await file.arrayBuffer())) : /\.parquet$/i.test(file.name) ? await parsePointParquet(file) : parsePointTable(await file.text());

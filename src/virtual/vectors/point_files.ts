@@ -99,8 +99,7 @@ export async function parsePointParquet(file: Blob): Promise<PointTable> {
   const names: string[] = parquetSchema(metadata).children.map((c: { element: { name: string } }) => c.element.name);
   const rows = Number(metadata.num_rows);
   const lower = names.map((n) => n.toLowerCase());
-  const axes = ["x", "y", "z"].map((a) => lower.findIndex((n) => coordinateName(n, a)));
-  if (axes[0] === -1 || axes[1] === -1) throw new Error("a Parquet table of points needs x and y columns (x, x_location, x_um …)");
+  if (["x", "y"].some((a) => !lower.some((n) => coordinateName(n, a)))) throw new Error("a Parquet table of points needs x and y columns (x, x_location, x_um …)");
   const values = new Map<string, Float64Array>();
   const numeric = new Set<string>();
   await parquetRead({
@@ -118,13 +117,25 @@ export async function parsePointParquet(file: Blob): Promise<PointTable> {
       }
     },
   });
+  return pointTableOf(names, values, rows, numeric, "Parquet");
+}
+
+/**
+ * A table read column by column (Parquet, Feather) as points: x, y and z
+ * from the columns named so (a table without z lies in z = 0), every other
+ * column with numbers a value per point (those with any missing left out).
+ */
+export function pointTableOf(names: string[], values: Map<string, Float64Array>, rows: number, numeric: Set<string>, format: string): PointTable {
+  const lower = names.map((n) => n.toLowerCase());
+  const axes = ["x", "y", "z"].map((a) => lower.findIndex((n) => coordinateName(n, a)));
+  if (axes[0] === -1 || axes[1] === -1) throw new Error(`a ${format} table of points needs x and y columns (x, x_location, x_um …)`);
   const positions = new Float64Array(3 * rows);
   axes.forEach((a, k) => {
     // A flat table (no z) lies in the plane z = 0.
     const column = a === -1 ? undefined : values.get(names[a]);
     for (let i = 0; i < rows; ++i) positions[3 * i + k] = column?.[i] ?? 0;
   });
-  if (positions.some((v) => !Number.isFinite(v))) throw new Error("a Parquet table with x, y or z values that are not numbers");
+  if (positions.some((v) => !Number.isFinite(v))) throw new Error(`a ${format} table with x, y or z values that are not numbers`);
   const columns: PointTable["columns"] = [];
   names.forEach((name, c) => {
     if (axes.includes(c) || !numeric.has(name)) return;
