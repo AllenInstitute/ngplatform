@@ -442,6 +442,8 @@ class Orientations {
     const slab = slabOf(info.voxelToRas, section.origin, section.normal);
     if (slabVoxels(visible, slab) > this.saved.maxGlyphs) return { note: `more than ${this.saved.maxGlyphs} glyphs at the coarsest level: zoom in` };
     const spacingPx = info.voxelSize * section.pxPerMm;
+    // Glyphs a few pixels across show nothing but noise.
+    if (spacingPx < 4) return { note: "glyphs would be under 4 pixels apart at the coarsest level: zoom in" };
     // A finer sphere only where glyphs are big enough to show it.
     const subdivisions = spacingPx * this.saved.size >= 40 ? 3 : 2;
     const key = `${level}|${slab.n.map((v) => v.toFixed(4)).join(",")}|${Math.round(slab.d * 1e3)}|${subdivisions}`;
@@ -482,6 +484,7 @@ class Orientations {
       this.drawn = "";
       return;
     }
+    this.channelise();
     const layerShown = this.ctx.viewer.layers().find((l) => l.name === this.handleLayer)?.visible !== false;
     const sections = this.sections();
     const seen = new Set<HTMLElement | "3d">();
@@ -685,31 +688,79 @@ class Orientations {
       this.ctx.ui.toast("Direction colour needs vectors, tensors or spherical harmonics.");
       return;
     }
-    // The components as a channel dimension (`c^`), so the shader sees them all
-    // at once: the layer's output dimensions as they are, that one renamed.
-    const transform = this.ctx.viewer.layerTransform(target.name);
-    const axis = opened.componentAxis;
-    const names = transform?.output.names ?? [];
-    const current = names.find((n) => n === `${axis}'` || n === axis || n === `${axis}^`);
-    if (transform === undefined || current === undefined) {
+    const level0 = opened.levels[0];
+    if (level0.componentChunk < level0.components) {
+      // Neuroglancer's shaders see a channel dimension only whole in one chunk.
+      this.ctx.ui.toast(`Direction colour needs each voxel's ${level0.components} components in one chunk; this image stores ${level0.componentChunk} per chunk (a 4-D NIfTI read in place stores one). Write it as OME-Zarr with whole channel chunks (see the plugin's README).`, "error");
+      return;
+    }
+    const edit = this.channelEdit(target.name, "^");
+    if (edit === "loading") {
       this.ctx.ui.toast("The image's layer has not loaded yet; try again in a moment.");
       return;
     }
     this.ctx.viewer.patchState((ng) => {
-      const layers = (ng.layers ?? []) as Record<string, unknown>[];
-      const layer = layers.find((l) => l.name === target.name);
+      const layer = ((ng.layers ?? []) as Record<string, unknown>[]).find((l) => l.name === target.name);
       if (layer === undefined) return;
       layer.shader = shader;
-      if (current === `${axis}^`) return;
+      edit?.(layer);
+    });
+  }
+
+  /**
+   * An edit renaming a layer's component axis: to a channel dimension
+   * (`c^`), so a shader sees every component at once, or to a local one
+   * (`t'`), out of the global dimensions; the layer's output dimensions as
+   * they are, that one renamed.  Undefined when it is so already (a channel
+   * dimension stays one); "loading" until the layer's source has loaded.
+   */
+  private channelEdit(layerName: string, suffix: "^" | "'"): ((layer: Record<string, unknown>) => void) | undefined | "loading" {
+    const transform = this.ctx.viewer.layerTransform(layerName);
+    const axis = this.opened?.componentAxis;
+    const names = transform?.output.names ?? [];
+    const current = names.find((n) => n === `${axis}'` || n === axis || n === `${axis}^`);
+    if (transform === undefined || axis === undefined || current === undefined) return "loading";
+    if (current === `${axis}${suffix}` || current === `${axis}^`) return undefined;
+    return (layer) => {
       const source: Record<string, unknown> = typeof layer.source === "string" ? { url: layer.source } : { ...(layer.source as Record<string, unknown>) };
       const outputDimensions: Record<string, [number, string]> = {};
-      names.forEach((n, i) => (outputDimensions[n === current ? `${axis}^` : n] = [transform.output.scales[i], transform.output.units[i]]));
+      names.forEach((n, i) => (outputDimensions[n === current ? `${axis}${suffix}` : n] = [transform.output.scales[i], transform.output.units[i]]));
       source.transform = { ...((source.transform as Record<string, unknown>) ?? {}), outputDimensions };
       layer.source = source;
-      // The local (or global) position along it no longer applies.
+      // The local position along it no longer applies.
       delete layer.localDimensions;
       delete layer.localPosition;
-    });
+    };
+  }
+
+  /** The store whose component axis was taken out of the global dimensions. */
+  private channelised: string | undefined;
+
+  /**
+   * A component axis among the global dimensions (a 4-D NIfTI's t) makes
+   * every view step through components and upsets the 2-D views' zoom; it
+   * becomes a local dimension of the layer instead (`t'`), once per image,
+   * on the user's behalf (the layer still shows the first component).
+   */
+  private channelise(): void {
+    const opened = this.opened;
+    const layer = this.handleLayer;
+    if (opened === undefined || layer === undefined || this.channelised === this.store) return;
+    if (!(this.space?.names ?? []).includes(opened.componentAxis)) {
+      this.channelised = this.store;
+      return;
+    }
+    const edit = this.channelEdit(layer, "'");
+    if (edit === "loading") return;
+    this.channelised = this.store;
+    if (edit === undefined) return;
+    this.ctx.viewer.patchState(
+      (ng) => {
+        const spec = ((ng.layers ?? []) as Record<string, unknown>[]).find((l) => l.name === layer);
+        if (spec !== undefined) edit(spec);
+      },
+      { quiet: true },
+    );
   }
 
   // ------------------------------------------------------------- panel

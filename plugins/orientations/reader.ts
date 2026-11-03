@@ -26,6 +26,8 @@ export interface OrientationLevel extends VolumeLevel {
   type: string;
   /** The read chunk's shape, in the array's axis order. */
   chunk: number[];
+  /** Components in one chunk (all of them, or one for a 4-D NIfTI read in place). */
+  componentChunk: number;
 }
 
 /** What a store says about its orientations (attributes.orientations), when it says it. */
@@ -151,6 +153,7 @@ export class OrientationReader {
             components: array.shape[componentDim],
             type: array.elementType,
             chunk,
+            componentChunk: chunk[componentDim],
           },
           reader: new ZarrArrayReader(array, read, shardIndexes),
           dimOf,
