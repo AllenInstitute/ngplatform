@@ -1,11 +1,11 @@
 /**
- * The Annotations plugin: one tab, four sections.
+ * The Annotations plugin: one tab, three sections.
  *
  *  - Labels (./labels.ts): names pinned in the views, for figures.
  *  - Measure (./measure_panel.ts): lengths, areas and volumes of
  *    Neuroglancer's annotations, and an image's profile along a line.
- *  - Statistics (./statistics_panel.ts): an image's values in a region.
- *  - Segmentation (./segmentation/): label volumes drawn by hand.
+ *  - Statistics (./statistics_panel.ts): an image's values in a region
+ *    (a label of a volume drawn in the Segmentation plugin among them).
  *
  * Each section is folded or open as the user left it (kept in this browser).
  */
@@ -13,7 +13,6 @@ import type { Disposer, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { Labels, STYLE as LABELS_STYLE } from "./labels.js";
 import { ANNOTATIONS_PANEL } from "./manifest.js";
 import { Measure } from "./measure_panel.js";
-import { Segmentation } from "./segmentation/panel.js";
 import { Statistics } from "./statistics_panel.js";
 import { STYLE } from "./style.js";
 import { el } from "./ui.js";
@@ -28,7 +27,7 @@ interface Section {
 function sections(ctx: PlatformContext, list: Section[]): (host: HTMLElement) => Disposer {
   return (host) => {
     const offs: Disposer[] = [];
-    const open = ctx.settings.get<Record<string, boolean>>("openSections") ?? { labels: true, measure: true, statistics: false, segmentation: true };
+    const open = ctx.settings.get<Record<string, boolean>>("openSections") ?? { labels: true, measure: true, statistics: false };
     const root = el("div", { class: "an" });
     for (const s of list) {
       const body = el("div", { class: "an-body" });
@@ -63,14 +62,12 @@ export const plugin: PluginModule = {
     const voxels = new Voxels();
     const labels = new Labels(ctx);
     const measure = new Measure(ctx, voxels);
-    const segmentation = new Segmentation(ctx, voxels);
-    const statistics = new Statistics(ctx, voxels, segmentation);
+    const statistics = new Statistics(ctx, voxels);
     ctx.subscriptions.push(() => {
       voxels.dispose();
       labels.dispose();
       measure.dispose();
       statistics.dispose();
-      segmentation.dispose();
       style.remove();
     });
     ctx.ui.panel(
@@ -79,7 +76,6 @@ export const plugin: PluginModule = {
         { id: "labels", title: "Labels", render: (host) => labels.render(host) },
         { id: "measure", title: "Measure", render: (host) => measure.render(host) },
         { id: "statistics", title: "Statistics", render: (host) => statistics.render(host) },
-        { id: "segmentation", title: "Segmentation", render: (host) => segmentation.render(host) },
       ]),
     );
   },

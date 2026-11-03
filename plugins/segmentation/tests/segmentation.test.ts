@@ -7,11 +7,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openNifti } from "../../../src/virtual/images/nifti.js";
 import { VolumeReader } from "../../volume-view/volume_reader.js";
-import { History, Stroke } from "../segmentation/history.js";
-import { ballReach, ballShape, dabsBetween, distance2d, floodFill, type ImageBlock, inRange, interpolate, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "../segmentation/kernels.js";
-import { LabelVolume } from "../segmentation/label_volume.js";
-import { component, otsu, THRESHOLD_SELECT } from "../segmentation/quick_select.js";
-import { cropped, niftiGz, omeZarr } from "../segmentation/save.js";
+import { History, Stroke } from "../history.js";
+import { ballReach, ballShape, dabsBetween, distance2d, floodFill, type ImageBlock, inRange, interpolate, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "../kernels.js";
+import { LabelVolume } from "../label_volume.js";
+import { component, otsu, THRESHOLD_SELECT } from "../quick_select.js";
+import { cropped, niftiGz, omeZarr } from "../save.js";
 
 afterEach(() => vi.unstubAllGlobals());
 

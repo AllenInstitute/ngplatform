@@ -2,7 +2,11 @@
  * Drawing in the views with the mouse.  While on, the left button in a
  * view belongs to the drawing tool (Neuroglancer does not see it), and
  * everything else stays Neuroglancer's: the wheel moves through sections,
- * keys work, and holding Space gives the left button back to move the view.
+ * Ctrl+wheel zooms, Ctrl+click annotates, the right button moves the
+ * position, and holding Space gives the left button back to move the view
+ * (Neuroglancer's own Space, which changes the layout, is held back while
+ * drawing).  Alt+wheel over a 2-D view sizes the brush, in place of
+ * Neuroglancer's depth range of annotations.
  *
  * In a 2-D view the point under the pointer is found from the view's own
  * projection (exact, at once); in the 3-D view it is Neuroglancer's picked
@@ -10,7 +14,7 @@
  * 2-D views, and a dragged box is drawn for quick select.
  */
 import type { Disposer, PlatformContext, ViewPanelInfo } from "@ngplatform/sdk";
-import { unprojector } from "../geometry.js";
+import { unprojector } from "../annotations/geometry.js";
 
 export interface ViewPoint {
   kind: "2d" | "3d";
@@ -32,6 +36,8 @@ export interface PainterHandler {
   ring(p: ViewPoint): number | undefined;
   /** Dragging draws a box (quick select) rather than a stroke. */
   boxDrag(): boolean;
+  /** Alt+wheel over a 2-D view, in notches (up is positive); returns whether it was used. */
+  wheel(notches: number): boolean;
 }
 
 export class Painter {
@@ -42,6 +48,8 @@ export class Painter {
   private readonly ringElement: HTMLElement;
   private readonly boxElement: HTMLElement;
   private boxStart: [number, number] | undefined;
+  /** The last pointer event over a view, to redraw the ring when the brush changes. */
+  private lastMove: MouseEvent | undefined;
   private readonly offs: Disposer[] = [];
 
   constructor(
@@ -50,9 +58,9 @@ export class Painter {
   ) {
     this.overlay = ctx.ui.overlay();
     this.ringElement = document.createElement("div");
-    this.ringElement.className = "an-ring";
+    this.ringElement.className = "sg-ring";
     this.boxElement = document.createElement("div");
-    this.boxElement.className = "an-box";
+    this.boxElement.className = "sg-box";
     this.overlay.element.append(this.ringElement, this.boxElement);
     const listen = <K extends keyof WindowEventMap>(target: Window | Document, type: K, f: (e: WindowEventMap[K]) => void) => {
       target.addEventListener(type, f as EventListener, true);
@@ -71,11 +79,16 @@ export class Painter {
       });
     }
     listen(window, "keydown", (e) => {
-      if (e.key === " " && !isTyping(e.target)) {
+      if (e.key === " " && this.on && !isTyping(e.target)) {
+        // Neuroglancer's Space changes the layout: not while it moves the view here.
+        e.preventDefault();
+        e.stopPropagation();
         this.space = true;
         this.ringElement.hidden = true;
       }
     });
+    document.addEventListener("wheel", this.onWheel, { capture: true, passive: false });
+    this.offs.push(() => document.removeEventListener("wheel", this.onWheel, { capture: true }));
     listen(window, "keyup", (e) => {
       if (e.key === " ") this.space = false;
     });
@@ -92,7 +105,11 @@ export class Painter {
       this.onUp();
       this.hide();
     }
-    this.overlay.element.classList.toggle("an-drawing", on);
+  }
+
+  /** Draws the ring again where the pointer last was (after the brush or the tool changed). */
+  refresh(): void {
+    if (this.lastMove !== undefined && this.dragging === undefined) this.onMove(this.lastMove);
   }
 
   dispose(): void {
@@ -110,8 +127,10 @@ export class Painter {
     for (const panel of this.ctx.viewer.panels()) {
       const r = panel.element.getBoundingClientRect();
       if (e.clientX < r.left || e.clientY < r.top || e.clientX > r.right || e.clientY > r.bottom) continue;
-      // Over the view itself, or what is drawn over it; not over its corner buttons.
+      // Over the view itself, or what is drawn over it; not over its corner
+      // buttons, or the controls a plugin puts over it (the tool bar).
       const target = e.target as Element | null;
+      if (target?.closest?.(".view-overlay button, .view-overlay input, .view-overlay select, .sg-bar")) return undefined;
       if (target === null || target === panel.element || target === panel.element.querySelector("canvas") || this.overlay.element.contains(target) || target.closest?.(".view-overlay")) return panel;
       if (panel.element.contains(target) && !target.closest("button, input, select, label")) return panel;
     }
@@ -156,6 +175,17 @@ export class Painter {
     this.handler.down(p, e);
   }
 
+  private readonly onWheel = (e: WheelEvent): void => {
+    if (!this.on || !e.altKey || e.ctrlKey || e.metaKey) return;
+    const panel = this.panelAt(e);
+    if (panel?.kind !== "2d") return;
+    const notches = -Math.sign(e.deltaY || e.deltaX);
+    if (notches === 0 || !this.handler.wheel(notches)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    this.onMove(e);
+  };
+
   private onMove(e: MouseEvent): void {
     if (!this.on) return;
     const panel = this.dragging ?? this.panelAt(e);
@@ -163,6 +193,7 @@ export class Painter {
       this.ringElement.hidden = true;
       return;
     }
+    this.lastMove = e;
     const p = this.point(panel, e);
     if (p === undefined) return;
     if (this.dragging !== undefined) {

@@ -8,9 +8,9 @@
  * The built-in method thresholds (Otsu's threshold in a box; a tolerance
  * around the value clicked) and keeps the connected part.  Other plugins
  * add methods (a model served elsewhere, say) through the
- * `annotations.quickSelect` service:
+ * `segmentation.quickSelect` service:
  *
- *     const qs = await ctx.services.get<QuickSelectService>("annotations.quickSelect");
+ *     const qs = await ctx.services.get<QuickSelectService>("segmentation.quickSelect");
  *     ctx.subscriptions.push(qs.register({ id: "sam", title: "Segment Anything", prompts: ["box", "point"], run: async (request, signal) => … }));
  */
 import { blockValue, type ImageBlock, type Vec3 } from "./kernels.js";
