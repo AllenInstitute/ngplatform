@@ -273,6 +273,51 @@ export function buildStore(s: Synthetic): Store {
   return store;
 }
 
+/**
+ * The same image as OME-Zarr 0.4 in Zarr v2 (`.zattrs`, `.zarray`, chunk
+ * keys "0.1.2.3"), as ome-zarr-py writes it; `order` "F" stores each
+ * chunk's first index fastest.
+ */
+export function toZarr2(v3: Store, order: "C" | "F" = "C"): Store {
+  const out: Store = new Map();
+  const decode = (bytes: Uint8Array) => JSON.parse(new TextDecoder().decode(bytes));
+  const group = decode(v3.get("zarr.json")!);
+  const { ome, ...rest } = group.attributes;
+  out.set(".zgroup", json({ zarr_format: 2 }));
+  out.set(".zattrs", json({ multiscales: ome.multiscales.map((m: object) => ({ ...m, version: "0.4" })), ...rest }));
+  for (const [key, bytes] of v3) {
+    const meta = /^(\d+)\/zarr\.json$/.exec(key);
+    if (meta !== null) {
+      const array = decode(bytes);
+      out.set(`${meta[1]}/.zarray`, json({
+        zarr_format: 2,
+        shape: array.shape,
+        chunks: array.chunk_grid.configuration.chunk_shape,
+        dtype: "<f4",
+        compressor: null,
+        fill_value: 0,
+        order,
+        filters: null,
+      }));
+      continue;
+    }
+    const chunk = /^(\d+)\/c\/(\d+)\/(\d+)\/(\d+)\/(\d+)$/.exec(key);
+    if (chunk === null) continue;
+    const [, level, ...index] = chunk;
+    let data = bytes;
+    if (order === "F") {
+      const shape = decode(v3.get(`${level}/zarr.json`)!).chunk_grid.configuration.chunk_shape as number[];
+      const c = new Float32Array(bytes.slice().buffer);
+      const f = new Float32Array(c.length);
+      const [n0, n1, n2, n3] = shape;
+      for (let a = 0; a < n0; ++a) for (let b = 0; b < n1; ++b) for (let d = 0; d < n2; ++d) for (let e = 0; e < n3; ++e) f[a + n0 * (b + n1 * (d + n2 * e))] = c[((a * n1 + b) * n2 + d) * n3 + e];
+      data = new Uint8Array(f.buffer);
+    }
+    out.set(`${level}/${index.join(".")}`, data);
+  }
+  return out;
+}
+
 /** A fetch answering from stores by URL prefix (and 404 for anything else). */
 export function storeFetch(stores: Record<string, Store>): (url: string | URL) => Promise<Response> {
   return async (url) => {

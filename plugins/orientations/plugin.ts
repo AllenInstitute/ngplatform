@@ -276,7 +276,9 @@ class Orientations {
     let p = this.probed.get(url);
     if (p === undefined) {
       p = (async () => {
-        const response = await fetch(`${url}zarr.json`);
+        // Zarr v3's group metadata, else v2's attributes (OME-Zarr 0.4).
+        let response = await fetch(`${url}zarr.json`);
+        if (!response.ok) response = await fetch(`${url}.zattrs`);
         if (!response.ok) return false;
         const { spatialGroup } = await import("./ome4.js");
         spatialGroup(await response.json());

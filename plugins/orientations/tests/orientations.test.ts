@@ -18,7 +18,7 @@ import { OrientationReader } from "../reader.js";
 import { directionShader } from "../shader.js";
 import { icosphere } from "../sphere.js";
 import { boxAround, chooseLevel, layerMove, planesAround, planSection, sectionOf, slabOf, slabVoxels, unproject, type Vec3 } from "../view.js";
-import { buildStore, crossingSh, type Store, storeFetch, tensorField, vectorField } from "./synthetic.js";
+import { buildStore, crossingSh, type Store, storeFetch, tensorField, toZarr2, vectorField } from "./synthetic.js";
 
 const SIZE: [number, number, number] = [32, 32, 8];
 const stores: Record<string, Store> = {};
@@ -27,6 +27,8 @@ beforeAll(() => {
   stores["http://synthetic.test/sh.ome.zarr/"] = buildStore(crossingSh(SIZE));
   stores["http://synthetic.test/tensor.ome.zarr/"] = buildStore(tensorField(SIZE));
   stores["http://synthetic.test/vector.ome.zarr/"] = buildStore(vectorField(SIZE));
+  stores["http://synthetic.test/tensor-v2.ome.zarr/"] = toZarr2(stores["http://synthetic.test/tensor.ome.zarr/"]);
+  stores["http://synthetic.test/tensor-v2f.ome.zarr/"] = toZarr2(stores["http://synthetic.test/tensor.ome.zarr/"], "F");
   const out = process.env.ORIENTATIONS_WRITE;
   if (out) {
     // Bigger ones to look at.
@@ -105,6 +107,24 @@ describe("reading orientation pyramids", () => {
     expect(d[0]).toBeCloseTo(1.7e-3, 6);
     expect(d[3]).toBeCloseTo(0.3e-3, 6);
     expect(d[5]).toBeCloseTo(0.3e-3, 6);
+  });
+
+  it("reads OME-Zarr 0.4 in Zarr v2, C or Fortran order, as it reads v3", async () => {
+    vi.stubGlobal("fetch", storeFetch(stores));
+    const request = { lo: [0, 0, 2] as Vec3, hi: [32, 32, 4] as Vec3 };
+    const read = async (url: string) => {
+      const reader = new OrientationReader();
+      const opened = await reader.open(url);
+      return { opened, voxels: await reader.voxels(1, request, new AbortController().signal) };
+    };
+    const v3 = await read("http://synthetic.test/tensor.ome.zarr/");
+    for (const url of ["http://synthetic.test/tensor-v2.ome.zarr/", "http://synthetic.test/tensor-v2f.ome.zarr/"]) {
+      const v2 = await read(url);
+      expect(v2.opened.levels.map((l) => l.size)).toEqual(v3.opened.levels.map((l) => l.size));
+      expect(Array.from(v2.opened.levels[1].voxelToRas)).toEqual(Array.from(v3.opened.levels[1].voxelToRas));
+      expect(v2.voxels.count).toBe(v3.voxels.count);
+      expect(Array.from(v2.voxels.values)).toEqual(Array.from(v3.voxels.values));
+    }
   });
 
   it("strips a NIfTI's fourth axis (t, read in place) from OME-Zarr 0.6 metadata", () => {

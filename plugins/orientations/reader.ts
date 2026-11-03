@@ -16,6 +16,7 @@ import { httpAccess, openZarrArray, ShardIndexCache, ZarrArrayReader } from "neu
 import { mergeLevels, parseOmeLevels, type VolumeLevel } from "../volume-view/ome.js";
 import { storedOrder } from "../volume-view/volume_reader.js";
 import { spatialGroup } from "./ome4.js";
+import { withZarr2 } from "./zarr2.js";
 
 export interface OrientationLevel extends VolumeLevel {
   /** Voxels along x, y and z. */
@@ -122,7 +123,8 @@ export class OrientationReader {
     const { group: spatial, component, name } = spatialGroup(group);
     const pyramid = parseOmeLevels(base, spatial);
     const levels = mergeLevels([pyramid]);
-    const { read: plainRead } = httpAccess(base);
+    // Zarr v2 arrays (OME-Zarr 0.4) read as v3.
+    const plainRead = withZarr2(httpAccess(base).read);
     const shardIndexes = new ShardIndexCache();
     const axesWithComponent = (axes: string[]) => {
       const out = [...axes];
