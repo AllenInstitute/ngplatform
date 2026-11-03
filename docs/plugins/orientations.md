@@ -52,6 +52,10 @@ zoom in and the finer level's glyphs load in and take their place.
   weighted by the anisotropy, as Freeview's `-dti` display. Its Render tab
   has a brightness slider.
 
+The tab also says what the voxel under the cursor holds: a tensor's FA,
+MD, eigenvalues and principal direction; an ODF's GFA and peaks; a
+vector's direction and length.
+
 Glyphs are drawn into screenshots taken with Neuroglancer's screenshot
 button, and follow the layer when it is moved (Registration).
 

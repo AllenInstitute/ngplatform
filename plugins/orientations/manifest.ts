@@ -25,6 +25,9 @@ The plugin guesses the kind from the number of components (6 is taken as a tenso
 - **Hide below anisotropy**: leave out glyphs whose GFA (spherical harmonics) or FA (tensors) is lower.
 - **Size** (1 fills a voxel), **Spacing** (pixels between glyphs, which picks the level), **Most glyphs per view**.
 
+## Under the cursor
+The tab says what the voxel under the cursor holds: a tensor's FA, MD, eigenvalues and principal direction; an ODF's GFA and peaks; a vector's direction and length.
+
 ## As you zoom
 Each 2-D view shows one glyph per voxel of the level whose voxels are at least **Spacing** pixels apart on the screen. Zoom in and the next finer level's glyphs load and replace the coarser ones; the coarser stay until they arrive. Only the voxels on the section and in view are read.
 

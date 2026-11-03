@@ -30,6 +30,8 @@ User guide: [docs/plugins/orientations.md](../../docs/plugins/orientations.md)
 | `reader.ts`, `ome4.ts` | The 4-D pyramid: levels, and the voxels of a box within slabs, as float32. |
 | `worker.ts`, `client.ts` | The reader and glyph computation in a worker. |
 | `shader.ts` | The direction-colour shader for the image layer. |
+| `readout.ts` | What the voxel under the cursor holds, in words. |
+| `zarr2.ts` | Zarr v2 arrays (OME-Zarr 0.4) read as v3. |
 | `tools/make_dipy_example.py` | A real example from DIPY's sample data (below). |
 | `tests/` | The maths against DIPY, synthetic multiscale stores read end to end. |
 
@@ -195,6 +197,21 @@ it, so direction colour needs stores chunked whole along `c` (as
 place stores one component per chunk, so it gets glyphs but not direction
 colour; its fourth axis, `t`, is made a local dimension of the layer (`t'`)
 when the plugin opens it, so the views do not step through components.
+
+### Under the cursor
+
+The panel names what the finest level's voxel under the cursor holds: a
+tensor's FA, MD, eigenvalues and principal direction (as Freeview and
+mrview report them), an ODF's GFA and peaks, a vector's direction and
+length, all in RAS after the frame and flips.
+
+### Stores
+
+OME-Zarr 0.5 (Zarr v3) and 0.4 (Zarr v2, `.zarray`, C or Fortran order:
+`zarr2.ts` presents each array's metadata as v3's), 0.6 coordinate systems
+(through the volume view's `ome.ts`), and 4-D NIfTI read in place by the
+app. Axes: one component axis (`type: "channel"`, or named `c`, or a
+NIfTI's `t`) beside x, y and z.
 
 ## A real example
 
