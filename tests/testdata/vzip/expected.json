@@ -1,0 +1,41 @@
+{
+ "tiles": {
+  "0/c/0/0": "1c7e83780fae8accd6ae19c370f50c3c702da7091450163bfee95150e597981c",
+  "0/c/0/1": "92dbfca79d044c56cf1d423668da92a2a813c7eed34c1ed32a43b24ea05e7590",
+  "0/c/0/2": "75b178392f5f52d488cce35dbd8fc7eb83359149bb1ed1f402cbbcc95cb04e0c",
+  "0/c/0/3": "f96061ed3232d769b986eeea63d1a5917691ff3e8ece6a27214a166b09b48853",
+  "0/c/1/0": "15177e34e347781ab71ab7bb1542b59ccec01f75a6e2a0fbc1056ffc0aebddd3",
+  "0/c/1/1": "6d46e6480efcae246ed6f5cda189d0e90d0dc843f7bf053e953bb96bd627d52f",
+  "0/c/1/2": "9d6b8ce39fa96c6d0fd7b0136f22f1d66e04484847cde650c0f6bb978efcf66f",
+  "0/c/1/3": "04daafeb48908180ba3d07835b4c6fd2d7cfab00d80df630835d0ec4afb8dafa",
+  "0/c/2/0": "525125cf6e4800d52bc3b8a6570ff64acc13a8702ee190a89b9319d2baf97ea1",
+  "0/c/2/1": "14f2003980700098bbef1da9fdce3a80372d9c2c4bfbd2888b5f3d9e5e8fe920",
+  "0/c/2/2": "0266fc4155e8659adcd1d9d8e4c2073868d1022f3f99f0044ec47a147d82b713",
+  "0/c/2/3": "b230bde889e1cf9c65004d9534865ab3561323e47cccf3369592f84acdc8b8ef",
+  "0/zarr.json": "6a2f9fa8a76291bc949532aa3e360974514bd9f2deb3fecb23c4acc34241de59",
+  "refkv_source/ir/rows/c/0/0": "e10727a52d15fcd8d5e56d66f7b580da1ce65d5f067df9c804ce5967b8eab779",
+  "refkv_source/ir/rows/zarr.json": "36e9b866c2c5c4a26df651c1af0f1edfd983f5f30671f272b96a97c509ba3634",
+  "refkv_source/ir/tables/c/0/0": "3b69d6f59d588668d07dc51b9ce6a66283c9a6e35ece0ffa8088da1bf6abc019",
+  "refkv_source/ir/tables/zarr.json": "45c5f2d485212aa1cb5eede1761bab581ab1ed7569bab394fcb3b9e711491b44",
+  "refkv_source/ir/zarr.json": "5a74c13c504faff64ffd30ee6ce868cb0e9ee4d47b55184ee05bf31e008c2b4a",
+  "refkv_source/tree/zarr.json": "3832faeddfe8a41f134d8b15a3f847b92b4bce0d08bdec04b68eca0e4df23635",
+  "refkv_source/zarr.json": "ad9f82945c4accb14346c5dec6adcb5f176d49dd71b53160aa0adce7dc906f45",
+  "zarr.json": "6aea60691dcbdfb52dde9f5eabf9719c94128fbb0d3e0888ec5798b5b160d17a"
+ },
+ "strips": {
+  "0/c/0/0": "43c511587138056cdcbd6edf0f525dd51ebdf666e9b0d3da94805867e76e1721",
+  "0/c/1/0": "1148207b563cbd396647305688c3c9b82d04c52a79b46087bada082501f2bfa1",
+  "0/c/2/0": "70c6e2af6eb12db26489095e22a84009c7a861361f4088a920e68c33071672d3",
+  "0/c/3/0": "c52933eb284da2080739370fbcee9c45b3bd1651b534017a678098295011af07",
+  "0/c/4/0": "279a1aacacb2bbcf40d8a8c90d305c1afdadb673e009ffdb2cb6d076e9ecd9c1",
+  "0/zarr.json": "00b4b28b256f86769c3b20a338dcea53d21cc0d719617496905d77afa0f601aa",
+  "refkv_source/ir/rows/c/0/0": "dcabf2ea946680634b4f40fac317bac25a91c559888957fc160d6277b46aab6c",
+  "refkv_source/ir/rows/zarr.json": "36e9b866c2c5c4a26df651c1af0f1edfd983f5f30671f272b96a97c509ba3634",
+  "refkv_source/ir/tables/c/0/0": "5e9d5c8f65b1babda1c2bc5f66319e037297b0074c588f51ddae3b9cecc44240",
+  "refkv_source/ir/tables/zarr.json": "889f19c92112713c9210e08d174b766391e0efec7e5c758884c5e60b496f595d",
+  "refkv_source/ir/zarr.json": "5a74c13c504faff64ffd30ee6ce868cb0e9ee4d47b55184ee05bf31e008c2b4a",
+  "refkv_source/tree/zarr.json": "7c14c143880e4e8ffa4a3aa19b9ba65b57f47c38de8b1e87692c54c924cf4ef2",
+  "refkv_source/zarr.json": "3e496dd186c78cf033fbe171ded4952ff934f5d7dacab7d578244914ef439e44",
+  "zarr.json": "2c7b3a13ae18f6a4692b8530245ac7558ad23ec118eebd12cbd3c52fff2be585"
+ }
+}
