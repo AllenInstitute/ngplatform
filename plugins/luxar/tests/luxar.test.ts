@@ -6,8 +6,9 @@ import { buildChunk, objectKey, TEXTURE_WIDTH } from "../chunk_build.js";
 import { keyOf, selectChunks } from "../chunks.js";
 import type { StoreInfo } from "../client.js";
 import { LUXAR_MANIFEST } from "../manifest.js";
+import { idOf, needsTable, objectTable } from "../segments.js";
 import { DEFAULT_STYLE, readSaved, readStyle, rgbOf, scalarOf } from "../style.js";
-import { apply, autoGain, boxInFrustum, chooseLevel, chunkRange, coverage, directionMatrix, invertAffine, measurePanel, modelTo, modelToPanel, multiply, pixelsPerUnit, screenArea, storeToGlobal } from "../view_math.js";
+import { apply, autoGain, boxInFrustum, chooseLevel, chunkRange, coverage, directionMatrix, invertAffine, MAX_SELECTION_BOOST, measurePanel, modelTo, modelToPanel, multiply, pixelsPerUnit, screenArea, shownShare, storeToGlobal, vertexBudget } from "../view_math.js";
 
 const identityTransform = (offset = [0, 0, 0], scale = 1): LayerTransform => {
   const m = new Float64Array(16);
@@ -119,6 +120,69 @@ describe("building a chunk", () => {
     const low = keys.filter((k) => k < 0.5).length;
     expect(low).toBeGreaterThan(400);
     expect(low).toBeLessThan(600);
+  });
+});
+
+describe("a layer's chosen segments", () => {
+  // Line 0-1-2 of object 7, line 3-4 of object 9, and a point of a 64-bit id.
+  const input = {
+    numVertices: 6,
+    numOwnVertices: 6,
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 3, 0, 0, 5, 5, 5, 5, 6, 5, 9, 9, 9]),
+    segmentIds: new Uint32Array([7, 0, 7, 0, 7, 0, 9, 0, 9, 0, 1, 2]),
+    edges: new Uint32Array([0, 1, 1, 2, 3, 4]),
+    attributes: [],
+  };
+
+  it("names each vertex's object by a slot in the chunk's list, weighted by its lines' length", () => {
+    const c = buildChunk(input, { kind: "none" });
+    expect(Array.from(c.slots.slice(0, 6))).toEqual([0, 0, 0, 1, 1, 2]);
+    expect(c.slots.length).toBe(TEXTURE_WIDTH);
+    expect(Array.from(c.objectIds)).toEqual([7, 0, 9, 0, 1, 2]);
+    expect(Array.from(c.objectWeight)).toEqual([3, 1, 0]);
+    // A point cloud weighs its objects by their points.
+    const p = buildChunk({ ...input, edges: new Uint32Array(0) }, { kind: "none" });
+    expect(Array.from(p.objectWeight)).toEqual([3, 2, 1]);
+  });
+
+  it("reads 64-bit ids from their two words", () => {
+    expect(idOf(7, 0)).toBe(7n);
+    expect(idOf(1, 2)).toBe((2n << 32n) | 1n);
+    expect(idOf(0xffffffff, 0xffffffff)).toBe(0xffffffffffffffffn);
+  });
+
+  it("shows only the chosen objects, and says how much of the chunk that is", () => {
+    const c = buildChunk(input, { kind: "none" });
+    const chosen = new Set([9n]);
+    const t = objectTable(c.objectIds, c.objectWeight, { version: 1, all: false, has: (id) => chosen.has(id) });
+    expect(t.rows).toBe(1);
+    expect(t.table.length).toBe(TEXTURE_WIDTH * 4);
+    expect([t.table[3], t.table[7], t.table[11]]).toEqual([0, 255, 0]);
+    expect(t.shown).toBeCloseTo(1 / 4);
+    const none = objectTable(c.objectIds, c.objectWeight, { version: 2, all: false, has: () => false });
+    expect(none.shown).toBe(0);
+    const all = objectTable(c.objectIds, c.objectWeight, { version: 3, all: true, has: () => false });
+    expect(all.shown).toBe(1);
+    expect([all.table[3], all.table[7], all.table[11]]).toEqual([255, 255, 255]);
+  });
+
+  it("colours each object as the layer does, when asked", () => {
+    const c = buildChunk(input, { kind: "none" });
+    const shading = { version: 1, all: true, has: () => true, colour: (id: bigint): [number, number, number] => (id === 7n ? [1, 0, 0.5] : [0, 1, 0]) };
+    expect(needsTable(shading)).toBe(true);
+    expect(needsTable({ ...shading, colour: undefined })).toBe(false);
+    const t = objectTable(c.objectIds, c.objectWeight, shading);
+    expect(Array.from(t.table.slice(0, 8))).toEqual([255, 0, 128, 255, 0, 255, 0, 255]);
+  });
+
+  it("reads more for a view that shows a few objects, within a limit", () => {
+    expect(shownShare([])).toBe(1);
+    expect(shownShare([{ length: 3, pointCount: 0, shown: 0.5 }, { length: 1, pointCount: 0, shown: 1 }])).toBeCloseTo(5 / 8);
+    expect(vertexBudget(2, 1)).toBe(2e6);
+    expect(vertexBudget(2, 0.5)).toBe(4e6);
+    expect(vertexBudget(2, 0)).toBe(2e6 * MAX_SELECTION_BOOST);
+    // Only the share of a chunk's lines shown counts toward how much of the view they cover.
+    expect(coverage([{ length: 10, pointCount: 0, shown: 0.1 }], 1, 1, 10)).toBeCloseTo(0.1);
   });
 });
 

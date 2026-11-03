@@ -22,6 +22,7 @@
  * Contributors; see ./README.md); the code is written for this plugin.
  */
 import { TEXTURE_WIDTH, type BuiltChunk } from "./chunk_build.js";
+import { needsTable, type ObjectShading, objectTable } from "./segments.js";
 
 /** Where a program's outputs go: Neuroglancer's three (colour, depth, pick) or one. */
 export interface Outputs {
@@ -55,6 +56,8 @@ export interface DrawUniforms {
   depthCut: number;
   /** Depth pass: write depth at the near plane (over everything). */
   depthNear: boolean;
+  /** Each vertex's object is looked up in its chunk's table: hidden objects are not drawn, and "segment" colours come from it. */
+  objectTable: boolean;
 }
 
 /** One chunk on the GPU. */
@@ -67,6 +70,16 @@ export interface GpuChunk {
   bytes: number;
   /** The segments' total length, store units. */
   length: number;
+  /** Per vertex, its object's slot (R32UI, as the vertex texture). */
+  slots: WebGLTexture;
+  /** The chunk's objects (ids as word pairs) and weights, for its table. */
+  objectIds: Uint32Array;
+  objectWeight: Float32Array;
+  /** Per object, its colour and whether it shows (RGBA8), made for `tableVersion`. */
+  objects: WebGLTexture | undefined;
+  tableVersion: number;
+  /** The share of the chunk's lines (or points) shown: 0 skips it. */
+  shown: number;
 }
 
 /** The colormaps as GLSL: `vec3 colormap(int which, float t)` (shared with the splats' shader). */
@@ -135,9 +148,19 @@ uniform int uColormap;
 uniform vec2 uRange;
 uniform vec4 uPlane;
 uniform float uSlab;
+uniform highp usampler2D uSlots;
+uniform lowp sampler2D uObjects;
+uniform bool uObjectTable;
 
 vec4 vertexAt(uint i) {
   return texelFetch(uVertices, ivec2(int(i % ${TEXTURE_WIDTH}u), int(i / ${TEXTURE_WIDTH}u)), 0);
+}
+
+// A vertex's object: its colour (as the layer colours segments) and whether it shows (alpha).
+vec4 objectAt(uint i) {
+  if (!uObjectTable) return vec4(1.0);
+  uint slot = texelFetch(uSlots, ivec2(int(i % ${TEXTURE_WIDTH}u), int(i / ${TEXTURE_WIDTH}u)), 0).r;
+  return texelFetch(uObjects, ivec2(int(slot % ${TEXTURE_WIDTH}u), int(slot / ${TEXTURE_WIDTH}u)), 0);
 }
 
 ${COLORMAP_GLSL}
@@ -147,8 +170,8 @@ vec3 hue(float h) {
   return mix(vec3(1.0), k, 0.75);
 }
 
-// A vertex's colour: by the direction there, its object, its value, or one colour.
-vec3 colourAt(vec4 v, vec3 tangent) {
+// A vertex's colour: by the direction there, its object, its value, one colour, or its segment's colour.
+vec3 colourAt(vec4 v, vec3 tangent, vec3 segment) {
   if (uColourBy == 0) {
     vec3 d = uDirections * tangent;
     float l = length(d);
@@ -156,6 +179,7 @@ vec3 colourAt(vec4 v, vec3 tangent) {
   }
   if (uColourBy == 1) return hue(v.w);
   if (uColourBy == 2) return colormap(uColormap, (v.w - uRange.x) / max(uRange.y - uRange.x, 1e-12));
+  if (uColourBy == 4) return segment;
   return uColour;
 }
 
@@ -197,6 +221,11 @@ void main() {
   vec4 N = vertexAt(aSegment.w);
   bool joinA = aSegment.x != aSegment.y;
   bool joinB = aSegment.w != aSegment.z;
+  vec4 object = objectAt(aSegment.y);
+  if (object.a < 0.5) {
+    hide();
+    return;
+  }
 
   float dA = sectionDistance(A.xyz);
   float dB = sectionDistance(B.xyz);
@@ -260,7 +289,7 @@ void main() {
   vAcross = side;
   vSection = atEnd ? dB : dA;
   vec3 tangent = atEnd ? (joinB ? N.xyz - A.xyz : B.xyz - A.xyz) : (joinA ? B.xyz - P.xyz : B.xyz - A.xyz);
-  vColour = colourAt(atEnd ? B : A, tangent);
+  vColour = colourAt(atEnd ? B : A, tangent, object.rgb);
 }
 `;
 
@@ -278,7 +307,8 @@ void main() {
   vec2 corner = vec2((gl_VertexID & 1) == 0 ? -1.0 : 1.0, gl_VertexID >= 2 ? 1.0 : -1.0);
   float d = sectionDistance(v.xyz);
   vec4 c = uModelToClip * vec4(v.xyz, 1.0);
-  if ((uSlab > 0.0 && abs(d) > uSlab) || c.w < 1e-6) {
+  vec4 object = objectAt(uint(gl_InstanceID));
+  if ((uSlab > 0.0 && abs(d) > uSlab) || c.w < 1e-6 || object.a < 0.5) {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
   }
@@ -288,7 +318,7 @@ void main() {
   gl_Position = c;
   vCorner = corner;
   vSection = d;
-  vColour = colourAt(v, vec3(0.0));
+  vColour = colourAt(v, vec3(0.0), object.rgb);
 }
 `;
 
@@ -490,6 +520,11 @@ export class Renderer {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, TEXTURE_WIDTH, rows, 0, gl.RGBA, gl.FLOAT, chunk.vertices);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    const slots = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, slots);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32UI, TEXTURE_WIDTH, rows, 0, gl.RED_INTEGER, gl.UNSIGNED_INT, chunk.slots);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.bindTexture(gl.TEXTURE_2D, null);
     const vao = gl.createVertexArray()!;
     let segments: WebGLBuffer | undefined;
@@ -510,14 +545,45 @@ export class Renderer {
       vao,
       segmentCount: chunk.segmentCount,
       pointCount: chunk.pointCount,
-      bytes: chunk.vertices.byteLength + chunk.segmentCount * 16,
+      bytes: chunk.vertices.byteLength + chunk.slots.byteLength + chunk.segmentCount * 16,
       length: chunk.length,
+      slots,
+      objectIds: chunk.objectIds,
+      objectWeight: chunk.objectWeight,
+      objects: undefined,
+      tableVersion: -1,
+      shown: 1,
     };
+  }
+
+  /**
+   * Makes a chunk's object table for what the layer shows now (when it
+   * needs one), and sets the share of it shown.
+   */
+  shade(chunk: GpuChunk, shading: ObjectShading): void {
+    if (chunk.tableVersion === shading.version) return;
+    chunk.tableVersion = shading.version;
+    if (!needsTable(shading)) {
+      chunk.shown = 1;
+      return;
+    }
+    const { gl } = this;
+    const { table, rows, shown } = objectTable(chunk.objectIds, chunk.objectWeight, shading);
+    chunk.shown = shown;
+    chunk.objects ??= gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, chunk.objects);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, TEXTURE_WIDTH, rows, 0, gl.RGBA, gl.UNSIGNED_BYTE, table);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.bindTexture(gl.TEXTURE_2D, null);
   }
 
   release(chunk: GpuChunk): void {
     const { gl } = this;
     gl.deleteTexture(chunk.texture);
+    gl.deleteTexture(chunk.slots);
+    if (chunk.objects) gl.deleteTexture(chunk.objects);
     if (chunk.segments) gl.deleteBuffer(chunk.segments);
     gl.deleteVertexArray(chunk.vao);
   }
@@ -526,7 +592,7 @@ export class Renderer {
   draw(chunks: GpuChunk[], pass: Pass, outputs: Outputs, u: DrawUniforms): void {
     const { gl } = this;
     for (const points of [false, true]) {
-      const some = chunks.filter((c) => (points ? c.pointCount > 0 : c.segmentCount > 0));
+      const some = chunks.filter((c) => (points ? c.pointCount > 0 : c.segmentCount > 0) && (!u.objectTable || (c.shown > 0 && c.objects !== undefined)));
       if (some.length === 0) continue;
       const key = `${points ? "p" : "l"}|${pass}|${outputs.color},${outputs.z},${outputs.pick}`;
       const p = this.compile(key, points ? POINT_VS : LINE_VS, fragment(points, pass, outputs));
@@ -549,8 +615,16 @@ export class Renderer {
       gl.uniform1f(this.uniform(p, "uDepthCut"), u.depthCut);
       gl.uniform1i(this.uniform(p, "uDepthNear"), u.depthNear ? 1 : 0);
       gl.uniform1i(this.uniform(p, "uVertices"), 0);
-      gl.activeTexture(gl.TEXTURE0);
+      gl.uniform1i(this.uniform(p, "uSlots"), 1);
+      gl.uniform1i(this.uniform(p, "uObjects"), 2);
+      gl.uniform1i(this.uniform(p, "uObjectTable"), u.objectTable ? 1 : 0);
       for (const chunk of some) {
+        // Bound whether used or not: a sampler must not meet a texture of another kind left on its unit.
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, chunk.slots);
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, chunk.objects ?? null);
+        gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, chunk.texture);
         if (points) {
           this.emptyVao ??= gl.createVertexArray()!;
@@ -562,6 +636,11 @@ export class Renderer {
         }
       }
       gl.bindVertexArray(null);
+      for (const unit of [gl.TEXTURE2, gl.TEXTURE1]) {
+        gl.activeTexture(unit);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+      }
+      gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, null);
     }
   }

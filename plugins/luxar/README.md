@@ -24,7 +24,8 @@ point tables). Nothing is converted and no files are written.
 | `render_gl.ts` | WebGL2: the line and point shaders, upload, the tone-mapping composite |
 | `chunks.ts` | Levels of detail and which chunks a view reads and draws; the per-context GPU cache |
 | `client.ts`, `luxar_worker.ts` | Reading a store's chunks with the Zarr Vectors reader, in a worker |
-| `chunk_build.ts` | A decoded chunk made ready to draw: a vertex texture and (previous, start, end, next) segments |
+| `chunk_build.ts` | A decoded chunk made ready to draw: a vertex texture, (previous, start, end, next) segments, and each vertex's object as a slot in the chunk's list of objects |
+| `segments.ts` | Which of a chunk's objects show and their colours: the table the shaders look each vertex's object up in |
 | `view_math.ts` | Matrices, frustum and slab tests, level choice |
 | `camera.ts` | Optional momentum on rotating the 3-D view |
 | `style.ts` | The per-layer style kept in the workspace |
@@ -156,18 +157,43 @@ the objects was tried first: it makes a sparse sample's few lines glare.
 
 ### Setting Neuroglancer's own drawing aside
 
-While a layer is drawn here, its segments are shown as a temporary set
-naming no object (`setTemporaryVisibleSegments`). Neuroglancer then neither
-draws the layer's overview nor reads chunks for it (the dense layer reads
-nothing when nothing it would draw is visible), and temporary sets are not
-saved: a link with Luxar layers opened without this plugin shows the layers
-drawn by Neuroglancer. The layer itself stays visible, which keeps the
-3-D drawer (a render layer of that layer) drawing; hiding the layer hides
-both.
+While a layer is drawn here, Neuroglancer's drawing of it is hidden
+(`viewer.hideLayerDrawing`): the engine shows its segments as a temporary
+set naming no object. Neuroglancer then neither draws the layer's overview
+nor reads chunks for it (the dense layer reads nothing when nothing it
+would draw is visible), and temporary sets are not saved: a link with
+Luxar layers opened without this plugin shows the layers drawn by
+Neuroglancer. The layer itself stays visible, which keeps the 3-D drawer
+(a render layer of that layer) drawing; hiding the layer hides both.
 
-The cost: a layer whose segments are being chosen by another tool through
-a temporary set (track filtering's group layers) cannot be drawn here
-without losing that choice; see *What is left*.
+### The layer's chosen segments
+
+What the layer shows is drawn, as Neuroglancer would draw it: every object
+when no segment is chosen (and the layer's *ignore null visible set* is on,
+the default), else only the chosen segments. The engine keeps the set
+apart from its hiding (`viewer.visibleSegments`): the layer's own
+`segments`, or a temporary set another plugin gives
+(`setTemporaryVisibleSegments`, as track filtering does for a group), which
+the engine keeps while the drawing is hidden and puts back when it is shown
+again.
+
+Each built chunk lists its objects, and each vertex names its object by a
+slot in that list (an R32UI texture beside the vertex texture). For what
+the layer shows now, each chunk gets a small RGBA8 table, one texel per
+object: shown or not, and the object's colour as Neuroglancer colours it
+(a colour chosen for it, the layer's default colour, or the hash of its id
+with the layer's seed, and the layer's saturation; *Colour: the layer's
+segment colours*). The line and point shaders look the vertex's object up
+and drop what is hidden. Tables are made again when the segments or
+colours change (`viewer.onSegmentsChanged`), not the chunks. A chunk none
+of whose objects shows is not drawn. Automatic brightness counts only the
+share of a chunk's lines that shows.
+
+Coarse levels of a tractogram hold a sample of the streamlines, so few of
+the chosen ones may be in them. A view showing a share of the objects
+reads more vertices (the Detail over that share, at most eight times the
+Detail), which picks a finer level; the share is the least it has seen for
+these segments, so the level settles.
 
 ### Momentum
 
@@ -185,14 +211,14 @@ momentum in the engine.
   faces, which soft-shaded triangles need (the decoder has them, as
   `DecodedChunk.faces`; exposing them is a change to the Zarr Vectors
   reader). Point clouds and every line kind are drawn fully.
-- **Selections**: the layer's selected segments are not honoured; the
-  layer is drawn whole. A track-filtering group layer is drawn right once
-  track filtering has given it a store of its own (streamline groups get
-  one a moment after their exact answer); before that it reads the whole
-  dataset. Both use temporary segment sets, so a group's next answer can
-  bring Neuroglancer's own drawing back until the layer's source changes.
-  Drawing groups from track filtering's `trackFiltering.groups` service
-  (`curves(id, n)`) would avoid that.
+- **A few chosen segments** are read as the chunks that hold them, whole:
+  a handful of streamlines out of a whole brain reads the chunks of a
+  level about eight times the Detail, and coarse levels show only those of
+  them in their sample. Reading the chosen objects alone (the reader's
+  `ObjectReader`, or track filtering's `trackFiltering.groups` service,
+  `curves(id, n)`) would draw them whole at any zoom, as Neuroglancer's
+  per-object skeletons do. Objects not chosen are not drawn at all, even
+  when the layer's *notSelectedAlpha* would show them faintly.
 - **Bloom** (Luxar's glow around bright light) is not done.
 - **Free line ends** are square: Luxar's soft cap would need to know which
   chunk-boundary ends continue in the next chunk (the reader's

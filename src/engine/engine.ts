@@ -15,6 +15,7 @@ import {
   changeLayerName,
   deleteLayer,
   EventActionMap,
+  getBaseObjectColor,
   getDefaultPerspectivePanelBindings,
   getDefaultSliceViewPanelBindings,
   getStatusMessageContainers,
@@ -135,6 +136,10 @@ export const LAYOUTS: [string, string][] = [
  * frame, and never lets it throw into Neuroglancer: a listener that throws
  * inside a layer-change dispatch makes Neuroglancer drop the layer.
  */
+/** A segment id no store uses: the temporary set that hides a segmentation layer's drawing. */
+const HIDDEN_SEGMENTS = new BigUint64Array([0xffffffffffffffffn]);
+const segmentColourScratch = new Float32Array(4);
+
 export function deferred(callback: () => void): () => void {
   let pending = false;
   return () => {
@@ -314,6 +319,15 @@ export class Engine {
     });
     // Segmentations drawn as outlines keep their outline layers' colours in step.
     this.disposers.push(watchOutlines(this));
+    // Segmentation layers whose drawing a plugin hides stay hidden when made afresh.
+    const lm = this.viewer.layerManager;
+    for (const signal of [lm.layersChanged, lm.readyStateChanged, lm.specificationChanged]) {
+      this.disposers.push(
+        signal.add(() => {
+          if (this.hiddenSegments.size > 0) this.rehideSegments();
+        }),
+      );
+    }
   }
 
   // ------------------------------------------------------------- state
@@ -366,8 +380,14 @@ export class Engine {
    * for a plugin that draws the layer itself (Luxar's splats).  Not saved:
    * the state keeps the opacity the layer had, and a change to it while
    * hidden (an undo, the opacity slider) becomes the opacity it returns to.
+   * A segmentation layer's segments are shown as a temporary set naming no
+   * object instead (see `hiddenSegments`).
    */
   hideDrawing(name: string, hide: boolean): void {
+    if (this.segmentationLayer(name) !== undefined || this.hiddenSegments.has(name)) {
+      this.hideSegmentDrawing(name, hide);
+      return;
+    }
     const known = this.hiddenDrawing.get(name);
     if (!hide) {
       if (known === undefined) return;
@@ -924,13 +944,45 @@ export class Engine {
   }
 
   /**
+   * Temporary visible sets plugins asked for (`setTemporaryVisibleSegments`),
+   * with the layer state each was set on: a layer made afresh forgets its
+   * set, as Neuroglancer's own does.
+   */
+  private readonly temporarySegments = new Map<string, { group: object; ids: BigUint64Array; set?: Set<bigint> }>();
+  /**
+   * Segmentation layers whose own drawing a plugin hides (Luxar draws them),
+   * with the layer state it was hidden on: their segments are shown as a
+   * temporary set naming no object, which Neuroglancer neither draws nor
+   * reads chunks for, while `visibleSegments` still says what they show.
+   */
+  private readonly hiddenSegments = new Map<string, object | undefined>();
+  /** Called when a layer's claimed temporary set changes (listeners of `onSegmentsChanged`). */
+  private readonly segmentListeners = new Map<string, Set<() => void>>();
+
+  /**
    * Shows only `ids` in a segmentation layer, through its temporary visible
    * set: not saved in the state, so a filter result never bloats the link.
-   * `undefined` returns the layer to its ordinary visible segments.
+   * `undefined` returns the layer to its ordinary visible segments.  While
+   * the layer's drawing is hidden (`hideDrawing`) the set is kept and
+   * reported by `visibleSegments`, and shown when the drawing is.
    */
   setTemporaryVisibleSegments(name: string, ids: BigUint64Array | undefined): void {
     const group = this.segmentationLayer(name)?.displayState.segmentationGroupState.value;
     if (group === undefined) return;
+    if (ids === undefined) this.temporarySegments.delete(name);
+    else this.temporarySegments.set(name, { group, ids: BigUint64Array.from(ids) });
+    this.applySegments(name);
+    for (const listener of this.segmentListeners.get(name) ?? []) listener();
+  }
+
+  /** Puts a layer's temporary visible set as it should be: none, a plugin's set, or (hidden) no object. */
+  private applySegments(name: string): void {
+    const group = this.segmentationLayer(name)?.displayState.segmentationGroupState.value;
+    if (group === undefined) return;
+    const claim = this.temporarySegments.get(name);
+    const hidden = this.hiddenSegments.has(name);
+    if (hidden) this.hiddenSegments.set(name, group);
+    const ids = hidden ? HIDDEN_SEGMENTS : claim?.group === group ? claim.ids : undefined;
     group.temporaryVisibleSegments.clear();
     if (ids === undefined) {
       group.useTemporaryVisibleSegments.value = false;
@@ -938,6 +990,116 @@ export class Engine {
     }
     group.temporaryVisibleSegments.add(ids);
     group.useTemporaryVisibleSegments.value = true;
+  }
+
+  /** Hides a segmentation layer's drawing or shows it again (see `hiddenSegments`). */
+  private hideSegmentDrawing(name: string, hide: boolean): void {
+    if (hide === this.hiddenSegments.has(name)) {
+      // Hidden already: again only on a layer made afresh.
+      const group = this.segmentationLayer(name)?.displayState.segmentationGroupState.value;
+      if (!hide || group === undefined || this.hiddenSegments.get(name) === group) return;
+    }
+    if (hide) this.hiddenSegments.set(name, undefined);
+    else this.hiddenSegments.delete(name);
+    this.applySegments(name);
+  }
+
+  /** Hides again the segmentation layers made afresh (an undo, a source changed) while hidden. */
+  private rehideSegments(): void {
+    for (const [name, group] of this.hiddenSegments) {
+      const now = this.segmentationLayer(name)?.displayState.segmentationGroupState.value;
+      if (now !== undefined && now !== group) this.applySegments(name);
+    }
+  }
+
+  /**
+   * What a segmentation layer shows, as Neuroglancer would draw it (were its
+   * drawing not hidden): every object (`all`: no segment chosen and
+   * `ignoreNullVisibleSet`), or those `has` says.  The segments are a
+   * plugin's temporary set when one is set, else the layer's own.
+   */
+  visibleSegments(name: string): { all: boolean; size: number; has(id: bigint): boolean } | undefined {
+    const layer = this.segmentationLayer(name);
+    if (layer === undefined) return undefined;
+    const { displayState } = layer;
+    const group = displayState.segmentationGroupState.value;
+    const claim = this.temporarySegments.get(name);
+    const ignoreNull = displayState.ignoreNullVisibleSet.value;
+    if (claim !== undefined && claim.group === group) {
+      const set = (claim.set ??= new Set(claim.ids));
+      return { all: set.size === 0 && ignoreNull, size: set.size, has: (id) => set.has(id) };
+    }
+    // A temporary set Neuroglancer itself made (not ours to hide behind).
+    const own = !this.hiddenSegments.has(name) && group.useTemporaryVisibleSegments.value ? group.temporaryVisibleSegments : group.visibleSegments;
+    return { all: own.size === 0 && ignoreNull, size: own.size, has: (id) => own.has(id) };
+  }
+
+  /**
+   * A segment's colour in a segmentation layer, as Neuroglancer colours it
+   * (a colour stated for it, the layer's default colour, or the hash of its
+   * id with the layer's seed), with the layer's saturation.  RGB, 0 to 1.
+   */
+  segmentColour(name: string, id: bigint): [number, number, number] | undefined {
+    const layer = this.segmentationLayer(name);
+    if (layer === undefined) return undefined;
+    const ds = layer.displayState;
+    const c = getBaseObjectColor(ds as unknown as Parameters<typeof getBaseObjectColor>[0], id, segmentColourScratch);
+    const s = ds.saturation.value;
+    return [c[0] * s + 1 - s, c[1] * s + 1 - s, c[2] * s + 1 - s];
+  }
+
+  /**
+   * Calls back when what a segmentation layer shows or how its segments are
+   * coloured changes: its segments, a plugin's temporary set, the colours,
+   * or the layer made afresh.
+   */
+  onSegmentsChanged(name: string, callback: () => void): Disposer {
+    const run = deferred(callback);
+    let bound: object | undefined;
+    let offs: (() => void)[] = [];
+    const unbind = () => {
+      offs.forEach((off) => off());
+      offs = [];
+    };
+    const bind = () => {
+      const layer = this.segmentationLayer(name);
+      const groupState = layer?.displayState.segmentationGroupState.value;
+      const colours = layer?.displayState.segmentationColorGroupState.value;
+      const token = layer === undefined ? undefined : [layer, groupState, colours];
+      if (token !== undefined && bound !== undefined && (bound as unknown[]).every((v, i) => v === token[i])) return;
+      unbind();
+      bound = token;
+      run();
+      if (layer === undefined) return;
+      const ds = layer.displayState;
+      for (const signal of [
+        groupState!.visibleSegments.changed,
+        groupState!.temporaryVisibleSegments.changed,
+        groupState!.useTemporaryVisibleSegments.changed,
+        ds.ignoreNullVisibleSet.changed,
+        ds.saturation.changed,
+        colours!.segmentColorHash.changed,
+        colours!.segmentStatedColors.changed,
+        colours!.segmentDefaultColor.changed,
+      ]) {
+        offs.push(signal.add(run));
+      }
+      // The layer's group (a link to another layer's) changing.
+      offs.push(ds.segmentationGroupState.changed.add(bind), ds.segmentationColorGroupState.changed.add(bind));
+    };
+    const lm = this.viewer.layerManager;
+    const offLayers = [lm.layersChanged.add(bind), lm.readyStateChanged.add(bind), lm.specificationChanged.add(bind)];
+    let listeners = this.segmentListeners.get(name);
+    if (listeners === undefined) this.segmentListeners.set(name, (listeners = new Set()));
+    listeners.add(run);
+    bind();
+    return () => {
+      offLayers.forEach((off) => off());
+      unbind();
+      const set = this.segmentListeners.get(name);
+      set?.delete(run);
+      if (set?.size === 0) this.segmentListeners.delete(name);
+    };
   }
 
   /** A layer's first source's transform (see the SDK's ViewerApi.layerTransform). */

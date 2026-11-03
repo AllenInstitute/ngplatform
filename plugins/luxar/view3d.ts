@@ -14,7 +14,7 @@ import type { Drawer3d, Frame3d } from "@ngplatform/sdk";
 import { GpuChunks, selectChunks, type Selection } from "./chunks.js";
 import type { LayerView } from "./layer_view.js";
 import { DepthTarget, LightTarget, Renderer } from "./render_gl.js";
-import { apply, boxInFrustum, coverage, invertAffine, modelTo, multiply, pixelsPerUnit, screenArea } from "./view_math.js";
+import { apply, boxInFrustum, coverage, invertAffine, modelTo, multiply, pixelsPerUnit, screenArea, shownShare } from "./view_math.js";
 
 /** GPU memory for one layer's chunks in the 3-D view. */
 const GPU_BYTES = 768 * 1024 * 1024;
@@ -102,12 +102,13 @@ export class View3d implements Drawer3d {
     const toModel = invertAffine(toDisplay);
     const centre = toModel ? apply(toModel, frame.position) : [0, 0, 0];
     const style = view.style;
-    const selection = selectChunks(info, (lo, hi) => boxInFrustum(modelToClip, lo, hi), centre, style.detail * 1e6, (k) => chunks.arrived(k));
+    const selection = selectChunks(info, (lo, hi) => boxInFrustum(modelToClip, lo, hi), centre, view.budget("3d"), (k) => chunks.arrived(k));
     this.selection = selection;
     view.client.want("3d", selection.want);
-    const { chunks: drawn, more } = chunks.take(selection.draw);
+    const { chunks: drawn, more } = chunks.take(selection.draw, view.objectShading());
     if (more) view.redraw();
     view.reportLevel("3d", selection);
+    if (drawn.length > 0) view.reportShare("3d", shownShare(drawn));
     if (drawn.length === 0) return;
 
     const saved = this.save(gl);

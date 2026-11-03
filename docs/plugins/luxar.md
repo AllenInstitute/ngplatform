@@ -37,13 +37,16 @@ is converted.
   first; finer levels replace it as you zoom in, only for the chunks in view.
 - **Momentum** (at the bottom): let go of a rotation in the 3-D view while
   moving and it keeps turning, slowing to a stop.
+- **Segments**: when the layer shows only some objects (segments chosen in
+  its Segments tab or in the link, or another tool's choice, such as a
+  track-filtering group), only those are drawn. *Colour: the layer's
+  segment colours* colours each object as Neuroglancer does.
 - Hiding the layer hides its Luxar drawing too. A link opened where the
   plugin is off shows the layer drawn by Neuroglancer as usual.
 
-Not yet: meshes, a layer's selected segments and track filtering's groups
-by id (a group layer that has its own store is drawn whole, which is the
-group), Luxar's bloom, and fitted Gaussian splats (Luxar's GPU fit, which
-makes new files).
+Not yet: meshes, track filtering's groups by id (a group layer that has its
+own store is drawn whole, which is the group), Luxar's bloom, and fitted
+Gaussian splats (Luxar's GPU fit, which makes new files).
 
 ## Images as splats
 

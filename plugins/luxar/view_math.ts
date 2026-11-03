@@ -235,10 +235,36 @@ export function screenArea(modelToClip: ArrayLike<number>, lower: number[], uppe
  * screen times their width, over the view's area (`share` of them showing,
  * for a 2-D view's slab).
  */
-export function coverage(chunks: { length: number; pointCount: number }[], pixelsPerUnit: number, widthPx: number, area: number, share = 1): number {
+export function coverage(chunks: { length: number; pointCount: number; shown?: number }[], pixelsPerUnit: number, widthPx: number, area: number, share = 1): number {
   let covered = 0;
-  for (const c of chunks) covered += c.length * pixelsPerUnit * widthPx + c.pointCount * Math.PI * (1.5 * widthPx) ** 2;
+  // Of a chunk whose objects are not all shown (a layer's chosen segments), its share shown.
+  for (const c of chunks) covered += (c.length * pixelsPerUnit * widthPx + c.pointCount * Math.PI * (1.5 * widthPx) ** 2) * (c.shown ?? 1);
   return area > 0 ? (covered * share) / area : 0;
+}
+
+/** The share of these chunks' lines and points shown (a layer's chosen segments), by weight; 1 with none. */
+export function shownShare(chunks: { length: number; pointCount: number; shown?: number }[]): number {
+  let total = 0;
+  let shown = 0;
+  for (const c of chunks) {
+    const w = c.length + c.pointCount;
+    total += w;
+    shown += w * (c.shown ?? 1);
+  }
+  return total > 0 ? shown / total : 1;
+}
+
+/** At most this many times the Detail is read for a view showing a few of a layer's objects. */
+export const MAX_SELECTION_BOOST = 8;
+
+/**
+ * The vertex budget for a view: the Detail, raised when only a share of the
+ * objects shows (a layer's chosen segments: the vertices drawn, not those
+ * read, are what Detail aims at, and a coarse level is only a sample of the
+ * objects), at most MAX_SELECTION_BOOST times.
+ */
+export function vertexBudget(detail: number, share: number): number {
+  return (detail * 1e6) / Math.max(1 / MAX_SELECTION_BOOST, Math.min(1, share));
 }
 
 /**

@@ -4,11 +4,13 @@
  *
  * Each layer with it on gets a LayerView (./layer_view.ts): its own reading
  * worker, a drawer in the 3-D view and a canvas over the 2-D views.
- * Neuroglancer's own drawing of the layer is set aside while it is on by
- * showing the layer's segments as a temporary set naming no object, which
- * Neuroglancer neither draws nor reads chunks for, and which is never
- * saved: the same link opened without this plugin shows the layer as
- * Neuroglancer draws it.
+ * Neuroglancer's own drawing of the layer is hidden while it is on
+ * (`hideLayerDrawing`: a Zarr Vectors layer's segments shown as a temporary
+ * set naming no object, which Neuroglancer neither draws nor reads chunks
+ * for; an image's opacity 0), never saved: the same link opened without
+ * this plugin shows the layer as Neuroglancer draws it.  What the layer
+ * shows (its chosen segments, or another plugin's temporary set, such as a
+ * track-filtering group's) is still known (`visibleSegments`), and drawn.
  */
 import type { Disposer, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
@@ -28,9 +30,6 @@ import {
   type Saved,
   TONE_LABELS,
 } from "./style.js";
-
-/** A segment id no store uses: the temporary set that sets Neuroglancer's drawing of a layer aside. */
-const NO_OBJECT = new BigUint64Array([0xffffffffffffffffn]);
 
 type Child = Node | string | null | undefined | false;
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
@@ -64,10 +63,8 @@ export function storeOfLayer(layer: LayerInfo): string | undefined {
 class Luxar {
   private saved: Saved;
   private readonly views = new Map<string, LayerView | SplatView>();
-  /** Layers whose drawing is set aside, so it can be given back. */
-  private readonly hidden = new Map<string, string>();
-  /** Images whose own drawing is hidden while their splats are drawn. */
-  private readonly imagesHidden = new Set<string>();
+  /** Layers whose own drawing is hidden while this plugin draws them. */
+  private readonly drawingHidden = new Set<string>();
   private panelUpdate: (() => void) | undefined;
   private statusUpdate: (() => void) | undefined;
   /** The layer whose settings the panel shows. */
@@ -158,38 +155,22 @@ class Luxar {
       } else if (view.style !== style) view.setStyle(style);
       view.setVisible(layer.visible);
     }
-    // Neuroglancer's own drawing is set aside exactly while ours is on: set
-    // again when a layer's sources change, as a layer made afresh forgets its
-    // temporary set (and only then: setting it changes the layer).
-    for (const name of [...this.hidden.keys()]) {
-      if (!this.views.has(name)) {
-        this.hidden.delete(name);
-        if (layers.has(name)) this.ctx.viewer.setTemporaryVisibleSegments(name, undefined);
-      }
-    }
-    // An image is drawn either by Neuroglancer or as splats, not both: its own drawing is hidden
-    // (not in the link) while its splats are on; asked each time, as a layer made afresh shows again.
-    for (const name of [...this.imagesHidden]) {
-      if (this.views.get(name) instanceof SplatView) continue;
-      this.imagesHidden.delete(name);
+    // A layer is drawn either by Neuroglancer or here, not both: its own
+    // drawing is hidden (not in the link) while ours is on; asked each time,
+    // as a layer still loading may not take it yet, and a layer made afresh
+    // shows again (the engine does nothing when it is hidden already).
+    for (const name of [...this.drawingHidden]) {
+      if (this.views.has(name)) continue;
+      this.drawingHidden.delete(name);
       if (layers.has(name)) this.ctx.viewer.hideLayerDrawing(name, false);
     }
-    for (const [name, view] of this.views) {
-      if (!(view instanceof SplatView)) continue;
-      this.imagesHidden.add(name);
+    for (const name of this.views.keys()) {
+      this.drawingHidden.add(name);
       this.ctx.viewer.hideLayerDrawing(name, true);
     }
     // Splats add light to the 2-D views: on black, as the image they stand for is drawn.
-    this.ctx.viewer.setTemporaryBackground(this.imagesHidden.size > 0 ? [0, 0, 0] : undefined);
-    for (const [name, view] of this.views) {
-      if (!(view instanceof LayerView)) continue;
-      // Once its data has loaded, too: a layer still loading may not take the set yet.
-      const layer = layers.get(name)!;
-      const key = `${layer.ready}\n${layer.sources.join("\n")}`;
-      if (this.hidden.get(name) === key) continue;
-      this.hidden.set(name, key);
-      this.ctx.viewer.setTemporaryVisibleSegments(name, NO_OBJECT);
-    }
+    const splats = [...this.views.values()].some((v) => v instanceof SplatView);
+    this.ctx.viewer.setTemporaryBackground(splats ? [0, 0, 0] : undefined);
     this.momentum.set(this.saved.momentum);
   }
 
@@ -378,12 +359,11 @@ class Luxar {
   dispose(): void {
     this.offs.forEach((off) => off());
     for (const view of this.views.values()) view.dispose();
-    for (const name of this.hidden.keys()) this.ctx.viewer.setTemporaryVisibleSegments(name, undefined);
-    for (const name of this.imagesHidden) this.ctx.viewer.hideLayerDrawing(name, false);
-    if (this.imagesHidden.size > 0) this.ctx.viewer.setTemporaryBackground(undefined);
-    this.imagesHidden.clear();
+    const splats = [...this.views.values()].some((v) => v instanceof SplatView);
+    for (const name of this.drawingHidden) this.ctx.viewer.hideLayerDrawing(name, false);
+    if (splats) this.ctx.viewer.setTemporaryBackground(undefined);
+    this.drawingHidden.clear();
     this.views.clear();
-    this.hidden.clear();
     this.momentum.dispose();
   }
 }

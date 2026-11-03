@@ -16,8 +16,8 @@
 import type { ViewPanelInfo } from "@ngplatform/sdk";
 import { GpuChunks, selectChunks, type Selection } from "./chunks.js";
 import type { LayerView } from "./layer_view.js";
-import { LightTarget, Renderer } from "./render_gl.js";
-import { apply, boxInFrustum, coverage, invertAffine, measurePanel, modelToPanel, multiply, pixelsPerUnit, screenArea } from "./view_math.js";
+import { type GpuChunk, LightTarget, Renderer } from "./render_gl.js";
+import { apply, boxInFrustum, coverage, invertAffine, measurePanel, modelToPanel, multiply, pixelsPerUnit, screenArea, shownShare } from "./view_math.js";
 
 const GPU_BYTES = 512 * 1024 * 1024;
 
@@ -153,6 +153,8 @@ export class View2d {
       height,
       view.client.arrivals,
       view.client.generation,
+      view.objectShading().version,
+      view.budget("2d"),
       info === undefined,
       layouts.map(({ rect, m }) => [rect.left, rect.top, rect.width, rect.height, Array.from(m.modelToClip, (v) => +v.toPrecision(9))]),
     ]);
@@ -190,13 +192,16 @@ export class View2d {
     const selections: Selection[] = [];
     let more = false;
     const want: string[][] = [];
+    const budget = view.budget("2d");
+    const drawnAll: GpuChunk[] = [];
     layouts.forEach(({ rect, m }) => {
-      const selection = selectChunks(info, (lo, hi) => boxInFrustum(m.modelToClip, lo, hi), m.centre, style.detail * 1e6, (k) => chunks.arrived(k));
+      const selection = selectChunks(info, (lo, hi) => boxInFrustum(m.modelToClip, lo, hi), m.centre, budget, (k) => chunks.arrived(k));
       selections.push(selection);
       want.push(selection.want);
-      const taken = chunks.take(selection.draw);
+      const taken = chunks.take(selection.draw, view.objectShading());
       more ||= taken.more;
       if (taken.chunks.length === 0) return;
+      drawnAll.push(...taken.chunks);
       const x = Math.round((rect.left - base.left) * dpr);
       const y = Math.round((base.bottom - rect.bottom) * dpr);
       const w = Math.round(rect.width * dpr);
@@ -226,6 +231,7 @@ export class View2d {
       }
     }
     view.client.want("2d", merged);
+    if (drawnAll.length > 0) view.reportShare("2d", shownShare(drawnAll));
     this.selections = selections;
     if (selections.length > 0) {
       const finest = selections.reduce((a, b) => (a.level <= b.level ? a : b));

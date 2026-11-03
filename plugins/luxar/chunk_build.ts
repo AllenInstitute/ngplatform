@@ -2,8 +2,11 @@
  * One spatial chunk of a Zarr Vectors level, made ready to draw: its
  * vertices as one texture's worth of (x, y, z, value), and its line
  * segments as (previous, start, end, next) vertex indices, so the line
- * shader can mitre each joint without looking anything up.  Pure, so the
- * worker and the tests share it.
+ * shader can mitre each joint without looking anything up.  Each vertex
+ * also names its object by a slot in the chunk's list of objects, so the
+ * views can show some objects and not others (a layer's chosen segments)
+ * and colour them as Neuroglancer does, by a small table per chunk.  Pure,
+ * so the worker and the tests share it.
  */
 
 /** Vertex texture width: rows of this many vertices. */
@@ -44,6 +47,12 @@ export interface BuiltChunk {
   upper: [number, number, number];
   /** Distinct objects in the chunk (for comparing levels). */
   objects: number;
+  /** Per vertex, its object's slot in `objectIds` (padded to whole texture rows, as `vertices`). */
+  slots: Uint32Array;
+  /** The chunk's objects in slot order: each id as two uint32, low word first. */
+  objectIds: Uint32Array;
+  /** Per slot, how much of the chunk the object is: its segments' length, or (points) its own vertices. */
+  objectWeight: Float32Array;
 }
 
 /** An object id's colour key: a well-mixed hash of its 64 bits, in [0, 1). */
@@ -82,6 +91,10 @@ export function buildChunk(input: ChunkInput, scalar: ScalarSource): BuiltChunk 
   const { positions, segmentIds } = input;
   const attribute = scalar.kind === "attribute" ? input.attributes[scalar.index] : undefined;
   const objects = new Set<number>();
+  const slots = new Uint32Array(rows * TEXTURE_WIDTH);
+  // Slots by id: the low word alone for the usual ids, both words otherwise.
+  const slotOf = new Map<number | string, number>();
+  const ids: number[] = [];
   for (let v = 0; v < n; ++v) {
     for (let k = 0; k < 3; ++k) {
       const p = positions[3 * v + k];
@@ -92,6 +105,14 @@ export function buildChunk(input: ChunkInput, scalar: ScalarSource): BuiltChunk 
     const lo = segmentIds[2 * v] ?? 0;
     const hi = segmentIds[2 * v + 1] ?? 0;
     if (v < own && hi === 0) objects.add(lo);
+    const key = hi === 0 ? lo : `${hi}:${lo}`;
+    let slot = slotOf.get(key);
+    if (slot === undefined) {
+      slot = ids.length / 2;
+      slotOf.set(key, slot);
+      ids.push(lo, hi);
+    }
+    slots[v] = slot;
     let value = 0;
     if (scalar.kind === "object") value = objectKey(lo, hi);
     else if (attribute !== undefined && scalar.kind === "attribute") {
@@ -136,6 +157,7 @@ export function buildChunk(input: ChunkInput, scalar: ScalarSource): BuiltChunk 
     return other === from ? v : other;
   };
   const segments = new Uint32Array(m * 4);
+  const objectWeight = new Float32Array(ids.length / 2);
   let count = 0;
   let length = 0;
   for (let e = 0; e < m; ++e) {
@@ -146,9 +168,12 @@ export function buildChunk(input: ChunkInput, scalar: ScalarSource): BuiltChunk 
     segments[4 * count + 1] = a;
     segments[4 * count + 2] = b;
     segments[4 * count + 3] = across(b, a);
-    length += Math.hypot(positions[3 * b] - positions[3 * a], positions[3 * b + 1] - positions[3 * a + 1], positions[3 * b + 2] - positions[3 * a + 2]);
+    const l = Math.hypot(positions[3 * b] - positions[3 * a], positions[3 * b + 1] - positions[3 * a + 1], positions[3 * b + 2] - positions[3 * a + 2]);
+    length += l;
+    objectWeight[slots[a]] += l;
     ++count;
   }
+  if (count === 0) for (let v = 0; v < own; ++v) objectWeight[slots[v]] += 1;
   if (n === 0) {
     lower.fill(0);
     upper.fill(0);
@@ -164,5 +189,8 @@ export function buildChunk(input: ChunkInput, scalar: ScalarSource): BuiltChunk 
     lower,
     upper,
     objects: objects.size,
+    slots,
+    objectIds: Uint32Array.from(ids),
+    objectWeight,
   };
 }

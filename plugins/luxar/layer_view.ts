@@ -1,16 +1,22 @@
 /**
  * One layer drawn in Luxar's style: its reading worker, its drawing in the
  * 3-D view (./view3d.ts) and over the 2-D views (./view2d.ts), and the
- * uniforms they share from its style.
+ * uniforms they share from its style.  Only the objects the layer shows are
+ * drawn (its chosen segments, or a plugin's temporary set, as Neuroglancer
+ * would draw them), and "segment" colours are the layer's segment colours.
  */
+
+/** Tables made by any layer view: each new shading gets a new version. */
+let shadingVersions = 0;
 import type { Disposer, LayerTransform, PlatformContext } from "@ngplatform/sdk";
 import type { Selection } from "./chunks.js";
 import { StoreClient } from "./client.js";
 import type { DrawUniforms } from "./render_gl.js";
+import { needsTable, type ObjectShading } from "./segments.js";
 import { COLORMAP_INDEX, COLOUR_INDEX, type LayerStyle, rgbOf, scalarOf, TONE_INDEX } from "./style.js";
 import { View2d } from "./view2d.js";
 import { View3d } from "./view3d.js";
-import { autoGain, directionMatrix } from "./view_math.js";
+import { autoGain, directionMatrix, vertexBudget } from "./view_math.js";
 
 export class LayerView {
   readonly client: StoreClient;
@@ -20,6 +26,10 @@ export class LayerView {
   private readonly levels = new Map<string, Selection>();
   private transformCache: { at: number; value: LayerTransform | undefined } | undefined;
   private readonly offs: Disposer[] = [];
+  private shading: (ObjectShading & { segmentColours: boolean; size: number }) | undefined;
+  private readonly colours = new Map<bigint, [number, number, number]>();
+  /** Per view, the share of what it last drew that showed (a layer's chosen segments). */
+  private readonly shares = new Map<string, { version: number; share: number }>();
   /** Called when what the panel shows about this layer changes. */
   onStatus: (() => void) | undefined;
 
@@ -39,6 +49,15 @@ export class LayerView {
       afterSections: true,
       dispose: () => this.view3d.dispose(),
     });
+    // What the layer shows, or its colours, changed: tables are made again.
+    this.offs.push(
+      ctx.viewer.onSegmentsChanged(name, () => {
+        this.shading = undefined;
+        this.colours.clear();
+        this.redraw();
+        this.onStatus?.();
+      }),
+    );
     this.client.onChunk = () => {
       this.redraw();
       this.onStatus?.();
@@ -71,6 +90,35 @@ export class LayerView {
     this.transformCache = undefined;
     this.handle.redraw();
     this.view2d.schedule();
+  }
+
+  /**
+   * The objects the layer shows and their colours: every object, or the
+   * chosen segments (`visibleSegments`), each in the layer's colour for it
+   * when the style colours by segment.
+   */
+  objectShading(): ObjectShading {
+    const segmentColours = this.style.colourBy === "segment";
+    if (this.shading !== undefined && this.shading.segmentColours === segmentColours) return this.shading;
+    const visible = this.ctx.viewer.visibleSegments(this.name);
+    const { ctx, name, colours } = this;
+    const colour = (id: bigint): [number, number, number] => {
+      let c = colours.get(id);
+      if (c === undefined) {
+        c = ctx.viewer.segmentColour(name, id) ?? [1, 1, 1];
+        colours.set(id, c);
+      }
+      return c;
+    };
+    this.shading = {
+      version: ++shadingVersions,
+      all: visible === undefined || visible.all,
+      has: (id) => visible === undefined || visible.has(id),
+      colour: segmentColours ? colour : undefined,
+      segmentColours,
+      size: visible?.size ?? 0,
+    };
+    return this.shading;
   }
 
   get toneIndex(): number {
@@ -108,7 +156,30 @@ export class LayerView {
       slab: 0,
       depthCut: 0.3,
       depthNear: false,
+      objectTable: needsTable(this.objectShading()),
     };
+  }
+
+  /** The vertices a view reads: the Detail, more when it shows only some of the objects. */
+  budget(view: string): number {
+    const shading = this.objectShading();
+    const known = this.shares.get(view);
+    return vertexBudget(this.style.detail, shading.all || known?.version !== shading.version ? 1 : known.share);
+  }
+
+  /**
+   * The share of what a view drew that showed, for its next budget: the
+   * least seen while the layer shows the same objects, so the budget only
+   * grows and the level settles rather than going back and forth.
+   */
+  reportShare(view: string, share: number): void {
+    const { version } = this.objectShading();
+    const known = this.shares.get(view);
+    const old = known?.version === version ? known.share : 1;
+    if (share >= old) return;
+    this.shares.set(view, { version, share });
+    // A new budget may choose another level: draw again.
+    if (vertexBudget(1, share) > 1.01 * vertexBudget(1, old)) this.redraw();
   }
 
   /** What a view read and drew, for the panel. */
@@ -131,6 +202,8 @@ export class LayerView {
     };
     const levels = [...this.levels.entries()].map(([view, s]) => `${view === "3d" ? "3-D" : "2-D"} level ${s.level}${share(s.level)}${s.complete ? "" : " (loading)"}`);
     const parts = [...new Set(levels)];
+    const shading = this.objectShading();
+    if (!shading.all) parts.unshift(this.shading!.size === 1 ? "1 segment shown" : `${this.shading!.size.toLocaleString()} segments shown`);
     if (client.pending > 0) parts.push(`${client.pending} chunks to read`);
     if (client.error !== undefined) parts.push(`a chunk failed: ${client.error}`);
     return [...problems, parts.join(" · ")].filter((p) => p).join(" ");

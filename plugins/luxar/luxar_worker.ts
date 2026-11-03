@@ -145,7 +145,7 @@ async function read(key: string, forScalar: string): Promise<void> {
       return;
     }
     const chunk = buildChunk(data, scalarSource(forScalar));
-    post({ type: "chunk", key, scalar: forScalar, chunk }, [chunk.vertices.buffer, chunk.segments.buffer]);
+    post({ type: "chunk", key, scalar: forScalar, chunk }, [chunk.vertices.buffer, chunk.segments.buffer, chunk.slots.buffer, chunk.objectIds.buffer, chunk.objectWeight.buffer]);
   } catch (e) {
     post({ type: "error", key, scalar: forScalar, message: (e as Error).message ?? String(e) });
   }

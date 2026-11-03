@@ -13,8 +13,13 @@
  */
 export type Blending = "glow" | "glow-through" | "emission" | "solid";
 
-/** What colours a line: its direction (RGB of |tangent|), its object, a vertex attribute through a colormap, or one colour. */
-export type ColourBy = "direction" | "object" | "attribute" | "solid";
+/**
+ * What colours a line: its direction (RGB of |tangent|), its object, a
+ * vertex attribute through a colormap, one colour, or its segment's colour
+ * in the layer (as Neuroglancer colours it: a colour chosen for it, the
+ * layer's default colour, or the layer's hash of its id).
+ */
+export type ColourBy = "direction" | "object" | "attribute" | "solid" | "segment";
 
 export type Colormap = "viridis" | "magma" | "inferno" | "plasma" | "turbo" | "grey";
 
@@ -65,7 +70,7 @@ export const DEFAULT_STYLE: LayerStyle = {
 };
 
 const BLENDINGS: Blending[] = ["glow", "glow-through", "emission", "solid"];
-const COLOUR_BY: ColourBy[] = ["direction", "object", "attribute", "solid"];
+const COLOUR_BY: ColourBy[] = ["direction", "object", "attribute", "solid", "segment"];
 const COLORMAPS: Colormap[] = ["viridis", "magma", "inferno", "plasma", "turbo", "grey"];
 const TONE_MAPS: ToneMap[] = ["aces-hue", "aces", "reinhard", "clamp"];
 
@@ -80,6 +85,7 @@ export const COLOUR_LABELS: [ColourBy, string][] = [
   ["object", "Each object its own colour"],
   ["attribute", "An attribute, through a colormap"],
   ["solid", "One colour"],
+  ["segment", "The layer's segment colours"],
 ];
 export const COLORMAP_LABELS: [Colormap, string][] = COLORMAPS.map((c) => [c, c === "grey" ? "Grey" : c[0].toUpperCase() + c.slice(1)]);
 export const TONE_LABELS: [ToneMap, string][] = [
@@ -140,7 +146,7 @@ export function rgbOf(hex: string): [number, number, number] {
 
 export const COLORMAP_INDEX: Record<Colormap, number> = { viridis: 0, magma: 1, inferno: 2, plasma: 3, turbo: 4, grey: 5 };
 export const TONE_INDEX: Record<ToneMap, number> = { aces: 0, reinhard: 1, clamp: 2, "aces-hue": 3 };
-export const COLOUR_INDEX: Record<ColourBy, number> = { direction: 0, object: 1, attribute: 2, solid: 3 };
+export const COLOUR_INDEX: Record<ColourBy, number> = { direction: 0, object: 1, attribute: 2, solid: 3, segment: 4 };
 
 /**
  * What the worker puts in each vertex's fourth value, for a style: an
