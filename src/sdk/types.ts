@@ -299,6 +299,8 @@ export interface FieldWarpPart {
   after?: number[][];
   invert?: boolean;
   components?: string[];
+  /** A coordinate field (OME-NGFF 0.6's `coordinates`): its values are places in the source, not displacements. */
+  absolute?: boolean;
 }
 
 export interface ViewerApi {

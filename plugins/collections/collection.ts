@@ -245,7 +245,7 @@ export function placeInto(root: CollectionNode, member: CollectionNode, system: 
  * vector components in order (its transform's output system's), when the
  * tree names that system.
  */
-export type Step = { kind: "affine"; m: Mat4 } | { kind: "field"; url: string; inverse: boolean; components?: string[] };
+export type Step = { kind: "affine"; m: Mat4 } | { kind: "field"; url: string; inverse: boolean; components?: string[]; absolute?: boolean };
 
 /**
  * A transform as steps on x, y, z (the axes in `axes` order, its output
@@ -259,6 +259,11 @@ export function transformSteps(t: any, axes: string[] | undefined, document: str
   if (t?.type === INVERSE) {
     const inner = transformSteps(t.of, axes, document);
     return inner && invertSteps(inner);
+  }
+  if (t?.type === "coordinates") {
+    // The field's values are the output places themselves; walked backwards only as a bijection's stated inverse.
+    if (typeof t.path !== "string") return undefined;
+    return [{ kind: "field", url: resolvePath(t.path, document), inverse: false, absolute: true, ...(axes ? { components: axes } : {}) }];
   }
   if (t?.type === "displacements") {
     if (typeof t.path !== "string") return undefined;
@@ -296,6 +301,7 @@ export function inverseOf(t: any): any {
 export function invertSteps(steps: Step[]): Step[] | undefined {
   const out: Step[] = [];
   for (const s of [...steps].reverse()) {
+    // A coordinate map's inverse is only marked: it can be undone again, not applied (see `fieldWarp`).
     if (s.kind === "field") out.push({ ...s, inverse: !s.inverse });
     else {
       const m = invert(s.m);
@@ -373,10 +379,12 @@ export function fieldWarp(steps: Step[], unit: number): { placement: Mat4; warp:
       continue;
     }
     // Undoing x → x + D(x) is the field's inverse (invertSteps has turned the flag); undoing its inverse is the field.
-    parts.push({ kind: "field", url: s.url, before: pending.map((m) => inMm(m, unit)), after: [], invert: s.inverse, ...(s.components ? { components: s.components } : {}) });
+    parts.push({ kind: "field", url: s.url, before: pending.map((m) => inMm(m, unit)), after: [], invert: s.inverse, ...(s.components ? { components: s.components } : {}), ...(s.absolute ? { absolute: true } : {}) });
     pending = [];
   }
   parts[parts.length - 1].after = pending.map((m) => inMm(m, unit));
+  // A coordinate map is applied only as written (its inverse is not computed here).
+  if (parts.some((p) => p.absolute && p.invert)) return undefined;
   return { placement, warp: parts.length === 1 ? parts[0] : { kind: "fields", parts } };
 }
 
@@ -388,6 +396,7 @@ export interface FieldPart {
   after: Mat4[];
   invert: boolean;
   components?: string[];
+  absolute?: boolean;
 }
 
 const DTYPE_RANGE: Record<string, [number, number]> = {

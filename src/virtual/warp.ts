@@ -262,6 +262,11 @@ export interface FieldSpec {
   components: number[];
   /** Millimetres in one unit of a displacement. */
   mm: number;
+  /**
+   * A coordinate field (OME-NGFF 0.6's `coordinates`): the values are the
+   * place itself, q → C(q), not a displacement from it.  Not inverted.
+   */
+  absolute?: boolean;
 }
 
 /** The field's box [lo, hi) of its grid: one array per component (C order, the grid's axes). */
@@ -282,6 +287,7 @@ export class FieldWarp implements Warp {
     readonly spec: FieldSpec,
     private readonly read: FieldReader,
   ) {
+    if (spec.absolute && spec.invert) throw new Error("a coordinate field's inverse is not computed: give its inverse as a field of its own (a bijection)");
     this.before = composeAffines(spec.before);
     this.after = composeAffines(spec.after);
   }
@@ -379,7 +385,9 @@ export class FieldWarp implements Warp {
     return (p, out) => {
       applyAffine(this.before, p, q);
       D(q, d);
-      if (!this.spec.invert) {
+      if (this.spec.absolute) {
+        for (let k = 0; k < 3; ++k) x[k] = d[k];
+      } else if (!this.spec.invert) {
         for (let k = 0; k < 3; ++k) x[k] = q[k] + d[k];
       } else {
         for (let k = 0; k < 3; ++k) x[k] = q[k] - d[k];

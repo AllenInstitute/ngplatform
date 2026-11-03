@@ -36,8 +36,10 @@ each placed by its transforms, with the **Collections** panel beside it.
   view it, and marked **warped** in the graph (dashed) and under
   **Members**. A field written from the system to the image (as
   registration tools write it) is applied as it is; one written the other
-  way is inverted by iteration. A chain may go through up to three fields;
-  coordinate maps (`coordinates`) are not applied yet.
+  way is inverted by iteration. A chain may go through up to three fields.
+  A coordinate map (`coordinates`) written from the system to the image is
+  applied too; one written the other way needs its inverse given (a
+  `bijection`).
 - **Members** and **Transforms**: the tree (each node's type, name and
   where it is) and every transform as written.
 

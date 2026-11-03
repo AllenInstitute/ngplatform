@@ -113,7 +113,7 @@ describe("members warped by a displacement field (RFC-5 displacements)", () => {
       { kind: "field", url: "https://example.org/c.zarr/coordinateTransformations/swirl", inverse: false, components: ["z", "y", "x"] },
       { kind: "affine", m: [1, 0, 0, -10, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] },
     ]);
-    expect(transformSteps({ type: "coordinates", path: "c" }, undefined, t.document)).toBeUndefined();
+    expect(transformSteps({ type: "coordinates", path: "c" }, undefined, t.document)).toEqual([{ kind: "field", url: "https://example.org/c.zarr/c", inverse: false, absolute: true }]);
   });
 
   it("finds the chain through a field (one at most), which affine placement does not", () => {
@@ -166,6 +166,22 @@ describe("members warped by a displacement field (RFC-5 displacements)", () => {
     expect(displayRangeOf({ multiscales: [], omero: { channels: [{ window: { start: 10, end: 900 } }] } }, { dtype: "<u2" })).toEqual([10, 900]);
     expect(displayRangeOf(group, { dtype: "|u1" })).toEqual([0, 255]);
     expect(displayRangeOf(group, { data_type: "float32" })).toBeUndefined();
+  });
+});
+
+describe("coordinate maps", () => {
+  it("are applied as written, and not inverted", async () => {
+    const { fieldWarp, transformSteps, inverseOf } = await import("../collection.js");
+    const doc = "https://example.org/c/zarr.json";
+    const coords = { type: "coordinates", path: "map.zarr" };
+    const steps = transformSteps(coords, ["z", "y", "x"], doc)!;
+    expect(steps).toEqual([{ kind: "field", url: "https://example.org/c/map.zarr", inverse: false, absolute: true, components: ["z", "y", "x"] }]);
+    // Written system → member, walked member → system (backwards): shown through the map as written.
+    const back = transformSteps(inverseOf(coords), ["z", "y", "x"], doc)!;
+    const shown = fieldWarp(back, 1)!.warp as { absolute?: boolean; invert: boolean };
+    expect([shown.absolute, shown.invert]).toEqual([true, false]);
+    // Written member → system: showing would need its inverse, which is not computed.
+    expect(fieldWarp(steps, 1)).toBeUndefined();
   });
 });
 

@@ -71,7 +71,7 @@ describe("a displacement field", () => {
    * -1 mm), its components stored z, y, x: `d` gives the displacement (mm;
    * x, y, z) at a place (mm; x, y, z).  Reads are counted.
    */
-  const field = (d: (p: number[]) => number[], invert = false, before: Affine[] = [], after: Affine[] = []) => {
+  const field = (d: (p: number[]) => number[], invert = false, before: Affine[] = [], after: Affine[] = [], absolute = false) => {
     const m = 6;
     const fieldGrid = { shape: [m, m, m], voxel: [2, 2, 2], origin: [-1, -1, -1], xyz: [2, 1, 0], mm: [1, 1, 1] };
     const reads: number[][][] = [];
@@ -88,8 +88,15 @@ describe("a displacement field", () => {
           }
       return comps;
     };
-    return { warp: new FieldWarp({ before, after, invert, grid: fieldGrid, components: [2, 1, 0], mm: 1 }, reader), reads };
+    return { warp: new FieldWarp({ before, after, invert, grid: fieldGrid, components: [2, 1, 0], mm: 1, absolute }, reader), reads };
   };
+
+  it("as coordinates, takes each place to the field's value", async () => {
+    // A coordinate field whose values are the place shifted 2 mm in x: the same as that shift.
+    const { warp } = field((p) => [p[0] + 2, p[1], p[2]], false, [], [], true);
+    const out = await warpChunk(grid, [n, n, n], [0, 0, 0], warp, read);
+    expect(at(out, 3, 2, 1)).toBeCloseTo(3, 5);
+  });
 
   it("chained, applies each in turn (two shifts add up)", async () => {
     const { warp: one } = field(() => [1, 0, 0]);

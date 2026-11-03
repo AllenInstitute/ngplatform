@@ -69,8 +69,11 @@ Limits: the field is looked up trilinearly whatever `interpolation` says;
 past its edge the edge's displacement holds; the displacement axis must
 come before z, y, x (the order the spec now asks for; an earlier draft had
 it last), and component values are read in the field's spatial unit. A
-chain needing more than three fields and `coordinates` maps are not
-applied. A
+chain needing more than three fields is not applied. A `coordinates` map
+(the field's values are the places themselves) is applied as written, so
+an image is shown through one written from the system to it; one written
+the other way would need its inverse, which is not computed (give it as a
+`bijection` with its inverse). A
 transform walked backwards is read as its inverse (`inverseOf`): a sequence
 reversed, each part inverted, and a `bijection`, alone or inside a
 sequence, by its stated `inverse`. The warped layer keeps the member's grid, so a

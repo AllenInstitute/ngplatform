@@ -91,6 +91,9 @@ reads only that (`Engine.read`), then samples each voxel there
 - `{kind: "tps", fixed, moving}`: a thin-plate spline through landmark
   pairs (mm), each output place taken to its place in the source. The
   Registration plugin's "Warp through the pairs".
+- `absolute: true` on a `field`: a coordinate field (OME-NGFF 0.6's
+  `coordinates`), its values the places themselves (q → C(q)); not
+  inverted.
 - `{kind: "fields", parts: [...]}`: several `field` warps applied one
   after another (`ChainWarp`): each part reads the box its places need,
   its places being where the parts before it took the chunk.

@@ -48,6 +48,8 @@ export interface FieldWarpSpec {
   invert?: boolean;
   /** The axes the vector's components are, in order (["z", "y", "x"]); by default the field's spatial axes. */
   components?: string[];
+  /** A coordinate field (`coordinates`): its values are the place in the source, not a displacement. */
+  absolute?: boolean;
 }
 
 /**
@@ -384,7 +386,7 @@ export class ComputedImages {
     if (components.length !== 3 || components.some((k) => k === -1)) throw new Error(`a displacement field's components must be x, y and z, not ${(warp.components ?? []).join(", ")}`);
     const grid = { shape: level.shape, voxel: level.voxel, origin: level.origin, xyz, mm: info.axes.map((a) => mmPerUnit(a.unit)) };
     return new FieldWarp(
-      { before: warp.before ?? [], after: warp.after ?? [], invert: warp.invert === true, grid, components, mm: grid.mm[0] },
+      { before: warp.before ?? [], after: warp.after ?? [], invert: warp.invert === true, grid, components, mm: grid.mm[0], absolute: warp.absolute === true },
       (lo, hi) => Promise.all(views.map(async (v) => typed(info.dtype, await engine.read(v, 0, lo, hi)))),
     );
   }
