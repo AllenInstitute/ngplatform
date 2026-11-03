@@ -89,11 +89,20 @@ def write(path, data, mask, affine, name, orientations, levels=4, coarsen=coarse
         raise SystemExit("this writer takes a diagonal affine only")
     # Axes that run backwards in the file are turned round, so OME's scales stay positive.
     origin = affine[:3, 3].copy()
+    # Directions are in the voxel frame, so they turn round with their axis.
+    kind = orientations.get("type")
     for k in range(3):
         if affine[k, k] < 0:
             data = np.flip(data, axis=k)
             mask = np.flip(mask, axis=k)
             origin[k] += affine[k, k] * (data.shape[k] - 1)
+            if kind == "tensor":
+                # DIPY's order Dxx Dxy Dyy Dxz Dyz Dzz: the off-diagonal terms with axis k change sign.
+                data = data.copy()
+                for c in {0: (1, 3), 1: (1, 4), 2: (3, 4)}[k]:
+                    data[..., c] = -data[..., c]
+            elif kind != "scalar":
+                raise SystemExit(f"axis {k} runs backwards in the file: this writer turns directions round for tensors only, not {kind}")
     root = zarr.open_group(path, mode="w", zarr_format=3)
     datasets = []
     for level in range(levels):
