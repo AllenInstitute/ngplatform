@@ -15,6 +15,8 @@ export const DRAWING = "segmentation.drawing";
 export const BRUSHING = "segmentation.brushing";
 /** Set while quick select's proposed mask waits for Enter (paint it) or Escape (drop it). */
 export const PREVIEWING = "segmentation.previewing";
+/** Set while quick select computes a mask: Enter and Escape then say what to do with it when it comes. */
+export const SELECTING = "segmentation.selecting";
 
 const tool = (key: string, id: string) => ({ key, command: "segmentation.tool", args: { tool: id }, when: EDITING });
 
@@ -49,7 +51,7 @@ NIfTI (.nii.gz) or an OME-Zarr folder (only painted chunks written), the whole g
   provides: { services: ["segmentation.quickSelect", "segmentation.labelVolumes"] },
   contributes: {
     panels: [{ id: SEGMENTATION_PANEL, title: "Segmentation", slot: "left", order: 61 }],
-    contextKeys: [EDITING, DRAWING, BRUSHING, PREVIEWING],
+    contextKeys: [EDITING, DRAWING, BRUSHING, PREVIEWING, SELECTING],
     // Segment groups, by label volume (./segment_groups.ts).
     appState: { key: "segmentation", version: 1 },
     commands: [
@@ -64,8 +66,8 @@ NIfTI (.nii.gz) or an OME-Zarr folder (only painted chunks written), the whole g
       { id: "segmentation.undo", title: "Undo the last stroke or workspace change, whichever came last", group: "Segmentation", when: EDITING },
       { id: "segmentation.redo", title: "Redo a stroke or workspace change, in the order undone", group: "Segmentation", when: EDITING },
       { id: "segmentation.stopEditing", title: "Stop editing the label volume (hide the tool bar)", group: "Segmentation", when: EDITING },
-      { id: "segmentation.acceptPreview", title: "Paint quick select's proposed mask", group: "Segmentation", when: PREVIEWING },
-      { id: "segmentation.cancelPreview", title: "Drop quick select's proposed mask", group: "Segmentation", when: PREVIEWING },
+      { id: "segmentation.acceptPreview", title: "Paint quick select's proposed mask", group: "Segmentation", when: `${PREVIEWING} || ${SELECTING}` },
+      { id: "segmentation.cancelPreview", title: "Drop quick select's proposed mask", group: "Segmentation", when: `${PREVIEWING} || ${SELECTING}` },
     ],
     keybindings: [
       tool("m", "move"),
@@ -87,8 +89,8 @@ NIfTI (.nii.gz) or an OME-Zarr folder (only painted chunks written), the whole g
       { key: "mod+y", command: "segmentation.redo", when: EDITING },
       { key: "mod+shift+z", command: "segmentation.redo", when: EDITING },
       // After Escape's Move above: a key bound later wins, so Escape drops a proposed mask first.
-      { key: "enter", command: "segmentation.acceptPreview", when: PREVIEWING },
-      { key: "escape", command: "segmentation.cancelPreview", when: PREVIEWING },
+      { key: "enter", command: "segmentation.acceptPreview", when: `${PREVIEWING} || ${SELECTING}` },
+      { key: "escape", command: "segmentation.cancelPreview", when: `${PREVIEWING} || ${SELECTING}` },
     ],
   },
 };

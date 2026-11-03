@@ -48,7 +48,7 @@ While a segmentation layer is edited, a tool bar shows at the top of the
 | **Lasso** | ++l++ | Hold the left button and draw round a structure in a 2-D view: when you let go, the outline closes and its inside is painted with the active segment in that section (as **Paint over** says, and within the image's range when that is on). **Erase** on the bar erases inside it instead |
 | **Fill** | ++f++, ++shift+f++ | Fills the region clicked with the active segment: **2-D** in its section (++f++), or **3-D** in a box round the click (++shift+f++) |
 | **Pick segment** | ++i++ | The segment clicked becomes the active one |
-| **Quick select** | ++q++ | Drag a box round a structure in a 2-D view (Otsu's threshold inside it), or click it (values near the one clicked). The mask shows first, tinted with its outline: ++enter++ (or ✓ on the bar) paints it with the active segment, ++escape++ (or ×) drops it |
+| **Quick select** | ++q++ | Drag a box round a structure in a 2-D view (Otsu's threshold inside it), or click it (values near the one clicked). The mask shows first, tinted with its outline: ++enter++ (or ✓ on the bar) paints it with the active segment, ++escape++ (or ×) drops it; pressed while it is still being worked out, they apply as soon as it is |
 
 - **Brush size**: ++alt++ + wheel over a 2-D view, ++bracket-left++ and
   ++bracket-right++, or **−** and **+** on the tool bar. The size is in

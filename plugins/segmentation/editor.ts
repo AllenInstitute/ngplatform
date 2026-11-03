@@ -31,7 +31,7 @@ import { chooseUndo, Stroke } from "./history.js";
 import { ballReach, ballShape, dabsBetween, fillOutline, floodFill, type ImageBlock, inRange, interpolate, type Paint, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "./kernels.js";
 import { discard, type KeptInfo, kept, restore } from "./keep.js";
 import { LABEL_MAX, type LabelType, LabelVolume } from "./label_volume.js";
-import { BRUSHING, DRAWING, EDITING, PREVIEWING, SEGMENTATION_PANEL } from "./manifest.js";
+import { BRUSHING, DRAWING, EDITING, PREVIEWING, SEGMENTATION_PANEL, SELECTING } from "./manifest.js";
 import { Painter, type ViewPoint } from "./painter.js";
 import { maskCount, PreviewOverlay } from "./preview.js";
 import { type Mask, type Prompt, QuickSelectRegistry } from "./quick_select.js";
@@ -984,13 +984,24 @@ export class Editor implements LabelVolumes {
       this.ctx.ui.toast("Quick select reads an image: choose one under “Image values”.");
       return;
     }
-    const mask = await method.run({ prompt, image, axis: start.axis, tolerance: this.tolerance }, new AbortController().signal);
+    // Enter or Escape while the mask is computed says now what to do with it.
+    this.decided = undefined;
+    this.ctx.context.set(SELECTING, true);
+    let mask: Mask;
+    try {
+      mask = await method.run({ prompt, image, axis: start.axis, tolerance: this.tolerance }, new AbortController().signal);
+    } finally {
+      this.ctx.context.set(SELECTING, false);
+    }
+    const decided = this.decided;
+    this.decided = undefined;
+    if (decided === "cancel") return;
     const voxels = maskCount(mask);
     if (voxels === 0) {
       this.ctx.ui.toast("Quick select found nothing there.");
       return;
     }
-    if (this.quickMode === "paint") {
+    if (this.quickMode === "paint" || decided === "accept") {
       this.paintMask(session, mask);
       return;
     }
@@ -1004,7 +1015,11 @@ export class Editor implements LabelVolumes {
   /** Paints quick select's proposed mask with the active segment (as Paint over says). */
   acceptPreview(): void {
     const p = this.pending;
-    if (p === undefined) return;
+    if (p === undefined) {
+      // Still computing: painted as soon as it comes.
+      this.decided = "accept";
+      return;
+    }
     this.clearPreview();
     this.enqueue(() => this.paintMask(p.session, p.mask));
   }
@@ -1012,7 +1027,11 @@ export class Editor implements LabelVolumes {
   /** Drops quick select's proposed mask. */
   cancelPreview(): void {
     if (this.pending !== undefined) this.clearPreview();
+    else this.decided = "cancel";
   }
+
+  /** What Enter or Escape asked for while quick select was computing. */
+  private decided: "accept" | "cancel" | undefined;
 
   private clearPreview(): void {
     this.pending = undefined;
