@@ -65,6 +65,7 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
       const offs = [store.onChange(callback), engine.onSelectionChanged(callback)];
       return () => offs.forEach((off) => off());
     },
+    undoSteps: () => store.history.ends(),
     local: {
       locate: (url) => {
         const at = wb.localData.parse(url);

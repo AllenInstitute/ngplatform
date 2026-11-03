@@ -34,7 +34,7 @@ export const SEGMENTATION_MANIFEST: Manifest = {
 While a label volume is edited, a tool bar shows at the top of the views:
 - **Move** (\`M\`): the views as usual. **Brush** (\`B\`) and **Erase** (\`E\`): the left button paints the active segment, or 0; a ring shows the brush; **Alt+wheel** or \`[\` \`]\` change its size. **Fill** (\`F\`): the region clicked, in its section (2-D) or in a box round it (3-D, \`Shift+F\`). **Pick segment** (\`I\`). **Quick select** (\`Q\`): drag a box round a structure, or click it.
 - \`W\` and \`Shift+W\` step through the tools; hold **Space** to move the view with the left button while a drawing tool is on; \`Escape\` goes back to Move.
-- **New segment** (\`C\`), the active segment's colour and name; **Undo** and **Redo** (\`Ctrl+Z\`, \`Ctrl+Y\`); **Interpolate** (\`V\`) fills the sections between two where the segment is drawn; **Save**.
+- **New segment** (\`C\`), the active segment's colour and name; **Undo** and **Redo** (\`Ctrl+Z\`, \`Ctrl+Y\`: strokes and workspace changes as one history); **Interpolate** (\`V\`) fills the sections between two where the segment is drawn; **Save**.
 
 ## Segments
 Each segment's colour, name, voxels and volume; the active one is marked. Click one to paint with it; the eye shows or hides it; **Go to** moves the views to it; **Merge** gives its voxels to the active segment; **Delete** erases it. All undoable.
@@ -57,8 +57,8 @@ NIfTI (.nii.gz) or an OME-Zarr folder (only painted chunks written), the whole g
       { id: "segmentation.brushSize", title: "Brush size", group: "Segmentation", args: { type: "object", properties: { notches: { type: "number", default: 1 } } } },
       { id: "segmentation.newSegment", title: "New segment", group: "Segmentation", when: EDITING },
       { id: "segmentation.interpolate", title: "Interpolate the segment between drawn sections", group: "Segmentation", when: EDITING },
-      { id: "segmentation.undo", title: "Undo the last stroke", group: "Segmentation", when: EDITING },
-      { id: "segmentation.redo", title: "Redo a stroke", group: "Segmentation", when: EDITING },
+      { id: "segmentation.undo", title: "Undo the last stroke or workspace change, whichever came last", group: "Segmentation", when: EDITING },
+      { id: "segmentation.redo", title: "Redo a stroke or workspace change, in the order undone", group: "Segmentation", when: EDITING },
       { id: "segmentation.stopEditing", title: "Stop editing the label volume (hide the tool bar)", group: "Segmentation", when: EDITING },
     ],
     keybindings: [

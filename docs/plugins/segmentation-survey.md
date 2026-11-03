@@ -77,7 +77,7 @@ Neuroglancer reads its chunks again (see the plugin's README).
 | Quick select, threshold | **Quick select** with a box (Otsu's threshold, the side the box's middle is on, its connected part) or a click (a tolerance round the value) | Now |
 | Quick select, AI (SAM) | The same tool takes other methods through the `segmentation.quickSelect` service: a method gets the prompt and the image's values round it on the label grid, and returns a mask. A Segment Anything method served elsewhere (or in the page with ONNX Runtime Web) can plug in without changing the tool | Later |
 | Preview, Enter / Escape | Quick select paints at once (undo takes it back) | Later |
-| Undo / redo | **Undo**, **Redo** of strokes (`Ctrl+Z`, `Ctrl+Y` while a layer is edited), within a memory budget | Now |
+| Undo / redo | **Undo**, **Redo** (`Ctrl+Z`, `Ctrl+Y` while a layer is edited): strokes (within a memory budget) and the workspace's changes as one history, whichever came last | Now |
 | Trace (lasso) | Draw an outline with the brush and **Fill 2-D** inside it; a lasso tool proper | Later |
 | Interpolation between sections (V) | **Interpolate** (++v++): shape-based (signed distances, weighted by nearness) through the sections between drawn sections of the active segment (over any segment, or empty voxels only, as **Paint over** says), across the view last drawn in | Now |
 | 3-D flood fill to relabel a segment (fixing splits and merges by hand) | **Merge** (a segment into the active one) and **Delete**, everywhere | Now |

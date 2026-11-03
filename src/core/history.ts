@@ -105,6 +105,15 @@ export class StateHistory {
     ];
   }
 
+  /**
+   * The change undo would take back (the current entry, when there is one
+   * before it) and the one redo would bring back, with when each was made.
+   */
+  ends(): { undo?: { label: string; time: number }; redo?: { label: string; time: number } } {
+    const step = (e: Entry | undefined) => e && { label: e.label, time: e.time };
+    return { undo: this.past.length > 0 ? step(this.current) : undefined, redo: step(this.future[this.future.length - 1]) };
+  }
+
   /** Ends an adoption window that produced no state change (restoring an identical state). */
   settle(): void {
     this.adopting = false;

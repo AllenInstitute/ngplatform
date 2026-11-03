@@ -26,7 +26,7 @@ import { download, el, fileName, fmt } from "../annotations/ui.js";
 import { type ImageLevel, layerStore, readableImages, type Voxels } from "../annotations/voxels.js";
 import { zipFiles } from "../registration/volume_io.js";
 import { storeOf } from "../volume-view/sources.js";
-import { Stroke } from "./history.js";
+import { chooseUndo, Stroke } from "./history.js";
 import { ballReach, ballShape, dabsBetween, floodFill, type ImageBlock, inRange, interpolate, type Paint, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "./kernels.js";
 import { discard, type KeptInfo, kept, restore } from "./keep.js";
 import { LABEL_MAX, type LabelType, LabelVolume } from "./label_volume.js";
@@ -751,15 +751,16 @@ export class Editor implements LabelVolumes {
   private commit(stroke: Stroke, session = this.current, value = this.value): void {
     stroke.finish();
     if (session === undefined || stroke.changes === 0) return;
-    session.history.push(stroke);
-    session.changed(stroke.keys());
-    session.unsaved++;
-    session.refresh();
     if (value > 0) {
+      // Before the stroke is timed: a change of the user's still settling is recorded first, as its own step.
       session.applyColours([value]);
       // A segment painted shows, even where others are hidden.
       this.show(session, value, true, true);
     }
+    session.history.push(stroke);
+    session.changed(stroke.keys());
+    session.unsaved++;
+    session.refresh();
     this.recount();
   }
 
@@ -852,10 +853,29 @@ export class Editor implements LabelVolumes {
     this.commit(stroke);
   }
 
+  /**
+   * What undo (or redo) takes now: the current volume's last stroke or the
+   * workspace's last change, whichever came last (for redo, the one undone
+   * first), so the two undo as one history (`chooseUndo`).
+   */
+  undoTarget(redo: boolean): { kind: "stroke" } | { kind: "workspace"; label: string } | undefined {
+    const h = this.current?.history;
+    const steps = this.ctx.workspace.undoSteps();
+    const workspace = redo ? steps.redo : steps.undo;
+    const which = chooseUndo(redo ? h?.redoTime : h?.undoTime, workspace?.time, redo);
+    return which === "workspace" ? { kind: "workspace", label: workspace!.label } : which && { kind: which };
+  }
+
   undo(redo: boolean): void {
     const session = this.current;
-    if (session === undefined) return;
-    this.enqueue(() => {
+    // After strokes still being drawn are kept.
+    this.enqueue(async () => {
+      const target = this.undoTarget(redo);
+      if (target?.kind === "workspace" || session === undefined) {
+        if (target === undefined || (await this.ctx.commands.invoke(redo ? "edit.redo" : "edit.undo")) === undefined) this.ctx.ui.toast(redo ? "Nothing to redo." : "Nothing to undo.");
+        this.changed();
+        return;
+      }
       const keys = redo ? session.history.redo() : session.history.undo();
       if (keys.length === 0) {
         this.ctx.ui.toast(redo ? "Nothing to redo." : "Nothing to undo.");

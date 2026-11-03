@@ -18,6 +18,8 @@ export class Toolbar {
   private readonly bar: HTMLElement;
   private readonly offs: Disposer[] = [];
   private placed = "";
+  private undoButton: HTMLButtonElement | undefined;
+  private redoButton: HTMLButtonElement | undefined;
 
   constructor(
     private readonly ctx: PlatformContext,
@@ -34,6 +36,8 @@ export class Toolbar {
     });
     this.offs.push(
       editor.onChanged(() => this.draw()),
+      // Undo and Redo name what they take back, which may be a change to the workspace.
+      ctx.workspace.onChanged(() => this.drawUndo()),
       ctx.viewer.onRendered(() => this.place()),
     );
     this.draw();
@@ -61,6 +65,19 @@ export class Toolbar {
     this.bar.style.top = `${Math.round(top) + 30}px`;
     this.bar.style.left = `${Math.round(centre)}px`;
     this.bar.style.maxWidth = `${Math.max(120, Math.round(width) - 16)}px`;
+  }
+
+  /** Undo and Redo: what each takes, the last stroke or a change to the workspace (they undo as one history). */
+  private drawUndo(): void {
+    const e = this.editor;
+    const what = (t: ReturnType<Editor["undoTarget"]>, redo: boolean) =>
+      t === undefined ? "nothing" : t.kind === "stroke" ? (redo ? "the stroke undone" : "the last stroke") : `${t.label} (a change to the workspace)`;
+    for (const [button, redo] of [[this.undoButton, false], [this.redoButton, true]] as const) {
+      if (button === undefined) continue;
+      const target = e.undoTarget(redo);
+      button.title = `${redo ? "Redo" : "Undo"}: ${what(target, redo)} (${redo ? "Ctrl+Y" : "Ctrl+Z"})`;
+      button.disabled = target === undefined;
+    }
   }
 
   private draw(): void {
@@ -107,10 +124,9 @@ export class Toolbar {
       iconButton("plus", `New segment (C): ${rowsMax(rows.map((r) => r.value), LABEL_MAX[session.volume.type])}`, () => e.newSegment()),
     );
 
-    const undo = iconButton("undo", "Undo the last stroke (Ctrl+Z)", () => e.undo(false));
-    undo.disabled = !session.history.canUndo;
-    const redo = iconButton("redo", "Redo (Ctrl+Y)", () => e.undo(true));
-    redo.disabled = !session.history.canRedo;
+    const undo = (this.undoButton = iconButton("undo", "Undo (Ctrl+Z)", () => e.undo(false)));
+    const redo = (this.redoButton = iconButton("redo", "Redo (Ctrl+Y)", () => e.undo(true)));
+    this.drawUndo();
     const save = iconButton("save", `Save ${session.layer} (${e.saveFormat === "zarr" ? "OME-Zarr" : "NIfTI"}; the format is in the Segmentation tab)${session.unsaved ? `: ${session.unsaved} change${session.unsaved === 1 ? "" : "s"} not saved` : ""}`, () => void e.save());
     save.classList.toggle("sg-unsaved", session.unsaved > 0);
     const actions = group(

@@ -59,14 +59,22 @@ While a segmentation layer is edited, a tool bar shows at the top of the
   **Redo** (++ctrl+y++); **Interpolate** (++v++); **Save**; and **×**,
   which hides the bar. **Edit** in the tab shows it again.
 
+**Undo and redo** while the tool bar shows: ++ctrl+z++ undoes whichever
+came last, the last stroke or the last change to the workspace (a layer
+hidden, the view moved, a segment hidden), so strokes and other changes
+undo as one history; ++ctrl+y++ (or ++ctrl+shift+z++) redoes them in the
+order they were undone. Hover **Undo** on the bar to see what it will
+take back. Merge, Delete, fills, quick select and interpolation are
+strokes too.
+
 **Interpolate**: draw the active segment in two sections a few apart (in
 the same 2-D view), then press ++v++: each section between gets a shape
 between the two drawn. Check the result, as with any interpolation.
 
 While the tool bar shows, the keys above are the tools'. Some are
 Neuroglancer's otherwise (++b++ scale bar, ++e++ rotate, ++v++ default
-annotations, ++space++ layout, ++escape++, ++alt++ + wheel) and ++ctrl+z++
-is the workspace's undo; hide the tool bar to have them back.
+annotations, ++space++ layout, ++escape++, ++alt++ + wheel); hide the tool
+bar to have them back.
 
 ## Segments
 

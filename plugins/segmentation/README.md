@@ -75,10 +75,23 @@ on, and gives everything else to Neuroglancer:
 While a volume is edited (the tool bar shows), these keys are the tools'
 rather than Neuroglancer's or the workspace's: `B` (Neuroglancer: scale
 bar), `E` (rotate), `V` (default annotations), `F`, `I`, `M`, `Q`, `W`,
-`C`, `Ctrl+Z` (the workspace's undo; here strokes), `Ctrl+Y`; `[` and `]`
+`C`, `Ctrl+Z` and `Ctrl+Y` (the workspace's undo and redo; here the
+last stroke or the last workspace change, whichever came last, see
+below); `[` and `]`
 (time steps) with Brush or Erase; `Escape` (Neuroglancer's tool) with a
 drawing tool. Hiding the tool bar (its ×, or **Editing** in the tab) gives
 them back.
+
+Strokes have an undo of their own (`history.ts`, chunk copies within a
+memory budget), beside the workspace's (state snapshots). While the tool
+bar shows, `Ctrl+Z` undoes whichever came last: each stroke is timed when
+kept, and `workspace.undoSteps()` says when the workspace's change undo
+would take back was made (`chooseUndo`). `Ctrl+Y` redoes whichever of the
+two undone came first, so they redo in the order they were undone. The
+quiet changes a stroke makes to the layer (its segment's colour, its
+visibility) amend the workspace's current step, not a new one; a change of
+the user's still settling when a stroke ends is recorded before the stroke
+is timed.
 
 A segment's visibility is Neuroglancer's own list of visible segments
 (`segments`, with `!id` for one listed but hidden): with nothing hidden the
@@ -167,7 +180,8 @@ drawn.
 `ui.overlay()` (the tool bar, the brush ring), `viewer.panels()`,
 `viewer.onRendered()`, `viewer.cursor()`, `viewer.layerTransform()`,
 `viewer.patchState()`, `viewer.setPosition()`, `viewer.lookupTables`,
-`viewer.reloadData(url)`, `workspace.local.open/close`, `services`
+`viewer.reloadData(url)`, `workspace.local.open/close`,
+`workspace.undoSteps()`, `commands.invoke` (`edit.undo`, `edit.redo`), `services`
 (`segmentation.quickSelect` and `segmentation.labelVolumes`, which it
 provides), `context` (`segmentation.editing`, `segmentation.drawing`,
 `segmentation.brushing`), `jobs`.

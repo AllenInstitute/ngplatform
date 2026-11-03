@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openNifti } from "../../../src/virtual/images/nifti.js";
 import { VolumeReader } from "../../volume-view/volume_reader.js";
-import { History, Stroke } from "../history.js";
+import { chooseUndo, History, Stroke } from "../history.js";
 import { ballReach, ballShape, dabsBetween, distance2d, floodFill, type ImageBlock, inRange, interpolate, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "../kernels.js";
 import { LabelVolume } from "../label_volume.js";
 import { component, otsu, THRESHOLD_SELECT } from "../quick_select.js";
@@ -340,6 +340,41 @@ describe("undo and redo", () => {
     expect(history.undo().length).toBe(1);
     history.undo();
     expect(history.canUndo).toBe(false);
+  });
+
+  it("times strokes, and undoes them with the workspace's changes as one history (Ctrl+Z while editing)", () => {
+    let clock = 1000;
+    const v = vol();
+    const history = new History(undefined, () => clock);
+    const stroke = (at: number) => {
+      const s = new Stroke(v);
+      s.set(at, 0, 0, 1);
+      s.finish();
+      history.push(s);
+    };
+    // A stroke at 1000, a workspace change at 2000, a stroke at 3000.
+    stroke(1);
+    clock = 3000;
+    stroke(2);
+    let workspace: { undo?: number; redo?: number } = { undo: 2000 };
+    const undo = () => {
+      const which = chooseUndo(history.undoTime, workspace.undo, false);
+      if (which === "stroke") history.undo();
+      else if (which === "workspace") workspace = { redo: workspace.undo };
+      return which;
+    };
+    const redo = () => {
+      const which = chooseUndo(history.redoTime, workspace.redo, true);
+      if (which === "stroke") history.redo();
+      else if (which === "workspace") workspace = { undo: workspace.redo };
+      return which;
+    };
+    expect([undo(), undo(), undo(), undo()]).toEqual(["stroke", "workspace", "stroke", undefined]);
+    expect([redo(), redo(), redo(), redo()]).toEqual(["stroke", "workspace", "stroke", undefined]);
+    expect(history.undoTime).toBe(3000);
+    // With no stroke, the workspace's; with no workspace step, the stroke's.
+    expect(chooseUndo(undefined, 5, false)).toBe("workspace");
+    expect(chooseUndo(5, undefined, true)).toBe("stroke");
   });
 });
 

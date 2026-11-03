@@ -167,6 +167,13 @@ export interface LayerInfo {
   dataset?: string;
 }
 
+/** One change in the workspace's undo history. */
+export interface UndoStep {
+  label: string;
+  /** When it was made, in ms since 1970. */
+  time: number;
+}
+
 export interface WorkspaceApi {
   scenes(): SceneInfo[];
   switchScene(id: string): void;
@@ -198,6 +205,13 @@ export interface WorkspaceApi {
   selectedDataset(): DatasetInfo | undefined;
 
   onChanged(callback: () => void): Disposer;
+  /**
+   * The ends of the workspace's undo history: the change undo would take
+   * back and the one redo would bring back, each with its label and when it
+   * was made (ms since 1970).  A plugin with an undo of its own (strokes)
+   * compares times to undo whichever came last.
+   */
+  undoSteps(): { undo?: UndoStep; redo?: UndoStep };
 
   /** Data opened from this computer (Add → Local), which plugins can write into. */
   local: {
