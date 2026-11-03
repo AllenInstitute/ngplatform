@@ -101,7 +101,13 @@ import type { Uint64Map } from "neuroglancer/unstable/uint64_map.js";
 import { DataType } from "neuroglancer/unstable/util/data_type.js";
 import type { Borrowed } from "neuroglancer/unstable/util/disposable.js";
 import { RefCounted } from "neuroglancer/unstable/util/disposable.js";
-import { mat4 } from "neuroglancer/unstable/util/geom.js";
+import {
+  mat3,
+  mat3FromMat4,
+  mat4,
+  scaleMat3Output,
+  vec3,
+} from "neuroglancer/unstable/util/geom.js";
 import type { AnyConstructor } from "neuroglancer/unstable/util/mixin.js";
 import { GLBuffer } from "neuroglancer/unstable/webgl/buffer.js";
 import {
@@ -173,6 +179,13 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
   attributeTextures: (WebGLTexture | null)[] = [];
   edgeBuffer: GLBuffer | undefined;
   faceBuffer: GLBuffer | undefined;
+  /** A mesh's vertex normals, for shading its faces in 3-d. */
+  normalTexture: WebGLTexture | null = null;
+
+  /** The chunk's attribute values on the CPU, for what is under the mouse. */
+  get attributeValues(): Float32Array[] | undefined {
+    return this.uploads?.attributes;
+  }
 
   constructor(source: SliceViewChunkSource, x: any) {
     super(source, x);
@@ -228,6 +241,11 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
         WebGL2RenderingContext.ARRAY_BUFFER,
         WebGL2RenderingContext.STATIC_DRAW,
       );
+      this.normalTexture = texture(
+        POSITION_FORMAT,
+        vertexNormals(uploads.positions, uploads.faces, this.numVertices),
+      );
+      gl.bindTexture(WebGL2RenderingContext.TEXTURE_2D, null);
     }
   }
 
@@ -236,17 +254,60 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
     for (const t of [
       this.positionTexture,
       this.segmentTexture,
+      this.normalTexture,
       ...this.attributeTextures,
     ]) {
       gl.deleteTexture(t);
     }
-    this.positionTexture = this.segmentTexture = null;
+    this.positionTexture = this.segmentTexture = this.normalTexture = null;
     this.attributeTextures = [];
     this.edgeBuffer?.dispose();
     this.edgeBuffer = undefined;
     this.faceBuffer?.dispose();
     this.faceBuffer = undefined;
   }
+}
+
+/**
+ * Each vertex's normal: the sum of its faces' normals weighted by their
+ * areas (the cross product's length), normalised, so a surface shades
+ * smoothly; faces wound either way give the same light (shading uses the
+ * normal's absolute cosine).
+ */
+export function vertexNormals(
+  positions: Float32Array,
+  faces: Uint32Array,
+  numVertices: number,
+): Float32Array {
+  const out = new Float32Array(3 * numVertices);
+  for (let f = 0; f + 3 <= faces.length; f += 3) {
+    const a = 3 * faces[f];
+    const b = 3 * faces[f + 1];
+    const c = 3 * faces[f + 2];
+    const ux = positions[b] - positions[a];
+    const uy = positions[b + 1] - positions[a + 1];
+    const uz = positions[b + 2] - positions[a + 2];
+    const vx = positions[c] - positions[a];
+    const vy = positions[c + 1] - positions[a + 1];
+    const vz = positions[c + 2] - positions[a + 2];
+    const nx = uy * vz - uz * vy;
+    const ny = uz * vx - ux * vz;
+    const nz = ux * vy - uy * vx;
+    for (const v of [a, b, c]) {
+      out[v] += nx;
+      out[v + 1] += ny;
+      out[v + 2] += nz;
+    }
+  }
+  for (let v = 0; v < out.length; v += 3) {
+    const length = Math.hypot(out[v], out[v + 1], out[v + 2]);
+    if (length > 0) {
+      out[v] /= length;
+      out[v + 1] /= length;
+      out[v + 2] /= length;
+    }
+  }
+  return out;
 }
 
 class ZarrVectorsGeometryChunkSourceBase extends SliceViewChunkSource<ZarrVectorsChunkSpecification> {
@@ -371,6 +432,8 @@ const SHOW_ALL_FLAG = 1;
 const HIDE_VISIBLE_FLAG = 2;
 
 const tempMat4 = mat4.create();
+const tempMat3 = mat3.create();
+const tempLight = new Float32Array(4);
 
 interface DenseAttachmentState {
   transform: RenderLayerTransformOrError;
@@ -391,7 +454,11 @@ class DenseRenderHelper extends RefCounted {
   nodeShaderGetter;
   /** A mesh in a cross-section: each triangle as the segment where it crosses the section. */
   sectionShaderGetter;
+  /** A mesh in 3-d: its faces, filled and lit. */
+  faceShaderGetter;
   readonly triangles: boolean;
+  /** Per attribute (in `attributes` order), a parcellation's table, if it is one. */
+  readonly labelTables: ({ code: number; name: string; rgba: number[] }[] | undefined)[];
 
   constructor(
     private gl: GL,
@@ -409,6 +476,11 @@ class DenseRenderHelper extends RefCounted {
         : "points";
     this.triangles =
       KIND_CAPABILITIES[description.geometryKind].primitive === "triangles";
+    this.labelTables = this.attributes.map(
+      (a) =>
+        description.attributes.find((d) => d.id === a.id && a.components === 1)
+          ?.labels,
+    );
     const common = {
       fallbackParameters,
       parameters:
@@ -463,6 +535,23 @@ class DenseRenderHelper extends RefCounted {
         ) => this.defineShader(builder, state, true, true),
       },
     );
+    this.faceShaderGetter = parameterizedEmitterDependentShaderGetter(
+      this,
+      gl,
+      {
+        memoizeKey: {
+          type: "zarr-vectors/dense/faces",
+          attributes: this.attributes,
+          labels: this.labelTables,
+          slice: targetIsSliceView,
+        },
+        ...common,
+        defineShader: (
+          builder: ShaderBuilder,
+          state: ShaderControlsBuilderState,
+        ) => this.defineShader(builder, state, false, false, true),
+      },
+    );
   }
 
   private fadeFactor() {
@@ -476,6 +565,7 @@ class DenseRenderHelper extends RefCounted {
     state: ShaderControlsBuilderState,
     edges: boolean,
     sections = false,
+    faces = false,
   ) {
     if (state.parseResult.errors.length !== 0) {
       throw new Error("Invalid UI control specification");
@@ -526,9 +616,59 @@ class DenseRenderHelper extends RefCounted {
       );
     });
     builder.addVarying("highp uvec2", "vSegment", "flat");
-    builder.addVarying("highp uint", "vPickID", "flat");
+    if (!faces) builder.addVarying("highp uint", "vPickID", "flat");
     let vertexMain: string;
-    if (sections) {
+    // How each attribute's varying is set: from `vertexIndex`, unless a
+    // pass says otherwise.
+    let readAttributes = (i: number) =>
+      `vAttribute${i} = readAttribute${i}(vertexIndex);\n`;
+    if (faces) {
+      // Instanced: one triangle per instance, its corner from gl_VertexID.
+      // Values are interpolated across the face; a parcellation's code is
+      // the nearest corner's (its three as a flat vec3), so its borders
+      // stay sharp.  The picked vertex is the nearest corner too.
+      builder.addAttribute("highp uvec3", "aTriangle");
+      builder.addUniform("highp mat3", "uNormalMatrix");
+      builder.addUniform("highp vec4", "uLightDirection");
+      builder.addTextureSampler("sampler2D", "uNormals", normalSampler);
+      builder.addVertexCode(
+        this.textureAccess.getAccessor(
+          "readNormal",
+          "uNormals",
+          DataType.FLOAT32,
+          3,
+        ),
+      );
+      builder.addVarying("highp vec3", "vNormal");
+      builder.addVarying("highp vec3", "vBarycentric");
+      builder.addVarying("highp uvec3", "vCorners", "flat");
+      vertexMain = `
+highp uint corner = uint(gl_VertexID);
+highp uint vertexIndex = corner == 0u ? aTriangle.x : (corner == 1u ? aTriangle.y : aTriangle.z);
+gl_Position = uProjection * vec4(readPosition(vertexIndex), 1.0);
+vNormal = uNormalMatrix * readNormal(vertexIndex);
+vBarycentric = vec3(corner == 0u ? 1.0 : 0.0, corner == 1u ? 1.0 : 0.0, corner == 2u ? 1.0 : 0.0);
+vCorners = aTriangle;
+vSegment = readSegment(vertexIndex).value;
+`;
+      builder.addFragmentCode(`
+highp uint zvNearestCorner() {
+  return vBarycentric.x >= vBarycentric.y && vBarycentric.x >= vBarycentric.z
+      ? vCorners.x
+      : (vBarycentric.y >= vBarycentric.z ? vCorners.y : vCorners.z);
+}
+float zvNearest(vec3 values) {
+  return vBarycentric.x >= vBarycentric.y && vBarycentric.x >= vBarycentric.z
+      ? values.x
+      : (vBarycentric.y >= vBarycentric.z ? values.y : values.z);
+}
+#define vPickID (uPickID + zvNearestCorner())
+`);
+      readAttributes = (i: number) =>
+        this.labelTables[i] !== undefined
+          ? `vAttribute${i} = vec3(readAttribute${i}(aTriangle.x), readAttribute${i}(aTriangle.y), readAttribute${i}(aTriangle.z));\n`
+          : `vAttribute${i} = readAttribute${i}(vertexIndex);\n`;
+    } else if (sections) {
       // A triangle's crossing with the section (clip z = 0 in a
       // cross-section): the two points where its edges cross it, drawn as a
       // line; a triangle that does not cross it is put outside the view.
@@ -545,16 +685,30 @@ highp float d2 = (uProjection * vec4(p2, 1.0)).z;
 highp vec3 ends[2];
 ends[0] = p0;
 ends[1] = p0;
+// Each end's edge and how far along it, so values are those at the crossing.
+highp uvec2 edgeOf[2];
+edgeOf[0] = aTriangle.xy;
+edgeOf[1] = aTriangle.xy;
+highp float along[2];
+along[0] = 0.0;
+along[1] = 0.0;
 int found = 0;
-if ((d0 < 0.0) != (d1 < 0.0)) { ends[found] = mix(p0, p1, d0 / (d0 - d1)); ++found; }
-if ((d1 < 0.0) != (d2 < 0.0)) { ends[found] = mix(p1, p2, d1 / (d1 - d2)); ++found; }
-if (found < 2 && (d2 < 0.0) != (d0 < 0.0)) { ends[found] = mix(p2, p0, d2 / (d2 - d0)); ++found; }
+if ((d0 < 0.0) != (d1 < 0.0)) { along[found] = d0 / (d0 - d1); edgeOf[found] = aTriangle.xy; ends[found] = mix(p0, p1, along[found]); ++found; }
+if ((d1 < 0.0) != (d2 < 0.0)) { along[found] = d1 / (d1 - d2); edgeOf[found] = aTriangle.yz; ends[found] = mix(p1, p2, along[found]); ++found; }
+if (found < 2 && (d2 < 0.0) != (d0 < 0.0)) { along[found] = d2 / (d2 - d0); edgeOf[found] = aTriangle.zx; ends[found] = mix(p2, p0, along[found]); ++found; }
 emitLine(uProjection, ends[0], ends[1], uLineWidth);
 if (found < 2) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-highp uint vertexIndex = aTriangle.x;
+int end = int(getLineEndpointIndex());
+highp uvec2 edge = edgeOf[end];
+highp float t = along[end];
+highp uint vertexIndex = t < 0.5 ? edge.x : edge.y;
 vSegment = readSegment(aTriangle.x).value;
-vPickID = uPickID + aTriangle.x;
+vPickID = uPickID + vertexIndex;
 `;
+      readAttributes = (i: number) =>
+        this.labelTables[i] !== undefined
+          ? `vAttribute${i} = readAttribute${i}(vertexIndex);\n`
+          : `vAttribute${i} = mix(readAttribute${i}(edge.x), readAttribute${i}(edge.y), t);\n`;
     } else if (edges) {
       defineLineShader(builder);
       builder.addAttribute("highp uvec2", "aVertexIndex");
@@ -580,9 +734,20 @@ vPickID = uPickID + vertexIndex;
     }
     this.attributes.forEach((a, i) => {
       const type = a.components === 1 ? "float" : `vec${a.components}`;
-      builder.addVarying(`highp ${type}`, `vAttribute${i}`);
-      vertexMain += `vAttribute${i} = readAttribute${i}(vertexIndex);\n`;
-      builder.addFragmentCode(`#define prop_${a.id}() vAttribute${i}\n`);
+      if (faces && this.labelTables[i] !== undefined) {
+        builder.addVarying("highp vec3", `vAttribute${i}`, "flat");
+        builder.addFragmentCode(
+          `#define prop_${a.id}() zvNearest(vAttribute${i})\n`,
+        );
+      } else {
+        builder.addVarying(`highp ${type}`, `vAttribute${i}`);
+        builder.addFragmentCode(`#define prop_${a.id}() vAttribute${i}\n`);
+      }
+      vertexMain += readAttributes(i);
+      const table = this.labelTables[i];
+      if (table !== undefined) {
+        builder.addFragmentCode(labelColourFunction(a.id, table));
+      }
     });
     builder.setVertexMain(vertexMain);
 
@@ -613,7 +778,27 @@ vec4 segmentColor() {
   return zvColor;
 }
 `);
-    if (edges) {
+    if (faces) {
+      builder.addFragmentCode(`
+vec3 zvShade(vec3 color) {
+  // Neuroglancer's mesh lighting (ambient, and a light from the viewer,
+  // either side of the face), with a faint highlight as Freeview has.
+  vec3 normal = normalize(vNormal);
+  float cosine = abs(dot(normal, uLightDirection.xyz));
+  float facing = abs(dot(normal, normalize(uLightDirection.xyz)));
+  return color * (cosine + uLightDirection.w) + vec3(0.12 * pow(facing, 24.0));
+}
+void emitRGBA(vec4 color) {
+  emit(vec4(zvShade(color.rgb) * color.a, color.a), vPickID);
+}
+void emitRGB(vec3 color) {
+  emitRGBA(vec4(color, zvAlpha));
+}
+void emitDefault() {
+  emitRGBA(zvColor);
+}
+`);
+    } else if (edges) {
       builder.addFragmentCode(`
 void emitRGBA(vec4 color) {
   // As Neuroglancer's skeleton layer: colour premultiplied by the object's
@@ -751,6 +936,9 @@ zvUserMain();
     };
     bind(positionSampler, chunk.positionTexture);
     bind(segmentSampler, chunk.segmentTexture);
+    if (shader.textureUnit(normalSampler) !== undefined) {
+      bind(normalSampler, chunk.normalTexture);
+    }
     chunk.attributeTextures.forEach((t, i) => bind(attributeSampler(i), t));
   }
 
@@ -762,6 +950,52 @@ zvUserMain();
 }
 
 const positionSampler = Symbol("zarr-vectors.positions");
+const normalSampler = Symbol("zarr-vectors.normals");
+
+/**
+ * A parcellation's colours as a GLSL function of its code, `lut_<id>(code)`
+ * (r, g, b, a; transparent for a code not in the table, such as -1): an
+ * array lookup when the codes run on from the first, else a search.
+ */
+export function labelColourFunction(
+  id: string,
+  table: readonly { code: number; rgba: readonly number[] }[],
+): string {
+  const f = (v: number) => {
+    const t = String(Number(Math.min(1, Math.max(0, v)).toFixed(4)));
+    return t.includes(".") ? t : `${t}.0`;
+  };
+  const sorted = [...table].sort((a, b) => a.code - b.code);
+  const n = sorted.length;
+  if (n === 0) return `vec4 lut_${id}(float code) { return vec4(0.0); }\n`;
+  const colours = sorted
+    .map((l) => `vec4(${[0, 1, 2, 3].map((k) => f(l.rgba[k] ?? 1)).join(", ")})`)
+    .join(",\n    ");
+  const first = sorted[0].code;
+  const contiguous = sorted.every((l, i) => l.code === first + i);
+  if (contiguous) {
+    return `vec4 lut_${id}(float code) {
+  const vec4 colours[${n}] = vec4[${n}](
+    ${colours});
+  int i = int(floor(code + 0.5)) - (${first});
+  if (i < 0 || i >= ${n}) return vec4(0.0);
+  return colours[i];
+}
+`;
+  }
+  const codes = sorted.map((l) => String(l.code)).join(", ");
+  return `vec4 lut_${id}(float code) {
+  const int codes[${n}] = int[${n}](${codes});
+  const vec4 colours[${n}] = vec4[${n}](
+    ${colours});
+  int c = int(floor(code + 0.5));
+  for (int i = 0; i < ${n}; ++i) {
+    if (codes[i] == c) return colours[i];
+  }
+  return vec4(0.0);
+}
+`;
+}
 const segmentSampler = Symbol("zarr-vectors.segments");
 const attributeSamplers: symbol[] = [];
 function attributeSampler(i: number) {
@@ -1210,7 +1444,41 @@ function DenseRenderLayer<
         modelMatrix,
       );
       const { shaderControlState } = displayState.skeletonRenderingOptions;
-      const passes: { shader: ShaderProgram; edges: boolean; sections?: boolean }[] = [];
+      const passes: {
+        shader: ShaderProgram;
+        edges: boolean;
+        sections?: boolean;
+        faces?: boolean;
+      }[] = [];
+      if (helper.triangles && !targetIsSliceView) {
+        // A mesh's faces, filled and lit as Neuroglancer lights its meshes.
+        const { shader, parameters } = helper.faceShaderGetter(
+          renderContext.emitter,
+        );
+        if (shader === null) return;
+        shader.bind();
+        setShaderControls(
+          gl,
+          shader,
+          shaderControlState,
+          parameters.parseResult,
+        );
+        const { lightDirection, ambientLighting, directionalLighting } =
+          renderContext as PerspectiveViewRenderContext;
+        vec3.scale(tempLight as unknown as vec3, lightDirection, directionalLighting);
+        tempLight[3] = ambientLighting;
+        gl.uniform4fv(shader.uniform("uLightDirection"), tempLight);
+        mat3FromMat4(tempMat3, modelMatrix);
+        scaleMat3Output(
+          tempMat3,
+          tempMat3,
+          projectionParameters.displayDimensionRenderInfo.canonicalVoxelFactors,
+        );
+        mat3.invert(tempMat3, tempMat3);
+        mat3.transpose(tempMat3, tempMat3);
+        gl.uniformMatrix3fv(shader.uniform("uNormalMatrix"), false, tempMat3);
+        passes.push({ shader, edges: false, faces: true });
+      }
       if (helper.triangles && targetIsSliceView) {
         const { shader, parameters } = helper.sectionShaderGetter(
           renderContext.emitter,
@@ -1264,7 +1532,7 @@ function DenseRenderLayer<
         });
         passes.push({ shader, edges: false });
       }
-      for (const { shader, edges, sections } of passes) {
+      for (const { shader, edges, sections, faces } of passes) {
         shader.bind();
         helper.beginLayer(shader, mvp, visibleAlpha);
         for (const chunk of chunks) {
@@ -1273,7 +1541,24 @@ function DenseRenderLayer<
             : 0;
           gl.uniform1ui(shader.uniform("uPickID"), pickID);
           helper.bindChunk(shader, chunk);
-          if (sections) {
+          if (faces) {
+            if (chunk.faceBuffer === undefined) continue;
+            const aTriangle = shader.attribute("aTriangle");
+            chunk.faceBuffer.bindToVertexAttribI(
+              aTriangle,
+              3,
+              WebGL2RenderingContext.UNSIGNED_INT,
+            );
+            gl.vertexAttribDivisor(aTriangle, 1);
+            gl.drawArraysInstanced(
+              WebGL2RenderingContext.TRIANGLES,
+              0,
+              3,
+              chunk.numFaces,
+            );
+            gl.vertexAttribDivisor(aTriangle, 0);
+            gl.disableVertexAttribArray(aTriangle);
+          } else if (sections) {
             if (chunk.faceBuffer === undefined) continue;
             const aTriangle = shader.attribute("aTriangle");
             chunk.faceBuffer.bindToVertexAttribI(
@@ -1298,6 +1583,8 @@ function DenseRenderLayer<
             gl.vertexAttribDivisor(aVertexIndex, 0);
             gl.disableVertexAttribArray(aVertexIndex);
           } else {
+            // A mesh's chunk with faces has them drawn instead.
+            if (helper.triangles && chunk.faceBuffer !== undefined) continue;
             drawCircles(gl, 1, chunk.numOwnVertices);
           }
         }
