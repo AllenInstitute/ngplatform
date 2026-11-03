@@ -106,6 +106,39 @@ class FilterTaskTest(unittest.TestCase):
         image = nib.load(str(nii))
         self.assertEqual(int(image.get_fdata().max()), int(mask.sum()) if mask.sum() else 0)
 
+    def stored_points(self, store):
+        from zarr_vectors.types.polylines import read_polylines
+
+        r = read_polylines(str(store), level=0)
+        order = np.argsort(np.asarray(r["object_ids"]))
+        return np.concatenate([np.concatenate(r["polylines"][k]) for k in order])
+
+    def test_a_store_output_lines_up_with_its_input(self):
+        from zarr_vectors_tools.cli import main as zvtools
+
+        # From a file: RAS+ mm, as the viewer shows the file.
+        source = FIXTURES / "las.trk"
+        t, _ = self.oracle(source, {"op": "all"})
+        centre = t.vertices[len(t.vertices) // 2].astype(float).tolist()
+        tree = {"op": "passes", "mode": "path", "region": {"type": "sphere", "center": centre, "radius": 15}}
+        t, mask = self.oracle(source, tree)
+        self.run_task(source, tree, "--store", str(self.dir / "from_file.zarr"), "--levels", "0")
+        expected = np.concatenate([t.polyline(k) for k in np.flatnonzero(mask)])
+        self.assertTrue(np.allclose(self.stored_points(self.dir / "from_file.zarr"), expected, atol=1e-4))
+        self.assertFalse((self.dir / ".from_file.zarr.filtered.trk").exists())
+        # From a store in voxel mm, and one in RAS mm: each keeps its own space.
+        for name, extra in (("vox.zarr", []), ("ras.zarr", ["--apply-affine"])):
+            store = self.dir / name
+            self.assertEqual(zvtools(["convert", str(source), str(store), *extra]), 0)
+            t, _ = self.oracle(store, {"op": "all"})
+            centre = t.vertices[len(t.vertices) // 2].astype(float).tolist()
+            tree = {"op": "passes", "mode": "path", "region": {"type": "sphere", "center": centre, "radius": 15}}
+            t, mask = self.oracle(store, tree)
+            out = self.dir / f"out_{name}"
+            self.run_task(store, tree, "--store", str(out), "--levels", "0")
+            expected = np.concatenate([t.polyline(k) for k in np.flatnonzero(mask)])
+            self.assertTrue(np.allclose(self.stored_points(out), expected, atol=1e-3), name)
+
     def test_density_counts_each_streamline_once_per_voxel(self):
         source = FIXTURES / "ras.trk"
         nii = self.dir / "d.nii"

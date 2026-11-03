@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import runpy
+import signal
 import sys
 import time
 import traceback
@@ -28,6 +29,12 @@ def main() -> None:
         raise SystemExit(2)
     result, module, args = sys.argv[1], sys.argv[2], sys.argv[3:]
     sys.argv = [module, *args]
+
+    def terminated(signum, frame):
+        # Cancelled: unwind, so the work's cleanup runs (a part-written file is deleted).
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, terminated)
     code = 0
     try:
         runpy.run_module(module, run_name="__main__", alter_sys=True)

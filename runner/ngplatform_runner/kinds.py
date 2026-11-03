@@ -159,6 +159,10 @@ def plan_convert(roots: Roots, args: dict) -> Plan:
     elif not source.name.lower().endswith(".trk"):
         # zvtools needs a chunk shape for every format but .trk.
         argv += ["--chunk-shape", "32,32,32"]
+    # A .trk's points in RAS+ mm, as the viewer shows the file itself, unless asked to keep voxel mm.
+    ras = _bool(args, "ras", True)
+    if ras and source.name.lower().endswith(".trk"):
+        argv.append("--apply-affine")
     if overwrite:
         argv.append("--overwrite")
     return Plan(
@@ -166,7 +170,7 @@ def plan_convert(roots: Roots, args: dict) -> Plan:
         argv=argv,
         title=f"Convert {source.name}",
         outputs=[{"path": str(output), "type": "zarr-vectors"}],
-        shown={"input": str(source), "output": str(output), "levels": levels, "overwrite": overwrite},
+        shown={"input": str(source), "output": str(output), "levels": levels, "ras": ras, "overwrite": overwrite},
     )
 
 
@@ -265,7 +269,8 @@ KINDS: dict[str, Kind] = {
         "convert", "Convert a tractogram",
         "A .trk, .tck or .trx file to a Zarr Vectors store with coarser levels (zvtools convert). "
         "Arguments: input, output (a .zarr folder to make), levels (coarser levels, each half the "
-        "streamlines of the one below; default 3), chunk_shape (mm; default for .trk: chosen from the file), overwrite.",
+        "streamlines of the one below; default 3), chunk_shape (mm; default for .trk: chosen from the file), ras (a .trk's "
+        "points stored in RAS+ mm, as the viewer shows the file; default true), overwrite.",
         plan_convert, convert_progress,
     ),
     "filter": Kind(

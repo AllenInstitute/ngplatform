@@ -77,14 +77,15 @@ again when it starts.
 Each job is a process of its own: `python -m ngplatform_runner.child`, which
 runs the kind's module in that same process (so the PID shown is the work's
 own). It is started in a new process group, and cancelling it ends the group
-(SIGTERM, then SIGKILL after 5 s), including processes it started. Its
+(SIGTERM, then SIGKILL after 5 s), including processes it started. A
+filter job that is cancelled deletes the `.trk` it was writing. Its
 output goes to `<state-dir>/jobs/<id>/log.txt`, from which the runner reads
 progress; when it ends it writes `result.json` with its exit code. The job
 list is `<state-dir>/state.json`.
 
 | Kind | Arguments | Writes |
 |---|---|---|
-| `convert` | `input` (.trk, .tck, .trx), `output` (a `.zarr` folder to make), `levels` (coarser levels, each half the streamlines of the one below; default 3), `chunk_shape` (mm; default chosen from a .trk, 32 mm otherwise), `overwrite` | A Zarr Vectors store (`zvtools convert`) |
+| `convert` | `input` (.trk, .tck, .trx), `output` (a `.zarr` folder to make), `levels` (coarser levels, each half the streamlines of the one below; default 3), `chunk_shape` (mm; default chosen from a .trk, 32 mm otherwise), `ras` (default true: a .trk's points stored in RAS+ mm, `--apply-affine`, so the store lines up with the file as the viewer shows it), `overwrite` | A Zarr Vectors store (`zvtools convert`) |
 | `filter` | `input` (a tractogram or a Zarr Vectors store), `filter` (a zvf-predicate document), and one or more of `trk`, `store` (with `levels`), `density` (with `voxel`, mm); `name`, `overwrite` | The streamlines that pass, as a `.trk`, a store, a density map (NIfTI) |
 | `density` | `input`, `filter`, `output` (.nii or .nii.gz), `voxel` | A density map |
 
@@ -105,7 +106,9 @@ reader compute them), the stored positions for a store.
 - A store input is read whole (level 0) into memory, then written with
   zarr-vectors-tools' `export_trk`.
 - A `store` output is the passing streamlines converted with `zvtools
-  convert`. A `density` output counts each passing streamline once in every
+  convert`, in the input's coordinates (RAS+ mm for a file, with
+  `--apply-affine`; a store's own space for a store), so it lines up with
+  the input in the viewer. A `density` output counts each passing streamline once in every
   voxel it passes through, on a grid around them.
 
 Progress comes from lines `[progress] <0..1> <message>` that the runner's

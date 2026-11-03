@@ -42,6 +42,14 @@ KEEP_POINTS = 30_000_000
 MAX_VOXELS = 600 ** 3
 
 
+def _stored_space(store: Path) -> str:
+    """"voxmm" for a store that keeps TrackVis voxel millimetres, else "rasmm"."""
+    from zarr_vectors_tools.convert.export._streamlines import stored_space
+
+    space, trk, _ = stored_space(store)
+    return "voxmm" if space == "voxmm" and trk is not None else "rasmm"
+
+
 def _tractogram(batch: Batch, groups):
     from zarr_vectors_tools.filtering import Tractogram
 
@@ -206,6 +214,10 @@ def run(args: argparse.Namespace) -> dict:
 
         progress(done, f"Writing the Zarr Vectors store {Path(args.store).name}")
         argv = ["convert", str(trk_path), str(args.store)]
+        # The store keeps the input's coordinates: RAS+ mm for a file (as the
+        # viewer reads the file), a store's own space for a store.
+        if source.kind != "store" or _stored_space(source_path) != "voxmm":
+            argv.append("--apply-affine")
         if args.levels > 0:
             argv += ["--sparsity", ",".join(["2"] * args.levels)]
         if args.overwrite:
