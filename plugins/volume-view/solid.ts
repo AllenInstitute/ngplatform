@@ -266,9 +266,13 @@ void main() {
     colour = vec3(shown(raw(p)));
     behind = 2e-5;
   } else {
+    // Down to a tenth of a step where the surface is (a jump over empty
+    // blocks or a brick of background is many of a fine level's voxels).
     float a = before;
     float b = t;
-    for (int k = 0; k < 5; ++k) {
+    float within = 0.1 * sampleAt(p).stepSize;
+    for (int k = 0; k < 16; ++k) {
+      if (b - a < within) break;
       float m = 0.5 * (a + b);
       vec3 q = o + d * m;
       if (!removed(q) && value(q) < threshold) b = m; else a = m;
