@@ -47,7 +47,8 @@ nav:
       - plugins/index.md
       - Zarr Vectors: plugins/zarr-vectors.md
       - Track filtering: plugins/track-filtering.md
-      - Labels: plugins/labels.md
+      - Annotations: plugins/annotations.md
+      - "Drawing labels: a survey": plugins/segmentation-survey.md
       - Registration: plugins/registration.md
       - Volume rendering: plugins/volume-rendering.md
       - Collections: plugins/collections.md

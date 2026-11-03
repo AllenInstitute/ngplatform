@@ -20,7 +20,7 @@ all, and the keyboard icon lists the keyboard and mouse bindings.
 | **Neuroglancer** | Open this scene in Google's Neuroglancer in a new tab. It says so when the scene holds data plain Neuroglancer cannot read (Zarr Vectors, files on this computer). |
 | **Undo / Redo** | Undo any change to the workspace: layers, positions, settings, plugin state. |
 | **Scene tabs** | One tab per scene. **+** adds a scene; each tab has a close button (closing the last leaves a blank scene). Rename, duplicate and delete scenes from the command palette. |
-| Camera icon | **Capture**: a picture of the views (magnified, borders trimmed), or a movie (a sweep through slices or time, or a turn of the 3-D view) as GIF, WebM, MP4 or PNG frames; and Neuroglancer's own screenshot dialog. See [Capture](#capture). |
+| Camera icon | **Capture**: a picture of the views (magnified, borders trimmed), or a movie (a sweep through slices or time, or a turn of the 3-D view) as GIF, WebM, MP4 or PNG frames; and Neuroglancer's own screenshot dialog. Labels from the Annotations plugin are painted in. See [Capture](#capture). |
 | Gear icon | View settings, reload the scene's layers, or a hard reset that reloads everything fresh. |
 | Keyboard icon | The keyboard and mouse reference. |
 | **Commands** | The command palette (++ctrl+k++). |
@@ -57,7 +57,7 @@ Labels from the Labels plugin are painted into every frame.
 |---|---|
 | **Datasets** | What the scene shows: one row per dataset with its visibility, load state and source. A dataset shown through several layers (a tractogram and its track groups, say) lists them beneath it. Selecting a row shows its controls in the Layer tab. Datasets that other scenes show are listed below, ready to add. |
 | **Filtering** | The Track filtering plugin: TrackVis-style track groups. See [Track filtering](../plugins/track-filtering.md). |
-| **Labels** | The Labels plugin: named pins and callouts for figures. See [Labels](../plugins/labels.md). |
+| **Annotations** | The Annotations plugin: labels (named pins and callouts for figures), measurements, statistics in a region, and label volumes drawn by hand. See [Annotations](../plugins/annotations.md). |
 | **Registration** | When the Registration plugin is on: move a layer by hand or by landmarks, and save the transform or the moved image. See [Registration](../plugins/registration.md). |
 | **Auth** | The services the workspace's data needs a sign-in for (for example a private Google Cloud bucket), with who is signed in. |
 | **Plugins** | Every plugin, with a switch, a one-line description and a *Read more* guide. **Add** loads a plugin from your computer or a URL. See [Plugins](../plugins/index.md). |

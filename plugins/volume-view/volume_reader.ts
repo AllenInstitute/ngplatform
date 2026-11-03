@@ -383,6 +383,141 @@ export class VolumeReader {
   }
 
   /**
+   * A box of a level's own values (not windowed), x fastest, as numbers;
+   * voxels outside the level are NaN.  For measuring: line profiles, label
+   * statistics, a brush limited to an intensity range.
+   */
+  async rawRegion(index: number, region: Region, signal: AbortSignal, progress?: Progress): Promise<{ data: Float32Array; size: [number, number, number] }> {
+    const level = this.levels[index];
+    const { chunk: cs, shape } = level.info;
+    const { dimOf, type } = level;
+    const size = [0, 1, 2].map((k) => Math.max(0, region.hi[k] - region.lo[k])) as [number, number, number];
+    const out = new Float32Array(size[0] * size[1] * size[2]).fill(NaN);
+    const aLo = [0, 0, 0];
+    const aHi = [0, 0, 0];
+    const stride = [0, 0, 0];
+    const outStride = [1, size[0], size[0] * size[1]];
+    const outLo = [0, 0, 0];
+    for (let k = 0; k < 3; ++k) {
+      aLo[dimOf[k]] = Math.max(0, region.lo[k]);
+      aHi[dimOf[k]] = Math.min(shape[dimOf[k]], region.hi[k]);
+      stride[dimOf[k]] = outStride[k];
+      outLo[dimOf[k]] = region.lo[k];
+    }
+    if (aLo.some((v, d) => v >= aHi[d])) return { data: out, size };
+    // Inside the level, where no chunk is stored, the fill value.
+    for (let i = aLo[0]; i < aHi[0]; ++i) {
+      for (let j = aLo[1]; j < aHi[1]; ++j) {
+        for (let k = aLo[2]; k < aHi[2]; ++k) out[(i - outLo[0]) * stride[0] + (j - outLo[1]) * stride[1] + (k - outLo[2]) * stride[2]] = level.fill;
+      }
+    }
+    const read = level.rawChunk ?? level.readChunk;
+    const first = [0, 1, 2].map((d) => Math.floor(aLo[d] / cs[d]));
+    const last = [0, 1, 2].map((d) => Math.ceil(aHi[d] / cs[d]) - 1);
+    const indices: number[][] = [];
+    for (let a = first[0]; a <= last[0]; ++a) for (let b = first[1]; b <= last[1]; ++b) for (let c = first[2]; c <= last[2]; ++c) indices.push([a, b, c]);
+    let done = 0;
+    await each(indices, signal, async (ci) => {
+      const bytes = await read(ci);
+      if (bytes !== undefined) {
+        const data = values(bytes, level.rawChunk ? type : "uint8");
+        const origin = [0, 1, 2].map((d) => ci[d] * cs[d]);
+        const from = [0, 1, 2].map((d) => Math.max(origin[d], aLo[d]));
+        const to = [0, 1, 2].map((d) => Math.min(origin[d] + cs[d], aHi[d]));
+        for (let i = from[0]; i < to[0]; ++i) {
+          for (let j = from[1]; j < to[1]; ++j) {
+            let src = ((i - origin[0]) * cs[1] + (j - origin[1])) * cs[2] + (from[2] - origin[2]);
+            let dst = (i - outLo[0]) * stride[0] + (j - outLo[1]) * stride[1] + (from[2] - outLo[2]) * stride[2];
+            for (let k = from[2]; k < to[2]; ++k, ++src, dst += stride[2]) out[dst] = data[src];
+          }
+        }
+      }
+      progress?.(++done, indices.length);
+    });
+    return { data: out, size };
+  }
+
+  /**
+   * A level's own values at points (voxel coordinates x, y, z, three a
+   * point; integers at voxel centres), nearest or trilinear; NaN outside.
+   * Each chunk the points need is read once, so a long line across a large
+   * image reads only the chunks it passes through.
+   */
+  async rawPoints(index: number, points: Float64Array, method: "nearest" | "linear", signal: AbortSignal): Promise<Float64Array> {
+    const level = this.levels[index];
+    const { chunk: cs, shape, size } = level.info;
+    const { dimOf, type } = level;
+    const n = points.length / 3;
+    const out = new Float64Array(n).fill(NaN);
+    // The voxels needed (x, y, z packed as one number), each with its value once read.
+    const pack = (x: number, y: number, z: number) => x + size[0] * (y + size[1] * z);
+    const inside = (x: number, y: number, z: number) => x >= 0 && y >= 0 && z >= 0 && x < size[0] && y < size[1] && z < size[2];
+    const wanted = new Map<number, number>();
+    const corners = method === "nearest" ? 1 : 8;
+    for (let i = 0; i < n; ++i) {
+      const p = [points[3 * i], points[3 * i + 1], points[3 * i + 2]];
+      const base = method === "nearest" ? p.map(Math.round) : p.map(Math.floor);
+      for (let c = 0; c < corners; ++c) {
+        const x = base[0] + (c & 1);
+        const y = base[1] + ((c >> 1) & 1);
+        const z = base[2] + ((c >> 2) & 1);
+        if (inside(x, y, z)) wanted.set(pack(x, y, z), level.fill);
+      }
+    }
+    // Grouped by chunk, in the array's order.
+    const byChunk = new Map<string, { index: number[]; voxels: number[][] }>();
+    for (const key of wanted.keys()) {
+      const v = [key % size[0], Math.floor(key / size[0]) % size[1], Math.floor(key / (size[0] * size[1]))];
+      const e = [0, 0, 0];
+      for (let k = 0; k < 3; ++k) e[dimOf[k]] = v[k];
+      const ci = e.map((x, d) => Math.floor(x / cs[d]));
+      const id = ci.join(".");
+      let group = byChunk.get(id);
+      if (group === undefined) byChunk.set(id, (group = { index: ci, voxels: [] }));
+      group.voxels.push(v);
+    }
+    const read = level.rawChunk ?? level.readChunk;
+    await each([...byChunk.values()], signal, async ({ index: ci, voxels }) => {
+      const bytes = await read(ci);
+      if (bytes === undefined) return;
+      const data = values(bytes, level.rawChunk ? type : "uint8");
+      for (const v of voxels) {
+        const e = [0, 0, 0];
+        for (let k = 0; k < 3; ++k) e[dimOf[k]] = v[k];
+        if (e.some((x, d) => x >= shape[d])) continue;
+        wanted.set(pack(v[0], v[1], v[2]), data[((e[0] - ci[0] * cs[0]) * cs[1] + (e[1] - ci[1] * cs[1])) * cs[2] + (e[2] - ci[2] * cs[2])]);
+      }
+    });
+    const at = (x: number, y: number, z: number) => (inside(x, y, z) ? (wanted.get(pack(x, y, z)) ?? NaN) : NaN);
+    for (let i = 0; i < n; ++i) {
+      const x = points[3 * i];
+      const y = points[3 * i + 1];
+      const z = points[3 * i + 2];
+      if (method === "nearest") {
+        out[i] = at(Math.round(x), Math.round(y), Math.round(z));
+        continue;
+      }
+      const x0 = Math.floor(x);
+      const y0 = Math.floor(y);
+      const z0 = Math.floor(z);
+      const f = [x - x0, y - y0, z - z0];
+      let v = 0;
+      let w = 0;
+      for (let c = 0; c < 8; ++c) {
+        const d = [c & 1, (c >> 1) & 1, (c >> 2) & 1];
+        const weight = (d[0] ? f[0] : 1 - f[0]) * (d[1] ? f[1] : 1 - f[1]) * (d[2] ? f[2] : 1 - f[2]);
+        if (weight === 0) continue;
+        const s = at(x0 + d[0], y0 + d[1], z0 + d[2]);
+        if (s !== s) continue;
+        v += weight * s;
+        w += weight;
+      }
+      out[i] = w > 0 ? v / w : NaN;
+    }
+    return out;
+  }
+
+  /**
    * A section: the plane `axis` (0 = R, 1 = A, 2 = S) = `value` mm, over
    * `rect` = [u0, u1, v0, v1] mm along the other two axes in order, with
    * texels of about `texel` mm (at most 4096 a side), from a level.
