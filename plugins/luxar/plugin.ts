@@ -153,7 +153,9 @@ class Luxar {
       }
     }
     for (const name of this.views.keys()) {
-      const key = layers.get(name)!.sources.join("\n");
+      // Once its data has loaded, too: a layer still loading may not take the set yet.
+      const layer = layers.get(name)!;
+      const key = `${layer.ready}\n${layer.sources.join("\n")}`;
       if (this.hidden.get(name) === key) continue;
       this.hidden.set(name, key);
       this.ctx.viewer.setTemporaryVisibleSegments(name, NO_OBJECT);
