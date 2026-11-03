@@ -8,7 +8,8 @@
  */
 
 /** Files read as virtual Zarr, by name: NIfTI images. */
-export const VIRTUAL_FILE = /\.(nii(\.gz)?|hdr)$/i;
+/** NIfTI and Analyze files; not CIFTI (`.dscalar.nii` and the like: values on surfaces, read with them). */
+export const VIRTUAL_FILE = /^(?!.*\.(d|p)(scalar|label|tseries|conn|fiber)\.nii$).*\.(nii(\.gz)?|hdr)$/i;
 export const TIFF_FILE = /\.tiff?$/i;
 
 /**

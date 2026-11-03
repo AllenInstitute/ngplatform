@@ -10,6 +10,7 @@
  * each to check its vertex count when the store opens, a file's values when
  * that attribute is first asked for.
  */
+import { CIFTI_FILE, CORTEX, ciftiMap, parseCiftiHeader } from "./cifti.js";
 import { gunzipHead, isGzip } from "../images/store.js";
 import { MGH_HEADER } from "../images/mgh.js";
 import { FREESURFER_SURFACE } from "./mesh_files.js";
@@ -76,7 +77,8 @@ export async function surfaceRelated(path: string, list: (folder: string) => Pro
   }
   if (/\.gii$/i.test(name)) {
     const hemi = giftiHemisphere(name);
-    return here.filter((f) => /\.gii$/i.test(f) && (hemi === undefined || giftiHemisphere(f) === hemi));
+    // CIFTI files hold both hemispheres: any beside a surface whose hemisphere is known.
+    return here.filter((f) => (/\.gii$/i.test(f) && (hemi === undefined || giftiHemisphere(f) === hemi)) || (hemi !== undefined && CIFTI_FILE.test(f)));
   }
   return [];
 }
@@ -174,6 +176,23 @@ export async function surfaceCompanions(surfaceName: string, related: Record<str
         if (/\.mg[hz]$/i.test(base)) {
           if (mghCount(await head(file, MGH_HEADER)) !== vertexCount) throw new Error("another vertex count");
           maps.push({ name: stem(path).replace(/\.mg[hz]$/i, ""), source: path, parcellation: false, load: once(async () => parseMghValues(await whole(file))) });
+          return;
+        }
+        if (CIFTI_FILE.test(base)) {
+          // Each map of the hemisphere's cortex in a CIFTI file.
+          const structure = CORTEX[giftiHemisphere(surfaceName) ?? ""];
+          // The header says where the values start: the XML is everything before.
+          const first = await head(file, 540);
+          const start = new DataView(first.buffer, first.byteOffset, first.byteLength);
+          const header = parseCiftiHeader(await head(file, Number(start.getBigInt64(168, start.getInt32(0, true) === 540))));
+          const model = header.models.find((m) => m.structure === structure);
+          if (structure === undefined || model === undefined) throw new Error("no cortex of this hemisphere in it");
+          if (model.surfaceVertices !== vertexCount) throw new Error("another vertex count");
+          const bytes = once(() => whole(file));
+          header.maps.forEach((m, row) => {
+            const name = header.maps.length === 1 ? base.replace(CIFTI_FILE, "").replace(/^.*[._-](?=[^._-]+$)/, "") || m.name : m.name;
+            maps.push({ name, source: path, parcellation: m.labels !== undefined, load: once(async () => ciftiMap(await bytes(), header, row, structure, vertexCount)) });
+          });
           return;
         }
         if (/\.gii$/i.test(base)) {

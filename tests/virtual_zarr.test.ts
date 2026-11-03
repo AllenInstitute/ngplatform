@@ -510,3 +510,11 @@ describe("FreeSurfer .mgz and .mgh as virtual OME-Zarr", () => {
     ]);
   });
 });
+
+describe("file names", () => {
+  it("reads NIfTI and Analyze as images, and leaves CIFTI to the surfaces it is on", async () => {
+    const { VIRTUAL_FILE } = await import("../src/virtual/images/store.js");
+    for (const name of ["T1.nii", "T1.nii.gz", "a.hdr", "sub.dwi.nii.gz"]) expect(VIRTUAL_FILE.test(name), name).toBe(true);
+    for (const name of ["sub.thickness.dscalar.nii", "aparc.dlabel.nii", "rest.dtseries.nii", "net.pconn.nii"]) expect(VIRTUAL_FILE.test(name), name).toBe(false);
+  });
+});
