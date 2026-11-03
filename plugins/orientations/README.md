@@ -25,7 +25,7 @@ User guide: [docs/plugins/orientations.md](../../docs/plugins/orientations.md)
 | `render.ts` | Drawing glyph sets, in that canvas and in Neuroglancer's 3-D view (`draw3d`). |
 | `glyphs.ts` | Voxels to glyphs: SH on a sphere, tensor ellipsoids, lines. |
 | `sh.ts` | Real symmetric spherical harmonics in four bases; least-squares fit; the order-2 quadratic forms. |
-| `tensor.ts` | Tensor component orders, Jacobi eigen-decomposition, FA, MD. |
+| `tensor.ts` | Tensor component orders, Jacobi eigen-decomposition, FA, MD. (Log-Euclidean means, for coarser levels, are the app's: `src/virtual/images/tensors.ts`.) |
 | `sphere.ts` | Icospheres with each vertex's ring of neighbours (for normals). |
 | `reader.ts`, `ome4.ts` | The 4-D pyramid: levels, and the voxels of a box within slabs, as float32. |
 | `worker.ts`, `client.ts` | The reader and glyph computation in a worker. |
@@ -170,8 +170,42 @@ The plugin never coarsens: a store's levels are taken as they are. For SH
 the mean of a box's coefficients is the mean ODF of the box (SH are linear),
 so a pyramid of means (as `tools/make_dipy_example.py` writes, and as the
 app's NIfTI reader makes for a 4-D NIfTI read in place) gives sensible
-coarse glyphs. For tensors a mean is the Euclidean mean (a log-Euclidean
-pyramid would keep determinants better).
+coarse glyphs.
+
+Tensors are not averaged that way. A plain mean of the six components
+swells tensors that point different ways: two cigars crossing at right
+angles average to a fat disc of twice their volume (its determinant
+larger than either's), and FA drops. The log-Euclidean mean (Arsigny et
+al., 2006: the mean of the matrix logarithms, exponentiated) keeps the
+determinant at the geometric mean of the box's determinants. Tensors that
+are not positive definite (the zeros around a brain, a fit with a negative
+eigenvalue) have no logarithm and are left out of a box's mean; a box with
+none is zeros (no glyph). So:
+
+- `tools/make_dipy_example.py` and the synthetic stores in `tests/` write
+  tensor pyramids of log-Euclidean means.
+- The app's NIfTI reader (`src/virtual/images/nifti.ts`, the maths in
+  `src/virtual/images/tensors.ts`) makes coarser levels log-Euclidean when
+  the image holds six float components a voxel, all in each chunk, and
+  either its header's intent is NIFTI_INTENT_SYMMATRIX (1005; NIfTI stores
+  the lower triangle by rows, which is DIPY's order, as DIPY's
+  `nifti1_symmat` writes) or the page asks. The plugin asks: when it draws
+  such a NIfTI as tensors it sends the store `{ tensor: <order> }`
+  (`WorkspaceApi.local.send`), and `{ tensor: null }` when it draws it as
+  something else; when that changes the levels, the worker forgets its
+  chunks and Neuroglancer reads the image again (`reloadData`). Most DTI
+  NIfTIs (FSL's `dtifit`, MRtrix, DIPY's plain `save_nifti`) set no intent,
+  so this is how they get log-Euclidean levels; it follows the **Tensor
+  order** setting (a wrong order gives wrong means, as it gives wrong
+  glyphs). A 6-volume NIfTI marked as a time series (one volume per chunk)
+  keeps plain means.
+- The panel says which the open NIfTI's coarser levels are.
+
+The decomposition is closed form (Smith's eigenvalues, the most distinct
+one's eigenvector from cross products, the other two by one rotation), no
+iterations: about 0.25 µs a tensor, so a 128³ level of six components
+averages to 64³ in under a second in one thread (`tests/virtual_zarr.test.ts`
+times it).
 
 ### The 3-D view
 
@@ -232,13 +266,19 @@ axial slices). Serve
 ## Tests
 
 `npx vitest run plugins/orientations`: SH against DIPY in all four bases,
-fits, quadratic forms and GFA; tensor orders, eigenvectors, FA; synthetic
+fits, quadratic forms and GFA; tensor orders, eigenvectors, FA; a coarse
+tensor level keeping the geometric mean of its box's determinants; synthetic
 multiscale stores (crossing fibres as SH, a tensor field, a vector field;
 `tests/synthetic.ts`) read through the reader by slab, and their glyphs; the
 level chosen by zoom and the cap, a section's geometry, a moved layer, ODF
 peaks. With
 `ORIENTATIONS_WRITE=<folder>` the synthetic stores are also written to disk,
-to serve and look at.
+to serve and look at. `tests/tensors.test.ts` and the tensor cases in
+`tests/virtual_zarr.test.ts` check the log-Euclidean means: two diagonal
+tensors give the geometric mean of their eigenvalues, determinants are
+kept where the plain mean swells them, tensors that are not positive
+definite are left out with no NaN, the three orders agree, and the NIfTI
+reader's levels (by intent, and by message) match.
 
 The plugin also offers a service, `orientations.status`, with the lines its
 panel shows and counts of reads and draws, which is how the headless browser

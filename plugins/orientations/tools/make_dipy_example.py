@@ -10,7 +10,10 @@ OME-Zarr 0.5 image with a channel axis of components:
 
 Each coarser level is the mean of 2 x 2 x 2 boxes of the finer one, over
 the voxels inside the brain mask; for spherical harmonics that is the mean
-ODF of the box.  The stores say what they hold in `attributes.orientations`.
+ODF of the box.  Tensors are averaged log-Euclidean (the mean of their
+matrix logarithms, exponentiated; tensors that are not positive definite
+left out), which keeps their determinants where a plain mean would swell
+them.  The stores say what they hold in `attributes.orientations`.
 
 Needs dipy and zarr (v3):
 
@@ -35,7 +38,7 @@ from dipy.reconst.dti import TensorModel, lower_triangular
 from dipy.segment.mask import median_otsu
 
 
-def coarsen(data, mask):
+def coarsen(data, mask, dtype=np.float32):
     """The mean of each 2 x 2 x 2 box over the voxels in the mask, and the coarser mask."""
     nx, ny, nz = data.shape[:3]
     px, py, pz = (-nx) % 2, (-ny) % 2, (-nz) % 2
@@ -45,10 +48,41 @@ def coarsen(data, mask):
     total = d.reshape(sx, 2, sy, 2, sz, 2, -1).sum(axis=(1, 3, 5))
     count = m.reshape(sx, 2, sy, 2, sz, 2).sum(axis=(1, 3, 5))
     out = np.where(count[..., None] > 0, total / np.maximum(count, 1)[..., None], 0)
-    return out.astype(np.float32), count > 0
+    return out.astype(dtype), count > 0
 
 
-def write(path, data, mask, affine, name, orientations, levels=4):
+def tensor_matrices(t):
+    """DIPY's lower_triangular order (Dxx Dxy Dyy Dxz Dyz Dzz) to 3 x 3 matrices."""
+    xx, xy, yy, xz, yz, zz = np.moveaxis(t, -1, 0)
+    return np.stack([np.stack([xx, xy, xz], -1), np.stack([xy, yy, yz], -1), np.stack([xz, yz, zz], -1)], -2)
+
+
+def tensor_components(m):
+    """3 x 3 matrices to DIPY's lower_triangular order."""
+    return np.stack([m[..., 0, 0], m[..., 0, 1], m[..., 1, 1], m[..., 0, 2], m[..., 1, 2], m[..., 2, 2]], -1)
+
+
+def apply_to_eigenvalues(t, f):
+    """V f(L) V^T of each symmetric tensor (DIPY's order)."""
+    w, v = np.linalg.eigh(tensor_matrices(t.astype(np.float64)))
+    return tensor_components((v * f(w)[..., None, :]) @ np.swapaxes(v, -1, -2))
+
+
+def coarsen_tensors(data, mask):
+    """
+    The log-Euclidean mean of each 2 x 2 x 2 box: the mean of the matrix
+    logarithms of the box's tensors in the mask that are positive definite,
+    exponentiated (zeros where there are none); and the coarser mask.
+    """
+    w = np.linalg.eigvalsh(tensor_matrices(data.astype(np.float64)))
+    valid = mask & (w[..., 0] > 0) & np.isfinite(w).all(axis=-1)
+    logs = apply_to_eigenvalues(np.where(valid[..., None], data, 0), lambda w: np.log(np.where(w > 0, w, 1)))
+    means, coarse = coarsen(logs, valid, np.float64)
+    out = apply_to_eigenvalues(means, np.exp) * coarse[..., None]
+    return out.astype(np.float32), coarse
+
+
+def write(path, data, mask, affine, name, orientations, levels=4, coarsen=coarsen):
     """An OME-Zarr 0.5 pyramid (axes c, z, y, x) of `data` (x, y, z, c), placed by a diagonal affine."""
     voxel = np.abs(np.diag(affine)[:3])
     if not np.allclose(affine[:3, :3], np.diag(np.diag(affine)[:3])):
@@ -137,6 +171,7 @@ def main():
         affine,
         "Stanford HARDI, DTI",
         {"type": "tensor", "order": "dipy", "frame": "voxel", "software": "DIPY TensorModel"},
+        coarsen=coarsen_tensors,
     )
     print(f"tensors in {time.time() - started:.0f} s")
 

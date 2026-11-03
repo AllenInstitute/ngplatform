@@ -13,7 +13,7 @@ import path from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { computeGlyphs, type GlyphOptions, voxelFrame, withFlips } from "../glyphs.js";
 import { spatialGroup } from "../ome4.js";
-import { readSaved, resolveBasis, resolveFrame, resolveKind } from "../plugin.js";
+import { readSaved, resolveBasis, resolveFrame, resolveKind, resolveTensorOrder } from "../plugin.js";
 import { OrientationReader } from "../reader.js";
 import { directionShader } from "../shader.js";
 import { icosphere } from "../sphere.js";
@@ -250,6 +250,29 @@ describe("glyphs", () => {
     expect(radiusToward(set.radii!, 0, [0, 1, 0])).toBeGreaterThan(0.85);
   });
 
+  it("reads a coarse level of tensors as their log-Euclidean mean, the determinant kept", async () => {
+    vi.stubGlobal("fetch", storeFetch(stores));
+    const reader = new OrientationReader();
+    await reader.open("http://synthetic.test/tensor.ome.zarr/");
+    const signal = new AbortController().signal;
+    // Level 2 voxel (4, 2, 0) covers level 0's x 16..19, y 8..11, z 0..3: fibres along z, x and y, and crossings.
+    const box = await reader.voxels(0, { lo: [16, 8, 0], hi: [20, 12, 4] }, signal);
+    const coarse = await reader.voxels(2, { lo: [4, 2, 0], hi: [5, 3, 1] }, signal);
+    const det = (v: Float32Array, at: number) => {
+      const [xx, xy, xz, yy, yz, zz] = Array.from(v.subarray(at, at + 6), Number);
+      return xx * (yy * zz - yz * yz) - xy * (xy * zz - yz * xz) + xz * (xy * yz - yy * xz);
+    };
+    expect(box.count).toBe(64);
+    const dets = Array.from({ length: box.count }, (_, i) => det(box.values, 6 * i));
+    expect(new Set(dets.map((d) => d.toPrecision(4))).size).toBe(2);
+    const geometric = Math.exp(dets.reduce((a, d) => a + Math.log(d), 0) / dets.length);
+    expect(det(coarse.values, 0) / geometric).toBeCloseTo(1, 4);
+    // A plain mean of the same tensors swells.
+    const mean = new Float32Array(6);
+    for (let i = 0; i < box.count; ++i) for (let c = 0; c < 6; ++c) mean[c] += box.values[6 * i + c] / box.count;
+    expect(det(mean, 0) / geometric).toBeGreaterThan(1.3);
+  });
+
   it("turns directions from the voxel axes into RAS, and flips them", () => {
     // A level stored with x running right to left (a radiological NIfTI).
     const voxelToRas = [-2, 0, 0, 90, 0, 2, 0, -126, 0, 0, 2, -72, 0, 0, 0, 1];
@@ -452,6 +475,11 @@ describe("settings", () => {
     expect(resolveBasis({ basis: "auto" }, { metadata: { basis: "tournier07" } })).toBe("tournier07");
     expect(resolveBasis({ basis: "auto" }, { metadata: { basis: "descoteaux07", legacy: false } })).toBe("descoteaux07");
     expect(resolveFrame({ frame: "auto" }, none, "tournier07", "sh")).toBe("world");
+    // Tensor order: the store's, else DIPY's (NIfTI's lower triangle) for a symmetric-matrix intent, else FSL's.
+    expect(resolveTensorOrder({ tensorOrder: "auto" }, none)).toBe("fsl");
+    expect(resolveTensorOrder({ tensorOrder: "auto" }, { metadata: { order: "mrtrix" } })).toBe("mrtrix");
+    expect(resolveTensorOrder({ tensorOrder: "auto" }, { metadata: undefined, nifti: { intent: 1005 } })).toBe("dipy");
+    expect(resolveTensorOrder({ tensorOrder: "fsl" }, { metadata: undefined, nifti: { intent: 1005 } })).toBe("fsl");
     expect(resolveFrame({ frame: "auto" }, none, "descoteaux07-legacy", "sh")).toBe("voxel");
   });
 

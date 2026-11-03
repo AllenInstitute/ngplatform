@@ -94,6 +94,19 @@ export function resolveBasis(saved: Pick<Saved, "basis">, opened: Pick<Opened, "
   return "descoteaux07-legacy";
 }
 
+/**
+ * The tensors' component order: the setting, else the store's own
+ * attributes, else DIPY's for a NIfTI whose intent says symmetric matrix
+ * (NIfTI stores its lower triangle by rows), else FSL's.
+ */
+export function resolveTensorOrder(saved: Pick<Saved, "tensorOrder">, opened: Pick<Opened, "metadata" | "nifti">): TensorOrder {
+  if (saved.tensorOrder !== "auto") return saved.tensorOrder;
+  const said = String(opened.metadata?.order ?? "");
+  if (said === "dipy" || said === "mrtrix" || said === "fsl") return said;
+  if (opened.nifti?.intent === 1005) return "dipy";
+  return "fsl";
+}
+
 export function resolveFrame(saved: Pick<Saved, "frame">, opened: Pick<Opened, "metadata">, basis: ShBasis, kind: OrientationKind): "voxel" | "world" {
   if (saved.frame !== "auto") return saved.frame;
   const said = opened.metadata?.frame;
@@ -206,14 +219,15 @@ class Orientations {
     this.settingsChanged();
   }
 
-  /** Settings that change the glyphs: read again. */
-  private settingsChanged(): void {
+  /** Settings that change the glyphs: read again (and the store's coarser levels made anew, when they should be). */
+  private settingsChanged(tell = true): void {
     for (const slot of this.slots.values()) {
       slot.pending?.controller.abort();
       slot.pending = undefined;
       if (slot.shown) slot.shown.key = "";
     }
     this.update();
+    if (tell) void this.retellStore();
   }
 
   private readSpace(): void {
@@ -379,9 +393,15 @@ class Orientations {
   private async open(url: string): Promise<void> {
     this.client ??= new OrientationClient();
     try {
-      const opened = await this.client.open(url);
+      let opened = await this.client.open(url);
       if (this.store !== url) return;
       if (opened.levels.length === 0) throw new Error("it has no levels");
+      if (await this.tellStore(url, opened)) {
+        // Its coarser levels are made anew: Neuroglancer's too.
+        opened = await this.client.open(url);
+        this.ctx.viewer.reloadData(url);
+        if (this.store !== url) return;
+      }
       this.opened = opened;
       this.schedule();
     } catch (e) {
@@ -390,16 +410,61 @@ class Orientations {
     this.panelUpdate?.();
   }
 
+  /**
+   * The tensor order a NIfTI read in place has its coarser levels averaged
+   * in (null: plain means), as the store last said; by store URL.
+   */
+  private coarsened: { url: string; tensor: string | null } | undefined;
+
+  /**
+   * For a NIfTI read in place (whose coarser levels the app makes): tells
+   * its store to make them log-Euclidean means when the image is drawn as
+   * tensors, and plain means when not.  True when that changed them.
+   */
+  private async tellStore(url: string, opened: Opened): Promise<boolean> {
+    if (opened.nifti === undefined || opened.levels.length < 2 || opened.levels[0].components !== 6) return false;
+    const options = this.optionsFor(opened, 2);
+    const wanted = options.kind === "tensor" ? options.tensorOrder : null;
+    const current = this.coarsened?.url === url ? this.coarsened.tensor : (opened.nifti.tensorOrder ?? null);
+    if (wanted === current) {
+      this.coarsened = { url, tensor: current };
+      return false;
+    }
+    try {
+      const answer = (await this.ctx.workspace.local.send(url, { tensor: wanted })) as { tensor: string | null; changed: boolean };
+      this.coarsened = { url, tensor: answer.tensor };
+      return answer.changed;
+    } catch {
+      // Not a file on this computer (or a store that takes no messages): its levels are as they are.
+      this.coarsened = { url, tensor: current };
+      return false;
+    }
+  }
+
+  /** After a change of settings: the store's coarser levels made anew when they should be, and read again. */
+  private async retellStore(): Promise<void> {
+    const url = this.store;
+    const opened = this.opened;
+    if (url === undefined || opened === undefined || this.client === undefined) return;
+    if (!(await this.tellStore(url, opened)) || this.store !== url) return;
+    // The worker's chunks are of the old levels: opened again, they are forgotten.
+    await this.client.open(url);
+    if (this.store !== url) return;
+    this.ctx.viewer.reloadData(url);
+    this.settingsChanged(false);
+  }
+
   /** The glyph settings for the open image. */
   private options(subdivisions: number): GlyphOptions | undefined {
-    const opened = this.opened;
-    if (opened === undefined) return undefined;
+    return this.opened === undefined ? undefined : this.optionsFor(this.opened, subdivisions);
+  }
+
+  private optionsFor(opened: Opened, subdivisions: number): GlyphOptions {
     const level0 = opened.levels[0];
     const kind = resolveKind(this.saved, opened, level0.components);
     const basis = resolveBasis(this.saved, opened);
     const frame = resolveFrame(this.saved, opened, basis, kind);
-    const said = String(opened.metadata?.order ?? "");
-    const tensorOrder: TensorOrder = this.saved.tensorOrder !== "auto" ? this.saved.tensorOrder : said === "dipy" || said === "mrtrix" ? said : "fsl";
+    const tensorOrder = resolveTensorOrder(this.saved, opened);
     const toData = withFlips(frame === "voxel" ? voxelFrame(level0.voxelToRas) : [1, 0, 0, 0, 1, 0, 0, 0, 1], this.saved.flips);
     return { kind, basis, tensorOrder, toData, normalise: this.saved.normalise, tensorGlyph: this.saved.tensorGlyph, shGlyph: this.saved.shGlyph, subdivisions, minAnisotropy: this.saved.minAnisotropy };
   }
@@ -836,6 +901,10 @@ class Orientations {
             ? "vectors"
             : `peaks (${Math.floor(level0.components / 3)} per voxel)`;
     lines.push(`${opened.name}: ${what}; ${opened.levels.length} level${opened.levels.length === 1 ? "" : "s"}, ${opened.levels.map((l) => mm(l.voxelSize)).join(", ")}.`);
+    const coarsened = this.coarsened;
+    if (opened.nifti !== undefined && opened.levels.length > 1 && coarsened !== undefined && coarsened.url === this.store) {
+      lines.push(coarsened.tensor !== null ? "Coarser levels: log-Euclidean means of the tensors (made by the app)." : "Coarser levels: means of each component (made by the app).");
+    }
     let index = 0;
     for (const [key, slot] of this.slots) {
       index++;

@@ -13,6 +13,7 @@ import { mghVoxelToRas, openMgh, parseMghHeader } from "../src/virtual/images/mg
 import { splitVirtual } from "../src/virtual/local_data.js";
 import { NiftiStore, nearestAxes, niftiAffine, openNifti, parseNiftiHeader } from "../src/virtual/images/nifti.js";
 import { answer, blobSource, pairAsSingleFile } from "../src/virtual/images/store.js";
+import { logEuclideanMean } from "../src/virtual/images/tensors.js";
 
 interface Spec {
   version?: 1 | 2;
@@ -395,6 +396,110 @@ describe("NIfTI as Zarr", () => {
     expect(part).toMatchObject({ status: 200, size: whole.size, start: 2 });
     expect(new Uint8Array(part.body!)).toEqual(new Uint8Array(whole.body!).slice(2, 10));
     expect((await answer(s, "nothing", undefined, false)).status).toBe(404);
+  });
+
+  describe("tensors", () => {
+    // A tensor field (Dxx Dxy Dyy Dxz Dyz Dzz, NIfTI's lower triangle) whose
+    // cigars turn from voxel to voxel, with a background of zeros (x < 3).
+    const tdim = [60, 10, 9];
+    const tensorAt = (i: number, j: number, k: number): number[] => {
+      if (i < 3) return [0, 0, 0, 0, 0, 0];
+      const a = 0.4 * i + 0.7 * j - 0.3 * k;
+      const [l1, l2, l3] = [1.7e-3, 0.3e-3 + 1e-5 * k, 0.2e-3];
+      const c = Math.cos(a);
+      const s = Math.sin(a);
+      // xx, xy, yy, xz, yz, zz
+      return [l1 * c * c + l2 * s * s, (l1 - l2) * c * s, l1 * s * s + l2 * c * c, 0, 0, l3];
+    };
+    const tensorFile = (spec: { intent?: number; fourD?: boolean }) =>
+      nifti({
+        dim: spec.fourD ? [...tdim, 6] : [...tdim, 1, 6],
+        datatype: 16,
+        intent: spec.intent,
+        // file order: i fastest, then j, k, (t), component
+        value: (n) => {
+          const i = n % tdim[0];
+          const j = Math.floor(n / tdim[0]) % tdim[1];
+          const k = Math.floor(n / (tdim[0] * tdim[1])) % tdim[2];
+          const c = Math.floor(n / (tdim[0] * tdim[1] * tdim[2]));
+          return tensorAt(i, j, k)[c];
+        },
+      });
+    /** The six components of a level's voxel, from readLevel. */
+    const sixOf = (level: Awaited<ReturnType<typeof readLevel>>, i: number, j: number, k: number) => Array.from({ length: 6 }, (_, c) => level.at(i, j, k, c));
+    const boxes = [[0, 0, 0], [1, 2, 3], [5, 4, 4], [10, 4, 2], [6, 0, 1]];
+
+    it("makes coarse levels of a NIFTI_INTENT_SYMMATRIX image log-Euclidean means, zeros left out", async () => {
+      const s = await store(tensorFile({ intent: 1005 }));
+      expect(s.coarsening).toEqual({ type: "log-euclidean", order: "dipy" });
+      const group = await json(s, "zarr.json");
+      expect(group.attributes.ome.multiscales[0].type).toBe("log-euclidean");
+      expect(s.levels[1].step).toEqual([2, 2, 2]);
+      const coarse = await readLevel(s, 1);
+      for (const [I, J, K] of boxes) {
+        const box: number[][] = [];
+        for (let k = 2 * K; k < Math.min(2 * K + 2, tdim[2]); ++k) for (let j = 2 * J; j < Math.min(2 * J + 2, tdim[1]); ++j) for (let i = 2 * I; i < Math.min(2 * I + 2, tdim[0]); ++i) box.push(tensorAt(i, j, k));
+        const expected = logEuclideanMean(box, "dipy");
+        const got = sixOf(coarse, I, J, K);
+        for (let c = 0; c < 6; ++c) expect(got[c]).toBeCloseTo(expected[c], 8);
+      }
+      // All background: zeros. Half background: the mean of the tensors alone.
+      expect(sixOf(coarse, 0, 3, 3)).toEqual([0, 0, 0, 0, 0, 0]);
+      const half = logEuclideanMean([tensorAt(3, 2, 2), tensorAt(3, 3, 2), tensorAt(3, 2, 3), tensorAt(3, 3, 3)], "dipy");
+      sixOf(coarse, 1, 1, 1).forEach((v, c) => expect(v).toBeCloseTo(half[c], 8));
+      // No NaN at any level, the coarsest too.
+      for (let l = 1; l < s.levels.length; ++l) {
+        const level = await readLevel(s, l);
+        const [, nx, ny, nz] = level.size;
+        for (let k = 0; k < nz; ++k) for (let j = 0; j < ny; ++j) for (let i = 0; i < nx; ++i) for (const v of sixOf(level, i, j, k)) expect(Number.isFinite(v)).toBe(true);
+      }
+    });
+
+    it("keeps the determinant where a plain mean swells it", async () => {
+      const log = await readLevel(await store(tensorFile({ intent: 1005 })), 1);
+      const plain = await readLevel(await store(tensorFile({})), 1);
+      // xx, xy, yy, xz, yz, zz
+      const det = (m: number[]) => m[0] * (m[2] * m[5] - m[4] * m[4]) - m[1] * (m[1] * m[5] - m[4] * m[3]) + m[3] * (m[1] * m[4] - m[2] * m[3]);
+      for (const [I, J, K] of [[5, 2, 1], [7, 3, 3]]) {
+        const dets: number[] = [];
+        for (let k = 2 * K; k < 2 * K + 2; ++k) for (let j = 2 * J; j < 2 * J + 2; ++j) for (let i = 2 * I; i < 2 * I + 2; ++i) dets.push(det(tensorAt(i, j, k)));
+        const geometric = Math.exp(dets.reduce((a, d) => a + Math.log(d), 0) / dets.length);
+        expect(det(sixOf(log, I, J, K)) / geometric).toBeCloseTo(1, 4);
+        expect(det(sixOf(plain, I, J, K)) / geometric).toBeGreaterThan(1.2);
+      }
+    });
+
+    it("averages as tensors when told to (in the order given), and plainly again when told not to", async () => {
+      const s = await store(tensorFile({ fourD: true }));
+      expect(s.coarsening).toEqual({ type: "mean" });
+      const plain = sixOf(await readLevel(s, 1), 5, 2, 1);
+      expect(s.message({ tensor: "dipy" })).toEqual({ tensor: "dipy", changed: true });
+      expect(s.message({ tensor: "dipy" })).toEqual({ tensor: "dipy", changed: false });
+      const told = sixOf(await readLevel(s, 1), 5, 2, 1);
+      const reference = sixOf(await readLevel(await store(tensorFile({ intent: 1005 })), 1), 5, 2, 1);
+      told.forEach((v, c) => expect(v).toBeCloseTo(reference[c], 10));
+      expect(s.message({ tensor: null })).toEqual({ tensor: null, changed: true });
+      expect(sixOf(await readLevel(s, 1), 5, 2, 1)).toEqual(plain);
+      expect(() => s.message({ tensor: "spm" })).toThrow(/not a tensor order/);
+      // Not six components together in a chunk: refused, saying why.
+      const series = await store(nifti({ dim: [...tdim, 6], pixdim: [1, 1, 1, 2], units: 2 | 8, datatype: 16, value: () => 1 }));
+      expect(series.message({ tensor: "fsl" })).toMatchObject({ tensor: null, changed: false, reason: expect.stringMatching(/six float components/) });
+    });
+
+    it("makes a 128³ level of tensors in well under a few seconds", async () => {
+      const n = 128;
+      // Dxx Dxy Dyy Dxz Dyz Dzz: off-diagonals varying from voxel to voxel.
+      const component = (f: number) => [1e-3, ((f % 7) - 3) * 1e-5, 6e-4, ((f % 5) - 2) * 1e-5, ((f % 3) - 1) * 1e-5, 3e-4][Math.floor(f / n ** 3)];
+      const bytes = nifti({ dim: [n, n, n, 1, 6], datatype: 16, intent: 1005, value: component });
+      const s = await store(bytes);
+      const started = performance.now();
+      const meta = await json(s, "1/zarr.json");
+      const grid = meta.shape.map((v: number, d: number) => Math.ceil(v / meta.chunk_grid.configuration.chunk_shape[d]));
+      for (let k = 0; k < grid[3]; ++k) for (let j = 0; j < grid[2]; ++j) for (let i = 0; i < grid[1]; ++i) await s.get(`1/c/0/${i}/${j}/${k}`);
+      const ms = performance.now() - started;
+      console.log(`a 128³ × 6 level 1 (64³) made in ${Math.round(ms)} ms`);
+      expect(ms).toBeLessThan(4000);
+    }, 30000);
   });
 });
 

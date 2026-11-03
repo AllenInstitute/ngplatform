@@ -22,8 +22,15 @@
  *   the finer level's box, or the box's first voxel for label images
  *   (intent NIFTI_INTENT_LABEL or NEURONAME).  They are made when asked
  *   for, so the coarsest needs the whole file read once.
+ * - Diffusion tensors (six float components a voxel) are averaged
+ *   log-Euclidean (./tensors.ts), which keeps their determinants: when the
+ *   header's intent is NIFTI_INTENT_SYMMATRIX (the lower triangle by rows,
+ *   DIPY's order), or when the page asks with a message
+ *   (`{ tensor: "fsl" | "dipy" | "mrtrix" | null }`, as the Orientations
+ *   plugin does for an image it draws as tensors).
  */
 import { type ByteSource, blobSource, gunzipHead, gunzipSource, isGzip, jsonBytes, Lru, type VirtualStore } from "./store.js";
+import { LogEuclideanSum, NIFTI_INTENT_SYMMATRIX, TENSOR_ORDER_NAMES, type TensorOrder } from "./tensors.js";
 
 export interface NiftiHeader {
   version: 1 | 2;
@@ -320,6 +327,11 @@ export class NiftiStore implements VirtualStore {
   /** Coarser levels' chunks (each made from many finer ones); level 0's are cut again from the bands. */
   private readonly chunks = new Lru<Uint8Array>(96 << 20);
   private readonly bands = new Lru<Uint8Array>(64 << 20);
+  /**
+   * Coarser levels as log-Euclidean means of the tensors stored in this
+   * order of their six components; otherwise plain means.
+   */
+  private tensors: TensorOrder | undefined;
   private windows: Promise<DisplayWindow[] | undefined> | undefined;
 
   constructor(
@@ -367,6 +379,37 @@ export class NiftiStore implements VirtualStore {
     this.raw = this.scale === undefined && (this.outType === inType || (inType === "int64" && this.outType === "uint64"));
     this.affine = niftiAffine(h);
     this.levels = this.pyramid();
+    if (h.intentCode === NIFTI_INTENT_SYMMATRIX && this.holdsTensors()) this.tensors = "dipy";
+  }
+
+  /** Whether coarser levels can be tensor means: six float components a voxel, each chunk holding all six. */
+  holdsTensors(): boolean {
+    return this.extra?.size === 6 && this.wholeExtra && this.outType === "float32" && !this.label;
+  }
+
+  /** How coarser levels are made: the first voxel of a box, its mean, or its tensors' log-Euclidean mean. */
+  get coarsening(): { type: "nearest" | "mean" | "log-euclidean"; order?: TensorOrder } {
+    if (this.label) return { type: "nearest" };
+    return this.tensors === undefined ? { type: "mean" } : { type: "log-euclidean", order: this.tensors };
+  }
+
+  /**
+   * A message from the page: `{ tensor: order }` makes coarser levels
+   * log-Euclidean means of tensors stored in that order, `{ tensor: null }`
+   * plain means again.  Answers how they are made now, and whether that
+   * changed (the page then reads them again).
+   */
+  message(body: unknown): { tensor: TensorOrder | null; changed: boolean; reason?: string } {
+    const asked = (body as { tensor?: unknown } | null)?.tensor;
+    const before = this.tensors;
+    let reason: string | undefined;
+    if (asked === null) this.tensors = undefined;
+    else if (typeof asked === "string") {
+      if (!TENSOR_ORDER_NAMES.includes(asked as TensorOrder)) throw new Error(`${asked} is not a tensor order (${TENSOR_ORDER_NAMES.join(", ")})`);
+      if (this.holdsTensors()) this.tensors = asked as TensorOrder;
+      else reason = "coarser levels stay plain means: tensors need six float components together in each chunk";
+    } else if (asked !== undefined) throw new Error("tensor is an order or null");
+    return { tensor: this.tensors ?? null, changed: before !== this.tensors, ...(reason ? { reason } : {}) };
   }
 
   private pyramid(): Level[] {
@@ -510,7 +553,7 @@ export class NiftiStore implements VirtualStore {
               ],
               datasets: this.levels.map((_, i) => ({ path: String(i), coordinateTransformations: [this.levelTransform(i)] })),
               coordinateTransformations: [{ type: "affine", affine: this.worldAffine(), input: "array", output: space }],
-              type: this.label ? "nearest" : "mean",
+              type: this.coarsening.type,
               metadata: { description: h.description || `${this.name}, read from its NIfTI file` },
             },
           ],
@@ -537,6 +580,7 @@ export class NiftiStore implements VirtualStore {
           scl_inter: h.sclInter,
           intent_code: h.intentCode,
           description: h.description,
+          ...(this.tensors ? { tensor_order: this.tensors } : {}),
         },
       },
     };
@@ -590,9 +634,11 @@ export class NiftiStore implements VirtualStore {
     return [e];
   }
 
-  private chunk(index: number, e: number, b: number[]): Promise<Uint8Array> {
+  private chunk(index: number, e: number, b: number[], tensors = this.tensors): Promise<Uint8Array> {
     if (index === 0) return this.cut(e, b);
-    return this.chunks.get(`${index}/${e}/${b.join("/")}`, () => this.reduce(index, e, b), (d) => d.byteLength);
+    // Keyed by how it is averaged, so a change of mind never mixes the two.
+    const key = `${tensors ?? ""}|${index}/${e}/${b.join("/")}`;
+    return this.chunks.get(key, () => (tensors === undefined ? this.reduce(index, e, b) : this.reduceTensors(index, b, tensors)), (d) => d.byteLength);
   }
 
   /** The file's rows for chunk row (k, j) of volume `v`: every i, little-endian. */
@@ -705,6 +751,53 @@ export class NiftiStore implements VirtualStore {
       const round = !this.outType.startsWith("float");
       for (let d = 0; d < n; ++d) if (count![d] > 0) to[d] = round ? Math.round(sum![d] / count![d]) : sum![d] / count![d];
     }
+    return out;
+  }
+
+  /**
+   * A chunk of a coarser level of tensors: each voxel the log-Euclidean
+   * mean of the finer level's box (of its tensors that are positive
+   * definite; zeros when none is).  Each chunk holds all six components.
+   */
+  private async reduceTensors(index: number, b: number[], order: TensorOrder): Promise<Uint8Array> {
+    const level = this.levels[index];
+    const finer = this.levels[index - 1];
+    const [ci, cj, ck] = level.chunk;
+    const [fi, fj, fk] = finer.chunk;
+    const step = level.step;
+    const lo = [0, 1, 2].map((a) => b[a] * level.chunk[a]);
+    const hi = [0, 1, 2].map((a) => Math.min(level.size[a], lo[a] + level.chunk[a]));
+    const srcLo = lo.map((v, a) => v * step[a]);
+    const srcHi = hi.map((v, a) => Math.min(finer.size[a], v * step[a]));
+    const voxels = ci * cj * ck;
+    const sums = new LogEuclideanSum(voxels, order);
+    const first = srcLo.map((v, a) => Math.floor(v / finer.chunk[a]));
+    const last = srcHi.map((v, a) => Math.floor((v - 1) / finer.chunk[a]));
+    // A component's stride in a finer chunk (components slowest).
+    const fineStride = fi * fj * fk;
+    for (let pk = first[2]; pk <= last[2]; ++pk) {
+      for (let pj = first[1]; pj <= last[1]; ++pj) {
+        for (let pi = first[0]; pi <= last[0]; ++pi) {
+          const p = [pi, pj, pk];
+          const from = typed("float32", await this.chunk(index - 1, 0, p, order)) as unknown as Float32Array;
+          const slo = p.map((v, a) => v * finer.chunk[a]);
+          const xlo = Math.max(slo[0], srcLo[0]);
+          const xhi = Math.min(slo[0] + fi, srcHi[0]);
+          for (let z = Math.max(slo[2], srcLo[2]); z < Math.min(slo[2] + fk, srcHi[2]); ++z) {
+            const dz = Math.floor(z / step[2]) - lo[2];
+            for (let y = Math.max(slo[1], srcLo[1]); y < Math.min(slo[1] + fj, srcHi[1]); ++y) {
+              const dy = Math.floor(y / step[1]) - lo[1];
+              const srcRow = ((z - slo[2]) * fj + (y - slo[1])) * fi - slo[0];
+              const dstRow = (dz * cj + dy) * ci - lo[0];
+              for (let x = xlo; x < xhi; ++x) sums.add(dstRow + Math.floor(x / step[0]), from, srcRow + x, fineStride);
+            }
+          }
+        }
+      }
+    }
+    const out = new Uint8Array(6 * voxels * 4);
+    const to = typed("float32", out) as unknown as Float32Array;
+    for (let d = 0; d < voxels; ++d) if (sums.count(d) > 0) sums.mean(d, to, d, voxels);
     return out;
   }
 }
