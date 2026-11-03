@@ -251,6 +251,11 @@ describe("glyphs", () => {
     expect(set.count).toBe(2);
     expect(Array.from(set.dirs!)).toEqual([1, 0, 0, 0, 0.5, 0]);
     expect(Array.from(set.centres)).toEqual([5, 6, 7, 5, 6, 7]);
+    // Slots MRtrix leaves NaN are no peak, not an empty voxel.
+    const nan = Float32Array.from([0, 0, 3, NaN, NaN, NaN, NaN, NaN, NaN]);
+    const one = computeGlyphs([1, 1, 1], nan, 9, voxelToRas, options({ kind: "peaks" }));
+    expect(one.count).toBe(1);
+    expect(Array.from(one.dirs!)).toEqual([0, 0, 1]);
   });
 
   it("leaves out glyphs below an anisotropy", () => {

@@ -106,13 +106,19 @@ function basisAtSphere(basis: ShBasis, lmax: number, subdivisions: number, toDat
   return m;
 }
 
-/** Whether a voxel holds nothing: every component zero, or not a number. */
-function empty(values: ArrayLike<number>, offset: number, n: number): boolean {
+/**
+ * Whether a voxel has no glyph: every component zero; or, when `partial` is
+ * false, any component not a number.  Peaks may leave some slots NaN (as
+ * MRtrix's sh2peaks does for a voxel with fewer peaks than slots), so for
+ * them only a voxel with no number at all is empty.
+ */
+function empty(values: ArrayLike<number>, offset: number, n: number, partial: boolean): boolean {
   let any = false;
   for (let c = 0; c < n; ++c) {
     const v = values[offset + c];
-    if (v !== v) return true;
-    if (v !== 0) any = true;
+    if (v !== v) {
+      if (!partial) return true;
+    } else if (v !== 0) any = true;
   }
   return !any;
 }
@@ -121,7 +127,8 @@ function empty(values: ArrayLike<number>, offset: number, n: number): boolean {
 export function computeGlyphs(indices: ArrayLike<number>, values: Float32Array, components: number, voxelToRas: Mat4, options: GlyphOptions): GlyphSet {
   const count = Math.floor(indices.length / 3);
   let kept: number[] = [];
-  for (let i = 0; i < count; ++i) if (!empty(values, i * components, components)) kept.push(i);
+  const partial = options.kind === "peaks" || options.kind === "vector";
+  for (let i = 0; i < count; ++i) if (!empty(values, i * components, components, partial)) kept.push(i);
   const least = options.minAnisotropy ?? 0;
   if (least > 0 && options.kind === "sh" && lmaxOf(components) !== undefined) kept = kept.filter((i) => gfa(values, i * components, components, options.basis) >= least);
   const centresOf = (list: number[]) => {
