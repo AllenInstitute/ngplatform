@@ -28,6 +28,7 @@ point tables). Nothing is converted and no files are written.
 | `view_math.ts` | Matrices, frustum and slab tests, level choice |
 | `camera.ts` | Optional momentum on rotating the 3-D view |
 | `style.ts` | The per-layer style kept in the workspace |
+| `fork/draws-after-sections.patch` | A proposed Neuroglancer change (not applied): layers that draw after the 3-D view's sections |
 | `tests/` | `npm test` runs them |
 
 ## Why a renderer in Luxar's style, not Luxar's viewer
@@ -79,17 +80,36 @@ Neuroglancer's offscreen framebuffer bound. The drawer:
 1. reads the framebuffer's depth-stencil renderbuffer and attaches it to a
    float target of its own, so lines are depth-tested against everything
    drawn before them (a volume-rendered solid, meshes) without writing it;
-2. adds the lines' light up there, then tone maps it onto Neuroglancer's
-   colour output (colour attachment only, so pick ids are untouched);
-3. draws the lines' cores once more into Neuroglancer's depth buffer and
-   its depth and pick outputs (pick id 0), so the sections Neuroglancer
-   draws after the opaque layers neither paint over lines in front of them
-   nor show through lines behind them, and the pointer's 3-D position
-   lands on the lines;
-4. puts back every piece of GL state it changed.
+2. adds the lines' light up there, and draws the lines once more into a
+   depth texture of its own: the nearest line at each pixel;
+3. tone maps the light onto Neuroglancer's colour output (colour
+   attachment only, so pick ids are untouched);
+4. where the tone-mapped light is clear (15 % or more), writes the nearest
+   line's depth into Neuroglancer's depth buffer and its depth output (pick
+   id 0), so the sections Neuroglancer draws after the opaque layers do not
+   paint over lines in front of them, and the pointer's 3-D position lands
+   on the lines; faint glow writes none;
+5. puts back every piece of GL state it changed.
 
 The image underneath is Neuroglancer's (sections, or the volume-view
 plugin's solid, which writes depth): the tractogram composites on it.
+
+**The sections.** Neuroglancer draws its cross-sections in the 3-D view
+*after* the opaque layers, and `draw3d` draws with the opaque layers. So
+where lines are in front of a section, the section is kept out by their
+depth, and the lines show over the background rather than over the
+section: bright where lines crowd, but a dim line over a pale section
+reads as a dark streak. With **Sections** off in the 3-D view (common for
+tractography) this does not arise. The proper fix is in Neuroglancer: let
+a layer draw after the sections, so light adds over them. That is
+[`fork/draws-after-sections.patch`](fork/draws-after-sections.patch)
+(against the fork's `src/perspective_view/`, 30 lines: a
+`drawsAfterSections` flag on render layers, drawn right after
+`drawSliceViews`, with `renderContext.sectionsDrawn` set). The platform
+side is already here: `Drawer3d.afterSections` (this plugin sets it) and
+`Frame3d.sectionsDrawn`; with an unpatched Neuroglancer the flag is
+ignored and nothing changes. Built against a patched copy, the glow adds
+over the sections as in the 2-D views.
 
 ### How it sits over the 2-D views
 
@@ -116,11 +136,21 @@ chunk faces. Built chunks are kept on the main thread (384 MiB) and on each
 GPU context (768 MiB for 3-D, 512 MiB for 2-D), least recently drawn first
 out.
 
-Coarse levels of a tractogram usually keep a sample of the streamlines
-(`object_sparsity`), so they look dimmer when the light adds up. *Brighten
-coarse levels* raises their gain by the square root of the share they
-keep; off by default, because a full correction makes a sparse sample's
-lines glare white.
+### Brightness
+
+Light that adds up depends on how many lines there are: a whole brain at a
+fine level turns white, and coarse levels of a tractogram (which keep a
+sample of the streamlines, `object_sparsity`, a tenth per level in the
+HCP-1065 store) look dim. *Automatic brightness* (on by default) measures
+how many times over the drawn lines would cover the view (their length on
+screen, from each chunk's total segment length and the view's pixels per
+unit, times their width, over the view's area; for a 2-D view, times the
+slab's share of a chunk's depth) and dims each line by
+`1 / max(1, cover / 2)^0.85`. So a dense view glows where bundles gather,
+a sparse one is left alone, and the picture keeps about the same
+brightness as levels come and go. A correction by each level's share of
+the objects was tried first: it makes a sparse sample's few lines glare.
+*Brightness* is in stops on top.
 
 ### Setting Neuroglancer's own drawing aside
 
@@ -148,13 +178,19 @@ momentum in the engine.
 
 ## What is left
 
-- **Meshes** (Zarr Vectors `mesh` stores) are not drawn Luxar-style yet:
-  their chunks hold faces, and soft-shaded triangles need a third program
-  and per-face normals. Point clouds and every line kind are drawn.
-- **Selections**: the layer's selected segments and track filtering's
-  groups are not honoured; the layer is drawn whole. Groups could be drawn
-  from track filtering's `trackFiltering.groups` service (`curves(id, n)`
-  gives each group's whole streamlines), each in its colour.
+- **Meshes** (Zarr Vectors `mesh` stores) are drawn as their vertices
+  (points): the reader's dense chunks (`LevelPipeline.download`) carry no
+  faces, which soft-shaded triangles need (the decoder has them, as
+  `DecodedChunk.faces`; exposing them is a change to the Zarr Vectors
+  reader). Point clouds and every line kind are drawn fully.
+- **Selections**: the layer's selected segments are not honoured; the
+  layer is drawn whole. A track-filtering group layer is drawn right once
+  track filtering has given it a store of its own (streamline groups get
+  one a moment after their exact answer); before that it reads the whole
+  dataset. Both use temporary segment sets, so a group's next answer can
+  bring Neuroglancer's own drawing back until the layer's source changes.
+  Drawing groups from track filtering's `trackFiltering.groups` service
+  (`curves(id, n)`) would avoid that.
 - **Bloom** (Luxar's glow around bright light) is not done.
 - **Free line ends** are square: Luxar's soft cap would need to know which
   chunk-boundary ends continue in the next chunk (the reader's

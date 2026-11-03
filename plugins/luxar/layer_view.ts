@@ -124,7 +124,12 @@ export class LayerView {
     if (client.error !== undefined && client.info === undefined) return `Could not open the store: ${client.error}`;
     if (client.info === undefined) return "Opening the store…";
     const problems = [this.view3d.problem, this.view2d.problem].filter((p) => p !== undefined);
-    const levels = [...this.levels.entries()].map(([view, s]) => `${view === "3d" ? "3-D" : "2-D"} level ${s.level}${s.complete ? "" : " (loading)"}`);
+    // A coarse level of a tractogram is often a sample of its streamlines: say how much of one.
+    const share = (level: number) => {
+      const s = client.info?.levels[level]?.objectShare;
+      return s !== undefined && s < 1 ? `, ${+(s * 100).toPrecision(2)}% of the objects` : "";
+    };
+    const levels = [...this.levels.entries()].map(([view, s]) => `${view === "3d" ? "3-D" : "2-D"} level ${s.level}${share(s.level)}${s.complete ? "" : " (loading)"}`);
     const parts = [...new Set(levels)];
     if (client.pending > 0) parts.push(`${client.pending} chunks to read`);
     if (client.error !== undefined) parts.push(`a chunk failed: ${client.error}`);

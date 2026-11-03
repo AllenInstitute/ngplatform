@@ -85,7 +85,7 @@ function scalarSource(name: string): ScalarSource {
 /**
  * Each level's share of level 0's objects, from its `object_sparsity` (a
  * fraction of its parent's): coarse levels of a tractogram keep a sample of
- * the streamlines, so drawn alike they would look dimmer.
+ * the streamlines, which the panel says (a view at a coarse level is a sample).
  */
 async function objectShares(storeUrl: string, s: ZarrVectorsStore): Promise<(number | undefined)[]> {
   const metas = await Promise.all(
