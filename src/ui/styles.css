@@ -805,6 +805,13 @@ textarea.state-input.tall { min-height: 50vh; }
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 .toast.error { border-color: var(--err); }
+.toast.offer { display: grid; gap: 4px; }
+.toast.offer .row-actions { justify-content: flex-end; margin-top: 4px; }
+.overview-list { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 4px 12px; align-items: center; font-size: 12px; margin: 8px 0 0; }
+.overview-list .name { overflow-wrap: anywhere; }
+.overview-list .num { font: 12px/1.45 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); text-align: right; }
+.overview-settings label { display: inline-flex; align-items: center; gap: 6px; margin: 6px 16px 0 0; font-size: 12px; color: var(--muted); }
+.overview-settings input[type="number"] { width: 64px; }
 
 /* ----------------------------------------------------------- narrow screens */
 @media (max-width: 1100px) {

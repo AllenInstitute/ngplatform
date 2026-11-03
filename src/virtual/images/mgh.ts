@@ -13,7 +13,7 @@
  * columns, rows and slices (3 × 3 float32: x_r x_a x_s, y_r y_a y_s,
  * z_r z_a z_s) and c_ras, the RAS of the volume's centre (3 float32).
  */
-import { type NiftiHeader, NiftiStore } from "./nifti.js";
+import { cacheKeyOf, type NiftiHeader, NiftiStore } from "./nifti.js";
 import { blobSource, gunzipHead, gunzipSource, isGzip } from "./store.js";
 
 export const MGH_FILE = /\.mg[hz]$/i;
@@ -124,5 +124,5 @@ export async function openMgh(file: Blob, name: string, options: { label?: boole
   const header = mghAsNifti(parseMghHeader(gz ? await gunzipHead(file, MGH_HEADER) : start), `FreeSurfer ${gz ? "MGZ" : "MGH"}: ${name}`);
   const key = file instanceof File ? `${file.name}|${file.size}|${file.lastModified}` : undefined;
   const whole = blobSource(file);
-  return new NiftiStore(header, gz ? gunzipSource(file, key) : () => Promise.resolve(whole), name, options);
+  return new NiftiStore(header, gz ? gunzipSource(file, key) : () => Promise.resolve(whole), name, { ...options, cacheKey: cacheKeyOf(file) });
 }

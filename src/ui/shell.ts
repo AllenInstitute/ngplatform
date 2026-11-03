@@ -41,6 +41,7 @@ import {
 } from "./panels/misc.js";
 import { CONVENTION_LABELS, type PanelConvention } from "../engine/anatomical.js";
 import { showCaptureSheet } from "./capture.js";
+import { offerOverviews } from "./overview.js";
 import { openDropped, showAddDatasetSheet, showEditStateSheet, showLocalSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
 import type { Workbench } from "./workbench.js";
 import { createPlatformApis } from "./apis.js";
@@ -347,6 +348,8 @@ export class Shell {
     store.sourceRules = (source) => sourceWithRules(source, wb.rules.list(), wb.auth.sourceSignIns(sourceUrls(source)));
     applyRulesToNewLayers(store, wb.rules, (sources) => wb.auth.sourceSignIns(sources));
     void wb.localData.start();
+    // A large image first viewed: offer to build its overview in the background.
+    offerOverviews(wb);
     // Local data opened again (dropped files go with a reload): the layers
     // that read it before read it again, under its new id.
     const relink = async () => {

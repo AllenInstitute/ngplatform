@@ -11,7 +11,7 @@
  * placement in the file: voxels are 1 unit, from the origin.
  */
 import type { NiftiHeader } from "./nifti.js";
-import { NiftiStore } from "./nifti.js";
+import { cacheKeyOf, NiftiStore } from "./nifti.js";
 import { blobSource } from "./store.js";
 
 export const NPY_FILE = /\.npy$/i;
@@ -107,5 +107,5 @@ export async function openNpy(file: Blob, name: string): Promise<NiftiStore> {
   const head = new Uint8Array(await file.slice(0, 64 * 1024).arrayBuffer());
   const header = npyAsNifti(parseNpyHeader(head), `NumPy array: ${name}`);
   const whole = blobSource(file);
-  return new NiftiStore(header, () => Promise.resolve(whole), name);
+  return new NiftiStore(header, () => Promise.resolve(whole), name, { cacheKey: cacheKeyOf(file) });
 }

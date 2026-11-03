@@ -9,6 +9,7 @@ import { closeSheet, sheet, showSheet, toast } from "./overlays.js";
 import { collectDropped, LocalData, type FoundDataset, type LocalEntry } from "../virtual/local_data.js";
 import { clear, h, icon, keyLabel } from "./dom.js";
 import { kindLabel } from "./panels/format.js";
+import { renderOverviewSettings } from "./overview.js";
 import type { Workbench } from "./workbench.js";
 
 // -------------------------------------------------------------------- open
@@ -360,6 +361,8 @@ export function showLocalSheet(wb: Workbench, local: LocalData): void {
 
 export function showSettingsSheet(wb: Workbench): void {
   const panel = h("div", { class: "ng-host settings-host" });
+  const overviews = h("div", { class: "section overview-section" });
+  renderOverviewSettings(overviews, wb);
   let unmount: (() => void) | undefined;
   showSheet(
     sheet(
@@ -367,6 +370,7 @@ export function showSettingsSheet(wb: Workbench): void {
       [
         panel,
         h("p", { class: "note" }, "Saved with the workspace, so a shared link shows the same. Memory limits apply to this browser tab."),
+        overviews,
       ],
       [h("button", { class: "btn primary", type: "button", onclick: () => closeSheet() }, "Done")],
     ),

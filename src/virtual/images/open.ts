@@ -20,7 +20,8 @@ export async function openImage(file: Blob & { name: string }, related: Record<s
   if (VZIP_FILE.test(file.name)) return openVzip(file, related);
   const filtered = FILTER_FILE.exec(file.name);
   if (filtered !== null) {
-    const source = await openImage(new File([file], filtered[1]));
+    // A Blob, not a File: no date of its own, so nothing kept between visits under it.
+    const source = await openImage(Object.assign(file.slice(), { name: filtered[1] }));
     return FilteredStore.open(source, parseFilterName(filtered[2]), `${source.name} (${filtered[2].split("-")[0]})`);
   }
   return openUnfiltered(file);
