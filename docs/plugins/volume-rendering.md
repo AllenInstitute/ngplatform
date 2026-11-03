@@ -17,7 +17,9 @@ view, depth-tested against it.
 - It draws the selected image: an OME-Zarr image (local NIfTI included) or a
   precomputed one.
 - Detail follows the zoom, or a chosen level. A level over 384 voxels a side
-  is drawn as a 256-voxel box around the position, which follows it.
+  is drawn as a 256-voxel box around the position, which follows it, inside
+  the whole image from the finest level that fits (so the rest of the brain
+  stays, coarser).
 - The cut's faces show three sections of their own, as sharp as the 3-D
   view's zoom can show, down to the image's finest level: zoom into the cut
   to see fine structure over the coarse solid. **Fine sections on the cut**

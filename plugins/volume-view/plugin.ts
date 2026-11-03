@@ -233,6 +233,7 @@ class VolumeRendering {
       this.store = url;
       this.levels = [];
       this.loaded = undefined;
+      this.contextLoaded = undefined;
       this.region = undefined;
       void this.open(url);
     } else if (this.levels.length > 0) {
@@ -371,26 +372,61 @@ class VolumeRendering {
     }
   }
 
+  /** The whole image the solid shows when the chosen level is drawn as a box: the finest level small enough to hold whole. */
+  private contextLevel(): LevelInfo | undefined {
+    return this.levels.find((l) => Math.max(...l.size) <= WHOLE) ?? this.levels[this.levels.length - 1];
+  }
+
+  /** The level (or a box of it) the solid shows, as keyed; and the whole coarse level under a box. */
+  private contextLoaded: string | undefined;
+
+  /**
+   * Loads what the solid shows: a level whole; or, for a box of a large
+   * level, the whole image from a coarse level first (once) and the box
+   * as the detail drawn inside it.
+   */
   private async load(level: LevelInfo, key: string, region: Region | undefined): Promise<void> {
     const client = this.client;
     if (client === undefined) return;
     this.loading?.abort();
     const controller = (this.loading = new AbortController());
     this.loaded = key;
-    const index = this.levels.indexOf(level);
-    const label = mm(level.voxelSize);
     const started = performance.now();
-    this.setStatus(`Loading the solid (${label})…`);
-    try {
-      const { data, size } = await client.volume(index, (done, total) => this.setStatus(`Loading the solid (${label}): ${done} of ${total} chunks`), controller.signal, region);
-      if (controller.signal.aborted) return;
+    const read = async (l: LevelInfo, box: Region | undefined, what: string) => {
+      const label = mm(l.voxelSize);
+      this.setStatus(`Loading ${what} (${label})…`);
+      const { data, size } = await client.volume(this.levels.indexOf(l), (done, total) => this.setStatus(`Loading ${what} (${label}): ${done} of ${total} chunks`), controller.signal, box);
       // A box's voxel 0 is the level's voxel `lo`.
-      const voxelToRas = new Float64Array(level.voxelToRas);
-      if (region !== undefined) for (let r = 0; r < 3; ++r) voxelToRas[4 * r + 3] += [0, 1, 2].reduce((sum, c) => sum + level.voxelToRas[4 * r + c] * region.lo[c], 0);
-      this.drawer.setVolume(data, size, voxelToRas, level.voxelSize);
+      const voxelToRas = new Float64Array(l.voxelToRas);
+      if (box !== undefined) for (let r = 0; r < 3; ++r) voxelToRas[4 * r + 3] += [0, 1, 2].reduce((sum, c) => sum + l.voxelToRas[4 * r + c] * box.lo[c], 0);
+      return { data, size, voxelToRas };
+    };
+    try {
+      if (region === undefined) {
+        const v = await read(level, undefined, "the solid");
+        if (controller.signal.aborted) return;
+        this.drawer.setVolume(v.data, v.size, v.voxelToRas, level.voxelSize);
+        this.drawer.setDetail(undefined);
+        this.contextLoaded = key;
+        this.handle?.redraw();
+        this.setStatus(`Solid at ${mm(level.voxelSize)} (${v.size.join(" × ")} voxels), in ${((performance.now() - started) / 1000).toFixed(1)} s`);
+        return;
+      }
+      const context = this.contextLevel()!;
+      const contextKey = `${this.store}|${context.path}|`;
+      if (this.contextLoaded !== contextKey) {
+        const v = await read(context, undefined, "the whole image");
+        if (controller.signal.aborted) return;
+        this.drawer.setVolume(v.data, v.size, v.voxelToRas, context.voxelSize);
+        this.drawer.setDetail(undefined);
+        this.contextLoaded = contextKey;
+        this.handle?.redraw();
+      }
+      const box = await read(level, region, "a box around the position");
+      if (controller.signal.aborted) return;
+      this.drawer.setDetail(box.data, box.size, box.voxelToRas);
       this.handle?.redraw();
-      const where = region === undefined ? "" : ", a box around the position";
-      this.setStatus(`Solid at ${label} (${size.join(" × ")} voxels${where}), in ${((performance.now() - started) / 1000).toFixed(1)} s`);
+      this.setStatus(`Solid at ${mm(context.voxelSize)}, with ${mm(level.voxelSize)} in a box around the position (${box.size.join(" × ")} voxels), in ${((performance.now() - started) / 1000).toFixed(1)} s`);
     } catch (e) {
       if (controller.signal.aborted) return;
       this.loaded = undefined;

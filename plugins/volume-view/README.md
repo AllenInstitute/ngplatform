@@ -22,7 +22,7 @@ the MNI ICBM152 2009a template, or any uint8 OME-Zarr 0.4 to 0.6 (zarr v3).
 | File | What |
 |---|---|
 | `manifest.ts` | The Volume tab, commands and state slice |
-| `plugin.ts` | The tab, the view (mounted with `ctx.ui.view`), camera, presets |
+| `plugin.ts` | The tab, the view (mounted with `ctx.ui.view`), camera, presets; which levels it loads (a level whole, or the whole image coarse with a finer box around the position) |
 | `sections.ts` | The fine sections on the cut: their zoom and size |
 | `renderer.ts` | WebGL2: the solid, the cut, the sections, the tracts |
 | `ome.ts` | OME-Zarr multiscales to voxel-to-RAS transforms |

@@ -18,6 +18,12 @@
  * dark one (an MRI), as the volume's border shows.  Empty space is skipped
  * with a coarse grid of block maxima.  Coordinates are Neuroglancer's
  * display coordinates throughout (see Frame3d).
+ *
+ * Two levels: the whole image from a coarse one, and optionally a box of a
+ * finer one (the detail, around the position).  Inside the box the ray
+ * samples the detail, steps and shades at its voxel size; elsewhere the
+ * coarse level.  The coarse level's empty-space grid, background and
+ * contrast window serve both (the same image, read through one window).
  */
 import type { Drawer3d, Frame3d } from "@ngplatform/sdk";
 import { invert, type Mat4, multiply } from "./ome.js";
@@ -52,6 +58,11 @@ uniform vec3 uCutSide;
 uniform vec3 uVoxel;
 uniform bool uDarkBackground;
 uniform vec2 uWindow;
+uniform bool uHasDetail;
+uniform sampler3D uDetail;
+uniform mat4 uWorldToDetail;
+uniform float uDetailStep;
+uniform vec3 uDetailVoxel;
 in vec2 vNdc;
 layout(location = ${outputs.color}) out vec4 out_color;
 layout(location = ${outputs.z}) out highp vec4 out_z;
@@ -67,7 +78,16 @@ vec2 slab(vec3 o, vec3 inv, vec3 lo, vec3 hi, out vec3 tExit) {
 
 vec3 texOf(vec3 p) { return (uWorldToTex * vec4(p, 1.0)).xyz; }
 
+// Inside the detail box (its texture coordinates, half a voxel in from its edges).
+bool inDetail(vec3 p, out vec3 tc) {
+  if (!uHasDetail) return false;
+  tc = (uWorldToDetail * vec4(p, 1.0)).xyz;
+  return all(greaterThan(tc, vec3(0.0))) && all(lessThan(tc, vec3(1.0)));
+}
+
 float raw(vec3 p) {
+  vec3 dc;
+  if (inDetail(p, dc)) return texture(uDetail, dc).r;
   vec3 tc = texOf(p);
   if (any(lessThan(tc, vec3(0.0))) || any(greaterThan(tc, vec3(1.0)))) return uDarkBackground ? 0.0 : 1.0;
   return texture(uVolume, tc).r;
@@ -144,7 +164,8 @@ void main() {
     }
     face = false;
     before = t;
-    t += uStep;
+    vec3 dc;
+    t += inDetail(p, dc) ? uDetailStep : uStep;
   }
   if (!hit) discard;
   vec3 p = o + d * t;
@@ -163,7 +184,8 @@ void main() {
     }
     t = b;
     p = o + d * t;
-    vec3 h = uVoxel;
+    vec3 dc;
+    vec3 h = inDetail(p, dc) ? uDetailVoxel : uVoxel;
     vec3 g = vec3(
       value(p + vec3(h.x, 0.0, 0.0)) - value(p - vec3(h.x, 0.0, 0.0)),
       value(p + vec3(0.0, h.y, 0.0)) - value(p - vec3(0.0, h.y, 0.0)),
@@ -281,6 +303,10 @@ export class SolidDrawer implements Drawer3d {
   private occupancy: WebGLTexture | undefined;
   private uploaded: Volume | undefined;
   private pending: Volume | undefined;
+  /** The finer box, its texture, and whether it waits to be uploaded (null: to be taken away). */
+  private detail: Volume | undefined;
+  private detailTexture: WebGLTexture | undefined;
+  private detailPending: Volume | null | undefined;
   private voxelToRas: Mat4 | undefined;
   private occScale: [number, number, number] = [1, 1, 1];
   private darkBackground = true;
@@ -297,6 +323,29 @@ export class SolidDrawer implements Drawer3d {
     this.darkBackground = borderMean(data, size) < 128;
     this.window = tissueWindow(data, this.darkBackground);
     this.pending = { data, size, voxelToDisplay: voxelToRas };
+  }
+
+  /** A box of a finer level, drawn inside the volume where it covers it (voxels as the volume's, x fastest); undefined takes it away. */
+  setDetail(data: Uint8Array | undefined, size?: [number, number, number], voxelToRas?: Mat4): void {
+    this.detailPending = data === undefined ? null : { data, size: size!, voxelToDisplay: voxelToRas! };
+  }
+
+  get hasDetail(): boolean {
+    return this.detailPending !== null && (this.detailPending !== undefined || this.detail !== undefined);
+  }
+
+  private uploadDetail(gl: WebGL2RenderingContext, detail: Volume | null): void {
+    if (this.detailTexture) gl.deleteTexture(this.detailTexture);
+    this.detailTexture = undefined;
+    this.detail = detail ?? undefined;
+    if (detail === null) return;
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    this.detailTexture = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_3D, this.detailTexture);
+    gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, detail.size[0], detail.size[1], detail.size[2], 0, gl.RED, gl.UNSIGNED_BYTE, detail.data);
+    for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_3D, p, gl.LINEAR);
+    for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T, gl.TEXTURE_WRAP_R]) gl.texParameteri(gl.TEXTURE_3D, p, gl.CLAMP_TO_EDGE);
+    gl.bindTexture(gl.TEXTURE_3D, null);
   }
 
   get hasVolume(): boolean {
@@ -445,10 +494,15 @@ export class SolidDrawer implements Drawer3d {
       this.program = undefined;
       this.vao = undefined;
       if (this.uploaded) this.pending ??= this.uploaded;
+      if (this.detail) this.detailPending ??= this.detail;
     }
     if (this.pending !== undefined) {
       this.upload(gl, this.pending);
       this.pending = undefined;
+    }
+    if (this.detailPending !== undefined) {
+      this.uploadDetail(gl, this.detailPending);
+      this.detailPending = undefined;
     }
     const volume = this.uploaded;
     if (volume === undefined || this.voxelToRas === undefined) return;
@@ -489,8 +543,25 @@ export class SolidDrawer implements Drawer3d {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_3D, this.occupancy!);
     gl.uniform1i(u("uOccupancy"), 1);
+    // The detail box: display coordinates to its texture's, its step and voxel.
+    const detail = this.detail;
+    gl.uniform1i(u("uHasDetail"), detail !== undefined && this.detailTexture !== undefined ? 1 : 0);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_3D, this.detailTexture ?? this.volumeTexture!);
+    gl.uniform1i(u("uDetail"), 2);
+    if (detail !== undefined) {
+      const ds = detail.size;
+      const detailToDisplay = multiply(toDisplay, detail.voxelToDisplay);
+      const texOfDetail = Float64Array.from([1 / ds[0], 0, 0, 0.5 / ds[0], 0, 1 / ds[1], 0, 0.5 / ds[1], 0, 0, 1 / ds[2], 0.5 / ds[2], 0, 0, 0, 1]);
+      gl.uniformMatrix4fv(u("uWorldToDetail"), false, gl4(multiply(texOfDetail, invert(detailToDisplay))));
+      const dv = [0, 1, 2].map((r) => Math.hypot(detailToDisplay[4 * r], detailToDisplay[4 * r + 1], detailToDisplay[4 * r + 2]));
+      gl.uniform1f(u("uDetailStep"), Math.min(...dv) * (frame.moving ? 0.9 : 0.45));
+      gl.uniform3fv(u("uDetailVoxel"), dv);
+    }
     gl.bindVertexArray(this.vao!);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_3D, null);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_3D, null);
     gl.activeTexture(gl.TEXTURE0);
@@ -505,7 +576,8 @@ export class SolidDrawer implements Drawer3d {
     if (this.vao) gl.deleteVertexArray(this.vao);
     if (this.volumeTexture) gl.deleteTexture(this.volumeTexture);
     if (this.occupancy) gl.deleteTexture(this.occupancy);
-    this.program = this.vao = this.volumeTexture = this.occupancy = undefined;
+    if (this.detailTexture) gl.deleteTexture(this.detailTexture);
+    this.program = this.vao = this.volumeTexture = this.occupancy = this.detailTexture = undefined;
     this.gl = undefined;
   }
 }
