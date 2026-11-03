@@ -102,10 +102,13 @@ export class TablePanel {
       const a = l?.spec.annotations.find((x) => x.id === selected!.id);
       const editorKey = JSON.stringify([selected, a, l?.meta.values[selected?.id ?? ""], l?.meta.comments[selected?.id ?? ""], l?.spec.annotationProperties, l?.meta.fields, l?.meta.groups]);
       if (editorKey !== shownEditor || force) {
-        shownEditor = editorKey;
-        // Keep what is being typed: an editor is drawn again only when it is not focused, or its annotation changed.
+        // Keep what is being typed: an editor is drawn again only when it is not focused, or its annotation changed
+        // (and when the focus leaves it).
         const typing = editor.contains(document.activeElement) && editor.dataset.key === (selected ? `${selected.layer}|${selected.id}` : "");
-        if (!typing || force) this.drawEditor(editor, selected);
+        if (!typing || force) {
+          shownEditor = editorKey;
+          this.drawEditor(editor, selected);
+        }
       }
       if (selected && (key !== shown || force)) tableWrap.querySelector(`tr.an-current`)?.scrollIntoView({ block: "nearest" });
     };
@@ -118,6 +121,9 @@ export class TablePanel {
         last = now;
         tableWrap.querySelector("tr.an-current")?.scrollIntoView({ block: "nearest" });
       }
+    });
+    editor.addEventListener("focusout", (e) => {
+      if (!editor.contains(e.relatedTarget as Node | null)) requestAnimationFrame(() => draw());
     });
     const visible = new IntersectionObserver((entries) => {
       if (entries.some((e) => e.isIntersecting)) draw();

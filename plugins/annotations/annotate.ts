@@ -344,9 +344,9 @@ export class Annotate {
   }
 
   /**
-   * After each change to the state: an annotation new to a layer drawn in
-   * here (drawn in a view) is selected, and the table shown; an annotation
-   * Neuroglancer selected is selected here.
+   * After each change to the state: an annotation new to a layer (drawn in
+   * a view) is selected, and the table shown when the layer is the one
+   * chosen; an annotation Neuroglancer selected is selected here.
    */
   private stateChanged(): void {
     const layers = this.layers();
@@ -362,7 +362,8 @@ export class Annotate {
         if (drawn.length === 1) {
           this.selected = { layer: l.spec.name, id: drawn[0].id };
           this.lastSelection = `${l.spec.name}|${drawn[0].id}`;
-          this.ctx.ui.showPanel(TABLE_PANEL);
+          // The table opens for the layer drawn in from the Annotate section (not Measure's, say).
+          if (l.spec.name === this.chosen()) this.ctx.ui.showPanel(TABLE_PANEL);
         }
       }
     }
