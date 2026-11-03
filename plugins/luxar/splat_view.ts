@@ -11,9 +11,10 @@
  * Blocks are chosen in level 0's voxels; splats are drawn in RAS
  * millimetres, placed in the view as the volume view places images.
  *
- * Light is added up in a float target sharing Neuroglancer's depth buffer
- * (so a solid or mesh in front hides splats behind it) and tone mapped onto
- * the view, as the lines' glow is.
+ * Light (and, for emission and absorption, optical depth) is added up in a
+ * float target sharing Neuroglancer's depth buffer (so a solid or mesh in
+ * front hides splats behind it) and tone mapped onto the view, as the
+ * lines' is.
  */
 import type { Disposer, Frame3d, PlatformContext } from "@ngplatform/sdk";
 import { displayOfRas } from "../volume-view/solid.js";
@@ -27,10 +28,10 @@ import { apply, boxInFrustum, invertAffine, multiply } from "./view_math.js";
 
 /** GPU memory for one image's splats. */
 const GPU_BYTES = 512 * 1024 * 1024;
-/** Light per splat, times its cell's share of the image's extent: a ray through solid tissue sums to about this. */
-const DEPTH_GAIN = 1.5;
-/** Likewise optical depth, at Absorption 1: a ray through solid tissue is mostly absorbed. */
-const DEPTH_ABSORPTION = 4;
+/** Optical depth of a full-intensity splat of level 0 at Absorption 1 (a coarser level's, by its voxel size). */
+const SPLAT_DEPTH = 0.5;
+/** In glow, light per splat as a share of that. */
+const GLOW = 0.3;
 /** Of a level's cells, about this share is taken to hold tissue, for the budget. */
 const FILL = 0.3;
 
@@ -144,9 +145,9 @@ export class SplatView {
       this.wanted = wanted;
       this.worker.postMessage({ type: "want", keys: wanted });
     }
-    // By level: each level's light scaled by its cell's share of the image's
-    // depth, so a ray sums to about the same through any level (coarse
-    // blocks standing in for fine ones are as bright as they).
+    // By level: a coarser level's splats are larger and fewer along a ray,
+    // so each is scaled by its voxels' size against level 0's (coarse blocks
+    // standing in for fine ones look about as they will).
     const drawn = new Map<number, GpuSplats[]>();
     for (const key of selection.draw) {
       const b = this.blocks.get(key);
@@ -164,8 +165,6 @@ export class SplatView {
     this.evict();
     this.onStatus?.();
     if (drawn.size === 0) return;
-    const base = info.levels[0];
-    const extent = Math.max(...base.size) * base.voxelSize;
 
     const saved = {
       framebuffer: gl.getParameter(gl.DRAW_FRAMEBUFFER_BINDING) as WebGLFramebuffer | null,
@@ -200,8 +199,10 @@ export class SplatView {
         this.renderer!.draw(splats, {
           modelToClip: Float32Array.from(rasToClip),
           viewport: [width, height],
-          gain: 2 ** style.exposure * DEPTH_GAIN * ((CELL * info.levels[level].voxelSize) / extent),
-          absorption: emission ? style.absorption * DEPTH_ABSORPTION * ((CELL * info.levels[level].voxelSize) / extent) : 0,
+          // Emission and absorption: a splat's light is its colour times its optical depth, so where they
+          // pile up the composite's (1 - e^-τ) shows the colour, not a blow-out; glow adds light alone.
+          gain: 2 ** style.exposure * SPLAT_DEPTH * (info.levels[level].voxelSize / info.levels[0].voxelSize) * (emission ? Math.max(style.absorption, 0.05) : GLOW),
+          absorption: emission ? style.absorption * SPLAT_DEPTH * (info.levels[level].voxelSize / info.levels[0].voxelSize) : 0,
           colormap: COLORMAP_INDEX[style.colormap],
           colour: style.colourBy === "solid" ? rgbOf(style.colour) : undefined,
         });

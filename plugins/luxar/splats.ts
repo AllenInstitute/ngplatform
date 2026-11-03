@@ -18,7 +18,12 @@ export interface Splats {
   centres: Float32Array;
   /** Covariances, xx xy xz yy yz zz each, in voxels². */
   covariances: Float32Array;
-  /** Each splat's mean intensity over its cell (0..1), and its mass (summed intensity, in voxels). */
+  /**
+   * Each splat's brightness (0..1): its Gaussian's peak, the cell's mass over
+   * √((2π)³ det Σ), scaled so a cell filled evenly at full intensity gives 1
+   * (a thin bright tube keeps its brightness; an average over the cell would
+   * not); and its mass (summed intensity, in voxels).
+   */
   weights: Float32Array;
   masses: Float32Array;
   count: number;
@@ -41,6 +46,9 @@ export function splatsOfBlock(values: ArrayLike<number>, size: [number, number, 
   const weights = new Float32Array(capacity);
   const masses = new Float32Array(capacity);
   let count = 0;
+  // The peak of the Gaussian matching a cell filled evenly at full intensity: what a weight of 1 is.
+  const even = (cell * cell) / 12 + VOXEL_VARIANCE;
+  const fullPeak = cell ** 3 / Math.sqrt((2 * Math.PI) ** 3 * even ** 3);
   for (let cz = 0; cz < cells[2]; ++cz) {
     for (let cy = 0; cy < cells[1]; ++cy) {
       for (let cx = 0; cx < cells[0]; ++cx) {
@@ -97,7 +105,9 @@ export function splatsOfBlock(values: ArrayLike<number>, size: [number, number, 
         covariances[c + 3] = syy / m - my * my + VOXEL_VARIANCE;
         covariances[c + 4] = syz / m - my * mz;
         covariances[c + 5] = szz / m - mz * mz + VOXEL_VARIANCE;
-        weights[count] = m / ((x1 - x0) * (y1 - y0) * (z1 - z0));
+        const [a, b, c2, d, e, f] = covariances.subarray(c, c + 6);
+        const det = a * (d * f - e * e) - b * (b * f - e * c2) + c2 * (b * e - d * c2);
+        weights[count] = Math.min(1, (m / Math.sqrt((2 * Math.PI) ** 3 * Math.max(det, 1e-12))) / fullPeak);
         masses[count] = m;
         ++count;
       }

@@ -38,6 +38,16 @@ describe("splats from voxels", () => {
     }
   });
 
+  it("gives a full, even cell weight 1, and a thin bright line nearly as much, not its average over the cell", () => {
+    const full = new Float32Array(64).fill(1);
+    expect(splatsOfBlock(full, [4, 4, 4], 4).weights[0]).toBeCloseTo(1, 5);
+    const line = new Float32Array(64);
+    for (let x = 0; x < 4; ++x) line[x + 4 * (1 + 4 * 2)] = 1;
+    const w = splatsOfBlock(line, [4, 4, 4], 4).weights[0];
+    // Its mean over the cell is 4 / 64; its peak is far brighter.
+    expect(w).toBeGreaterThan(0.5);
+  });
+
   it("places splats in the world: centres through the affine, covariances as A Σ Aᵀ", () => {
     const s = splatsOfBlock(blob([8, 8, 8], [3, 4, 5], [1, 1, 1]), [8, 8, 8], 8);
     // 0.5 mm voxels, x and y swapped, an offset.

@@ -109,7 +109,7 @@ class Luxar {
     const saved = this.saved.layers[name];
     if (saved !== undefined) return saved;
     const layer = this.ctx.viewer.layers().find((l) => l.name === name);
-    if (layer !== undefined && imageOfLayer(layer) !== undefined) return { ...DEFAULT_STYLE, on: false, blending: "emission", colourBy: "attribute", colormap: "grey" };
+    if (layer !== undefined && imageOfLayer(layer) !== undefined) return { ...DEFAULT_STYLE, on: false, blending: "emission", colourBy: "attribute", colormap: "grey", absorption: 0.3 };
     return { ...DEFAULT_STYLE, on: false };
   }
 
