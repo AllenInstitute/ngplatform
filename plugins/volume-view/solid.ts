@@ -19,16 +19,22 @@
  * with a coarse grid of block maxima.  Coordinates are Neuroglancer's
  * display coordinates throughout (see Frame3d).
  *
- * Two levels: the whole image from a coarse one, and optionally a box of a
- * finer one (the detail, around the position).  Inside the box the ray
- * samples the detail, steps and shades at its voxel size; elsewhere the
- * coarse level.  The coarse level's empty-space grid, background and
- * contrast window serve both (the same image, read through one window).
+ * The whole image from a coarse level, and finer levels over it: bricks
+ * of several levels at once (./bricks.ts), finer near the camera and the
+ * cut, held in one 3-D texture (the atlas) and found through a page table;
+ * or, where the atlas cannot be made, a box of one finer level (the detail,
+ * around the position).  At each point the ray samples the finest brick
+ * held there (or the detail), steps and shades at its voxel size; elsewhere
+ * the coarse level.  The coarse level's empty-space grid, background and
+ * contrast window serve all (the same image, read through one window).
  */
 import type { Drawer3d, Frame3d } from "@ngplatform/sdk";
+import { BRICK, type BrickLevel, type BrickLoader, brickLevels, BrickSet, type BrickView, MAX_LEVELS, SLOT } from "./bricks.js";
 import { invert, type Mat4, multiply } from "./ome.js";
 
 const BLOCK = 8;
+/** Most bytes the bricks' atlas takes on the GPU. */
+const ATLAS_BYTES = 128 * 1024 * 1024;
 
 const VS = `#version 300 es
 out vec2 vNdc;
@@ -38,9 +44,15 @@ void main() {
   gl_Position = vec4(p, 0.0, 1.0);
 }`;
 
-const fs = (outputs: Frame3d["outputs"]) => `#version 300 es
+const fs = (outputs: Frame3d["outputs"], bricks: boolean) => `#version 300 es
 precision highp float;
+precision highp int;
 precision highp sampler3D;
+precision highp usampler3D;
+${bricks ? "#define BRICKS" : ""}
+const int MAX_LEVELS = ${MAX_LEVELS};
+const float BRICK = ${BRICK}.0;
+const float SLOT = ${SLOT}.0;
 uniform sampler3D uVolume;
 uniform sampler3D uOccupancy;
 uniform mat4 uInvViewProj;
@@ -63,6 +75,18 @@ uniform sampler3D uDetail;
 uniform mat4 uWorldToDetail;
 uniform float uDetailStep;
 uniform vec3 uDetailVoxel;
+#ifdef BRICKS
+uniform sampler3D uAtlas;
+uniform highp usampler3D uPages;
+uniform vec3 uAtlasTexel;
+uniform int uFirstLevel;
+uniform int uLevelCount;
+uniform mat4 uWorldToLevel[MAX_LEVELS];
+uniform ivec3 uPageOffset[MAX_LEVELS];
+uniform ivec3 uPageGrid[MAX_LEVELS];
+uniform float uLevelStep[MAX_LEVELS];
+uniform vec3 uLevelVoxel[MAX_LEVELS];
+#endif
 in vec2 vNdc;
 layout(location = ${outputs.color}) out vec4 out_color;
 layout(location = ${outputs.z}) out highp vec4 out_z;
@@ -85,13 +109,70 @@ bool inDetail(vec3 p, out vec3 tc) {
   return all(greaterThan(tc, vec3(0.0))) && all(lessThan(tc, vec3(1.0)));
 }
 
-float raw(vec3 p) {
+// A value and where it came from: the step and voxel there, and the brick
+// (level -1: the coarse level or the detail).
+struct Sample {
+  float v;
+  float stepSize;
+  vec3 voxel;
+  int level;
+  vec3 brick;
+  bool constant;
+};
+
+Sample sampleAt(vec3 p) {
+  Sample s;
+  s.level = -1;
+  s.brick = vec3(0.0);
+  s.constant = false;
+#ifdef BRICKS
+  // The finest brick held here, from the finest level allowed.
+  for (int l = 0; l < MAX_LEVELS; ++l) {
+    if (l >= uLevelCount) break;
+    if (l < uFirstLevel) continue;
+    vec3 x = (uWorldToLevel[l] * vec4(p, 1.0)).xyz;
+    vec3 b = floor((x + 0.5) / BRICK);
+    ivec3 bi = ivec3(b);
+    if (any(lessThan(bi, ivec3(0))) || any(greaterThanEqual(bi, uPageGrid[l]))) continue;
+    uvec4 e = texelFetch(uPages, uPageOffset[l] + bi, 0);
+    if (e.a == 0u) continue;
+    s.level = l;
+    s.brick = b;
+    s.stepSize = uLevelStep[l];
+    s.voxel = uLevelVoxel[l];
+    s.constant = e.a == 2u;
+    // The slot's voxel 0 is the brick's voxel -1 (the apron).
+    s.v = s.constant ? float(e.r) / 255.0 : texture(uAtlas, (vec3(e.rgb) * SLOT + x - b * BRICK + 1.5) * uAtlasTexel).r;
+    return s;
+  }
+#else
   vec3 dc;
-  if (inDetail(p, dc)) return texture(uDetail, dc).r;
+  if (inDetail(p, dc)) {
+    s.v = texture(uDetail, dc).r;
+    s.stepSize = uDetailStep;
+    s.voxel = uDetailVoxel;
+    return s;
+  }
+#endif
+  s.stepSize = uStep;
+  s.voxel = uVoxel;
   vec3 tc = texOf(p);
-  if (any(lessThan(tc, vec3(0.0))) || any(greaterThan(tc, vec3(1.0)))) return uDarkBackground ? 0.0 : 1.0;
-  return texture(uVolume, tc).r;
+  if (any(lessThan(tc, vec3(0.0))) || any(greaterThan(tc, vec3(1.0)))) s.v = uDarkBackground ? 0.0 : 1.0;
+  else s.v = texture(uVolume, tc).r;
+  return s;
 }
+
+float raw(vec3 p) { return sampleAt(p).v; }
+
+#ifdef BRICKS
+// Where the ray leaves brick b of level l.
+float brickExit(vec3 o, vec3 d, int l, vec3 b) {
+  mat4 m = uWorldToLevel[l];
+  vec3 dl = mat3(m) * d;
+  vec3 tExit;
+  return slab((m * vec4(o, 1.0)).xyz, 1.0 / (dl + vec3(equal(dl, vec3(0.0))) * 1e-9), b * BRICK - 0.5, b * BRICK + BRICK - 0.5, tExit).y;
+}
+#endif
 
 // The tissue's range stretched to black..white.
 float shown(float v) {
@@ -158,14 +239,24 @@ void main() {
       face = false;
       continue;
     }
-    if (value(p) < threshold) {
+    Sample s = sampleAt(p);
+    if ((uDarkBackground ? 1.0 - s.v : s.v) < threshold) {
       hit = true;
       break;
     }
     face = false;
     before = t;
-    vec3 dc;
-    t += inDetail(p, dc) ? uDetailStep : uStep;
+#ifdef BRICKS
+    if (s.constant) {
+      // A brick of background throughout: on to where the ray leaves it (or meets the cut).
+      float exit = brickExit(o, d, s.level, s.brick);
+      if (t < oct.x && oct.x < oct.y) exit = min(exit, oct.x);
+      before = max(t, exit - 1e-3 * s.stepSize);
+      t = max(exit, t) + 0.05 * s.stepSize;
+      continue;
+    }
+#endif
+    t += s.stepSize;
   }
   if (!hit) discard;
   vec3 p = o + d * t;
@@ -175,17 +266,20 @@ void main() {
     colour = vec3(shown(raw(p)));
     behind = 2e-5;
   } else {
+    // Down to a tenth of a step where the surface is (a jump over empty
+    // blocks or a brick of background is many of a fine level's voxels).
     float a = before;
     float b = t;
-    for (int k = 0; k < 5; ++k) {
+    float within = 0.1 * sampleAt(p).stepSize;
+    for (int k = 0; k < 16; ++k) {
+      if (b - a < within) break;
       float m = 0.5 * (a + b);
       vec3 q = o + d * m;
       if (!removed(q) && value(q) < threshold) b = m; else a = m;
     }
     t = b;
     p = o + d * t;
-    vec3 dc;
-    vec3 h = inDetail(p, dc) ? uDetailVoxel : uVoxel;
+    vec3 h = sampleAt(p).voxel;
     vec3 g = vec3(
       value(p + vec3(h.x, 0.0, 0.0)) - value(p - vec3(h.x, 0.0, 0.0)),
       value(p + vec3(0.0, h.y, 0.0)) - value(p - vec3(0.0, h.y, 0.0)),
@@ -268,6 +362,17 @@ export interface SolidOptions {
   cut: boolean;
 }
 
+/** Bricks of the image's finer levels, and how to read them. */
+export interface BrickSource {
+  /** The same key, the same levels: only `finest` may change. */
+  key: string;
+  /** The levels finer than the whole one, finest first. */
+  levels: BrickLevel[];
+  /** The finest level to draw bricks of (its index among the image's levels). */
+  finest: number;
+  load: BrickLoader;
+}
+
 interface Volume {
   data: Uint8Array;
   size: [number, number, number];
@@ -312,6 +417,19 @@ export class SolidDrawer implements Drawer3d {
   private darkBackground = true;
   private window: [number, number] = [0, 1];
   private voxelSize = 1;
+  /** Where bricks come from; their CPU side; the atlas (and its slots a side) and page table. */
+  private brickSource: BrickSource | undefined;
+  private bricks: BrickSet | undefined;
+  private atlas: WebGLTexture | undefined;
+  private atlasSlots = 0;
+  private pageTexture: WebGLTexture | undefined;
+  /** The view the bricks were last chosen for, and the choice waiting for the view to settle. */
+  private chosenFor: string | undefined;
+  private choosing: ReturnType<typeof setTimeout> | undefined;
+  /** Why bricks cannot be drawn on this GPU (then the detail box is). */
+  bricksFailed: string | undefined;
+  /** A brick arrived, the bricks were chosen again, or they failed. */
+  onBricks: (() => void) | undefined;
   /** Why nothing is drawn, for the panel. */
   problem: string | undefined;
   onProblem: (() => void) | undefined;
@@ -328,6 +446,119 @@ export class SolidDrawer implements Drawer3d {
   /** A box of a finer level, drawn inside the volume where it covers it (voxels as the volume's, x fastest); undefined takes it away. */
   setDetail(data: Uint8Array | undefined, size?: [number, number, number], voxelToRas?: Mat4): void {
     this.detailPending = data === undefined ? null : { data, size: size!, voxelToDisplay: voxelToRas! };
+  }
+
+  /** Draws bricks of finer levels over the whole one; undefined stops. */
+  setBricks(source: BrickSource | undefined): void {
+    if (source?.key !== this.brickSource?.key) this.dropBricks();
+    this.brickSource = source;
+  }
+
+  /** The bricks: held, slots, being read, wanted; and the levels they come from (indices among the image's). */
+  brickStatus(): { held: number; slots: number; loading: number; wanted: number; levels: number[] } | undefined {
+    const b = this.bricks;
+    if (b === undefined) return undefined;
+    const finest = this.brickSource?.finest ?? 0;
+    return { held: b.held, slots: b.slots, loading: b.pending, wanted: b.wanted.length, levels: b.levels.map((l) => l.index).filter((i) => i >= finest) };
+  }
+
+  private dropBricks(): void {
+    this.bricks?.dispose();
+    this.bricks = undefined;
+    this.chosenFor = undefined;
+    clearTimeout(this.choosing);
+    if (this.pageTexture && this.gl) this.gl.deleteTexture(this.pageTexture);
+    this.pageTexture = undefined;
+  }
+
+  /**
+   * The atlas (as many slots as the budget and MAX_3D_TEXTURE_SIZE allow),
+   * the page table, and the bricks' CPU side; on failure, `bricksFailed`
+   * says why.
+   */
+  private makeBricks(gl: WebGL2RenderingContext, source: BrickSource, context: Volume): void {
+    const max = gl.getParameter(gl.MAX_3D_TEXTURE_SIZE) as number;
+    const fit = brickLevels(source.levels, max);
+    const perAxis = Math.min(Math.floor(max / SLOT), Math.floor(Math.cbrt(ATLAS_BYTES / SLOT ** 3)));
+    const fail = (why: string) => {
+      this.bricksFailed = why;
+      if (this.atlas) gl.deleteTexture(this.atlas);
+      this.atlas = undefined;
+      this.dropBricks();
+      this.onBricks?.();
+    };
+    if (perAxis < 2) return fail(`3-D textures here are at most ${max} voxels a side`);
+    if (fit === undefined) return fail("the levels' page tables do not fit in a 3-D texture");
+    for (let i = 0; i < 16 && gl.getError() !== gl.NO_ERROR; ++i);
+    if (this.atlas === undefined || this.atlasSlots !== perAxis) {
+      if (this.atlas) gl.deleteTexture(this.atlas);
+      this.atlas = gl.createTexture()!;
+      this.atlasSlots = perAxis;
+      gl.bindTexture(gl.TEXTURE_3D, this.atlas);
+      gl.texStorage3D(gl.TEXTURE_3D, 1, gl.R8, perAxis * SLOT, perAxis * SLOT, perAxis * SLOT);
+      for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_3D, p, gl.LINEAR);
+      for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T, gl.TEXTURE_WRAP_R]) gl.texParameteri(gl.TEXTURE_3D, p, gl.CLAMP_TO_EDGE);
+    }
+    const size = fit.layout.size;
+    this.pageTexture = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_3D, this.pageTexture);
+    gl.texStorage3D(gl.TEXTURE_3D, 1, gl.RGBA8UI, size[0], size[1], size[2]);
+    for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_3D, p, gl.NEAREST);
+    gl.bindTexture(gl.TEXTURE_3D, null);
+    const error = gl.getError();
+    if (error !== gl.NO_ERROR) return fail(error === gl.OUT_OF_MEMORY ? "the GPU has no memory for the bricks" : `the bricks' textures could not be made (WebGL error ${error})`);
+    this.bricks = new BrickSet(fit.levels, fit.layout, perAxis, { data: context.data, size: context.size, voxelToRas: context.voxelToDisplay, darkBackground: this.darkBackground }, source.load);
+    this.bricks.onChange = () => this.onBricks?.();
+  }
+
+  /** Bricks read since the last frame into the atlas, and page entries changed into the page table. */
+  private uploadBricks(gl: WebGL2RenderingContext, bricks: BrickSet): void {
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    if (bricks.uploads.length > 0) {
+      gl.bindTexture(gl.TEXTURE_3D, this.atlas!);
+      for (const { slot, data } of bricks.uploads) {
+        const [x, y, z] = bricks.slotAt(slot);
+        gl.texSubImage3D(gl.TEXTURE_3D, 0, x * SLOT, y * SLOT, z * SLOT, SLOT, SLOT, SLOT, gl.RED, gl.UNSIGNED_BYTE, data);
+      }
+      bricks.uploads = [];
+    }
+    const dirty = bricks.takeDirty();
+    if (dirty.length > 0) {
+      const [w, h, d] = bricks.layout.size;
+      gl.bindTexture(gl.TEXTURE_3D, this.pageTexture!);
+      if (dirty.length > 256) {
+        gl.texSubImage3D(gl.TEXTURE_3D, 0, 0, 0, 0, w, h, d, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, bricks.pages);
+      } else {
+        for (const t of dirty) gl.texSubImage3D(gl.TEXTURE_3D, 0, t % w, Math.floor(t / w) % h, Math.floor(t / (w * h)), 1, 1, 1, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, bricks.pages, 4 * t);
+      }
+    }
+    gl.bindTexture(gl.TEXTURE_3D, null);
+  }
+
+  /**
+   * Chooses the bricks again once the view (or the threshold, cut or finest
+   * level) has stayed the same a moment.
+   */
+  private chooseBricks(frame: Frame3d, bricks: BrickSet, toDisplay: Mat4, side: number[], finest: number): void {
+    const cut = this.options.cut ? { point: [...frame.position], side } : undefined;
+    const view: BrickView = {
+      viewProjection: Float64Array.from(frame.viewProjection),
+      invViewProjection: Float64Array.from(frame.invViewProjection),
+      height: frame.height,
+      toDisplay,
+      cut,
+      threshold: this.options.threshold,
+      finest,
+    };
+    const key = JSON.stringify([Array.from(view.viewProjection, (v) => v.toPrecision(5)), frame.height, cut, view.threshold, finest]);
+    if (key === this.chosenFor) return;
+    this.chosenFor = key;
+    clearTimeout(this.choosing);
+    this.choosing = setTimeout(() => {
+      if (this.bricks !== bricks) return;
+      bricks.choose(view);
+      this.onBricks?.();
+    }, 150);
   }
 
   get hasDetail(): boolean {
@@ -362,8 +593,8 @@ export class SolidDrawer implements Drawer3d {
     this.onProblem?.();
   }
 
-  private compile(gl: WebGL2RenderingContext, outputs: Frame3d["outputs"]): WebGLProgram | undefined {
-    const key = JSON.stringify(outputs);
+  private compile(gl: WebGL2RenderingContext, outputs: Frame3d["outputs"], bricks: boolean): WebGLProgram | undefined {
+    const key = JSON.stringify([outputs, bricks]);
     if (this.program !== undefined && this.programFor === key) return this.program;
     const shader = (type: number, source: string) => {
       const s = gl.createShader(type)!;
@@ -374,7 +605,7 @@ export class SolidDrawer implements Drawer3d {
     };
     const program = gl.createProgram()!;
     gl.attachShader(program, shader(gl.VERTEX_SHADER, VS));
-    gl.attachShader(program, shader(gl.FRAGMENT_SHADER, fs(outputs)));
+    gl.attachShader(program, shader(gl.FRAGMENT_SHADER, fs(outputs, bricks)));
     gl.linkProgram(program);
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program) ?? "program did not link");
     if (this.program) gl.deleteProgram(this.program);
@@ -440,6 +671,8 @@ export class SolidDrawer implements Drawer3d {
     gl.bindTexture(gl.TEXTURE_3D, null);
     this.occScale = size.map((s, k) => s / (blocks[k] * BLOCK)) as [number, number, number];
     this.uploaded = volume;
+    // The bricks know where tissue is from the whole level: made again for this one.
+    this.dropBricks();
   }
 
   /**
@@ -490,6 +723,8 @@ export class SolidDrawer implements Drawer3d {
   draw(frame: Frame3d): void {
     const { gl } = frame;
     if (this.gl !== gl) {
+      this.dropBricks();
+      this.atlas = undefined;
       this.gl = gl;
       this.program = undefined;
       this.vao = undefined;
@@ -512,10 +747,20 @@ export class SolidDrawer implements Drawer3d {
       return;
     }
     this.setProblem(undefined);
-    const program = this.compile(gl, frame.outputs);
-    if (program === undefined) return;
     const { size } = volume;
     const { voxelToDisplay, lo, hi, voxel, side } = this.geometry(frame, toDisplay, size);
+    const source = this.brickSource;
+    if (source !== undefined && this.bricks === undefined && this.bricksFailed === undefined) this.makeBricks(gl, source, volume);
+    const bricks = source !== undefined ? this.bricks : undefined;
+    // The finest brick level drawn (its place among the bricks' levels).
+    let finest = 0;
+    if (bricks !== undefined) {
+      this.uploadBricks(gl, bricks);
+      finest = Math.max(0, bricks.levels.findIndex((l) => l.index >= source!.finest));
+      this.chooseBricks(frame, bricks, toDisplay, side, finest);
+    }
+    const program = this.compile(gl, frame.outputs, bricks !== undefined);
+    if (program === undefined) return;
     const texOfVoxel = Float64Array.from([1 / size[0], 0, 0, 0.5 / size[0], 0, 1 / size[1], 0, 0.5 / size[1], 0, 0, 1 / size[2], 0.5 / size[2], 0, 0, 0, 1]);
     const worldToTex = multiply(texOfVoxel, invert(voxelToDisplay));
     const step = Math.min(...voxel) * (frame.moving ? 0.9 : 0.45);
@@ -558,8 +803,45 @@ export class SolidDrawer implements Drawer3d {
       gl.uniform1f(u("uDetailStep"), Math.min(...dv) * (frame.moving ? 0.9 : 0.45));
       gl.uniform3fv(u("uDetailVoxel"), dv);
     }
+    if (bricks !== undefined) {
+      // Per brick level: display coordinates to its voxels, its page table's place and size, its step and voxel.
+      const worldToLevel = new Float32Array(16 * MAX_LEVELS);
+      const offsets = new Int32Array(3 * MAX_LEVELS);
+      const grids = new Int32Array(3 * MAX_LEVELS);
+      const steps = new Float32Array(MAX_LEVELS);
+      const voxels = new Float32Array(3 * MAX_LEVELS);
+      bricks.levels.forEach((l, i) => {
+        const m = multiply(toDisplay, l.voxelToRas);
+        worldToLevel.set(gl4(invert(m)), 16 * i);
+        offsets.set(bricks.layout.offsets[i], 3 * i);
+        grids.set(bricks.layout.grids[i], 3 * i);
+        const v = [0, 1, 2].map((r) => Math.hypot(m[4 * r], m[4 * r + 1], m[4 * r + 2]));
+        voxels.set(v, 3 * i);
+        steps[i] = Math.min(...v) * (frame.moving ? 0.9 : 0.45);
+      });
+      gl.uniformMatrix4fv(u("uWorldToLevel"), false, worldToLevel);
+      gl.uniform3iv(u("uPageOffset"), offsets);
+      gl.uniform3iv(u("uPageGrid"), grids);
+      gl.uniform1fv(u("uLevelStep"), steps);
+      gl.uniform3fv(u("uLevelVoxel"), voxels);
+      gl.uniform1i(u("uLevelCount"), bricks.levels.length);
+      gl.uniform1i(u("uFirstLevel"), finest);
+      gl.uniform3fv(u("uAtlasTexel"), new Array(3).fill(1 / (bricks.slotsPerAxis * SLOT)));
+      gl.activeTexture(gl.TEXTURE3);
+      gl.bindTexture(gl.TEXTURE_3D, this.atlas!);
+      gl.uniform1i(u("uAtlas"), 3);
+      gl.activeTexture(gl.TEXTURE4);
+      gl.bindTexture(gl.TEXTURE_3D, this.pageTexture!);
+      gl.uniform1i(u("uPages"), 4);
+    }
     gl.bindVertexArray(this.vao!);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+    if (bricks !== undefined) {
+      gl.activeTexture(gl.TEXTURE4);
+      gl.bindTexture(gl.TEXTURE_3D, null);
+      gl.activeTexture(gl.TEXTURE3);
+      gl.bindTexture(gl.TEXTURE_3D, null);
+    }
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_3D, null);
     gl.activeTexture(gl.TEXTURE1);
@@ -577,7 +859,9 @@ export class SolidDrawer implements Drawer3d {
     if (this.volumeTexture) gl.deleteTexture(this.volumeTexture);
     if (this.occupancy) gl.deleteTexture(this.occupancy);
     if (this.detailTexture) gl.deleteTexture(this.detailTexture);
-    this.program = this.vao = this.volumeTexture = this.occupancy = this.detailTexture = undefined;
+    this.dropBricks();
+    if (this.atlas) gl.deleteTexture(this.atlas);
+    this.program = this.vao = this.volumeTexture = this.occupancy = this.detailTexture = this.atlas = undefined;
     this.gl = undefined;
   }
 }
