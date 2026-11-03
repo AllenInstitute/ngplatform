@@ -182,8 +182,7 @@ parcellation's colour.
 
 Limits: Freeview's overlay settings beyond threshold and top (mid point,
 truncate, inverse, custom colour scales), label outlines, and several
-overlays at once are not there. In a store split into many chunks, the
-faces that cross from one chunk to the next are not drawn in the overview.
+overlays at once are not there.
 
 ## 5. Bottom dock
 

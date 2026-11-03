@@ -272,9 +272,12 @@ The dense overview draws a mesh store's faces from its chunks: in 3-d filled
 and lit (vertex normals from the faces, Neuroglancer's mesh lighting), in a
 cross-section as the line where each face crosses the section, both
 through the layer's skeleton shader, so `prop_<attribute>()` colours them
-(on a section, the value where the face crosses it). Faces that cross from
-one chunk to another are not in either chunk's links, so a store split into
-many chunks shows seams there.
+(on a section, the value where the face crosses it). A face reaching into
+another chunk (stored once, in a neighbour-offset links array) is drawn by
+the chunk that answers for it, its far corners as ghost vertices placed and
+valued as their own chunk stores them (positions from its vertex cell,
+values from its attribute cells), so a chunked surface shows no seams, on
+any of the surfaces it keeps as attributes too.
 
 Surfaces. A store with `headers/surface` (zarr-vectors-tools' surface
 header: `label_tables`, `alternates`, `scalars`; and, from stores the

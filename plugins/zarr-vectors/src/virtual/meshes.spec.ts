@@ -162,6 +162,24 @@ describe("virtual surface store", () => {
       }
     }
     expect(seen).toBe(12);
+
+    // Faces reaching into other chunks too: every face exactly once over the
+    // chunks, its far corners where the neighbour has them.
+    const corners = (d: { positions: Float32Array }, v: number) => Array.from(d.positions.subarray(3 * v, 3 * v + 3), (x) => x.toFixed(3)).join(",");
+    const faces: string[] = [];
+    for (const cell of cells) {
+      const d = await pipeline.download(cell, signal);
+      if (d === undefined) continue;
+      expect(Math.max(...d.faces)).toBeLessThan(d.numVertices);
+      // A far corner carries its own values, read from its chunk.
+      const key = d.attributes[names.indexOf("zv_join_key")];
+      for (let v = d.numOwnVertices; v < d.numVertices; ++v) {
+        expect(d.attributes[names.indexOf("thickness")][v]).toBeCloseTo(values["surf/lh.thickness"].values[key[v]], 4);
+      }
+      for (let f = 0; f < d.faces.length; f += 3) faces.push([0, 1, 2].map((k) => corners(d, d.faces[f + k])).sort().join(" | "));
+    }
+    expect(faces.length).toBe(20);
+    expect(new Set(faces).size).toBe(20);
   });
 
   it("serves a map that is not shown by default when asked for by name", async () => {
