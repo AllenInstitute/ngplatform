@@ -531,8 +531,10 @@ export class Renderer {
       gl.uniformMatrix4fv(this.uniform(p, "uModelToClip"), false, u.modelToClip);
       gl.uniformMatrix3fv(this.uniform(p, "uDirections"), false, u.directions);
       gl.uniform2f(this.uniform(p, "uViewport"), u.viewport[0], u.viewport[1]);
-      gl.uniform1f(this.uniform(p, "uHalfWidth"), u.halfWidth);
-      gl.uniform1i(this.uniform(p, "uColourBy"), points && u.colourBy === 0 ? 3 : u.colourBy);
+      // A point is drawn three line widths across: a dot as wide as a line is lost.
+      gl.uniform1f(this.uniform(p, "uHalfWidth"), points ? 3 * u.halfWidth : u.halfWidth);
+      // Points have no direction: each object its own colour instead.
+      gl.uniform1i(this.uniform(p, "uColourBy"), points && u.colourBy === 0 ? 1 : u.colourBy);
       gl.uniform3fv(this.uniform(p, "uColour"), u.colour);
       gl.uniform1i(this.uniform(p, "uColormap"), u.colormap);
       gl.uniform2f(this.uniform(p, "uRange"), u.range[0], u.range[1]);

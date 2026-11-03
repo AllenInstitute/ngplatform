@@ -51,7 +51,7 @@ describe("styles", () => {
   });
 
   it("says what each vertex's value holds", () => {
-    expect(scalarOf({ ...DEFAULT_STYLE, colourBy: "direction" })).toBe("none");
+    expect(scalarOf({ ...DEFAULT_STYLE, colourBy: "direction" })).toBe("object");
     expect(scalarOf({ ...DEFAULT_STYLE, colourBy: "object" })).toBe("object");
     expect(scalarOf({ ...DEFAULT_STYLE, colourBy: "attribute", attribute: "fa" })).toBe("attribute:fa");
     expect(rgbOf("#ff8000")).toEqual([1, 128 / 255, 0]);

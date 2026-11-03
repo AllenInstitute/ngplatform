@@ -296,7 +296,9 @@ class Luxar {
     }
     const points = info?.primitive === "points";
     parts.push(
-      this.slider(name, points ? "Point size (pixels)" : "Width (pixels)", "width", 0.5, 12, 0.25, (v) => `${v} px`),
+      points
+        ? this.slider(name, "Point size (pixels)", "width", 0.5, 12, 0.25, (v) => `${3 * v} px`)
+        : this.slider(name, "Width (pixels)", "width", 0.5, 12, 0.25, (v) => `${v} px`),
       this.slider(name, "Brightness (stops)", "exposure", -8, 8, 0.25, (v) => (v > 0 ? `+${v}` : `${v}`)),
       this.slider(name, "Sharpness", "sharpness", 0, 1, 0.05, (v) => v.toFixed(2)),
     );

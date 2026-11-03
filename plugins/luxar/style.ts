@@ -144,10 +144,10 @@ export const COLOUR_INDEX: Record<ColourBy, number> = { direction: 0, object: 1,
 
 /**
  * What the worker puts in each vertex's fourth value, for a style: an
- * attribute's value, an object's hashed hue, or nothing.
+ * attribute's value, or an object's hashed hue.
  */
 export function scalarOf(style: LayerStyle): string {
-  if (style.colourBy === "object") return "object";
   if (style.colourBy === "attribute" && style.attribute !== undefined) return `attribute:${style.attribute}`;
-  return "none";
+  // Otherwise each object's colour key: what "object" needs, and what points coloured "by direction" use (a point has none).
+  return "object";
 }

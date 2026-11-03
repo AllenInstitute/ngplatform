@@ -210,7 +210,7 @@ export function screenArea(modelToClip: ArrayLike<number>, lower: number[], uppe
  */
 export function coverage(chunks: { length: number; pointCount: number }[], pixelsPerUnit: number, widthPx: number, area: number, share = 1): number {
   let covered = 0;
-  for (const c of chunks) covered += c.length * pixelsPerUnit * widthPx + c.pointCount * Math.PI * (widthPx / 2) ** 2;
+  for (const c of chunks) covered += c.length * pixelsPerUnit * widthPx + c.pointCount * Math.PI * (1.5 * widthPx) ** 2;
   return area > 0 ? (covered * share) / area : 0;
 }
 
