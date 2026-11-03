@@ -26,6 +26,7 @@ import { LABEL_MAX, type LabelType, LabelVolume } from "./label_volume.js";
 import { Painter, type ViewPoint } from "./painter.js";
 import { type Prompt, QuickSelectRegistry } from "./quick_select.js";
 import { cropped, niftiBytes, niftiGz, omeZarr } from "./save.js";
+import { discard, type KeptInfo, kept, restore } from "./keep.js";
 import { type Reference, Session } from "./session.js";
 import { zipFiles } from "../../registration/volume_io.js";
 
@@ -128,12 +129,69 @@ export class Segmentation {
     c.register("annotations.redoStroke", () => this.undo(true));
     c.register("annotations.interpolate", () => this.interpolate());
     c.register("annotations.stopDrawing", () => this.setDrawing(false));
-    // A layer removed from the scene ends its session's drawing.
+    // A layer removed from the scene ends its session's drawing; a label
+    // layer whose volume went with a reload comes back from the browser.
     this.offs.push(
       ctx.viewer.onLayersChanged(() => {
         if (this.current && !ctx.viewer.layers().some((l) => l.name === this.current!.layer) && this.painter.active) this.setDrawing(false);
+        void this.restoreLost();
       }),
     );
+    void this.restoreLost();
+  }
+
+  /** Label volumes kept in this browser and not open now. */
+  private keptHere: KeptInfo[] = [];
+  /** Volumes already looked for after a reload. */
+  private readonly sought = new Set<string>();
+
+  /**
+   * Layers showing a label volume that is not in this page (the page was
+   * reloaded): each is pointed at the volume as kept in the browser, if it
+   * was; otherwise the log says it is gone.
+   */
+  private async restoreLost(): Promise<void> {
+    const open = new Set(this.sessions.map((s) => s.id));
+    const lost: { layer: string; id: string }[] = [];
+    for (const l of this.ctx.viewer.layers()) {
+      for (const source of l.sources) {
+        const m = /\/([^/]+)\.ngplabels\/?$/.exec(source);
+        if (m && !open.has(m[1]) && !this.sought.has(m[1])) lost.push({ layer: l.name, id: m[1] });
+      }
+    }
+    if (lost.length === 0) return;
+    for (const { id } of lost) this.sought.add(id);
+    const keptNow = await kept();
+    for (const { layer, id } of lost) {
+      const info = keptNow.find((k) => k.id === id);
+      if (info === undefined) {
+        this.ctx.log.error(`The label volume of “${layer}” was in a page since closed, and not kept in this browser: it is gone. Remove the layer.`);
+        continue;
+      }
+      try {
+        await this.reopen(info, layer);
+        this.ctx.log.info(`Brought back “${layer}” as kept in this browser (${new Date(info.time).toLocaleString()}).`);
+      } catch (e) {
+        this.ctx.log.error(`Could not bring back “${layer}”: ${(e as Error).message}`);
+      }
+    }
+    void this.refreshKept();
+  }
+
+  /** A kept volume opened again: into a layer that shows it (`replace`), or as a new one. */
+  private async reopen(info: KeptInfo, replace?: string): Promise<void> {
+    const volume = await restore(info);
+    const session = await Session.open(this.ctx, this.voxels, volume, info.name, { id: info.id, replace });
+    for (const [value, label] of info.labels) session.labels.set(value, label);
+    if (info.reference && this.ctx.viewer.layers().some((l) => l.name === info.reference)) await this.chooseReference(session, info.reference);
+    this.adopt(session, false);
+    session.applyColours([...session.counts.keys(), ...session.labels.keys()]);
+  }
+
+  private async refreshKept(): Promise<void> {
+    const open = new Set(this.sessions.map((s) => s.id));
+    this.keptHere = (await kept()).filter((k) => !open.has(k.id));
+    this.update?.();
   }
 
   dispose(): void {
@@ -173,14 +231,15 @@ export class Segmentation {
     }
   }
 
-  private adopt(session: Session): void {
+  private adopt(session: Session, draw = true): void {
     this.sessions.push(session);
     this.current = session;
     this.showForm = false;
     this.value = 1;
     session.counts = session.volume.counts();
     session.applyColours([1]);
-    this.setDrawing(true);
+    if (draw) this.setDrawing(true);
+    else this.update?.();
   }
 
   private pickNifti(): void {
@@ -218,6 +277,7 @@ export class Segmentation {
         await this.chooseReference(session, readableImages(this.ctx).find((l) => l !== session.layer));
         this.adopt(session);
         session.applyColours([...session.counts.keys()]);
+        session.changed(volume.keys());
         this.ctx.log.info(`Opened ${file.name} to edit: ${level.size.join(" × ")} voxels, ${type}.`);
       });
     } catch (e) {
@@ -245,7 +305,7 @@ export class Segmentation {
 
   private async close(session: Session): Promise<void> {
     if (session.unsaved > 0 && !(await this.ctx.ui.confirm(`Close “${session.layer}” without saving its last ${session.unsaved} stroke${session.unsaved === 1 ? "" : "s"}?`))) return;
-    session.dispose();
+    session.dispose(true);
     this.sessions.splice(this.sessions.indexOf(session), 1);
     if (this.ctx.viewer.layers().some((l) => l.name === session.layer)) this.ctx.workspace.removeLayer(session.layer);
     if (this.current === session) this.current = this.sessions[this.sessions.length - 1];
@@ -414,6 +474,7 @@ export class Segmentation {
     stroke.finish();
     if (session === undefined || stroke.changes === 0) return;
     session.history.push(stroke);
+    session.changed(stroke.keys());
     session.unsaved++;
     session.refresh();
     if (value > 0) session.applyColours([value]);
@@ -519,6 +580,7 @@ export class Segmentation {
     this.enqueue(() => {
       const keys = redo ? session.history.redo() : session.history.undo();
       if (keys.length === 0) return;
+      session.changed(keys);
       session.unsaved += 1;
       session.refresh();
       this.recount();
@@ -613,6 +675,7 @@ export class Segmentation {
   // -------------------------------------------------------------- panel
 
   render(host: HTMLElement): Disposer {
+    void this.refreshKept();
     let levels: { store: string; levels: ImageLevel[] } | undefined;
     const draw = () => {
       const images = readableImages(this.ctx).filter((n) => !this.sessions.some((s) => s.layer === n));
@@ -683,6 +746,24 @@ export class Segmentation {
               this.update?.();
             }, "Type")),
           ),
+      this.keptHere.length
+        ? el(
+            "div",
+            { class: "an-kept" },
+            el("p", { class: "an-hint" }, "Kept in this browser (as drawn, not saved):"),
+            ...this.keptHere.map((k) =>
+              el(
+                "div",
+                { class: "an-row" },
+                el("span", {}, `${k.name}`),
+                el("span", { class: "an-faint" }, `${k.size.join(" × ")}, ${new Date(k.time).toLocaleString()}`),
+                el("span", { class: "an-spacer" }),
+                button("Open", () => void this.reopen(k).then(() => this.refreshKept(), (e) => this.ctx.ui.toast(`Could not open it: ${(e as Error).message}`, "error")), "Open it again as a new layer"),
+                button("Discard", () => void discard(k.id).then(() => this.refreshKept()), "Forget it"),
+              ),
+            ),
+          )
+        : "",
       el(
         "div",
         { class: "an-row" },
@@ -743,12 +824,14 @@ export class Segmentation {
     const colour = el("input", { type: "color", value: session.colour(this.value), "aria-label": "Colour" }) as HTMLInputElement;
     colour.addEventListener("change", () => {
       session.labels.set(this.value, { name: session.labels.get(this.value)?.name ?? "", colour: colour.value });
+      session.changed([]);
       session.applyColours([this.value]);
       this.update?.();
     });
     const labelName = el("input", { class: "text-input", type: "text", value: session.labels.get(this.value)?.name ?? "", placeholder: "Name", "aria-label": "Label name" }) as HTMLInputElement;
     labelName.addEventListener("change", () => {
       session.labels.set(this.value, { name: labelName.value, colour: session.colour(this.value) });
+      session.changed([]);
       this.update?.();
     });
     const next = button("New label", () => {

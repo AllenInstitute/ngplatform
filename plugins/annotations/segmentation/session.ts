@@ -16,6 +16,7 @@ import type { ImageLevel, Voxels } from "../voxels.js";
 import { History } from "./history.js";
 import type { ImageBlock, Vec3 } from "./kernels.js";
 import { CHUNK, LabelVolume } from "./label_volume.js";
+import { discard, keep } from "./keep.js";
 import { LABEL_STORE_EXTENSION, serveInPage } from "./store_format.js";
 
 /** Distinct colours for labels 1, 2, 3, … (then round again). */
@@ -49,6 +50,10 @@ export class Session {
   private refreshTimer: ReturnType<typeof setTimeout> | undefined;
   private lastRefresh = 0;
   private readonly blocks = new Map<string, Promise<Float32Array>>();
+  /** Chunks changed since last kept in the browser. */
+  private readonly dirty = new Set<number>();
+  private keepTimer: ReturnType<typeof setTimeout> | undefined;
+  private keeping: Promise<unknown> = Promise.resolve();
   private blockGeneration = 0;
 
   private constructor(
@@ -61,19 +66,37 @@ export class Session {
   }
 
   /** Makes the session and shows its layer (named `name`) in the scene. */
-  static async open(ctx: PlatformContext, voxels: Voxels, volume: LabelVolume, name: string): Promise<Session> {
-    const fileName = `labels-${Date.now().toString(36)}-${++sessions}${LABEL_STORE_EXTENSION}`;
+  static async open(ctx: PlatformContext, voxels: Voxels, volume: LabelVolume, name: string, options: { id?: string; replace?: string } = {}): Promise<Session> {
+    const fileName = `${options.id ?? `labels-${Date.now().toString(36)}-${++sessions}`}${LABEL_STORE_EXTENSION}`;
     const session = new Session(ctx, voxels, volume, fileName);
     try {
-      const [found] = await ctx.workspace.local.open(new File([], fileName));
+      // A file made in the page: its layer is a dataset by its name, not by
+      // this visit's URL, so pointing it at a new one after a reload keeps it.
+      const [found] = await ctx.workspace.local.open(new File([], fileName), { derived: true });
       if (found === undefined) throw new Error("local data did not take the label volume");
       session.source = found.source;
       session.url = found.source.replace(/^zarr3:\/\//, "");
-      const before = new Set(ctx.viewer.layers().map((l) => l.name));
       // The volume alone: its bounds' outline (a yellow box round the whole grid) is no help when drawing.
       const source = { url: found.source, subsources: { default: true, bounds: false }, enableDefaultSubsources: false };
-      ctx.workspace.addDataset({ source, name, kind: "segmentation" });
-      session.layer = ctx.viewer.layers().find((l) => !before.has(l.name) && l.sources.some((s) => s.includes(fileName)))?.name ?? name;
+      if (options.replace !== undefined) {
+        const replace = options.replace;
+        ctx.viewer.patchState(
+          (ng) => {
+            const layer = ((ng.layers as Record<string, unknown>[] | undefined) ?? []).find((l) => l.name === replace);
+            if (layer) layer.source = source;
+          },
+          { quiet: true },
+        );
+        session.layer = replace;
+        return session;
+      }
+      const before = new Set(ctx.viewer.layers().map((l) => l.name));
+      // Its dataset is known by its name: a name no dataset or layer has yet.
+      const taken = new Set([...ctx.workspace.datasets().map((d) => d.name), ...before]);
+      let unique = name;
+      for (let i = 2; taken.has(unique); ++i) unique = `${name} ${i}`;
+      ctx.workspace.addDataset({ source, name: unique, kind: "segmentation" });
+      session.layer = ctx.viewer.layers().find((l) => !before.has(l.name) && l.sources.some((s) => s.includes(fileName)))?.name ?? unique;
     } catch (e) {
       session.unserve();
       throw e;
@@ -83,6 +106,25 @@ export class Session {
 
   get name(): string {
     return this.layer;
+  }
+
+  /** Its store's name without the extension: the folder it is kept in. */
+  get id(): string {
+    return this.fileName.slice(0, -LABEL_STORE_EXTENSION.length);
+  }
+
+  /**
+   * Keeps changed chunks in the browser a moment after strokes stop (and,
+   * with none, its labels' names and colours).
+   */
+  changed(keys: Iterable<number>): void {
+    for (const k of keys) this.dirty.add(k);
+    clearTimeout(this.keepTimer);
+    this.keepTimer = setTimeout(() => {
+      const keys = [...this.dirty];
+      this.dirty.clear();
+      this.keeping = this.keeping.then(() => keep(this.volume, { id: this.id, name: this.layer, labels: [...this.labels], reference: this.reference?.layer }, keys));
+    }, 1500);
   }
 
   /** Where the label volume's voxels are in the global space (once its layer has loaded). */
@@ -214,9 +256,12 @@ export class Session {
     );
   }
 
-  dispose(): void {
+  /** Ends the session; `forget` also drops what the browser keeps of it (it was closed, not the page). */
+  dispose(forget = false): void {
     clearTimeout(this.refreshTimer);
+    clearTimeout(this.keepTimer);
     this.unserve();
     this.ctx.workspace.local.close(this.source);
+    if (forget) void this.keeping.then(() => discard(this.id));
   }
 }

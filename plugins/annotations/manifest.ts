@@ -46,7 +46,7 @@ Label volumes drawn by hand, shown as a segmentation layer that updates as you d
 - In a view, the left button draws; hold **Space** to move the view instead. Keys while drawing: \`B\` brush, \`E\` erase, \`F\` fill, \`Shift+F\` fill 3-D, \`I\` pick, \`V\` interpolate between sections, \`[\` and \`]\` brush size, \`Ctrl+Z\` and \`Ctrl+Shift+Z\` undo and redo strokes, \`Escape\` stops drawing.
 - **Save** as NIfTI (.nii.gz) or an OME-Zarr folder; only the painted box, if you ask.
 
-A label volume lives in this page until saved: save it before closing the page.`,
+A label volume lives in this page until saved. It is also kept in this browser while you draw, so a reload brings it back; save it all the same.`,
   links: [{ title: "WebKnossos volume annotation (what this follows)", url: "https://docs.webknossos.org/webknossos/volume_annotation/index.html" }],
   license: "Apache-2.0",
   activation: ["onStartup"],

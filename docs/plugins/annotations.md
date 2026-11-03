@@ -105,8 +105,12 @@ is to come).
   only the painted chunks, so it suits large grids; NIfTI holds every voxel.
 
 !!! warning "Save before you leave"
-    A label volume lives in the page until saved. The workspace link names
-    it, but it does not reopen on another visit.
+    A label volume lives in the page until saved. While you draw it is also
+    kept in this browser, so a reload brings it back into its layer, and a
+    volume whose page was closed is offered again under **New** (*Kept in
+    this browser*: Open or Discard). That copy is not a save: the browser may
+    clear it, and the link does not carry it to another computer. **Close**
+    forgets it.
 
 ## Notes from users
 

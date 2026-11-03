@@ -49,6 +49,7 @@ unchanged, so links and docked tabs from then still open.
 | `segmentation/painter.ts` | The mouse in the views: drawing, the brush ring, the quick-select box |
 | `segmentation/quick_select.ts` | The quick select interface, the threshold method, the registry other plugins add to |
 | `segmentation/save.ts` | NIfTI and OME-Zarr out, the painted box |
+| `segmentation/keep.ts` | Volumes kept in the browser (OPFS) while drawn, brought back after a reload |
 | `segmentation/panel.ts` | The section |
 | `tests/` | `npm test` runs them |
 
@@ -88,6 +89,17 @@ exact and immediate); its depth gradient gives the section's normal in the
 volume's voxels, so a disc brush and a 2-D fill take the section shown. In
 the 3-D view the brush paints a ball at Neuroglancer's picked point (on a
 section or a surface).
+
+### Kept in the browser
+
+While a volume is drawn, its painted chunks and description are written to
+the browser's origin private file system (`segmentation/keep.ts`), a moment
+after strokes stop. The store's file is opened as a *derived* local file, so
+its layer is a dataset known by its name rather than by the visit's URL:
+after a reload, a layer whose volume is not in the page is pointed at the
+kept copy (served under a new URL) in place, and the workspace keeps one
+dataset. Volumes kept but not in the scene are offered under **New**.
+**Close** forgets the copy.
 
 ### Large data
 
