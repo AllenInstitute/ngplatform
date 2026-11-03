@@ -9,7 +9,7 @@ import { EDGE_LIST } from "./formats.js";
 import { lazToLas } from "./laz.js";
 import { lazPerf } from "./laz_module.js";
 import { FREESURFER_SURFACE, parseMeshFile } from "./mesh_files.js";
-import { MeshStore } from "./meshes.js";
+import { openMeshStore } from "./mesh_cells.js";
 import { graphStore, parseEdgeList, parseGraphml, splitEdgeList } from "./graphs.js";
 import { parseLas, parsePointParquet, parsePointTable, parseSwc, parseSwcCollection } from "./point_files.js";
 import { surfaceCompanions } from "./surfaces.js";
@@ -22,7 +22,8 @@ serveVirtualStores(async (file, related) => {
     // A surface's values on its vertices, from the files beside it.
     const companions = await surfaceCompanions(file.name, related, mesh.positions.length / 3);
     if (companions.skipped.length > 0) console.info(`${file.name}: files beside it left out: ${companions.skipped.join("; ")}`);
-    return new MeshStore(mesh, file.name.replace(/\.(surf\.gii|gii|obj|stl|ply)$/i, ""), companions);
+    // Past a million triangles (and not a surface with values beside it), in cells with coarser levels.
+    return openMeshStore(mesh, file.name.replace(/\.(surf\.gii|gii|obj|stl|ply)$/i, ""), companions);
   }
   if (/^@all\.swc$/i.test(file.name)) {
     // A folder's SWC files, which local data hands over as one text.

@@ -167,36 +167,59 @@ export function parsePly(bytes: Uint8Array, name = "mesh"): MeshData {
       }
     }
   } else {
+    // Binary: each property read by a getter chosen once, triangles into a typed array.
     const little = format === "binary_little_endian";
     const view = new DataView(bytes.buffer, bytes.byteOffset + bodyStart, bytes.byteLength - bodyStart);
-    let at = 0;
-    const read = (type: string) => {
-      const [size, getter] = PLY_TYPES[type] ?? [0, ""];
+    const getter = (type: string): [number, (at: number) => number] => {
+      const [size, name] = PLY_TYPES[type] ?? [0, ""];
       if (size === 0) throw new Error(`a PLY property of type ${type}`);
-      const v = (view as unknown as Record<string, (o: number, l?: boolean) => number>)[`get${getter}`](at, little);
-      at += size;
-      return v;
+      const get = (view as unknown as Record<string, (o: number, l?: boolean) => number>)[`get${name}`].bind(view);
+      return [size, (at: number) => get(at, little)];
+    };
+    let at = 0;
+    let out = new Uint32Array(0);
+    let length = 0;
+    const push = (a: number, b: number, c: number) => {
+      if (length + 3 > out.length) {
+        const next = new Uint32Array(Math.max(1024, out.length * 2));
+        next.set(out.subarray(0, length));
+        out = next;
+      }
+      out[length++] = a;
+      out[length++] = b;
+      out[length++] = c;
     };
     for (const element of elements) {
+      const readers = element.properties.map((p) => (p.list ? { list: true, count: getter(p.list.count), item: getter(p.list.item) } : { list: false, value: getter(p.type) }));
+      const firstList = element.properties.findIndex((p) => p.list !== undefined);
+      const isVertex = element === vertexElement;
+      const isFace = element.name === "face";
+      if (isFace && out.length === 0) out = new Uint32Array(3 * element.count);
       for (let i = 0; i < element.count; ++i) {
-        let corners: number[] | undefined;
-        element.properties.forEach((p, k) => {
-          if (p.list) {
-            const n = read(p.list.count);
-            const items: number[] = [];
-            for (let j = 0; j < n; ++j) items.push(read(p.list.item));
-            if (corners === undefined) corners = items;
-          } else {
-            const v = read(p.type);
-            if (element === vertexElement) {
-              const axis = axes.indexOf(k);
-              if (axis !== -1) positions[3 * i + axis] = v;
+        for (let k = 0; k < readers.length; ++k) {
+          const r = readers[k];
+          if (r.list) {
+            const [countSize, count] = r.count!;
+            const [itemSize, item] = r.item!;
+            const n = count(at);
+            at += countSize;
+            if (isFace && k === firstList) {
+              const first = item(at);
+              for (let j = 1; j + 1 < n; ++j) push(first, item(at + j * itemSize), item(at + (j + 1) * itemSize));
             }
+            at += n * itemSize;
+          } else {
+            const [size, value] = r.value!;
+            if (isVertex) {
+              const axis = axes.indexOf(k);
+              if (axis !== -1) positions[3 * i + axis] = value(at);
+            }
+            at += size;
           }
-        });
-        if (element.name === "face" && corners) for (let k = 1; k + 1 < corners.length; ++k) triangles.push(corners[0], corners[k], corners[k + 1]);
+        }
       }
     }
+    return single(positions, out.slice(0, length), name);
   }
   return single(positions, Uint32Array.from(triangles), name);
 }
