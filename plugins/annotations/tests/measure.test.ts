@@ -58,6 +58,20 @@ describe("measuring annotations", () => {
     expect(measure({ type: "axis_aligned_bounding_box", id: "b", pointA: [0, 0, 0], pointB: [1, 1, 1] }, "m", g, MM)?.value).toBeCloseTo(8);
   });
 
+  it("reads a source whose coordinates are in another scale than the scene's, as Neuroglancer draws it", () => {
+    // Annotations in 1 µm coordinates, the scene in mm: the identity matrix is physical, so
+    // a point at 1000 is 1 mm along; the translation is in the scene's units.
+    const t: LayerTransform = {
+      rank: 3,
+      input: { names: ["x", "y", "z"], scales: [1e-6, 1e-6, 1e-6], units: ["m", "m", "m"] },
+      output: { names: ["x", "y", "z"], scales: [0.001, 0.001, 0.001], units: ["m", "m", "m"] },
+      matrix: Float64Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 0, 0, 1]),
+      defaultMatrix: Float64Array.from([1]),
+    };
+    const g = annotationToGlobal(t, MM, 3);
+    expect(g([1000, 2000, 0]).map((v) => +v.toFixed(9))).toEqual([6, 2, 0]);
+  });
+
   it("lists every measurable annotation of the state's layers, points left out", () => {
     const all = measureAll(
       [

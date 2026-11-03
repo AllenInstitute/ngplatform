@@ -182,13 +182,20 @@ export function annotationToGlobal(t: LayerTransform | undefined, space: GlobalS
     const g = target[r];
     return g < 0 ? 1 : mmOf(t.output.scales[r], t.output.units[r]) / mmOf(space.scales[g], space.units[g]);
   });
+  const scale = (c: number, r: number) => {
+    const i = t.input.scales[c];
+    const o = t.output.scales[r];
+    return i > 0 && o > 0 ? i / o : 1;
+  };
   return (point) => {
     const out = space.names.map(() => NaN);
     for (let r = 0; r < R; ++r) {
       const g = target[r];
       if (g < 0) continue;
       let v = m[R * (R + 1) + r];
-      for (let c = 0; c < R; ++c) v += m[c * (R + 1) + r] * point[c];
+      // The linear part is physical: each coefficient times the input's scale over the output's
+      // (Neuroglancer's convention), the translation in the output's units.
+      for (let c = 0; c < R; ++c) v += m[c * (R + 1) + r] * scale(c, r) * point[c];
       out[g] = v * ratio[r];
     }
     return out;
