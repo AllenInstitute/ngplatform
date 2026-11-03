@@ -64,6 +64,13 @@ export interface BuiltChunk {
   normals: Float32Array;
   /** The triangles' total area, store units squared. */
   area: number;
+  /**
+   * Objects read whole (a set, not a spatial chunk): its segments sorted
+   * into pieces of space, PIECE_STRIDE numbers each: the first segment, how
+   * many, the piece's bounds (lower x, y, z, upper x, y, z), and how many
+   * the first 1, 2, … SAMPLES samples of the objects hold.  See sortIntoPieces.
+   */
+  pieces?: Float64Array;
 }
 
 /** An object id's colour key: a well-mixed hash of its 64 bits, in [0, 1). */
@@ -250,4 +257,139 @@ export function buildChunk(input: ChunkInput, scalar: ScalarSource): BuiltChunk 
     normals,
     area,
   };
+}
+
+/**
+ * A layer's chosen objects read whole, by id (the Zarr Vectors reader's
+ * `ObjectReader.readCurves`), as one chunk's input: each curve's vertices
+ * in order, each joined to the next.
+ */
+export function curvesInput(ids: ArrayLike<bigint>, offsets: Uint32Array, positions: Float32Array): ChunkInput {
+  const n = positions.length / 3;
+  const segmentIds = new Uint32Array(2 * n);
+  let edgeCount = 0;
+  for (let c = 0; c < ids.length; ++c) edgeCount += Math.max(0, offsets[c + 1] - offsets[c] - 1);
+  const edges = new Uint32Array(2 * edgeCount);
+  let e = 0;
+  for (let c = 0; c < ids.length; ++c) {
+    const lo = Number(BigInt.asUintN(32, ids[c]));
+    const hi = Number(BigInt.asUintN(32, ids[c] >> 32n));
+    for (let v = offsets[c]; v < offsets[c + 1]; ++v) {
+      segmentIds[2 * v] = lo;
+      segmentIds[2 * v + 1] = hi;
+      if (v + 1 < offsets[c + 1]) {
+        edges[e++] = v;
+        edges[e++] = v + 1;
+      }
+    }
+  }
+  return { numVertices: n, numOwnVertices: n, positions, segmentIds, edges, attributes: [] };
+}
+
+/** Objects read whole one at a time (`ObjectReader.readSkeleton`): their vertices, edges and attributes, one after another. */
+export function skeletonsInput(parts: { id: bigint; positions: Float32Array; edges: Uint32Array; attributes: Float32Array[] }[], components: number[]): ChunkInput {
+  let n = 0;
+  let m = 0;
+  for (const p of parts) {
+    n += p.positions.length / 3;
+    m += p.edges.length;
+  }
+  const positions = new Float32Array(3 * n);
+  const segmentIds = new Uint32Array(2 * n);
+  const edges = new Uint32Array(m);
+  const attributes = components.map((c) => new Float32Array(c * n));
+  let at = 0;
+  let e = 0;
+  for (const p of parts) {
+    const count = p.positions.length / 3;
+    positions.set(p.positions, 3 * at);
+    const lo = Number(BigInt.asUintN(32, p.id));
+    const hi = Number(BigInt.asUintN(32, p.id >> 32n));
+    for (let v = 0; v < count; ++v) {
+      segmentIds[2 * (at + v)] = lo;
+      segmentIds[2 * (at + v) + 1] = hi;
+    }
+    for (let k = 0; k < p.edges.length; ++k) edges[e++] = p.edges[k] + at;
+    components.forEach((c, k) => {
+      const a = p.attributes[k];
+      if (a !== undefined) attributes[k].set(a.subarray(0, c * count), c * at);
+    });
+    at += count;
+  }
+  return { numVertices: n, numOwnVertices: n, positions, segmentIds, edges, attributes };
+}
+
+/** At most this many pieces along each axis when a set of whole objects is cut up for culling. */
+export const PIECES_PER_AXIS = 16;
+
+/** Each piece's segments are ordered by this many samples of the objects (see sortIntoPieces). */
+export const SAMPLES = 8;
+/** Numbers per piece in `BuiltChunk.pieces`: first segment, count, bounds (6), and the end of each sample (SAMPLES). */
+export const PIECE_STRIDE = 8 + SAMPLES;
+
+/**
+ * Sorts a built chunk's segments into pieces of space (a grid over its
+ * bounds, cells about `cell` store units, at most PIECES_PER_AXIS a side),
+ * so a view draws only the pieces it can show (a 2-D view's slab, the 3-D
+ * view's frustum) while the lines stay joined across them (the vertices
+ * are not moved).  Within a piece the segments are ordered by their
+ * object's sample (the hash of its id, objectKey, in SAMPLES parts), so the
+ * first k samples of every piece are the same k / SAMPLES of the objects,
+ * whole: a view with more lines than its Detail draws that share.  Sets
+ * `pieces`, PIECE_STRIDE numbers each: its first segment, its count, its
+ * bounds, and how many of its segments the first 1, 2, … SAMPLES samples
+ * hold.
+ */
+export function sortIntoPieces(chunk: BuiltChunk, cell: number): void {
+  const count = chunk.segmentCount;
+  if (count === 0) return;
+  const { lower, upper, vertices, segments, slots, objectIds } = chunk;
+  const dims = [0, 1, 2].map((k) => Math.max(1, Math.min(PIECES_PER_AXIS, Math.ceil((upper[k] - lower[k]) / Math.max(cell, 1e-9)))));
+  const size = [0, 1, 2].map((k) => Math.max((upper[k] - lower[k]) / dims[k], 1e-12));
+  const cells = dims[0] * dims[1] * dims[2];
+  // Each object's sample, by its slot.
+  const sampleOf = new Uint8Array(objectIds.length / 2);
+  for (let i = 0; i < sampleOf.length; ++i) sampleOf[i] = Math.min(SAMPLES - 1, Math.floor(objectKey(objectIds[2 * i], objectIds[2 * i + 1]) * SAMPLES));
+  const keyOf = new Uint32Array(count);
+  const starts = new Uint32Array(cells * SAMPLES + 1);
+  for (let s = 0; s < count; ++s) {
+    const a = segments[4 * s + 1];
+    let index = 0;
+    for (let k = 2; k >= 0; --k) {
+      const i = Math.min(dims[k] - 1, Math.max(0, Math.floor((vertices[4 * a + k] - lower[k]) / size[k])));
+      index = index * dims[k] + i;
+    }
+    const key = index * SAMPLES + sampleOf[slots[a]];
+    keyOf[s] = key;
+    ++starts[key + 1];
+  }
+  for (let c = 0; c < cells * SAMPLES; ++c) starts[c + 1] += starts[c];
+  const next = starts.slice(0, cells * SAMPLES);
+  const sorted = new Uint32Array(4 * count);
+  for (let s = 0; s < count; ++s) {
+    const to = next[keyOf[s]]++;
+    sorted.set(segments.subarray(4 * s, 4 * s + 4), 4 * to);
+  }
+  const pieces: number[] = [];
+  for (let c = 0; c < cells; ++c) {
+    const start = starts[c * SAMPLES];
+    const end = starts[(c + 1) * SAMPLES];
+    if (end === start) continue;
+    const lo = [Infinity, Infinity, Infinity];
+    const hi = [-Infinity, -Infinity, -Infinity];
+    for (let s = start; s < end; ++s) {
+      for (let j = 1; j <= 2; ++j) {
+        const v = sorted[4 * s + j];
+        for (let k = 0; k < 3; ++k) {
+          const p = vertices[4 * v + k];
+          if (p < lo[k]) lo[k] = p;
+          if (p > hi[k]) hi[k] = p;
+        }
+      }
+    }
+    pieces.push(start, end - start, lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
+    for (let b = 1; b <= SAMPLES; ++b) pieces.push(starts[c * SAMPLES + b] - start);
+  }
+  chunk.segments = sorted;
+  chunk.pieces = Float64Array.from(pieces);
 }

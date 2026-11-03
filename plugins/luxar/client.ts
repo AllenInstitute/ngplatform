@@ -1,10 +1,12 @@
 /**
  * The main thread's side of the reading worker, for one layer: which chunks
  * its views want, merged and sent on; the chunks that came back, kept (up
- * to a byte budget) until each view has put them on its GPU.
+ * to a byte budget) until each view has put them on its GPU.  The layer's
+ * chosen objects read whole, by id, are kept apart (`objects`).
  */
 import type { BuiltChunk } from "./chunk_build.js";
 import type { StoreInfo } from "./luxar_worker.js";
+import { ObjectSets } from "./objects.js";
 
 export type { StoreInfo };
 
@@ -59,14 +61,21 @@ export class StoreClient {
         return;
       }
       if (msg.scalar !== this.scalar) return;
+      if (msg.type === "objects" || msg.type === "objectsError") {
+        // Chosen objects read whole.
+        if (msg.type === "objects") {
+          const chunk = msg.chunk as BuiltChunk | null;
+          if (chunk?.valueRange !== undefined) this.widenRange(chunk.valueRange);
+          this.objects.arrived(msg.key, chunk, msg.found as BigUint64Array);
+        } else this.objects.failed(msg.key, msg.message);
+        this.onChunk?.();
+        return;
+      }
       this.requested.delete(msg.key);
       if (msg.type === "chunk") {
         const chunk = msg.chunk as BuiltChunk;
         this.store(msg.key, chunk);
-        if (chunk.valueRange !== undefined) {
-          const [lo, hi] = chunk.valueRange;
-          this.valueRange = this.valueRange === undefined ? [lo, hi] : [Math.min(this.valueRange[0], lo), Math.max(this.valueRange[1], hi)];
-        }
+        if (chunk.valueRange !== undefined) this.widenRange(chunk.valueRange);
       } else if (msg.type === "empty") {
         this.store(msg.key, null);
       } else if (msg.type === "error") {
@@ -77,6 +86,19 @@ export class StoreClient {
       this.onChunk?.();
     };
     this.worker.postMessage({ type: "open", storeUrl });
+    this.objects = new ObjectSets((key, plan, ids) => this.worker.postMessage({ type: "objects", key, level: plan.level, mode: plan.mode, ids, scalar: this.scalar }, [ids.buffer]));
+  }
+
+  /** The layer's chosen objects read whole, by id (./objects.ts). */
+  readonly objects: ObjectSets;
+
+  private widenRange([lo, hi]: [number, number]): void {
+    this.valueRange = this.valueRange === undefined ? [lo, hi] : [Math.min(this.valueRange[0], lo), Math.max(this.valueRange[1], hi)];
+  }
+
+  /** What each vertex's value holds now (styles.scalarOf). */
+  get scalarName(): string {
+    return this.scalar;
   }
 
   private store(key: string, chunk: BuiltChunk | null): void {
@@ -103,6 +125,7 @@ export class StoreClient {
     this.failed.clear();
     this.valueRange = undefined;
     ++this.generation;
+    this.objects.clear();
     this.send();
   }
 

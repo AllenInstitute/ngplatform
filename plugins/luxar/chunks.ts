@@ -8,7 +8,8 @@
  * coarsest level's chunks in view are always read first, so something
  * shows at once.
  */
-import type { StoreClient, StoreInfo } from "./client.js";
+import type { BuiltChunk } from "./chunk_build.js";
+import type { StoreInfo } from "./client.js";
 import type { GpuChunk, Renderer } from "./render_gl.js";
 import type { ObjectShading } from "./segments.js";
 import { chooseLevel, chunkBox, chunkRange, chunksIn } from "./view_math.js";
@@ -87,6 +88,14 @@ export function selectChunks(info: StoreInfo, visible: (lower: number[], upper: 
   return { level, draw: [...draw], want, complete };
 }
 
+/** Where built chunks come from: the store's spatial chunks (StoreClient), or its chosen objects read whole (ObjectSets). */
+export interface ChunkSource {
+  get(key: string): BuiltChunk | null | undefined;
+  has(key: string): boolean;
+  /** Changes when every chunk is dropped, so views drop their copies too. */
+  readonly generation: number;
+}
+
 /** One view's GPU copies of a layer's chunks, least recently drawn first. */
 export class GpuChunks {
   private readonly map = new Map<string, GpuChunk | null>();
@@ -95,7 +104,7 @@ export class GpuChunks {
 
   constructor(
     private readonly renderer: Renderer,
-    private readonly client: StoreClient,
+    private readonly client: ChunkSource,
     private readonly budget: number,
   ) {}
 

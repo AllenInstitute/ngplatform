@@ -42,13 +42,29 @@ is converted.
   moving and it keeps turning, slowing to a stop.
 - **Segments**: when the layer shows only some objects (segments chosen in
   its Segments tab or in the link, or another tool's choice, such as a
-  track-filtering group), only those are drawn. *Colour: the layer's
-  segment colours* colours each object as Neuroglancer does.
+  track-filtering group), only those are drawn. Up to about 8 million
+  vertices of them (four times the Detail; at most 100 000 objects) are
+  read whole, by id, at full resolution, so all of them show at any zoom
+  and nothing else is read; the panel says how many have been read. A
+  view draws about the Detail of them: zoomed out on a big group, the 3-D
+  view draws an even sample of its streamlines, each whole (the panel
+  says *2 in 8 of them*); raise the Detail to draw them all. More than
+  that are drawn from the level's chunks, as when every object shows. *Colour: the layer's segment colours* colours each object as
+  Neuroglancer does.
+- **The others, faintly**: with the layer's *Opacity (off)*
+  (notSelectedAlpha, in its Render tab) above 0, the objects not chosen
+  are drawn too, that much fainter, as Neuroglancer does (not with Solid
+  tubes). While Luxar draws the layer the slider springs back to 0
+  (Neuroglancer's own drawing is kept off that way), but the value you
+  set is what Luxar draws with, what the link keeps, and what the layer
+  has again when Luxar is switched off for it.
 - **Track filtering's groups**: tick a group's layer and it is drawn in the
-  group's colour, its streamlines picked by id from the whole tractogram
+  group's colour, its streamlines read by id from the whole tractogram
   until track filtering has made the group a store of its own, then from
-  that store. The group's answer can change (move a region) and Luxar
-  follows it.
+  that store; the drawing by id stays until the group's own store has
+  loaded, so the group does not blink out in between. The group's answer
+  can change (move a region) and Luxar follows it, reading only the
+  streamlines it has not read yet.
 - Hiding the layer hides its Luxar drawing too. A link opened where the
   plugin is off shows the layer drawn by Neuroglancer as usual.
 - **Meshes** (surfaces): lit in the 3-D view and, with Glow or Emission,

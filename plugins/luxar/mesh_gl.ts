@@ -31,13 +31,16 @@ layout(location = 0) in uint aVertex;
 out vec3 vColour;
 out vec3 vNormal;
 out vec3 vToEye;
+out float vWeight;
 
 void main() {
   vec4 object = objectAt(aVertex);
   vColour = vec3(0.0);
   vNormal = vec3(0.0, 0.0, 1.0);
   vToEye = vec3(0.0, 0.0, 1.0);
-  if (object.a < 0.5) {
+  // How strongly the object is drawn (the layer's notSelectedAlpha for one not chosen).
+  vWeight = object.a;
+  if (hidden(object)) {
     // A hidden object's triangles shrink to a point outside the view.
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
@@ -64,7 +67,7 @@ export function meshFragmentShader(pass: Pass, outputs: Outputs): string {
       float light = 0.2 + 0.6 * facing + 0.6 * pow(1.0 - facing, 3.0);
       float fragDepth = gl_FragCoord.z;
       // Seen edge on, the path through the surface is longer: it absorbs more.
-      outColour = vec4(vColour * (light * uGain), uAbsorption / max(facing, 0.2));
+      outColour = vec4(vColour * (light * uGain), uAbsorption / max(facing, 0.2)) * vWeight;
       ${writeRest}`,
     solid: `
       vec3 shaded = vColour * (0.25 + 0.75 * facing) + vec3(0.2) * pow(facing, 24.0);
@@ -72,6 +75,8 @@ export function meshFragmentShader(pass: Pass, outputs: Outputs): string {
       outColour = vec4(shaded, 1.0);
       ${writeRest}`,
     depth: `
+      // A faint surface does not keep what is behind it from showing.
+      if (vWeight < 0.5) discard;
       float fragDepth = uDepthNear ? 0.0 : gl_FragCoord.z;
       gl_FragDepth = fragDepth;
       outColour = vec4(0.0);
@@ -85,6 +90,7 @@ uniform bool uDepthNear;
 in vec3 vColour;
 in vec3 vNormal;
 in vec3 vToEye;
+in float vWeight;
 ${outs.join("\n")}
 
 void main() {
@@ -130,7 +136,7 @@ bool crossing(vec4 a, vec4 b, float da, float db, out vec4 p) {
 
 void main() {
   vec4 object = objectAt(aFace.x);
-  if (object.a < 0.5) {
+  if (hidden(object)) {
     hide();
     return;
   }
@@ -162,7 +168,7 @@ void main() {
   vec2 dir = len > 1e-6 ? d / len : vec2(1.0, 0.0);
   vec2 normal = vec2(-dir.y, dir.x);
   float halfWidth = max(uHalfWidth, 0.75);
-  vFade = uHalfWidth / halfWidth;
+  vFade = uHalfWidth / halfWidth * object.a;
   vec4 c = atEnd ? c1 : c0;
   c.xy += normal * side * halfWidth / (0.5 * uViewport) * c.w;
   gl_Position = c;

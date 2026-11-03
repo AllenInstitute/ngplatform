@@ -25,9 +25,10 @@ point tables). Nothing is converted and no files are written.
 | `mesh_gl.ts` | A mesh's shaders: lit triangles in 3-D, the outline where the section cuts them in 2-D |
 | `bloom.ts` | Bloom: the bright pass and the separable Gaussian blur at three scales |
 | `chunks.ts` | Levels of detail and which chunks a view reads and draws; the per-context GPU cache |
-| `client.ts`, `luxar_worker.ts` | Reading a store's chunks with the Zarr Vectors reader, in a worker |
-| `chunk_build.ts` | A decoded chunk made ready to draw: a vertex texture, (previous, start, end, next) segments, and each vertex's object as a slot in the chunk's list of objects |
-| `segments.ts` | Which of a chunk's objects show and their colours: the table the shaders look each vertex's object up in |
+| `client.ts`, `luxar_worker.ts` | Reading a store's chunks with the Zarr Vectors reader, in a worker; and a layer's chosen objects whole, by id (`ObjectReader`) |
+| `objects.ts` | Whether a layer's chosen objects are read whole (`objectPlan`), in which batches, and what has been read, by object (`ObjectSets`) |
+| `chunk_build.ts` | A decoded chunk made ready to draw: a vertex texture, (previous, start, end, next) segments, and each vertex's object as a slot in the chunk's list of objects; objects read whole built the same way, their segments sorted into pieces of space |
+| `segments.ts` | Which of a chunk's objects show, how strongly (the others at the layer's notSelectedAlpha) and their colours: the table the shaders look each vertex's object up in |
 | `sources.ts` | Which of a layer's sources it draws (a source with its parts off draws nothing) |
 | `view_math.ts` | Matrices, frustum and slab tests, level choice |
 | `camera.ts` | Optional momentum on rotating the 3-D view |
@@ -225,6 +226,13 @@ Luxar layers opened without this plugin shows the layers drawn by
 Neuroglancer. The layer itself stays visible, which keeps the 3-D drawer
 (a render layer of that layer) drawing; hiding the layer hides both.
 
+The layer's *notSelectedAlpha* is kept at 0 meanwhile: with it above 0,
+Neuroglancer draws every object not in the visible set faintly, and the
+set that hides the drawing names no object. The engine keeps the value
+the layer had (`visibleSegments(…).notSelectedAlpha` reports it, a change
+to it while hidden is kept as the new value, and the link saves it), and
+puts it back when the drawing is shown again.
+
 ### The layer's chosen segments
 
 What the layer shows is drawn, as Neuroglancer would draw it: every object
@@ -236,23 +244,108 @@ apart from its hiding (`viewer.visibleSegments`): the layer's own
 the engine keeps while the drawing is hidden and puts back when it is shown
 again.
 
+#### A few chosen objects are read whole, by id
+
+Reading the spatial chunks that hold a few chosen objects reads far more
+than is shown, and coarse levels of a tractogram hold only a sample of the
+objects (S-21-46 and HCP-1065 keep a tenth per level), so zoomed out most
+of the chosen ones are missing. A Zarr Vectors store's object index says
+where each object's vertices are, so when a layer chooses few enough
+objects they are read themselves, whole, at full resolution, and drawn
+instead of chunks (`objects.ts`, in the worker the reader's
+`ObjectReader`, as the Zarr Vectors plugin reads a selected object's
+skeleton):
+
+- **Which way** (`objectPlan`): the chosen objects are read whole when
+  there are at most 100 000 of them (2 000 when they are read one at a
+  time, below) and their vertices, estimated as the level's vertices over
+  its objects (each level's `object_index` says how many), are at most
+  four times the *Detail* (8 M vertices at the default 2 M). Once 256 of
+  them have been read, their own mean is used instead of the level's (a
+  bundle of long streamlines has far more than the mean), with up to
+  twice that budget, so a selection does not switch back and forth; past
+  it the chunks are read. They are read
+  from the finest level that holds every object (level 0, unless a coarser
+  level keeps every object and only simplifies them); a level that keeps a
+  sample of the objects is never used. Otherwise (more objects, or every
+  object shown, or a mesh, or a store without an object index) the chunks
+  are read as below.
+- **How**: streamlines (`implicit_sequential` lines) many at a time,
+  `readCurves` (the object index's manifests, then for each chunk the rows
+  of every fragment any of them has there, coalesced); other lines and
+  points one object at a time, `readSkeleton`, which also gives vertex
+  attributes (so streamlines coloured by a vertex attribute go this way
+  too).
+- **In batches**: the objects not read yet, in ascending id order (rows of
+  the object index together, so its chunks are read about once), 256
+  first so something shows at once, then 4 096 at a time, at most two
+  batches asked for at once, so a new selection is not stuck behind the
+  old one's queue. Each batch's answer is built as one chunk
+  (`curvesInput` / `skeletonsInput`, then `buildChunk`), its own object
+  table and colours as above.
+- **Kept by object** (`ObjectSets`): each object read knows the set it is
+  in. When the selection changes, only the objects not read yet (and not
+  found missing) are asked for; those no longer chosen are left out by the
+  sets' tables, and a set none of whose objects is chosen is let go when
+  more than 512 MiB is kept. Another level or another vertex value (the
+  colouring) drops them all.
+- **2-D slab culling**: a set's segments are sorted into pieces of space
+  (`sortIntoPieces`: a grid over the set's bounds, cells about half a
+  level-0 chunk, at most 16 a side; the vertices are not moved, so lines
+  stay joined), and a view draws only the pieces in its frustum, which in
+  a 2-D view is the slab; the vertex shader still drops what is outside
+  it.
+- **Drawn within the Detail**: up to four times the Detail is read, but a
+  view draws about the Detail. Within each piece the segments are ordered
+  by their object's sample (the hash of its id in eight parts), so the
+  first k samples of every piece are the same k eighths of the objects,
+  whole; a view whose pieces in view hold more segments than its Detail
+  (the 3-D view zoomed out on a big group) draws that share of them, at
+  least an eighth, and the panel says so (*3-D view 2 in 8 of them
+  (Detail)*). Raising the Detail draws more without reading again. A 2-D
+  view counts the segments of its pieces in the slab times the slab's
+  share of a piece's depth, so it rarely samples.
+- **Brightness**: automatic brightness dims the sets by their own cover
+  (for a 2-D view, the slab's share of the set's depth), so the chosen
+  objects are not dimmed by faint others drawn with them.
+
+The panel says how far it has got (*781 segments shown, reading them
+whole: 256 of 781*, then *read whole (level 0)*, with how many of them
+the store does not have).
+
+#### Many chosen objects: the chunks, and their tables
+
 Each built chunk lists its objects, and each vertex names its object by a
 slot in that list (an R32UI texture beside the vertex texture). For what
 the layer shows now, each chunk gets a small RGBA8 table, one texel per
-object: shown or not, and the object's colour as Neuroglancer colours it
-(a colour chosen for it, the layer's default colour, or the hash of its id
-with the layer's seed, and the layer's saturation; *Colour: the layer's
-segment colours*). The line and point shaders look the vertex's object up
-and drop what is hidden. Tables are made again when the segments or
-colours change (`viewer.onSegmentsChanged`), not the chunks. A chunk none
-of whose objects shows is not drawn. Automatic brightness counts only the
-share of a chunk's lines that shows.
+object: how strongly it is drawn (alpha: 1 chosen, the layer's
+notSelectedAlpha for the others, 0 not at all), and the object's colour
+as Neuroglancer colours it (a colour chosen for it, the layer's default
+colour, or the hash of its id with the layer's seed, and the layer's
+saturation; *Colour: the layer's segment colours*). The line, point and
+mesh shaders look the vertex's object up, drop what is not drawn and scale
+the light of the rest by its alpha. Tables are made again when the
+segments, colours or notSelectedAlpha change (`viewer.onSegmentsChanged`),
+not the chunks. A chunk none of whose objects is drawn is not drawn.
+Automatic brightness counts only the share of a chunk's lines that shows,
+each at its alpha.
 
 Coarse levels of a tractogram hold a sample of the streamlines, so few of
 the chosen ones may be in them. A view showing a share of the objects
 reads more vertices (the Detail over that share, at most four times the
 Detail), which picks a finer level; the share is the least it has seen for
 these segments, so the level settles.
+
+#### The others, faintly (notSelectedAlpha)
+
+When some objects are chosen and the layer's *notSelectedAlpha*
+("Opacity (off)" in the layer's Render tab, Neuroglancer's opacity of the
+segments not selected) is above 0, the others are drawn too, as
+Neuroglancer draws them: their light times that alpha. With the chosen
+objects read whole, the chunks are read for the others alone (their
+tables leave the chosen ones out, which the sets draw), at the Detail;
+otherwise one table holds both. *Solid* tubes are opaque, so the faint
+others are left out there.
 
 ### Track filtering's groups
 
@@ -263,7 +356,8 @@ segment colours*), and:
 
 - until track filtering has made the group a store of its own, from the
   dataset's store, showing only the group's streamlines (track filtering
-  gives them as the layer's temporary set, by id);
+  gives them as the layer's temporary set, by id), read whole by id when
+  there are few enough (above);
 - once it has (streamline groups get one a moment after their exact
   answer), from that store, whole. The layer then keeps the dataset as a
   first source with its parts off (for its segment properties); a source
@@ -272,6 +366,16 @@ segment colours*), and:
 
 Each new answer is a new temporary set, which the engine keeps behind the
 hidden drawing, so Neuroglancer's own drawing of the group stays hidden.
+
+**From one store to the next** (`plugin.ts`): when a layer's store
+changes, its view of the store before keeps drawing what it drew (frozen:
+the group's streamlines, even though the layer now shows every object of
+its new store), and the new store's view reads without drawing (*held*)
+until it has all it wants for its views, then takes over; after 30 s it
+takes over whatever it has. A big group's first store of its own is a
+sample of its streamlines (track filtering's preview, from a sample
+level); a store with fewer objects than the view before drew whole does
+not take over, and waits for the group's whole store.
 
 ### Momentum
 
@@ -289,14 +393,16 @@ momentum in the engine.
   own drawing of the chunks does; the surface is not sorted, so emission
   and absorption is the order-independent sum, as for lines; nothing of a
   mesh is picked (the pointer's position lands on it, no vertex values).
-- **A few chosen segments** are read as the chunks that hold them, whole:
-  a handful of streamlines out of a whole brain reads the chunks of a
-  level about four times the Detail, and coarse levels show only those of
-  them in their sample. Reading the chosen objects alone (the reader's
-  `ObjectReader`, or track filtering's `trackFiltering.groups` service,
-  `curves(id, n)`) would draw them whole at any zoom, as Neuroglancer's
-  per-object skeletons do. Objects not chosen are not drawn at all, even
-  when the layer's *notSelectedAlpha* would show them faintly.
+- **Chosen objects read whole** are read at one level whatever the zoom:
+  the finest that holds every object, which for the tractograms here is
+  level 0 (their coarser levels are samples of the objects); the vertex
+  budget bounds how many.
+  Meshes are never read by id (their chunks are). A selection larger than
+  the budget is drawn from chunks, as before, with what that means at
+  coarse levels.
+- **Faint others** (notSelectedAlpha) are left out of *Solid* tubes, and
+  their light simply scales; Neuroglancer blends them as transparent
+  surfaces.
 - **Free line ends** are square: Luxar's soft cap would need to know which
   chunk-boundary ends continue in the next chunk (the reader's
   `linkedVertices`), or caps would brighten every chunk face.
