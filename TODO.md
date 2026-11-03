@@ -33,7 +33,7 @@ then the Luxar plugin and drawing labels by hand.
 - [ ] A3. Formats to match zarr-vectors-tools (done: `.mgz`/`.mgh`, `.npy`, LAS, a FreeSurfer subject folder; images named as labels open as segmentations; Parquet, GraphML and edge lists; LAZ; left: Feather, CIFTI, surface morphometry and `.annot`): `.mgz`/`.mgh`, LAS/LAZ, Parquet/Feather, GraphML and edge lists, `.npy`/`.npz`, CIFTI, a FreeSurfer subject folder (with thickness, curv, sulc, area, aparc). 4–6 d
 - [ ] A4. Coarse levels for every virtual vector store (done: streamlines, nested levels of 1 in 10, 100, 1000 while each keeps about 2,000): streamlines 2–3 levels, meshes in cells with simplified levels, points subsampled, all within a time budget so opening stays fast. 3–4 d
 - [x] A5. **Export as** for local data (done except TIFF and `.trx` out): images to `.nii`, `.nii.gz`, `.mgz`, `.mgh`, OME-Zarr, TIFF; vectors to `.trk`, `.tck`, `.trx`, OBJ, STL, PLY, CSV. 3–4 d
-- [ ] A5b. Saving large data: (a) a region or level within a size limit, (b) a whole pyramid written chunk by chunk into a local folder, (c) edits only, as a small layer over the read-only source; (d) zvtools for very large jobs. 3–5 d
+- [ ] A5b. (Done: (b), every level of a local image written into a folder chunk by chunk, gzipped.) Saving large data: (a) a region or level within a size limit, (b) a whole pyramid written chunk by chunk into a local folder, (c) edits only, as a small layer over the read-only source; (d) zvtools for very large jobs. 3–5 d
 - [x] A6. Datasets list: no type shown for remote data; "Local" for local data.
 - [x] A7. Tractograms (any Zarr Vectors streamlines) show as lines, 1 px, in cross-sections too.
 

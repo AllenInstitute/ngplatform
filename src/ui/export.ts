@@ -118,9 +118,13 @@ export async function exportDataset(wb: Workbench, dataset: DatasetRecord): Prom
       const n = l.size.map((s) => Math.min(s, BOX));
       return `${l.index === 0 ? "Full resolution" : `Level ${l.index}`}: a box of ${n.join(" × ")} around the position (${sizeText((l.bytes / (l.size[0] * l.size[1] * l.size[2])) * n[0] * n[1] * n[2])})`;
     };
+    const total = all.reduce((sum, l) => sum + l.bytes, 0);
+    const PYRAMID = `Every level, written into a folder chunk by chunk (OME-Zarr only; ${sizeText(total)} before compression)`;
     const choices = [
       ...all.filter((l) => l.bytes <= MAX_BYTES).map((l) => ({ label: levelLabel(l), level: l.index, box: false })),
       ...all.filter((l) => l.size.some((s) => s > BOX)).map((l) => ({ label: boxLabel(l), level: l.index, box: true })),
+      // Any size: nothing is held whole.  Needs a browser that writes folders.
+      ...((window as unknown as Pickers).showDirectoryPicker ? [{ label: PYRAMID, level: 0, box: false }] : []),
     ];
     if (choices.length === 0) throw new Error("every level is larger than 2 GB");
     const answer = await formDialog<{ format: string; what: string }>(
@@ -139,6 +143,15 @@ export async function exportDataset(wb: Workbench, dataset: DatasetRecord): Prom
     if (answer === undefined) return;
     const chosen = formats.find((f) => f.label === answer.format)!;
     const choice = choices.find((c) => c.label === answer.what)!;
+    if (choice.label === PYRAMID) {
+      const target = await chooseTarget(true, dataset.name);
+      if (target === null) return;
+      if (target?.kind !== "directory") throw new Error("writing every level needs a folder to write into");
+      const name = `${dataset.name}.ome.zarr`;
+      const done = await wb.jobs.run(`Export ${dataset.name}`, (control) => writePyramid(worker, found.file, target, name, control));
+      if (done) toast(`Exported every level of ${dataset.name} into ${name}.`);
+      return;
+    }
     const level = all[choice.level];
     // The position, as RAS millimetres, for a box around it.
     const nav = wb.engine.navigation();
@@ -160,6 +173,58 @@ export async function exportDataset(wb: Workbench, dataset: DatasetRecord): Prom
   } finally {
     worker.terminate();
   }
+}
+
+/**
+ * The image's whole pyramid into a folder `name` in `parent`: the metadata, then every chunk
+ * of every level, a few at a time, each written as the worker hands it over
+ * (gzipped), so nothing is held whole.  False when cancelled.
+ */
+async function writePyramid(worker: Worker, file: File, parent: FileSystemDirectoryHandle, name: string, control: { progress(fraction: number, what?: string): void; readonly cancelled: boolean }): Promise<boolean> {
+  const root = await parent.getDirectoryHandle(name, { create: true });
+  const dirs = new Map<string, Promise<FileSystemDirectoryHandle>>([["", Promise.resolve(root)]]);
+  const dir = (path: string): Promise<FileSystemDirectoryHandle> => {
+    let d = dirs.get(path);
+    if (d === undefined) {
+      const at = path.lastIndexOf("/");
+      d = dir(path.slice(0, Math.max(0, at))).then((parent) => parent.getDirectoryHandle(path.slice(at + 1), { create: true }));
+      dirs.set(path, d);
+    }
+    return d;
+  };
+  const write = async (path: string, bytes: Uint8Array) => {
+    const at = path.lastIndexOf("/");
+    const handle = await (await dir(path.slice(0, Math.max(0, at)))).getFileHandle(path.slice(at + 1), { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(bytes as unknown as BufferSource);
+    await writable.close();
+  };
+  const meta = await request(worker, { type: "pyramid", file });
+  for (const [path, bytes] of meta.files as [string, Uint8Array][]) await write(path, bytes);
+  const arrays = meta.arrays as { path: string; grid: number[]; separator: string }[];
+  const total = arrays.reduce((sum, a) => sum + a.grid.reduce((n, g) => n * g, 1), 0);
+  // Every chunk key, level by level, in order.
+  function* keys() {
+    for (const a of arrays) {
+      const index = a.grid.map(() => 0);
+      for (let n = a.grid.reduce((m, g) => m * g, 1); n > 0; --n) {
+        yield `${a.path}/c/${index.join(a.separator)}`;
+        for (let d = index.length - 1; d >= 0 && ++index[d] === a.grid[d]; --d) index[d] = 0;
+      }
+    }
+  }
+  const queue = keys();
+  let done = 0;
+  const lane = async () => {
+    for (let next = queue.next(); !next.done; next = queue.next()) {
+      if (control.cancelled) return;
+      const reply = await request(worker, { type: "chunk", file, key: next.value });
+      if (reply.bytes !== undefined) await write(next.value, reply.bytes);
+      control.progress(++done / total, "Writing chunks");
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, lane));
+  return !control.cancelled;
 }
 
 type Target = FileSystemFileHandle | FileSystemDirectoryHandle | undefined;
