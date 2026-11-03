@@ -6,8 +6,9 @@
  *   (FURY's odf_slicer), coloured by each point's direction.
  * - Tensors: an ellipsoid with axes along the eigenvectors, as long as the
  *   eigenvalues (the largest 1), coloured by the principal direction
- *   (|x|, |y|, |z|, dimmed where the anisotropy is low); or a line along
- *   the principal direction.
+ *   (|x|, |y|, |z|, dimmed where the anisotropy is low), given by its three
+ *   semi-axes (the renderer ray-casts it, no mesh); or a line along the
+ *   principal direction.
  * - Vectors and peaks: lines through the voxel's centre, both ways (fibre
  *   directions have no sign), coloured by direction.
  *
@@ -41,13 +42,16 @@ export interface GlyphOptions {
 }
 
 export interface GlyphSet {
-  shape: "surface" | "lines";
+  /** Surfaces on a sphere's mesh (ODFs), ellipsoids (tensors, ray-cast), or lines. */
+  shape: "surface" | "ellipsoids" | "lines";
   count: number;
   /** Each glyph's centre, RAS mm. */
   centres: Float32Array;
   /** Surfaces: each glyph's radius at each sphere vertex (count × vertices), 0..1. */
   radii?: Float32Array;
   subdivisions?: number;
+  /** Ellipsoids: each glyph's three semi-axes, RAS (9 a glyph, orthogonal, the longest at most 1). */
+  axes?: Float32Array;
   /** Lines: half of each line, RAS, length 0..1 (in half-voxels once drawn). */
   dirs?: Float32Array;
   /** One colour per glyph (r, g, b); surfaces without them take each point's direction. */
@@ -228,32 +232,18 @@ export function computeGlyphs(indices: ArrayLike<number>, values: Float32Array, 
       });
       return { shape: "lines", count: kept.length, centres: centresOf(kept), dirs, colours };
     }
-    const sphere = icosphere(options.subdivisions);
-    const nv = sphere.count;
-    const radii = new Float32Array(kept.length * nv);
-    // The sphere's directions in the data's frame.
-    const dirs = new Float32Array(3 * nv);
-    for (let v = 0; v < nv; ++v) dirs.set(times(toData, sphere.vertices[3 * v], sphere.vertices[3 * v + 1], sphere.vertices[3 * v + 2]), 3 * v);
+    const axes = new Float32Array(9 * kept.length);
     eigens.forEach((e, k) => {
       const l1 = e.values[0];
       const size = options.normalise === "none" && globalMax > 0 ? Math.max(0, l1) / globalMax : 1;
-      // Semi-axes relative to the longest, never quite flat, so a disc still shows.
-      const axes = e.values.map((l) => (l1 > 0 ? Math.max(0.08, Math.max(0, l) / l1) : 1));
-      const inv = axes.map((a) => 1 / (a * a));
-      const v0 = e.vectors;
-      for (let v = 0; v < nv; ++v) {
-        const x = dirs[3 * v];
-        const y = dirs[3 * v + 1];
-        const z = dirs[3 * v + 2];
-        let s = 0;
-        for (let a = 0; a < 3; ++a) {
-          const dot = x * v0[3 * a] + y * v0[3 * a + 1] + z * v0[3 * a + 2];
-          s += dot * dot * inv[a];
-        }
-        radii[k * nv + v] = (size / Math.sqrt(s)) || 0;
+      for (let a = 0; a < 3; ++a) {
+        // Semi-axes relative to the longest, never quite flat, so a disc still shows.
+        const length = size * (l1 > 0 ? Math.max(0.08, Math.max(0, e.values[a]) / l1) : 1);
+        const d = timesT(toData, e.vectors[3 * a], e.vectors[3 * a + 1], e.vectors[3 * a + 2]);
+        for (let r = 0; r < 3; ++r) axes[9 * k + 3 * a + r] = d[r] * length;
       }
     });
-    return { shape: "surface", count: kept.length, centres: centresOf(kept), radii, subdivisions: options.subdivisions, colours };
+    return { shape: "ellipsoids", count: kept.length, centres: centresOf(kept), axes, colours };
   }
   // Vectors (3 components) and peaks (3 per peak): lines.
   if (components % 3 !== 0) throw new Error(`${components} components are not whole vectors (3 each)`);

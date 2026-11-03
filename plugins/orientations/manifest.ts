@@ -15,7 +15,7 @@ export const ORIENTATIONS_MANIFEST: Manifest = {
 
 ## What it reads
 - **Spherical harmonics**: 6, 15, 28, 45, 66 or 91 coefficients per voxel (orders 2 to 12), drawn as ODF glyphs, coloured by direction. Choose the basis: DIPY writes \`descoteaux07\` (its legacy form unless told otherwise), MRtrix3 writes \`tournier07\`.
-- **Tensors**: 6 components, drawn as ellipsoids (or a line along the principal direction), coloured by the principal direction and dimmed where the anisotropy is low. Choose the order the file stores them in (FSL, DIPY or MRtrix).
+- **Tensors**: 6 components, drawn as ellipsoids (exact: each pixel's ray meets the ellipsoid, so they are smooth at any size and quick in their thousands) or as a line along the principal direction, coloured by the principal direction and dimmed where the anisotropy is low. Choose the order the file stores them in (FSL, DIPY or MRtrix); a NIfTI whose header says symmetric matrix is DIPY's.
 - **Vectors and peaks**: 3 components per direction, drawn as lines through the voxel.
 
 The plugin guesses the kind from the number of components (6 is taken as a tensor) and from the store's \`orientations\` attributes, when it has them.
@@ -30,6 +30,8 @@ The tab says what the voxel under the cursor holds: a tensor's FA, MD, eigenvalu
 
 ## As you zoom
 Each 2-D view shows one glyph per voxel of the level whose voxels are at least **Spacing** pixels apart on the screen. Zoom in and the next finer level's glyphs load and replace the coarser ones; the coarser stay until they arrive. Only the voxels on the section and in view are read.
+
+For tensors the coarser levels should be log-Euclidean means (a plain mean swells crossing tensors into fat discs). A NIfTI opened from this computer gets them from the app: when its header says symmetric matrix, or once the plugin draws it as tensors (in the **Tensor order** chosen). The tab says which its coarser levels are.
 
 ## In the 3-D view
 The glyphs of the 2-D views' sections are drawn on those sections in the 3-D view, in front of them and hidden behind other things there; with no 2-D views, three planes through the position.

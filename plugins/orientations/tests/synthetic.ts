@@ -3,12 +3,15 @@
  * the tests (and written to a folder for trying the plugin in a browser,
  * see orientations.test.ts): crossing fibres as spherical harmonics, a
  * tensor field and a vector field, each with coarser levels that are the
- * means of 2 × 2 × 2 boxes of the finer, as a pyramid writer would make.
+ * means of 2 × 2 × 2 boxes of the finer, as a pyramid writer would make
+ * (log-Euclidean means for the tensors, as make_dipy_example.py and the
+ * app's NIfTI reader make them).
  *
  * The layout: a band of fibres along x (y in the band's rows), a band along
  * y (x in its columns), crossing where they meet, fibres along z elsewhere,
  * and nothing (zeros) in a border.
  */
+import { LogEuclideanSum } from "../../../src/virtual/images/tensors.js";
 import { fitSh, type ShBasis } from "../sh.js";
 
 export type Store = Map<string, Uint8Array>;
@@ -25,6 +28,8 @@ export interface Synthetic {
   value(x: number, y: number, z: number, out: Float32Array): void;
   /** attributes.orientations, when the store says what it holds. */
   orientations?: Record<string, unknown>;
+  /** How coarser levels average a box: each component's mean (the default), or tensors' log-Euclidean mean (FSL's order). */
+  pyramid?: "mean" | "log-euclidean";
 }
 
 const json = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
@@ -118,6 +123,7 @@ export function tensorField(size: [number, number, number]): Synthetic {
       out.set(d.map((v) => v * 1e-3));
     },
     orientations: { type: "tensor", order: "fsl", frame: "voxel" },
+    pyramid: "log-euclidean",
   };
 }
 
@@ -174,7 +180,13 @@ export function buildStore(s: Synthetic): Store {
       ny = Math.ceil(py / 2);
       nz = Math.ceil(pz / 2);
       const next = new Float32Array(C * nx * ny * nz);
-      for (let c = 0; c < C; ++c) {
+      if (s.pyramid === "log-euclidean") {
+        const sums = new LogEuclideanSum(nx * ny * nz, "fsl");
+        for (let Z = 0; Z < pz; ++Z)
+          for (let Y = 0; Y < py; ++Y)
+            for (let X = 0; X < px; ++X) sums.add((Math.floor(Z / 2) * ny + Math.floor(Y / 2)) * nx + Math.floor(X / 2), data, (Z * py + Y) * px + X, px * py * pz);
+        for (let d = 0; d < nx * ny * nz; ++d) sums.mean(d, next, d, nx * ny * nz);
+      } else for (let c = 0; c < C; ++c) {
         for (let z = 0; z < nz; ++z) {
           for (let y = 0; y < ny; ++y) {
             for (let x = 0; x < nx; ++x) {

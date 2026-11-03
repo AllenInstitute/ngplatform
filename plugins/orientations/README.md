@@ -22,10 +22,10 @@ User guide: [docs/plugins/orientations.md](../../docs/plugins/orientations.md)
 | `plugin.ts` | The panel and settings; which level and voxels each view wants; the 3-D drawing. |
 | `view.ts` | A 2-D view's section in RAS mm (from `panel.project`), the level for its zoom, the voxel box and slab to read. |
 | `overlay.ts` | The WebGL2 canvas over the 2-D views (one context, a viewport per view). |
-| `render.ts` | Drawing glyph sets, in that canvas and in Neuroglancer's 3-D view (`draw3d`). |
-| `glyphs.ts` | Voxels to glyphs: SH on a sphere, tensor ellipsoids, lines. |
+| `render.ts` | Drawing glyph sets, in that canvas and in Neuroglancer's 3-D view (`draw3d`): ODFs as instanced meshes, tensor ellipsoids ray-cast, lines as quads. |
+| `glyphs.ts` | Voxels to glyphs: SH on a sphere, tensor ellipsoids (their semi-axes), lines. |
 | `sh.ts` | Real symmetric spherical harmonics in four bases; least-squares fit; the order-2 quadratic forms. |
-| `tensor.ts` | Tensor component orders, Jacobi eigen-decomposition, FA, MD. |
+| `tensor.ts` | Tensor component orders, closed-form eigen-decomposition, FA, MD. (Log-Euclidean means, for coarser levels, are the app's: `src/virtual/images/tensors.ts`.) |
 | `sphere.ts` | Icospheres with each vertex's ring of neighbours (for normals). |
 | `reader.ts`, `ome4.ts` | The 4-D pyramid: levels, and the voxels of a box within slabs, as float32. |
 | `worker.ts`, `client.ts` | The reader and glyph computation in a worker. |
@@ -69,12 +69,56 @@ User guide: [docs/plugins/orientations.md](../../docs/plugins/orientations.md)
   map of the principal direction weighted by FA; lines for vectors.
 
 The plugin follows FURY's slicer: one glyph per voxel of the section,
-mesh-based (instanced: one sphere mesh, a texture of each glyph's radii),
-min-max normalised by default, coloured by direction; peaks and vectors as
-lines through the centre; tensors as ellipsoids coloured by the principal
-direction, dimmed by FA. Ray-casting the SH in the fragment shader (as
-FURY's new glyphs do) would let far more glyphs draw at once; with a cap
-of a few thousand per view, instanced meshes are enough for now.
+min-max normalised by default, coloured by direction; ODFs as meshes
+(instanced: one sphere mesh, a texture of each glyph's radii); peaks and
+vectors as lines through the centre; tensors as ellipsoids coloured by the
+principal direction, dimmed by FA, ray-cast (below). Ray-casting the SH
+themselves (as FURY's new glyphs do, after Peters et al.) is not done: it
+needs a root-finder per pixel on an order-8 function, a much larger shader;
+ODFs stay meshes, and the cap of a few thousand per view keeps them quick.
+
+### Ray-cast ellipsoids
+
+A tensor glyph is its three semi-axes (9 numbers, from `glyphs.ts`), not a
+mesh. `render.ts` draws one quad per glyph: the vertex shader takes the
+projection's derivative at the glyph's centre and gives the quad the axes
+of the ellipse the ellipsoid projects to (exact for the 2-D views, which
+are orthographic; under the 3-D view's perspective a little larger, by the
+glyph's size over its distance, plus two pixels). The fragment shader casts
+the pixel's ray (the inverse projection of the pixel at the near and far
+planes, and at the centre's depth for a point near the glyph) into the
+frame where the ellipsoid is the unit sphere, solves the quadratic, and
+from the nearer meeting gets the surface normal (the inverse semi-axes'
+transpose times the point) and the depth, which it writes, so glyphs hide
+each other and sit in Neuroglancer's 3-D view as a mesh did (the same lift
+towards the eye). Lighting and colour are the mesh's: the colour by
+principal direction dimmed by FA, `0.3 + 0.7 |n·v|` and a small highlight.
+On the 2-D views' canvas (multisampled) the edge is smoothed by alpha to
+coverage, from how far the ray passes from the ellipsoid in pixels; in
+the 3-D view, whose buffers Neuroglancer owns, the edge is hard, as the
+mesh's was.
+
+Measured on a page drawing the same random tensors, in a grid filling a
+1000 × 700 canvas, with the mesh renderer as it was and with ray-casting,
+each frame timed to a `readPixels`, in headless Chrome on SwiftShader (a
+CPU renderer, so only the ratios mean anything):
+
+| Glyphs | Mesh, 162 vertices | Mesh, 642 vertices | Ray-cast |
+|---|---|---|---|
+| 1 000 (26 px) | 120 ms | 460 ms | 22 ms |
+| 4 000 (13 px) | 500 ms | 1 810 ms | 56 ms |
+| 16 000 (7 px) | 1 850 ms | | 210 ms |
+| 50 000 (4 px) | 5 630 ms | | 760 ms |
+| 100 000 (3 px) | 11 200 ms | | 1 240 ms |
+
+So in the time the mesh drew 1 000 glyphs, ray-casting draws about 9 000;
+against the finer mesh used for big glyphs (642 vertices), about 20 times
+as many. On a GPU both are far faster; the vertex work the ray-cast saves
+is the larger part there too. The worker's work per glyph also drops (9
+numbers instead of a radius per sphere vertex). In the app (a DTI NIfTI of
+DIPY's Stanford HARDI sample, four panels, about 240 glyphs at 2 mm, the
+same scene before and after) the plugin's five draws took 302 ms with
+meshes and 19 ms ray-cast, and the pictures match.
 
 ### Spherical harmonic bases
 
@@ -144,9 +188,17 @@ outside the white matter.
 
 Six components in one of three orders: FSL `dtifit` (Dxx Dxy Dxz Dyy Dyz
 Dzz, the default), DIPY `lower_triangular` (Dxx Dxy Dyy Dxz Dyz Dzz),
-MRtrix `dwi2tensor` (Dxx Dyy Dzz Dxy Dxz Dyz). Eigen-decomposition by
-Jacobi rotations; the ellipsoid's semi-axes are the eigenvalues over the
-largest (never under 0.08, so a disc still shows).
+MRtrix `dwi2tensor` (Dxx Dyy Dzz Dxy Dxz Dyz). Eigen-decomposition in
+closed form (Smith's eigenvalues; the most distinct one's eigenvector from
+cross products, the other two by one rotation in the plane across it), the
+same code as the app's NIfTI reader uses for log-Euclidean levels (copied:
+plugins import the platform only through the SDK; a test keeps the two
+identical, and checks both against Jacobi rotations, `tests/jacobi.ts`).
+It was Jacobi rotations, about 3–4 µs a tensor, which once ellipsoids were
+ray-cast was most of the worker's time for a tensor read; closed form is
+about 0.25 µs, and 100 000 tensors' glyphs take about 140 ms in Node
+instead of 390. The ellipsoid's semi-axes are the eigenvalues over
+the largest (never under 0.08, so a disc still shows).
 
 ### Levels and what is read
 
@@ -162,6 +214,9 @@ next coarser that does not is used, and none when even the coarsest would
 glyphs shown stay until the new ones arrive, so zooming in shows the coarse
 glyphs until the finer load in below. Chunks are cached in the worker.
 
+Tensors' ellipsoids are cheap to draw (above), so for them the cap limits
+reading and the worker's work more than drawing.
+
 Each 2-D view's glyphs are redrawn, on the plugin's canvas, only when the
 view moves or new glyphs arrive (Neuroglancer draws many frames while
 chunks load), and into Neuroglancer's screenshots (`ui.screenshotOverlay`).
@@ -170,8 +225,42 @@ The plugin never coarsens: a store's levels are taken as they are. For SH
 the mean of a box's coefficients is the mean ODF of the box (SH are linear),
 so a pyramid of means (as `tools/make_dipy_example.py` writes, and as the
 app's NIfTI reader makes for a 4-D NIfTI read in place) gives sensible
-coarse glyphs. For tensors a mean is the Euclidean mean (a log-Euclidean
-pyramid would keep determinants better).
+coarse glyphs.
+
+Tensors are not averaged that way. A plain mean of the six components
+swells tensors that point different ways: two cigars crossing at right
+angles average to a fat disc of twice their volume (its determinant
+larger than either's), and FA drops. The log-Euclidean mean (Arsigny et
+al., 2006: the mean of the matrix logarithms, exponentiated) keeps the
+determinant at the geometric mean of the box's determinants. Tensors that
+are not positive definite (the zeros around a brain, a fit with a negative
+eigenvalue) have no logarithm and are left out of a box's mean; a box with
+none is zeros (no glyph). So:
+
+- `tools/make_dipy_example.py` and the synthetic stores in `tests/` write
+  tensor pyramids of log-Euclidean means.
+- The app's NIfTI reader (`src/virtual/images/nifti.ts`, the maths in
+  `src/virtual/images/tensors.ts`) makes coarser levels log-Euclidean when
+  the image holds six float components a voxel, all in each chunk, and
+  either its header's intent is NIFTI_INTENT_SYMMATRIX (1005; NIfTI stores
+  the lower triangle by rows, which is DIPY's order, as DIPY's
+  `nifti1_symmat` writes) or the page asks. The plugin asks: when it draws
+  such a NIfTI as tensors it sends the store `{ tensor: <order> }`
+  (`WorkspaceApi.local.send`), and `{ tensor: null }` when it draws it as
+  something else; when that changes the levels, the worker forgets its
+  chunks and Neuroglancer reads the image again (`reloadData`). Most DTI
+  NIfTIs (FSL's `dtifit`, MRtrix, DIPY's plain `save_nifti`) set no intent,
+  so this is how they get log-Euclidean levels; it follows the **Tensor
+  order** setting (a wrong order gives wrong means, as it gives wrong
+  glyphs). A 6-volume NIfTI marked as a time series (one volume per chunk)
+  keeps plain means.
+- The panel says which the open NIfTI's coarser levels are.
+
+The decomposition is closed form (Smith's eigenvalues, the most distinct
+one's eigenvector from cross products, the other two by one rotation), no
+iterations: about 0.25 µs a tensor, so a 128³ level of six components
+averages to 64³ in under a second in one thread (`tests/virtual_zarr.test.ts`
+times it).
 
 ### The 3-D view
 
@@ -232,13 +321,19 @@ axial slices). Serve
 ## Tests
 
 `npx vitest run plugins/orientations`: SH against DIPY in all four bases,
-fits, quadratic forms and GFA; tensor orders, eigenvectors, FA; synthetic
+fits, quadratic forms and GFA; tensor orders, eigenvectors, FA; a coarse
+tensor level keeping the geometric mean of its box's determinants; synthetic
 multiscale stores (crossing fibres as SH, a tensor field, a vector field;
 `tests/synthetic.ts`) read through the reader by slab, and their glyphs; the
 level chosen by zoom and the cap, a section's geometry, a moved layer, ODF
 peaks. With
 `ORIENTATIONS_WRITE=<folder>` the synthetic stores are also written to disk,
-to serve and look at.
+to serve and look at. `tests/tensors.test.ts` and the tensor cases in
+`tests/virtual_zarr.test.ts` check the log-Euclidean means: two diagonal
+tensors give the geometric mean of their eigenvalues, determinants are
+kept where the plain mean swells them, tensors that are not positive
+definite are left out with no NaN, the three orders agree, and the NIfTI
+reader's levels (by intent, and by message) match.
 
 The plugin also offers a service, `orientations.status`, with the lines its
 panel shows and counts of reads and draws, which is how the headless browser

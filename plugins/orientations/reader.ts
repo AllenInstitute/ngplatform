@@ -48,6 +48,12 @@ export interface Opened {
   /** The component axis's name in the array ("c" or "t"). */
   componentAxis: string;
   metadata: OrientationMetadata | undefined;
+  /**
+   * A NIfTI read in place by the app (whose coarser levels the app makes):
+   * its intent code, and the tensor order its coarser levels are
+   * log-Euclidean means in, when they are.
+   */
+  nifti?: { intent: number; tensorOrder?: string };
 }
 
 /** Voxels of a box to read: lo up to (not including) hi, in a level's x, y, z indices, kept when inside any slab. */
@@ -170,7 +176,16 @@ export class OrientationReader {
     this.cached = 0;
     const attributes = group.attributes ?? group;
     const metadata = attributes?.orientations as OrientationMetadata | undefined;
-    return { levels: this.levels.map((l) => l.info), name: pyramid.name, componentAxis: name, metadata: typeof metadata === "object" && metadata !== null ? metadata : undefined };
+    const nifti = attributes?.nifti as { intent_code?: unknown; tensor_order?: unknown } | undefined;
+    return {
+      levels: this.levels.map((l) => l.info),
+      name: pyramid.name,
+      componentAxis: name,
+      metadata: typeof metadata === "object" && metadata !== null ? metadata : undefined,
+      ...(typeof nifti === "object" && nifti !== null
+        ? { nifti: { intent: Number(nifti.intent_code ?? 0), ...(typeof nifti.tensor_order === "string" ? { tensorOrder: nifti.tensor_order } : {}) } }
+        : {}),
+    };
   }
 
   private chunk(level: OpenLevel, index: number[]): Promise<Float32Array | undefined> {

@@ -13,7 +13,7 @@ import path from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { computeGlyphs, type GlyphOptions, voxelFrame, withFlips } from "../glyphs.js";
 import { spatialGroup } from "../ome4.js";
-import { readSaved, resolveBasis, resolveFrame, resolveKind } from "../plugin.js";
+import { readSaved, resolveBasis, resolveFrame, resolveKind, resolveTensorOrder } from "../plugin.js";
 import { OrientationReader } from "../reader.js";
 import { directionShader } from "../shader.js";
 import { icosphere } from "../sphere.js";
@@ -57,6 +57,17 @@ const options = (patch: Partial<GlyphOptions> = {}): GlyphOptions => ({
   subdivisions: 2,
   ...patch,
 });
+
+/** An ellipsoid glyph's radius along a unit direction: 1 / √Σ (d·a)² / |a|⁴ over its semi-axes a. */
+function ellipsoidRadius(axes: Float32Array, glyph: number, d: Vec3): number {
+  let s = 0;
+  for (let k = 0; k < 3; ++k) {
+    const a = axes.subarray(9 * glyph + 3 * k, 9 * glyph + 3 * k + 3);
+    const aa = a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
+    s += (d[0] * a[0] + d[1] * a[1] + d[2] * a[2]) ** 2 / (aa * aa);
+  }
+  return 1 / Math.sqrt(s);
+}
 
 /** The sphere vertex nearest a direction, and the radius there. */
 function radiusToward(radii: Float32Array, glyph: number, d: Vec3, subdivisions = 2): number {
@@ -250,6 +261,29 @@ describe("glyphs", () => {
     expect(radiusToward(set.radii!, 0, [0, 1, 0])).toBeGreaterThan(0.85);
   });
 
+  it("reads a coarse level of tensors as their log-Euclidean mean, the determinant kept", async () => {
+    vi.stubGlobal("fetch", storeFetch(stores));
+    const reader = new OrientationReader();
+    await reader.open("http://synthetic.test/tensor.ome.zarr/");
+    const signal = new AbortController().signal;
+    // Level 2 voxel (4, 2, 0) covers level 0's x 16..19, y 8..11, z 0..3: fibres along z, x and y, and crossings.
+    const box = await reader.voxels(0, { lo: [16, 8, 0], hi: [20, 12, 4] }, signal);
+    const coarse = await reader.voxels(2, { lo: [4, 2, 0], hi: [5, 3, 1] }, signal);
+    const det = (v: Float32Array, at: number) => {
+      const [xx, xy, xz, yy, yz, zz] = Array.from(v.subarray(at, at + 6), Number);
+      return xx * (yy * zz - yz * yz) - xy * (xy * zz - yz * xz) + xz * (xy * yz - yy * xz);
+    };
+    expect(box.count).toBe(64);
+    const dets = Array.from({ length: box.count }, (_, i) => det(box.values, 6 * i));
+    expect(new Set(dets.map((d) => d.toPrecision(4))).size).toBe(2);
+    const geometric = Math.exp(dets.reduce((a, d) => a + Math.log(d), 0) / dets.length);
+    expect(det(coarse.values, 0) / geometric).toBeCloseTo(1, 4);
+    // A plain mean of the same tensors swells.
+    const mean = new Float32Array(6);
+    for (let i = 0; i < box.count; ++i) for (let c = 0; c < 6; ++c) mean[c] += box.values[6 * i + c] / box.count;
+    expect(det(mean, 0) / geometric).toBeGreaterThan(1.3);
+  });
+
   it("turns directions from the voxel axes into RAS, and flips them", () => {
     // A level stored with x running right to left (a radiological NIfTI).
     const voxelToRas = [-2, 0, 0, 90, 0, 2, 0, -126, 0, 0, 2, -72, 0, 0, 0, 1];
@@ -270,9 +304,16 @@ describe("glyphs", () => {
     const d = Float32Array.from([0.3, 0, 0, 1.7, 0, 0.3]);
     const voxelToRas = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
     const set = computeGlyphs([0, 0, 0], d, 6, voxelToRas, options({ kind: "tensor" }));
-    expect(set.shape).toBe("surface");
-    expect(radiusToward(set.radii!, 0, [0, 1, 0])).toBeCloseTo(1, 2);
-    expect(radiusToward(set.radii!, 0, [1, 0, 0])).toBeCloseTo(0.3 / 1.7, 2);
+    // Three semi-axes for the renderer to ray-cast: no mesh.
+    expect(set.shape).toBe("ellipsoids");
+    expect(set.radii).toBeUndefined();
+    expect(set.axes!.length).toBe(9);
+    expect(ellipsoidRadius(set.axes!, 0, [0, 1, 0])).toBeCloseTo(1, 6);
+    expect(ellipsoidRadius(set.axes!, 0, [1, 0, 0])).toBeCloseTo(0.3 / 1.7, 6);
+    expect(ellipsoidRadius(set.axes!, 0, [0, 0, 1])).toBeCloseTo(0.3 / 1.7, 6);
+    // The semi-axes are orthogonal (the renderer inverts them so).
+    const ax = set.axes!;
+    for (const [i, j] of [[0, 1], [0, 2], [1, 2]]) expect(ax[3 * i] * ax[3 * j] + ax[3 * i + 1] * ax[3 * j + 1] + ax[3 * i + 2] * ax[3 * j + 2]).toBeCloseTo(0, 9);
     // Green (y), bright for an FA of 0.8.
     const [r, g, b] = Array.from(set.colours!);
     expect(g).toBeGreaterThan(0.8);
@@ -284,7 +325,16 @@ describe("glyphs", () => {
     // The same tensor in DIPY's order reads the same.
     const dipy = Float32Array.from([0.3, 0, 1.7, 0, 0, 0.3]);
     const again = computeGlyphs([0, 0, 0], dipy, 6, voxelToRas, options({ kind: "tensor", tensorOrder: "dipy" }));
-    expect(radiusToward(again.radii!, 0, [0, 1, 0])).toBeCloseTo(1, 2);
+    expect(ellipsoidRadius(again.axes!, 0, [0, 1, 0])).toBeCloseTo(1, 6);
+    // Turned by the frame: data axis y is RAS x here.
+    const turned = computeGlyphs([0, 0, 0], d, 6, voxelToRas, options({ kind: "tensor", toData: [0, 1, 0, 1, 0, 0, 0, 0, 1] }));
+    expect(ellipsoidRadius(turned.axes!, 0, [1, 0, 0])).toBeCloseTo(1, 6);
+    expect(ellipsoidRadius(turned.axes!, 0, [0, 1, 0])).toBeCloseTo(0.3 / 1.7, 6);
+    // A flat disc keeps a thickness; scaled to the largest in the set when not normalised.
+    const two = Float32Array.from([1, 0, 0, 1, 0, 0, 0.5, 0, 0, 0.5, 0, 0.5]);
+    const flat = computeGlyphs([0, 0, 0, 1, 0, 0], two, 6, voxelToRas, options({ kind: "tensor", normalise: "none" }));
+    expect(ellipsoidRadius(flat.axes!, 0, [0, 0, 1])).toBeCloseTo(0.08, 6);
+    expect(ellipsoidRadius(flat.axes!, 1, [1, 0, 0])).toBeCloseTo(0.5, 6);
   });
 
   it("draws peaks as lines, each scaled to the voxel's largest", () => {
@@ -452,6 +502,11 @@ describe("settings", () => {
     expect(resolveBasis({ basis: "auto" }, { metadata: { basis: "tournier07" } })).toBe("tournier07");
     expect(resolveBasis({ basis: "auto" }, { metadata: { basis: "descoteaux07", legacy: false } })).toBe("descoteaux07");
     expect(resolveFrame({ frame: "auto" }, none, "tournier07", "sh")).toBe("world");
+    // Tensor order: the store's, else DIPY's (NIfTI's lower triangle) for a symmetric-matrix intent, else FSL's.
+    expect(resolveTensorOrder({ tensorOrder: "auto" }, none)).toBe("fsl");
+    expect(resolveTensorOrder({ tensorOrder: "auto" }, { metadata: { order: "mrtrix" } })).toBe("mrtrix");
+    expect(resolveTensorOrder({ tensorOrder: "auto" }, { metadata: undefined, nifti: { intent: 1005 } })).toBe("dipy");
+    expect(resolveTensorOrder({ tensorOrder: "fsl" }, { metadata: undefined, nifti: { intent: 1005 } })).toBe("fsl");
     expect(resolveFrame({ frame: "auto" }, none, "descoteaux07-legacy", "sh")).toBe("voxel");
   });
 

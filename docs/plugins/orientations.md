@@ -32,8 +32,12 @@ zoom in and the finer level's glyphs load in and take their place.
   **SH glyph**: the ODF's shape, or lines along its peaks (up to three, each
   over half the largest).
 - **Tensor order**: FSL (Dxx Dxy Dxz Dyy Dyz Dzz), DIPY (Dxx Dxy Dyy Dxz Dyz
-  Dzz) or MRtrix (Dxx Dyy Dzz Dxy Dxz Dyz). **Tensor glyph**: an ellipsoid,
-  or a line along the principal direction.
+  Dzz) or MRtrix (Dxx Dyy Dzz Dxy Dxz Dyz). Automatic takes the store's
+  word, DIPY's for a NIfTI whose header says symmetric matrix (intent
+  1005), else FSL's. **Tensor glyph**: an ellipsoid, or a line along the
+  principal direction. Ellipsoids are drawn exactly (each pixel's ray meets
+  the ellipsoid), not as a mesh of triangles, so they are smooth at any
+  size and many thousands draw quickly.
 - **Frame**: directions along the voxel axes (DIPY, FSL) or along the
   world's x, y, z (MRtrix). **Flip x, y, z** when glyphs point the wrong
   way.
@@ -62,6 +66,13 @@ button, and follow the layer when it is moved (Registration).
 A 4-D NIfTI opened from this computer works too (its coarser levels are
 means, which for spherical harmonics are mean ODFs); its fourth axis is
 made the layer's own (`t'`) so the views do not step through components.
+For tensors the coarser levels are log-Euclidean means instead (the mean
+of the matrix logarithms), which do not swell crossing tensors into fat
+discs as a plain mean does: when the header says symmetric matrix, or
+once the plugin draws the image as tensors (it tells the app, which makes
+the levels again in the chosen **Tensor order**). The tab says which the
+coarser levels are. Voxels that are not positive definite (the background)
+are left out of a coarse voxel's mean.
 Direction colour works on it when its header does not mark the fourth axis
 as time (no time unit and step), since the app then keeps up to 128
 components together in each chunk; otherwise write it as OME-Zarr with
