@@ -152,3 +152,23 @@ describe("members warped by a displacement field (RFC-5 displacements)", () => {
     expect(displayRangeOf(group, { data_type: "float32" })).toBeUndefined();
   });
 });
+
+describe("transforms walked backwards", () => {
+  it("use a bijection's stated inverse, alone or inside a sequence", async () => {
+    const { inverseOf, transformSteps } = await import("../collection.js");
+    const doc = "https://example.org/c/zarr.json";
+    const field = (p: string) => ({ type: "displacements", path: p });
+    const shift = { type: "translation", translation: [0, 0, 5] };
+    const seq = { type: "sequence", transformations: [shift, { type: "bijection", forward: field("fwd.zarr"), inverse: field("inv.zarr") }] };
+    const forward = transformSteps(seq, ["z", "y", "x"], doc)!;
+    expect(forward.map((s) => (s.kind === "field" ? `field ${s.url.split("/").pop()} ${s.inverse}` : "affine"))).toEqual(["affine", "field fwd.zarr false"]);
+    const back = transformSteps(inverseOf(seq), ["z", "y", "x"], doc)!;
+    // Backwards: the bijection's own inverse (not the forward field inverted), then the shift undone.
+    expect(back.map((s) => (s.kind === "field" ? `field ${s.url.split("/").pop()} ${s.inverse}` : "affine"))).toEqual(["field inv.zarr false", "affine"]);
+    expect(back[1].kind === "affine" && back[1].m[3]).toBe(-5);
+    // A field with no stated inverse, backwards, is inverted.
+    const plain = transformSteps(inverseOf(field("only.zarr")), ["z", "y", "x"], doc)!;
+    expect(plain[0].kind === "field" && plain[0].inverse).toBe(true);
+    expect(inverseOf(inverseOf(seq))).toEqual(seq);
+  });
+});

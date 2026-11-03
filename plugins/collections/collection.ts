@@ -254,6 +254,12 @@ export type Step = { kind: "affine"; m: Mat4 } | { kind: "field"; url: string; i
  * kinds this cannot apply (coordinate maps, among others).
  */
 export function transformSteps(t: any, axes: string[] | undefined, document: string): Step[] | undefined {
+  // A bijection forwards is its `forward`; walked backwards (see `inverseOf`) its `inverse` as written.
+  if (t?.type === "bijection") return transformSteps(t.forward, axes, document);
+  if (t?.type === INVERSE) {
+    const inner = transformSteps(t.of, axes, document);
+    return inner && invertSteps(inner);
+  }
   if (t?.type === "displacements") {
     if (typeof t.path !== "string") return undefined;
     return [{ kind: "field", url: resolvePath(t.path, document), inverse: false, ...(axes ? { components: axes } : {}) }];
@@ -269,6 +275,21 @@ export function transformSteps(t: any, axes: string[] | undefined, document: str
   }
   const m = transformMatrix(t, axes);
   return m === undefined ? undefined : [{ kind: "affine", m }];
+}
+
+/** A transform walked backwards, the steps of which are its parts' inverses in reverse order (`transformSteps` reads it). */
+const INVERSE = "ngplatform:inverse";
+
+/**
+ * A transform walked backwards, as a transform: a sequence reversed with
+ * each part inverted, a bijection with its two sides swapped (so its stated
+ * inverse is used, wherever it sits), anything else marked to be inverted.
+ */
+export function inverseOf(t: any): any {
+  if (t?.type === "sequence") return { ...t, transformations: [...(t.transformations ?? [])].reverse().map(inverseOf) };
+  if (t?.type === "bijection") return { ...t, forward: t.inverse, inverse: t.forward };
+  if (t?.type === INVERSE) return t.of;
+  return { type: INVERSE, of: t };
 }
 
 /** Steps walked backwards: in reverse order, each inverted (undefined when an affine is singular). */
@@ -294,12 +315,12 @@ export function invertSteps(steps: Step[]): Step[] | undefined {
 export function chainInto(root: CollectionNode, member: CollectionNode, system: string): Step[] | undefined {
   const known = (id: string) => graph(root).systems.find((s) => s.id === id)?.axes;
   const edges = graph(root).transforms.flatMap((t) => {
-    const bijection = t.raw?.type === "bijection";
     // A system the tree does not name (a member's own) has the axes of the other side.
     const output = known(t.output) ?? known(t.input);
     const input = known(t.input) ?? known(t.output);
-    const there = transformSteps(bijection ? t.raw.forward : t.raw, output, t.document);
-    const back = bijection ? transformSteps(t.raw.inverse, input, t.document) : there && invertSteps(there);
+    const there = transformSteps(t.raw, output, t.document);
+    // Backwards: a bijection's stated inverse wherever it sits (alone or in a sequence); the rest inverted.
+    const back = transformSteps(inverseOf(t.raw), input, t.document);
     return [...(there ? [{ from: t.input, to: t.output, steps: there }] : []), ...(back ? [{ from: t.output, to: t.input, steps: back }] : [])];
   });
   const fields = (steps: Step[]) => steps.filter((s) => s.kind === "field").length;
