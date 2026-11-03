@@ -107,7 +107,8 @@ void main() {
   }
   gl_Position = p;
   vColour = aColour;
-  vNormal = -uViewDir;
+  // No normal: lines are drawn flat, in their colour.
+  vNormal = vec3(0.0);
 }`;
 
 const fs = (outputs: Outputs) => `#version 300 es
@@ -119,9 +120,11 @@ layout(location = ${outputs.color}) out vec4 out_color;
 ${outputs.z !== undefined ? `layout(location = ${outputs.z}) out highp vec4 out_z;` : ""}
 ${outputs.pick !== undefined ? `layout(location = ${outputs.pick}) out highp vec4 out_pickId;` : ""}
 void main() {
-  vec3 n = normalize(vNormal);
-  float diffuse = abs(dot(n, uViewDir));
-  vec3 colour = vColour * (0.3 + 0.7 * diffuse) + vec3(0.18) * pow(diffuse, 24.0);
+  vec3 colour = vColour;
+  if (dot(vNormal, vNormal) > 0.0) {
+    float diffuse = abs(dot(normalize(vNormal), uViewDir));
+    colour = vColour * (0.3 + 0.7 * diffuse) + vec3(0.18) * pow(diffuse, 24.0);
+  }
   out_color = vec4(colour, 1.0);
   ${outputs.z !== undefined ? "out_z = vec4(1.0 - gl_FragCoord.z);" : ""}
   ${outputs.pick !== undefined ? "out_pickId = vec4(0.0);" : ""}

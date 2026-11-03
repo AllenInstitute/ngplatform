@@ -38,6 +38,8 @@ export interface Saved {
   spacing: number;
   /** At most this many glyphs in a view (a coarser level, or none, beyond). */
   maxGlyphs: number;
+  /** Glyphs less anisotropic than this (GFA, FA) are left out. */
+  minAnisotropy: number;
   show2d: boolean;
   show3d: boolean;
 }
@@ -62,6 +64,7 @@ export function readSaved(raw: unknown): Saved {
     size: num(s.size, 0.2, 3, 1),
     spacing: num(s.spacing, 4, 200, 24),
     maxGlyphs: num(s.maxGlyphs, 100, 50000, 8000),
+    minAnisotropy: num(s.minAnisotropy, 0, 1, 0),
     show2d: s.show2d !== false,
     show3d: s.show3d !== false,
   };
@@ -380,7 +383,7 @@ class Orientations {
     const said = String(opened.metadata?.order ?? "");
     const tensorOrder: TensorOrder = this.saved.tensorOrder !== "auto" ? this.saved.tensorOrder : said === "dipy" || said === "mrtrix" ? said : "fsl";
     const toData = withFlips(frame === "voxel" ? voxelFrame(level0.voxelToRas) : [1, 0, 0, 0, 1, 0, 0, 0, 1], this.saved.flips);
-    return { kind, basis, tensorOrder, toData, normalise: this.saved.normalise, tensorGlyph: this.saved.tensorGlyph, subdivisions };
+    return { kind, basis, tensorOrder, toData, normalise: this.saved.normalise, tensorGlyph: this.saved.tensorGlyph, subdivisions, minAnisotropy: this.saved.minAnisotropy };
   }
 
   // ------------------------------------------------------------- frames
@@ -479,6 +482,7 @@ class Orientations {
       this.drawn = "";
       return;
     }
+    const layerShown = this.ctx.viewer.layers().find((l) => l.name === this.handleLayer)?.visible !== false;
     const sections = this.sections();
     const seen = new Set<HTMLElement | "3d">();
     const draws: PanelDraw[] = [];
@@ -489,7 +493,7 @@ class Orientations {
       if (slot === undefined) this.slots.set(panel.element, (slot = {}));
       const want = this.want2d(section);
       this.follow(slot, want);
-      if (this.saved.show2d && slot.shown !== undefined) {
+      if (this.saved.show2d && layerShown && slot.shown !== undefined) {
         const rect = panel.element.getBoundingClientRect();
         const voxel = opened.levels[slot.shown.level].voxelSize;
         draws.push({
@@ -846,6 +850,9 @@ class Orientations {
           ),
           range("Size", saved.size, 0.2, 3, 0.05, (v) => `${v.toFixed(2)} voxel`, (v) => this.set({ size: v })),
           range("Spacing", saved.spacing, 4, 80, 1, (v) => `${v} px`, (v) => this.set({ spacing: v })),
+          kind === "sh" || kind === "tensor"
+            ? range("Hide below anisotropy", saved.minAnisotropy, 0, 0.9, 0.01, (v) => (v > 0 ? `${kind === "sh" ? "GFA" : "FA"} ${v.toFixed(2)}` : "off"), (v) => this.set({ minAnisotropy: v }))
+            : null,
           range("Most glyphs per view", saved.maxGlyphs, 500, 30000, 500, (v) => String(v), (v) => this.set({ maxGlyphs: v })),
           el("div", { class: "or-flips" }, check("2-D views", saved.show2d, (v) => this.set({ show2d: v })), check("3-D view", saved.show3d, (v) => this.set({ show3d: v }))),
           el(

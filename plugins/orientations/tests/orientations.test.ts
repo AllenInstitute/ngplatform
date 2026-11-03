@@ -252,6 +252,16 @@ describe("glyphs", () => {
     expect(Array.from(set.dirs!)).toEqual([1, 0, 0, 0, 0.5, 0]);
     expect(Array.from(set.centres)).toEqual([5, 6, 7, 5, 6, 7]);
   });
+
+  it("leaves out glyphs below an anisotropy", () => {
+    const voxelToRas = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    // An isotropic tensor (FA 0) and a prolate one (FA 0.8).
+    const d = Float32Array.from([1, 0, 0, 1, 0, 1, 0.3, 0, 0, 1.7, 0, 0.3]);
+    expect(computeGlyphs([0, 0, 0, 1, 0, 0], d, 6, voxelToRas, options({ kind: "tensor" })).count).toBe(2);
+    const kept = computeGlyphs([0, 0, 0, 1, 0, 0], d, 6, voxelToRas, options({ kind: "tensor", minAnisotropy: 0.5 }));
+    expect(kept.count).toBe(1);
+    expect(kept.centres[0]).toBe(1);
+  });
 });
 
 describe("views", () => {

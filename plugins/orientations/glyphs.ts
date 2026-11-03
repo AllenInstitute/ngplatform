@@ -16,7 +16,7 @@
  * RAS with `toData` (RAS → data, orthogonal).  Plain code: the worker runs
  * it, and the tests check it.
  */
-import { evaluate, lmaxOf, type ShBasis, shMatrix } from "./sh.js";
+import { evaluate, gfa, lmaxOf, type ShBasis, shMatrix } from "./sh.js";
 import { icosphere } from "./sphere.js";
 import { eigenSymmetric, fractionalAnisotropy, type TensorOrder, tensorMatrix } from "./tensor.js";
 
@@ -34,6 +34,8 @@ export interface GlyphOptions {
   tensorGlyph: "ellipsoid" | "line";
   /** The sphere's subdivisions (2: 162 vertices, 3: 642). */
   subdivisions: number;
+  /** Leave out glyphs less anisotropic than this (GFA for SH, FA for tensors), 0..1. */
+  minAnisotropy?: number;
 }
 
 export interface GlyphSet {
@@ -118,8 +120,10 @@ function empty(values: ArrayLike<number>, offset: number, n: number): boolean {
 /** The glyphs of some voxels (indices x, y, z; `components` values each), on a level placed by `voxelToRas`. */
 export function computeGlyphs(indices: ArrayLike<number>, values: Float32Array, components: number, voxelToRas: Mat4, options: GlyphOptions): GlyphSet {
   const count = Math.floor(indices.length / 3);
-  const kept: number[] = [];
+  let kept: number[] = [];
   for (let i = 0; i < count; ++i) if (!empty(values, i * components, components)) kept.push(i);
+  const least = options.minAnisotropy ?? 0;
+  if (least > 0 && options.kind === "sh" && lmaxOf(components) !== undefined) kept = kept.filter((i) => gfa(values, i * components, components, options.basis) >= least);
   const centresOf = (list: number[]) => {
     const centres = new Float32Array(3 * list.length);
     list.forEach((i, k) => centreOf(voxelToRas, indices[3 * i], indices[3 * i + 1], indices[3 * i + 2], centres, 3 * k));
@@ -161,7 +165,12 @@ export function computeGlyphs(indices: ArrayLike<number>, values: Float32Array, 
   if (kind === "tensor") {
     if (components !== 6) throw new Error(`tensors have 6 components, not ${components}`);
     const m = new Float64Array(9);
-    const eigens = kept.map((i) => eigenSymmetric(tensorMatrix(values, i * components, options.tensorOrder, m)));
+    let eigens = kept.map((i) => eigenSymmetric(tensorMatrix(values, i * components, options.tensorOrder, m)));
+    if (least > 0) {
+      const anisotropic = eigens.map((e) => fractionalAnisotropy(e.values) >= least);
+      kept = kept.filter((_, k) => anisotropic[k]);
+      eigens = eigens.filter((_, k) => anisotropic[k]);
+    }
     const colours = new Float32Array(3 * kept.length);
     let globalMax = 0;
     for (const e of eigens) globalMax = Math.max(globalMax, e.values[0]);
