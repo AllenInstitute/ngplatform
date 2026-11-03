@@ -14,6 +14,7 @@
 import type { MeshData } from "./mesh_files.js";
 import { fragmentIndex } from "./streamlines.js";
 import { DEFAULT_MAPS, labelTable, type SurfaceCompanions, type SurfaceMap } from "./surfaces.js";
+import { VertexGrid } from "./vertex_grid.js";
 
 const MANIFEST_ROWS = 16384;
 const COLUMN_ROWS = 65536;
@@ -80,6 +81,8 @@ export class MeshStore {
   private readonly sourceVertex: Uint32Array;
   /** Each map's values in stored order, made when first asked for (a series' map, for the time point it was made at). */
   private readonly attributeBytes = new Map<string, Promise<Uint8Array>>();
+  /** The stored vertices by place, for the vertex nearest a point; made when first asked for. */
+  private grid: VertexGrid | undefined;
   readonly count: number;
 
   /**
@@ -203,16 +206,41 @@ export class MeshStore {
   }
 
   /**
-   * A message from the page (`WorkspaceApi.local.send`): `{ series, time }`
-   * chooses the time point a series' map (`series`, its name) serves;
-   * without `time`, nothing changes.  Answers the series as it is then:
-   * `{ series, time, count }`.  The page then has the viewer read the map
-   * again (`ViewerApi.reloadData`).
+   * A message from the page (`WorkspaceApi.local.send`) about a series
+   * (`series`, its map's name):
+   *
+   * - `{ series, time }` chooses the time point the series' map serves;
+   *   without `time`, nothing changes.  Answers the series as it is then:
+   *   `{ series, time, count }`.  The page then has the viewer read the map
+   *   again (`ViewerApi.reloadData`).
+   * - `{ series, nearest: [x, y, z], within? }` finds the vertex nearest a
+   *   point in the store's coordinates (as `0/vertices` holds them: the
+   *   file's, less `coordinate_offset`; the layer's source coordinates),
+   *   if one is within `within` of it.  Answers `{ series, vertex,
+   *   distance, position }` (the vertex as the surface file numbers it, its
+   *   position in the store's coordinates), or `{ series, vertex: null }`.
+   * - `{ series, vertex }` answers that vertex's values at every time point:
+   *   `{ series, vertex, values }` (a Float32Array, NaN where the file has
+   *   none for it, as on the medial wall).
    */
   message(body: unknown): unknown {
-    const { series: name, time } = (body ?? {}) as { series?: unknown; time?: unknown };
+    const { series: name, time, nearest, within, vertex } = (body ?? {}) as { series?: unknown; time?: unknown; nearest?: unknown; within?: unknown; vertex?: unknown };
     const series = this.companions.series?.find((s) => s.map.name === name);
     if (series === undefined) throw new Error(`no time series ${String(name)} on this surface`);
+    if (nearest !== undefined) {
+      const point = Array.isArray(nearest) && nearest.length === 3 ? nearest.map(Number) : [];
+      if (point.length !== 3 || !point.every(Number.isFinite)) throw new Error("nearest takes a point [x, y, z]");
+      const limit = within === undefined ? Infinity : Number(within);
+      if (!(limit >= 0)) throw new Error("within takes a distance");
+      const found = (this.grid ??= new VertexGrid(this.vertices)).nearest(point, limit);
+      if (found === undefined) return { series: series.map.name, vertex: null };
+      const position = Array.from(this.vertices.subarray(3 * found.index, 3 * found.index + 3));
+      return { series: series.map.name, vertex: this.sourceVertex[found.index], distance: found.distance, position };
+    }
+    if (vertex !== undefined) {
+      if (!Number.isInteger(vertex)) throw new Error(`vertex ${String(vertex)} is not a vertex number`);
+      return series.course(vertex as number).then((values) => ({ series: series.map.name, vertex, values }));
+    }
     if (time !== undefined) {
       if (!(Number.isInteger(time) && (time as number) >= 0 && (time as number) < series.count)) throw new Error(`time point ${String(time)} is outside 0–${series.count - 1}`);
       series.time = time as number;

@@ -10,7 +10,7 @@
  * deviation over time, read a few thousand columns at a time: each
  * structure's columns are contiguous, so only its part of the file is read;
  * and its values at one time point (`CiftiSeries`), for stepping through
- * time.
+ * time, or at one vertex at every time point (its column), for plotting.
  */
 import type { SurfaceLabel, SurfaceValues } from "./surface_values.js";
 
@@ -184,6 +184,15 @@ export function ciftiMap(bytes: Uint8Array, header: CiftiHeader, row: number, st
   return { values, ...(map?.labels !== undefined ? { labels: map.labels } : {}) };
 }
 
+/** Each of a surface's vertices' column in a structure's part of the file (-1 for none: the medial wall). */
+function columnsOf(model: CiftiModel, vertexCount: number): Int32Array {
+  const columns = new Int32Array(vertexCount).fill(-1);
+  model.vertices!.forEach((vertex, k) => {
+    if (vertex >= 0 && vertex < vertexCount) columns[vertex] = k;
+  });
+  return columns;
+}
+
 /** The most a series' values on one structure may take in memory to be stepped through (float32). */
 const SERIES_BYTES = 1 << 30;
 
@@ -197,6 +206,8 @@ const SERIES_BYTES = 1 << 30;
 export class CiftiSeries {
   private matrix: Promise<Float32Array> | undefined;
   private readonly model: CiftiModel;
+  /** Each vertex's column in the structure (-1 for none), made when first asked for. */
+  private columns: Int32Array | undefined;
 
   constructor(
     private readonly file: Blob,
@@ -225,6 +236,33 @@ export class CiftiSeries {
       const vertex = vertices![k];
       if (vertex >= 0 && vertex < this.vertexCount) out[vertex] = row[k];
     }
+    return out;
+  }
+
+  /**
+   * Vertex `vertex`'s values at every time point: from the series read
+   * already, else its column of the file alone (contiguous, rows varying
+   * fastest).  NaN at every time point for a vertex the file has no
+   * column for (the medial wall).
+   */
+  async course(vertex: number): Promise<Float32Array> {
+    if (!(Number.isInteger(vertex) && vertex >= 0 && vertex < this.vertexCount)) throw new Error(`vertex ${vertex} is outside 0–${this.vertexCount - 1}`);
+    const { header, model } = this;
+    const rows = header.rows;
+    const out = new Float32Array(rows).fill(NaN);
+    const k = (this.columns ??= columnsOf(model, this.vertexCount))[vertex];
+    if (k === -1) return out;
+    if (this.matrix !== undefined) {
+      const matrix = await this.matrix;
+      for (let t = 0; t < rows; ++t) out[t] = matrix[t * model.count + k];
+      return out;
+    }
+    const size = SIZES[header.datatype];
+    if (size === undefined) throw new Error(`CIFTI data type ${header.datatype} is not read`);
+    const start = header.offset + size * rows * (model.offset + k);
+    const bytes = new Uint8Array(await this.file.slice(start, start + size * rows).arrayBuffer());
+    const value = reader(new DataView(bytes.buffer), header.datatype, header.littleEndian);
+    for (let t = 0; t < rows; ++t) out[t] = value(size * t);
     return out;
   }
 
