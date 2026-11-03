@@ -16,7 +16,11 @@ import { storeOf } from "./sources.js";
 export { omeZarrUrl, storeOf } from "./sources.js";
 import { type LevelInfo, type Region, VolumeClient } from "./volume_client.js";
 
-/** Levels up to this many voxels a side are drawn whole; larger ones as a box this many voxels a side around the position. */
+/**
+ * Levels up to this many voxels a side are drawn whole; larger ones as
+ * bricks over the finest that fits, or (where the GPU cannot hold the
+ * bricks) as a box this many voxels a side around the position.
+ */
 const WHOLE = 384;
 const BOX = 256;
 
@@ -24,7 +28,10 @@ export interface Saved {
   on: boolean;
   /** The image layer drawn; the first image it can read when unset or gone. */
   layer?: string;
-  /** The solid's voxel size, mm: the finest level at least this coarse; 0 follows the 3-D view's zoom. */
+  /**
+   * The solid's voxel size, mm: the finest level at least this coarse (with
+   * bricks, the finest level they are drawn from); 0 follows the 3-D view.
+   */
   solid: number;
   /** Tissue threshold, 0..1 of difference from the background. */
   threshold: number;
@@ -77,10 +84,27 @@ class VolumeRendering {
   private readonly toggle: { set(value: boolean): void; dispose(): void };
   private panelUpdate: (() => void) | undefined;
   private readonly offs: Disposer[] = [];
+  /** Bricks of the finer levels are drawn (until the GPU cannot hold them: then a box of one level). */
+  private bricks = true;
+  private brickNoted: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly ctx: PlatformContext) {
     this.saved = readSaved(ctx.state.get());
     this.drawer.onProblem = () => this.setStatus(this.drawer.problem ?? "");
+    this.drawer.onBricks = () => {
+      if (this.drawer.bricksFailed !== undefined && this.bricks) {
+        this.bricks = false;
+        this.loaded = undefined;
+        this.update();
+        return;
+      }
+      this.handle?.redraw();
+      // The panel's count of bricks, now and then.
+      this.brickNoted ??= setTimeout(() => {
+        this.brickNoted = undefined;
+        this.panelUpdate?.();
+      }, 500);
+    };
     this.toggle = ctx.ui.viewToggle({
       label: "Volume",
       title: "Draw an image as a solid, cut open at the position (the Volume tab has its settings)",
@@ -109,6 +133,7 @@ class VolumeRendering {
         }, 400);
       }),
       () => clearTimeout(this.follow),
+      () => clearTimeout(this.brickNoted),
     );
     this.update();
   }
@@ -140,7 +165,8 @@ class VolumeRendering {
   /**
    * The finest level at least `solid` coarse (a large one is drawn as a box
    * around the position).  Automatic (`solid` 0): the finest whose box, or
-   * whole image, spans three quarters of the 3-D view's height.
+   * whole image, spans three quarters of the 3-D view's height.  (With
+   * bricks, automatic is the finest level, and the bricks follow the view.)
    */
   private chooseLevel(): LevelInfo | undefined {
     const wanted = (this.saved.solid > 0 ? this.saved.solid : this.autoVoxel()) * 0.95;
@@ -236,6 +262,14 @@ class VolumeRendering {
       this.contextLoaded = undefined;
       this.region = undefined;
       void this.open(url);
+    } else if (this.levels.length > 0 && this.bricks) {
+      this.autoFor = this.autoVoxel();
+      const whole = this.wholeLevel();
+      const key = `${url}|${whole.path}|`;
+      if (key !== this.loaded) {
+        this.region = undefined;
+        void this.load(whole, key, undefined);
+      }
     } else if (this.levels.length > 0) {
       this.autoFor = this.autoVoxel();
       const level = this.chooseLevel();
@@ -259,9 +293,55 @@ class VolumeRendering {
         sectionClip: (frame) => this.drawer.sectionClip(frame),
       });
     }
+    this.offerBricks();
     this.fineSections(this.levels.length > 0 ? this.fineSectionPlan() : undefined);
     this.handle?.redraw();
     this.panelUpdate?.();
+  }
+
+  /**
+   * With bricks, the level drawn whole: a chosen level when it fits whole
+   * (then without bricks), else the finest that fits.
+   */
+  private wholeLevel(): LevelInfo {
+    const context = this.contextLevel()!;
+    const chosen = this.saved.solid > 0 ? this.chooseLevel() : undefined;
+    return chosen !== undefined && this.levels.indexOf(chosen) > this.levels.indexOf(context) ? chosen : context;
+  }
+
+  /**
+   * Bricks of the levels finer than the whole one, down to the chosen level
+   * (automatic: the finest), once the whole one is drawn.
+   */
+  private offerBricks(): void {
+    const client = this.client;
+    if (!this.bricks || !this.saved.on || this.levels.length === 0 || client === undefined) {
+      this.drawer.setBricks(undefined);
+      return;
+    }
+    const whole = this.wholeLevel();
+    const at = this.levels.indexOf(whole);
+    const finest = this.saved.solid > 0 ? this.levels.indexOf(this.chooseLevel()!) : 0;
+    const ready = this.contextLoaded === `${this.store}|${whole.path}|` && finest < at;
+    this.drawer.setBricks(
+      ready
+        ? {
+            key: `${this.store}|${whole.path}`,
+            levels: this.levels.slice(0, at).map((l, index) => ({ index, size: l.size, voxelToRas: l.voxelToRas })),
+            finest,
+            load: (level, region, signal) => client.volume(level, undefined, signal, region).then((v) => v.data),
+          }
+        : undefined,
+    );
+  }
+
+  /** What the bricks hold, for the panel. */
+  private brickNote(): string | undefined {
+    const s = this.drawer.brickStatus();
+    if (s === undefined || s.levels.length === 0) return undefined;
+    const sizes = s.levels.map((i) => this.levels[i].voxelSize);
+    const range = sizes.length > 1 ? `${mm(Math.min(...sizes))} to ${mm(Math.max(...sizes))}` : mm(sizes[0]);
+    return `Bricks of ${range} near the camera and the cut: ${s.held} of ${s.slots} held${s.loading > 0 ? `, ${s.loading} loading` : ""}.`;
   }
 
   /**
@@ -408,6 +488,7 @@ class VolumeRendering {
         this.drawer.setVolume(v.data, v.size, v.voxelToRas, level.voxelSize);
         this.drawer.setDetail(undefined);
         this.contextLoaded = key;
+        this.offerBricks();
         this.handle?.redraw();
         this.setStatus(`Solid at ${mm(level.voxelSize)} (${v.size.join(" × ")} voxels), in ${((performance.now() - started) / 1000).toFixed(1)} s`);
         return;
@@ -451,10 +532,11 @@ class VolumeRendering {
       layer.addEventListener("change", () => this.set({ layer: layer.value }));
       const detail = el("select", { class: "text-input", "aria-label": "Detail" }) as HTMLSelectElement;
       const chosen = this.chooseLevel();
-      detail.append(el("option", { value: "0" }, `Automatic${saved.solid === 0 && chosen ? ` (${mm(chosen.voxelSize)})` : ""}`));
+      const bricks = this.bricks;
+      detail.append(el("option", { value: "0" }, `Automatic${bricks ? " (finer near the camera)" : saved.solid === 0 && chosen ? ` (${mm(chosen.voxelSize)})` : ""}`));
       for (const l of this.levels) {
         const big = Math.max(...l.size) > WHOLE;
-        detail.append(el("option", { value: String(l.voxelSize) }, `${mm(l.voxelSize)} · ${big ? `a ${BOX}³ box` : l.size.join(" × ")}`));
+        detail.append(el("option", { value: String(l.voxelSize) }, `${mm(l.voxelSize)} · ${!big ? l.size.join(" × ") : bricks ? "bricks down to this" : `a ${BOX}³ box`}`));
       }
       detail.value = saved.solid === 0 || chosen === undefined ? "0" : String(chosen.voxelSize);
       detail.disabled = this.levels.length === 0;
@@ -470,6 +552,7 @@ class VolumeRendering {
       const cut = el("input", { type: "checkbox" }) as HTMLInputElement;
       cut.checked = saved.cut;
       cut.addEventListener("change", () => this.set({ cut: cut.checked }));
+      const brickNote = this.brickNote();
       const fine = el("input", { type: "checkbox" }) as HTMLInputElement;
       fine.checked = saved.fine;
       fine.addEventListener("change", () => this.set({ fine: fine.checked }));
@@ -490,6 +573,8 @@ class VolumeRendering {
             el("span", {}, "Fine sections on the cut, following the 3-D zoom"),
           ),
           this.status ? el("p", { class: "note" }, this.status) : null,
+          this.bricks ? null : el("p", { class: "note" }, `No bricks on this GPU (${this.drawer.bricksFailed}): finer levels are drawn as a box around the position.`),
+          saved.on && brickNote !== undefined ? el("p", { class: "note" }, brickNote) : null,
         ),
       );
     };
