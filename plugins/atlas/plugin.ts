@@ -30,9 +30,10 @@ const STYLE = `
 .at-node.at-match .at-name { font-weight: 600; }
 .at-caret { width: 12px; flex: none; text-align: center; color: var(--faint); font-size: 10px; }
 .at-swatch { width: 10px; height: 10px; flex: none; border: 1px solid rgba(255, 255, 255, 0.2); }
-.at-name { overflow: hidden; text-overflow: ellipsis; }
+.at-name { flex: 1 1 auto; min-width: 8em; overflow: hidden; text-overflow: ellipsis; }
+.at-node .at-acronym { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .at-acronym { color: var(--faint); font: 11px var(--mono); }
-.at-volume { margin-left: auto; padding-left: 8px; color: var(--faint); font: 11px var(--mono); }
+.at-volume { flex: 0 1 auto; min-width: 0; overflow: hidden; padding-left: 6px; color: var(--faint); font: 11px var(--mono); }
 .at-chosen-box { border: 1px solid var(--line); padding: 6px 8px; display: grid; gap: 6px; }
 `;
 
@@ -92,7 +93,12 @@ class AtlasPanel {
       .filter((l) => l.type === "segmentation")
       .map((l) => l.name);
     const changedLayer = !this.layers.includes(this.layer);
-    if (changedLayer) this.layer = this.layers.find((l) => this.ctx.viewer.lookupTables.of(l) !== undefined) ?? this.layers[0] ?? "";
+    if (changedLayer) {
+      this.layer = this.layers.find((l) => this.ctx.viewer.lookupTables.of(l) !== undefined) ?? this.layers[0] ?? "";
+      this.counted = undefined;
+      this.totals = undefined;
+      this.chosen = undefined;
+    }
     const table = this.layer === "" ? undefined : this.ctx.viewer.lookupTables.of(this.layer);
     if (table !== this.table) void this.load(table);
     else if (changedLayer) this.draw();
@@ -129,9 +135,11 @@ class AtlasPanel {
       this.expanded.clear();
       // A single root (the Allen ontology's "root") is opened, to show its parts.
       if (atlas.roots.length === 1) this.expanded.add(atlas.roots[0].key);
-      this.totals = this.counted && atlas.totals(this.voxelsPerValue(this.counted));
+      // Counts of another layer's image are not this one's.
       const store = layerStore(this.ctx, this.layer);
-      if (this.counted?.store !== store && `${this.layer}|${store}` !== this.countingFor) void this.count();
+      if (this.counted?.store !== store) this.counted = undefined;
+      this.totals = this.counted && atlas.totals(this.voxelsPerValue(this.counted));
+      if (this.counted === undefined && `${this.layer}|${store}` !== this.countingFor) void this.count();
     } catch (e) {
       if (this.table === table) this.note = `Could not read the table: ${(e as Error).message}`;
     }
@@ -380,7 +388,7 @@ class AtlasPanel {
       const n = this.totals?.get(r);
       const row = el(
         "div",
-        { class: `at-node${r === this.chosen ? " at-chosen" : ""}${matches.has(r) ? " at-match" : ""}`, role: "treeitem", style: `padding-left: ${4 + depth * 12}px`, title: atlas.pathText(r) },
+        { class: `at-node${r === this.chosen ? " at-chosen" : ""}${matches.has(r) ? " at-match" : ""}`, role: "treeitem", style: `padding-left: ${4 + depth * 10}px`, title: atlas.pathText(r) },
         el("span", { class: "at-caret" }, children.length === 0 ? "" : open ? "▾" : "▸"),
         el("span", { class: "at-swatch", style: r.colour ? `background: rgb(${r.colour.join(",")})` : "visibility: hidden" }),
         el("span", { class: "at-name" }, r.name),
@@ -433,7 +441,6 @@ class AtlasPanel {
           button("Show only", () => this.show(r, "only"), "Show this region and its descendants, and no other segments"),
           button("Add", () => this.show(r, "add"), "Add this region and its descendants to the segments shown"),
           button("Show all", () => this.showAll(), "Show every segment again"),
-          el("span", { class: "at-spacer" }),
           button("Go to", () => void this.goTo(r), "Move to this region's voxel nearest its centre"),
         ),
       ),
