@@ -1,0 +1,121 @@
+{
+  "attributes": {
+    "zarr_vectors": {
+      "zv_version": "0.9.4",
+      "format_capabilities": [],
+      "chunk_shape": [
+        32.0,
+        32.0,
+        32.0
+      ],
+      "bounds": [
+        [
+          -30.860679626464844,
+          -49.610679626464844,
+          -12.360679626464844
+        ],
+        [
+          33.860679626464844,
+          15.110679626464844,
+          52.360679626464844
+        ]
+      ],
+      "geometry_types": [
+        "mesh"
+      ],
+      "links_convention": "explicit",
+      "object_index_convention": "standard",
+      "cross_chunk_strategy": "explicit_links"
+    },
+    "multiscales": [
+      {
+        "version": "0.4",
+        "name": "default",
+        "axes": [
+          {
+            "name": "x",
+            "type": "space",
+            "unit": "millimeter"
+          },
+          {
+            "name": "y",
+            "type": "space",
+            "unit": "millimeter"
+          },
+          {
+            "name": "z",
+            "type": "space",
+            "unit": "millimeter"
+          }
+        ],
+        "datasets": [
+          {
+            "path": "0",
+            "coordinateTransformations": [
+              {
+                "type": "scale",
+                "scale": [
+                  1.0,
+                  1.0,
+                  1.0
+                ]
+              },
+              {
+                "type": "translation",
+                "translation": [
+                  16.0,
+                  16.0,
+                  16.0
+                ]
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "format": "zarr_vectors"
+        }
+      }
+    ],
+    "ome": {
+      "version": "0.6",
+      "type": "collection",
+      "name": "surface_fs",
+      "attributes": {
+        "scene": {
+          "coordinateSystems": [
+            {
+              "id": "world",
+              "name": "world",
+              "axes": [
+                {
+                  "name": "x",
+                  "type": "space",
+                  "unit": "millimeter"
+                },
+                {
+                  "name": "y",
+                  "type": "space",
+                  "unit": "millimeter"
+                },
+                {
+                  "name": "z",
+                  "type": "space",
+                  "unit": "millimeter"
+                }
+              ]
+            }
+          ],
+          "coordinateTransformations": []
+        }
+      },
+      "nodes": [
+        {
+          "type": "zv:level",
+          "name": "0"
+        }
+      ]
+    }
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

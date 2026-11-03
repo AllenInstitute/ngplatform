@@ -133,3 +133,20 @@ write_label("lh.V1.label", [1, 3, 4])
 with open(os.path.join(HERE, "expected.json"), "w") as f:
     json.dump(expected, f)
 print(sorted(expected))
+
+# The same subject as zarr-vectors-tools writes it (testdata/surface_fs.zarrvectors):
+# a surface store with its header (label tables, alternates), as a remote
+# store would be.  Left as it is when zarr-vectors-tools is not installed.
+try:
+    import zarr_vectors_tools  # noqa: F401
+except ImportError:
+    pass
+else:
+    import shutil
+    import subprocess
+    import sys
+
+    store = os.path.join(HERE, "..", "..", "surface_fs.zarrvectors")
+    shutil.rmtree(store, ignore_errors=True)
+    subprocess.run([sys.executable, "-m", "zarr_vectors_tools", "convert", "--format", "freesurfer", "--geometry", "white",
+                    "--hemisphere", "lh", "--chunk-shape", "32,32,32", SURF, store], check=True, stdout=subprocess.DEVNULL)

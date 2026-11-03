@@ -13,6 +13,7 @@ import { LevelPipeline, ObjectReader, openZarrVectorsStore, readObjectTable, Sha
 import { parseMeshFile } from "../../../../src/virtual/vectors/mesh_files.js";
 import { MeshStore } from "../../../../src/virtual/vectors/meshes.js";
 import { surfaceCompanions, surfaceRelated } from "../../../../src/virtual/vectors/surfaces.js";
+import { fixtureListDirectories, fixtureRead } from "../test_fixtures.js";
 
 const DIR = path.resolve(import.meta.dirname, "../../testdata/meshes");
 const expected = JSON.parse(fs.readFileSync(path.join(DIR, "expected.json"), "utf8"));
@@ -132,6 +133,35 @@ describe("virtual surface store", () => {
       const got = d.attributes[names.indexOf(name)];
       list.forEach((v, i) => expect(got[i]).toBeCloseTo(v, 4));
     }
+  });
+
+  it("reads the same subject as zarr-vectors-tools writes it: label tables, alternates, values by vertex", async () => {
+    const a = { read: fixtureRead("surface_fs"), listDirectories: fixtureListDirectories("surface_fs"), shardIndexes: new ShardIndexCache() };
+    const zv = await openZarrVectorsStore(a as never, undefined);
+    const names = zv.description.attributes.map((x) => x.name);
+    expect(names).toEqual(expect.arrayContaining(["aparc", "sulc", "thickness", "coords_pial", "coords_inflated", "zv_join_key"]));
+    const surface = zv.description.surface!;
+    expect(surface.geometry).toBe("white");
+    expect(surface.alternates).toEqual({ coords_pial: "pial", coords_inflated: "inflated" });
+    const aparc = zv.description.attributes.find((x) => x.name === "aparc")!;
+    // zarr-vectors-tools adds -1, "unassigned", transparent.
+    expect(aparc.labels![0]).toEqual({ code: -1, name: "unassigned", rgba: [0, 0, 0, 0] });
+    expect(aparc.labels!.slice(1).map((l) => [l.code, l.name])).toEqual(values["label/lh.aparc.annot"].labels.map((l: { code: number; name: string }) => [l.code, l.name]));
+    // Every chunk's vertices, matched to the files' by the join key (vertex number, left hemisphere).
+    const pipeline = new LevelPipeline(a as never, zv.description, zv.levels[0]);
+    const cells = (zv.levels[0].arrays.vertices.attributes.nonempty_chunks as string[]).map((k) => k.split(".").map(Number));
+    let seen = 0;
+    for (const cell of cells) {
+      const d = await pipeline.download(cell, signal);
+      if (d === undefined) continue;
+      const key = d.attributes[names.indexOf("zv_join_key")];
+      for (let v = 0; v < d.numOwnVertices; ++v, ++seen) {
+        const source = key[v];
+        expect(d.attributes[names.indexOf("thickness")][v]).toBeCloseTo(values["surf/lh.thickness"].values[source], 4);
+        expect(d.attributes[names.indexOf("aparc")][v]).toBe(values["label/lh.aparc.annot"].values[source]);
+      }
+    }
+    expect(seen).toBe(12);
   });
 
   it("serves a map that is not shown by default when asked for by name", async () => {

@@ -587,9 +587,10 @@ export class LocalData {
     const kind = format.kind === "image" && LABEL_NAME.test(name) ? "segmentation" : format.kind;
     // A FreeSurfer surface's whole name is its pattern (lh.pial): keep it.
     // Surfaces in Freeview's colours; a Zarr Vectors layer is a segmentation from the start, so the colour is kept.
+    // Their outlines on the sections opaque, as Freeview draws them (2-D opacity 1, not 0.5).
     const colour = /surface/i.test(format.format) ? surfaceColour(name) : undefined;
     const base = { source: format.source(this.urlOf(id, path)), name: name.replace(format.pattern, "") || name, format: format.format, path };
-    return colour === undefined ? { ...base, kind } : { ...base, kind: "segmentation", layer: { segmentDefaultColor: colour } };
+    return colour === undefined ? { ...base, kind } : { ...base, kind: "segmentation", layer: { segmentDefaultColor: colour, selectedAlpha: 1 } };
   }
 
   /**
