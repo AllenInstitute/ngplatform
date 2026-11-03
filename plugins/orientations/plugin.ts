@@ -19,7 +19,7 @@ import { GlyphRenderer } from "./render.js";
 import { lmaxOf, SH_BASES, type ShBasis } from "./sh.js";
 import { directionShader } from "./shader.js";
 import { TENSOR_ORDERS, type TensorOrder } from "./tensor.js";
-import { type Box, chooseLevel, type SectionPlan, contains, invert4, planesAround, planSection, type Section, sectionOf, type Slab, type Vec3, applyAffine } from "./view.js";
+import { type Box, chooseLevel, layerMove, type SectionPlan, contains, invert4, planesAround, planSection, type Section, sectionOf, type Slab, type Vec3, applyAffine } from "./view.js";
 
 export interface Saved {
   on: boolean;
@@ -218,12 +218,20 @@ class Orientations {
       position: state.position ?? names.map(() => 0),
       projectionScale: state.projectionScale,
     };
+    const t = this.handleLayer === undefined ? undefined : this.ctx.viewer.layerTransform(this.handleLayer);
+    const move = t === undefined ? undefined : layerMove(t);
+    if (JSON.stringify(move) !== JSON.stringify(this.move)) {
+      this.move = move;
+      // Moved: what each view shows of the store has changed.
+      for (const slot of this.slots.values()) if (slot.shown) slot.shown.key = "";
+    }
   }
 
   /** A global position for a RAS point (mm), the other dimensions where the view is. */
   private globalOf(ras: ArrayLike<number>): number[] | undefined {
     const space = this.space;
     if (space === undefined) return undefined;
+    if (this.move !== undefined) ras = applyAffine(this.move, ras);
     const out = [...space.position];
     let found = 0;
     space.names.forEach((name, i) => {
@@ -245,8 +253,15 @@ class Orientations {
       if (axis === -1) return;
       out[axis] = space.units[i] === "m" ? space.position[i] * space.scales[i] * 1e3 : space.position[i] * space.scales[i];
     });
-    return out.every(Number.isFinite) ? (out as Vec3) : undefined;
+    if (!out.every(Number.isFinite)) return undefined;
+    return this.move === undefined ? (out as Vec3) : applyAffine(invert4(this.move), out);
   }
+
+  /**
+   * The layer's move from where its store places it (Registration), RAS mm
+   * to RAS mm; glyphs are placed from the store and drawn moved by it.
+   */
+  private move: number[] | undefined;
 
   /** Image layers it can read: OME-Zarr (a NIfTI read in place is one). */
   candidates(): LayerInfo[] {
@@ -589,13 +604,22 @@ class Orientations {
       this.renderer3d?.dispose();
       this.renderer3d = new GlyphRenderer(gl, frame.outputs);
     }
-    // RAS mm to clip: the frame's view-projection after RAS to display.
+    // RAS mm to clip: the frame's view-projection after RAS to display (after the layer's move).
     const vp = frame.viewProjection;
+    const placed = new Float32Array(16);
+    const move = this.move;
+    for (let c = 0; c < 4; ++c) {
+      for (let r = 0; r < 4; ++r) {
+        let s = 0;
+        for (let k = 0; k < 4; ++k) s += toDisplay[4 * k + r] * (move === undefined ? (k === c ? 1 : 0) : move[4 * k + c]);
+        placed[4 * c + r] = s;
+      }
+    }
     const matrix = new Float32Array(16);
     for (let c = 0; c < 4; ++c) {
       for (let r = 0; r < 4; ++r) {
         let s = 0;
-        for (let k = 0; k < 4; ++k) s += vp[4 * k + r] * toDisplay[4 * c + k];
+        for (let k = 0; k < 4; ++k) s += vp[4 * k + r] * placed[4 * c + k];
         matrix[4 * c + r] = s;
       }
     }
@@ -608,8 +632,13 @@ class Orientations {
     const near = at(-1);
     const far = at(1);
     // Display axis k is RAS axis a with display = factor × ras: undo it.
-    const viewRas = [0, 0, 0];
+    let viewRas = [0, 0, 0];
     for (let k = 0; k < 3; ++k) for (let a = 0; a < 3; ++a) if (toDisplay[4 * a + k] !== 0) viewRas[a] = (far[k] - near[k]) / toDisplay[4 * a + k];
+    // Back into the store's frame, before the layer's move.
+    if (move !== undefined) {
+      const back = invert4(move);
+      viewRas = [0, 1, 2].map((r) => back[4 * r] * viewRas[0] + back[4 * r + 1] * viewRas[1] + back[4 * r + 2] * viewRas[2]);
+    }
     const n = Math.hypot(viewRas[0], viewRas[1], viewRas[2]) || 1;
     const viewDir = viewRas.map((v) => v / n) as Vec3;
     gl.enable(gl.DEPTH_TEST);

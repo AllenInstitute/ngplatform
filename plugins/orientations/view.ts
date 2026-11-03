@@ -226,3 +226,47 @@ export function planSection(
   }
   return { note: `more than ${options.maxGlyphs} glyphs even at the coarsest level: zoom in` };
 }
+
+/**
+ * How far a layer has been moved from where its source puts it (by
+ * Registration, or a transform edited by hand): the change from its
+ * default transform to its current one, as an affine of RAS millimetres
+ * (row-major 4 × 4), so a point placed from the store's own metadata is
+ * drawn where the layer now shows it.  Undefined when it has not moved, or
+ * its outputs are not x, y and z.  Matrices as `ViewerApi.layerTransform`
+ * gives them: homogeneous, column-major, rank + 1 square.
+ */
+export function layerMove(t: { rank: number; output: { names: string[]; scales: number[]; units: string[] }; matrix: ArrayLike<number>; defaultMatrix: ArrayLike<number> }): number[] | undefined {
+  const n = t.rank + 1;
+  const rows = (m: ArrayLike<number>) => Array.from({ length: n }, (_, r) => Array.from({ length: n }, (_, c) => m[c * n + r]));
+  const m = rows(t.matrix);
+  // The default's inverse, by Gauss-Jordan.
+  const a = rows(t.defaultMatrix).map((row, r) => [...row, ...Array.from({ length: n }, (_, c) => (c === r ? 1 : 0))]);
+  for (let c = 0; c < n; ++c) {
+    let pivot = c;
+    for (let r = c + 1; r < n; ++r) if (Math.abs(a[r][c]) > Math.abs(a[pivot][c])) pivot = r;
+    [a[c], a[pivot]] = [a[pivot], a[c]];
+    const p = a[c][c];
+    if (Math.abs(p) < 1e-300) return undefined;
+    for (let k = 0; k < 2 * n; ++k) a[c][k] /= p;
+    for (let r = 0; r < n; ++r) {
+      if (r === c) continue;
+      const f = a[r][c];
+      if (f !== 0) for (let k = 0; k < 2 * n; ++k) a[r][k] -= f * a[c][k];
+    }
+  }
+  const inv = a.map((row) => row.slice(n));
+  const move = m.map((row) => inv[0].map((_, c) => row.reduce((s, v, k) => s + v * inv[k][c], 0)));
+  const axes = ["x", "y", "z"].map((name) => t.output.names.indexOf(name));
+  if (axes.includes(-1)) return undefined;
+  const mmOf = (i: number) => (t.output.units[i] === "m" ? t.output.scales[i] * 1e3 : t.output.scales[i]);
+  const out: number[] = [];
+  for (let r = 0; r < 3; ++r) {
+    const i = axes[r];
+    for (let c = 0; c < 3; ++c) out.push((move[i][axes[c]] * mmOf(i)) / mmOf(axes[c]));
+    out.push(move[i][n - 1] * mmOf(i));
+  }
+  out.push(0, 0, 0, 1);
+  const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  return out.every((x, k) => Math.abs(x - identity[k]) < 1e-9) ? undefined : out;
+}

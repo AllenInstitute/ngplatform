@@ -17,7 +17,7 @@ import { readSaved, resolveBasis, resolveFrame, resolveKind } from "../plugin.js
 import { OrientationReader } from "../reader.js";
 import { directionShader } from "../shader.js";
 import { icosphere } from "../sphere.js";
-import { boxAround, chooseLevel, planesAround, planSection, sectionOf, slabOf, slabVoxels, unproject, type Vec3 } from "../view.js";
+import { boxAround, chooseLevel, layerMove, planesAround, planSection, sectionOf, slabOf, slabVoxels, unproject, type Vec3 } from "../view.js";
 import { buildStore, crossingSh, type Store, storeFetch, tensorField, vectorField } from "./synthetic.js";
 
 const SIZE: [number, number, number] = [32, 32, 8];
@@ -356,6 +356,29 @@ describe("views", () => {
     expect(p.subdivisions).toBe(2);
     const big = plan(48);
     expect("note" in big ? 0 : big.subdivisions).toBe(3);
+  });
+
+  it("follows a layer moved from where its store puts it", () => {
+    // Output dimensions c', z, y, x (2 mm), as an OME-Zarr image with a channel axis gives them.
+    const output = { names: ["c'", "z", "y", "x"], scales: [1, 0.002, 0.002, 0.002], units: ["", "m", "m", "m"] };
+    const eye = (n: number) => Float64Array.from({ length: n * n }, (_, i) => (i % (n + 1) === 0 ? 1 : 0));
+    expect(layerMove({ rank: 4, output, matrix: eye(5), defaultMatrix: eye(5) })).toBeUndefined();
+    // Moved 5 units (10 mm) along x, and the default placed 3 units along z.
+    const def = eye(5);
+    def[4 * 5 + 1] = 3;
+    const moved = Float64Array.from(def);
+    moved[4 * 5 + 3] = 5;
+    const m = layerMove({ rank: 4, output, matrix: moved, defaultMatrix: def })!;
+    expect(m).toEqual([1, 0, 0, 10, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    // A quarter turn about z (x to y), around the origin.
+    const turned = Float64Array.from(def);
+    // Columns: input x (index 3) goes to output y (index 2), input y to output -x.
+    turned[3 * 5 + 3] = 0;
+    turned[3 * 5 + 2] = 1;
+    turned[2 * 5 + 2] = 0;
+    turned[2 * 5 + 3] = -1;
+    const r = layerMove({ rank: 4, output, matrix: turned, defaultMatrix: def })!;
+    expect(r.map((v) => +v.toFixed(12) || 0)).toEqual([0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
   });
 
   it("places three planes around the position for the 3-D view", () => {
