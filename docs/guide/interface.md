@@ -193,4 +193,4 @@ overlays at once are not there.
 | **Activity** | A log of what the workspace did, newest first: datasets added, plugins started, errors. |
 | **Jobs** | Long tasks from plugins (filters, statistics, saving), with progress and a cancel button. |
 | **Chunk statistics** | Neuroglancer's chunk statistics: what is being downloaded, from where, and how fast. |
-| **Python** | A Python console running in the page (Pyodide). `ngp` drives the workspace; `await ngp.show(array, voxel_size=…)` shows a numpy array as a layer. |
+| **Python** | A Python console running in the page (Pyodide). `ngp` drives the workspace; `await ngp.show(array, voxel_size=…)` shows a numpy array as a layer; `ngp.show_points(xyz, values=…)`, `ngp.show_lines(lines)` and `ngp.show_mesh(vertices, faces)` show points, streamlines and meshes made in Python (as Zarr Vectors, so Track filtering works on them), and `ngp.annotate(points=…, lines=…, boxes=…, ellipsoids=…)` adds an annotation layer. |

@@ -25,14 +25,16 @@ interface Pyodide {
 }
 
 // What `ngp` is, in Python.  The bridge passes JSON strings both ways.
-const PRELUDE = `
+export const PRELUDE = `
 import json as _json
 from contextlib import contextmanager as _contextmanager
 import _ngp_bridge as _bridge
 
 class _Workspace:
     """The workspace: ngp.state(), ngp.set_state(d), with ngp.txn() as s: …,
-    ngp.layers(), ngp.add_layer(url), await ngp.show(array), ngp.position,
+    ngp.layers(), ngp.add_layer(url), await ngp.show(array),
+    await ngp.show_points(xyz), await ngp.show_lines(lines),
+    await ngp.show_mesh(vertices, faces), ngp.annotate(points=…), ngp.position,
     await ngp.invoke(id, args), ngp.commands(), and ngp.viewer (Neuroglancer's
     JavaScript viewer)."""
 
@@ -84,6 +86,84 @@ class _Workspace:
         header = _nifti_header(a, codes[a.dtype.name], voxel_size, origin, 1002 if labels else 0, f"ngp.show: {name}")
         data = header + np.asfortranarray(a.astype(a.dtype.newbyteorder("<"), copy=False)).tobytes(order="F")
         return await _bridge.showFile(f"{name}.nii", to_js(data), name, "segmentation" if labels else "image")
+
+    async def show_points(self, xyz, name="points", values=None):
+        """Shows points (an N × 3 array of x, y, z in millimetres) as a layer, each
+        point an object; values: {name: N values} shown and filtered per point.
+            await ngp.show_points(np.random.rand(1000, 3) * 50, values={"size": np.arange(1000)})"""
+        import io
+        import numpy as np
+        p = np.asarray(xyz, dtype=np.float64)
+        if p.ndim != 2 or p.shape[1] != 3:
+            raise ValueError("points as an N x 3 array of x, y, z")
+        columns = {k: np.asarray(v, dtype=np.float64).ravel() for k, v in (values or {}).items()}
+        for k, v in columns.items():
+            if len(v) != len(p):
+                raise ValueError(f"{k}: {len(v)} values for {len(p)} points")
+        table = np.column_stack([p] + list(columns.values())) if columns else p
+        out = io.StringIO()
+        np.savetxt(out, table, delimiter=",", header=",".join(["x_mm", "y_mm", "z_mm"] + [str(k) for k in columns]), comments="", fmt="%.9g")
+        return await self._show_bytes(f"{name}.csv", out.getvalue().encode(), name)
+
+    async def show_lines(self, lines, name="lines"):
+        """Shows polylines (a list of M × 3 arrays, millimetres) as streamlines, each
+        line an object, as a tractogram would be:
+            await ngp.show_lines([np.cumsum(np.random.randn(100, 3), 0) for _ in range(50)])"""
+        import numpy as np
+        tracks = [np.asarray(l, dtype="<f4").reshape(-1, 3) for l in lines]
+        body = bytearray()
+        for t in tracks:
+            body += t.tobytes() + np.full(3, np.nan, "<f4").tobytes()
+        body += np.full(3, np.inf, "<f4").tobytes()
+        head = f"mrtrix tracks\\ndatatype: Float32LE\\ncount: {len(tracks)}\\nfile: . {{}}\\nEND\\n"
+        offset = len(head.format(0)) + 8
+        header = head.format(offset).encode().ljust(offset, b"\\0")
+        return await self._show_bytes(f"{name}.tck", bytes(header) + bytes(body), name)
+
+    async def show_mesh(self, vertices, faces, name="mesh"):
+        """Shows a triangle mesh (vertices N × 3 in millimetres, faces M × 3 vertex
+        indices), as a mesh file would be:
+            await ngp.show_mesh(v, f)"""
+        import numpy as np
+        v = np.asarray(vertices, dtype="<f4").reshape(-1, 3)
+        f = np.asarray(faces, dtype="<i4").reshape(-1, 3)
+        if f.size and (f.min() < 0 or f.max() >= len(v)):
+            raise ValueError("a face names a vertex the mesh does not have")
+        head = (f"ply\\nformat binary_little_endian 1.0\\nelement vertex {len(v)}\\nproperty float x\\nproperty float y\\nproperty float z\\n"
+                f"element face {len(f)}\\nproperty list uchar int vertex_indices\\nend_header\\n").encode()
+        rows = np.zeros(len(f), dtype=[("n", "u1"), ("i", "<i4", 3)])
+        rows["n"] = 3
+        rows["i"] = f
+        return await self._show_bytes(f"{name}.ply", head + v.tobytes() + rows.tobytes(), name)
+
+    async def _show_bytes(self, file_name, data, name):
+        from pyodide.ffi import to_js
+        return await _bridge.showFile(file_name, to_js(bytes(data)), name, "auto")
+
+    def annotate(self, points=(), lines=(), boxes=(), ellipsoids=(), name="annotations", descriptions=None):
+        """Adds an annotation layer (kept in the workspace, editable in the views),
+        in the views' coordinates (as ngp.position):
+            points: [p, …]; lines: [(a, b), …]; boxes: [(corner, corner), …];
+            ellipsoids: [(centre, radii), …]; descriptions: one text per annotation, in that order.
+        Returns the layer's name."""
+        def xyz(v):
+            return [float(x) for x in v]
+        made = [{"type": "point", "point": xyz(p)} for p in points]
+        made += [{"type": "line", "pointA": xyz(a), "pointB": xyz(b)} for a, b in lines]
+        made += [{"type": "axis_aligned_bounding_box", "pointA": xyz(a), "pointB": xyz(b)} for a, b in boxes]
+        made += [{"type": "ellipsoid", "center": xyz(c), "radii": xyz(r)} for c, r in ellipsoids]
+        for i, a in enumerate(made):
+            a["id"] = f"py{i}"
+            if descriptions is not None and i < len(descriptions) and descriptions[i]:
+                a["description"] = str(descriptions[i])
+        with self.txn() as s:
+            taken = {l.get("name") for l in s.get("layers", [])}
+            layer, k = name, 2
+            while layer in taken:
+                layer, k = f"{name} {k}", k + 1
+            dims = s.get("dimensions", {})
+            s.setdefault("layers", []).append({"type": "annotation", "name": layer, "source": {"url": "local://annotations", "transform": {"outputDimensions": dims}}, "annotations": made})
+        return layer
 
     @property
     def position(self):
@@ -323,7 +403,7 @@ export function renderPythonPanel(host: HTMLElement, wb: Workbench): () => void 
       clear(out);
       print(
         `Python (Pyodide ${py.version}), running in this page. ngp is the workspace: ngp.state(), ngp.set_state(d), ` +
-          `with ngp.txn() as s: …, ngp.layers(), ngp.add_layer(url), await ngp.show(array), ngp.position, await ngp.invoke(id, args), ngp.commands(). ` +
+          `with ngp.txn() as s: …, ngp.layers(), ngp.add_layer(url), await ngp.show(array), await ngp.show_points(xyz), await ngp.show_lines(lines), await ngp.show_mesh(vertices, faces), ngp.annotate(points=…), ngp.position, await ngp.invoke(id, args), ngp.commands(). ` +
           `Packages such as numpy load when imported. Ctrl+L clears.`,
         "note",
       );

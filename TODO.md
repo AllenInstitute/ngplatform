@@ -33,7 +33,7 @@ then the Luxar plugin and drawing labels by hand.
 - [ ] A3. Formats to match zarr-vectors-tools (done: `.mgz`/`.mgh`, `.npy`, LAS, a FreeSurfer subject folder; images named as labels open as segmentations; Parquet, GraphML and edge lists; LAZ, surface morphometry and `.annot` (the Surfaces work), CIFTI dense scalars, labels and time series (mean and SD) on GIFTI surfaces; Feather (Arrow IPC, LZ4 and ZSTD); left: stepping through a time series): `.mgz`/`.mgh`, LAS/LAZ, Parquet/Feather, GraphML and edge lists, `.npy`/`.npz`, CIFTI, a FreeSurfer subject folder (with thickness, curv, sulc, area, aparc). 4–6 d
 - [ ] A4. Coarse levels for every virtual vector store (done: streamlines, nested levels of 1 in 10, 100, 1000 while each keeps about 2,000; points. Deferred: meshes, which are served as one cell and drawn whole, enough for surfaces and most local meshes; cells with simplified levels when very large meshes need them): streamlines 2–3 levels, meshes in cells with simplified levels, points subsampled, all within a time budget so opening stays fast. 3–4 d
 - [x] A5. **Export as** for local data (done except TIFF and `.trx` out): images to `.nii`, `.nii.gz`, `.mgz`, `.mgh`, OME-Zarr, TIFF; vectors to `.trk`, `.tck`, `.trx`, OBJ, STL, PLY, CSV. 3–4 d
-- [ ] A5b. (Done: (b), every level of a local image written into a folder chunk by chunk, gzipped.) Saving large data: (a) a region or level within a size limit, (b) a whole pyramid written chunk by chunk into a local folder, (c) edits only, as a small layer over the read-only source; (d) zvtools for very large jobs. 3–5 d
+- [ ] A5b. (Done: (a) a level or a box within a size limit; (b) every level of a local image written into a folder chunk by chunk, gzipped; painted labels saved as OME-Zarr write only painted chunks. Left: (c) editing an existing large segmentation copy-on-write (chunks read from the original until edited; the in-page store answering asynchronously, coarse levels from the original's pyramid, every tool loading the original's chunks before writing, undo included), most of a day and touches the Annotations painting code, so to agree with Andrew first; (d) zvtools for very large jobs.) Saving large data: (a) a region or level within a size limit, (b) a whole pyramid written chunk by chunk into a local folder, (c) edits only, as a small layer over the read-only source; (d) zvtools for very large jobs. 3–5 d
 - [x] A6. Datasets list: no type shown for remote data; "Local" for local data.
 - [x] A7. Tractograms (any Zarr Vectors streamlines) show as lines, 1 px, in cross-sections too.
 
@@ -143,7 +143,7 @@ models, story): `docs/plugins/ideas.md`.
 - [x] Virtual Zarr: `.nii.gz` kept decompressed between visits (OPFS, the six most recently used, by name, size and date).
 - [x] Virtual Zarr: TIFF floating-point predictor; 16-bit RGB (shown by each sample's top 8 bits).
 - [x] Data made in the page shown as a layer, for images: `await ngp.show(array, …)` in the Python console (image or labels), and track density maps; both are NIfTI files made in memory and read as virtual Zarr (`workspace.local.open` for plugins).
-- [ ] `memory://` beyond images: meshes, points and annotations made in the page.
+- [x] Beyond images from Python: `ngp.show_points`, `ngp.show_lines`, `ngp.show_mesh` (served as virtual Zarr Vectors) and `ngp.annotate`.
 - [ ] zarr-vectors-tools Z1: `zvtools index`, filter-ready columns (length, bounding box, endpoints, fragment owner), so a region reads only the fragments near it.
 
 ## The build guide's tracks, not started
