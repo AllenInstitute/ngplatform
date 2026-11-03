@@ -264,4 +264,17 @@ describe("sign-ins", () => {
     expect((engine.ng.layers as Json[])[0].source).toBe(IMAGE);
     expect(store.datasets()).toHaveLength(1);
   });
+
+  it("points layers and datasets at local data opened again under a new id, as one step", () => {
+    const { store, engine } = setup();
+    const OLD = "https://app/local/aaa/";
+    const NEW = "https://app/local/bbb/";
+    store.open({ ng: { layers: [{ name: "t", type: "segmentation", source: `${OLD}t.trk/|zarr-vectors:` }, { name: "img", type: "image", source: IMAGE }] }, app: {} }, "test");
+    store.noteInput();
+    expect(store.relinkSources(OLD, NEW, "Local data opened again")).toBe(1);
+    expect((engine.ng.layers as Json[]).map((l) => l.source)).toEqual([`${NEW}t.trk/|zarr-vectors:`, IMAGE]);
+    expect(store.datasets().find((d) => d.name === "t")?.source).toBe(`${NEW}t.trk/|zarr-vectors:`);
+    expect(store.historyRows().map((r) => r.label)).toEqual(["Opened", "Local data opened again"]);
+    expect(store.relinkSources(OLD, NEW, "again")).toBe(0);
+  });
 });
