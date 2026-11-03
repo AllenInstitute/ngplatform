@@ -206,6 +206,39 @@ export interface WorkspaceApi {
     /** The file on this computer a layer's source reads (an image or tractogram opened from it), if any. */
     sourceFile(source: string): Promise<File | undefined>;
   };
+
+  /**
+   * Images computed as they are viewed, by chunkmirage's browser engine
+   * (src/virtual/computed.ts): a pipeline of chunkmirage ops over an image
+   * the viewer reads, served as OME-Zarr.
+   */
+  computed: {
+    /**
+     * The source URL of `pipeline` ({source, ops, chunk}: chunkmirage's
+     * pipeline spec, its source a layer's source URL), to add with
+     * addDataset.  Python the pipeline carries is allowed in this browser.
+     */
+    url(pipeline: ComputedPipeline): Promise<string>;
+    /** Marks Python as the plugin's own, which a link from elsewhere may run without asking. */
+    ownPython(code: string): string;
+    /** The pipeline a computed layer's source carries, if it is one. */
+    pipelineOf(source: string): Promise<ComputedPipeline | undefined>;
+    /** What the engine is doing, and its counts of chunks computed, dropped and failed. */
+    status(): { status: string; computed: number; dropped: number; failed: number; failure: { view: string; message: string } | null };
+    onChanged(callback: () => void): Disposer;
+  };
+}
+
+/** A pipeline of chunkmirage ops (its PipelineSpec, as the browser engine takes it). */
+export interface ComputedPipeline {
+  /** The image read: a layer's source URL (zarr3://, n5://, precomputed://, or a file on this computer). */
+  source: string;
+  /** chunkmirage's op specs, in order: {op: "gaussian", sigma: 2}, {op: "python", code}. */
+  ops?: Record<string, unknown>[];
+  /** Output chunks, one size per axis (z, y, x). */
+  chunk: number[];
+  /** Non-spatial axes pinned: {c: 1, t: 0}. */
+  select?: Record<string, number>;
 }
 
 export interface ViewerApi {

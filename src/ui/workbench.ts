@@ -9,6 +9,7 @@ import type { FragmentParser } from "../core/state_io.js";
 import type { ContextKeys } from "../core/when.js";
 import type { Engine } from "../engine/engine.js";
 import type { JobService } from "../platform/jobs.js";
+import type { ComputedImages } from "../virtual/computed.js";
 import type { LocalData } from "../virtual/local_data.js";
 import type { PluginHost } from "../platform/plugin_host.js";
 import type { ExampleRegistry, OpenHandlerRegistry } from "../platform/registries.js";
@@ -40,6 +41,8 @@ export interface Workbench {
   log: ActivityLog;
   /** Data on this computer, served to the viewer (see src/virtual/local_data.ts). */
   localData: LocalData;
+  /** Images computed as they are viewed, by chunkmirage's engine (see src/virtual/computed.ts). */
+  computed: ComputedImages;
   parseFragment: FragmentParser;
   framed: boolean;
   /** Runs a command, reporting a failure in the log and a toast. */

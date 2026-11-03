@@ -1,0 +1,3 @@
+[submodule "vendor/chunkmirage"]
+	path = vendor/chunkmirage
+	url = https://github.com/JaneliaSciComp/chunkmirage.git

@@ -3,13 +3,14 @@
 Files on this computer are never uploaded and never loaded whole. Each one
 is presented to Neuroglancer as a chunked, multiscale store made from it as
 it is read: a **virtual store**. Neuroglancer reads it over HTTP like any
-other source; the service worker (`public/local-sw.js`) passes each request
+other source; the service worker (`src/sw.ts`) passes each request
 to the page, and a worker here answers it from the file.
 
 | Folder / file | What |
 |---|---|
 | `local_data.ts` | Local files and folders: picking, remembering, the URLs under `<app>/local/<id>/`, answering the service worker, files made in the page (`openFile`, derived files) |
 | `images/` | Images as OME-Zarr 0.6: NIfTI and Analyze (`nifti.ts`), TIFF stacks (`tiff.ts`), the store and its pyramid (`store.ts`), the worker (`worker.ts`) |
+| `computed.ts` | Images computed as they are viewed by [chunkmirage](https://github.com/JaneliaSciComp/chunkmirage)'s browser engine (`vendor/chunkmirage`, a submodule): a pipeline of its ops over any image, served under `<app>/virtual/ngp/<pipeline>/` |
 | `vectors/` | Geometry as Zarr Vectors: tractograms (`trk.ts`, `tck.ts`, `trx.ts` → `streamlines.ts`), meshes and surfaces (`mesh_files.ts` → `meshes.ts`), SWC neurons and point tables (`point_files.ts` → `points.ts`), the formats (`formats.ts`) and the worker (`worker.ts`) |
 
 ## Reading in
@@ -51,3 +52,28 @@ With `derived = true` the file is a view of a dataset that exists elsewhere
 (a track group's own streamlines): it is not listed, and a layer showing it
 beside that dataset still counts as that dataset (`DERIVED_LOCAL` in
 `src/core/workspace.ts`).
+
+## Computed images (chunkmirage)
+
+Images computed from others (filters, thresholds, Python of one's own) are
+chunkmirage's: its browser engine (`vendor/chunkmirage/web/src/engine.ts`,
+pinned as a git submodule) runs a pipeline of its ops (`gaussian`,
+`uniform`, `dog`, `threshold`, `morphology`, `python`, ...) over an image
+read from a URL or from this computer, and serves the result as OME-Zarr
+0.5. `computed.ts` puts the pipeline in the URL,
+`<app>/virtual/ngp/<deflated JSON, base64url>/`, so a link carries it and
+any tab of the app answers it; the service worker (`src/sw.ts`) relays each
+request to the tab in use (chunkmirage's `relay`), which starts the engine
+the first time and passes the request on to it. Chunks are computed at the
+level the viewer shows, in Pyodide workers when ops need Python, and
+dropped when the viewer stops waiting. Plugins reach it as
+`workspace.computed` (the Filters tab).
+
+A `python` op runs the code it carries: from a link made elsewhere, only
+code the platform marks as its own (`ownPython`, whatever its `#halo`) or
+code this browser has allowed (`allow`, kept in localStorage by its hash)
+runs; the rest is answered 403.
+
+`images/filters.ts` (the `.vfilter` files of earlier versions of the
+Filters tab) still reads the filtered layers of old links.
+

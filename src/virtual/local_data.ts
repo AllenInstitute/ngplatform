@@ -2,7 +2,7 @@
  * Data on this computer, opened in the viewer without uploading it: a
  * picked folder (an OME-Zarr image, a zarr-vectors store, a precomputed
  * volume) or file (NIfTI) gets a URL under <app>/local/<id>/, which the
- * service worker (public/local-sw.js) answers by asking this page for the
+ * service worker (src/sw.ts) answers by asking this page for the
  * file.  Neuroglancer reads it like any other source, ranges and all.
  *
  * Files that are not Zarr are read as virtual stores: the URLs under a
@@ -241,13 +241,13 @@ export class LocalData {
     this.worker ??= (async () => {
       navigator.serviceWorker.addEventListener("message", (event) => {
         const data = event.data;
-        if (data?.type === "local-read") void this.answer(data, event.ports[0]);
+        if (data?.type === "local-read") void this.answer({ ...data, path: data.file }, event.ports[0]);
         if (data?.type === "local-has") event.ports[0]?.postMessage(this.entries.has(data.id));
       });
       // Control can come after start() stops waiting (a busy page): tell the
       // worker then which data this page holds, so it need not ask around.
       navigator.serviceWorker.addEventListener("controllerchange", () => this.register());
-      const registration = await navigator.serviceWorker.register(new URL("local-sw.js", this.base), { scope: this.base });
+      const registration = await navigator.serviceWorker.register(new URL("sw.js", this.base), { scope: this.base });
       await navigator.serviceWorker.ready;
       if (navigator.serviceWorker.controller === null) {
         const controlled = new Promise<void>((resolve) => navigator.serviceWorker.addEventListener("controllerchange", () => resolve(), { once: true }));

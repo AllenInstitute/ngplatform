@@ -12,6 +12,7 @@ import { activeScene, layersOf } from "../core/workspace.js";
 import { type Engine, LAYOUTS } from "../engine/engine.js";
 import { AuthRegistry, browserAuthEnvironment, middleauthProvider } from "../platform/auth.js";
 import { JobService } from "../platform/jobs.js";
+import { ComputedImages } from "../virtual/computed.js";
 import { LocalData } from "../virtual/local_data.js";
 import { LocalPlugins } from "../platform/local_plugins.js";
 import { PluginHost } from "../platform/plugin_host.js";
@@ -216,6 +217,7 @@ export class Shell {
       },
       log,
       localData: new LocalData(),
+      computed: new ComputedImages(),
       parseFragment,
       framed,
       run: (id, args) => {
@@ -288,6 +290,10 @@ export class Shell {
       if (entry.virtualFormats !== undefined && plugins.resolution.enabled.has(entry.manifest.id)) wb.localData.addFormats(entry.virtualFormats());
     }
     void wb.localData.restore();
+    // The service worker from the start: a workspace's computed layers are
+    // asked for as soon as it opens.
+    wb.computed.listen();
+    void wb.localData.start();
     for (const entry of plugins.catalogue) {
       const enabled = plugins.resolution.enabled.has(entry.manifest.id);
       // A data type plugin has no platform code: it was loaded with the viewer.

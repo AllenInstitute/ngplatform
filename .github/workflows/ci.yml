@@ -34,6 +34,8 @@ jobs:
       - uses: actions/checkout@v5
         with:
           path: ngplatform
+          # chunkmirage's browser engine (vendor/chunkmirage).
+          submodules: true
       # package.json depends on file:../neuroglancer, so the fork sits beside it.
       - uses: actions/checkout@v5
         with:

@@ -5,6 +5,7 @@
  */
 import { catalogueUrl, loadLookupTable, LOOKUP_TABLES, lookupTitle } from "../engine/lookup_tables.js";
 import type { DatasetInfo, Json, LayerInfo, SceneDatasetInfo, ViewerApi, WorkspaceApi } from "../sdk/types.js";
+import { allow, decodePipeline, engineSource, ownPython, pipelineCode } from "../virtual/computed.js";
 import type { Workbench } from "./workbench.js";
 
 export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; viewer: ViewerApi } {
@@ -77,6 +78,20 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
       open: async (file, options) => (await wb.localData.openFile(file, options?.derived === true)).map(({ source, name, kind }) => ({ source, name, kind })),
       close: (source) => wb.localData.close(source),
       sourceFile: async (source) => (await wb.localData.sourceFile(source))?.file,
+    },
+    computed: {
+      url: async (pipeline) => {
+        const spec = { ...pipeline, source: engineSource(pipeline.source) };
+        await allow(spec);
+        return wb.computed.url(spec);
+      },
+      ownPython,
+      pipelineOf: async (source) => {
+        const code = pipelineCode(source);
+        return code === undefined ? undefined : decodePipeline(code).catch(() => undefined);
+      },
+      status: () => wb.computed.status,
+      onChanged: (callback) => wb.computed.onChange(callback),
     },
   };
 

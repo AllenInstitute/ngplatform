@@ -15,12 +15,15 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "noEmit": true,
+    // chunkmirage's engine (vendor/chunkmirage) imports some modules by their .ts names.
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "lib": ["dom", "webworker", "esnext", "dom.iterable"],
     "types": ["vite/client"],
     "paths": {
       "@ngplatform/sdk": ["./src/sdk/index.ts"],
-      "@ngplatform/sdk/*": ["./src/sdk/*.ts"]
+      "@ngplatform/sdk/*": ["./src/sdk/*.ts"],
+      "chunkmirage-web/*": ["./vendor/chunkmirage/web/src/*"]
     }
   },
   // Each plugin's top-level files and tests; zarr-vectors' package is

@@ -14,11 +14,13 @@
     "typecheck": "tsc -p . && tsc -p plugins/zarr-vectors"
   },
   "dependencies": {
+    "geotiff": "3.1.0-beta.0",
     "hyparquet": "1.31.4",
     "hyparquet-compressors": "1.1.2",
     "laz-perf": "0.0.7",
     "neuroglancer": "file:../neuroglancer",
-    "neuroglancer-zarr-vectors": "file:plugins/zarr-vectors"
+    "neuroglancer-zarr-vectors": "file:plugins/zarr-vectors",
+    "zarrita": "0.7.5"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",

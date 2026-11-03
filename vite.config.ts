@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vite";
+import { build as esbuild } from "esbuild";
+import { defineConfig, type Plugin } from "vite";
 
 // Neuroglancer is consumed as TypeScript source (see package.json), following
 // its own examples/vite configuration.  Plugins live in plugins/, one folder
@@ -8,8 +9,51 @@ const sdk = fileURLToPath(new URL("./src/sdk/", import.meta.url));
 // Neuroglancer's JPEG decoder is plain JavaScript, which its "./unstable/*.js"
 // export (to TypeScript sources) does not reach.
 const jpg = fileURLToPath(new URL("./node_modules/neuroglancer/src/third_party/jpgjs/jpg.js", import.meta.url));
+const webWorker = fileURLToPath(new URL("./node_modules/web-worker/src/browser/index.js", import.meta.url));
+// chunkmirage's browser engine, from its repository (a submodule: vendor/chunkmirage).
+const chunkmirage = fileURLToPath(new URL("./vendor/chunkmirage/web/src/", import.meta.url));
+
+/**
+ * The service worker (src/sw.ts), bundled on its own into sw.js beside the
+ * page: a classic script, as a service worker registered without
+ * `type: "module"` must be.  Served from memory by the dev server.
+ */
+function serviceWorker(): Plugin {
+  const bundle = async () => {
+    const out = await esbuild({
+      entryPoints: [fileURLToPath(new URL("./src/sw.ts", import.meta.url))],
+      bundle: true,
+      format: "iife",
+      target: "es2022",
+      minify: true,
+      write: false,
+      alias: { "chunkmirage-web": chunkmirage.replace(/\/$/, "") },
+      resolveExtensions: [".ts", ".js"],
+    });
+    return out.outputFiles[0].text;
+  };
+  return {
+    name: "ngplatform-service-worker",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url?.split("?")[0] !== "/sw.js") return next();
+        bundle().then(
+          (text) => {
+            res.setHeader("content-type", "text/javascript");
+            res.end(text);
+          },
+          (e: Error) => next(e),
+        );
+      });
+    },
+    async generateBundle() {
+      this.emitFile({ type: "asset", fileName: "sw.js", source: await bundle() });
+    },
+  };
+}
 
 export default defineConfig({
+  plugins: [serviceWorker()],
   // Relative asset URLs, so the built app can be served from any path: a
   // bucket prefix, GitHub Pages, or an artifact host.
   base: "",
@@ -18,6 +62,10 @@ export default defineConfig({
       { find: /^@ngplatform\/sdk$/, replacement: `${sdk}index.ts` },
       { find: /^@ngplatform\/sdk\/(.*)$/, replacement: `${sdk}$1.ts` },
       { find: /^neuroglancer\/unstable\/third_party\/jpgjs\/jpg\.js$/, replacement: jpg },
+      { find: /^chunkmirage-web\/(.*)$/, replacement: `${chunkmirage}$1` },
+      // geotiff's worker pool (chunkmirage reads GeoTIFFs with it) imports web-worker, whose
+      // browser build the conditions above (Neuroglancer's, in place of Vite's defaults) miss.
+      { find: /^web-worker$/, replacement: webWorker },
     ],
     conditions: [
       "neuroglancer/datasource:none_by_default",
