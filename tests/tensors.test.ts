@@ -1,6 +1,7 @@
 /** Log-Euclidean means of diffusion tensors (src/virtual/images/tensors.ts). */
 import { describe, expect, it } from "vitest";
-import { eigenSymmetric, TENSOR_POSITIONS } from "../plugins/orientations/tensor.js";
+import { eigenSym3 as pluginEigen, TENSOR_POSITIONS } from "../plugins/orientations/tensor.js";
+import { eigenJacobi } from "../plugins/orientations/tests/jacobi.js";
 import { eigenSym3, expTensor, logEuclideanMean, logTensor, TENSOR_SLOTS, type TensorOrder } from "../src/virtual/images/tensors.js";
 
 /** (xx, xy, xz, yy, yz, zz) of R diag(l) Rᵀ, R a rotation by `angle` about z. */
@@ -20,7 +21,7 @@ function inOrder(m: number[], order: TensorOrder): number[] {
 }
 
 describe("log-Euclidean tensor means", () => {
-  it("decomposes as the plugin's Jacobi rotations do, near-equal eigenvalues and all", () => {
+  it("decomposes as Jacobi rotations do, near-equal eigenvalues and all, as the plugin's copy does", () => {
     const values = new Float64Array(3);
     const vectors = new Float64Array(9);
     let seed = 7;
@@ -30,7 +31,7 @@ describe("log-Euclidean tensor means", () => {
       if (t % 3 === 0) [m[1], m[2], m[4]] = [m[1] * 1e-8, m[2] * 1e-8, m[4] * 1e-8];
       if (t % 5 === 0) m[3] = m[0];
       eigenSym3(m, values, vectors);
-      const jacobi = eigenSymmetric([m[0], m[1], m[2], m[1], m[3], m[4], m[2], m[4], m[5]]);
+      const jacobi = eigenJacobi([m[0], m[1], m[2], m[1], m[3], m[4], m[2], m[4], m[5]]);
       const scale = Math.max(...m.map(Math.abs));
       for (let k = 0; k < 3; ++k) expect(Math.abs(values[k] - jacobi.values[k]) / scale).toBeLessThan(1e-12);
       // Σ λ v vᵀ gives the matrix back.
@@ -40,6 +41,11 @@ describe("log-Euclidean tensor means", () => {
         for (let k = 0; k < 3; ++k) back[q] += values[k] * vectors[3 * k + a] * vectors[3 * k + b];
       });
       for (let q = 0; q < 6; ++q) expect(Math.abs(back[q] - m[q]) / scale).toBeLessThan(1e-12);
+      // The Orientations plugin's copy gives the very same.
+      const theirs = { values: new Float64Array(3), vectors: new Float64Array(9) };
+      pluginEigen(m, theirs.values, theirs.vectors);
+      expect(theirs.values).toEqual(values);
+      expect(theirs.vectors).toEqual(vectors);
     }
   });
 

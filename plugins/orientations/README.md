@@ -25,7 +25,7 @@ User guide: [docs/plugins/orientations.md](../../docs/plugins/orientations.md)
 | `render.ts` | Drawing glyph sets, in that canvas and in Neuroglancer's 3-D view (`draw3d`): ODFs as instanced meshes, tensor ellipsoids ray-cast, lines as quads. |
 | `glyphs.ts` | Voxels to glyphs: SH on a sphere, tensor ellipsoids (their semi-axes), lines. |
 | `sh.ts` | Real symmetric spherical harmonics in four bases; least-squares fit; the order-2 quadratic forms. |
-| `tensor.ts` | Tensor component orders, Jacobi eigen-decomposition, FA, MD. (Log-Euclidean means, for coarser levels, are the app's: `src/virtual/images/tensors.ts`.) |
+| `tensor.ts` | Tensor component orders, closed-form eigen-decomposition, FA, MD. (Log-Euclidean means, for coarser levels, are the app's: `src/virtual/images/tensors.ts`.) |
 | `sphere.ts` | Icospheres with each vertex's ring of neighbours (for normals). |
 | `reader.ts`, `ome4.ts` | The 4-D pyramid: levels, and the voxels of a box within slabs, as float32. |
 | `worker.ts`, `client.ts` | The reader and glyph computation in a worker. |
@@ -188,9 +188,17 @@ outside the white matter.
 
 Six components in one of three orders: FSL `dtifit` (Dxx Dxy Dxz Dyy Dyz
 Dzz, the default), DIPY `lower_triangular` (Dxx Dxy Dyy Dxz Dyz Dzz),
-MRtrix `dwi2tensor` (Dxx Dyy Dzz Dxy Dxz Dyz). Eigen-decomposition by
-Jacobi rotations; the ellipsoid's semi-axes are the eigenvalues over the
-largest (never under 0.08, so a disc still shows).
+MRtrix `dwi2tensor` (Dxx Dyy Dzz Dxy Dxz Dyz). Eigen-decomposition in
+closed form (Smith's eigenvalues; the most distinct one's eigenvector from
+cross products, the other two by one rotation in the plane across it), the
+same code as the app's NIfTI reader uses for log-Euclidean levels (copied:
+plugins import the platform only through the SDK; a test keeps the two
+identical, and checks both against Jacobi rotations, `tests/jacobi.ts`).
+It was Jacobi rotations, about 3–4 µs a tensor, which once ellipsoids were
+ray-cast was most of the worker's time for a tensor read; closed form is
+about 0.25 µs, and 100 000 tensors' glyphs take about 140 ms in Node
+instead of 390. The ellipsoid's semi-axes are the eigenvalues over
+the largest (never under 0.08, so a disc still shows).
 
 ### Levels and what is read
 
