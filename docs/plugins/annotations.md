@@ -5,10 +5,11 @@
 **Kind:** tool · **On by default** · the **Annotations** tab ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/annotations)
 
-Everything you add to annotate a dataset, in one tab with four sections:
-**Labels** for figures, **Measure**, **Statistics** and **Segmentation**
-(label volumes drawn by hand). Each section folds; the tab remembers which
-are open. (This plugin was called *Labels*; links made then still open.)
+Everything you add to annotate a dataset, in one tab with three sections:
+**Labels** for figures, **Measure** and **Statistics**. Each section folds;
+the tab remembers which are open. Label volumes drawn by hand, once a fourth
+section here, have a tab of their own: see [Segmentation](segmentation.md).
+(This plugin was called *Labels*; links made then still open.)
 
 ## Labels
 
@@ -47,7 +48,8 @@ view's side.
 ## Statistics
 
 As Freeview's label statistics: choose an **image** and a **region** (a box
-or ellipsoid annotation, a label of a label volume drawn here, or a label
+or ellipsoid annotation, a segment of a layer drawn in the
+[Segmentation](segmentation.md) tab, or a label
 of any segmentation layer whose voxels can be read, such as an atlas in
 NIfTI or OME-Zarr, by its number), then
 **Compute**: the voxel count, volume (mm³), mean, standard deviation
@@ -55,65 +57,6 @@ NIfTI or OME-Zarr, by its number), then
 of the image whose box round the region fits the **memory** chosen is read
 (the result says which). Results gather as cards; **Save as CSV** writes
 them.
-
-## Segmentation
-
-![Drawing labels on SRB 2026a: brush, fill, quick select](../images/plugins/annotations-segmentation.png)
-
-Label volumes drawn by hand, as in WebKnossos, ITK-SNAP or Freeview's voxel
-edit (see [the survey](segmentation-survey.md) for what is here and what
-is to come).
-
-- **New**: choose an image and one of its levels: the label volume has the
-  same voxels and placement. 8-bit labels go to 255, 16-bit to 65,535.
-  **Open NIfTI…** reads a label image from your computer to edit.
-- **Draw in the views** turns drawing on: the left button draws with the
-  tool, everything else stays Neuroglancer's (the wheel moves through
-  sections); hold ++space++ to move the view with the left button.
-  ++escape++ stops drawing.
-- Tools (keys while drawing):
-    - **Brush** (++b++): a disc in the section, or a ball; its radius in mm or µm
-      (round in space whatever the voxels) or in voxels; ++bracket-left++
-      and ++bracket-right++ change it. **Paint over** any label, or only
-      unlabelled voxels.
-    - **Erase** (++e++): any label, or only the active one.
-    - **Fill 2-D** (++f++) fills the region clicked in its section; **Fill
-      3-D** (++shift+f++) in a box a chosen reach round the click. A fill
-      follows the label clicked (fill inside an outline) or an intensity
-      range of the image.
-    - **Pick** (++i++) takes the label clicked.
-    - **Quick select** (++q++): drag a box round a structure in a 2-D view
-      (Otsu's threshold inside it; the side its middle is on) or click one
-      (values within the tolerance of the one clicked). Other methods (an
-      AI model) can be added by plugins.
-- **Interpolate** (++v++): draw a label in two sections a few apart (in
-  the same 2-D view), then fill the sections between: each takes a shape
-  between the two drawn (shape-based interpolation), on unlabelled voxels
-  only. Check the result, as with any interpolation.
-- **Image values**: the image whose values limit the tools (by default the
-  one the grid came from), a **range**, and whether the brush and eraser
-  keep to it. **Range from the cursor** sets it round the value under the
-  pointer.
-- **Undo** and **Redo** strokes: ++ctrl+z++ and ++ctrl+shift+z++ while
-  drawing (the workspace's own undo otherwise).
-- **Labels** lists the labels painted, with voxels and volume; click one to
-  draw with it. Choose each label's colour and name beside the label number;
-  **New label** takes the next unused one. **Erase label** removes the
-  active label everywhere, **Merge into…** gives its voxels another label
-  (both undoable).
-- **Save**: NIfTI (.nii.gz, marked as labels) or an OME-Zarr folder (in a
-  zip where the browser cannot write folders). **Only the painted box**
-  saves the box round what is painted, placed where it was. OME-Zarr writes
-  only the painted chunks, so it suits large grids, and carries the labels'
-  names and colours (OME-NGFF `image-label`); NIfTI holds every voxel.
-
-!!! warning "Save before you leave"
-    A label volume lives in the page until saved. While you draw it is also
-    kept in this browser, so a reload brings it back into its layer, and a
-    volume whose page was closed is offered again under **New** (*Kept in
-    this browser*: Open or Discard). That copy is not a save: the browser may
-    clear it, and the link does not carry it to another computer. **Close**
-    forgets it.
 
 ## Notes from users
 

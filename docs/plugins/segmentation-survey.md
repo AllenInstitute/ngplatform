@@ -3,8 +3,7 @@
 A short survey of volume annotation (labelling voxels by hand and with
 help) in [WebKnossos](https://docs.webknossos.org/webknossos/volume_annotation/index.html),
 the reference for this kind of work on large volumes, and what the
-[Annotations](annotations.md) plugin's **Segmentation** section builds now
-and later. Surveyed November 2026 from the WebKnossos user documentation.
+[Segmentation](segmentation.md) plugin builds now and later. Surveyed November 2026 from the WebKnossos user documentation.
 
 ## What WebKnossos offers
 
@@ -66,20 +65,23 @@ Neuroglancer reads its chunks again (see the plugin's README).
 
 | WebKnossos | Here | When |
 |---|---|---|
-| Brush, its size | **Brush**: a ball, or its disc in the section; radius in mm or µm (round in space on any voxels) or voxels; `[` and `]` | Now |
+| Tool bar over the views; Move as the default tool; tools by key (B, E, F, I, Q; W to cycle) | The same tool bar and keys while a layer is edited; Move (`M`, `Escape`) leaves the views to Neuroglancer | Now |
+| Brush, its size (Shift + wheel) | **Brush**: a ball, or its disc in the section; radius in voxels, mm or µm (round in space on any voxels); **Alt + wheel** (Neuroglancer's Shift + wheel steps ten sections), `[` and `]`, the bar's − and + | Now |
+| A new volume layer, empty or over an existing segmentation | **New segmentation layer** on an image's or a segmentation's grid, at a level; or a **copy** of a segmentation's labels at a level to edit (WebKnossos edits a fallback segmentation in place; here a copy, up to 512 M voxels) | Now |
 | Eraser | **Erase**: any label, or only the active one | Now |
 | Overwrite modes | **Paint over**: any label, or unlabelled only | Now |
 | Fill 2-D / 3-D by labels | **Fill 2-D** (the section) and **Fill 3-D** (a box a set reach round the click), by the label clicked | Now |
 | — (WebKnossos fills ignore the image) | Fills and the brush limited to an **intensity range** of an image (as ITK-SNAP's and Freeview's thresholds) | Now |
-| Segment picker | **Pick** | Now |
+| Segment picker | **Pick segment** (`I`) | Now |
+| Create new segment ID (C) | **New segment** (`C`): one more than the largest id used | Now |
 | Quick select, threshold | **Quick select** with a box (Otsu's threshold, the side the box's middle is on, its connected part) or a click (a tolerance round the value) | Now |
-| Quick select, AI (SAM) | The same tool takes other methods through the `annotations.quickSelect` service: a method gets the prompt and the image's values round it on the label grid, and returns a mask. A Segment Anything method served elsewhere (or in the page with ONNX Runtime Web) can plug in without changing the tool | Later |
+| Quick select, AI (SAM) | The same tool takes other methods through the `segmentation.quickSelect` service: a method gets the prompt and the image's values round it on the label grid, and returns a mask. A Segment Anything method served elsewhere (or in the page with ONNX Runtime Web) can plug in without changing the tool | Later |
 | Preview, Enter / Escape | Quick select paints at once (undo takes it back) | Later |
-| Undo / redo | **Undo**, **Redo** of strokes (`Ctrl+Z`, `Ctrl+Shift+Z` while drawing), within a memory budget | Now |
+| Undo / redo | **Undo**, **Redo** of strokes (`Ctrl+Z`, `Ctrl+Y` while a layer is edited), within a memory budget | Now |
 | Trace (lasso) | Draw an outline with the brush and **Fill 2-D** inside it; a lasso tool proper | Later |
-| Interpolation between sections (V) | **Interpolate** (++v++): shape-based (signed distances, weighted by nearness) through the unlabelled sections between drawn sections of the active label, across the view last drawn in | Now |
-| 3-D flood fill to relabel a segment (fixing splits and merges by hand) | **Merge into…** and **Erase label** on the active label, everywhere | Now |
-| Segments list, statistics, CSV | **Labels** table (voxels, volume); names and colours; the **Statistics** section (an image's values in a label) with CSV | Now |
+| Interpolation between sections (V) | **Interpolate** (++v++): shape-based (signed distances, weighted by nearness) through the sections between drawn sections of the active segment (over any segment, or empty voxels only, as **Paint over** says), across the view last drawn in | Now |
+| 3-D flood fill to relabel a segment (fixing splits and merges by hand) | **Merge** (a segment into the active one) and **Delete**, everywhere | Now |
+| Segments list: active segment, names, colours, visibility, go to; statistics, CSV | **Segments** list: the active one marked, names, colours, voxels and volume, shown or hidden, **Go to**; Annotations' **Statistics** section (an image's values in a segment) with CSV | Now |
 | Import / export | **Open** a NIfTI label image; **Save** as NIfTI (.nii.gz, label intent) or OME-Zarr (only painted chunks written), optionally only the painted box | Now |
 | Pen tablet | Pointer events would give pressure; not yet used | Later |
 | Proofreading: merge and split agglomerates | Needs a supervoxel graph and an editable mapping: for CAVE / graphene segmentations Neuroglancer already has its own merge and split tools; for others, later | Later |

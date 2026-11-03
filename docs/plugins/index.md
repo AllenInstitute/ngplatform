@@ -13,7 +13,7 @@ and a *Read more* guide each.
   `|zarr-vectors:`). They can also declare files they read in place from
   your computer, as virtual stores.
 - **Tools** add tabs, commands, overlays and views around Neuroglancer: track
-  filtering, annotations, registration, volume rendering. They work through the
+  filtering, annotations, segmentation, registration, volume rendering. They work through the
   platform's SDK (`@ngplatform/sdk`): the workspace, the viewer, the docks,
   jobs, storage and sign-in.
 
@@ -23,7 +23,8 @@ and a *Read more* guide each.
 |---|---|---|---|
 | [Zarr Vectors](zarr-vectors.md) | data type | yes | Points, streamlines, skeletons, graphs and meshes from Zarr Vectors stores, and local tractograms, meshes, neurons and point tables as virtual stores. |
 | [Track filtering](track-filtering.md) | tool | yes | TrackVis-style groups of the objects that pass through regions. |
-| [Annotations](annotations.md) | tool | yes | Labels on the views for figures, measurements, statistics in a region, and label volumes drawn by hand. |
+| [Annotations](annotations.md) | tool | yes | Labels on the views for figures, measurements, and statistics in a region. |
+| [Segmentation](segmentation.md) | tool | yes | Label volumes drawn by hand, as in WebKnossos: a new segmentation layer on an image's grid or a copy of a segmentation, a tool bar over the views, a segment list, saving as NIfTI or OME-Zarr. |
 | [Registration](registration.md) | tool | no | Move a layer by hand (as Freeview) or by landmarks; save the transform or the moved image. |
 | [Volume rendering](volume-rendering.md) | tool | no | An image drawn as a solid in the 3-D view, cut open at the position. |
 | [Filters](filters.md) | tool | no | An image filtered on the fly (mean, median, Gaussian, Frangi vesselness) as a layer of its own. |
