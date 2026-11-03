@@ -19,7 +19,7 @@ import { GlyphRenderer } from "./render.js";
 import { lmaxOf, SH_BASES, type ShBasis } from "./sh.js";
 import { directionShader } from "./shader.js";
 import { TENSOR_ORDERS, type TensorOrder } from "./tensor.js";
-import { type Box, boxAround, chooseLevel, contains, invert4, planesAround, type Section, sectionOf, type Slab, slabOf, slabVoxels, unproject, type Vec3, applyAffine } from "./view.js";
+import { type Box, chooseLevel, type SectionPlan, contains, invert4, planesAround, planSection, type Section, sectionOf, type Slab, type Vec3, applyAffine } from "./view.js";
 
 export interface Saved {
   on: boolean;
@@ -129,15 +129,7 @@ interface Slot {
   note?: string;
 }
 
-/** What a view wants read: a level, the voxels in view (and a margin), and the slab of its section. */
-interface Want {
-  level: number;
-  box: Box;
-  visible: Box;
-  slabs: Slab[];
-  key: string;
-  subdivisions: number;
-}
+type Want = SectionPlan;
 
 /** The global coordinate space, as the state has it, cached from state changes. */
 interface Space {
@@ -422,32 +414,7 @@ class Orientations {
 
   /** What a 2-D view wants read. */
   private want2d(section: Section): Want | { note: string } {
-    const levels = this.opened!.levels;
-    const level = chooseLevel(
-      levels.map((l) => l.voxelSize),
-      section.pxPerMm,
-      this.saved.spacing,
-    );
-    const info = levels[level];
-    const corners = [
-      [0, 0],
-      [section.width, 0],
-      [0, section.height],
-      [section.width, section.height],
-    ].map(([x, y]) => unproject(section, x, y));
-    if (corners.some((c) => c === undefined)) return { note: "" };
-    const visible = boxAround(info.voxelToRas, info.size, corners as Vec3[], 0);
-    const box = boxAround(info.voxelToRas, info.size, corners as Vec3[], 0.25);
-    if (visible === undefined || box === undefined) return { note: "" };
-    const slab = slabOf(info.voxelToRas, section.origin, section.normal);
-    if (slabVoxels(visible, slab) > this.saved.maxGlyphs) return { note: `more than ${this.saved.maxGlyphs} glyphs at the coarsest level: zoom in` };
-    const spacingPx = info.voxelSize * section.pxPerMm;
-    // Glyphs a few pixels across show nothing but noise.
-    if (spacingPx < 4) return { note: "glyphs would be under 4 pixels apart at the coarsest level: zoom in" };
-    // A finer sphere only where glyphs are big enough to show it.
-    const subdivisions = spacingPx * this.saved.size >= 40 ? 3 : 2;
-    const key = `${level}|${slab.n.map((v) => v.toFixed(4)).join(",")}|${Math.round(slab.d * 1e3)}|${subdivisions}`;
-    return { level, box, visible, slabs: [slab], key, subdivisions };
+    return planSection(this.opened!.levels, section, this.saved);
   }
 
   /** What the 3-D view wants read when there are no 2-D views: three planes through the position. */

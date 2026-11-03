@@ -176,3 +176,53 @@ export function planesAround(voxel: Vec3, size: Vec3, half: number): { box: Box;
   const slabs: Slab[] = [0, 1, 2].map((k) => ({ n: [0, 1, 2].map((j) => (j === k ? 1 : 0)) as Vec3, d: at[k], h: 0.5 }));
   return { box, slabs };
 }
+
+/** What a view wants read: a level, the voxels in view (and a margin), and the slab of its section. */
+export interface SectionPlan {
+  level: number;
+  /** The voxels to read: what the view shows, and a quarter more each way. */
+  box: Box;
+  /** What the view shows. */
+  visible: Box;
+  slabs: Slab[];
+  /** Same key, same voxels (given a box that covers `visible`). */
+  key: string;
+  /** The sphere's subdivisions for glyphs this size. */
+  subdivisions: number;
+}
+
+/**
+ * What a 2-D view should read: the finest level whose voxels are at least
+ * `spacing` pixels apart, or a coarser one while that would be more than
+ * `maxGlyphs` glyphs; nothing (with a note) when even the coarsest would be
+ * too many, or glyphs under 4 pixels apart.  `levels` finest first.
+ */
+export function planSection(
+  levels: { voxelSize: number; voxelToRas: Mat4; size: Vec3 }[],
+  section: Section,
+  options: { spacing: number; maxGlyphs: number; size: number },
+): SectionPlan | { note: string } {
+  const corners = [
+    [0, 0],
+    [section.width, 0],
+    [0, section.height],
+    [section.width, section.height],
+  ].map(([x, y]) => unproject(section, x, y));
+  if (corners.some((c) => c === undefined)) return { note: "" };
+  for (let level = chooseLevel(levels.map((l) => l.voxelSize), section.pxPerMm, options.spacing); level < levels.length; ++level) {
+    const info = levels[level];
+    const visible = boxAround(info.voxelToRas, info.size, corners as Vec3[], 0);
+    const box = boxAround(info.voxelToRas, info.size, corners as Vec3[], 0.25);
+    if (visible === undefined || box === undefined) return { note: "" };
+    const slab = slabOf(info.voxelToRas, section.origin, section.normal);
+    if (slabVoxels(visible, slab) > options.maxGlyphs) continue;
+    const spacingPx = info.voxelSize * section.pxPerMm;
+    // Glyphs a few pixels across show nothing but noise.
+    if (spacingPx < 4) return { note: "glyphs would be under 4 pixels apart: zoom in" };
+    // A finer sphere only where glyphs are big enough to show it.
+    const subdivisions = spacingPx * options.size >= 40 ? 3 : 2;
+    const key = `${level}|${slab.n.map((v) => v.toFixed(4)).join(",")}|${Math.round(slab.d * 1e3)}|${subdivisions}`;
+    return { level, box, visible, slabs: [slab], key, subdivisions };
+  }
+  return { note: `more than ${options.maxGlyphs} glyphs even at the coarsest level: zoom in` };
+}

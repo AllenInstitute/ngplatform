@@ -17,7 +17,7 @@ import { readSaved, resolveBasis, resolveFrame, resolveKind } from "../plugin.js
 import { OrientationReader } from "../reader.js";
 import { directionShader } from "../shader.js";
 import { icosphere } from "../sphere.js";
-import { boxAround, chooseLevel, planesAround, sectionOf, slabOf, slabVoxels, unproject, type Vec3 } from "../view.js";
+import { boxAround, chooseLevel, planesAround, planSection, sectionOf, slabOf, slabVoxels, unproject, type Vec3 } from "../view.js";
 import { buildStore, crossingSh, type Store, storeFetch, tensorField, vectorField } from "./synthetic.js";
 
 const SIZE: [number, number, number] = [32, 32, 8];
@@ -320,6 +320,37 @@ describe("views", () => {
       const inside = -slab.h <= z - slab.d && z - slab.d < slab.h;
       expect(inside).toBe(z === 100);
     }
+  });
+
+  it("plans a view's reading: finer levels as it zooms in, coarser beyond the cap", () => {
+    // A pyramid of 1, 2, 4 and 8 mm over 256 mm, like a pyramid writer makes.
+    const levels = [1, 2, 4, 8].map((v) => ({
+      voxelSize: v,
+      voxelToRas: [v, 0, 0, (v - 1) / 2, 0, v, 0, (v - 1) / 2, 0, 0, v, (v - 1) / 2, 0, 0, 0, 1],
+      size: [256 / v, 256 / v, 256 / v] as Vec3,
+    }));
+    const plan = (zoom: number, maxGlyphs = 8000) => planSection(levels, axial([128, 128, 128], zoom), { spacing: 24, maxGlyphs, size: 1 });
+    const levelAt = (zoom: number, maxGlyphs?: number) => {
+      const p = plan(zoom, maxGlyphs);
+      return "note" in p ? p.note : p.level;
+    };
+    // 3 px/mm: 8 mm voxels are 24 px apart; 6: 4 mm; 12: 2 mm; 24 and more: 1 mm.
+    expect([3, 6, 12, 24, 48].map((z) => levelAt(z))).toEqual([3, 2, 1, 0, 0]);
+    // Zoomed out past the coarsest: glyphs too small.
+    expect(levelAt(0.4)).toMatch(/under 4 pixels/);
+    // At 24 px/mm the 1 mm level reads about 20 × 16 voxels (what shows, and a voxel round it); capped at 300, the 2 mm level.
+    expect(levelAt(24, 300)).toBe(1);
+    expect(levelAt(24, 10)).toMatch(/coarsest/);
+    // What is read covers what is shown, with a margin, on the section's plane of voxels.
+    const p = plan(12);
+    if ("note" in p) throw new Error(p.note);
+    expect(p.box.lo.every((v, k) => v <= p.visible.lo[k])).toBe(true);
+    expect(p.box.hi.every((v, k) => v >= p.visible.hi[k])).toBe(true);
+    expect(p.slabs[0].n.map(Math.abs)).toEqual([0, 0, 1]);
+    // Big glyphs get the finer sphere.
+    expect(p.subdivisions).toBe(2);
+    const big = plan(48);
+    expect("note" in big ? 0 : big.subdivisions).toBe(3);
   });
 
   it("places three planes around the position for the 3-D view", () => {
