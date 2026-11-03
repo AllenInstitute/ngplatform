@@ -323,7 +323,7 @@ describe("views", () => {
 describe("settings", () => {
   it("fills in defaults", () => {
     const s = readSaved(undefined);
-    expect(s).toMatchObject({ on: false, kind: "auto", basis: "auto", normalise: "minmax", spacing: 14, show2d: true, show3d: true });
+    expect(s).toMatchObject({ on: false, kind: "auto", basis: "auto", normalise: "minmax", spacing: 24, show2d: true, show3d: true });
     expect(readSaved({ spacing: 1000, flips: [true, 0, false] }).spacing).toBe(200);
   });
 

@@ -26,6 +26,7 @@ and a *Read more* guide each.
 | [Labels](labels.md) | tool | yes | Labels on the views for figures, in screenshots too. |
 | [Registration](registration.md) | tool | no | Move a layer by hand (as Freeview) or by landmarks; save the transform or the moved image. |
 | [Volume rendering](volume-rendering.md) | tool | no | An image drawn as a solid in the 3-D view, cut open at the position. |
+| [Orientations](orientations.md) | tool | no | ODF glyphs from spherical harmonics, tensor ellipsoids and peak lines over an image, finer as you zoom in; direction colour. |
 
 ## Switching, adding and writing plugins
 

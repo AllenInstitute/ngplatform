@@ -43,14 +43,17 @@ export function sectionOf(project: (ras: Vec3) => { x: number; y: number; depth:
     cols.push([p.x - p0.x, p.y - p0.y, p.depth - p0.depth]);
   }
   const row = (r: number) => [cols[0][r], cols[1][r], cols[2][r]];
-  const [rx, ry, rz] = [row(0), row(1), row(2)];
-  const t = [p0.x, p0.y, p0.depth].map((v, r) => v - [rx, ry, rz][r].reduce((s, c, k) => s + c * origin[k], 0));
-  const toScreen = [...rx, t[0], ...ry, t[1], ...rz, t[2]];
-  const nz = Math.hypot(rz[0], rz[1], rz[2]);
-  if (!(nz > 0)) return undefined;
-  const normal = rz.map((v) => v / nz) as Vec3;
+  const [rx, ry] = [row(0), row(1)];
+  // Into the screen: right × down (the view's own depth may not vary across a section).
+  const n = [rx[1] * ry[2] - rx[2] * ry[1], rx[2] * ry[0] - rx[0] * ry[2], rx[0] * ry[1] - rx[1] * ry[0]];
+  const nn = Math.hypot(n[0], n[1], n[2]);
   const pxPerMm = Math.sqrt(Math.hypot(rx[0], rx[1], rx[2]) * Math.hypot(ry[0], ry[1], ry[2]));
-  if (!(pxPerMm > 0)) return undefined;
+  if (!(nn > 0) || !(pxPerMm > 0)) return undefined;
+  const normal = n.map((v) => v / nn) as Vec3;
+  // Depth is millimetres along the normal, 0 on the section.
+  const rz = normal;
+  const t = [p0.x, p0.y, 0].map((v, r) => v - [rx, ry, rz][r].reduce((s, c, k) => s + c * origin[k], 0));
+  const toScreen = [...rx, t[0], ...ry, t[1], ...rz, t[2]];
   return { toScreen, width, height, origin, normal, pxPerMm };
 }
 

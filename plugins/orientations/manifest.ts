@@ -39,6 +39,7 @@ The glyphs of the 2-D views' sections are drawn on those sections in the 3-D vie
     { title: "DIPY: spherical harmonic bases", url: "https://docs.dipy.org/stable/theory/sh_basis.html" },
     { title: "MRtrix3: spherical harmonics", url: "https://mrtrix.readthedocs.io/en/latest/concepts/spherical_harmonics.html" },
   ],
+  provides: { services: ["orientations.status"] },
   contributes: {
     panels: [{ id: ORIENTATIONS_PANEL, title: "Orientations", slot: "left", order: 55 }],
     commands: [{ id: "orientations.toggle", title: "Orientation glyphs on or off", group: "View" }],

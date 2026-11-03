@@ -60,7 +60,7 @@ export function readSaved(raw: unknown): Saved {
     normalise: pick(s.normalise, ["minmax", "max", "none"], "minmax"),
     tensorGlyph: pick(s.tensorGlyph, ["ellipsoid", "line"], "ellipsoid"),
     size: num(s.size, 0.2, 3, 1),
-    spacing: num(s.spacing, 4, 200, 14),
+    spacing: num(s.spacing, 4, 200, 24),
     maxGlyphs: num(s.maxGlyphs, 100, 50000, 8000),
     show2d: s.show2d !== false,
     show3d: s.show3d !== false,
@@ -319,6 +319,7 @@ class Orientations {
       this.handleLayer = undefined;
       this.clearSlots();
       this.glyphOverlay?.draw([], 1);
+      this.drawn = "";
       this.panelUpdate?.();
       return;
     }
@@ -438,7 +439,8 @@ class Orientations {
     const slab = slabOf(info.voxelToRas, section.origin, section.normal);
     if (slabVoxels(visible, slab) > this.saved.maxGlyphs) return { note: `more than ${this.saved.maxGlyphs} glyphs at the coarsest level: zoom in` };
     const spacingPx = info.voxelSize * section.pxPerMm;
-    const subdivisions = spacingPx >= 28 ? 3 : 2;
+    // A finer sphere only where glyphs are big enough to show it.
+    const subdivisions = spacingPx * this.saved.size >= 40 ? 3 : 2;
     const key = `${level}|${slab.n.map((v) => v.toFixed(4)).join(",")}|${Math.round(slab.d * 1e3)}|${subdivisions}`;
     return { level, box, visible, slabs: [slab], key, subdivisions };
   }
@@ -469,10 +471,12 @@ class Orientations {
     return { level, box: planes.box, visible: planes.box, slabs: planes.slabs, key, subdivisions: 2 };
   }
 
-  private frame(): void {
+  private frame(force = false): void {
     const opened = this.opened;
+    this.stats.frames++;
     if (!this.saved.on || opened === undefined || this.glyphOverlay === undefined) {
-      this.glyphOverlay?.draw([], 1);
+      if (this.drawn !== "") this.glyphOverlay?.draw([], 1);
+      this.drawn = "";
       return;
     }
     const sections = this.sections();
@@ -509,7 +513,28 @@ class Orientations {
       slot.pending?.controller.abort();
       this.slots.delete(key);
     }
+    // Only when something moved or arrived: Neuroglancer draws many frames
+    // while chunks load, and glyphs are many triangles.
+    const signature = draws
+      .map((d) => [d.left, d.top, d.width, d.height, ...d.section.toScreen.map((v) => v.toPrecision(7)), ...d.sets.map((s) => `${this.idOf(s.set)}:${s.scale}`)].join(","))
+      .join("|");
+    if (!force && signature === this.drawn) return;
+    this.drawn = signature;
+    const started = performance.now();
     this.glyphOverlay.draw(draws, 2);
+    this.stats.draws++;
+    this.stats.drawMs += performance.now() - started;
+  }
+
+  private drawn = "";
+  private ids = new WeakMap<GlyphSet, number>();
+  private nextId = 1;
+  readonly stats = { frames: 0, draws: 0, drawMs: 0, reads: 0, readMs: 0 };
+
+  private idOf(set: GlyphSet): number {
+    let id = this.ids.get(set);
+    if (id === undefined) this.ids.set(set, (id = this.nextId++));
+    return id;
   }
 
   /** Reads what a view wants when what it shows (or is reading) does not cover it. */
@@ -558,11 +583,14 @@ class Orientations {
     const controller = new AbortController();
     slot.pending = { key: want.key, box: want.box, level: want.level, controller };
     this.panelUpdate?.();
+    const started = performance.now();
     client.glyphs(want.level, { lo: want.box.lo, hi: want.box.hi, slabs: want.slabs }, options, controller.signal).then(
       ({ set }) => {
         if (slot.pending?.controller !== controller) return;
         slot.pending = undefined;
         slot.shown = { set, level: want.level, box: want.box, key: want.key };
+        this.stats.reads++;
+        this.stats.readMs += performance.now() - started;
         this.schedule();
         this.handle?.redraw();
         this.panelUpdate?.();
@@ -629,7 +657,7 @@ class Orientations {
   private paintScreenshot(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void {
     if (!this.saved.on || !this.saved.show2d || this.glyphOverlay === undefined || this.overlay === undefined) return;
     // Drawn again now, so the canvas holds this frame when it is copied.
-    this.frame();
+    this.frame(true);
     const glyphs = this.glyphOverlay.canvas;
     const canvasRect = canvas.getBoundingClientRect();
     const scale = canvas.width / Math.max(1, canvasRect.width);
@@ -653,41 +681,37 @@ class Orientations {
       this.ctx.ui.toast("Direction colour needs vectors, tensors or spherical harmonics.");
       return;
     }
+    // The components as a channel dimension (`c^`), so the shader sees them all
+    // at once: the layer's output dimensions as they are, that one renamed.
+    const transform = this.ctx.viewer.layerTransform(target.name);
+    const axis = opened.componentAxis;
+    const names = transform?.output.names ?? [];
+    const current = names.find((n) => n === `${axis}'` || n === axis || n === `${axis}^`);
+    if (transform === undefined || current === undefined) {
+      this.ctx.ui.toast("The image's layer has not loaded yet; try again in a moment.");
+      return;
+    }
     this.ctx.viewer.patchState((ng) => {
       const layers = (ng.layers ?? []) as Record<string, unknown>[];
       const layer = layers.find((l) => l.name === target.name);
       if (layer === undefined) return;
       layer.shader = shader;
-      layer.channelDimensions = undefined;
-      const local = this.channelAxisName(layer);
-      if (local !== undefined) {
-        // The components as a channel dimension (`c^`), so the shader sees them all at once.
-        const source: Record<string, unknown> = typeof layer.source === "string" ? { url: layer.source } : { ...(layer.source as Record<string, unknown>) };
-        const transform = { ...((source.transform as Record<string, unknown>) ?? {}) };
-        const outputs = { ...((transform.outputDimensions as Record<string, unknown>) ?? {}) };
-        if (Object.keys(outputs).length > 0) {
-          const renamed: Record<string, unknown> = {};
-          for (const [k, v] of Object.entries(outputs)) renamed[k === local ? `${opened.componentAxis}^` : k] = v;
-          transform.outputDimensions = renamed;
-          source.transform = transform;
-          layer.source = source;
-        }
-      }
+      if (current === `${axis}^`) return;
+      const source: Record<string, unknown> = typeof layer.source === "string" ? { url: layer.source } : { ...(layer.source as Record<string, unknown>) };
+      const outputDimensions: Record<string, [number, string]> = {};
+      names.forEach((n, i) => (outputDimensions[n === current ? `${axis}^` : n] = [transform.output.scales[i], transform.output.units[i]]));
+      source.transform = { ...((source.transform as Record<string, unknown>) ?? {}), outputDimensions };
+      layer.source = source;
+      // The local (or global) position along it no longer applies.
+      delete layer.localDimensions;
+      delete layer.localPosition;
     });
-  }
-
-  /** The layer's name for the component axis, from its transform (c' for a channel axis, t for a NIfTI's). */
-  private channelAxisName(layer: Record<string, unknown>): string | undefined {
-    const source = layer.source as { transform?: { outputDimensions?: Record<string, unknown> } } | string | undefined;
-    const outputs = typeof source === "object" ? source.transform?.outputDimensions : undefined;
-    if (outputs === undefined) return undefined;
-    const axis = this.opened!.componentAxis;
-    return [`${axis}'`, axis].find((k) => k in outputs);
   }
 
   // ------------------------------------------------------------- panel
 
-  private describe(): string[] {
+  /** What the image is and what each view shows, in lines for the panel. */
+  describe(): string[] {
     const lines: string[] = [];
     const opened = this.opened;
     if (opened === undefined) return lines;
@@ -895,6 +919,8 @@ export const plugin: PluginModule = {
       if (instance === own) instance = undefined;
     });
     ctx.ui.panel(ORIENTATIONS_PANEL, (host) => own.render(host));
+    // What is shown, for other plugins and for checking the plugin in a browser.
+    ctx.services.provide("orientations.status", { lines: () => own.describe(), stats: own.stats });
     ctx.commands.register("orientations.toggle", () => {
       const saved = readSaved(ctx.state.get());
       ctx.state.set({ ...saved, on: !saved.on });
