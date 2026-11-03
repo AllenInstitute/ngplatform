@@ -22,9 +22,13 @@ point tables). Nothing is converted and no files are written.
 | `view3d.ts` | The 3-D view, through `viewer.draw3d`: the float target, tone mapping, depth |
 | `view2d.ts` | The 2-D views, on a canvas over them (the platform's overlay), with each panel's camera |
 | `render_gl.ts` | WebGL2: the line and point shaders, upload, the tone-mapping composite |
+| `mesh_gl.ts` | A mesh's shaders: lit triangles in 3-D, the outline where the section cuts them in 2-D |
+| `bloom.ts` | Bloom: the bright pass and the separable Gaussian blur at three scales |
 | `chunks.ts` | Levels of detail and which chunks a view reads and draws; the per-context GPU cache |
 | `client.ts`, `luxar_worker.ts` | Reading a store's chunks with the Zarr Vectors reader, in a worker |
-| `chunk_build.ts` | A decoded chunk made ready to draw: a vertex texture and (previous, start, end, next) segments |
+| `chunk_build.ts` | A decoded chunk made ready to draw: a vertex texture, (previous, start, end, next) segments, and each vertex's object as a slot in the chunk's list of objects |
+| `segments.ts` | Which of a chunk's objects show and their colours: the table the shaders look each vertex's object up in |
+| `sources.ts` | Which of a layer's sources it draws (a source with its parts off draws nothing) |
 | `view_math.ts` | Matrices, frustum and slab tests, level choice |
 | `camera.ts` | Optional momentum on rotating the 3-D view |
 | `style.ts` | The per-layer style kept in the workspace |
@@ -73,6 +77,40 @@ data formats directly:
   window), the thickness being a per-layer control.
 
 `@luxar/viewer` is not a dependency: nothing of three.js is bundled.
+
+### Meshes
+
+A Zarr Vectors `mesh` store (a surface) is drawn from the reader's dense
+chunks, whose faces include those reaching into a neighbour chunk (their
+corners there as copies). Each chunk keeps its triangles and a normal per
+vertex (the area-weighted mean of its faces' in the chunk), an RGBA32F
+texture beside the vertex texture (`chunk_build.ts`, `mesh_gl.ts`). The
+faces that span chunks are found only by listing the store's link arrays,
+so the worker reads with listing on (`httpAccess(url, { listing: true })`
+in the Zarr Vectors reader: a Cloud Storage bucket's JSON API, or the
+HTML index a server or the app's local data gives for a directory); where
+a server gives neither, those faces are missing and the surface shows
+gaps along chunk faces.
+
+- **3-D**: each triangle drawn (two-sided) and lit by a light at the eye
+  (the eye found from the view's matrix: the point it maps to clip
+  x = y = w = 0, or for an orthographic view, the direction it looks
+  along). *Glow* adds `0.2 + 0.6 f + 0.6 (1 - f)^3` of the colour (`f`
+  how squarely the surface faces the eye: lit, with a rim where it turns
+  away) into the same float target as lines and points, tone mapped and
+  depth-tested the same way, so the surface reads as a lit, glowing shell
+  and other Luxar layers composite with it; *emission and absorption*
+  also absorbs `absorption / max(f, 0.2)` (a longer path through a surface
+  seen edge on); *solid* draws it opaque (`0.25 + 0.75 f`, a highlight),
+  depth-written, into the view. Colour by direction is by the normal.
+  Automatic brightness counts a surface's area on screen (half of it,
+  seen at all angles).
+- **2-D**: each triangle the section cuts is drawn as the segment where it
+  crosses (one instanced quad per triangle, as Neuroglancer draws a mesh in
+  a section), the layer's width across, with the line's cross-section:
+  the surface's outline, glowing.
+
+The layer's chosen segments and colours apply as for lines.
 
 ### How it sits in Neuroglancer's frame (3-D)
 
@@ -154,20 +192,86 @@ brightness as levels come and go. A correction by each level's share of
 the objects was tried first: it makes a sparse sample's few lines glare.
 *Brightness* is in stops on top.
 
+### Bloom
+
+Luxar's glow around bright light (*Bloom*, an amount per layer, 0 is off,
+the default; lines, points and splats, in the 3-D view and the 2-D views).
+After the light is added up in the float target and before it is tone
+mapped (`bloom.ts`):
+
+1. a bright pass keeps what is brighter than 1 (light the tone map shows
+   at about 0.8), with a soft knee from 0.5 to 1.5 so the glow fades in;
+   with emission and absorption, of the light as it is shown (screened by
+   its own absorption); it is taken at half the view's size (each pixel
+   the mean of four);
+2. it is blurred by a separable Gaussian (sigma 2 pixels, 13 taps, across
+   then down) at half, a quarter and an eighth of the view's size, each
+   scale made from the one before: glows of about 4, 8 and 16 pixels;
+3. the composite adds the mean of the three scales (read with bilinear
+   filtering), times the amount, to the light, then tone maps.
+
+So a bright bundle bleeds light into what is around it, the wider the
+brighter. In the 2-D views the blur runs over the whole canvas, so a
+panel's glow can reach a few pixels into the next. Solid tubes have none.
+
 ### Setting Neuroglancer's own drawing aside
 
-While a layer is drawn here, its segments are shown as a temporary set
-naming no object (`setTemporaryVisibleSegments`). Neuroglancer then neither
-draws the layer's overview nor reads chunks for it (the dense layer reads
-nothing when nothing it would draw is visible), and temporary sets are not
-saved: a link with Luxar layers opened without this plugin shows the layers
-drawn by Neuroglancer. The layer itself stays visible, which keeps the
-3-D drawer (a render layer of that layer) drawing; hiding the layer hides
-both.
+While a layer is drawn here, Neuroglancer's drawing of it is hidden
+(`viewer.hideLayerDrawing`): the engine shows its segments as a temporary
+set naming no object. Neuroglancer then neither draws the layer's overview
+nor reads chunks for it (the dense layer reads nothing when nothing it
+would draw is visible), and temporary sets are not saved: a link with
+Luxar layers opened without this plugin shows the layers drawn by
+Neuroglancer. The layer itself stays visible, which keeps the 3-D drawer
+(a render layer of that layer) drawing; hiding the layer hides both.
 
-The cost: a layer whose segments are being chosen by another tool through
-a temporary set (track filtering's group layers) cannot be drawn here
-without losing that choice; see *What is left*.
+### The layer's chosen segments
+
+What the layer shows is drawn, as Neuroglancer would draw it: every object
+when no segment is chosen (and the layer's *ignore null visible set* is on,
+the default), else only the chosen segments. The engine keeps the set
+apart from its hiding (`viewer.visibleSegments`): the layer's own
+`segments`, or a temporary set another plugin gives
+(`setTemporaryVisibleSegments`, as track filtering does for a group), which
+the engine keeps while the drawing is hidden and puts back when it is shown
+again.
+
+Each built chunk lists its objects, and each vertex names its object by a
+slot in that list (an R32UI texture beside the vertex texture). For what
+the layer shows now, each chunk gets a small RGBA8 table, one texel per
+object: shown or not, and the object's colour as Neuroglancer colours it
+(a colour chosen for it, the layer's default colour, or the hash of its id
+with the layer's seed, and the layer's saturation; *Colour: the layer's
+segment colours*). The line and point shaders look the vertex's object up
+and drop what is hidden. Tables are made again when the segments or
+colours change (`viewer.onSegmentsChanged`), not the chunks. A chunk none
+of whose objects shows is not drawn. Automatic brightness counts only the
+share of a chunk's lines that shows.
+
+Coarse levels of a tractogram hold a sample of the streamlines, so few of
+the chosen ones may be in them. A view showing a share of the objects
+reads more vertices (the Detail over that share, at most four times the
+Detail), which picks a finer level; the share is the least it has seen for
+these segments, so the level settles.
+
+### Track filtering's groups
+
+A group is a segmentation layer of its own, in the group's colour (its
+`segmentDefaultColor`). Ticked here, it is drawn in that colour (a layer
+whose segments have colours of their own starts with *Colour: the layer's
+segment colours*), and:
+
+- until track filtering has made the group a store of its own, from the
+  dataset's store, showing only the group's streamlines (track filtering
+  gives them as the layer's temporary set, by id);
+- once it has (streamline groups get one a moment after their exact
+  answer), from that store, whole. The layer then keeps the dataset as a
+  first source with its parts off (for its segment properties); a source
+  whose parts are all off draws nothing, so the store drawn is the
+  group's own (`sources.ts`).
+
+Each new answer is a new temporary set, which the engine keeps behind the
+hidden drawing, so Neuroglancer's own drawing of the group stays hidden.
 
 ### Momentum
 
@@ -180,20 +284,19 @@ momentum in the engine.
 
 ## What is left
 
-- **Meshes** (Zarr Vectors `mesh` stores) are drawn as their vertices
-  (points): the reader's dense chunks (`LevelPipeline.download`) carry no
-  faces, which soft-shaded triangles need (the decoder has them, as
-  `DecodedChunk.faces`; exposing them is a change to the Zarr Vectors
-  reader). Point clouds and every line kind are drawn fully.
-- **Selections**: the layer's selected segments are not honoured; the
-  layer is drawn whole. A track-filtering group layer is drawn right once
-  track filtering has given it a store of its own (streamline groups get
-  one a moment after their exact answer); before that it reads the whole
-  dataset. Both use temporary segment sets, so a group's next answer can
-  bring Neuroglancer's own drawing back until the layer's source changes.
-  Drawing groups from track filtering's `trackFiltering.groups` service
-  (`curves(id, n)`) would avoid that.
-- **Bloom** (Luxar's glow around bright light) is not done.
+- **Meshes**: normals are per chunk (the faces in it), so where a surface
+  crosses a chunk face the shading can show a faint seam, as Neuroglancer's
+  own drawing of the chunks does; the surface is not sorted, so emission
+  and absorption is the order-independent sum, as for lines; nothing of a
+  mesh is picked (the pointer's position lands on it, no vertex values).
+- **A few chosen segments** are read as the chunks that hold them, whole:
+  a handful of streamlines out of a whole brain reads the chunks of a
+  level about four times the Detail, and coarse levels show only those of
+  them in their sample. Reading the chosen objects alone (the reader's
+  `ObjectReader`, or track filtering's `trackFiltering.groups` service,
+  `curves(id, n)`) would draw them whole at any zoom, as Neuroglancer's
+  per-object skeletons do. Objects not chosen are not drawn at all, even
+  when the layer's *notSelectedAlpha* would show them faintly.
 - **Free line ends** are square: Luxar's soft cap would need to know which
   chunk-boundary ends continue in the next chunk (the reader's
   `linkedVertices`), or caps would brighten every chunk face.

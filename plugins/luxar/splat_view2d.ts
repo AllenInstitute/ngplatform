@@ -15,6 +15,7 @@
  */
 import type { ViewPanelInfo } from "@ngplatform/sdk";
 import { selectChunks, type Selection } from "./chunks.js";
+import { Bloom } from "./bloom.js";
 import { LightTarget, Renderer } from "./render_gl.js";
 import { type GpuSplats, SplatRenderer } from "./splat_gl.js";
 import type { SplatView } from "./splat_view.js";
@@ -48,6 +49,7 @@ export class SplatView2d {
   private renderer: SplatRenderer | undefined;
   private composite: Renderer | undefined;
   private target: LightTarget | undefined;
+  private bloom: Bloom | undefined;
   private readonly gpu = new Map<string, { splats: GpuSplats; used: number }>();
   private gpuBytes = 0;
   private frame = 0;
@@ -107,6 +109,7 @@ export class SplatView2d {
       this.renderer = new SplatRenderer(this.gl);
       this.composite = new Renderer(this.gl);
       this.target = new LightTarget(this.gl, this.composite.floatTargets);
+      this.bloom = new Bloom(this.composite, this.composite.floatTargets);
     }
     return this.gl;
   }
@@ -179,12 +182,14 @@ export class SplatView2d {
     view.want("2d", merged);
     this.selections = selections;
     this.evict();
+    const amount = view.style.bloom;
+    const bloom = amount > 0 ? this.bloom!.run(target.texture!, width, height, false) : undefined;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, width, height);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE);
     // Clamped, not tone mapped: a section shows the image's own values, as Neuroglancer's drawing would.
-    this.composite!.composite(target.texture!, { color: 0 }, { toneMap: TONE_INDEX.clamp, emission: false, origin: [0, 0] });
+    this.composite!.composite(target.texture!, { color: 0 }, { toneMap: TONE_INDEX.clamp, emission: false, origin: [0, 0], bloom: bloom && { textures: bloom, amount } });
     gl.disable(gl.BLEND);
   }
 
@@ -292,6 +297,7 @@ export class SplatView2d {
     for (const b of this.gpu.values()) this.renderer?.release(b.splats);
     this.gpu.clear();
     this.target?.release();
+    this.bloom?.release();
     this.renderer?.dispose();
     this.composite?.dispose();
     this.overlay.dispose();

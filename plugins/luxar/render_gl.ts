@@ -12,6 +12,9 @@
  * the sharpness: 0.5 a Gaussian, 1 a hard edge.  Points are round sprites
  * with the same profile.
  *
+ * A mesh's triangles are drawn lit, or in a 2-D view as where they cross
+ * the section (./mesh_gl.ts), with the same uniforms and object tables.
+ *
  * The light is added up in a float (HDR) target and then tone mapped onto
  * the view (`composite`): "glow" adds, "emission" also absorbs, so that a
  * dense bundle hides what is behind it.  "Solid" skips the target and
@@ -22,6 +25,8 @@
  * Contributors; see ./README.md); the code is written for this plugin.
  */
 import { TEXTURE_WIDTH, type BuiltChunk } from "./chunk_build.js";
+import { cutVertexShader, meshFragmentShader, meshVertexShader } from "./mesh_gl.js";
+import { needsTable, type ObjectShading, objectTable } from "./segments.js";
 
 /** Where a program's outputs go: Neuroglancer's three (colour, depth, pick) or one. */
 export interface Outputs {
@@ -55,6 +60,10 @@ export interface DrawUniforms {
   depthCut: number;
   /** Depth pass: write depth at the near plane (over everything). */
   depthNear: boolean;
+  /** Each vertex's object is looked up in its chunk's table: hidden objects are not drawn, and "segment" colours come from it. */
+  objectTable: boolean;
+  /** A mesh's light comes from the eye: a point (w 1) or, far away, a direction (w 0), store coordinates. */
+  eye: [number, number, number, number];
 }
 
 /** One chunk on the GPU. */
@@ -67,6 +76,23 @@ export interface GpuChunk {
   bytes: number;
   /** The segments' total length, store units. */
   length: number;
+  /** Per vertex, its object's slot (R32UI, as the vertex texture). */
+  slots: WebGLTexture;
+  /** The chunk's objects (ids as word pairs) and weights, for its table. */
+  objectIds: Uint32Array;
+  objectWeight: Float32Array;
+  /** Per object, its colour and whether it shows (RGBA8), made for `tableVersion`. */
+  objects: WebGLTexture | undefined;
+  tableVersion: number;
+  /** The share of the chunk's lines (or points, or triangles) shown: 0 skips it. */
+  shown: number;
+  /** A mesh's triangles, their normals per vertex, and the arrays that draw them in 3-D and (cut by the section) in 2-D. */
+  triangleCount: number;
+  area: number;
+  normals: WebGLTexture | undefined;
+  faces: WebGLBuffer | undefined;
+  meshVao: WebGLVertexArrayObject | undefined;
+  cutVao: WebGLVertexArrayObject | undefined;
 }
 
 /** The colormaps as GLSL: `vec3 colormap(int which, float t)` (shared with the splats' shader). */
@@ -135,9 +161,19 @@ uniform int uColormap;
 uniform vec2 uRange;
 uniform vec4 uPlane;
 uniform float uSlab;
+uniform highp usampler2D uSlots;
+uniform lowp sampler2D uObjects;
+uniform bool uObjectTable;
 
 vec4 vertexAt(uint i) {
   return texelFetch(uVertices, ivec2(int(i % ${TEXTURE_WIDTH}u), int(i / ${TEXTURE_WIDTH}u)), 0);
+}
+
+// A vertex's object: its colour (as the layer colours segments) and whether it shows (alpha).
+vec4 objectAt(uint i) {
+  if (!uObjectTable) return vec4(1.0);
+  uint slot = texelFetch(uSlots, ivec2(int(i % ${TEXTURE_WIDTH}u), int(i / ${TEXTURE_WIDTH}u)), 0).r;
+  return texelFetch(uObjects, ivec2(int(slot % ${TEXTURE_WIDTH}u), int(slot / ${TEXTURE_WIDTH}u)), 0);
 }
 
 ${COLORMAP_GLSL}
@@ -147,8 +183,8 @@ vec3 hue(float h) {
   return mix(vec3(1.0), k, 0.75);
 }
 
-// A vertex's colour: by the direction there, its object, its value, or one colour.
-vec3 colourAt(vec4 v, vec3 tangent) {
+// A vertex's colour: by the direction there, its object, its value, one colour, or its segment's colour.
+vec3 colourAt(vec4 v, vec3 tangent, vec3 segment) {
   if (uColourBy == 0) {
     vec3 d = uDirections * tangent;
     float l = length(d);
@@ -156,6 +192,7 @@ vec3 colourAt(vec4 v, vec3 tangent) {
   }
   if (uColourBy == 1) return hue(v.w);
   if (uColourBy == 2) return colormap(uColormap, (v.w - uRange.x) / max(uRange.y - uRange.x, 1e-12));
+  if (uColourBy == 4) return segment;
   return uColour;
 }
 
@@ -163,6 +200,9 @@ float sectionDistance(vec3 p) {
   return dot(uPlane.xyz, p) + uPlane.w;
 }
 `;
+
+const MESH_VS = meshVertexShader(COMMON);
+const CUT_VS = cutVertexShader(COMMON);
 
 const LINE_VS = `#version 300 es
 precision highp float;
@@ -197,6 +237,11 @@ void main() {
   vec4 N = vertexAt(aSegment.w);
   bool joinA = aSegment.x != aSegment.y;
   bool joinB = aSegment.w != aSegment.z;
+  vec4 object = objectAt(aSegment.y);
+  if (object.a < 0.5) {
+    hide();
+    return;
+  }
 
   float dA = sectionDistance(A.xyz);
   float dB = sectionDistance(B.xyz);
@@ -260,7 +305,7 @@ void main() {
   vAcross = side;
   vSection = atEnd ? dB : dA;
   vec3 tangent = atEnd ? (joinB ? N.xyz - A.xyz : B.xyz - A.xyz) : (joinA ? B.xyz - P.xyz : B.xyz - A.xyz);
-  vColour = colourAt(atEnd ? B : A, tangent);
+  vColour = colourAt(atEnd ? B : A, tangent, object.rgb);
 }
 `;
 
@@ -278,7 +323,8 @@ void main() {
   vec2 corner = vec2((gl_VertexID & 1) == 0 ? -1.0 : 1.0, gl_VertexID >= 2 ? 1.0 : -1.0);
   float d = sectionDistance(v.xyz);
   vec4 c = uModelToClip * vec4(v.xyz, 1.0);
-  if ((uSlab > 0.0 && abs(d) > uSlab) || c.w < 1e-6) {
+  vec4 object = objectAt(uint(gl_InstanceID));
+  if ((uSlab > 0.0 && abs(d) > uSlab) || c.w < 1e-6 || object.a < 0.5) {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
   }
@@ -288,7 +334,7 @@ void main() {
   gl_Position = c;
   vCorner = corner;
   vSection = d;
-  vColour = colourAt(v, vec3(0.0));
+  vColour = colourAt(v, vec3(0.0), object.rgb);
 }
 `;
 
@@ -391,6 +437,7 @@ uniform int uToneMap;
 uniform bool uEmission;
 uniform float uCut;
 uniform bool uNear;
+${depth ? "" : "uniform highp sampler2D uBloom0;\nuniform highp sampler2D uBloom1;\nuniform highp sampler2D uBloom2;\nuniform float uBloom;"}
 ${outs}
 
 // ACES filmic, Narkowicz's fit.
@@ -413,6 +460,16 @@ vec3 tone(vec3 x) {
 
 void main() {
   vec4 light = texelFetch(uLight, ivec2(gl_FragCoord.xy) - uOrigin, 0);
+  // Bloom (./bloom.ts): the bright light blurred at three scales, added before tone mapping.
+  vec3 bloom = vec3(0.0);
+  ${
+    depth
+      ? ""
+      : `if (uBloom > 0.0) {
+    vec2 uv = (vec2(ivec2(gl_FragCoord.xy) - uOrigin) + 0.5) / vec2(textureSize(uLight, 0));
+    bloom = uBloom * (texture(uBloom0, uv).rgb + texture(uBloom1, uv).rgb + texture(uBloom2, uv).rgb) / 3.0;
+  }`
+  }
   vec4 shown;
   if (uEmission) {
     // Emission and absorption, order-independent: the light emitted, each
@@ -421,11 +478,11 @@ void main() {
     float tau = max(light.a, 0.0);
     float through = exp(-tau);
     float screen = tau < 1e-3 ? 1.0 - 0.5 * tau : (1.0 - through) / tau;
-    vec3 c = tone(light.rgb * screen);
+    vec3 c = tone(light.rgb * screen + bloom);
     shown = vec4(c, 1.0 - through);
     ${depth ? "shown.a = max(shown.a, max(c.r, max(c.g, c.b)));" : ""}
   } else {
-    vec3 c = tone(light.rgb);
+    vec3 c = tone(light.rgb + bloom);
     shown = vec4(c, max(c.r, max(c.g, c.b)));
   }
   ${write}
@@ -490,6 +547,11 @@ export class Renderer {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, TEXTURE_WIDTH, rows, 0, gl.RGBA, gl.FLOAT, chunk.vertices);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    const slots = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, slots);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32UI, TEXTURE_WIDTH, rows, 0, gl.RED_INTEGER, gl.UNSIGNED_INT, chunk.slots);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.bindTexture(gl.TEXTURE_2D, null);
     const vao = gl.createVertexArray()!;
     let segments: WebGLBuffer | undefined;
@@ -504,32 +566,107 @@ export class Renderer {
       gl.bindVertexArray(null);
       gl.bindBuffer(gl.ARRAY_BUFFER, null);
     }
+    let normals: WebGLTexture | undefined;
+    let faces: WebGLBuffer | undefined;
+    let meshVao: WebGLVertexArrayObject | undefined;
+    let cutVao: WebGLVertexArrayObject | undefined;
+    if (chunk.triangleCount > 0) {
+      normals = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, normals);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, TEXTURE_WIDTH, rows, 0, gl.RGBA, gl.FLOAT, chunk.normals);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      faces = gl.createBuffer()!;
+      gl.bindBuffer(gl.ARRAY_BUFFER, faces);
+      gl.bufferData(gl.ARRAY_BUFFER, chunk.triangles, gl.STATIC_DRAW);
+      // 3-D: each index a vertex of a triangle.
+      meshVao = gl.createVertexArray()!;
+      gl.bindVertexArray(meshVao);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribIPointer(0, 1, gl.UNSIGNED_INT, 0, 0);
+      // 2-D: each triangle an instance, cut by the section.
+      cutVao = gl.createVertexArray()!;
+      gl.bindVertexArray(cutVao);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribIPointer(0, 3, gl.UNSIGNED_INT, 12, 0);
+      gl.vertexAttribDivisor(0, 1);
+      gl.bindVertexArray(null);
+      gl.bindBuffer(gl.ARRAY_BUFFER, null);
+    }
     return {
       texture,
       segments,
       vao,
       segmentCount: chunk.segmentCount,
       pointCount: chunk.pointCount,
-      bytes: chunk.vertices.byteLength + chunk.segmentCount * 16,
+      bytes: chunk.vertices.byteLength + chunk.slots.byteLength + chunk.segmentCount * 16 + chunk.normals.byteLength + chunk.triangles.byteLength,
       length: chunk.length,
+      slots,
+      objectIds: chunk.objectIds,
+      objectWeight: chunk.objectWeight,
+      objects: undefined,
+      tableVersion: -1,
+      shown: 1,
+      triangleCount: chunk.triangleCount,
+      area: chunk.area,
+      normals,
+      faces,
+      meshVao,
+      cutVao,
     };
+  }
+
+  /**
+   * Makes a chunk's object table for what the layer shows now (when it
+   * needs one), and sets the share of it shown.
+   */
+  shade(chunk: GpuChunk, shading: ObjectShading): void {
+    if (chunk.tableVersion === shading.version) return;
+    chunk.tableVersion = shading.version;
+    if (!needsTable(shading)) {
+      chunk.shown = 1;
+      return;
+    }
+    const { gl } = this;
+    const { table, rows, shown } = objectTable(chunk.objectIds, chunk.objectWeight, shading);
+    chunk.shown = shown;
+    chunk.objects ??= gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, chunk.objects);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, TEXTURE_WIDTH, rows, 0, gl.RGBA, gl.UNSIGNED_BYTE, table);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.bindTexture(gl.TEXTURE_2D, null);
   }
 
   release(chunk: GpuChunk): void {
     const { gl } = this;
     gl.deleteTexture(chunk.texture);
+    gl.deleteTexture(chunk.slots);
+    if (chunk.objects) gl.deleteTexture(chunk.objects);
     if (chunk.segments) gl.deleteBuffer(chunk.segments);
     gl.deleteVertexArray(chunk.vao);
+    if (chunk.normals) gl.deleteTexture(chunk.normals);
+    if (chunk.faces) gl.deleteBuffer(chunk.faces);
+    if (chunk.meshVao) gl.deleteVertexArray(chunk.meshVao);
+    if (chunk.cutVao) gl.deleteVertexArray(chunk.cutVao);
   }
 
   /** Draws chunks in one pass. The caller sets the target, blending and depth state. */
   draw(chunks: GpuChunk[], pass: Pass, outputs: Outputs, u: DrawUniforms): void {
     const { gl } = this;
-    for (const points of [false, true]) {
-      const some = chunks.filter((c) => (points ? c.pointCount > 0 : c.segmentCount > 0));
+    // Lines, points, and a mesh's triangles: lit in 3-D, cut by the section in 2-D.
+    for (const kind of ["lines", "points", "triangles"] as const) {
+      const points = kind === "points";
+      const count = (c: GpuChunk) => (kind === "lines" ? c.segmentCount : points ? c.pointCount : c.triangleCount);
+      const some = chunks.filter((c) => count(c) > 0 && (!u.objectTable || (c.shown > 0 && c.objects !== undefined)));
       if (some.length === 0) continue;
-      const key = `${points ? "p" : "l"}|${pass}|${outputs.color},${outputs.z},${outputs.pick}`;
-      const p = this.compile(key, points ? POINT_VS : LINE_VS, fragment(points, pass, outputs));
+      const cut = kind === "triangles" && u.slab > 0;
+      const mesh = kind === "triangles" && !cut;
+      const key = `${cut ? "cut" : kind}|${pass}|${outputs.color},${outputs.z},${outputs.pick}`;
+      const vs = kind === "lines" ? LINE_VS : points ? POINT_VS : cut ? CUT_VS : MESH_VS;
+      const p = this.compile(key, vs, mesh ? meshFragmentShader(pass, outputs) : fragment(points, pass, outputs));
       gl.useProgram(p.program);
       gl.uniformMatrix4fv(this.uniform(p, "uModelToClip"), false, u.modelToClip);
       gl.uniformMatrix3fv(this.uniform(p, "uDirections"), false, u.directions);
@@ -549,19 +686,42 @@ export class Renderer {
       gl.uniform1f(this.uniform(p, "uDepthCut"), u.depthCut);
       gl.uniform1i(this.uniform(p, "uDepthNear"), u.depthNear ? 1 : 0);
       gl.uniform1i(this.uniform(p, "uVertices"), 0);
-      gl.activeTexture(gl.TEXTURE0);
+      gl.uniform1i(this.uniform(p, "uSlots"), 1);
+      gl.uniform1i(this.uniform(p, "uObjects"), 2);
+      gl.uniform1i(this.uniform(p, "uObjectTable"), u.objectTable ? 1 : 0);
+      gl.uniform1i(this.uniform(p, "uNormals"), 3);
+      gl.uniform4fv(this.uniform(p, "uEye"), u.eye);
       for (const chunk of some) {
+        gl.activeTexture(gl.TEXTURE3);
+        gl.bindTexture(gl.TEXTURE_2D, chunk.normals ?? null);
+        // Bound whether used or not: a sampler must not meet a texture of another kind left on its unit.
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, chunk.slots);
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, chunk.objects ?? null);
+        gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, chunk.texture);
         if (points) {
           this.emptyVao ??= gl.createVertexArray()!;
           gl.bindVertexArray(this.emptyVao);
           gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, chunk.pointCount);
+        } else if (mesh) {
+          gl.bindVertexArray(chunk.meshVao!);
+          gl.drawArrays(gl.TRIANGLES, 0, 3 * chunk.triangleCount);
+        } else if (cut) {
+          gl.bindVertexArray(chunk.cutVao!);
+          gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, chunk.triangleCount);
         } else {
           gl.bindVertexArray(chunk.vao);
           gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, chunk.segmentCount);
         }
       }
       gl.bindVertexArray(null);
+      for (const unit of [gl.TEXTURE3, gl.TEXTURE2, gl.TEXTURE1]) {
+        gl.activeTexture(unit);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+      }
+      gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, null);
     }
   }
@@ -570,7 +730,14 @@ export class Renderer {
   composite(
     texture: WebGLTexture,
     outputs: Outputs,
-    options: { toneMap: number; emission: boolean; origin: [number, number]; depth?: { texture: WebGLTexture; cut: number; near: boolean } },
+    options: {
+      toneMap: number;
+      emission: boolean;
+      origin: [number, number];
+      depth?: { texture: WebGLTexture; cut: number; near: boolean };
+      /** Bloom's blurred light (bloom.ts), finest first, and how much of it to add. */
+      bloom?: { textures: WebGLTexture[]; amount: number };
+    },
   ): void {
     const { gl } = this;
     const depth = options.depth;
@@ -586,6 +753,17 @@ export class Renderer {
       gl.uniform1f(this.uniform(p, "uCut"), depth.cut);
       gl.uniform1i(this.uniform(p, "uNear"), depth.near ? 1 : 0);
     }
+    if (!depth) {
+      // Bound whether used or not (no other kind of texture left on a sampler's unit).
+      const bloom = options.bloom;
+      for (let i = 0; i < 3; ++i) {
+        gl.activeTexture(gl.TEXTURE1 + i);
+        gl.bindTexture(gl.TEXTURE_2D, bloom?.textures[i] ?? null);
+        gl.uniform1i(this.uniform(p, `uBloom${i}`), 1 + i);
+      }
+      gl.uniform1f(this.uniform(p, "uBloom"), bloom !== undefined && bloom.textures.length >= 3 ? bloom.amount : 0);
+      gl.activeTexture(gl.TEXTURE0);
+    }
     gl.uniform2i(this.uniform(p, "uOrigin"), options.origin[0], options.origin[1]);
     gl.uniform1i(this.uniform(p, "uToneMap"), options.toneMap);
     gl.uniform1i(this.uniform(p, "uEmission"), options.emission ? 1 : 0);
@@ -596,8 +774,40 @@ export class Renderer {
     if (depth) {
       gl.bindTexture(gl.TEXTURE_2D, null);
       gl.activeTexture(gl.TEXTURE0);
+    } else {
+      for (let i = 3; i >= 1; --i) {
+        gl.activeTexture(gl.TEXTURE0 + i);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+      }
+      gl.activeTexture(gl.TEXTURE0);
     }
     gl.bindTexture(gl.TEXTURE_2D, null);
+  }
+
+  /**
+   * Draws a full-screen triangle with a program of its own (bloom's passes):
+   * `textures` on units 0, 1, … by sampler name, `ints` as ivec2 uniforms.
+   */
+  fullScreen(key: string, vs: string, fs: string, textures: Record<string, WebGLTexture>, ints: Record<string, [number, number]> = {}, floats: Record<string, number> = {}): void {
+    const { gl } = this;
+    const p = this.compile(key, vs, fs);
+    gl.useProgram(p.program);
+    const names = Object.keys(textures);
+    names.forEach((name, i) => {
+      gl.activeTexture(gl.TEXTURE0 + i);
+      gl.bindTexture(gl.TEXTURE_2D, textures[name]);
+      gl.uniform1i(this.uniform(p, name), i);
+    });
+    for (const [name, v] of Object.entries(ints)) gl.uniform2i(this.uniform(p, name), v[0], v[1]);
+    for (const [name, v] of Object.entries(floats)) gl.uniform1f(this.uniform(p, name), v);
+    this.emptyVao ??= gl.createVertexArray()!;
+    gl.bindVertexArray(this.emptyVao);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindVertexArray(null);
+    for (let i = names.length - 1; i >= 0; --i) {
+      gl.activeTexture(gl.TEXTURE0 + i);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+    }
   }
 
   dispose(): void {

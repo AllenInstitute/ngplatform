@@ -11,6 +11,8 @@ export type { StoreInfo };
 /** Built chunks kept on this side, for the views to upload (a view keeps its own GPU copy). */
 const CPU_BYTES = 384 * 1024 * 1024;
 
+const bytesOf = (c: BuiltChunk) => c.vertices.byteLength + c.segments.byteLength + c.slots.byteLength + c.objectIds.byteLength + c.objectWeight.byteLength + c.triangles.byteLength + c.normals.byteLength;
+
 export class StoreClient {
   private worker: Worker;
   readonly ready: Promise<StoreInfo>;
@@ -79,14 +81,14 @@ export class StoreClient {
 
   private store(key: string, chunk: BuiltChunk | null): void {
     const old = this.chunks.get(key);
-    if (old) this.bytes -= old.vertices.byteLength + old.segments.byteLength;
+    if (old) this.bytes -= bytesOf(old);
     this.chunks.delete(key);
     this.chunks.set(key, chunk);
-    if (chunk) this.bytes += chunk.vertices.byteLength + chunk.segments.byteLength;
+    if (chunk) this.bytes += bytesOf(chunk);
     for (const [k, c] of this.chunks) {
       if (this.bytes <= CPU_BYTES) break;
       if (k === key || c === null) continue;
-      this.bytes -= c.vertices.byteLength + c.segments.byteLength;
+      this.bytes -= bytesOf(c);
       this.chunks.delete(k);
     }
   }

@@ -16,8 +16,9 @@
 import type { ViewPanelInfo } from "@ngplatform/sdk";
 import { GpuChunks, selectChunks, type Selection } from "./chunks.js";
 import type { LayerView } from "./layer_view.js";
-import { LightTarget, Renderer } from "./render_gl.js";
-import { apply, boxInFrustum, coverage, invertAffine, measurePanel, modelToPanel, multiply, pixelsPerUnit, screenArea } from "./view_math.js";
+import { Bloom } from "./bloom.js";
+import { type GpuChunk, LightTarget, Renderer } from "./render_gl.js";
+import { apply, boxInFrustum, coverage, invertAffine, measurePanel, modelToPanel, multiply, pixelsPerUnit, screenArea, shownShare } from "./view_math.js";
 
 const GPU_BYTES = 512 * 1024 * 1024;
 
@@ -28,6 +29,7 @@ export class View2d {
   private renderer: Renderer | undefined;
   private chunks: GpuChunks | undefined;
   private target: LightTarget | undefined;
+  private bloom: Bloom | undefined;
   private queued = false;
   private visible = true;
   private readonly offRendered: () => void;
@@ -49,7 +51,7 @@ export class View2d {
     this.offScreenshot = view.ctx.ui.screenshotOverlay((context, canvas) => this.paint(context, canvas));
     this.canvas.addEventListener("webglcontextlost", (e) => {
       e.preventDefault();
-      this.renderer = this.chunks = this.target = undefined;
+      this.renderer = this.chunks = this.target = this.bloom = undefined;
     });
     this.canvas.addEventListener("webglcontextrestored", () => {
       this.gl = null;
@@ -86,6 +88,7 @@ export class View2d {
       this.renderer = new Renderer(this.gl);
       this.target = new LightTarget(this.gl, this.renderer.floatTargets);
       this.chunks = new GpuChunks(this.renderer, this.view.client, GPU_BYTES);
+      this.bloom = new Bloom(this.renderer, this.renderer.floatTargets);
     }
     return this.gl;
   }
@@ -153,6 +156,8 @@ export class View2d {
       height,
       view.client.arrivals,
       view.client.generation,
+      view.objectShading().version,
+      view.budget("2d"),
       info === undefined,
       layouts.map(({ rect, m }) => [rect.left, rect.top, rect.width, rect.height, Array.from(m.modelToClip, (v) => +v.toPrecision(9))]),
     ]);
@@ -190,13 +195,16 @@ export class View2d {
     const selections: Selection[] = [];
     let more = false;
     const want: string[][] = [];
+    const budget = view.budget("2d");
+    const drawnAll: GpuChunk[] = [];
     layouts.forEach(({ rect, m }) => {
-      const selection = selectChunks(info, (lo, hi) => boxInFrustum(m.modelToClip, lo, hi), m.centre, style.detail * 1e6, (k) => chunks.arrived(k));
+      const selection = selectChunks(info, (lo, hi) => boxInFrustum(m.modelToClip, lo, hi), m.centre, budget, (k) => chunks.arrived(k));
       selections.push(selection);
       want.push(selection.want);
-      const taken = chunks.take(selection.draw);
+      const taken = chunks.take(selection.draw, view.objectShading());
       more ||= taken.more;
       if (taken.chunks.length === 0) return;
+      drawnAll.push(...taken.chunks);
       const x = Math.round((rect.left - base.left) * dpr);
       const y = Math.round((base.bottom - rect.bottom) * dpr);
       const w = Math.round(rect.width * dpr);
@@ -226,19 +234,22 @@ export class View2d {
       }
     }
     view.client.want("2d", merged);
+    if (drawnAll.length > 0) view.reportShare("2d", shownShare(drawnAll));
     this.selections = selections;
     if (selections.length > 0) {
       const finest = selections.reduce((a, b) => (a.level <= b.level ? a : b));
       view.reportLevel("2d", { ...finest, complete: selections.every((s) => s.complete) });
     }
     if (!solid) {
+      const emission = style.blending === "emission";
+      // Bloom over the whole canvas (a panel's glow may reach a little into the next).
+      const bloom = style.bloom > 0 ? this.bloom!.run(target.texture!, width, height, emission) : undefined;
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, width, height);
-      const emission = style.blending === "emission";
       gl.enable(gl.BLEND);
       if (emission) gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       else gl.blendFunc(gl.ONE, gl.ONE);
-      renderer.composite(target.texture!, { color: 0 }, { toneMap: view.toneIndex, emission, origin: [0, 0] });
+      renderer.composite(target.texture!, { color: 0 }, { toneMap: view.toneIndex, emission, origin: [0, 0], bloom: bloom && { textures: bloom, amount: style.bloom } });
       gl.disable(gl.BLEND);
     }
     this.more = more;
@@ -262,6 +273,7 @@ export class View2d {
     this.offRendered();
     this.chunks?.clear();
     this.target?.release();
+    this.bloom?.release();
     this.renderer?.dispose();
     this.overlay.dispose();
     this.gl?.getExtension("WEBGL_lose_context")?.loseContext();

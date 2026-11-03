@@ -4,11 +4,13 @@
  *
  * Each layer with it on gets a LayerView (./layer_view.ts): its own reading
  * worker, a drawer in the 3-D view and a canvas over the 2-D views.
- * Neuroglancer's own drawing of the layer is set aside while it is on by
- * showing the layer's segments as a temporary set naming no object, which
- * Neuroglancer neither draws nor reads chunks for, and which is never
- * saved: the same link opened without this plugin shows the layer as
- * Neuroglancer draws it.
+ * Neuroglancer's own drawing of the layer is hidden while it is on
+ * (`hideLayerDrawing`: a Zarr Vectors layer's segments shown as a temporary
+ * set naming no object, which Neuroglancer neither draws nor reads chunks
+ * for; an image's opacity 0), never saved: the same link opened without
+ * this plugin shows the layer as Neuroglancer draws it.  What the layer
+ * shows (its chosen segments, or another plugin's temporary set, such as a
+ * track-filtering group's) is still known (`visibleSegments`), and drawn.
  */
 import type { Disposer, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
@@ -16,6 +18,7 @@ import { Momentum } from "./camera.js";
 import { storeOf } from "../volume-view/sources.js";
 import { LayerView } from "./layer_view.js";
 import { SplatView } from "./splat_view.js";
+import { drawnSources } from "./sources.js";
 import { LUXAR_PANEL } from "./manifest.js";
 import {
   BLENDING_LABELS,
@@ -28,9 +31,6 @@ import {
   type Saved,
   TONE_LABELS,
 } from "./style.js";
-
-/** A segment id no store uses: the temporary set that sets Neuroglancer's drawing of a layer aside. */
-const NO_OBJECT = new BigUint64Array([0xffffffffffffffffn]);
 
 type Child = Node | string | null | undefined | false;
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
@@ -51,10 +51,15 @@ export function imageOfLayer(layer: LayerInfo): string | undefined {
   return layer.type === "image" ? storeOf(layer.sources[0]) : undefined;
 }
 
-/** The store a layer reads, when it is a Zarr Vectors layer this plugin can draw. */
-export function storeOfLayer(layer: LayerInfo): string | undefined {
+/**
+ * The store a layer draws, when it is a Zarr Vectors layer this plugin can
+ * draw: its first source that draws anything (`spec`, the layer's
+ * specification, says which draw nothing: a track-filtering group with a
+ * store of its own keeps the dataset's source beside it, drawing nothing).
+ */
+export function storeOfLayer(layer: LayerInfo, spec?: { source?: unknown }): string | undefined {
   if (layer.type !== "segmentation" && layer.type !== "auto") return undefined;
-  for (const source of layer.sources) {
+  for (const source of drawnSources(layer.sources, spec)) {
     const url = storeUrlOfSource(source);
     if (url !== undefined) return url;
   }
@@ -64,10 +69,8 @@ export function storeOfLayer(layer: LayerInfo): string | undefined {
 class Luxar {
   private saved: Saved;
   private readonly views = new Map<string, LayerView | SplatView>();
-  /** Layers whose drawing is set aside, so it can be given back. */
-  private readonly hidden = new Map<string, string>();
-  /** Images whose own drawing is hidden while their splats are drawn. */
-  private readonly imagesHidden = new Set<string>();
+  /** Layers whose own drawing is hidden while this plugin draws them. */
+  private readonly drawingHidden = new Set<string>();
   private panelUpdate: (() => void) | undefined;
   private statusUpdate: (() => void) | undefined;
   /** The layer whose settings the panel shows. */
@@ -96,7 +99,11 @@ class Luxar {
   }
 
   candidates(): LayerInfo[] {
-    return this.ctx.viewer.layers().filter((l) => storeOfLayer(l) !== undefined || imageOfLayer(l) !== undefined);
+    return this.ctx.viewer.layers().filter((l) => this.storeOf(l) !== undefined || imageOfLayer(l) !== undefined);
+  }
+
+  private storeOf(layer: LayerInfo): string | undefined {
+    return storeOfLayer(layer, this.ctx.viewer.layerSpec(layer.name) as { source?: unknown } | undefined);
   }
 
   private write(saved: Saved): void {
@@ -112,7 +119,11 @@ class Luxar {
     if (saved !== undefined) return saved;
     const layer = this.ctx.viewer.layers().find((l) => l.name === name);
     if (layer !== undefined && imageOfLayer(layer) !== undefined) return { ...DEFAULT_STYLE, on: false, blending: "emission", colourBy: "attribute", colormap: "grey", absorption: 0.3 };
-    return { ...DEFAULT_STYLE, on: false };
+    // A layer whose segments have colours of their own (a track-filtering group's colour, colours chosen
+    // for segments) is drawn in them.
+    const spec = this.ctx.viewer.layerSpec(name) as { segmentDefaultColor?: unknown; segmentColors?: unknown } | undefined;
+    const coloured = spec?.segmentDefaultColor !== undefined || (typeof spec?.segmentColors === "object" && spec.segmentColors !== null && Object.keys(spec.segmentColors).length > 0);
+    return { ...DEFAULT_STYLE, on: false, ...(coloured ? { colourBy: "segment" as const } : {}) };
   }
 
   setStyle(name: string, patch: Partial<LayerStyle>, save = true): void {
@@ -137,7 +148,7 @@ class Luxar {
     for (const [name, view] of this.views) {
       const layer = layers.get(name);
       const style = this.saved.layers[name];
-      const store = layer && (storeOfLayer(layer) ?? imageOfLayer(layer));
+      const store = layer && (this.storeOf(layer) ?? imageOfLayer(layer));
       if (layer === undefined || style === undefined || !style.on || store !== view.storeUrl) {
         view.dispose();
         this.views.delete(name);
@@ -146,7 +157,7 @@ class Luxar {
     for (const [name, style] of Object.entries(this.saved.layers)) {
       const layer = layers.get(name);
       if (layer === undefined || !style.on) continue;
-      const store = storeOfLayer(layer);
+      const store = this.storeOf(layer);
       const image = store === undefined ? imageOfLayer(layer) : undefined;
       if (store === undefined && image === undefined) continue;
       let view = this.views.get(name);
@@ -158,38 +169,22 @@ class Luxar {
       } else if (view.style !== style) view.setStyle(style);
       view.setVisible(layer.visible);
     }
-    // Neuroglancer's own drawing is set aside exactly while ours is on: set
-    // again when a layer's sources change, as a layer made afresh forgets its
-    // temporary set (and only then: setting it changes the layer).
-    for (const name of [...this.hidden.keys()]) {
-      if (!this.views.has(name)) {
-        this.hidden.delete(name);
-        if (layers.has(name)) this.ctx.viewer.setTemporaryVisibleSegments(name, undefined);
-      }
-    }
-    // An image is drawn either by Neuroglancer or as splats, not both: its own drawing is hidden
-    // (not in the link) while its splats are on; asked each time, as a layer made afresh shows again.
-    for (const name of [...this.imagesHidden]) {
-      if (this.views.get(name) instanceof SplatView) continue;
-      this.imagesHidden.delete(name);
+    // A layer is drawn either by Neuroglancer or here, not both: its own
+    // drawing is hidden (not in the link) while ours is on; asked each time,
+    // as a layer still loading may not take it yet, and a layer made afresh
+    // shows again (the engine does nothing when it is hidden already).
+    for (const name of [...this.drawingHidden]) {
+      if (this.views.has(name)) continue;
+      this.drawingHidden.delete(name);
       if (layers.has(name)) this.ctx.viewer.hideLayerDrawing(name, false);
     }
-    for (const [name, view] of this.views) {
-      if (!(view instanceof SplatView)) continue;
-      this.imagesHidden.add(name);
+    for (const name of this.views.keys()) {
+      this.drawingHidden.add(name);
       this.ctx.viewer.hideLayerDrawing(name, true);
     }
     // Splats add light to the 2-D views: on black, as the image they stand for is drawn.
-    this.ctx.viewer.setTemporaryBackground(this.imagesHidden.size > 0 ? [0, 0, 0] : undefined);
-    for (const [name, view] of this.views) {
-      if (!(view instanceof LayerView)) continue;
-      // Once its data has loaded, too: a layer still loading may not take the set yet.
-      const layer = layers.get(name)!;
-      const key = `${layer.ready}\n${layer.sources.join("\n")}`;
-      if (this.hidden.get(name) === key) continue;
-      this.hidden.set(name, key);
-      this.ctx.viewer.setTemporaryVisibleSegments(name, NO_OBJECT);
-    }
+    const splats = [...this.views.values()].some((v) => v instanceof SplatView);
+    this.ctx.viewer.setTemporaryBackground(splats ? [0, 0, 0] : undefined);
     this.momentum.set(this.saved.momentum);
   }
 
@@ -266,7 +261,7 @@ class Luxar {
   }
 
   /** A slider that draws as it moves and saves when let go. */
-  private slider(name: string, label: string, key: "width" | "exposure" | "sharpness" | "absorption" | "slab" | "detail", min: number, max: number, step: number, format: (v: number) => string): HTMLElement {
+  private slider(name: string, label: string, key: "width" | "exposure" | "sharpness" | "absorption" | "slab" | "detail" | "bloom", min: number, max: number, step: number, format: (v: number) => string): HTMLElement {
     const style = this.styleOf(name);
     const input = el("input", { type: "range", min, max, step, value: style[key], "aria-label": label }) as HTMLInputElement;
     const shown = el("span", { class: "lx-value" }, format(style[key]));
@@ -276,6 +271,11 @@ class Luxar {
     });
     input.addEventListener("change", () => this.setStyle(name, { [key]: Number(input.value) }));
     return el("label", { class: "field" }, el("span", {}, label), el("div", { class: "lx-row" }, input, shown));
+  }
+
+  /** Bloom: how much of the bright light glows around it, 0 off. */
+  private bloomSlider(name: string): HTMLElement {
+    return this.slider(name, "Bloom (glow around bright light)", "bloom", 0, 3, 0.05, (v) => (v === 0 ? "off" : v.toFixed(2)));
   }
 
   /** An image's settings: splats coloured by intensity or one colour, brightness, tone map, detail. */
@@ -299,6 +299,7 @@ class Luxar {
       this.slider(name, "Brightness (stops)", "exposure", -8, 8, 0.25, (v) => (v > 0 ? `+${v}` : `${v}`)),
       ...(style.blending === "emission" ? [this.slider(name, "Absorption", "absorption", 0, 8, 0.05, (v) => v.toFixed(2))] : []),
       this.select("Tone map", style.toneMap, TONE_LABELS, (toneMap) => set({ toneMap })),
+      this.bloomSlider(name),
       this.slider(name, "Detail (splats per view)", "detail", 0.25, 12, 0.25, (v) => `${v} M`),
     );
     if (!style.on) parts.push(el("p", { class: "note" }, "Tick the layer above to draw it this way."));
@@ -357,15 +358,17 @@ class Luxar {
       parts.push(el("label", { class: "field" }, el("span", {}, "Line colour"), colour));
     }
     const points = info?.primitive === "points";
+    const mesh = info?.primitive === "triangles";
+    if (mesh) parts.push(el("p", { class: "note" }, "A mesh: lit surfaces in the 3-D view (direction colours by the surface's normal), and in the 2-D views the outline where the section cuts it."));
     parts.push(
       points
         ? this.slider(name, "Point size (pixels)", "width", 0.5, 12, 0.25, (v) => `${3 * v} px`)
-        : this.slider(name, "Width (pixels)", "width", 0.5, 12, 0.25, (v) => `${v} px`),
+        : this.slider(name, mesh ? "Outline width in 2-D (pixels)" : "Width (pixels)", "width", 0.5, 12, 0.25, (v) => `${v} px`),
       this.slider(name, "Brightness (stops)", "exposure", -8, 8, 0.25, (v) => (v > 0 ? `+${v}` : `${v}`)),
       this.slider(name, "Sharpness", "sharpness", 0, 1, 0.05, (v) => v.toFixed(2)),
     );
     if (style.blending === "emission") parts.push(this.slider(name, "Absorption", "absorption", 0, 8, 0.05, (v) => v.toFixed(2)));
-    if (style.blending !== "solid") parts.push(this.select("Tone map", style.toneMap, TONE_LABELS, (toneMap) => set({ toneMap })));
+    if (style.blending !== "solid") parts.push(this.select("Tone map", style.toneMap, TONE_LABELS, (toneMap) => set({ toneMap })), this.bloomSlider(name));
     parts.push(
       this.slider(name, "2-D slab (thickness shown around a section)", "slab", 0.5, 40, 0.5, (v) => `${v} mm`),
       this.slider(name, "Detail (vertices per view)", "detail", 0.25, 12, 0.25, (v) => `${v} M`),
@@ -378,12 +381,11 @@ class Luxar {
   dispose(): void {
     this.offs.forEach((off) => off());
     for (const view of this.views.values()) view.dispose();
-    for (const name of this.hidden.keys()) this.ctx.viewer.setTemporaryVisibleSegments(name, undefined);
-    for (const name of this.imagesHidden) this.ctx.viewer.hideLayerDrawing(name, false);
-    if (this.imagesHidden.size > 0) this.ctx.viewer.setTemporaryBackground(undefined);
-    this.imagesHidden.clear();
+    const splats = [...this.views.values()].some((v) => v instanceof SplatView);
+    for (const name of this.drawingHidden) this.ctx.viewer.hideLayerDrawing(name, false);
+    if (splats) this.ctx.viewer.setTemporaryBackground(undefined);
+    this.drawingHidden.clear();
     this.views.clear();
-    this.hidden.clear();
     this.momentum.dispose();
   }
 }

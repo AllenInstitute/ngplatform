@@ -16,7 +16,7 @@ items are done (and say where); the rest are in rough order of work.
 - [x] Zarr Vectors: opacity fades colour without darkening, lines alone show no vertex dots (and the fork's skeleton layer, 435cdcb0).
 - [x] Segmentation gaps: tool bar over the 2-D views only, Ctrl+Z with the workspace's undo, labels past 2^24, quick select preview, lasso, segment groups.
 - [x] Time series gaps: a layer's local time axis, coarse levels while moving, playing without undo steps, CIFTI time series on surfaces.
-- [ ] Luxar gaps (an agent): selected segments, track groups by id, bloom, meshes.
+- [x] Luxar gaps: only a layer's chosen segments, track groups by id then from their stores, bloom, meshes (lit in 3-D, outlines in 2-D). Left: fitted splats; reading only the chosen objects (few chosen read whole chunks); `notSelectedAlpha`.
 - [ ] Waiting on Andrew: a Google OAuth client ID; the Allen CATMAID address; S-21-46's source data and leave to upload a rebuild with even coarse levels; copy-on-write editing of a large segmentation (agree first); the deploy.
 - [x] Registration: Warp through the pairs (a thin-plate spline from landmark pairs, a layer computed by chunkmirage's engine; `src/virtual/warp.ts`).
 - [x] Time series: a CIFTI series shown as the overlay with a button (`viewer.setSurfaceOverlay`), its time point kept in the link. Atlas: a file's hierarchy kept in the link.

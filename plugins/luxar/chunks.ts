@@ -10,6 +10,7 @@
  */
 import type { StoreClient, StoreInfo } from "./client.js";
 import type { GpuChunk, Renderer } from "./render_gl.js";
+import type { ObjectShading } from "./segments.js";
 import { chooseLevel, chunkBox, chunkRange, chunksIn } from "./view_math.js";
 
 /** Levels with more chunks than this in all are skipped (unless the coarsest): enumerating them would cost more than it saves. */
@@ -116,7 +117,7 @@ export class GpuChunks {
    * frame), then letting go of the least recently drawn beyond the budget.
    * `more` is set when some were left for the next frame.
    */
-  take(keys: string[], uploadBytes = 96 * 1024 * 1024): { chunks: GpuChunk[]; more: boolean } {
+  take(keys: string[], shading?: ObjectShading, uploadBytes = 96 * 1024 * 1024): { chunks: GpuChunk[]; more: boolean } {
     this.check();
     const out: GpuChunk[] = [];
     let uploaded = 0;
@@ -137,7 +138,11 @@ export class GpuChunks {
         }
       } else this.map.delete(key);
       this.map.set(key, gpu);
-      if (gpu) out.push(gpu);
+      if (gpu) {
+        // Which of its objects show, and their colours, as the layer has them now.
+        if (shading !== undefined) this.renderer.shade(gpu, shading);
+        out.push(gpu);
+      }
     }
     const keep = new Set(keys);
     for (const [key, gpu] of this.map) {

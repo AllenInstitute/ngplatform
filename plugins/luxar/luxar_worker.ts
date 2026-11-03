@@ -114,7 +114,8 @@ async function objectShares(storeUrl: string, s: ZarrVectorsStore): Promise<(num
 }
 
 async function open(storeUrl: string): Promise<StoreInfo> {
-  access = httpAccess(storeUrl);
+  // Listing where the server allows it: a mesh's faces that span chunks are found only so.
+  access = httpAccess(storeUrl, { listing: true });
   store = await openZarrVectorsStore(access, []);
   pipelines.clear();
   const shares = await objectShares(storeUrl, store);
@@ -145,7 +146,7 @@ async function read(key: string, forScalar: string): Promise<void> {
       return;
     }
     const chunk = buildChunk(data, scalarSource(forScalar));
-    post({ type: "chunk", key, scalar: forScalar, chunk }, [chunk.vertices.buffer, chunk.segments.buffer]);
+    post({ type: "chunk", key, scalar: forScalar, chunk }, [chunk.vertices.buffer, chunk.segments.buffer, chunk.slots.buffer, chunk.objectIds.buffer, chunk.objectWeight.buffer, chunk.triangles.buffer, chunk.normals.buffer]);
   } catch (e) {
     post({ type: "error", key, scalar: forScalar, message: (e as Error).message ?? String(e) });
   }

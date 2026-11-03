@@ -6,7 +6,7 @@
 **Luxar** tab, and a command ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/luxar)
 
-Draws a Zarr Vectors layer (a tractogram, skeletons, a point cloud, or a
+Draws a Zarr Vectors layer (a tractogram, skeletons, a point cloud, a mesh, or a
 `.trk`, `.tck`, `.trx` or SWC file opened in place) the way the
 [Luxar](https://github.com/royerlab/luxar) viewer draws lines: as light,
 added up and tone mapped, with smooth thick lines and mitred joins. It
@@ -31,19 +31,32 @@ is converted.
   hard edge) and the **Tone map**. **Automatic brightness** dims lines where
   many crowd the view, so a whole brain glows rather than turning white and
   zooming in (finer levels, more lines) keeps the picture's brightness.
+- **Bloom**: a glow around bright light, as Luxar has: the brightest
+  parts, blurred, are added back around them (0 is off). For lines,
+  points and images drawn as splats, in 2-D and 3-D.
 - **2-D slab**: in a 2-D view, lines within half this distance of the
   section show, fading away from it, as Luxar slices by proximity.
 - **Detail**: about how many vertices a view reads. The coarsest level shows
   first; finer levels replace it as you zoom in, only for the chunks in view.
 - **Momentum** (at the bottom): let go of a rotation in the 3-D view while
   moving and it keeps turning, slowing to a stop.
+- **Segments**: when the layer shows only some objects (segments chosen in
+  its Segments tab or in the link, or another tool's choice, such as a
+  track-filtering group), only those are drawn. *Colour: the layer's
+  segment colours* colours each object as Neuroglancer does.
+- **Track filtering's groups**: tick a group's layer and it is drawn in the
+  group's colour, its streamlines picked by id from the whole tractogram
+  until track filtering has made the group a store of its own, then from
+  that store. The group's answer can change (move a region) and Luxar
+  follows it.
 - Hiding the layer hides its Luxar drawing too. A link opened where the
   plugin is off shows the layer drawn by Neuroglancer as usual.
+- **Meshes** (surfaces): lit in the 3-D view and, with Glow or Emission,
+  added up as light the way lines are (so other Luxar layers' lines and
+  splats mix with them); Solid draws them opaque. In the 2-D views the
+  outline where the section cuts them glows.
 
-Not yet: meshes, a layer's selected segments and track filtering's groups
-by id (a group layer that has its own store is drawn whole, which is the
-group), Luxar's bloom, and fitted Gaussian splats (Luxar's GPU fit, which
-makes new files).
+Not yet: fitted Gaussian splats (Luxar's GPU fit, which makes new files).
 
 ## Images as splats
 

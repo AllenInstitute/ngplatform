@@ -323,9 +323,24 @@ export interface ViewerApi {
    */
   setTemporaryVisibleSegments(layer: string, ids: BigUint64Array | undefined): void;
   /**
-   * Hides an image layer's own drawing, or shows it again, for a plugin that
-   * draws the layer itself: not saved in the link (the layer keeps its
-   * opacity there), and kept hidden through undo and scene switches.
+   * What a segmentation layer shows, as Neuroglancer would draw it (were its
+   * drawing hidden or not): every object (`all`: no segment chosen, and the
+   * layer shows all then), or those `has` says yes to.  The segments are a
+   * plugin's temporary set when one is set, else the layer's own.
+   */
+  visibleSegments(layer: string): VisibleSegments | undefined;
+  /** A segment's colour as Neuroglancer colours it in a segmentation layer (stated, default or hashed; with its saturation), RGB 0 to 1. */
+  segmentColour(layer: string, id: bigint): [number, number, number] | undefined;
+  /** Calls back when what a segmentation layer shows, or how its segments are coloured, changes. */
+  onSegmentsChanged(layer: string, callback: () => void): Disposer;
+  /**
+   * Hides a layer's own drawing, or shows it again, for a plugin that draws
+   * the layer itself: not saved in the link, and kept hidden through undo
+   * and scene switches.  An image layer's opacity is set to 0 (the link
+   * keeps its own); a segmentation layer's segments are shown as a
+   * temporary set naming no object, so Neuroglancer neither draws nor reads
+   * its chunks, while `visibleSegments` still says what it shows (a
+   * plugin's temporary set made meanwhile included).
    */
   hideLayerDrawing(layer: string, hidden: boolean): void;
   /** Shows a surface map (an attribute of a surface layer's store) as its overlay, as Render → Surface's Overlay does; false when the layer is not a surface. */
@@ -465,6 +480,15 @@ export interface Drawer3d {
    */
   afterSections?: boolean;
   dispose?(): void;
+}
+
+/** What a segmentation layer shows (`ViewerApi.visibleSegments`). */
+export interface VisibleSegments {
+  /** Every object shows (no segment is chosen, and the layer then shows all). */
+  all: boolean;
+  /** How many segments are chosen. */
+  size: number;
+  has(id: bigint): boolean;
 }
 
 export interface SegmentProperties {
