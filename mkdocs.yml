@@ -54,6 +54,7 @@ nav:
       - Collections: plugins/collections.md
       - Filters: plugins/filters.md
       - Luxar rendering: plugins/luxar.md
+      - Orientations: plugins/orientations.md
       - Ideas for new plugins: plugins/ideas.md
       - Page template: plugins/template.md
   - Contributing: contributing.md

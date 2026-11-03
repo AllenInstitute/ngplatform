@@ -102,7 +102,7 @@ function toUint8(v: ArrayLike<number>, [lo, hi]: [number, number]): Uint8Array {
  * it in its stored order (shape, chunk shape and chunk keys permuted, the
  * codec dropped), and its axes in that order; undefined for other arrays.
  */
-async function storedOrder(read: ZarrArrayRead, path: string, axes: string[], signal?: AbortSignal): Promise<{ read: ZarrArrayRead; axes: string[] } | undefined> {
+export async function storedOrder(read: ZarrArrayRead, path: string, axes: string[], signal?: AbortSignal): Promise<{ read: ZarrArrayRead; axes: string[] } | undefined> {
   const bytes = await read(`${path}/zarr.json`, { signal });
   if (bytes === undefined) return undefined;
   const meta = JSON.parse(new TextDecoder().decode(bytes));
