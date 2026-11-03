@@ -301,10 +301,11 @@ export function signedDistance(mask: Uint8Array, w: number, h: number): Float64A
  * WebKnossos's and ITK-SNAP's): along `axis`, where a label is drawn in
  * sections a and b with only unlabelled sections between, each section
  * between gets the shape where the two signed distances, weighted by
- * nearness, are positive.  Within `box` (the label's own box, say); paints
- * only unlabelled voxels.  Returns the sections filled.
+ * nearness, are positive.  Within `box` (the label's own box, say); over
+ * any label, or (`only`) only voxels with that label now, as 0 for
+ * unlabelled ones.  Returns the sections filled.
  */
-export function interpolate(stroke: Stroke, value: number, axis: number, box: { lo: number[]; hi: number[] }): number {
+export function interpolate(stroke: Stroke, value: number, axis: number, box: { lo: number[]; hi: number[] }, only?: number): number {
   const volume = stroke.volume;
   const [u, w] = [0, 1, 2].filter((k) => k !== axis);
   const nu = box.hi[u] - box.lo[u];
@@ -351,7 +352,7 @@ export function interpolate(stroke: Stroke, value: number, axis: number, box: { 
           const q = i + nu * j;
           if ((1 - t) * da[q] + t * db[q] <= 0) continue;
           const p = at(s, i, j);
-          if (volume.get(...p) === 0) stroke.set(...p, value);
+          if (only === undefined || volume.get(...p) === only) stroke.set(...p, value);
         }
       }
       ++filled;

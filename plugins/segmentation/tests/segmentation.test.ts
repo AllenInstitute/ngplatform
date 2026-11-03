@@ -7,11 +7,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openNifti } from "../../../src/virtual/images/nifti.js";
 import { VolumeReader } from "../../volume-view/volume_reader.js";
-import { History, Stroke } from "../segmentation/history.js";
-import { ballReach, ballShape, dabsBetween, distance2d, floodFill, type ImageBlock, inRange, interpolate, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "../segmentation/kernels.js";
-import { LabelVolume } from "../segmentation/label_volume.js";
-import { component, otsu, THRESHOLD_SELECT } from "../segmentation/quick_select.js";
-import { cropped, niftiGz, omeZarr } from "../segmentation/save.js";
+import { History, Stroke } from "../history.js";
+import { ballReach, ballShape, dabsBetween, distance2d, floodFill, type ImageBlock, inRange, interpolate, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "../kernels.js";
+import { LabelVolume } from "../label_volume.js";
+import { component, otsu, THRESHOLD_SELECT } from "../quick_select.js";
+import { cropped, niftiGz, omeZarr } from "../save.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -267,11 +267,12 @@ describe("interpolation between sections", () => {
     const s = new Stroke(v);
     paintBall(s, [20, 20, 2], ballShape(4, "voxels"), { value: 5 }, [0, 0, 1]);
     paintBall(s, [20, 20, 6], ballShape(8, "voxels"), { value: 5 }, [0, 0, 1]);
-    // Another label in section 4 is left alone.
+    // Another label in section 4 is left alone when only empty voxels are painted.
     s.set(20, 20, 4, 9);
+    s.set(20, 21, 4, 9);
     s.finish();
     const t = new Stroke(v);
-    expect(interpolate(t, 5, 2, { lo: [0, 0, 0], hi: [40, 40, 10] })).toBe(3);
+    expect(interpolate(t, 5, 2, { lo: [0, 0, 0], hi: [40, 40, 10] }, 0)).toBe(3);
     t.finish();
     const radius = (z: number) => {
       let r = 0;
@@ -284,6 +285,14 @@ describe("interpolation between sections", () => {
     expect(v.get(21, 20, 4)).toBe(5);
     expect(v.get(20, 20, 1)).toBe(0);
     expect(v.get(20, 20, 7)).toBe(0);
+    // Undone, and done over any label: the other label is painted over.
+    const h = new History();
+    h.push(t);
+    h.undo();
+    const all = new Stroke(v);
+    interpolate(all, 5, 2, { lo: [0, 0, 0], hi: [40, 40, 10] });
+    all.finish();
+    expect(v.get(20, 21, 4)).toBe(5);
   });
 });
 

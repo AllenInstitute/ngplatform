@@ -1,8 +1,8 @@
 /**
  * The Statistics section, as Freeview's label statistics: for an image and
- * a region (a box or ellipsoid annotation, or a label of a label volume
- * drawn here), the voxel count, volume, mean, SD, minimum, maximum and
- * median of the image inside.  The image is read at its finest level whose
+ * a region (a box or ellipsoid annotation, a label of a label volume drawn
+ * in the Segmentation tab, or a label of a segmentation layer), the voxel
+ * count, volume, mean, SD, minimum, maximum and median of the image inside.  The image is read at its finest level whose
  * box around the region fits the memory chosen (as Registration's save
  * chooses a level); each result is a row of a table, saved as CSV.
  */
@@ -10,7 +10,7 @@ import type { Disposer, PlatformContext } from "@ngplatform/sdk";
 import { apply, between, invertOr, multiply, voxelVolume } from "./geometry.js";
 import type { AnnotationJson } from "./measure.js";
 import { annotationFromGlobal, annotationLayers, imagePlacement, rankOf, toGlobalOf } from "./scene.js";
-import type { Segmentation } from "./segmentation/panel.js";
+import type { LabelVolumes } from "../segmentation/editor.js";
 import { corners, levelWithin, type Region, type Summary, voxelBox } from "./statistics.js";
 import { button, csv, download, el, field, fmt, numberInput, physical, select } from "./ui.js";
 import { layerStore, readableImages, type Voxels } from "./voxels.js";
@@ -39,12 +39,18 @@ export class Statistics {
   private note = "";
   private running: AbortController | undefined;
   private update: (() => void) | undefined;
+  /** Label volumes drawn in the Segmentation plugin (none while it is off). */
+  private volumes: LabelVolumes = { sessions: [] };
 
   constructor(
     private readonly ctx: PlatformContext,
     private readonly voxels: Voxels,
-    private readonly segmentation: Segmentation,
-  ) {}
+  ) {
+    void ctx.services.get<LabelVolumes>("segmentation.labelVolumes").then((volumes) => {
+      this.volumes = volumes;
+      this.update?.();
+    });
+  }
 
   dispose(): void {
     this.running?.abort();
@@ -59,13 +65,13 @@ export class Statistics {
         out.push([`a|${layer.name}|${a.id}`, `${a.type === "ellipsoid" ? "Ellipsoid" : "Box"} ${a.description || a.id.slice(0, 6)} (${layer.name})`]);
       }
     }
-    for (const s of this.segmentation.sessions) {
+    for (const s of this.volumes.sessions) {
       for (const value of [...s.counts.keys()].sort((a, b) => a - b)) {
         out.push([`l|${s.fileName}|${value}`, `Label ${value}${s.labels.get(value)?.name ? ` ${s.labels.get(value)!.name}` : ""} (${s.layer})`]);
       }
     }
     // Other segmentations whose voxels can be read (an atlas in NIfTI, say): a label chosen by number.
-    const drawn = new Set(this.segmentation.sessions.map((s) => s.layer));
+    const drawn = new Set(this.volumes.sessions.map((s) => s.layer));
     for (const layer of readableImages(this.ctx, ["segmentation"])) {
       if (!drawn.has(layer)) out.push([`s|${layer}|`, `A label of ${layer}`]);
     }
@@ -128,7 +134,7 @@ export class Statistics {
           };
         };
       } else {
-        const session = this.segmentation.sessions.find((s) => s.fileName === owner);
+        const session = this.volumes.sessions.find((s) => s.fileName === owner);
         const value = Number(id);
         const placed = session?.placement();
         if (session === undefined || placed === undefined) throw new Error("the label volume is gone");
@@ -219,7 +225,7 @@ export class Statistics {
         images.length === 0
           ? el("p", { class: "empty" }, "Add an image whose voxels can be read (OME-Zarr, NIfTI or precomputed).")
           : regions.length === 0
-            ? el("p", { class: "empty" }, "Draw a box or an ellipsoid (Measure), or paint a label (Segmentation), for a region.")
+            ? el("p", { class: "empty" }, "Draw a box or an ellipsoid (Measure), or paint a label (Segmentation tab), for a region.")
             : el(
                 "div",
                 { class: "an-grid2" },

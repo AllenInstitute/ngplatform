@@ -12,7 +12,7 @@ the *Plugin idea* template.
 | Plugin | What it would do | People use today |
 |---|---|---|
 | **Annotations** (from Labels; begun, see [Annotations](annotations.md)) | Labels, measuring (lengths, areas, line profiles), contours, statistics per label or region, and manual segmentation | Freeview's measure tools, ITK-SNAP, WebKnossos |
-| **Segmentation** (in Annotations; begun, see the [survey](segmentation-survey.md)) | Draw and erase labels: sphere brush, threshold-limited brush, 2-D/3-D fill, interpolation between slices; AI-assisted selection later; save masks locally | WebKnossos, ITK-SNAP, Freeview voxel edit, napari, 3D Slicer |
+| **Segmentation** (now the [Segmentation](segmentation.md) plugin; see the [survey](segmentation-survey.md)) | Draw and erase labels: sphere brush, threshold-limited brush, 2-D/3-D fill, interpolation between slices; AI-assisted selection later; save masks locally | WebKnossos, ITK-SNAP, Freeview voxel edit, napari, 3D Slicer |
 | **Luxar** | Views through [Luxar](https://github.com/royerlab/luxar): HDR points, lines and meshes, Gaussian-splat volumes, straight from OME-Zarr and Zarr Vectors | Luxar's own viewer |
 | **Orientations** (begun, see [Orientations](orientations.md)) | Vector fields, DTI tensors and FA colour, spherical-harmonic ODF glyphs that refine as you zoom (multiscale) | FURY / DIPY, MRtrix `mrview`, DSI Studio, TrackVis |
 | **Filters** | Mean, median, Gaussian and Frangi (vesselness) computed on the fly, chunk by chunk, at every level | Fiji, napari, ITK, Freeview's filters |

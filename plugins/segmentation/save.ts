@@ -5,8 +5,8 @@
  * NIfTI holds every voxel, so for a large grid save only the painted box
  * (`crop`), which moves the origin to the box's corner.
  */
-import { gzip, niftiFile, omeZarrMetadata } from "../../registration/volume_io.js";
-import { multiply4 } from "../../registration/fit.js";
+import { gzip, niftiFile, omeZarrMetadata } from "../registration/volume_io.js";
+import { multiply4 } from "../registration/fit.js";
 import { type Box, CHUNK, LabelVolume } from "./label_volume.js";
 
 /** The volume cut to a box (a new volume, placed where the box is). */

@@ -46,16 +46,4 @@ export const STYLE = `
 .an-plot .an-cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 2; }
 .an-plot .an-dot { fill: var(--select); stroke: var(--ink-2); stroke-width: 2; }
 .an-readout { font: 11px var(--mono); color: var(--muted); min-height: 1.2em; }
-.an-seg { display: grid; gap: 8px; }
-.an-session strong { font-weight: 600; }
-.an-label input[type="color"] { width: 28px; height: 24px; padding: 0; border: 1px solid var(--line); background: none; }
-.an-label .text-input { flex: 1; min-width: 60px; height: 24px; }
-.an-swatch { display: inline-block; width: 10px; height: 10px; border: 1px solid rgba(255, 255, 255, 0.3); vertical-align: -1px; }
-.an-swatch.big { width: 16px; height: 16px; }
-.an-limit { display: grid; gap: 6px; }
-.an-kept { display: grid; gap: 4px; font-size: 12px; }
-.an-form { display: grid; gap: 8px; padding-bottom: 8px; border-bottom: 1px dashed var(--line); }
-.an-ring { position: absolute; pointer-events: none; border: 1.5px solid rgba(255, 255, 255, 0.85); border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5); }
-.an-box { position: absolute; pointer-events: none; border: 1.5px dashed #ffd166; background: rgba(255, 209, 102, 0.08); }
-.view-overlay.an-drawing { cursor: crosshair; }
 `;

@@ -10,8 +10,8 @@
  * Voxels are x fastest, in a chunk and in a block; chunk (cx, cy, cz) is
  * key cx + gx·(cy + gy·cz) at level 0.
  */
-import { type LevelGrid, omeZarrMetadata, pyramidGrids } from "../../registration/volume_io.js";
-import type { Mat4 } from "../geometry.js";
+import { type LevelGrid, omeZarrMetadata, pyramidGrids } from "../registration/volume_io.js";
+import type { Mat4 } from "../annotations/geometry.js";
 
 export type LabelType = "uint8" | "uint16" | "uint32";
 export type LabelArray = Uint8Array | Uint16Array | Uint32Array;
@@ -31,6 +31,8 @@ export interface Box {
 export class LabelVolume {
   readonly grid: [number, number, number];
   private readonly chunks = new Map<number, LabelArray>();
+  /** Each chunk's labels and their voxels, counted when asked for and kept until it changes. */
+  private readonly chunkCounts = new Map<number, Map<number, number>>();
   /** Coarser levels' chunks, made when asked for (null: nothing there). */
   private readonly coarse: Map<string, LabelArray | null>[];
   readonly levels: LevelGrid[];
@@ -105,6 +107,7 @@ export class LabelVolume {
 
   /** Marks a chunk changed: the coarser chunks over it are made again when next asked for. */
   changed(key: number): void {
+    this.chunkCounts.delete(key);
     const [cx, cy, cz] = this.coords(key);
     for (let level = 1; level < this.levels.length; ++level) this.coarse[level].delete(`${cx >> level}/${cy >> level}/${cz >> level}`);
     ++this.version;
@@ -145,16 +148,57 @@ export class LabelVolume {
     return lo[0] === Infinity ? undefined : { lo, hi };
   }
 
-  /** The labels used, with their voxel counts. */
+  /** The labels used, with their voxel counts (only chunks changed since last asked are counted again). */
   counts(): Map<number, number> {
     const out = new Map<number, number>();
-    for (const c of this.chunks.values()) {
-      for (let i = 0; i < c.length; ++i) {
-        const v = c[i];
-        if (v !== 0) out.set(v, (out.get(v) ?? 0) + 1);
+    for (const [key, c] of this.chunks) {
+      let own = this.chunkCounts.get(key);
+      if (own === undefined) {
+        own = new Map();
+        for (let i = 0; i < c.length; ++i) {
+          const v = c[i];
+          if (v !== 0) own.set(v, (own.get(v) ?? 0) + 1);
+        }
+        this.chunkCounts.set(key, own);
       }
+      for (const [v, n] of own) out.set(v, (out.get(v) ?? 0) + n);
     }
     return out;
+  }
+
+  /**
+   * The voxel of a label nearest the mean of its voxels (the mean itself
+   * may fall outside a curved or hollow shape); undefined when it is not
+   * painted.
+   */
+  centre(value: number): [number, number, number] | undefined {
+    const sum = [0, 0, 0];
+    let n = 0;
+    const visit = (f: (x: number, y: number, z: number) => void) => {
+      for (const [key, c] of this.chunks) {
+        if (this.chunkCounts.get(key)?.has(value) === false) continue;
+        const [cx, cy, cz] = this.coords(key);
+        for (let i = 0; i < c.length; ++i) if (c[i] === value) f(cx * CHUNK + (i & 63), cy * CHUNK + ((i >> 6) & 63), cz * CHUNK + (i >> 12));
+      }
+    };
+    visit((x, y, z) => {
+      sum[0] += x;
+      sum[1] += y;
+      sum[2] += z;
+      ++n;
+    });
+    if (n === 0) return undefined;
+    const mean = sum.map((s) => s / n);
+    let best: [number, number, number] = [0, 0, 0];
+    let bestD = Infinity;
+    visit((x, y, z) => {
+      const d = (x - mean[0]) ** 2 + (y - mean[1]) ** 2 + (z - mean[2]) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        best = [x, y, z];
+      }
+    });
+    return best;
   }
 
   /** A block of voxels (x fastest), the whole volume unless a box is given. */
@@ -203,7 +247,35 @@ export class LabelVolume {
       }
     }
     for (const c of this.coarse) c.clear();
+    this.chunkCounts.clear();
     ++this.version;
+  }
+
+  /**
+   * Writes a block of labels (x fastest, `size` voxels from `lo`) into the
+   * volume, as when copying a segmentation a block at a time: values are
+   * rounded, and 0 (or less) writes nothing, so no empty chunk is made.
+   */
+  addBlock(lo: [number, number, number], size: [number, number, number], data: ArrayLike<number>): void {
+    const touched = new Set<number>();
+    let i = 0;
+    for (let z = lo[2]; z < lo[2] + size[2]; ++z) {
+      for (let y = lo[1]; y < lo[1] + size[1]; ++y) {
+        for (let x = lo[0]; x < lo[0] + size[0]; ++x, ++i) {
+          const v = data[i];
+          if (!(v > 0) || !this.inside(x, y, z)) continue;
+          const key = this.key(x >> 6, y >> 6, z >> 6);
+          let c = this.chunks.get(key);
+          if (c === undefined) {
+            c = new LABEL_ARRAYS[this.type](C3);
+            this.chunks.set(key, c);
+          }
+          c[LabelVolume.offset(x, y, z)] = Math.round(v);
+          touched.add(key);
+        }
+      }
+    }
+    for (const key of touched) this.changed(key);
   }
 
   // ---------------------------------------------------------- pyramid

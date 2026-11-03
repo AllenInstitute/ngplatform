@@ -10,9 +10,9 @@
  * while they last, and once when they end.
  */
 import type { PlatformContext } from "@ngplatform/sdk";
-import { between, type Placement, placement } from "../geometry.js";
-import { space } from "../scene.js";
-import type { ImageLevel, Voxels } from "../voxels.js";
+import { between, type Placement, placement } from "../annotations/geometry.js";
+import { space } from "../annotations/scene.js";
+import type { ImageLevel, Voxels } from "../annotations/voxels.js";
 import { History } from "./history.js";
 import type { ImageBlock, Vec3 } from "./kernels.js";
 import { CHUNK, LabelVolume } from "./label_volume.js";
