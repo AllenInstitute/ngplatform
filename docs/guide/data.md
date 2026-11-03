@@ -42,8 +42,7 @@ reading them again); links to them work in the same browser while the tab
 is open.
 
 !!! note "Coming"
-    CIFTI time series (`.dtseries.nii`) and surface values (thickness,
-    curvature, parcellations) are on the
+    CIFTI time series (`.dtseries.nii`) and Feather tables are on the
     [work plan](https://github.com/AllenInstitute/ngplatform/blob/main/TODO.md).
 
 ## Exporting
