@@ -285,8 +285,12 @@ export interface ViewerApi {
   /**
    * A layer's first data source's transform, from its source space to the
    * global one, and the transform the source itself gives (its default).
-   * Matrices are homogeneous, column-major, in multiples of each side's
-   * scales (as Neuroglancer keeps them); scales are in the units given.
+   * Matrices are homogeneous, column-major, as Neuroglancer keeps them:
+   * the linear part relates physical lengths, so an input coordinate
+   * moves output coordinate o by `matrix[o, i] * input.scales[i] /
+   * output.scales[o]` (an identity matrix puts a 1 mm source in 0.5 mm
+   * global dimensions at twice its coordinates), while the translation is
+   * in output coordinates.  Scales are in the units given.
    */
   layerTransform(layer: string): LayerTransform | undefined;
   /** Sets a layer's transform matrix (same form as `layerTransform`'s), as one undo step. */

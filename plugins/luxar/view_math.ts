@@ -60,6 +60,32 @@ export function invertAffine(m: ArrayLike<number>): Mat4 | undefined {
 }
 
 /**
+ * The layer's transform as a map from store coordinates to global ones
+ * (same layout as `transform.matrix`).  Neuroglancer keeps the matrix's
+ * linear part in physical terms: an input of scale 1 mm read in a global
+ * dimension of scale 0.5 mm counts two global units a store unit with an
+ * identity matrix (render_coordinate_transform.ts, scaleTransformSubmatrix
+ * multiplies each coefficient by the input's scale over the output's).
+ * The translation is in output (global) units already.  Without this a
+ * store drawn in a scene whose global scales differ from its own (a 1 mm
+ * tractogram over a 1.25 mm or 0.5 mm image) lands scaled about the origin:
+ * shifted, and the wrong size.
+ */
+export function storeToGlobal(transform: LayerTransform): Float64Array {
+  const r = transform.rank;
+  const n = r + 1;
+  const out = Float64Array.from(transform.matrix);
+  for (let o = 0; o < r; ++o) {
+    const outScale = transform.output.scales[o];
+    for (let j = 0; j < r; ++j) {
+      const inScale = transform.input.scales[j];
+      if (inScale > 0 && outScale > 0) out[n * j + o] *= inScale / outScale;
+    }
+  }
+  return out;
+}
+
+/**
  * Store coordinates (the layer source's x, y, z) to three named global
  * dimensions (a 3-D view's display dimensions), through the layer's
  * transform; undefined when one is not among the layer's outputs.
@@ -67,7 +93,7 @@ export function invertAffine(m: ArrayLike<number>): Mat4 | undefined {
 export function modelTo(transform: LayerTransform, names: string[]): Mat4 | undefined {
   const r = transform.rank;
   const n = r + 1;
-  const M = transform.matrix;
+  const M = storeToGlobal(transform);
   const out = new Float64Array(16);
   out[15] = 1;
   for (let i = 0; i < 3; ++i) {
@@ -88,13 +114,14 @@ export function directionMatrix(transform: LayerTransform): Float32Array {
   const r = transform.rank;
   const n = r + 1;
   const names = transform.output.names;
+  const M = storeToGlobal(transform);
   const axes = ["x", "y", "z"].every((a) => names.includes(a)) ? ["x", "y", "z"].map((a) => names.indexOf(a)) : [0, 1, 2];
   const out = new Float32Array(9);
   for (let i = 0; i < 3; ++i) {
     const g = axes[i];
     if (g >= r) continue;
     const scale = transform.output.scales[g] || 1;
-    for (let j = 0; j < Math.min(3, r); ++j) out[3 * j + i] = transform.matrix[n * j + g] * scale;
+    for (let j = 0; j < Math.min(3, r); ++j) out[3 * j + i] = M[n * j + g] * scale;
   }
   return out;
 }
@@ -262,7 +289,7 @@ export function measurePanel(project: (global: number[]) => { x: number; y: numb
 export function modelToPanel(transform: LayerTransform, globalNames: string[], rows: number[][]): Mat4 {
   const r = transform.rank;
   const n = r + 1;
-  const T = transform.matrix;
+  const T = storeToGlobal(transform);
   const R = globalNames.length;
   const outputOf = globalNames.map((name) => transform.output.names.indexOf(name));
   const out = new Float64Array(16);
