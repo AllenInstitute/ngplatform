@@ -12,7 +12,8 @@ their history) and that section was taken out of Annotations.
   placement); or a copy of a segmentation's labels at a level, to edit (the
   original is hidden, not changed); or a NIfTI label image opened from this
   computer.
-- **The tool bar** over the views while a volume is edited: Move (the
+- **The tool bar** over the 2-D views while a volume is edited (centred
+  over the top row of 2-D views, so it never covers the 3-D view): Move (the
   views as Neuroglancer moves them; the default), Brush, Erase, Fill (2-D or
   3-D), Pick segment and Quick select; the brush's size; the active
   segment and New segment; Undo, Redo, Interpolate, Save; and a button that

@@ -2,7 +2,8 @@
  * The tool bar over the views while a label volume is edited, as
  * WebKnossos's: the tools, the brush's size or the fill's reach in 2-D or
  * 3-D, the active segment and New segment, undo, redo, interpolation and
- * saving.  It sits at the top of the views, centred over them.
+ * saving.  It sits at the top of the 2-D views, centred over them (not
+ * over the 3-D view, where the left button rotates).
  */
 import type { Disposer, PlatformContext } from "@ngplatform/sdk";
 import { el } from "../annotations/ui.js";
@@ -43,22 +44,23 @@ export class Toolbar {
     this.overlay.dispose();
   }
 
-  /** Keeps the bar centred at the top of the views shown (below Neuroglancer's position bar). */
+  /** Keeps the bar centred at the top of the 2-D views (below Neuroglancer's position bar). */
   private place(): void {
     if (this.bar.hidden) return;
     const panels = this.ctx.viewer.panels();
     if (panels.length === 0) return;
     const base = this.overlay.element.getBoundingClientRect();
-    const rects = panels.map((p) => p.element.getBoundingClientRect());
-    const top = Math.min(...rects.map((r) => r.top)) - base.top;
-    const left = Math.min(...rects.map((r) => r.left)) - base.left;
-    const right = Math.max(...rects.map((r) => r.right)) - base.left;
-    const key = `${Math.round(top)}/${Math.round((left + right) / 2)}`;
+    const span = barSpan(panels.map((p) => ({ kind: p.kind, rect: p.element.getBoundingClientRect() })));
+    const top = span.top - base.top;
+    const centre = (span.left + span.right) / 2 - base.left;
+    const width = span.right - span.left;
+    const key = `${Math.round(top)}/${Math.round(centre)}/${Math.round(width)}`;
     if (key === this.placed) return;
     this.placed = key;
     // Below the views' corner buttons (maximise, layout), which it would cover.
     this.bar.style.top = `${Math.round(top) + 30}px`;
-    this.bar.style.left = `${Math.round((left + right) / 2)}px`;
+    this.bar.style.left = `${Math.round(centre)}px`;
+    this.bar.style.maxWidth = `${Math.max(120, Math.round(width) - 16)}px`;
   }
 
   private draw(): void {
@@ -131,4 +133,32 @@ export class Toolbar {
 function rowsMax(values: number[], max: number): string {
   const top = Math.max(0, ...values);
   return top < max ? `segment ${top + 1}` : "the smallest unused id";
+}
+
+interface PanelRect {
+  kind: "2d" | "3d";
+  rect: { left: number; right: number; top: number; bottom: number };
+}
+
+/**
+ * Where the bar goes: across the top row of the 2-D views (those whose top
+ * is the highest), so in a layout with a 3-D view beside them (xy-3d,
+ * 4panel) it does not cover the 3-D view.  When a 3-D view sits between
+ * 2-D views in that row, the widest 2-D view alone; with no 2-D view, all
+ * the views.
+ */
+export function barSpan(panels: PanelRect[]): { left: number; right: number; top: number } {
+  const flat = panels.filter((p) => p.kind === "2d");
+  const use = flat.length ? flat : panels;
+  const top = Math.min(...use.map((p) => p.rect.top));
+  const row = use.filter((p) => p.rect.top < top + 4);
+  let left = Math.min(...row.map((p) => p.rect.left));
+  let right = Math.max(...row.map((p) => p.rect.right));
+  const between = panels.some((p) => p.kind === "3d" && flat.length > 0 && p.rect.left < right - 1 && p.rect.right > left + 1 && p.rect.top < top + 40 && p.rect.bottom > top);
+  if (between) {
+    const widest = row.reduce((a, b) => (b.rect.right - b.rect.left > a.rect.right - a.rect.left ? b : a));
+    left = widest.rect.left;
+    right = widest.rect.right;
+  }
+  return { left, right, top };
 }

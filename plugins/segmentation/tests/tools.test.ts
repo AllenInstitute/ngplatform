@@ -12,6 +12,7 @@ import { floodFill, paintBall, relabel, sameLabel, type Vec3 } from "../kernels.
 import { LabelVolume } from "../label_volume.js";
 import { SEGMENTATION_MANIFEST } from "../manifest.js";
 import { isVisible, nextSegment, segmentName, segmentRows, withVisibility } from "../segments.js";
+import { barSpan } from "../toolbar.js";
 import { brushes, cycle, draws, stepRadius, TOOLS } from "../tools.js";
 import { checkManifest } from "../../../src/sdk/manifest.js";
 
@@ -53,6 +54,24 @@ describe("the tools", () => {
     expect(keys.get("mod+z")?.command).toBe("segmentation.undo");
     expect(keys.get("mod+y")?.command).toBe("segmentation.redo");
     for (const k of keys.values()) expect(k.when).toMatch(/^segmentation\./);
+  });
+});
+
+describe("the tool bar's place", () => {
+  const panel = (kind: "2d" | "3d", left: number, top: number, right: number, bottom: number) => ({ kind, rect: { left, top, right, bottom } });
+
+  it("spans the 2-D view beside a 3-D one (xy-3d), not the 3-D view", () => {
+    expect(barSpan([panel("2d", 0, 40, 550, 750), panel("3d", 550, 40, 1100, 750)])).toEqual({ left: 0, right: 550, top: 40 });
+  });
+
+  it("spans the top row of 2-D views in four panels", () => {
+    const four = [panel("2d", 0, 40, 550, 395), panel("2d", 550, 40, 1100, 395), panel("2d", 0, 395, 550, 750), panel("3d", 550, 395, 1100, 750)];
+    expect(barSpan(four)).toEqual({ left: 0, right: 1100, top: 40 });
+  });
+
+  it("takes the widest 2-D view when a 3-D view sits between them, and every view with no 2-D view", () => {
+    expect(barSpan([panel("2d", 0, 40, 300, 750), panel("3d", 300, 40, 700, 750), panel("2d", 700, 40, 1100, 750)])).toEqual({ left: 700, right: 1100, top: 40 });
+    expect(barSpan([panel("3d", 0, 40, 1100, 750)])).toEqual({ left: 0, right: 1100, top: 40 });
   });
 });
 

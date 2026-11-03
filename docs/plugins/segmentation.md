@@ -35,7 +35,8 @@ scene has its own segmentation layers; the tab shows the scene you are in.
 ## The tool bar
 
 While a segmentation layer is edited, a tool bar shows at the top of the
-views. Hover a button for its name and key.
+2-D views (in a layout with a 3-D view, such as xy-3d, it stays over the
+2-D view). Hover a button for its name and key.
 
 | Tool | Key | What it does |
 |---|---|---|
