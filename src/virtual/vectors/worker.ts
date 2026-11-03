@@ -6,7 +6,7 @@
 import { serveVirtualStores } from "../../sdk/virtual.js";
 import { FREESURFER_SURFACE, parseMeshFile } from "./mesh_files.js";
 import { MeshStore } from "./meshes.js";
-import { parseLas, parsePointTable, parseSwc, parseSwcCollection } from "./point_files.js";
+import { parseLas, parsePointParquet, parsePointTable, parseSwc, parseSwcCollection } from "./point_files.js";
 import { pointStore, skeletonStore } from "./points.js";
 import { openTractogram } from "./tractograms.js";
 
@@ -21,6 +21,7 @@ serveVirtualStores(async (file) => {
     return skeletonStore(nodes, "neurons", { names: files, fileOf });
   }
   if (/\.swc$/i.test(file.name)) return skeletonStore(parseSwc(await file.text()), file.name.replace(/\.swc$/i, ""));
+  if (/\.parquet$/i.test(file.name)) return pointStore(await parsePointParquet(file), file.name.replace(/\.parquet$/i, ""));
   if (/\.las$/i.test(file.name)) return pointStore(parseLas(new Uint8Array(await file.arrayBuffer())), file.name.replace(/\.las$/i, ""));
   if (/\.(csv|tsv|xyz)$/i.test(file.name)) return pointStore(parsePointTable(await file.text()), file.name.replace(/\.(csv|tsv|xyz)$/i, ""));
   return openTractogram(file, file.name);

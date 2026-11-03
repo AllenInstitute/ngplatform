@@ -80,6 +80,63 @@ export interface PointTable {
 }
 
 /** A delimited table of points: comma, tab or space separated, with or without a header row. */
+/** Whether a column's name says it is `axis` (x, y or z) of a point: x, x_position, x_location (10x Xenium), x_um, centroid_x … */
+function coordinateName(lower: string, axis: string): boolean {
+  return [axis, `${axis}_position`, `position_${axis}`, `${axis}_location`, `${axis}_um`, `${axis}_mm`, `${axis}_nm`, `centroid_${axis}`, `global_${axis}`].includes(lower);
+}
+
+/**
+ * A Parquet table of points (spatial transcriptomics, cell tables, any
+ * table with x, y and z columns): its numeric columns, read column by
+ * column (hyparquet, with the usual compressions).  Text columns (gene
+ * names, cell types) are left out, as from CSV.
+ */
+export async function parsePointParquet(file: Blob): Promise<PointTable> {
+  const { parquetMetadataAsync, parquetRead, parquetSchema } = await import("hyparquet/src/index.js");
+  const { compressors } = await import("hyparquet-compressors");
+  const buffer = { byteLength: file.size, slice: (start: number, end?: number) => file.slice(start, end).arrayBuffer() };
+  const metadata = await parquetMetadataAsync(buffer);
+  const names: string[] = parquetSchema(metadata).children.map((c: { element: { name: string } }) => c.element.name);
+  const rows = Number(metadata.num_rows);
+  const lower = names.map((n) => n.toLowerCase());
+  const axes = ["x", "y", "z"].map((a) => lower.findIndex((n) => coordinateName(n, a)));
+  if (axes[0] === -1 || axes[1] === -1) throw new Error("a Parquet table of points needs x and y columns (x, x_location, x_um …)");
+  const values = new Map<string, Float64Array>();
+  const numeric = new Set<string>();
+  await parquetRead({
+    file: buffer,
+    metadata,
+    compressors,
+    onChunk: ({ columnName, columnData, rowStart }: { columnName: string; columnData: ArrayLike<unknown>; rowStart: number }) => {
+      let column = values.get(columnName);
+      if (column === undefined) values.set(columnName, (column = new Float64Array(rows).fill(Number.NaN)));
+      for (let i = 0; i < columnData.length; ++i) {
+        const v = columnData[i];
+        const n = typeof v === "number" ? v : typeof v === "bigint" ? Number(v) : NaN;
+        if (Number.isFinite(n)) numeric.add(columnName);
+        column[rowStart + i] = n;
+      }
+    },
+  });
+  const positions = new Float64Array(3 * rows);
+  axes.forEach((a, k) => {
+    // A flat table (no z) lies in the plane z = 0.
+    const column = a === -1 ? undefined : values.get(names[a]);
+    for (let i = 0; i < rows; ++i) positions[3 * i + k] = column?.[i] ?? 0;
+  });
+  if (positions.some((v) => !Number.isFinite(v))) throw new Error("a Parquet table with x, y or z values that are not numbers");
+  const columns: PointTable["columns"] = [];
+  names.forEach((name, c) => {
+    if (axes.includes(c) || !numeric.has(name)) return;
+    const column = values.get(name)!;
+    if (column.some((v) => !Number.isFinite(v))) return;
+    columns.push({ name: name.replace(/[^A-Za-z0-9_]/g, "_") || `col${c}`, values: Float32Array.from(column) });
+  });
+  const suffix = /_(um|mm|nm)$/.exec(lower[axes[0]])?.[1] ?? (/_location$/.test(lower[axes[0]]) ? "um" : undefined);
+  const unit = suffix === undefined ? undefined : { um: "micrometer", mm: "millimeter", nm: "nanometer" }[suffix];
+  return { positions, columns, unit };
+}
+
 export function parsePointTable(text: string): PointTable {
   const lines = text.split("\n").map((l) => l.trim()).filter((l) => l !== "" && !l.startsWith("#"));
   if (lines.length === 0) throw new Error("a point table without rows");
@@ -90,7 +147,7 @@ export function parsePointTable(text: string): PointTable {
   const names = header ? first : first.map((_, i) => `col${i}`);
   const rows = (header ? lines.slice(1) : lines).map(split);
   const lower = names.map((n) => n.toLowerCase());
-  const find = (axis: string) => lower.findIndex((n) => n === axis || n === `${axis}_position` || n === `position_${axis}` || n === `${axis}_um` || n === `${axis}_mm` || n === `${axis}_nm` || n === `centroid_${axis}`);
+  const find = (axis: string) => lower.findIndex((n) => coordinateName(n, axis));
   let axes = ["x", "y", "z"].map(find);
   if (axes.some((i) => i === -1)) axes = [0, 1, 2];
   if (names.length < 3) throw new Error("a point table needs three columns (x, y, z)");

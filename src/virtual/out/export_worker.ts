@@ -12,7 +12,7 @@
  */
 import { openImage } from "../images/open.js";
 import { parseMeshFile } from "../vectors/mesh_files.js";
-import { parseLas, parsePointTable, parseSwc } from "../vectors/point_files.js";
+import { parseLas, parsePointParquet, parsePointTable, parseSwc } from "../vectors/point_files.js";
 import { parseTckHeader, readTck } from "../vectors/tck.js";
 import type { TrkBatch } from "../vectors/trk.js";
 import { parseTrkHeader, readTrk, TRK_HEADER_SIZE } from "../vectors/trk.js";
@@ -60,9 +60,8 @@ async function exportGeometry(file: Blob & { name: string }, format: GeometryFor
     if (format === "csv") return csvFile(mesh.positions);
   }
   if (kind === "points" && format === "csv") {
-    const text = await file.text();
     if (/\.swc$/i.test(file.name)) {
-      const nodes = parseSwc(text);
+      const nodes = parseSwc(await file.text());
       const positions = new Float64Array(nodes.length * 3);
       nodes.forEach((n, i) => positions.set(n.position, 3 * i));
       return csvFile(positions, [
@@ -72,7 +71,7 @@ async function exportGeometry(file: Blob & { name: string }, format: GeometryFor
         { name: "parent", values: nodes.map((n) => n.parent) },
       ]);
     }
-    const table = /\.las$/i.test(file.name) ? parseLas(new Uint8Array(await file.arrayBuffer())) : parsePointTable(text);
+    const table = /\.las$/i.test(file.name) ? parseLas(new Uint8Array(await file.arrayBuffer())) : /\.parquet$/i.test(file.name) ? await parsePointParquet(file) : parsePointTable(await file.text());
     return csvFile(table.positions, table.columns);
   }
   throw new Error(`a ${kind ?? "file"} cannot be written as ${format}`);

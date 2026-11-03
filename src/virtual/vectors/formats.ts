@@ -71,6 +71,14 @@ export const ZARR_VECTORS_VIRTUAL: VirtualFormat[] = [
     worker,
   },
   {
+    pattern: /\.parquet$/i,
+    extensions: [".parquet"],
+    format: "Parquet table of points",
+    kind: "auto",
+    source: (url) => `${url}/|zarr-vectors:`,
+    worker,
+  },
+  {
     pattern: /\.las$/i,
     extensions: [".las"],
     format: "LAS point cloud",

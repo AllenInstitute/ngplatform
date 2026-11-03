@@ -28,10 +28,12 @@ is never loaded whole and coarser levels appear first.
 |---|---|---|
 | NIfTI (`.nii`, `.nii.gz`), Analyze (`.hdr` + `.img`), FreeSurfer (`.mgz`, `.mgh`) | a virtual OME-Zarr image, with a pyramid | Placed by the sform (else qform). A `.nii.gz` is decompressed once and kept in the browser's private storage for later visits. Colour (RGB) NIfTI shows in colour. |
 | TIFF stacks (`.tif`, `.tiff`), OME-TIFF, ImageJ hyperstacks | a virtual OME-Zarr image, with a pyramid | Classic and BigTIFF; channels and time points from OME and ImageJ metadata. |
+| NumPy arrays (`.npy`, 2-D to 4-D) | a virtual OME-Zarr image, with a pyramid | Indexed [z, y, x] as Python imaging code does (the last axis is x); 1-unit voxels. |
+| A FreeSurfer subject folder (with `mri/` and `surf/`) | its T1, aparc+aseg and white and pial surfaces | Surfaces in Freeview's colours, drawn as outlines on the slices. |
 | Tractograms (`.trk`, `.tck`, `.trx`) | a virtual Zarr Vectors streamline store | Split into spatial cells, with a coarse level for large files; track groups work on them. |
 | Meshes (`.obj`, `.stl`, `.ply`), GIFTI and FreeSurfer surfaces (`lh.pial` …) | a virtual Zarr Vectors mesh store | Surfaces are placed in scanner RAS. |
 | Neurons (`.swc`, or a folder of them) | a virtual Zarr Vectors skeleton store | One object per tree, with cable length and branch points. |
-| Point tables (`.csv`, `.tsv`, `.xyz`) | a virtual Zarr Vectors point store | Numeric columns become properties. |
+| Point tables (`.csv`, `.tsv`, `.xyz`, `.parquet`) and LAS point clouds (`.las`) | a virtual Zarr Vectors point store | x, y, z from columns named so (or `x_location`, `x_um` …, as Xenium writes transcripts); other numeric columns become properties. Large clouds get coarse levels. |
 | A folder of OME-Zarr, Zarr Vectors or precomputed data | the stores themselves | Read file by file. |
 
 Chrome and Edge remember local files between visits (you are asked to allow
@@ -39,7 +41,8 @@ reading them again); links to them work in the same browser while the tab
 is open.
 
 !!! note "Coming"
-    LAS/LAZ point clouds, Parquet tables and GraphML are on the
+    LAZ (compressed LAS), GraphML, CIFTI and surface values (thickness,
+    curvature, parcellations) are on the
     [work plan](https://github.com/AllenInstitute/ngplatform/blob/main/TODO.md).
 
 ## Exporting

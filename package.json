@@ -14,6 +14,8 @@
     "typecheck": "tsc -p . && tsc -p plugins/zarr-vectors"
   },
   "dependencies": {
+    "hyparquet": "1.31.4",
+    "hyparquet-compressors": "1.1.2",
     "neuroglancer": "file:../neuroglancer",
     "neuroglancer-zarr-vectors": "file:plugins/zarr-vectors"
   },

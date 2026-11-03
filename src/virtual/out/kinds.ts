@@ -9,6 +9,6 @@ export function exportKind(name: string): "image" | "streamlines" | "mesh" | "po
   if (/\.(nii(\.gz)?|hdr|mg[hz]|npy|tiff?)$/i.test(name)) return "image";
   if (/\.(trk|tck|trx)$/i.test(name)) return "streamlines";
   if (/\.(obj|stl|ply|gii)$/i.test(name) || /^[lr]h\.[a-z0-9_.-]+$/i.test(name)) return "mesh";
-  if (/\.(csv|tsv|xyz|swc|las)$/i.test(name)) return "points";
+  if (/\.(csv|tsv|xyz|swc|las|parquet)$/i.test(name)) return "points";
   return undefined;
 }
