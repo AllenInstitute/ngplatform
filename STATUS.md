@@ -1,6 +1,6 @@
 # Status
 
-*As of 2026-11-03. The `working` branch holds the night's work, below, for review before it goes to `main`.*
+*As of 2026-11-03. The night's work, below, is on `main`; new work goes to `working` first.*
 
 ## Where things stand
 
@@ -20,7 +20,7 @@
 | **Neuroglancer** | google/neuroglancer `master` plus commits on `Andrew-Keenlyside/neuroglancer` branch `ngplatform-upstream`: application-supplied workers, host-owned side panels, incremental layer restore, GCS listing, a one-byte GET where a bucket's CORS blocks HEAD (without it no chunk of the HCP store loaded), switches beside Sections and sections clipped to a box, a screenshot overlay, and resolution histograms laid out by resolution (every level keeps its place; the target line moves). |
 | **Filter oracle and engines, step C0** | In `zarr-vectors-tools`, on its branch `working`. |
 
-## New on the `working` branch (2026-11-02 to 03), for review
+## New (2026-11-02 to 03)
 
 | Area | What |
 |---|---|
