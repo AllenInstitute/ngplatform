@@ -9,7 +9,8 @@
 import { clear, h } from "../dom.js";
 import type { Workbench } from "../workbench.js";
 
-const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v0.27.7/full/";
+// The same Pyodide as chunkmirage's engine (vendor/chunkmirage/web/src/pyworker.ts), so the browser fetches and caches one.
+const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/";
 
 interface PyProxyLike {
   (...args: unknown[]): Promise<unknown>;
