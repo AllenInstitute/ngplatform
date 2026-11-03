@@ -51,13 +51,29 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
     h("span", {}, "Local data in this scene needs a click to be read again."),
     h("button", { class: "btn small", type: "button", onclick: () => wb.run("dataset.reconnectLocal") }, "Allow"),
   );
-  host.append(h("div", { class: "panel-actions" }, addButton), permission, list, others);
+  const gone = h("div", { class: "note-bar", hidden: true });
+  host.append(h("div", { class: "panel-actions" }, addButton), permission, gone, list, others);
 
   const render = () => {
     const localBase = `${wb.localData.base}local/`;
     permission.hidden = !(
       wb.localData.list().some((e) => e.needsPermission) && engine.layers().some((l) => l.sources.some((s) => s.includes(localBase)))
     );
+    // Layers reading local data this tab no longer has (dropped or opened files are kept
+    // only while the tab is open, unless the browser handed over a handle to remember).
+    const lost = wb.localData.restored
+      ? engine.layers().filter((l) => l.sources.some((s) => {
+          const at = wb.localData.parse(s.replace(/^[a-z0-9+]+:\/\/(?=https?:)/, ""));
+          return at !== undefined && !wb.localData.has(at.id);
+        }))
+      : [];
+    gone.hidden = lost.length === 0;
+    if (lost.length > 0) {
+      clear(
+        gone,
+        h("span", {}, `${lost.map((l) => l.name).join(", ")}: ${lost.length === 1 ? "its" : "their"} files on this computer are no longer open in this tab. Open them again (Add → Local, or drop them here).`),
+      );
+    }
     const entries = store.sceneDatasets();
     const layerInfo = new Map(engine.layers().map((l) => [l.name, l]));
     const selected = engine.selectedLayer();

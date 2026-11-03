@@ -117,6 +117,8 @@ interface Stored {
   name: string;
   kind: "folder" | "file";
   handle?: Handle;
+  /** Several things dropped at once: each one's handle, read as one folder of them. */
+  handles?: Handle[];
 }
 
 interface Open extends Stored {
@@ -209,6 +211,14 @@ export class LocalData {
     return "showDirectoryPicker" in window;
   }
 
+  /** Whether remembered data is known yet (`restore` done). */
+  restored = false;
+
+  /** Whether `id` is open in this tab: remembered, dropped or picked. */
+  has(id: string): boolean {
+    return this.entries.has(id);
+  }
+
   list(): LocalEntry[] {
     return [...this.entries.values()].filter((e) => !e.id.startsWith(DERIVED_PREFIX)).map(({ id, name, kind, needsPermission }) => ({ id, name, kind, needsPermission }));
   }
@@ -241,8 +251,8 @@ export class LocalData {
     this.worker ??= (async () => {
       navigator.serviceWorker.addEventListener("message", (event) => {
         const data = event.data;
-        if (data?.type === "local-read") void this.answer({ ...data, path: data.file }, event.ports[0]);
-        if (data?.type === "local-has") event.ports[0]?.postMessage(this.entries.has(data.id));
+        if (data?.type === "local-read") void this.restoring.then(() => this.answer({ ...data, path: data.file }, event.ports[0]));
+        if (data?.type === "local-has") void this.restoring.then(() => event.ports[0]?.postMessage(this.entries.has(data.id)));
       });
       // Control can come after start() stops waiting (a busy page): tell the
       // worker then which data this page holds, so it need not ask around.
@@ -260,7 +270,21 @@ export class LocalData {
   }
 
   /** Folders and files remembered from earlier visits. */
-  async restore(): Promise<void> {
+  restore(): Promise<void> {
+    this.restoring = this.restoreNow().finally(() => {
+      this.restored = true;
+      this.changed();
+    });
+    return this.restoring;
+  }
+
+  /**
+   * Done once remembered data is known: the worker's reads wait for it, so
+   * a workspace reopened after a reload is not told its local data has gone.
+   */
+  private restoring: Promise<void> = Promise.resolve();
+
+  private async restoreNow(): Promise<void> {
     if (!LocalData.supported) return;
     let stored: Stored[] = [];
     try {
@@ -269,8 +293,12 @@ export class LocalData {
       return;
     }
     for (const item of stored) {
-      const permission = await (item.handle as Permissioned | undefined)?.queryPermission?.({ mode: "read" });
-      this.entries.set(item.id, { ...item, needsPermission: permission !== "granted" });
+      const handles = (item.handles ?? (item.handle ? [item.handle] : [])) as Permissioned[];
+      let granted = handles.length > 0;
+      for (const h of handles) if ((await h.queryPermission?.({ mode: "read" }).catch(() => undefined)) !== "granted") granted = false;
+      const entry: Open = { ...item, needsPermission: !granted };
+      if (granted && item.handles !== undefined) entry.files = await groupFiles(item.handles).catch(() => undefined);
+      this.entries.set(item.id, entry);
     }
     if (stored.length) {
       await this.start();
@@ -288,8 +316,11 @@ export class LocalData {
     let granted = 0;
     for (const entry of this.entries.values()) {
       if (!entry.needsPermission) continue;
-      const handle = entry.handle as Permissioned | undefined;
-      if ((await handle?.requestPermission?.({ mode: "read" })) === "granted") {
+      const handles = (entry.handles ?? (entry.handle ? [entry.handle] : [])) as Permissioned[];
+      let ok = handles.length > 0;
+      for (const h of handles) if ((await h.requestPermission?.({ mode: "read" }).catch(() => undefined)) !== "granted") ok = false;
+      if (ok && entry.handles !== undefined) entry.files = await groupFiles(entry.handles).catch(() => undefined);
+      if (ok) {
         entry.needsPermission = false;
         granted++;
       }
@@ -359,6 +390,12 @@ export class LocalData {
       const single = files.size === 1 && items.length === 1 && !items[0].folder;
       const name = single ? [...files.keys()][0] : items.length === 1 ? items[0].name : `${items.length} dropped items`;
       entry = { id, name, kind: single ? "file" : "folder", files, needsPermission: false };
+      // Several things dropped at once are remembered too, where each came with a handle.
+      const handles = items.map((i) => i.handle);
+      if (items.length > 1 && handles.every((h) => h !== undefined)) {
+        entry.handles = handles as Handle[];
+        await idb("readwrite", (s) => s.put({ id, name, kind: "folder", handles })).catch(() => {});
+      }
     }
     this.entries.set(id, entry);
     this.register();
@@ -432,6 +469,34 @@ export class LocalData {
     this.entries.delete(id);
     await idb("readwrite", (s) => s.delete(id)).catch(() => {});
     this.changed();
+  }
+
+  /** Whether entry `id` holds `path`: a file, or a folder with something in it. */
+  async holds(id: string, path: string): Promise<boolean> {
+    const p = path.replace(/\/+$/, "");
+    if (p === "" || this.entries.get(id)?.needsPermission !== false) return false;
+    if ((await this.file(id, p).catch(() => undefined)) !== undefined) return true;
+    return (await this.files(id, p).catch(() => [])).length > 0;
+  }
+
+  /**
+   * Local data opened again under a new id (a reload drops dropped files):
+   * for each layer source still reading an id this tab does not have, the
+   * open entry holding the same path, or undefined.
+   */
+  async reopened(sources: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    for (const source of sources) {
+      const at = this.parse(source.replace(/^[a-z0-9+]+:\/\/(?=https?:)/, ""));
+      if (at === undefined || this.entries.has(at.id) || out.has(at.id)) continue;
+      for (const entry of this.list()) {
+        if (await this.holds(entry.id, at.path)) {
+          out.set(at.id, entry.id);
+          break;
+        }
+      }
+    }
+    return out;
   }
 
   /** A file of an entry ("" or the file's name for a picked file). */
@@ -822,6 +887,15 @@ async function handleFiles(handle: FileSystemFileHandle | FileSystemDirectoryHan
     for (const [path, file] of await handleFiles(child, child.kind === "directory" ? `${prefix}${child.name}/` : prefix)) out.set(path, file);
   }
   return out;
+}
+
+/** Several dropped handles' files, as one folder of them (as when they were dropped). */
+async function groupFiles(handles: Handle[]): Promise<Map<string, File>> {
+  const files = new Map<string, File>();
+  for (const h of handles as (FileSystemFileHandle | FileSystemDirectoryHandle)[]) {
+    for (const [path, file] of await handleFiles(h, h.kind === "directory" ? `${h.name}/` : "")) files.set(path, file);
+  }
+  return files;
 }
 
 async function entryFiles(dir: FileSystemDirectoryEntry, prefix: string): Promise<Map<string, File>> {

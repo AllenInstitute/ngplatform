@@ -107,6 +107,12 @@ async function local(request: Request, url: URL): Promise<Response> {
   const slash = rest.indexOf("/");
   const id = slash === -1 ? rest : rest.slice(0, slash);
   const file = slash === -1 ? "" : decodeURIComponent(rest.slice(slash + 1));
+  // Neuroglancer lists a folder two ways at once: its index page, and S3's
+  // ListObjects on what looks like the bucket (<app>/local/?list-type=2).
+  // Local data answers the first; the second is not a dataset that has gone.
+  if (id === "" && url.searchParams.has("list-type")) {
+    return new Response("Local folders are listed by their index pages.", { status: 404, headers: { "access-control-allow-origin": "*" } });
+  }
   const range = parseRange(request.headers.get("range"));
   const answer = await read(id, file, range, method === "HEAD");
   const headers: Record<string, string> = { "access-control-allow-origin": "*", "cache-control": "no-store" };

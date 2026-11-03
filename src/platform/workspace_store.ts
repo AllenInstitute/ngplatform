@@ -529,6 +529,33 @@ export class WorkspaceStore {
     this.settle();
   }
 
+  /**
+   * Points every layer (in every scene) and dataset reading under `from` (a
+   * URL prefix) at `to` instead: local data opened again, under a new id.
+   * Returns how many layers of the active scene changed.
+   */
+  relinkSources(from: string, to: string, label: string): number {
+    if (this.settleTimer !== undefined) this.settle();
+    const swap = <T>(value: T): T => JSON.parse(JSON.stringify(value).split(from).join(to)) as T;
+    const reads = (value: unknown) => JSON.stringify(value ?? "").includes(from);
+    const ng = structuredClone(this.ng());
+    let changed = 0;
+    for (const layer of Array.isArray(ng.layers) ? (ng.layers as Json[]) : []) {
+      if (reads(layer.source)) {
+        layer.source = swap(layer.source) as Json;
+        changed++;
+      }
+    }
+    const scenes = this.platform.scenes.map((sc) => (sc.ng !== undefined && reads((sc.ng as Json).layers) ? { ...sc, ng: { ...sc.ng, layers: swap((sc.ng as Json).layers) } } : sc));
+    const datasets = this.platform.datasets.map((d) => (reads(d.source) ? { ...d, source: swap(d.source), key: d.key.split(from).join(to) } : d));
+    if (changed === 0 && scenes.every((sc, i) => sc === this.platform.scenes[i]) && datasets.every((d, i) => d === this.platform.datasets[i])) return 0;
+    this.platform = { ...this.platform, scenes, datasets };
+    this.engine.setState(ng);
+    this.nextLabel = label;
+    this.settle();
+    return changed;
+  }
+
   // -------------------------------------------------------- plugin slices
 
   getSlice<T>(spec: SliceSpec<T>): T {

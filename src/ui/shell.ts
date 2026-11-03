@@ -314,6 +314,17 @@ export class Shell {
     // asked for as soon as it opens.
     wb.computed.listen();
     void wb.localData.start();
+    // Local data opened again (dropped files go with a reload): the layers
+    // that read it before read it again, under its new id.
+    const relink = async () => {
+      if (!wb.localData.restored) return;
+      const sources = engine.layers().flatMap((l) => l.sources);
+      for (const [from, to] of await wb.localData.reopened(sources)) {
+        const n = store.relinkSources(`${wb.localData.base}local/${from}/`, `${wb.localData.base}local/${to}/`, "Local data opened again");
+        if (n > 0) toast(`Reading ${n} layer${n === 1 ? "" : "s"} from the files opened again.`);
+      }
+    };
+    wb.localData.onChange(() => void relink());
     for (const entry of plugins.catalogue) {
       const enabled = plugins.resolution.enabled.has(entry.manifest.id);
       // A data type plugin has no platform code: it was loaded with the viewer.
