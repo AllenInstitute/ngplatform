@@ -7,6 +7,7 @@
  */
 import type { Manifest, PluginModule, VirtualFormat } from "@ngplatform/sdk";
 import { ANNOTATIONS_MANIFEST } from "./annotations/manifest.js";
+import { ORIENTATIONS_MANIFEST } from "./orientations/manifest.js";
 import { REGISTRATION_MANIFEST } from "./registration/manifest.js";
 import { TRACK_FILTERING_MANIFEST } from "./track-filtering/manifest.js";
 import { VOLUME_VIEW_MANIFEST } from "./volume-view/manifest.js";
@@ -28,4 +29,5 @@ export const CATALOGUE: CatalogueEntry[] = [
   { manifest: VOLUME_VIEW_MANIFEST, load: async () => (await import("./volume-view/plugin.js")).plugin },
   { manifest: ANNOTATIONS_MANIFEST, load: async () => (await import("./annotations/plugin.js")).plugin },
   { manifest: REGISTRATION_MANIFEST, load: async () => (await import("./registration/plugin.js")).plugin },
+  { manifest: ORIENTATIONS_MANIFEST, load: async () => (await import("./orientations/plugin.js")).plugin },
 ];
