@@ -45,3 +45,13 @@ describe("computed images", () => {
     expect(engineReplies(Object.create(Engine.prototype))).toBe(true);
   });
 });
+
+describe("computed images from signed-in buckets", () => {
+  it("keeps gs+google:// in the pipeline and reads it through the app's own path", async () => {
+    const { readableSource } = await import("../src/virtual/computed.js");
+    expect(engineSource("zarr3://gs+google://bucket/a.zarr/")).toBe("gs+google://bucket/a.zarr/");
+    expect(readableSource("gs+google://bucket/a.zarr/", "https://host/app/")).toBe("https://host/app/gcs-google/bucket/a.zarr/");
+    expect(readableSource("precomputed://gs+google://bucket/vol", "https://host/app/")).toBe("precomputed://https://host/app/gcs-google/bucket/vol");
+    expect(readableSource("https://h/a.zarr/", "https://host/app/")).toBe("https://h/a.zarr/");
+  });
+});

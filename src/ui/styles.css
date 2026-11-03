@@ -820,3 +820,6 @@ textarea.state-input.tall { min-height: 50vh; }
 .drop-hint > div { display: grid; justify-items: center; gap: 8px; color: var(--text); font-size: 16px; }
 .drop-hint svg { width: 40px; height: 40px; }
 .drop-hint small { color: var(--faint); font-size: 12px; }
+
+/* code shown in a confirmation (a pipeline's Python) */
+.confirm-detail { max-height: 40vh; overflow: auto; margin: 8px 0 0; padding: 8px 10px; background: var(--ink-1); border: 1px solid var(--line); border-radius: var(--r); font: 11px/1.45 var(--mono); white-space: pre; }

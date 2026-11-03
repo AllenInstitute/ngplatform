@@ -63,6 +63,25 @@ export function engineSource(source: string): string {
   return url.replace(/^(zarr3?|zarr2|n5|ome-zarr):\/\//, "");
 }
 
+/**
+ * Where the engine reads a pipeline's source in this tab: a `gs+google://`
+ * one through the app's own path for it (the link keeps `gs+google://`, so
+ * it works on any host).
+ */
+export function readableSource(source: string, base: string): string {
+  const signedIn = (u: string) => u.replace(/^gs\+google:\/\//, `${base}${GOOGLE_PATH}`);
+  if (source.startsWith("precomputed://")) return `precomputed://${signedIn(source.slice("precomputed://".length))}`;
+  return signedIn(source);
+}
+
+/**
+ * Under the app's base: Cloud Storage read with the Google sign-in
+ * (<app>/gcs-google/<bucket>/<object>), which the service worker fetches
+ * with the token this page gives it, so the engine's reader reads a
+ * `gs+google://` image as any other URL.
+ */
+export const GOOGLE_PATH = "gcs-google/";
+
 /** The pipeline a computed layer's source URL carries, if it is one. */
 export function pipelineCode(source: string): string | undefined {
   const at = source.indexOf(`/${COMPUTED_PATH}`);
@@ -133,6 +152,14 @@ export interface ComputedStatus {
 }
 
 export class ComputedImages {
+  /**
+   * Asks the person whether to run a pipeline's Python that came in a link
+   * (the shell gives a dialog); without it, such a pipeline is refused.
+   */
+  confirmPython: ((code: string[]) => Promise<boolean>) | undefined;
+  /** Called when a pipeline was allowed after it had been refused, so the viewer asks for it again. */
+  onAllowed: (() => void) | undefined;
+  private asking = new Map<string, Promise<boolean>>();
   private engine?: Promise<Engine>;
   /** Pipelines served, by their code: the engine's view name. */
   private served = new Map<string, Promise<string>>();
@@ -148,8 +175,17 @@ export class ComputedImages {
    * every open tab of the app; src/sw.ts), and tells the worker when this
    * tab is the one in use, which it asks first.
    */
+  /** Gives the service worker the Google token for <app>/gcs-google/ (or none). */
+  setGoogleToken(token: string | undefined): void {
+    this.googleToken = token;
+    navigator.serviceWorker?.controller?.postMessage({ type: "google-token", token: token ?? null });
+  }
+
+  private googleToken: string | undefined;
+
   listen(): void {
     if (!("serviceWorker" in navigator) || !window.isSecureContext) return;
+    navigator.serviceWorker.addEventListener("controllerchange", () => this.setGoogleToken(this.googleToken));
     route(`/${COMPUTED_PATH}`, (ask, port) => void this.reply(ask, port));
     const active = () => {
       if (document.visibilityState === "visible") navigator.serviceWorker.controller?.postMessage({ type: "ngp-active" });
@@ -207,17 +243,50 @@ export class ComputedImages {
     if (served === undefined) {
       served = (async () => {
         const spec = await decodePipeline(code);
-        if (!(await mayRun(spec))) throw new Refused("This layer runs Python from its link. Add it again from the Filters tab to allow it here.");
-        const engine = await this.start();
+        if (!(await mayRun(spec)) && !(await this.ask(code, spec))) throw new Refused("This layer runs Python from its link, which was not allowed here.");
         const name = `p${await digest(code)}`;
         const source = /^[a-z][a-z0-9+.-]*:\/\//i.test(spec.source) ? spec.source : new URL(spec.source, this.base).href;
-        await engine.add({ [name]: { ...spec, source } });
+        const view = { [name]: { ...spec, source: readableSource(source, this.base) } };
+        try {
+          await (await this.start()).add(view);
+        } catch (e) {
+          // Python that loaded without its packages (a CDN hiccup): a fresh engine, once.
+          if (!/No module named|ModuleNotFoundError|loadPackage|pyodide/i.test(String((e as Error)?.message ?? e))) throw e;
+          this.restart();
+          await (await this.start()).add(view);
+        }
         return name;
       })();
       this.served.set(code, served);
       served.catch(() => this.served.delete(code));
     }
     return served;
+  }
+
+  /** Asks once per pipeline whether to run its Python; allowed, it is remembered in this browser. */
+  private ask(code: string, spec: PipelineView): Promise<boolean> {
+    let asked = this.asking.get(code);
+    if (asked === undefined) {
+      asked = (async () => {
+        if (this.confirmPython === undefined) return false;
+        const ok = await this.confirmPython(pythonOf(spec));
+        if (ok) {
+          await allow(spec);
+          this.onAllowed?.();
+        }
+        return ok;
+      })();
+      this.asking.set(code, asked);
+    }
+    return asked;
+  }
+
+  /** Stops the engine; the next pipeline asked for starts another (pipelines served again on it). */
+  private restart(): void {
+    this.started?.stop();
+    this.started = undefined;
+    this.engine = undefined;
+    this.served.clear();
   }
 
   private async reply(ask: Ask, port: MessagePort): Promise<void> {

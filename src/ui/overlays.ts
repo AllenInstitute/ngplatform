@@ -132,7 +132,8 @@ export function showPalette(
   input.focus();
 }
 
-export function confirmDialog(message: string, action = "Continue", danger = false): Promise<boolean> {
+/** Asks to confirm; `detail` (code, say) is shown as it is, below the message. */
+export function confirmDialog(message: string, action = "Continue", danger = false, detail?: string): Promise<boolean> {
   return new Promise((resolve) => {
     let answered = false;
     const answer = (value: boolean) => {
@@ -143,7 +144,7 @@ export function confirmDialog(message: string, action = "Continue", danger = fal
     };
     const ok = h("button", { class: danger ? "btn danger" : "btn primary", type: "button", onclick: () => answer(true) }, action);
     showSheet(
-      sheet("Confirm", [h("p", { class: "empty" }, message)], [
+      sheet("Confirm", [h("p", { class: "empty" }, message), ...(detail === undefined ? [] : [h("pre", { class: "confirm-detail" }, detail)])], [
         h("button", { class: "btn", type: "button", onclick: () => answer(false) }, "Cancel"),
         ok,
       ]),

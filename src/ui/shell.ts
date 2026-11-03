@@ -313,6 +313,22 @@ export class Shell {
     // The service worker from the start: a workspace's computed layers are
     // asked for as soon as it opens.
     wb.computed.listen();
+    // Python a pipeline brings in a link runs only once allowed here, with its code shown.
+    wb.computed.confirmPython = (code) =>
+      confirmDialog(
+        "A computed layer in this workspace runs the Python below in this tab. Run it? Only run code from people you trust: it can read what this tab can, files opened from this computer included.",
+        "Run it",
+        true,
+        code.map((c) => (c.length > 4000 ? `${c.slice(0, 4000)}\n…` : c)).join("\n# ----\n"),
+      );
+    wb.computed.onAllowed = () => store.reloadLayers();
+    // The engine's reader reads gs+google:// sources with the sign-in's token.
+    if (this.google !== undefined) {
+      const google = this.google;
+      const give = () => wb.computed.setGoogleToken(google.token()?.accessToken);
+      google.onChanged(give);
+      give();
+    }
     void wb.localData.start();
     // Local data opened again (dropped files go with a reload): the layers
     // that read it before read it again, under its new id.

@@ -10,15 +10,23 @@
  *   the page answers with a Zarr store made from the file (virtual Zarr).
  *
  * - <app>/virtual/<page>/<view>/...: images computed by chunkmirage's
- *   browser engine (src/virtual/engine.ts), relayed to the page that serves
- *   them by chunkmirage's own relay, a chunk's body streamed once computed
- *   and the work dropped when the viewer stops waiting for it.
+ *   browser engine (src/virtual/computed.ts), relayed to the page that
+ *   serves them by chunkmirage's own relay, a chunk's body streamed once
+ *   computed and the work dropped when the viewer stops waiting for it.
+ *
+ * - <app>/gcs-google/<bucket>/<object>: Cloud Storage read with the Google
+ *   sign-in, for the engine's reader (a `gs+google://` source in a
+ *   pipeline): fetched through the JSON API with the token the page gives
+ *   this worker (`google-token`), ranges passed on.
  */
 import { relay } from "chunkmirage-web/relay";
 
 declare const self: ServiceWorkerGlobalScope;
 
 const PREFIX = new URL("./local/", self.registration.scope).pathname;
+const GOOGLE_PREFIX = new URL("./gcs-google/", self.registration.scope).pathname;
+/** The Google sign-in's access token, from the page (none: signed out). */
+let googleToken: string | undefined;
 /** The page (client id) that holds each picked folder or file. */
 const owners = new Map<string, string>();
 /** The tab last in use, which computed images are asked of first: every tab can compute them, and one should. */
@@ -33,6 +41,7 @@ self.addEventListener("message", (event) => {
   if (data?.type === "local-register" && source && data.id !== undefined) owners.set(data.id, source.id);
   if (data?.type === "local-claim") event.waitUntil(self.clients.claim());
   if (data?.type === "ngp-active" && source) active = source.id;
+  if (data?.type === "google-token") googleToken = (data as { token?: string | null }).token ?? undefined;
 });
 
 /** How long a page may take over one read: a large .nii.gz is decompressed on its first. */
@@ -136,12 +145,29 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith(GOOGLE_PREFIX)) {
+    if (request.method === "GET" || request.method === "HEAD") event.respondWith(google(request, url));
+    return;
+  }
   if (url.pathname.startsWith(PREFIX)) {
     if (request.method === "GET" || request.method === "HEAD") event.respondWith(local(request, url));
     return;
   }
   if (url.pathname.includes("/virtual/")) event.respondWith(computed(request, url));
 });
+
+/** A Cloud Storage object read with the Google sign-in (401 until the page has given a token). */
+async function google(request: Request, url: URL): Promise<Response> {
+  const rest = decodeURIComponent(url.pathname.slice(GOOGLE_PREFIX.length));
+  const slash = rest.indexOf("/");
+  const bucket = slash === -1 ? rest : rest.slice(0, slash);
+  const object = slash === -1 ? "" : rest.slice(slash + 1);
+  if (googleToken === undefined) return new Response("Sign in with Google in the Auth tab to read this bucket.", { status: 401 });
+  const headers: Record<string, string> = { authorization: `Bearer ${googleToken}` };
+  const range = request.headers.get("range");
+  if (range !== null) headers.range = range;
+  return fetch(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(object)}?alt=media`, { method: request.method, headers });
+}
 
 /**
  * A computed image's request, relayed to a page: the tab in use first, so
