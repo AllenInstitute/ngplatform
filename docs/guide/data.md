@@ -31,7 +31,7 @@ is never loaded whole and coarser levels appear first.
 | You open | It is shown as | Notes |
 |---|---|---|
 | NIfTI (`.nii`, `.nii.gz`), Analyze (`.hdr` + `.img`), FreeSurfer (`.mgz`, `.mgh`) | a virtual OME-Zarr image, with a pyramid | Placed by the sform (else qform). A `.nii.gz` is decompressed once and kept in the browser's private storage for later visits. Colour (RGB) NIfTI shows in colour. |
-| TIFF stacks (`.tif`, `.tiff`), OME-TIFF, ImageJ hyperstacks | a virtual OME-Zarr image, with a pyramid | Classic and BigTIFF; LZW, deflate and PackBits, with either predictor; channels and time points from OME and ImageJ metadata; RGB(A) of 8 or 16 bits a sample shown in colour (16-bit by its top 8 bits). |
+| TIFF stacks (`.tif`, `.tiff`), OME-TIFF, ImageJ hyperstacks | a virtual OME-Zarr image, with a pyramid (the file's own, where it has one) | Classic and BigTIFF; LZW, deflate and PackBits, with either predictor; channels and time points from OME and ImageJ metadata; RGB(A) of 8 or 16 bits a sample shown in colour (16-bit by its top 8 bits). |
 | refkv vzip archives (`.vzip`), opened with the files they reference (the folder that holds both, or both dropped together) | the archive's own Zarr hierarchy | A Zarr hierarchy whose chunks reference byte ranges of other files (TIFF, CZI, ND2, HDF5 … zarrified by [refkv](https://github.com/d-v-b/refkv)). References to local files are found beside the archive by name; http(s) ones are read with range requests. Codecs Neuroglancer does not read (refkv's TIFF deflate and LZW, the TIFF predictor) are decoded on the fly; JPEG and JPEG 2000 chunks are not read yet. Format version 0, as refkv 0.2.0 writes it. |
 | NumPy arrays (`.npy`, 2-D to 4-D) | a virtual OME-Zarr image, with a pyramid | Indexed [z, y, x] as Python imaging code does (the last axis is x); 1-unit voxels. |
 | A FreeSurfer subject folder (with `mri/` and `surf/`) | its T1, aparc+aseg and white and pial surfaces | Surfaces in Freeview's colours, drawn as outlines on the slices. |
@@ -46,6 +46,31 @@ Chrome and Edge remember local files between visits (you are asked to allow
 reading them again); links to them work in the same browser while the tab
 is open.
 
+### Large images: overviews
+
+A large TIFF or NIfTI is shown without converting it. Its coarser levels
+are made when a zoomed-out view asks for them, reading the file once
+across. A pyramid the file already holds (a pyramidal OME-TIFF's SubIFDs,
+or reduced-resolution pages) is read as it is, not made again.
+
+- **Kept between visits, within a budget.** The coarsest levels are kept in
+  the browser's private storage: 2 % of the file by default, at most 2 GB
+  an image and 10 GB in all. A 1 TB TIFF keeps 2 GB, a 16 GB one about
+  330 MB. Coarse levels cost the most to make again and the least to keep,
+  so they are kept first. Finer levels are made again from the file when
+  you zoom in. Files under 64 MB keep nothing.
+- **Building the overview.** When an image of 1 GB or more is first shown,
+  you are offered **Build the overview in the background**. It reads the file
+  once and keeps what the budget allows, and it appears in the Jobs tab with
+  its progress (you can cancel it). It is also in Datasets → the row's ⋯,
+  beside **Clear its kept overview**.
+- **Settings.** **View settings → Overviews of large images** sets the
+  budget, lists what each image keeps, and clears it.
+
+Converting to OME-Zarr (Export, below) is still the fastest to view. An
+overview is for looking at a TIFF straight away, without waiting for a
+conversion or making a full copy.
+
 !!! note "Coming"
     Stepping through a CIFTI time series is on the
     [work plan](https://github.com/AllenInstitute/ngplatform/blob/main/TODO.md).
@@ -56,7 +81,7 @@ What can be saved today, and where:
 
 | What | How | Format |
 |---|---|---|
-| A local image | Datasets → the row's ⋯ → **Export as…** | NIfTI (`.nii.gz`, `.nii`), FreeSurfer (`.mgz`, `.mgh`) or an OME-Zarr folder: the whole image at full resolution or a coarser level (up to 2 GB), or a box of 256 voxels a side around the position at any level; or, at any size, every level written into a folder chunk by chunk as OME-Zarr (gzip-compressed; in browsers that can write folders, such as Chrome and Edge) |
+| A local image | Datasets → the row's ⋯ → **Export as…** | NIfTI (`.nii.gz`, `.nii`), FreeSurfer (`.mgz`, `.mgh`) or an OME-Zarr folder: the whole image at full resolution or a coarser level (up to 2 GB), or a box of 256 voxels a side around the position at any level; or, at any size, every level written into a folder chunk by chunk as OME-Zarr in one pass over the file (gzip-compressed; in browsers that can write folders, such as Chrome and Edge) |
 | A local tractogram | the same | TrackVis `.trk` or MRtrix `.tck` |
 | A local mesh or surface | the same | OBJ, PLY, STL, or its vertices as CSV |
 | A local point table or SWC | the same | CSV |
