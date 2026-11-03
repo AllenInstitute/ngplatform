@@ -46,6 +46,8 @@ describe("layers and datasets", () => {
     expect(normaliseUrl("https://x/store/|zarr-vectors:")).toBe("https://x/store|zarr-vectors:");
     expect(normaliseUrl(" https://x/store/ ")).toBe("https://x/store");
     expect(datasetKey({ source: "https://x/s/|zarr-vectors:" })).toBe(datasetKey({ source: { url: "https://x/s|zarr-vectors:" } }));
+    // The values a Zarr Vectors layer shows do not make it other data.
+    expect(datasetKey({ source: "https://x/s/|zarr-vectors:#attributes=curv,thickness" })).toBe(datasetKey({ source: "https://x/s/|zarr-vectors:" }));
   });
 
   it("gives a layer without a data source its own dataset", () => {

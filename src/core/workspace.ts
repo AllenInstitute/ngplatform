@@ -88,7 +88,12 @@ export const DERIVED_LOCAL = /\/local\/derived-[0-9a-f]+\//;
 
 /** A URL in comparable form: trimmed, no trailing slash before a `|` adapter or the end. */
 export function normaliseUrl(url: string): string {
-  return url.trim().replace(/\/+(?=\||$)/g, "");
+  // A Zarr Vectors store's `#attributes=` chooses which of its values are
+  // shown, not which data it is (as a lookup table does for a segmentation).
+  return url
+    .trim()
+    .replace(/(\|zarr-vectors:)#attributes=[^|]*$/, "$1")
+    .replace(/\/+(?=\||$)/g, "");
 }
 
 /**

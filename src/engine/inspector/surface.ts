@@ -84,8 +84,15 @@ function build(scope: Scope, l: SegmentationUserLayer, view: SurfaceView): HTMLE
     return values.length === 0 ? next : { ...next, ...overlayRange(values, next.colormap ?? "heat") };
   };
   // An overlay chosen before its values were drawn gets its range once they are.
-  const current = look();
-  if (current.overlay !== undefined && current.range === undefined && view.values(current.overlay).length > 0) write(withRange(current));
+  // (A map just loaded is drawn a moment after the layer reloads: wait for it, a while.)
+  let tries = 0;
+  const fillRange = () => {
+    const current = look();
+    if (scope.disposed || current.overlay === undefined || current.range !== undefined) return;
+    if (view.values(current.overlay).length > 0) write(withRange(current));
+    else if (++tries < 40) setTimeout(fillRange, 500);
+  };
+  fillRange();
 
   const rows: HTMLElement[] = [];
 
