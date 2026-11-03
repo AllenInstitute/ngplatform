@@ -138,7 +138,9 @@ segment is in one group at most. Hiding a group sets each of its segments
 hidden in Neuroglancer's list of visible segments, as one change; a
 group's colour is given to each of its segments (their own colours, which
 can then be changed one by one). Deleting or merging away a segment takes
-it out of its group. Groups are not written into saved files.
+it out of its group. A saved OME-Zarr keeps each segment's group as a
+property of its label (`image-label` → `properties`, `group`); NIfTI has no
+place for it.
 
 ## How a label volume reaches Neuroglancer
 

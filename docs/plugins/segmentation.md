@@ -112,7 +112,8 @@ in its row.
   them all that colour; ▾ folds its rows away; the bin deletes the group
   (its segments stay, in no group).
 - Groups belong to the scene, are kept in the link, and can be undone like
-  other changes. They are not written into saved NIfTI or OME-Zarr files.
+  other changes. A saved OME-Zarr keeps each segment's group, with its
+  name and colour; a NIfTI file has no place for them.
 
 ## Tool settings and image values
 

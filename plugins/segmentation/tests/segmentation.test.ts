@@ -569,9 +569,9 @@ describe("saving", () => {
     const s = new Stroke(v);
     s.set(250, 150, 90, 4);
     s.finish();
-    const files = await omeZarr(v, undefined, undefined, [{ value: 4, name: "Soma", colour: "#ff8000" }]);
+    const files = await omeZarr(v, undefined, undefined, [{ value: 4, name: "Soma", colour: "#ff8000", group: "Neurons" }]);
     const group = JSON.parse(new TextDecoder().decode(files.get("zarr.json")));
-    expect(group.attributes.ome["image-label"]).toEqual({ colors: [{ "label-value": 4, rgba: [255, 128, 0, 255] }], properties: [{ "label-value": 4, name: "Soma" }] });
+    expect(group.attributes.ome["image-label"]).toEqual({ colors: [{ "label-value": 4, rgba: [255, 128, 0, 255] }], properties: [{ "label-value": 4, name: "Soma", group: "Neurons" }] });
     const chunks = [...files.keys()].filter((k) => k.includes("/c/"));
     // Four levels: 300 voxels halved to 38, under a chunk's side.
     expect(chunks).toEqual(["0/c/1/2/3", "1/c/0/1/1", "2/c/0/0/0", "3/c/0/0/0"]);

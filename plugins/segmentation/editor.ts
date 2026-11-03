@@ -36,7 +36,7 @@ import { Painter, type ViewPoint } from "./painter.js";
 import { maskCount, PreviewOverlay } from "./preview.js";
 import { type Mask, type Prompt, QuickSelectRegistry } from "./quick_select.js";
 import { cropped, niftiBytes, niftiGz, omeZarr } from "./save.js";
-import { addGroup, assign, editGroup, members, readGroups, removeGroup, type SegmentationSaved, type VolumeGroups } from "./segment_groups.js";
+import { addGroup, assign, editGroup, groupOf, members, readGroups, removeGroup, type SegmentationSaved, type VolumeGroups } from "./segment_groups.js";
 import { isVisible, nextSegment, type SegmentRow, segmentRows, type SegmentsState, withVisibility } from "./segments.js";
 import { type Reference, Session } from "./session.js";
 import { brushes, cycle, draws, stepRadius, type Tool, TOOLS } from "./tools.js";
@@ -1177,7 +1177,8 @@ export class Editor implements LabelVolumes {
     try {
       let where: string;
       if (zarr) {
-        const labels = [...session.counts.keys()].sort((a, b) => a - b).map((value) => ({ value, name: session.labels.get(value)?.name || undefined, colour: session.colour(value) }));
+        const groups = this.groups(session);
+        const labels = [...session.counts.keys()].sort((a, b) => a - b).map((value) => ({ value, name: session.labels.get(value)?.name || undefined, colour: session.colour(value), group: groupOf(groups, value)?.name }));
         const files = await omeZarr(out, description, (done, total) => this.setNote(`Writing: ${Math.round((100 * done) / total)}%`), labels);
         if (folder) {
           const root = await folder.getDirectoryHandle(base + suffix, { create: true });

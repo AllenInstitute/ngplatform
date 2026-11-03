@@ -33,16 +33,16 @@ export async function omeZarr(
   volume: LabelVolume,
   description?: string,
   progress?: (done: number, total: number) => void,
-  labels: { value: number; name?: string; colour?: string }[] = [],
+  labels: { value: number; name?: string; colour?: string; group?: string }[] = [],
 ): Promise<Map<string, Uint8Array>> {
   const files = omeZarrMetadata(volume.levels, volume.type, volume.name, { label: true, chunk: CHUNK, description });
   if (labels.length) {
-    // Names and colours as OME-NGFF's label images carry them ("image-label").
+    // Names and colours as OME-NGFF's label images carry them ("image-label"); a segment's group as a property too.
     const group = JSON.parse(new TextDecoder().decode(files.get("zarr.json")));
     const rgba = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).concat(255);
     group.attributes.ome["image-label"] = {
       colors: labels.filter((l) => l.colour).map((l) => ({ "label-value": l.value, rgba: rgba(l.colour!) })),
-      properties: labels.map((l) => ({ "label-value": l.value, ...(l.name ? { name: l.name } : {}) })),
+      properties: labels.map((l) => ({ "label-value": l.value, ...(l.name ? { name: l.name } : {}), ...(l.group ? { group: l.group } : {}) })),
     };
     files.set("zarr.json", new TextEncoder().encode(JSON.stringify(group, null, 1)));
   }
