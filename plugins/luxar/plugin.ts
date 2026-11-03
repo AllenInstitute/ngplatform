@@ -13,7 +13,9 @@
 import type { Disposer, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
 import { Momentum } from "./camera.js";
+import { storeOf } from "../volume-view/sources.js";
 import { LayerView } from "./layer_view.js";
+import { SplatView } from "./splat_view.js";
 import { LUXAR_PANEL } from "./manifest.js";
 import {
   BLENDING_LABELS,
@@ -44,6 +46,11 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string,
   return e;
 }
 
+/** The image a layer reads, when it is an image this plugin can draw as splats. */
+export function imageOfLayer(layer: LayerInfo): string | undefined {
+  return layer.type === "image" ? storeOf(layer.sources[0]) : undefined;
+}
+
 /** The store a layer reads, when it is a Zarr Vectors layer this plugin can draw. */
 export function storeOfLayer(layer: LayerInfo): string | undefined {
   if (layer.type !== "segmentation" && layer.type !== "auto") return undefined;
@@ -56,7 +63,7 @@ export function storeOfLayer(layer: LayerInfo): string | undefined {
 
 class Luxar {
   private saved: Saved;
-  private readonly views = new Map<string, LayerView>();
+  private readonly views = new Map<string, LayerView | SplatView>();
   /** Layers whose drawing is set aside, so it can be given back. */
   private readonly hidden = new Map<string, string>();
   private panelUpdate: (() => void) | undefined;
@@ -87,7 +94,7 @@ class Luxar {
   }
 
   candidates(): LayerInfo[] {
-    return this.ctx.viewer.layers().filter((l) => storeOfLayer(l) !== undefined);
+    return this.ctx.viewer.layers().filter((l) => storeOfLayer(l) !== undefined || imageOfLayer(l) !== undefined);
   }
 
   private write(saved: Saved): void {
@@ -124,7 +131,7 @@ class Luxar {
     for (const [name, view] of this.views) {
       const layer = layers.get(name);
       const style = this.saved.layers[name];
-      const store = layer && storeOfLayer(layer);
+      const store = layer && (storeOfLayer(layer) ?? imageOfLayer(layer));
       if (layer === undefined || style === undefined || !style.on || store !== view.storeUrl) {
         view.dispose();
         this.views.delete(name);
@@ -134,10 +141,12 @@ class Luxar {
       const layer = layers.get(name);
       if (layer === undefined || !style.on) continue;
       const store = storeOfLayer(layer);
-      if (store === undefined) continue;
+      const image = store === undefined ? imageOfLayer(layer) : undefined;
+      if (store === undefined && image === undefined) continue;
       let view = this.views.get(name);
       if (view === undefined) {
-        view = new LayerView(this.ctx, name, store, style);
+        // An image is drawn as splats made from its voxels; a Zarr Vectors layer as lines and points.
+        view = image !== undefined ? new SplatView(this.ctx, name, image, style) : new LayerView(this.ctx, name, store!, style);
         view.onStatus = () => this.statusUpdate?.();
         this.views.set(name, view);
       } else if (view.style !== style) view.setStyle(style);
@@ -152,7 +161,9 @@ class Luxar {
         if (layers.has(name)) this.ctx.viewer.setTemporaryVisibleSegments(name, undefined);
       }
     }
-    for (const name of this.views.keys()) {
+    for (const [name, view] of this.views) {
+      // Images (splats) keep Neuroglancer's own drawing.
+      if (!(view instanceof LayerView)) continue;
       // Once its data has loaded, too: a layer still loading may not take the set yet.
       const layer = layers.get(name)!;
       const key = `${layer.ready}\n${layer.sources.join("\n")}`;
@@ -248,9 +259,37 @@ class Luxar {
     return el("label", { class: "field" }, el("span", {}, label), el("div", { class: "lx-row" }, input, shown));
   }
 
+  /** An image's settings: splats coloured by intensity or one colour, brightness, tone map, detail. */
+  private splatSettings(name: string): HTMLElement {
+    const style = this.styleOf(name);
+    const set = (patch: Partial<LayerStyle>) => this.setStyle(name, patch);
+    const solid = style.colourBy === "solid";
+    const parts: Child[] = [
+      el("h3", { class: "lx-heading" }, `Settings: ${name}`),
+      el("p", { class: "note" }, "Drawn as Gaussian splats made from its voxels as they are read, each level of the image giving its own: light added up and tone mapped, in the 3-D view."),
+      this.select("Colour", solid ? "solid" : "attribute", [["attribute", "By intensity, through a colormap"], ["solid", "One colour"]] as ["attribute" | "solid", string][], (v) => set({ colourBy: v })),
+    ];
+    if (solid) {
+      const colour = el("input", { type: "color", value: style.colour, "aria-label": "Colour" }) as HTMLInputElement;
+      colour.addEventListener("input", () => this.setStyle(name, { colour: colour.value }, false));
+      colour.addEventListener("change", () => set({ colour: colour.value }));
+      parts.push(el("label", { class: "field" }, el("span", {}, "Colour"), colour));
+    } else parts.push(this.select("Colormap", style.colormap, COLORMAP_LABELS, (colormap) => set({ colormap })));
+    parts.push(
+      this.slider(name, "Brightness (stops)", "exposure", -8, 8, 0.25, (v) => (v > 0 ? `+${v}` : `${v}`)),
+      this.select("Tone map", style.toneMap, TONE_LABELS, (toneMap) => set({ toneMap })),
+      this.slider(name, "Detail (splats per view)", "detail", 0.25, 12, 0.25, (v) => `${v} M`),
+    );
+    if (!style.on) parts.push(el("p", { class: "note" }, "Tick the layer above to draw it this way."));
+    return el("div", { class: "lx-settings" }, ...parts);
+  }
+
   private settings(name: string): HTMLElement {
     const style = this.styleOf(name);
-    const view = this.views.get(name);
+    const layer = this.ctx.viewer.layers().find((l) => l.name === name);
+    if (layer !== undefined && imageOfLayer(layer) !== undefined) return this.splatSettings(name);
+    const found = this.views.get(name);
+    const view = found instanceof LayerView ? found : undefined;
     const info = view?.client.info;
     const set = (patch: Partial<LayerStyle>) => this.setStyle(name, patch);
     const attributes = info?.attributes ?? [];

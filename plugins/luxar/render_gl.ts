@@ -69,24 +69,8 @@ export interface GpuChunk {
   length: number;
 }
 
-const COMMON = `
-uniform highp sampler2D uVertices;
-uniform mat4 uModelToClip;
-uniform mat3 uDirections;
-uniform vec2 uViewport;
-uniform float uHalfWidth;
-uniform int uColourBy;
-uniform vec3 uColour;
-uniform int uColormap;
-uniform vec2 uRange;
-uniform vec4 uPlane;
-uniform float uSlab;
-
-vec4 vertexAt(uint i) {
-  return texelFetch(uVertices, ivec2(int(i % ${TEXTURE_WIDTH}u), int(i / ${TEXTURE_WIDTH}u)), 0);
-}
-
-// Colormaps as polynomial fits (viridis, magma, inferno and plasma after
+/** The colormaps as GLSL: `vec3 colormap(int which, float t)` (shared with the splats' shader). */
+export const COLORMAP_GLSL = `// Colormaps as polynomial fits (viridis, magma, inferno and plasma after
 // Matt Zucker's fits of matplotlib's, CC0; turbo after Google's).
 vec3 colormap(int which, float t) {
   t = clamp(t, 0.0, 1.0);
@@ -137,7 +121,26 @@ vec3 colormap(int which, float t) {
     c6 = vec3(-3.658713842777788, -22.93153465461149, 18.19190778539828);
   }
   return clamp(c0 + t * (c1 + t * (c2 + t * (c3 + t * (c4 + t * (c5 + t * c6))))), 0.0, 1.0);
+}`;
+
+const COMMON = `
+uniform highp sampler2D uVertices;
+uniform mat4 uModelToClip;
+uniform mat3 uDirections;
+uniform vec2 uViewport;
+uniform float uHalfWidth;
+uniform int uColourBy;
+uniform vec3 uColour;
+uniform int uColormap;
+uniform vec2 uRange;
+uniform vec4 uPlane;
+uniform float uSlab;
+
+vec4 vertexAt(uint i) {
+  return texelFetch(uVertices, ivec2(int(i % ${TEXTURE_WIDTH}u), int(i / ${TEXTURE_WIDTH}u)), 0);
 }
+
+${COLORMAP_GLSL}
 
 vec3 hue(float h) {
   vec3 k = clamp(abs(mod(h * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
