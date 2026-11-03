@@ -83,8 +83,8 @@ goes to the chosen group without being written again. Changing a field's
 list keeps each annotation's value by name.
 
 The plugin's state is the scene's (each scene keeps its own slice), keyed by
-layer name: renaming a layer in Neuroglancer leaves its text values and
-comments behind. Values and comments of annotations deleted are dropped the
+layer name; a layer renamed (in Neuroglancer or the platform) keeps its
+record: the new name holding the same annotations, by id, takes it over. Values and comments of annotations deleted are dropped the
 next time the layer is written. Track filtering's regions layer (`<dataset>
 regions`, written from its groups) is listed and can be gone to, commented
 and deleted, not edited.

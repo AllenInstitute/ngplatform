@@ -320,3 +320,14 @@ describe("ontologies", () => {
     expect(searchTerms(fs, "frontal p").map((t) => t.id)).toEqual(["1"]);
   });
 });
+
+describe("a layer renamed keeps its record", () => {
+  it("matches the new name to the layer gone with the same annotations", async () => {
+    const { renamedFrom } = await import("../annotate.js");
+    const s = (...ids: string[]) => new Set(ids);
+    expect(renamedFrom(s("a", "b"), [["old", s("a", "b")], ["other", s("c")]])).toBe("old");
+    expect(renamedFrom(s("a", "b"), [["old", s("a")]])).toBeUndefined();
+    expect(renamedFrom(s(), [["empty", s()]])).toBe("empty");
+    expect(renamedFrom(s(), [["e1", s()], ["e2", s()]])).toBeUndefined();
+  });
+});

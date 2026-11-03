@@ -348,12 +348,39 @@ export class Annotate {
    * a view) is selected, and the table shown when the layer is the one
    * chosen; an annotation Neuroglancer selected is selected here.
    */
+  /**
+   * A layer renamed (in Neuroglancer or the platform) keeps its record:
+   * a name gone and a new one holding the same annotations (by id) are the
+   * same layer, so its fields, groups, text values and comments move to it.
+   */
+  private followRenames(before: Map<string, Set<string>>, now: Map<string, Set<string>>): void {
+    const gone = [...before.keys()].filter((n) => !now.has(n));
+    const added = [...now.keys()].filter((n) => !before.has(n));
+    if (gone.length === 0 || added.length === 0) return;
+    const saved = this.saved();
+    const records = { ...saved.layers };
+    let chosen = saved.layer;
+    let moved = false;
+    for (const name of added) {
+      const ids = now.get(name)!;
+      const from = renamedFrom(ids, gone.map((g) => [g, before.get(g)!] as const));
+      if (from === undefined || records[from] === undefined || records[name] !== undefined) continue;
+      records[name] = records[from];
+      delete records[from];
+      if (chosen === from) chosen = name;
+      if (this.selected?.layer === from) this.selected = { ...this.selected, layer: name };
+      moved = true;
+    }
+    if (moved) this.save({ ...saved, layers: records, ...(chosen !== undefined ? { layer: chosen } : {}) });
+  }
+
   private stateChanged(): void {
     const layers = this.layers();
     const scene = this.sceneId();
     const before = this.known.get(scene);
     const now = this.ids(layers);
     this.known.set(scene, now);
+    if (before !== undefined) this.followRenames(before, now);
     if (before !== undefined) {
       for (const l of layers) {
         const old = before.get(l.spec.name);
@@ -419,4 +446,16 @@ export class Annotate {
     this.tip.style.top = `${this.pointer[1] - box.top + 14}px`;
     this.tip.hidden = false;
   }
+}
+
+/**
+ * The layer a new one was renamed from: of the layers gone, the one whose
+ * annotations (by id) are the new one's, all of them; an empty layer only
+ * when it is the one empty layer gone.
+ */
+export function renamedFrom(ids: Set<string>, gone: (readonly [string, Set<string>])[]): string | undefined {
+  const same = gone.filter(([, old]) => old.size === ids.size && [...old].every((id) => ids.has(id)));
+  if (same.length !== 1) return undefined;
+  if (ids.size === 0 && gone.filter(([, old]) => old.size === 0).length !== 1) return undefined;
+  return same[0][0];
 }
