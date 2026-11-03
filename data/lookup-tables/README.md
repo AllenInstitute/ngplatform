@@ -67,7 +67,7 @@ the link sees it without the file.
 - ITK-SNAP label descriptions (`IDX R G B A VIS MSH "LABEL"`).
 - FSL atlas XML (`<label index="…">Name</label>`); values are index + 1
   unless the first label is the background ("Unclassified", as in JHU).
-- The Allen Institute structure graph (JSON).
+- The Allen Institute structure graph (JSON), with each structure's parent (the Atlas plugin shows the hierarchy).
 - Plain `index name` lists (AAL's), with colours made up.
 
 To add a table: put the file here, add an entry to `tables.json` (`id`,
