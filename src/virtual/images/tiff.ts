@@ -4,10 +4,10 @@
  * byte source that decodes the pages' strips or tiles as rows are asked for.
  *
  * Read: classic TIFF and BigTIFF, either byte order; one sample per pixel,
- * 8 to 64 bits (unsigned, signed or float), or 8-bit RGB and RGBA (served
+ * 8 to 64 bits (unsigned, signed or float), or 8- or 16-bit RGB and RGBA (served
  * packed in one uint32 a pixel, which the app shows in colour); strips or
- * tiles; no compression, LZW, deflate or PackBits, with the horizontal
- * predictor.  Pixel sizes come
+ * tiles; no compression, LZW, deflate or PackBits, with the horizontal or
+ * floating-point predictor.  Pixel sizes come
  * from OME-XML (PhysicalSizeX/Y/Z) or ImageJ's description (spacing, unit)
  * and the resolution tags.  Reduced-resolution pages (thumbnails, pyramid
  * levels) are skipped.
@@ -117,7 +117,7 @@ export async function readTiffStack(file: Blob): Promise<Stack> {
     const samples = await one(277, 1);
     if (samples !== 1) {
       const bits = await one(258, 8);
-      if (!((samples === 3 || samples === 4) && bits === 8)) throw new Error(`a TIFF with ${samples} samples of ${bits} bits a pixel (one sample, or 8-bit RGB or RGBA, only)`);
+      if (!((samples === 3 || samples === 4) && (bits === 8 || bits === 16))) throw new Error(`a TIFF with ${samples} samples of ${bits} bits a pixel (one sample, or 8- or 16-bit RGB or RGBA, only)`);
       if ((await one(284, 1)) !== 1) throw new Error("an RGB TIFF with its colours in separate planes (interleaved only)");
     }
     const width = await one(256, 0);
@@ -257,6 +257,7 @@ async function decodeBlock(stack: Stack, page: Page, raw: Uint8Array, width: num
     padded.set(data);
     data = padded;
   } else if (data.byteLength > expected || data.byteOffset !== 0) data = data.slice(0, expected);
+  if (page.predictor === 3) return undoFloatPredictor(data, width * page.samples, rows, size, page.samples);
   if (!stack.littleEndian && size > 1) {
     for (let i = 0; i < data.length; i += size) data.subarray(i, i + size).reverse();
   }
@@ -274,10 +275,27 @@ async function decodeBlock(stack: Stack, page: Page, raw: Uint8Array, width: num
         }
       }
     }
-  } else if (page.predictor === 3) {
-    throw new Error("the TIFF floating-point predictor is not read yet");
   }
   return data;
+}
+
+/**
+ * Undoes the floating-point predictor (Adobe's, as libtiff writes it): in
+ * each row the bytes were split into planes, most significant first (the
+ * same whatever the file's byte order), then differenced byte by byte a
+ * pixel's samples apart.  Returns the samples little-endian.
+ */
+function undoFloatPredictor(data: Uint8Array, samples: number, rows: number, size: number, stride: number): Uint8Array {
+  const rowBytes = samples * size;
+  const out = new Uint8Array(data.length);
+  for (let r = 0; r < rows; ++r) {
+    const row = data.subarray(r * rowBytes, (r + 1) * rowBytes);
+    for (let i = stride; i < rowBytes; ++i) row[i] = (row[i] + row[i - stride]) & 0xff;
+    for (let s = 0, at = r * rowBytes; s < samples; ++s, at += size) {
+      for (let b = 0; b < size; ++b) out[at + b] = row[(size - 1 - b) * samples + s];
+    }
+  }
+  return out;
 }
 
 /**
@@ -287,19 +305,20 @@ async function decodeBlock(stack: Stack, page: Page, raw: Uint8Array, width: num
  */
 export function tiffSource(file: Blob, stack: Stack, pageOf: (plane: number) => number = (p) => p, planes = stack.pages.length): ByteSource {
   const first = stack.pages[0];
-  // RGB(A) is served packed, 4 bytes a pixel (alpha 255 for RGB).
+  // RGB(A) is served packed, 4 bytes a pixel (alpha 255 for RGB); 16-bit samples by their top 8 bits.
   const size = first.samples > 1 ? 4 : first.bits / 8;
+  const sampleBytes = first.bits / 8;
   const rowBytes = first.width * size;
   const planeBytes = rowBytes * first.height;
   const rgba = (pixels: Uint8Array, samples: number) => {
-    if (samples === 1 || samples === 4) return pixels;
-    const n = pixels.length / samples;
+    if (samples === 1 || (samples === 4 && sampleBytes === 1)) return pixels;
+    const n = pixels.length / (samples * sampleBytes);
     const out = new Uint8Array(4 * n);
+    // The most significant byte of each (little-endian) sample.
+    const top = sampleBytes - 1;
     for (let i = 0; i < n; ++i) {
-      out[4 * i] = pixels[samples * i];
-      out[4 * i + 1] = pixels[samples * i + 1];
-      out[4 * i + 2] = pixels[samples * i + 2];
-      out[4 * i + 3] = 255;
+      for (let k = 0; k < samples; ++k) out[4 * i + k] = pixels[(samples * i + k) * sampleBytes + top];
+      if (samples === 3) out[4 * i + 3] = 255;
     }
     return out;
   };

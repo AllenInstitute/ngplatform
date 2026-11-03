@@ -92,5 +92,21 @@ t4 = ramp((1, 40, 36, 4), np.uint8)
 tifffile.imwrite(HERE / "rgba_tiles.tif", t4, photometric="rgb", extrasamples=["unassalpha"], tile=(16, 16))
 note("rgba_tiles.tif", packed(t4), (1, 1, 1), (36, 40, 1))
 
+# The floating-point predictor: float32 tiles, deflate; float64 strips, big-endian, LZW.
+fp = (ramp((2, 21, 19), np.uint16).astype(np.float32) / 7 - 300).astype(np.float32)
+tifffile.imwrite(HERE / "float_predictor_f32.tif", fp, tile=(16, 16), compression="zlib", predictor=3, photometric="minisblack")
+note("float_predictor_f32.tif", fp, (1, 1, 1), (19, 21, 2))
+fd = (ramp((3, 11, 13), np.uint16).astype(np.float64) * 1e-3 - 4.5)
+tifffile.imwrite(HERE / "float_predictor_f64_be.tif", fd, byteorder=">", compression="lzw", predictor=3, rowsperstrip=4, photometric="minisblack")
+note("float_predictor_f64_be.tif", fd, (1, 1, 1), (13, 11, 3))
+
+# 16-bit RGB (LZW, the horizontal predictor) and RGBA: served by each sample's top 8 bits.
+c16 = ramp((2, 9, 11, 3), np.uint16) * 2
+tifffile.imwrite(HERE / "rgb16_lzw.tif", c16, photometric="rgb", compression="lzw", predictor=True)
+note("rgb16_lzw.tif", packed((c16 >> 8).astype(np.uint8)), (1, 1, 1), (11, 9, 2))
+r16 = ramp((1, 10, 12, 4), np.uint16) * 2
+tifffile.imwrite(HERE / "rgba16.tif", r16, photometric="rgb", extrasamples=["unassalpha"])
+note("rgba16.tif", packed((r16 >> 8).astype(np.uint8)), (1, 1, 1), (12, 10, 1))
+
 (HERE / "expected.json").write_text(json.dumps(expected, indent=1) + "\n")
 print("\n".join(f"{k}: {(HERE / k).stat().st_size} bytes" for k in expected))

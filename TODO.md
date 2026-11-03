@@ -141,7 +141,7 @@ models, story): `docs/plugins/ideas.md`.
 - [x] Virtual Zarr: RGB and RGBA (TIFF, NIfTI RGB24/RGBA32), packed one uint32 a voxel and shown in colour.
 - [x] Virtual Zarr: `.hdr`/`.img` pairs (NIfTI and Analyze 7.5), joined without copying the image.
 - [x] Virtual Zarr: `.nii.gz` kept decompressed between visits (OPFS, the six most recently used, by name, size and date).
-- [ ] Virtual Zarr, next: TIFF floating-point predictor; RGB with more than 8 bits a sample.
+- [x] Virtual Zarr: TIFF floating-point predictor; 16-bit RGB (shown by each sample's top 8 bits).
 - [x] Data made in the page shown as a layer, for images: `await ngp.show(array, …)` in the Python console (image or labels), and track density maps; both are NIfTI files made in memory and read as virtual Zarr (`workspace.local.open` for plugins).
 - [ ] `memory://` beyond images: meshes, points and annotations made in the page.
 - [ ] zarr-vectors-tools Z1: `zvtools index`, filter-ready columns (length, bounding box, endpoints, fragment owner), so a region reads only the fragments near it.
