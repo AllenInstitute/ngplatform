@@ -17,6 +17,9 @@ items are done (and say where); the rest are in rough order of work.
 - [x] Segmentation gaps: tool bar over the 2-D views only, Ctrl+Z with the workspace's undo, labels past 2^24, quick select preview, lasso, segment groups.
 - [x] Time series gaps: a layer's local time axis, coarse levels while moving, playing without undo steps, CIFTI time series on surfaces.
 - [x] Luxar gaps: only a layer's chosen segments, track groups by id then from their stores, bloom, meshes (lit in 3-D, outlines in 2-D). Left: fitted splats; reading only the chosen objects (few chosen read whole chunks); `notSelectedAlpha`.
+- [ ] Running (agents): Luxar reading a layer's chosen objects directly (and `notSelectedAlpha`); Time series plotting a surface vertex's CIFTI time course.
+- [ ] Left, smaller: ray-cast SH ODF glyphs (Orientations); segment groups written into saved files; `coordinates` transforms and chains with two fields (Collections); Luxar glow saturating on folded surfaces; AI quick select (the interface exists) and proofreading (Segmentation).
+- [ ] brainhops (neuroscales/brainhops) for reading non-linear warp files (ANTs, FSL, SPM, NiftyReg…) in the page: no licence in its repository yet, not on PyPI; a Pyodide feasibility test is ready in the scratchpad, waiting for Andrew.
 - [ ] Waiting on Andrew: a Google OAuth client ID; the Allen CATMAID address; S-21-46's source data and leave to upload a rebuild with even coarse levels; copy-on-write editing of a large segmentation (agree first); the deploy.
 - [x] Collections: an image whose chain holds a displacement field (RFC-5) resampled through it, computed as it is viewed (a warp kind `field`; checked against numpy). Left: `coordinates` transforms, chains with two fields.
 - [x] Registration: Warp through the pairs (a thin-plate spline from landmark pairs, a layer computed by chunkmirage's engine; `src/virtual/warp.ts`).
