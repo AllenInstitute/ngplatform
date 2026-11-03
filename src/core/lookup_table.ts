@@ -265,12 +265,33 @@ async function pipe(bytes: Uint8Array, stream: CompressionStream | Decompression
  * with it still works for someone who does not have the file.
  */
 export async function inlineLookupSource(title: string, table: LookupTable): Promise<string> {
-  const text = table.entries.map((e) => `${e.value} ${e.name}${e.description ? ` # ${e.description}` : ""}`).join("\n");
+  const lines = table.entries.map((e) => `${e.value} ${e.name}${e.description ? ` # ${e.description}` : ""}`);
+  // A hierarchy's parents (an Allen structure graph from a file): `#parents value:parent …` lines, which tables ignore.
+  const pairs = table.entries.filter((e) => e.parent !== undefined).map((e) => `${e.value}:${e.parent}`);
+  for (let i = 0; i < pairs.length; i += 200) lines.push(`${PARENTS} ${pairs.slice(i, i + 200).join(" ")}`);
+  const text = lines.join("\n");
   const packed = await pipe(new TextEncoder().encode(text), new CompressionStream("deflate-raw"));
   return lookupSourceUrl({ kind: "inline", title, data: toBase64Url(packed) });
 }
 
-/** The text of an inline source (names only: `value name # description` lines). */
+/** The text of an inline source (names only: `value name # description` lines, and `#parents` lines). */
 export async function inlineLookupText(data: string): Promise<string> {
   return new TextDecoder().decode(await pipe(fromBase64Url(data), new DecompressionStream("deflate-raw")));
+}
+
+const PARENTS = "#parents";
+
+/** An inline source's table: its names, and the parents its `#parents` lines give. */
+export function parseInlineLookup(text: string): LookupTable {
+  const table = parseLookupTable(text);
+  const parents = new Map<bigint, bigint>();
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.startsWith(`${PARENTS} `)) continue;
+    for (const pair of line.slice(PARENTS.length + 1).split(/\s+/)) {
+      const m = /^(\d+):(\d+)$/.exec(pair);
+      if (m !== null) parents.set(BigInt(m[1]), BigInt(m[2]));
+    }
+  }
+  if (parents.size === 0) return table;
+  return { ...table, entries: table.entries.map((e) => (parents.has(e.value) ? { ...e, parent: parents.get(e.value)! } : e)) };
 }

@@ -5,6 +5,7 @@ import {
   hexColour,
   inlineLookupSource,
   inlineLookupText,
+  parseInlineLookup,
   LookupTableError,
   lookupSourceUrl,
   parseLookupSource,
@@ -149,6 +150,24 @@ describe("lookup tables", () => {
     expect(url.length).toBeLessThan(lines.length / 2);
     const back = parseLookupTable(await inlineLookupText(source.data));
     expect(back.entries.map((e) => [e.value, e.name])).toEqual(table.entries.map((e) => [e.value, e.name]));
+  });
+
+  it("keeps a hierarchy's parents in the link (an Allen structure graph from a file)", async () => {
+    const table = {
+      entries: [
+        { value: 997n, name: "root", colour: [255, 255, 255] as [number, number, number] },
+        { value: 8n, name: "grey", colour: [191, 218, 227] as [number, number, number], description: "Basic cell groups and regions", parent: 997n },
+        { value: 567n, name: "CH", colour: [176, 240, 255] as [number, number, number], description: "Cerebrum", parent: 8n },
+      ],
+    };
+    const source = parseLookupSource(await inlineLookupSource("allen.json", table));
+    if (source?.kind !== "inline") throw new Error("not inline");
+    const back = parseInlineLookup(await inlineLookupText(source.data));
+    expect(back.entries.map((e) => [e.value, e.name, e.description, e.parent])).toEqual([
+      [997n, "root", undefined, undefined],
+      [8n, "grey", "Basic cell groups and regions", 997n],
+      [567n, "CH", "Cerebrum", 8n],
+    ]);
   });
 });
 

@@ -12,6 +12,7 @@
 import {
   hexColour,
   inlineLookupText,
+  parseInlineLookup,
   type LookupSource,
   type LookupTable,
   LookupTableError,
@@ -80,7 +81,7 @@ async function readTable(url: string): Promise<LookupTable> {
     case "remote":
       return fetchTable(source.url);
     case "inline":
-      return parseLookupTable(await inlineLookupText(source.data));
+      return parseInlineLookup(await inlineLookupText(source.data));
   }
 }
 

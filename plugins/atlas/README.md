@@ -34,9 +34,9 @@ the segment colours and its names show in the Segments tab and on hover.
 
 Groups the table does not number (FreeSurfer's "Cerebral cortex") have no
 value; a region's segments are its own value and its descendants'. A table
-from a file travels in the link as names only (`lut://inline/…`), so an
-Allen structure graph loaded from a file loses its parents and lists flat;
-choose the catalogue's Allen table instead.
+from a file travels in the link as names, descriptions and parents
+(`lut://inline/…`, its parents as `#parents` lines), so an Allen structure
+graph loaded from a file keeps its tree when the link is opened.
 
 ## Showing and going to a region
 
