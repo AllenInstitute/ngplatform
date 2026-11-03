@@ -82,6 +82,8 @@ export interface FoundDataset {
   format: string;
   /** Its path inside the picked folder ("" for the folder itself). */
   path: string;
+  /** Settings for its layer (a surface's colour, say). */
+  layer?: Record<string, unknown>;
 }
 
 interface Stored {
@@ -120,6 +122,17 @@ async function idb<T>(mode: IDBTransactionMode, work: (store: IDBObjectStore) =>
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
+}
+
+/**
+ * The colours Freeview gives FreeSurfer's surfaces, so their outlines on the
+ * sections read the same: white yellow, pial red; others undefined.
+ */
+function surfaceColour(name: string): string | undefined {
+  if (/(^|\.)(white|smoothwm)(\.|$)/i.test(name)) return "#ffff00";
+  if (/(^|\.)pial(\.|$)/i.test(name)) return "#ff0000";
+  if (/(^|\.)(orig|midthickness|graymid)(\.|$)/i.test(name)) return "#00c0ff";
+  return undefined;
 }
 
 /** Ids of derived files start so; `DERIVED_LOCAL` finds them in a URL. */
@@ -530,7 +543,10 @@ export class LocalData {
     // A label image (aseg, a BIDS dseg…) opens as a segmentation (images/open.ts reads it as labels).
     const kind = format.kind === "image" && LABEL_NAME.test(name) ? "segmentation" : format.kind;
     // A FreeSurfer surface's whole name is its pattern (lh.pial): keep it.
-    return { source: format.source(this.urlOf(id, path)), name: name.replace(format.pattern, "") || name, kind, format: format.format, path };
+    // Surfaces in Freeview's colours; a Zarr Vectors layer is a segmentation from the start, so the colour is kept.
+    const colour = /surface/i.test(format.format) ? surfaceColour(name) : undefined;
+    const base = { source: format.source(this.urlOf(id, path)), name: name.replace(format.pattern, "") || name, format: format.format, path };
+    return colour === undefined ? { ...base, kind } : { ...base, kind: "segmentation", layer: { segmentDefaultColor: colour } };
   }
 
   /**

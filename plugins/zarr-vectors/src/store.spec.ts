@@ -536,7 +536,7 @@ describe("vertex cell reads", () => {
     expect(reads.filter((r) => !r.endsWith("@")).length).toBeGreaterThan(0);
   });
 
-  it("leaves a mesh's faces unread, since the overview draws its vertices", async () => {
+  it("reads a mesh's faces, which draw its outline on cross-sections", async () => {
     const reads: string[] = [];
     const base = access("mesh_raw");
     const counted = {
@@ -554,7 +554,11 @@ describe("vertex cell reads", () => {
     );
     const data = await pipeline.download([0, 0, 0], signal);
     expect(data?.numVertices).toBeGreaterThan(0);
-    expect(reads.filter((r) => /^0\/links\/.*\/c\//.test(r))).toEqual([]);
+    expect(reads.filter((r) => /^0\/links\/.*\/c\//.test(r)).length).toBe(1);
+    // Whole triangles, three vertex indices each, within the chunk's vertices.
+    expect(data!.faces.length % 3).toBe(0);
+    expect(data!.faces.length).toBeGreaterThan(0);
+    expect(Math.max(...data!.faces)).toBeLessThan(data!.numVertices);
   });
 
   it("never takes ghost positions from another store's cells", async () => {

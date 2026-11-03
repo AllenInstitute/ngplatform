@@ -78,6 +78,8 @@ export interface DenseChunkData {
   segmentIds: Uint32Array;
   /** Line segments as vertex index pairs, bridges included. */
   edges: Uint32Array;
+  /** A mesh's triangles, three vertex indices each (drawn in cross-sections as where they cross the section). */
+  faces: Uint32Array;
   /** Per exposed attribute (`components` floats per vertex), then the tangent. */
   attributes: Float32Array[];
 }
@@ -374,7 +376,8 @@ export class LevelPipeline {
     const [decoded, links] = await Promise.all([
       decodeChunk(this.cells, description, chunkKey, signal, {
         relinkedChildren,
-        skipFaces: true,
+        // A mesh's faces draw its outline on cross-sections.
+        skipFaces: false,
         vertices: this.vertexCell(chunkKey),
         skipSegmentIds: mode === "manifests",
         fragmentIdColumn: mode === "object_id" ? "object_id" : "segment_id",
@@ -560,6 +563,7 @@ function assembleChunk(
     positions,
     segmentIds: ids,
     edges,
+    faces: decoded.faces,
     attributes,
   };
 }

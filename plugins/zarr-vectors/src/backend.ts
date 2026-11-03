@@ -160,6 +160,7 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
         data.positions.buffer,
         data.segmentIds.buffer,
         data.edges.buffer,
+        ...(data.faces.byteLength > 0 ? [data.faces.buffer] : []),
         ...data.attributes.map((a) => a.buffer),
       );
     }
@@ -173,7 +174,8 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
       bytes =
         data.positions.byteLength +
         data.segmentIds.byteLength +
-        data.edges.byteLength;
+        data.edges.byteLength +
+        data.faces.byteLength;
       for (const a of data.attributes) bytes += a.byteLength;
     }
     this.systemMemoryBytes = bytes;

@@ -371,11 +371,11 @@ export class WorkspaceStore {
   // ------------------------------------------------------------ datasets
 
   /** Records a dataset and shows it in the active scene through a new layer; returns its id. */
-  addDataset(spec: { source: unknown; name?: string; kind?: string }): string {
+  addDataset(spec: { source: unknown; name?: string; kind?: string; layer?: Json }): string {
     const name = spec.name ?? "dataset";
     const { platform, dataset } = addDatasetRecord(this.platform, spec.source, name, spec.kind ?? "auto");
     this.platform = platform;
-    this.showDataset(dataset.id);
+    this.showDataset(dataset.id, spec.layer ?? {});
     return dataset.id;
   }
 

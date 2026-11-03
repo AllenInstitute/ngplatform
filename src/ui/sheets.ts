@@ -48,7 +48,7 @@ async function addLocalEntry(wb: Workbench, entry: LocalEntry): Promise<boolean>
     void local.forget(entry.id);
     return false;
   }
-  for (const dataset of datasets) wb.store.addDataset({ source: dataset.source, name: dataset.name, kind: dataset.kind });
+  for (const dataset of datasets) wb.store.addDataset({ source: dataset.source, name: dataset.name, kind: dataset.kind, layer: dataset.layer });
   wb.docks.show("layer");
   return true;
 }

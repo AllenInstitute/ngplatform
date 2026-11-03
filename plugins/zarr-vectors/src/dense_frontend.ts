@@ -157,6 +157,7 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
   numVertices = 0;
   numOwnVertices = 0;
   numEdges = 0;
+  numFaces = 0;
   /** Kept on the CPU for picking (two uint32 per vertex). */
   segmentIds: Uint32Array | undefined;
   private uploads:
@@ -164,12 +165,14 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
         positions: Float32Array;
         attributes: Float32Array[];
         edges: Uint32Array;
+        faces: Uint32Array;
       }
     | undefined;
   positionTexture: WebGLTexture | null = null;
   segmentTexture: WebGLTexture | null = null;
   attributeTextures: (WebGLTexture | null)[] = [];
   edgeBuffer: GLBuffer | undefined;
+  faceBuffer: GLBuffer | undefined;
 
   constructor(source: SliceViewChunkSource, x: any) {
     super(source, x);
@@ -178,11 +181,13 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
       this.numVertices = data.numVertices;
       this.numOwnVertices = data.numOwnVertices;
       this.numEdges = data.edges.length / 2;
+      this.numFaces = (data.faces?.length ?? 0) / 3;
       this.segmentIds = data.segmentIds;
       this.uploads = {
         positions: data.positions,
         attributes: data.attributes,
         edges: data.edges,
+        faces: data.faces ?? new Uint32Array(0),
       };
     }
   }
@@ -216,6 +221,14 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
         WebGL2RenderingContext.STATIC_DRAW,
       );
     }
+    if (this.numFaces > 0) {
+      this.faceBuffer = GLBuffer.fromData(
+        gl,
+        uploads.faces,
+        WebGL2RenderingContext.ARRAY_BUFFER,
+        WebGL2RenderingContext.STATIC_DRAW,
+      );
+    }
   }
 
   freeGPUMemory(gl: GL) {
@@ -231,6 +244,8 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
     this.attributeTextures = [];
     this.edgeBuffer?.dispose();
     this.edgeBuffer = undefined;
+    this.faceBuffer?.dispose();
+    this.faceBuffer = undefined;
   }
 }
 
@@ -374,6 +389,9 @@ class DenseRenderHelper extends RefCounted {
   readonly primitive: "lines" | "points";
   edgeShaderGetter;
   nodeShaderGetter;
+  /** A mesh in a cross-section: each triangle as the segment where it crosses the section. */
+  sectionShaderGetter;
+  readonly triangles: boolean;
 
   constructor(
     private gl: GL,
@@ -389,6 +407,8 @@ class DenseRenderHelper extends RefCounted {
       KIND_CAPABILITIES[description.geometryKind].primitive === "lines"
         ? "lines"
         : "points";
+    this.triangles =
+      KIND_CAPABILITIES[description.geometryKind].primitive === "triangles";
     const common = {
       fallbackParameters,
       parameters:
@@ -427,6 +447,22 @@ class DenseRenderHelper extends RefCounted {
         ) => this.defineShader(builder, state, false),
       },
     );
+    this.sectionShaderGetter = parameterizedEmitterDependentShaderGetter(
+      this,
+      gl,
+      {
+        memoizeKey: {
+          type: "zarr-vectors/dense/section",
+          attributes: this.attributes,
+          slice: targetIsSliceView,
+        },
+        ...common,
+        defineShader: (
+          builder: ShaderBuilder,
+          state: ShaderControlsBuilderState,
+        ) => this.defineShader(builder, state, true, true),
+      },
+    );
   }
 
   private fadeFactor() {
@@ -439,6 +475,7 @@ class DenseRenderHelper extends RefCounted {
     builder: ShaderBuilder,
     state: ShaderControlsBuilderState,
     edges: boolean,
+    sections = false,
   ) {
     if (state.parseResult.errors.length !== 0) {
       throw new Error("Invalid UI control specification");
@@ -491,7 +528,34 @@ class DenseRenderHelper extends RefCounted {
     builder.addVarying("highp uvec2", "vSegment", "flat");
     builder.addVarying("highp uint", "vPickID", "flat");
     let vertexMain: string;
-    if (edges) {
+    if (sections) {
+      // A triangle's crossing with the section (clip z = 0 in a
+      // cross-section): the two points where its edges cross it, drawn as a
+      // line; a triangle that does not cross it is put outside the view.
+      defineLineShader(builder);
+      builder.addAttribute("highp uvec3", "aTriangle");
+      builder.addUniform("highp float", "uLineWidth");
+      vertexMain = `
+highp vec3 p0 = readPosition(aTriangle.x);
+highp vec3 p1 = readPosition(aTriangle.y);
+highp vec3 p2 = readPosition(aTriangle.z);
+highp float d0 = (uProjection * vec4(p0, 1.0)).z;
+highp float d1 = (uProjection * vec4(p1, 1.0)).z;
+highp float d2 = (uProjection * vec4(p2, 1.0)).z;
+highp vec3 ends[2];
+ends[0] = p0;
+ends[1] = p0;
+int found = 0;
+if ((d0 < 0.0) != (d1 < 0.0)) { ends[found] = mix(p0, p1, d0 / (d0 - d1)); ++found; }
+if ((d1 < 0.0) != (d2 < 0.0)) { ends[found] = mix(p1, p2, d1 / (d1 - d2)); ++found; }
+if (found < 2 && (d2 < 0.0) != (d0 < 0.0)) { ends[found] = mix(p2, p0, d2 / (d2 - d0)); ++found; }
+emitLine(uProjection, ends[0], ends[1], uLineWidth);
+if (found < 2) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+highp uint vertexIndex = aTriangle.x;
+vSegment = readSegment(aTriangle.x).value;
+vPickID = uPickID + aTriangle.x;
+`;
+    } else if (edges) {
       defineLineShader(builder);
       builder.addAttribute("highp uvec2", "aVertexIndex");
       builder.addUniform("highp float", "uLineWidth");
@@ -754,18 +818,10 @@ export class ZarrVectorsDenseLayer extends RefCounted {
     this.redrawNeeded = redrawNeeded;
     const { chunkManager, displayState } = options;
     const rpc = chunkManager.rpc!;
-    // A mesh's vertices are no picture of it in a cross-section (every
-    // vertex of a surface, flattened onto the section): meshes show in 3-d
-    // only, until surfaces are drawn as their outlines on the section.
-    const meshOnly3d =
-      KIND_CAPABILITIES[options.source.description.geometryKind]
-        ?.primitive === "triangles";
     const updateMask = () => {
       this.drawMask.value =
         (denseLayerDraws(denseDrawState(displayState, false)) ? DRAWS_3D : 0) |
-        (!meshOnly3d && denseLayerDraws(denseDrawState(displayState, true))
-          ? DRAWS_2D
-          : 0);
+        (denseLayerDraws(denseDrawState(displayState, true)) ? DRAWS_2D : 0);
     };
     for (const value of [
       displayState.objectAlpha,
@@ -1154,8 +1210,23 @@ function DenseRenderLayer<
         modelMatrix,
       );
       const { shaderControlState } = displayState.skeletonRenderingOptions;
-      const passes: { shader: ShaderProgram; edges: boolean }[] = [];
-      if (helper.primitive === "lines") {
+      const passes: { shader: ShaderProgram; edges: boolean; sections?: boolean }[] = [];
+      if (helper.triangles && targetIsSliceView) {
+        const { shader, parameters } = helper.sectionShaderGetter(
+          renderContext.emitter,
+        );
+        if (shader === null) return;
+        shader.bind();
+        setShaderControls(
+          gl,
+          shader,
+          shaderControlState,
+          parameters.parseResult,
+        );
+        gl.uniform1f(shader.uniform("uLineWidth"), lineWidth);
+        initializeLineShader(shader, projectionParameters, 1.0);
+        passes.push({ shader, edges: true, sections: true });
+      } else if (helper.primitive === "lines") {
         const { shader, parameters } = helper.edgeShaderGetter(
           renderContext.emitter,
         );
@@ -1175,7 +1246,7 @@ function DenseRenderLayer<
         );
         passes.push({ shader, edges: true });
       }
-      {
+      if (!(helper.triangles && targetIsSliceView)) {
         const { shader, parameters } = helper.nodeShaderGetter(
           renderContext.emitter,
         );
@@ -1193,7 +1264,7 @@ function DenseRenderLayer<
         });
         passes.push({ shader, edges: false });
       }
-      for (const { shader, edges } of passes) {
+      for (const { shader, edges, sections } of passes) {
         shader.bind();
         helper.beginLayer(shader, mvp, visibleAlpha);
         for (const chunk of chunks) {
@@ -1202,7 +1273,19 @@ function DenseRenderLayer<
             : 0;
           gl.uniform1ui(shader.uniform("uPickID"), pickID);
           helper.bindChunk(shader, chunk);
-          if (edges) {
+          if (sections) {
+            if (chunk.faceBuffer === undefined) continue;
+            const aTriangle = shader.attribute("aTriangle");
+            chunk.faceBuffer.bindToVertexAttribI(
+              aTriangle,
+              3,
+              WebGL2RenderingContext.UNSIGNED_INT,
+            );
+            gl.vertexAttribDivisor(aTriangle, 1);
+            drawLines(gl, 1, chunk.numFaces);
+            gl.vertexAttribDivisor(aTriangle, 0);
+            gl.disableVertexAttribArray(aTriangle);
+          } else if (edges) {
             if (chunk.edgeBuffer === undefined) continue;
             const aVertexIndex = shader.attribute("aVertexIndex");
             chunk.edgeBuffer.bindToVertexAttribI(
