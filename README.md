@@ -19,7 +19,7 @@ The platform provides:
   overlays, jobs and data formats through it.
 
 <p align="center">
-  <img src="docs/images/architecture.webp" alt="How ngplatform fits together: the user and plugins (from GitHub or this computer) work through ngplatform; it computes locally and in the cloud, saves to local data, and shows data in Neuroglancer, local data as virtual Zarr" width="640" />
+  <img src="docs/images/architecture.webp" alt="How ngplatform fits together: the user and plugins (from GitHub or this computer) work through ngplatform, which shows OME-Zarr and Zarr Vectors from cloud storage in Neuroglancer, computes in the browser (Pyodide) into dynamic Zarr, saves to local data, and serves local data of any format to Neuroglancer as virtual Zarr; cloud compute editing cloud storage is to come" width="640" />
 </p>
 
 **Docs:** https://ngplatform.readthedocs.io/ has the user guide, a page for
