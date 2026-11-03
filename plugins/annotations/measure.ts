@@ -17,6 +17,8 @@ export interface AnnotationJson {
   center?: number[];
   radii?: number[];
   points?: number[][];
+  /** Values of the layer's annotation properties, in their order. */
+  props?: (number | string)[];
 }
 
 export type Quantity = "length" | "area" | "volume";
@@ -64,6 +66,19 @@ export function spanned(edges: number[][]): { quantity: Quantity; value: number 
 }
 
 /**
+ * The axis along which a box was drawn in one section, or -1.  Neuroglancer
+ * gives a box drawn in a 2-D view one coordinate of depth (its corners
+ * would otherwise be on one plane): a box exactly one coordinate deep along
+ * one axis, and not along the others, is that rectangle, so its area is
+ * measured.
+ */
+export function sectionAxis(a: number[], b: number[]): number {
+  // Coordinates are 32-bit floats in the state.
+  const one = a.map((v, k) => Math.abs(Math.abs(b[k] - v) - 1) <= 1e-5 * Math.max(1, Math.abs(v)));
+  return one.filter(Boolean).length === 1 && a.length >= 3 ? one.indexOf(true) : -1;
+}
+
+/**
  * An annotation's measurement, or undefined for a point.  `toGlobal`
  * places the layer's coordinates in the global space.
  */
@@ -83,7 +98,9 @@ export function measure(a: AnnotationJson, layer: string, toGlobal: (p: ArrayLik
       if (!a.pointA || !a.pointB) return undefined;
       // Edges along each of the layer's own axes, placed in the global space (a turned layer turns its boxes).
       const origin = mm(a.pointA);
+      const section = sectionAxis(a.pointA, a.pointB);
       const edges = a.pointA.map((_, k) => {
+        if (k === section) return a.pointA!.map(() => 0);
         const q = a.pointA!.slice();
         q[k] = a.pointB![k];
         return mm(q).map((v, i) => v - origin[i]);

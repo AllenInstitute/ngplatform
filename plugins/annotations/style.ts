@@ -46,4 +46,42 @@ export const STYLE = `
 .an-plot .an-cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 2; }
 .an-plot .an-dot { fill: var(--select); stroke: var(--ink-2); stroke-width: 2; }
 .an-readout { font: 11px var(--mono); color: var(--muted); min-height: 1.2em; }
+.an-block { display: grid; gap: 6px; }
+.an-groups, .an-fields { display: grid; gap: 2px; }
+.an-group { display: flex; gap: 4px; align-items: center; }
+.an-group input[type="color"] { width: 22px; height: 22px; padding: 0; border: 1px solid var(--line); background: none; flex: none; }
+.an-group .text-input { flex: 1; min-width: 50px; height: 24px; }
+.an-group.an-active .text-input { border-color: var(--select); }
+.an-group .an-group-parent { width: 18px; flex: none; height: 22px; padding: 0; border: 1px solid var(--line); background: var(--ink-1); color: transparent; cursor: pointer; }
+.an-group .an-group-parent option { color: var(--text); background: var(--ink-1); }
+.an-group.an-dim .text-input { color: var(--faint); }
+.an-count { font: 11px var(--mono); min-width: 2ch; text-align: right; }
+.an-field-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; align-items: center; font-size: 12px; }
+.an-field-row .an-faint { font-size: 11px; }
+.an-textarea { width: 100%; min-height: 0; resize: vertical; font: 12px/1.4 var(--ui); padding: 4px 6px; height: auto; }
+.an-table-panel { display: flex; flex-direction: column; gap: 6px; height: 100%; min-height: 0; }
+.an-toolbar .an-search { flex: 1 1 260px; min-width: 160px; max-width: 520px; height: 24px; }
+.an-toolbar select { height: 24px; }
+.an-table-body { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 10px; flex: 1; min-height: 0; }
+.an-table-scroll { overflow: auto; min-height: 0; }
+.an-table-scroll .an-table th { position: sticky; top: 0; background: var(--ink-2); z-index: 1; }
+.an-table-scroll .an-table td { overflow-wrap: normal; white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+.an-sortable { cursor: pointer; user-select: none; }
+.an-sortable:hover { color: var(--text); }
+.an-editor { overflow: auto; min-height: 0; display: grid; gap: 6px; align-content: start; border-left: 1px solid var(--line); padding-left: 10px; font-size: 12px; }
+.an-editor .field { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 6px; align-items: center; }
+.an-editor .field > span:first-child { color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.an-editor .field .text-input, .an-editor select { width: 100%; height: 24px; min-width: 0; }
+.an-editor .an-textarea { height: auto; }
+.an-editor-head { display: grid; gap: 2px; }
+.an-comment { border-left: 2px solid var(--line-strong); padding: 2px 0 2px 6px; display: grid; gap: 2px; }
+.an-comment > .an-faint { display: flex; align-items: center; justify-content: space-between; font-size: 11px; }
+.an-comment-x { height: 18px; }
+.an-inline-wide { display: block; }
+.an-inline-wide .text-input { width: 100%; }
+.an-tip { position: absolute; pointer-events: none; max-width: 260px; background: rgba(12, 12, 12, 0.92); border: 1px solid var(--line-strong); padding: 4px 8px; font-size: 12px; line-height: 1.4; display: grid; gap: 1px; z-index: 5; }
+.an-tip[hidden] { display: none; }
+.an-tip .an-faint { font-size: 11px; }
+.an-tip-comment { font-style: italic; }
+@media (max-width: 900px) { .an-table-body { grid-template-columns: minmax(0, 1fr); } .an-editor { border-left: 0; padding-left: 0; } }
 `;

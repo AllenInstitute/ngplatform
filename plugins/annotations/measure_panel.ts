@@ -18,8 +18,8 @@ const LAYER = "measurements";
 const TOOLS: [string, string, string][] = [
   ["annotateLine", "Line", "Click twice in a view: a length"],
   ["annotatePolyline", "Polyline", "Click points, double-click to finish: a length along them"],
-  ["annotateBoundingBox", "Box", "Click two corners: a volume (an area if flat)"],
-  ["annotateSphere", "Ellipsoid", "Click the centre, then the extent: a volume"],
+  ["annotateBoundingBox", "Box", "Click two corners in a section: an area (a volume if the corners are in different sections)"],
+  ["annotateSphere", "Ellipsoid", "Click the centre, then the extent: an area in a section"],
 ];
 
 const TYPE_NAMES: Record<string, string> = { line: "Line", polyline: "Polyline", axis_aligned_bounding_box: "Box", ellipsoid: "Ellipsoid" };
@@ -76,9 +76,16 @@ export class Measure {
     });
   }
 
+  /**
+   * The tool Ctrl+click draws with: the measurements layer's, while it is
+   * the selected layer (Neuroglancer draws with the selected layer's tool,
+   * so with another layer selected the button picks the tool again rather
+   * than turning it off).
+   */
   private currentTool(): string | undefined {
-    const layers = ((this.ctx.viewer.getState() as { layers?: Json[] }).layers ?? []) as Json[];
-    const t = layers.find((l) => l.name === LAYER)?.tool;
+    const ng = this.ctx.viewer.getState() as { layers?: Json[]; selectedLayer?: { layer?: string } };
+    if (ng.selectedLayer?.layer !== LAYER) return undefined;
+    const t = (ng.layers ?? []).find((l) => l.name === LAYER)?.tool;
     return typeof t === "string" ? t : undefined;
   }
 

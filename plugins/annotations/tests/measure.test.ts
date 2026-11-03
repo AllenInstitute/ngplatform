@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { LayerTransform } from "@ngplatform/sdk";
 import { annotationToGlobal, distanceMm, type GlobalSpace, placement, toGlobal, toVoxel, unprojector, voxelVolume } from "../geometry.js";
-import { measure, measureAll, sampleCount, samplePath, samplePoints, spanned } from "../measure.js";
+import { measure, measureAll, sampleCount, samplePath, samplePoints, sectionAxis, spanned } from "../measure.js";
 import { csv, physical } from "../ui.js";
 
 /** Global x, y, z in mm, as the app's MNI examples have it. */
@@ -29,6 +29,11 @@ describe("measuring annotations", () => {
     const flat = measure({ type: "axis_aligned_bounding_box", id: "b", pointA: [0, 0, 5], pointB: [2, 3, 5] }, "m", identity(MM), MM);
     expect(flat?.quantity).toBe("area");
     expect(flat?.value).toBeCloseTo(6);
+    // As Neuroglancer draws a box in a 2-D view: one coordinate deep, so a rectangle.
+    const drawn = measure({ type: "axis_aligned_bounding_box", id: "b", pointA: [18.3, -33, 9.999999], pointB: [-17.7, -63, 10.999999] }, "m", identity(MM), MM);
+    expect(drawn?.quantity).toBe("area");
+    expect(drawn?.value).toBeCloseTo(36 * 30);
+    expect(sectionAxis([0, 0, 0], [1, 1, 1])).toBe(-1);
   });
 
   it("gives an ellipsoid's volume (4/3 π abc), or an ellipse's area", () => {
