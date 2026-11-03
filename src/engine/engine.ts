@@ -9,7 +9,7 @@
  * (layer controls, settings, help, statistics) in its docks and dialogs.
  */
 import { setSurfaceOverlay } from "./inspector/surface.js";
-import type { Drawer3d } from "../sdk/types.js";
+import type { Drawer3d, VisibleSegments } from "../sdk/types.js";
 import { draw3d } from "./draw3d.js";
 import {
   addPerspectivePanelToggle,
@@ -349,6 +349,15 @@ export class Engine {
         else layer.opacity = hidden.json;
       }
     }
+    // A segmentation layer whose drawing a plugin hides keeps its notSelectedAlpha.
+    if (this.hiddenFaint.size > 0 && Array.isArray(ng.layers)) {
+      for (const layer of ng.layers as Json[]) {
+        const hidden = this.hiddenFaint.get(String(layer.name));
+        if (hidden === undefined) continue;
+        if (hidden.json === undefined || hidden.json === 0) delete layer.notSelectedAlpha;
+        else layer.notSelectedAlpha = hidden.json;
+      }
+    }
     return ng;
   }
 
@@ -447,6 +456,23 @@ export class Engine {
    */
   setState(ng: Json): void {
     const { state } = this.viewer;
+    // A segmentation layer whose drawing a plugin hides, restored with the
+    // notSelectedAlpha getState saved for it, is restored as it is now (0):
+    // the same specification, so the layer is kept, not made afresh (which
+    // would drop a plugin's temporary visible set).  Copies: `ng` may be a
+    // state kept for undo.
+    if (this.hiddenFaint.size > 0 && Array.isArray(ng.layers)) {
+      ng = {
+        ...ng,
+        layers: (ng.layers as Json[]).map((layer) => {
+          const faint = this.hiddenFaint.get(String(layer.name));
+          if (faint === undefined || layer.notSelectedAlpha === undefined || layer.notSelectedAlpha !== faint.json) return layer;
+          const copy = { ...layer };
+          delete copy.notSelectedAlpha;
+          return copy;
+        }),
+      };
+    }
     for (const [key, child] of state.children) {
       if (Object.prototype.hasOwnProperty.call(ng, key) && ng[key] !== undefined) continue;
       if (key === "layers") child.restoreState([]);
@@ -1046,6 +1072,7 @@ export class Engine {
     if (hide) this.hiddenSegments.set(name, undefined);
     else this.hiddenSegments.delete(name);
     this.applySegments(name);
+    this.zeroNotSelected(name, hide);
   }
 
   /** Hides again the segmentation layers made afresh (an undo, a source changed) while hidden. */
@@ -1053,7 +1080,51 @@ export class Engine {
     for (const [name, group] of this.hiddenSegments) {
       const now = this.segmentationLayer(name)?.displayState.segmentationGroupState.value;
       if (now !== undefined && now !== group) this.applySegments(name);
+      this.zeroNotSelected(name, true);
     }
+  }
+
+  /**
+   * Segmentation layers whose drawing a plugin hides, with their
+   * notSelectedAlpha as it was (its value, and as saved): Neuroglancer would
+   * draw every object not chosen at that strength, the hidden temporary set
+   * included, so it is kept at 0 meanwhile.  A change to it while hidden
+   * (the "Opacity (off)" slider, an undo) becomes the value reported and
+   * put back.
+   */
+  private readonly hiddenFaint = new Map<string, { value: number; json: Json[string]; off: () => void; target: object }>();
+
+  private zeroNotSelected(name: string, hide: boolean): void {
+    const known = this.hiddenFaint.get(name);
+    const alpha = this.segmentationLayer(name)?.displayState.notSelectedAlpha;
+    if (!hide) {
+      if (known === undefined) return;
+      known.off();
+      this.hiddenFaint.delete(name);
+      if (alpha !== undefined) alpha.value = known.value;
+      return;
+    }
+    if (alpha === undefined || known?.target === alpha) return;
+    // A layer made afresh: hidden again, keeping the value it had unless the new one says otherwise.
+    known?.off();
+    const keep = known !== undefined && alpha.value === 0;
+    const json = keep ? known.json : (this.managed(name)?.toJSON() as Json | undefined)?.notSelectedAlpha;
+    const entry = { value: keep ? known.value : alpha.value, json, off: () => {}, target: alpha as object };
+    this.hiddenFaint.set(name, entry);
+    let zeroing = false;
+    const rezero = () => {
+      if (zeroing) return;
+      entry.value = alpha.value;
+      entry.json = alpha.value;
+      if (alpha.value === 0) return;
+      zeroing = true;
+      alpha.value = 0;
+      zeroing = false;
+    };
+    entry.off = alpha.changed.add(rezero);
+    zeroing = true;
+    alpha.value = 0;
+    zeroing = false;
   }
 
   /**
@@ -1062,20 +1133,22 @@ export class Engine {
    * `ignoreNullVisibleSet`), or those `has` says.  The segments are a
    * plugin's temporary set when one is set, else the layer's own.
    */
-  visibleSegments(name: string): { all: boolean; size: number; has(id: bigint): boolean } | undefined {
+  visibleSegments(name: string): VisibleSegments | undefined {
     const layer = this.segmentationLayer(name);
     if (layer === undefined) return undefined;
     const { displayState } = layer;
     const group = displayState.segmentationGroupState.value;
     const claim = this.temporarySegments.get(name);
     const ignoreNull = displayState.ignoreNullVisibleSet.value;
+    // The layer's own, also while its drawing is hidden (and it is kept at 0).
+    const notSelectedAlpha = this.hiddenFaint.get(name)?.value ?? displayState.notSelectedAlpha.value;
     if (claim !== undefined && claim.group === group) {
       const set = (claim.set ??= new Set(claim.ids));
-      return { all: set.size === 0 && ignoreNull, size: set.size, has: (id) => set.has(id) };
+      return { all: set.size === 0 && ignoreNull, size: set.size, has: (id) => set.has(id), ids: () => BigUint64Array.from(set), notSelectedAlpha };
     }
     // A temporary set Neuroglancer itself made (not ours to hide behind).
-    const own = !this.hiddenSegments.has(name) && group.useTemporaryVisibleSegments.value ? group.temporaryVisibleSegments : group.visibleSegments;
-    return { all: own.size === 0 && ignoreNull, size: own.size, has: (id) => own.has(id) };
+    const own = (!this.hiddenSegments.has(name) && group.useTemporaryVisibleSegments.value ? group.temporaryVisibleSegments : group.visibleSegments) as typeof group.visibleSegments & Iterable<bigint>;
+    return { all: own.size === 0 && ignoreNull, size: own.size, has: (id) => own.has(id), ids: () => BigUint64Array.from(own), notSelectedAlpha };
   }
 
   /**
@@ -1121,6 +1194,7 @@ export class Engine {
         groupState!.temporaryVisibleSegments.changed,
         groupState!.useTemporaryVisibleSegments.changed,
         ds.ignoreNullVisibleSet.changed,
+        ds.notSelectedAlpha.changed,
         ds.saturation.changed,
         colours!.segmentColorHash.changed,
         colours!.segmentStatedColors.changed,
