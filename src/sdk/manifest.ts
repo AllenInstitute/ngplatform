@@ -62,7 +62,7 @@ export const MANIFEST_SCHEMA: Schema = {
           items: {
             type: "object",
             required: ["id", "title", "slot"],
-            properties: { id, title: { type: "string" }, slot, order: { type: "number" }, when },
+            properties: { id, title: { type: "string" }, slot, order: { type: "number" }, when, minSize: { type: "number", minimum: 0 } },
           },
         },
         datasetActions: {

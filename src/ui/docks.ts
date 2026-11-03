@@ -201,6 +201,14 @@ export class DockManager {
     if (slot === undefined) return;
     this.setCollapsed(slot, false);
     this.select(slot, id);
+    // A panel that needs room grows its dock for now; the size the person set stays saved.
+    const min = this.docks[slot].tabs.get(id)?.tab.minSize;
+    if (min !== undefined) {
+      const rect = this.docks[slot].el.getBoundingClientRect();
+      const now = slot === "bottom" ? rect.height : rect.width;
+      const limit = slot === "bottom" ? window.innerHeight * 0.6 : window.innerWidth * 0.5;
+      if (now > 0 && now < min) this.root.style.setProperty(`--${slot}`, `${Math.round(Math.min(min, limit))}px`);
+    }
   }
 
   selected(slot: DockSlot): string | undefined {

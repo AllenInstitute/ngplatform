@@ -35,6 +35,8 @@ export interface DockTabSpec {
   slot: DockSlot;
   order?: number;
   when?: string;
+  /** Pixels the dock is grown to (at least) when the panel is shown: a table needs some height. */
+  minSize?: number;
   owner?: string;
   render(host: HTMLElement): Disposer | void | Promise<Disposer | void>;
 }

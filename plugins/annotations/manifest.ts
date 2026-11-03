@@ -61,7 +61,7 @@ For an image and a region (a box or ellipsoid annotation, a label of a label vol
   contributes: {
     panels: [
       { id: ANNOTATIONS_PANEL, title: "Annotations", slot: "left", order: 60 },
-      { id: TABLE_PANEL, title: "Annotation table", slot: "bottom", order: 15 },
+      { id: TABLE_PANEL, title: "Annotation table", slot: "bottom", order: 15, minSize: 300 },
     ],
     appState: { key: "labels", version: 1 },
     commands: [

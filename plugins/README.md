@@ -204,6 +204,10 @@ export const MANIFEST: Manifest = {
 - **Activation**: using a declared contribution loads the plugin. Activation
   events (`onStartup`, `onCommand:<id>`, `onView:<panel>`,
   `onDatasetKind:<kind>`, `onOpen:<regex>`) load it earlier.
+- **Panels** (`contributes.panels`): a tab in a dock (`left`, `right` or
+  `bottom`), in `order`; `minSize` (pixels) grows the dock to at least that
+  while the panel is shown (the annotation table asks for 300), without
+  changing the size the person set.
 - **Scene kinds** (`contributes.sceneKinds: [{kind, title, panel}]`): a
   kind of scene the plugin adds, shown in the scene bar while the plugin is
   on. Before one exists its tab (dashed) makes it; switching to it shows

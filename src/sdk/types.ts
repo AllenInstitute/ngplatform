@@ -114,7 +114,8 @@ export interface Manifest {
   contributes?: {
     commands?: CommandContribution[];
     keybindings?: { key: string; command: string; args?: unknown; when?: string }[];
-    panels?: { id: string; title: string; slot: DockSlot; order?: number; when?: string }[];
+    /** `minSize`: pixels the dock grows to, at least, when the panel is shown (not saved as the dock's size). */
+    panels?: { id: string; title: string; slot: DockSlot; order?: number; when?: string; minSize?: number }[];
     datasetActions?: { command: string; title?: string; when?: string }[];
     openHandlers?: { id: string; pattern: string; title?: string }[];
     examples?: { id: string; title: string; description: string; remote?: boolean; state?: Json }[];
