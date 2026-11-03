@@ -301,6 +301,24 @@ export class WorkspaceStore {
     }
   }
 
+  /**
+   * Makes a change on the user's behalf that is not an undo step of its own
+   * (a plugin playing through time moves the position many times a
+   * second).  A change of the user's still settling is recorded first; this
+   * one then amends the current step, as does every quiet change until the
+   * next settle, which waits for a pause, so a run of them settles once.
+   * The user's next key, click or scroll settles them first (`noteInput`),
+   * so what the user does then is a step of its own.
+   */
+  quietly(change: () => void): void {
+    if (this.settleTimer !== undefined && !this.amend) this.settle();
+    change();
+    this.amend = true;
+    // What Neuroglancer does next on its own, after the change, belongs to it too.
+    this.quietSince = performance.now();
+    this.scheduleSettle();
+  }
+
   /** The workspace as last settled, to say what the next change was. */
   private lastWorkspace: { ng: Json; app: Json } | undefined;
 
@@ -331,6 +349,8 @@ export class WorkspaceStore {
 
   /** The shell calls this on the user's first key, click or scroll after opening. */
   noteInput(): void {
+    // Quiet changes still settling are not part of what the user does next.
+    if (this.amend && this.settleTimer !== undefined) this.settle();
     this.inputSinceOpen = true;
     this.lastInput = performance.now();
   }

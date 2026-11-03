@@ -35,6 +35,8 @@ images with a `t` axis. Neuroglancer shows time as the dimension `t`, and
    from the start again when **Loop** is on; the other buttons go to the
    first, previous, next and last time point. **Alt+Shift+P** plays and
    pauses. The readout gives the time and the time point (from 0).
+   Playing makes no undo steps: undo after playing undoes what you did
+   before it (the buttons for one time point are steps, as other moves).
 7. **% change** plots each series as its change from its own mean, in
    percent, so series with different baselines can be compared.
 8. **Save CSV**: a row per time point (its number and time) and a column

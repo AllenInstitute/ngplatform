@@ -55,6 +55,13 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   again. A region's voxels are grouped by chunk and averaged per time point
   (missing values left out). The pointer is read 80 ms after it stops; a
   newer voxel cancels the older read.
+- **Playing.** Each time point shown moves the position with
+  `setPosition(…, { quiet: true })`: the workspace store
+  (`WorkspaceStore.quietly`) amends the current undo step with it rather
+  than adding one, so playing makes no undo steps, at any rate; the user's
+  next key, click or scroll settles it first. The first, previous, next and
+  last buttons and clicks on the plot are ordinary moves, an undo step
+  each.
 - **State.** Pins (voxel indices, or an annotation layer and annotation id
   for a region) and the chosen image are in the plugin's state, in the
   link; their values are read again when it is opened. A region pin is
@@ -91,9 +98,6 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   large chunks (1200 time points of 64³ float32 chunks) reads about a
   gigabyte the first time the mouse enters a chunk. Reading a coarser level
   while the mouse moves, then the finest when it rests, would help.
-- **Undo while playing.** Each time point shown is a change of position;
-  at 2 time points a second or slower each becomes an undo step (faster
-  ones settle into one).
 - **CIFTI time series on surfaces.** A `.dtseries.nii` beside a GIFTI
   surface is served as each vertex's mean and SD over time
   (`src/virtual/vectors/surfaces.ts`, `ciftiSeriesStats` in `cifti.ts`).

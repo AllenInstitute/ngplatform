@@ -267,7 +267,13 @@ export interface ViewerApi {
   onLayersChanged(callback: () => void): Disposer;
   cursor(): { active: boolean; position: number[]; names: string[]; units: string[]; values: Record<string, unknown> };
   onCursorChanged(callback: () => void): Disposer;
-  setPosition(position: number[]): void;
+  /**
+   * Moves the global position (NaN leaves a dimension where it is).  With
+   * `quiet`, the move makes no undo step of its own: it amends the current
+   * one, as a run of quiet moves does (playing through time), until the
+   * user next acts.
+   */
+  setPosition(position: number[], options?: { quiet?: boolean }): void;
   /**
    * A segmentation layer's segment properties (one row per segment: numeric
    * columns, and tags), once its source has supplied them.

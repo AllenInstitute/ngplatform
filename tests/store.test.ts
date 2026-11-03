@@ -230,6 +230,52 @@ describe("undo granularity", () => {
   });
 });
 
+describe("quiet changes", () => {
+  it("makes a run of quiet moves (playing through time) no undo step, and the user's next change its own", () => {
+    const { store, engine } = setup();
+    store.open({ ng: { layers: [{ name: "a", source: IMAGE }], position: [0, 0, 0, 0] }, app: {} }, "test");
+    store.noteInput();
+    store.patchState((ng) => {
+      ng.layout = "3d";
+    });
+    store.settle();
+    for (let t = 1; t <= 5; ++t) {
+      store.quietly(() => engine.setState({ ...engine.ng, position: [t, 0, 0, 0] }));
+      // Settling between moves (a slow rate) still adds no step.
+      if (t % 2 === 0) store.settle();
+    }
+    store.settle();
+    expect(store.historyRows().map((r) => r.label)).toEqual(["Opened", "Layout: 3d"]);
+    // The link has the position shown.
+    expect(JSON.parse(store.serialize()).ng.position).toEqual([5, 0, 0, 0]);
+    // A quiet move still settling is settled before the user's input, which is then a step of its own.
+    store.quietly(() => engine.setState({ ...engine.ng, position: [6, 0, 0, 0] }));
+    store.noteInput();
+    store.setLayerVisible("a", false);
+    store.settle();
+    expect(store.historyRows()).toHaveLength(3);
+    expect(store.undo()).toBe(true);
+    expect(engine.layers()[0].visible).toBe(true);
+    expect(engine.ng.position).toEqual([6, 0, 0, 0]);
+    expect(store.undo()).toBe(true);
+    expect(engine.ng.layout).toBeUndefined();
+  });
+
+  it("records a change of the user's still settling before a quiet move", () => {
+    const { store, engine } = setup();
+    store.open({ ng: { layers: [{ name: "a", source: IMAGE }], position: [0, 0, 0] }, app: {} }, "test");
+    store.noteInput();
+    store.patchState((ng) => {
+      ng.layout = "3d";
+    });
+    store.quietly(() => engine.setState({ ...engine.ng, position: [1, 0, 0] }));
+    store.settle();
+    expect(store.historyRows().map((r) => r.label)).toEqual(["Opened", "Layout: 3d"]);
+    expect(store.undo()).toBe(true);
+    expect(engine.ng.layout).toBeUndefined();
+  });
+});
+
 describe("opening", () => {
   it("counts what follows opening on its own as part of opening, until the user acts", () => {
     const { store, engine } = setup();

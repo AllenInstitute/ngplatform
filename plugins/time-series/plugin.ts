@@ -492,14 +492,17 @@ class TimeSeries {
 
   // ------------------------------------------------------------- time
 
-  /** Shows time point `i` in the views. */
-  private show(i: number): void {
+  /**
+   * Shows time point `i` in the views; `quiet` (playing) makes no undo
+   * step of it.
+   */
+  private show(i: number, quiet = false): void {
     const { map, axis } = this;
     if (map === undefined || axis === undefined) return;
     const position = this.position();
     const target = new Array(position.length).fill(NaN);
     target[axis.dim] = coordinateOf(map, axis, position, i);
-    this.ctx.viewer.setPosition(target);
+    this.ctx.viewer.setPosition(target, { quiet });
   }
 
   private step(delta: number): void {
@@ -515,14 +518,14 @@ class TimeSeries {
     const axis = this.axis;
     if (axis === undefined) return;
     // Playing from the last time point starts again.
-    if (this.current >= axis.count - 1) this.show(0);
+    if (this.current >= axis.count - 1) this.show(0, true);
     const tick = () => {
       const next = this.axis === undefined ? undefined : nextIndex(this.current, this.axis.count, this.loop);
       if (next === undefined) {
         this.pause();
         return;
       }
-      this.show(next);
+      this.show(next, true);
       this.playing = setTimeout(tick, 1000 / this.rate);
     };
     this.playing = setTimeout(tick, 1000 / this.rate);
