@@ -83,6 +83,8 @@ export interface Saved {
 
 /** Points per batch when saving .trk: about 48 MB of the file in memory at a time. */
 const BATCH_POINTS = 4_000_000;
+/** A disk's drawn thickness, a share of its radius (it is tested as a plane). */
+const DISK_THICKNESS = 0.04;
 /**
  * A streamline group is drawn from a store of its own whole streamlines,
  * made in the page, of at most about this many points (else from the
@@ -838,6 +840,8 @@ class TrackGroups {
       radius: size,
       size: [size * 2, size * 2, size * 2],
       op: group.rois.length === 0 ? "and" : "and",
+      // A disk lies across z (an axial plane) until another axis is chosen.
+      ...(shape === "disk" ? { axis: 2, radius: size * 2 } : {}),
     };
     this.updateGroup(group.id, (g) => ({ ...g, rois: [...g.rois, roi] }));
     this.ensureLayer(this.editing()!);
@@ -874,6 +878,10 @@ class TrackGroups {
         const description = `${group.name}: ${roi.op.toUpperCase()} ${roi.shape} ${i + 1}`;
         if (roi.shape === "sphere") {
           out.push({ type: "ellipsoid", id: roi.id, center: [...roi.center], radii: [roi.radius, roi.radius, roi.radius], props: [group.colour], description });
+        } else if (roi.shape === "disk") {
+          // A flat ellipsoid: thin across its axis.
+          const radii = [0, 1, 2].map((k) => (k === (roi.axis ?? 2) ? roi.radius * DISK_THICKNESS : roi.radius));
+          out.push({ type: "ellipsoid", id: roi.id, center: [...roi.center], radii, props: [group.colour], description });
         } else {
           const half = roi.size.map((s) => s / 2);
           out.push({
@@ -967,7 +975,8 @@ class TrackGroups {
         if (a.type === "ellipsoid" && Array.isArray(a.center) && Array.isArray(a.radii)) {
           const center = (a.center as number[]).slice(0, 3) as [number, number, number];
           const radius = Math.max(...(a.radii as number[]).slice(0, 3));
-          if (!close(center, roi.center) || !close([radius], [roi.radius])) next = { ...roi, shape: "sphere", center, radius };
+          // A disk stays one (its ellipsoid is flat); else a sphere.
+          if (!close(center, roi.center) || !close([radius], [roi.radius])) next = { ...roi, shape: roi.shape === "disk" ? "disk" : "sphere", center, radius };
         } else if (a.type === "axis_aligned_bounding_box" && Array.isArray(a.pointA) && Array.isArray(a.pointB)) {
           const pa = a.pointA as number[];
           const pb = a.pointB as number[];
@@ -1129,6 +1138,11 @@ class TrackGroups {
 
   /** A region in nanometres, from the viewer's coordinates. */
   private toNm(roi: Roi, nm: [number, number, number]): NmRegion {
+    if (roi.shape === "disk") {
+      // Labels and annotations test a disk as a flat box: its width, a quarter of its radius thick.
+      const size = [0, 1, 2].map((k) => (k === (roi.axis ?? 2) ? roi.radius / 2 : 2 * roi.radius) * nm[k]) as [number, number, number];
+      return { shape: "box", center: [0, 1, 2].map((k) => roi.center[k] * nm[k]) as [number, number, number], radius: roi.radius * nm[0], size };
+    }
     return {
       shape: roi.shape,
       center: [0, 1, 2].map((k) => roi.center[k] * nm[k]) as [number, number, number],
@@ -2068,6 +2082,7 @@ class TrackGroups {
         el("h3", { class: "section-title", style: "margin:0;flex:1" }, "Regions"),
         el("button", { class: "btn outline small", type: "button", title: "A sphere at the centre of the views", onclick: () => this.addRoi("sphere") }, "+ Sphere"),
         el("button", { class: "btn outline small", type: "button", title: "A box at the centre of the views", onclick: () => this.addRoi("box") }, "+ Box"),
+        el("button", { class: "btn outline small", type: "button", title: "A disk at the centre of the views, which tracks must cross (TrackVis's disk), optionally within an angle of its normal", onclick: () => this.addRoi("disk") }, "+ Disk"),
       ),
     );
     if (group.rois.length === 0) {
@@ -2186,12 +2201,23 @@ class TrackGroups {
       number("x", () => current().center[0], c(0), 0.5, () => extent(0)),
       number("y", () => current().center[1], c(1), 0.5, () => extent(1)),
       number("z", () => current().center[2], c(2), 0.5, () => extent(2)),
-      roi.shape === "sphere"
+      roi.shape !== "box"
         ? number("radius", () => current().radius, (v) => ({ radius: Math.max(0.1, v) }), 0.5, span)
         : number("width", () => current().size[0], (v) => ({ size: [Math.max(0.1, v), current().size[1], current().size[2]] }), 0.5, span),
     );
+    const axis = el("select", { "aria-label": "Disk axis", title: "The plane the disk lies in: the axis it lies across" }) as HTMLSelectElement;
+    for (const [value, label] of [["0", "Across x (sagittal)"], ["1", "Across y (coronal)"], ["2", "Across z (axial)"]]) axis.append(el("option", { value }, label));
+    axis.value = String(roi.axis ?? 2);
+    axis.addEventListener("change", () => this.updateRoi(group, roi.id, { axis: Number(axis.value) }));
     const extra =
-      roi.shape === "box"
+      roi.shape === "disk"
+        ? el(
+            "div",
+            { class: "tf-xyz" },
+            el("label", { class: "tf-field" }, el("span", {}, "plane"), axis),
+            number("angle limit °", () => current().angle ?? 90, (v) => ({ angle: v >= 90 ? undefined : Math.max(0, v) }), 1, () => [0, 90]),
+          )
+        : roi.shape === "box"
         ? el(
             "div",
             { class: "tf-xyz" },
@@ -2209,14 +2235,14 @@ class TrackGroups {
       el(
         "div",
         { class: "tf-roi-head" },
-        el("span", { class: "label" }, `${roi.shape === "sphere" ? "Sphere" : "Box"} ${index + 1}`),
+        el("span", { class: "label" }, `${roi.shape === "sphere" ? "Sphere" : roi.shape === "disk" ? "Disk" : "Box"} ${index + 1}`),
         op,
         el("button", { class: "btn small", type: "button", title: "Apply the typed values", onclick: () => typed.forEach((apply) => apply()) }, "Set"),
         el("button", { class: "btn small", type: "button", title: "Move it to the centre of the views", onclick: () => this.updateRoi(group, roi.id, { center: this.viewCentre() }) }, "Here"),
         el("button", { class: "btn small", type: "button", title: "Go to it", onclick: () => this.ctx.viewer.setPosition([...current().center]) }, "Go"),
         el("button", { class: "btn small", type: "button", title: "Remove it", "aria-label": "Remove", onclick: () => this.removeRoi(group, roi.id) }, "×"),
       ),
-      lines ? el("div", { class: "tf-ends" }, ends) : null,
+      lines && roi.shape !== "disk" ? el("div", { class: "tf-ends" }, ends) : null,
       fields,
       extra,
       status,

@@ -180,6 +180,7 @@ export function toStore(roi: Roi, dims: Dimensions, info: StoreInfo): RoiGeometr
     radius: roi.radius * factor[0],
     size: [0, 1, 2].map((k) => roi.size[k] * factor[k]) as [number, number, number],
     ...(roi.ends === undefined ? {} : { ends: roi.ends }),
+    ...(roi.shape === "disk" ? { axis: roi.axis ?? 2, ...(roi.angle === undefined ? {} : { angle: roi.angle }) } : {}),
   };
 }
 

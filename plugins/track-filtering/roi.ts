@@ -7,10 +7,13 @@
  * TrackVis semantics: a group keeps the tracks that pass through every
  * "and" region, through at least one "or" region (when it has any), and
  * through no "not" region, and whose attributes are in range.  A region can
- * instead ask for a track's ends: either end in it, or both.
+ * instead ask for a track's ends: either end in it, or both.  A disk (as
+ * TrackVis's) is crossed: a segment passes from one side of its plane to
+ * the other within its radius, and, with an angle limit, runs within that
+ * angle of the disk's normal there.
  */
 
-export type RoiShape = "sphere" | "box";
+export type RoiShape = "sphere" | "box" | "disk";
 export type RoiOp = "and" | "or" | "not";
 /** What of a track must be in a region: by default any of it (it passes through); else either end, or both. */
 export type RoiEnds = "either" | "both";
@@ -26,6 +29,10 @@ export interface Roi {
   size: [number, number, number];
   op: RoiOp;
   ends?: RoiEnds;
+  /** Disk: the axis it lies across (0, 1, 2: its normal is along x, y or z). */
+  axis?: number;
+  /** Disk: the most a crossing segment may turn from the normal, degrees; none: any. */
+  angle?: number;
 }
 
 /** A region in store coordinates, as the worker tests it. */
@@ -35,10 +42,12 @@ export interface RoiGeometry {
   radius: number;
   size: [number, number, number];
   ends?: RoiEnds;
+  axis?: number;
+  angle?: number;
 }
 
 export function roiBounds(roi: RoiGeometry, margin = 0): { lo: number[]; hi: number[] } {
-  const half = roi.shape === "sphere" ? [roi.radius, roi.radius, roi.radius] : roi.size.map((s) => Math.abs(s) / 2);
+  const half = roi.shape === "sphere" ? [roi.radius, roi.radius, roi.radius] : roi.shape === "disk" ? [0, 1, 2].map((k) => (k === (roi.axis ?? 2) ? 0 : roi.radius)) : roi.size.map((s) => Math.abs(s) / 2);
   return {
     lo: roi.center.map((c, i) => c - half[i] - margin),
     hi: roi.center.map((c, i) => c + half[i] + margin),
@@ -48,7 +57,7 @@ export function roiBounds(roi: RoiGeometry, margin = 0): { lo: number[]; hi: num
 /** A stable key for a region's geometry, to cache its result by. */
 export function roiKey(roi: RoiGeometry, level: number): string {
   const r = (v: number) => Math.round(v * 1000) / 1000;
-  return `${level}|${roi.shape}|${roi.center.map(r).join(",")}|${r(roi.radius)}|${roi.size.map(r).join(",")}${roi.ends ? `|${roi.ends}` : ""}`;
+  return `${level}|${roi.shape}|${roi.center.map(r).join(",")}|${r(roi.radius)}|${roi.size.map(r).join(",")}${roi.ends ? `|${roi.ends}` : ""}${roi.shape === "disk" ? `|${roi.axis ?? 2}|${roi.angle ?? ""}` : ""}`;
 }
 
 /**
@@ -151,6 +160,10 @@ export function testChunk(geometry: ChunkGeometry, roi: RoiGeometry, hits: IdSet
   const [cx, cy, cz] = roi.center;
   const r2 = roi.radius * roi.radius;
   const sphere = roi.shape === "sphere";
+  const disk = roi.shape === "disk";
+  const axis = roi.axis ?? 2;
+  const [u, v] = [0, 1, 2].filter((k) => k !== axis);
+  const cosLimit = roi.angle === undefined ? -1 : Math.cos((Math.min(90, Math.max(0, roi.angle)) * Math.PI) / 180);
   // The segments: consecutive vertices flagged in `next`, then the `extra`
   // pairs; for points, each vertex as a segment of length zero.
   const extraPairs = extra.length / 2;
@@ -180,7 +193,9 @@ export function testChunk(geometry: ChunkGeometry, roi: RoiGeometry, hits: IdSet
       continue;
     }
     let inside: boolean;
-    if (sphere) {
+    if (disk) {
+      inside = segmentCrossesDisk(p, a, b, roi.center, r2, axis, u, v, cosLimit);
+    } else if (sphere) {
       const dx = qx - px;
       const dy = qy - py;
       const dz = qz - pz;
@@ -264,6 +279,27 @@ export function testEnds(ends: ChunkEnds, roi: RoiGeometry, counts: Map<number |
     const key = high < 0x200000 ? high * 0x100000000 + ends.idLow[i] : (BigInt(high) << 32n) | BigInt(ends.idLow[i]);
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
+}
+
+/**
+ * Whether the segment between vertices `a` and `b` crosses the disk at
+ * `center` across `axis` (radius² `r2`; `u`, `v` the other axes): from one
+ * side of its plane to the other (or touching it), where it meets the plane
+ * within the radius, and at no more than the angle whose cosine is
+ * `cosLimit` from the normal.  A point (a = b) crosses only lying in it.
+ */
+export function segmentCrossesDisk(p: Float32Array, a: number, b: number, center: number[], r2: number, axis: number, u: number, v: number, cosLimit: number): boolean {
+  const sa = p[3 * a + axis] - center[axis];
+  const sb = p[3 * b + axis] - center[axis];
+  if ((sa > 0 && sb > 0) || (sa < 0 && sb < 0)) return false;
+  const t = sa === sb ? 0 : sa / (sa - sb);
+  const du = p[3 * a + u] + t * (p[3 * b + u] - p[3 * a + u]) - center[u];
+  const dv = p[3 * a + v] + t * (p[3 * b + v] - p[3 * a + v]) - center[v];
+  if (du * du + dv * dv > r2) return false;
+  if (cosLimit <= 0) return true;
+  const d = [0, 1, 2].map((k) => p[3 * b + k] - p[3 * a + k]);
+  const len = Math.hypot(d[0], d[1], d[2]);
+  return len > 0 && Math.abs(d[axis]) / len >= cosLimit;
 }
 
 /** Whether the segment between vertices `a` and `b` meets the box [lo, hi] (slab test). */

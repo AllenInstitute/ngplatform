@@ -124,16 +124,17 @@ function ends(level: number, coords: number[]): Promise<ChunkEnds | undefined> {
   return pending;
 }
 
-function chunk(level: number, coords: number[]): Promise<ChunkGeometry | undefined> {
-  const key = `${level}|${coords.join(".")}`;
+function chunk(level: number, coords: number[], bridges = false): Promise<ChunkGeometry | undefined> {
+  const key = `${level}|${coords.join(".")}${bridges ? "|bridged" : ""}`;
   const hit = cached<ChunkGeometry>(key);
   if (hit !== undefined) return hit;
   const pipeline = pipelineOf(level);
   // Reads are shared between requests, so none is cancelled with one.  The
-  // segments crossing into neighbouring chunks are left out: they would
-  // need the neighbours' vertices, and a region meets the segments either
-  // side of one anyway.
-  const pending = pipeline.download(coords, new AbortController().signal, { bridges: false }).then((data) => {
+  // segments crossing into neighbouring chunks are left out unless asked
+  // for: they need the neighbours' vertices, and a solid region meets the
+  // segments either side of one anyway.  A disk is a plane, which may lie
+  // on a chunk boundary, where only those segments cross it.
+  const pending = pipeline.download(coords, new AbortController().signal, { bridges }).then((data) => {
     if (data === undefined) {
       remember(key, 0);
       return undefined;
@@ -199,7 +200,7 @@ async function evaluate(id: number, level: number, roi: RoiGeometry): Promise<vo
     const work = async () => {
       while (next < coords.length) {
         const c = coords[next++];
-        const data = roi.ends === undefined ? await chunk(level, c) : await ends(level, c);
+        const data = roi.ends === undefined ? await chunk(level, c, roi.shape === "disk") : await ends(level, c);
         if (controller.signal.aborted) return;
         if (data !== undefined) {
           if (roi.ends === undefined) testChunk(data as ChunkGeometry, roi, hits);
