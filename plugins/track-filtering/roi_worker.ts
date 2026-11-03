@@ -10,7 +10,8 @@
  *
  * Messages in:  { type: "open", storeUrl }
  *               { type: "evaluate", id, level, roi }    roi in store coordinates;
- *                 roi.ends: test the lines' ends (either, or both) instead
+ *                 roi.ends: test the lines' ends (either, or both) instead;
+ *                 roi.maskSource: a volume's voxels, read here once
  *               { type: "curves", id, level, ids }   whole streamlines of objects
  *               { type: "cancel", id }
  * Messages out: { type: "opened", info } | { type: "error", id?, message }
@@ -33,7 +34,9 @@ import {
 } from "neuroglancer-zarr-vectors/reader";
 import { setAsyncComputationWorkerFactory } from "neuroglancer/unstable/worker_factories.js";
 import { asyncComputationWorker } from "@ngplatform/sdk/workers";
-import { type ChunkEnds, chunkEnds, type ChunkGeometry, compactChunk, IdSet, type RoiGeometry, roiBounds, testChunk, testEnds } from "./roi.js";
+import { ARRAYS, type VoxelType } from "@ngplatform/sdk/volume_out";
+import { VolumeReader } from "../volume-view/volume_reader.js";
+import { type ChunkEnds, chunkEnds, type ChunkGeometry, compactChunk, IdSet, type MaskSource, type MaskVolume, maskBits, maskBounds, maskKey, type RoiGeometry, roiBounds, testChunk, testChunkMask, testEnds } from "./roi.js";
 
 // Compressed arrays (the object manifests, zstd) decode in the platform's
 // async-computation worker, with Zarr Vectors' decoders loaded, as the
@@ -168,6 +171,29 @@ async function open(storeUrl: string): Promise<StoreInfo> {
   };
 }
 
+/** Masks read, by source: the last few. */
+const masks = new Map<string, Promise<MaskVolume>>();
+
+/** A mask's level, read whole, as one byte a voxel. */
+function maskVolume(source: MaskSource): Promise<MaskVolume> {
+  const key = maskKey(source);
+  let mask = masks.get(key);
+  if (mask === undefined) {
+    mask = (async () => {
+      const reader = new VolumeReader();
+      await reader.open([source.store], undefined);
+      const raw = await reader.rawVolume(source.level, new AbortController().signal);
+      const Type = ARRAYS[raw.type as VoxelType];
+      const values = new Type(raw.data.buffer as ArrayBuffer, raw.data.byteOffset, raw.data.byteLength / Type.BYTES_PER_ELEMENT);
+      return maskBits(values, raw.size, source, Float64Array.from(source.storeToVoxel));
+    })();
+    mask.catch(() => masks.delete(key));
+    masks.set(key, mask);
+    while (masks.size > 4) masks.delete(masks.keys().next().value!);
+  }
+  return mask;
+}
+
 async function evaluate(id: number, level: number, roi: RoiGeometry): Promise<void> {
   if (store === undefined) throw new Error("no store is open");
   const controller = new AbortController();
@@ -178,7 +204,14 @@ async function evaluate(id: number, level: number, roi: RoiGeometry): Promise<vo
     // Segments are short beside a chunk; a small margin catches one that
     // starts just outside the region's bounds and ends inside.
     const margin = Math.min(...chunkShape) / 16;
-    const { lo, hi } = roiBounds(roi, margin);
+    const mask = roi.maskSource === undefined ? undefined : await maskVolume(roi.maskSource);
+    const { lo, hi } = mask === undefined ? roiBounds(roi, margin) : (({ lo, hi }) => ({ lo: lo.map((v) => v - margin), hi: hi.map((v) => v + margin) }))(maskBounds(mask));
+    if (mask !== undefined && mask.hi.every((v) => v === 0)) {
+      // An empty mask: nothing passes through it.
+      const none = new BigUint64Array(0);
+      postMessage({ type: "result", id, ids: none, chunks: 0, bytes: 0, ms: performance.now() - started }, { transfer: [none.buffer] });
+      return;
+    }
     const coords: number[][] = [];
     const from = lo.map((v, k) => Math.floor(v / chunkShape[k]));
     const to = hi.map((v, k) => Math.floor(v / chunkShape[k]));
@@ -200,10 +233,12 @@ async function evaluate(id: number, level: number, roi: RoiGeometry): Promise<vo
     const work = async () => {
       while (next < coords.length) {
         const c = coords[next++];
-        const data = roi.ends === undefined ? await chunk(level, c, roi.shape === "disk") : await ends(level, c);
+        // Thin regions (a disk, a mask's voxels) can lie on a chunk boundary, crossed only by the segments joining chunks.
+        const data = roi.ends === undefined ? await chunk(level, c, roi.shape === "disk" || mask !== undefined) : await ends(level, c);
         if (controller.signal.aborted) return;
         if (data !== undefined) {
-          if (roi.ends === undefined) testChunk(data as ChunkGeometry, roi, hits);
+          if (mask !== undefined) testChunkMask(data as ChunkGeometry, mask, hits);
+          else if (roi.ends === undefined) testChunk(data as ChunkGeometry, roi, hits);
           else testEnds(data as ChunkEnds, roi, endCounts);
           bytes += data.bytes;
         }
@@ -245,6 +280,11 @@ async function curves(id: number, level: number, ids: BigUint64Array): Promise<v
 
 /** Small questions about the store, answered with `{type: "answer", id, value}`. */
 const calls: Record<string, (msg: any) => Promise<{ value: unknown; transfer?: Transferable[] }>> = {
+  /** An image's levels, for a mask on it: each one's voxels along x, y, z and their placement (voxel indices to RAS mm). */
+  async maskLevels({ store: url }: { store: string }) {
+    const { levels } = await new VolumeReader().open([url], undefined);
+    return { value: levels.map((l) => ({ size: l.size, voxelToRas: Array.from(l.voxelToRas) })) };
+  },
   async objectIds({ level, segmentIds }: { level: number; segmentIds: BigUint64Array }) {
     const levelPath = store!.levels[level].path;
     const table = await readObjectTable(access!, levelPath);

@@ -11,7 +11,8 @@ export function omeZarrUrl(source: string | undefined): string | undefined {
   if (source === undefined) return undefined;
   let url = source.trim();
   const scheme = /^(zarr2?|zarr3):\/\//i.exec(url);
-  const pipe = /\|zarr[23]?:?[^|]*$/i.exec(url);
+  // `|zarr:`, `|zarr2:`, `|zarr3:` (not `|zarr-vectors:`).
+  const pipe = /\|zarr[23]?(:[^|]*)?$/i.exec(url);
   if (scheme === null && pipe === null && !/\.ome\.zarr\/?$/i.test(url)) return undefined;
   if (scheme) url = url.slice(scheme[0].length);
   if (pipe) url = url.slice(0, pipe.index);

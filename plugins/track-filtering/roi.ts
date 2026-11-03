@@ -10,10 +10,13 @@
  * instead ask for a track's ends: either end in it, or both.  A disk (as
  * TrackVis's) is crossed: a segment passes from one side of its plane to
  * the other within its radius, and, with an angle limit, runs within that
- * angle of the disk's normal there.
+ * angle of the disk's normal there.  A mask is a volume's voxels (a
+ * painted label image, or an image above a threshold): a segment passes
+ * through it when a point along it, at most half a voxel from the next,
+ * lies in a voxel of the mask.
  */
 
-export type RoiShape = "sphere" | "box" | "disk";
+export type RoiShape = "sphere" | "box" | "disk" | "mask";
 export type RoiOp = "and" | "or" | "not";
 /** What of a track must be in a region: by default any of it (it passes through); else either end, or both. */
 export type RoiEnds = "either" | "both";
@@ -33,6 +36,128 @@ export interface Roi {
   axis?: number;
   /** Disk: the most a crossing segment may turn from the normal, degrees; none: any. */
   angle?: number;
+  /** Mask: the layer whose voxels it is, and which of them: at or above a value (images), or one label (none: any but 0). */
+  mask?: { layer: string; threshold?: number; label?: number };
+}
+
+/** A mask as the worker reads it: the image, which of its levels, and store coordinates to that level's voxel indices. */
+export interface MaskSource {
+  store: string;
+  level: number;
+  storeToVoxel: number[];
+  threshold?: number;
+  label?: number;
+}
+
+/** A stable key for a mask's source. */
+export function maskKey(m: MaskSource): string {
+  return `${m.store}|${m.level}|${m.storeToVoxel.map((v) => Math.round(v * 1e6) / 1e6).join(",")}|${m.threshold ?? ""}|${m.label ?? ""}`;
+}
+
+/** A mask read: one byte a voxel (x fastest), and the box of its set voxels (`hi` exclusive). */
+export interface MaskVolume {
+  bits: Uint8Array;
+  size: [number, number, number];
+  lo: [number, number, number];
+  hi: [number, number, number];
+  storeToVoxel: Float64Array;
+}
+
+/** The mask of a volume's values: at or above `threshold`, or equal to `label`, or (neither given) not 0. */
+export function maskBits(values: ArrayLike<number>, size: [number, number, number], source: { threshold?: number; label?: number }, storeToVoxel: Float64Array): MaskVolume {
+  const bits = new Uint8Array(values.length);
+  const lo: [number, number, number] = [Infinity, Infinity, Infinity];
+  const hi: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  const test = source.label !== undefined ? (v: number) => v === source.label : source.threshold !== undefined ? (v: number) => v >= source.threshold! : (v: number) => v !== 0 && !Number.isNaN(v);
+  for (let z = 0, i = 0; z < size[2]; ++z) {
+    for (let y = 0; y < size[1]; ++y) {
+      for (let x = 0; x < size[0]; ++x, ++i) {
+        if (!test(values[i])) continue;
+        bits[i] = 1;
+        if (x < lo[0]) lo[0] = x;
+        if (y < lo[1]) lo[1] = y;
+        if (z < lo[2]) lo[2] = z;
+        if (x >= hi[0]) hi[0] = x + 1;
+        if (y >= hi[1]) hi[1] = y + 1;
+        if (z >= hi[2]) hi[2] = z + 1;
+      }
+    }
+  }
+  if (!Number.isFinite(lo[0])) return { bits, size, lo: [0, 0, 0], hi: [0, 0, 0], storeToVoxel };
+  return { bits, size, lo, hi, storeToVoxel };
+}
+
+/** The store-coordinate box around a mask's set voxels (voxel centres at integers, so each voxel spans ±0.5). */
+export function maskBounds(mask: MaskVolume): { lo: number[]; hi: number[] } {
+  const toStore = invert3x4(mask.storeToVoxel);
+  const lo = [Infinity, Infinity, Infinity];
+  const hi = [-Infinity, -Infinity, -Infinity];
+  for (let c = 0; c < 8; ++c) {
+    const v = [0, 1, 2].map((k) => ((c >> k) & 1 ? mask.hi[k] - 0.5 : mask.lo[k] - 0.5));
+    for (let r = 0; r < 3; ++r) {
+      const p = toStore[4 * r] * v[0] + toStore[4 * r + 1] * v[1] + toStore[4 * r + 2] * v[2] + toStore[4 * r + 3];
+      lo[r] = Math.min(lo[r], p);
+      hi[r] = Math.max(hi[r], p);
+    }
+  }
+  return { lo, hi };
+}
+
+function invert3x4(m: ArrayLike<number>): Float64Array {
+  const [a, b, c, d, e, f, g, h, i] = [m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]];
+  const det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+  const inv = [(e * i - f * h) / det, (c * h - b * i) / det, (b * f - c * e) / det, (f * g - d * i) / det, (a * i - c * g) / det, (c * d - a * f) / det, (d * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d) / det];
+  const t = [m[3], m[7], m[11]];
+  const out = new Float64Array(16);
+  for (let r = 0; r < 3; ++r) {
+    for (let k = 0; k < 3; ++k) out[4 * r + k] = inv[3 * r + k];
+    out[4 * r + 3] = -(inv[3 * r] * t[0] + inv[3 * r + 1] * t[1] + inv[3 * r + 2] * t[2]);
+  }
+  out[15] = 1;
+  return out;
+}
+
+/** Adds the ids of the objects with a segment (or, for points, a vertex) through the mask's voxels. */
+export function testChunkMask(geometry: ChunkGeometry, mask: MaskVolume, hits: IdSet): void {
+  const { positions: p, idLow, idHigh, next, extra, hasSegments } = geometry;
+  const n = idLow.length;
+  const m = mask.storeToVoxel;
+  const [nx, ny, nz] = mask.size;
+  const voxel = (i: number) => [0, 1, 2].map((r) => m[4 * r] * p[3 * i] + m[4 * r + 1] * p[3 * i + 1] + m[4 * r + 2] * p[3 * i + 2] + m[4 * r + 3]);
+  const set = (x: number, y: number, z: number) => {
+    const i = Math.round(x);
+    const j = Math.round(y);
+    const k = Math.round(z);
+    return i >= 0 && j >= 0 && k >= 0 && i < nx && j < ny && k < nz && mask.bits[i + nx * (j + ny * k)] === 1;
+  };
+  const extraPairs = extra.length / 2;
+  for (let s = 0; s < n + extraPairs; ++s) {
+    let a: number;
+    let b: number;
+    if (s < n) {
+      if (hasSegments) {
+        if (next[s] === 0) continue;
+        a = s;
+        b = s + 1;
+      } else a = b = s;
+    } else {
+      a = extra[2 * (s - n)];
+      b = extra[2 * (s - n) + 1];
+    }
+    const va = voxel(a);
+    const vb = voxel(b);
+    // Outside the set voxels' box at both ends, on one side: no meeting.
+    if ([0, 1, 2].some((k) => (va[k] < mask.lo[k] - 0.5 && vb[k] < mask.lo[k] - 0.5) || (va[k] > mask.hi[k] - 0.5 && vb[k] > mask.hi[k] - 0.5))) continue;
+    // Points along it at most half a voxel apart.
+    const steps = Math.max(1, Math.ceil(2 * Math.max(Math.abs(vb[0] - va[0]), Math.abs(vb[1] - va[1]), Math.abs(vb[2] - va[2]))));
+    for (let t = 0; t <= steps; ++t) {
+      const f = t / steps;
+      if (set(va[0] + f * (vb[0] - va[0]), va[1] + f * (vb[1] - va[1]), va[2] + f * (vb[2] - va[2]))) {
+        hits.add(idLow[a], idHigh === undefined ? 0 : idHigh[a]);
+        break;
+      }
+    }
+  }
 }
 
 /** A region in store coordinates, as the worker tests it. */
@@ -44,6 +169,8 @@ export interface RoiGeometry {
   ends?: RoiEnds;
   axis?: number;
   angle?: number;
+  /** Mask: the volume it reads. */
+  maskSource?: MaskSource;
 }
 
 export function roiBounds(roi: RoiGeometry, margin = 0): { lo: number[]; hi: number[] } {
@@ -57,7 +184,7 @@ export function roiBounds(roi: RoiGeometry, margin = 0): { lo: number[]; hi: num
 /** A stable key for a region's geometry, to cache its result by. */
 export function roiKey(roi: RoiGeometry, level: number): string {
   const r = (v: number) => Math.round(v * 1000) / 1000;
-  return `${level}|${roi.shape}|${roi.center.map(r).join(",")}|${r(roi.radius)}|${roi.size.map(r).join(",")}${roi.ends ? `|${roi.ends}` : ""}${roi.shape === "disk" ? `|${roi.axis ?? 2}|${roi.angle ?? ""}` : ""}`;
+  return `${level}|${roi.shape}|${roi.center.map(r).join(",")}|${r(roi.radius)}|${roi.size.map(r).join(",")}${roi.ends ? `|${roi.ends}` : ""}${roi.shape === "disk" ? `|${roi.axis ?? 2}|${roi.angle ?? ""}` : ""}${roi.maskSource ? `|${maskKey(roi.maskSource)}` : ""}`;
 }
 
 /**

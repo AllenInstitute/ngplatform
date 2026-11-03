@@ -133,6 +133,8 @@ describe("drawing in Neuroglancer's 3-D view", () => {
     expect(omeZarrUrl("https://a.org/x.ome.zarr/|zarr3:")).toBe("https://a.org/x.ome.zarr/");
     expect(omeZarrUrl("zarr2://gs://bucket/brain/")).toBe("https://storage.googleapis.com/bucket/brain/");
     expect(omeZarrUrl("precomputed://gs://bucket/em")).toBeUndefined();
+    // Zarr Vectors stores are not images.
+    expect(omeZarrUrl("gs://bucket/tracts.zarrvectors/|zarr-vectors:")).toBeUndefined();
     expect(omeZarrUrl(undefined)).toBeUndefined();
   });
 

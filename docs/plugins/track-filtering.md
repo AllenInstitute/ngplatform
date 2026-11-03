@@ -6,7 +6,7 @@
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/track-filtering)
 
 TrackVis-style track groups. A group keeps the objects that pass through its
-regions (spheres, boxes and disks, combined with AND, OR and NOT) and whose
+regions (spheres, boxes, disks and masks, combined with AND, OR and NOT) and whose
 properties are in range, and shows them as a layer of its own colour. It
 works on any dataset that is not an image: Zarr Vectors streamlines,
 skeletons and points (local `.trk` files included), precomputed
@@ -25,9 +25,14 @@ segmentations, and annotation layers.
    tracks that cross it within that angle of its normal (90° or more: any).
    On segmentations and annotations it is tested as a flat box a quarter
    of its radius thick.
-5. The count updates as you move: a quick preview from a coarse level, then
+5. **+ Mask** (Zarr Vectors stores): an image's voxels that a track must
+   pass through. A label volume (painted in Annotations, or opened from a
+   file): any label but 0, or the one typed. An image: voxels at or above
+   the value typed (blank: not 0). It is read once, at the finest level of
+   at most 64 M voxels, where the layer places it.
+6. The count updates as you move: a quick preview from a coarse level, then
    the exact answer.
-6. Rename a group with the pencil icon or by double-clicking its name.
+7. Rename a group with the pencil icon or by double-clicking its name.
 
 Per group: **Save .trk** (the whole streamlines, as TrackVis), **Density
 map** (streamlines per 1 mm voxel, shown as a heat map and saved as NIfTI)

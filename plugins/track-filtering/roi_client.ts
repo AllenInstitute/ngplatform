@@ -145,6 +145,11 @@ export class RoiEngine {
     return this.call("objectIds", { level, segmentIds });
   }
 
+  /** An image's levels (for a mask): voxels along x, y, z, and voxel indices to RAS mm. */
+  maskLevels(store: string): Promise<{ size: [number, number, number]; voxelToRas: number[] }[]> {
+    return this.call("maskLevels", { store });
+  }
+
   /** A level's groups as stored: their names and members (object ids). */
   groups(level = 0): Promise<{ names: string[]; members: BigUint64Array[]; levelPath: string }> {
     return this.call("groups", { level });

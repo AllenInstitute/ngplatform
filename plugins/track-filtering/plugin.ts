@@ -41,7 +41,9 @@ import {
   toCsv,
 } from "./filter.js";
 import { FILTERING_PANEL } from "./manifest.js";
-import { groupMask, type Roi, type RoiEnds, type RoiOp, type RoiShape, rowIndex, rowMask } from "./roi.js";
+import { multiply, placement } from "../annotations/geometry.js";
+import { layerStore, readableImages } from "../annotations/voxels.js";
+import { groupMask, type MaskSource, type Roi, type RoiEnds, type RoiGeometry, type RoiOp, type RoiShape, rowIndex, rowMask } from "./roi.js";
 import { type Curves, type Dimensions, previewLevel, RoiEngine, type RoiResult, type StoreInfo, toStore } from "./roi_client.js";
 import { fileName, millimetres, trkBody, trkHeader, trkSpace, writeTrk } from "./trk.js";
 import { groupFiles, mergeGroups, type StoredGroup, withGroupsListed } from "./zv_groups.js";
@@ -83,6 +85,14 @@ export interface Saved {
 
 /** Points per batch when saving .trk: about 48 MB of the file in memory at a time. */
 const BATCH_POINTS = 4_000_000;
+/** A mask is read at its image's finest level of at most this many voxels (a byte each, in the region worker). */
+const MASK_VOXELS = 64 * 2 ** 20;
+
+interface MaskLevel {
+  size: [number, number, number];
+  voxelToRas: Float64Array;
+}
+
 /** A disk's drawn thickness, a share of its radius (it is tested as a plane). */
 const DISK_THICKNESS = 0.04;
 /**
@@ -379,6 +389,8 @@ class TrackGroups {
   private info: StoreInfo | undefined;
   private results = new Map<string, GroupResult>();
   private roiStatus = new Map<string, string>();
+  /** Mask images' levels, by store. */
+  private maskLevels = new Map<string, MaskLevel[]>();
   private tokens = new Map<string, number>();
   private exactTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private layerWatches = new Map<string, Disposer>();
@@ -815,6 +827,12 @@ class TrackGroups {
   // ------------------------------------------------------------- regions
 
   private addRoi(shape: RoiShape): void {
+    // A mask needs an image to be one: the label volume added last, else the image added last.
+    const image = shape === "mask" ? (readableImages(this.ctx, ["segmentation"]).at(-1) ?? readableImages(this.ctx).at(-1)) : undefined;
+    if (shape === "mask" && image === undefined) {
+      this.ctx.ui.toast("A mask is an image's voxels: open an image or a label volume (OME-Zarr, NIfTI, precomputed) first.", "error");
+      return;
+    }
     let group = this.editing();
     if (group === undefined) {
       this.newGroup();
@@ -842,6 +860,7 @@ class TrackGroups {
       op: group.rois.length === 0 ? "and" : "and",
       // A disk lies across z (an axial plane) until another axis is chosen.
       ...(shape === "disk" ? { axis: 2, radius: size * 2 } : {}),
+      ...(image !== undefined ? { mask: { layer: image } } : {}),
     };
     this.updateGroup(group.id, (g) => ({ ...g, rois: [...g.rois, roi] }));
     this.ensureLayer(this.editing()!);
@@ -875,6 +894,8 @@ class TrackGroups {
       const shown = group.id === this.saved.editing || this.layerInfo(group.layer)?.visible === true;
       if (!shown) continue;
       group.rois.forEach((roi, i) => {
+        // A mask is its image's voxels, shown by its own layer.
+        if (roi.shape === "mask") return;
         const description = `${group.name}: ${roi.op.toUpperCase()} ${roi.shape} ${i + 1}`;
         if (roi.shape === "sphere") {
           out.push({ type: "ellipsoid", id: roi.id, center: [...roi.center], radii: [roi.radius, roi.radius, roi.radius], props: [group.colour], description });
@@ -1070,7 +1091,23 @@ class TrackGroups {
       this.setResult(group, { mask: undefined, count: 0, state: "waiting", detail: "Opening the store…" });
       return;
     }
-    const geometries = group.rois.map((r) => toStore(r, dims, info));
+    // Masks need their image's levels first: read once, then the group is worked out again.
+    const unread = group.rois.filter((r) => r.shape === "mask" && this.maskLevelsOf(r) === undefined);
+    if (unread.length > 0) {
+      this.setResult(group, { mask: undefined, count: 0, state: "waiting", detail: "Reading the mask's image…" });
+      Promise.all(unread.map((r) => this.loadMaskLevels(r, engine))).then(
+        () => current() && this.evaluateGroup(group, exactNow),
+        (e) => current() && this.setResult(group, { mask: undefined, count: 0, state: "error", detail: `The mask: ${(e as Error).message}` }),
+      );
+      return;
+    }
+    let geometries: RoiGeometry[];
+    try {
+      geometries = group.rois.map((r) => (r.shape === "mask" ? { ...toStore(r, dims, info), maskSource: this.maskSource(r, dims, info) } : toStore(r, dims, info)));
+    } catch (e) {
+      this.setResult(group, { mask: undefined, count: 0, state: "error", detail: (e as Error).message });
+      return;
+    }
     const combine = (results: RoiResult[]) =>
       groupMask(
         n,
@@ -1136,8 +1173,57 @@ class TrackGroups {
     );
   }
 
+  // ------------------------------------------------------------ masks
+
+  /** The image store a mask's layer reads (OME-Zarr, NIfTI as virtual OME-Zarr, precomputed). */
+  private maskStore(roi: Roi): string | undefined {
+    return roi.mask === undefined ? undefined : layerStore(this.ctx, roi.mask.layer);
+  }
+
+  private maskLevelsOf(roi: Roi): MaskLevel[] | undefined {
+    const store = this.maskStore(roi);
+    return store === undefined ? undefined : this.maskLevels.get(store);
+  }
+
+  private async loadMaskLevels(roi: Roi, engine: RoiEngine): Promise<void> {
+    const store = this.maskStore(roi);
+    if (store === undefined) throw new Error(`${roi.mask?.layer ?? "no layer"} is not an image that can be read (OME-Zarr, NIfTI and precomputed images can be)`);
+    const levels = await engine.maskLevels(store);
+    this.maskLevels.set(store, levels.map((l) => ({ size: l.size, voxelToRas: Float64Array.from(l.voxelToRas) })));
+  }
+
+  /**
+   * What the worker reads for a mask: its image's finest level of at most
+   * MASK_VOXELS voxels, and the map from the store's coordinates to that
+   * level's voxels (through the viewer's coordinates, and the mask layer's
+   * placement there).
+   */
+  private maskSource(roi: Roi, dims: Dimensions, info: StoreInfo): MaskSource {
+    const levels = this.maskLevelsOf(roi)!;
+    const index = Math.max(0, levels.findIndex((l) => l.size[0] * l.size[1] * l.size[2] <= MASK_VOXELS));
+    const level = levels[index] ?? levels[levels.length - 1];
+    const globalSpace = { names: Object.keys(dims), scales: Object.values(dims).map((d) => d[0]), units: Object.values(dims).map((d) => d[1]) };
+    const placed = placement(this.ctx.viewer.layerTransform(roi.mask!.layer), level.voxelToRas, globalSpace);
+    if (placed === undefined) throw new Error(`${roi.mask!.layer} is not placed in x, y and z`);
+    // Store coordinates to the viewer's, in the rows of the placement's dimensions.
+    const toGlobal = new Float64Array(16);
+    toGlobal[15] = 1;
+    const offset = info.coordinateOffset ?? [0, 0, 0];
+    placed.dims.forEach((d, r) => {
+      const k = info.axisNames.indexOf(globalSpace.names[d]);
+      if (k < 0) throw new Error(`the tracks have no ${globalSpace.names[d]} axis`);
+      const factor = info.axisScales[k] > 0 && dims[info.axisNames[k]] ? dims[info.axisNames[k]][0] / info.axisScales[k] : 1;
+      toGlobal[4 * r + k] = 1 / factor;
+      toGlobal[4 * r + 3] = (offset[k] ?? 0) / factor;
+    });
+    const m = roi.mask!;
+    return { store: this.maskStore(roi)!, level: levels.indexOf(level), storeToVoxel: Array.from(multiply(placed.globalToVoxel, toGlobal)), ...(m.threshold === undefined ? {} : { threshold: m.threshold }), ...(m.label === undefined ? {} : { label: m.label }) };
+  }
+
   /** A region in nanometres, from the viewer's coordinates. */
   private toNm(roi: Roi, nm: [number, number, number]): NmRegion {
+    // Masks are read only for Zarr Vectors stores: on others, nothing is in one.
+    if (roi.shape === "mask") return { shape: "box", center: [NaN, NaN, NaN], radius: 0, size: [0, 0, 0] };
     if (roi.shape === "disk") {
       // Labels and annotations test a disk as a flat box: its width, a quarter of its radius thick.
       const size = [0, 1, 2].map((k) => (k === (roi.axis ?? 2) ? roi.radius / 2 : 2 * roi.radius) * nm[k]) as [number, number, number];
@@ -2083,6 +2169,9 @@ class TrackGroups {
         el("button", { class: "btn outline small", type: "button", title: "A sphere at the centre of the views", onclick: () => this.addRoi("sphere") }, "+ Sphere"),
         el("button", { class: "btn outline small", type: "button", title: "A box at the centre of the views", onclick: () => this.addRoi("box") }, "+ Box"),
         el("button", { class: "btn outline small", type: "button", title: "A disk at the centre of the views, which tracks must cross (TrackVis's disk), optionally within an angle of its normal", onclick: () => this.addRoi("disk") }, "+ Disk"),
+        this.kind() === "zarr-vectors"
+          ? el("button", { class: "btn outline small", type: "button", title: "An image's voxels (a painted label volume, or an image above a threshold) that tracks must pass through", onclick: () => this.addRoi("mask") }, "+ Mask")
+          : null,
       ),
     );
     if (group.rois.length === 0) {
@@ -2229,6 +2318,7 @@ class TrackGroups {
     this.updaters.push(() => {
       status.textContent = this.roiStatus.get(roi.id) ?? "";
     });
+    if (roi.shape === "mask") return this.maskRow(group, roi, index, op, status);
     return el(
       "div",
       { class: "tf-roi" },
@@ -2245,6 +2335,42 @@ class TrackGroups {
       lines && roi.shape !== "disk" ? el("div", { class: "tf-ends" }, ends) : null,
       fields,
       extra,
+      status,
+    );
+  }
+
+  /** A mask region's row: its image, and which voxels (at or above a value; one label). */
+  private maskRow(group: Group, roi: Roi, index: number, op: HTMLElement, status: HTMLElement): HTMLElement {
+    const mask = roi.mask ?? { layer: "" };
+    const layers = readableImages(this.ctx, ["image", "segmentation"]);
+    const layer = el("select", { "aria-label": "Mask image", title: "The image whose voxels the mask is" }) as HTMLSelectElement;
+    for (const name of new Set([...layers, mask.layer])) layer.append(el("option", { value: name }, name));
+    layer.value = mask.layer;
+    layer.addEventListener("change", () => this.updateRoi(group, roi.id, { mask: { layer: layer.value } }));
+    const labels = this.ctx.viewer.layers().find((l) => l.name === mask.layer)?.type === "segmentation";
+    // Images: voxels at or above a value (blank: not 0). Labels: one label (blank: any but 0).
+    const value = el("input", { type: "number", step: "any", placeholder: labels ? "any" : "not 0", "aria-label": labels ? "Mask label" : "Mask threshold", value: String((labels ? mask.label : mask.threshold) ?? "") }) as HTMLInputElement;
+    value.addEventListener("change", () => {
+      const v = value.value.trim() === "" ? undefined : Number(value.value);
+      const kept = v !== undefined && Number.isFinite(v) ? v : undefined;
+      this.updateRoi(group, roi.id, { mask: { layer: mask.layer, ...(kept === undefined ? {} : labels ? { label: kept } : { threshold: kept }) } });
+    });
+    return el(
+      "div",
+      { class: "tf-roi" },
+      el(
+        "div",
+        { class: "tf-roi-head" },
+        el("span", { class: "label" }, `Mask ${index + 1}`),
+        op,
+        el("button", { class: "btn small", type: "button", title: "Remove it", "aria-label": "Remove", onclick: () => this.removeRoi(group, roi.id) }, "×"),
+      ),
+      el(
+        "div",
+        { class: "tf-xyz" },
+        el("label", { class: "tf-field" }, el("span", {}, "image"), layer),
+        el("label", { class: "tf-field" }, el("span", {}, labels ? "label" : "at or above"), value),
+      ),
       status,
     );
   }
