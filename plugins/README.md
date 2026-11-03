@@ -21,13 +21,13 @@ a counter kept in the scene's state, and a command:
 
 | Starter | For | How to use it |
 |---|---|---|
-| [`plugins/starter/`](starter/) | A TypeScript plugin built into the app | Copy the folder, rename it and its ids, list it in `index.ts` (below) |
-| [`examples/plugins/starter.mjs`](../examples/plugins/starter.mjs) | One JavaScript file, no build | Plugins → **Add**, then **Reload** after each edit |
-| [`examples/plugins/starter.py`](../examples/plugins/starter.py) | Python, in the page's Python (Pyodide) | Plugins → **Add**; `@ngp.command` adds a command, `@ngp.panel` a tab |
+| [`starter_ts/`](starter_ts/) | A TypeScript plugin built into the app | Copy the folder, rename it and its ids, list it in `index.ts` (below) |
+| [`starter_ts/starter.mjs`](starter_ts/starter.mjs) | The same as one JavaScript file, no build | Plugins → **Add**, then **Reload** after each edit |
+| [`starter_py/`](starter_py/) | Python, in the page's Python (Pyodide): only `.py` files and a README | Plugins → **Add** its `starter.py`; `@ngp.command` adds a command, `@ngp.panel` a tab |
 
 ## Adding a plugin
 
-1. **Make a folder** (or copy `starter/`), `plugins/<name>/`, with at least:
+1. **Make a folder** (or copy `starter_ts/`), `plugins/<name>/`, with at least:
    - `manifest.ts`: `export const MY_MANIFEST: Manifest = { id, name, version, kind, … }`
      (see [The manifest](#the-manifest)). The `id` is reverse-DNS and unique,
      e.g. `org.my-lab.layer-stats`.

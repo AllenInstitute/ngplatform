@@ -1,8 +1,8 @@
 /**
  * A starter tool plugin as one JavaScript file: load it in the app with
  * Plugins → Add (no build needed), edit it, and press Reload.  The same as
- * plugins/starter in the repository, which is the TypeScript version to
- * copy when a plugin is to be built into the app.
+ * the TypeScript plugin beside it (manifest.ts, plugin.ts), which is the
+ * one to copy when a plugin is to be built into the app.
  *
  * It exports `manifest` (what the platform shows before running any code)
  * and `plugin` (`activate(ctx)`, given the platform's API: see

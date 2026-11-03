@@ -1,7 +1,8 @@
-"""A starter plugin in Python: load it in the app with Plugins -> Add (no
-build needed), edit it, and press Reload.  It runs in the page's Python
-(Pyodide), where `ngp` is the workspace: its state, layers, position and
-commands, numpy arrays and points shown as layers (help(ngp) lists it all).
+"""A starter plugin in Python (see README.md beside it): load it in the app
+with Plugins -> Add (no build needed), edit it, and press Reload.  It runs
+in the page's Python (Pyodide), where `ngp` is the workspace: its state,
+layers, position and commands, numpy arrays and points shown as layers
+(help(ngp) lists it all).
 Packages it imports (numpy, scipy, scikit-image ...) load when it runs.
 
     @ngp.command("Title")   adds a function to the command palette
