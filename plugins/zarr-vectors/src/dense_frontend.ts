@@ -44,6 +44,7 @@ import {
   ZARR_VECTORS_DENSE_RENDER_LAYER_UPDATE_SOURCES_RPC_ID,
   ZarrVectorsGeometryChunkSourceParameters,
 } from "./base.js";
+import { emitsPremultipliedAlpha, glslZvEmit } from "./blending.js";
 import {
   addStringShaderSupport,
   setShaderControls,
@@ -794,6 +795,9 @@ vPickID = uPickID + vertexIndex;
     this.segmentColor.defineShader(builder);
     this.statedColors.defineShader(builder);
     const alpha = edges ? `getLineAlpha() * ${this.fadeFactor()}` : "1.0";
+    builder.addFragmentCode(
+      glslZvEmit(emitsPremultipliedAlpha(this.targetIsSliceView)),
+    );
     builder.addFragmentCode(`
 float zvAlpha;
 vec4 zvColor;
@@ -827,7 +831,7 @@ vec3 zvShade(vec3 color) {
   return color * (cosine + uLightDirection.w) + vec3(0.12 * pow(facing, 24.0));
 }
 void emitRGBA(vec4 color) {
-  emit(vec4(zvShade(color.rgb) * color.a, color.a), vPickID);
+  zvEmit(zvShade(color.rgb), color.a, vPickID);
 }
 void emitRGB(vec3 color) {
   emitRGBA(vec4(color, zvAlpha));
@@ -839,9 +843,9 @@ void emitDefault() {
     } else if (edges) {
       builder.addFragmentCode(`
 void emitRGBA(vec4 color) {
-  // As Neuroglancer's skeleton layer: colour premultiplied by the object's
-  // opacity; the line's edge coverage only in alpha.
-  emit(vec4(color.rgb * color.a, color.a * ${alpha}), vPickID);
+  // The object's opacity times the line's coverage of this fragment (its
+  // feathered edge; in a cross-section, its fade away from the section).
+  zvEmit(color.rgb, color.a * ${alpha}, vPickID);
 }
 void emitRGB(vec3 color) {
   emitRGBA(vec4(color, zvAlpha));
@@ -853,7 +857,8 @@ void emitDefault() {
     } else {
       builder.addFragmentCode(`
 void emitRGBA(vec4 color) {
-  emit(getCircleColor(color, color), vPickID);
+  vec4 circle = getCircleColor(color, color);
+  zvEmit(circle.rgb, circle.a, vPickID);
 }
 void emitRGB(vec3 color) {
   emitRGBA(vec4(color, zvAlpha));
