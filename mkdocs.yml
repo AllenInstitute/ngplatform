@@ -65,3 +65,5 @@ nav:
   - Contributing: contributing.md
   - Design notes:
       - The repository plan: editor_repo_plan.md
+  - Development:
+      - "Audit, part 2: annotations to capture": dev/audit-2.md
