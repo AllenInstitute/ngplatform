@@ -299,6 +299,51 @@ export function vertexBudget(detail: number, share: number): number {
   return (detail * 1e6) / Math.max(1 / MAX_SELECTION_BOOST, Math.min(1, share));
 }
 
+/** The inverse of a column-major 4 × 4 (a projection too), or undefined when it has none. */
+export function invert4(m: ArrayLike<number>): Mat4 | undefined {
+  const a = Array.from({ length: 4 }, (_, r) => [m[r], m[4 + r], m[8 + r], m[12 + r], ...[0, 1, 2, 3].map((c) => (c === r ? 1 : 0))]);
+  for (let c = 0; c < 4; ++c) {
+    let pivot = c;
+    for (let r = c + 1; r < 4; ++r) if (Math.abs(a[r][c]) > Math.abs(a[pivot][c])) pivot = r;
+    if (Math.abs(a[pivot][c]) < 1e-300) return undefined;
+    [a[c], a[pivot]] = [a[pivot], a[c]];
+    const p = a[c][c];
+    for (let k = 0; k < 8; ++k) a[c][k] /= p;
+    for (let r = 0; r < 4; ++r) {
+      if (r === c || a[r][c] === 0) continue;
+      const f = a[r][c];
+      for (let k = 0; k < 8; ++k) a[r][k] -= f * a[c][k];
+    }
+  }
+  const out = new Float64Array(16);
+  for (let r = 0; r < 4; ++r) for (let c = 0; c < 4; ++c) out[4 * c + r] = a[r][4 + c];
+  return out;
+}
+
+/**
+ * How far behind the nearest surface a mesh's glow fades by e (store
+ * units): a share of the layer's extent (the diagonal of its bounds), so a
+ * cortex (about 220 mm across) shows about 4 mm into its folds.  `depth`
+ * is the share, the layer's *Glow depth*.
+ */
+export function glowFalloff(lower: ArrayLike<number>, upper: ArrayLike<number>, depth: number): number {
+  let d = 0;
+  for (let k = 0; k < 3; ++k) d += (upper[k] - lower[k]) ** 2;
+  return Math.sqrt(d) * depth;
+}
+
+/**
+ * The share of light a pixel gets from surfaces at these distances along
+ * its ray, each fading by e^(-d / falloff) behind the nearest (what the
+ * mesh shader does per fragment; for tests): 1 from the nearest, and from
+ * layers spaced s apart at most 1 / (1 - e^(-s / falloff)) however many.
+ */
+export function layeredLight(distances: number[], falloff: number): number {
+  if (distances.length === 0) return 0;
+  const near = Math.min(...distances);
+  return distances.reduce((sum, d) => sum + (falloff > 0 ? Math.exp(-(d - near) / falloff) : 1), 0);
+}
+
 /**
  * Automatic brightness: lines that would cover the view many times over are
  * each drawn dimmer, so a dense whole-brain view glows where bundles gather

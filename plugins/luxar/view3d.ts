@@ -17,7 +17,7 @@ import { samplesFor } from "./objects.js";
 import type { LayerView } from "./layer_view.js";
 import { Bloom } from "./bloom.js";
 import { DepthTarget, type DrawUniforms, type GpuChunk, LightTarget, type Outputs, type Pass, Renderer } from "./render_gl.js";
-import { apply, boxInFrustum, coverage, eyeOf, invertAffine, modelTo, multiply, pixelsPerUnit, screenArea, shownShare } from "./view_math.js";
+import { apply, boxInFrustum, coverage, eyeOf, glowFalloff, invert4, invertAffine, modelTo, multiply, pixelsPerUnit, screenArea, shownShare } from "./view_math.js";
 
 /** GPU memory for one layer's chunks in the 3-D view. */
 const GPU_BYTES = 768 * 1024 * 1024;
@@ -42,6 +42,8 @@ export class View3d implements Drawer3d {
   private sets: GpuChunks | undefined;
   private target: LightTarget | undefined;
   private nearest: DepthTarget | undefined;
+  /** A mesh's nearest surface at each pixel, for its glow's fall-off behind it. */
+  private front: DepthTarget | undefined;
   private bloom: Bloom | undefined;
   private broken = false;
   selection: Selection | undefined;
@@ -97,6 +99,7 @@ export class View3d implements Drawer3d {
       this.renderer = new Renderer(gl);
       this.target = new LightTarget(gl, this.renderer.floatTargets);
       this.nearest = new DepthTarget(gl);
+      this.front = new DepthTarget(gl);
       this.bloom = new Bloom(this.renderer, this.renderer.floatTargets);
     }
     const info = view.client.info;
@@ -149,8 +152,13 @@ export class View3d implements Drawer3d {
     // More of the chosen objects' lines in view than the Detail: a sample of them, whole.
     const samples = samplesFor(sets, inView, style.detail * 1e6);
     view.reportSamples("3d", sets.length > 0 ? samples : SAMPLES);
-    const setCover = coverage(sets, ppu, 2 * view.halfWidth, area, samples / SAMPLES, true);
-    const chunkCover = coverage(drawn, ppu, 2 * view.halfWidth, area, 1, true);
+    // A mesh's glow fades behind its nearest surface (below), so each pixel holds about one
+    // surface's light however deep the folds: its area then does not dim it.
+    const glow = style.blending === "glow" || style.blending === "glow-through";
+    const meshes = [...drawn, ...sets].some((c) => c.triangleCount > 0);
+    const fades = glow && meshes && style.glowDepth > 0;
+    const setCover = coverage(sets, ppu, 2 * view.halfWidth, area, samples / SAMPLES, !fades);
+    const chunkCover = coverage(drawn, ppu, 2 * view.halfWidth, area, 1, !fades);
     const matrix = Float32Array.from(modelToClip);
     // The chosen objects read whole are dimmed only by their own cover; the chunks (with any faint others) by all.
     const chunkUniforms = view.uniforms(matrix, size, chunkCover + setCover);
@@ -178,6 +186,22 @@ export class View3d implements Drawer3d {
         this.broken = true;
         this.problem = "This GPU cannot add light up in a float target here; drawing solid lines instead.";
         return;
+      }
+      // A mesh's glow: first the nearest surface at each pixel.
+      const clipToModel = fades ? invert4(modelToClip) : undefined;
+      if (clipToModel !== undefined && this.front!.bind(width, height)) {
+        gl.viewport(0, 0, width, height);
+        gl.disable(gl.STENCIL_TEST);
+        gl.disable(gl.BLEND);
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthFunc(gl.LESS);
+        drawAll("depth", { color: 0 }, { depthNear: false });
+        chunkUniforms.front = setUniforms.front = {
+          texture: this.front!.texture!,
+          clipToModel: Float32Array.from(clipToModel),
+          falloff: glowFalloff(info.bounds.lower, info.bounds.upper, style.glowDepth),
+        };
+        this.target!.bind(width, height, depthBuffer);
       }
       gl.viewport(0, 0, width, height);
       gl.clearColor(0, 0, 0, 0);
@@ -254,6 +278,8 @@ export class View3d implements Drawer3d {
     this.target?.release();
     this.nearest?.release();
     this.nearest = undefined;
+    this.front?.release();
+    this.front = undefined;
     this.bloom?.release();
     this.bloom = undefined;
     this.renderer?.dispose();

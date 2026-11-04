@@ -64,6 +64,12 @@ export interface DrawUniforms {
   objectTable: boolean;
   /** A mesh's light comes from the eye: a point (w 1) or, far away, a direction (w 0), store coordinates. */
   eye: [number, number, number, number];
+  /**
+   * A mesh's glow, 3-D: the nearest surface's depth at each pixel (a depth
+   * texture the size of the target), the clip-to-store matrix, and the
+   * distance (store units) over which light behind it fades by e.
+   */
+  front?: { texture: WebGLTexture; clipToModel: Float32Array; falloff: number };
 }
 
 /** One chunk on the GPU. */
@@ -717,6 +723,13 @@ export class Renderer {
       gl.uniform1i(this.uniform(p, "uOpaque"), pass === "solid" ? 1 : 0);
       gl.uniform1i(this.uniform(p, "uNormals"), 3);
       gl.uniform4fv(this.uniform(p, "uEye"), u.eye);
+      if (mesh) {
+        gl.uniform1i(this.uniform(p, "uFront"), 4);
+        gl.uniform1f(this.uniform(p, "uFalloff"), u.front?.falloff ?? 0);
+        if (u.front !== undefined) gl.uniformMatrix4fv(this.uniform(p, "uClipToModel"), false, u.front.clipToModel);
+        gl.activeTexture(gl.TEXTURE4);
+        gl.bindTexture(gl.TEXTURE_2D, u.front?.texture ?? null);
+      }
       for (const chunk of some) {
         gl.activeTexture(gl.TEXTURE3);
         gl.bindTexture(gl.TEXTURE_2D, chunk.normals ?? null);
@@ -759,7 +772,7 @@ export class Renderer {
         }
       }
       gl.bindVertexArray(null);
-      for (const unit of [gl.TEXTURE3, gl.TEXTURE2, gl.TEXTURE1]) {
+      for (const unit of [gl.TEXTURE4, gl.TEXTURE3, gl.TEXTURE2, gl.TEXTURE1]) {
         gl.activeTexture(unit);
         gl.bindTexture(gl.TEXTURE_2D, null);
       }

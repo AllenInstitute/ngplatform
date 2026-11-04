@@ -6,7 +6,10 @@
  * times how squarely it faces the viewer, with a rim where it turns away.
  * *Glow* adds that light up in the layer's float target, as lines do, so a
  * surface reads as a lit, glowing shell and lines and splats composite
- * with it; *emission and absorption* also absorbs, more where the surface is
+ * with it.  Each fragment's light falls off with how far it lies behind
+ * the nearest surface at its pixel (`uFront`, drawn first: e^(-d/L)), so a
+ * folded surface (a cortex, its sulci a dozen layers deep) shows its front
+ * with a glow from just behind, rather than every fold added up to white; *emission and absorption* also absorbs, more where the surface is
  * seen edge on (a longer path through it), so a dense fold darkens what is
  * behind; *solid* draws it opaque, lit, with a highlight, into the view.
  *
@@ -32,9 +35,11 @@ out vec3 vColour;
 out vec3 vNormal;
 out vec3 vToEye;
 out float vWeight;
+out vec3 vModel;
 
 void main() {
   vec4 object = objectAt(aVertex);
+  vModel = vec3(0.0);
   vColour = vec3(0.0);
   vNormal = vec3(0.0, 0.0, 1.0);
   vToEye = vec3(0.0, 0.0, 1.0);
@@ -48,6 +53,7 @@ void main() {
   vec4 v = vertexAt(aVertex);
   vec3 n = texelFetch(uNormals, ivec2(int(aVertex % ${TEXTURE_WIDTH}u), int(aVertex / ${TEXTURE_WIDTH}u)), 0).xyz;
   gl_Position = uModelToClip * vec4(v.xyz, 1.0);
+  vModel = v.xyz;
   vNormal = n;
   vToEye = uEye.w > 0.5 ? uEye.xyz - v.xyz : uEye.xyz;
   vColour = colourAt(v, n, object.rgb);
@@ -66,8 +72,17 @@ export function meshFragmentShader(pass: Pass, outputs: Outputs): string {
       // Lit from the eye, with a rim where the surface turns away: a glowing shell.
       float light = 0.2 + 0.6 * facing + 0.6 * pow(1.0 - facing, 3.0);
       float fragDepth = gl_FragCoord.z;
+      // Fainter the further behind the nearest surface at this pixel.
+      float behind = 1.0;
+      if (uFalloff > 0.0) {
+        float near = texelFetch(uFront, ivec2(gl_FragCoord.xy), 0).r;
+        if (near < 1.0) {
+          vec4 p = uClipToModel * vec4(gl_FragCoord.xy / uViewport * 2.0 - 1.0, 2.0 * near - 1.0, 1.0);
+          behind = exp(-length(vModel - p.xyz / p.w) / uFalloff);
+        }
+      }
       // Seen edge on, the path through the surface is longer: it absorbs more.
-      outColour = vec4(vColour * (light * uGain), uAbsorption / max(facing, 0.2)) * vWeight;
+      outColour = vec4(vColour * (light * uGain * behind), uAbsorption / max(facing, 0.2)) * vWeight;
       ${writeRest}`,
     solid: `
       vec3 shaded = vColour * (0.25 + 0.75 * facing) + vec3(0.2) * pow(facing, 24.0);
@@ -87,10 +102,16 @@ precision highp float;
 uniform float uGain;
 uniform float uAbsorption;
 uniform bool uDepthNear;
+// The nearest surface's depth at each pixel, and how quickly light behind it fades (store units; 0: it does not).
+uniform highp sampler2D uFront;
+uniform float uFalloff;
+uniform mat4 uClipToModel;
+uniform vec2 uViewport;
 in vec3 vColour;
 in vec3 vNormal;
 in vec3 vToEye;
 in float vWeight;
+in vec3 vModel;
 ${outs.join("\n")}
 
 void main() {

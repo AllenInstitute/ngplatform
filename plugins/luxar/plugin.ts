@@ -338,7 +338,7 @@ class Luxar {
   }
 
   /** A slider that draws as it moves and saves when let go. */
-  private slider(name: string, label: string, key: "width" | "exposure" | "sharpness" | "absorption" | "slab" | "detail" | "bloom", min: number, max: number, step: number, format: (v: number) => string): HTMLElement {
+  private slider(name: string, label: string, key: "width" | "exposure" | "sharpness" | "absorption" | "slab" | "detail" | "bloom" | "glowDepth", min: number, max: number, step: number, format: (v: number) => string): HTMLElement {
     const style = this.styleOf(name);
     const input = el("input", { type: "range", min, max, step, value: style[key], "aria-label": label }) as HTMLInputElement;
     const shown = el("span", { class: "lx-value" }, format(style[key]));
@@ -445,6 +445,8 @@ class Luxar {
       this.slider(name, "Sharpness", "sharpness", 0, 1, 0.05, (v) => v.toFixed(2)),
     );
     if (style.blending === "emission") parts.push(this.slider(name, "Absorption", "absorption", 0, 8, 0.05, (v) => v.toFixed(2)));
+    if (mesh && (style.blending === "glow" || style.blending === "glow-through"))
+      parts.push(this.slider(name, "Glow depth (light from behind the nearest surface, as a share of the layer's size; 0 adds every fold up)", "glowDepth", 0, 0.2, 0.005, (v) => (v === 0 ? "off" : `${(100 * v).toFixed(1)} %`)));
     if (style.blending !== "solid") parts.push(this.select("Tone map", style.toneMap, TONE_LABELS, (toneMap) => set({ toneMap })), this.bloomSlider(name));
     parts.push(
       this.slider(name, "2-D slab (thickness shown around a section)", "slab", 0.5, 40, 0.5, (v) => `${v} mm`),
