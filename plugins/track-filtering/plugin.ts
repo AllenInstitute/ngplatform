@@ -1162,7 +1162,8 @@ class TrackGroups {
       this.setResult(group, { ...(this.results.get(group.id) ?? { mask: undefined, count: 0 }), state: "computing", detail: "Previewing…" });
       void Promise.all(geometries.map((g) => engine.evaluate(g, preview))).then(
         (results) => {
-          if (!current()) return;
+          // The exact answer can come first (its levels are cached): a late preview must not replace it.
+          if (!current() || this.results.get(group.id)?.state === "exact") return;
           const mask = combine(results);
           const sample = Math.round(100 * (info.levels[preview].vertexCount ?? 0) / (info.levels[0].vertexCount || 1));
           this.setResult(group, { mask, count: countPassing(mask), state: "preview", detail: `preview from level ${preview} (about ${sample}% of the vertices); exact to follow` });
@@ -1243,8 +1244,9 @@ class TrackGroups {
    */
   private maskSource(roi: Roi, dims: Dimensions, info: StoreInfo): MaskSource {
     const levels = this.maskLevelsOf(roi)!;
-    const index = Math.max(0, levels.findIndex((l) => l.size[0] * l.size[1] * l.size[2] <= MASK_VOXELS));
-    const level = levels[index] ?? levels[levels.length - 1];
+    // The finest level within the budget; the coarsest when none is.
+    const index = levels.findIndex((l) => l.size[0] * l.size[1] * l.size[2] <= MASK_VOXELS);
+    const level = index === -1 ? levels[levels.length - 1] : levels[index];
     const globalSpace = { names: Object.keys(dims), scales: Object.values(dims).map((d) => d[0]), units: Object.values(dims).map((d) => d[1]) };
     const placed = placement(this.ctx.viewer.layerTransform(roi.mask!.layer), level.voxelToRas, globalSpace);
     if (placed === undefined) throw new Error(`${roi.mask!.layer} is not placed in x, y and z`);

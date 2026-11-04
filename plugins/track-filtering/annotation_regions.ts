@@ -1,7 +1,7 @@
 /**
  * Region tests on annotations (a layer's own, drawn by hand or loaded):
- * which annotations meet a region.  Points inside it, lines that cross it,
- * boxes and ellipsoids that overlap it (an ellipsoid by its bounding box).
+ * which annotations meet a region.  Points inside it, lines and polylines
+ * that cross it, boxes and ellipsoids that overlap it (an ellipsoid by its bounding box).
  * Coordinates are nanometres, converted from the viewer's by the caller.
  */
 import { inside, type NmRegion } from "./labels.js";
@@ -9,7 +9,7 @@ import { inside, type NmRegion } from "./labels.js";
 export interface AnnotationGeometry {
   id: string;
   type: string;
-  /** The annotation's points, nm: a point's one, a line's or box's two, an ellipsoid's centre and radii. */
+  /** The annotation's points, nm: a point's one, a line's or box's two, a polyline's vertices, an ellipsoid's centre and radii. */
   points: number[][];
 }
 
@@ -67,6 +67,8 @@ export function annotationMeets(region: NmRegion, a: AnnotationGeometry): boolea
       return inside(region, p);
     case "line":
       return segmentMeets(region, p, q);
+    case "polyline":
+      return a.points.length === 1 ? inside(region, p) : a.points.slice(1).some((b, i) => segmentMeets(region, a.points[i], b));
     case "axis_aligned_bounding_box":
       return boxMeets(
         region,
@@ -102,7 +104,9 @@ export function annotationGeometry(annotations: unknown[], nm: [number, number, 
           ? [scale(a.pointA), scale(a.pointB)]
           : type === "ellipsoid"
             ? [scale(a.center), scale(a.radii)]
-            : [];
+            : type === "polyline" && Array.isArray(a.points)
+              ? a.points.map(scale)
+              : [];
     if (id === "" || points.length === 0 || points.some((p) => p === undefined || p.some((v) => !Number.isFinite(v)))) continue;
     out.push({ id, type, points: points as number[][] });
   }
