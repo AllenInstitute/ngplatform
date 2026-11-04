@@ -303,6 +303,8 @@ export class WorkspaceStore {
   }
 
   redo(): boolean {
+    // An edit still settling is recorded first (and then there is nothing to redo), as for undo.
+    this.settle();
     return this.restore(this.history.redo(), "Redid the change.");
   }
 
@@ -571,10 +573,12 @@ export class WorkspaceStore {
     if (entry !== undefined) this.engine.selectLayer(entry.layers[0]);
   }
 
-  renameLayer(name: string, newName: string): void {
-    if (newName.trim() === "" || newName === name) return;
-    this.engine.renameLayer(name, newName.trim());
+  /** The layer's name afterwards: Neuroglancer makes a name that is taken unique ("cells" → "cells1"). */
+  renameLayer(name: string, newName: string): string {
+    if (newName.trim() === "" || newName === name) return name;
+    const renamed = this.engine.renameLayer(name, newName.trim());
     this.scheduleSettle();
+    return renamed ?? name;
   }
 
   removeLayer(name: string): void {

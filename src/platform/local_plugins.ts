@@ -191,8 +191,19 @@ export class LocalPlugins {
     await this.reload(key);
   }
 
+  /** Loads in progress, by key: a second Reload joins the first, and Remove waits for it. */
+  private readonly loading = new Map<string, Promise<void>>();
+
   /** Reads the plugin's files again and runs the new code in place of the old. */
-  async reload(key: string): Promise<void> {
+  reload(key: string): Promise<void> {
+    const running = this.loading.get(key);
+    if (running !== undefined) return running;
+    const load = this.load(key).finally(() => this.loading.delete(key));
+    this.loading.set(key, load);
+    return load;
+  }
+
+  private async load(key: string): Promise<void> {
     const entry = this.entries.get(key);
     if (entry === undefined) return;
     const { stored, state } = entry;
@@ -294,6 +305,8 @@ export class LocalPlugins {
   }
 
   async remove(key: string): Promise<void> {
+    // A load still running would register the plugin after it was removed.
+    await this.loading.get(key);
     const entry = this.entries.get(key);
     if (entry === undefined) return;
     if (entry.state.id !== undefined) await this.hooks.host.unregister(entry.state.id);

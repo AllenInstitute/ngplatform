@@ -152,6 +152,30 @@ describe("lookup tables", () => {
     expect(back.entries.map((e) => [e.value, e.name])).toEqual(table.entries.map((e) => [e.value, e.name]));
   });
 
+  it("keeps names with commas and trailing numbers, and reads older links' lines", async () => {
+    const table = {
+      entries: [
+        { value: 4n, name: "Brodmann area 4", colour: [1, 2, 3] as [number, number, number] },
+        { value: 6n, name: "Brodmann area 6", colour: [1, 2, 3] as [number, number, number], description: "premotor, # not a comment" },
+        { value: 7n, name: "Left, lateral 2 3 4", colour: [1, 2, 3] as [number, number, number] },
+      ],
+    };
+    const source = parseLookupSource(await inlineLookupSource("talairach.xml", table));
+    if (source?.kind !== "inline") throw new Error("not inline");
+    const back = parseInlineLookup(await inlineLookupText(source.data));
+    expect(back.entries.map((e) => [e.value, e.name, e.description])).toEqual([
+      [4n, "Brodmann area 4", undefined],
+      [6n, "Brodmann area 6", "premotor, # not a comment"],
+      [7n, "Left, lateral 2 3 4", undefined],
+    ]);
+    // A link made before: `value name # description` lines, read as tables read them.
+    const old = parseInlineLookup("1 Hippocampus # left\n2 Amygdala\n");
+    expect(old.entries.map((e) => [e.value, e.name, e.description])).toEqual([
+      [1n, "Hippocampus", "left"],
+      [2n, "Amygdala", undefined],
+    ]);
+  });
+
   it("keeps a hierarchy's parents in the link (an Allen structure graph from a file)", async () => {
     const table = {
       entries: [

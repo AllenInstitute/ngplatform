@@ -50,10 +50,7 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
     },
     removeDatasetFromScene: (id) => store.removeDatasetFromScene(id),
     removeLayer: (name) => store.removeLayer(name),
-    renameLayer: (name, newName) => {
-      store.renameLayer(name, newName);
-      return engine.layers().some((l) => l.name === newName) ? newName : name;
-    },
+    renameLayer: (name, newName) => store.renameLayer(name, newName),
     selectedLayer: () => engine.selectedLayer(),
     selectLayer: (name) => store.selectLayer(name),
     selectedDataset: () => {

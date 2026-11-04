@@ -390,7 +390,8 @@ function fmt(v: number): string {
 
 /** Copies text, saying so on the button for a moment ("Copied", or why not). */
 function copy(text: string, target: HTMLElement): void {
-  const before = target.textContent;
+  // The label itself, kept from the first click: a second click while "Copied" shows must not keep that.
+  const before = (target.dataset.label ??= target.textContent ?? "");
   const say = (word: string) => {
     target.textContent = word;
     setTimeout(() => (target.textContent = before), 1200);

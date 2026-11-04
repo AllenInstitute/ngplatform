@@ -265,7 +265,10 @@ async function pipe(bytes: Uint8Array, stream: CompressionStream | Decompression
  * with it still works for someone who does not have the file.
  */
 export async function inlineLookupSource(title: string, table: LookupTable): Promise<string> {
-  const lines = table.entries.map((e) => `${e.value} ${e.name}${e.description ? ` # ${e.description}` : ""}`);
+  // `value<TAB>name<TAB># description`: a tab ends the value and the name, so names keep their
+  // commas and trailing numbers ("Brodmann area 4"), which a table's own line format would not.
+  const field = (text: string) => text.replace(/[\t\r\n]+/g, " ");
+  const lines = table.entries.map((e) => `${e.value}\t${field(e.name)}${e.description ? `\t# ${field(e.description)}` : ""}`);
   // A hierarchy's parents (an Allen structure graph from a file): `#parents value:parent …` lines, which tables ignore.
   const pairs = table.entries.filter((e) => e.parent !== undefined).map((e) => `${e.value}:${e.parent}`);
   for (let i = 0; i < pairs.length; i += 200) lines.push(`${PARENTS} ${pairs.slice(i, i + 200).join(" ")}`);
@@ -274,7 +277,7 @@ export async function inlineLookupSource(title: string, table: LookupTable): Pro
   return lookupSourceUrl({ kind: "inline", title, data: toBase64Url(packed) });
 }
 
-/** The text of an inline source (names only: `value name # description` lines, and `#parents` lines). */
+/** The text of an inline source (names only: `value<TAB>name<TAB># description` lines, or `value name # description` in older links, and `#parents` lines). */
 export async function inlineLookupText(data: string): Promise<string> {
   return new TextDecoder().decode(await pipe(fromBase64Url(data), new DecompressionStream("deflate-raw")));
 }
@@ -283,7 +286,24 @@ const PARENTS = "#parents";
 
 /** An inline source's table: its names, and the parents its `#parents` lines give. */
 export function parseInlineLookup(text: string): LookupTable {
-  const table = parseLookupTable(text);
+  let table = parseLookupTable(text);
+  // Lines with tabs give their names (and descriptions) exactly.
+  const exact = new Map<bigint, { name: string; description?: string }>();
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^(\d+)\t([^\t]*)(?:\t# ?(.*))?$/.exec(line);
+    if (m !== null) exact.set(BigInt(m[1]), { name: m[2], ...(m[3] ? { description: m[3] } : {}) });
+  }
+  if (exact.size > 0) {
+    table = {
+      ...table,
+      entries: table.entries.map((e) => {
+        const x = exact.get(e.value);
+        if (x === undefined) return e;
+        const { description: _, ...rest } = e;
+        return { ...rest, ...x };
+      }),
+    };
+  }
   const parents = new Map<bigint, bigint>();
   for (const line of text.split(/\r?\n/)) {
     if (!line.startsWith(`${PARENTS} `)) continue;
