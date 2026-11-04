@@ -38,7 +38,8 @@ full-resolution result.
    before it runs.
 
 The tab's image and steps are kept with the workspace: a reload, undo or a
-shared link brings them back. Opening a link from before that, the tab
+shared link brings them back. To save a filtered view as a file, use the
+Datasets tab: the row's ⋯ → **Export as…** (NIfTI, `.mgz` or OME-Zarr). Opening a link from before that, the tab
 shows the steps of its newest filtered layer. A filtered layer lies where
 its image does, oblique and flipped files included.
 

@@ -1,13 +1,17 @@
 /**
- * Export as…: a dataset read from a file on this computer, saved in another
- * format.  Images: NIfTI (.nii.gz, .nii), FreeSurfer (.mgz, .mgh) or an
- * OME-Zarr folder, at full resolution or a coarser level; tractograms as
+ * Export as…: a dataset read from a file on this computer, or an image
+ * computed as it is viewed (a filtered view, `workspace.computed`), saved
+ * in another format.  Images: NIfTI (.nii.gz, .nii), FreeSurfer (.mgz,
+ * .mgh) or an OME-Zarr folder, at full resolution or a coarser level (a
+ * computed one is computed as it is read, through the service worker as
+ * the viewer reads it); tractograms as
  * .trk or .tck; meshes as OBJ, PLY or STL; points as CSV; graphs as GraphML.  The file is read
  * and written in a worker (src/virtual/out/export_worker.ts); the result is
  * saved where the system's save dialog says, or downloaded.
  */
 import { JobCancelled } from "../platform/jobs.js";
 import type { DatasetRecord } from "../core/workspace.js";
+import { pipelineCode } from "../virtual/computed.js";
 import { type ExportFormat, exportKind } from "../virtual/out/kinds.js";
 import { zipFiles } from "../virtual/out/volume.js";
 import { formDialog, toast } from "./overlays.js";
@@ -88,19 +92,30 @@ function fileNameOf(wb: Workbench, dataset: DatasetRecord): string | undefined {
   return at?.path.replace(/\/$/, "").split("/").pop();
 }
 
-/** Whether a dataset can be exported: an image, tractogram, mesh or point table read from a file on this computer. */
+/** The http(s) URL of a computed view (a filtered image), if the dataset is one. */
+function computedUrl(dataset: DatasetRecord): string | undefined {
+  const source = sourceOf(dataset);
+  if (pipelineCode(source) === undefined) return undefined;
+  return source.replace(/\|.*$/, "").replace(/^(zarr3?|zarr2|ome-zarr):\/\//, "");
+}
+
+/** Whether a dataset can be exported: an image, tractogram, mesh or point table read from a file on this computer, or a computed image. */
 export function canExport(wb: Workbench, dataset: DatasetRecord): boolean {
+  if (computedUrl(dataset) !== undefined) return true;
   const name = fileNameOf(wb, dataset);
   return name !== undefined && exportKind(name) !== undefined;
 }
 
 export async function exportDataset(wb: Workbench, dataset: DatasetRecord): Promise<void> {
-  const found = await wb.localData.sourceFile(sourceOf(dataset));
-  if (found === undefined) {
+  const url = computedUrl(dataset);
+  const found = url !== undefined ? undefined : await wb.localData.sourceFile(sourceOf(dataset));
+  if (url === undefined && found === undefined) {
     toast(`${dataset.name} is not a file on this computer that can be exported.`, "error");
     return;
   }
-  const kind = exportKind(found.file.name);
+  // What the worker reads: the file, or the computed view's URL (its layers a mask or labels when it is a segmentation).
+  const input = found !== undefined ? { file: found.file } : { url, title: dataset.name, label: dataset.kind === "segmentation" };
+  const kind = found !== undefined ? exportKind(found.file.name) : "image";
   if (kind === undefined) return;
   const formats = FORMATS[kind];
   const worker = new Worker(new URL("../virtual/out/export_worker.ts", import.meta.url), { type: "module", name: "export" });
@@ -117,13 +132,13 @@ export async function exportDataset(wb: Workbench, dataset: DatasetRecord): Prom
       const target = await chooseTarget(false, dataset.name + chosen.suffix);
       if (target === null) return;
       await wb.jobs.run(`Export ${dataset.name}`, async (control) => {
-        const done = await unlessCancelled(worker, control, request(worker, { type: "export", file: found.file, format: chosen.format }, (what, n, total) => control.progress(n / Math.max(1, total), what)));
+        const done = await unlessCancelled(worker, control, request(worker, { type: "export", ...input, format: chosen.format }, (what, n, total) => control.progress(n / Math.max(1, total), what)));
         await save(new Map<string, Uint8Array>(done.files), dataset.name + chosen.suffix, false, target);
       });
       toast(`Exported ${dataset.name} as ${dataset.name}${chosen.suffix}.`);
       return;
     }
-    const info = await request(worker, { type: "levels", file: found.file });
+    const info = await request(worker, { type: "levels", ...input });
     const all = (info.levels as { size: number[]; bytes: number; type: string }[]).map((l, i) => ({ ...l, index: i }));
     const levelLabel = (l: { index: number; size: number[]; bytes: number }) => `${l.index === 0 ? "Full resolution" : `Level ${l.index}`}: ${l.size.join(" × ")} (${sizeText(l.bytes)})`;
     // A box around the position, for images too large to save whole: any level, the box within the limit.
@@ -162,7 +177,7 @@ export async function exportDataset(wb: Workbench, dataset: DatasetRecord): Prom
       if (target === null) return;
       if (target?.kind !== "directory") throw new Error("writing every level needs a folder to write into");
       const name = `${dataset.name}.ome.zarr`;
-      const done = await wb.jobs.run(`Export ${dataset.name}`, (control) => writePyramid(worker, found.file, target, name, control));
+      const done = await wb.jobs.run(`Export ${dataset.name}`, (control) => writePyramid(worker, input, target, name, control));
       if (done) toast(`Exported every level of ${dataset.name} into ${name}.`);
       return;
     }
@@ -178,7 +193,7 @@ export async function exportDataset(wb: Workbench, dataset: DatasetRecord): Prom
     const target = await chooseTarget(chosen.format === "zarr", base + chosen.suffix);
     if (target === null) return;
     await wb.jobs.run(`Export ${dataset.name}`, async (control) => {
-      const done = await unlessCancelled(worker, control, request(worker, { type: "export", file: found.file, format: chosen.format, level: level.index, region }, (what, n, total) => control.progress(n / Math.max(1, total), what)));
+      const done = await unlessCancelled(worker, control, request(worker, { type: "export", ...input, format: chosen.format, level: level.index, region }, (what, n, total) => control.progress(n / Math.max(1, total), what)));
       await save(new Map<string, Uint8Array>(done.files), base + chosen.suffix, chosen.format === "zarr", target);
     });
     toast(`Exported ${dataset.name} as ${base}${chosen.suffix}.`);
@@ -196,7 +211,7 @@ export async function exportDataset(wb: Workbench, dataset: DatasetRecord): Prom
  * over the file makes them, so nothing is held whole and no level is made
  * twice.  False when cancelled.
  */
-async function writePyramid(worker: Worker, file: File, parent: FileSystemDirectoryHandle, name: string, control: { progress(fraction: number, what?: string): void; readonly cancelled: boolean }): Promise<boolean> {
+async function writePyramid(worker: Worker, input: object, parent: FileSystemDirectoryHandle, name: string, control: { progress(fraction: number, what?: string): void; readonly cancelled: boolean }): Promise<boolean> {
   const id = Math.random();
   const watch = setInterval(() => {
     if (control.cancelled) worker.postMessage({ type: "cancel", id });
@@ -215,7 +230,7 @@ async function writePyramid(worker: Worker, file: File, parent: FileSystemDirect
         else resolve(reply);
       };
       worker.addEventListener("message", listener);
-      worker.postMessage({ type: "write-pyramid", id, file, dir: parent, name });
+      worker.postMessage({ type: "write-pyramid", id, ...input, dir: parent, name });
     });
     return !control.cancelled && done.type === "done";
   } finally {
