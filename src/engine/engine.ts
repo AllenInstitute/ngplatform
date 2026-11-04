@@ -1058,7 +1058,12 @@ export class Engine {
       group.useTemporaryVisibleSegments.value = false;
       return;
     }
-    group.temporaryVisibleSegments.add(ids);
+    // Sized once for the whole set (here and in the workers' copies): adding
+    // hundreds of thousands of ids to a table that grows as it fills
+    // rehashes it again and again.
+    const set = group.temporaryVisibleSegments;
+    set.reserve(Math.ceil(ids.length / set.hashTable.loadFactor));
+    set.add(ids);
     group.useTemporaryVisibleSegments.value = true;
   }
 

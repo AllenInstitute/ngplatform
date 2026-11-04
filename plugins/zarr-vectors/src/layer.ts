@@ -38,6 +38,7 @@ import {
   ZarrVectorsMultiscaleGeometrySource,
 } from "./dense_frontend.js";
 import { ZarrVectorsLazyPropertyMap } from "./frontend.js";
+import { SortedSegmentPropertyMap } from "./sorted_property_map.js";
 import {
   curvatureShader,
   DIRECTION_SHADER,
@@ -51,10 +52,7 @@ import {
 import type { LoadedDataSubsource } from "neuroglancer/unstable/layer/layer_data_source.js";
 import { SegmentationUserLayer } from "neuroglancer/unstable/layer/segmentation/index.js";
 import { SkeletonRenderMode } from "neuroglancer/unstable/skeleton/frontend.js";
-import {
-  mergeSegmentPropertyMaps,
-  PreprocessedSegmentPropertyMap,
-} from "neuroglancer/unstable/segmentation_display_state/property_map.js";
+import { mergeSegmentPropertyMaps } from "neuroglancer/unstable/segmentation_display_state/property_map.js";
 import { VolumeType } from "neuroglancer/unstable/sliceview/volume/base.js";
 import {
   makeCachedDerivedWatchableValue,
@@ -201,7 +199,8 @@ export class ZarrVectorsSegmentationUserLayer extends SegmentationUserLayer {
   /**
    * The base class builds its property map from what the subsources hold
    * when they are activated; a {@link ZarrVectorsLazyPropertyMap} holds its
-   * properties only later. Rebuilds the map then, as the base class would.
+   * properties only later. Rebuilds the map then, as the base class would,
+   * but finding rows by binary search (see sorted_property_map.ts).
    */
   private refreshPropertiesWhenReady(subsources: LoadedDataSubsource[]) {
     const token = (this.propertiesToken = {});
@@ -227,7 +226,7 @@ export class ZarrVectorsSegmentationUserLayer extends SegmentationUserLayer {
         this.displayState.originalSegmentationGroupState.segmentPropertyMap.value =
           merged === undefined
             ? undefined
-            : new PreprocessedSegmentPropertyMap(merged);
+            : new SortedSegmentPropertyMap(merged);
       },
       () => {},
     );

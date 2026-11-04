@@ -52,8 +52,32 @@ function serviceWorker(): Plugin {
   };
 }
 
+/**
+ * Zarr Vectors' Neuroglancer module is on by default, and main.ts waits for
+ * it before it builds the shell; as a dynamic import it would start to
+ * download only once the main bundle has run.  Listed as a module preload
+ * in the page, it downloads alongside the main bundle.
+ */
+function preloadDefaultPlugin(): Plugin {
+  return {
+    name: "ngplatform-preload-default-plugin",
+    apply: "build",
+    transformIndexHtml: {
+      order: "post",
+      handler(html, ctx) {
+        if (ctx.bundle === undefined || !ctx.filename.endsWith("index.html")) return html;
+        const chunks = Object.values(ctx.bundle).flatMap((c) => (c.type === "chunk" ? [c] : []));
+        const entry = chunks.find((c) => c.isDynamicEntry && /zarr-vectors\/src\/register_default\.ts$/.test(c.facadeModuleId ?? ""));
+        if (entry === undefined) return html;
+        const files = [entry.fileName, ...entry.imports].filter((f) => !html.includes(`/${f}"`));
+        return files.map((f) => ({ tag: "link", attrs: { rel: "modulepreload", crossorigin: true, href: `./${f}` }, injectTo: "head" as const }));
+      },
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [serviceWorker()],
+  plugins: [serviceWorker(), preloadDefaultPlugin()],
   // Relative asset URLs, so the built app can be served from any path: a
   // bucket prefix, GitHub Pages, or an artifact host.
   base: "",

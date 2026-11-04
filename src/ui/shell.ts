@@ -48,7 +48,6 @@ import { closeSheet, confirmDialog, copyText, formDialog, offer, promptDialog, s
 import { ActivityLog } from "./panels/activity.js";
 import { renderAuthPanel } from "./panels/auth.js";
 import { renderDatasetsPanel, showAddMenu } from "./panels/datasets.js";
-import { forgetPython, renderPythonPanel, runPythonPlugin } from "./panels/python.js";
 import { layerTarget, renderLayerPanel } from "./panels/layer.js";
 import {
   renderJobsPanel,
@@ -56,13 +55,19 @@ import {
   renderStatisticsPanel,
 } from "./panels/misc.js";
 import { CONVENTION_LABELS, type PanelConvention } from "../engine/anatomical.js";
-import { showCaptureSheet } from "./capture.js";
 import { offerOverviews } from "./overview.js";
 import { offerRunnerForLarge, offerSampledTractograms, pairFromLink, runnerApi } from "./runner.js";
 import { openDroppedItems, showAddDatasetSheet, showEditStateSheet, showLocalSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
 import type { Workbench } from "./workbench.js";
 import { createPlatformApis } from "./apis.js";
-import { closeHistoryView, showHistoryView } from "./history_view.js";
+
+/**
+ * Code that only some sessions use, loaded the first time it is: the Python
+ * tab (and Python plugins), the capture sheet, the history menu.
+ */
+const pythonPanel = () => import("./panels/python.js");
+const captureSheet = () => import("./capture.js");
+const historyView = () => import("./history_view.js");
 
 /** The code, linked from the top bar. */
 const REPOSITORY = "https://github.com/AllenInstitute/ngplatform";
@@ -345,8 +350,8 @@ export class Shell {
     registerBuiltins(wb);
     this.localPlugins = new LocalPlugins({
       host: wb.plugins,
-      runPython: (owner, source) => runPythonPlugin(wb, owner, source),
-      forgetPython,
+      runPython: async (owner, source) => (await pythonPanel()).runPythonPlugin(wb, owner, source),
+      forgetPython: (owner) => void pythonPanel().then((m) => m.forgetPython(owner)),
       log: (message, level) => log.add(message, level ?? "info"),
     });
     void this.localPlugins.restore();
@@ -499,7 +504,7 @@ export class Shell {
     });
     add({ id: "jobs", title: "Jobs", slot: "bottom", order: 20, render: (host) => renderJobsPanel(host, wb) });
     add({ id: "statistics", title: "Chunk statistics", slot: "bottom", order: 30, transient: true, render: (host) => renderStatisticsPanel(host, wb) });
-    add({ id: "python", title: "Python", slot: "bottom", order: 40, render: (host) => renderPythonPanel(host, wb) });
+    add({ id: "python", title: "Python", slot: "bottom", order: 40, render: async (host) => (await pythonPanel()).renderPythonPanel(host, wb) });
   }
 
   // ---------------------------------------------------------- commands
@@ -888,9 +893,9 @@ export class Shell {
     });
     add({ id: "view.settings", title: "View settings…", group: "View", run: () => showSettingsSheet(wb) });
     add({ id: "view.screenshot", title: "Screenshot (Neuroglancer)…", group: "View", run: () => engine.showScreenshotDialog() });
-    add({ id: "view.capture", title: "Capture a picture (magnified, trimmed)…", group: "View", run: () => showCaptureSheet(wb, "picture") });
-    add({ id: "view.captureSweep", title: "Capture a movie: sweep slices or time…", group: "View", run: () => showCaptureSheet(wb, "sweep") });
-    add({ id: "view.captureTurntable", title: "Capture a movie: turn the 3-D view…", group: "View", run: () => showCaptureSheet(wb, "turntable") });
+    add({ id: "view.capture", title: "Capture a picture (magnified, trimmed)…", group: "View", run: async () => (await captureSheet()).showCaptureSheet(wb, "picture") });
+    add({ id: "view.captureSweep", title: "Capture a movie: sweep slices or time…", group: "View", run: async () => (await captureSheet()).showCaptureSheet(wb, "sweep") });
+    add({ id: "view.captureTurntable", title: "Capture a movie: turn the 3-D view…", group: "View", run: async () => (await captureSheet()).showCaptureSheet(wb, "turntable") });
     const options: [string, string][] = [
       ["showAxisLines", "axis lines"],
       ["showScaleBar", "scale bar"],
@@ -1492,8 +1497,10 @@ export class Shell {
    * choosing a row goes back or forward to it.
    */
   private showHistory(): void {
-    if (closeHistoryView()) return;
-    showHistoryView(this.historyButton, this.wb.store);
+    void historyView().then(({ closeHistoryView, showHistoryView }) => {
+      if (closeHistoryView()) return;
+      showHistoryView(this.historyButton, this.wb.store);
+    });
   }
 
   /**
