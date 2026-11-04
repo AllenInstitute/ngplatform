@@ -21,12 +21,12 @@ works as a user would expect: 100 % is "nothing known missing".
 
 | Area | Complete | Bugs fixed | Left (hours) |
 |---|---|---|---|
-| Annotations | 85 % | 10 | 6.5 |
+| Annotations | 90 % | 11 | 5.5 |
 | Segmentation | 80 % | 10 | 13 |
 | Registration | 85 % | 6 | 6 |
 | Collections | 70 % | 4 | 8 |
 | Time series | 85 % | 4 | 2.5 |
-| Auth tab | 85 % | 2 | 4 |
+| Auth tab | 85 % | 3 | 4 |
 | Jobs → This computer | 80 % | 7 | 5 |
 | Python panel and starters | 75 % | 3 | 5 |
 | Capture | 90 % | 4 | 2 |
@@ -40,7 +40,7 @@ names for figures), Measure (lengths, areas, volumes, a line profile) and
 Statistics (an image's values in a region); the annotation table in the
 bottom dock (search, sort, edit, comments, CSV out and in).
 
-**Complete: 85 %.**
+**Complete: 90 %.**
 
 **Bugs found and fixed**
 
@@ -66,6 +66,8 @@ bottom dock (search, sort, edit, comments, CSV out and in).
   used `Math.min(...values)`, which overflows the stack on a large layer.
 - Comment times were shown in UTC without saying so; they are local now
   (UTC on hover).
+- Turning hidden groups or colours off deleted a shader of the user's own
+  (only Undo brought it back); it is now kept and put back. Test added.
 
 **UI.** The hints under the tools, groups, fields, labels and table are
 one line each; the per-tool instructions were already in the tools'
@@ -75,7 +77,6 @@ tooltips.
 
 | What | Hours |
 |---|---|
-| Turning off hidden groups or colours deletes a shader of the user's own instead of restoring it (only Undo brings it back) | 1 |
 | Labels and Statistics keep the first service object they were given: switching Track filtering or Segmentation off and on leaves a dead one | 1 |
 | Every state change (panning) rebuilds the table and the measurement list; slow past a few thousand annotations | 2 |
 | Statistics results and the line profile are shared by all scenes | 1 |
@@ -251,6 +252,9 @@ client ID.
   is still loading" looked like a dead button. They are now toasts too.
 - A middleauth server that could not be reached once was taken for the rest
   of the visit as "not an app", so Sign in opened a 404.
+- **Add** took "not a url" as a server (Chrome's URL parser accepts it as
+  the host `not%20a%20url`). Addresses with spaces or a host that is not
+  one are refused. Test added.
 
 **UI.** Six paragraphs of explanation are one line each (details in
 tooltips and the Signing in guide); "Google sign-in setup" folds away once
