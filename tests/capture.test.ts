@@ -124,6 +124,14 @@ describe("GIF encoding", () => {
     expect(decoded.frames[1].pixels).toEqual(expected(b));
   });
 
+  it("keeps a frame rate that is not whole hundredths: 30 a second alternates 3, 3, 4", () => {
+    const a = image(2, 2, () => [0, 0, 0]);
+    const decoded = decodeGif(encodeGif([a, a, a, a, a, a], { delay: 100 / 30 }));
+    const delays = decoded.frames.map((f) => f.delay);
+    expect(delays).toEqual([3, 4, 3, 3, 4, 3]);
+    expect(delays.reduce((s, d) => s + d, 0)).toBe(20);
+  });
+
   it("compresses long runs past the 12-bit dictionary, and still decodes", () => {
     // Noise in 200 grey levels, enough codes to fill the table and clear it.
     let seed = 1;
