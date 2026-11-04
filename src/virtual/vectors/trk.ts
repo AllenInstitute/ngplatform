@@ -232,13 +232,15 @@ export async function readTrk(
 
 /**
  * Coalesces sorted byte ranges into windows read at once (ranges closer than
- * `gap` share a read), and hands each range's bytes on.
+ * `gap` share a read: a browser's file read waits a millisecond or more on
+ * another process, about as long as reading half a megabyte), and hands
+ * each range's bytes on.
  */
 export async function readRanges(
   file: Blob,
   ranges: { start: number; end: number }[],
   each: (index: number, bytes: Uint8Array, at: number) => void,
-  gap = 64 * 1024,
+  gap = 512 * 1024,
   window = 16 * 1024 * 1024,
   concurrency = 16,
 ): Promise<void> {
