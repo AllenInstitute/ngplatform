@@ -104,7 +104,7 @@ async function saveLarge(msg: SaveRequest & { id: number }, reader: VolumeReader
   }
   const root = await msg.folder!.getDirectoryHandle(msg.folderName!, { create: true });
   await saveInBlocks(
-    { size: level.size, voxelToRas: level.voxelToRas, type, read: async (lo, hi) => (await reader.rawRegion(0, { lo, hi }, signal)).data },
+    { size: level.size, voxelToRas: level.voxelToRas, type, read: (lo, hi) => readExact(reader, type, lo, hi, signal) },
     grid,
     // Voxels kept: the image onto its own grid unmoved, the new placement written.
     msg.header ? identity4() : move,
@@ -145,7 +145,7 @@ async function saveLargeFile(msg: SaveRequest & { id: number }, reader: VolumeRe
   const writer = compress?.writable.getWriter();
   try {
     await saveInSlabs(
-      { size: level.size, voxelToRas: level.voxelToRas, type, read: async (lo, hi) => (await reader.rawRegion(0, { lo, hi }, signal)).data },
+      { size: level.size, voxelToRas: level.voxelToRas, type, read: (lo, hi) => readExact(reader, type, lo, hi, signal) },
       grid,
       msg.header ? identity4() : move,
       { method: msg.method, label: msg.label, format: /^nii/.test(msg.format) ? "nii" : "mgh", description: `${msg.name}, moved by ngplatform registration`, window, placement: msg.header ? multiply4(move, level.voxelToRas) : undefined },
@@ -237,3 +237,12 @@ self.onmessage = (event: MessageEvent) => {
     })
     .finally(() => controllers.delete(msg.id));
 };
+
+/**
+ * A box of the finest level's values: 64-bit floats for types a 32-bit float
+ * would round (labels above 2^24, 64-bit floats), 32-bit floats otherwise.
+ */
+async function readExact(reader: VolumeReader, type: VoxelType, lo: [number, number, number], hi: [number, number, number], signal: AbortSignal): Promise<Float32Array | Float64Array> {
+  const wide = type === "uint32" || type === "int32" || type === "float64";
+  return wide ? (await reader.exactRegion(0, { lo, hi }, signal)).data : (await reader.rawRegion(0, { lo, hi }, signal)).data;
+}
