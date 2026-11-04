@@ -70,7 +70,6 @@ class Grow<T extends Float32Array | Float64Array | Uint32Array | Int32Array | Ui
   }
 }
 
-const f32 = (n: number) => new Float32Array(n);
 const f64 = (n: number) => new Float64Array(n);
 const u32 = (n: number) => new Uint32Array(n);
 const u8 = (n: number) => new Uint8Array(n);
@@ -220,8 +219,6 @@ class Level {
   readonly manifestSegments: number[] = [];
   private readonly manifest = new Grow(u8, 4096);
   private readonly blocks = new Grow(u32);
-  /** The run of points being made (x, y, z and values each). */
-  private readonly run = new Grow(f32, 1024);
   readonly lo = [Infinity, Infinity, Infinity];
   readonly hi = [-Infinity, -Infinity, -Infinity];
   vertexCount = 0;
@@ -238,20 +235,42 @@ class Level {
     private readonly writer: Writer,
   ) {}
 
+  /** The cells last found, by a hash of their key (most lookups are of a few nearby cells). */
+  private readonly recentKeys = new Float64Array(4096).fill(-1);
+  private readonly recentCells = new Int32Array(4096);
+  /** Directions of steps of at most 2 cells along each axis, by (dx + 2) · 25 + (dy + 2) · 5 + dz + 2 (-1: not yet named). */
+  private readonly nearDirections = new Int32Array(125).fill(-1);
+
   private cellAt(x: number, y: number, z: number): number {
     const key = cellKey(x, y, z);
+    const slot = (Math.imul(x, 73856093) ^ Math.imul(y, 19349663) ^ Math.imul(z, 83492791)) & 4095;
+    if (this.recentKeys[slot] === key) return this.recentCells[slot];
     let i = this.index.get(key);
+    this.recentKeys[slot] = key;
+    if (i !== undefined) this.recentCells[slot] = i;
     if (i === undefined) {
       i = this.cells.length;
       this.index.set(key, i);
       const cell = new Cell([x, y, z], i);
       this.cells.push(cell);
       this.writer.cells.push(cell);
+      this.recentCells[slot] = i;
     }
     return i;
   }
 
   private direction(from: number[], to: number[]): number {
+    const dx = to[0] - from[0];
+    const dy = to[1] - from[1];
+    const dz = to[2] - from[2];
+    const near = dx >= -2 && dx <= 2 && dy >= -2 && dy <= 2 && dz >= -2 && dz <= 2 ? (dx + 2) * 25 + (dy + 2) * 5 + dz + 2 : -1;
+    if (near >= 0 && this.nearDirections[near] >= 0) return this.nearDirections[near];
+    const i = this.namedDirection(from, to);
+    if (near >= 0) this.nearDirections[near] = i;
+    return i;
+  }
+
+  private namedDirection(from: number[], to: number[]): number {
     const key = cellKey(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
     let i = this.directionIndex.get(key);
     if (i === undefined) {
@@ -276,15 +295,18 @@ class Level {
     const c = this.chunk;
     const nv = this.valueNames.length;
     const stride = 3 + nv;
-    const run = this.run;
+    const step = this.pointStep;
     let cell: Cell | undefined;
+    let words: Pending | undefined;
+    /** Where the run's header word is in `words`. */
+    let head = -1;
     let prevLastRow = -1;
     let lastX = NaN;
     let lastY = NaN;
     let lastZ = NaN;
     let ci = -1;
     for (let p = first; p < last; ++p) {
-      if (this.pointStep > 1 && (p - first) % this.pointStep !== 0 && p !== last - 1) continue;
+      if (step > 1 && (p - first) % step !== 0 && p !== last - 1) continue;
       const x = points[3 * p];
       const y = points[3 * p + 1];
       const z = points[3 * p + 2];
@@ -299,7 +321,7 @@ class Level {
       }
       if (cell === undefined || ci !== cell.index) {
         const previous = cell;
-        if (previous !== undefined) this.closeRun(previous, object, stride);
+        if (previous !== undefined) this.closeRun(previous, words!, head, object, stride);
         cell = this.cells[ci];
         const fragment = cell.fragments++;
         const row = cell.rows;
@@ -325,55 +347,59 @@ class Level {
           this.links++;
           if (bridge.length * 4 >= FLUSH_BYTES) previous.flushBridges(writer);
         }
-        run.length = 0;
+        if (cell.fragmentWords === undefined) {
+          cell.fragmentWords = new Pending();
+          writer.pending += 1024;
+        }
+        words = cell.fragmentWords;
+        // The header's word, filled in when the run ends.
+        words.reserve(writer, 1 + stride);
+        head = words.length++;
       }
-      run.reserve(stride);
-      const floats = run.data;
-      let at = run.length;
+      words!.reserve(writer, stride);
+      const floats = words!.floats;
+      let at = words!.length;
       floats[at++] = x;
       floats[at++] = y;
       floats[at++] = z;
       for (let k = 0; k < nv; ++k) floats[at++] = scalars[p * nValues + k];
-      run.length = at;
+      words!.length = at;
       prevLastRow = cell.rows++;
       ++this.vertexCount;
-      if (x < cell.lo[0]) cell.lo[0] = x;
-      if (x > cell.hi[0]) cell.hi[0] = x;
-      if (y < cell.lo[1]) cell.lo[1] = y;
-      if (y > cell.hi[1]) cell.hi[1] = y;
-      if (z < cell.lo[2]) cell.lo[2] = z;
-      if (z > cell.hi[2]) cell.hi[2] = z;
+      const lo = cell.lo;
+      const hi = cell.hi;
+      if (x < lo[0]) lo[0] = x;
+      if (x > hi[0]) hi[0] = x;
+      if (y < lo[1]) lo[1] = y;
+      if (y > hi[1]) hi[1] = y;
+      if (z < lo[2]) lo[2] = z;
+      if (z > hi[2]) hi[2] = z;
     }
-    if (cell !== undefined) this.closeRun(cell, object, stride);
+    if (cell !== undefined) this.closeRun(cell, words!, head, object, stride);
     ++this.present;
     if (writer.pending > PENDING_BYTES) writer.flushAll();
   }
 
   /**
-   * Writes the run of points just made in `cell` as a fragment record: a
-   * header (its object and point count: one word, the object as a step from
-   * the cell's last fragment's, when both fit; else two), then the points.
+   * Ends the run of points just written into `cell` after the header word
+   * at `head`: the header gives its object and point count, in that one
+   * word (the object as a step from the cell's last fragment's) when both
+   * fit; else in two, the points moved up a word to make room.
    */
-  private closeRun(cell: Cell, object: number, stride: number): void {
-    const writer = this.writer;
-    const n = this.run.length / stride;
-    if (cell.fragmentWords === undefined) {
-      cell.fragmentWords = new Pending();
-      writer.pending += 1024;
-    }
-    const words = cell.fragmentWords;
-    words.reserve(writer, 2 + this.run.length);
+  private closeRun(cell: Cell, words: Pending, head: number, object: number, stride: number): void {
+    const n = (words.length - head - 1) / stride;
     const step = object - cell.lastOwner;
-    if (n < 4096 && step >= 0 && step < 1 << 19) words.words[words.length++] = 0x80000000 + step * 4096 + n;
+    if (n < 4096 && step >= 0 && step < 1 << 19) words.words[head] = 0x80000000 + step * 4096 + n;
     else {
       if (n >= 0x80000000) throw new Error(`a run of ${n} points`);
-      words.words[words.length++] = n;
-      words.words[words.length++] = object;
+      words.reserve(this.writer, 1);
+      words.words.copyWithin(head + 2, head + 1, words.length);
+      words.words[head] = n;
+      words.words[head + 1] = object;
+      words.length += 1;
     }
     cell.lastOwner = object;
-    words.floats.set(this.run.data.subarray(0, this.run.length), words.length);
-    words.length += this.run.length;
-    if (words.length * 4 >= FLUSH_BYTES) cell.flushFragments(writer);
+    if (words.length * 4 >= FLUSH_BYTES) cell.flushFragments(this.writer);
   }
 
   private endObject(): void {

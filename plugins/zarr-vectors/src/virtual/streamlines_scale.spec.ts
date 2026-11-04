@@ -212,6 +212,37 @@ describe("the spill and the index", () => {
     store.close();
   });
 
+  it("keeps a run too long for a one-word header (5,000 points in one cell), with its values", async () => {
+    const long = Array.from({ length: 5000 }, (_, i) => [1 + i * 1e-3, 2, 3]);
+    const lines = [long, [[1, 1, 1], [40, 40, 40]], long.slice(0, 10)];
+    const store = await StreamlineStore.build({
+      scalarNames: ["fa"],
+      propertyNames: [],
+      expectedCount: lines.length,
+      extent: 100,
+      name: "long",
+      async read(onBatch) {
+        const offsets = new Uint32Array(lines.length + 1);
+        lines.forEach((l, i) => (offsets[i + 1] = offsets[i] + l.length));
+        const points = Float32Array.from(lines.flat(2));
+        await onBatch({ points, offsets, scalars: Float32Array.from({ length: points.length / 3 }, (_, i) => i), properties: new Float32Array(0) });
+        return lines.length;
+      },
+    });
+    const a = access(store);
+    const zv = await openZarrVectorsStore(a as never, []);
+    const curves = await new ObjectReader(a as never, zv.description, zv.levels[0]).readCurves([0n, 1n, 2n], signal);
+    expect(Array.from(curves.offsets)).toEqual([0, 5000, 5002, 5012]);
+    expect(Array.from(curves.positions.subarray(3 * 4999, 3 * 5000))).toEqual(long[4999].map(Math.fround));
+    const root = JSON.parse(new TextDecoder().decode((await store.get("0/vertices/zarr.json"))!));
+    const origin: number[] = root.attributes.chunk_grid_origin;
+    const key = [0, 0, 0].map((_, k) => Math.floor([1, 2, 3][k] / 10) - origin[k]).join("/");
+    const values = (await store.get(`0/vertex_attributes/fa/c/${key}`))!;
+    const fa = new Float32Array(values.slice(8).buffer);
+    expect(fa[4999]).toBe(4999);
+    expect(fa[5000]).toBe(5000);
+  });
+
   it("chooses smaller cells for a large file, and the decoded-cell budget from the device or the setting", () => {
     expect(cellSize(200)).toBe(20);
     // 6 GB of points in a 200 mm space: cells of about 4 MB.
