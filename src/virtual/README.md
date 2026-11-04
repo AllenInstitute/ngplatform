@@ -9,10 +9,10 @@ to the page, and a worker here answers it from the file.
 | Folder / file | What |
 |---|---|
 | `local_data.ts` | Local files and folders: picking, remembering, the URLs under `<app>/local/<id>/`, answering the service worker, files made in the page (`openFile`, derived files) |
-| `images/` | Images as OME-Zarr 0.6: NIfTI and Analyze (`nifti.ts`), TIFF stacks and their own pyramids (`tiff.ts`), the store and its pyramid (`store.ts`), levels made in slabs (`slabs.ts`), the overview cache (`overview_cache.ts`), the worker (`worker.ts`) |
+| `images/` | Images as OME-Zarr 0.6: NIfTI and Analyze (`nifti.ts`), TIFF stacks and their own pyramids (`tiff.ts`), the store and its pyramid (`store.ts`), levels made in slabs (`slabs.ts`), reduced in several workers (`reduce_pool.ts`, `reduce_worker.ts`), the overview cache (`overview_cache.ts`), the worker (`worker.ts`) |
 | `computed.ts` | Images computed as they are viewed by [chunkmirage](https://github.com/JaneliaSciComp/chunkmirage)'s browser engine (`vendor/chunkmirage`, a submodule): a pipeline of its ops over any image, served under `<app>/virtual/ngp/<pipeline>/` |
 | `warp.ts` | Images resampled through a smooth map as they are viewed, for `computed.ts`: a thin-plate spline from landmark pairs, or a displacement field between affines |
-| `vectors/` | Geometry as Zarr Vectors: tractograms (`trk.ts`, `tck.ts`, `trx.ts` → `tractograms.ts` → `streamlines.ts`, kept in a spill: `spill.ts`), meshes and surfaces (`mesh_files.ts` → `meshes.ts`, or for a large mesh `mesh_cells.ts` with levels from `mesh_levels.ts`), SWC neurons and point tables (`point_files.ts` → `points.ts`), the formats (`formats.ts`) and the worker (`worker.ts`) |
+| `vectors/` | Geometry as Zarr Vectors: tractograms (`trk.ts`, `tck.ts`, `trx.ts` → `tractograms.ts` → `streamlines.ts`, binned in bin workers: `bin_workers.ts`, `bin_worker.ts`, kept in spills: `spill.ts`), meshes and surfaces (`mesh_files.ts` → `meshes.ts`, or for a large mesh `mesh_cells.ts` with levels from `mesh_levels.ts`), SWC neurons and point tables (`point_files.ts` → `points.ts`), the formats (`formats.ts`) and the worker (`worker.ts`) |
 
 ## Reading in
 
@@ -85,7 +85,23 @@ into spatial cells and writes, as it goes, into a **spill**
 
 A large file's spill is a file in the browser's private storage (OPFS),
 written through a synchronous access handle (in 8 MB writes, the file grown
-512 MB at a time); a small file's (under 256 MB) is in memory. The spill
+512 MB at a time); a small file's (under 256 MB) is in memory.
+
+**Bin workers** (`vectors/bin_workers.ts`). For a spill on disk, binning
+(most of the pass) is done in bin workers: half the cores, at most six.
+The vectors worker reads and parses the file, keeps the per-streamline
+columns and checkpoints, and deals the batches to the workers in turn
+(their points handed over, two batches out to each at most); each worker
+bins its batches (`Binner`) into a spill file of its own, which the vectors
+worker reserved (and holds by a lock) and opens for reading once the
+worker hands it back. The store then merges the workers' cells by place
+(`StoreLevel`): a cell is each worker's part in turn, its rows and
+fragments numbered on from the parts before; a manifest is kept per batch
+and renumbered when read; a bridge's rows are renumbered by the parts of
+the two cells it joins. Within a cell, fragments are in streamline order
+for each worker's part, not across parts. Pending records share 128 MB
+across the workers. One worker, or a spill in memory, bins in the vectors
+worker itself, the same way with one part per cell. The spill
 lives while the store does: it is deleted when the file changes or its tab
 closes (a spill left by a closed tab is deleted the next time one is made).
 It is about 1.3 to 1.5 times the file's size: a copy of level 0's points
@@ -94,10 +110,10 @@ plus their fragments, bridges and manifests. The levels' cells are 2, 4, 8
 about ten cells across the space, smaller for a large file, so a cell holds
 about 4 MB of points (`cellSize`).
 
-Memory keeps an index: per cell its segments, rows, fragments, bounds and
-bridge directions; per 16 384 streamlines where their manifests are; per
-16 streamlines where they start in the file (`CHECKPOINT`). For 20 million
-streamlines that is about 25 MB. Cells are decoded from the spill when a
+Memory keeps an index: per cell and worker its segments, rows, fragments,
+bounds and bridge directions; per batch read where its manifests are; per
+16 streamlines where they start in the file (`CHECKPOINT`). For 17 million
+streamlines binned by six workers that is about 50 MB. Cells are decoded from the spill when a
 key asks for them, and the decoded cells last used are kept up to a budget:
 1/32 of the device's memory (`navigator.deviceMemory`), between 64 and
 512 MB, or what View settings sets (the vectors worker gets it as a
@@ -140,8 +156,9 @@ samples of them above; `curves` gives only sampled ids; `stats()` says
 runner's conversion; opened another way, it says a sample is shown.
 
 Measured headless on a 4.6 GB `.trk` of 17 million streamlines held in
-memory: every streamline, 73 s and a 7.3 GB spill (binning 57 s of it);
-1 in 10, 22 s and 0.8 GB; 1 in 100, 19 s and 0.23 GB in memory.
+memory: every streamline, 70 s and a 7.3 GB spill in one worker (binning
+55 s of it), 18 s with six bin workers; 1 in 10, 22 s and 0.8 GB (17 s
+with bin workers); 1 in 100, 19 s and 0.23 GB in memory.
 
 When even 1 in 10 000 does not fit, or the storage refuses to grow (a
 private window keeps OPFS in memory, with less room), opening fails with
@@ -219,7 +236,25 @@ on an 8 GB machine; Chrome reports 8 at most).
 with progress, which can be cancelled). One pass over level 0, slab by slab.
 Each coarser level is made from the slabs of the one below as they pass,
 and the levels the budget keeps are written into the cache. Memory stays at
-about one slab per level. Until it is done, chunks are made on request as
+about one slab per level, plus the finer slabs being reduced in workers.
+The level a build keeps in part keeps its first chunks: the rest are not
+cut or written (when viewing, a finer chunk may still push out another of
+its level, least recently used first).
+
+**Reduced in several workers** (`images/reduce_pool.ts`). The first level
+made from one read from the file (level 1, or the first past a TIFF's own
+pyramid) is made in reduce workers, half the cores and at most six,
+started when first needed and stopped after 30 s idle; for levels under
+64 MB the worker serving the image does it. Each finer slab goes to a
+reduce worker, which gives back its part of the coarser slab, pasted in
+place. Where the file holds the slab as it is served (uncompressed
+NIfTI, uncompressed little-endian TIFF strips: `ByteSource.stored`), the
+reduce worker reads it from the file itself; otherwise (compressed or
+converted voxels) it is read and decoded here and handed over. At most
+512 MB of finer slabs are read or reduced at once, and the level above
+asks for four of its slabs ahead so that each worker has work. A 5 GB TIFF
+(4096 × 4096 × 160 uint16, 64-row strips): 8.3 s, 615 MB/s, against 20.4 s
+(250 MB/s) in one worker; reading the file alone takes 6.3 to 7.4 s. Until it is done, chunks are made on request as
 above, and a cancelled build resumes from the levels already kept. The
 platform offers the build when an image of 1 GB or more is first viewed
 ("Build the overview of this 16 GB image in the background? … at most

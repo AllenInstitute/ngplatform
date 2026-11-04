@@ -55,8 +55,9 @@ is never loaded whole and coarser levels appear first.
 A tractogram is read once when it is opened, in a worker. The pass copies
 the points into spatial cells in the browser's private storage (OPFS),
 kept while the file is open and deleted when it is closed or its tab is.
-Memory holds an index of the cells (about 25 MB for 20 million
-streamlines) and the cells last used, up to a budget: 1/32 of this
+For a large file the cells are made in several workers at once (half the
+computer's cores, at most six), each writing a file of its own. Memory
+holds an index of the cells (about 50 MB for 17 million streamlines) and the cells last used, up to a budget: 1/32 of this
 device's memory, between 64 and 512 MB, or what **View settings → Local
 tractograms → Memory for decoded cells** sets. While the pass runs the
 layer waits (its reads are answered "still reading the file" and asked
@@ -72,8 +73,8 @@ in 10 streamlines, or 1 in 100, 1 000 or 10 000, the first that fits
 
 | A 4.6 GB `.trk`, 17 million streamlines (measured headless, file in memory) | Copied | Open |
 |---|---|---|
-| Every streamline (limit set to 10 GB) | 7.3 GB | 73 s |
-| 1 in 10 (the default 4 GB limit) | 0.8 GB | 22 s |
+| Every streamline (limit set to 20 GB) | 7.2 GB | 18 s (70 s in one worker) |
+| 1 in 10 (the default 4 GB limit) | 0.8 GB | 17 s |
 | 1 in 100 (limit 0: in memory) | 0.23 GB | 19 s |
 
 A dropped tractogram past the limit asks first: **Open 1 in 10** (the
@@ -81,8 +82,11 @@ dataset is named so, `t17m (1 in 10)`), **Convert it** or **Serve it**
 with the runner on this computer (see [Jobs on this computer](local-jobs.md)).
 Opened another way (Open from device, a folder, a reload), it opens as the
 sample and a notice offers the conversion. With a sample, the view,
-regions and groups use only the sampled streamlines; Track filtering's
-**Run on this computer** reads the whole file. For every streamline of a
+regions and groups use only the sampled streamlines: Track filtering's
+counts read "of 1,699,274 in the sample (1 in 10 of 17,000,000)", and
+**Save .trk** and density maps hold only sampled streamlines (their
+buttons and messages say so). Track filtering's **Run on this computer**
+reads the whole file. For every streamline of a
 large file without the copy, convert it: the store is read a chunk at a
 time.
 
@@ -125,10 +129,12 @@ or reduced-resolution pages) is read as it is, not made again.
   you are offered **Build the overview in the background**. It reads the file
   once and keeps what the budget allows, and it appears in the Jobs tab with
   its progress (you can cancel it). It is also in Datasets → the row's ⋯,
-  beside **Clear its kept overview**. A 5 GB uncompressed TIFF (4096 × 4096
-  × 160, 16-bit) builds in about 21 s (245 MB/s; reading the file alone
-  takes 7 s), and its first zoomed-out view, without the build, takes
-  about 21 s; measured headless with the file in memory.
+  beside **Clear its kept overview**. The first coarser level is made in
+  several workers at once (half the computer's cores, at most six), each
+  reading its part of the file. A 5 GB uncompressed TIFF (4096 × 4096 ×
+  160, 16-bit) builds in about 8.3 s (615 MB/s; 20 s in one worker;
+  reading the file alone takes 7 s); measured headless with the file in
+  memory.
 - **Settings.** **View settings → Overviews of local images** sets the
   budget, lists what each image keeps, and clears it.
 
