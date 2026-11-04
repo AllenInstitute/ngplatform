@@ -106,7 +106,7 @@ take about 0.1 MB rather than 2.3 MB.
 
 | Tab | What it holds |
 |---|---|
-| **Datasets** | What the scene shows: one row per dataset with its visibility, load state and source. A dataset shown through several layers (a tractogram and its track groups, say) lists them beneath it. Selecting a row shows its controls in the Layer tab. Datasets that other scenes show are listed below, ready to add. *Tools for this data* lists the plugins that are off but work with this data: click one to turn it on, × for "Not now". |
+| **Datasets** | What the scene shows: one row per dataset with its visibility, load state and source. A dataset shown through several layers (a tractogram and its track groups, say) lists them beneath it. Selecting a row shows its controls in the Layer tab. Datasets that other scenes show are listed below, ready to add. *Tools for this data* lists the plugins that are off but work with this data: click one to turn it on (its tab opens), × for "Not now". Pasting a data URL on the window (++ctrl+v++) adds it here; see [Data from a URL](data.md#data-from-a-url). |
 | **Filtering** | The Track filtering plugin: TrackVis-style track groups. See [Track filtering](../plugins/track-filtering.md). |
 | **Annotations** | The Annotations plugin: labels (named pins and callouts for figures), measurements, statistics in a region, and label volumes drawn by hand. See [Annotations](../plugins/annotations.md). |
 | **Registration** | When the Registration plugin is on: move a layer by hand or by landmarks, and save the transform or the moved image. See [Registration](../plugins/registration.md). |
@@ -130,12 +130,13 @@ sections, ++ctrl++ + scroll to zoom, drag in 3-D to rotate, and
 
 The selected dataset's controls, as Neuroglancer's own layer tabs at full
 height. A header names the dataset and, when it is shown through several
-layers, lets you pick which one.
+layers, lets you pick which one. Picking another view there (the next channel, say)
+keeps the tab you are on.
 
 | Tab | What it holds |
 |---|---|
 | **Source** | Where the data comes from, its parts (subsources), and its **transform**: the matrix that places it in the scene, editable. |
-| **Render** | How it is drawn: resolution, opacity, blending; for images the **Colour map** and the shader (contrast, with a histogram); for segmentations the **Lookup table**; for surfaces the **Surface** controls. |
+| **Render** | How it is drawn: resolution, opacity, blending; for images the **Colour map**, then the shader's controls (contrast, with a histogram and Min-Max, 1-99% and 5-95% buttons) above its code; for segmentations the **Lookup table**; for surfaces the **Surface** controls. |
 | **Segments** | For segmentations: search segments by id, label or property, show and hide them, colours. |
 | **Annotations** | For annotation layers: the tools that draw points, lines, boxes, ellipsoids and polylines, and the list of annotations. |
 | **Schema** | For annotation layers: the properties each annotation carries. |

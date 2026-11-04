@@ -32,7 +32,7 @@ when it runs out. Proofreading and axon segmentation last.
 - [ ] D1. UI tidy (shorter text, consistent controls, empty and error states).
 - [ ] D2. Speed (startup, bundle, time to first image, memory, drawing), before and after.
 - [ ] D3. Code review (shared helpers in the SDK, dead code, test gaps).
-- [ ] D4. UX workflows: about ten common tasks, interactions counted, quicker paths built, counted again.
+- [x] D4. (Done: ten tasks counted in headless Chrome, 71 → 57 interactions, five things to know → one: a data URL pasted on the window, Annotations and Segmentation listed for images, the annotation tool on named, Alt+Shift+S/B regions at the mouse, the moving layer by default, contrast controls above the shader code; bugs found: the range buttons covered by an undrawn histogram, a layer added with the mouse over a view threw; docs/dev/workflows.md. Left: Filters on a local NIfTI fails (axes), saving a filtered view, scenes side by side.) UX workflows: about ten common tasks, interactions counted, quicker paths built, counted again.
 - [ ] D5. Examples report (every feature, screenshots, measurements).
 
 **Last**: proofreading; axon segmentation and tracing.
