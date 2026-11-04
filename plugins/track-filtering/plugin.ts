@@ -2131,8 +2131,7 @@ class TrackGroups {
     const dataset = this.dataset();
     if (dataset === undefined) {
       root.append(
-        el("p", { class: "tf-intro" }, "Groups keep the objects that pass through regions: tracts, points, segments or annotations. Each group is a layer."),
-        el("p", { class: "empty" }, el("strong", {}, "Nothing to filter in this scene. "), "Add tracts, a segmentation or annotations in Datasets."),
+        el("p", { class: "empty", title: "Groups keep the objects that pass through regions: tracts, points, segments or annotations. Each group is a layer." }, "Add a tractogram, a segmentation or annotations to filter them."),
       );
       return;
     }
