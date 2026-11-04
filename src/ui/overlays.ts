@@ -347,6 +347,24 @@ export function toast(message: string, kind: "info" | "error" = "info"): void {
   setTimeout(() => el.remove(), kind === "error" ? 7000 : 3200);
 }
 
+/** A toast asking a question, with a button for each answer; gone after a choice, or after `timeout` ms. */
+export function offer(message: string, actions: { label: string; primary?: boolean; run?: () => void }[], timeout = 30000): void {
+  const el = h(
+    "div",
+    { class: "toast offer" },
+    h("span", {}, message),
+    h(
+      "div",
+      { class: "row-actions" },
+      ...actions.map((a) =>
+        h("button", { class: a.primary ? "btn primary small" : "btn outline small", type: "button", onclick: () => (el.remove(), a.run?.()) }, a.label),
+      ),
+    ),
+  );
+  toastHost().append(el);
+  setTimeout(() => el.remove(), timeout);
+}
+
 /**
  * Copies text from inside a user gesture; when the clipboard refuses, shows
  * the text selected in a sheet so it can be copied by hand.

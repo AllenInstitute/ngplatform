@@ -20,8 +20,15 @@
  * - Coarser levels halve the finest axes (voxel sizes within 2× of the
  *   smallest) until a level fits in one chunk.  Each voxel is the mean of
  *   the finer level's box, or the box's first voxel for label images
- *   (intent NIFTI_INTENT_LABEL or NEURONAME).  They are made when asked
- *   for, so the coarsest needs the whole file read once.
+ *   (intent NIFTI_INTENT_LABEL or NEURONAME).  A file can bring some of its
+ *   own (a TIFF's reduced-resolution pages): those are read, not computed.
+ * - Computed levels are made in slabs (./slabs.ts): a chunk asked for is
+ *   made with the rest of its chunk row, from the finer level's slabs under
+ *   it, down to the file, read once across.  The coarsest levels are kept
+ *   between visits within a budget (./overview_cache.ts), and a build in
+ *   the background (`{ overview: "build" }`) makes and keeps them in one
+ *   pass over the file; Export → OME-Zarr writes every level in that same
+ *   one pass (`eachChunk`).
  * - Diffusion tensors (six float components a voxel) are averaged
  *   log-Euclidean (./tensors.ts), which keeps their determinants: when the
  *   header's intent is NIFTI_INTENT_SYMMATRIX (the lower triangle by rows,
@@ -29,6 +36,8 @@
  *   (`{ tensor: "fsl" | "dipy" | "mrtrix" | null }`, as the Orientations
  *   plugin does for an image it draws as tensors).
  */
+import { cacheBudget, levelsKept, memoryBudgets, OverviewCache, readSettings } from "./overview_cache.js";
+import { type Box, chunkFromSlab, chunksOf, finerSlabs, type Grid, levelSlabs, Reducer, type Slab, slabFromChunks, slabOf, slabWidth, type Voxels } from "./slabs.js";
 import { type ByteSource, blobSource, gunzipHead, gunzipSource, isGzip, jsonBytes, Lru, type VirtualStore } from "./store.js";
 import { LogEuclideanSum, NIFTI_INTENT_SYMMATRIX, TENSOR_ORDER_NAMES, type TensorOrder } from "./tensors.js";
 
@@ -282,6 +291,97 @@ interface Level {
   step: number[];
   /** Chunk size along i, j, k. */
   chunk: number[];
+  /** For a level read from the file (level 0, a TIFF's own reduced pages): its bytes, from `offset`, laid out as level 0's are. */
+  read?: () => Promise<ByteSource>;
+  offset?: number;
+}
+
+/** A coarser level the file holds itself (a TIFF's reduced-resolution pages), read as level 0 is. */
+export interface FileLevel {
+  /** Voxels along i, j, k. */
+  size: number[];
+  /** Level-0 voxels per voxel, along i, j, k (2, 4, … along i and j; 1 along k for a TIFF). */
+  factor: number[];
+  read: () => Promise<ByteSource>;
+}
+
+/** What identifies a file for the overview cache: its name, size and date. */
+export interface CacheKey {
+  name: string;
+  size: number;
+  lastModified: number;
+}
+
+/** A slab of a level past this many bytes is cut along i into pieces. */
+const SLAB_LIMIT = 256 * 2 ** 20;
+/** Files smaller than this keep no overview: their coarser levels are made in a moment. */
+const MIN_CACHED = 64 * 2 ** 20;
+/** Chunk rows made at once for the viewer (each may read a large part of the file). */
+const ROWS_AT_ONCE = 2;
+
+class Cancelled extends Error {
+  constructor() {
+    super("Cancelled");
+  }
+}
+
+/** How a slab's making is reported and stopped. */
+interface SlabContext {
+  /** Level-0 voxels' worth done (a slab of a level read from the file, or one found kept). */
+  progress?(voxels: number): void;
+  cancelled?(): boolean;
+  /** Each finer slab once made (Export → OME-Zarr writes its chunks). */
+  emit?(index: number, e: number, slab: Slab): Promise<void>;
+  /** Every level made from the file, none put together from kept chunks (the levels below are wanted too). */
+  fresh?: boolean;
+}
+
+/** The overview build's state, as `{ overview: "status" }` answers it. */
+export interface OverviewStatus {
+  state: "idle" | "building" | "done" | "cancelled" | "failed";
+  /** Level-0 voxels' worth done, of `total`. */
+  done: number;
+  total: number;
+  message?: string;
+  /** The file's bytes, and the bytes its overview may keep. */
+  fileBytes: number;
+  budget: number;
+  /** Levels kept whole, the one kept in part, and the bytes of the whole ones. */
+  kept: { whole: number[]; partial?: number; bytes: number };
+  /** What the cache holds now. */
+  cached: { bytes: number; chunks: number; byLevel: Record<number, { chunks: number; bytes: number }> };
+  built: boolean;
+  /** Whether this worker keeps the cache (another tab may). */
+  writer: boolean;
+  levels: { size: number[]; bytes: number; from: "file" | "computed" }[];
+  /** No cache here (no private file system, or a file made in the page). */
+  noCache?: boolean;
+}
+
+interface BuildState {
+  status: OverviewStatus["state"];
+  done: number;
+  total: number;
+  message?: string;
+  cancel: boolean;
+  running?: Promise<void>;
+}
+
+/** Runs at most `n` at a time. */
+class Gate {
+  private active = 0;
+  private readonly queue: (() => void)[] = [];
+  constructor(private readonly n: number) {}
+  async run<T>(work: () => Promise<T>): Promise<T> {
+    if (this.active >= this.n) await new Promise<void>((resolve) => this.queue.push(resolve));
+    this.active++;
+    try {
+      return await work();
+    } finally {
+      this.active--;
+      this.queue.shift()?.();
+    }
+  }
 }
 
 function concat(parts: Uint8Array[]): Uint8Array {
@@ -324,9 +424,15 @@ export class NiftiStore implements VirtualStore {
   private readonly scale: { slope: number; inter: number } | undefined;
   /** Whether level 0's bytes are the file's (after byte order), with no arithmetic. */
   private readonly raw: boolean;
-  /** Coarser levels' chunks (each made from many finer ones); level 0's are cut again from the bands. */
-  private readonly chunks = new Lru<Uint8Array>(96 << 20);
-  private readonly bands = new Lru<Uint8Array>(64 << 20);
+  /** Coarser levels' chunks (each made from many finer ones); level 0's are cut again from the bands.  Sized from the device's memory. */
+  private readonly chunks = new Lru<Uint8Array>(memoryBudgets().chunks);
+  private readonly bands = new Lru<Uint8Array>(memoryBudgets().bands);
+  /** Slabs being made, by level and box, shared by whoever needs them meanwhile. */
+  private readonly running = new Map<string, Promise<Slab>>();
+  private readonly rows = new Gate(ROWS_AT_ONCE);
+  /** The overview cache, opened when first needed. */
+  private cache: Promise<OverviewCache | undefined> | undefined;
+  private build: BuildState = { status: "idle", done: 0, total: 0, cancel: false };
   /**
    * Coarser levels as log-Euclidean means of the tensors stored in this
    * order of their six components; otherwise plain means.
@@ -343,7 +449,16 @@ export class NiftiStore implements VirtualStore {
      * label: a label image whatever its intent says (a FreeSurfer aseg, say): picked, not
      * averaged, when downsampled, and signed integers as uint32, as segmentations are read.
      */
-    readonly options: { rgb?: boolean; label?: boolean } = {},
+    readonly options: {
+      rgb?: boolean;
+      label?: boolean;
+      /** Coarser levels the file holds itself (a TIFF's reduced pages), finest first. */
+      levels?: FileLevel[];
+      /** The file, for keeping its overview between visits; none for a file made in the page. */
+      cacheKey?: CacheKey;
+      /** A slab larger than this many bytes is cut along i (256 MB). */
+      slabBytes?: number;
+    } = {},
   ) {
     const h = header;
     if (h.magic !== "n+1" && h.magic !== "n+2") {
@@ -398,8 +513,15 @@ export class NiftiStore implements VirtualStore {
    * log-Euclidean means of tensors stored in that order, `{ tensor: null }`
    * plain means again.  Answers how they are made now, and whether that
    * changed (the page then reads them again).
+   *
+   * `{ overview: "status" | "build" | "cancel" | "clear" | "settings" }`:
+   * the overview cache and its build (answering an `OverviewStatus`):
+   * start the build in the background, stop it, drop what is kept, or
+   * read the budget's settings again.
    */
-  message(body: unknown): { tensor: TensorOrder | null; changed: boolean; reason?: string } {
+  message(body: unknown): unknown {
+    const overview = (body as { overview?: unknown } | null)?.overview;
+    if (overview !== undefined) return this.overviewMessage(overview);
     const asked = (body as { tensor?: unknown } | null)?.tensor;
     const before = this.tensors;
     let reason: string | undefined;
@@ -419,7 +541,14 @@ export class NiftiStore implements VirtualStore {
     const volumes = this.wholeExtra ? this.extra!.size : 1;
     const side = (c: number, d: number) => Math.max(8, Math.min(c, Math.floor(((4 * c ** d) / volumes) ** (1 / d))));
     const chunk = this.shape[2] > 1 ? [side(CHUNK, 3), side(CHUNK, 3), side(CHUNK, 3)] : [side(CHUNK_2D, 2), side(CHUNK_2D, 2), 1];
-    const levels: Level[] = [{ size: this.shape, factor: [1, 1, 1], step: [1, 1, 1], chunk: chunk.map((c, a) => Math.min(c, this.shape[a])) }];
+    const levels: Level[] = [{ size: this.shape, factor: [1, 1, 1], step: [1, 1, 1], chunk: chunk.map((c, a) => Math.min(c, this.shape[a])), read: this.data, offset: this.header.voxOffset }];
+    // The file's own coarser levels, while each is smaller than the one before.
+    for (const own of this.options.levels ?? []) {
+      const last = levels[levels.length - 1];
+      if ([0, 1, 2].every((a) => last.size[a] <= chunk[a])) break;
+      if (!own.size.every((n, a) => n <= last.size[a]) || own.size.every((n, a) => n === last.size[a])) break;
+      levels.push({ size: own.size, factor: own.factor, step: own.factor.map((f, a) => f / last.factor[a]), chunk: chunk.map((c, a) => Math.min(c, own.size[a])), read: own.read, offset: 0 });
+    }
     while (levels.length < 16) {
       const last = levels[levels.length - 1];
       if ([0, 1, 2].every((a) => last.size[a] <= chunk[a])) break;
@@ -635,21 +764,188 @@ export class NiftiStore implements VirtualStore {
   }
 
   private chunk(index: number, e: number, b: number[], tensors = this.tensors): Promise<Uint8Array> {
-    if (index === 0) return this.cut(e, b);
-    // Keyed by how it is averaged, so a change of mind never mixes the two.
-    const key = `${tensors ?? ""}|${index}/${e}/${b.join("/")}`;
-    return this.chunks.get(key, () => (tensors === undefined ? this.reduce(index, e, b) : this.reduceTensors(index, b, tensors)), (d) => d.byteLength);
+    if (this.levels[index].read !== undefined) return this.cut(index, e, b);
+    if (tensors !== undefined) {
+      // Tensors are averaged chunk by chunk, keyed by their order, so a change of mind never mixes the two.
+      return this.chunks.get(`${tensors}|${index}/${e}/${b.join("/")}`, () => this.reduceTensors(index, b, tensors), (d) => d.byteLength);
+    }
+    return this.chunks.get(`${index}/${e}/${b.join("/")}`, () => this.computed(index, e, b), (d) => d.byteLength);
   }
 
-  /** The file's rows for chunk row (k, j) of volume `v`: every i, little-endian. */
-  private band(v: number, bk: number, bj: number): Promise<Uint8Array> {
-    return this.bands.get(`${v}/${bk}/${bj}`, () => this.readBand(v, bk, bj), (d) => d.byteLength);
+  // ------------------------------------------------------------ slabs
+
+  private grid(index: number): Grid {
+    const l = this.levels[index];
+    return { size: l.size, chunk: l.chunk, step: l.step };
   }
 
-  private async readBand(v: number, bk: number, bj: number): Promise<Uint8Array> {
-    const source = await this.data();
-    const [nx, ny, nz] = this.shape;
-    const [, cj, ck] = this.levels[0].chunk;
+  /** Volumes a chunk holds (time points or components kept together), and the chunk groups along the extra axis. */
+  private get slots(): number {
+    return this.wholeExtra ? this.extra!.size : 1;
+  }
+
+  private get groups(): number {
+    return this.extra === undefined || this.wholeExtra ? 1 : this.extra.size;
+  }
+
+  private width(index: number): number {
+    return slabWidth(this.grid(index), BYTES[this.outType], this.slots, this.options.slabBytes ?? SLAB_LIMIT);
+  }
+
+  private makeVoxels = (n: number): Voxels => new ARRAYS[this.outType](n);
+
+  /** Level-0 voxels under a box of a level. */
+  private voxels0(index: number, box: Box): number {
+    const f = this.levels[index].factor;
+    return [0, 1, 2].reduce((n, a) => n * Math.max(0, Math.min(this.shape[a], Math.round(box.hi[a] * f[a])) - Math.round(box.lo[a] * f[a])), 1);
+  }
+
+  /**
+   * A chunk of a computed level: kept (the overview cache), or made with the
+   * rest of its chunk row (a slab), whose chunks are then kept in memory.
+   */
+  private async computed(index: number, e: number, b: number[]): Promise<Uint8Array> {
+    const key = `${index}/${e}/${b.join("/")}`;
+    const cache = await this.overviewCache();
+    const kept = await cache?.get(key);
+    if (kept !== undefined) return kept;
+    const grid = this.grid(index);
+    const box = slabOf(grid, b, this.width(index));
+    const slab = await this.rows.run(() => this.slab(index, e, box, {}));
+    const bytes = BYTES[this.outType];
+    let mine: Uint8Array | undefined;
+    for (const c of chunksOf(grid, box)) {
+      const chunk = chunkFromSlab(grid, slab, c, bytes);
+      if (c.every((v, a) => v === b[a])) mine = chunk;
+      else this.chunks.put(`${index}/${e}/${c.join("/")}`, chunk, chunk.byteLength);
+    }
+    return mine!;
+  }
+
+  /** A slab of a level: read (a level from the file), put together from kept chunks, or made from the finer level's. */
+  private async slab(index: number, e: number, box: Box, ctx: SlabContext): Promise<Slab> {
+    const key = `${index}/${e}/${box.lo.join(",")}/${box.hi.join(",")}`;
+    for (;;) {
+      const running = this.running.get(key);
+      if (running === undefined) break;
+      try {
+        const slab = await running;
+        ctx.progress?.(this.voxels0(index, box));
+        return slab;
+      } catch (err) {
+        // Made for a build that was cancelled: made here instead.
+        if (!(err instanceof Cancelled) || ctx.cancelled?.()) throw err;
+      }
+    }
+    const made = this.makeSlab(index, e, box, ctx);
+    this.running.set(key, made);
+    const done = () => {
+      if (this.running.get(key) === made) this.running.delete(key);
+    };
+    made.then(done, done);
+    return made;
+  }
+
+  private async makeSlab(index: number, e: number, box: Box, ctx: SlabContext): Promise<Slab> {
+    if (this.levels[index].read !== undefined) {
+      const slab = await this.readSlab(index, e, box);
+      ctx.progress?.(this.voxels0(index, box));
+      return slab;
+    }
+    const kept = ctx.fresh ? undefined : await this.keptSlab(index, e, box);
+    if (kept !== undefined) {
+      ctx.progress?.(this.voxels0(index, box));
+      return kept;
+    }
+    const grid = this.grid(index);
+    const reducer = new Reducer(grid, this.grid(index - 1), box, this.slots, this.label || this.outType === "uint64" ? "nearest" : "mean", this.makeVoxels);
+    for (const finer of finerSlabs(grid, this.grid(index - 1), box, this.width(index - 1))) {
+      if (ctx.cancelled?.()) throw new Cancelled();
+      const slab = await this.slab(index - 1, e, finer, ctx);
+      await ctx.emit?.(index - 1, e, slab);
+      reducer.add(slab);
+      // Let requests waiting on this worker in.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    const slab = reducer.finish();
+    await this.keep(index, e, slab);
+    return slab;
+  }
+
+  /** A slab put together from chunks kept in memory or in the overview cache, when every one of them is. */
+  private async keptSlab(index: number, e: number, box: Box): Promise<Slab | undefined> {
+    const grid = this.grid(index);
+    const cache = await this.overviewCache();
+    const wanted = chunksOf(grid, box);
+    const found = new Map<string, Promise<Uint8Array | undefined>>();
+    for (const b of wanted) {
+      const key = `${index}/${e}/${b.join("/")}`;
+      const inMemory = this.chunks.peek(key);
+      if (inMemory !== undefined) found.set(b.join("/"), inMemory.catch(() => undefined));
+      else if (cache?.has(key)) found.set(b.join("/"), cache.get(key));
+      else return undefined;
+    }
+    const chunks = new Map<string, Uint8Array>();
+    for (const [k, p] of found) {
+      const bytes = await p;
+      if (bytes === undefined) return undefined;
+      chunks.set(k, bytes);
+    }
+    return slabFromChunks(grid, box, this.slots, BYTES[this.outType], chunks, this.makeVoxels);
+  }
+
+  /** Keeps a computed slab's chunks in the overview cache, as far as its budget and levels allow. */
+  private async keep(index: number, e: number, slab: Slab): Promise<void> {
+    const cache = await this.overviewCache();
+    if (cache === undefined || !cache.writer || index < cache.policy.floor) return;
+    const grid = this.grid(index);
+    for (const b of chunksOf(grid, slab.box)) await cache.put(`${index}/${e}/${b.join("/")}`, index, chunkFromSlab(grid, slab, b, BYTES[this.outType]));
+  }
+
+  /** A slab of a level read from the file, from its bands, as the type served. */
+  private async readSlab(index: number, e: number, box: Box): Promise<Slab> {
+    const level = this.levels[index];
+    const [ci, cj, ck] = level.chunk;
+    const nx = level.size[0];
+    const [ni, nj, nk] = [0, 1, 2].map((a) => box.hi[a] - box.lo[a]);
+    const volumes = this.volumesOf(e);
+    const bk = box.lo[2] / ck;
+    const bj = box.lo[1] / cj;
+    if (box.lo[0] % ci !== 0 || !Number.isInteger(bk) || !Number.isInteger(bj)) throw new Error("a slab off the chunks");
+    const out = this.makeVoxels(volumes.length * ni * nj * nk);
+    const { slope, inter } = this.scale ?? { slope: 1, inter: 0 };
+    const inSize = BYTES[this.inType];
+    for (let slot = 0; slot < volumes.length; ++slot) {
+      // A piece of a very wide level: only its part of each row is read.
+      const band = ni === nx ? await this.band(index, volumes[slot], bk, bj) : await this.readBand(index, volumes[slot], bk, bj, box.lo[0], box.hi[0]);
+      const at = slot * ni * nj * nk;
+      if (this.raw) {
+        const dst = new Uint8Array(out.buffer, out.byteOffset, out.byteLength);
+        dst.set(band.subarray(0, ni * nj * nk * inSize), at * inSize);
+        continue;
+      }
+      const from = typed(this.inType, band);
+      const to = out as Float32Array;
+      for (let r = 0; r < nj * nk; ++r) {
+        const src = r * ni;
+        const dst = at + r * ni;
+        for (let x = 0; x < ni; ++x) to[dst + x] = Number(from[src + x]) * slope + inter;
+      }
+    }
+    return { box, slots: volumes.length, data: out };
+  }
+
+  /** The file's rows for chunk row (k, j) of volume `v` of a level read from the file: every i, little-endian. */
+  private band(index: number, v: number, bk: number, bj: number): Promise<Uint8Array> {
+    return this.bands.get(`${index}/${v}/${bk}/${bj}`, () => this.readBand(index, v, bk, bj), (d) => d.byteLength);
+  }
+
+  /** The rows of a chunk row; with `x0` and `x1`, only those columns of each (a piece of a very wide level). */
+  private async readBand(index: number, v: number, bk: number, bj: number, x0?: number, x1?: number): Promise<Uint8Array> {
+    const level = this.levels[index];
+    const source = await level.read!();
+    const [nx, ny, nz] = level.size;
+    const [, cj, ck] = level.chunk;
     const size = BYTES[this.inType];
     const z0 = bk * ck;
     const z1 = Math.min(nz, z0 + ck);
@@ -657,25 +953,33 @@ export class NiftiStore implements VirtualStore {
     const y1 = Math.min(ny, y0 + cj);
     const row = nx * size;
     const plane = ny * row;
-    const base = this.header.voxOffset + v * nz * plane;
+    const base = (level.offset ?? 0) + v * nz * plane;
     let data: Uint8Array;
-    if (y0 === 0 && y1 === ny) data = await source.read(base + z0 * plane, base + z1 * plane);
+    if (x0 !== undefined && x1 !== undefined && (x0 > 0 || x1 < nx)) {
+      const parts: Uint8Array[] = [];
+      for (let z = z0; z < z1; ++z) {
+        parts.push(...(await Promise.all(Array.from({ length: y1 - y0 }, (_, dy) => source.read(base + z * plane + (y0 + dy) * row + x0 * size, base + z * plane + (y0 + dy) * row + x1 * size)))));
+      }
+      data = concat(parts);
+      if (data.byteLength < (z1 - z0) * (y1 - y0) * (x1 - x0) * size) throw new Error("the file is shorter than its header says");
+    } else if (y0 === 0 && y1 === ny) data = await source.read(base + z0 * plane, base + z1 * plane);
     else {
       const parts = await Promise.all(Array.from({ length: z1 - z0 }, (_, dz) => source.read(base + (z0 + dz) * plane + y0 * row, base + (z0 + dz) * plane + y1 * row)));
       data = concat(parts);
     }
-    if (data.byteLength < (z1 - z0) * (y1 - y0) * row) throw new Error("the file is shorter than its header says");
+    if (x0 === undefined && data.byteLength < (z1 - z0) * (y1 - y0) * row) throw new Error("the file is shorter than its header says");
     if (data.byteOffset !== 0 || data.byteLength !== data.buffer.byteLength) data = data.slice();
     if (!this.header.littleEndian && size > 1) swapBytes(data, size);
     return data;
   }
 
-  /** A level-0 chunk, cut from the file. */
-  private async cut(e: number, b: number[]): Promise<Uint8Array> {
-    const nx = this.shape[0];
-    const [ci, cj, ck] = this.levels[0].chunk;
-    const lo = [0, 1, 2].map((a) => b[a] * this.levels[0].chunk[a]);
-    const hi = [0, 1, 2].map((a) => Math.min(this.shape[a], lo[a] + this.levels[0].chunk[a]));
+  /** A chunk of a level read from the file, cut from its bands. */
+  private async cut(index: number, e: number, b: number[]): Promise<Uint8Array> {
+    const level = this.levels[index];
+    const nx = level.size[0];
+    const [ci, cj, ck] = level.chunk;
+    const lo = [0, 1, 2].map((a) => b[a] * level.chunk[a]);
+    const hi = [0, 1, 2].map((a) => Math.min(level.size[a], lo[a] + level.chunk[a]));
     const volumes = this.volumesOf(e);
     const inSize = BYTES[this.inType];
     const outSize = BYTES[this.outType];
@@ -684,7 +988,7 @@ export class NiftiStore implements VirtualStore {
     const { slope, inter } = this.scale ?? { slope: 1, inter: 0 };
     const width = hi[0] - lo[0];
     const rows = hi[1] - lo[1];
-    const bands = await Promise.all(volumes.map((v) => this.band(v, b[2], b[1])));
+    const bands = await Promise.all(volumes.map((v) => this.band(index, v, b[2], b[1])));
     bands.forEach((band, slot) => {
       const from = to === undefined ? undefined : typed(this.inType, band);
       for (let z = lo[2]; z < hi[2]; ++z) {
@@ -699,59 +1003,186 @@ export class NiftiStore implements VirtualStore {
     return out;
   }
 
-  /** A chunk of a coarser level, from the finer level's chunks. */
-  private async reduce(index: number, e: number, b: number[]): Promise<Uint8Array> {
-    const level = this.levels[index];
-    const finer = this.levels[index - 1];
-    const [ci, cj, ck] = level.chunk;
-    const [fi, fj, fk] = finer.chunk;
-    const step = level.step;
-    const lo = [0, 1, 2].map((a) => b[a] * level.chunk[a]);
-    const hi = [0, 1, 2].map((a) => Math.min(level.size[a], lo[a] + level.chunk[a]));
-    const srcLo = lo.map((v, a) => v * step[a]);
-    const srcHi = hi.map((v, a) => Math.min(finer.size[a], v * step[a]));
-    const slots = this.volumesOf(e).length;
-    const n = slots * ci * cj * ck;
-    const mean = !this.label && this.outType !== "uint64";
-    const sum = mean ? new Float64Array(n) : undefined;
-    const count = mean ? new Uint16Array(n) : undefined;
-    const out = new Uint8Array(n * BYTES[this.outType]);
-    const to = typed(this.outType, out);
-    const first = srcLo.map((v, a) => Math.floor(v / finer.chunk[a]));
-    const last = srcHi.map((v, a) => Math.floor((v - 1) / finer.chunk[a]));
-    const parts: number[][] = [];
-    for (let k = first[2]; k <= last[2]; ++k) for (let j = first[1]; j <= last[1]; ++j) for (let i = first[0]; i <= last[0]; ++i) parts.push([i, j, k]);
-    // One finer chunk at a time, so making the coarsest level holds no more than a chunk per level.
-    for (const p of parts) {
-      const from = typed(this.outType, await this.chunk(index - 1, e, p));
-      const slo = p.map((v, a) => v * finer.chunk[a]);
-      const xlo = Math.max(slo[0], srcLo[0]);
-      const xhi = Math.min(slo[0] + fi, srcHi[0]);
-      for (let slot = 0; slot < slots; ++slot) {
-        for (let z = Math.max(slo[2], srcLo[2]); z < Math.min(slo[2] + fk, srcHi[2]); ++z) {
-          if (!mean && z % step[2] !== 0) continue;
-          const dz = Math.floor(z / step[2]) - lo[2];
-          for (let y = Math.max(slo[1], srcLo[1]); y < Math.min(slo[1] + fj, srcHi[1]); ++y) {
-            if (!mean && y % step[1] !== 0) continue;
-            const dy = Math.floor(y / step[1]) - lo[1];
-            const srcRow = ((slot * fk + (z - slo[2])) * fj + (y - slo[1])) * fi - slo[0];
-            const dstRow = ((slot * ck + dz) * cj + dy) * ci - lo[0];
-            for (let x = xlo; x < xhi; ++x) {
-              const d = dstRow + Math.floor(x / step[0]);
-              if (mean) {
-                sum![d] += Number(from[srcRow + x]);
-                count![d]++;
-              } else if (x % step[0] === 0) to[d] = from[srcRow + x];
-            }
+  // ------------------------------------------------------------ the overview cache and build
+
+  /** The bytes of a level's chunks (as kept: whole chunks), every group. */
+  private levelBytes(index: number): number {
+    const l = this.levels[index];
+    const chunks = [0, 1, 2].reduce((n, a) => n * Math.ceil(l.size[a] / l.chunk[a]), 1);
+    return chunks * l.chunk[0] * l.chunk[1] * l.chunk[2] * this.slots * this.groups * BYTES[this.outType];
+  }
+
+  private async plan(free?: number): Promise<{ budget: number; kept: ReturnType<typeof levelsKept> }> {
+    const fileBytes = this.options.cacheKey?.size ?? 0;
+    const budget = cacheBudget(fileBytes, await readSettings().catch(() => undefined), free);
+    const kept = levelsKept(
+      this.levels.map((_, i) => this.levelBytes(i)),
+      this.levels.map((l) => l.read === undefined),
+      budget,
+    );
+    return { budget, kept };
+  }
+
+  /** The overview cache, opened once (none for tensors, which are averaged chunk by chunk, or without a file to key it by). */
+  private overviewCache(): Promise<OverviewCache | undefined> {
+    const key = this.options.cacheKey;
+    // Small images make their coarser levels in a moment: nothing kept.
+    if (key === undefined || key.size < MIN_CACHED) return Promise.resolve(undefined);
+    return (this.cache ??= OverviewCache.open(`${key.name}|${key.size}|${key.lastModified}|${this.coarsening.type}|v1`, key, async (free) => {
+      const { budget, kept } = await this.plan(free);
+      return { budget, floor: kept.floor };
+    }).catch(() => undefined));
+  }
+
+  /** The levels made from slabs at the top of each run of computed levels: [base read from the file, top]. */
+  private segments(): [number, number][] {
+    const out: [number, number][] = [];
+    for (let i = 0; i < this.levels.length; ++i) {
+      if (this.levels[i].read === undefined) continue;
+      let top = i;
+      while (top + 1 < this.levels.length && this.levels[top + 1].read === undefined) top++;
+      out.push([i, top]);
+    }
+    return out;
+  }
+
+  private async overviewMessage(what: unknown): Promise<OverviewStatus> {
+    if (what === "build") this.startBuild();
+    else if (what === "cancel") this.cancelBuild();
+    else if (what === "clear") await this.clearCache();
+    else if (what === "settings") {
+      const cache = await this.overviewCache();
+      if (cache !== undefined) {
+        const { budget, kept } = await this.plan();
+        await cache.rebudget(budget, kept.floor);
+      }
+    } else if (what !== "status") throw new Error(`overview: ${String(what)} is not status, build, cancel, clear or settings`);
+    return this.status();
+  }
+
+  async status(): Promise<OverviewStatus> {
+    const cache = await this.overviewCache();
+    const { budget, kept } = await this.plan();
+    const policy = cache?.policy;
+    return {
+      state: this.build.status,
+      done: this.build.done,
+      total: this.build.total,
+      ...(this.build.message ? { message: this.build.message } : {}),
+      fileBytes: this.options.cacheKey?.size ?? 0,
+      budget: policy?.budget ?? budget,
+      kept: { whole: kept.whole, ...(kept.partial !== undefined ? { partial: kept.partial } : {}), bytes: kept.bytes },
+      cached: { bytes: policy?.total ?? 0, chunks: policy?.entries.size ?? 0, byLevel: policy?.byLevel() ?? {} },
+      built: cache?.built ?? false,
+      writer: cache?.writer ?? false,
+      levels: this.levels.map((l, i) => ({ size: l.size, bytes: this.levelBytes(i), from: l.read === undefined ? "computed" : "file" })),
+      ...(cache === undefined ? { noCache: true } : {}),
+    };
+  }
+
+  /**
+   * Makes the overview in the background: every computed level, slab by
+   * slab from the file, read once; the levels the budget keeps are kept as
+   * they pass.  Chunks the viewer asks for meanwhile are made as before.
+   */
+  startBuild(): void {
+    if (this.build.status === "building") return;
+    if (this.tensors !== undefined) {
+      this.build = { status: "failed", done: 0, total: 0, cancel: false, message: "tensors are averaged as they are viewed" };
+      return;
+    }
+    const groups = this.groups;
+    const segments = this.segments();
+    const total = segments.length * groups * this.shape.reduce((a, b) => a * b, 1);
+    const state: BuildState = { status: "building", done: 0, total, cancel: false };
+    this.build = state;
+    state.running = (async () => {
+      const cache = await this.overviewCache();
+      if (cache === undefined || !cache.writer) throw new Error(cache === undefined ? "this browser keeps no overviews (no private file system)" : "another tab is keeping this image's overview");
+      const ctx: SlabContext = { progress: (n) => (state.done += n), cancelled: () => state.cancel };
+      for (const [base, top] of segments) {
+        for (let e = 0; e < groups; ++e) {
+          // Nothing to make from this base, or nothing kept above it: counted done.
+          if (top === base || top < cache.policy.floor) {
+            state.done += this.shape.reduce((a, b) => a * b, 1);
+            continue;
           }
+          for (const box of levelSlabs(this.grid(top), this.width(top))) await this.slab(top, e, box, ctx);
+        }
+      }
+      await cache.flush();
+      cache.markBuilt(true);
+    })().then(
+      () => {
+        state.status = "done";
+        state.done = state.total;
+      },
+      (err) => {
+        state.status = state.cancel ? "cancelled" : "failed";
+        if (!(err instanceof Cancelled)) state.message = (err as Error).message;
+      },
+    );
+  }
+
+  cancelBuild(): void {
+    if (this.build.status === "building") this.build.cancel = true;
+  }
+
+  async clearCache(): Promise<void> {
+    this.cancelBuild();
+    await this.build.running?.catch(() => {});
+    const cache = await this.overviewCache();
+    await cache?.clear();
+    this.build = { status: "idle", done: 0, total: 0, cancel: false };
+  }
+
+  /**
+   * Every chunk of every level, each once (Export → OME-Zarr): the file read
+   * once, slab by slab, each computed level made from the slabs below it as
+   * they pass and handed to `write` with its key.  Chunks all zero (Zarr's
+   * fill value) are left out.  Levels the overview cache holds are
+   * read from it.
+   */
+  async eachChunk(write: (key: string, bytes: Uint8Array) => Promise<void>, control: { progress(done: number, total: number): void; readonly cancelled: boolean }): Promise<void> {
+    const bytes = BYTES[this.outType];
+    const keyOf = (index: number, e: number, b: number[]) => `${index}/c/${[...(this.extra ? [e] : []), ...b].join("/")}`;
+    if (this.tensors !== undefined) {
+      // Tensors: chunk by chunk, each level from the one below as it is asked for.
+      const keys: string[] = [];
+      for (let i = 0; i < this.levels.length; ++i) for (let e = 0; e < this.groups; ++e) for (const b of chunksOf(this.grid(i), { lo: [0, 0, 0], hi: this.levels[i].size })) keys.push(keyOf(i, e, b));
+      let done = 0;
+      for (const key of keys) {
+        if (control.cancelled) throw new Cancelled();
+        const chunk = await this.get(key);
+        if (chunk !== undefined && chunk.some((v) => v !== 0)) await write(key, chunk);
+        control.progress(++done, keys.length);
+      }
+      return;
+    }
+    const segments = this.segments();
+    const total = segments.length * this.groups * this.shape.reduce((a, b) => a * b, 1);
+    let done = 0;
+    const emit = async (index: number, e: number, slab: Slab) => {
+      const grid = this.grid(index);
+      for (const b of chunksOf(grid, slab.box)) {
+        const chunk = chunkFromSlab(grid, slab, b, bytes);
+        if (chunk.some((v) => v !== 0)) await write(keyOf(index, e, b), chunk);
+      }
+    };
+    const ctx: SlabContext = {
+      progress: (n) => control.progress((done += n), total),
+      cancelled: () => control.cancelled,
+      emit,
+      fresh: true,
+    };
+    for (const [, top] of segments) {
+      for (let e = 0; e < this.groups; ++e) {
+        for (const box of levelSlabs(this.grid(top), this.width(top))) {
+          const slab = await this.slab(top, e, box, ctx);
+          await emit(top, e, slab);
         }
       }
     }
-    if (mean) {
-      const round = !this.outType.startsWith("float");
-      for (let d = 0; d < n; ++d) if (count![d] > 0) to[d] = round ? Math.round(sum![d] / count![d]) : sum![d] / count![d];
-    }
-    return out;
   }
 
   /**
@@ -802,6 +1233,11 @@ export class NiftiStore implements VirtualStore {
   }
 }
 
+/** A file on this computer, by its name, size and date (for the caches); none for data made in the page without a date. */
+export function cacheKeyOf(file: Blob): CacheKey | undefined {
+  return file instanceof File ? { name: file.name, size: file.size, lastModified: file.lastModified } : undefined;
+}
+
 /** A NIfTI file as a store; reads only its header until a chunk is asked for. */
 export async function openNifti(file: Blob, name: string, options: { label?: boolean } = {}): Promise<NiftiStore> {
   const start = new Uint8Array(await file.slice(0, 540).arrayBuffer());
@@ -814,7 +1250,7 @@ export async function openNifti(file: Blob, name: string, options: { label?: boo
   const samples = COLOUR[header.datatype];
   if (samples !== undefined) {
     const voxels = header.dim.slice(1, 1 + header.dim[0]).reduce((a, d) => a * Math.max(1, d), 1);
-    return new NiftiStore(packedHeader(header), () => data().then((s) => packedColours(s, header.voxOffset, voxels, samples)), name, { rgb: true });
+    return new NiftiStore(packedHeader(header), () => data().then((s) => packedColours(s, header.voxOffset, voxels, samples)), name, { rgb: true, cacheKey: cacheKeyOf(file) });
   }
-  return new NiftiStore(header, data, name, options);
+  return new NiftiStore(header, data, name, { ...options, cacheKey: cacheKeyOf(file) });
 }

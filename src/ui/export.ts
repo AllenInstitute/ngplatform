@@ -176,55 +176,36 @@ export async function exportDataset(wb: Workbench, dataset: DatasetRecord): Prom
 }
 
 /**
- * The image's whole pyramid into a folder `name` in `parent`: the metadata, then every chunk
- * of every level, a few at a time, each written as the worker hands it over
- * (gzipped), so nothing is held whole.  False when cancelled.
+ * The image's whole pyramid into a folder `name` in `parent`, written by
+ * the worker: the metadata, then every level's chunks (gzipped) as one pass
+ * over the file makes them, so nothing is held whole and no level is made
+ * twice.  False when cancelled.
  */
 async function writePyramid(worker: Worker, file: File, parent: FileSystemDirectoryHandle, name: string, control: { progress(fraction: number, what?: string): void; readonly cancelled: boolean }): Promise<boolean> {
-  const root = await parent.getDirectoryHandle(name, { create: true });
-  const dirs = new Map<string, Promise<FileSystemDirectoryHandle>>([["", Promise.resolve(root)]]);
-  const dir = (path: string): Promise<FileSystemDirectoryHandle> => {
-    let d = dirs.get(path);
-    if (d === undefined) {
-      const at = path.lastIndexOf("/");
-      d = dir(path.slice(0, Math.max(0, at))).then((parent) => parent.getDirectoryHandle(path.slice(at + 1), { create: true }));
-      dirs.set(path, d);
-    }
-    return d;
-  };
-  const write = async (path: string, bytes: Uint8Array) => {
-    const at = path.lastIndexOf("/");
-    const handle = await (await dir(path.slice(0, Math.max(0, at)))).getFileHandle(path.slice(at + 1), { create: true });
-    const writable = await handle.createWritable();
-    await writable.write(bytes as unknown as BufferSource);
-    await writable.close();
-  };
-  const meta = await request(worker, { type: "pyramid", file });
-  for (const [path, bytes] of meta.files as [string, Uint8Array][]) await write(path, bytes);
-  const arrays = meta.arrays as { path: string; grid: number[]; separator: string }[];
-  const total = arrays.reduce((sum, a) => sum + a.grid.reduce((n, g) => n * g, 1), 0);
-  // Every chunk key, level by level, in order.
-  function* keys() {
-    for (const a of arrays) {
-      const index = a.grid.map(() => 0);
-      for (let n = a.grid.reduce((m, g) => m * g, 1); n > 0; --n) {
-        yield `${a.path}/c/${index.join(a.separator)}`;
-        for (let d = index.length - 1; d >= 0 && ++index[d] === a.grid[d]; --d) index[d] = 0;
-      }
-    }
+  const id = Math.random();
+  const watch = setInterval(() => {
+    if (control.cancelled) worker.postMessage({ type: "cancel", id });
+  }, 300);
+  try {
+    const done = await new Promise<Reply>((resolve, reject) => {
+      const listener = (event: MessageEvent<Reply>) => {
+        const reply = event.data;
+        if (reply.id !== id) return;
+        if (reply.type === "progress") {
+          control.progress(reply.done / Math.max(1, reply.total), reply.what);
+          return;
+        }
+        worker.removeEventListener("message", listener);
+        if (reply.type === "error" && !control.cancelled) reject(new Error(reply.message));
+        else resolve(reply);
+      };
+      worker.addEventListener("message", listener);
+      worker.postMessage({ type: "write-pyramid", id, file, dir: parent, name });
+    });
+    return !control.cancelled && done.type === "done";
+  } finally {
+    clearInterval(watch);
   }
-  const queue = keys();
-  let done = 0;
-  const lane = async () => {
-    for (let next = queue.next(); !next.done; next = queue.next()) {
-      if (control.cancelled) return;
-      const reply = await request(worker, { type: "chunk", file, key: next.value });
-      if (reply.bytes !== undefined) await write(next.value, reply.bytes);
-      control.progress(++done / total, "Writing chunks");
-    }
-  };
-  await Promise.all(Array.from({ length: 6 }, lane));
-  return !control.cancelled;
 }
 
 type Target = FileSystemFileHandle | FileSystemDirectoryHandle | undefined;

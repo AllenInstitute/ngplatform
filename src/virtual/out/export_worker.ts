@@ -5,6 +5,9 @@
  *
  * In:  { type: "levels", id, file }
  *      { type: "export", id, file, format, level, region?: { centre (RAS mm), size (voxels) } }
+ *      { type: "write-pyramid", id, file, dir (a folder handle), name }: every level
+ *        as an OME-Zarr folder `name` in `dir`, written here chunk by chunk in one
+ *        pass over the file (the store's `eachChunk`); { type: "cancel", id } stops it
  * Out: { type: "levels", id, levels: { size, type, bytes }[], label }
  *      { type: "progress", id, what, done, total }
  *      { type: "done", id, files: [path, bytes][] }
@@ -104,8 +107,7 @@ const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value
 
 /**
  * Every level of the image as an OME-Zarr folder: the store's metadata as
- * it serves it (each array gzip-compressed), and each array's chunk grid,
- * so the page can ask for the chunks one by one and write each as it comes.
+ * it serves it (each array gzip-compressed), and each array's chunk grid.
  */
 async function pyramid(store: Awaited<ReturnType<typeof openImage>>) {
   const group = JSON.parse(new TextDecoder().decode((await store.get("zarr.json"))!));
@@ -126,9 +128,95 @@ async function pyramid(store: Awaited<ReturnType<typeof openImage>>) {
   return { files, arrays };
 }
 
+/** Writes of a pyramid asked to stop, by request id. */
+const cancelled = new Set<number>();
+
+/** A folder's files written by path ("0/c/1/2/3"), its sub-folders made once. */
+function folderWriter(root: FileSystemDirectoryHandle) {
+  const dirs = new Map<string, Promise<FileSystemDirectoryHandle>>([["", Promise.resolve(root)]]);
+  const dir = (path: string): Promise<FileSystemDirectoryHandle> => {
+    let d = dirs.get(path);
+    if (d === undefined) {
+      const at = path.lastIndexOf("/");
+      d = dir(path.slice(0, Math.max(0, at))).then((parent) => parent.getDirectoryHandle(path.slice(at + 1), { create: true }));
+      dirs.set(path, d);
+    }
+    return d;
+  };
+  return async (path: string, bytes: Uint8Array) => {
+    const at = path.lastIndexOf("/");
+    const handle = await (await dir(path.slice(0, Math.max(0, at)))).getFileHandle(path.slice(at + 1), { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(bytes as unknown as BufferSource);
+    await writable.close();
+  };
+}
+
+/**
+ * Every level of the image into a folder: its metadata, then each chunk
+ * gzipped as the store makes it.  NIfTI-like stores make every level in one
+ * pass over the file (`eachChunk`); others are asked chunk by chunk.  A few
+ * writes are in flight at once.
+ */
+async function writePyramid(store: Awaited<ReturnType<typeof openImage>>, parent: FileSystemDirectoryHandle, name: string, id: number, post: (m: object) => void): Promise<void> {
+  const write = folderWriter(await parent.getDirectoryHandle(name, { create: true }));
+  const { files, arrays } = await pyramid(store);
+  for (const [path, bytes] of files) await write(path, bytes);
+  const pending = new Set<Promise<void>>();
+  let failure: Error | undefined;
+  const writeChunk = async (key: string, bytes: Uint8Array) => {
+    if (failure !== undefined) throw failure;
+    const job = gzip(bytes).then((gz) => write(key, gz));
+    pending.add(job);
+    job.then(
+      () => pending.delete(job),
+      (e) => {
+        pending.delete(job);
+        failure = e as Error;
+      },
+    );
+    if (pending.size >= 8) await Promise.race(pending).catch(() => {});
+  };
+  let last = 0;
+  const control = {
+    progress(done: number, total: number) {
+      const now = Date.now();
+      if (now - last < 250 && done < total) return;
+      last = now;
+      post({ type: "progress", what: "Writing every level", done, total });
+    },
+    get cancelled() {
+      return cancelled.has(id);
+    },
+  };
+  const each = (store as { eachChunk?: (w: typeof writeChunk, c: typeof control) => Promise<void> }).eachChunk;
+  if (each !== undefined) await each.call(store, writeChunk, control);
+  else {
+    const total = arrays.reduce((sum, a) => sum + a.grid.reduce((n, g) => n * g, 1), 0);
+    let done = 0;
+    for (const a of arrays) {
+      const index = a.grid.map(() => 0);
+      for (let n = a.grid.reduce((m, g) => m * g, 1); n > 0; --n) {
+        if (control.cancelled) throw new Error("Cancelled");
+        const key = `${a.path}/c/${index.join(a.separator)}`;
+        const bytes = await store.get(key);
+        if (bytes !== undefined) await writeChunk(key, bytes);
+        control.progress(++done, total);
+        for (let d = index.length - 1; d >= 0 && ++index[d] === a.grid[d]; --d) index[d] = 0;
+      }
+    }
+  }
+  await Promise.all(pending);
+  if (failure !== undefined) throw failure;
+}
+
 self.onmessage = async (event: MessageEvent) => {
   const msg = event.data;
   const post = (m: object, transfer: Transferable[] = []) => postMessage({ id: msg.id, ...m }, { transfer });
+  if (msg.type === "cancel") {
+    cancelled.add(msg.id);
+    return;
+  }
   try {
     if (msg.type === "export" && exportKind(msg.file.name) !== "image") {
       post({ type: "progress", what: "Reading", done: 0, total: 1 });
@@ -137,16 +225,10 @@ self.onmessage = async (event: MessageEvent) => {
       return;
     }
     const store = await storeOf(msg.file);
-    if (msg.type === "pyramid") {
-      const { files, arrays } = await pyramid(store);
-      post({ type: "pyramid", files, arrays });
-      return;
-    }
-    if (msg.type === "chunk") {
-      // One chunk, gzipped; none where the store has none (Zarr's fill value).
-      const bytes = await store.get(msg.key);
-      const out = bytes === undefined ? undefined : await gzip(bytes);
-      post({ type: "chunk", bytes: out }, out === undefined ? [] : [out.buffer as ArrayBuffer]);
+    if (msg.type === "write-pyramid") {
+      await writePyramid(store, msg.dir, msg.name, msg.id, post);
+      post({ type: "done", files: [], cancelled: cancelled.has(msg.id) });
+      cancelled.delete(msg.id);
       return;
     }
     const { levels, label } = await storeLevels(store);

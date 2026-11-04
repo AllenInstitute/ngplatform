@@ -171,10 +171,15 @@ export async function cachedFile(dir: CacheDirectory, key: string, decompress: (
 
 /** A cache of values with sizes, dropping the least recently used beyond a budget of bytes. */
 export class Lru<V> {
-  private readonly entries = new Map<string, { value: Promise<V>; bytes: number }>();
+  private readonly entries = new Map<string, { value: Promise<V>; bytes: number; settled?: boolean }>();
   private total = 0;
 
-  constructor(private readonly budget: number) {}
+  constructor(readonly budget: number) {}
+
+  /** Bytes held. */
+  get bytes(): number {
+    return this.total;
+  }
 
   /** The value for `key`, made (once, shared by every caller) when absent. */
   get(key: string, make: () => Promise<V>, sizeOf: (v: V) => number): Promise<V> {
@@ -184,12 +189,13 @@ export class Lru<V> {
       this.entries.set(key, hit);
       return hit.value;
     }
-    const entry = { value: make(), bytes: 0 };
+    const entry: { value: Promise<V>; bytes: number; settled?: boolean } = { value: make(), bytes: 0 };
     this.entries.set(key, entry);
     entry.value.then(
       (v) => {
         if (this.entries.get(key) !== entry) return;
         entry.bytes = sizeOf(v);
+        entry.settled = true;
         this.total += entry.bytes;
         this.trim();
       },
@@ -198,6 +204,24 @@ export class Lru<V> {
       },
     );
     return entry.value;
+  }
+
+  /** The value kept for `key`, if it is made (not still being made), without counting it as a use. */
+  peek(key: string): Promise<V> | undefined {
+    const entry = this.entries.get(key);
+    return entry?.settled ? entry.value : undefined;
+  }
+
+  /** Keeps a value made elsewhere (replacing any kept for `key`). */
+  put(key: string, value: V, bytes: number): void {
+    const old = this.entries.get(key);
+    if (old !== undefined) {
+      this.entries.delete(key);
+      this.total -= old.bytes;
+    }
+    this.entries.set(key, { value: Promise.resolve(value), bytes, settled: true });
+    this.total += bytes;
+    this.trim();
   }
 
   private trim(): void {

@@ -223,6 +223,16 @@ export class LocalData {
     return [...this.entries.values()].filter((e) => !e.id.startsWith(DERIVED_PREFIX)).map(({ id, name, kind, needsPermission }) => ({ id, name, kind, needsPermission }));
   }
 
+  /** Files read as virtual stores whose metadata has been read, by place. */
+  private readonly opened = new Set<string>();
+  private readonly openListeners = new Set<(opened: { url: string; file: File; format: VirtualFormat }) => void>();
+
+  /** Calls `listener` when the viewer first reads a file's virtual store (its metadata), with the store's URL. */
+  onVirtualOpen(listener: (opened: { url: string; file: File; format: VirtualFormat }) => void): () => void {
+    this.openListeners.add(listener);
+    return () => this.openListeners.delete(listener);
+  }
+
   onChange(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -558,6 +568,12 @@ export class LocalData {
       if (file === undefined) {
         port.postMessage({ status: 404 });
         return;
+      }
+      // A store's first read of its metadata: it has just been opened.
+      const place = `${request.id}/${virtual.file}`;
+      if (virtual.key === "zarr.json" && !this.opened.has(place)) {
+        this.opened.add(place);
+        for (const listener of this.openListeners) listener({ url: this.urlOf(request.id, virtual.file), file, format: virtual.format });
       }
       let worker = this.virtualWorkers.get(virtual.format);
       if (worker === undefined) this.virtualWorkers.set(virtual.format, (worker = virtual.format.worker()));

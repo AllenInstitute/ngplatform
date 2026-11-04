@@ -9,15 +9,23 @@
  * tiles; no compression, LZW, deflate or PackBits, with the horizontal or
  * floating-point predictor.  Pixel sizes come
  * from OME-XML (PhysicalSizeX/Y/Z) or ImageJ's description (spacing, unit)
- * and the resolution tags.  Reduced-resolution pages (thumbnails, pyramid
- * levels) are skipped.
+ * and the resolution tags.
+ *
+ * A pyramid the file holds itself is used as the image's coarser levels,
+ * read like the full-resolution pages and not computed: each page's
+ * SubIFDs (pyramidal OME-TIFF as bioformats2raw → raw2ometiff, tifffile
+ * and QuPath write it), or the reduced-resolution pages following each
+ * page in the chain (NewSubfileType 1), as tifffile reads them for a
+ * series' levels.  They halve x and y (not z); coarser levels past the
+ * file's own are computed from the coarsest of them.  A lone thumbnail, or
+ * reduced pages that do not line up with every plane, are skipped.
  */
-import { NiftiStore, type NiftiHeader } from "./nifti.js";
+import { cacheKeyOf, type FileLevel, NiftiStore, type NiftiHeader } from "./nifti.js";
 import { type ByteSource, Lru } from "./store.js";
 
 export { TIFF_FILE } from "./store.js";
 
-interface Page {
+export interface Page {
   width: number;
   height: number;
   bits: number;
@@ -41,15 +49,153 @@ interface Stack {
   description: string;
   /** Pixels per unit (x, y) and the unit (2 inch, 3 cm), from the first page. */
   resolution?: [number, number, number];
+  /**
+   * The file's own coarser levels, finest first: each level's pages, one
+   * for each full-resolution page (its SubIFDs, or the reduced-resolution
+   * pages that follow it), all the same size.
+   */
+  levels: Page[][];
 }
 
-const TYPE_SIZE: Record<number, number> = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 16: 8, 17: 8, 18: 8 };
+const TYPE_SIZE: Record<number, number> = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 13: 4, 16: 8, 17: 8, 18: 8 };
 
 async function bytesAt(file: Blob, start: number, end: number): Promise<Uint8Array> {
   return new Uint8Array(await file.slice(start, end).arrayBuffer());
 }
 
-/** Every full-resolution page's layout, following the IFD chain. */
+/** Compressions decoded here. */
+const READ_COMPRESSION = new Set([1, 5, 8, 32946, 32773]);
+
+interface Ifd {
+  /** The values of a tag (numbers; rationals as their quotient). */
+  values(tag: number): Promise<number[]>;
+  one(tag: number, fallback: number): Promise<number>;
+  has(tag: number): boolean;
+  text(tag: number): Promise<string | undefined>;
+  /** The next IFD's offset (0 for none). */
+  next: number;
+}
+
+/** The IFD at `at`. */
+async function readIfd(file: Blob, at: number, little: boolean, big: boolean): Promise<Ifd> {
+  const countBytes = await bytesAt(file, at, at + (big ? 8 : 2));
+  const cv = new DataView(countBytes.buffer);
+  const n = big ? Number(cv.getBigUint64(0, little)) : cv.getUint16(0, little);
+  const entrySize = big ? 20 : 12;
+  const start = at + (big ? 8 : 2);
+  const ifd = await bytesAt(file, start, start + n * entrySize + (big ? 8 : 4));
+  const v = new DataView(ifd.buffer);
+  const tags = new Map<number, { type: number; count: number; at: number; inline: boolean }>();
+  for (let e = 0; e < n; ++e) {
+    const o = e * entrySize;
+    const tag = v.getUint16(o, little);
+    const type = v.getUint16(o + 2, little);
+    const count = big ? Number(v.getBigUint64(o + 4, little)) : v.getUint32(o + 4, little);
+    const size = (TYPE_SIZE[type] ?? 1) * count;
+    const valueAt = o + (big ? 12 : 8);
+    const inline = size <= (big ? 8 : 4);
+    tags.set(tag, { type, count, inline, at: inline ? valueAt : big ? Number(v.getBigUint64(valueAt, little)) : v.getUint32(valueAt, little) });
+  }
+  const whole = ifd.byteLength >= n * entrySize + (big ? 8 : 4);
+  const next = !whole ? 0 : big ? Number(v.getBigUint64(n * entrySize, little)) : v.getUint32(n * entrySize, little);
+  const raw = async (t: { type: number; count: number; at: number; inline: boolean }, size: number) =>
+    t.inline ? ifd.subarray(t.at, t.at + size * t.count) : await bytesAt(file, t.at, t.at + size * t.count);
+  const values = async (tag: number): Promise<number[]> => {
+    const t = tags.get(tag);
+    if (t === undefined) return [];
+    const size = TYPE_SIZE[t.type] ?? 1;
+    const bytes = await raw(t, size);
+    const d = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const out: number[] = [];
+    for (let i = 0; i < t.count; ++i) {
+      const o = i * size;
+      switch (t.type) {
+        case 1: case 7: out.push(d.getUint8(o)); break;
+        case 6: out.push(d.getInt8(o)); break;
+        case 3: out.push(d.getUint16(o, little)); break;
+        case 8: out.push(d.getInt16(o, little)); break;
+        case 4: case 13: out.push(d.getUint32(o, little)); break;
+        case 9: out.push(d.getInt32(o, little)); break;
+        case 5: out.push(d.getUint32(o, little) / (d.getUint32(o + 4, little) || 1)); break;
+        case 10: out.push(d.getInt32(o, little) / (d.getInt32(o + 4, little) || 1)); break;
+        case 11: out.push(d.getFloat32(o, little)); break;
+        case 12: out.push(d.getFloat64(o, little)); break;
+        case 16: case 17: case 18: out.push(Number(d.getBigUint64(o, little))); break;
+        default: out.push(0);
+      }
+    }
+    return out;
+  };
+  return {
+    values,
+    one: async (tag, fallback) => (await values(tag))[0] ?? fallback,
+    has: (tag) => tags.has(tag),
+    text: async (tag) => {
+      const t = tags.get(tag);
+      return t === undefined ? undefined : new TextDecoder().decode(await raw(t, 1)).replace(/\0+$/, "");
+    },
+    next,
+  };
+}
+
+/** A page's layout from its IFD; undefined for samples this reader does not take (unless `strict`, which throws). */
+async function pageOf(ifd: Ifd, strict: boolean): Promise<Page | undefined> {
+  const samples = await ifd.one(277, 1);
+  if (samples !== 1) {
+    const bits = await ifd.one(258, 8);
+    const fail = (why: string) => {
+      if (strict) throw new Error(why);
+      return undefined;
+    };
+    if (!((samples === 3 || samples === 4) && (bits === 8 || bits === 16))) return fail(`a TIFF with ${samples} samples of ${bits} bits a pixel (one sample, or 8- or 16-bit RGB or RGBA, only)`);
+    if ((await ifd.one(284, 1)) !== 1) return fail("an RGB TIFF with its colours in separate planes (interleaved only)");
+  }
+  const width = await ifd.one(256, 0);
+  const height = await ifd.one(257, 0);
+  const tiled = ifd.has(322);
+  return {
+    width,
+    height,
+    bits: await ifd.one(258, 1),
+    samples,
+    format: await ifd.one(339, 1),
+    compression: await ifd.one(259, 1),
+    predictor: await ifd.one(317, 1),
+    offsets: await ifd.values(tiled ? 324 : 273),
+    counts: await ifd.values(tiled ? 325 : 279),
+    blockWidth: tiled ? await ifd.one(322, width) : width,
+    blockHeight: tiled ? await ifd.one(323, height) : Math.min(height, await ifd.one(278, height)),
+    tiled,
+  };
+}
+
+const sameKind = (a: Page, b: Page) => a.bits === b.bits && a.format === b.format && a.samples === b.samples;
+
+/**
+ * The file's own levels from each full page's reduced versions (its
+ * SubIFDs, or the reduced pages after it): level k is every page's k-th,
+ * kept while every page has one, all the same size, smaller than the level
+ * before by the same factor along x and y (at least 1.5), of the same
+ * type, and in a compression read here.
+ */
+export function ownLevels(pages: Page[], reduced: Page[][]): Page[][] {
+  const levels: Page[][] = [];
+  if (pages.length === 0 || reduced.length !== pages.length) return levels;
+  for (let k = 0; ; ++k) {
+    const level = reduced.map((r) => r[k]);
+    if (level.some((p) => p === undefined)) break;
+    const first = level[0];
+    const before = k === 0 ? pages[0] : levels[k - 1][0];
+    if (!level.every((p) => p.width === first.width && p.height === first.height && sameKind(p, pages[0]) && READ_COMPRESSION.has(p.compression))) break;
+    const fx = before.width / first.width;
+    const fy = before.height / first.height;
+    if (!(fx >= 1.5 && fy >= 1.5 && Math.abs(fx - fy) / fx < 0.1)) break;
+    levels.push(level);
+  }
+  return levels;
+}
+
+/** Every full-resolution page's layout, following the IFD chain; and the file's own coarser levels. */
 export async function readTiffStack(file: Blob): Promise<Stack> {
   const head = await bytesAt(file, 0, 16);
   const order = String.fromCharCode(head[0], head[1]);
@@ -61,93 +207,41 @@ export async function readTiffStack(file: Blob): Promise<Stack> {
   const big = version === 43;
   let next = big ? Number(hv.getBigUint64(8, little)) : hv.getUint32(4, little);
   const pages: Page[] = [];
+  /** Each full page's reduced versions: its SubIFDs, else the reduced pages after it in the chain. */
+  const reduced: Page[][] = [];
   let description = "";
   let resolution: [number, number, number] | undefined;
   const seen = new Set<number>();
-  while (next !== 0 && !seen.has(next)) {
+  while (next !== 0 && !seen.has(next) && next < file.size) {
     seen.add(next);
-    const countBytes = await bytesAt(file, next, next + (big ? 8 : 2));
-    const cv = new DataView(countBytes.buffer);
-    const n = big ? Number(cv.getBigUint64(0, little)) : cv.getUint16(0, little);
-    const entrySize = big ? 20 : 12;
-    const start = next + (big ? 8 : 2);
-    const ifd = await bytesAt(file, start, start + n * entrySize + (big ? 8 : 4));
-    const v = new DataView(ifd.buffer);
-    const tags = new Map<number, { type: number; count: number; at: number; inline: boolean }>();
-    for (let e = 0; e < n; ++e) {
-      const at = e * entrySize;
-      const tag = v.getUint16(at, little);
-      const type = v.getUint16(at + 2, little);
-      const count = big ? Number(v.getBigUint64(at + 4, little)) : v.getUint32(at + 4, little);
-      const size = (TYPE_SIZE[type] ?? 1) * count;
-      const valueAt = at + (big ? 12 : 8);
-      const inline = size <= (big ? 8 : 4);
-      tags.set(tag, { type, count, inline, at: inline ? valueAt : big ? Number(v.getBigUint64(valueAt, little)) : v.getUint32(valueAt, little) });
-    }
-    next = big ? Number(v.getBigUint64(n * entrySize, little)) : v.getUint32(n * entrySize, little);
-    const values = async (tag: number): Promise<number[]> => {
-      const t = tags.get(tag);
-      if (t === undefined) return [];
-      const size = TYPE_SIZE[t.type] ?? 1;
-      const bytes = t.inline ? ifd.subarray(t.at, t.at + size * t.count) : await bytesAt(file, t.at, t.at + size * t.count);
-      const d = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-      const out: number[] = [];
-      for (let i = 0; i < t.count; ++i) {
-        const o = i * size;
-        switch (t.type) {
-          case 1: case 7: out.push(d.getUint8(o)); break;
-          case 6: out.push(d.getInt8(o)); break;
-          case 3: out.push(d.getUint16(o, little)); break;
-          case 8: out.push(d.getInt16(o, little)); break;
-          case 4: out.push(d.getUint32(o, little)); break;
-          case 9: out.push(d.getInt32(o, little)); break;
-          case 5: out.push(d.getUint32(o, little) / (d.getUint32(o + 4, little) || 1)); break;
-          case 10: out.push(d.getInt32(o, little) / (d.getInt32(o + 4, little) || 1)); break;
-          case 11: out.push(d.getFloat32(o, little)); break;
-          case 12: out.push(d.getFloat64(o, little)); break;
-          case 16: case 17: case 18: out.push(Number(d.getBigUint64(o, little))); break;
-          default: out.push(0);
-        }
+    const ifd = await readIfd(file, next, little, big);
+    next = ifd.next;
+    // A reduced-resolution page (thumbnail, pyramid level): a level of the full page before it, perhaps.
+    if ((await ifd.one(254, 0)) & 1) {
+      const last = reduced[pages.length - 1];
+      if (last !== undefined && !(last as { subifds?: boolean }).subifds) {
+        const page = await pageOf(ifd, false);
+        if (page !== undefined) last.push(page);
       }
-      return out;
-    };
-    const one = async (tag: number, fallback: number) => (await values(tag))[0] ?? fallback;
-    // A reduced-resolution page (thumbnail, pyramid level): not part of the stack.
-    if ((await one(254, 0)) & 1) continue;
-    const samples = await one(277, 1);
-    if (samples !== 1) {
-      const bits = await one(258, 8);
-      if (!((samples === 3 || samples === 4) && (bits === 8 || bits === 16))) throw new Error(`a TIFF with ${samples} samples of ${bits} bits a pixel (one sample, or 8- or 16-bit RGB or RGBA, only)`);
-      if ((await one(284, 1)) !== 1) throw new Error("an RGB TIFF with its colours in separate planes (interleaved only)");
+      continue;
     }
-    const width = await one(256, 0);
-    const height = await one(257, 0);
-    const tiled = tags.has(322);
-    const page: Page = {
-      width,
-      height,
-      bits: await one(258, 1),
-      samples,
-      format: await one(339, 1),
-      compression: await one(259, 1),
-      predictor: await one(317, 1),
-      offsets: await values(tiled ? 324 : 273),
-      counts: await values(tiled ? 325 : 279),
-      blockWidth: tiled ? await one(322, width) : width,
-      blockHeight: tiled ? await one(323, height) : Math.min(height, await one(278, height)),
-      tiled,
-    };
+    const page = (await pageOf(ifd, true))!;
     if (pages.length === 0) {
-      const t = tags.get(270);
-      if (t !== undefined) {
-        const bytes = t.inline ? ifd.subarray(t.at, t.at + t.count) : await bytesAt(file, t.at, t.at + t.count);
-        description = new TextDecoder().decode(bytes).replace(/\0+$/, "");
-      }
-      if (tags.has(282)) resolution = [await one(282, 1), await one(283, 1), await one(296, 2)];
+      description = (await ifd.text(270)) ?? "";
+      if (ifd.has(282)) resolution = [await ifd.one(282, 1), await ifd.one(283, 1), await ifd.one(296, 2)];
     } else if (page.width !== pages[0].width || page.height !== pages[0].height || page.bits !== pages[0].bits || page.format !== pages[0].format) {
       continue;
     }
     pages.push(page);
+    // SubIFDs (OME-TIFF's and tifffile's pyramids): the page's reduced versions, finest first.
+    const subs: Page[] = [];
+    for (const at of await ifd.values(330)) {
+      if (at <= 0 || at >= file.size) break;
+      const sub = await pageOf(await readIfd(file, at, little, big), false);
+      if (sub === undefined) break;
+      subs.push(sub);
+    }
+    reduced.push(Object.assign(subs, { subifds: subs.length > 0 }));
   }
   if (pages.length === 0) throw new Error("a TIFF without a full-resolution page");
   // ImageJ writes stacks over 4 GB with one page, the images one after another, uncompressed.
@@ -159,9 +253,10 @@ export async function readTiffStack(file: Blob): Promise<Stack> {
     const contiguous = only.offsets.every((o, i) => i === 0 || o === only.offsets[i - 1] + only.counts[i - 1]);
     if (contiguous && start + images * plane <= file.size) {
       for (let i = 1; i < images; ++i) pages.push({ ...only, offsets: only.offsets.map((o) => o + i * plane) });
+      reduced.length = 0;
     }
   }
-  return { littleEndian: little, pages, description, resolution };
+  return { littleEndian: little, pages, description, resolution, levels: ownLevels(pages, reduced) };
 }
 
 /** TIFF's LZW (MSB-first codes, 9 to 12 bits, early change). */
@@ -240,7 +335,7 @@ async function inflate(bytes: Uint8Array): Promise<Uint8Array> {
 }
 
 /** A strip or tile's pixels: decompressed, predictor undone, little-endian. */
-async function decodeBlock(stack: Stack, page: Page, raw: Uint8Array, width: number, rows: number): Promise<Uint8Array> {
+async function decodeBlock(stack: Pick<Stack, "littleEndian">, page: Page, raw: Uint8Array, width: number, rows: number): Promise<Uint8Array> {
   const size = page.bits / 8;
   const pixel = size * page.samples;
   const expected = width * rows * pixel;
@@ -303,7 +398,7 @@ function undoFloatPredictor(data: Uint8Array, samples: number, rows: number, siz
  * `pageOf(p)`): rows are decoded from their strips or tiles as they are
  * read, the decoded blocks kept for a while.
  */
-export function tiffSource(file: Blob, stack: Stack, pageOf: (plane: number) => number = (p) => p, planes = stack.pages.length): ByteSource {
+export function tiffSource(file: Blob, stack: Pick<Stack, "pages" | "littleEndian">, pageOf: (plane: number) => number = (p) => p, planes = stack.pages.length): ByteSource {
   const first = stack.pages[0];
   // RGB(A) is served packed, 4 bytes a pixel (alpha 255 for RGB); 16-bit samples by their top 8 bits.
   const size = first.samples > 1 ? 4 : first.bits / 8;
@@ -475,6 +570,19 @@ export async function openTiff(file: Blob, name: string): Promise<NiftiStore> {
     srow: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
     description: `TIFF stack, ${stack.pages.length} pages`,
   };
-  const source = tiffSource(file, stack, pageOf, layout.z * layout.c * layout.t);
-  return new NiftiStore(header, () => Promise.resolve(source), name, { rgb });
+  const planes = layout.z * layout.c * layout.t;
+  const source = tiffSource(file, stack, pageOf, planes);
+  // The file's own levels: the same planes, each from its page's reduced version.
+  const levels: FileLevel[] = stack.levels.map((pages) => {
+    const level = tiffSource(file, { littleEndian: stack.littleEndian, pages }, pageOf, planes);
+    const factor = [first.width / pages[0].width, first.height / pages[0].height, 1].map(nominal);
+    return { size: [pages[0].width, pages[0].height, layout.z], factor, read: () => Promise.resolve(level) };
+  });
+  return new NiftiStore(header, () => Promise.resolve(source), name, { rgb, levels, cacheKey: cacheKeyOf(file) });
+}
+
+/** A level's scale: the power of two it is within 5 % of (1023 → 512 pixels is 2), else the ratio itself. */
+function nominal(ratio: number): number {
+  const power = 2 ** Math.round(Math.log2(ratio));
+  return Math.abs(ratio - power) / power < 0.05 ? power : ratio;
 }
