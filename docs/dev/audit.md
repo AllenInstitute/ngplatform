@@ -251,11 +251,10 @@ careful; it has no panel of its own (its parts are in the Layer tab).
 
 **Bugs fixed.** None here.
 
-**Left.** A network error while finding cross-chunk links is cached as
-"no links" for the session, with no warning (`src/links.ts`; 1 h).
-Per-object values that cannot be read leave the attributes at 0, which
-looks like data; NaN and a warning would not (`src/chunk_pipeline.ts`;
-1 h).
+**Left.** Nothing from this audit. (Fixed in E1: a network error while
+finding cross-chunk links is warned and tried again on the next read, not
+cached as "no links"; per-object values that cannot be read are NaN with a
+warning, not 0.)
 
 ### Track filtering
 
@@ -403,9 +402,9 @@ over an image, added as a layer computed as it is viewed.
 - Empty state on its own; shorter labels; an error that says what to do.
 
 **Left.** The last note ("Added …") stays until the next add (0.5 h).
-Typing in a Python step loses focus when layers change (1 h). The steps
-are not kept with the workspace: a reload loses an unfinished pipeline
-(1.5 h).
+(Fixed in E1: typing in a Python step keeps its focus when layers change;
+the steps are kept with the workspace and its link, and read back from a
+filtered layer.)
 
 ## Screenshots
 

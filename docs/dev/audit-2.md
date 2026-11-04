@@ -260,11 +260,10 @@ client ID.
 tooltips and the Signing in guide); "Google sign-in setup" folds away once
 a client ID is set.
 
-**Left**
+**Left** (fixed in E1: the service worker asks the open tabs for the Google tokens again after the browser restarts it, or on a 401)
 
 | What | Hours |
 |---|---|
-| The service worker keeps Google tokens in a global; after the browser stops an idle worker, computed images read with Google answer 401 until the sign-in changes | 2 |
 | The service worker and the main path can choose different Google accounts when a rule names none (the worker's table drops such rules) | 1.5 |
 | "Reload to apply" note: apply the new sign-in without a reload | 0.5 |
 

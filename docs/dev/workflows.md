@@ -160,11 +160,10 @@ opens) · tick the layer.
 
 **Filters** under *Tools for this data* · **Add step** · choose
 *Threshold* · **Add filtered view** (Gaussian is the first step by
-default, threshold 100). Two gaps found, not fixed here: a local NIfTI
-cannot be filtered (its virtual store lists the axes x, y, z, and
-chunkmirage asks for z, y, x: "axes x,y,z must end in z, y, x"), so this
-task used an OME-Zarr; and a filtered view cannot be saved as a file
-(Export works on files from this computer only).
+default, threshold 100). Two gaps found here were fixed in E1: a local
+NIfTI could not be filtered (its virtual store listed the axes x, y, z,
+and chunkmirage asks for z, y, x), so this task used an OME-Zarr; and a
+filtered view could not be saved as a file (Export now saves it).
 
 ### 10. Compare two scenes (7, unchanged)
 
@@ -175,8 +174,6 @@ Drop the image · right-click the scene tab · *Duplicate* · Render tab ·
 
 | Idea | Task | Hours |
 |---|---|---:|
-| Filters on a local NIfTI: give chunkmirage z, y, x axes (or have it read x, y, z) | 9 | 2 |
-| Save a filtered (computed) view as NIfTI or OME-Zarr, as Export does for files | 9 | 3 |
 | Luxar turned on from its offer draws the scene's one Zarr Vectors layer at once | 8 | 1 |
 | Contrast 1–99 % for every channel of a dataset at once (the dataset's ⋯ menu) | 2 | 2 |
 | Two scenes side by side, positions linked, for comparing | 10 | 6 |
