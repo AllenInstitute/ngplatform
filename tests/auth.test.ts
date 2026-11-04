@@ -233,5 +233,10 @@ describe("the registry", () => {
     expect(normaliseServer(" https://a.org/x/ ")).toBe("https://a.org/x");
     expect(normaliseServer("a.org")).toBe("https://a.org");
     expect(normaliseServer("")).toBeUndefined();
+    // Not addresses, though a browser's URL parser may take them.
+    expect(normaliseServer("not a url")).toBeUndefined();
+    expect(normaliseServer("https://bad_host!/")).toBeUndefined();
+    expect(normaliseServer("http://localhost:8080/auth")).toBe("http://localhost:8080/auth");
+    expect(normaliseServer("http://[::1]:9000")).toBe("http://[::1]:9000");
   });
 });
