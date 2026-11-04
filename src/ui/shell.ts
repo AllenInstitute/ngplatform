@@ -931,6 +931,8 @@ export class Shell {
   }
 
   private onKey(e: KeyboardEvent): void {
+    // The modifier no binding uses here (Ctrl on macOS, the Windows key elsewhere): not "1" pressed alone.
+    if (isMac() ? e.ctrlKey : e.metaKey) return;
     const target = e.target as HTMLElement | null;
     const typing =
       target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable === true;
