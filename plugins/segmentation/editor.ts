@@ -235,6 +235,13 @@ export class Editor implements LabelVolumes {
     this.offs.push(
       ctx.viewer.onLayersChanged(() => {
         const here = this.inScene();
+        // A label layer renamed (or shown under another name in this scene): the session follows its store.
+        const layers = this.ctx.viewer.layers();
+        for (const s of here) {
+          if (layers.some((l) => l.name === s.layer && l.sources.some((source) => source.includes(s.fileName)))) continue;
+          const named = layers.find((l) => l.sources.some((source) => source.includes(s.fileName)))?.name;
+          if (named !== undefined) s.layer = named;
+        }
         if (this.pending !== undefined && !here.includes(this.pending.session)) this.cancelPreview();
         if (this.current !== undefined && !here.includes(this.current)) {
           this.current = here[0];
@@ -965,13 +972,13 @@ export class Editor implements LabelVolumes {
    */
   private begin(session: Session): Brushing {
     const erase = this.tool === "erase";
-    if (this.limit && session.reference === undefined) this.noRange();
     return {
       session,
       stroke: new Stroke(session.volume),
       q: this.shapeQ(),
       paint: erase ? { value: 0, only: this.eraseOnly ? this.value : undefined } : { value: this.value, only: this.overwrite === "empty" ? 0 : undefined },
-      range: this.limit && session.reference ? [this.low, this.high] : undefined,
+      // On with no image chosen: each dab finds no values, paints nothing, and says so.
+      range: this.limit ? [this.low, this.high] : undefined,
       disc: this.shape === "disc",
     };
   }
@@ -1170,7 +1177,7 @@ export class Editor implements LabelVolumes {
     hi[u] = Math.ceil(Math.max(...points.map((p) => p[0]))) + 1;
     lo[w] = Math.floor(Math.min(...points.map((p) => p[1])));
     hi[w] = Math.ceil(Math.max(...points.map((p) => p[1]))) + 1;
-    if (this.limit && session.reference) {
+    if (this.limit) {
       const block = await session.imageBox(lo, hi);
       if (block === undefined) return this.noRange();
       paint.where = inRange(block, this.low, this.high);
