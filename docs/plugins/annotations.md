@@ -2,7 +2,7 @@
 
 ![Labels pinned to structures, in 2-D and 3-D](../images/plugins/labels.png)
 
-**Kind:** tool · **On by default** · the **Annotations** tab and the **Annotation table** (bottom dock) ·
+**Kind:** tool · **Off by default** (offered when you open an annotation layer; or turn it on in the Plugins tab) · the **Annotations** tab and the **Annotation table** (bottom dock) ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/annotations)
 
 Everything you add to annotate a dataset, in one tab with four sections:

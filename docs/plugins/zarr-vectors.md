@@ -2,7 +2,7 @@
 
 ![Neurons from SWC files as a virtual Zarr Vectors store, in 2-D and 3-D](../images/plugins/zarr-vectors.png)
 
-**Kind:** data type · **On by default** ·
+**Kind:** data type · **On by default** (the only plugin that is) ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/zarr-vectors)
 
 [Zarr Vectors](https://github.com/AllenInstitute/zarr_vectors) is a chunked,

@@ -2,7 +2,7 @@
 
 ![A template drawn as a solid, cut open at the position](../images/plugins/volume-rendering.png)
 
-**Kind:** tool · **Off by default** (switch it on in the Plugins tab) · a
+**Kind:** tool · **Off by default** (offered when you open an image; or turn it on in the Plugins tab) · a
 **Volume** switch beside **Sections** in the 3-D view ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/volume-view)
 

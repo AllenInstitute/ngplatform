@@ -2,7 +2,7 @@
 
 ![Gaussian smoothing and Frangi vesselness of a T1, computed as viewed](../images/plugins/filters.png)
 
-**Kind:** tool · **Off by default** (switch it on in the Plugins tab) · the
+**Kind:** tool · **Off by default** (offered when you open an image; or turn it on in the Plugins tab) · the
 **Filters** tab ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/filters)
 

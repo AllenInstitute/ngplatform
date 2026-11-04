@@ -1,6 +1,6 @@
 # Collections
 
-**Kind:** tool · **Off by default** (switch it on in the Plugins tab) · the
+**Kind:** tool · **Off by default** (offered when you open an image inside an OME collection; or turn it on in the Plugins tab) · the
 **Collections** tab ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/collections)
 

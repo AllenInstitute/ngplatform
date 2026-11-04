@@ -25,7 +25,7 @@ when it runs out. Proofreading and axon segmentation last.
 
 **Wave C**
 - [ ] C1. Ray-cast SH ODF glyphs; Luxar glow on folded surfaces; region and parcel time courses on surfaces; vertex reach by mesh spacing.
-- [ ] C2. Defaults: every plugin off except Zarr Vectors, with one-click offers when data a plugin handles is opened.
+- [x] C2. (Done: every plugin off but Zarr Vectors, choices already made kept; offers in the Datasets tab (*Tools for this data*) and once in a toast, "Not now" per plugin, Settings → Show offers for tools that are off; a tool plugin turns on without a reload (`PluginHost.switchOn`); a link holding state of a plugin that is off says so, with Turn on, the state kept; the S-21-46 and HCP-1065 examples turn Track filtering on for the tab; a browser that had the old defaults is told once, with Turn back on; the Plugins tab grouped by what plugins do. Left: turning off still reloads.) Defaults: every plugin off except Zarr Vectors, with one-click offers when data a plugin handles is opened.
 - [ ] C3. Plugin-by-plugin audit (bugs, half-done features, verbose UI), scorecards.
 
 **Wave D**

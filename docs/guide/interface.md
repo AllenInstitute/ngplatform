@@ -22,7 +22,7 @@ all, and the keyboard icon lists the keyboard and mouse bindings.
 | **⋯** (beside redo) | The history of changes, as a tree: go to any earlier state, including ones on branches left by going back and changing something else. See [History of changes](#history-of-changes). |
 | **Scene tabs** | One tab per scene. **+** adds a scene; each tab has a close button (closing the last leaves a blank scene). Rename, duplicate and delete scenes from the command palette. Each scene works as a viewer of its own: the plugin tabs (Filtering's groups, Annotations, Luxar, Volume and the rest) show that scene's own; a new scene starts with none, a duplicated one with a copy. |
 | Camera icon | **Capture**: a picture of the views (magnified, borders trimmed), or a movie (a sweep through slices or time, or a turn of the 3-D view) as GIF, WebM, MP4 or PNG frames; and Neuroglancer's own screenshot dialog. Labels from the Annotations plugin are painted in. See [Capture](#capture). |
-| Gear icon | View settings, reload the scene's layers, or a hard reset that reloads everything fresh. |
+| Gear icon | View settings (with *Show offers for tools that are off*), reload the scene's layers, or a hard reset that reloads everything fresh. |
 | Keyboard icon | The keyboard and mouse reference. |
 | **Commands** | The command palette (++ctrl+k++). |
 
@@ -106,12 +106,12 @@ take about 0.1 MB rather than 2.3 MB.
 
 | Tab | What it holds |
 |---|---|
-| **Datasets** | What the scene shows: one row per dataset with its visibility, load state and source. A dataset shown through several layers (a tractogram and its track groups, say) lists them beneath it. Selecting a row shows its controls in the Layer tab. Datasets that other scenes show are listed below, ready to add. |
+| **Datasets** | What the scene shows: one row per dataset with its visibility, load state and source. A dataset shown through several layers (a tractogram and its track groups, say) lists them beneath it. Selecting a row shows its controls in the Layer tab. Datasets that other scenes show are listed below, ready to add. *Tools for this data* lists the plugins that are off but work with this data: click one to turn it on, × for "Not now". |
 | **Filtering** | The Track filtering plugin: TrackVis-style track groups. See [Track filtering](../plugins/track-filtering.md). |
 | **Annotations** | The Annotations plugin: labels (named pins and callouts for figures), measurements, statistics in a region, and label volumes drawn by hand. See [Annotations](../plugins/annotations.md). |
 | **Registration** | When the Registration plugin is on: move a layer by hand or by landmarks, and save the transform or the moved image. See [Registration](../plugins/registration.md). |
 | **Auth** | The sign-ins available (one or more Google accounts for this browser, and CAVE, CATMAID and ngauth servers), with who is signed in; rules saying which sign-in and which Google account reads which bucket or server; and for each layer of the scene the sign-in it reads its data with. See [Signing in](signing-in.md). |
-| **Plugins** | Every plugin, with a switch, a one-line description and a *Read more* guide. **Add** loads a plugin from your computer or a URL. See [Plugins](../plugins/index.md). |
+| **Plugins** | Every plugin, grouped by what it does, with a one-line description, a switch and an *About* guide. Only Zarr Vectors is on by default; a tool turns on at once, and turning one off reloads the page with the same link. **Add** loads a plugin from your computer or a URL. See [Plugins](../plugins/index.md). |
 
 ## 3. The views
 
