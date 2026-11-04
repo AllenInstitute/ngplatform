@@ -4,8 +4,8 @@
 
 The window has a top bar (1), three docks around Neuroglancer's views: left
 (2), right (4) and bottom (5), and the views themselves (3). Docks can be
-resized by dragging their edges and collapsed with the icon at their top
-right; sizes and open tabs are remembered by your browser.
+resized by dragging their edges and collapsed with the icon in their tab
+bar; sizes and open tabs are remembered by your browser.
 
 Almost everything is also a command: **Commands** (++ctrl+k++) searches them
 all, and the keyboard icon lists the keyboard and mouse bindings.
@@ -50,7 +50,7 @@ movie*, open one dialog:
 
 The job runs in **Jobs** (bottom dock), where it can be cancelled. The view
 is put back as it was afterwards, and a capture adds nothing to undo.
-Labels from the Labels plugin are painted into every frame.
+Labels from the Annotations plugin are painted into every frame.
 
 ### History of changes
 

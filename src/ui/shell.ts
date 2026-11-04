@@ -1113,9 +1113,9 @@ export class Shell {
   private showShareMenu(anchor: HTMLElement): void {
     const run = (id: string) => () => void this.wb.run(id);
     showMenu(anchor, [
-      { label: "Copy link to the workspace", run: run("workspace.share") },
-      { label: "Copy this scene as a Neuroglancer link", run: run("workspace.copyPlainLink") },
-      { label: "Copy this scene as Neuroglancer JSON", run: run("workspace.copyState") },
+      { label: "Copy workspace link", run: run("workspace.share") },
+      { label: "Copy scene as Neuroglancer link", run: run("workspace.copyPlainLink") },
+      { label: "Copy scene as Neuroglancer JSON", run: run("workspace.copyState") },
       "-",
       { label: "Open in Neuroglancer ↗", run: run("workspace.openInNeuroglancer") },
       { label: "Open in Neuroglancer with Zarr Vectors ↗", run: run("workspace.openInPlainNeuroglancer") },
@@ -1172,6 +1172,14 @@ export class Shell {
               const k = e as KeyboardEvent;
               if (k.key === "Enter") store.switchScene(scene.id);
               if (k.key === "Delete") close(scene.id, scene.name);
+              // Arrow keys move between scenes (only the active tab is in the tab order).
+              if (k.key === "ArrowLeft" || k.key === "ArrowRight") {
+                const next = p.scenes[index + (k.key === "ArrowLeft" ? -1 : 1)];
+                if (next === undefined) return;
+                k.preventDefault();
+                store.switchScene(next.id);
+                requestAnimationFrame(() => this.sceneTabs.querySelector<HTMLElement>('.scene-tab[aria-selected="true"]')?.focus());
+              }
             },
           },
           kind ? h("span", { class: "scene-kind-mark", title: kind.title, "aria-hidden": "true" }) : null,
