@@ -514,6 +514,29 @@ export function tiffSource(file: Blob, stack: Pick<Stack, "pages" | "littleEndia
     );
     return Math.max(0, end - start);
   };
+  /** Strips stored as they are served: uncompressed, one sample, no predictor, little-endian (or bytes). */
+  const asServed = (page: Page) => page.compression === 1 && !page.tiled && page.samples === 1 && page.predictor <= 1 && (stack.littleEndian || page.bits === 8);
+  const stored = (start: number, end: number): { blob: Blob; pieces: number[] } | undefined => {
+    end = Math.min(end, planeBytes * planes);
+    const pieces: number[] = [];
+    for (let at = start; at < end; ) {
+      const plane = Math.floor(at / planeBytes);
+      const page = stack.pages[pageOf(plane)];
+      if (!asServed(page)) return undefined;
+      const inPlane = at - plane * planeBytes;
+      const b = Math.floor(Math.floor(inPlane / rowBytes) / page.blockHeight);
+      const from = inPlane - b * page.blockHeight * rowBytes;
+      const take = Math.min(end - at, Math.min(page.blockHeight, page.height - b * page.blockHeight) * rowBytes - from);
+      // A strip shorter than its rows is padded when decoded: not as stored.
+      if (page.counts[b] < from + take) return undefined;
+      const offset = page.offsets[b] + from;
+      const n = pieces.length;
+      if (n > 0 && pieces[n - 2] + pieces[n - 1] === offset) pieces[n - 1] += take;
+      else pieces.push(offset, take);
+      at += take;
+    }
+    return { blob: file, pieces };
+  };
   return {
     size: planeBytes * planes,
     async read(start, end) {
@@ -522,6 +545,7 @@ export function tiffSource(file: Blob, stack: Pick<Stack, "pages" | "littleEndia
       return out;
     },
     readInto,
+    stored,
   };
 }
 

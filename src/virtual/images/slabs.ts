@@ -301,3 +301,110 @@ export class Reducer {
     return { box: this.box, slots: this.slots, data: this.out };
   }
 }
+
+// ---------------------------------------------------------------- reduced in other workers
+
+/**
+ * A slab kept as it is in a file: `pieces` of [offset, length] in `blob`
+ * that together are its voxels (`type`, a typed array's name), in order.
+ */
+export interface StoredSlab {
+  blob: Blob;
+  pieces: number[];
+  box: Box;
+  slots: number;
+  type: string;
+}
+
+/**
+ * One finer slab to reduce on its own (in a reduce worker, `reduce_pool.ts`):
+ * the slab itself, or where it is stored (read by the worker).  `box` is the
+ * part of the coarser level it makes whole (`coarseBoxOf`).
+ */
+export interface ReduceJob {
+  grid: Grid;
+  finer: Grid;
+  box: Box;
+  mode: "mean" | "nearest";
+  slab?: Slab;
+  stored?: StoredSlab;
+  /** Hand the finer slab back too (Export writes its chunks). */
+  keepFiner?: boolean;
+}
+
+/** Reads made at once by `readStored`, … */
+const READS_AT_ONCE = 8;
+/** … each at most this long. */
+const READ_PIECE = 8 * 2 ** 20;
+
+/** A stored slab, read. */
+export async function readStored(stored: StoredSlab): Promise<Slab> {
+  const Make = (globalThis as unknown as Record<string, new (buffer: ArrayBuffer) => Voxels>)[stored.type];
+  // Reads of [offset in the file, length, offset in the slab].
+  const reads: number[] = [];
+  let length = 0;
+  for (let i = 0; i < stored.pieces.length; i += 2) {
+    for (let done = 0; done < stored.pieces[i + 1]; done += READ_PIECE) reads.push(stored.pieces[i] + done, Math.min(READ_PIECE, stored.pieces[i + 1] - done), length + done);
+    length += stored.pieces[i + 1];
+  }
+  const buffer = new ArrayBuffer(length);
+  const bytes = new Uint8Array(buffer);
+  let next = 0;
+  const reader = async () => {
+    for (let k = next++; 3 * k < reads.length; k = next++) {
+      const [start, n, at] = reads.slice(3 * k, 3 * k + 3);
+      const piece = new Uint8Array(await stored.blob.slice(start, start + n).arrayBuffer());
+      if (piece.byteLength < n) throw new Error("the file is shorter than its header says");
+      bytes.set(piece, at);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(READS_AT_ONCE, reads.length / 3) }, reader));
+  return { box: stored.box, slots: stored.slots, data: new Make(buffer) };
+}
+
+/** What a reduce worker does with a job: its part of the coarser slab, and the finer slab when asked for. */
+export async function runJob(job: ReduceJob): Promise<{ part: Slab; finer?: Slab }> {
+  const slab = job.slab ?? (await readStored(job.stored!));
+  const part = reducePiece({ ...job, slab });
+  return { part, ...(job.keepFiner ? { finer: slab } : {}) };
+}
+
+/**
+ * The box of the coarser level (`grid`) that a finer slab makes whole, when
+ * it does: the slab starts on the halving along every axis and ends on it
+ * or at the finer level's edge, so every coarse voxel under it has all its
+ * finer voxels in it.  Undefined otherwise (odd chunk sizes).
+ */
+export function coarseBoxOf(grid: Grid, finer: Grid, fine: Box): Box | undefined {
+  for (let a = 0; a < 3; ++a) {
+    const s = grid.step[a];
+    if (fine.lo[a] % s !== 0 || (fine.hi[a] % s !== 0 && fine.hi[a] !== finer.size[a])) return undefined;
+  }
+  return { lo: fine.lo.map((v, a) => v / grid.step[a]), hi: fine.hi.map((v, a) => Math.ceil(v / grid.step[a])) };
+}
+
+/** A job's part of the coarser slab: its finer slab reduced (the same voxels a `Reducer` of the whole slab makes there). */
+export function reducePiece(job: ReduceJob & { slab: Slab }): Slab {
+  const Make = job.slab.data.constructor as new (n: number) => Voxels;
+  const reducer = new Reducer(job.grid, job.finer, job.box, job.slab.slots, job.mode, (n) => new Make(n));
+  reducer.add(job.slab);
+  return reducer.finish();
+}
+
+/** Copies `part` into its place in `into` (its box inside `into`'s; the same slots and type). */
+export function pasteSlab(into: Slab, part: Slab): void {
+  const [ni, nj, nk] = extent(into.box);
+  const [pi, pj, pk] = extent(part.box);
+  const [oi, oj, ok] = part.box.lo.map((v, a) => v - into.box.lo[a]);
+  const dst = into.data as unknown as { set(src: ArrayLike<number | bigint>, at: number): void };
+  const src = part.data as unknown as { subarray(a: number, b: number): ArrayLike<number | bigint> };
+  for (let s = 0; s < part.slots; ++s) {
+    for (let z = 0; z < pk; ++z) {
+      const from = (s * pk + z) * pj * pi;
+      const to = ((s * nk + ok + z) * nj + oj) * ni + oi;
+      // Whole rows: the plane's rows in one copy.
+      if (pi === ni) dst.set(src.subarray(from, from + pj * pi), to);
+      else for (let y = 0; y < pj; ++y) dst.set(src.subarray(from + y * pi, from + (y + 1) * pi), to + y * ni);
+    }
+  }
+}

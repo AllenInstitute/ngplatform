@@ -63,6 +63,21 @@ describe("which chunks stay", () => {
     expect(p.total).toBe(3);
   });
 
+  it("in a build, keeps the first chunks of the level kept in part instead of writing it whole", () => {
+    const p = new CachePolicy(10, 1);
+    expect(p.admit("2/a", 2, 3, 1, false)).toEqual([]);
+    expect(p.admit("1/a", 1, 3, 2, false)).toEqual([]);
+    expect(p.admit("1/b", 1, 3, 3, false)).toEqual([]);
+    // Full: the next level-1 chunk would only fit by dropping one of its own level, so it is not kept.
+    expect(p.mayAdmit(1, 3, false)).toBe(false);
+    expect(p.admit("1/c", 1, 3, 4, false)).toBeUndefined();
+    // A coarser chunk still drops a finer one; when viewing, a level-1 chunk may drop another.
+    expect(p.mayAdmit(2, 3, false)).toBe(true);
+    expect(p.admit("2/b", 2, 3, 5, false)).toEqual(["1/a"]);
+    expect(p.mayAdmit(1, 3)).toBe(true);
+    expect(p.admit("1/d", 1, 3, 6)).toEqual(["1/b"]);
+  });
+
   it("keeps the same chunk once, however often it is kept", () => {
     const p = new CachePolicy(100, 1);
     p.admit("2/x", 2, 10, 1);

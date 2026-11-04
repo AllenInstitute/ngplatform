@@ -37,7 +37,8 @@
  *   plugin does for an image it draws as tensors).
  */
 import { cacheBudget, levelsKept, memoryBudgets, OverviewCache, readSettings } from "./overview_cache.js";
-import { type Box, chunkFromSlab, chunksOf, finerSlabs, type Grid, levelSlabs, Reducer, type Slab, slabFromChunks, slabOf, slabWidth, type Voxels } from "./slabs.js";
+import { InFlight, type ReducePool, reducePool } from "./reduce_pool.js";
+import { type Box, boxVoxels, chunkFromSlab, chunksOf, coarseBoxOf, finerSlabs, type Grid, levelSlabs, pasteSlab, Reducer, type Slab, slabFromChunks, slabOf, slabWidth, type StoredSlab, type Voxels } from "./slabs.js";
 import { type ByteSource, blobSource, gunzipHead, gunzipSource, isGzip, jsonBytes, Lru, readInto, type VirtualStore } from "./store.js";
 import { LogEuclideanSum, NIFTI_INTENT_SYMMATRIX, TENSOR_ORDER_NAMES, type TensorOrder } from "./tensors.js";
 
@@ -318,6 +319,9 @@ const SLAB_LIMIT = 256 * 2 ** 20;
 const MIN_CACHED = 64 * 2 ** 20;
 /** Bytes of the overview cache's writes that may wait while slabs are made. */
 const WRITES_AHEAD = 64 * 2 ** 20;
+/** Bytes of finer slabs read and being reduced in the reduce workers at once (every image of this worker). */
+const IN_FLIGHT = 512 * 2 ** 20;
+const inFlight = new InFlight(IN_FLIGHT);
 /** The longest the worker works on slabs without letting other requests in, ms. */
 const PAUSE_EVERY = 100;
 let lastPause = 0;
@@ -347,6 +351,8 @@ interface SlabContext {
   emit?(index: number, e: number, slab: Slab): Promise<void>;
   /** Every level made from the file, none put together from kept chunks (the levels below are wanted too). */
   fresh?: boolean;
+  /** The overview build: each chunk passes once, so none of a level is dropped for another of it. */
+  build?: boolean;
 }
 
 /** The overview build's state, as `{ overview: "status" }` answers it. */
@@ -861,11 +867,21 @@ export class NiftiStore implements VirtualStore {
       return kept;
     }
     const grid = this.grid(index);
-    const reducer = new Reducer(grid, this.grid(index - 1), box, this.slots, this.label || this.outType === "uint64" ? "nearest" : "mean", this.makeVoxels);
-    const boxes = finerSlabs(grid, this.grid(index - 1), box, this.width(index - 1));
+    const finer = this.grid(index - 1);
+    const mode = this.label || this.outType === "uint64" ? "nearest" : "mean";
+    const boxes = finerSlabs(grid, finer, box, this.width(index - 1));
+    const pool = this.levels[index - 1].read !== undefined ? reducePool(this.levelBytes(index - 1)) : undefined;
+    if (pool !== undefined) {
+      const parts = boxes.map((b) => coarseBoxOf(grid, finer, b));
+      if (parts.every((p) => p !== undefined)) return this.reduceInWorkers(pool, index, e, box, boxes, parts as Box[], mode, ctx);
+    }
+    const reducer = new Reducer(grid, finer, box, this.slots, mode, this.makeVoxels);
     // The next finer slabs are read (or made) while this one is added, so the file is read while the
-    // worker reduces: two ahead when they are read from the file, one when they are made.
-    const ahead = this.levels[index - 1].read !== undefined ? 2 : 1;
+    // worker reduces: two ahead when they are read from the file, one when they are made, four when
+    // they are made in the reduce workers (so that each worker has slabs to read and reduce: their
+    // bytes are bounded by IN_FLIGHT).
+    const inWorkers = index >= 2 && this.levels[index - 2].read !== undefined && reducePool(this.levelBytes(index - 2)) !== undefined;
+    const ahead = this.levels[index - 1].read !== undefined ? 2 : inWorkers ? 4 : 1;
     const started: Promise<Slab>[] = [];
     const start = (i: number) => {
       if (i >= boxes.length || started[i] !== undefined) return;
@@ -884,8 +900,45 @@ export class NiftiStore implements VirtualStore {
       await pause();
     }
     const slab = reducer.finish();
-    await this.keep(index, e, slab);
+    await this.keep(index, e, slab, ctx);
     return slab;
+  }
+
+  /**
+   * A slab of the level above one read from the file, its finer slabs each
+   * reduced in a reduce worker (`reduce_pool.ts`), several at once (within
+   * `IN_FLIGHT` bytes), each part pasted in as it comes back.  A finer slab
+   * the file holds as it is served is read by the worker; others are read
+   * here and handed over.
+   */
+  private async reduceInWorkers(pool: ReducePool, index: number, e: number, box: Box, boxes: Box[], parts: Box[], mode: "mean" | "nearest", ctx: SlabContext): Promise<Slab> {
+    const grid = this.grid(index);
+    const finer = this.grid(index - 1);
+    const out: Slab = { box, slots: this.slots, data: this.makeVoxels(this.slots * boxVoxels(box)) };
+    const bytes = BYTES[this.outType] * this.slots;
+    const keepFiner = ctx.emit !== undefined;
+    const jobs = boxes.map(async (b, i) => {
+      const size = bytes * boxVoxels(b);
+      await inFlight.acquire(size);
+      try {
+        if (ctx.cancelled?.()) throw new Cancelled();
+        const stored = await this.storedSlab(index - 1, e, b);
+        // Otherwise read for this alone (not kept with the bands), since it is handed over.
+        const slab = stored === undefined ? await this.readSlab(index - 1, e, b, true) : undefined;
+        if (slab !== undefined) await ctx.emit?.(index - 1, e, slab);
+        const done = await pool.run({ grid, finer, box: parts[i], mode, ...(slab !== undefined ? { slab } : { stored, keepFiner }) });
+        ctx.progress?.(this.voxels0(index - 1, b));
+        if (done.finer !== undefined) await ctx.emit?.(index - 1, e, done.finer);
+        pasteSlab(out, done.part);
+      } finally {
+        inFlight.release(size);
+      }
+    });
+    const settled = await Promise.allSettled(jobs);
+    const failed = settled.find((s): s is PromiseRejectedResult => s.status === "rejected");
+    if (failed !== undefined) throw failed.reason;
+    await this.keep(index, e, out, ctx);
+    return out;
   }
 
   /** A slab put together from chunks kept in memory or in the overview cache, when every one of them is. */
@@ -911,17 +964,71 @@ export class NiftiStore implements VirtualStore {
   }
 
   /** Keeps a computed slab's chunks in the overview cache, as far as its budget and levels allow. */
-  private async keep(index: number, e: number, slab: Slab): Promise<void> {
+  private async keep(index: number, e: number, slab: Slab, ctx: SlabContext): Promise<void> {
     const cache = await this.overviewCache();
     if (cache === undefined || !cache.writer || index < cache.policy.floor) return;
     const grid = this.grid(index);
+    const bytes = BYTES[this.outType];
+    const chunkBytes = grid.chunk.reduce((a, b) => a * b, slab.slots * bytes);
+    const sameLevel = !ctx.build;
     // Written in the background: this waits only while more than WRITES_AHEAD bytes are still to be written.
-    for (const b of chunksOf(grid, slab.box)) void cache.put(`${index}/${e}/${b.join("/")}`, index, chunkFromSlab(grid, slab, b, BYTES[this.outType]));
+    for (const b of chunksOf(grid, slab.box)) {
+      if (!cache.policy.mayAdmit(index, chunkBytes, sameLevel)) break;
+      void cache.put(`${index}/${e}/${b.join("/")}`, index, chunkFromSlab(grid, slab, b, bytes), sameLevel);
+    }
     await cache.drained(WRITES_AHEAD);
   }
 
-  /** A slab of a level read from the file, from its bands, as the type served. */
-  private async readSlab(index: number, e: number, box: Box): Promise<Slab> {
+  /**
+   * Where a slab of a level read from the file is kept in it as it is
+   * served (its voxels' bytes, in order: no scaling, conversion or byte
+   * swapping, and a source that says where, `ByteSource.stored`), for a
+   * reduce worker to read itself; undefined otherwise.
+   */
+  private async storedSlab(index: number, e: number, box: Box): Promise<StoredSlab | undefined> {
+    const inSize = BYTES[this.inType];
+    if (!this.raw || (!this.header.littleEndian && inSize > 1)) return undefined;
+    const level = this.levels[index];
+    const source = await level.read!();
+    if (source.stored === undefined) return undefined;
+    const [nx, ny, nz] = level.size;
+    const row = nx * inSize;
+    const plane = ny * row;
+    const [x0, y0, z0] = box.lo;
+    const [x1, y1, z1] = box.hi;
+    const volumes = this.volumesOf(e);
+    const pieces: number[] = [];
+    let blob: Blob | undefined;
+    let length = 0;
+    const add = (start: number, end: number) => {
+      const where = source.stored!(start, end);
+      if (where === undefined || (blob !== undefined && where.blob !== blob)) return false;
+      blob = where.blob;
+      for (let i = 0; i < where.pieces.length; i += 2) {
+        const n = pieces.length;
+        if (n > 0 && pieces[n - 2] + pieces[n - 1] === where.pieces[i]) pieces[n - 1] += where.pieces[i + 1];
+        else pieces.push(where.pieces[i], where.pieces[i + 1]);
+        length += where.pieces[i + 1];
+      }
+      return true;
+    };
+    for (const v of volumes) {
+      const base = (level.offset ?? 0) + v * nz * plane;
+      for (let z = z0; z < z1; ++z) {
+        if (x0 === 0 && x1 === nx) {
+          if (!add(base + z * plane + y0 * row, base + z * plane + y1 * row)) return undefined;
+        } else {
+          for (let y = y0; y < y1; ++y) if (!add(base + z * plane + y * row + x0 * inSize, base + z * plane + y * row + x1 * inSize)) return undefined;
+        }
+      }
+    }
+    // A file shorter than its header says: read here, which says so.
+    if (blob === undefined || length !== volumes.length * boxVoxels(box) * inSize) return undefined;
+    return { blob, pieces, box, slots: volumes.length, type: this.makeVoxels(0).constructor.name };
+  }
+
+  /** A slab of a level read from the file, from its bands, as the type served; `own`: in buffers of its own, not kept with the bands. */
+  private async readSlab(index: number, e: number, box: Box, own = false): Promise<Slab> {
     const level = this.levels[index];
     const [ci, cj, ck] = level.chunk;
     const nx = level.size[0];
@@ -932,7 +1039,7 @@ export class NiftiStore implements VirtualStore {
     if (box.lo[0] % ci !== 0 || !Number.isInteger(bk) || !Number.isInteger(bj)) throw new Error("a slab off the chunks");
     const inSize = BYTES[this.inType];
     // A piece of a very wide level: only its part of each row is read.
-    const bandOf = (v: number) => (ni === nx ? this.band(index, v, bk, bj) : this.readBand(index, v, bk, bj, box.lo[0], box.hi[0]));
+    const bandOf = (v: number) => (ni !== nx ? this.readBand(index, v, bk, bj, box.lo[0], box.hi[0]) : own ? this.readBand(index, v, bk, bj) : this.band(index, v, bk, bj));
     if (this.raw && volumes.length === 1) {
       // The file's bytes are the slab's voxels: no copy (the band is only read from).
       const band = await bandOf(volumes[0]);
@@ -1133,7 +1240,7 @@ export class NiftiStore implements VirtualStore {
     state.running = (async () => {
       const cache = await this.overviewCache();
       if (cache === undefined || !cache.writer) throw new Error(cache === undefined ? "this browser keeps no overviews (no private file system)" : "another tab is keeping this image's overview");
-      const ctx: SlabContext = { progress: (n) => (state.done += n), cancelled: () => state.cancel };
+      const ctx: SlabContext = { progress: (n) => (state.done += n), cancelled: () => state.cancel, build: true };
       for (const [base, top] of segments) {
         for (let e = 0; e < groups; ++e) {
           // Nothing to make from this base, or nothing kept above it: counted done.

@@ -46,6 +46,13 @@ export interface ByteSource {
    * of its own where the source can; resolves to how many there were.
    */
   readInto?(start: number, end: number, target: Uint8Array): Promise<number>;
+  /**
+   * Where bytes [start, end) are kept as they are in a Blob (not compressed
+   * or otherwise changed), when they are: `pieces` holds [offset in the
+   * blob, length] pairs that together are those bytes, in order.  So
+   * another worker can read them itself (the reduce workers).
+   */
+  stored?(start: number, end: number): { blob: Blob; pieces: number[] } | undefined;
 }
 
 /** Reads bytes [start, end) of a source into `target`, through `readInto` where it has one. */
@@ -60,6 +67,7 @@ export function blobSource(blob: Blob): ByteSource {
   return {
     size: blob.size,
     read: async (start, end) => new Uint8Array(await blob.slice(start, end).arrayBuffer()),
+    stored: (start, end) => ({ blob, pieces: [start, Math.max(0, Math.min(end, blob.size) - start)] }),
   };
 }
 

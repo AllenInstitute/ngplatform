@@ -106,15 +106,18 @@ export class CachePolicy {
   /**
    * Whether a chunk of `level` and `bytes` is kept: the keys to drop to make
    * room for it (none when it fits), or undefined when it is not kept.
+   * With `sameLevel` false, no chunk of its own level is dropped for it (a
+   * build, which passes every chunk once: otherwise it would write the
+   * level kept in part whole, each chunk dropping an earlier one).
    */
-  admit(key: string, level: number, bytes: number, now: number): string[] | undefined {
-    if (level < this.floor || bytes > this.budget) return undefined;
+  admit(key: string, level: number, bytes: number, now: number, sameLevel = true): string[] | undefined {
+    if (!this.mayAdmit(level, bytes, sameLevel)) return undefined;
     const known = this.entries.get(key);
     const need = this.total - (known?.bytes ?? 0) + bytes - this.budget;
     const drop: string[] = [];
     if (need > 0) {
       // Finest level first, least recently used first; never a coarser level than this chunk's.
-      const candidates = [...this.entries].filter(([k, e]) => k !== key && e.level <= level).sort(([, a], [, b]) => a.level - b.level || a.used - b.used);
+      const candidates = [...this.entries].filter(([k, e]) => k !== key && (sameLevel ? e.level <= level : e.level < level)).sort(([, a], [, b]) => a.level - b.level || a.used - b.used);
       let freed = 0;
       for (const [k, e] of candidates) {
         if (freed >= need) break;
@@ -128,6 +131,19 @@ export class CachePolicy {
     this.entries.set(key, { level, bytes, used: now });
     this.total += bytes;
     return drop;
+  }
+
+  /**
+   * Whether a chunk of `level` and `bytes` may be kept at all, quickly (before
+   * it is cut from its slab): finer chunks may make room only when it fits
+   * without them, or when there are finer chunks (or, with `sameLevel`, any
+   * of its own level) to drop.
+   */
+  mayAdmit(level: number, bytes: number, sameLevel = true): boolean {
+    if (level < this.floor || bytes > this.budget) return false;
+    if (this.total + bytes <= this.budget) return true;
+    for (const e of this.entries.values()) if (e.level < level || (sameLevel && e.level === level)) return true;
+    return false;
   }
 
   touch(key: string, now: number): void {
@@ -402,10 +418,10 @@ export class OverviewCache {
     }
   }
 
-  /** Keeps a chunk if the policy has room for it. */
-  put(key: string, level: number, bytes: Uint8Array): Promise<void> {
+  /** Keeps a chunk if the policy has room for it (`sameLevel`: see `CachePolicy.admit`). */
+  put(key: string, level: number, bytes: Uint8Array, sameLevel = true): Promise<void> {
     if (!this.writer) return Promise.resolve();
-    const drop = this.policy.admit(key, level, bytes.byteLength, Date.now());
+    const drop = this.policy.admit(key, level, bytes.byteLength, Date.now(), sameLevel);
     if (drop === undefined) return Promise.resolve();
     const job = (async () => {
       // A writable stream takes about 25 ms a file in Chrome: several chunks are written at once.
