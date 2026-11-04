@@ -19,7 +19,10 @@
  *   pipeline): fetched through the JSON API with the token of the bucket's
  *   account, from the tokens the page gives this worker (`google-tokens`:
  *   the default account's, and one per sign-in rule naming an account; the
- *   longest rule prefix wins), ranges passed on.
+ *   longest rule prefix wins), ranges passed on.  The tokens are kept in
+ *   this worker's memory only: when the browser has stopped it and started
+ *   it again (it does so with an idle worker), or Google answers 401, it
+ *   asks the open tabs for them again (`google-tokens-ask`).
  */
 import { relay } from "chunkmirage-web/relay";
 import { type GoogleTokenTable, tokenFromTable } from "./core/sign_in_rules.js";
@@ -30,6 +33,10 @@ const PREFIX = new URL("./local/", self.registration.scope).pathname;
 const GOOGLE_PREFIX = new URL("./gcs-google/", self.registration.scope).pathname;
 /** The Google accounts' access tokens, from the page (none: signed out). */
 let googleTokens: GoogleTokenTable = { default: null, rules: [] };
+/** Whether a page has given this worker its tokens since it started. */
+let tokensGiven = false;
+/** A request to the pages for their tokens, under way. */
+let askingForTokens: Promise<void> | undefined;
 /** The page (client id) that holds each picked folder or file. */
 const owners = new Map<string, string>();
 /** The tab last in use, which computed images are asked of first: every tab can compute them, and one should. */
@@ -44,7 +51,10 @@ self.addEventListener("message", (event) => {
   if (data?.type === "local-register" && source && data.id !== undefined) owners.set(data.id, source.id);
   if (data?.type === "local-claim") event.waitUntil(self.clients.claim());
   if (data?.type === "ngp-active" && source) active = source.id;
-  if (data?.type === "google-tokens") googleTokens = (data as { tokens?: GoogleTokenTable }).tokens ?? { default: null, rules: [] };
+  if (data?.type === "google-tokens") {
+    googleTokens = (data as { tokens?: GoogleTokenTable }).tokens ?? { default: null, rules: [] };
+    tokensGiven = true;
+  }
 });
 
 /** How long a page may take over one read: a large .nii.gz is decompressed on its first. */
@@ -159,18 +169,49 @@ self.addEventListener("fetch", (event) => {
   if (url.pathname.includes("/virtual/")) event.respondWith(computed(request, url));
 });
 
-/** A Cloud Storage object read with its bucket's Google account (401 until the page has given that account's token). */
+/**
+ * The tokens of the open tabs (the one in use first; the first that has
+ * any), asked once at a time; nothing is kept but in this worker's memory.
+ */
+function askForTokens(): Promise<void> {
+  askingForTokens ??= (async () => {
+    const windows = await self.clients.matchAll({ type: "window" });
+    const ordered = [...windows.filter((c) => c.id === active), ...windows.filter((c) => c.id !== active)];
+    for (const client of ordered) {
+      const tokens = await ask<GoogleTokenTable>(client, { type: "google-tokens-ask" }, 5_000);
+      if (tokens === undefined || tokens === null) continue;
+      if (tokens.default !== null || (tokens.rules ?? []).length > 0) {
+        googleTokens = tokens;
+        tokensGiven = true;
+        return;
+      }
+    }
+  })().finally(() => (askingForTokens = undefined));
+  return askingForTokens;
+}
+
+/** A Cloud Storage object read with its bucket's Google account (401 until a page has that account's token). */
 async function google(request: Request, url: URL): Promise<Response> {
   const rest = decodeURIComponent(url.pathname.slice(GOOGLE_PREFIX.length));
   const slash = rest.indexOf("/");
   const bucket = slash === -1 ? rest : rest.slice(0, slash);
   const object = slash === -1 ? "" : rest.slice(slash + 1);
+  // Started again by the browser since the page gave its tokens: ask for them.
+  if (!tokensGiven) await askForTokens();
+  const fetchWith = (token: string) => {
+    const headers: Record<string, string> = { authorization: `Bearer ${token}` };
+    const range = request.headers.get("range");
+    if (range !== null) headers.range = range;
+    return fetch(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(object)}?alt=media`, { method: request.method, headers });
+  };
   const googleToken = tokenFromTable(googleTokens, bucket, object);
   if (googleToken === null) return new Response("Sign in with Google in the Auth tab to read this bucket (with the account its sign-in rule names).", { status: 401 });
-  const headers: Record<string, string> = { authorization: `Bearer ${googleToken}` };
-  const range = request.headers.get("range");
-  if (range !== null) headers.range = range;
-  return fetch(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(object)}?alt=media`, { method: request.method, headers });
+  const response = await fetchWith(googleToken);
+  if (response.status !== 401) return response;
+  // An expired token: the page may have a newer one.
+  await askForTokens();
+  const again = tokenFromTable(googleTokens, bucket, object);
+  return again !== null && again !== googleToken ? fetchWith(again) : response;
 }
 
 /**

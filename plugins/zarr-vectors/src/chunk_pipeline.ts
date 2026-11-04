@@ -200,8 +200,18 @@ export async function fillObjectValues(
     access,
     description.objectValuesPath,
     slots.map((i) => description.attributes[i].objectValue!),
-  ).catch(() => undefined);
-  if (objects === undefined) return;
+  ).catch((e) => {
+    warnOnce(
+      "object values could not be read " +
+        `(${e instanceof Error ? e.message : e}); shown as no value (NaN)`,
+    );
+    return undefined;
+  });
+  if (objects === undefined) {
+    // Not 0, which looks like data: no value.
+    for (const slot of slots) attributes[slot].fill(NaN, 0, numVertices);
+    return;
+  }
   let lastLo = -1;
   let lastHi = -1;
   let row: number | undefined;

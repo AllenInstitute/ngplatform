@@ -137,7 +137,10 @@ Rules do two things:
   workspace is opened again.
 - **When data is read**, a `gs+google://` bucket is read with the Google
   account its rule names, else with the default account. The account is
-  never in the link.
+  never in the link. A filtered view of such data is read through the
+  app's service worker, which holds the tokens in memory only; when the
+  browser stops the idle worker and starts it again, or Google refuses an
+  expired token, it asks the open tab for them again.
 
 A rule changed while data is open reaches it within about 15 seconds, or
 at once when a request is refused. Data that already failed (a chunk the

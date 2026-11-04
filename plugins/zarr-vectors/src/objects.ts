@@ -41,7 +41,7 @@ import {
   checkObjectIndexLayout,
   readJson,
 } from "./store.js";
-import { mapConcurrent, warnOnce } from "./util.js";
+import { mapConcurrent, retryable, warnOnce } from "./util.js";
 import {
   decodeUtf32,
   fillBytes,
@@ -1409,6 +1409,8 @@ async function loadShaderObjectValues(
           out[r] = v === absent || v === fillCode ? NaN : v;
         }
       } catch (e) {
+        // A read that may work later (the network) is not kept: the next chunk asks again.
+        if (retryable(e)) throw e;
         warnOnce(
           `object values for shaders: ${column ?? "groups"} unreadable ` +
             `(${e instanceof Error ? e.message : e})`,

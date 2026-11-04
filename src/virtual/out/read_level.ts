@@ -4,7 +4,10 @@
  * reassembled, x fastest, with its voxel-to-RAS placement from the
  * multiscales metadata (the 0.6 affine from the array's axes to the world,
  * and the level's scale and translation).  Works on any store that writes
- * OME-Zarr 0.6 as the platform's image stores do.
+ * OME-Zarr 0.6 as the platform's image stores do, and on OME-Zarr 0.4 and
+ * 0.5 (axes with units, each level's scale and translation), as a
+ * computed view (chunkmirage's) is served: placed in millimetres, an array
+ * whose axes are z, y, x read x fastest.
  */
 import { invert4, type Mat4, multiply4 } from "../../core/mat4.js";
 import type { VirtualStore } from "../images/store.js";
@@ -20,6 +23,8 @@ export interface LevelInfo {
   path: string;
   /** Voxels along the spatial axes (i, j, k). */
   size: [number, number, number];
+  /** The array's axes that are i, j and k (by default its last three, in order). */
+  axes?: number[];
   type: VoxelType;
   bytes: number;
   voxelToRas: Mat4;
@@ -45,21 +50,34 @@ function levelMatrix(transforms: any[] | undefined, spatial: number[]): Mat4 {
   return m;
 }
 
+/** Millimetres in a unit OME names (a length unit; none: millimetres). */
+const MM: Record<string, number> = { meter: 1000, m: 1000, centimeter: 10, cm: 10, millimeter: 1, mm: 1, micrometer: 1e-3, um: 1e-3, "µm": 1e-3, micron: 1e-3, nanometer: 1e-6, nm: 1e-6 };
+
 /** The store's levels, finest first, with their sizes and placements. */
 export async function storeLevels(store: VirtualStore): Promise<{ levels: LevelInfo[]; extra: number; label: boolean }> {
   const group = await json(store, "zarr.json");
-  const ms = group.attributes?.ome?.multiscales?.[0];
+  const ms = group.attributes?.ome?.multiscales?.[0] ?? group.attributes?.multiscales?.[0];
   if (ms === undefined) throw new Error("the store has no multiscales");
-  const arraySpace = (ms.coordinateSystems ?? []).find((c: any) => c.name === "array");
-  const names: string[] = (arraySpace?.axes ?? []).map((a: any) => a.name);
-  const spatial = names.map((n, i) => (["x", "y", "z"].includes(n) ? i : -1)).filter((i) => i !== -1);
+  const systems: boolean = Array.isArray(ms.coordinateSystems) && ms.coordinateSystems.length > 0;
+  const arraySpace = systems ? ms.coordinateSystems.find((c: any) => c.name === "array") : { axes: ms.axes ?? [] };
+  const names: string[] = (arraySpace?.axes ?? []).map((a: any) => (typeof a === "string" ? a : a.name));
+  let spatial = names.map((n, i) => (["x", "y", "z"].includes(n) ? i : -1)).filter((i) => i !== -1);
   if (spatial.length !== 3) throw new Error("the store's image is not three-dimensional");
+  // An array z, y, x (a computed view's): written x fastest.
+  if (spatial.map((a) => names[a]).join("") === "zyx") spatial = [...spatial].reverse();
   const world = (ms.coordinateSystems ?? []).find((c: any) => c.name !== "array");
   const worldNames: string[] = (world?.axes ?? []).map((a: any) => a.name);
   const affine: number[][] | undefined = (ms.coordinateTransformations ?? []).find((t: any) => t.type === "affine")?.affine;
   // Array (spatial) to world x, y, z.
   const toWorld = Float64Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-  if (affine !== undefined) {
+  if (!systems) {
+    // OME-Zarr 0.4, 0.5: the axes are the world's, in their units.
+    ["x", "y", "z"].forEach((w, r) => {
+      const c = spatial.findIndex((a) => names[a] === w);
+      const unit = String(arraySpace.axes[spatial[c]]?.unit ?? "millimeter");
+      for (let k = 0; k < 3; ++k) toWorld[4 * r + k] = k === c ? (MM[unit] ?? 1) : 0;
+    });
+  } else if (affine !== undefined) {
     ["x", "y", "z"].forEach((w, r) => {
       const row = affine[worldNames.indexOf(w)];
       if (row === undefined) return;
@@ -73,7 +91,8 @@ export async function storeLevels(store: VirtualStore): Promise<{ levels: LevelI
     const size = spatial.map((a) => meta.shape[a]) as [number, number, number];
     const type = meta.data_type as VoxelType;
     const per = ARRAYS[type]?.BYTES_PER_ELEMENT ?? 4;
-    levels.push({ path: dataset.path, size, type, bytes: size[0] * size[1] * size[2] * per, voxelToRas: multiply4(toWorld, levelMatrix(dataset.coordinateTransformations, spatial)) });
+    const transforms = [...(dataset.coordinateTransformations ?? []), ...(systems ? [] : ms.coordinateTransformations ?? [])];
+    levels.push({ path: dataset.path, size, axes: spatial, type, bytes: size[0] * size[1] * size[2] * per, voxelToRas: multiply4(toWorld, levelMatrix(transforms, spatial)) });
   }
   // Label images are downsampled by picking, not averaging.
   const label = ms.type === "nearest";
@@ -90,7 +109,7 @@ export async function readLevel(store: VirtualStore, level: LevelInfo, onProgres
   const chunk: number[] = meta.chunk_grid.configuration.chunk_shape;
   const order: number[] = meta.codecs.find((c: any) => c.name === "transpose")?.configuration.order ?? shape.map((_: number, d: number) => d);
   const rank = shape.length;
-  const spatial = [rank - 3, rank - 2, rank - 1];
+  const spatial = level.axes ?? [rank - 3, rank - 2, rank - 1];
   const lo = [0, 1, 2].map((k) => Math.max(0, Math.min(level.size[k], Math.floor(region?.lo[k] ?? 0))));
   const hi = [0, 1, 2].map((k) => Math.max(lo[k], Math.min(level.size[k], Math.ceil(region?.hi[k] ?? level.size[k]))));
   const size = [0, 1, 2].map((k) => hi[k] - lo[k]) as [number, number, number];
@@ -99,8 +118,9 @@ export async function readLevel(store: VirtualStore, level: LevelInfo, onProgres
   if (Array_ === undefined) throw new Error(`${level.type} images cannot be written yet`);
   const out = new Array_(size[0] * size[1] * size[2]);
   // The chunks the box touches, along each axis.
-  const first = shape.map((_, d) => (d < rank - 3 ? 0 : Math.floor(lo[d - (rank - 3)] / chunk[d])));
-  const grid = shape.map((n, d) => (d < rank - 3 ? 1 : Math.max(0, Math.ceil(hi[d - (rank - 3)] / chunk[d]) - first[d])));
+  const first = shape.map((_, d) => (!spatial.includes(d) ? 0 : Math.floor(lo[spatial.indexOf(d)] / chunk[d])));
+  const grid = shape.map((n, d) => (!spatial.includes(d) ? 1 : Math.max(0, Math.ceil(hi[spatial.indexOf(d)] / chunk[d]) - first[d])));
+  const others = shape.map((_, d) => d).filter((d) => !spatial.includes(d));
   const total = grid.reduce((a, b) => a * b, 1);
   let done = 0;
   const index = shape.map(() => 0);
@@ -116,7 +136,7 @@ export async function readLevel(store: VirtualStore, level: LevelInfo, onProgres
       const local = chunk.map(() => 0);
       for (let flat = 0; flat < data.length; ++flat) {
         const g = spatial.map((d, k) => index[d] * chunk[d] + local[d] - lo[k]);
-        if (local.slice(0, rank - 3).every((v) => v === 0) && g.every((v, k) => v >= 0 && v < size[k])) {
+        if (others.every((d) => local[d] === 0) && g.every((v, k) => v >= 0 && v < size[k])) {
           out[g[0] + ni * (g[1] + nj * g[2])] = data[flat];
         }
         // The next element in stored order: the last stored axis fastest.

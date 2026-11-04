@@ -7,7 +7,7 @@
  */
 import type { PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { FILTERS_PANEL } from "./manifest.js";
-import { blankSetting, describe, FRANGI, makesLabels, MEDIAN, newStep, opsOf, type Step, STEP_KINDS, type StepKind } from "./pipeline.js";
+import { blankSetting, describe, FRANGI, makesLabels, MEDIAN, newStep, opsOf, readSteps, type SavedFilters, type Step, STEP_KINDS, type StepKind, stepsOf } from "./pipeline.js";
 
 type Child = Node | string | null | undefined | false;
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
@@ -36,6 +36,13 @@ const STYLE = `
 /** Output chunks: 64 voxels a side. */
 const CHUNK = [64, 64, 64];
 
+/** A layer's source as the engine reads it, for comparing: no scheme prefix, pipeline or trailing slash. */
+const bareSource = (s: string) =>
+  s
+    .replace(/\|.*$/, "")
+    .replace(/^(zarr3?|zarr2|n5|ome-zarr):\/\//, "")
+    .replace(/\/+$/, "");
+
 class Filters {
   private image = "";
   private steps: Step[] = [newStep()];
@@ -43,22 +50,85 @@ class Filters {
   private images: string[] = [];
   private update?: () => void;
   private updateStatus?: () => void;
+  /** The steps were set here (edited, or read from the workspace): a filtered layer's are not read back over them. */
+  private settled = false;
+  /** What was last kept in the workspace, as JSON. */
+  private kept = "";
 
   constructor(private readonly ctx: PlatformContext) {
     ctx.subscriptions.push(ctx.viewer.onLayersChanged(() => this.refresh()));
     // The engine's counts change with every chunk: only the status line follows them, so a code box keeps its focus.
     ctx.subscriptions.push(ctx.workspace.computed.onChanged(() => this.updateStatus?.()));
+    // The steps are kept in the workspace (and its link); undo, redo or another link brings others.
+    ctx.subscriptions.push(ctx.state.onChanged(() => this.load()));
+    this.load();
     this.refresh();
   }
 
-  /** The image layers: any can be filtered. */
-  private refresh(): void {
-    this.images = this.ctx.viewer
+  /** The steps kept in the workspace, if they differ from the tab's. */
+  private load(): void {
+    const saved = this.ctx.state.get<SavedFilters>();
+    const json = JSON.stringify(saved ?? null);
+    if (json === this.kept) return;
+    this.kept = json;
+    const steps = readSteps(saved?.steps);
+    if (steps === undefined) return;
+    this.steps = steps;
+    if (typeof saved?.image === "string") this.image = saved.image;
+    this.settled = true;
+    this.refresh(true);
+  }
+
+  /** Keeps the tab's image and steps in the workspace (one undo step), after a change. */
+  private save(): void {
+    this.settled = true;
+    const saved: SavedFilters = { image: this.image, steps: this.steps.map((s) => ({ ...s })) };
+    // NaN (an empty setting) is kept as null, which JSON can hold.
+    const json = JSON.stringify(saved, (_, v) => (typeof v === "number" && !Number.isFinite(v) ? null : v));
+    if (json === this.kept) return;
+    this.kept = json;
+    this.ctx.state.set(JSON.parse(json));
+  }
+
+  /**
+   * The image layers: any can be filtered.  Drawn again only when they
+   * change (`force`: or the steps did), so typing in a step keeps its focus.
+   */
+  private refresh(force = false): void {
+    const images = this.ctx.viewer
       .layers()
       .filter((l) => l.type === "image" && this.sourceOf(l.name) !== undefined)
       .map((l) => l.name);
+    const changed = images.join("\n") !== this.images.join("\n");
+    this.images = images;
+    const image = this.image;
     if (!this.images.includes(this.image)) this.image = this.images[0] ?? "";
-    this.update?.();
+    if (!this.settled) void this.readBack();
+    if (force || changed || image !== this.image) this.update?.();
+  }
+
+  /**
+   * With nothing chosen here yet (a link from before the steps were kept),
+   * the steps of the newest filtered layer and the image it filters.
+   */
+  private async readBack(): Promise<void> {
+    const layers = this.ctx.viewer.layers().map((l) => l.name);
+    for (const name of [...layers].reverse()) {
+      const source = this.sourceOf(name);
+      if (source === undefined || !source.includes("/virtual/ngp/")) continue;
+      const spec = await this.ctx.workspace.computed.pipelineOf(source).catch(() => undefined);
+      const steps = stepsOf(spec?.ops);
+      if (spec === undefined || steps === undefined || this.settled) continue;
+      this.steps = steps;
+      const image = layers.find((l) => {
+        const s = this.sourceOf(l);
+        return s !== undefined && bareSource(s) === bareSource(spec.source);
+      });
+      if (image !== undefined && this.images.includes(image)) this.image = image;
+      this.settled = true;
+      this.update?.();
+      return;
+    }
   }
 
   private sourceOf(layer: string): string | undefined {
@@ -75,6 +145,7 @@ class Filters {
       this.update?.();
       return;
     }
+    this.save();
     try {
       const url = await this.ctx.workspace.computed.url({ source, ops: opsOf(this.steps), chunk: CHUNK });
       const labels = makesLabels(this.steps);
@@ -113,12 +184,24 @@ class Filters {
   }
 
   private stepView(step: Step, index: number, draw: () => void): HTMLElement {
+    // Each control has a key (data-focus) by which a redraw gives its focus back.
+    const key = (field: string) => `${index}.${field}`;
     const number = (label: string, value: number, set: (v: number) => void, step = "1", min = "0") =>
       el(
         "label",
         {},
         el("span", {}, label),
-        el("input", { type: "number", value: Number.isFinite(value) ? value : "", step, min, onchange: (e: Event) => set((e.target as HTMLInputElement).value === "" ? Number.NaN : Number((e.target as HTMLInputElement).value)) }),
+        el("input", {
+          type: "number",
+          value: Number.isFinite(value) ? value : "",
+          step,
+          min,
+          "data-focus": key(label),
+          onchange: (e: Event) => {
+            set((e.target as HTMLInputElement).value === "" ? Number.NaN : Number((e.target as HTMLInputElement).value));
+            this.save();
+          },
+        }),
       );
     const s = step;
     const settings: HTMLElement[] =
@@ -128,7 +211,7 @@ class Filters {
           ? [
               number("Sigma from (voxels)", s.sigmaLow, (v) => (s.sigmaLow = v), "0.5", "0.5"),
               number("Sigma to (voxels)", s.sigmaHigh, (v) => (s.sigmaHigh = v), "0.5", "0.5"),
-              el("label", { class: "field check" }, el("input", { type: "checkbox", checked: s.bright, onchange: (e: Event) => (s.bright = (e.target as HTMLInputElement).checked) }), el("span", { title: "Clear it for dark tubes" }, "Bright tubes")),
+              el("label", { class: "field check" }, el("input", { type: "checkbox", checked: s.bright, "data-focus": key("bright"), onchange: (e: Event) => ((s.bright = (e.target as HTMLInputElement).checked), this.save()) }), el("span", { title: "Clear it for dark tubes" }, "Bright tubes")),
             ]
           : s.kind === "threshold"
             ? [number("From (image units)", s.low, (v) => (s.low = v), "any", ""), number("Below (optional)", s.high, (v) => (s.high = v), "any", "")]
@@ -140,7 +223,7 @@ class Filters {
                     el("span", {}, "Operation"),
                     el(
                       "select",
-                      { onchange: (e: Event) => (s.operation = (e.target as HTMLSelectElement).value as Step["operation"]) },
+                      { "data-focus": key("operation"), onchange: (e: Event) => ((s.operation = (e.target as HTMLSelectElement).value as Step["operation"]), this.save()) },
                       ...(["open", "close"] as const).map((o) => el("option", { value: o, ...(o === s.operation ? { selected: "" } : {}) }, o === "open" ? "Open (removes small objects)" : "Close (fills small gaps)")),
                     ),
                   ),
@@ -152,15 +235,21 @@ class Filters {
                       "label",
                       { class: "fl-code" },
                       el("span", { title: "apply(block) runs on each block; #halo and #output lines set its context and what it returns" }, "Python code"),
-                      el("textarea", { class: "text-input fl-code-text", spellcheck: "false", rows: "10", oninput: (e: Event) => (s.code = (e.target as HTMLTextAreaElement).value) }, s.code),
+                      el(
+                        "textarea",
+                        { class: "text-input fl-code-text", spellcheck: "false", rows: "10", "data-focus": key("code"), oninput: (e: Event) => (s.code = (e.target as HTMLTextAreaElement).value), onchange: () => this.save() },
+                        s.code,
+                      ),
                     ),
                   ]
                 : [number("Radius (voxels)", s.radius, (v) => (s.radius = Math.max(1, Math.round(v))), "1", "1")];
     const kind = el(
       "select",
       {
+        "data-focus": key("kind"),
         onchange: (e: Event) => {
           s.kind = (e.target as HTMLSelectElement).value as StepKind;
+          this.save();
           draw();
         },
       },
@@ -175,6 +264,7 @@ class Filters {
         disabled: this.steps.length === 1,
         onclick: () => {
           this.steps.splice(index, 1);
+          this.save();
           draw();
         },
       },
@@ -185,7 +275,7 @@ class Filters {
 
   render(host: HTMLElement): () => void {
     const draw = () => {
-      const image = el("select", { onchange: (e: Event) => (this.image = (e.target as HTMLSelectElement).value) }, ...this.images.map((n) => el("option", { value: n, ...(n === this.image ? { selected: "" } : {}) }, n)));
+      const image = el("select", { "data-focus": "image", onchange: (e: Event) => ((this.image = (e.target as HTMLSelectElement).value), this.save()) }, ...this.images.map((n) => el("option", { value: n, ...(n === this.image ? { selected: "" } : {}) }, n)));
       const statusLine = el("div", { class: "fl-status" });
       const showStatus = () => {
         const status = this.ctx.workspace.computed.status();
@@ -203,6 +293,10 @@ class Filters {
         host.replaceChildren(el("div", { class: "fl" }, el("p", { class: "note" }, "Add an image to filter it.")));
         return;
       }
+      // The control being used keeps its focus, caret and scroll across the redraw.
+      const active = document.activeElement as (HTMLElement & Partial<HTMLTextAreaElement>) | null;
+      const focused = active !== null && host.contains(active) ? active.dataset.focus : undefined;
+      const caret = focused === undefined ? undefined : { start: active!.selectionStart, end: active!.selectionEnd, top: active!.scrollTop };
       host.replaceChildren(
         el(
           "div",
@@ -219,6 +313,7 @@ class Filters {
                 type: "button",
                 onclick: () => {
                   this.steps.push(newStep(this.steps.at(-1)?.kind === "threshold" ? "morphology" : "gaussian"));
+                  this.save();
                   draw();
                 },
               },
@@ -230,6 +325,18 @@ class Filters {
           statusLine,
         ),
       );
+      if (focused !== undefined) {
+        const again = host.querySelector<HTMLElement & Partial<HTMLTextAreaElement>>(`[data-focus="${CSS.escape(focused)}"]`);
+        again?.focus({ preventScroll: true });
+        if (again !== null && caret !== undefined && typeof again.setSelectionRange === "function" && caret.start !== null && caret.start !== undefined) {
+          try {
+            again.setSelectionRange(caret.start, caret.end ?? caret.start);
+          } catch {
+            // A number input has no caret to set.
+          }
+          if (caret.top !== undefined) again.scrollTop = caret.top;
+        }
+      }
     };
     this.update = draw;
     draw();

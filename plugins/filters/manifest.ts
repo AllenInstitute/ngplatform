@@ -32,5 +32,7 @@ Choose an image (any image layer: a file on this computer, or an OME-Zarr, N5 or
   activation: ["onStartup"],
   contributes: {
     panels: [{ id: FILTERS_PANEL, title: "Filters", slot: "left", order: 80 }],
+    // The tab's image and steps, kept in the workspace and its link.
+    appState: { key: "filters", version: 1 },
   },
 };

@@ -1,7 +1,11 @@
 /**
  * Exports an image on this computer to another format, off the page's
  * thread: the file is opened as its virtual store, a level read back whole
- * and written out.
+ * and written out.  Or a computed view (a filtered image): `url` and `title`
+ * instead of `file`, its keys fetched from the app's own path for it,
+ * which the service worker answers from the tab computing it, chunk by
+ * chunk, so a level is computed as it is read (`label`: it is a mask or
+ * labels).
  *
  * In:  { type: "levels", id, file }
  *      { type: "export", id, file, format, level, region?: { centre (RAS mm), size (voxels) } }
@@ -24,6 +28,7 @@ import { parseTckHeader, readTck } from "../vectors/tck.js";
 import type { TrkBatch } from "../vectors/trk.js";
 import { parseTrkHeader, readTrk, TRK_HEADER_SIZE } from "../vectors/trk.js";
 import { openTrxInfo, readTrx } from "../vectors/trx.js";
+import type { VirtualStore } from "../images/store.js";
 import { exportKind, type GeometryFormat, type ImageFormat } from "./kinds.js";
 import { readLevel, regionAround, storeLevels } from "./read_level.js";
 import { csvFile, type Curves, graphmlFile, objFile, plyFile, stlFile, tckFile, trkFile } from "./vectors.js";
@@ -97,10 +102,33 @@ async function exportGeometry(file: Blob & { name: string }, format: GeometryFor
 
 /** The image last opened, kept for the requests that follow (a pyramid is written chunk by chunk). */
 let opened: { key: string; store: ReturnType<typeof openImage> } | undefined;
-function storeOf(file: File): ReturnType<typeof openImage> {
+function storeOf(msg: { file?: File; url?: string; title?: string }): ReturnType<typeof openImage> {
+  if (msg.url !== undefined) {
+    const key = `url|${msg.url}`;
+    if (opened?.key !== key) opened = { key, store: Promise.resolve(urlStore(msg.url, msg.title ?? "image")) };
+    return opened.store;
+  }
+  const file = msg.file!;
   const key = `${file.name}|${file.size}|${file.lastModified}`;
   if (opened?.key !== key) opened = { key, store: openImage(file) };
   return opened.store;
+}
+
+/**
+ * A Zarr store at a URL (a computed view, under the app's own path), read
+ * key by key: absent keys are undefined, a failure says why.
+ */
+export function urlStore(url: string, name: string): VirtualStore & { name: string } {
+  const base = url.replace(/\/?$/, "/");
+  return {
+    name,
+    async get(key: string) {
+      const response = await fetch(base + key);
+      if (response.status === 404) return undefined;
+      if (!response.ok) throw new Error(`${key}: ${(await response.text().catch(() => "")) || `status ${response.status}`}`);
+      return new Uint8Array(await response.arrayBuffer());
+    },
+  };
 }
 
 const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value, null, 2));
@@ -218,20 +246,22 @@ self.onmessage = async (event: MessageEvent) => {
     return;
   }
   try {
-    if (msg.type === "export" && exportKind(msg.file.name) !== "image") {
+    if (msg.type === "export" && msg.file !== undefined && exportKind(msg.file.name) !== "image") {
       post({ type: "progress", what: "Reading", done: 0, total: 1 });
       const bytes = await exportGeometry(msg.file, msg.format);
       post({ type: "done", files: [[`file.${msg.format}`, bytes]] }, [bytes.buffer as ArrayBuffer]);
       return;
     }
-    const store = await storeOf(msg.file);
+    const store = await storeOf(msg);
     if (msg.type === "write-pyramid") {
       await writePyramid(store, msg.dir, msg.name, msg.id, post);
       post({ type: "done", files: [], cancelled: cancelled.has(msg.id) });
       cancelled.delete(msg.id);
       return;
     }
-    const { levels, label } = await storeLevels(store);
+    const found = await storeLevels(store);
+    const { levels } = found;
+    const label = found.label || msg.label === true;
     if (msg.type === "levels") {
       post({ type: "levels", levels: levels.map(({ size, type, bytes }) => ({ size, type, bytes })), label });
       return;

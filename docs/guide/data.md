@@ -143,6 +143,7 @@ What can be saved today, and where:
 | What | How | Format |
 |---|---|---|
 | A local image | Datasets → the row's ⋯ → **Export as…** | NIfTI (`.nii.gz`, `.nii`), FreeSurfer (`.mgz`, `.mgh`) or an OME-Zarr folder: the whole image at full resolution or a coarser level (up to 2 GB), or a box of 256 voxels a side around the position at any level; or, at any size, every level written into a folder chunk by chunk as OME-Zarr in one pass over the file (gzip-compressed; in browsers that can write folders, such as Chrome and Edge) |
+| A filtered view (Filters) | the same | As a local image. Each chunk is computed as it is written, so a large view takes a while; the Jobs tab shows progress and Cancel |
 | A local tractogram | the same | TrackVis `.trk` or MRtrix `.tck` |
 | A local mesh or surface | the same | OBJ, PLY, STL, or its vertices as CSV |
 | A local point table or SWC | the same | CSV |

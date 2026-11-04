@@ -30,6 +30,7 @@ import type { LevelCells } from "./level_cells.js";
 import {
   AsyncLru,
   mapConcurrent,
+  retryable,
   SHARED_SIGNAL,
 } from "./util.js";
 
@@ -217,6 +218,8 @@ function neighbourOffsets(): Offset[] {
   return out;
 }
 
+const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
 export interface CrossChunkLinksOptions {
   cells: LevelCells;
   /** Child directory names of a level-relative path; throws if unsupported. */
@@ -279,7 +282,9 @@ export class CrossChunkLinks {
 
   /**
    * The level's cross-chunk arrays, or `null` when it has no links. Shared by
-   * every chunk, so it runs without any one request's abort signal.
+   * every chunk, so it runs without any one request's abort signal.  A read
+   * that fails (the network) rejects it, with a warning, and it is found
+   * again on the next request: never kept as "no links".
    */
   discover(): Promise<Discovery | null> {
     if (this.discovery === undefined) {
@@ -303,7 +308,12 @@ export class CrossChunkLinks {
     let segments: string[] | undefined;
     try {
       segments = await listDirectories?.("links/0");
-    } catch {
+    } catch (e) {
+      if (retryable(e)) {
+        warn?.(`links could not be listed (${messageOf(e)}); trying again on the next read`);
+        throw e;
+      }
+      // Listing is not supported here.
       segments = undefined;
     }
     if (segments === undefined) {
@@ -323,9 +333,14 @@ export class CrossChunkLinks {
       segments = neighbourOffsets().map((o) => formatOffsets([o]));
     }
     const arrays: (OffsetArray | undefined)[] = new Array(segments.length);
+    // An absent array is undefined; a read that failed is kept, and fails the discovery.
+    let failure: unknown;
     await mapConcurrent(segments, 16, async (segment, i) => {
       const path = `links/0/${segment}`;
-      const reader = await cells.reader(path).catch(() => undefined);
+      const reader = await cells.reader(path).catch((e) => {
+        failure ??= e;
+        return undefined;
+      });
       if (reader === undefined) return;
       const a = reader.array.attributes;
       const offsets: Offset[] | undefined = Array.isArray(a.offsets)
@@ -346,6 +361,10 @@ export class CrossChunkLinks {
         signed: !dtype.startsWith("u"),
       };
     });
+    if (failure !== undefined) {
+      warn?.(`links could not be read (${messageOf(failure)}); trying again on the next read`);
+      throw failure;
+    }
     return {
       linkWidth,
       arrays: arrays.filter((a): a is OffsetArray => a !== undefined),

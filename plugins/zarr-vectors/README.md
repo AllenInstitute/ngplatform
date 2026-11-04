@@ -148,7 +148,9 @@ layers, so one shader colours the overview and the selected objects alike:
 - `obj_<column>`: the object's value in `object_attributes/<column>`; a
   dictionary-encoded column gives its code, and the codes are listed in the
   browser console when the layer opens. A value the store marks absent is
-  NaN (test with `isnan`).
+  NaN (test with `isnan`), and so is every value when the object table or
+  the column cannot be read (warned in the console); a network error is
+  not kept, so the next chunk reads them again.
 
 By default the group index and, when the store has at most 8 eligible
 columns (single-channel, numeric or dictionary, not 64-bit), all of them are
@@ -210,7 +212,7 @@ cost; an object index and directory listing also change what can be shown.
 | level stamped `fragment_link_groups`                      | one object's faces read alone, by byte range                                                                  | whole face cells (`zvtools index-faces` stamps it)                                                                    |
 | uncompressed cells, one per stored chunk (sharded or not) | byte-range reads of rows (an object's own curve and its fragments' range entries, bridges, faces, neighbours) | whole cells                                                                                                           |
 | `sharding_indexed`                                        | ranges of one shard read together are merged                                                                  | one request per cell                                                                                                  |
-| server directory listing                                  | cross-chunk links found by listing `links/0/`                                                                 | edges: the 26 neighbours are probed; faces: missing, warned                                                           |
+| server directory listing                                  | cross-chunk links found by listing `links/0/`                                                                 | edges: the 26 neighbours are probed; faces: missing, warned. A listing or link read that fails on the network is warned and tried again on the next read, not taken as "no links" |
 | `nonempty_chunks`                                         | empty cells skipped without a request                                                                         | a request that finds nothing                                                                                          |
 | zarr-vectors-tools `skeleton_layout`                      | skeleton layout known                                                                                         | inferred                                                                                                              |
 | `fragment_attributes/object_id`, or ids that are rows     | each fragment's object read directly                                                                          | taken from the level's manifests (a `segment_id` column may hold ids or rows, so it is used only where the two agree) |

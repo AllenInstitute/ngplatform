@@ -26,6 +26,17 @@ export function warnOnce(message: string) {
 }
 
 /**
+ * Whether a failed read may work when tried again (the network, a server
+ * error, too many requests), rather than saying the data is not there or
+ * cannot be listed: Neuroglancer's HttpError has status 0 for the network.
+ */
+export function retryable(e: unknown): boolean {
+  if (e instanceof TypeError) return true;
+  const status = (e as { status?: unknown } | null)?.status;
+  return typeof status === "number" && (status === 0 || status === 429 || status >= 500);
+}
+
+/**
  * Least-recently-used cache of promises.  Concurrent requests for one key
  * share a load; a load that fails is forgotten so the next request retries.
  * Bounded by entry count and, when `sizeOf` is given, by total size; loads
