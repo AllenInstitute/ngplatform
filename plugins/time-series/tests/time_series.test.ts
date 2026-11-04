@@ -9,12 +9,12 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LayerTransform } from "@ngplatform/sdk";
 import { openNifti } from "../../../src/virtual/images/nifti.js";
-import { linePath, ticks, valueRange } from "../plot.js";
+import { bandPath, linePath, ticks, valueRange } from "../plot.js";
 import { ChunkCache, describePlan, levelVoxel, movingPlan, readBytes, type SeriesInfo, type SeriesLevel, SeriesReader, timeAxisOf } from "../reader.js";
 import { inside, regionVoxels, shapeOf } from "../region.js";
-import { coordinateOf, formatTime, freeColour, indexAt, nextIndex, percentChange, seriesCsv, stepIndex, type TimeAxis, timeAxis, timeOf, timesOf, voxelAt, voxelLabel } from "../series.js";
+import { coordinateOf, formatTime, freeColour, indexAt, nextIndex, percentChange, percentChangeSpread, seriesCsv, stepIndex, type TimeAxis, timeAxis, timeOf, timesOf, voxelAt, voxelLabel } from "../series.js";
 import { type GlobalSpace, invert, LayerMap, placeOf } from "../space.js";
-import { nearestOf, storeDistance, storePoint, surfaceAxis, surfaceSeriesOf, vertexLabel, zarrVectorsStore } from "../surface.js";
+import { nearestOf, parcelAt, parcelCourseOf, parcelLabel, parcellationsOf, REACH_EDGES, storeDistance, storePoint, surfaceAxis, surfaceSeriesOf, vertexLabel, vertexReach, zarrVectorsStore } from "../surface.js";
 
 const FIXTURE = path.join(__dirname, "fixtures", "tiny.nii.gz");
 /** The fixture's value at voxel (x, y, z), time point t. */
@@ -496,5 +496,45 @@ describe("time series on surfaces", () => {
     expect(nearestOf({ series: "rest_t", vertex: 7, distance: 1.5, position: [0, 0, 0] })).toEqual({ vertex: 7, distance: 1.5 });
     expect(nearestOf({ series: "rest_t", vertex: null })).toBeUndefined();
     expect(vertexLabel(7)).toBe("vertex 7");
+    // How near a vertex the mouse must be: three median edges when the store has said, else 4 mm.
+    expect(REACH_EDGES).toBe(3);
+    expect(vertexReach(4.6, offset)).toBeCloseTo(13.8, 9);
+    expect(vertexReach(0.9, offset)).toBeCloseTo(2.7, 9);
+    expect(vertexReach(undefined, offset)).toBeCloseTo(4);
+    expect(vertexReach(0, { ...offset, input: { ...offset.input, scales: [1e-6, 1e-6, 1e-6] } })).toBeCloseTo(4000);
+  });
+
+  it("reads a store's parcellations and a parcel's mean and SD, and keeps the SD in the plot and the CSV", () => {
+    const codes = Float32Array.from([1, 2, 2, 0, 0, 1]);
+    const answer = {
+      series: "rest_t",
+      parcellations: [
+        { name: "aparc", codes, labels: [{ code: 0, name: "???", rgba: [0, 0, 0, 0], vertices: 2 }, { code: 1, name: "precentral", rgba: [0.2, 0.4, 0.8, 1], vertices: 2 }, { code: 2, name: "postcentral", rgba: [1, 0, 0, 1], vertices: 2 }, { code: 3, name: "empty", rgba: [1, 1, 1, 1], vertices: 0 }] },
+        { name: "nothing", codes: new Float32Array(6), labels: [] },
+        { name: "broken" },
+      ],
+    };
+    const list = parcellationsOf(answer);
+    // Labels on no vertex, and parcellations with none, are left out.
+    expect(list.map((p) => p.name)).toEqual(["aparc"]);
+    expect(list[0].labels.map((l) => l.name)).toEqual(["???", "precentral", "postcentral"]);
+    expect(parcelAt(list[0], 2)).toEqual({ code: 2, name: "postcentral", vertices: 2 });
+    expect(parcelAt(list[0], 9)).toBeUndefined();
+    expect(parcellationsOf({ series: "rest_t" })).toEqual([]);
+    const course = parcelCourseOf({ series: "rest_t", parcellation: "aparc", parcel: 1, name: "precentral", vertices: 2, mean: Float32Array.from([10, 20]), sd: Float32Array.from([1, 2]) });
+    expect(course?.name).toBe("precentral");
+    expect(Array.from(course!.sd)).toEqual([1, 2]);
+    expect(parcelCourseOf({ series: "rest_t", mean: [1] })).toBeUndefined();
+    expect(parcelLabel("precentral", "aparc")).toBe("precentral (aparc mean)");
+    // In percent change the SD scales as the mean does.
+    expect(Array.from(percentChangeSpread([90, 110], [5, 10]))).toEqual([5, 10]);
+    // The CSV: the mean's column, then the SD's.
+    const axis = { count: 2, start: 0, step: 0.72, unit: { label: "s", seconds: 1 } };
+    expect(seriesCsv(axis, [{ label: "precentral (aparc mean)", values: [10, 20], sd: [1, 2] }, { label: "vertex 3", values: [5, NaN] }])).toBe(
+      "time point,time (s),precentral (aparc mean),precentral (aparc mean) SD,vertex 3\n0,0,10,1,5\n1,0.72,20,2,\n",
+    );
+    // The band: one closed shape per run of numbers.
+    const band = bandPath([0, 1, 2, 3], [1, 2, NaN, 4], [0.5, 0.5, 0.5, 0.5], (x) => x, (y) => y);
+    expect(band).toBe("M0.0,1.5L1.0,2.5L1.0,1.5L0.0,0.5ZM3.0,4.5L3.0,3.5Z");
   });
 });

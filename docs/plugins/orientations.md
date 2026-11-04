@@ -30,7 +30,9 @@ zoom in and the finer level's glyphs load in and take their place.
 - **SH basis**: DIPY writes `descoteaux07` (its legacy form unless told
   otherwise), MRtrix3 `tournier07`. A wrong basis gives scrambled glyphs.
   **SH glyph**: the ODF's shape, or lines along its peaks (up to three, each
-  over half the largest).
+  over half the largest). Shapes are drawn exactly (each pixel's ray meets
+  the ODF's surface), not as a mesh of triangles, so lobes are smooth at
+  any size and thousands draw quickly.
 - **Tensor order**: FSL (Dxx Dxy Dxz Dyy Dyz Dzz), DIPY (Dxx Dxy Dyy Dxz Dyz
   Dzz) or MRtrix (Dxx Dyy Dzz Dxy Dxz Dyz). Automatic takes the store's
   word, DIPY's for a NIfTI whose header says symmetric matrix (intent

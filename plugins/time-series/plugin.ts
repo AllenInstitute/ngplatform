@@ -8,8 +8,9 @@
  * store (a NIfTI opened from this computer is one, read in place).  A
  * CIFTI time series beside a surface opened from this computer is stepped
  * through instead (./surface.ts): its store serves the values at the time
- * point the transport chooses, finds the vertex nearest the mouse and
- * sends a vertex's values at every time point.  Where
+ * point the transport chooses, finds the vertex nearest the mouse (within
+ * three median edge lengths), sends a vertex's values at every time point,
+ * and a parcel's mean and SD over its vertices.  Where
  * a position is in the image, and which time point the views show, come
  * from the layer's transform (./space.ts), so a moved layer reads where it
  * shows.  Pins are kept in the plugin's state (in the link); their values
@@ -22,26 +23,9 @@ import { TIME_SERIES_PANEL } from "./manifest.js";
 import { Plot, type PlotSeries } from "./plot.js";
 import { describePlan, movingPlan } from "./reader.js";
 import { type AnnotationJson, regionVoxels, shapeOf } from "./region.js";
-import {
-  COLOURS,
-  coordinateOf,
-  formatTime,
-  freeColour,
-  indexAt,
-  nextIndex,
-  percentChange,
-  RATES,
-  seriesCsv,
-  stepIndex,
-  type TimeAxis,
-  timeAxis,
-  timeOf,
-  timesOf,
-  voxelAt,
-  voxelLabel,
-} from "./series.js";
+import { COLOURS, coordinateOf, formatTime, freeColour, indexAt, nextIndex, percentChange, percentChangeSpread, RATES, seriesCsv, stepIndex, type TimeAxis, timeAxis, timeOf, timesOf, voxelAt, voxelLabel } from "./series.js";
 import { LayerMap, type Place, placeOf } from "./space.js";
-import { nearestOf, storeDistance, storePoint, type SurfaceSeries, surfaceAxis, surfaceSeriesOf, VERTEX_REACH_MM, vertexLabel, zarrVectorsStore } from "./surface.js";
+import { nearestOf, type Parcellation, parcelAt, parcelCourseOf, parcelLabel, parcellationsOf, storePoint, type SurfaceSeries, surfaceAxis, surfaceSeriesOf, vertexLabel, vertexReach, zarrVectorsStore } from "./surface.js";
 
 type Child = Node | string | null | undefined | false;
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
@@ -106,6 +90,7 @@ const STYLE = `
 .ts-plot .ts-axis { stroke: var(--line-strong); stroke-width: 1; }
 .ts-plot .ts-tick { fill: var(--faint); font: 10px var(--mono); }
 .ts-plot .ts-line { fill: none; stroke-width: 2; stroke-linejoin: round; }
+.ts-plot .ts-band { stroke: none; opacity: 0.18; }
 .ts-plot .ts-coarse { stroke-dasharray: 5 3; }
 .ts-plot .ts-coarse-note { fill: var(--warn); }
 .ts-plot .ts-now { stroke: var(--warn); stroke-width: 1.5; }
@@ -115,7 +100,7 @@ const STYLE = `
 .ts-readout { flex: none; color: var(--muted); font: 11px/1.5 var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 `;
 
-/** A pinned series: a voxel, the mean over a region drawn in an annotation layer, or a surface's vertex. */
+/** A pinned series: a voxel, the mean over a region drawn in an annotation layer, a surface's vertex, or the mean over a surface's parcel. */
 interface Pin {
   id: number;
   /** Its colour, an index into COLOURS. */
@@ -128,7 +113,14 @@ interface Pin {
   region?: { layer: string; annotation: string };
   /** A vertex of a surface: its store, the series (its map's name) and the vertex as the surface file numbers it. */
   vertex?: { store: string; series: string; index: number };
+  /** A parcel of a surface: its store, the series, the parcellation (its map's name) and the label's code and name. */
+  parcel?: { store: string; series: string; parcellation: string; code: number; name: string };
 }
+
+const isParcelPin = (v: unknown): boolean => {
+  const p = v as Pin["parcel"];
+  return typeof p?.store === "string" && typeof p.series === "string" && typeof p.parcellation === "string" && typeof p.code === "number" && typeof p.name === "string";
+};
 
 const isVertexPin = (v: unknown): boolean => {
   const p = v as Pin["vertex"];
@@ -147,7 +139,7 @@ const surfaceKey = (surface: SurfaceStep) => `${surface.store}|${surface.series.
 
 function readSaved(value: unknown): Saved {
   const v = (value ?? {}) as Partial<Saved>;
-  const pins = Array.isArray(v.pins) ? v.pins.filter((p) => typeof p?.id === "number" && typeof p.layer === "string" && (Array.isArray(p.voxel) || p.region !== undefined || isVertexPin(p.vertex))) : [];
+  const pins = Array.isArray(v.pins) ? v.pins.filter((p) => typeof p?.id === "number" && typeof p.layer === "string" && (Array.isArray(p.voxel) || p.region !== undefined || isVertexPin(p.vertex) || isParcelPin(p.parcel))) : [];
   const times = Object.entries(v.surfaceTimes ?? {}).filter((e): e is [string, number] => Number.isInteger(e[1]) && e[1] >= 0);
   return { layer: typeof v.layer === "string" ? v.layer : undefined, pins, ...(times.length ? { surfaceTimes: Object.fromEntries(times) } : {}) };
 }
@@ -156,6 +148,8 @@ function readSaved(value: unknown): Saved {
 interface Read {
   key: string;
   values?: Float32Array;
+  /** A parcel's SD across its vertices at each time point. */
+  sd?: Float32Array;
   /** The values are a coarse read (what, in words) until the finest replace them. */
   coarse?: string;
   error?: string;
@@ -227,6 +221,13 @@ class TimeSeries {
   private vertexCursor: VertexCursor | undefined;
   /** Counts the nearest-vertex lookups sent, so an answer to an older one is dropped. */
   private vertexLookups = 0;
+  /** Each surface store's median edge length (store units), once it has said. */
+  private readonly spacings = new Map<string, number>();
+  /** Each surface series' parcellations (by `store|series`), once its store has said. */
+  private readonly parcellations = new Map<string, Parcellation[] | "reading">();
+  /** The parcellation and parcel chosen in the panel (its name, a label's code). */
+  private parcellation = "";
+  private parcel: number | undefined;
   private cursorTimer: ReturnType<typeof setTimeout> | undefined;
   private restTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly pinned = new Map<number, Read>();
@@ -504,7 +505,8 @@ class TimeSeries {
    * The vertex under the mouse, on the surface whose series is chosen: the
    * mouse's position through the inverse of the surface layer's transform
    * to the store's coordinates, the store asked for the vertex nearest it
-   * (within VERTEX_REACH_MM), then for that vertex's values at every time
+   * (within three of the surface's median edge lengths, `vertexReach`),
+   * then for that vertex's values at every time
    * point.  Away from the surface, the last vertex stays plotted (so it can
    * be pinned from the panel).
    */
@@ -520,7 +522,7 @@ class TimeSeries {
     const lookup = ++this.vertexLookups;
     let found: { vertex: number; distance: number } | undefined;
     try {
-      found = nearestOf(await this.ctx.workspace.local.send(surface.store, { series: surface.series.name, nearest: point, within: storeDistance(t, VERTEX_REACH_MM) }));
+      found = nearestOf(await this.ctx.workspace.local.send(surface.store, { series: surface.series.name, nearest: point, within: vertexReach(this.spacings.get(surface.store), t) }));
     } catch (e) {
       if (lookup === this.vertexLookups && this.surface === surface) this.setStatus(`Could not find the vertex under the mouse: ${(e as Error).message}`, true);
       return;
@@ -641,6 +643,7 @@ class TimeSeries {
   /** What a pin reads: its voxel, or its region's annotation as it is now (so a region moved is read again). */
   private pinKey(pin: Pin): string {
     if (pin.vertex !== undefined) return `${pin.vertex.store}|${pin.vertex.series}|${pin.vertex.index}`;
+    if (pin.parcel !== undefined) return `${pin.parcel.store}|${pin.parcel.series}|${pin.parcel.parcellation}|${pin.parcel.code}`;
     if (pin.voxel !== undefined) return `${this.infoUrl}|${pin.voxel.join()}`;
     const layers = (this.ctx.viewer.getState() as { layers?: { name: string; annotations?: AnnotationJson[] }[] }).layers ?? [];
     const annotation = layers.find((l) => l.name === pin.region?.layer)?.annotations?.find((a) => a.id === pin.region?.annotation);
@@ -653,7 +656,8 @@ class TimeSeries {
     const live = new Set<number>();
     let changed = false;
     for (const pin of this.saved.pins) {
-      if (pin.layer !== layer || (pin.vertex === undefined ? this.map === undefined : this.surface === undefined)) continue;
+      const onSurface = pin.vertex !== undefined || pin.parcel !== undefined;
+      if (pin.layer !== layer || (onSurface ? this.surface === undefined : this.map === undefined)) continue;
       live.add(pin.id);
       const key = this.pinKey(pin);
       const known = this.pinned.get(pin.id);
@@ -662,6 +666,10 @@ class TimeSeries {
       known?.controller?.abort();
       const read: Read = { key };
       this.pinned.set(pin.id, read);
+      if (pin.parcel !== undefined) {
+        void this.readParcelInto(read, pin.parcel, pin.label);
+        continue;
+      }
       if (pin.vertex !== undefined) {
         // A vertex already read under the mouse needs no reading again.
         const under = this.vertexCursor;
@@ -792,11 +800,96 @@ class TimeSeries {
       if (this.surface !== surface || typeof answer?.time !== "number") return;
       this.current = answer.time;
       this.updateTime?.();
+      this.readSurfaceExtras(surface);
       // The time point the link keeps, shown again (a reload starts the store at 0).
       const kept = this.saved.surfaceTimes?.[surfaceKey(surface)];
       if (kept !== undefined && kept !== answer.time) void this.showOnSurface(kept);
     } catch (e) {
       if (this.surface === surface) this.setStatus(`Could not reach ${surface.series.name}: ${(e as Error).message}`, true);
+    }
+  }
+
+  /** How far apart a surface's vertices are, and its parcellations: asked of its store once. */
+  private readSurfaceExtras(surface: SurfaceStep): void {
+    const { store } = surface;
+    const series = surface.series.name;
+    if (!this.spacings.has(store)) {
+      this.ctx.workspace.local.send(store, { series, spacing: true }).then(
+        (answer) => {
+          const edge = (answer as { medianEdge?: unknown } | undefined)?.medianEdge;
+          if (typeof edge === "number" && edge > 0) this.spacings.set(store, edge);
+        },
+        () => undefined,
+      );
+    }
+    const key = `${store}|${series}`;
+    if (this.parcellations.has(key)) return;
+    this.parcellations.set(key, "reading");
+    this.ctx.workspace.local.send(store, { series, parcellations: true }).then(
+      (answer) => {
+        this.parcellations.set(key, parcellationsOf(answer));
+        this.update?.();
+      },
+      () => this.parcellations.set(key, []),
+    );
+  }
+
+  /** The chosen surface series' parcellations, once read. */
+  private surfaceParcellations(): Parcellation[] {
+    const surface = this.surface;
+    const known = surface === undefined ? undefined : this.parcellations.get(`${surface.store}|${surface.series.name}`);
+    return Array.isArray(known) ? known : [];
+  }
+
+  /** The parcellation chosen in the panel (the first when none is). */
+  private chosenParcellation(): Parcellation | undefined {
+    const list = this.surfaceParcellations();
+    return list.find((p) => p.name === this.parcellation) ?? list[0];
+  }
+
+  /** Pins the mean over a parcel of the chosen surface series' parcellation. */
+  private pinParcel(parcellation: Parcellation, code: number): void {
+    const surface = this.surface;
+    const label = parcellation.labels.find((l) => l.code === code);
+    if (surface === undefined || label === undefined) return;
+    const same = (p: Pin) => p.layer === this.layer() && p.parcel?.store === surface.store && p.parcel.series === surface.series.name && p.parcel.parcellation === parcellation.name && p.parcel.code === code;
+    if (this.saved.pins.some(same)) return;
+    this.addPin({ label: parcelLabel(label.name, parcellation.name), parcel: { store: surface.store, series: surface.series.name, parcellation: parcellation.name, code, name: label.name } });
+  }
+
+  /** Pins the mean over the parcel the vertex under the mouse (or the last one it was on) is in. */
+  pinItsParcel(): void {
+    const parcellation = this.chosenParcellation();
+    const under = this.vertexCursor;
+    if (this.surface === undefined || parcellation === undefined) {
+      this.ctx.ui.toast("Choose a surface's time series with a parcellation beside it (an .annot, .label or CIFTI dlabel file) first.");
+      return;
+    }
+    if (under === undefined) {
+      this.ctx.ui.toast("Move the mouse onto the surface first.");
+      return;
+    }
+    const label = parcelAt(parcellation, under.vertex);
+    if (label === undefined) {
+      this.ctx.ui.toast(`${vertexLabel(under.vertex)} has no label in ${parcellation.name}.`);
+      return;
+    }
+    this.parcel = label.code;
+    this.pinParcel(parcellation, label.code);
+  }
+
+  /** Reads a parcel's mean and SD at every time point from its store into `read`, then redraws. */
+  private async readParcelInto(read: Read, parcel: NonNullable<Pin["parcel"]>, what: string): Promise<void> {
+    try {
+      const course = parcelCourseOf(await this.ctx.workspace.local.send(parcel.store, { series: parcel.series, parcellation: parcel.parcellation, parcel: parcel.code }));
+      if (course === undefined) throw new Error("the store sent no values");
+      read.values = course.mean;
+      read.sd = course.sd;
+      read.error = course.vertices > 0 ? undefined : "no values: none of its vertices is in the series";
+      this.drawPlot();
+    } catch (e) {
+      read.error = (e as Error).message;
+      this.setStatus(`Could not read ${what}: ${read.error}`, true);
     }
   }
 
@@ -891,7 +984,7 @@ class TimeSeries {
     for (const pin of this.saved.pins) {
       const read = this.pinned.get(pin.id);
       const values = read?.error === undefined ? read?.values : undefined;
-      if (pin.layer === this.layer() && values !== undefined) out.push({ id: pin.id, label: pin.label, values, colour: COLOURS[pin.colour] });
+      if (pin.layer === this.layer() && values !== undefined) out.push({ id: pin.id, label: pin.label, values, colour: COLOURS[pin.colour], ...(read?.sd !== undefined ? { sd: read.sd } : {}) });
     }
     return out;
   }
@@ -902,7 +995,7 @@ class TimeSeries {
     this.plot?.set({
       times: axis ? timesOf(axis) : [],
       unit: axis?.unit.label ?? "",
-      series: this.change ? series.map((s) => ({ ...s, values: percentChange(s.values) })) : series,
+      series: this.change ? series.map((s) => ({ ...s, values: percentChange(s.values), ...(s.sd !== undefined ? { sd: percentChangeSpread(s.values, s.sd) } : {}) })) : series,
       valueUnit: this.change ? "%" : "",
     });
     this.plot?.setCurrent(this.current);
@@ -923,6 +1016,36 @@ class TimeSeries {
   }
 
   // ------------------------------------------------------------- panel
+
+  /** The surface's parcels: a parcellation, a parcel, and pins of their mean (and SD). */
+  private parcelRow(): Node | string {
+    const list = this.surfaceParcellations();
+    const parcellation = this.chosenParcellation();
+    if (parcellation === undefined) return "";
+    const labels = [...parcellation.labels].sort((a, b) => a.name.localeCompare(b.name));
+    if (!labels.some((l) => l.code === this.parcel)) this.parcel = labels[0]?.code;
+    const which =
+      list.length > 1
+        ? el(
+            "select",
+            { class: "text-input", "aria-label": "Parcellation", title: "The parcellation", onchange: (e: Event) => ((this.parcellation = (e.target as HTMLSelectElement).value), (this.parcel = undefined), this.update?.()) },
+            ...list.map((p) => el("option", { value: p.name, selected: p === parcellation }, p.name)),
+          )
+        : "";
+    const parcel = el(
+      "select",
+      { class: "text-input", "aria-label": "Parcel", title: `A label of ${parcellation.name} (how many vertices have it)`, onchange: (e: Event) => (this.parcel = Number((e.target as HTMLSelectElement).value)) },
+      ...labels.map((l) => el("option", { value: l.code, selected: l.code === this.parcel }, `${l.name} (${l.vertices})`)),
+    );
+    return el(
+      "div",
+      { class: "ts-row ts-region" },
+      which,
+      parcel,
+      el("button", { class: "btn outline small", type: "button", title: "Pin the mean (and SD) over the parcel's vertices", onclick: () => this.parcel !== undefined && this.pinParcel(parcellation, this.parcel) }, "Pin mean"),
+      el("button", { class: "btn outline small", type: "button", title: "Pin the mean over the parcel of the vertex under the mouse (Alt+Shift+M)", onclick: () => this.pinItsParcel() }, "Its parcel"),
+    );
+  }
 
   render(host: HTMLElement): Disposer {
     host.classList.add("ts-host");
@@ -999,6 +1122,7 @@ class TimeSeries {
         ),
         el("div", { class: "ts-row ts-spread" }, time, loop),
         regions.length > 0 && regionsToo ? el("div", { class: "ts-row ts-region" }, region, el("button", { class: "btn outline small", type: "button", title: "Pin the mean over the region's voxels", onclick: () => this.pinRegion() }, "Pin mean")) : "",
+        surface !== undefined ? this.parcelRow() : "",
         el("div", { class: `ts-status${this.statusError ? " error" : ""}` }, note || this.status),
       );
       // The legend: every series plotted or pinned, pins removable.
@@ -1017,7 +1141,12 @@ class TimeSeries {
         );
         const under = this.vertexCursor;
         if (under === undefined) keys.push(el("span", { class: "ts-key" }, "Move the mouse onto the surface to plot a vertex's time course."));
-        else keys.push(el("span", { class: "ts-key", title: under.read.error ?? "" }, swatch(CURSOR_COLOUR), `Mouse: ${vertexLabel(under.vertex)}${under.read.error ? ` (${under.read.error})` : under.read.values === undefined ? " …" : ""}`));
+        else {
+          const parcellation = this.chosenParcellation();
+          const label = parcellation === undefined ? undefined : parcelAt(parcellation, under.vertex);
+          const inParcel = label === undefined ? "" : `, in ${label.name}`;
+          keys.push(el("span", { class: "ts-key", title: under.read.error ?? "" }, swatch(CURSOR_COLOUR), `Mouse: ${vertexLabel(under.vertex)}${inParcel}${under.read.error ? ` (${under.read.error})` : under.read.values === undefined ? " …" : ""}`));
+        }
       } else if (this.cursor !== undefined && this.info !== undefined) {
         const coarse = this.cursor.read.coarse;
         keys.push(el("span", { class: "ts-key", title: coarse === undefined ? "" : "Read coarsely while the mouse moves; the finest values are read when it rests" }, swatch(CURSOR_COLOUR), `Mouse: ${voxelLabel(this.info, this.cursor.voxel)}${coarse !== undefined ? ` (coarse: ${coarse})` : ""}`));
@@ -1078,6 +1207,7 @@ export const plugin: PluginModule = {
     const series = new TimeSeries(ctx);
     ctx.subscriptions.push(() => series.dispose());
     ctx.commands.register("timeSeries.pin", () => series.pinCursor());
+    ctx.commands.register("timeSeries.pinParcel", () => series.pinItsParcel());
     ctx.commands.register("timeSeries.play", () => series.toggle());
     ctx.commands.register("timeSeries.saveCsv", () => series.saveCsv());
     ctx.ui.panel(TIME_SERIES_PANEL, (host) => series.render(host));

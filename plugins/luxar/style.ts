@@ -53,6 +53,12 @@ export interface LayerStyle {
   autoBrightness: boolean;
   /** Luxar's bloom: how much of the bright light, blurred, glows around it (0, off, to 3). */
   bloom: number;
+  /**
+   * Meshes in glow, 3-D: how far behind the nearest surface light still
+   * shows (it fades by e over this share of the layer's extent), so a
+   * folded surface reads as a surface; 0 adds every layer up as lines do.
+   */
+  glowDepth: number;
 }
 
 export const DEFAULT_STYLE: LayerStyle = {
@@ -70,6 +76,7 @@ export const DEFAULT_STYLE: LayerStyle = {
   detail: 2,
   autoBrightness: true,
   bloom: 0,
+  glowDepth: 0.02,
 };
 
 const BLENDINGS: Blending[] = ["glow", "glow-through", "emission", "solid"];
@@ -123,6 +130,7 @@ export function readStyle(raw: unknown): LayerStyle {
     detail: num(s.detail, 0.1, 50, d.detail),
     autoBrightness: s.autoBrightness !== false,
     bloom: num(s.bloom, 0, 3, d.bloom),
+    glowDepth: num(s.glowDepth, 0, 0.5, d.glowDepth),
   };
 }
 

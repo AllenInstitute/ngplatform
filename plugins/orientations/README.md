@@ -22,11 +22,11 @@ User guide: [docs/plugins/orientations.md](../../docs/plugins/orientations.md)
 | `plugin.ts` | The panel and settings; which level and voxels each view wants; the 3-D drawing. |
 | `view.ts` | A 2-D view's section in RAS mm (from `panel.project`), the level for its zoom, the voxel box and slab to read. |
 | `overlay.ts` | The WebGL2 canvas over the 2-D views (one context, a viewport per view). |
-| `render.ts` | Drawing glyph sets, in that canvas and in Neuroglancer's 3-D view (`draw3d`): ODFs as instanced meshes, tensor ellipsoids ray-cast, lines as quads. |
-| `glyphs.ts` | Voxels to glyphs: SH on a sphere, tensor ellipsoids (their semi-axes), lines. |
-| `sh.ts` | Real symmetric spherical harmonics in four bases; least-squares fit; the order-2 quadratic forms. |
+| `render.ts` | Drawing glyph sets, in that canvas and in Neuroglancer's 3-D view (`draw3d`): ODFs and tensor ellipsoids ray-cast, lines as quads. |
+| `glyphs.ts` | Voxels to glyphs: SH as polynomials (normalised, with a radius each stays within), tensor ellipsoids (their semi-axes), lines. |
+| `sh.ts` | Real symmetric spherical harmonics in four bases; least-squares fit; the order-2 quadratic forms; the same functions as one polynomial in x, y, z (what the shader sums). |
 | `tensor.ts` | Tensor component orders, closed-form eigen-decomposition, FA, MD. (Log-Euclidean means, for coarser levels, are the app's: `src/virtual/images/tensors.ts`.) |
-| `sphere.ts` | Icospheres with each vertex's ring of neighbours (for normals). |
+| `sphere.ts` | Icospheres with each vertex's ring of neighbours (for an ODF's range and its peaks). |
 | `reader.ts`, `ome4.ts` | The 4-D pyramid: levels, and the voxels of a box within slabs, as float32. |
 | `worker.ts`, `client.ts` | The reader and glyph computation in a worker. |
 | `shader.ts` | The direction-colour shader for the image layer. |
@@ -69,13 +69,81 @@ User guide: [docs/plugins/orientations.md](../../docs/plugins/orientations.md)
   map of the principal direction weighted by FA; lines for vectors.
 
 The plugin follows FURY's slicer: one glyph per voxel of the section,
-min-max normalised by default, coloured by direction; ODFs as meshes
-(instanced: one sphere mesh, a texture of each glyph's radii); peaks and
-vectors as lines through the centre; tensors as ellipsoids coloured by the
-principal direction, dimmed by FA, ray-cast (below). Ray-casting the SH
-themselves (as FURY's new glyphs do, after Peters et al.) is not done: it
-needs a root-finder per pixel on an order-8 function, a much larger shader;
-ODFs stay meshes, and the cap of a few thousand per view keeps them quick.
+min-max normalised by default, coloured by direction; peaks and vectors as
+lines through the centre; tensors as ellipsoids coloured by the principal
+direction, dimmed by FA. ODFs and ellipsoids are both ray-cast (below), as
+FURY's newer SH glyphs are: a quad per glyph and the surface found per
+pixel, no mesh.
+
+### Ray-cast ODFs
+
+An ODF glyph is its coefficients (45 for order 8), not a mesh. In the
+worker (`glyphs.ts`):
+
+- The function's values at an icosphere's 162 vertices give its lowest and
+  highest, as the meshes had them (min-max normalisation, FURY's); then
+  each vertex that is a local maximum within the top 30 % of the range is
+  climbed to the peak near it (two-dimensional Newton steps on the sphere,
+  the gradient and curvature from five values around; about a dozen
+  evaluations a peak). A mesh drawn through the vertices cut each lobe's
+  tip flat; the ray-cast surface is the function itself, so its true peak
+  is what normalises (radius 1), and 1.02 times it bounds the glyph.
+- The coefficients become one homogeneous polynomial of degree lmax in
+  x, y and z (`sh.ts`, `monomialMatrix`): each term P_l^m(cos θ)·cos mφ is
+  a polynomial on the unit sphere (sin^m θ cos mφ = Re (x + iy)^m),
+  and lower orders are raised to degree lmax by (x² + y² + z²)^k, which is 1
+  there. A degree-8 polynomial in three variables has 45 monomials, as many
+  as the coefficients, so nothing grows. The normalisation (radius =
+  a·f + b) is folded in, so the glyph's radius towards a direction d is
+  max(0, f(toData d)). This works for all four bases alike; the shader
+  never sees the basis.
+
+In the renderer (`render.ts`) each glyph is a quad covering its bounding
+sphere (the same projection as the ellipsoids'). The fragment shader reads
+the glyph's coefficients (12 RGBA texels for order 8) and walks the pixel's
+ray through the sphere in steps of about two pixels (10 to 48 steps),
+testing |p| − r(p/|p|): outside positive, inside negative. At the first
+step inside it narrows the crossing by six bisections and a secant. The
+polynomial is written out term by term for the glyph set's order (the
+shader is made per order), with x², x³, … computed once: about 140
+multiplications an evaluation and no loops. The normal is the gradient of
+|p| − r(p/|p|), r's part by differences along the sphere (two more
+evaluations); the colour is the point's direction (|x|, |y|, |z|), the
+lighting the meshes' (`0.3 + 0.7 |n·v|` and a small highlight), the depth
+written (so glyphs hide each other and sit in the 3-D view among
+Neuroglancer's own drawing, lifted towards the eye as before). On the 2-D
+views' canvas a ray that misses but passes within a pixel of the surface
+(radially) covers part of the pixel (alpha to coverage); in the 3-D view
+the edge is hard.
+
+The shader's polynomial gives DIPY's values (through `shMatrix`, itself
+tested against DIPY) to within 7 × 10⁻⁷ for every basis and order 2 to 12,
+run on the GPU (SwiftShader) at 256 directions; `tests/sh.test.ts` checks
+the same sums in JavaScript (`evaluateMonomials`), and that each glyph's
+true peak (on 6 000 directions) is within its bound.
+
+Measured as the ellipsoids were (the same random-crossing ODFs, order 8,
+in a grid filling a 1000 × 700 canvas, each frame timed to a `readPixels`,
+headless Chrome on SwiftShader, so only ratios mean anything; the meshes
+as they were before):
+
+| Glyphs | Mesh, 162 vertices | Mesh, 642 vertices | Ray-cast |
+|---|---|---|---|
+| 1 000 (26 px) | 121 ms | 474 ms | 49 ms |
+| 4 000 (13 px) | 470 ms | 1 830 ms | 99 ms |
+| 16 000 (7 px) | 1 895 ms | | 320 ms |
+| 50 000 (4 px) | 5 730 ms | | 950 ms |
+
+So 2.5 to 6 times the glyphs per frame of the coarse mesh, and about 10 to
+18 times those of the fine mesh used for big glyphs, with a smoother
+surface. The worker's time per glyph rises (finding the peaks and the
+polynomial): 66 ms for 1 000 glyphs and 335 ms for 16 000, against 12 and
+206 ms for the meshes' radii; what it sends is 46 numbers a glyph instead
+of 162 or 642. A first version that evaluated the harmonics in the shader
+by their recurrences (loops over l and m) was slower than the coarse mesh
+(594 ms for 1 000); the polynomial is what made it pay. In the app (the
+Stanford HARDI CSD store, four panels at 2 mm, and the 3-D layout at 8 mm
+with about 740 glyphs) the pictures match the meshes'.
 
 ### Ray-cast ellipsoids
 
@@ -214,8 +282,8 @@ next coarser that does not is used, and none when even the coarsest would
 glyphs shown stay until the new ones arrive, so zooming in shows the coarse
 glyphs until the finer load in below. Chunks are cached in the worker.
 
-Tensors' ellipsoids are cheap to draw (above), so for them the cap limits
-reading and the worker's work more than drawing.
+Ellipsoids and ODFs are ray-cast (above), so the cap limits reading and the
+worker's work more than drawing.
 
 Each 2-D view's glyphs are redrawn, on the plugin's canvas, only when the
 view moves or new glyphs arrive (Neuroglancer draws many frames while

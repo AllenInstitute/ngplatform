@@ -134,3 +134,30 @@ export class VertexGrid {
     return best === -1 ? undefined : { index: best, distance: Math.sqrt(bestSq) };
   }
 }
+
+/**
+ * The median length of a mesh's edges (each triangle's three; an edge two
+ * triangles share counts twice, which leaves the median as it is), in the
+ * vertices' units: how far apart its vertices are, for how far from the
+ * mouse a vertex may be and still be "under" it.  At most `most` triangles
+ * are looked at, evenly spread, so a large mesh takes no longer.  0 for a
+ * mesh with no triangles.
+ */
+export function medianEdgeLength(vertices: ArrayLike<number>, faces: ArrayLike<number>, most = 100_000): number {
+  const triangles = Math.floor(faces.length / 3);
+  if (triangles === 0) return 0;
+  const step = Math.max(1, Math.ceil(triangles / most));
+  const lengths = new Float64Array(3 * Math.ceil(triangles / step));
+  let n = 0;
+  for (let t = 0; t < triangles; t += step) {
+    for (let e = 0; e < 3; ++e) {
+      const a = faces[3 * t + e];
+      const b = faces[3 * t + ((e + 1) % 3)];
+      const d = Math.hypot(vertices[3 * a] - vertices[3 * b], vertices[3 * a + 1] - vertices[3 * b + 1], vertices[3 * a + 2] - vertices[3 * b + 2]);
+      if (Number.isFinite(d)) lengths[n++] = d;
+    }
+  }
+  if (n === 0) return 0;
+  const sorted = lengths.subarray(0, n).sort();
+  return n % 2 === 1 ? sorted[(n - 1) / 2] : (sorted[n / 2 - 1] + sorted[n / 2]) / 2;
+}

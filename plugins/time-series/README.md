@@ -8,7 +8,8 @@ mouse at every time point, keeps pinned voxels and the mean over a region
 (a box or ellipsoid in an annotation layer) beside it, marks the time the
 views show, plays and steps through time, and saves the plotted series as
 CSV; for a CIFTI time series beside a surface, the same for the vertex
-under the mouse and pinned vertices. After FSLeyes' time series panel,
+under the mouse and pinned vertices, and the mean (with its SD) over a
+parcel of the surface's parcellation. After FSLeyes' time series panel,
 Freeview's time course and napari's time slider.
 
 User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
@@ -22,11 +23,11 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
 | `plugin.ts` | The panel: the image, transport, pins and regions, the legend; the voxel under the mouse; playing; CSV. |
 | `space.ts` | Positions (global, and a layer's local dimensions after them: `Place`) to a layer's source coordinates and back, in any number of dimensions (`LayerMap`). |
 | `series.ts` | The time axis as the views show it (its global dimension, start, step and unit), the voxel at a position, stepping, colours, percent change, CSV. |
-| `surface.ts` | Time series on surfaces: a Zarr Vectors layer's store, the series its surface header lists (`time_series`), their time axis; the mouse in the store's coordinates, 4 mm in its units, the nearest-vertex answer. |
+| `surface.ts` | Time series on surfaces: a Zarr Vectors layer's store, the series its surface header lists (`time_series`), their time axis; the mouse in the store's coordinates, how near a vertex it must be (three median edge lengths), the nearest-vertex answer; parcellations and a parcel's course as the store answers them. |
 | `region.ts` | Boxes and ellipsoids from annotation layers; the image voxels whose centres are inside one. |
 | `reader.ts` | `SeriesReader`: an OME-Zarr image's levels read along time at some voxels, averaged (the finest, or a coarse read while the mouse moves: `movingPlan`); a byte-bounded chunk cache. |
 | `worker.ts`, `client.ts` | The reader in a worker. |
-| `plot.ts` | The SVG plot: ticks, lines broken at missing values (a coarse series dashed and joined across them), the current time, a crosshair readout, click to pick a time. |
+| `plot.ts` | The SVG plot: ticks, lines broken at missing values (a coarse series dashed and joined across them), a band of ± SD around a parcel's mean, the current time, a crosshair readout, click to pick a time. |
 | `tests/` | `time_series.test.ts`; `fixtures/tiny.nii.gz` (6 × 5 × 4 voxels × 12 time points, from `fixtures/generate.py` with nibabel). |
 
 ## How it works
@@ -113,9 +114,9 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   to the store's coordinates: the file's less `coordinate_offset`, which
   the layer's default transform adds back, so a moved layer is read where
   it shows. The store is asked for the vertex nearest that point within
-  4 mm (`{ series, nearest, within }`, `storeDistance` turning millimetres
-  into the source's units; a grid over the vertices answers it,
-  `src/virtual/vectors/vertex_grid.ts`), then for that vertex's values at
+  three of the surface's median edge lengths (`{ series, nearest, within }`;
+  a grid over the vertices answers it, `src/virtual/vectors/vertex_grid.ts`),
+  then for that vertex's values at
   every time point (`{ series, vertex }`: its column of the CIFTI file).
   An answer to an older lookup is dropped. Off the surface the last vertex
   stays (so it can be pinned from the panel). A vertex pin keeps the
@@ -123,6 +124,37 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   read again the same way when the link is opened. A vertex the file has
   no column for (the medial wall) gets NaN at every time point: the legend
   says "no values" and nothing is plotted or saved for it.
+- **How near a vertex.** It was 4 mm, which on a coarse mesh (fsaverage5,
+  10 242 vertices a hemisphere, edges of 4–5 mm; or a test sphere of 162
+  vertices, edges of 15 mm) left the middles of edges and triangles with no
+  vertex at all: the plot did not follow the mouse. Now the store finds
+  its surface's median edge length once (`{ series, spacing: true }` →
+  `{ medianEdge }`, `medianEdgeLength` in `vertex_grid.ts`: each
+  triangle's three edges, at most 100 000 triangles looked at, evenly
+  spread), and the reach is three of them (`vertexReach`), in the store's
+  own units; 4 mm only while the store has not said (or for a mesh with no
+  triangles). A point on a triangle is within one edge of its corners, so
+  three leaves no gaps, and on a fine mesh (1 mm edges) the reach is 3 mm,
+  less than before.
+- **Parcels.** The surface's parcellations are the store's maps marked as
+  one (`.annot`, FreeSurfer `.label` files together, a CIFTI `.dlabel.nii`
+  map). When a series is chosen the store is asked for them once
+  (`{ series, parcellations: true }` → each one's labels, how many vertices
+  each has, and every vertex's code), so the panel offers a parcellation
+  (when there are several) and its parcels, and the legend names the
+  parcel the vertex under the mouse is in, without asking again. **Pin
+  mean** pins the parcel chosen; **Its parcel** (Alt+Shift+M) the parcel
+  of the vertex under the mouse. The store answers `{ series,
+  parcellation, parcel }` (a code or a name) with the mean and standard
+  deviation (n − 1) across the parcel's vertices that have values, at each
+  time point (`CiftiSeries.parcel` in `cifti.ts`: the parcel's columns of
+  the file read in runs, columns up to 32 apart read together and at most
+  32 MB at a time, or from the series in memory once it has been stepped
+  through; Welford's sums per time point, `CourseStats`). The plot draws
+  the mean with a band of ± one SD in its colour (with **% change**, the
+  band scaled as the mean is); the CSV has the mean's column and a
+  "… SD" column after it. A parcel pin keeps the store, series,
+  parcellation and label code (and name), in the link.
 - **State.** Pins (voxel indices, or an annotation layer and annotation id
   for a region) and the chosen image are in the plugin's state, in the
   link; their values are read again when it is opened. A region pin is
@@ -179,13 +211,32 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   moves the time marker; in a 2-D view the vertex at the outline is found;
   after moving the layer 20 mm, the vertex shown under the mouse is still
   the one plotted.
+  `cifti.spec.ts` also checks the parcels against nibabel's fixture: the
+  parcellation's codes and label counts, each parcel's mean and SD at
+  every time point (by code and by name, from the file and from the series
+  in memory), and the median edge length; `CourseStats` against hand
+  sums (values that are not numbers left out, one value, none, a long
+  offset series); `vertex_grid.spec.ts` the median edge of regular meshes
+  of two spacings, whole and sampled.
+  In the browser: a 162-vertex sphere (edges of 15 mm; made with nibabel
+  as the 2562-vertex one above, a wave plus noise, and four sectors as a
+  CIFTI dlabel). With the mouse at the middle of an edge (7 mm from both
+  ends) the old build plotted nothing ("Move the mouse onto the
+  surface"); now the nearer vertex, and the legend names its sector.
+  **Its parcel** and **Pin mean** pinned two sectors, drawn with their
+  bands; the CSV's mean and SD columns equal numpy's over the sector's
+  vertices with values (worst differences 5e-5 and 6e-7).
 
 ## Not done
 
-- **Vertices' coarse reads and regions.** A vertex's column is read whole
-  (a few kilobytes even for 1200 time points), so there is no coarse read;
-  there is no region mean on a surface (a parcel's mean from a `.dlabel`
-  would be the natural one).
+- **Vertices' coarse reads.** A vertex's column is read whole (a few
+  kilobytes even for 1200 time points), so there is no coarse read. A
+  large parcel read from the file (before the series is stepped through)
+  reads its columns' span: for a lobe of a 32 000-vertex hemisphere with
+  1 200 time points, some tens of megabytes.
+- **Parcels by a click in the views.** "Its parcel" takes the vertex under
+  the mouse (Alt+Shift+M over the views, or the button); a click in the
+  views is Neuroglancer's (it moves the position), so it is not used.
 - **The other hemisphere.** A CIFTI file holds both hemispheres; each
   surface's store serves its own, so the right one's vertices are plotted
   only when its surface is open with the file beside it.

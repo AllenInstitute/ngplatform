@@ -4,12 +4,17 @@
  * three outputs written.  One renderer per context; a set's buffers are
  * made in each context the first time it is drawn there.
  *
- * Surfaces (ODFs) are the sphere's mesh drawn once per glyph (instanced),
- * each vertex pushed out to its radius, read from a float texture (a row of
- * vertices per glyph).  The normal comes from four neighbours' pushed-out
- * points (central differences), so a lobe is shaded as the surface it is.
+ * ODFs are ray-cast: one quad per glyph covering its bounding sphere, and
+ * in the fragment shader the pixel's ray is marched through that sphere
+ * until it passes inside the surface |p| = r(p / |p|), r the glyph's
+ * spherical-harmonic function written as one polynomial in x, y, z
+ * (sh.ts, `monomialMatrix`; its coefficients read from a float texture),
+ * then the crossing is narrowed by bisection.  The normal is the gradient of |p| - r, the colour the
+ * point's direction, the depth written.  The steps along the ray follow
+ * the glyph's size on screen (about one every two pixels across it, 10 to
+ * 48), so small glyphs cost little.
  *
- * Ellipsoids (tensors) are ray-cast: one quad per glyph, just covering the
+ * Ellipsoids (tensors) are ray-cast too: one quad per glyph, just covering the
  * ellipse the ellipsoid projects to (from the projection's derivative at
  * its centre, a little more under perspective), and in the fragment shader
  * the ray through each pixel meets the ellipsoid (a unit sphere in the
@@ -22,7 +27,6 @@
  * Lines are quads a few pixels wide, facing the screen.
  */
 import type { GlyphSet } from "./glyphs.js";
-import { icosphere, type Sphere } from "./sphere.js";
 
 export interface Outputs {
   color: number;
@@ -47,46 +51,6 @@ export interface DrawParams {
    */
   lift: number;
 }
-
-const SURFACE_VS = `#version 300 es
-precision highp float;
-precision highp int;
-precision highp sampler2D;
-uniform mat4 uMatrix;
-uniform sampler2D uRadii;
-uniform sampler2D uSphere;
-uniform int uVertices;
-uniform int uPerRow;
-uniform float uScale;
-uniform float uLift;
-uniform vec3 uViewDir;
-uniform bool uByGlyph;
-layout(location = 0) in vec3 aDir;
-layout(location = 1) in uvec4 aAround;
-layout(location = 2) in vec3 aCentre;
-layout(location = 3) in vec3 aColour;
-out vec3 vColour;
-out vec3 vNormal;
-
-float radius(int v) {
-  int g = gl_InstanceID;
-  return texelFetch(uRadii, ivec2((g % uPerRow) * uVertices + v, g / uPerRow), 0).r;
-}
-vec3 point(uint v) {
-  return texelFetch(uSphere, ivec2(int(v), 0), 0).xyz * radius(int(v));
-}
-void main() {
-  vec3 p = aDir * radius(gl_VertexID);
-  vec3 n = cross(point(aAround.x) - point(aAround.z), point(aAround.y) - point(aAround.w));
-  vNormal = dot(n, n) > 1e-12 ? n : aDir;
-  vColour = uByGlyph ? aColour : abs(aDir);
-  vec3 at = aCentre + p * uScale;
-  gl_Position = uMatrix * vec4(at, 1.0);
-  if (uLift > 0.0) {
-    vec4 lifted = uMatrix * vec4(at - uViewDir * uLift, 1.0);
-    gl_Position.z = lifted.z / lifted.w * gl_Position.w;
-  }
-}`;
 
 const LINE_VS = `#version 300 es
 precision highp float;
@@ -122,34 +86,22 @@ void main() {
   vNormal = vec3(0.0);
 }`;
 
-const ELLIPSOID_VS = `#version 300 es
-precision highp float;
+/**
+ * The corner of a quad covering the ellipse an ellipsoid (centre, semi-axes
+ * a0, a1, a2, RAS mm) projects to, from the projection's derivative at the
+ * centre (a little larger under perspective, and two pixels more), and the
+ * pixel's ray there: a point at the centre's depth, and the near and far
+ * planes' points.  `halfPx`: the ellipse's longer half-axis, in pixels.
+ */
+const COVER_GLSL = `
 uniform mat4 uMatrix;
 uniform mat4 uInverse;
-uniform float uScale;
 uniform vec2 uViewport;
-layout(location = 2) in vec3 aCentre;
-layout(location = 3) in vec3 aColour;
-layout(location = 5) in vec3 aAxis0;
-layout(location = 6) in vec3 aAxis1;
-layout(location = 7) in vec3 aAxis2;
-out vec3 vColour;
-flat out vec3 vCentre;
-flat out vec3 vInv0;
-flat out vec3 vInv1;
-flat out vec3 vInv2;
 out vec4 vPoint;
 out vec4 vNear;
 out vec4 vFar;
-void main() {
-  vec3 a0 = aAxis0 * uScale;
-  vec3 a1 = aAxis1 * uScale;
-  vec3 a2 = aAxis2 * uScale;
-  // The semi-axes are orthogonal: the inverse's rows are them over their squared lengths.
-  vInv0 = a0 / max(dot(a0, a0), 1e-30);
-  vInv1 = a1 / max(dot(a1, a1), 1e-30);
-  vInv2 = a2 / max(dot(a2, a2), 1e-30);
-  vec4 c = uMatrix * vec4(aCentre, 1.0);
+vec4 cover(vec3 centre, vec3 a0, vec3 a1, vec3 a2, out float halfPx) {
+  vec4 c = uMatrix * vec4(centre, 1.0);
   vec2 ndc = c.xy / c.w;
   // How the screen position moves with the point, at the centre.
   vec3 rowX = vec3(uMatrix[0].x, uMatrix[1].x, uMatrix[2].x);
@@ -177,14 +129,209 @@ void main() {
   int k = gl_VertexID;
   float sx = (k == 0 || k == 1 || k == 3) ? -1.0 : 1.0;
   float sy = (k == 0 || k == 2 || k == 4) ? -1.0 : 1.0;
-  vec2 corner = ndc + sx * e1 * (sqrt(mid + root) * grow + pad) + sy * e2 * (sqrt(max(mid - root, 0.0)) * grow + pad);
-  gl_Position = vec4(corner * c.w, c.z, c.w);
+  float major = sqrt(mid + root) * grow;
+  vec2 corner = ndc + sx * e1 * (major + pad) + sy * e2 * (sqrt(max(mid - root, 0.0)) * grow + pad);
+  halfPx = major * 0.5 * length(e1 * uViewport);
   // The pixel's ray: a point at the centre's depth, and the near and far planes' points for its direction.
   vPoint = uInverse * vec4(corner, c.z / c.w, 1.0);
   vNear = uInverse * vec4(corner, -1.0, 1.0);
   vFar = uInverse * vec4(corner, 1.0, 1.0);
+  return vec4(corner * c.w, c.z, c.w);
+}`;
+
+const ELLIPSOID_VS = `#version 300 es
+precision highp float;
+${COVER_GLSL}
+uniform float uScale;
+layout(location = 2) in vec3 aCentre;
+layout(location = 3) in vec3 aColour;
+layout(location = 5) in vec3 aAxis0;
+layout(location = 6) in vec3 aAxis1;
+layout(location = 7) in vec3 aAxis2;
+out vec3 vColour;
+flat out vec3 vCentre;
+flat out vec3 vInv0;
+flat out vec3 vInv1;
+flat out vec3 vInv2;
+void main() {
+  vec3 a0 = aAxis0 * uScale;
+  vec3 a1 = aAxis1 * uScale;
+  vec3 a2 = aAxis2 * uScale;
+  // The semi-axes are orthogonal: the inverse's rows are them over their squared lengths.
+  vInv0 = a0 / max(dot(a0, a0), 1e-30);
+  vInv1 = a1 / max(dot(a1, a1), 1e-30);
+  vInv2 = a2 / max(dot(a2, a2), 1e-30);
+  float halfPx;
+  gl_Position = cover(aCentre, a0, a1, a2, halfPx);
   vCentre = aCentre;
   vColour = aColour;
+}`;
+
+const ODF_VS = `#version 300 es
+precision highp float;
+${COVER_GLSL}
+uniform float uScale;
+layout(location = 2) in vec3 aCentre;
+layout(location = 8) in float aBound;
+flat out vec3 vCentre;
+flat out float vBound;
+flat out int vGlyph;
+flat out float vPxPerUnit;
+flat out int vSteps;
+void main() {
+  float r = aBound * uScale;
+  float halfPx;
+  gl_Position = cover(aCentre, vec3(r, 0.0, 0.0), vec3(0.0, r, 0.0), vec3(0.0, 0.0, r), halfPx);
+  vCentre = aCentre;
+  vBound = aBound;
+  vGlyph = gl_InstanceID;
+  vPxPerUnit = halfPx / max(aBound, 1e-6);
+  // About one step every two pixels across the bounding sphere.
+  vSteps = int(clamp(halfPx, 10.0, 48.0));
+}`;
+
+/**
+ * A glyph's function at a unit direction (RAS): one homogeneous polynomial
+ * of degree lmax (sh.ts, `monomialMatrix`; `evaluateMonomials` is the same
+ * sum), written out term by term for this order, its coefficients in C.
+ */
+export const odfGlsl = (lmax: number) => {
+  const n = ((lmax + 1) * (lmax + 2)) / 2;
+  const texels = Math.ceil(n / 4);
+  const pow = (v: string, e: number) => (e === 0 ? "" : ` * ${v}${e}`);
+  const lines: string[] = [];
+  let r = 0;
+  for (let k = 0; k <= lmax; ++k) {
+    const terms: string[] = [];
+    for (let j = 0; j <= lmax - k; ++j, ++r) terms.push(`C[${r >> 2}].${"xyzw"[r & 3]}${pow("x", lmax - k - j)}${pow("y", j)}`);
+    lines.push(`  s += (${terms.join(" + ")})${pow("z", k)};`);
+  }
+  const powers = (v: string) =>
+    Array.from({ length: lmax }, (_, e) => (e === 0 ? `  float ${v}1 = q.${v};` : `  float ${v}${e + 1} = ${v}${e} * ${v}1;`)).join("\n");
+  return `
+#define TEXELS ${texels}
+uniform mat3 uToData;
+vec4 C[TEXELS];
+float odf(vec3 w) {
+  vec3 q = uToData * w;
+${lmax > 0 ? [powers("x"), powers("y"), powers("z")].join("\n") : ""}
+  float s = 0.0;
+${lines.join("\n")}
+  return s;
+}
+void loadCoefficients(highp sampler2D coefficients, int glyph, int perRow) {
+  ivec2 at = ivec2((glyph % perRow) * TEXELS, glyph / perRow);
+  for (int k = 0; k < TEXELS; ++k) C[k] = texelFetch(coefficients, at + ivec2(k, 0), 0);
+}`;
+};
+
+const odfFs = (outputs: Outputs, smooth: boolean, lmax: number) => `#version 300 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+uniform mat4 uMatrix;
+uniform vec3 uViewDir;
+uniform float uLift;
+uniform float uScale;
+uniform sampler2D uCoefficients;
+uniform int uPerRow;
+${odfGlsl(lmax)}
+flat in vec3 vCentre;
+flat in float vBound;
+flat in int vGlyph;
+flat in float vPxPerUnit;
+flat in int vSteps;
+in vec4 vPoint;
+in vec4 vNear;
+in vec4 vFar;
+layout(location = ${outputs.color}) out vec4 out_color;
+${outputs.z !== undefined ? `layout(location = ${outputs.z}) out highp vec4 out_z;` : ""}
+${outputs.pick !== undefined ? `layout(location = ${outputs.pick}) out highp vec4 out_pickId;` : ""}
+// Outside the surface positive, inside negative.
+float field(vec3 p) {
+  float len = length(p);
+  return len - max(0.0, odf(p / max(len, 1e-12)));
+}
+void main() {
+  loadCoefficients(uCoefficients, vGlyph, uPerRow);
+  // The ray from near the centre, in the glyph's units (its radius 1 is uScale mm).
+  vec3 o = (vPoint.xyz / vPoint.w - vCentre) / uScale;
+  vec3 d = normalize(vFar.xyz / vFar.w - vNear.xyz / vNear.w);
+  float b = dot(o, d);
+  float disc = b * b - (dot(o, o) - vBound * vBound);
+  if (disc <= 0.0) discard;
+  float s = sqrt(disc);
+  float t0 = -b - s;
+  float dt = 2.0 * s / float(vSteps);
+  float ta = t0;
+  float fa = field(o + t0 * d);
+  float tb = t0;
+  float fb = fa;
+  float best = fa;
+  float tBest = t0;
+  bool hit = false;
+  for (int i = 1; i <= 48; ++i) {
+    if (i > vSteps) break;
+    float t = t0 + dt * float(i);
+    float f = field(o + t * d);
+    if (f < 0.0) {
+      hit = true;
+      tb = t;
+      fb = f;
+      break;
+    }
+    if (f < best) {
+      best = f;
+      tBest = t;
+    }
+    ta = t;
+    fa = f;
+  }
+  float t;
+  float coverage = 1.0;
+  if (hit) {
+    for (int k = 0; k < 6; ++k) {
+      float tm = 0.5 * (ta + tb);
+      float fm = field(o + tm * d);
+      if (fm < 0.0) {
+        tb = tm;
+        fb = fm;
+      } else {
+        ta = tm;
+        fa = fm;
+      }
+    }
+    t = ta + (tb - ta) * fa / max(fa - fb, 1e-20);
+  } else {
+    ${
+      smooth
+        ? `// Missed: within a pixel of the surface (radially) is the edge, partly covered.
+    coverage = clamp(1.0 - best * vPxPerUnit, 0.0, 1.0);
+    if (coverage <= 0.0) discard;
+    t = tBest;`
+        : "discard;"
+    }
+  }
+  vec3 p = o + t * d;
+  float rho = length(p);
+  vec3 w = p / max(rho, 1e-12);
+  // The normal: the gradient of |p| - r(p / |p|), r's along the sphere by differences.
+  vec3 u = normalize(cross(w, abs(w.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0)));
+  vec3 v = cross(w, u);
+  float h = 0.01;
+  float r0 = odf(w);
+  vec3 slope = ((odf(normalize(w + h * u)) - r0) * u + (odf(normalize(w + h * v)) - r0) * v) / h;
+  vec3 normal = w - slope / max(rho, 1e-3);
+  vec4 clip = uMatrix * vec4(vCentre + p * uScale - uViewDir * uLift, 1.0);
+  float z = clip.z / clip.w;
+  if (z < -1.0 || z > 1.0) discard;
+  float depth = 0.5 * z + 0.5;
+  gl_FragDepth = depth;
+  float diffuse = abs(dot(normalize(normal), uViewDir));
+  vec3 colour = abs(w) * (0.3 + 0.7 * diffuse) + vec3(0.18) * pow(diffuse, 24.0);
+  out_color = vec4(colour * coverage, coverage);
+  ${outputs.z !== undefined ? "out_z = vec4(1.0 - depth);" : ""}
+  ${outputs.pick !== undefined ? "out_pickId = vec4(0.0);" : ""}
 }`;
 
 const ellipsoidFs = (outputs: Outputs, smooth: boolean) => `#version 300 es
@@ -278,31 +425,22 @@ void main() {
   ${outputs.pick !== undefined ? "out_pickId = vec4(0.0);" : ""}
 }`;
 
-interface SphereBuffers {
-  vao: WebGLVertexArrayObject;
-  dirs: WebGLBuffer;
-  around: WebGLBuffer;
-  elements: WebGLBuffer;
-  texture: WebGLTexture;
-  sphere: Sphere;
-}
-
 interface SetBuffers {
   vao: WebGLVertexArrayObject;
   centres: WebGLBuffer;
   colours: WebGLBuffer;
-  /** Lines' halves, or ellipsoids' semi-axes. */
+  /** Lines' halves, ellipsoids' semi-axes, or ODFs' bounds. */
   dirs?: WebGLBuffer;
-  radii?: WebGLTexture;
+  /** ODFs' coefficients. */
+  texture?: WebGLTexture;
   perRow: number;
 }
 
 export class GlyphRenderer {
-  private surface: WebGLProgram | undefined;
+  private odfs = new Map<number, WebGLProgram>();
   private line: WebGLProgram | undefined;
   private ellipsoid: WebGLProgram | undefined;
   private smooth: boolean | undefined;
-  private spheres = new Map<number, SphereBuffers>();
   private sets = new WeakMap<GlyphSet, SetBuffers>();
   private made: { set: GlyphSet; buffers: SetBuffers }[] = [];
   private readonly maxTexture: number;
@@ -331,40 +469,6 @@ export class GlyphRenderer {
     return program;
   }
 
-  private sphere(subdivisions: number): SphereBuffers {
-    let s = this.spheres.get(subdivisions);
-    if (s !== undefined) return s;
-    const { gl } = this;
-    const sphere = icosphere(subdivisions);
-    const vao = gl.createVertexArray()!;
-    gl.bindVertexArray(vao);
-    const dirs = gl.createBuffer()!;
-    gl.bindBuffer(gl.ARRAY_BUFFER, dirs);
-    gl.bufferData(gl.ARRAY_BUFFER, sphere.vertices, gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
-    const around = gl.createBuffer()!;
-    gl.bindBuffer(gl.ARRAY_BUFFER, around);
-    gl.bufferData(gl.ARRAY_BUFFER, sphere.around, gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(1);
-    gl.vertexAttribIPointer(1, 4, gl.UNSIGNED_INT, 0, 0);
-    const elements = gl.createBuffer()!;
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, elements);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, sphere.faces, gl.STATIC_DRAW);
-    gl.bindVertexArray(null);
-    const texture = gl.createTexture()!;
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    const rgba = new Float32Array(4 * sphere.count);
-    for (let v = 0; v < sphere.count; ++v) rgba.set(sphere.vertices.subarray(3 * v, 3 * v + 3), 4 * v);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, sphere.count, 1, 0, gl.RGBA, gl.FLOAT, rgba);
-    this.nearest();
-    gl.bindTexture(gl.TEXTURE_2D, null);
-    s = { vao, dirs, around, elements, texture, sphere };
-    this.spheres.set(subdivisions, s);
-    return s;
-  }
-
   private nearest(): void {
     const { gl } = this;
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -379,33 +483,29 @@ export class GlyphRenderer {
     const { gl } = this;
     const vao = gl.createVertexArray()!;
     let perRow = 1;
-    let radii: WebGLTexture | undefined;
     let dirs: WebGLBuffer | undefined;
-    if (set.shape === "surface") {
-      const s = this.sphere(set.subdivisions ?? 3);
+    let texture: WebGLTexture | undefined;
+    if (set.shape === "odfs") {
       gl.bindVertexArray(vao);
-      gl.bindBuffer(gl.ARRAY_BUFFER, s.dirs);
-      gl.enableVertexAttribArray(0);
-      gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
-      gl.bindBuffer(gl.ARRAY_BUFFER, s.around);
-      gl.enableVertexAttribArray(1);
-      gl.vertexAttribIPointer(1, 4, gl.UNSIGNED_INT, 0, 0);
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, s.elements);
-      // Glyphs side by side in rows as wide as a texture may be.
-      const nv = s.sphere.count;
-      perRow = Math.max(1, Math.floor(this.maxTexture / nv));
+      dirs = gl.createBuffer()!;
+      gl.bindBuffer(gl.ARRAY_BUFFER, dirs);
+      gl.bufferData(gl.ARRAY_BUFFER, set.bounds!, gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(8);
+      gl.vertexAttribPointer(8, 1, gl.FLOAT, false, 0, 0);
+      gl.vertexAttribDivisor(8, 1);
+      // Each glyph's coefficients in a run of RGBA texels, glyphs side by side in rows as wide as a texture may be.
+      const n = ((set.lmax! + 1) * (set.lmax! + 2)) / 2;
+      const texels = Math.ceil(n / 4);
+      perRow = Math.max(1, Math.floor(this.maxTexture / texels));
       const rows = Math.max(1, Math.ceil(set.count / perRow));
-      const width = Math.min(set.count, perRow) * nv || nv;
-      const data = new Float32Array(width * rows);
-      const src = set.radii!;
-      for (let g = 0; g < set.count; ++g) {
-        const row = Math.floor(g / perRow);
-        data.set(src.subarray(g * nv, (g + 1) * nv), row * width + (g % perRow) * nv);
-      }
-      radii = gl.createTexture()!;
-      gl.bindTexture(gl.TEXTURE_2D, radii);
+      const width = (Math.min(set.count, perRow) || 1) * texels;
+      const data = new Float32Array(4 * width * rows);
+      const src = set.coefficients!;
+      for (let g = 0; g < set.count; ++g) data.set(src.subarray(g * n, (g + 1) * n), 4 * (Math.floor(g / perRow) * width + (g % perRow) * texels));
+      texture = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, texture);
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, width, rows, 0, gl.RED, gl.FLOAT, data);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, rows, 0, gl.RGBA, gl.FLOAT, data);
       this.nearest();
       gl.bindTexture(gl.TEXTURE_2D, null);
     } else if (set.shape === "ellipsoids") {
@@ -441,7 +541,7 @@ export class GlyphRenderer {
     gl.vertexAttribDivisor(3, 1);
     gl.bindVertexArray(null);
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
-    b = { vao, centres, colours, dirs, radii, perRow };
+    b = { vao, centres, colours, dirs, texture, perRow };
     this.sets.set(set, b);
     this.made.push({ set, buffers: b });
     return b;
@@ -457,7 +557,7 @@ export class GlyphRenderer {
       gl.deleteBuffer(buffers.centres);
       gl.deleteBuffer(buffers.colours);
       if (buffers.dirs) gl.deleteBuffer(buffers.dirs);
-      if (buffers.radii) gl.deleteTexture(buffers.radii);
+      if (buffers.texture) gl.deleteTexture(buffers.texture);
       this.sets.delete(set);
       return false;
     });
@@ -467,15 +567,18 @@ export class GlyphRenderer {
     if (set.count === 0) return;
     const { gl } = this;
     const b = this.buffers(set);
-    const surface = set.shape === "surface";
+    const odfs = set.shape === "odfs";
     const ellipsoids = set.shape === "ellipsoids";
     // Smooth edges where the target is multisampled (the 2-D views' canvas; not Neuroglancer's 3-D view, which takes depth).
     const smooth = (this.smooth ??= this.outputs.z === undefined && (gl.getParameter(gl.SAMPLES) as number) > 1);
-    const program = surface
-      ? (this.surface ??= this.program(SURFACE_VS))
-      : ellipsoids
-        ? (this.ellipsoid ??= this.program(ELLIPSOID_VS, ellipsoidFs(this.outputs, smooth)))
-        : (this.line ??= this.program(LINE_VS));
+    let program: WebGLProgram;
+    if (odfs) {
+      const lmax = set.lmax!;
+      let p = this.odfs.get(lmax);
+      if (p === undefined) this.odfs.set(lmax, (p = this.program(ODF_VS, odfFs(this.outputs, smooth, lmax))));
+      program = p;
+    } else if (ellipsoids) program = this.ellipsoid ??= this.program(ELLIPSOID_VS, ellipsoidFs(this.outputs, smooth));
+    else program = this.line ??= this.program(LINE_VS);
     gl.useProgram(program);
     const u = (name: string) => gl.getUniformLocation(program, name);
     gl.uniformMatrix4fv(u("uMatrix"), false, params.matrix);
@@ -483,27 +586,22 @@ export class GlyphRenderer {
     gl.uniform1f(u("uScale"), params.scale);
     gl.uniform1f(u("uLift"), params.lift);
     gl.bindVertexArray(b.vao);
-    if (surface) {
-      const s = this.sphere(set.subdivisions ?? 3);
-      gl.uniform1i(u("uVertices"), s.sphere.count);
-      gl.uniform1i(u("uPerRow"), b.perRow);
-      gl.uniform1i(u("uByGlyph"), set.colours !== undefined ? 1 : 0);
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, b.radii!);
-      gl.uniform1i(u("uRadii"), 0);
-      gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, s.texture);
-      gl.uniform1i(u("uSphere"), 1);
-      gl.drawElementsInstanced(gl.TRIANGLES, s.sphere.faces.length, gl.UNSIGNED_INT, 0, set.count);
-      gl.bindTexture(gl.TEXTURE_2D, null);
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, null);
-    } else if (ellipsoids) {
+    if (odfs || ellipsoids) {
       gl.uniformMatrix4fv(u("uInverse"), false, invert4x4(params.matrix));
       gl.uniform2fv(u("uViewport"), params.viewport);
+      if (odfs) {
+        const m = set.toData!;
+        // Row-major RAS → data, as a column-major mat3.
+        gl.uniformMatrix3fv(u("uToData"), false, [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]]);
+        gl.uniform1i(u("uPerRow"), b.perRow);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, b.texture!);
+        gl.uniform1i(u("uCoefficients"), 0);
+      }
       if (smooth) gl.enable(gl.SAMPLE_ALPHA_TO_COVERAGE);
       gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, set.count);
       if (smooth) gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);
+      if (odfs) gl.bindTexture(gl.TEXTURE_2D, null);
     } else {
       gl.uniform2fv(u("uViewport"), params.viewport);
       gl.uniform1f(u("uWidth"), params.lineWidth);
@@ -515,17 +613,10 @@ export class GlyphRenderer {
   dispose(): void {
     const { gl } = this;
     this.keepOnly([]);
-    for (const s of this.spheres.values()) {
-      gl.deleteVertexArray(s.vao);
-      gl.deleteBuffer(s.dirs);
-      gl.deleteBuffer(s.around);
-      gl.deleteBuffer(s.elements);
-      gl.deleteTexture(s.texture);
-    }
-    this.spheres.clear();
-    if (this.surface) gl.deleteProgram(this.surface);
+    for (const p of this.odfs.values()) gl.deleteProgram(p);
+    this.odfs.clear();
     if (this.line) gl.deleteProgram(this.line);
     if (this.ellipsoid) gl.deleteProgram(this.ellipsoid);
-    this.surface = this.line = this.ellipsoid = undefined;
+    this.line = this.ellipsoid = undefined;
   }
 }

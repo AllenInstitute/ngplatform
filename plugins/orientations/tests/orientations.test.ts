@@ -11,14 +11,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { computeGlyphs, type GlyphOptions, voxelFrame, withFlips } from "../glyphs.js";
+import { computeGlyphs, type GlyphOptions, odfRadius, voxelFrame, withFlips } from "../glyphs.js";
 import { spatialGroup } from "../ome4.js";
 import { readSaved, resolveBasis, resolveFrame, resolveKind, resolveTensorOrder } from "../plugin.js";
 import { OrientationReader } from "../reader.js";
 import { directionShader } from "../shader.js";
+import { fitSh } from "../sh.js";
 import { icosphere } from "../sphere.js";
 import { boxAround, chooseLevel, layerMove, planesAround, planSection, sectionOf, slabOf, slabVoxels, unproject, type Vec3 } from "../view.js";
-import { buildStore, crossingSh, type Store, storeFetch, tensorField, toZarr2, vectorField } from "./synthetic.js";
+import { buildStore, crossingSh, fibreOdf, spiral, type Store, storeFetch, tensorField, toZarr2, vectorField } from "./synthetic.js";
 
 const SIZE: [number, number, number] = [32, 32, 8];
 const stores: Record<string, Store> = {};
@@ -67,18 +68,6 @@ function ellipsoidRadius(axes: Float32Array, glyph: number, d: Vec3): number {
     s += (d[0] * a[0] + d[1] * a[1] + d[2] * a[2]) ** 2 / (aa * aa);
   }
   return 1 / Math.sqrt(s);
-}
-
-/** The sphere vertex nearest a direction, and the radius there. */
-function radiusToward(radii: Float32Array, glyph: number, d: Vec3, subdivisions = 2): number {
-  const { vertices, count } = icosphere(subdivisions);
-  let best = 0;
-  let bestDot = -Infinity;
-  for (let v = 0; v < count; ++v) {
-    const dot = vertices[3 * v] * d[0] + vertices[3 * v + 1] * d[1] + vertices[3 * v + 2] * d[2];
-    if (dot > bestDot) [best, bestDot] = [v, dot];
-  }
-  return radii[glyph * count + best];
 }
 
 describe("reading orientation pyramids", () => {
@@ -202,12 +191,16 @@ describe("glyphs", () => {
     const values = new Float32Array(3 * 45);
     picks.slice(0, 3).forEach((p, k) => values.set(voxels.values.subarray(45 * pick(p), 45 * pick(p) + 45), 45 * k));
     const set = computeGlyphs(indices, values, 45, level.voxelToRas, options());
-    expect(set.shape).toBe("surface");
+    expect(set.shape).toBe("odfs");
     expect(set.count).toBe(3);
-    const r = (g: number, d: Vec3) => radiusToward(set.radii!, g, d);
-    // Min-max normalised: 0..1.
-    expect(Math.min(...set.radii!)).toBeGreaterThanOrEqual(0);
-    expect(Math.max(...set.radii!)).toBeLessThanOrEqual(1);
+    const r = (g: number, d: Vec3) => odfRadius(set, g, d);
+    // Min-max normalised from the sphere's vertices: 0..1 there.
+    const sphere = icosphere(2);
+    for (let g = 0; g < 3; ++g) {
+      const at = [...Array(sphere.count).keys()].map((v) => r(g, [sphere.vertices[3 * v], sphere.vertices[3 * v + 1], sphere.vertices[3 * v + 2]]));
+      expect(Math.min(...at)).toBeCloseTo(0, 5);
+      expect(Math.max(...at)).toBeCloseTo(1, 4);
+    }
     // The crossing: long along x and y, short along z.
     expect(r(0, [1, 0, 0])).toBeGreaterThan(0.85);
     expect(r(0, [0, 1, 0])).toBeGreaterThan(0.85);
@@ -257,8 +250,8 @@ describe("glyphs", () => {
     const voxels = await reader.voxels(1, { lo: [10, 6, 1], hi: [11, 7, 2] }, new AbortController().signal);
     const set = computeGlyphs(voxels.indices, voxels.values, 45, opened.levels[1].voxelToRas, options());
     expect(set.count).toBe(1);
-    expect(radiusToward(set.radii!, 0, [1, 0, 0])).toBeGreaterThan(0.85);
-    expect(radiusToward(set.radii!, 0, [0, 1, 0])).toBeGreaterThan(0.85);
+    expect(odfRadius(set, 0, [1, 0, 0])).toBeGreaterThan(0.85);
+    expect(odfRadius(set, 0, [0, 1, 0])).toBeGreaterThan(0.85);
   });
 
   it("reads a coarse level of tensors as their log-Euclidean mean, the determinant kept", async () => {
@@ -306,7 +299,7 @@ describe("glyphs", () => {
     const set = computeGlyphs([0, 0, 0], d, 6, voxelToRas, options({ kind: "tensor" }));
     // Three semi-axes for the renderer to ray-cast: no mesh.
     expect(set.shape).toBe("ellipsoids");
-    expect(set.radii).toBeUndefined();
+    expect(set.coefficients).toBeUndefined();
     expect(set.axes!.length).toBe(9);
     expect(ellipsoidRadius(set.axes!, 0, [0, 1, 0])).toBeCloseTo(1, 6);
     expect(ellipsoidRadius(set.axes!, 0, [1, 0, 0])).toBeCloseTo(0.3 / 1.7, 6);
@@ -521,5 +514,61 @@ describe("settings", () => {
       expect(shader).toContain("getDataValue(i)");
     }
     expect(directionShader(options({ kind: "sh" }), 1)).toBeUndefined();
+  });
+});
+
+describe("ray-cast ODFs", () => {
+  const IDENTITY4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
+  it("keep each glyph within its bound, between the sphere's vertices too", () => {
+    let seed = 3;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const dirs = spiral(600);
+    const fine = spiral(6000);
+    for (const subdivisions of [2, 3]) {
+      for (const basis of ["descoteaux07-legacy", "tournier07"] as const) {
+        const voxels = 24;
+        const values = new Float32Array(45 * voxels);
+        for (let v = 0; v < voxels; ++v) {
+          // One to three fibres, sharper lobes than the synthetic store's.
+          const fibres = Array.from({ length: 1 + (v % 3) }, () => {
+            const f = [rnd() - 0.5, rnd() - 0.5, rnd() - 0.5];
+            const n = Math.hypot(f[0], f[1], f[2]);
+            return f.map((x) => x / n);
+          });
+          const sampled: number[] = [];
+          for (let i = 0; i < dirs.length; i += 3) sampled.push(Math.max(...fibres.map((f) => Math.exp(-40 * (1 - (dirs[i] * f[0] + dirs[i + 1] * f[1] + dirs[i + 2] * f[2]) ** 2)))));
+          values.set(fitSh(basis, 8, dirs, sampled, 1e-4), 45 * v);
+        }
+        const indices = Array.from({ length: voxels }, (_, v) => [v, 0, 0]).flat();
+        // A turned frame (30° about z, x flipped), so the turn into the data's frame counts too.
+        const c = Math.cos(Math.PI / 6);
+        const s = Math.sin(Math.PI / 6);
+        const toData = [-c, s, 0, s, c, 0, 0, 0, 1];
+        const set = computeGlyphs(indices, values, 45, IDENTITY4, options({ basis, subdivisions, toData }));
+        expect(set.count).toBe(voxels);
+        for (let g = 0; g < voxels; ++g) {
+          let top = 0;
+          for (let i = 0; i < fine.length; i += 3) top = Math.max(top, odfRadius(set, g, [fine[i], fine[i + 1], fine[i + 2]]));
+          expect(top, `subdivisions ${subdivisions}, ${basis}, glyph ${g}`).toBeLessThanOrEqual(set.bounds![g]);
+          // And the bound not much more than needed.
+          expect(set.bounds![g]).toBeLessThan(1.25 * Math.max(top, 1));
+        }
+      }
+    }
+  });
+
+  it("are min-max, max or not normalised as the sphere's values say", () => {
+    const values = Float32Array.from(fibreOdf([[1, 0, 0]], "descoteaux07-legacy", 8));
+    const minmax = computeGlyphs([0, 0, 0], values, 45, IDENTITY4, options());
+    const max = computeGlyphs([0, 0, 0], values, 45, IDENTITY4, options({ normalise: "max" }));
+    const none = computeGlyphs([0, 0, 0, 1, 0, 0], Float32Array.from([...values, ...values.map((v) => v / 2)]), 45, IDENTITY4, options({ normalise: "none" }));
+    expect(odfRadius(minmax, 0, [1, 0, 0])).toBeCloseTo(1, 4);
+    expect(odfRadius(max, 0, [1, 0, 0])).toBeCloseTo(1, 4);
+    // Max keeps the ratio to the highest (negative values at 0).
+    const shape = computeGlyphs([0, 0, 0], values, 45, IDENTITY4, options({ normalise: "none" }));
+    expect(odfRadius(max, 0, [0.6, 0.8, 0])).toBeCloseTo(odfRadius(shape, 0, [0.6, 0.8, 0]) / odfRadius(shape, 0, [1, 0, 0]), 4);
+    // Not normalised: the half-strength glyph half the size.
+    expect(odfRadius(none, 1, [1, 0, 0])).toBeCloseTo(odfRadius(none, 0, [1, 0, 0]) / 2, 4);
   });
 });

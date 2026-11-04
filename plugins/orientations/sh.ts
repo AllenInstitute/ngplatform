@@ -214,3 +214,197 @@ export function fitSh(basis: ShBasis, lmax: number, dirs: ArrayLike<number>, val
   }
   return Float64Array.from(a, (row) => row[n]);
 }
+
+/**
+ * The canonical form the ray-cast ODF shader evaluates, the same for every
+ * basis: for each even order l, the terms
+ *
+ *   P̄_l^m(z) · (C_lm Re (x + iy)^m + S_lm Im (x + iy)^m),  m = 0 … l,
+ *
+ * where P̄_l^m is the associated Legendre function without its sin^m θ
+ * (P_l^m = sin^m θ P̄_l^m, P̄_m^m = (-1)^m (2m - 1)!!) and, on the unit
+ * sphere, sin^m θ cos mφ = Re (x + iy)^m.  All of it is polynomial in x, y
+ * and z: no angles, nothing to divide by at the poles.  The coefficients
+ * are stored by order, 2l + 1 an order as the bases have them: C_l0, then
+ * C_l1, S_l1, C_l2, S_l2, …  Each of a basis's coefficients becomes one of
+ * these times its normalisation (and √2, and a sign); `canonicalTerms`
+ * gives, for each, where it goes and that factor.
+ */
+export function canonicalTerms(basis: ShBasis, lmax: number): { index: Int32Array; factor: Float64Array } {
+  const indices = shIndices(lmax);
+  const index = new Int32Array(indices.length);
+  const factor = new Float64Array(indices.length);
+  indices.forEach(({ l, m }, j) => {
+    const a = Math.abs(m);
+    const offset = (l * (l - 1)) / 2;
+    const k = norm(l, a);
+    if (m === 0) {
+      index[j] = offset;
+      factor[j] = k;
+      return;
+    }
+    // Whether the term takes the cosine (C) or the sine (S), and its factor.
+    let cos: boolean;
+    let f = Math.SQRT2 * k;
+    if (basis === "descoteaux07-legacy") cos = m < 0;
+    else if (basis === "descoteaux07") {
+      cos = m < 0;
+      if (m < 0 && a % 2 === 1) f = -f;
+    } else {
+      cos = m > 0;
+      if (basis === "tournier07-legacy") f = k;
+    }
+    index[j] = offset + (cos ? 2 * a - 1 : 2 * a);
+    factor[j] = f;
+  });
+  return { index, factor };
+}
+
+/** A voxel's coefficients (from `offset`) in the canonical form, each times `scale`, into `out` from `at`. */
+export function toCanonical(terms: { index: Int32Array; factor: Float64Array }, coefficients: ArrayLike<number>, offset: number, scale: number, out: Float32Array | Float64Array, at: number): void {
+  const { index, factor } = terms;
+  for (let j = 0; j < index.length; ++j) out[at + index[j]] = coefficients[offset + j] * factor[j] * scale;
+}
+
+/**
+ * A canonical-form function (coefficients from `offset`) at a unit
+ * direction, by the Legendre recurrences, with no angles (for tests: the
+ * shader sums the polynomial of `monomialMatrix` instead).
+ */
+export function evaluateCanonical(c: ArrayLike<number>, offset: number, lmax: number, x: number, y: number, z: number): number {
+  let sum = 0;
+  let cr = 1;
+  let ci = 0;
+  let pmm = 1;
+  for (let m = 0; m <= lmax; ++m) {
+    if (m > 0) {
+      const r = cr * x - ci * y;
+      ci = cr * y + ci * x;
+      cr = r;
+      pmm *= -(2 * m - 1);
+    }
+    let p1 = 0;
+    let p2 = 0;
+    for (let l = m; l <= lmax; ++l) {
+      const p = l === m ? pmm : l === m + 1 ? z * (2 * m + 1) * pmm : ((2 * l - 1) * z * p1 - (l + m - 1) * p2) / (l - m);
+      p2 = p1;
+      p1 = p;
+      if (l % 2 === 1) continue;
+      const base = offset + (l * (l - 1)) / 2;
+      sum += m === 0 ? c[base] * p : p * (c[base + 2 * m - 1] * cr + c[base + 2 * m] * ci);
+    }
+  }
+  return sum;
+}
+
+/**
+ * The monomials of degree lmax in x, y and z, in the order the shader sums
+ * them: z's power k = 0 … lmax, then y's j = 0 … lmax - k, x's the rest.
+ * There are as many as the basis has coefficients ((lmax + 1)(lmax + 2) / 2).
+ */
+export function monomials(lmax: number): [number, number, number][] {
+  const out: [number, number, number][] = [];
+  for (let k = 0; k <= lmax; ++k) for (let j = 0; j <= lmax - k; ++j) out.push([lmax - k - j, j, k]);
+  return out;
+}
+
+const monomialCache = new Map<number, Float64Array>();
+
+/**
+ * The matrix (row-major, monomial × canonical coefficient) that turns the
+ * canonical form into one homogeneous polynomial of degree lmax: each term
+ * written out in x, y and z, and those of lower degree raised to lmax by
+ * (x² + y² + z²)^k, which is 1 on the sphere.  A degree-lmax polynomial has
+ * as many monomials as the even orders to lmax have harmonics, so the
+ * shader evaluates it with one product a coefficient and no recurrences.
+ */
+export function monomialMatrix(lmax: number): Float64Array {
+  const known = monomialCache.get(lmax);
+  if (known !== undefined) return known;
+  const list = monomials(lmax);
+  const n = list.length;
+  const where = new Map(list.map(([i, j, k], r) => [`${i},${j},${k}`, r]));
+  const out = new Float64Array(n * n);
+  const binomial = (a: number, b: number) => {
+    let r = 1;
+    for (let t = 1; t <= b; ++t) r = (r * (a - b + t)) / t;
+    return r;
+  };
+  for (let l = 0; l <= lmax; l += 2) {
+    const offset = (l * (l - 1)) / 2;
+    for (let m = 0; m <= l; ++m) {
+      // P̄_l^m(z) as coefficients of z^0 … z^(l-m), by the recurrence in l.
+      let pmm = 1;
+      for (let t = 1; t <= m; ++t) pmm *= -(2 * t - 1);
+      let prev: number[] = [];
+      let p: number[] = [pmm];
+      for (let q = m + 1; q <= l; ++q) {
+        const next = new Array(q - m + 1).fill(0);
+        p.forEach((v, e) => (next[e + 1] += ((2 * q - 1) * v) / (q - m)));
+        prev.forEach((v, e) => (next[e] -= ((q + m - 1) * v) / (q - m)));
+        [prev, p] = [p, next];
+      }
+      // (x + iy)^m: its real and imaginary parts' monomials x^(m-t) y^t.
+      for (const [part, column] of [
+        ["re", m === 0 ? offset : offset + 2 * m - 1],
+        ["im", offset + 2 * m],
+      ] as const) {
+        if (m === 0 && part === "im") continue;
+        for (let t = 0; t <= m; ++t) {
+          if ((t % 2 === 0) !== (part === "re")) continue;
+          const sign = Math.floor(t / 2) % 2 === 0 ? 1 : -1;
+          const xy = sign * binomial(m, t);
+          p.forEach((zc, e) => {
+            if (zc === 0) return;
+            // x^(m-t) y^t z^e, of degree m + e, times (x² + y² + z²)^h.
+            const h = (lmax - m - e) / 2;
+            for (let a = 0; a <= h; ++a) {
+              for (let b = 0; a + b <= h; ++b) {
+                const c = h - a - b;
+                const multinomial = binomial(h, a) * binomial(h - a, b);
+                const row = where.get(`${m - t + 2 * a},${t + 2 * b},${e + 2 * c}`)!;
+                out[row * n + column] += xy * zc * multinomial;
+              }
+            }
+          });
+        }
+      }
+    }
+  }
+  monomialCache.set(lmax, out);
+  return out;
+}
+
+/** Canonical coefficients (from `offset`) to monomial ones, into `out` from `at`. */
+export function toMonomials(lmax: number, canonical: ArrayLike<number>, offset: number, out: Float32Array | Float64Array, at: number): void {
+  const m = monomialMatrix(lmax);
+  const n = coefficientCount(lmax);
+  for (let r = 0; r < n; ++r) {
+    let s = 0;
+    for (let c = 0; c < n; ++c) s += m[r * n + c] * canonical[offset + c];
+    out[at + r] = s;
+  }
+}
+
+/** A degree-lmax polynomial (coefficients from `offset`, in `monomials` order) at (x, y, z): what the shader computes. */
+export function evaluateMonomials(c: ArrayLike<number>, offset: number, lmax: number, x: number, y: number, z: number): number {
+  if (powersX.length <= lmax) [powersX, powersY] = [new Float64Array(lmax + 1), new Float64Array(lmax + 1)];
+  powersX[0] = powersY[0] = 1;
+  for (let e = 1; e <= lmax; ++e) {
+    powersX[e] = powersX[e - 1] * x;
+    powersY[e] = powersY[e - 1] * y;
+  }
+  let sum = 0;
+  let r = offset;
+  let zk = 1;
+  for (let k = 0; k <= lmax; ++k) {
+    let s = 0;
+    for (let j = 0; j <= lmax - k; ++j) s += c[r++] * powersX[lmax - k - j] * powersY[j];
+    sum += s * zk;
+    zk *= z;
+  }
+  return sum;
+}
+
+let powersX = new Float64Array(13);
+let powersY = new Float64Array(13);

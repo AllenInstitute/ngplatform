@@ -100,12 +100,32 @@ gaps along chunk faces.
   how squarely the surface faces the eye: lit, with a rim where it turns
   away) into the same float target as lines and points, tone mapped and
   depth-tested the same way, so the surface reads as a lit, glowing shell
-  and other Luxar layers composite with it; *emission and absorption*
+  and other Luxar layers composite with it. A folded surface would add
+  every fold up: through FreeSurfer's `lh.white` a ray crosses ten to
+  twenty layers, each adding 0.2–0.8 of the colour, and the hemisphere
+  turned into one saturated blob (automatic brightness, counting the
+  surface's area over the view, dimmed it by about half, far from
+  enough, and evenly, where the folds are uneven). So in glow a mesh
+  layer is first drawn into a depth texture of its own (the nearest
+  surface at each pixel), and each fragment's light is then multiplied by
+  `e^(-d/L)`, `d` its distance (store units) behind that surface (the
+  pixel's depth taken back through the inverse of the view's projection),
+  `L` the *Glow depth* times the diagonal of the layer's bounds (2 % by
+  default: 4.4 mm for a 220 mm hemisphere). The nearest surface keeps all
+  its light, a fold 1.5 mm behind it 70 %, one 10 mm behind 10 %; layers
+  spaced `s` apart add up to at most `1 / (1 - e^(-s/L))` (`layeredLight`
+  in `view_math.ts`), so the light at a pixel stays near one surface's
+  however deep the folds (it is the per-pixel coverage, weighted by depth,
+  rather than a gain for the whole view). The surface's area no longer
+  counts in automatic brightness then. Glow depth 0 is the old sum. The
+  depth pass costs a second draw of the triangles; *emission and
+  absorption*
   also absorbs `absorption / max(f, 0.2)` (a longer path through a surface
   seen edge on); *solid* draws it opaque (`0.25 + 0.75 f`, a highlight),
   depth-written, into the view. Colour by direction is by the normal.
   Automatic brightness counts a surface's area on screen (half of it,
-  seen at all angles).
+  seen at all angles), except in glow with a glow depth, where the fade
+  above keeps the light.
 - **2-D**: each triangle the section cuts is drawn as the segment where it
   crosses (one instanced quad per triangle, as Neuroglancer draws a mesh in
   a section), the layer's width across, with the line's cross-section:

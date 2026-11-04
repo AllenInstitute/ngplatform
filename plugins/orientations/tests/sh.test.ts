@@ -7,7 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { coefficientCount, evaluate, fitSh, gfa, legendre, lmaxOf, quadraticForms, SH_BASES, type ShBasis, shIndices, shMatrix } from "../sh.js";
+import { canonicalTerms, coefficientCount, evaluate, evaluateCanonical, evaluateMonomials, fitSh, gfa, legendre, lmaxOf, quadraticForms, SH_BASES, type ShBasis, monomials, shIndices, shMatrix, toCanonical, toMonomials } from "../sh.js";
 
 const dipy = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "sh_dipy.json"), "utf8")) as Record<string, number[][]>;
 const KEYS: Record<ShBasis, string> = {
@@ -113,5 +113,65 @@ describe("spherical harmonic bases", () => {
     }
     const c = fitSh("descoteaux07", 8, dirs, values);
     expect(gfa(c, 0, 45, "descoteaux07")).toBeGreaterThan(0.6);
+  });
+});
+
+describe("the canonical form the ray-cast ODFs evaluate", () => {
+  // Directions over the sphere, the poles and the equator among them.
+  const dirs: number[] = [0, 0, 1, 0, 0, -1, 1, 0, 0, 0, -1, 0, Math.SQRT1_2, -Math.SQRT1_2, 0, ...dipy.dirs.flat()];
+  for (let i = 0; i < 40; ++i) {
+    const z = 1 - (2 * (i + 0.5)) / 40;
+    const r = Math.sqrt(1 - z * z);
+    const phi = i * Math.PI * (3 - Math.sqrt(5));
+    dirs.push(r * Math.cos(phi), r * Math.sin(phi), z);
+  }
+  const rows = dirs.length / 3;
+
+  for (const [basis] of SH_BASES) {
+    it(`gives each basis's values (${basis}, orders 0 to 12)`, () => {
+      for (let lmax = 0; lmax <= 12; lmax += 2) {
+        const n = coefficientCount(lmax);
+        const c = Float64Array.from({ length: n }, (_, j) => Math.sin(3.1 * j + 0.7) / (1 + 0.2 * j));
+        const truth = evaluate(shMatrix(basis, lmax, dirs), n, c, 0, new Float32Array(rows));
+        const canon = new Float32Array(n);
+        toCanonical(canonicalTerms(basis, lmax), c, 0, 1, canon, 0);
+        for (let r = 0; r < rows; ++r) {
+          const v = evaluateCanonical(canon, 0, lmax, dirs[3 * r], dirs[3 * r + 1], dirs[3 * r + 2]);
+          expect(Math.abs(v - truth[r]), `lmax ${lmax}, direction ${r}`).toBeLessThan(2e-5 * (1 + Math.abs(truth[r])));
+        }
+      }
+    });
+  }
+
+  it("puts every coefficient in its own slot", () => {
+    for (const [basis] of SH_BASES) {
+      const { index } = canonicalTerms(basis, 8);
+      expect(new Set(index).size).toBe(45);
+      expect(Math.max(...index)).toBe(44);
+    }
+  });
+
+  it("is one homogeneous polynomial: the same values from its monomials, in float32 too", () => {
+    for (let lmax = 0; lmax <= 12; lmax += 2) {
+      const n = coefficientCount(lmax);
+      expect(monomials(lmax)).toHaveLength(n);
+      for (const [basis] of SH_BASES) {
+        // A fibre ODF's sort of coefficients: falling with order.
+        const c = Float64Array.from({ length: n }, (_, j) => Math.cos(2.3 * j + 0.4) / (1 + 0.3 * j));
+        const truth = evaluate(shMatrix(basis, lmax, dirs), n, c, 0, new Float32Array(rows));
+        const canon = new Float64Array(n);
+        const { index, factor } = canonicalTerms(basis, lmax);
+        index.forEach((k, j) => (canon[k] = c[j] * factor[j]));
+        // As the worker sends them: float32.
+        const mono = new Float32Array(n);
+        toMonomials(lmax, canon, 0, mono, 0);
+        let scale = 0;
+        for (let r = 0; r < rows; ++r) scale = Math.max(scale, Math.abs(truth[r]));
+        for (let r = 0; r < rows; ++r) {
+          const v = evaluateMonomials(mono, 0, lmax, dirs[3 * r], dirs[3 * r + 1], dirs[3 * r + 2]);
+          expect(Math.abs(v - truth[r]), `${basis} lmax ${lmax}, direction ${r}`).toBeLessThan(1e-4 * scale);
+        }
+      }
+    }
   });
 });

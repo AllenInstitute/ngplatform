@@ -159,6 +159,22 @@ export function freeColour(used: number[]): number | undefined {
   return i === -1 ? undefined : i;
 }
 
+/**
+ * A spread as percent change: the SD around a series scaled as the series
+ * is by `percentChange` (100 / |its mean|), so the band stays around it.
+ */
+export function percentChangeSpread(values: ArrayLike<number>, sd: ArrayLike<number>): Float32Array {
+  let sum = 0;
+  let n = 0;
+  for (let i = 0; i < values.length; ++i) {
+    if (!Number.isFinite(values[i])) continue;
+    sum += values[i];
+    n++;
+  }
+  const mean = n > 0 ? sum / n : NaN;
+  return Float32Array.from(sd, (s) => (mean !== 0 ? (100 * s) / Math.abs(mean) : NaN));
+}
+
 /** A series as its change from its own mean (of the values it has), in percent; NaN throughout when the mean is 0. */
 export function percentChange(values: ArrayLike<number>): Float32Array {
   let sum = 0;
@@ -177,6 +193,8 @@ export function percentChange(values: ArrayLike<number>): Float32Array {
 export interface NamedSeries {
   label: string;
   values: ArrayLike<number>;
+  /** A spread (a parcel's SD across its vertices): a column of its own after the values. */
+  sd?: ArrayLike<number>;
 }
 
 function csvField(text: string): string {
@@ -189,12 +207,13 @@ function csvField(text: string): string {
  */
 export function seriesCsv(axis: Pick<TimeAxis, "count" | "start" | "step" | "unit">, series: NamedSeries[]): string {
   const timeHeader = axis.unit.label ? `time (${axis.unit.label})` : "time";
-  const lines = [["time point", timeHeader, ...series.map((s) => s.label)].map(csvField).join(",")];
+  const lines = [["time point", timeHeader, ...series.flatMap((s) => (s.sd === undefined ? [s.label] : [s.label, `${s.label} SD`]))].map(csvField).join(",")];
+  const cell = (v: number | undefined) => (v === undefined || !Number.isFinite(v) ? "" : String(Number(v.toPrecision(7))));
   for (let i = 0; i < axis.count; ++i) {
     const row = [String(i), String(Number((axis.start + i * axis.step).toPrecision(10)))];
     for (const s of series) {
-      const v = s.values[i];
-      row.push(v === undefined || !Number.isFinite(v) ? "" : String(Number(v.toPrecision(7))));
+      row.push(cell(s.values[i]));
+      if (s.sd !== undefined) row.push(cell(s.sd[i]));
     }
     lines.push(row.join(","));
   }

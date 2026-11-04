@@ -69,8 +69,13 @@ is converted.
   plugin is off shows the layer drawn by Neuroglancer as usual.
 - **Meshes** (surfaces): lit in the 3-D view and, with Glow or Emission,
   added up as light the way lines are (so other Luxar layers' lines and
-  splats mix with them); Solid draws them opaque. In the 2-D views the
-  outline where the section cuts them glows.
+  splats mix with them); Solid draws them opaque. In Glow the light of
+  surfaces behind the nearest one fades with how far behind they are
+  (**Glow depth**, a share of the layer's size; 2 % by default, about 4 mm
+  for a cortex), so a folded surface such as FreeSurfer's `lh.white` shows
+  as a surface with a glow from its folds rather than a white blob; at 0
+  every fold adds up as lines do. In the 2-D views the outline where the
+  section cuts them glows.
 
 Not yet: fitted Gaussian splats (Luxar's GPU fit, which makes new files).
 
