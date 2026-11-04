@@ -8,7 +8,9 @@
  * - `OpfsSpill`: a file in the origin's private file system (OPFS), written
  *   and read through a synchronous access handle (dedicated workers only).
  *   It lives while the store does; a lock names it as in use, and a spill
- *   left behind by a closed tab is deleted the next time one is made.
+ *   left behind by a closed tab is deleted the next time one is made.  A
+ *   bin worker writes one the store's worker reserved (`reserve`, `writer`,
+ *   `handOver`, then `adopt`).
  * - `MemorySpill`: the same in memory, for small files and for tests.
  *
  * `cacheBudget()` says how much memory decoded cells may take, from the
@@ -153,24 +155,50 @@ export class OpfsSpill implements Spill {
     readonly name: string,
     private readonly handle: SyncHandle,
     private readonly release: () => void,
+    /** How much the file grows at a time. */
+    private readonly grow = GROW,
   ) {}
 
   /** A new spill file, held (by a lock) until closed. */
   static async create(): Promise<OpfsSpill> {
-    const root = await navigator.storage.getDirectory();
-    const dir = await root.getDirectoryHandle(DIRECTORY, { create: true });
-    await cleanStale(dir);
-    const name = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-    let release!: () => void;
-    await new Promise<void>((held) => {
-      void locks()!.request(LOCK + name, () => {
-        held();
-        return new Promise<void>((resolve) => (release = resolve));
-      });
-    });
-    const file = await dir.getFileHandle(name, { create: true });
-    const handle = (await (file as unknown as { createSyncAccessHandle(): Promise<SyncHandle> }).createSyncAccessHandle()) as SyncHandle;
-    return new OpfsSpill(dir, name, handle, release);
+    const { dir, name, release } = await newSpillFile();
+    return new OpfsSpill(dir, name, await syncHandle(dir, name), release);
+  }
+
+  /**
+   * A new spill file for a bin worker to write (`writer` there), held here by
+   * a lock: `adopt` reads it once the worker has handed it over, `discard`
+   * deletes it.
+   */
+  static async reserve(): Promise<{ name: string; adopt(size: number): Promise<OpfsSpill>; discard(): void }> {
+    const { dir, name, release } = await newSpillFile();
+    return {
+      name,
+      async adopt(size: number) {
+        const spill = new OpfsSpill(dir, name, await syncHandle(dir, name), release);
+        spill.size = spill.written = spill.allocated = size;
+        return spill;
+      },
+      discard() {
+        void dir.removeEntry(name).catch(() => {});
+        release();
+      },
+    };
+  }
+
+  /** Writes a spill file reserved by another worker (which holds its lock and deletes it), growing it `grow` bytes at a time. */
+  static async writer(name: string, grow = GROW): Promise<OpfsSpill> {
+    const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle(DIRECTORY);
+    return new OpfsSpill(dir, name, await syncHandle(dir, name), () => {}, grow);
+  }
+
+  /** Writes what is staged, trims the file to it and closes it (for the worker that reserved it): its size. */
+  handOver(): number {
+    this.writeStage();
+    this.handle.truncate(this.written);
+    this.handle.flush();
+    this.handle.close();
+    return this.size;
   }
 
   append(bytes: Uint8Array): number {
@@ -196,7 +224,7 @@ export class OpfsSpill implements Spill {
     const end = this.written + bytes.byteLength;
     if (end > this.allocated) {
       // Small writes past the end each ask for quota: grow the file in large steps instead.
-      const want = Math.ceil(end / GROW) * GROW;
+      const want = Math.ceil(end / this.grow) * this.grow;
       this.handle.truncate(want);
       // Where the file cannot grow so far (a private window), it grows write by write.
       this.allocated = (this.handle as { getSize?(): number }).getSize?.() === want ? want : end;
@@ -240,6 +268,28 @@ export class OpfsSpill implements Spill {
     void this.dir.removeEntry(this.name).catch(() => {});
     this.release();
   }
+}
+
+/** A new file in the spill folder, held by a lock (stale spills cleaned first). */
+async function newSpillFile(): Promise<{ dir: FileSystemDirectoryHandle; name: string; release: () => void }> {
+  const root = await navigator.storage.getDirectory();
+  const dir = await root.getDirectoryHandle(DIRECTORY, { create: true });
+  await cleanStale(dir);
+  const name = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  let release!: () => void;
+  await new Promise<void>((held) => {
+    void locks()!.request(LOCK + name, () => {
+      held();
+      return new Promise<void>((resolve) => (release = resolve));
+    });
+  });
+  await dir.getFileHandle(name, { create: true });
+  return { dir, name, release };
+}
+
+async function syncHandle(dir: FileSystemDirectoryHandle, name: string): Promise<SyncHandle> {
+  const file = await dir.getFileHandle(name);
+  return (await (file as unknown as { createSyncAccessHandle(): Promise<SyncHandle> }).createSyncAccessHandle()) as SyncHandle;
 }
 
 /** Memory and disk limits, as the page set them (Settings) or from the device. */

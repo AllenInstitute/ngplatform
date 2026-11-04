@@ -27,11 +27,17 @@
  * bridges, each level's manifests and the object columns into a spill
  * (./spill.ts: a file in OPFS for a large tractogram, memory for a small
  * one), as append-only segments; memory keeps only an index of them (per
- * cell: its segments, rows, fragments, bounds, bridge directions; per 16,384
- * objects: where their manifests are; per 16 streamlines: where they start
- * in the file).  Keys are made from the spill when asked, and decoded cells
+ * cell: its segments, rows, fragments, bounds, bridge directions; per batch
+ * read: where its manifests are; per 16 streamlines: where they start in
+ * the file).  Keys are made from the spill when asked, and decoded cells
  * are kept in a least-recently-used cache (`cacheBudget()`).  Whole
  * streamlines by id (`message({ curves })`) are read from the file itself.
+ *
+ * Binning (`Binner`) is most of a pass.  For a large file it is done in bin
+ * workers (./bin_workers.ts), the batches dealt to them in turn, each
+ * worker writing a spill of its own; the store merges their cells by place
+ * (`StoreLevel`): a cell's rows and fragments are each worker's in turn,
+ * and bridges and manifests are renumbered as they are read.
  */
 import { cacheBudget, MemorySpill, type Spill, type SpillPlan } from "./spill.js";
 import type { TrkBatch } from "./trk.js";
@@ -108,11 +114,14 @@ export function sampleDepth(id: number, levels: number): number {
 
 // ---------------------------------------------------------------- spilled cells
 
-/** The writer every level shares: the spill, and pending bytes across cells. */
+/** The writer every level of a binner shares: the spill, and pending bytes across cells. */
 class Writer {
   pending = 0;
   readonly cells: Cell[] = [];
-  constructor(readonly spill: Spill) {}
+  constructor(
+    readonly spill: Spill,
+    readonly pendingLimit = PENDING_BYTES,
+  ) {}
 
   /** Writes out every pending record, and gives back the buffers' memory. */
   flushAll(): void {
@@ -208,15 +217,16 @@ function putVarint(out: Grow<Uint8Array>, value: number): void {
   out.data[out.length++] = value;
 }
 
-/** One level being built, then served. */
+/** One level as a binner makes it: its cells' records and the manifests, in the binner's spill. */
 class Level {
   readonly cells: Cell[] = [];
   private readonly index = new Map<number, number>();
   /** Bridge directions ("+1.0.-1") by index. */
   readonly directionNames: string[] = [];
   private readonly directionIndex = new Map<number, number>();
-  /** Manifests: per MANIFEST_ROWS objects, one segment (offset, length). */
-  readonly manifestSegments: number[] = [];
+  /** Manifests: per batch, its first streamline, how many, and where (offset, length). */
+  readonly manifestBatches: number[] = [];
+  private batchFirst = 0;
   private readonly manifest = new Grow(u8, 4096);
   private readonly blocks = new Grow(u32);
   readonly lo = [Infinity, Infinity, Infinity];
@@ -377,7 +387,7 @@ class Level {
     }
     if (cell !== undefined) this.closeRun(cell, words!, head, object, stride);
     ++this.present;
-    if (writer.pending > PENDING_BYTES) writer.flushAll();
+    if (writer.pending > writer.pendingLimit) writer.flushAll();
   }
 
   /**
@@ -407,24 +417,271 @@ class Level {
     putVarint(this.manifest, blocks.length / 2);
     for (let i = 0; i < blocks.length; ++i) putVarint(this.manifest, blocks.data[i]);
     ++this.objects;
-    if (this.objects % MANIFEST_ROWS === 0) this.flushManifests();
   }
 
-  private flushManifests(): void {
+  /** A batch begins: its streamlines are `first`, `first + 1`, … */
+  beginBatch(first: number): void {
+    this.objects = this.batchFirst = first;
+  }
+
+  /** A batch ends: its manifests are written, as one segment. */
+  endBatch(): void {
     const bytes = this.manifest.view();
-    this.manifestSegments.push(this.writer.spill.append(bytes), bytes.byteLength);
+    this.manifestBatches.push(this.batchFirst, this.objects - this.batchFirst, this.writer.spill.append(bytes), bytes.byteLength);
     this.manifest.length = 0;
   }
 
-  /** Writes out what is pending; the level's bounds from its cells'. */
+  /** The level's bounds from its cells'. */
   finish(): void {
-    if (this.objects % MANIFEST_ROWS !== 0 || this.objects === 0) this.flushManifests();
     for (const cell of this.cells) {
       for (let k = 0; k < 3; ++k) {
         if (cell.lo[k] < this.lo[k]) this.lo[k] = cell.lo[k];
         if (cell.hi[k] > this.hi[k]) this.hi[k] = cell.hi[k];
       }
     }
+  }
+
+  /** What was binned, for the store (`StoreLevel`). */
+  indexOf(): LevelIndex {
+    return {
+      cells: this.cells.map((c) => ({ at: c.at, rows: c.rows, fragments: c.fragments, bridges: c.bridges, segments: c.segments, bridgeSegments: c.bridgeSegments, directions: [...c.directions], lo: c.lo, hi: c.hi })),
+      directionNames: this.directionNames,
+      manifestBatches: this.manifestBatches,
+      vertexCount: this.vertexCount,
+      present: this.present,
+      links: this.links,
+    };
+  }
+}
+
+// ---------------------------------------------------------------- binning, here or in bin workers
+
+/** What every binner of a store shares: the levels' cells, samples and values. */
+export interface BinConfig {
+  /** Level 0's cell size, mm. */
+  chunk: number;
+  /** The sample depth of level 0 (0: every streamline), and of the coarsest level. */
+  first: number;
+  depth: number;
+  /** Per-point values (level 0 keeps them). */
+  valueNames: string[];
+  /** Pending records' bytes at which every cell's are written out. */
+  pendingBytes?: number;
+}
+
+/** A cell as one binner made it: its records in that binner's spill. */
+export interface CellIndex {
+  at: [number, number, number];
+  rows: number;
+  fragments: number;
+  bridges: number;
+  /** Fragment and bridge records: offset, length pairs. */
+  segments: number[];
+  bridgeSegments: number[];
+  /** Directions bridges leave in, as indices into the level's `directionNames`. */
+  directions: number[];
+  lo: number[];
+  hi: number[];
+}
+
+export interface LevelIndex {
+  cells: CellIndex[];
+  directionNames: string[];
+  /** Per batch: its first streamline, how many, and where its manifests are (offset, length). */
+  manifestBatches: number[];
+  vertexCount: number;
+  present: number;
+  links: number;
+}
+
+/** What a binner made: each level's cells and manifests, in its spill. */
+export interface BinIndex {
+  levels: LevelIndex[];
+}
+
+/**
+ * Bins streamlines into every level's cells, writing their records into a
+ * spill: the store's whole pass, or (in a bin worker, `bin_worker.ts`) the
+ * share of its batches handed to that worker.
+ */
+export class Binner {
+  private readonly levels: Level[];
+  private readonly writer: Writer;
+
+  constructor(
+    spill: Spill,
+    private readonly config: BinConfig,
+  ) {
+    this.writer = new Writer(spill, config.pendingBytes);
+    const { chunk, first, depth, valueNames } = config;
+    this.levels = [new Level("0", chunk, valueNames, first, 1, this.writer)];
+    // Coarser levels for large tractograms, each about one streamline in
+    // ten of the last (a subset of it), in cells twice as large, with
+    // fewer points each, while a level still holds a couple of thousand.
+    for (let k = 1; k <= depth - first; ++k) this.levels.push(new Level(String(k), 2 ** k * chunk, [], first + k, 2 ** (k + 1), this.writer));
+  }
+
+  /** Bins a batch whose streamlines are `firstObject`, `firstObject + 1`, …: their lengths, mm. */
+  bin(batch: TrkBatch, firstObject: number): Float32Array {
+    const n = batch.offsets.length - 1;
+    const nValues = this.config.valueNames.length;
+    const depth = this.config.depth;
+    const lengths = new Float32Array(n);
+    const points = batch.points;
+    for (const level of this.levels) level.beginBatch(firstObject);
+    for (let s = 0; s < n; ++s) {
+      const object = firstObject + s;
+      const first = batch.offsets[s];
+      const last = batch.offsets[s + 1];
+      const keep = depth === 0 ? 0 : sampleDepth(object, depth);
+      for (const level of this.levels) level.add(object, batch, first, last, nValues, level.depth <= keep);
+      let arc = 0;
+      for (let p = first + 1; p < last; ++p) {
+        const dx = points[3 * p] - points[3 * p - 3];
+        const dy = points[3 * p + 1] - points[3 * p - 2];
+        const dz = points[3 * p + 2] - points[3 * p - 1];
+        arc += Math.sqrt(dx * dx + dy * dy + dz * dz);
+      }
+      lengths[s] = arc;
+    }
+    for (const level of this.levels) level.endBatch();
+    return lengths;
+  }
+
+  /** Writes out what is pending: what was binned. */
+  finish(): BinIndex {
+    for (const level of this.levels) level.finish();
+    this.writer.flushAll();
+    return { levels: this.levels.map((l) => l.indexOf()) };
+  }
+}
+
+/** Where a store's batches are binned: a `Binner` here, or one in a bin worker. */
+export interface BinTarget {
+  /** Bins a batch (its points and values may be handed over, so not used after); resolves to its streamlines' lengths. */
+  bin(batch: TrkBatch, firstObject: number): Promise<Float32Array>;
+  /** What it binned, and the spill that holds it (the store's from then on). */
+  finish(): Promise<{ index: BinIndex; spill: Spill }>;
+  /** Stops after a failure, its spill let go. */
+  abort(): void;
+}
+
+/** Bins here, into `spill`. */
+export function localBinTarget(spill: Spill, config: BinConfig): BinTarget {
+  const binner = new Binner(spill, config);
+  return {
+    bin: async (batch, first) => binner.bin(batch, first),
+    finish: async () => ({ index: binner.finish(), spill }),
+    abort: () => spill.close(),
+  };
+}
+
+// ---------------------------------------------------------------- the levels served
+
+/** A binner's part of a cell: its records, and where its rows and fragments start in the cell. */
+interface CellPart {
+  bin: number;
+  rows: number;
+  fragments: number;
+  bridges: number;
+  segments: number[];
+  bridgeSegments: number[];
+  rowBase: number;
+  fragmentBase: number;
+}
+
+/** A cell as served: every binner's part of it, one after another. */
+interface StoreCell {
+  at: [number, number, number];
+  index: number;
+  rows: number;
+  fragments: number;
+  bridges: number;
+  /** Directions bridges leave in (indices into the level's names). */
+  directions: Set<number>;
+  parts: CellPart[];
+}
+
+/**
+ * A level as the store serves it: the binners' cells merged by place, each
+ * cell's rows and fragments those of each binner in turn (so within a cell,
+ * fragments are in object order for each binner's streamlines).
+ */
+class StoreLevel {
+  readonly cells: StoreCell[] = [];
+  private readonly index = new Map<number, number>();
+  /** Bridge directions ("+1.0.-1") by index, and their steps in cells. */
+  readonly directionNames: string[] = [];
+  private readonly directionSteps: number[][] = [];
+  private readonly directionIndex = new Map<string, number>();
+  /** Manifests per batch: first streamline, how many, binner, offset, length; by first streamline. */
+  private manifestBatches: number[] = [];
+  /** Per binner: its cells' indices here, and their parts. */
+  private readonly cellOf: Int32Array[] = [];
+  private readonly partOf: CellPart[][] = [];
+  /** Per binner: its direction indices' here. */
+  private readonly directionOf: Int32Array[] = [];
+  readonly lo = [Infinity, Infinity, Infinity];
+  readonly hi = [-Infinity, -Infinity, -Infinity];
+  vertexCount = 0;
+  present = 0;
+  links = 0;
+
+  constructor(
+    readonly path: string,
+    readonly chunk: number,
+    readonly valueNames: string[],
+    readonly depth: number,
+    readonly pointStep: number,
+    bins: LevelIndex[],
+  ) {
+    const batches: number[][] = [];
+    bins.forEach((l, bin) => {
+      this.directionOf.push(Int32Array.from(l.directionNames, (name) => this.direction(name)));
+      const cellOf = new Int32Array(l.cells.length);
+      const partOf: CellPart[] = [];
+      l.cells.forEach((c, i) => {
+        const key = cellKey(c.at[0], c.at[1], c.at[2]);
+        let g = this.index.get(key);
+        if (g === undefined) {
+          g = this.cells.length;
+          this.index.set(key, g);
+          this.cells.push({ at: c.at, index: g, rows: 0, fragments: 0, bridges: 0, directions: new Set(), parts: [] });
+        }
+        const cell = this.cells[g];
+        const part: CellPart = { bin, rows: c.rows, fragments: c.fragments, bridges: c.bridges, segments: c.segments, bridgeSegments: c.bridgeSegments, rowBase: cell.rows, fragmentBase: cell.fragments };
+        cell.parts.push(part);
+        cell.rows += c.rows;
+        cell.fragments += c.fragments;
+        cell.bridges += c.bridges;
+        for (const d of c.directions) cell.directions.add(this.directionOf[bin][d]);
+        for (let k = 0; k < 3; ++k) {
+          if (c.lo[k] < this.lo[k]) this.lo[k] = c.lo[k];
+          if (c.hi[k] > this.hi[k]) this.hi[k] = c.hi[k];
+        }
+        cellOf[i] = g;
+        partOf.push(part);
+      });
+      this.cellOf.push(cellOf);
+      this.partOf.push(partOf);
+      for (let b = 0; b < l.manifestBatches.length; b += 4) batches.push([l.manifestBatches[b], l.manifestBatches[b + 1], bin, l.manifestBatches[b + 2], l.manifestBatches[b + 3]]);
+      this.vertexCount += l.vertexCount;
+      this.present += l.present;
+      this.links += l.links;
+    });
+    batches.sort((a, b) => a[0] - b[0]);
+    this.manifestBatches = batches.flat();
+  }
+
+  private direction(name: string): number {
+    let i = this.directionIndex.get(name);
+    if (i === undefined) {
+      i = this.directionNames.length;
+      this.directionNames.push(name);
+      this.directionSteps.push(name.split(".").map(Number));
+      this.directionIndex.set(name, i);
+    }
+    return i;
   }
 
   /** The grid's origin and shape, from bounds shared by every level. */
@@ -438,30 +695,76 @@ class Level {
     return this.index.get(cellKey(x, y, z));
   }
 
-  /** Object `o`'s manifest: (cell, fragment) pairs, from its chunk of manifests. */
-  manifestChunk(spill: Spill, chunk: number, count: number): Uint32Array[] {
-    const at = this.manifestSegments[2 * chunk];
-    const length = this.manifestSegments[2 * chunk + 1];
-    const bytes = spill.read(at, length);
-    const out: Uint32Array[] = [];
-    let p = 0;
-    const next = () => {
-      let value = 0;
-      let scale = 1;
-      for (;;) {
-        const b = bytes[p++];
-        value += (b & 0x7f) * scale;
-        if (b < 0x80) return value;
-        scale *= 128;
+  /**
+   * Streamlines `chunk · MANIFEST_ROWS` … (`count` of them): each one's
+   * (cell, fragment) pairs, from the manifests of the batches holding them.
+   */
+  manifestChunk(spills: Spill[], chunk: number, count: number): Uint32Array[] {
+    const from = chunk * MANIFEST_ROWS;
+    const to = from + count;
+    const out: Uint32Array[] = Array.from({ length: count }, () => new Uint32Array(0));
+    const mb = this.manifestBatches;
+    // The first batch ending after `from`.
+    let lo = 0;
+    let hi = mb.length / 5;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (mb[5 * mid] + mb[5 * mid + 1] <= from) lo = mid + 1;
+      else hi = mid;
+    }
+    for (let b = lo; b < mb.length / 5 && mb[5 * b] < to; ++b) {
+      const [first, n, bin, offset, length] = mb.slice(5 * b, 5 * b + 5);
+      const bytes = spills[bin].read(offset, length);
+      const cellOf = this.cellOf[bin];
+      const partOf = this.partOf[bin];
+      let p = 0;
+      const next = () => {
+        let value = 0;
+        let scale = 1;
+        for (;;) {
+          const v = bytes[p++];
+          value += (v & 0x7f) * scale;
+          if (v < 0x80) return value;
+          scale *= 128;
+        }
+      };
+      for (let o = first; o < first + n && o < to; ++o) {
+        const blocks = next();
+        if (o < from) {
+          for (let i = 0; i < 2 * blocks; ++i) next();
+          continue;
+        }
+        const pairs = new Uint32Array(2 * blocks);
+        for (let i = 0; i < blocks; ++i) {
+          const local = next();
+          pairs[2 * i] = cellOf[local];
+          pairs[2 * i + 1] = partOf[local].fragmentBase + next();
+        }
+        out[o - from] = pairs;
       }
-    };
-    for (let o = 0; o < count; ++o) {
-      const n = next();
-      const pairs = new Uint32Array(2 * n);
-      for (let i = 0; i < 2 * n; ++i) pairs[i] = next();
-      out.push(pairs);
     }
     return out;
+  }
+
+  /** Where binner `bin`'s rows start in the cell a step `d` from `cell` (that binner's bridges lead there). */
+  rowBaseThere(cell: StoreCell, d: number, bin: number): number {
+    const step = this.directionSteps[d];
+    const there = this.cellIndex(cell.at[0] + step[0], cell.at[1] + step[1], cell.at[2] + step[2]);
+    const part = there === undefined ? undefined : this.cells[there].parts.find((q) => q.bin === bin);
+    if (part === undefined) throw new Error(`a bridge from cell ${cell.at.join(".")} of level ${this.path} leads to no cell`);
+    return part.rowBase;
+  }
+
+  /** A binner's direction index, here. */
+  directionHere(bin: number, d: number): number {
+    return this.directionOf[bin][d];
+  }
+
+  /** Bytes the level's index takes in memory, about. */
+  get indexBytes(): number {
+    let n = this.manifestBatches.length * 8;
+    for (const cell of this.cells) for (const part of cell.parts) n += 120 + 8 * (part.segments.length + part.bridgeSegments.length);
+    return n + 100 * this.cells.length;
   }
 }
 
@@ -612,7 +915,16 @@ export interface BuildOptions {
   sampleEvery?: number;
   /** The plan it was built by, reported in `stats()`. */
   plan?: SpillPlan;
+  /**
+   * Where batches are binned (default: here, into `spill`): bin workers,
+   * each with a spill of its own (`bin_workers.ts`).  The store's columns
+   * stay in `spill`.
+   */
+  bins?: (config: BinConfig) => Promise<BinTarget[]>;
 }
+
+/** Batches out at once to each binner, at most. */
+const BATCHES_AHEAD = 2;
 
 const NICE = [1, 2, 4, 5, 8, 10, 16, 20, 25, 32, 40, 50, 64, 100, 128, 200, 256];
 
@@ -704,7 +1016,7 @@ class CellCache {
 }
 
 export class StreamlineStore {
-  private readonly levels: Level[];
+  private readonly levels: StoreLevel[];
   private readonly count: number;
   private readonly lo: number[];
   private readonly hi: number[];
@@ -715,15 +1027,18 @@ export class StreamlineStore {
   private closed = false;
 
   private constructor(
-    levels: Level[],
+    levels: StoreLevel[],
     count: number,
     columns: Column[],
     readonly name: string,
+    /** Where the columns are. */
     private readonly spill: Spill,
+    /** Each binner's spill, where its cells and manifests are (the first may be `spill`). */
+    private readonly spills: Spill[],
     private readonly checkpoints: Float64Array,
     private readonly input: StreamlineInput,
     cacheBytes: number | undefined,
-    /** Seconds the pass over the file took, and of them binning (the rest: reading and parsing). */
+    /** Seconds the pass over the file took, and of them binning here, or waiting for the bin workers (the rest: reading and parsing). */
     readonly timing: { seconds: number; binning: number },
     /** How much of the file the spill was allowed to copy. */
     readonly plan?: SpillPlan,
@@ -753,64 +1068,65 @@ export class StreamlineStore {
   static async build(input: StreamlineInput, options: BuildOptions = {}): Promise<StreamlineStore> {
     const started = performance.now();
     const spill = options.spill ?? new MemorySpill();
+    let targets: BinTarget[] = [];
     try {
-      const writer = new Writer(spill);
       // A sample only (past the disk budget): level 0 keeps the ids sampled at depth `first`.
       const first = Math.max(0, Math.round(Math.log10(options.sampleEvery ?? 1)));
       const chunk = cellSize(input.extent, (input.bytes ?? 0) / 10 ** first);
-      const nValues = input.scalarNames.length;
       const nProperties = input.propertyNames.length;
       const depth = Math.max(first, sampleLevels(input.expectedCount));
-      const levels = [new Level("0", chunk, input.scalarNames, first, 1, writer)];
-      // Coarser levels for large tractograms, each about one streamline in
-      // ten of the last (a subset of it), in cells twice as large, with
-      // fewer points each, while a level still holds a couple of thousand.
-      for (let k = 1; k <= depth - first; ++k) levels.push(new Level(String(k), 2 ** k * chunk, [], first + k, 2 ** (k + 1), writer));
+      const config: BinConfig = { chunk, first, depth, valueNames: input.scalarNames };
+      targets = options.bins !== undefined ? await options.bins(config) : [localBinTarget(spill, config)];
       const columns = [new Column("length"), new Column("n_points"), ...input.propertyNames.map((name) => new Column(name))];
       const checkpoints = new Grow(f64, 1024);
       let end = 0;
       let object = 0;
+      let batches = 0;
       let binning = 0;
-      const count = await input.read((batch) => {
+      // The lengths come back in the order the batches went out.
+      const out: Promise<Float32Array>[] = [];
+      const take = async () => {
+        const lengths = await out.shift()!;
+        for (let i = 0; i < lengths.length; ++i) columns[0].push(spill, lengths[i]);
+      };
+      const count = await input.read(async (batch) => {
         const t = performance.now();
-        for (let s = 0; s + 1 < batch.offsets.length; ++s, ++object) {
-          const first = batch.offsets[s];
-          const last = batch.offsets[s + 1];
-          if (batch.starts !== undefined && object % CHECKPOINT === 0) checkpoints.push(batch.starts[s]);
-          const keep = depth === 0 ? 0 : sampleDepth(object, depth);
-          for (const level of levels) level.add(object, batch, first, last, nValues, level.depth <= keep);
-          let arc = 0;
-          for (let p = first + 1; p < last; ++p) {
-            const dx = batch.points[3 * p] - batch.points[3 * p - 3];
-            const dy = batch.points[3 * p + 1] - batch.points[3 * p - 2];
-            const dz = batch.points[3 * p + 2] - batch.points[3 * p - 1];
-            arc += Math.sqrt(dx * dx + dy * dy + dz * dz);
-          }
-          columns[0].push(spill, arc);
-          columns[1].push(spill, last - first);
+        const n = batch.offsets.length - 1;
+        for (let s = 0; s < n; ++s) {
+          if (batch.starts !== undefined && (object + s) % CHECKPOINT === 0) checkpoints.push(batch.starts[s]);
+          columns[1].push(spill, batch.offsets[s + 1] - batch.offsets[s]);
           for (let k = 0; k < nProperties; ++k) columns[2 + k].push(spill, batch.properties[s * nProperties + k]);
         }
-        if (batch.starts !== undefined) end = batch.starts[batch.offsets.length - 1];
+        if (batch.starts !== undefined) end = batch.starts[n];
+        out.push(targets[batches++ % targets.length].bin(batch, object));
+        object += n;
+        while (out.length > (targets.length === 1 ? 0 : BATCHES_AHEAD * targets.length)) await take();
         binning += performance.now() - t;
       });
+      while (out.length > 0) await take();
       if (count !== object) throw new Error(`the reader handed over ${object} streamlines but counted ${count}`);
-      for (const level of levels) level.finish();
-      writer.flushAll();
+      const binned = await Promise.all(targets.map((t) => t.finish()));
       for (const column of columns) column.finish(spill);
       checkpoints.push(end);
+      const levels = binned[0].index.levels.map((_, k) => {
+        const path = String(k);
+        return new StoreLevel(path, 2 ** k * chunk, k === 0 ? input.scalarNames : [], first + k, k === 0 ? 1 : 2 ** (k + 1), binned.map((b) => b.index.levels[k]));
+      });
       const timing = { seconds: (performance.now() - started) / 1000, binning: binning / 1000 };
-      return new StreamlineStore(levels, count, columns, input.name, spill, checkpoints.view().slice(), input, options.cacheBytes, timing, options.plan);
+      return new StreamlineStore(levels, count, columns, input.name, spill, binned.map((b) => b.spill), checkpoints.view().slice(), input, options.cacheBytes, timing, options.plan);
     } catch (e) {
+      for (const target of targets) target.abort();
       spill.close();
       throw e;
     }
   }
 
-  /** Lets the spill go. */
+  /** Lets the spills go. */
   close(): void {
     if (this.closed) return;
     this.closed = true;
     this.spill.close();
+    for (const spill of this.spills) if (spill !== this.spill) spill.close();
   }
 
   /** What the store keeps: spill bytes, the cache, and the index in memory (about). */
@@ -828,14 +1144,11 @@ export class StreamlineStore {
     plan?: SpillPlan;
   } {
     let index = this.checkpoints.byteLength;
-    for (const level of this.levels) {
-      index += level.manifestSegments.length * 8;
-      for (const cell of level.cells) index += 200 + 8 * (cell.segments.length + cell.bridgeSegments.length);
-    }
+    for (const level of this.levels) index += level.indexBytes;
     return {
       streamlines: this.count,
       levels: this.levels.map((l) => ({ path: l.path, cells: l.cells.length, vertices: l.vertexCount, streamlines: l.present, chunk: l.chunk })),
-      spillBytes: this.spill.size,
+      spillBytes: this.spills.reduce((n, s) => (s === this.spill ? n : n + s.size), this.spill.size),
       cacheBytes: this.cache.size.bytes,
       cachedCells: this.cache.size.entries,
       indexBytes: index,
@@ -929,7 +1242,7 @@ export class StreamlineStore {
     ids.forEach((id, i) => {
       const chunk = Math.floor(id / MANIFEST_ROWS);
       let rows = manifests.get(chunk);
-      if (rows === undefined) manifests.set(chunk, (rows = level.manifestChunk(this.spill, chunk, Math.min(MANIFEST_ROWS, this.count - chunk * MANIFEST_ROWS))));
+      if (rows === undefined) manifests.set(chunk, (rows = level.manifestChunk(this.spills, chunk, Math.min(MANIFEST_ROWS, this.count - chunk * MANIFEST_ROWS))));
       const pairs = rows[id - chunk * MANIFEST_ROWS];
       for (let b = 0; b < pairs.length; b += 2) {
         const cell = this.decoded(level, level.cells[pairs[b]]);
@@ -983,7 +1296,7 @@ export class StreamlineStore {
     });
   }
 
-  private levelKey(level: Level, key: string): Uint8Array | undefined {
+  private levelKey(level: StoreLevel, key: string): Uint8Array | undefined {
     const { origin, shape } = level.grid(this.lo, this.hi);
     const perCell = (attributes: Record<string, unknown>) => json(arrayJson(shape, { nonempty_chunks: level.cells.map((c) => c.at.join(".")), chunk_grid_origin: origin, ...attributes }));
     switch (key) {
@@ -1053,69 +1366,86 @@ export class StreamlineStore {
     return this.levelChunk(level, key, origin);
   }
 
-  /** A cell's fragments, decoded from the spill (or the cache). */
-  private decoded(level: Level, cell: Cell): Decoded {
+  /** A cell's fragments, decoded from the spills (or the cache): each binner's part in turn. */
+  private decoded(level: StoreLevel, cell: StoreCell): Decoded {
     return this.cache.get(`${level.path}|${cell.index}`, () => {
-      const bytes = readSegments(this.spill, cell.segments);
-      const words = new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
-      const floats = new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
       const nv = level.valueNames.length;
       const vertices = new Float32Array(3 * cell.rows);
       const values = level.valueNames.map(() => new Float32Array(cell.rows));
       const counts = new Uint32Array(cell.fragments);
       const owners = new Uint32Array(cell.fragments);
-      let i = 0;
       let row = 0;
-      let owner = 0;
-      for (let f = 0; f < cell.fragments; ++f) {
-        const head = words[i++];
-        let n: number;
-        if (head >= 0x80000000) {
-          n = head & 0xfff;
-          owner += (head >>> 12) & 0x7ffff;
-        } else {
-          n = head;
-          owner = words[i++];
-        }
-        owners[f] = owner;
-        counts[f] = n;
-        if (nv === 0) {
-          vertices.set(floats.subarray(i, i + 3 * n), 3 * row);
-          i += 3 * n;
-          row += n;
-        } else {
-          for (let p = 0; p < n; ++p, ++row) {
-            vertices[3 * row] = floats[i++];
-            vertices[3 * row + 1] = floats[i++];
-            vertices[3 * row + 2] = floats[i++];
-            for (let k = 0; k < nv; ++k) values[k][row] = floats[i++];
+      let f = 0;
+      let read = 0;
+      for (const part of cell.parts) {
+        const bytes = readSegments(this.spills[part.bin], part.segments);
+        read += bytes.byteLength;
+        const words = new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
+        const floats = new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
+        let i = 0;
+        let owner = 0;
+        for (const last = f + part.fragments; f < last; ++f) {
+          const head = words[i++];
+          let n: number;
+          if (head >= 0x80000000) {
+            n = head & 0xfff;
+            owner += (head >>> 12) & 0x7ffff;
+          } else {
+            n = head;
+            owner = words[i++];
+          }
+          owners[f] = owner;
+          counts[f] = n;
+          if (nv === 0) {
+            vertices.set(floats.subarray(i, i + 3 * n), 3 * row);
+            i += 3 * n;
+            row += n;
+          } else {
+            for (let p = 0; p < n; ++p, ++row) {
+              vertices[3 * row] = floats[i++];
+              vertices[3 * row + 1] = floats[i++];
+              vertices[3 * row + 2] = floats[i++];
+              for (let k = 0; k < nv; ++k) values[k][row] = floats[i++];
+            }
           }
         }
+        if (i !== words.length || row !== part.rowBase + part.rows) throw new Error(`cell ${cell.at.join(".")} of level ${level.path} is damaged (${i} of ${words.length} words, ${row - part.rowBase} of ${part.rows} rows)`);
       }
-      if (i !== words.length || row !== cell.rows) throw new Error(`cell ${cell.at.join(".")} of level ${level.path} is damaged (${i} of ${words.length} words, ${row} of ${cell.rows} rows)`);
-      return { value: { vertices, counts, owners, values, bytes: bytes.byteLength + 8 * cell.fragments }, bytes: bytes.byteLength + 8 * cell.fragments };
+      return { value: { vertices, counts, owners, values, bytes: read + 8 * cell.fragments }, bytes: read + 8 * cell.fragments };
     });
   }
 
-  private decodedBridges(level: Level, cell: Cell): DecodedBridges {
+  private decodedBridges(level: StoreLevel, cell: StoreCell): DecodedBridges {
     return this.cache.get(`${level.path}|${cell.index}|bridges`, () => {
-      const bytes = readSegments(this.spill, cell.bridgeSegments);
-      const words = new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
-      // Records of (direction, row here, row there): unpacked, then grouped by direction.
+      // Records of (direction, row here, row there): unpacked, in this level's numbering, then grouped by direction.
       const records = new Int32Array(3 * cell.bridges);
       let n = 0;
-      for (let i = 0; i < words.length; ++n) {
-        const head = words[i++];
-        if (head >= 0x80000000) {
-          records[3 * n] = (head >>> 25) & 0x3f;
-          records[3 * n + 1] = head & 0x1ffffff;
-        } else {
-          records[3 * n] = head;
-          records[3 * n + 1] = words[i++];
+      let read = 0;
+      for (const part of cell.parts) {
+        const bytes = readSegments(this.spills[part.bin], part.bridgeSegments);
+        read += bytes.byteLength;
+        const words = new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
+        // Where this binner's rows start in the cell each direction leads to.
+        const there = new Map<number, number>();
+        const first = n;
+        for (let i = 0; i < words.length; ++n) {
+          const head = words[i++];
+          let d: number;
+          if (head >= 0x80000000) {
+            d = (head >>> 25) & 0x3f;
+            records[3 * n + 1] = (head & 0x1ffffff) + part.rowBase;
+          } else {
+            d = head;
+            records[3 * n + 1] = words[i++] + part.rowBase;
+          }
+          const here = level.directionHere(part.bin, d);
+          let base = there.get(here);
+          if (base === undefined) there.set(here, (base = level.rowBaseThere(cell, here, part.bin)));
+          records[3 * n] = here;
+          records[3 * n + 2] = words[i++] + base;
         }
-        records[3 * n + 2] = words[i++];
+        if (n - first !== part.bridges) throw new Error(`cell ${cell.at.join(".")} of level ${level.path}: ${n - first} of ${part.bridges} bridges`);
       }
-      if (n !== cell.bridges) throw new Error(`cell ${cell.at.join(".")} of level ${level.path}: ${n} of ${cell.bridges} bridges`);
       const counts = new Map<number, number>();
       for (let r = 0; r < n; ++r) counts.set(records[3 * r], (counts.get(records[3 * r]) ?? 0) + 1);
       const out: DecodedBridges = new Map([...counts].map(([d, c]) => [d, new Int32Array(2 * c)]));
@@ -1128,11 +1458,11 @@ export class StreamlineStore {
         rows[k + 1] = records[3 * r + 2];
         at.set(d, k + 2);
       }
-      return { value: out, bytes: bytes.byteLength };
+      return { value: out, bytes: read };
     });
   }
 
-  private levelChunk(level: Level, key: string, origin: number[]): Uint8Array | undefined {
+  private levelChunk(level: StoreLevel, key: string, origin: number[]): Uint8Array | undefined {
     const cellKeyMatch = /^(.*)\/c\/(-?\d+)\/(-?\d+)\/(-?\d+)$/.exec(key);
     if (cellKeyMatch !== null) {
       const at = [2, 3, 4].map((g, k) => Number(cellKeyMatch[g]) + origin[k]);
@@ -1168,7 +1498,7 @@ export class StreamlineStore {
     if (array === "object_index/manifests") {
       const first = chunk * MANIFEST_ROWS;
       if (first >= this.count) return undefined;
-      const pairs = level.manifestChunk(this.spill, chunk, Math.min(MANIFEST_ROWS, this.count - first));
+      const pairs = level.manifestChunk(this.spills, chunk, Math.min(MANIFEST_ROWS, this.count - first));
       return vlenChunk(
         pairs.map((p) => this.manifest(level, p)),
         MANIFEST_ROWS,
@@ -1182,7 +1512,7 @@ export class StreamlineStore {
   }
 
   /** An object's manifest: its fragments, in walk order, as (absolute cell, fragment) blocks. */
-  private manifest(level: Level, pairs: Uint32Array): Uint8Array {
+  private manifest(level: StoreLevel, pairs: Uint32Array): Uint8Array {
     const n = pairs.length / 2;
     const out = new Uint8Array(4 + 33 * n);
     const view = new DataView(out.buffer);
