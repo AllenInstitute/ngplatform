@@ -15,6 +15,7 @@
 import type { Json, LayerTransform, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { downloadBlob, el, safeFileName } from "@ngplatform/sdk/dom";
 import { layerSourceUrl } from "@ngplatform/sdk/sources";
+import { WorkerRpc } from "@ngplatform/sdk/worker_rpc";
 import { storeOf } from "../volume-view/sources.js";
 import { apply4, describe, fit, type Fit, identity4, invert4, type Mat4, MINIMUM, type Model, multiply4, type Vec3 } from "./fit.js";
 import { needsGeometry, readTransformFile, type VolumeGeometry, writeItk, writeLta, writePlain } from "./formats.js";
@@ -141,37 +142,17 @@ const MAX_BYTES = 512 * 2 ** 20;
 
 /** Registration's worker: geometry and saving, as promises with progress and cancel. */
 class SaveClient {
-  private worker = new Worker(new URL("./save_worker.ts", import.meta.url), { type: "module", name: "registration" });
-  private nextId = 1;
-  private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; progress?: (what: string, done: number, total: number) => void }>();
-
-  constructor() {
-    this.worker.onmessage = (event: MessageEvent) => {
-      const msg = event.data;
-      const p = this.pending.get(msg.id);
-      if (p === undefined) return;
-      if (msg.type === "progress") return p.progress?.(msg.what, msg.done, msg.total);
-      this.pending.delete(msg.id);
-      if (msg.type === "error") p.reject(new Error(msg.message));
-      else p.resolve(msg);
-    };
-  }
+  private readonly rpc = new WorkerRpc(() => new Worker(new URL("./save_worker.ts", import.meta.url), { type: "module", name: "registration" }), {
+    stopped: (why) => `the saving worker stopped: ${why}`,
+    restart: true,
+  });
 
   request<T>(message: object, progress?: (what: string, done: number, total: number) => void, signal?: AbortSignal): Promise<T> {
-    const id = this.nextId++;
-    return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject, progress });
-      signal?.addEventListener("abort", () => {
-        if (!this.pending.delete(id)) return;
-        this.worker.postMessage({ type: "cancel", id });
-        reject(new DOMException("Aborted", "AbortError"));
-      });
-      this.worker.postMessage({ ...message, id });
-    });
+    return this.rpc.request<T>(message, { signal, progress: progress && ((msg) => progress(msg.what, msg.done, msg.total)) });
   }
 
   dispose(): void {
-    this.worker.terminate();
+    this.rpc.dispose();
   }
 }
 

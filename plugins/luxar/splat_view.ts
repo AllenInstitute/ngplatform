@@ -60,6 +60,8 @@ export class SplatView {
   private frame = 0;
   private selection: Selection | undefined;
   private problem: string | undefined;
+  /** The worker failed: no more blocks will come. */
+  private stopped = false;
   private readonly handle: { redraw(): void; dispose(): void };
   private readonly offs: Disposer[] = [];
   onStatus: (() => void) | undefined;
@@ -89,10 +91,18 @@ export class SplatView {
       this.view2d.schedule();
       this.onStatus?.();
     };
+    // A worker that fails to start or dies answers nothing: say so (the view counts as drawn, so screenshots do not wait).
+    this.worker.onerror = (event: ErrorEvent) => {
+      event.preventDefault();
+      this.error = `the splat reader stopped: ${event.message || "it could not start"}`;
+      this.stopped = true;
+      this.handle?.redraw();
+      this.onStatus?.();
+    };
     this.worker.postMessage({ type: "open", store: storeUrl });
     this.handle = ctx.viewer.draw3d(name, {
       draw: (frame) => this.draw(frame),
-      isReady: () => this.selection === undefined || this.selection.complete,
+      isReady: () => this.stopped || this.selection === undefined || this.selection.complete,
       afterSections: true,
       dispose: () => this.release(),
     });
@@ -310,6 +320,7 @@ export class SplatView {
     this.handle.dispose();
     this.view2d.dispose();
     this.worker.terminate();
+    this.blocks.clear();
   }
 }
 

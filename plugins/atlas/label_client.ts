@@ -3,6 +3,7 @@
  * label: voxels, centre, bounds) and a region's voxel nearest its centre,
  * as promises, with progress and cancelling.
  */
+import { WorkerRpc } from "@ngplatform/sdk/worker_rpc";
 
 /** One label's voxels at the level counted. */
 export interface LabelStats {
@@ -26,47 +27,16 @@ export interface Counted {
   labels: Map<bigint, LabelStats>;
 }
 
-type Pending = { resolve: (v: any) => void; reject: (e: Error) => void; progress?: (done: number, total: number) => void };
-
 export class LabelClient {
-  private worker: Worker | undefined;
-  private nextId = 1;
-  private readonly pending = new Map<number, Pending>();
+  private readonly rpc = new WorkerRpc(() => new Worker(new URL("./label_worker.ts", import.meta.url), { type: "module", name: "atlas" }), {
+    stopped: (why) => `the label counter stopped: ${why}`,
+    // A failed worker is replaced by the next request.
+    restart: true,
+  });
 
-  private request<T>(message: object, options: { progress?: Pending["progress"]; signal?: AbortSignal } = {}): Promise<T> {
-    if (this.worker === undefined) {
-      this.worker = new Worker(new URL("./label_worker.ts", import.meta.url), { type: "module", name: "atlas" });
-      this.worker.onmessage = (event: MessageEvent) => {
-        const msg = event.data;
-        const p = this.pending.get(msg.id);
-        if (p === undefined) return;
-        if (msg.type === "progress") return p.progress?.(msg.done, msg.total);
-        this.pending.delete(msg.id);
-        if (msg.type === "error") p.reject(new Error(msg.message));
-        else p.resolve(msg);
-      };
-      // A worker that fails to load (or throws outside a request) answers nothing: every request
-      // waiting fails, and the next one starts a new worker.
-      const started = this.worker;
-      started.onerror = (event: ErrorEvent) => {
-        if (this.worker !== started) return;
-        started.terminate();
-        this.worker = undefined;
-        for (const p of this.pending.values()) p.reject(new Error(`the label counter stopped: ${event.message || "it could not start"}`));
-        this.pending.clear();
-      };
-    }
-    const id = this.nextId++;
-    const worker = this.worker;
-    return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject, progress: options.progress });
-      options.signal?.addEventListener("abort", () => {
-        if (!this.pending.delete(id)) return;
-        worker.postMessage({ type: "cancel", id });
-        reject(new DOMException("Aborted", "AbortError"));
-      });
-      worker.postMessage({ ...message, id });
-    });
+  private request<T>(message: object, options: { progress?: (done: number, total: number) => void; signal?: AbortSignal } = {}): Promise<T> {
+    const { progress, signal } = options;
+    return this.rpc.request<T>(message, { signal, progress: progress && ((msg) => progress(msg.done, msg.total)) });
   }
 
   /** Every label's voxels in a store, at its finest level of at most 64 M voxels. */
@@ -119,9 +89,6 @@ export class LabelClient {
   }
 
   dispose(): void {
-    this.worker?.terminate();
-    this.worker = undefined;
-    for (const p of this.pending.values()) p.reject(new Error("closed"));
-    this.pending.clear();
+    this.rpc.dispose();
   }
 }

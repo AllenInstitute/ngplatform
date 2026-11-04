@@ -6,6 +6,7 @@
  */
 import type { Json, PlatformContext } from "@ngplatform/sdk";
 import { layerSourceUrl } from "@ngplatform/sdk/sources";
+import { WorkerRpc } from "@ngplatform/sdk/worker_rpc";
 import { storeOf } from "../volume-view/sources.js";
 import type { Mat4 } from "./geometry.js";
 import type { Region, Summary } from "./statistics.js";
@@ -31,51 +32,18 @@ export function readableImages(ctx: PlatformContext, types = ["image"]): string[
     .map((l) => l.name);
 }
 
-type Pending = { resolve: (v: any) => void; reject: (e: Error) => void; progress?: (done: number, total: number) => void };
-
 export class Voxels {
-  private worker: Worker | undefined;
-  private nextId = 1;
-  private readonly pending = new Map<number, Pending>();
   private readonly levelsCache = new Map<string, Promise<ImageLevel[]>>();
+  // A worker that fails to start or dies (out of memory, say) answers nothing: every request fails, and the next starts a new one.
+  private readonly rpc = new WorkerRpc(() => new Worker(new URL("./voxel_worker.ts", import.meta.url), { type: "module", name: "annotations" }), {
+    stopped: (why) => `The reader stopped (${why}): try a smaller region or a coarser level.`,
+    restart: true,
+    onStopped: () => this.levelsCache.clear(),
+  });
 
-  private request<T>(message: object, options: { progress?: Pending["progress"]; signal?: AbortSignal; transfer?: Transferable[] } = {}): Promise<T> {
-    if (this.worker === undefined) {
-      this.worker = new Worker(new URL("./voxel_worker.ts", import.meta.url), { type: "module", name: "annotations" });
-      this.worker.onmessage = (event: MessageEvent) => {
-        const msg = event.data;
-        const p = this.pending.get(msg.id);
-        if (p === undefined) return;
-        if (msg.type === "progress") return p.progress?.(msg.done, msg.total);
-        this.pending.delete(msg.id);
-        if (msg.type === "error") p.reject(new Error(msg.message));
-        else p.resolve(msg);
-      };
-      // A worker that fails to start or dies (out of memory, say) answers nothing: every request fails, and the next starts a new one.
-      const failed = (why: string) => {
-        this.worker?.terminate();
-        this.worker = undefined;
-        this.levelsCache.clear();
-        for (const p of this.pending.values()) p.reject(new Error(why));
-        this.pending.clear();
-      };
-      this.worker.onerror = (e) => {
-        e.preventDefault();
-        failed(`The reader stopped${e.message ? ` (${e.message})` : ""}: try a smaller region or a coarser level.`);
-      };
-      this.worker.onmessageerror = () => failed("The reader's answer could not be read.");
-    }
-    const id = this.nextId++;
-    const worker = this.worker;
-    return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject, progress: options.progress });
-      options.signal?.addEventListener("abort", () => {
-        if (!this.pending.delete(id)) return;
-        worker.postMessage({ type: "cancel", id });
-        reject(new DOMException("Aborted", "AbortError"));
-      });
-      worker.postMessage({ ...message, id }, options.transfer ?? []);
-    });
+  private request<T>(message: object, options: { progress?: (done: number, total: number) => void; signal?: AbortSignal; transfer?: Transferable[] } = {}): Promise<T> {
+    const { progress, ...rest } = options;
+    return this.rpc.request<T>(message, { ...rest, progress: progress && ((msg) => progress(msg.done, msg.total)) });
   }
 
   /** An image's levels, finest first (asked once per store). */
@@ -114,9 +82,6 @@ export class Voxels {
   }
 
   dispose(): void {
-    this.worker?.terminate();
-    this.worker = undefined;
-    for (const p of this.pending.values()) p.reject(new Error("closed"));
-    this.pending.clear();
+    this.rpc.dispose();
   }
 }

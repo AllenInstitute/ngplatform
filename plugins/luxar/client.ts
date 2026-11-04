@@ -24,6 +24,8 @@ export class StoreClient {
   private chunks = new Map<string, BuiltChunk | null>();
   private bytes = 0;
   private requested = new Set<string>();
+  /** The worker failed: nothing more will come. */
+  private stopped = false;
   /** Chunks whose read failed, with when they may be asked for again (a network blip need not leave a hole for good). */
   private failed = new Map<string, number>();
   private wants = new Map<string, string[]>();
@@ -87,6 +89,16 @@ export class StoreClient {
       ++this.arrivals;
       this.onChunk?.();
     };
+    // A worker that fails to start or dies (out of memory, say) answers nothing: say so, and wait for nothing more from it.
+    this.worker.onerror = (event: ErrorEvent) => {
+      event.preventDefault();
+      this.stopped = true;
+      this.worker.terminate();
+      this.error = `the Luxar reader stopped: ${event.message || "it could not start"}`;
+      failed(new Error(this.error));
+      this.requested.clear();
+      this.onChunk?.();
+    };
     this.worker.postMessage({ type: "open", storeUrl });
     this.objects = new ObjectSets((key, plan, ids) => this.worker.postMessage({ type: "objects", key, level: plan.level, mode: plan.mode, ids, scalar: this.scalar }, [ids.buffer]));
   }
@@ -138,7 +150,7 @@ export class StoreClient {
 
   /** Whether a chunk has been read (empty or not), so a view need not wait for it. */
   has(key: string): boolean {
-    return this.chunks.has(key) || this.failedRecently(key);
+    return this.chunks.has(key) || this.failedRecently(key) || this.stopped;
   }
 
   /** Whether a chunk's read failed lately: counted as read until it may be asked for again. */
@@ -165,7 +177,7 @@ export class StoreClient {
 
   /** Every view's wants, taken in turn, so each gets its first chunks soon. */
   private send(): void {
-    if (this.info === undefined) return;
+    if (this.info === undefined || this.stopped) return;
     const lists = [...this.wants.values()];
     const merged: string[] = [];
     const seen = new Set<string>();
@@ -191,6 +203,7 @@ export class StoreClient {
   dispose(): void {
     this.worker.terminate();
     this.chunks.clear();
+    this.objects.clear();
     this.onChunk = undefined;
   }
 }
