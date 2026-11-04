@@ -102,6 +102,10 @@ class Collections {
   private documentUrl = "";
   private error = "";
   private busy = false;
+  /** Bumped by each open or choice of system: work for an older one stops at its next step. */
+  private generation = 0;
+  /** The address typed in the panel (kept while the panel is drawn again). */
+  private typed = "";
   private update?: () => void;
   /** Collections found above the workspace's images: group URL to its name (null: none there). */
   private found = new Map<string, string | null>();
@@ -208,23 +212,39 @@ class Collections {
 
   /** Opens `url` in the Collections tab (made if there is none), showing its images. */
   async openInTab(url: string): Promise<void> {
+    if (url === "") {
+      this.error = "Enter a collection's address (its collection.json or Zarr group), or choose Example.";
+      this.update?.();
+      return;
+    }
+    const generation = ++this.generation;
     const tab = this.ctx.workspace.scenes().find((s) => s.kind === COLLECTION_KIND);
     if (tab === undefined) this.ctx.workspace.newScene({ name: "Collections", kind: COLLECTION_KIND });
     else if (!tab.active) this.ctx.workspace.switchScene(tab.id);
-    if (!(await this.read(url))) return;
+    if (!(await this.read(url)) || !this.current(generation)) return;
     const root = this.root!;
     const system = sceneSystems(root)[0]?.id;
     this.ctx.state.set<Saved>({ url, system });
-    await this.show(system);
+    await this.show(system, generation);
+  }
+
+  /** Whether work begun for `generation` may go on: nothing newer was asked for, and the Collections tab is still the scene shown. */
+  private current(generation: number): boolean {
+    return generation === this.generation && this.inCollectionScene();
   }
 
   /** The tab's images: the collection's members, its other layers gone, each placed in `system`. */
-  private async show(system: string | undefined): Promise<void> {
+  private async show(system: string | undefined, generation: number): Promise<void> {
     const root = this.root;
-    if (root === undefined) return;
+    if (root === undefined || !this.current(generation)) return;
     for (const layer of this.ctx.viewer.layers()) this.ctx.workspace.removeLayer(layer.name);
-    for (const m of members(root)) if (m.node.location !== undefined) await this.setSource(m.node.name, `zarr://${m.node.location.url}/`);
-    await this.place(system);
+    for (const m of members(root)) {
+      if (m.node.location === undefined) continue;
+      await this.setSource(m.node.name, `zarr://${m.node.location.url}/`);
+      if (!this.current(generation)) return;
+    }
+    await this.place(system, generation);
+    if (!this.current(generation)) return;
     this.ctx.log.info(`Showing ${root.name} in the Collections tab.`);
   }
 
@@ -270,9 +290,9 @@ class Collections {
    * resampled back through the chain), placed by the chain's affines; a
    * member with no chain is hidden.
    */
-  private async place(system: string | undefined): Promise<void> {
+  private async place(system: string | undefined, generation: number): Promise<void> {
     const root = this.root;
-    if (root === undefined || system === undefined) return;
+    if (root === undefined || system === undefined || !this.current(generation)) return;
     const unit = MM[sceneSystems(root).find((s) => s.id === system)?.units.find((u) => u !== "") ?? "millimeter"] ?? 1;
     this.warped.clear();
     this.hidden.clear();
@@ -294,10 +314,12 @@ class Collections {
             this.ctx.log.error(`Could not warp ${layer}: ${(e as Error).message}`);
             placement = undefined;
           }
+          if (!this.current(generation)) return;
         }
       }
       if (placement === undefined) this.hidden.add(layer);
       else await this.setSource(layer, source, this.warped.has(layer) ? m.node.location.url : undefined);
+      if (!this.current(generation)) return;
       this.ctx.viewer.patchState(
         (ng) => {
           const spec = ((ng as { layers?: Record<string, unknown>[] }).layers ?? []).find((l) => l.name === layer);
@@ -305,20 +327,36 @@ class Collections {
         },
         { quiet: true },
       );
-      if (placement !== undefined) await this.setPlacement(layer, placement, unit);
+      if (placement !== undefined && !(await this.setPlacement(layer, placement, unit))) {
+        // Not placed: hidden rather than shown in the wrong place.
+        this.hidden.add(layer);
+        this.ctx.viewer.patchState(
+          (ng) => {
+            const spec = ((ng as { layers?: Record<string, unknown>[] }).layers ?? []).find((l) => l.name === layer);
+            if (spec !== undefined) spec.visible = false;
+          },
+          { quiet: true },
+        );
+      }
+      if (!this.current(generation)) return;
     }
     this.update?.();
   }
 
   /** Sets a layer's transform to its own (from its metadata) followed by `placement` (in units of `unit` mm). */
-  private async setPlacement(layer: string, placement: Mat4, unit: number): Promise<void> {
+  /** Whether it was placed: an image with other than x, y and z (channels, time) is not, yet. */
+  private async setPlacement(layer: string, placement: Mat4, unit: number): Promise<boolean> {
     // Neuroglancer knows the layer's transform once it has read its metadata.
     for (let i = 0; i < 100; ++i) {
       const t = this.ctx.viewer.layerTransform(layer);
       const p = t && physical(t, t.defaultMatrix);
+      if (t && !p) {
+        this.ctx.log.error(`${layer} is not placed: only images with x, y and z alone can be placed (it has ${t.output.names.join(", ")}).`);
+        return false;
+      }
       if (t && p) {
         const order = ["x", "y", "z"].map((n) => t.output.names.indexOf(n));
-        if (order.some((k) => k === -1)) return;
+        if (order.some((k) => k === -1)) return false;
         // The placement in millimetres, in the layer's output order.
         const a = new Float64Array(16);
         a[15] = 1;
@@ -329,15 +367,18 @@ class Collections {
         const out = new Float64Array(16);
         for (let r = 0; r < 4; ++r) for (let c = 0; c < 4; ++c) for (let k = 0; k < 4; ++k) out[4 * r + c] += a[4 * r + k] * p[4 * k + c];
         this.ctx.viewer.setLayerTransform(layer, neuroglancer(t, out));
-        return;
+        return true;
       }
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
+    this.ctx.log.error(`${layer} is not placed: its metadata did not load.`);
+    return false;
   }
 
   private async choose(system: string): Promise<void> {
+    const generation = ++this.generation;
     this.ctx.state.set<Saved>({ ...this.saved(), system });
-    await this.place(system);
+    await this.place(system, generation);
   }
 
   /**
@@ -397,7 +438,11 @@ class Collections {
   }
 
   render(host: HTMLElement): () => void {
-    const url = el("input", { type: "text", placeholder: "https://…/collection.json or a Zarr group", value: this.documentUrl }) as HTMLInputElement;
+    const url = el("input", { class: "text-input", type: "text", placeholder: "https://…/collection.json or a Zarr group", "aria-label": "Collection address", spellcheck: "false" }) as HTMLInputElement;
+    url.addEventListener("input", () => (this.typed = url.value));
+    url.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") void this.openInTab(url.value.trim());
+    });
     const draw = () => {
       const tab = this.inCollectionScene();
       const root = tab ? this.root : undefined;
@@ -420,6 +465,7 @@ class Collections {
       const g = root && graph(root);
       const found = this.foundHere();
       const chosen = root && sceneSystems(root).find((s) => s.id === this.saved().system);
+      url.value = this.typed || this.documentUrl;
       host.replaceChildren(
         el(
           "div",
@@ -446,14 +492,12 @@ class Collections {
             el("button", { class: "btn small", type: "button", disabled: this.busy, onclick: () => void this.openInTab(url.value.trim()) }, "Open"),
             el("button", { class: "btn outline small", type: "button", disabled: this.busy, onclick: () => void this.openInTab(EXAMPLE_URL) }, "Example"),
           ),
-          this.error ? el("p", { class: "note err" }, this.error) : null,
+          this.error ? el("p", { class: "note error" }, this.error) : null,
           !root
             ? el(
                 "p",
-                { class: "note" },
-                tab
-                  ? "This tab shows a collection (OME-NGFF RFC-8, draft): its images, each placed by its transforms. Open one by its URL, one found above your data, or the example."
-                  : "Open a collection (OME-NGFF RFC-8, draft) by its URL, or the example: it is shown in the Collections tab.",
+                { class: "note", title: "An OME-NGFF collection (RFC-8, draft): images, each placed by its transforms." },
+                tab ? "No collection open. Open one by its address, or the example." : "Open a collection by its address, or the example. It opens in the Collections tab.",
               )
             : null,
           root ? el("h3", { class: "section-title" }, `${root.name}: coordinate systems`) : null,

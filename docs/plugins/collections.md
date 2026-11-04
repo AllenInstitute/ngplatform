@@ -39,7 +39,11 @@ each placed by its transforms, with the **Collections** panel beside it.
   way is inverted by iteration. A chain may go through up to three fields.
   A coordinate map (`coordinates`) written from the system to the image is
   applied too; one written the other way needs its inverse given (a
-  `bijection`).
+  `bijection`). Limits: a field is looked up trilinearly whatever its
+  `interpolation` says, past its edge the edge's displacement holds, and the
+  warped image is cut to the member's own grid.
+- Only images with x, y and z alone are placed; one with channels or time
+  is hidden, and the Activity tab says why.
 - **Members** and **Transforms**: the tree (each node's type, name and
   where it is) and every transform as written.
 
