@@ -126,6 +126,18 @@ describe("RunnerService", () => {
     expect(down.available()).toBe(false);
   });
 
+  it("tells its listeners of changes, not of every poll", async () => {
+    const fake = fakeRunner();
+    const service = new RunnerService(memory(), fake.fetchImpl, 5);
+    await service.pair("http://127.0.0.1:8765", fake.token);
+    let heard = 0;
+    service.onChange(() => heard++);
+    const unwatch = service.watch();
+    await new Promise((r) => setTimeout(r, 60));
+    unwatch();
+    expect(heard).toBeLessThanOrEqual(1);
+  });
+
   it("follows a job to its end", async () => {
     const fake = fakeRunner();
     const service = new RunnerService(memory(), fake.fetchImpl, 5);

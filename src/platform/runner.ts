@@ -205,6 +205,8 @@ export class RunnerService {
   private watchers = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private inFlight: Promise<void> | undefined;
+  /** What the last fetch found, to tell listeners only of changes. */
+  private lastSeen = "";
 
   constructor(
     private readonly storage: Pick<Storage, "getItem" | "setItem" | "removeItem">,
@@ -307,7 +309,12 @@ export class RunnerService {
       this.state = (e as RunnerError).status === 401 || (e as RunnerError).status === 403 ? "refused" : "unreachable";
       this.errorValue = (e as Error).message;
     }
-    this.notify();
+    // Listeners (the Jobs tab redraws) hear of a change, or of a job still
+    // running (its elapsed time), not of every poll: a redraw every 1.5 s
+    // would drop focus and clicks in the tab.
+    const seen = JSON.stringify([this.state, this.errorValue, this.jobList]);
+    if (seen !== this.lastSeen || this.jobList.some(isActive)) this.notify();
+    this.lastSeen = seen;
     this.schedule();
   }
 
