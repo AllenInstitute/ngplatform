@@ -41,6 +41,19 @@ export interface VirtualStore {
 export interface ByteSource {
   readonly size: number;
   read(start: number, end: number): Promise<Uint8Array>;
+  /**
+   * Reads bytes [start, end) into `target` (at its start), without a copy
+   * of its own where the source can; resolves to how many there were.
+   */
+  readInto?(start: number, end: number, target: Uint8Array): Promise<number>;
+}
+
+/** Reads bytes [start, end) of a source into `target`, through `readInto` where it has one. */
+export async function readInto(source: ByteSource, start: number, end: number, target: Uint8Array): Promise<number> {
+  if (source.readInto !== undefined) return source.readInto(start, end, target);
+  const bytes = await source.read(start, end);
+  target.set(bytes.subarray(0, Math.min(bytes.byteLength, target.byteLength)));
+  return bytes.byteLength;
 }
 
 export function blobSource(blob: Blob): ByteSource {
@@ -206,6 +219,11 @@ export class Lru<V> {
       },
     );
     return entry.value;
+  }
+
+  /** Whether `key` is kept or being made. */
+  has(key: string): boolean {
+    return this.entries.has(key);
   }
 
   /** The value kept for `key`, if it is made (not still being made), without counting it as a use. */

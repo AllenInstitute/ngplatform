@@ -218,6 +218,26 @@ export class Reducer {
     }
     const sum = this.sum!;
     const src = from as Exclude<Voxels, BigUint64Array | BigInt64Array>;
+    if (si === 2 && sj === 2 && sk === 2 && ((li | lj | lk | fj | fk) & 1) === 0) {
+      // Halving along every axis, the slab on even voxels: each coarse voxel's 8 summed at once (one write, not 8).
+      const half = fi >> 1;
+      const plane = fj * fi;
+      for (let s = 0; s < this.slots; ++s) {
+        for (let z = 0; z < fk; z += 2) {
+          const dz = ((lk + z) >> 1) - pk;
+          for (let y = 0; y < fj; y += 2) {
+            const a = ((s * fk + z) * fj + y) * fi;
+            const b = a + fi;
+            const c = a + plane;
+            const d = c + fi;
+            let o = ((s * nk + dz) * nj + (((lj + y) >> 1) - pj)) * ni - pi + (li >> 1);
+            for (let x = 0; x < 2 * half; x += 2, ++o) sum[o] += src[a + x] + src[a + x + 1] + src[b + x] + src[b + x + 1] + src[c + x] + src[c + x + 1] + src[d + x] + src[d + x + 1];
+            if (fi & 1) sum[o] += src[a + fi - 1] + src[b + fi - 1] + src[c + fi - 1] + src[d + fi - 1];
+          }
+        }
+      }
+      return;
+    }
     for (let s = 0; s < this.slots; ++s) {
       for (let z = 0; z < fk; ++z) {
         const dz = Math.floor((lk + z) / sk) - pk;
@@ -229,11 +249,14 @@ export class Reducer {
             // Pairs along i: the common case, kept tight.
             let x = 0;
             if (li & 1) {
-              sum[dstRow + ((li >> 1))] += src[srcRow];
+              sum[dstRow + (li >> 1)] += src[srcRow];
               x = 1;
             }
-            for (; x + 1 < fi; x += 2) sum[dstRow + ((li + x) >> 1)] += src[srcRow + x] + src[srcRow + x + 1];
-            if (x < fi) sum[dstRow + ((li + x) >> 1)] += src[srcRow + x];
+            let d = dstRow + ((li + x) >> 1);
+            let at = srcRow + x;
+            const pairsEnd = srcRow + x + 2 * ((fi - x) >> 1);
+            for (; at < pairsEnd; at += 2, ++d) sum[d] += src[at] + src[at + 1];
+            if (at < srcRow + fi) sum[d] += src[at];
           } else {
             for (let x = 0; x < fi; ++x) sum[dstRow + li + x] += src[srcRow + x];
           }
@@ -248,17 +271,28 @@ export class Reducer {
       const [ni, nj, nk] = this.n;
       // Finer voxels under each coarse one, along each axis: the step, less at the far edge.
       const count = (a: number, p: number) => Math.max(1, Math.min(this.grid.step[a], this.finer.size[a] - p * this.grid.step[a]));
-      const ci = Array.from({ length: ni }, (_, x) => count(0, this.box.lo[0] + x));
+      const ci = Float64Array.from({ length: ni }, (_, x) => count(0, this.box.lo[0] + x));
+      // Counts of 1 and 2 (steps of 1 or 2) multiply to powers of two, whose
+      // reciprocals are exact: a product then gives the quotient exactly.
+      const exact = this.grid.step.every((s) => s === 1 || s === 2);
+      const inv = Float64Array.from(ci, (c) => 1 / c);
       const sum = this.sum!;
       const out = this.out as Exclude<Voxels, BigUint64Array | BigInt64Array>;
       const round = !(out instanceof Float32Array || out instanceof Float64Array);
+      const small = out instanceof Uint8Array || out instanceof Uint16Array;
       for (let s = 0; s < this.slots; ++s) {
         for (let z = 0; z < nk; ++z) {
           const cz = count(2, this.box.lo[2] + z);
           for (let y = 0; y < nj; ++y) {
             const czy = cz * count(1, this.box.lo[1] + y);
             const row = ((s * nk + z) * nj + y) * ni;
-            if (round) for (let x = 0; x < ni; ++x) out[row + x] = Math.round(sum[row + x] / (czy * ci[x]));
+            if (exact) {
+              const k = 1 / czy;
+              // Means of unsigned 8- and 16-bit values are never negative: adding a half and truncating rounds them.
+              if (small) for (let x = 0; x < ni; ++x) out[row + x] = (sum[row + x] * k * inv[x] + 0.5) | 0;
+              else if (round) for (let x = 0; x < ni; ++x) out[row + x] = Math.round(sum[row + x] * k * inv[x]);
+              else for (let x = 0; x < ni; ++x) out[row + x] = sum[row + x] * k * inv[x];
+            } else if (round) for (let x = 0; x < ni; ++x) out[row + x] = Math.round(sum[row + x] / (czy * ci[x]));
             else for (let x = 0; x < ni; ++x) out[row + x] = sum[row + x] / (czy * ci[x]);
           }
         }
