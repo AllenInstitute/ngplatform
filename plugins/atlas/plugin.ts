@@ -173,6 +173,8 @@ class AtlasPanel {
     const layer = this.layer;
     const store = layerStore(this.ctx, layer);
     this.countingFor = `${layer}|${store}`;
+    // Still the count wanted: the same layer, reading the same store (its source may have changed meanwhile).
+    const mine = () => this.layer === layer && this.countingFor === `${layer}|${store}`;
     if (store === undefined) {
       this.counting = "Volumes and Go to need an OME-Zarr, NIfTI, MGH or precomputed label image.";
       this.drawVolumes();
@@ -187,7 +189,7 @@ class AtlasPanel {
           (done, total) => {
             if (job.cancelled) controller.abort();
             job.progress(done / total, `${done} of ${total} chunks`);
-            if (this.layer === layer) {
+            if (mine()) {
               this.counting = `Counting the voxels… ${Math.round((100 * done) / total)}%`;
               this.drawVolumes();
             }
@@ -202,14 +204,14 @@ class AtlasPanel {
     }
     try {
       const c = await counted;
-      if (this.layer !== layer) return c;
+      if (!mine()) return c;
       this.counted = c;
       this.counting = "";
       this.totals = this.atlas?.totals(this.voxelsPerValue(c));
       this.draw();
       return c;
     } catch (e) {
-      if (this.layer === layer) {
+      if (mine()) {
         this.counting = (e as Error).name === "AbortError" ? "Counting cancelled." : `Could not count the voxels: ${(e as Error).message}`;
         this.drawVolumes();
       }

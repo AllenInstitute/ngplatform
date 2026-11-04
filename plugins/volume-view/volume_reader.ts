@@ -722,3 +722,28 @@ export class VolumeReader {
     return { data: out, width, height };
   }
 }
+
+/**
+ * Readers by store, opened once, for a worker that reads several stores in
+ * turn: each holds up to `cacheBytes` of chunks, so only the `keep` used
+ * last are kept.
+ */
+export function readerCache(keep: number, cacheBytes = 128 * 2 ** 20): (store: string) => Promise<{ reader: VolumeReader; levels: Awaited<ReturnType<VolumeReader["open"]>>["levels"] }> {
+  const readers = new Map<string, Promise<{ reader: VolumeReader; levels: Awaited<ReturnType<VolumeReader["open"]>>["levels"] }>>();
+  return (store) => {
+    let r = readers.get(store);
+    if (r === undefined) {
+      const reader = new VolumeReader(cacheBytes);
+      r = reader.open([store], undefined).then(({ levels }) => ({ reader, levels }));
+      readers.set(store, r);
+      const opened = r;
+      r.catch(() => readers.get(store) === opened && readers.delete(store));
+      while (readers.size > keep) readers.delete(readers.keys().next().value!);
+    } else {
+      // Used again: the newest.
+      readers.delete(store);
+      readers.set(store, r);
+    }
+    return r;
+  };
+}

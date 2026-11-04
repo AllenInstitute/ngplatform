@@ -102,7 +102,7 @@ export class SplatView {
     this.worker.postMessage({ type: "open", store: storeUrl });
     this.handle = ctx.viewer.draw3d(name, {
       draw: (frame) => this.draw(frame),
-      isReady: () => this.stopped || this.selection === undefined || this.selection.complete,
+      isReady: () => this.stopped || this.failedIn !== undefined || this.selection === undefined || this.selection.complete,
       afterSections: true,
       dispose: () => this.release(),
     });
@@ -171,7 +171,23 @@ export class SplatView {
     this.gl = undefined;
   }
 
+  /** Draws, unless drawing has failed in this GL context (a shader this GPU cannot compile, say): then the panel says why, and it is not tried every frame. */
   private draw(frame: Frame3d): void {
+    if (this.failedIn === frame.gl) return;
+    this.failedIn = undefined;
+    try {
+      this.drawNow(frame);
+    } catch (e) {
+      this.failedIn = frame.gl;
+      this.problem = `The 3-D view could not draw splats: ${(e as Error).message}`;
+      // Built again, whole, in the next context.
+      this.release();
+    }
+  }
+
+  private failedIn: WebGL2RenderingContext | undefined;
+
+  private drawNow(frame: Frame3d): void {
     const { gl } = frame;
     const info = this.info;
     if (info === undefined) return;

@@ -1323,15 +1323,22 @@ export class Editor implements LabelVolumes {
       prompts = { box: p.box, points: p.points.map((x) => ({ ...x })) };
       this.previewOverlay.draw();
     }
-    const image: ImageBlock | undefined = await session.imageBox(lo, hi);
-    if (image === undefined) {
-      this.ctx.ui.toast("Quick select reads an image: choose one under “Image values”.");
+    // Enter or Escape from here on (while the image is read, or the mask computed) says now what to do with it.
+    this.decided = undefined;
+    const abort = (this.quickAbort = new AbortController());
+    let image: ImageBlock | undefined;
+    try {
+      image = await session.imageBox(lo, hi, abort.signal);
+    } catch (e) {
+      if (!abort.signal.aborted) this.ctx.ui.toast(`${method.title}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    if (abort.signal.aborted || this.decided === "cancel" || image === undefined) {
+      if (this.quickAbort === abort) this.quickAbort = undefined;
+      if (this.decided === "cancel") this.decided = undefined;
+      else if (image === undefined && !abort.signal.aborted) this.ctx.ui.toast("Quick select reads an image: choose one under “Image values”.");
       return;
     }
-    // Enter or Escape while the mask is computed says now what to do with it.
-    this.decided = undefined;
     this.ctx.context.set(SELECTING, true);
-    const abort = (this.quickAbort = new AbortController());
     let mask: Mask;
     try {
       // Escape (or Stop) ends the wait at once, even while the model downloads: the strokes queued behind it go on.

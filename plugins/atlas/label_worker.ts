@@ -14,31 +14,16 @@
  */
 import { setAsyncComputationWorkerFactory } from "neuroglancer/unstable/worker_factories.js";
 import { asyncComputationWorker } from "@ngplatform/sdk/workers";
-import { VolumeReader } from "../volume-view/volume_reader.js";
+import { readerCache } from "../volume-view/volume_reader.js";
 import { countingLevel, LabelCounter, NearestVoxel } from "./labels.js";
 
 // zstd and the other codecs decode in the platform's async-computation worker.
 setAsyncComputationWorkerFactory(() => asyncComputationWorker(["org.ngplatform.zarr-vectors"]));
 
-const readers = new Map<string, Promise<{ reader: VolumeReader; levels: Awaited<ReturnType<VolumeReader["open"]>>["levels"] }>>();
 const controllers = new Map<number, AbortController>();
 
-function open(store: string) {
-  let r = readers.get(store);
-  if (r === undefined) {
-    const reader = new VolumeReader(128 * 2 ** 20);
-    r = reader.open([store], undefined).then(({ levels }) => ({ reader, levels }));
-    readers.set(store, r);
-    r.catch(() => readers.delete(store));
-    // Each reader holds up to 128 MB of chunks: keep the last two stores' only.
-    while (readers.size > 2) readers.delete(readers.keys().next().value!);
-  } else {
-    // Used again: the newest.
-    readers.delete(store);
-    readers.set(store, r);
-  }
-  return r;
-}
+// Each reader holds up to 128 MB of chunks: keep the last two stores' only.
+const open = readerCache(2);
 
 self.onmessage = (event: MessageEvent) => {
   const msg = event.data;
