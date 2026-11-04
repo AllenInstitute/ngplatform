@@ -23,7 +23,7 @@ segmentations, and annotation layers.
 4. **+ Disk** is TrackVis's disk: a flat region across x, y or z that a
    track must cross within its radius. An *angle limit* keeps only the
    tracks that cross it within that angle of its normal (90° or more: any).
-   On segmentations and annotations it is tested as a flat box a quarter
+   On segmentations and annotations it is tested as a flat box half
    of its radius thick.
 5. **+ Mask** (Zarr Vectors stores): an image's voxels that a track must
    pass through. A label volume (painted in Annotations, or opened from a
@@ -34,9 +34,11 @@ segmentations, and annotation layers.
    the exact answer.
 7. Rename a group with the pencil icon or by double-clicking its name.
 
-Per group: **Save .trk** (the whole streamlines, as TrackVis), **Density
+Per group: **Save .trk** (the whole streamlines, as TrackVis), **Make density
 map** (streamlines per 1 mm voxel, shown as a heat map and saved as NIfTI)
-and **CSV** (count and each property's mean, SD, median and range).
+and **Export CSV** (the group's objects and their properties). Under
+**Statistics**, **Export CSV** writes each group's count and each property's
+mean, SD, median and range.
 
 ## Speed
 
