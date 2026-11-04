@@ -70,3 +70,4 @@ nav:
       - "Audit, part 2: annotations to capture": dev/audit-2.md
       - "Speed: startup, bundle, first image, memory, drawing": dev/speed.md
       - "Workflows: ten tasks, counted": dev/workflows.md
+      - "Code review: shared helpers, dead code, bugs, tests": dev/code-review.md
