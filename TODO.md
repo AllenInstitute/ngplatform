@@ -20,7 +20,7 @@ when it runs out. Proofreading and axon segmentation last.
 
 **Wave B**
 - [x] B1. (Done: branches kept, Vim's redo rule, Ctrl+Alt+Z between branches, the tree in the ⋯ view with a scene/dataset filter, 400 steps stored as shared pieces, kept in IndexedDB beside the link.) History as a provenance tree (branches kept after going back, a tree to jump in, changes named by scene and dataset).
-- [ ] B2. Editing a large segmentation in place (copy-on-write).
+- [x] B2. (Merged: unedited chunks read from the original, edits copied on first change, saved alone or with the whole volume.) Editing a large segmentation in place (copy-on-write).
 - [x] B3. AI quick select (a SAM-style model in the page, ONNX Runtime Web). (MobileSAM, Apache-2.0, 44.7 MB from Hugging Face, kept in Cache Storage; ONNX Runtime Web 1.30.0 from jsDelivr in a worker, WebGPU else WASM; boxes, clicks wanted and not; embeddings kept per section; Spread to N sections as one stroke. Left: WebGPU timings on a real GPU; a decoder pass that feeds the last mask back (`mask_input`); threads under cross-origin isolation, untried.)
 
 **Wave C**
