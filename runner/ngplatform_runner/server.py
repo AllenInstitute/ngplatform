@@ -213,11 +213,12 @@ class Handler(BaseHTTPRequestHandler):
         return host in (f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}")
 
     def _cors(self, public: bool = False) -> None:
+        # Served stores too answer only the allowed origins (the app's): their addresses travel in shared
+        # links, and another site that learned one must not read the files while the runner runs.
         origin = self._origin()
         if public:
-            self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Expose-Headers", "Content-Range, Content-Length")
-        elif origin is not None and self._origin_allowed(origin):
+        if origin is not None and self._origin_allowed(origin):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
 
@@ -265,7 +266,7 @@ class Handler(BaseHTTPRequestHandler):
         path = urllib.parse.urlsplit(self.path).path
         public = path.startswith("/stores/")
         origin = self._origin()
-        if not public and not self._origin_allowed(origin):
+        if not self._origin_allowed(origin):
             self._send(403, b"", "text/plain")
             return
         self.send_response(204)
@@ -347,7 +348,10 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._error(409 if m.get(parts[1]) else 404, "only a finished job can be taken off the list")
         elif len(parts) == 3 and parts[0] == "jobs" and parts[2] == "log" and method == "GET":
-            tail = int((query.get("tail") or ["65536"])[0])
+            try:
+                tail = int((query.get("tail") or ["65536"])[0])
+            except ValueError as e:
+                raise BadRequest("tail must be a whole number of bytes") from e
             log = m.log(parts[1], tail=max(1, min(tail, 4 << 20)))
             self._json(200, log) if log else self._error(404, "no such job")
         elif len(parts) == 3 and parts[0] == "jobs" and parts[2] == "cancel" and method == "POST":

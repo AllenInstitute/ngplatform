@@ -494,6 +494,7 @@ textarea.text-input { height: auto; padding: 8px 10px; }
 .auth-select { height: 28px; padding: 0 6px; }
 .auth-scopes { padding-left: 18px; display: grid; gap: 2px; margin-top: 6px; }
 .auth-scopes code, .auth-google .note code { font: 11px var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.auth-google > summary { cursor: pointer; }
 .auth-field { display: grid; gap: 4px; margin-top: 10px; font-size: 12px; color: var(--muted); }
 .auth-field .auth-add { margin-top: 0; }
 .layer-sign-in { display: flex; align-items: center; gap: 8px; flex-basis: 100%; font-size: 12px; color: var(--muted); }
@@ -525,6 +526,9 @@ textarea.text-input { height: auto; padding: 8px 10px; }
 .runner-files li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 6px; }
 .runner-files li.chosen { background: var(--accent-soft, rgba(90, 140, 255, 0.18)); }
 .runner-files li.store > button { font-weight: 500; }
+.runner-serves { display: grid; gap: 4px; }
+.runner-serves .runner-entry { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.runner-serves .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .linkish { background: none; border: 0; padding: 0; color: var(--text); font: 12px/1.6 var(--mono); cursor: pointer; text-align: left; overflow-wrap: anywhere; }
 .linkish:hover { color: var(--accent); }
 .mono { font-family: var(--mono); }

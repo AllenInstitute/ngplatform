@@ -103,10 +103,10 @@ function pairForm(runner: RunnerService, note?: string): HTMLElement {
     h(
       "p",
       { class: "note" },
-      "Long jobs (converting, filtering a whole tractogram into a new .trk or store, density maps) run as Python processes on this computer through the runner. Start it in a terminal with ",
-      h("code", {}, START_COMMAND),
-      " (in the Python that has zarr-vectors-tools), then open the link it prints, or enter its address and token here. ",
-      h("a", { href: LOCAL_JOBS_GUIDE, target: "_blank", rel: "noopener" }, "How it works ↗"),
+      "Runs long jobs (converting, filtering, density maps) as Python on this computer. Start it with ",
+      h("code", { title: "In the Python that has zarr-vectors-tools" }, START_COMMAND),
+      ", then open the link it prints or enter its address and token. ",
+      h("a", { href: LOCAL_JOBS_GUIDE, target: "_blank", rel: "noopener" }, "Guide ↗"),
     ),
   );
 }
@@ -133,7 +133,8 @@ function jobRow(wb: Workbench, runner: RunnerService, job: RunnerJob, openLogs: 
         {
           class: "btn small runner-cancel",
           type: "button",
-          onclick: () => void runner.cancel(job.id).catch((e) => toast((e as Error).message, "error")),
+          // A served file is stopped by its serve (its record removed), not only its process: else a restarted runner serves it again.
+          onclick: () => void (job.kind === "serve" && job.serve ? runner.stopServing(job.serve.id) : runner.cancel(job.id)).catch((e) => toast((e as Error).message, "error")),
         },
         job.kind === "serve" ? "Stop" : "Cancel",
       ),
@@ -233,6 +234,7 @@ export function renderRunnerSection(wb: Workbench, runner: RunnerService): { ele
         state === "connected" ? h("button", { class: "btn small runner-convert", type: "button", onclick: () => void convertDialog(runner) }, "Convert a tractogram…") : null,
         state === "connected" ? h("button", { class: "btn small runner-open-path", type: "button", onclick: () => void openDialog(wb, runner) }, "Open a file…") : null,
         state !== "connected" ? h("button", { class: "btn small", type: "button", onclick: () => void runner.refresh() }, "Try again") : null,
+        state === "connected" ? h("button", { class: "btn small runner-served", type: "button", title: "Files and folders the runner serves to the viewer", onclick: () => void servedDialog(runner) }, "Served…") : null,
         runner.jobs().some((j) => !isActive(j) && j.kind !== "serve") ? h("button", { class: "btn small", type: "button", onclick: () => void runner.clearFinished() }, "Clear finished") : null,
         h("button", { class: "btn small", type: "button", onclick: () => runner.unpair() }, "Unpair"),
       ),
@@ -372,6 +374,46 @@ export function choosePath(runner: RunnerService, options: Parameters<RunnerApi[
 async function openDialog(wb: Workbench, runner: RunnerService): Promise<void> {
   const path = await choosePath(runner, { title: "Open a file on this computer", mode: "open", note: "A Zarr Vectors store, a tractogram, mesh, SWC or point table (served as a store: the file is read whole first), or a NIfTI image. The runner serves it to the viewer." });
   if (path !== undefined) await openOutput(wb, runner, { path, type: "file" });
+}
+
+/** What the runner serves to the viewer, each with Stop (its address then answers nothing, now and after a restart). */
+async function servedDialog(runner: RunnerService): Promise<void> {
+  const list = h("div", { class: "list runner-serves" });
+  const fill = async () => {
+    try {
+      const serves = await runner.serves();
+      clear(
+        list,
+        ...(serves.length === 0
+          ? [h("p", { class: "empty" }, "Nothing is served.")]
+          : serves.map((s) =>
+              h(
+                "div",
+                { class: "runner-entry" },
+                h("span", { class: "grow mono", title: s.path }, s.path),
+                h("span", { class: "type" }, s.mode === "virtual" ? "read by a process" : s.mode),
+                h(
+                  "button",
+                  {
+                    class: "btn small",
+                    type: "button",
+                    onclick: () =>
+                      void runner.stopServing(s.id).then(
+                        () => void fill(),
+                        (e) => toast((e as Error).message, "error"),
+                      ),
+                  },
+                  "Stop",
+                ),
+              ),
+            )),
+      );
+    } catch (e) {
+      clear(list, h("p", { class: "empty error" }, `Could not list them: ${(e as Error).message}`));
+    }
+  };
+  showSheet(sheet("Served to the viewer", [h("p", { class: "note first" }, "A layer reading one of these stops loading when it is stopped."), list], [h("button", { class: "btn", type: "button", onclick: () => closeSheet() }, "Close")]));
+  await fill();
 }
 
 async function convertDialog(runner: RunnerService): Promise<void> {

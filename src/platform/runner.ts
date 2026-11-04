@@ -228,6 +228,8 @@ export class RunnerService {
     this.infoValue = undefined;
     this.errorValue = undefined;
     this.jobList = [];
+    // A fetch for the client before answers nothing here; the next refresh starts one for this client.
+    this.inFlight = undefined;
   }
 
   pairing(): Pairing | undefined {
@@ -357,6 +359,17 @@ export class RunnerService {
     await this.refresh();
   }
 
+  /** The files and folders the runner serves to the viewer. */
+  serves(): Promise<RunnerServe[]> {
+    return this.need().serves();
+  }
+
+  /** Stops serving a file: its record goes too, so a restarted runner does not serve it again. */
+  async stopServing(serveId: string): Promise<void> {
+    await this.need().stopServing(serveId);
+    await this.refresh();
+  }
+
   async forget(id: string): Promise<void> {
     await this.need().forget(id);
     this.jobList = this.jobList.filter((j) => j.id !== id);
@@ -374,21 +387,38 @@ export class RunnerService {
   /** Resolves with the job once it has finished. */
   wait(id: string, onProgress?: (job: RunnerJob) => void, signal?: AbortSignal): Promise<RunnerJob> {
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+        return;
+      }
       this.waiting++;
+      let done = false;
       let off = () => {};
+      const onAbort = () => finish(() => reject(signal!.reason ?? new DOMException("Aborted", "AbortError")));
+      // Once only: a job's end, an abort, an unpairing or the job gone, whichever comes first.
       const finish = (f: () => void) => {
+        if (done) return;
+        done = true;
         off();
+        signal?.removeEventListener("abort", onAbort);
         this.waiting--;
         f();
       };
+      let seen = false;
       const check = () => {
+        if (this.connection() === "unpaired") return finish(() => reject(new RunnerError("The runner was unpaired", 0)));
         const job = this.jobList.find((j) => j.id === id);
-        if (job === undefined) return;
+        if (job === undefined) {
+          // Gone from a list that had it (forgotten, or the runner's state cleared).
+          if (seen) finish(() => reject(new RunnerError(`The job ${id} is no longer on the runner`, 404)));
+          return;
+        }
+        seen = true;
         onProgress?.(job);
         if (!isActive(job)) finish(() => resolve(job));
       };
       off = this.onChange(check);
-      signal?.addEventListener("abort", () => finish(() => reject(signal.reason ?? new DOMException("Aborted", "AbortError"))));
+      signal?.addEventListener("abort", onAbort);
       check();
       void this.refresh();
     });

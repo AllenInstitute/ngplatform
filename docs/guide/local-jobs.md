@@ -103,10 +103,15 @@ conversion of the streamlines that pass.
   readable by you only. `--new-token` replaces it; browsers paired before
   must then pair again.
 - Every path is checked against the roots after links are followed, and an
-  output that exists is not overwritten unless the job asks for it.
+  output that exists is not overwritten (the app never asks to; choose
+  another name). An output cannot be the job's input.
 - Files it serves to the viewer are at addresses with a random part (128
-  bits), which only this app learns; they need no token, because the
-  viewer cannot send one. Stop serving a file with **Stop** in the Jobs tab.
+  bits). They need no token, because the viewer cannot send one, but a web
+  page can read them only from the origins the runner allows (this app's),
+  so a shared link does not let another site read them. A file served by a
+  process has a **Stop** in the Jobs tab, which also keeps it from being
+  served again when the runner restarts. Folders and NIfTI files served as
+  they are have no row; they stop being served when the runner stops.
 - Chrome asks before a site may reach your computer's own network
   addresses: allow it for this app. The runner answers the checks Chrome
   makes (Private Network Access).

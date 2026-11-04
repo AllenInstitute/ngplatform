@@ -239,7 +239,10 @@ class ServeTest(unittest.TestCase):
         status, headers, body = self.runner.request("GET", path + "zarr.json", token=None, headers={"Origin": "https://alleninstitute.github.io"})
         self.assertEqual(status, 200)
         self.assertEqual(body, {"zarr_format": 3})
-        self.assertEqual(headers["Access-Control-Allow-Origin"], "*")
+        self.assertEqual(headers["Access-Control-Allow-Origin"], "https://alleninstitute.github.io")
+        # Another site that learned the address cannot read it from a page.
+        _, headers, _ = self.runner.request("GET", path + "zarr.json", token=None, headers={"Origin": "https://anywhere.example"})
+        self.assertNotIn("Access-Control-Allow-Origin", headers)
         status, headers, _ = self.runner.request("GET", path + "0/vertices/c", token=None, headers={"Range": "bytes=10-19"})
         self.assertEqual(status, 206)
         self.assertEqual(headers["Content-Range"], "bytes 10-19/100")
@@ -258,10 +261,11 @@ class ServeTest(unittest.TestCase):
         self.assertIn(served["id"], [s["id"] for s in listed["serves"]])
 
     def test_preflight_for_stores(self):
-        status, headers, _ = self.runner.request("OPTIONS", "/stores/x/y", token=None, headers={"Origin": "https://anywhere.example", "Access-Control-Request-Private-Network": "true"})
+        status, headers, _ = self.runner.request("OPTIONS", "/stores/x/y", token=None, headers={"Origin": "https://alleninstitute.github.io", "Access-Control-Request-Private-Network": "true"})
         self.assertEqual(status, 204)
-        self.assertEqual(headers["Access-Control-Allow-Origin"], "*")
+        self.assertEqual(headers["Access-Control-Allow-Origin"], "https://alleninstitute.github.io")
         self.assertEqual(headers["Access-Control-Allow-Private-Network"], "true")
+        self.assertEqual(self.runner.request("OPTIONS", "/stores/x/y", token=None, headers={"Origin": "https://anywhere.example"})[0], 403)
 
     def test_refused(self):
         self.assertEqual(self.runner.request("POST", "/serve", {"path": str(self.runner.root / "secret.txt")})[0], 403)
