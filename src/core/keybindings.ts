@@ -109,3 +109,55 @@ export function keyLabel(key: string, isMac: boolean): string {
   const shown = parts.map((p) => (names[p] ? names[p][isMac ? 0 : 1] : p.length === 1 ? p.toUpperCase() : p[0].toUpperCase() + p.slice(1)));
   return isMac ? shown.join("") : shown.join("+");
 }
+
+/** A row of the keyboard reference: one or more keys and what they do. */
+export interface ShortcutRow {
+  keys: string[];
+  title: string;
+}
+
+/**
+ * The keyboard reference's rows.  A binding reads as its command's title,
+ * with its text arguments ("Segmentation tool: brush"); bindings that read
+ * alike share a row, in the order first bound, and a run of digit keys
+ * with the same modifiers is one key: "1"…"9" → "1–9", "alt+1"…"alt+9" →
+ * "alt+1–9".  Bindings whose command `titleOf` does not know are left out.
+ */
+export function shortcutRows(bindings: KeyBinding[], titleOf: (command: string) => string | undefined): ShortcutRow[] {
+  const rows = new Map<string, string[]>();
+  for (const b of bindings) {
+    const base = titleOf(b.command);
+    if (base === undefined) continue;
+    const words =
+      b.args !== null && typeof b.args === "object"
+        ? Object.values(b.args as Record<string, unknown>).filter((v): v is string => typeof v === "string")
+        : [];
+    const title = words.length > 0 ? `${base}: ${words.join(", ")}` : base;
+    const keys = rows.get(title) ?? [];
+    if (!keys.includes(b.key)) keys.push(b.key);
+    rows.set(title, keys);
+  }
+  return [...rows].map(([title, keys]) => ({ title, keys: digitRuns(keys) }));
+}
+
+function digitRuns(keys: string[]): string[] {
+  const out: string[] = [];
+  const done = new Set<string>();
+  for (const key of keys) {
+    if (done.has(key)) continue;
+    const m = /^(.*?)(\d)$/.exec(key);
+    if (m === null) {
+      out.push(key);
+      continue;
+    }
+    const prefix = m[1];
+    const digits = keys.filter((k) => k.startsWith(prefix) && /^\d$/.test(k.slice(prefix.length))).map((k) => Number(k.slice(prefix.length)));
+    const lo = Math.min(...digits);
+    const hi = Math.max(...digits);
+    if (digits.length >= 3 && hi - lo + 1 === digits.length) {
+      for (const d of digits) done.add(`${prefix}${d}`);
+      out.push(`${prefix}${lo}–${hi}`);
+    } else out.push(key);
+  }
+  return out;
+}

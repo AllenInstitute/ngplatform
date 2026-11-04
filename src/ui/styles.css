@@ -361,7 +361,7 @@ kbd {
 .facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; margin: 0; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; font: 12px/1.45 var(--mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.facts.keys dt { text-align: right; }
+.facts.keys dt { text-align: right; display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 4px; }
 .source-line { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .source-line code { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--muted); }
 
@@ -496,8 +496,10 @@ textarea.text-input { height: auto; padding: 8px 10px; }
 .auth-scopes code, .auth-google .note code { font: 11px var(--mono); color: var(--muted); overflow-wrap: anywhere; }
 .auth-field { display: grid; gap: 4px; margin-top: 10px; font-size: 12px; color: var(--muted); }
 .auth-field .auth-add { margin-top: 0; }
-.layer-sign-in { display: flex; align-items: center; gap: 8px; flex-basis: 100%; font-size: 12px; color: var(--muted); }
-.layer-sign-in .auth-select { flex: 1; min-width: 0; color: var(--text); }
+.layer-sign-in { display: flex; align-items: flex-start; gap: 8px; flex-basis: 100%; font-size: 12px; color: var(--muted); }
+.layer-sign-in > span { white-space: nowrap; line-height: 28px; }
+.layer-sign-in > .auth-layer-control { flex: 1; }
+.layer-sign-in .auth-select { flex: 1 1 140px; min-width: 0; color: var(--text); }
 
 .jobs { display: grid; gap: 8px; }
 .job { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px 10px; }
@@ -565,8 +567,9 @@ textarea.py-in {
 .ngp-docked-panel > .neuroglancer-side-panel-titlebar > .neuroglancer-icon:last-child { display: none; }
 .dock-pane[data-tab="selection"], .dock-pane[data-tab="statistics"] { display: flex; flex-direction: column; }
 .selection-host, .statistics-host, .settings-host, .bindings-host { display: flex; flex-direction: column; min-height: 0; flex: 1; }
-.settings-host { max-height: 60vh; overflow: auto; }
-.bindings-host { max-height: 50vh; overflow: auto; }
+/* In a sheet, Neuroglancer's panels need a height: their bodies scroll inside it. */
+.settings-host { height: min(400px, 45vh); flex: none; }
+.bindings-host { height: 50vh; flex: none; }
 .bindings-host .neuroglancer-side-panel-titlebar, .settings-host .neuroglancer-side-panel-titlebar,
 .statistics-host .neuroglancer-side-panel-titlebar { display: none; }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readSlice, SliceError, writeSlice } from "../src/core/app_state.js";
 import { CommandError, CommandRegistry } from "../src/core/commands.js";
-import { KeybindingTable, keyLabel, normaliseKey } from "../src/core/keybindings.js";
+import { KeybindingTable, keyLabel, normaliseKey, shortcutRows } from "../src/core/keybindings.js";
 import { validate, withDefaults } from "../src/core/schema.js";
 import { ContextKeys, evaluateWhen, whenKeys } from "../src/core/when.js";
 
@@ -84,6 +84,27 @@ describe("commands with arguments", () => {
 });
 
 describe("key bindings", () => {
+  it("lists the keyboard reference one row per action, digit runs as one key", () => {
+    const table = new KeybindingTable();
+    for (let i = 1; i <= 9; i++) {
+      table.add({ key: String(i), command: "dataset.toggle", args: { index: i } });
+      table.add({ key: `alt+${i}`, command: "dataset.select", args: { index: i } });
+    }
+    table.add({ key: "b", command: "seg.tool", args: { tool: "brush" } });
+    table.add({ key: "e", command: "seg.tool", args: { tool: "eraser" } });
+    table.add({ key: "mod+shift+z", command: "edit.redo" });
+    table.add({ key: "mod+y", command: "edit.redo" });
+    table.add({ key: "x", command: "unknown" });
+    const titles: Record<string, string> = { "dataset.toggle": "Show or hide a dataset", "dataset.select": "Select a dataset", "seg.tool": "Tool", "edit.redo": "Redo" };
+    expect(shortcutRows(table.list(), (id) => titles[id])).toEqual([
+      { title: "Show or hide a dataset", keys: ["1–9"] },
+      { title: "Select a dataset", keys: ["alt+1–9"] },
+      { title: "Tool: brush", keys: ["b"] },
+      { title: "Tool: eraser", keys: ["e"] },
+      { title: "Redo", keys: ["mod+shift+z", "mod+y"] },
+    ]);
+  });
+
   it("normalises keys and labels them per platform", () => {
     expect(normaliseKey("Shift+Mod+Z")).toBe("mod+shift+z");
     expect(normaliseKey("ctrl+k")).toBe("mod+k");
