@@ -22,6 +22,8 @@ import type { Manifest } from "../sdk/types.js";
 import type { WorkspaceStore } from "../platform/workspace_store.js";
 import type { ActivityLog } from "./panels/activity.js";
 import type { DockManager } from "./docks.js";
+import type { PluginOffers } from "./plugin_offers.js";
+import type { CatalogueEntry } from "../../plugins/index.js";
 
 export interface Workbench {
   engine: Engine;
@@ -43,13 +45,24 @@ export interface Workbench {
   /** This browser's sign-in rules: which sign-in (and Google account) reads which bucket or server. */
   rules: SignInRules;
   plugins: PluginHost;
-  /** Which plugins are on, and switching them (which reloads the page). */
+  /**
+   * Which plugins are on, and switching them: a tool plugin switches on at
+   * once; a data type plugin, or switching off, reloads the page.
+   */
   pluginSwitches: {
+    catalogue: CatalogueEntry[];
     manifests: Manifest[];
     enabled: Set<string>;
     blocked: Map<string, string[]>;
+    /** On for this tab only: an example switched them on. */
+    thisTab: Set<string>;
     toggle(id: string, on: boolean): Promise<void>;
+    /** Keeps a plugin on for this tab on in this browser. */
+    keep(id: string): void;
+    onChange(listener: () => void): () => void;
   };
+  /** Offers of the plugins that are off, from the data opened. */
+  offers: PluginOffers;
   log: ActivityLog;
   /** Data on this computer, served to the viewer (see src/virtual/local_data.ts). */
   localData: LocalData;

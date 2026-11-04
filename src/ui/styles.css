@@ -426,6 +426,20 @@ textarea.text-input { height: auto; padding: 8px 10px; }
 .plugin-name { font-weight: 600; }
 
 .plugin .note { margin: 0; }
+.plugin-groups { display: grid; gap: 16px; }
+.plugin-group .section-title { margin-top: 0; }
+.plugin-head .link { font-size: 12px; }
+
+/* tools that are off, offered for the data in the Datasets tab */
+.ds-offers { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 4px; }
+.ds-offers[hidden] { display: none; }
+.ds-offers-title { color: var(--muted); font-size: 12px; margin-right: 2px; }
+.offer-chip { display: inline-flex; align-items: center; border: 1px solid var(--line-strong); font-size: 12px; }
+.offer-on { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; background: none; border: 0; color: var(--text); cursor: pointer; font: inherit; }
+.offer-on:hover { color: #fff; background: var(--line); }
+.offer-on svg { width: 12px; height: 12px; }
+.offer-chip .offer-no { height: 22px; width: 22px; opacity: 0.6; }
+.offer-chip .offer-no:hover { opacity: 1; }
 
 /* sign-in */
 .auth-list { display: grid; gap: 8px; }

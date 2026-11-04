@@ -11,7 +11,7 @@ import { loadDataTypePlugins } from "./engine/plugins.js";
 import { revalidateFetches } from "./engine/workers/plugins.js";
 import { browserGoogleEnvironment, GoogleSignIn, googleTokens } from "./platform/google_auth.js";
 import { SignInRules } from "./platform/sign_in_rules.js";
-import { loadChoices, resolveEnabled } from "./platform/plugin_switches.js";
+import { loadChoices, loadThisTab, resolveEnabled, returningVisitor } from "./platform/plugin_switches.js";
 import { CATALOGUE } from "../plugins/index.js";
 import { Shell } from "./ui/shell.js";
 import "./ui/styles.css";
@@ -28,10 +28,15 @@ try {
 if (revalidate) revalidateFetches(window);
 
 const choices = loadChoices();
+// Plugins an example switched on for this tab (kept over a reload of it).
+const thisTab = loadThisTab();
 const resolution = resolveEnabled(
   CATALOGUE.map((e) => e.manifest),
   choices,
+  thisTab,
 );
+// Before the docks remember their tabs: whether this browser used the app before.
+const returning = returningVisitor();
 await loadDataTypePlugins(
   CATALOGUE.filter((e) => e.neuroglancer !== undefined && resolution.enabled.has(e.manifest.id)).map((e) => ({
     id: e.manifest.id,
@@ -54,4 +59,4 @@ const engine = new Engine(shell.engineHost);
 (window as unknown as { viewer: unknown; engine: unknown }).viewer = engine.viewer;
 (window as unknown as { engine: unknown }).engine = engine;
 
-shell.attach(engine, urlSafeParse, import.meta.env.VITE_DEFAULT_EXAMPLE ?? "s2146-mni", { catalogue: CATALOGUE, choices, resolution }, google, rules);
+shell.attach(engine, urlSafeParse, import.meta.env.VITE_DEFAULT_EXAMPLE ?? "s2146-mni", { catalogue: CATALOGUE, choices, resolution, thisTab, returning }, google, rules);

@@ -2,7 +2,7 @@
 
 ![Fibre ODFs from DIPY's Stanford HARDI sample over the 2-D views and on their sections in the 3-D view](../images/plugins/orientations.png)
 
-**Kind:** tool · **Off by default** (switch it on in the Plugins tab) · an
+**Kind:** tool · **Off by default** (offered when you open a tensor, SH or peaks image; or turn it on in the Plugins tab) · an
 **Orientations** tab, and a **Glyphs** switch beside **Sections** in the
 3-D view ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/orientations)

@@ -62,8 +62,37 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
     h("button", { class: "btn small", type: "button", onclick: () => wb.run("dataset.reconnectLocal") }, "Allow access"),
   );
   const gone = h("div", { class: "note-bar", hidden: true });
+  // Tools that are off but would serve this scene's data (src/ui/plugin_offers.ts).
+  const tools = h("div", { class: "ds-offers", hidden: true });
   const actions = h("div", { class: "panel-actions" }, addButton);
-  host.append(actions, permission, gone, list, others);
+  host.append(actions, permission, gone, list, tools, others);
+
+  const renderOffers = () => {
+    const items = wb.offers.list();
+    tools.hidden = items.length === 0;
+    clear(
+      tools,
+      h("span", { class: "ds-offers-title" }, "Tools for this data"),
+      ...items.map((item) =>
+        h(
+          "span",
+          { class: "offer-chip" },
+          h(
+            "button",
+            {
+              class: "offer-on",
+              type: "button",
+              title: item.uses ? `This workspace uses ${item.name}, which is off. Turn it on.` : `Turn on ${item.name}: ${item.pitch}`,
+              onclick: () => wb.offers.accept([item.id]),
+            },
+            icon("plus"),
+            item.name,
+          ),
+          item.uses ? null : iconButton("close", `Not now: stop offering ${item.name}`, () => wb.offers.notNow([item.id]), { class: "btn icon offer-no" }),
+        ),
+      ),
+    );
+  };
 
   const render = () => {
     const localBase = `${wb.localData.base}local/`;
@@ -262,7 +291,8 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
     }
   };
 
-  const offs = [store.onChange(render), engine.onLayersChanged(render), engine.onSelectionChanged(render), wb.localData.onChange(render)];
+  const offs = [store.onChange(render), engine.onLayersChanged(render), engine.onSelectionChanged(render), wb.localData.onChange(render), wb.offers.onChange(renderOffers)];
   render();
+  renderOffers();
   return () => offs.forEach((off) => off());
 }

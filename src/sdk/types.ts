@@ -90,7 +90,7 @@ export interface Manifest {
   kind: PluginKind;
   /** One sentence, shown under the plugin's name. */
   description?: string;
-  /** A short user guide in Markdown (## headings, lists, `code`, [links](…)), behind "Read more". */
+  /** A short user guide in Markdown (## headings, lists, `code`, [links](…)), behind "About" in the Plugins tab. */
   guide?: string;
   /** Where to find out more: repositories, specifications, papers. */
   links?: { title: string; url: string }[];

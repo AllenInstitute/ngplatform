@@ -3,8 +3,12 @@
 Everything in ngplatform beyond viewing is a plugin: a folder in
 [`plugins/`](https://github.com/AllenInstitute/ngplatform/tree/main/plugins)
 with a manifest (what the platform shows before loading any code) and its
-code. The **Plugins** tab lists them, with a switch, a one-line description
-and a *Read more* guide each.
+code. The **Plugins** tab lists them by what they do, each with a one-line
+description, a switch and an *About* guide.
+
+Only Zarr Vectors is on by default. The others stay out of the way until
+you need them: open data one works with and it is offered (below), or turn
+it on in the Plugins tab.
 
 ## Two kinds
 
@@ -19,24 +23,41 @@ and a *Read more* guide each.
 
 ## The plugins
 
-| Plugin | Kind | On by default | What it does |
+| Plugin | Kind | Offered when you open | What it does |
 |---|---|---|---|
-| [Zarr Vectors](zarr-vectors.md) | data type | yes | Points, streamlines, skeletons, graphs and meshes from Zarr Vectors stores, and local tractograms, meshes, neurons and point tables as virtual stores. |
-| [Track filtering](track-filtering.md) | tool | yes | TrackVis-style groups of the objects that pass through regions. |
-| [Annotations](annotations.md) | tool | yes | Labels on the views for figures, measurements, and statistics in a region. |
-| [Segmentation](segmentation.md) | tool | yes | Label volumes drawn by hand, as in WebKnossos: a new segmentation layer on an image's grid or a copy of a segmentation, a tool bar over the views, a segment list, saving as NIfTI or OME-Zarr. |
-| [Registration](registration.md) | tool | no | Move a layer by hand (as Freeview) or by landmarks; save the transform or the moved image. |
-| [Volume rendering](volume-rendering.md) | tool | no | An image drawn as a solid in the 3-D view, cut open at the position. |
-| [Filters](filters.md) | tool | no | An image filtered on the fly (mean, median, Gaussian, Frangi vesselness) as a layer of its own. |
-| [Collections](collections.md) | tool | no | OME-Zarr collections (RFC-8, draft): members, coordinate systems, transforms, and a scene of them. |
-| [Luxar rendering](luxar.md) | tool | no | Chosen Zarr Vectors layers drawn as Luxar draws lines (HDR glow, mitred joins), in the 2-D and 3-D views. |
-| [Orientations](orientations.md) | tool | no | ODF glyphs from spherical harmonics, tensor ellipsoids and peak lines over an image, finer as you zoom in; direction colour. |
-| [Atlas](atlas.md) | tool | no | A segmentation's regions as a tree (Allen CCF hierarchy, FreeSurfer grouped): search, show a region with its parts, go to it, the region under the cursor, volumes. |
-| [Time series](time-series.md) | tool | no | The time course of the voxel under the mouse, pinned voxels and region means in a 4-D image; playing through time; CSV. |
+| [Zarr Vectors](zarr-vectors.md) | data type | (on by default) | Points, streamlines, skeletons, graphs and meshes from Zarr Vectors stores, and local tractograms, meshes, neurons and point tables as virtual stores. |
+| [Track filtering](track-filtering.md) | tool | a tractogram or Zarr Vectors store | TrackVis-style groups of the objects that pass through regions. |
+| [Annotations](annotations.md) | tool | an annotation layer | Labels on the views for figures, measurements, and statistics in a region. |
+| [Segmentation](segmentation.md) | tool | a segmentation (label volume) | Label volumes drawn by hand, as in WebKnossos: a new segmentation layer on an image's grid or a copy of a segmentation, a tool bar over the views, a segment list, saving as NIfTI or OME-Zarr. |
+| [Registration](registration.md) | tool | two images | Move a layer by hand (as Freeview) or by landmarks; save the transform or the moved image. |
+| [Volume rendering](volume-rendering.md) | tool | an image | An image drawn as a solid in the 3-D view, cut open at the position. |
+| [Filters](filters.md) | tool | an image | An image filtered on the fly (mean, median, Gaussian, Frangi vesselness) as a layer of its own. |
+| [Collections](collections.md) | tool | an image inside an OME collection | OME-Zarr collections (RFC-8, draft): members, coordinate systems, transforms, and a scene of them. |
+| [Luxar rendering](luxar.md) | tool | a tractogram or Zarr Vectors store | Chosen Zarr Vectors layers drawn as Luxar draws lines (HDR glow, mitred joins), in the 2-D and 3-D views. |
+| [Orientations](orientations.md) | tool | a tensor, SH or peaks image | ODF glyphs from spherical harmonics, tensor ellipsoids and peak lines over an image, finer as you zoom in; direction colour. |
+| [Atlas](atlas.md) | tool | a segmentation with a lookup table | A segmentation's regions as a tree (Allen CCF hierarchy, FreeSurfer grouped): search, show a region with its parts, go to it, the region under the cursor, volumes. |
+| [Time series](time-series.md) | tool | a 4-D image, or a CIFTI series on a surface | The time course of the voxel under the mouse, pinned voxels and region means in a 4-D image; playing through time; CSV. |
 
 ## Switching, adding and writing plugins
 
-- **Switch** a plugin on or off in the Plugins tab; the choice is remembered.
+- **Turn on** a plugin in the Plugins tab, or from an offer: a tool comes
+  on at once, without a reload, and its tab opens. Turning one off reloads
+  the page with the same link, so your workspace stays. The choice is kept
+  in this browser.
+- **Offers.** When you open data a plugin that is off works with, the
+  Datasets tab lists it under *Tools for this data*: click it to turn it on,
+  or × for "Not now" (remembered in this browser). Track filtering,
+  Annotations, Segmentation, Atlas, Time series, Orientations and
+  Collections are also offered once in a toast. Settings → *Show offers for
+  tools that are off* turns all offers off (ticking it again brings back
+  those you said "Not now" to).
+- **Shared links.** A link whose workspace uses a plugin that is off (track
+  groups, annotation groups and comments, a Luxar style) says "This
+  workspace uses Track filtering, which is off", with **Turn on**. Its
+  state is kept in the workspace whether or not you turn it on.
+- **The examples.** The S-21-46 and HCP-1065 examples turn Track filtering
+  on for the tab, for their track groups, unless you turned it off; the
+  Plugins tab then offers to *Keep it on*.
 - **Try** a plugin without building the app: Plugins → **Add** loads a
   JavaScript module or a Python file from your computer, and reloads it
   after each edit. A plugin from a URL shows its manifest and asks before

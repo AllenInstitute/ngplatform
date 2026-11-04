@@ -2,7 +2,7 @@
 
 ![Registration: rotating a template by hand, and the saved image overlaid](../images/plugins/registration.png)
 
-**Kind:** tool · **Off by default** (switch it on in the Plugins tab) · the
+**Kind:** tool · **Off by default** (offered when you open two images; or turn it on in the Plugins tab) · the
 **Registration** tab ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/registration)
 

@@ -6,6 +6,7 @@ import { renderMarkdown } from "../markdown.js";
 import { closeSheet, sheet, showMenu, showSheet } from "../overlays.js";
 import { renderRunnerSection } from "../runner.js";
 import type { Workbench } from "../workbench.js";
+import { type CatalogueEntry, GROUP_TITLES, type PluginGroup } from "../../../plugins/index.js";
 
 // -------------------------------------------------------------- statistics
 
@@ -58,7 +59,7 @@ export function renderJobsPanel(host: HTMLElement, wb: Workbench): () => void {
 const KIND_LABEL = { datatype: "Data type", tool: "Tool" } as const;
 const GUIDE = "https://github.com/AllenInstitute/ngplatform/blob/main/plugins/README.md";
 
-/** The "Read more" sheet: a plugin's guide, links and facts. */
+/** The "About" sheet: a plugin's guide, links and facts. */
 export function showPluginInfo(manifest: Manifest): void {
   const facts: [string, string][] = [
     ["Kind", KIND_LABEL[manifest.kind]],
@@ -152,14 +153,8 @@ function confirmPlugin(offer: UrlPluginOffer): Promise<boolean> {
   });
 }
 
-/** The first sentence of a description, for the one line a card shows. */
-function firstSentence(text: string): string {
-  const m = /^(.+?[.!?])(\s|$)/.exec(text);
-  return m ? m[1] : text;
-}
-
 export function renderPluginsPanel(host: HTMLElement, wb: Workbench, local: LocalPlugins): () => void {
-  const list = h("div", { class: "list plugin-list" });
+  const list = h("div", { class: "plugin-groups" });
   const localList = h("div", { class: "list plugin-list" });
   const addButton = h("button", { class: "btn outline small", type: "button", "aria-haspopup": "menu" }, icon("plus"), "Add");
   addButton.addEventListener("click", () =>
@@ -172,57 +167,72 @@ export function renderPluginsPanel(host: HTMLElement, wb: Workbench, local: Loca
     ]),
   );
   host.append(
-    h("div", { class: "panel-intro" }, h("p", { class: "note" }, "Switching one reloads the page."), addButton),
+    h(
+      "div",
+      { class: "panel-intro" },
+      h("p", { class: "note" }, "Only Zarr Vectors is on by default. Tools turn on at once; turning one off reloads the page."),
+      addButton,
+    ),
     list,
     localList,
   );
   const render = () => {
     const records = new Map(wb.plugins.list().map((r) => [r.manifest.id, r]));
-    const { manifests, enabled, blocked } = wb.pluginSwitches;
+    const { catalogue, manifests, enabled, blocked, thisTab } = wb.pluginSwitches;
     const nameOf = (id: string) => manifests.find((m) => m.id === id)?.name ?? id;
+    const row = (entry: CatalogueEntry) => {
+      const { manifest } = entry;
+      const on = enabled.has(manifest.id);
+      const record = records.get(manifest.id);
+      const missing = blocked.get(manifest.id);
+      const toggle = h("input", {
+        type: "checkbox",
+        class: "switch",
+        role: "switch",
+        "aria-label": `${on ? "Turn off" : "Turn on"} ${manifest.name}`,
+      });
+      toggle.checked = on;
+      toggle.addEventListener("change", () => {
+        toggle.checked = on; // shown as it is until the switch takes effect
+        void wb.pluginSwitches.toggle(manifest.id, !on);
+      });
+      const problem =
+        record?.status === "failed" || record?.status === "disabled"
+          ? `Failed: ${record.error ?? "unknown error"}`
+          : missing !== undefined
+            ? `Off: needs ${missing.map(nameOf).join(", ")}`
+            : undefined;
+      const forTab = on && thisTab.has(manifest.id);
+      return h(
+        "div",
+        { class: on ? "plugin on" : "plugin" },
+        h(
+          "div",
+          { class: "plugin-head" },
+          h("span", { class: "plugin-name" }, manifest.name),
+          h("button", { class: "link", type: "button", title: `About ${manifest.name}`, onclick: () => showPluginInfo(manifest) }, "About"),
+          h("label", { class: "switch-label", title: on ? "On" : "Off" }, toggle),
+        ),
+        h("p", { class: "plugin-desc" }, entry.summary),
+        forTab
+          ? h(
+              "p",
+              { class: "note" },
+              "On in this tab for the example. ",
+              h("button", { class: "link", type: "button", onclick: () => wb.pluginSwitches.keep(manifest.id) }, "Keep it on"),
+            )
+          : null,
+        problem ? h("p", { class: "note error" }, problem) : null,
+      );
+    };
     clear(
       list,
-      ...manifests.map((manifest) => {
-        const on = enabled.has(manifest.id);
-        const record = records.get(manifest.id);
-        const missing = blocked.get(manifest.id);
-        const toggle = h("input", {
-          type: "checkbox",
-          class: "switch",
-          role: "switch",
-          "aria-label": `${on ? "Switch off" : "Switch on"} ${manifest.name}`,
-        });
-        toggle.checked = on;
-        toggle.addEventListener("change", () => {
-          toggle.checked = on; // the reload shows the new state
-          void wb.pluginSwitches.toggle(manifest.id, !on);
-        });
-        const problem =
-          record?.status === "failed" || record?.status === "disabled"
-            ? `Failed: ${record.error ?? "unknown error"}`
-            : missing !== undefined
-              ? `Off: needs ${missing.map(nameOf).join(", ")}`
-              : undefined;
-        return h(
-          "div",
-          { class: on ? "plugin on" : "plugin" },
-          h(
-            "div",
-            { class: "plugin-head" },
-            h("span", { class: "plugin-name" }, manifest.name),
-            h("span", { class: `chip kind-${manifest.kind}` }, KIND_LABEL[manifest.kind]),
-            h("label", { class: "switch-label", title: on ? "On" : "Off" }, toggle),
-          ),
-          h(
-            "p",
-            { class: "plugin-desc" },
-            firstSentence(manifest.description ?? ""),
-            " ",
-            h("button", { class: "link", type: "button", onclick: () => showPluginInfo(manifest) }, "Read more"),
-          ),
-          problem ? h("p", { class: "note error" }, problem) : null,
-        );
-      }),
+      ...(Object.keys(GROUP_TITLES) as PluginGroup[])
+        .map((group) => [group, catalogue.filter((e) => e.group === group)] as const)
+        .filter(([, entries]) => entries.length > 0)
+        .map(([group, entries]) =>
+          h("section", { class: "plugin-group" }, h("h3", { class: "section-title" }, GROUP_TITLES[group]), h("div", { class: "list plugin-list" }, ...entries.map(row))),
+        ),
     );
     const locals = local.list();
     clear(
@@ -249,7 +259,7 @@ export function renderPluginsPanel(host: HTMLElement, wb: Workbench, local: Loca
             h(
               "span",
               { class: "plugin-actions" },
-              record?.manifest ? h("button", { class: "link", type: "button", onclick: () => showPluginInfo(record.manifest) }, "Read more") : null,
+              record?.manifest ? h("button", { class: "link", type: "button", onclick: () => showPluginInfo(record.manifest) }, "About") : null,
               h(
                 "button",
                 { class: "btn small", type: "button", title: p.url ? "Fetch it again and run the new code" : "Read the file again and run the new code", onclick: () => void local.reload(p.key) },
@@ -263,7 +273,7 @@ export function renderPluginsPanel(host: HTMLElement, wb: Workbench, local: Loca
       }),
     );
   };
-  const offs = [wb.plugins.onChange(render), local.onChange(render)];
+  const offs = [wb.plugins.onChange(render), local.onChange(render), wb.pluginSwitches.onChange(render)];
   render();
   return () => offs.forEach((off) => off());
 }

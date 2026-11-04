@@ -22,7 +22,7 @@ export const ANNOTATIONS_MANIFEST: Manifest = {
   name: "Annotations",
   version: "0.3.0",
   kind: "tool",
-  enabledByDefault: true,
+  enabledByDefault: false,
   description: "Annotations with groups, values and comments in a table; labels on the views for figures, measurements, and statistics in a region.",
   guide: `Everything you add to annotate a dataset, in the **Annotations** tab (four sections), and the **Annotation table** in the bottom dock. Label volumes drawn by hand are in the **Segmentation** tab (the Segmentation plugin).
 

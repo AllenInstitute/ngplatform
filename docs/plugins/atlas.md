@@ -2,7 +2,7 @@
 
 ![FreeSurfer's aparc+aseg in the Atlas tab: the left precentral gyrus shown and gone to](../images/plugins/atlas.png)
 
-**Kind:** tool · **Off by default** (switch it on in the Plugins tab) · the
+**Kind:** tool · **Off by default** (offered when you open a segmentation with a lookup table; or turn it on in the Plugins tab) · the
 **Atlas** tab ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/atlas)
 

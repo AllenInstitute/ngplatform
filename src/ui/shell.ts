@@ -25,13 +25,26 @@ import { ServiceRegistry } from "../platform/services.js";
 import { WorkspaceStore } from "../platform/workspace_store.js";
 import { HistoryKeep, IndexedDbHistoryBackend } from "../platform/history_keep.js";
 import type { HistoryData } from "../core/history.js";
-import { type Choices, type Resolution, saveChoices, toggle as togglePlugin } from "../platform/plugin_switches.js";
+import {
+  type Choices,
+  defaultsTold,
+  formerlyOnNowOff,
+  needsReload,
+  noteDefaultsTold,
+  type Resolution,
+  resolveEnabled,
+  saveChoices,
+  saveThisTab,
+  toggle as togglePlugin,
+} from "../platform/plugin_switches.js";
+import { listNames } from "../platform/plugin_offers.js";
+import { PluginOffers } from "./plugin_offers.js";
 import type { CatalogueEntry } from "../../plugins/index.js";
 import { registerBuiltins } from "../builtins/index.js";
 import { contextKeyFor } from "./context.js";
 import { type DockTab, DockManager, prefs } from "./docks.js";
 import { h, icon, iconButton, isMac, keyLabel, mark } from "./dom.js";
-import { closeSheet, confirmDialog, copyText, formDialog, promptDialog, sheetIsOpen, showMenu, showPalette, toast } from "./overlays.js";
+import { closeSheet, confirmDialog, copyText, formDialog, offer, promptDialog, sheetIsOpen, showMenu, showPalette, toast } from "./overlays.js";
 import { ActivityLog } from "./panels/activity.js";
 import { renderAuthPanel } from "./panels/auth.js";
 import { renderDatasetsPanel, showAddMenu } from "./panels/datasets.js";
@@ -85,6 +98,10 @@ export class Shell {
   private auth: AuthRegistry | undefined;
   private google: GoogleSignIn | undefined;
   private localPlugins: LocalPlugins | undefined;
+  /** Which plugins are on: this browser's choices, what examples switched on for this tab, and the result. */
+  private switches!: { catalogue: CatalogueEntry[]; choices: Choices; thisTab: Set<string>; resolution: Resolution };
+  /** Activates the plugins with state in the workspace and refreshes the shell (set in attach). */
+  private activateWithState: () => void = () => {};
   private lastHashSeen = "";
 
   constructor(root: HTMLElement) {
@@ -190,7 +207,7 @@ export class Shell {
     engine: Engine,
     parseFragment: FragmentParser,
     defaultExample: string,
-    plugins: { catalogue: CatalogueEntry[]; choices: Choices; resolution: Resolution },
+    plugins: { catalogue: CatalogueEntry[]; choices: Choices; resolution: Resolution; thisTab: Set<string>; returning: boolean },
     google: GoogleSignIn,
     rules: SignInRules,
   ): void {
@@ -248,11 +265,19 @@ export class Shell {
       rules,
       plugins: undefined as unknown as PluginHost,
       pluginSwitches: {
+        catalogue: plugins.catalogue,
         manifests: plugins.catalogue.map((e) => e.manifest),
         enabled: plugins.resolution.enabled,
         blocked: plugins.resolution.blocked,
-        toggle: (id, on) => this.switchPlugin(plugins.catalogue, plugins.choices, id, on),
+        thisTab: plugins.thisTab,
+        toggle: (id, on) => this.switchPlugin(id, on),
+        keep: (id) => this.keepPlugin(id),
+        onChange: (listener) => {
+          this.pluginListeners.add(listener);
+          return () => this.pluginListeners.delete(listener);
+        },
       },
+      offers: undefined as unknown as PluginOffers,
       log,
       localData: new LocalData(),
       computed: new ComputedImages(),
@@ -267,6 +292,8 @@ export class Shell {
       },
     };
     this.wb = wb;
+    this.switches = { catalogue: plugins.catalogue, choices: plugins.choices, thisTab: plugins.thisTab, resolution: plugins.resolution };
+    wb.offers = new PluginOffers(wb, plugins.catalogue, (ids) => this.turnOnPlugins(ids));
     // For debugging from the console, beside window.viewer.
     (window as unknown as { workbench: Workbench }).workbench = wb;
     const apis = createPlatformApis(wb);
@@ -402,6 +429,10 @@ export class Shell {
       }
     };
     store.onChange(withState);
+    this.activateWithState = () => {
+      withState();
+      refresh();
+    };
     engine.onLayersChanged(refresh);
     engine.onSelectionChanged(refresh);
     commands.onChange(() => this.updateControls());
@@ -434,11 +465,14 @@ export class Shell {
       })();
     } else {
       const example = examples.get(defaultExample) ?? examples.list()[0];
-      if (example !== undefined) store.open(example.state(), `the example “${example.title}”`);
+      if (example !== undefined) this.openExample(example.id);
       else store.settle();
     }
     refresh();
     setTimeout(() => this.checkFormats(), 1500);
+    // Offers of the plugins that are off, from the data opened (and the workspace's state).
+    wb.offers.start();
+    this.tellNewDefaults(plugins.returning);
     log.add(
       framed
         ? "Running inside a frame: Share copies the workspace as JSON, since links here cannot carry it."
@@ -955,20 +989,134 @@ export class Shell {
 
   /**
    * Switches a plugin on or off (with what it requires, or what requires
-   * it), keeps the choice, and reloads the page with the same link.
+   * it) and keeps the choice.  A tool plugin switches on at once; a data
+   * type plugin switched on, or anything switched off, reloads the page
+   * with the same link (after asking).
    */
-  private async switchPlugin(catalogue: CatalogueEntry[], choices: Choices, id: string, on: boolean): Promise<void> {
+  private async switchPlugin(id: string, on: boolean): Promise<void> {
+    if (on) return this.turnOnPlugins([id]);
+    const { catalogue, choices, thisTab } = this.switches;
     const manifests = catalogue.map((e) => e.manifest);
     const nameOf = (other: string) => manifests.find((m) => m.id === other)?.name ?? other;
-    const { choices: next, also } = togglePlugin(manifests, choices, id, on);
-    const message =
-      `Switch ${nameOf(id)} ${on ? "on" : "off"}` +
-      (also.length ? `, and with it ${also.map(nameOf).join(", ")}` : "") +
-      "? The page reloads with the same link.";
-    if (!(await confirmDialog(message, on ? "Switch on and reload" : "Switch off and reload"))) return;
+    const { choices: next, also } = togglePlugin(manifests, choices, id, false, thisTab);
+    const message = `Turn ${nameOf(id)} off${also.length ? `, and with it ${listNames(also.map(nameOf))}` : ""}? The page reloads with the same link.`;
+    if (!(await confirmDialog(message, "Turn off and reload"))) return;
     saveChoices(next);
     this.wb.store.settle();
     location.reload();
+  }
+
+  /**
+   * Turns plugins on (with what they require) and keeps the choice.  Tool
+   * plugins come on at once, without a reload: their tabs and commands
+   * appear, and the first one's tab is shown.  A data type plugin needs the
+   * page reloaded (with the same link, so the workspace is kept).
+   */
+  private async turnOnPlugins(ids: string[]): Promise<void> {
+    const { catalogue, thisTab } = this.switches;
+    const manifests = catalogue.map((e) => e.manifest);
+    const nameOf = (other: string) => manifests.find((m) => m.id === other)?.name ?? other;
+    let next = this.switches.choices;
+    for (const id of ids) next = togglePlugin(manifests, next, id, true, thisTab).choices;
+    const switchedOn = [...resolveEnabled(manifests, next, thisTab).enabled].filter((id) => !this.wb.pluginSwitches.enabled.has(id));
+    if (needsReload(manifests, switchedOn)) {
+      const message = `Turn on ${listNames(switchedOn.map(nameOf))}? The page reloads with the same link.`;
+      if (!(await confirmDialog(message, "Turn on and reload"))) return;
+      saveChoices(next);
+      this.wb.store.settle();
+      location.reload();
+      return;
+    }
+    saveChoices(next);
+    this.switches.choices = next;
+    // Chosen now: no longer on for this tab only.
+    for (const id of Object.keys(next)) thisTab.delete(id);
+    saveThisTab(thisTab);
+    this.applySwitches(switchedOn);
+    const shown = ids.filter((id) => this.wb.pluginSwitches.enabled.has(id));
+    if (shown.length === 0) return;
+    const panel = manifests.find((m) => m.id === shown[0])?.contributes?.panels?.[0]?.id;
+    if (panel !== undefined) this.docks.show(panel);
+    toast(`${listNames(shown.map(nameOf))} ${shown.length === 1 ? "is" : "are"} on.`);
+  }
+
+  /** A plugin on for this tab only (an example's), kept on in this browser. */
+  private keepPlugin(id: string): void {
+    this.switches.choices = { ...this.switches.choices, [id]: true };
+    saveChoices(this.switches.choices);
+    this.switches.thisTab.delete(id);
+    saveThisTab(this.switches.thisTab);
+    this.applySwitches([]);
+  }
+
+  /**
+   * Switches on, for this tab only, the tool plugins an example is shown
+   * with, unless this browser chose them off (or one would need a reload).
+   */
+  private switchOnForTab(ids: string[]): void {
+    const { catalogue, choices, thisTab } = this.switches;
+    const manifests = catalogue.map((e) => e.manifest);
+    const wanted = ids.filter((id) => choices[id] === undefined && !this.wb.pluginSwitches.enabled.has(id));
+    if (wanted.length === 0) return;
+    const after = new Set([...thisTab, ...wanted]);
+    const switchedOn = [...resolveEnabled(manifests, choices, after).enabled].filter((id) => !this.wb.pluginSwitches.enabled.has(id));
+    if (needsReload(manifests, switchedOn)) return;
+    for (const id of wanted) thisTab.add(id);
+    saveThisTab(thisTab);
+    this.applySwitches(switchedOn);
+  }
+
+  /** Brings the plugins just switched on into the page, and brings up to date everything that shows which are on. */
+  private applySwitches(switchedOn: string[]): void {
+    const { catalogue, choices, thisTab } = this.switches;
+    const manifests = catalogue.map((e) => e.manifest);
+    const resolution = resolveEnabled(manifests, choices, thisTab);
+    this.switches.resolution = resolution;
+    // The workbench's sets are the ones panels hold: changed in place.
+    const { enabled, blocked } = this.wb.pluginSwitches;
+    enabled.clear();
+    for (const id of resolution.enabled) enabled.add(id);
+    blocked.clear();
+    for (const [id, missing] of resolution.blocked) blocked.set(id, missing);
+    // In the catalogue's order: what a plugin requires comes before it.
+    for (const entry of catalogue) {
+      if (!switchedOn.includes(entry.manifest.id)) continue;
+      if (entry.virtualFormats !== undefined) this.wb.localData.addFormats(entry.virtualFormats());
+      this.wb.plugins.switchOn(entry.manifest.id);
+    }
+    this.activateWithState();
+    this.wb.offers.schedule(0);
+    this.pluginsChanged();
+  }
+
+  private readonly pluginListeners = new Set<() => void>();
+
+  private pluginsChanged(): void {
+    for (const listener of this.pluginListeners) listener();
+  }
+
+  /**
+   * Once, for a browser that used the app before every plugin but Zarr
+   * Vectors was off by default: those it had on by default are off now,
+   * with one click to turn them back on.
+   */
+  private tellNewDefaults(returning: boolean): void {
+    const { catalogue, choices, resolution } = this.switches;
+    const manifests = catalogue.map((e) => e.manifest);
+    const ids = formerlyOnNowOff(manifests, choices, resolution.enabled, returning, defaultsTold());
+    noteDefaultsTold();
+    if (ids.length === 0) return;
+    const names = listNames(ids.map((id) => manifests.find((m) => m.id === id)?.name ?? id));
+    const one = ids.length === 1;
+    this.wb.log.add(`${names} ${one ? "is" : "are"} now off by default: offered when your data calls for ${one ? "it" : "them"}, or turned on in the Plugins tab.`);
+    offer(
+      `${names} ${one ? "is" : "are"} now off until you turn ${one ? "it" : "them"} on.`,
+      [
+        { label: "Plugins tab", run: () => this.docks.show("plugins") },
+        { label: "Turn back on", primary: true, run: () => void this.turnOnPlugins(ids) },
+      ],
+      60000,
+    );
   }
 
   /** Says so when the workspace uses a format whose plugin is off. */
@@ -1051,6 +1199,7 @@ export class Shell {
   private openExample(id: string): void {
     const example = this.wb.examples.get(id);
     if (example === undefined) throw new CommandError(`no example ${id}`);
+    this.switchOnForTab(example.plugins ?? []);
     this.wb.store.open(example.state(), `the example “${example.title}”`);
   }
 

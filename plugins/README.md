@@ -1,7 +1,9 @@
 # Plugins
 
 Each plugin is a folder here. The app ships what [`index.ts`](index.ts)
-lists, and the **Plugins** tab (left dock) switches each on or off.
+lists, and the **Plugins** tab (left dock) switches each on or off. Only Zarr
+Vectors is on by default; the others are offered when data they work with is
+opened (below).
 
 ```
 plugins/
@@ -42,19 +44,27 @@ a counter kept in the scene's state, and a command:
    when a plugin needs its internals, as the data types do.
 3. **List it** in [`index.ts`](index.ts):
    ```ts
-   { manifest: MY_MANIFEST, load: async () => (await import("./my-plugin/plugin.js")).plugin },
+   {
+     manifest: MY_MANIFEST,
+     load: async () => (await import("./my-plugin/plugin.js")).plugin,
+     summary: "One line for the Plugins tab.",
+     group: "images",
+     offer: OFFERS[MY_MANIFEST.id], // when to offer it while it is off (offers.ts)
+   },
    ```
-   A data type instead gives `neuroglancer: () => import("…")` (its
-   main-thread module, which registers the data source) and adds its worker
-   modules to [`workers.ts`](workers.ts).
+   `group` places it in the Plugins tab (data types, vectors, images,
+   segmentations and atlases, annotation). A data type instead gives
+   `neuroglancer: () => import("…")` (its main-thread module, which
+   registers the data source) and adds its worker modules to
+   [`workers.ts`](workers.ts).
 4. **Check it**: `npm test` (the catalogue test checks every manifest and
    entry), `npm run typecheck`, `npm run e2e` against a build. A plugin with
    its own `package.json` (as `zarr-vectors/`) can also run its own tests, as
    the root `npm test` does for zarr-vectors.
-5. **Describe it**: `description` is one sentence (the Plugins tab shows
-   it); `guide` is a short user guide in Markdown (`##` headings, lists,
-   `` `code` ``, links) and `links` its repositories and papers, both
-   shown behind **Read more**.
+5. **Describe it**: the catalogue entry's `summary` is the one line the
+   Plugins tab shows; `description` is one sentence, and `guide` a short
+   user guide in Markdown (`##` headings, lists, `` `code` ``, links) with
+   `links` its repositories and papers, all shown behind **About**.
 
 ### Trying a plugin without building the app
 
@@ -81,14 +91,34 @@ that folder plus one line in `index.ts`.
 
 ## Switching plugins on and off
 
-Switching one on or off reloads the page with the same link, so the
-workspace comes back as it was, now with or without the plugin; the choice
-is kept in this browser.
+Only Zarr Vectors is on by default (`enabledByDefault`); every other plugin
+is off until someone turns it on, from the Plugins tab or from an offer.
+The choice is kept in this browser.
 
-- Switching a plugin on also switches on the plugins it requires; switching
-  one off also switches off the plugins that require it. The confirmation
-  says which.
+- A tool plugin turns on at once, without a reload (`PluginHost.switchOn`):
+  its tabs, commands and keys appear, and it activates as its manifest says.
+  A data type plugin turns on with a reload, as its Neuroglancer modules
+  load only with the page. Turning any plugin off reloads the page. A reload
+  keeps the link, so the workspace comes back as it was.
+- Turning a plugin on also turns on the plugins it requires; turning one
+  off also turns off the plugins that require it. The confirmation says
+  which.
 - A plugin whose requirement is off is off, and the tab says why.
+- **Offers.** When data a tool plugin works with is opened while it is
+  off, the Datasets tab lists it under *Tools for this data*, with a button
+  to turn it on and one for "Not now"; some offers also show once in a
+  toast. Each entry in [`index.ts`](index.ts) has an `offer`
+  ([`offers.ts`](offers.ts)): a few words on what it does, whether it is
+  worth a toast, and `applies(scene)`, which looks at the scene's layers
+  (and, at most once per URL, a store's metadata). Settings → *Show offers
+  for tools that are off* turns them all off.
+- A workspace that holds state of a plugin that is off (a link with track
+  groups, say) says "This workspace uses Track filtering, which is off",
+  with **Turn on**. The state stays in the workspace either way.
+- An example can name the tool plugins it is shown with (`plugins` in its
+  spec): opening it turns them on for this tab only, unless this browser
+  turned them off. The S-21-46 and HCP-1065 examples do so for Track
+  filtering.
 - A workspace with data in a format whose plugin is off says so when it
   opens, and shows the Plugins tab.
 

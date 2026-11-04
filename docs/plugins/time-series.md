@@ -2,7 +2,7 @@
 
 ![The time course of the voxel under the mouse, two pinned voxels and a region's mean in a synthetic 4-D brain](../images/plugins/time-series.png)
 
-**Kind:** tool · **Off by default** (switch it on in the Plugins tab) · the
+**Kind:** tool · **Off by default** (offered when you open a 4-D image or a CIFTI series; or turn it on in the Plugins tab) · the
 **Time series** tab in the bottom dock, and **Alt+P** to pin ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/time-series)
 
