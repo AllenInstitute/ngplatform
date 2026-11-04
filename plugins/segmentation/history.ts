@@ -15,6 +15,9 @@ export class Stroke {
   changes = 0;
   /** When it was kept for undo (ms since 1970). */
   time = 0;
+  /** What else undo and redo put back besides voxels (a deleted segment's name and colour, say). */
+  onUndo?: () => void;
+  onRedo?: () => void;
   /** Chunks changed since `flush`, to tell the volume (and the viewer). */
   private readonly dirty = new Set<number>();
 
@@ -111,6 +114,7 @@ export class History {
     if (stroke === undefined) return [];
     this.undone.push(stroke);
     for (const [key, data] of stroke.before) stroke.volume.putChunk(key, data?.slice());
+    stroke.onUndo?.();
     return stroke.keys();
   }
 
@@ -119,6 +123,7 @@ export class History {
     if (stroke === undefined) return [];
     this.done.push(stroke);
     for (const [key, data] of stroke.after ?? []) stroke.volume.putChunk(key, data?.slice());
+    stroke.onRedo?.();
     return stroke.keys();
   }
 

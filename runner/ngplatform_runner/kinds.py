@@ -213,6 +213,8 @@ def plan_filter(roots: Roots, args: dict, *, density_only: bool = False) -> Plan
         paths = [o["path"] for o in outputs]
         if len(set(paths)) != len(paths):
             raise BadRequest("the outputs must be different files")
+        if str(source) in paths:
+            raise BadRequest("an output cannot be the input itself")
     if overwrite:
         argv.append("--overwrite")
     name = _text(args, "name")

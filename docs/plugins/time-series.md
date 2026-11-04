@@ -46,7 +46,7 @@ along it.
 8. **Save CSV**: a row per time point (its number and time) and a column
    per plotted series, with the values as read (not the percent change).
 
-To save a movie of the time-lapse, use the camera icon → **Movie…** with a
+To save a movie of the time-lapse, use the camera icon → **Movie: sweep slices or time…** with a
 sweep along `t`.
 
 The finest resolution is read, chunk by chunk along time; the first voxel

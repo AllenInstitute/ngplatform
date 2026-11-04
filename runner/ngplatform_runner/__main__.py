@@ -27,11 +27,14 @@ def _token(state_dir: Path, new: bool) -> str:
         if len(token) >= 32:
             return token
     token = secrets.token_urlsafe(32)
-    path.write_text(token + "\n")
+    # Made readable by its owner alone from the start (not written, then narrowed).
     try:
-        os.chmod(path, 0o600)
-    except OSError:
+        path.unlink()
+    except FileNotFoundError:
         pass
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(token + "\n")
     return token
 
 

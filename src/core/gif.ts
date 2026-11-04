@@ -232,6 +232,8 @@ export class GifEncoder {
   private width = 0;
   private height = 0;
   private frames = 0;
+  /** Hundredths of a second written so far, and wanted so far: each delay is whole, the rounding carried on. */
+  private written = 0;
 
   constructor(private readonly options: GifOptions) {}
 
@@ -263,7 +265,10 @@ export class GifEncoder {
     while (1 << bits < palette.length / 3) bits++;
     // Graphic control: the delay, no transparency, frames replace each other.
     w.bytes([0x21, 0xf9, 0x04, 0x04]);
-    w.word(Math.max(0, Math.round(this.options.delay)));
+    // A GIF's delays are whole hundredths: 30 frames a second alternate 3, 3, 4 so the movie keeps its length.
+    const delay = Math.max(0, Math.round(this.frames * this.options.delay) - this.written);
+    this.written += delay;
+    w.word(delay);
     w.bytes([0x00, 0x00]);
     // Image descriptor with a local colour table.
     w.byte(0x2c);

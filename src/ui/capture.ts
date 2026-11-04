@@ -14,6 +14,7 @@ import { GifEncoder } from "../core/gif.js";
 import { muxMp4, type Mp4Sample } from "../core/mp4.js";
 import { zipStore } from "../core/zip.js";
 import type { JobControl } from "../sdk/types.js";
+import { formatScaleWithUnitAsString } from "../engine/neuroglancer.js";
 import { h } from "./dom.js";
 import { closeSheet, sheet, showSheet, toast } from "./overlays.js";
 import type { Workbench } from "./workbench.js";
@@ -59,6 +60,15 @@ function remembered(): Partial<CaptureSettings> {
   } catch {
     return {};
   }
+}
+
+/** A coordinate's unit, as the position bar shows it: "mm", or "steps of 0.5 mm". */
+function unitLabel(scale: number, unit: string): string {
+  if (unit === "") return "its coordinates";
+  const text = formatScaleWithUnitAsString(scale, unit, { precision: 3 });
+  // "mm" (or "1mm"): that unit; "0.5mm": steps of it.
+  if (!/^\d/.test(text)) return text;
+  return /^1[^\d.]/.test(text) ? text.slice(1) : `steps of ${text}`;
 }
 
 const canPickFolder = () => "showDirectoryPicker" in window;
@@ -133,9 +143,11 @@ export function showCaptureSheet(wb: Workbench, initialMode: Mode = "picture"): 
   const from = number(0, { step: "any" });
   const to = number(0, { step: "any" });
   const step = number(1, { step: "any", min: 0 });
+  const rangeUnit = h("span", { class: "field-hint" });
   const setRange = () => {
     const d = dims[Number(dimension.value)];
     if (d === undefined) return;
+    rangeUnit.textContent = `From, to and step in ${unitLabel(d.scale, d.unit)}.`;
     // Voxel centres from the first to the last.
     const lo = Number.isFinite(d.lower) ? Math.floor(d.lower) + 0.5 : d.position;
     const hi = Number.isFinite(d.upper) ? Math.ceil(d.upper) - 0.5 : d.position;
@@ -143,7 +155,10 @@ export function showCaptureSheet(wb: Workbench, initialMode: Mode = "picture"): 
     to.value = String(hi);
     step.value = "1";
   };
-  dimension.addEventListener("change", setRange);
+  dimension.addEventListener("change", () => {
+    setRange();
+    update();
+  });
   setRange();
   const frames = number(saved.frames ?? 72, { min: 2, max: 3600, step: 1 });
   const degrees = number(saved.degrees ?? 360, { min: 1, max: 3600, step: 1 });
@@ -151,17 +166,18 @@ export function showCaptureSheet(wb: Workbench, initialMode: Mode = "picture"): 
   const format = h("select", { class: "text-input" }) as HTMLSelectElement;
   const count = h("span", { class: "detected" });
 
-  const pictureRows = h("div", { class: "field-row" }, field("View", panel), field("Magnification", scale, "Pixels per screen pixel: 2 doubles the width and height"));
-  const trimRow = h("div", { class: "field-row" }, h("label", { class: "field check" }, trim, h("span", {}, "Trim empty borders")), field("Margin left after trimming (pixels)", margin));
+  const pictureRows = h("div", { class: "field-row" }, field("View", panel), field("Magnification (×)", scale, "2 doubles the width and height"));
+  const trimRow = h("div", { class: "field-row" }, h("label", { class: "field check" }, trim, h("span", {}, "Trim empty borders")), field("Margin after trimming (px)", margin));
   const sweepRows = h(
     "div",
     { class: "capture-sweep" },
-    h("div", { class: "field-row" }, field("Dimension", dimension, "z for slices; a dimension that is not shown (time) steps through it"), field("Step", step)),
+    h("div", { class: "field-row" }, field("Dimension", dimension, "z for slices, t for time"), field("Step", step)),
     h("div", { class: "field-row" }, field("From", from), field("To", to)),
+    rangeUnit,
   );
-  const turnRows = h("div", { class: "field-row" }, field("Frames per turn", frames), field("Degrees", degrees, "360 for a whole turn about the view's vertical"));
-  const movieRows = h("div", { class: "field-row" }, field("Format", format), field("Frames a second", fps));
-  const waitRow = h("div", { class: "field-row" }, field("Wait for data, at most (seconds a frame)", timeout), h("span"));
+  const turnRows = h("div", { class: "field-row" }, field("Frames per turn", frames), field("Angle (°)", degrees, "360 is a whole turn"));
+  const movieRows = h("div", { class: "field-row" }, field("Format", format), field("Frames per second", fps));
+  const waitRow = h("div", { class: "field-row" }, field("Max wait per frame (s)", timeout, "A frame is taken when its data has loaded, or after this."), h("span"));
 
   const settings = (): CaptureSettings => ({
     mode: mode.value as Mode,
@@ -191,7 +207,7 @@ export function showCaptureSheet(wb: Workbench, initialMode: Mode = "picture"): 
     movieRows.hidden = m === "picture";
     const s = settings();
     const n = planFrames(s, [0, 0, 0, 1]).length;
-    count.textContent = m === "picture" ? "One picture of the views as they are." : n === 0 ? "No frames: check the range and step." : `${n} frame${n === 1 ? "" : "s"}, ${(n / s.fps).toFixed(1)} s at ${s.fps} a second.`;
+    count.textContent = m === "picture" ? "One picture of the views as they are." : n === 0 ? "No frames: check the range and step." : `${n} frame${n === 1 ? "" : "s"}, ${(n / s.fps).toFixed(1)} s at ${s.fps} fps.`;
     start.disabled = n === 0;
   };
   const start = h("button", { class: "btn primary", type: "button" }, "Capture") as HTMLButtonElement;
@@ -231,7 +247,6 @@ export function showCaptureSheet(wb: Workbench, initialMode: Mode = "picture"): 
         turnRows,
         movieRows,
         waitRow,
-        h("p", { class: "note first" }, "Each frame is taken once the data in view has loaded, or after the wait. The view is put back afterwards. Neuroglancer's own screenshot dialog is under Commands: “Screenshot…”."),
       ],
       [count, h("button", { class: "btn", type: "button", onclick: () => closeSheet() }, "Cancel"), start],
     ),
@@ -249,7 +264,20 @@ interface Kept {
 }
 
 /** Takes the frames, then writes them out in the chosen format. */
+/** A capture under way: a second would move the same view at the same time. */
+let capturing = false;
+
 export async function runCapture(wb: Workbench, s: CaptureSettings, folder?: FileSystemDirectoryHandle): Promise<void> {
+  if (capturing) throw new Error("another capture is under way: wait for it, or cancel it in the Jobs tab");
+  capturing = true;
+  try {
+    await capture(wb, s, folder);
+  } finally {
+    capturing = false;
+  }
+}
+
+async function capture(wb: Workbench, s: CaptureSettings, folder?: FileSystemDirectoryHandle): Promise<void> {
   const name = captureName();
   const title = s.mode === "picture" ? "Picture of the views" : s.mode === "sweep" ? "Movie: a sweep" : "Movie: a turntable";
   await wb.jobs.run(title, async (control: JobControl) => {
@@ -401,7 +429,7 @@ async function encodeMp4(kept: Kept[], frame: (k: Kept) => Promise<HTMLCanvasEle
       chunk.copyTo(data);
       samples.push({ data, key: chunk.type === "key" });
       const description = metadata?.decoderConfig?.description;
-      if (description !== undefined && avcC === undefined) avcC = new Uint8Array(description instanceof ArrayBuffer ? description : (description as ArrayBufferView).buffer.slice(0));
+      if (description !== undefined && avcC === undefined) avcC = new Uint8Array(description instanceof ArrayBuffer ? description : (description as ArrayBufferView).buffer.slice((description as ArrayBufferView).byteOffset, (description as ArrayBufferView).byteOffset + (description as ArrayBufferView).byteLength));
     },
     error: (e) => (failure = e as Error),
   });

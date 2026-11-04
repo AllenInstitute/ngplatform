@@ -155,11 +155,13 @@ export class AuthRegistry {
 /** A server address as https://host[:port][/path], without a trailing slash. */
 export function normaliseServer(text: string): string | undefined {
   let t = text.trim().replace(/^(middleauth|gs\+ngauth)\+/, "");
-  if (t === "") return undefined;
+  // Not an address: blank, or with spaces (Chrome's URL parser accepts "not a url" as a host).
+  if (t === "" || /\s/.test(t)) return undefined;
   if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(t)) t = `https://${t}`;
   try {
     const url = new URL(t);
     if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+    if (!/^([a-z0-9-]+\.)*[a-z0-9-]+$|^\[[0-9a-f:.]+\]$/i.test(url.hostname)) return undefined;
     return `${url.origin}${url.pathname}`.replace(/\/+$/, "");
   } catch {
     return undefined;
@@ -217,7 +219,11 @@ export function middleauthProvider(env: AuthEnvironment): AuthProvider {
       pending = env
         .fetch(`${app}/auth_info`)
         .then(async (r) => (r.ok ? normaliseServer(String((await r.json()).login_url ?? "")) : undefined))
-        .catch(() => undefined);
+        .catch(() => {
+          // Not reached (offline, say): asked again next time rather than taken as "not an app" for the visit.
+          loginUrls.delete(app);
+          return undefined;
+        });
       loginUrls.set(app, pending);
     }
     return pending;

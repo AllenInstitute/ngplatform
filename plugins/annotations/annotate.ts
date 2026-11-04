@@ -19,7 +19,7 @@ import { measure, type AnnotationJson } from "./measure.js";
 import { lookupTerms, type Term } from "./ontology.js";
 import { rankOf, space, toGlobalOf } from "./scene.js";
 import { buildRows, rowName, type Row, type TableLayer } from "./table.js";
-import { withShader } from "./groups.js";
+import { withShaderKept } from "./groups.js";
 import { el, physical } from "./ui.js";
 import { type Comment, type Field, fieldsOf, type LayerMeta, type LayerSpec, metaOf, prune, readValue } from "./values.js";
 
@@ -188,14 +188,18 @@ export class Annotate {
   write(name: string, spec: LayerSpec, meta: LayerMeta): void {
     // An annotation half drawn (a polyline, say) would be lost by rewriting the layer: the edit waits.
     if (this.ctx.viewer.annotationInProgress()) {
-      this.pending.set(name, { spec, meta });
+      // The layer's annotations before the first edit queued: anything else there when drawing ends was drawn meanwhile.
+      const before = this.pending.get(name)?.before ?? new Set((this.layer(name)?.spec.annotations ?? []).map((a) => a.id));
+      this.pending.set(name, { spec, meta, before, scene: activeScene(this.ctx) });
       this.waitForDrawing();
       return;
     }
     const current = this.layer(name);
     if (current === undefined) return;
     const fields = fieldsOf(spec, meta);
-    const next = current.managed ? spec : withShader(spec, meta, fields, this.range(spec, meta, fields));
+    // A shader of the user's own is kept while one made here stands in for it, and put back after.
+    const [next, kept] = current.managed ? [spec, meta] : withShaderKept(spec, meta, fields, this.range(spec, meta, fields));
+    meta = kept;
     this.ctx.viewer.patchState((ng) => {
       const l = ((ng.layers as Json[] | undefined) ?? []).find((x) => x.name === name);
       if (l === undefined) return;
@@ -212,7 +216,7 @@ export class Annotate {
   }
 
   /** Edits waiting for an annotation being drawn, by layer (the latest of each). */
-  private readonly pending = new Map<string, { spec: LayerSpec; meta: LayerMeta }>();
+  private readonly pending = new Map<string, { spec: LayerSpec; meta: LayerMeta; before: Set<string | undefined>; scene: string | undefined }>();
   private waiting: ReturnType<typeof setInterval> | undefined;
 
   private waitForDrawing(): void {
@@ -224,10 +228,13 @@ export class Annotate {
       const edits = [...this.pending];
       this.pending.clear();
       // The annotation drawn meanwhile is in the layer now: each edit is applied to the layer as it is.
-      for (const [name, { spec, meta }] of edits) {
+      for (const [name, { spec, meta, before, scene }] of edits) {
+        // An edit made in another scene is not applied to a layer of the same name here.
+        if (scene !== activeScene(this.ctx)) continue;
         const now = this.layer(name)?.spec;
         const known = new Set(spec.annotations.map((a) => a.id));
-        const drawn = (now?.annotations ?? []).filter((a) => !known.has(a.id));
+        // Drawn: new since the edit was queued (not ones the edit deleted).
+        const drawn = (now?.annotations ?? []).filter((a) => !known.has(a.id) && !before.has(a.id));
         this.write(name, { ...spec, annotations: [...spec.annotations, ...drawn] }, meta);
       }
     }, 250);
@@ -235,6 +242,9 @@ export class Annotate {
 
   /** Writes only a layer's record (comments, text and terms). */
   writeMeta(name: string, meta: LayerMeta): void {
+    // A layer edit waiting for drawing to end keeps these comments and values too.
+    const waiting = this.pending.get(name);
+    if (waiting !== undefined) waiting.meta = { ...waiting.meta, comments: meta.comments, values: meta.values };
     const saved = this.saved();
     this.save({ ...saved, layers: { ...saved.layers, [name]: meta } });
   }
@@ -244,7 +254,15 @@ export class Annotate {
     const field = fields.find((f) => f.id === meta.colourBy && f.kind === "number");
     if (field === undefined) return undefined;
     const values = spec.annotations.map((a) => Number(readValue(field, a, spec, meta))).filter(Number.isFinite);
-    return values.length ? [Math.min(...values), Math.max(...values)] : undefined;
+    if (values.length === 0) return undefined;
+    // Not Math.min(...values): that overflows the stack for a large layer.
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const v of values) {
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    return [lo, hi];
   }
 
   /** Makes a local annotation layer in the global space and chooses it. */
@@ -487,4 +505,9 @@ export function renamedFrom(ids: Set<string>, gone: (readonly [string, Set<strin
   if (same.length !== 1) return undefined;
   if (ids.size === 0 && gone.filter(([, old]) => old.size === 0).length !== 1) return undefined;
   return same[0][0];
+}
+
+/** The id of the scene on show (pending edits belong to it). */
+function activeScene(ctx: PlatformContext): string | undefined {
+  return ctx.workspace.scenes().find((x) => x.active)?.id;
 }

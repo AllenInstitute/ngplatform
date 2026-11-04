@@ -185,7 +185,8 @@ export function percentChange(values: ArrayLike<number>): Float32Array {
     n++;
   }
   const mean = n > 0 ? sum / n : NaN;
-  return Float32Array.from(values, (v) => (mean !== 0 ? (100 * (v - mean)) / mean : NaN));
+  // Divided by the mean's size: a series with a negative mean still rises when its values do.
+  return Float32Array.from(values, (v) => (mean !== 0 ? (100 * (v - mean)) / Math.abs(mean) : NaN));
 }
 
 // ------------------------------------------------------------------- CSV

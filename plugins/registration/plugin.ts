@@ -212,8 +212,14 @@ class Registration {
 
   constructor(private readonly ctx: PlatformContext) {
     this.saved = readSaved(ctx.state.get());
+    // The state's notice comes for any plugin's change: only a change of this plugin's state is read again
+    // (else a drag's move, kept in memory until it ends, would be read over and applied twice).
+    let seen = JSON.stringify(ctx.state.get() ?? null);
     ctx.subscriptions.push(
       ctx.state.onChanged(() => {
+        const now = JSON.stringify(ctx.state.get() ?? null);
+        if (now === seen) return;
+        seen = now;
         this.saved = readSaved(ctx.state.get());
         this.refit(false);
         this.panelUpdate?.();
@@ -471,7 +477,12 @@ class Registration {
     const t = name ? this.ctx.viewer.layerTransform(name) : undefined;
     const source = name ? sourceUrl(this.ctx.viewer.layerSpec(name)) : undefined;
     const pairs = this.saved.pairs.filter((q) => q.on && q.fixed && q.moving);
-    if (!name || !t || source === undefined) return;
+    if (!name || !t) return;
+    if (source === undefined) {
+      this.warpNote = `${name} has no source address that can be read again, so it cannot be warped.`;
+      this.panelUpdate?.();
+      return;
+    }
     if (pairs.length < 4) {
       this.warpNote = `A warp needs four complete pairs or more, not all in one plane; there ${pairs.length === 1 ? "is" : "are"} ${pairs.length}.`;
       this.panelUpdate?.();
@@ -640,8 +651,8 @@ class Registration {
       else if (format !== "zarr" && picker.showSaveFilePicker)
         file = await picker.showSaveFilePicker({ id: "ngplatform-save", suggestedName: base + suffix, types: [{ description: /^mg/.test(format) ? "FreeSurfer volume" : "NIfTI", accept: { "application/octet-stream": [suffix] } }] });
     } catch (e) {
-      if ((e as DOMException).name === "AbortError") return;
-      throw e;
+      if ((e as DOMException).name !== "AbortError") this.note(`Could not choose where to save: ${(e as Error).message}`);
+      return;
     }
     this.saving?.abort();
     const controller = (this.saving = new AbortController());
@@ -948,7 +959,11 @@ class Registration {
       layer.append(el("option", { value: "" }, "Choose…"));
       for (const n of candidates) layer.append(el("option", { value: n }, n));
       layer.value = this.layer() ?? "";
-      layer.addEventListener("change", () => this.save({ layer: layer.value || undefined, base: undefined, pairs: [], start: undefined, manual: identityManual(this.saved.manual.around) }));
+      layer.addEventListener("change", () => {
+        this.straightenNote = "";
+        this.warpNote = "";
+        this.save({ layer: layer.value || undefined, base: undefined, pairs: [], marks: undefined, start: undefined, manual: identityManual(this.saved.manual.around) });
+      });
       const model = el("select", { class: "text-input", "aria-label": "Model" }) as HTMLSelectElement;
       for (const m of ["translation", "rigid", "similarity", "affine"]) model.append(el("option", { value: m }, `${m[0].toUpperCase()}${m.slice(1)} (${MINIMUM[m as Model]}+ pairs)`));
       model.value = saved.model;
@@ -1039,7 +1054,11 @@ class Registration {
             el("span", {}, "Apply to all visible volumes"),
           ),
           el("h3", { class: "section-title" }, "Straighten with landmarks"),
-          el("p", { class: "note rg-tight" }, "As Freeview's landmarks: mark four points on the image (the views' centre), then turn the line #1 → #2 onto one axis and #3 → #4 as near another as it can, about the volume's centre (for example the AC to the PC onto P → A)."),
+          el(
+            "p",
+            { class: "note rg-tight", title: "As Freeview's landmarks: the line #1 → #2 is turned onto one axis and #3 → #4 as near another as it can, about the volume's centre (for example the AC to the PC onto P → A)." },
+            "Mark four points at the views' centre, then straighten.",
+          ),
           el(
             "div",
             { class: "rg-row" },
@@ -1080,7 +1099,7 @@ class Registration {
           ),
           this.straightenNote ? el("p", { class: "note" }, this.straightenNote) : null,
           el("h3", { class: "section-title" }, "Landmarks"),
-          el("p", { class: "note rg-tight" }, "Point at a feature in the fixed data, Alt+F; the same feature in the moving layer, Alt+M."),
+          el("p", { class: "note rg-tight" }, "Fixed point: Alt+F at the mouse. Its match in the moving layer: Alt+M."),
           el(
             "div",
             { class: "rg-row" },
@@ -1112,6 +1131,7 @@ class Registration {
           this.saveControls(name),
         ),
       );
+      foldSections(host.firstElementChild as HTMLElement, this.ctx);
     };
     this.panelUpdate = draw;
     draw(true);
@@ -1122,8 +1142,41 @@ class Registration {
   }
 }
 
+/**
+ * The panel's sections (each heading and what follows it, to the next) as
+ * folding sections, open or closed as the user left them (in this browser).
+ */
+function foldSections(root: HTMLElement, ctx: PlatformContext): void {
+  const open = ctx.settings.get<Record<string, boolean>>("openSections") ?? {};
+  const children = [...root.children].flatMap((c) => (c.classList.contains("rg-save") ? [...c.children] : [c]));
+  const out: Element[] = [];
+  let body: HTMLElement | undefined;
+  for (const c of children) {
+    if (c.tagName === "H3" && c.classList.contains("section-title")) {
+      const title = c.textContent ?? "";
+      body = el("div", { class: "rg-body" });
+      const details = el("details", { class: "rg-section" }, el("summary", { class: "section-title" }, title), body) as HTMLDetailsElement;
+      details.open = open[title] !== false;
+      details.addEventListener("toggle", () => {
+        const now = ctx.settings.get<Record<string, boolean>>("openSections") ?? {};
+        ctx.settings.set("openSections", { ...now, [title]: details.open });
+      });
+      out.push(details);
+    } else if (body !== undefined) body.append(c);
+    else out.push(c);
+  }
+  root.replaceChildren(...out);
+}
+
 const STYLE = `
 .rg { display: grid; gap: 8px; }
+.rg-section { border-top: 1px solid var(--line); padding-top: 4px; }
+.rg-section > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; margin: 0; padding: 4px 0; user-select: none; }
+.rg-section > summary::-webkit-details-marker { display: none; }
+.rg-section > summary::before { content: "▸"; color: var(--faint); font-size: 10px; width: 10px; }
+.rg-section[open] > summary::before { content: "▾"; }
+.rg-section[open] > summary { margin-bottom: 6px; }
+.rg-body { display: grid; gap: 8px; }
 .rg .section-title { margin: 8px 0 0; }
 .rg-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .rg-tight { margin: 0; }

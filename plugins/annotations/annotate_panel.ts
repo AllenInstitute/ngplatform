@@ -56,7 +56,7 @@ export class AnnotatePanel {
               (v) => this.model.choose(v),
               "Layer",
             )
-          : el("span", { class: "an-hint" }, "No annotation layer of yours yet."),
+          : el("span", { class: "an-hint" }, "No annotation layer yet."),
         button("+ New layer", () => this.model.newLayer(), "A local annotation layer, kept in the link"),
       );
       const tools = el("div", { class: "segmented an-tools" });
@@ -66,8 +66,8 @@ export class AnnotatePanel {
       host.replaceChildren(
         layerRow,
         tools,
-        el("p", { class: "an-hint" }, "Pick a tool, then Ctrl+click in a view (Ctrl+double-click ends a polyline). Each new annotation is selected in the annotation table, ready for its values. Pick the tool again to stop."),
-        el("div", { class: "an-row" }, button("Annotation table", () => this.ctx.ui.showPanel(TABLE_PANEL), "The table of every annotation, in the bottom dock")),
+        el("p", { class: "an-hint", title: "Each new annotation is selected in the annotation table, ready for its values. Pick the tool again to stop." }, "Pick a tool, then Ctrl+click in a view."),
+        el("div", { class: "an-row" }, button("Open table", () => this.ctx.ui.showPanel(TABLE_PANEL), "The table of every annotation, in the bottom dock")),
         l ? this.groups(l.spec.name) : "",
         l ? this.fields(l.spec.name) : "",
       );
@@ -144,12 +144,12 @@ export class AnnotatePanel {
     const fields = fieldsOf(spec, meta);
     const colourable: [string, string][] = [["", "Layer colour"], ...(groups.length ? [[GROUP, "Group"] as [string, string]] : []), ...fields.filter((f) => f.storage === "property").map((f) => [f.id, f.title] as [string, string])];
     const colourBy = select(colourable, meta.colourBy ?? "", (v) => write((gs) => ({ groups: gs, colourBy: v || undefined })), "Colour by");
-    const active = select([["0", "No group"], ...groupTree(groups).map(({ group: g }) => [String(g.value), groupPath(groups, g.value)] as [string, string])], String(meta.activeGroup ?? 0), (v) => write((gs) => ({ groups: gs, active: Number(v) || undefined })), "New annotations go to");
+    const active = select([["0", "No group"], ...groupTree(groups).map(({ group: g }) => [String(g.value), groupPath(groups, g.value)] as [string, string])], String(meta.activeGroup ?? 0), (v) => write((gs) => ({ groups: gs, active: Number(v) || 0 })), "New annotations go to");
     return el(
       "div",
       { class: "an-block" },
       el("h4", { class: "an-sub" }, "Groups"),
-      groups.length ? el("div", { class: "an-groups" }, ...rows) : el("p", { class: "an-hint" }, "Put annotations in named groups, nested if you like: shown or hidden together, and coloured."),
+      groups.length ? el("div", { class: "an-groups" }, ...rows) : el("p", { class: "an-hint", title: "Groups are shown or hidden together and coloured; they can be nested." }, "No groups."),
       el("div", { class: "an-row" }, button("+ Group", () => write((gs, m) => {
         const { groups: next, value } = addGroup(gs, "");
         return { groups: next, active: m.activeGroup ?? value };
@@ -186,7 +186,7 @@ export class AnnotatePanel {
       "div",
       { class: "an-block" },
       el("h4", { class: "an-sub" }, "Fields"),
-      fields.length ? el("div", { class: "an-fields" }, ...rows) : el("p", { class: "an-hint" }, "Values each annotation of the layer has: a cell type from a list, a number, a note, a structure from an ontology."),
+      fields.length ? el("div", { class: "an-fields" }, ...rows) : el("p", { class: "an-hint", title: "Values each annotation of the layer has: a cell type from a list, a number, a note, a structure from an ontology." }, "No fields."),
       this.editing !== undefined ? this.form(name, fields.find((f) => f.id === this.editing)) : el("div", { class: "an-row" }, button("+ Field", () => this.edit(""), "A value the layer's annotations have")),
     );
   }
@@ -256,7 +256,7 @@ export class AnnotatePanel {
       const options = [...new Set(values.value.split(/\r?\n/).map((v) => v.trim()).filter((v) => v !== ""))];
       if (!text) return this.ctx.ui.toast("Give the field a name.", "error");
       if (kind === "ontology" && ontology === undefined) return this.ctx.ui.toast("Choose where its terms come from.", "error");
-      if (field === undefined && fieldsOf(now.spec, now.meta).some((f) => f.title.toLowerCase() === text.toLowerCase())) return this.ctx.ui.toast(`The layer has a field “${text}” already.`, "error");
+      if (fieldsOf(now.spec, now.meta).some((f) => f.id !== field?.id && f.title.toLowerCase() === text.toLowerCase())) return this.ctx.ui.toast(`The layer has a field “${text}” already.`, "error");
       const [s, m] =
         field === undefined
           ? addField(now.spec, now.meta, { id: "", title: text, kind, ...(kind === "list" ? { options } : {}), ...(kind === "ontology" ? { ontology } : {}) })

@@ -85,7 +85,9 @@ export class Statistics {
     if (store === undefined || !owner) return;
     this.running?.abort();
     const controller = (this.running = new AbortController());
-    const maxVoxels = (Number(this.budget) * 2 ** 20) / (kind === "s" ? 8 : 4);
+    // Bytes the worker holds a voxel: the image (float32) and the values inside (float32); an atlas label adds its labels read exactly (float64) and the segmentation read.
+    const perVoxel = kind === "s" ? 20 : 8;
+    const maxVoxels = (Number(this.budget) * 2 ** 20) / perVoxel;
     this.setNote("Reading…");
     try {
       const levels = await this.voxels.levels(store);
@@ -159,7 +161,7 @@ export class Statistics {
       const level = levelWithin(levels.length, (l) => (placements[l] ? voxelsOf(regionAt(l).box) : Infinity), maxVoxels);
       const { region, box } = regionAt(level);
       if (box === undefined) throw new Error(`the region is outside ${image}`);
-      if (voxelsOf(box) > maxVoxels) throw new Error(`even the coarsest level needs ${Math.round((voxelsOf(box) * 4) / 2 ** 20)} MB: allow more memory`);
+      if (voxelsOf(box) > maxVoxels) throw new Error(`even the coarsest level needs ${Math.round((voxelsOf(box) * perVoxel) / 2 ** 20)} MB: allow more memory, or draw a smaller region`);
       const summary = await this.voxels.stats(store, level, box, region, (done, total) => this.setNote(`Reading: ${Math.round((100 * done) / total)}%`), controller.signal);
       const volume = summary.count * voxelVolume(placements[level]!.voxelToMm);
       this.rows.push({ image, region: title, level, voxelSize: levels[level].voxelSize, volume, ...summary });

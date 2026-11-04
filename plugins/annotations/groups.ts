@@ -218,10 +218,26 @@ const propsIndex = (spec: LayerSpec, id: string) => (spec.annotationProperties ?
  * groups need one.
  */
 export function withShader(spec: LayerSpec, meta: LayerMeta, fields: Field[], range?: [number, number]): LayerSpec {
+  return withShaderKept(spec, meta, fields, range)[0];
+}
+
+/**
+ * As `withShader`, and the record to keep with it: a shader of the user's
+ * own replaced here is kept in the record (`userShader`), and put back when
+ * no shader made here is needed any more.
+ */
+export function withShaderKept(spec: LayerSpec, meta: LayerMeta, fields: Field[], range?: [number, number]): [LayerSpec, LayerMeta] {
   const shader = layerShader(spec, meta, fields, range);
   const ours = spec.shader === undefined || spec.shader.startsWith(SHADER_MARK);
-  if (shader !== undefined) return shader === spec.shader ? spec : { ...spec, shader };
-  if (!ours || spec.shader === undefined) return spec;
+  if (shader !== undefined) {
+    const kept = !ours && spec.shader !== undefined ? { ...meta, userShader: spec.shader } : meta;
+    return [shader === spec.shader ? spec : { ...spec, shader }, kept];
+  }
+  if (!ours || spec.shader === undefined) return [spec, meta];
   const { shader: _gone, ...rest } = spec;
-  return rest;
+  if (meta.userShader !== undefined) {
+    const { userShader, ...m } = meta;
+    return [{ ...rest, shader: userShader }, m];
+  }
+  return [rest, meta];
 }

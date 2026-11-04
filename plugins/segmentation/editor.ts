@@ -235,6 +235,13 @@ export class Editor implements LabelVolumes {
     this.offs.push(
       ctx.viewer.onLayersChanged(() => {
         const here = this.inScene();
+        // A label layer renamed (or shown under another name in this scene): the session follows its store.
+        const layers = this.ctx.viewer.layers();
+        for (const s of here) {
+          if (layers.some((l) => l.name === s.layer && l.sources.some((source) => source.includes(s.fileName)))) continue;
+          const named = layers.find((l) => l.sources.some((source) => source.includes(s.fileName)))?.name;
+          if (named !== undefined) s.layer = named;
+        }
         if (this.pending !== undefined && !here.includes(this.pending.session)) this.cancelPreview();
         if (this.current !== undefined && !here.includes(this.current)) {
           this.current = here[0];
@@ -323,6 +330,36 @@ export class Editor implements LabelVolumes {
   setRadius(radius: number): void {
     this.radius = radius;
     this.autoRadius = false;
+    this.painter.refresh();
+    this.changed();
+  }
+
+  private noRangeTold = 0;
+
+  /** Says (at most every few seconds) that the range limit is on but the image's values cannot be read. */
+  private noRange(): void {
+    if (Date.now() - this.noRangeTold < 4000) return;
+    this.noRangeTold = Date.now();
+    const ref = this.current?.reference?.layer;
+    this.ctx.ui.toast(
+      ref === undefined
+        ? "“Only within the range” is on, but no image is chosen: choose one under Image values, or untick it."
+        : `“Only within the range” is on, but ${ref}'s values cannot be read here (is it shown and loaded?). Nothing was painted.`,
+      "error",
+    );
+  }
+
+  /** Changes the brush's unit, keeping its size (5 voxels of 0.1 mm become 0.5 mm, not 5 mm). */
+  setUnit(unit: "mm" | "µm" | "voxels"): void {
+    if (unit === this.unit) return;
+    const affine = this.current?.placement()?.voxelToMm ?? this.current?.volume.voxelToRas;
+    const voxel = affine ? Math.min(...voxelEdges(affine)) : undefined;
+    const mm = this.unit === "mm" ? this.radius : this.unit === "µm" ? this.radius / 1000 : voxel !== undefined ? this.radius * voxel : undefined;
+    this.unit = unit;
+    if (mm !== undefined && mm > 0) {
+      const next = unit === "mm" ? mm : unit === "µm" ? mm * 1000 : voxel !== undefined ? mm / voxel : this.radius;
+      this.radius = Number(next.toPrecision(3));
+    }
     this.painter.refresh();
     this.changed();
   }
@@ -516,13 +553,28 @@ export class Editor implements LabelVolumes {
       const release = await s.volume.prepareKeys(s.volume.keys());
       relabel(stroke, value, 0);
       release();
-      s.labels.delete(value);
+      this.forgetLabel(s, stroke, value);
       if (this.groups(s).of[String(value)] !== undefined) this.assignGroup([value], undefined);
       s.changed([]);
       this.commit(stroke, s, 0);
       if (this.value === value) this.value = this.rows().find((r) => r.value !== value)?.value ?? 1;
       this.changed();
     });
+  }
+
+  /** Drops a segment's name and colour, which undoing `stroke` puts back (its group is a workspace step of its own). */
+  private forgetLabel(s: Session, stroke: Stroke, value: number): void {
+    const kept = s.labels.get(value);
+    s.labels.delete(value);
+    if (kept === undefined) return;
+    stroke.onUndo = () => {
+      s.labels.set(value, kept);
+      s.changed([]);
+    };
+    stroke.onRedo = () => {
+      s.labels.delete(value);
+      s.changed([]);
+    };
   }
 
   /** Gives a segment's voxels to the active segment (undoable). */
@@ -534,7 +586,7 @@ export class Editor implements LabelVolumes {
       const release = await s.volume.prepareKeys(s.volume.keys());
       const n = relabel(stroke, from, into);
       release();
-      s.labels.delete(from);
+      this.forgetLabel(s, stroke, from);
       if (this.groups(s).of[String(from)] !== undefined) this.assignGroup([from], undefined);
       s.changed([]);
       this.ctx.ui.toast(`Merged segment ${from} into ${into}: ${n.toLocaleString()} voxels${s.volume instanceof CowVolume ? " in the edited chunks" : ""}.`);
@@ -925,7 +977,8 @@ export class Editor implements LabelVolumes {
       stroke: new Stroke(session.volume),
       q: this.shapeQ(),
       paint: erase ? { value: 0, only: this.eraseOnly ? this.value : undefined } : { value: this.value, only: this.overwrite === "empty" ? 0 : undefined },
-      range: this.limit && session.reference ? [this.low, this.high] : undefined,
+      // On with no image chosen: each dab finds no values, paints nothing, and says so.
+      range: this.limit ? [this.low, this.high] : undefined,
       disc: this.shape === "disc",
     };
   }
@@ -937,7 +990,9 @@ export class Editor implements LabelVolumes {
     const hi = at.map((v, k) => Math.ceil(v + reach[k]) + 2) as Vec3;
     if (b.range !== undefined) {
       const block = await b.session.imageBlock(lo, hi);
-      if (block) paint.where = inRange(block, b.range[0], b.range[1]);
+      // Asked to keep within a range whose values cannot be read: paint nothing rather than everything.
+      if (block === undefined) return this.noRange();
+      paint.where = inRange(block, b.range[0], b.range[1]);
     }
     const release = await this.ready(b.session, lo, hi, "The brush");
     if (release === undefined) return;
@@ -1122,9 +1177,10 @@ export class Editor implements LabelVolumes {
     hi[u] = Math.ceil(Math.max(...points.map((p) => p[0]))) + 1;
     lo[w] = Math.floor(Math.min(...points.map((p) => p[1])));
     hi[w] = Math.ceil(Math.max(...points.map((p) => p[1]))) + 1;
-    if (this.limit && session.reference) {
+    if (this.limit) {
       const block = await session.imageBox(lo, hi);
-      if (block) paint.where = inRange(block, this.low, this.high);
+      if (block === undefined) return this.noRange();
+      paint.where = inRange(block, this.low, this.high);
     }
     const release = await this.ready(session, lo, hi, "The outline");
     if (release === undefined) return;
@@ -1276,7 +1332,8 @@ export class Editor implements LabelVolumes {
     const abort = (this.quickAbort = new AbortController());
     let mask: Mask;
     try {
-      mask = await method.run({ prompt, image, axis: start.axis, tolerance: this.tolerance, prompts, ...this.quickExtras(session) }, abort.signal);
+      // Escape (or Stop) ends the wait at once, even while the model downloads: the strokes queued behind it go on.
+      mask = await untilAborted(method.run({ prompt, image, axis: start.axis, tolerance: this.tolerance, prompts, ...this.quickExtras(session) }, abort.signal), abort.signal);
     } catch (e) {
       if (!abort.signal.aborted) this.ctx.ui.toast(`${method.title}: ${e instanceof Error ? e.message : String(e)}`);
       this.quickPrompts = undefined;
@@ -1291,6 +1348,8 @@ export class Editor implements LabelVolumes {
     const decided = this.decided;
     this.decided = undefined;
     if (decided === "cancel") return;
+    // The scene or the label volume changed while the mask was worked out: it belongs to neither.
+    if (this.current !== session) return;
     const voxels = maskCount(mask);
     if (voxels === 0) {
       this.ctx.ui.toast("Quick select found nothing there.");
@@ -1372,7 +1431,7 @@ export class Editor implements LabelVolumes {
             this.quickStatus = { text: `${step}: ${text}`, fraction: fraction ?? done / (2 * n) };
             this.changed();
           };
-          const mask = await method.run({ prompt: { kind: "box", lo, hi }, image, axis, tolerance: this.tolerance, prompts: { box: { lo, hi }, points: [] }, ...extras, progress }, abort.signal);
+          const mask = await untilAborted(method.run({ prompt: { kind: "box", lo, hi }, image, axis, tolerance: this.tolerance, prompts: { box: { lo, hi }, points: [] }, ...extras, progress }, abort.signal), abort.signal);
           if (abort.signal.aborted || this.pending !== p) return;
           const voxels = maskCount(mask);
           if (voxels === 0 || voxels * 4 < count || voxels > 4 * count) break;
@@ -1551,12 +1610,36 @@ export class Editor implements LabelVolumes {
 
   // --------------------------------------------------------------- save
 
+  /** A save under way (one at a time: two would write the same files). */
+  private saving = false;
+
   async save(): Promise<void> {
     const session = this.current;
     if (session === undefined) {
       this.ctx.ui.toast("No label volume to save.");
       return;
     }
+    if (this.saving) {
+      this.ctx.ui.toast("A save is under way: wait for it to finish.");
+      return;
+    }
+    this.saving = true;
+    try {
+      await this.saveSession(session);
+    } catch (e) {
+      // A file picker that failed (not one closed), or a folder that could not be made.
+      this.setNote(`Could not save: ${(e as Error).message}`);
+    } finally {
+      this.saving = false;
+    }
+  }
+
+  /** Changes counted as saved: those made before the save began (strokes made during it are still unsaved). */
+  private markSaved(session: Session, before: number): void {
+    session.unsaved = Math.max(0, session.unsaved - before);
+  }
+
+  private async saveSession(session: Session): Promise<void> {
     const volume = session.volume;
     if (volume instanceof CowVolume) return this.saveEdited(session, volume);
     const box = this.saveCrop ? volume.paintedBox() : undefined;
@@ -1585,6 +1668,7 @@ export class Editor implements LabelVolumes {
       throw e;
     }
     const description = `${session.layer}, labels drawn in ngplatform`;
+    const before = session.unsaved;
     this.setNote("Writing…");
     try {
       let where: string;
@@ -1603,7 +1687,7 @@ export class Editor implements LabelVolumes {
           where = base + suffix;
         }
       }
-      session.unsaved = 0;
+      this.markSaved(session, before);
       this.setNote(`Saved ${where}: ${out.size.join(" × ")}${box ? `, the painted box from voxel ${box.lo.join(", ")}` : ""}.`);
       this.ctx.log.info(`Saved ${session.layer} as ${where}.`);
     } catch (e) {
@@ -1644,12 +1728,13 @@ export class Editor implements LabelVolumes {
     const original = volume.original;
     const description = whole ? `${session.layer}: ${original.layer} edited in ngplatform` : `${session.layer}: edits of ${original.layer} (${original.store}) made in ngplatform`;
     const labels = this.savedLabels(session);
+    const before = session.unsaved;
     if (!whole) {
       this.setNote("Writing the edits…");
       try {
         const files = await editsZarr(volume, description, (done, total) => this.setNote(`Writing the edits: ${Math.round((100 * done) / total)}%`), labels);
         const where = await writeFolder(files, folder, name);
-        session.unsaved = 0;
+        this.markSaved(session, before);
         this.setNote(`Saved the edits as ${where}: ${volume.chunkCount} chunks of 64³; the rest is ${original.layer} (${original.store}), which they name. Open edits… opens them over it again.`);
         this.ctx.log.info(`Saved the edits of ${session.layer} as ${where}.`);
       } catch (e) {
@@ -1669,7 +1754,7 @@ export class Editor implements LabelVolumes {
           cancelled: () => job.cancelled,
         }),
       );
-      session.unsaved = 0;
+      this.markSaved(session, before);
       this.setNote(`Saved the whole volume as ${where}: ${n.toLocaleString()} chunks.`);
       this.ctx.log.info(`Saved ${session.layer} (the whole volume) as ${where}.`);
     } catch (e) {
@@ -1782,3 +1867,22 @@ export function fmtBytes(n: number): string {
 }
 
 export type { ImageLevel, Reference };
+
+/** `p`, or an AbortError as soon as `signal` aborts (the work behind `p` may finish later, unheeded). */
+function untilAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    p.then(
+      (v) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(v);
+      },
+      (e) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(e);
+      },
+    );
+  });
+}

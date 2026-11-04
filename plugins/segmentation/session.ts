@@ -60,6 +60,10 @@ export class Session {
   private readonly dirty = new Set<number>();
   private keepTimer: ReturnType<typeof setTimeout> | undefined;
   private keeping: Promise<unknown> = Promise.resolve();
+  /** When the oldest change not yet kept was made: drawing without a pause is kept every few seconds all the same. */
+  private dirtySince: number | undefined;
+  /** Leaving the page keeps what is not kept yet. */
+  private readonly onPageHide = () => this.keepNow();
   private blockGeneration = 0;
 
   private constructor(
@@ -128,15 +132,27 @@ export class Session {
   changed(keys: Iterable<number>): void {
     for (const k of keys) this.dirty.add(k);
     clearTimeout(this.keepTimer);
-    this.keepTimer = setTimeout(() => {
-      const keys = [...this.dirty];
-      this.dirty.clear();
-      const versions = keys.map((k) => this.volume.versionOf(k));
-      const original = this.volume instanceof CowVolume ? this.volume.original : undefined;
-      this.keeping = this.keeping.then(async () => {
-        if (await keep(this.volume, { id: this.id, name: this.layer, labels: [...this.labels], reference: this.reference?.layer, original }, keys, versions)) this.volume.keptAt(keys, versions);
-      });
-    }, 1500);
+    if (this.dirtySince === undefined) {
+      this.dirtySince = Date.now();
+      window.addEventListener("pagehide", this.onPageHide);
+    }
+    // 1.5 s after the last change, or at once when changes have waited 5 s.
+    this.keepTimer = setTimeout(() => this.keepNow(), Date.now() - this.dirtySince > 5000 ? 0 : 1500);
+  }
+
+  /** Writes the changed chunks (and the labels) to the browser's storage now. */
+  keepNow(): void {
+    clearTimeout(this.keepTimer);
+    this.keepTimer = undefined;
+    this.dirtySince = undefined;
+    window.removeEventListener("pagehide", this.onPageHide);
+    const keys = [...this.dirty];
+    this.dirty.clear();
+    const versions = keys.map((k) => this.volume.versionOf(k));
+    const original = this.volume instanceof CowVolume ? this.volume.original : undefined;
+    this.keeping = this.keeping.then(async () => {
+      if (await keep(this.volume, { id: this.id, name: this.layer, labels: [...this.labels], reference: this.reference?.layer, original }, keys, versions)) this.volume.keptAt(keys, versions);
+    });
   }
 
   /** Where the label volume's voxels are in the global space (once its layer has loaded). */
@@ -281,7 +297,10 @@ export class Session {
   /** Ends the session; `forget` also drops what the browser keeps of it (it was closed, not the page). */
   dispose(forget = false): void {
     clearTimeout(this.refreshTimer);
+    // Changes not kept yet are kept, unless the session is being forgotten.
+    if (!forget && this.keepTimer !== undefined) this.keepNow();
     clearTimeout(this.keepTimer);
+    window.removeEventListener("pagehide", this.onPageHide);
     this.unserve();
     this.ctx.workspace.local.close(this.source);
     if (forget) void this.keeping.then(() => discard(this.id));

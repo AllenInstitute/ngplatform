@@ -28,6 +28,8 @@ export class Panel {
   /** A segmentation's new layer starts as a copy of its labels, edits it in place, or starts empty. */
   private newStart: "copy" | "inPlace" | "empty" = "copy";
   private showForm = false;
+  /** A layer being made (a copy can take a while): Create stays off until it is. */
+  private creating = false;
   /** A segment row is being dragged (onto a group): the list waits to be redrawn. */
   private dragging = false;
   private levels: { store: string; levels: ImageLevel[] } | undefined;
@@ -149,22 +151,32 @@ export class Panel {
     const name = el("input", { class: "text-input", type: "text", value: this.newName, placeholder: defaultName, "aria-label": "Name" }) as HTMLInputElement;
     name.addEventListener("change", () => (this.newName = name.value.trim()));
     const create = button(inPlace ? "Edit in place" : copy ? "Copy and edit" : "Create", () => {
+      if (this.creating) return;
+      this.creating = true;
       create.disabled = true;
-      void e.create({ layer: this.newLayer, level: inPlace ? 0 : this.newLevel, type: this.newType, name: this.newName || defaultName, copy, inPlace }).then((made) => {
-        if (made) {
-          this.showForm = false;
-          this.newName = "";
-        }
-        e.changed();
-      });
+      void e
+        .create({ layer: this.newLayer, level: inPlace ? 0 : this.newLevel, type: this.newType, name: this.newName || defaultName, copy, inPlace })
+        .then(
+          (made) => {
+            if (made) {
+              this.showForm = false;
+              this.newName = "";
+            }
+          },
+          (err) => this.ctx.ui.toast(`Could not make the layer: ${(err as Error).message}`, "error"),
+        )
+        .finally(() => {
+          this.creating = false;
+          e.changed();
+        });
     }, inPlace ? "Edit this segmentation at its finest level without copying it: chunks are read from it until changed (it is hidden and never written)" : copy ? "A copy of this segmentation's labels at this level, to edit (the original is hidden and not changed)" : "An empty label volume on this layer's grid", "btn primary small");
-    create.disabled = !this.newLayer || levels.length === 0;
+    create.disabled = this.creating || !this.newLayer || levels.length === 0;
     return el(
       "div",
       { class: "an-form" },
       el("h4", { class: "an-sub" }, "New segmentation layer"),
       layers.length === 0
-        ? el("p", { class: "empty" }, "Add an image or a segmentation (OME-Zarr, NIfTI, MGH or precomputed) to draw on its grid, or open a NIfTI label image.")
+        ? el("p", { class: "empty", title: "OME-Zarr, NIfTI, MGH or precomputed" }, "Add an image or a segmentation to draw on its grid, or open a NIfTI label image.")
         : el(
             "div",
             { class: "an-grid2" },
@@ -198,7 +210,7 @@ export class Panel {
         ? el(
             "div",
             { class: "an-kept" },
-            el("p", { class: "an-hint" }, "Kept in this browser (as drawn, not saved):"),
+            el("p", { class: "an-hint", title: "As drawn, not saved to a file" }, "Kept in this browser:"),
             ...e.keptHere.map((k) =>
               el(
                 "div",
@@ -233,9 +245,12 @@ export class Panel {
     const layer = this.newLayer;
     return el(
       "p",
-      { class: "an-hint sg-inplace" },
-      level ? `Level ${this.newLevel} is ${level.size.join(" × ")} voxels, more than a copy holds (${MAX_COPY / 2 ** 20} M), so it is edited in place. ` : "",
-      `Edit in place copies nothing first: ${layer}'s chunks (64³ voxels) are read at its finest level as they are shown or drawn on, and a chunk is copied when you first change it. Only the changed chunks are kept: in this page (up to 512 MB), and in this browser's storage (OPFS) a moment after each stroke, beyond which they are read back from there. ${layer} itself is hidden and never written. Save writes the edits alone (an OME-Zarr that names ${layer}) or the whole volume.`,
+      {
+        class: "an-hint sg-inplace",
+        title: `${layer}'s chunks (64³ voxels) are read at its finest level as they are shown or drawn on; a chunk is copied when you first change it, and only changed chunks are kept (in this page up to 512 MB, then in this browser's storage). Save writes the edits alone (an OME-Zarr that names ${layer}) or the whole volume.`,
+      },
+      level ? `Level ${this.newLevel} is too large to copy (${level.size.join(" × ")} voxels): ` : "",
+      `${level ? "e" : "E"}dited in place at the finest level. ${layer} is hidden and never written.`,
     );
   }
 
@@ -255,13 +270,13 @@ export class Panel {
       this.intensity(session),
       el(
         "p",
-        { class: "an-hint" },
+        { class: "an-hint", title: volume instanceof CowVolume ? `The rest is read from ${volume.original.store}. Segment voxels are counted in the edited chunks only.` : "" },
         volume instanceof CowVolume
-          ? `Edited in place over ${volume.original.layer}: ${volume.chunkCount} chunk${volume.chunkCount === 1 ? "" : "s"} of 64³ edited (${fmtBytes(volume.bytes)} in this page${volume.spilledCount ? `, ${volume.spilledCount} more kept only in this browser` : ""}); the rest is read from ${volume.original.store}. Segment voxels are counted in the edited chunks. `
-          : `In the page: ${volume.chunkCount} chunks, ${fmtBytes(volume.bytes)}. `,
+          ? `Edited in place over ${volume.original.layer}: ${volume.chunkCount} chunk${volume.chunkCount === 1 ? "" : "s"} edited (${fmtBytes(volume.bytes)} here${volume.spilledCount ? `, ${volume.spilledCount} in browser storage` : ""}). `
+          : `${volume.chunkCount} chunks, ${fmtBytes(volume.bytes)}. `,
         session.unsaved ? `${session.unsaved} change${session.unsaved === 1 ? "" : "s"} not saved.` : "Nothing unsaved.",
       ),
-      e.editing ? null : el("p", { class: "an-hint" }, "Edit shows the tool bar over the views; B, E, L, F, I, Q pick tools there."),
+      e.editing ? null : el("p", { class: "an-hint", title: "B, E, L, F, I and Q pick tools on the tool bar." }, "Edit shows the tool bar over the views."),
     );
   }
 
@@ -285,8 +300,8 @@ export class Panel {
           "p",
           { class: "an-hint" },
           e.saveInPlace === "edits"
-            ? `The edited chunks only, on ${session.volume.original.layer}'s levels, with a note of where it is; Open edits… opens them over it again.`
-            : "Every chunk, into a folder, as a job: the original's copied a block at a time, the edited ones as edited.",
+            ? `Only the edited chunks, naming ${session.volume.original.layer}; Open edits… puts them back over it.`
+            : "Every chunk, into a folder, as a job.",
         ),
         e.note ? el("p", { class: "an-hint" }, e.note) : null,
       );
@@ -309,7 +324,7 @@ export class Panel {
         el("span", { class: "an-spacer" }),
         button("Save", () => void e.save(), "Save to this computer", "btn primary small"),
       ),
-      big && e.saveFormat === "nii.gz" ? el("p", { class: "an-hint" }, "This grid is too large for one NIfTI: save the painted box, or as OME-Zarr (only painted chunks are written).") : null,
+      big && e.saveFormat === "nii.gz" ? el("p", { class: "an-hint error" }, "Too large for one NIfTI: tick Only the painted box, or save as OME-Zarr.") : null,
       e.note ? el("p", { class: "an-hint" }, e.note) : null,
     );
   }
@@ -456,10 +471,7 @@ export class Panel {
     const options = el("div", { class: "an-grid2" });
     if (brushes(e.tool)) {
       options.append(
-        field("Radius", el("div", { class: "an-inline" }, numberInput(e.radius, (v) => e.setRadius(Math.max(0.01, v)), { min: 0.01, step: "any", "aria-label": "Radius" }), select([["voxels", "voxels"], ["mm", "mm"], ["µm", "µm"]], e.unit, (v) => {
-          e.unit = v as "mm" | "µm" | "voxels";
-          e.changed();
-        }, "Unit")), "Alt+wheel, [ and ] in the views"),
+        field("Radius", el("div", { class: "an-inline" }, numberInput(e.radius, (v) => e.setRadius(Math.max(0.01, v)), { min: 0.01, step: "any", "aria-label": "Radius" }), select([["voxels", "voxels"], ["mm", "mm"], ["µm", "µm"]], e.unit, (v) => e.setUnit(v as "mm" | "µm" | "voxels"), "Unit")), "Alt+wheel, [ and ] in the views"),
         field("Shape", select([["disc", "Disc in the section"], ["ball", "Ball"]], e.shape, (v) => (e.shape = v as "ball" | "disc"), "Shape")),
         e.tool === "brush"
           ? field("Paint over", select([["all", "Any segment"], ["empty", "Empty voxels only"]], e.overwrite, (v) => {
@@ -601,8 +613,8 @@ export class Panel {
       field("Context (voxels)", numberInput(e.quickContext, (v) => {
         e.quickContext = Math.max(32, Math.min(2048, Math.round(v)));
         e.changed();
-      }, { min: 32, max: 2048, step: 32 }), "How much of the section round the prompt the model sees: at least this many voxels across (more for a larger box)"),
-      el("p", { class: "an-hint" }, "Click what you want; Shift+click or Alt+click what you do not; or drag a box. Each click refines the mask in its section; the first in a region computes the image's embedding, later ones are quick."),
+      }, { min: 32, max: 2048, step: 32 }), "How much of the section the model sees round the prompt"),
+      el("p", { class: "an-hint", title: "Each click refines the mask in its section. The first click in a region computes the image's embedding; later ones are quick." }, "Click to include, Shift+click to exclude, or drag a box."),
     );
   }
 
@@ -628,7 +640,7 @@ export class Panel {
         }, "Image"), ref ? `Level ${ref.level}: ${physical(ref.levels[ref.level].voxelSize)} voxels` : undefined),
         field("Range", el("div", { class: "an-inline" }, numberInput(e.low, (v) => (e.low = v), { step: "any", "aria-label": "Low" }), el("span", { class: "an-faint" }, "to"), numberInput(e.high, (v) => (e.high = v), { step: "any", "aria-label": "High" }))),
       ),
-      el("label", { class: "field check" }, limit, el("span", {}, "Brush, eraser and lasso only within the range")),
+      el("label", { class: "field check" }, limit, el("span", {}, "Only within the range"), el("span", { class: "an-faint" }, "(brush, eraser, lasso)")),
       el("div", { class: "an-row" }, button("Range from the cursor", () => void e.rangeFromCursor(), "The value under the pointer, ± the tolerance of the range there")),
     );
   }

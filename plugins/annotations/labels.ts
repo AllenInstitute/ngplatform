@@ -7,6 +7,8 @@
  * the workspace (this plugin's state).
  */
 import type { Disposer, PlatformContext, ViewPanelInfo } from "@ngplatform/sdk";
+import type { AnnotationJson } from "./measure.js";
+import { rankOf, toGlobalOf } from "./scene.js";
 
 export type Placement = "top-left" | "top" | "top-right" | "left" | "center" | "right" | "bottom-left" | "bottom" | "bottom-right" | "side";
 type Anchor = { kind: "point"; position: number[] } | { kind: "group"; group: string } | { kind: "annotation"; layer: string; annotation: string };
@@ -204,12 +206,17 @@ export class Labels {
       const layer = (ng.layers as { name?: string; annotations?: Record<string, unknown>[] }[] | undefined)?.find((l) => l.name === anchor.layer);
       const a = layer?.annotations?.find((x) => x.id === anchor.annotation);
       if (a === undefined) return undefined;
-      const point = (a.point ?? a.center) as number[] | undefined;
-      if (point) return point;
-      const p = a.pointA as number[] | undefined;
-      const q = a.pointB as number[] | undefined;
-      // A line's middle, a box's centre.
-      return p && q ? p.map((v, i) => (v + q[i]) / 2) : p;
+      // The middle of its points (a line's middle, a box's or polyline's centre), placed by the layer's transform.
+      const own = a as unknown as AnnotationJson;
+      const points = own.point ? [own.point] : own.center ? [own.center] : (own.points ?? (own.pointA && own.pointB ? [own.pointA, own.pointB] : []));
+      if (points.length === 0) return undefined;
+      const toGlobal = toGlobalOf(this.ctx, anchor.layer, rankOf(own));
+      const g = points.map((p) => toGlobal(p));
+      const position = ng.position ?? [];
+      return g[0].map((_, i) => {
+        const v = g.reduce((s, p) => s + p[i], 0) / g.length;
+        return Number.isFinite(v) ? v : (position[i] ?? 0);
+      });
     }
     const group = this.groups?.list().find((g) => g.id === anchor.group);
     if (group === undefined) return undefined;
@@ -450,7 +457,7 @@ export class Labels {
     const draw = () => {
       groupsButton.disabled = (this.groups?.list().length ?? 0) === 0;
       if (this.labels.length === 0) {
-        list.replaceChildren(el("p", { class: "empty" }, "No labels yet. Add one, then drag it in a view to move it, or by its corner to resize it."));
+        list.replaceChildren(el("p", { class: "empty", title: "Drag a label in a view to move it, or by its corner to resize it." }, "No labels yet."));
         return;
       }
       list.replaceChildren(

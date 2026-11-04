@@ -14,7 +14,7 @@ transform, or the moved image.
 
 - **By hand:** the Rotate, Translate, Scale and Flip tabs, along X (L-R),
   Y (P-A) and Z (I-S), each a slider and a typed value. The layer moves as
-  you drag. Rotate about the volume's centre or the cursor; **Move centre to
+  you drag. Rotate about the volume's centre or the cursor (the views' centre); **Move centre to
   cursor**; **Restore to original**. **Apply to all visible volumes** moves
   every other visible image and segmentation with it (clear it to put them
   back).

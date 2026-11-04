@@ -145,7 +145,7 @@ export class TablePanel {
     );
     count.textContent = v.rows.length === v.all ? `${v.all} annotation${v.all === 1 ? "" : "s"}` : `${v.rows.length} of ${v.all}`;
     if (v.all === 0) {
-      host.replaceChildren(el("p", { class: "empty" }, names.length ? "No annotations yet: pick a tool in Annotations → Annotate and Ctrl+click in a view." : "No local annotation layer in this scene: make one in Annotations → Annotate."));
+      host.replaceChildren(el("p", { class: "empty" }, names.length ? "No annotations yet: pick a tool in Annotations → Annotate, then Ctrl+click in a view." : "No annotation layer in this scene: make one in Annotations → Annotate."));
       return;
     }
     const head = el(
@@ -197,7 +197,7 @@ export class TablePanel {
     if (host.dataset.key !== key) host.scrollTop = 0;
     host.dataset.key = key;
     if (!selected || l === undefined || a === undefined) {
-      host.replaceChildren(el("p", { class: "an-hint" }, "Click a row to go to its annotation and edit it here; a new annotation drawn in a view comes here too."));
+      host.replaceChildren(el("p", { class: "an-hint" }, "Select a row to edit it here."));
       return;
     }
     const name = selected.layer;
@@ -281,7 +281,7 @@ export class TablePanel {
         el(
           "div",
           { class: "an-comment" },
-          el("div", { class: "an-faint" }, c.time.slice(0, 16).replace("T", " "), button("×", () => this.model.removeComment(selected, i), "Remove the comment", "btn small icon an-comment-x")),
+          el("div", { class: "an-faint", title: c.time }, localTime(c.time), button("×", () => this.model.removeComment(selected, i), "Remove the comment", "btn small icon an-comment-x")),
           el("div", {}, c.text),
         ),
       ),
@@ -353,7 +353,17 @@ export class TablePanel {
       const list = this.model.termList(f);
       return typeof list === "string" ? undefined : list;
     };
-    const result = importCsv(await file.text(), layers, target, () => crypto.randomUUID().replace(/-/g, ""), terms);
+    let result: ReturnType<typeof importCsv>;
+    try {
+      result = importCsv(await file.text(), layers, target, () => crypto.randomUUID().replace(/-/g, ""), terms);
+    } catch (e) {
+      this.ctx.ui.toast(`Could not read ${file.name}: ${(e as Error).message}`, "error");
+      return;
+    }
+    if (result.added + result.updated === 0 && result.skipped > 0 && !layers.has(target ?? "")) {
+      this.ctx.ui.toast(`${file.name}: no layer to add its rows to. Make one with + New layer in Annotations, then open it again.`, "error");
+      return;
+    }
     for (const [name, l] of result.layers) this.model.write(name, l.spec, l.meta);
     const message = `${file.name}: ${result.added} added, ${result.updated} updated${result.skipped ? `, ${result.skipped} skipped` : ""}.`;
     this.ctx.ui.toast([message, ...result.notes.slice(0, 3)].join(" "), result.skipped && !result.added && !result.updated ? "error" : "info");
@@ -369,4 +379,12 @@ export class TablePanel {
     if (!(await this.ctx.ui.confirm(`Delete the ${rows.length} annotation${rows.length === 1 ? "" : "s"} found${this.query ? ` by “${this.query}”` : ""}${kept ? ` (not the ${kept} track filtering region${kept === 1 ? "" : "s"})` : ""}? Undo brings them back.`))) return;
     this.model.delete(rows.map((r) => ({ layer: r.layer, id: r.id })));
   }
+}
+
+/** A comment's time (kept in UTC) as this computer's local time, to the minute. */
+function localTime(iso: string): string {
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return iso.slice(0, 16).replace("T", " ");
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}`;
 }

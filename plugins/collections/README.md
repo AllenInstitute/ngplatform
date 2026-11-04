@@ -20,8 +20,8 @@ collection).
 
 The RFC is a draft and has no implementations yet; this follows its text of
 October 2026 and reads what it can: scale, translation, affine, identity,
-sequences of them, and displacement fields (below). Coordinate maps
-(`coordinates`) are listed, not applied. Placements use the Registration
+sequences of them, displacement fields and coordinate maps (below; a map
+is applied when written from the system to the image). Placements use the Registration
 plugin's conversion between millimetre matrices and Neuroglancer's layer
 transforms.
 

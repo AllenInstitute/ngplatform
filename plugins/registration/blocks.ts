@@ -140,7 +140,7 @@ export interface BlockSource {
   voxelToRas: Mat4;
   type: VoxelType;
   /** Its values in a box (x fastest). */
-  read(lo: [number, number, number], hi: [number, number, number]): Promise<Float32Array>;
+  read(lo: [number, number, number], hi: [number, number, number]): Promise<Float32Array | Float64Array>;
 }
 
 /**

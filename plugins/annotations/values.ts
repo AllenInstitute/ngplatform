@@ -89,6 +89,8 @@ export interface LayerMeta {
   /** Text and ontology values, by annotation id and field id. */
   values: Record<string, Record<string, string | TermValue>>;
   comments: Record<string, Comment[]>;
+  /** The layer's own shader, kept while one made here (for hidden groups or colours) stands in for it. */
+  userShader?: string;
 }
 
 export type Value = string | number | TermValue | undefined;
@@ -107,6 +109,7 @@ export function metaOf(raw: Partial<LayerMeta> | undefined): LayerMeta {
     colourBy: raw?.colourBy,
     values: raw?.values ?? {},
     comments: raw?.comments ?? {},
+    ...(typeof raw?.userShader === "string" ? { userShader: raw.userShader } : {}),
   };
 }
 

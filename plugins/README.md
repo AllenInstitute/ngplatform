@@ -18,14 +18,15 @@ plugins/
 
 ## Starting from the starter plugins
 
-Three empty plugins to copy, each with a tab that lists the scene's layers,
-a counter kept in the scene's state, and a command:
+Three empty plugins to copy, each with a tab that lists the scene's layers
+and a command (the TypeScript and JavaScript ones also keep a counter in the
+scene's state):
 
 | Starter | For | How to use it |
 |---|---|---|
 | [`starter_ts/`](starter_ts/) | A TypeScript plugin built into the app | Copy the folder, rename it and its ids, list it in `index.ts` (below) |
 | [`starter_ts/starter.mjs`](starter_ts/starter.mjs) | The same as one JavaScript file, no build | Plugins → **Add**, then **Reload** after each edit |
-| [`starter_py/`](starter_py/) | Python, in the page's Python (Pyodide): only `.py` files and a README | Plugins → **Add** its `starter.py`; `@ngp.command` adds a command, `@ngp.panel` a tab |
+| [`starter_py/`](starter_py/) | Python, in the page's Python (Pyodide): only `.py` files and a README | Plugins → **Add** its `starter.py`; `@ngp.command` adds a command (its id `python.<plugin>.<function>`), `@ngp.panel` a tab; what it prints goes to the Python tab, or the Activity tab when that is closed |
 
 ## Adding a plugin
 

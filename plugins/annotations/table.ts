@@ -229,17 +229,22 @@ const GEOMETRY = ["point", "point_a", "point_b", "center", "radii", "points"] as
 
 const vector = (v: number[] | undefined) => (v ? v.map((x) => String(Number(x.toPrecision(7)))).join(" ") : "");
 
-/** Comments in one cell: a line each, its time then its text. */
-export const commentsText = (comments: Comment[]) => comments.map((c) => `${c.time} ${c.text}`).join("\n");
+/**
+ * Comments in one cell: a line each, its time then its text.  A line break
+ * within a comment is written as "\\n" (and a backslash as "\\\\"), so a
+ * comment of several lines comes back as one.
+ */
+export const commentsText = (comments: Comment[]) => comments.map((c) => `${c.time} ${c.text.replace(/\\/g, "\\\\").replace(/\r?\n/g, "\\n")}`).join("\n");
 
 export function parseComments(text: string): Comment[] {
+  const unescape = (t: string) => t.replace(/\\(\\|n)/g, (_m, c: string) => (c === "n" ? "\n" : "\\"));
   return text
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line !== "")
     .map((line) => {
       const m = /^(\d{4}-\d\d-\d\d[T ][\d:.]+Z?)\s+(.*)$/.exec(line);
-      return m ? { time: m[1], text: m[2] } : { time: "", text: line };
+      return m ? { time: m[1], text: unescape(m[2]) } : { time: "", text: unescape(line) };
     });
 }
 
@@ -387,8 +392,9 @@ export function importCsv(
     if (l === undefined || l.managed) return undefined;
     return l;
   };
-  // Each record's layer.
-  const where = records.map((rec) => (rec.layer && work(rec.layer) ? rec.layer : target));
+  // Each record's layer; a row of a layer that is not the user's (track filtering's regions) is skipped, not copied.
+  const into = target !== undefined && work(target) ? target : undefined;
+  const where = records.map((rec) => (rec.layer && work(rec.layer) ? rec.layer : rec.layer && layers.get(rec.layer)?.managed ? undefined : into));
   // Columns the layers have no field for become fields: numbers when every value is one, lists otherwise.
   for (const name of new Set(where)) {
     if (name === undefined) continue;
