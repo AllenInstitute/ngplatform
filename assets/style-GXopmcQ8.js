@@ -21,6 +21,7 @@ import{g as x,h as g,p as c,i as f}from"./voxels-tXmgS9Zv.js";function s(a){retu
 .an-grid2 .an-inline select { width: auto; flex: none; }
 .an-num { height: 24px; padding: 0 4px; font: 12px/1 var(--mono); min-width: 0; width: 64px; }
 .an-tools { align-self: start; }
+.an-tools button[aria-pressed="true"] { color: var(--accent-ink); background: var(--accent); }
 .an-table-wrap { overflow-x: auto; }
 .an-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .an-table th { text-align: left; color: var(--faint); font-weight: 500; padding: 2px 4px; white-space: nowrap; }
