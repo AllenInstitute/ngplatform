@@ -9,9 +9,11 @@
  *     serveVirtualStores((file) => openMyFormat(file));
  *
  * A store answers a key ("zarr.json", "0/c/0/1/2") with its bytes, or
- * undefined when it has no such key.
+ * undefined when it has no such key.  Keys under `zyx/` are answered for
+ * every store: an image's axes put in the order z, y, x (../virtual/images/zyx.ts).
  */
 import { answer, type Range, type VirtualStore } from "../virtual/images/store.js";
+import { withZyxView, ZYX_PREFIX } from "../virtual/images/zyx.js";
 
 export { answer, blobSource, type ByteSource, jsonBytes, Lru, type Range, type VirtualStore } from "../virtual/images/store.js";
 
@@ -52,6 +54,12 @@ export const OPENING_WAIT_MS = 45_000;
  */
 export function serveVirtualStores(open: (file: File, related: Record<string, File>, progress: (fraction: number) => void) => Promise<VirtualStore>): void {
   const stores = new Map<string, Promise<VirtualStore>>();
+  const zyxViews = new WeakMap<VirtualStore, VirtualStore>();
+  const zyxOf = (store: VirtualStore) => {
+    let view = zyxViews.get(store);
+    if (view === undefined) zyxViews.set(store, (view = withZyxView(store)));
+    return view;
+  };
   const opened = new Set<Promise<VirtualStore>>();
   const progressOf = new Map<Promise<VirtualStore>, () => number>();
   const storeFor = (request: VirtualRequest) => {
@@ -120,7 +128,8 @@ export function serveVirtualStores(open: (file: File, related: Record<string, Fi
             return;
           }
         }
-        const reply = await answer(await pending, request.key, request.range, request.head ?? false);
+        const store = await pending;
+        const reply = await answer(request.key.startsWith(ZYX_PREFIX) ? zyxOf(store) : store, request.key, request.range, request.head ?? false);
         port.postMessage(reply, reply.body ? [reply.body] : []);
       } catch (e) {
         port.postMessage({ status: 500, message: `${request.file.name}: ${e instanceof Error ? e.message : String(e)}` });

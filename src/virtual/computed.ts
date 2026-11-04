@@ -19,6 +19,7 @@
 import type { GoogleTokenTable } from "../core/sign_in_rules.js";
 import type { Engine } from "chunkmirage-web/engine";
 import { route } from "chunkmirage-web/routes";
+import { ZYX_PREFIX } from "./images/zyx.js";
 import type { Ask, PipelineView as EnginePipeline } from "chunkmirage-web/types";
 import { ChainWarp, FieldWarp, fitTps, mmPerUnit, type Tps, type Vec3, type Warp, warpChunk } from "./warp.js";
 
@@ -229,6 +230,8 @@ export class ComputedImages {
   /** Pipelines served, by their code: the engine's view name. */
   private served = new Map<string, Promise<string>>();
   private listeners = new Set<() => void>();
+  /** Views of a file on this computer read through its z, y, x view: that view's group metadata. */
+  private placed = new Map<string, unknown>();
   private message = "";
   private started?: Engine;
 
@@ -318,6 +321,12 @@ export class ComputedImages {
         if (spec.warp !== undefined) {
           await this.serveWarp(name, view[name]);
           return name;
+        }
+        // A file on this computer read as an image (NIfTI, MGH, NumPy, TIFF): its axes in the order z, y, x.
+        const zyx = await zyxSource(view[name].source, this.base);
+        if (zyx !== undefined) {
+          view[name].source = zyx.source;
+          this.placed.set(name, zyx.group);
         }
         try {
           await add(await this.start(), view);
@@ -420,6 +429,7 @@ export class ComputedImages {
     this.started = undefined;
     this.engine = undefined;
     this.served.clear();
+    this.placed.clear();
   }
 
   private async reply(ask: Ask, port: MessagePort): Promise<void> {
@@ -428,7 +438,25 @@ export class ComputedImages {
     try {
       const view = await this.view(code);
       const engine = await this.start();
-      await (engine as unknown as Replier).reply({ ...ask, path: `/virtual/${engine.page}/${view}/${rest.join("/")}` }, port);
+      const relayed = { ...ask, path: `/virtual/${engine.page}/${view}/${rest.join("/")}` };
+      const placed = this.placed.get(view);
+      if (placed !== undefined && rest.join("/") === "zarr.json") {
+        // The group's metadata: placed by the source's own transforms (its affine to the world).
+        const answer = await new Promise<{ status: number; body?: string | ArrayBuffer; type?: string } | null>((resolve) => {
+          const channel = new MessageChannel();
+          channel.port1.onmessage = (e) => {
+            channel.port1.close();
+            resolve(e.data);
+          };
+          void (engine as unknown as Replier).reply(relayed, channel.port2);
+        });
+        if (answer?.status === 200 && answer.body !== undefined) {
+          const text = typeof answer.body === "string" ? answer.body : new TextDecoder().decode(answer.body);
+          port.postMessage({ status: 200, body: JSON.stringify(placeLike(JSON.parse(text), placed)), type: "application/json" });
+        } else port.postMessage(answer);
+        return;
+      }
+      await (engine as unknown as Replier).reply(relayed, port);
     } catch (e) {
       const refused = e instanceof Refused;
       port.postMessage({ status: refused ? 403 : 500, body: (e as Error).message ?? String(e), type: "text/plain" });
@@ -451,4 +479,70 @@ function add(engine: Engine, views: Parameters<Engine["add"]>[0]): Promise<void>
 /** Whether the engine still answers relayed requests the way this module passes them on. */
 export function engineReplies(engine: object): boolean {
   return typeof (engine as Partial<Replier>).reply === "function";
+}
+
+/**
+ * A source on this computer (under <app>/local/) that local data reads as
+ * an image: its z, y, x view (./images/zyx.ts) and that view's group
+ * metadata; undefined for anything else (a Zarr folder, a URL).
+ */
+async function zyxSource(source: string, base: string): Promise<{ source: string; group: unknown } | undefined> {
+  if (!source.startsWith(`${base}local/`)) return undefined;
+  const view = `${source.replace(/\/+$/, "")}/${ZYX_PREFIX.replace(/\/$/, "")}`;
+  const response = await fetch(`${view}/zarr.json`).catch(() => undefined);
+  if (!response?.ok) return undefined;
+  const group = await response.json().catch(() => undefined);
+  return group === undefined ? undefined : { source: view, group };
+}
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/**
+ * The engine's group metadata for a view (OME-Zarr 0.5: the source's axes,
+ * each level's scale and translation in the source's array voxels) placed
+ * as the source is: OME-Zarr 0.6, those levels in the source's array
+ * system, and the source's affine from it to the world, reduced to the
+ * output's axes (an axis pinned by `select` drops out, a channel axis the
+ * ops add maps to itself).  A source with no affine to a world system (an
+ * OME-Zarr 0.4 or 0.5 image) is placed by the engine's metadata as it is.
+ */
+export function placeLike(output: any, source: any): any {
+  const out = output?.attributes?.ome?.multiscales?.[0];
+  const ms = source?.attributes?.ome?.multiscales?.[0];
+  const first = (ms?.datasets?.[0]?.coordinateTransformations ?? []).find((t: any) => t?.output);
+  const system = typeof first?.output === "string" ? first.output : first?.output?.name;
+  const arraySystem = (ms?.coordinateSystems ?? []).find((s: any) => s.name === system);
+  const toWorld = (ms?.coordinateTransformations ?? []).find((t: any) => t?.input === system && t?.type === "affine" && Array.isArray(t.affine?.[0]));
+  const world = (ms?.coordinateSystems ?? []).find((s: any) => s.name === toWorld?.output);
+  if (out === undefined || arraySystem === undefined || toWorld === undefined || world === undefined) return output;
+  const nameOf = (a: any) => String(typeof a === "string" ? a : a?.name);
+  const inNames: string[] = arraySystem.axes.map(nameOf);
+  const outAxes: any[] = out.axes ?? [];
+  const outNames = outAxes.map(nameOf);
+  const m: number[][] = toWorld.affine;
+  const n = inNames.length;
+  // World rows: space always; another axis (t) only where the output keeps it.
+  const rows: { axis: any; row: number[] }[] = [];
+  world.axes.forEach((axis: any, r: number) => {
+    if (axis?.type !== "space" && !outNames.includes(nameOf(axis))) return;
+    rows.push({ axis, row: [...outNames.map((o) => (inNames.includes(o) ? m[r][inNames.indexOf(o)] : 0)), m[r][n]] });
+  });
+  // An axis of the output the source does not have (a channel the ops add): itself.
+  outNames.forEach((o, c) => {
+    if (inNames.includes(o) || rows.some((r) => nameOf(r.axis) === o)) return;
+    rows.unshift({ axis: outAxes[c], row: [...outNames.map((_, k) => (k === c ? 1 : 0)), 0] });
+  });
+  const worldName = String(world.name);
+  const multiscale = {
+    ...(out.name ? { name: out.name } : {}),
+    coordinateSystems: [
+      { name: worldName, axes: rows.map((r) => r.axis) },
+      { name: "array", axes: outAxes.map((a, c) => (inNames.includes(outNames[c]) ? arraySystem.axes[inNames.indexOf(outNames[c])] : a)) },
+    ],
+    datasets: (out.datasets ?? []).map((d: any) => ({
+      path: d.path,
+      coordinateTransformations: [{ type: "sequence", input: String(d.path), output: "array", transformations: d.coordinateTransformations ?? [] }],
+    })),
+    coordinateTransformations: [{ type: "affine", affine: rows.map((r) => r.row), input: "array", output: worldName }],
+  };
+  return { ...output, attributes: { ...output.attributes, ome: { ...output.attributes.ome, version: "0.6", multiscales: [multiscale] } } };
 }
