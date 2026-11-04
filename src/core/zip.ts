@@ -38,8 +38,8 @@ export function zipStore(entries: ZipEntry[], date = new Date(), tooLarge = "too
   const day = (((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate()) & 0xffff;
   for (const { name, data } of entries) {
     const nameBytes = new TextEncoder().encode(name);
-    const crc = crc32(data);
     if (data.length >= 0xffffffff || offset + 30 + nameBytes.length + data.length > 0xffffffff) throw new Error(tooLarge);
+    const crc = crc32(data);
     const local = new DataView(new ArrayBuffer(30));
     local.setUint32(0, 0x04034b50, true);
     local.setUint16(4, 20, true); // version needed

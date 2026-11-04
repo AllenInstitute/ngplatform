@@ -452,3 +452,38 @@ describe("the history tree", () => {
     expect(other.historyTree().map((n) => n.label)).toEqual(["Opened"]);
   });
 });
+
+describe("renaming and redo", () => {
+  it("renameLayer gives the name the layer got, made unique as Neuroglancer makes it", () => {
+    class UniqueNames extends FakeEngine {
+      renameLayer(name: string, newName: string) {
+        let unique = newName;
+        for (let i = 1; this.layers().some((l) => l.name === unique); ++i) unique = `${newName}${i}`;
+        return super.renameLayer(name, unique);
+      }
+    }
+    const engine = new UniqueNames();
+    const store = new WorkspaceStore(engine, { framed: false, log: () => {}, settleDelay: 1, writeUrl: () => {} });
+    store.open({ ng: { layers: [{ name: "a", type: "image", source: IMAGE }, { name: "b", type: "image", source: IMAGE }] }, app: {} }, "test");
+    expect(store.renameLayer("b", "a")).toBe("a1");
+    expect(store.renameLayer("a1", "  c  ")).toBe("c");
+    expect(store.renameLayer("c", "   ")).toBe("c");
+    expect(engine.layers().map((l) => l.name)).toEqual(["a", "c"]);
+  });
+
+  it("Redo keeps an edit still settling (it is recorded first, and then there is nothing to redo)", () => {
+    const engine = new FakeEngine();
+    const store = new WorkspaceStore(engine, { framed: false, log: () => {}, settleDelay: 60_000, writeUrl: () => {} });
+    store.open({ ng: {}, app: {} }, "test");
+    store.noteInput();
+    store.addDataset({ source: IMAGE, name: "img" });
+    store.settle();
+    expect(store.undo()).toBe(true);
+    expect(engine.layers()).toEqual([]);
+    // An edit, not yet settled, then Redo at once.
+    store.noteInput();
+    engine.addLayer({ name: "drawn", type: "annotation", source: "local://annotations" });
+    expect(store.redo()).toBe(false);
+    expect(engine.layers().map((l) => l.name)).toEqual(["drawn"]);
+  });
+});
