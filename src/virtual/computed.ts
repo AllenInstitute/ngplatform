@@ -320,12 +320,12 @@ export class ComputedImages {
           return name;
         }
         try {
-          await (await this.start()).add(view);
+          await add(await this.start(), view);
         } catch (e) {
           // Python that loaded without its packages (a CDN hiccup): a fresh engine, once.
           if (!/No module named|ModuleNotFoundError|loadPackage|pyodide/i.test(String((e as Error)?.message ?? e))) throw e;
           this.restart();
-          await (await this.start()).add(view);
+          await add(await this.start(), view);
         }
         return name;
       })();
@@ -345,7 +345,7 @@ export class ComputedImages {
     const warp = spec.warp!;
     const engine = await this.start();
     const from = `${name}s`;
-    await engine.add({ [from]: { source: spec.source, chunk: spec.chunk, ...(spec.select ? { select: spec.select } : {}) } });
+    await add(engine, { [from]: { source: spec.source, chunk: spec.chunk, ...(spec.select ? { select: spec.select } : {}) } });
     const info = engine.sources[from];
     const xyz = info.axes.map((a) => ["x", "y", "z"].indexOf(a.name));
     if (xyz.some((k) => k === -1)) throw new Error(`a warp needs an image with x, y and z axes, not ${info.axes.map((a) => a.name).join(", ")}`);
@@ -382,7 +382,7 @@ export class ComputedImages {
     };
     const { displacement } = fieldAxes(await metadata());
     const views = [0, 1, 2].map((k) => `${name}f${k}`);
-    await engine.add(Object.fromEntries(views.map((v, k) => [v, { source: url, chunk: [64, 64, 64], select: { [displacement]: k } }])));
+    await add(engine, Object.fromEntries(views.map((v, k) => [v, { source: url, chunk: [64, 64, 64], select: { [displacement]: k } }])));
     const info = engine.sources[views[0]];
     const level = info.levels[0];
     const xyz = info.axes.map((a) => ["x", "y", "z"].indexOf(a.name));
@@ -437,6 +437,16 @@ export class ComputedImages {
 }
 
 class Refused extends Error {}
+
+/**
+ * Serves `views` on `engine`. The engine chains its `ready` on the plan with no handler of
+ * its own, so a failed plan, which the caller sees here, would also be an unhandled rejection.
+ */
+function add(engine: Engine, views: Parameters<Engine["add"]>[0]): Promise<void> {
+  const added = engine.add(views);
+  engine.ready.catch(() => {});
+  return added;
+}
 
 /** Whether the engine still answers relayed requests the way this module passes them on. */
 export function engineReplies(engine: object): boolean {
