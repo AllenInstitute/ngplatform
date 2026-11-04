@@ -19,6 +19,7 @@ all, and the keyboard icon lists the keyboard and mouse bindings.
 | **Share** | Copy a link to the whole workspace, copy this scene as a Neuroglancer link or JSON state, or open it in this site's plain Neuroglancer page. |
 | **Neuroglancer** | Open this scene in Google's Neuroglancer in a new tab. It says so when the scene holds data plain Neuroglancer cannot read (Zarr Vectors, files on this computer). |
 | **Undo / Redo** | Undo any change to the workspace: layers, positions, settings, plugin state. |
+| **⋯** (beside redo) | The history of changes, as a tree: go to any earlier state, including ones on branches left by going back and changing something else. See [History of changes](#history-of-changes). |
 | **Scene tabs** | One tab per scene. **+** adds a scene; each tab has a close button (closing the last leaves a blank scene). Rename, duplicate and delete scenes from the command palette. Each scene works as a viewer of its own: the plugin tabs (Filtering's groups, Annotations, Luxar, Volume and the rest) show that scene's own; a new scene starts with none, a duplicated one with a copy. |
 | Camera icon | **Capture**: a picture of the views (magnified, borders trimmed), or a movie (a sweep through slices or time, or a turn of the 3-D view) as GIF, WebM, MP4 or PNG frames; and Neuroglancer's own screenshot dialog. Labels from the Annotations plugin are painted in. See [Capture](#capture). |
 | Gear icon | View settings, reload the scene's layers, or a hard reset that reloads everything fresh. |
@@ -50,6 +51,56 @@ movie*, open one dialog:
 The job runs in **Jobs** (bottom dock), where it can be cancelled. The view
 is put back as it was afterwards, and a capture adds nothing to undo.
 Labels from the Labels plugin are painted into every frame.
+
+### History of changes
+
+Every change to the workspace is a step: a layer's settings, the position,
+the layout, scenes, datasets, plugin state. Steps are kept as a tree, so
+nothing is lost by going back: a change made after going back starts a new
+branch, and the steps that were undone stay as another branch.
+
+- **Undo** (++ctrl+z++) goes to the step before. **Redo**
+  (++ctrl+shift+z++) goes forward along the branch you were on last (the
+  branch you came back from, or the newest change made), as Vim's undo tree
+  does.
+- ++ctrl+alt+z++ and ++ctrl+alt+shift+z++ go to the previous or next branch
+  at the nearest fork above the current step (branches in the order they
+  were made), landing on that branch's first step; redo then follows it.
+- The **⋯** beside redo (or *History of changes…* in the command palette)
+  shows the tree, newest at the top: the path from opening the workspace
+  to the state shown now (marked ●, in bold), then what redo would bring
+  back (struck through). Where other changes were made from a step on it, a
+  row **↳ 3 other changes** sits just above that step; choosing it (or →)
+  opens those branches, indented, and ← closes them. Choosing any step
+  goes to it and restores everything as it was then: scenes, datasets,
+  layers, plugin state. The view stays open and follows, until ++escape++ or
+  a click elsewhere.
+- Each step says what changed, and in which scene once the workspace has
+  more than one: "Scene 2 · SRB 2026a: colour map viridis". A dataset the
+  words do not name (a change to a second view of it, say) follows after a
+  dot. Hover a step for its scene, datasets and date.
+- The menu at the top shows only the steps made in one scene, or to one
+  dataset, from every branch.
+- Keys in the view: ++arrow-up++ ++arrow-down++ move, ++home++ ++end++ go to
+  the ends, ++enter++ or ++space++ chooses.
+
+What a plugin does on your behalf (a track group's layer, a time series
+playing) joins the current step rather than making its own, and so does
+whatever follows opening before your first click or key. Segmentation's
+strokes undo in turn with the workspace's steps, by time; they
+are the painted volume's own, not steps in this tree, so going to another
+branch leaves painted voxels as they are.
+
+**Where it is kept.** The link in the address bar, and any link you share,
+holds only the current state: links stay small. The tree is kept in this
+browser (its IndexedDB storage), filed under the link the page last showed.
+Reloading the page, or opening the same link in this browser later, brings
+the tree back; another browser, or a link edited by hand, starts a new
+one. The trees of the last 12 workspaces are kept. A tree holds up to 400
+steps and 32 MB; past either, the oldest step that is not on the current
+path goes first (a branch's end, or the very first step). Steps store what
+they share with other steps once, so 400 steps of the default workspace
+take about 0.1 MB rather than 2.3 MB.
 
 ## 2. Left dock
 

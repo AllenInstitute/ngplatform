@@ -17,7 +17,7 @@ when it runs out. Proofreading and axon segmentation last.
 - [ ] A3. Zarr Vectors at scale in the browser: tractograms binned by streaming in bounded memory (capped spill), meshes in spatial cells with simplified levels; past the browser's limits, the app offers the local runner; aim: a 20 GB tractogram usable for interactive fibre tracing (regions, groups) with jobs to write the results.
 
 **Wave B**
-- [ ] B1. History as a provenance tree (branches kept after going back, a tree to jump in, changes named by scene and dataset).
+- [x] B1. (Done: branches kept, Vim's redo rule, Ctrl+Alt+Z between branches, the tree in the ⋯ view with a scene/dataset filter, 400 steps stored as shared pieces, kept in IndexedDB beside the link.) History as a provenance tree (branches kept after going back, a tree to jump in, changes named by scene and dataset).
 - [ ] B2. Editing a large segmentation in place (copy-on-write).
 - [ ] B3. AI quick select (a SAM-style model in the page, ONNX Runtime Web).
 
@@ -79,7 +79,7 @@ then the Luxar plugin and drawing labels by hand.
 - [x] Views the right way up for anatomy: Neuroglancer's panels put +y and +z down, so RAS data showed axial anterior-down, coronal upside down, sagittal on its side. Now radiological (as Freeview) for x, y, z in mm or µm, Neuroglancer's for EM; Settings → Which way up the views are. Needs the fork's `setNamedPanelOrientation` (FORK_SHA bumped). Data placement itself was right (NIfTI/MGH against nibabel and FreeSurfer, .trk against nibabel).
 - [x] A `working` branch for review; main only after Andrew's QC.
 - [x] A history menu beside undo and redo (the ⋯ button, or *History of changes…* in the palette): every change in the workspace, newest at the top, with a few words saying what it was (worked out from the two states: "Layout: 3d", "Hid SRB 2026a", "Track filtering") and the time; undone changes greyed until redone; choosing a row goes back or forward to it. Up to 200 changes, scrollable. What a plugin does on the user's behalf (a track group's layer, its regions' annotations) and what follows opening before the user's first input join the current step instead of adding their own.
-- [ ] The history as a provenance tree: keep branches when a change is made after going back, show them, and name changes per scene and per dataset. To flesh out with Andrew first.
+- [x] The history as a provenance tree: a change made after going back starts a branch and the undone steps stay as another; undo to the step before, redo along the branch last visited (Vim's rule), Ctrl+Alt+Z / Ctrl+Alt+Shift+Z to the previous / next branch at the nearest fork. The ⋯ view shows the current path with other branches folded ("↳ 3 other changes"), each step named by scene and dataset ("Scene 2 · SRB 2026a: colour map viridis"), a filter by scene or dataset, keyboard navigation; any step can be gone to. Up to 400 steps, the oldest off the current path pruned first; states stored once per shared piece. Kept in this browser's IndexedDB, filed under the link (the last 12 workspaces), not in the link. Left: naming a step by hand, exporting the tree (as provenance for a figure), and a two-tab race (the tree saved last for a link wins).
 - [x] The 3-D view's feel: it keeps turning after a drag, slowing down (src/engine/momentum.ts); a touch stops it; a palette command turns it off. Panning and zoom momentum: not yet.
 
 ### A. Local data

@@ -68,7 +68,9 @@ hidden, the view moved, a segment hidden), so strokes and other changes
 undo as one history; ++ctrl+y++ (or ++ctrl+shift+z++) redoes them in the
 order they were undone. Hover **Undo** on the bar to see what it will
 take back. Merge, Delete, fills, quick select and interpolation are
-strokes too.
+strokes too. Strokes are the volume's own and are not in the workspace's
+history tree (the ⋯ beside redo): going to another branch there changes
+the workspace's state and leaves the painted voxels as they are.
 
 **Quick select** shows its mask before painting it, as WebKnossos does:
 check it, then ++enter++ paints it and ++escape++ drops it; a new box or
