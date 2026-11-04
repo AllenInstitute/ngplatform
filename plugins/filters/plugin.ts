@@ -7,7 +7,7 @@
  */
 import type { PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { FILTERS_PANEL } from "./manifest.js";
-import { describe, FRANGI, makesLabels, MEDIAN, newStep, opsOf, type Step, STEP_KINDS, type StepKind } from "./pipeline.js";
+import { blankSetting, describe, FRANGI, makesLabels, MEDIAN, newStep, opsOf, type Step, STEP_KINDS, type StepKind } from "./pipeline.js";
 
 type Child = Node | string | null | undefined | false;
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
@@ -69,15 +69,23 @@ class Filters {
   private async add(): Promise<void> {
     const source = this.sourceOf(this.image);
     if (source === undefined || this.steps.length === 0) return;
+    const missing = this.steps.findIndex((s) => blankSetting(s));
+    if (missing !== -1) {
+      this.note = `Step ${missing + 1} has an empty setting: fill it in, then add the view.`;
+      this.update?.();
+      return;
+    }
     try {
       const url = await this.ctx.workspace.computed.url({ source, ops: opsOf(this.steps), chunk: CHUNK });
       const labels = makesLabels(this.steps);
-      const name = `${this.image} (${this.steps.map(describe).join(", ")})`;
-      this.ctx.workspace.addDataset({ source: url, name, kind: labels ? "segmentation" : "image" });
+      const asked = `${this.image} (${this.steps.map(describe).join(", ")})`;
+      const id = this.ctx.workspace.addDataset({ source: url, name: asked, kind: labels ? "segmentation" : "image" });
+      // The name may have been made unique ("… 2"): style the layer just added, not an older one.
+      const name = this.ctx.workspace.sceneDatasets().find((d) => d.id === id)?.layers[0]?.name ?? asked;
       this.display(name);
-      this.note = `Added ${this.image}, filtered: computed as you view it.`;
+      this.note = `Added “${name}”.`;
     } catch (e) {
-      this.note = `This image could not be filtered: ${(e as Error).message}`;
+      this.note = `Could not filter ${this.image}: ${(e as Error).message}. Check the image loads, then try again.`;
     }
     this.update?.();
   }
@@ -120,10 +128,10 @@ class Filters {
           ? [
               number("Sigma from (voxels)", s.sigmaLow, (v) => (s.sigmaLow = v), "0.5", "0.5"),
               number("Sigma to (voxels)", s.sigmaHigh, (v) => (s.sigmaHigh = v), "0.5", "0.5"),
-              el("label", { class: "field check" }, el("input", { type: "checkbox", checked: s.bright, onchange: (e: Event) => (s.bright = (e.target as HTMLInputElement).checked) }), el("span", {}, "Bright tubes (clear for dark ones)")),
+              el("label", { class: "field check" }, el("input", { type: "checkbox", checked: s.bright, onchange: (e: Event) => (s.bright = (e.target as HTMLInputElement).checked) }), el("span", { title: "Clear it for dark tubes" }, "Bright tubes")),
             ]
           : s.kind === "threshold"
-            ? [number("From (image units)", s.low, (v) => (s.low = v), "any", ""), number("Below (empty: no limit)", s.high, (v) => (s.high = v), "any", "")]
+            ? [number("From (image units)", s.low, (v) => (s.low = v), "any", ""), number("Below (optional)", s.high, (v) => (s.high = v), "any", "")]
             : s.kind === "morphology"
               ? [
                   el(
@@ -143,7 +151,7 @@ class Filters {
                     el(
                       "label",
                       { class: "fl-code" },
-                      el("span", {}, "Python: apply(block) on each block"),
+                      el("span", { title: "apply(block) runs on each block; #halo and #output lines set its context and what it returns" }, "Python code"),
                       el("textarea", { class: "text-input fl-code-text", spellcheck: "false", rows: "10", oninput: (e: Event) => (s.code = (e.target as HTMLTextAreaElement).value) }, s.code),
                     ),
                   ]
@@ -191,6 +199,10 @@ class Filters {
       };
       this.updateStatus = showStatus;
       showStatus();
+      if (this.images.length === 0) {
+        host.replaceChildren(el("div", { class: "fl" }, el("p", { class: "note" }, "Add an image to filter it.")));
+        return;
+      }
       host.replaceChildren(
         el(
           "div",

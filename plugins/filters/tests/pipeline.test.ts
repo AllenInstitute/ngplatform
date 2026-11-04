@@ -1,6 +1,6 @@
 /** The Filters tab's steps as chunkmirage ops. */
 import { describe, expect, it } from "vitest";
-import { FRANGI, makesLabels, MEDIAN, newStep, opOf, opsOf } from "../pipeline.js";
+import { blankSetting, FRANGI, makesLabels, MEDIAN, newStep, opOf, opsOf } from "../pipeline.js";
 
 const halo = (code: unknown) => Number(/^#halo (\d+)$/m.exec(String(code))?.[1]);
 
@@ -27,6 +27,23 @@ describe("filter steps", () => {
     expect(makesLabels([newStep("threshold"), newStep("morphology")])).toBe(true);
     expect(makesLabels([newStep("threshold"), newStep("gaussian")])).toBe(false);
     expect(makesLabels([newStep("median")])).toBe(false);
+  });
+
+  it("make labels when a last python step says #output label or mask", () => {
+    const python = (code: string) => ({ ...newStep("python"), code });
+    expect(makesLabels([python("#halo 1\n#output uint32 label\ndef apply(b):\n    return b\n")])).toBe(true);
+    expect(makesLabels([python("#output mask\n")])).toBe(true);
+    expect(makesLabels([newStep("threshold"), python("#output float32 image\n")])).toBe(false);
+    expect(makesLabels([newStep("threshold"), python("def apply(b):\n    return b\n")])).toBe(true);
+    expect(makesLabels([newStep("python")])).toBe(false);
+  });
+
+  it("say when a setting a step needs is empty", () => {
+    expect(blankSetting({ ...newStep("gaussian"), sigma: Number.NaN })).toBe(true);
+    expect(blankSetting({ ...newStep("threshold"), high: Number.NaN })).toBe(false);
+    expect(blankSetting({ ...newStep("threshold"), low: Number.NaN })).toBe(true);
+    expect(blankSetting({ ...newStep("morphology"), radius: Number.NaN })).toBe(true);
+    expect(blankSetting(newStep("frangi"))).toBe(false);
   });
 });
 
