@@ -1,6 +1,7 @@
 /**
- * A zip archive of files stored as they are (PNGs are compressed already):
- * enough for a folder of movie frames in one download.
+ * A zip archive of files stored as they are (PNGs and chunks are
+ * compressed already): movie frames, or an OME-Zarr folder, in one
+ * download.  Under 4 GB and 65,535 files (no Zip64).
  */
 
 const CRC_TABLE = (() => {
@@ -24,8 +25,12 @@ export interface ZipEntry {
   data: Uint8Array;
 }
 
-/** The archive's bytes, as a Blob's parts (no copy of the files' data). */
-export function zipStore(entries: ZipEntry[], date = new Date()): BlobPart[] {
+/**
+ * The archive's bytes, as a Blob's parts (no copy of the files' data).
+ * `tooLarge` is the error past 4 GB.
+ */
+export function zipStore(entries: ZipEntry[], date = new Date(), tooLarge = "too large for a zip (over 4 GB)"): BlobPart[] {
+  if (entries.length > 0xffff) throw new Error("too many files for a zip (over 65,535)");
   const parts: BlobPart[] = [];
   const central: Uint8Array[] = [];
   let offset = 0;
@@ -33,8 +38,8 @@ export function zipStore(entries: ZipEntry[], date = new Date()): BlobPart[] {
   const day = (((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate()) & 0xffff;
   for (const { name, data } of entries) {
     const nameBytes = new TextEncoder().encode(name);
+    if (data.length >= 0xffffffff || offset + 30 + nameBytes.length + data.length > 0xffffffff) throw new Error(tooLarge);
     const crc = crc32(data);
-    if (data.length >= 0xffffffff || offset >= 0xffffffff) throw new Error("The frames are too large for one zip file; save them to a folder instead.");
     const local = new DataView(new ArrayBuffer(30));
     local.setUint32(0, 0x04034b50, true);
     local.setUint16(4, 20, true); // version needed

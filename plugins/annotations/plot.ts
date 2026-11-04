@@ -3,26 +3,10 @@
  * with a few round ticks, and a crosshair that reads out the value under
  * the pointer.  Plain SVG, sized to its container's width.
  */
-import { el, fmt } from "./ui.js";
+import { el, svgEl } from "@ngplatform/sdk/dom";
+import { ticks } from "@ngplatform/sdk/format";
+import { fmt } from "./ui.js";
 
-const NS = "http://www.w3.org/2000/svg";
-
-function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number> = {}): SVGElementTagNameMap[K] {
-  const e = document.createElementNS(NS, tag);
-  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
-  return e;
-}
-
-/** About `count` round tick values covering [lo, hi]. */
-export function ticks(lo: number, hi: number, count = 4): number[] {
-  if (!(hi > lo)) return [lo];
-  const raw = (hi - lo) / count;
-  const power = 10 ** Math.floor(Math.log10(raw));
-  const step = [1, 2, 5, 10].map((m) => m * power).find((s) => s >= raw) ?? raw;
-  const out: number[] = [];
-  for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) out.push(Number(v.toPrecision(12)));
-  return out;
-}
 
 export function linePlot(xs: ArrayLike<number>, ys: ArrayLike<number>, labels: { x: string; y: string }, width = 276, height = 150): HTMLElement {
   const pad = { left: 44, right: 8, top: 8, bottom: 26 };
@@ -39,20 +23,20 @@ export function linePlot(xs: ArrayLike<number>, ys: ArrayLike<number>, labels: {
   const x1 = xs[xs.length - 1] ?? 1;
   const sx = (x: number) => pad.left + ((x - x0) / (x1 - x0 || 1)) * w;
   const sy = (y: number) => pad.top + (1 - (y - lo) / (hi - lo)) * h;
-  const root = svg("svg", { viewBox: `0 0 ${width} ${height}`, class: "an-plot", role: "img", "aria-label": `${labels.y} against ${labels.x}` });
+  const root = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, class: "an-plot", role: "img", "aria-label": `${labels.y} against ${labels.x}` });
   for (const t of ticks(lo, hi)) {
-    root.append(svg("line", { x1: pad.left, x2: pad.left + w, y1: sy(t), y2: sy(t), class: "an-grid" }));
-    const label = svg("text", { x: pad.left - 4, y: sy(t) + 3, class: "an-tick", "text-anchor": "end" });
+    root.append(svgEl("line", { x1: pad.left, x2: pad.left + w, y1: sy(t), y2: sy(t), class: "an-grid" }));
+    const label = svgEl("text", { x: pad.left - 4, y: sy(t) + 3, class: "an-tick", "text-anchor": "end" });
     label.textContent = fmt(t, 3);
     root.append(label);
   }
   for (const t of ticks(x0, x1)) {
-    const label = svg("text", { x: sx(t), y: pad.top + h + 14, class: "an-tick", "text-anchor": "middle" });
+    const label = svgEl("text", { x: sx(t), y: pad.top + h + 14, class: "an-tick", "text-anchor": "middle" });
     label.textContent = fmt(t, 3);
     root.append(label);
   }
-  root.append(svg("line", { x1: pad.left, x2: pad.left + w, y1: pad.top + h, y2: pad.top + h, class: "an-axis" }));
-  const xLabel = svg("text", { x: pad.left + w, y: height - 1, class: "an-tick", "text-anchor": "end" });
+  root.append(svgEl("line", { x1: pad.left, x2: pad.left + w, y1: pad.top + h, y2: pad.top + h, class: "an-axis" }));
+  const xLabel = svgEl("text", { x: pad.left + w, y: height - 1, class: "an-tick", "text-anchor": "end" });
   xLabel.textContent = labels.x;
   root.append(xLabel);
   // Gaps (NaN, outside the image) break the line.
@@ -66,13 +50,13 @@ export function linePlot(xs: ArrayLike<number>, ys: ArrayLike<number>, labels: {
     d += `${pen ? "L" : "M"}${sx(xs[i]).toFixed(1)},${sy(ys[i]).toFixed(1)}`;
     pen = true;
   }
-  root.append(svg("path", { d, class: "an-line" }));
-  const cross = svg("line", { y1: pad.top, y2: pad.top + h, class: "an-cross", visibility: "hidden" });
-  const dot = svg("circle", { r: 4, class: "an-dot", visibility: "hidden" });
+  root.append(svgEl("path", { d, class: "an-line" }));
+  const cross = svgEl("line", { y1: pad.top, y2: pad.top + h, class: "an-cross", visibility: "hidden" });
+  const dot = svgEl("circle", { r: 4, class: "an-dot", visibility: "hidden" });
   root.append(cross, dot);
   const readout = el("div", { class: "an-readout" }, " ");
   // The hover target is the whole plot area, wider than the line.
-  const hit = svg("rect", { x: pad.left, y: pad.top, width: w, height: h, fill: "transparent" });
+  const hit = svgEl("rect", { x: pad.left, y: pad.top, width: w, height: h, fill: "transparent" });
   root.append(hit);
   hit.addEventListener("pointermove", (e) => {
     const box = root.getBoundingClientRect();

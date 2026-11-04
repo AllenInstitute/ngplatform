@@ -13,6 +13,7 @@
  * Each section is folded or open as the user left it (kept in this browser).
  */
 import type { Disposer, PlatformContext, PluginModule } from "@ngplatform/sdk";
+import { el } from "@ngplatform/sdk/dom";
 import { Annotate } from "./annotate.js";
 import { AnnotatePanel } from "./annotate_panel.js";
 import { Labels, STYLE as LABELS_STYLE } from "./labels.js";
@@ -21,7 +22,6 @@ import { Measure } from "./measure_panel.js";
 import { Statistics } from "./statistics_panel.js";
 import { STYLE } from "./style.js";
 import { TablePanel } from "./table_panel.js";
-import { el } from "./ui.js";
 import { Voxels } from "./voxels.js";
 
 interface Section {

@@ -9,6 +9,8 @@
  * the coarser stay until they arrive.
  */
 import type { Disposer, Frame3d, LayerInfo, PlatformContext, PluginModule, ViewPanelInfo } from "@ngplatform/sdk";
+import { el } from "@ngplatform/sdk/dom";
+import { mmText } from "@ngplatform/sdk/format";
 import { omeZarrUrl } from "../volume-view/sources.js";
 import { OrientationClient } from "./client.js";
 import { type GlyphOptions, type GlyphSet, type Normalise, type OrientationKind, voxelFrame, withFlips } from "./glyphs.js";
@@ -20,7 +22,7 @@ import { lmaxOf, SH_BASES, type ShBasis } from "./sh.js";
 import { describeVoxel } from "./readout.js";
 import { directionShader } from "./shader.js";
 import { TENSOR_ORDERS, type TensorOrder } from "./tensor.js";
-import { type Box, chooseLevel, layerMove, type SectionPlan, contains, invert4, planesAround, planSection, type Section, sectionOf, type Slab, type Vec3, applyAffine } from "./view.js";
+import { type Box, chooseLevel, layerMove, type SectionPlan, contains, invert4, planesAround, planSection, type Section, sectionOf, type Vec3, applyAffine } from "./view.js";
 
 export interface Saved {
   on: boolean;
@@ -114,21 +116,6 @@ export function resolveFrame(saved: Pick<Saved, "frame">, opened: Pick<Opened, "
   // MRtrix writes directions in world (scanner) space; DIPY and FSL along the voxel axes.
   return kind === "sh" && basis.startsWith("tournier") ? "world" : "voxel";
 }
-
-type Child = Node | string | null | undefined | false;
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === undefined || v === false) continue;
-    if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2), v as EventListener);
-    else if (k === "class") e.className = String(v);
-    else e.setAttribute(k, v === true ? "" : String(v));
-  }
-  for (const c of children) if (c !== null && c !== undefined && c !== false) e.append(c);
-  return e;
-}
-
-const mm = (v: number) => (v >= 1 ? `${+v.toFixed(2)} mm` : `${Math.round(v * 1000)} µm`);
 
 /** A glyph set drawn, and what it was read for. */
 interface Shown {
@@ -723,7 +710,7 @@ class Orientations {
     client.values(0, { lo: voxel, hi: voxel.map((v) => v + 1) as Vec3 }, controller.signal).then(
       (voxels) => {
         if (controller.signal.aborted || voxels.count === 0) return;
-        this.setCursorLine(`Voxel ${voxel.join(", ")} (${mm(level.voxelSize)}): ${describeVoxel(voxels.values, level.components, options)}`);
+        this.setCursorLine(`Voxel ${voxel.join(", ")} (${mmText(level.voxelSize)}): ${describeVoxel(voxels.values, level.components, options)}`);
       },
       () => {},
     );
@@ -918,7 +905,7 @@ class Orientations {
           : options.kind === "vector"
             ? "vectors"
             : `peaks (${Math.floor(level0.components / 3)} per voxel)`;
-    lines.push(`${opened.name}: ${what}; ${opened.levels.length} level${opened.levels.length === 1 ? "" : "s"}, ${opened.levels.map((l) => mm(l.voxelSize)).join(", ")}.`);
+    lines.push(`${opened.name}: ${what}; ${opened.levels.length} level${opened.levels.length === 1 ? "" : "s"}, ${opened.levels.map((l) => mmText(l.voxelSize)).join(", ")}.`);
     const coarsened = this.coarsened;
     if (opened.nifti !== undefined && opened.levels.length > 1 && coarsened !== undefined && coarsened.url === this.store) {
       lines.push(coarsened.tensor !== null ? "Coarser levels: log-Euclidean means of the tensors (made by the app)." : "Coarser levels: means of each component (made by the app).");
@@ -929,8 +916,8 @@ class Orientations {
       const name = key === "3d" ? "3-D view" : `View ${index}`;
       const shown = slot.shown;
       const parts: string[] = [];
-      if (shown) parts.push(`${shown.set.count} glyphs at ${mm(opened.levels[shown.level].voxelSize)}`);
-      if (slot.pending) parts.push(`reading ${mm(opened.levels[slot.pending.level].voxelSize)}…`);
+      if (shown) parts.push(`${shown.set.count} glyphs at ${mmText(opened.levels[shown.level].voxelSize)}`);
+      if (slot.pending) parts.push(`reading ${mmText(opened.levels[slot.pending.level].voxelSize)}…`);
       if (slot.note) parts.push(slot.note);
       if (parts.length > 0) lines.push(`${name}: ${parts.join("; ")}`);
     }

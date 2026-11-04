@@ -13,6 +13,7 @@
  * track-filtering group's) is still known (`visibleSegments`), and drawn.
  */
 import type { Disposer, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
+import { type Child, el } from "@ngplatform/sdk/dom";
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
 import { Momentum } from "./camera.js";
 import { storeOf } from "../volume-view/sources.js";
@@ -34,20 +35,6 @@ import {
 
 /** At most this long a layer's view of its previous store keeps drawing while the new one reads. */
 const OUTGOING_MS = 30_000;
-
-type Child = Node | string | null | undefined | false;
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === undefined || v === false) continue;
-    if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2), v as EventListener);
-    else if (k === "class") e.className = String(v);
-    else if (k === "value") (e as HTMLInputElement).value = String(v);
-    else e.setAttribute(k, v === true ? "" : String(v));
-  }
-  for (const c of children) if (c !== null && c !== undefined && c !== false) e.append(c);
-  return e;
-}
 
 /** The image a layer reads, when it is an image this plugin can draw as splats. */
 export function imageOfLayer(layer: LayerInfo): string | undefined {

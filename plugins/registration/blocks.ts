@@ -175,7 +175,6 @@ export async function saveInBlocks(
         signal.throwIfAborted();
         const lo = [bx, by, bz].map((b) => b * BLOCK);
         const hi = lo.map((v, k) => Math.min(grid.size[k], v + BLOCK));
-        const size = hi.map((v, k) => v - lo[k]) as [number, number, number];
         let block = await resampleBox(source, grid, move, method, lo, hi, toSource, margin);
         let origin = lo;
         for (let l = 0; ; ++l) {

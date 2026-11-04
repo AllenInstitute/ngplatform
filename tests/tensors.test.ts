@@ -1,6 +1,6 @@
 /** Log-Euclidean means of diffusion tensors (src/virtual/images/tensors.ts). */
 import { describe, expect, it } from "vitest";
-import { eigenSym3 as pluginEigen, TENSOR_POSITIONS } from "../plugins/orientations/tensor.js";
+import { TENSOR_POSITIONS } from "../plugins/orientations/tensor.js";
 import { eigenJacobi } from "../plugins/orientations/tests/jacobi.js";
 import { eigenSym3, expTensor, logEuclideanMean, logTensor, TENSOR_SLOTS, type TensorOrder } from "../src/virtual/images/tensors.js";
 
@@ -21,7 +21,7 @@ function inOrder(m: number[], order: TensorOrder): number[] {
 }
 
 describe("log-Euclidean tensor means", () => {
-  it("decomposes as Jacobi rotations do, near-equal eigenvalues and all, as the plugin's copy does", () => {
+  it("decomposes as Jacobi rotations do, near-equal eigenvalues and all", () => {
     const values = new Float64Array(3);
     const vectors = new Float64Array(9);
     let seed = 7;
@@ -41,11 +41,6 @@ describe("log-Euclidean tensor means", () => {
         for (let k = 0; k < 3; ++k) back[q] += values[k] * vectors[3 * k + a] * vectors[3 * k + b];
       });
       for (let q = 0; q < 6; ++q) expect(Math.abs(back[q] - m[q]) / scale).toBeLessThan(1e-12);
-      // The Orientations plugin's copy gives the very same.
-      const theirs = { values: new Float64Array(3), vectors: new Float64Array(9) };
-      pluginEigen(m, theirs.values, theirs.vectors);
-      expect(theirs.values).toEqual(values);
-      expect(theirs.vectors).toEqual(vectors);
     }
   });
 

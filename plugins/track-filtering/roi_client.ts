@@ -87,6 +87,21 @@ export class RoiEngine {
         }
       }
     };
+    // A worker that fails to start or dies (out of memory, say) answers nothing: every request fails, and so does opening.
+    this.worker.onerror = (event: ErrorEvent) => {
+      event.preventDefault();
+      const error = () => new Error(`the region reader stopped: ${event.message || "it could not start"}`);
+      failed(error());
+      for (const p of this.pending.values()) {
+        this.results.delete(p.key);
+        p.reject(error());
+      }
+      for (const p of this.pendingCurves.values()) p.reject(error());
+      for (const p of this.pendingCalls.values()) p.reject(error());
+      this.pending.clear();
+      this.pendingCurves.clear();
+      this.pendingCalls.clear();
+    };
     this.worker.postMessage({ type: "open", storeUrl });
   }
 

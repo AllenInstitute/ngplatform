@@ -59,7 +59,7 @@ describe("regions on a segmentation", () => {
 
 describe("regions on annotations", () => {
   const region = sphere([0, 0, 0], 10);
-  it("meets points, lines, boxes and ellipsoids", () => {
+  it("meets points, lines, polylines, boxes and ellipsoids", () => {
     expect(segmentMeets(region, [-20, 5, 0], [20, 5, 0])).toBe(true);
     expect(segmentMeets(region, [-20, 15, 0], [20, 15, 0])).toBe(false);
     expect(segmentMeets(box([0, 0, 0], [10, 10, 10]), [-20, 4, 4], [20, 4, 4])).toBe(true);
@@ -74,11 +74,14 @@ describe("regions on annotations", () => {
         { type: "ellipsoid", id: "e", center: [15, 0, 0], radii: [6, 6, 6] },
         { type: "axis_aligned_bounding_box", id: "b", pointA: [30, 30, 30], pointB: [20, 20, 20] },
         { type: "polyline", id: "skipped" },
+        // Its vertices all outside, its second segment through the sphere.
+        { type: "polyline", id: "pl", points: [[40, 40, 0], [40, -5, 0], [-40, 5, 0]] },
+        { type: "polyline", id: "pl-far", points: [[40, 40, 0], [40, -40, 0]] },
       ],
       [1, 1, 1],
     );
-    expect(geometry.map((a) => a.id)).toEqual(["p", "far", "l", "e", "b"]);
-    expect(geometry.filter((a) => annotationMeets(region, a)).map((a) => a.id)).toEqual(["p", "l", "e"]);
+    expect(geometry.map((a) => a.id)).toEqual(["p", "far", "l", "e", "b", "pl", "pl-far"]);
+    expect(geometry.filter((a) => annotationMeets(region, a)).map((a) => a.id)).toEqual(["p", "l", "e", "pl"]);
   });
 
   it("scales the viewer's coordinates to nanometres", () => {

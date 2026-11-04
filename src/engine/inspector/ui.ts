@@ -4,6 +4,7 @@
  * watchable values (so a change made anywhere, in the views, by undo or
  * by a link, shows here at once, and a change here applies at once).
  */
+import { type Attrs, type Child, el } from "../../sdk/dom.js";
 import { RefCounted, WatchableVisibilityPriority } from "../neuroglancer.js";
 
 /** One of Neuroglancer's watchable values, as far as the inspector needs it. */
@@ -73,20 +74,7 @@ export class Scope {
 
 // --------------------------------------------------------------- elements
 
-type Child = Node | string | null | undefined | false;
-type Attrs = Record<string, unknown>;
-
-export function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Attrs = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === undefined || v === false || v === null) continue;
-    if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2), v as EventListener);
-    else if (k === "class") e.className = String(v);
-    else e.setAttribute(k, v === true ? "" : String(v));
-  }
-  for (const c of children) if (c !== null && c !== undefined && c !== false) e.append(c);
-  return e;
-}
+export { el } from "../../sdk/dom.js";
 
 /** A titled group of rows. */
 export function section(title: string, ...children: Child[]): HTMLElement {

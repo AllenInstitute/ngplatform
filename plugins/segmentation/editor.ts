@@ -26,10 +26,12 @@
  * segmentation layer that reads it as an OME-Zarr store (./session.ts).
  */
 import type { Disposer, PlatformContext } from "@ngplatform/sdk";
+import { downloadBlob, el } from "@ngplatform/sdk/dom";
+import { layerSourceUrl } from "@ngplatform/sdk/sources";
 import { mmOf, toGlobal, toVoxel, voxelEdges } from "../annotations/geometry.js";
 import { space as spaceOf } from "../annotations/scene.js";
-import { download, el, fileName, fmt } from "../annotations/ui.js";
-import { type ImageLevel, layerStore, readableImages, sourceUrl, type Voxels } from "../annotations/voxels.js";
+import { fileName, fmt } from "../annotations/ui.js";
+import { type ImageLevel, layerStore, readableImages, type Voxels } from "../annotations/voxels.js";
 import { zipFiles } from "../registration/volume_io.js";
 import { storeOf } from "../volume-view/sources.js";
 import { CowVolume, type Original } from "./cow_volume.js";
@@ -754,7 +756,7 @@ export class Editor implements LabelVolumes {
    * The original is hidden and never written.
    */
   private async editInPlace(spec: NewLayer, store: string): Promise<boolean> {
-    const original: Original = { store, layer: spec.layer, source: sourceUrl(this.ctx.viewer.layerSpec(spec.layer)) };
+    const original: Original = { store, layer: spec.layer, source: layerSourceUrl(this.ctx.viewer.layerSpec(spec.layer)) };
     const volume = await this.overOriginal(original, spec.name);
     const session = await Session.open(this.ctx, this.voxels, volume, spec.name);
     await this.theirLabels(spec.layer, session);
@@ -1321,15 +1323,22 @@ export class Editor implements LabelVolumes {
       prompts = { box: p.box, points: p.points.map((x) => ({ ...x })) };
       this.previewOverlay.draw();
     }
-    const image: ImageBlock | undefined = await session.imageBox(lo, hi);
-    if (image === undefined) {
-      this.ctx.ui.toast("Quick select reads an image: choose one under “Image values”.");
+    // Enter or Escape from here on (while the image is read, or the mask computed) says now what to do with it.
+    this.decided = undefined;
+    const abort = (this.quickAbort = new AbortController());
+    let image: ImageBlock | undefined;
+    try {
+      image = await session.imageBox(lo, hi, abort.signal);
+    } catch (e) {
+      if (!abort.signal.aborted) this.ctx.ui.toast(`${method.title}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    if (abort.signal.aborted || this.decided === "cancel" || image === undefined) {
+      if (this.quickAbort === abort) this.quickAbort = undefined;
+      if (this.decided === "cancel") this.decided = undefined;
+      else if (image === undefined && !abort.signal.aborted) this.ctx.ui.toast("Quick select reads an image: choose one under “Image values”.");
       return;
     }
-    // Enter or Escape while the mask is computed says now what to do with it.
-    this.decided = undefined;
     this.ctx.context.set(SELECTING, true);
-    const abort = (this.quickAbort = new AbortController());
     let mask: Mask;
     try {
       // Escape (or Stop) ends the wait at once, even while the model downloads: the strokes queued behind it go on.
@@ -1683,7 +1692,7 @@ export class Editor implements LabelVolumes {
           await w.close();
           where = file.name;
         } else {
-          download(new Blob([bytes as BlobPart]), base + suffix);
+          downloadBlob(new Blob([bytes as BlobPart]), base + suffix);
           where = base + suffix;
         }
       }
@@ -1837,7 +1846,7 @@ async function writeFolder(files: Map<string, Uint8Array>, folder: FileSystemDir
     for (const [path, bytes] of files) await writeFile(root, path, bytes);
     return `${folder.name}/${name}`;
   }
-  download(zipFiles(new Map([...files].map(([p, b]) => [`${name}/${p}`, b]))), `${name}.zip`);
+  downloadBlob(zipFiles(new Map([...files].map(([p, b]) => [`${name}/${p}`, b]))), `${name}.zip`);
   return `${name}.zip`;
 }
 

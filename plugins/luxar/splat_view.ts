@@ -26,7 +26,7 @@ import { type GpuSplats, SplatRenderer } from "./splat_gl.js";
 import { SplatView2d } from "./splat_view2d.js";
 import { BLOCK, CELL, type SplatImageInfo } from "./splat_worker.js";
 import { COLORMAP_INDEX, type LayerStyle, rgbOf, TONE_INDEX } from "./style.js";
-import { apply, boxInFrustum, invertAffine, multiply } from "./view_math.js";
+import { apply, boxInFrustum, columnMajor, invertAffine, multiply } from "./view_math.js";
 
 /** GPU memory for one image's splats. */
 const GPU_BYTES = 512 * 1024 * 1024;
@@ -38,9 +38,6 @@ const SPLAT_DEPTH = 0.5;
 const GLOW = 0.3;
 /** Of a level's cells, about this share is taken to hold tissue, for the budget. */
 const FILL = 0.3;
-
-/** Row-major (as the volume view keeps matrices) to column-major. */
-const columnMajor = (m: ArrayLike<number>) => Float32Array.from({ length: 16 }, (_, i) => m[4 * (i % 4) + Math.floor(i / 4)]);
 
 export class SplatView {
   private readonly worker: Worker;
@@ -63,6 +60,8 @@ export class SplatView {
   private frame = 0;
   private selection: Selection | undefined;
   private problem: string | undefined;
+  /** The worker failed: no more blocks will come. */
+  private stopped = false;
   private readonly handle: { redraw(): void; dispose(): void };
   private readonly offs: Disposer[] = [];
   onStatus: (() => void) | undefined;
@@ -92,10 +91,18 @@ export class SplatView {
       this.view2d.schedule();
       this.onStatus?.();
     };
+    // A worker that fails to start or dies answers nothing: say so (the view counts as drawn, so screenshots do not wait).
+    this.worker.onerror = (event: ErrorEvent) => {
+      event.preventDefault();
+      this.error = `the splat reader stopped: ${event.message || "it could not start"}`;
+      this.stopped = true;
+      this.handle?.redraw();
+      this.onStatus?.();
+    };
     this.worker.postMessage({ type: "open", store: storeUrl });
     this.handle = ctx.viewer.draw3d(name, {
       draw: (frame) => this.draw(frame),
-      isReady: () => this.selection === undefined || this.selection.complete,
+      isReady: () => this.stopped || this.failedIn !== undefined || this.selection === undefined || this.selection.complete,
       afterSections: true,
       dispose: () => this.release(),
     });
@@ -164,7 +171,23 @@ export class SplatView {
     this.gl = undefined;
   }
 
+  /** Draws, unless drawing has failed in this GL context (a shader this GPU cannot compile, say): then the panel says why, and it is not tried every frame. */
   private draw(frame: Frame3d): void {
+    if (this.failedIn === frame.gl) return;
+    this.failedIn = undefined;
+    try {
+      this.drawNow(frame);
+    } catch (e) {
+      this.failedIn = frame.gl;
+      this.problem = `The 3-D view could not draw splats: ${(e as Error).message}`;
+      // Built again, whole, in the next context.
+      this.release();
+    }
+  }
+
+  private failedIn: WebGL2RenderingContext | undefined;
+
+  private drawNow(frame: Frame3d): void {
     const { gl } = frame;
     const info = this.info;
     if (info === undefined) return;
@@ -313,6 +336,7 @@ export class SplatView {
     this.handle.dispose();
     this.view2d.dispose();
     this.worker.terminate();
+    this.blocks.clear();
   }
 }
 

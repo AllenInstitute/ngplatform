@@ -7,6 +7,8 @@
  * levels are read by ./volume_worker.ts.
  */
 import type { Disposer, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
+import { el } from "@ngplatform/sdk/dom";
+import { mmText } from "@ngplatform/sdk/format";
 import { VOLUME_PANEL } from "./manifest.js";
 import { invert, multiply } from "./ome.js";
 import { displayOfRas, SolidDrawer } from "./solid.js";
@@ -54,21 +56,6 @@ export function readSaved(raw: unknown): Saved {
     fine: s.fine !== false,
   };
 }
-
-type Child = Node | string | null | undefined | false;
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === undefined || v === false) continue;
-    if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2), v as EventListener);
-    else if (k === "class") e.className = String(v);
-    else e.setAttribute(k, v === true ? "" : String(v));
-  }
-  for (const c of children) if (c !== null && c !== undefined && c !== false) e.append(c);
-  return e;
-}
-
-const mm = (v: number) => (v >= 1 ? `${+v.toFixed(2)} mm` : `${Math.round(v * 1000)} µm`);
 
 class VolumeRendering {
   private saved: Saved;
@@ -353,7 +340,7 @@ class VolumeRendering {
     const s = this.drawer.brickStatus();
     if (s === undefined || s.levels.length === 0) return undefined;
     const sizes = s.levels.map((i) => this.levels[i].voxelSize);
-    const range = sizes.length > 1 ? `${mm(Math.min(...sizes))} to ${mm(Math.max(...sizes))}` : mm(sizes[0]);
+    const range = sizes.length > 1 ? `${mmText(Math.min(...sizes))} to ${mmText(Math.max(...sizes))}` : mmText(sizes[0]);
     return `Bricks of ${range} near the camera and the cut: ${s.held} of ${s.slots} held${s.loading > 0 ? `, ${s.loading} loading` : ""}.`;
   }
 
@@ -493,7 +480,7 @@ class VolumeRendering {
     this.loaded = key;
     const started = performance.now();
     const read = async (l: LevelInfo, box: Region | undefined, what: string) => {
-      const label = mm(l.voxelSize);
+      const label = mmText(l.voxelSize);
       this.setStatus(`Loading ${what} (${label})…`);
       const { data, size } = await client.volume(this.levels.indexOf(l), (done, total) => this.setStatus(`Loading ${what} (${label}): ${done} of ${total} chunks`), controller.signal, box);
       // A box's voxel 0 is the level's voxel `lo`.
@@ -510,7 +497,7 @@ class VolumeRendering {
         this.contextLoaded = key;
         this.offerBricks();
         this.handle?.redraw();
-        this.setStatus(`Solid at ${mm(level.voxelSize)} (${v.size.join(" × ")} voxels), in ${((performance.now() - started) / 1000).toFixed(1)} s`);
+        this.setStatus(`Solid at ${mmText(level.voxelSize)} (${v.size.join(" × ")} voxels), in ${((performance.now() - started) / 1000).toFixed(1)} s`);
         return;
       }
       const context = this.contextLevel()!;
@@ -527,7 +514,7 @@ class VolumeRendering {
       if (controller.signal.aborted) return;
       this.drawer.setDetail(box.data, box.size, box.voxelToRas);
       this.handle?.redraw();
-      this.setStatus(`Solid at ${mm(context.voxelSize)}, with ${mm(level.voxelSize)} in a box around the position (${box.size.join(" × ")} voxels), in ${((performance.now() - started) / 1000).toFixed(1)} s`);
+      this.setStatus(`Solid at ${mmText(context.voxelSize)}, with ${mmText(level.voxelSize)} in a box around the position (${box.size.join(" × ")} voxels), in ${((performance.now() - started) / 1000).toFixed(1)} s`);
     } catch (e) {
       if (controller.signal.aborted) return;
       this.loaded = undefined;
@@ -555,10 +542,10 @@ class VolumeRendering {
       const detail = el("select", { class: "text-input", "aria-label": "Detail" }) as HTMLSelectElement;
       const chosen = this.chooseLevel();
       const bricks = this.bricks;
-      detail.append(el("option", { value: "0" }, `Automatic${bricks ? " (finer near the camera)" : saved.solid === 0 && chosen ? ` (${mm(chosen.voxelSize)})` : ""}`));
+      detail.append(el("option", { value: "0" }, `Automatic${bricks ? " (finer near the camera)" : saved.solid === 0 && chosen ? ` (${mmText(chosen.voxelSize)})` : ""}`));
       for (const l of this.levels) {
         const big = Math.max(...l.size) > WHOLE;
-        detail.append(el("option", { value: String(l.voxelSize) }, `${mm(l.voxelSize)} · ${!big ? l.size.join(" × ") : bricks ? "bricks" : `a ${BOX}³ box`}`));
+        detail.append(el("option", { value: String(l.voxelSize) }, `${mmText(l.voxelSize)} · ${!big ? l.size.join(" × ") : bricks ? "bricks" : `a ${BOX}³ box`}`));
       }
       detail.value = saved.solid === 0 || chosen === undefined ? "0" : String(chosen.voxelSize);
       detail.disabled = this.levels.length === 0;

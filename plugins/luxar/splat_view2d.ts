@@ -21,7 +21,7 @@ import { type GpuSplats, SplatRenderer } from "./splat_gl.js";
 import type { SplatView } from "./splat_view.js";
 import { CELL } from "./splat_worker.js";
 import { COLORMAP_INDEX, rgbOf, TONE_INDEX } from "./style.js";
-import { apply, boxInFrustum, type Globals, invertAffine, measurePanel, multiply, rasToPanel, sectionPlane } from "./view_math.js";
+import { apply, boxInFrustum, columnMajor, type Globals, invertAffine, measurePanel, multiply, rasToPanel, sectionPlane } from "./view_math.js";
 
 /** GPU memory for the 2-D views' splats. */
 const GPU_BYTES = 256 * 1024 * 1024;
@@ -38,9 +38,6 @@ const WIDEN = 3;
  * cells are not all full, and those below the worker's threshold are left out).
  */
 const SECTION_GAIN = (12 / (2 * Math.PI)) * 1.4;
-
-/** Row-major to column-major. */
-const columnMajor = (m: ArrayLike<number>) => Float32Array.from({ length: 16 }, (_, i) => m[4 * (i % 4) + Math.floor(i / 4)]);
 
 export class SplatView2d {
   private readonly overlay: { element: HTMLElement; dispose(): void };

@@ -1,40 +1,9 @@
 /** Tiny DOM helpers: the shell is framework-free, like Neuroglancer's own UI. */
 import { keyLabel as platformKeyLabel } from "../core/keybindings.js";
+import { type Attrs, el as h } from "../sdk/dom.js";
 
-type Child = Node | string | null | undefined | false;
-type Attrs = Record<string, string | number | boolean | EventListener | undefined>;
-
-export function h<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  attrs: Attrs = {},
-  ...children: Child[]
-): HTMLElementTagNameMap[K] {
-  const el = document.createElement(tag);
-  for (const [key, value] of Object.entries(attrs)) {
-    if (value === undefined || value === false) continue;
-    if (key.startsWith("on") && typeof value === "function") {
-      el.addEventListener(key.slice(2).toLowerCase(), value as EventListener);
-    } else if (key === "class") {
-      el.className = String(value);
-    } else {
-      el.setAttribute(key, value === true ? "" : String(value));
-    }
-  }
-  append(el, children);
-  return el;
-}
-
-export function append(el: Element, children: Child[]): void {
-  for (const child of children) {
-    if (child === null || child === undefined || child === false) continue;
-    el.append(child);
-  }
-}
-
-export function clear(el: Element, ...children: Child[]): void {
-  el.replaceChildren();
-  append(el, children);
-}
+/** `h` is the shell's name for the SDK's `el`. */
+export { type Attrs, append, clear, el as h } from "../sdk/dom.js";
 
 const PATHS: Record<string, string> = {
   open: "M3 6.5h6l2 2h10v10.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z",

@@ -87,7 +87,8 @@ export function decodeMinishardIndex(bytes: Uint8Array, shardIndexSize: number):
   return { ids, starts, ends };
 }
 
-async function gunzip(bytes: Uint8Array): Promise<Uint8Array> {
+/** Gzipped bytes, inflated. */
+export async function gunzip(bytes: Uint8Array): Promise<Uint8Array> {
   const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(new DecompressionStream("gzip"));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
@@ -106,6 +107,14 @@ export const httpRead: RangeRead = async (url, range, signal) => {
   if (range !== undefined && response.status === 200 && bytes.byteLength > range.length) return bytes.subarray(range.offset, range.offset + range.length);
   return bytes;
 };
+
+/** A JSON file over http(s); undefined when it is missing (404, or 403 as buckets answer). */
+export async function httpJson(url: string, signal?: AbortSignal): Promise<any | undefined> {
+  const response = await fetch(url, { signal });
+  if (response.status === 404 || response.status === 403) return undefined;
+  if (!response.ok) throw new Error(`${url}: ${response.status} ${response.statusText}`);
+  return response.json();
+}
 
 /** One scale of a precomputed volume, its chunks read as x-fastest blocks of the full chunk shape. */
 export class PrecomputedScale {

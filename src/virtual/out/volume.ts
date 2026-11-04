@@ -8,6 +8,7 @@
  * millimetres, a 4 × 4 row-major.
  */
 import { invert4, type Mat4, multiply4 } from "../../core/mat4.js";
+import { zipStore } from "../../core/zip.js";
 
 export type VoxelType = "uint8" | "int8" | "uint16" | "int16" | "uint32" | "int32" | "float32" | "float64";
 export type TypedArray = Uint8Array | Int8Array | Uint16Array | Int16Array | Uint32Array | Int32Array | Float32Array | Float64Array;
@@ -434,66 +435,10 @@ export async function omeZarrFiles(volume: Volume, name: string, options: { labe
 
 // ------------------------------------------------------------ zip
 
-const CRC_TABLE = (() => {
-  const t = new Uint32Array(256);
-  for (let n = 0; n < 256; ++n) {
-    let c = n;
-    for (let k = 0; k < 8; ++k) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    t[n] = c >>> 0;
-  }
-  return t;
-})();
-
-export function crc32(bytes: Uint8Array): number {
-  let c = 0xffffffff;
-  for (let i = 0; i < bytes.length; ++i) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
-  return (c ^ 0xffffffff) >>> 0;
-}
+export { crc32 } from "../../core/zip.js";
 
 /** Files in a zip, stored (the chunks are compressed already); for browsers that cannot write a folder. Under 4 GB. */
 export function zipFiles(files: Map<string, Uint8Array>): Blob {
-  if (files.size > 0xffff) throw new Error("too many files for a zip (over 65,535)");
-  const parts: BlobPart[] = [];
-  const central: Uint8Array[] = [];
-  let offset = 0;
-  for (const [path, data] of files) {
-    const name = new TextEncoder().encode(path);
-    const crc = crc32(data);
-    const local = new Uint8Array(30 + name.length);
-    const l = new DataView(local.buffer);
-    l.setUint32(0, 0x04034b50, true);
-    l.setUint16(4, 20, true);
-    l.setUint16(6, 0x0800, true); // UTF-8 names
-    l.setUint32(14, crc, true);
-    l.setUint32(18, data.length, true);
-    l.setUint32(22, data.length, true);
-    l.setUint16(26, name.length, true);
-    local.set(name, 30);
-    const entry = new Uint8Array(46 + name.length);
-    const e = new DataView(entry.buffer);
-    e.setUint32(0, 0x02014b50, true);
-    e.setUint16(4, 20, true);
-    e.setUint16(6, 20, true);
-    e.setUint16(8, 0x0800, true);
-    e.setUint32(16, crc, true);
-    e.setUint32(20, data.length, true);
-    e.setUint32(24, data.length, true);
-    e.setUint16(28, name.length, true);
-    e.setUint32(42, offset, true);
-    entry.set(name, 46);
-    parts.push(local, data as BlobPart);
-    central.push(entry);
-    offset += local.length + data.length;
-    if (offset > 0xffffffff) throw new Error("too large for a zip (over 4 GB)");
-  }
-  const size = central.reduce((n, c) => n + c.length, 0);
-  const end = new Uint8Array(22);
-  const d = new DataView(end.buffer);
-  d.setUint32(0, 0x06054b50, true);
-  d.setUint16(8, files.size, true);
-  d.setUint16(10, files.size, true);
-  d.setUint32(12, size, true);
-  d.setUint32(16, offset, true);
-  return new Blob([...parts, ...(central as BlobPart[]), end]);
+  return new Blob(zipStore([...files].map(([name, data]) => ({ name, data }))));
 }
 

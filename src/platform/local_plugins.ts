@@ -15,6 +15,7 @@
  * manifest where there is one; the URL and that consent are remembered, and
  * the plugin loads again on the next visit.
  */
+import { idbRequest } from "../core/idb.js";
 import type { Manifest, PluginModule } from "../sdk/types.js";
 import type { PluginHost } from "./plugin_host.js";
 
@@ -78,29 +79,7 @@ export function readManifestJson(text: string): Manifest {
 
 const isManifestUrl = (url: URL) => /\.json$/i.test(url.pathname);
 
-const DB = "ngplatform";
-const STORE = "localPlugins";
-
-function db(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB, 1);
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains(STORE)) request.result.createObjectStore(STORE, { keyPath: "key" });
-      if (!request.result.objectStoreNames.contains("localData")) request.result.createObjectStore("localData", { keyPath: "id" });
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-async function idb<T>(mode: IDBTransactionMode, work: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
-  const database = await db();
-  return new Promise((resolve, reject) => {
-    const request = work(database.transaction(STORE, mode).objectStore(STORE));
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
+const idb = <T>(mode: IDBTransactionMode, work: (store: IDBObjectStore) => IDBRequest<T>) => idbRequest<T>("localPlugins", mode, work);
 
 export interface LocalPluginHooks {
   host: PluginHost;
@@ -212,8 +191,19 @@ export class LocalPlugins {
     await this.reload(key);
   }
 
+  /** Loads in progress, by key: a second Reload joins the first, and Remove waits for it. */
+  private readonly loading = new Map<string, Promise<void>>();
+
   /** Reads the plugin's files again and runs the new code in place of the old. */
-  async reload(key: string): Promise<void> {
+  reload(key: string): Promise<void> {
+    const running = this.loading.get(key);
+    if (running !== undefined) return running;
+    const load = this.load(key).finally(() => this.loading.delete(key));
+    this.loading.set(key, load);
+    return load;
+  }
+
+  private async load(key: string): Promise<void> {
     const entry = this.entries.get(key);
     if (entry === undefined) return;
     const { stored, state } = entry;
@@ -315,6 +305,8 @@ export class LocalPlugins {
   }
 
   async remove(key: string): Promise<void> {
+    // A load still running would register the plugin after it was removed.
+    await this.loading.get(key);
     const entry = this.entries.get(key);
     if (entry === undefined) return;
     if (entry.state.id !== undefined) await this.hooks.host.unregister(entry.state.id);

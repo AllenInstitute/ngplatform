@@ -283,6 +283,7 @@ export class GoogleSignIn {
     };
     const now = ready();
     if (now !== undefined) return Promise.resolve(now);
+    if (signal?.aborted) return Promise.reject(signal.reason);
     if (refused !== undefined) this.markInvalid(refused);
     for (const listener of [...this.neededListeners]) listener(account);
     return new Promise((resolve, reject) => {

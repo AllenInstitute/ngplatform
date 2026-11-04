@@ -100,7 +100,6 @@ export class Shell {
   private readonly viewArea = h("div", { class: "engine-view", hidden: true });
   private readonly viewSplit = h("div", { class: "engine-split", hidden: true, role: "separator", "aria-orientation": "vertical", title: "Drag to resize" });
   private view: { owner: string; dispose: () => void } | undefined;
-  private auth: AuthRegistry | undefined;
   private google: GoogleSignIn | undefined;
   private localPlugins: LocalPlugins | undefined;
   /** Which plugins are on: this browser's choices, what examples switched on for this tab, and the result. */
@@ -230,7 +229,6 @@ export class Shell {
     auth.register(googleProvider(google), "platform");
     auth.register(middleauthProvider(authEnvironment), "platform");
     auth.register(ngauthProvider(authEnvironment), "platform");
-    this.auth = auth;
     this.google = google;
     // Data waiting for a Google account says so once per account, and gets the sign-in ready for the click.
     const told = new Set<string>();

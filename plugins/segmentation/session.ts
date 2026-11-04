@@ -151,9 +151,20 @@ export class Session {
     const versions = keys.map((k) => this.volume.versionOf(k));
     const original = this.volume instanceof CowVolume ? this.volume.original : undefined;
     this.keeping = this.keeping.then(async () => {
-      if (await keep(this.volume, { id: this.id, name: this.layer, labels: [...this.labels], reference: this.reference?.layer, original }, keys, versions)) this.volume.keptAt(keys, versions);
+      if (await keep(this.volume, { id: this.id, name: this.layer, labels: [...this.labels], reference: this.reference?.layer, original }, keys, versions)) {
+        this.volume.keptAt(keys, versions);
+        this.keepFailed = false;
+        return;
+      }
+      // Not kept (storage full, say): kept again with the next change, so a reload does not bring back less.
+      for (const k of keys) this.dirty.add(k);
+      if (!this.keepFailed) this.ctx.log.error(`${this.layer}: its changes could not be kept in this browser's storage (full?); save the segmentation to keep them.`);
+      this.keepFailed = true;
     });
   }
+
+  /** The last keep failed (said once until one succeeds). */
+  private keepFailed = false;
 
   /** Where the label volume's voxels are in the global space (once its layer has loaded). */
   placement(): Placement | undefined {

@@ -21,6 +21,7 @@
  */
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
 import type { DatasetInfo, Disposer, Json, PlatformContext, PluginModule, RunnerJob, SegmentProperties } from "@ngplatform/sdk";
+import { downloadBlob, el } from "@ngplatform/sdk/dom";
 import { precomputedUrl } from "@ngplatform/sdk/sources";
 import { annotationGeometry, annotationMeets } from "./annotation_regions.js";
 import { addDensity, densityGrid, displayMax, niftiFile } from "./density.js";
@@ -239,9 +240,7 @@ async function saveTarget(name: string, description: string, extension: string):
           throw new Error(`cannot rewrite bytes ${position}..${position + part.byteLength} of ${length}`);
         },
         async close() {
-          const a = el("a", { href: URL.createObjectURL(new Blob(parts, { type: "application/octet-stream" })), download: name });
-          a.click();
-          setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+          downloadBlob(new Blob(parts, { type: "application/octet-stream" }), name);
         },
         async abort() {
           parts.length = 0;
@@ -252,20 +251,6 @@ async function saveTarget(name: string, description: string, extension: string):
 }
 
 // ------------------------------------------------------------------- DOM
-
-type Child = Node | string | null | undefined | false;
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === undefined || v === false) continue;
-    if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2), v as EventListener);
-    else if (k === "class") e.className = String(v);
-    else e.setAttribute(k, v === true ? "" : String(v));
-  }
-  for (const c of children) if (c !== null && c !== undefined && c !== false) e.append(c);
-  return e;
-}
 
 /** A pencil, as the platform's edit icon draws it. */
 function pencil(): SVGSVGElement {
@@ -288,7 +273,6 @@ function fmt(v: number): string {
 
 const STYLE = `
 .tf { display: grid; gap: 10px; }
-.tf-intro { margin: 0; color: var(--muted); font-size: 12px; }
 .tf-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .tf-groups { display: grid; gap: 3px; }
 .tf-group { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 5px 6px; border-radius: var(--r); border: 1px solid transparent; cursor: pointer; }
@@ -1177,7 +1161,8 @@ class TrackGroups {
       this.setResult(group, { ...(this.results.get(group.id) ?? { mask: undefined, count: 0 }), state: "computing", detail: "Previewing…" });
       void Promise.all(geometries.map((g) => engine.evaluate(g, preview))).then(
         (results) => {
-          if (!current()) return;
+          // The exact answer can come first (its levels are cached): a late preview must not replace it.
+          if (!current() || this.results.get(group.id)?.state === "exact") return;
           const mask = combine(results);
           const sample = Math.round(100 * (info.levels[preview].vertexCount ?? 0) / (info.levels[0].vertexCount || 1));
           this.setResult(group, { mask, count: countPassing(mask), state: "preview", detail: `preview from level ${preview} (about ${sample}% of the vertices); exact to follow` });
@@ -1258,8 +1243,9 @@ class TrackGroups {
    */
   private maskSource(roi: Roi, dims: Dimensions, info: StoreInfo): MaskSource {
     const levels = this.maskLevelsOf(roi)!;
-    const index = Math.max(0, levels.findIndex((l) => l.size[0] * l.size[1] * l.size[2] <= MASK_VOXELS));
-    const level = levels[index] ?? levels[levels.length - 1];
+    // The finest level within the budget; the coarsest when none is.
+    const index = levels.findIndex((l) => l.size[0] * l.size[1] * l.size[2] <= MASK_VOXELS);
+    const level = index === -1 ? levels[levels.length - 1] : levels[index];
     const globalSpace = { names: Object.keys(dims), scales: Object.values(dims).map((d) => d[0]), units: Object.values(dims).map((d) => d[1]) };
     const placed = placement(this.ctx.viewer.layerTransform(roi.mask!.layer), level.voxelToRas, globalSpace);
     if (placed === undefined) throw new Error(`${roi.mask!.layer} is not placed in x, y and z`);
@@ -1582,9 +1568,7 @@ class TrackGroups {
     const ids = group && this.results.get(group.id)?.ids;
     if (group !== undefined && ids !== undefined) {
       const blob = new Blob([["id", ...ids].join("\n") + "\n"], { type: "text/csv" });
-      const a = el("a", { href: URL.createObjectURL(blob), download: `${group.name}.csv` });
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      downloadBlob(blob, `${group.name}.csv`);
       this.ctx.log.info(`Exported ${ids.length.toLocaleString()} ids of ${group.name} as CSV.`);
       return;
     }
@@ -1594,9 +1578,7 @@ class TrackGroups {
       return;
     }
     const blob = new Blob([toCsv(this.props, mask)], { type: "text/csv" });
-    const a = el("a", { href: URL.createObjectURL(blob), download: `${group.name}.csv` });
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    downloadBlob(blob, `${group.name}.csv`);
     this.ctx.log.info(`Exported ${countPassing(mask).toLocaleString()} objects of ${group.name} as CSV.`);
   }
 
@@ -2314,9 +2296,7 @@ class TrackGroups {
       return { name: g.name, count: r?.state === "exact" ? r.count : NaN, columns: props && r?.mask && r.state === "exact" ? groupStatistics(props, r.mask) : [] };
     });
     const blob = new Blob([statisticsCsv(rows)], { type: "text/csv" });
-    const a = el("a", { href: URL.createObjectURL(blob), download: fileName(`${this.dataset()?.name ?? "groups"} statistics`, ".csv") });
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    downloadBlob(blob, fileName(`${this.dataset()?.name ?? "groups"} statistics`, ".csv"));
     this.ctx.log.info(`Exported the statistics of ${groups.length} groups as CSV.`);
   }
 

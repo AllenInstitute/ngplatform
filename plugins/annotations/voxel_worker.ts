@@ -18,25 +18,16 @@
  */
 import { setAsyncComputationWorkerFactory } from "neuroglancer/unstable/worker_factories.js";
 import { asyncComputationWorker } from "@ngplatform/sdk/workers";
-import { VolumeReader } from "../volume-view/volume_reader.js";
+import { readerCache, type VolumeReader } from "../volume-view/volume_reader.js";
 import { type Region, regionTest, summarise, valuesInside } from "./statistics.js";
 
 // zstd and the other codecs decode in the platform's async-computation worker.
 setAsyncComputationWorkerFactory(() => asyncComputationWorker(["org.ngplatform.zarr-vectors"]));
 
-const readers = new Map<string, Promise<{ reader: VolumeReader; levels: Awaited<ReturnType<VolumeReader["open"]>>["levels"] }>>();
 const controllers = new Map<number, AbortController>();
 
-function open(store: string) {
-  let r = readers.get(store);
-  if (r === undefined) {
-    const reader = new VolumeReader(128 * 2 ** 20);
-    r = reader.open([store], undefined).then(({ levels }) => ({ reader, levels }));
-    readers.set(store, r);
-    r.catch(() => readers.delete(store));
-  }
-  return r;
-}
+// Each reader holds up to 128 MB of chunks: the last three stores' only (an image and a segmentation at once, for statistics).
+const open = readerCache(3);
 
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const isIdentity = (a: number[]) => a.every((v, i) => Math.abs(v - IDENTITY[i]) < 1e-9);

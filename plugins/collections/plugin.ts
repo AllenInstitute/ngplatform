@@ -9,24 +9,12 @@
  * collections that scene's data belongs to.  The model is ./collection.ts.
  */
 import type { PlatformContext, PluginModule } from "@ngplatform/sdk";
+import { el } from "@ngplatform/sdk/dom";
 import { describeTransform } from "@ngplatform/sdk/ome";
 import { neuroglancer, physical } from "../registration/plugin.js";
 import { chainInto, type CollectionNode, displayRangeOf, fieldWarp, firstLevel, graph, isCollection, type Mat4, members, parentGroups, placeInto, readCollection, sceneSystems } from "./collection.js";
 import example from "./examples/srb_gallery.json";
 import { COLLECTION_KIND, COLLECTIONS_PANEL } from "./manifest.js";
-
-type Child = Node | string | null | undefined | false;
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === undefined || v === false) continue;
-    if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2), v as EventListener);
-    else if (k === "class") e.className = String(v);
-    else e.setAttribute(k, String(v));
-  }
-  for (const c of children) if (c !== null && c !== undefined && c !== false) e.append(c);
-  return e;
-}
 
 const SVG = "http://www.w3.org/2000/svg";
 function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: (SVGElement | string)[]): SVGElementTagNameMap[K] {

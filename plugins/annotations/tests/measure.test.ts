@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { LayerTransform } from "@ngplatform/sdk";
 import { annotationToGlobal, distanceMm, type GlobalSpace, placement, toGlobal, toVoxel, unprojector, voxelVolume } from "../geometry.js";
 import { measure, measureAll, sampleCount, samplePath, samplePoints, sectionAxis, spanned } from "../measure.js";
-import { csv, physical } from "../ui.js";
+import { csv } from "@ngplatform/sdk/format";
+import { physical } from "../ui.js";
 
 /** Global x, y, z in mm, as the app's MNI examples have it. */
 const MM: GlobalSpace = { names: ["x", "y", "z"], scales: [0.001, 0.001, 0.001], units: ["m", "m", "m"] };

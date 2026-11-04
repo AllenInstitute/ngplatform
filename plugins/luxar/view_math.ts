@@ -453,3 +453,6 @@ export function sectionPlane(toPanel: ArrayLike<number>): [number, number, numbe
   if (!(norm > 0)) return undefined;
   return [a / norm, b / norm, c / norm, toPanel[14] / norm];
 }
+
+/** Row-major (as the volume view keeps matrices) to column-major. */
+export const columnMajor = (m: ArrayLike<number>) => Float32Array.from({ length: 16 }, (_, i) => m[4 * (i % 4) + Math.floor(i / 4)]);

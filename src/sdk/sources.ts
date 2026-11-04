@@ -9,3 +9,12 @@ export function precomputedUrl(source: string | undefined): string | undefined {
   if (!/^https?:\/\//.test(url)) return undefined;
   return url.endsWith("/") ? url : `${url}/`;
 }
+
+/** A layer's first source as a URL, whatever form its spec gives it in (a string, a list, `{ url }`). */
+export function layerSourceUrl(spec: unknown): string | undefined {
+  const source = (spec as { source?: unknown } | undefined)?.source;
+  const first = Array.isArray(source) ? source[0] : source;
+  if (typeof first === "string") return first;
+  const url = (first as { url?: unknown } | undefined)?.url;
+  return typeof url === "string" ? url : undefined;
+}

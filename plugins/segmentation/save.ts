@@ -5,6 +5,7 @@
  * NIfTI holds every voxel, so for a large grid save only the painted box
  * (`crop`), which moves the origin to the box's corner.
  */
+import { gunzip } from "@ngplatform/sdk/precomputed";
 import { gzip, niftiFile, omeZarrMetadata } from "../registration/volume_io.js";
 import { multiply4 } from "../registration/fit.js";
 import type { CowVolume, Original } from "./cow_volume.js";
@@ -193,11 +194,6 @@ export async function writeWhole(
     }
   }
   return written;
-}
-
-async function gunzip(bytes: Uint8Array): Promise<Uint8Array> {
-  const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(new DecompressionStream("gzip"));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
 /** Saved edits read back: their note, their segments, and their level-0 chunks by [x, y, z]. */

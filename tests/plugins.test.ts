@@ -259,3 +259,32 @@ describe("sign-in providers from plugins", () => {
     expect(auth.list()).toEqual([]);
   });
 });
+
+describe("handles a plugin disposes itself", () => {
+  it("are disposed once, and forgotten (not disposed again when the plugin stops)", async () => {
+    const { s } = services();
+    const disposed: string[] = [];
+    s.ui.overlay = () => ({ element: {} as HTMLElement, dispose: () => disposed.push("overlay") });
+    s.ui.viewToggle = () => ({ set: () => {}, dispose: () => disposed.push("toggle") });
+    s.viewer = { draw3d: () => ({ redraw: () => {}, dispose: () => disposed.push("draw3d") }) } as unknown as ViewerApi;
+    const host = new PluginHost(s);
+    const m: Manifest = { ...manifest, id: "org.example.handles", activation: ["onStartup"], contributes: {} };
+    let kept: { dispose(): void } | undefined;
+    host.register(m, async () => ({
+      activate(ctx) {
+        ctx.ui.overlay().dispose();
+        ctx.ui.viewToggle({ label: "x", value: false, onChange: () => {} }).dispose();
+        const handle = ctx.viewer.draw3d("layer", { draw: () => {} });
+        handle.redraw();
+        handle.dispose();
+        kept = ctx.ui.overlay();
+      },
+    }));
+    await host.activate(m.id);
+    expect(disposed).toEqual(["overlay", "toggle", "draw3d"]);
+    expect(kept).toBeDefined();
+    await host.deactivate(m.id);
+    // Only the overlay still held is disposed when the plugin stops.
+    expect(disposed).toEqual(["overlay", "toggle", "draw3d", "overlay"]);
+  });
+});

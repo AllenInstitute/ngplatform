@@ -41,7 +41,7 @@ export function bsplineCoefficients(data: ArrayLike<number>, size: [number, numb
   const c = Float64Array.from(data);
   const z = Math.sqrt(3) - 2;
   const line = new Float64Array(Math.max(...size));
-  const [nx, ny, nz] = size;
+  const [nx, ny] = size;
   const strides = [1, nx, nx * ny];
   for (let axis = 0; axis < 3; ++axis) {
     const n = size[axis];

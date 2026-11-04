@@ -3,6 +3,7 @@
  * stepping and playing through time, the series' colours, and the plotted
  * series as CSV.  Plain code, without the page.
  */
+import { csvField } from "@ngplatform/sdk/format";
 import type { SeriesInfo } from "./reader.js";
 import type { LayerMap } from "./space.js";
 
@@ -196,10 +197,6 @@ export interface NamedSeries {
   values: ArrayLike<number>;
   /** A spread (a parcel's SD across its vertices): a column of its own after the values. */
   sd?: ArrayLike<number>;
-}
-
-function csvField(text: string): string {
-  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 /**

@@ -12,6 +12,7 @@
  * in a byte-bounded cache, so panning a little reads nothing again.  The
  * worker runs this; it is plain code, tested without one.
  */
+import { httpJson } from "@ngplatform/sdk/precomputed";
 import { httpAccess, openZarrArray, ShardIndexCache, ZarrArrayReader } from "neuroglancer-zarr-vectors/reader";
 import { mergeLevels, parseOmeLevels, type VolumeLevel } from "../volume-view/ome.js";
 import { storedOrder } from "../volume-view/volume_reader.js";
@@ -95,13 +96,6 @@ const NUMERIC = {
 
 const CONCURRENCY = 8;
 
-async function readJson(url: string, signal?: AbortSignal): Promise<any | undefined> {
-  const response = await fetch(url, { signal });
-  if (response.status === 404 || response.status === 403) return undefined;
-  if (!response.ok) throw new Error(`${url}: ${response.status} ${response.statusText}`);
-  return response.json();
-}
-
 /** A chunk's bytes (little-endian unless said) as float32. */
 function toFloat(bytes: Uint8Array, type: keyof typeof NUMERIC, bigEndian: boolean): Float32Array {
   const Type = NUMERIC[type];
@@ -124,7 +118,7 @@ export class OrientationReader {
 
   async open(url: string, signal?: AbortSignal): Promise<Opened> {
     const base = url.endsWith("/") ? url : `${url}/`;
-    const group = (await readJson(`${base}zarr.json`, signal)) ?? (await readJson(`${base}.zattrs`, signal));
+    const group = (await httpJson(`${base}zarr.json`, signal)) ?? (await httpJson(`${base}.zattrs`, signal));
     if (group === undefined) throw new Error(`${base}: no zarr.json`);
     const { group: spatial, component, name } = spatialGroup(group);
     const pyramid = parseOmeLevels(base, spatial);
