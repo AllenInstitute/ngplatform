@@ -266,6 +266,9 @@ export async function runPythonPlugin(wb: Workbench, owner: string, source: stri
   }
 }
 
+/** Where printed output goes while the Python tab is open. */
+let pythonSink: ((text: string, kind: "out" | "err") => void) | undefined;
+
 export function loadPython(wb: Workbench): Promise<Pyodide> {
   pyodide ??= (async () => {
     const module = (await import(/* @vite-ignore */ `${PYODIDE}pyodide.mjs`)) as { loadPyodide(o: { indexURL: string }): Promise<Pyodide> };
@@ -296,8 +299,10 @@ export function loadPython(wb: Workbench): Promise<Pyodide> {
       invoke: async (id: string, args: string) => JSON.stringify((await commands.invoke(id, JSON.parse(args))) ?? null),
       commands: () => JSON.stringify(Object.fromEntries(commands.list().map((c) => [c.id, c.title]))),
       viewer: () => engine.viewer,
-      registerCommand: (id: string, title: string, fn: { (): unknown; destroy?(): void; copy?(): typeof fn }) => {
+      registerCommand: (given: string, title: string, fn: { (): unknown; destroy?(): void; copy?(): typeof fn }) => {
         const owner = pythonOwner;
+        // A plugin's default ids are its own (python.<plugin>.<function>), so two plugins' hello() do not clash.
+        const id = owner !== "console" && given.startsWith("python.") ? `python.${owner.replace(/[^A-Za-z0-9_-]/g, "_")}.${given.slice(7)}` : given;
         const own = pythonCommands.get(owner) ?? new Map<string, () => void>();
         pythonCommands.set(owner, own);
         own.get(id)?.();
@@ -362,6 +367,9 @@ export function loadPython(wb: Workbench): Promise<Pyodide> {
       },
     });
     await py.runPythonAsync(PRELUDE);
+    // Printed output goes to the Python tab when it is open, else to the Activity tab (a command's print, say).
+    py.setStdout({ batched: (t) => (pythonSink ? pythonSink(t, "out") : wb.log.add(t, "info", "Python")) });
+    py.setStderr({ batched: (t) => (pythonSink ? pythonSink(t, "err") : wb.log.add(t, "error", "Python")) });
     return py;
   })();
   pyodide.catch(() => (pyodide = undefined));
@@ -374,7 +382,7 @@ export function renderPythonPanel(host: HTMLElement, wb: Workbench): () => void 
     class: "py-in",
     rows: 1,
     spellcheck: "false",
-    placeholder: "Python. Enter runs, Shift+Enter adds a line, ↑ and ↓ go through history.",
+    placeholder: "Enter runs · Shift+Enter: new line · ↑ ↓: history",
     "aria-label": "Python input",
     disabled: true,
   });
@@ -446,30 +454,31 @@ export function renderPythonPanel(host: HTMLElement, wb: Workbench): () => void 
   });
 
   let disposed = false;
-  print("Loading Python…", "note");
-  loadPython(wb).then(
-    (py) => {
-      if (disposed) return;
-      python = py;
-      py.setStdout({ batched: (t) => print(t, "out") });
-      py.setStderr({ batched: (t) => print(t, "err") });
-      clear(out);
-      print(
-        `Python (Pyodide ${py.version}), running in this page. ngp is the workspace: ngp.state(), ngp.set_state(d), ` +
-          `with ngp.txn() as s: …, ngp.layers(), ngp.add_layer(url), await ngp.show(array), await ngp.show_points(xyz), await ngp.show_lines(lines), await ngp.show_mesh(vertices, faces), ngp.annotate(points=…), ngp.position, await ngp.invoke(id, args), ngp.commands(). ` +
-          `Packages such as numpy load when imported. Ctrl+L clears.`,
-        "note",
-      );
-      input.disabled = false;
-      input.focus();
-    },
-    (e) => {
-      clear(out);
-      print(`Python did not load: ${(e as Error).message}. It comes from ${PYODIDE}; check the connection and reopen this tab.`, "err");
-    },
-  );
+  const start = () => {
+    clear(out);
+    print("Loading Python…", "note");
+    loadPython(wb).then(
+      (py) => {
+        if (disposed) return;
+        python = py;
+        pythonSink = print;
+        clear(out);
+        print(`Python (Pyodide ${py.version}), in this page. ngp is the workspace: help(ngp) lists what it does. Packages load when imported; Ctrl+L clears.`, "note");
+        input.disabled = false;
+        input.focus();
+      },
+      (e) => {
+        if (disposed) return;
+        clear(out);
+        print(`Python did not load from ${PYODIDE}: ${(e as Error).message}. Check the connection, then try again.`, "err");
+        out.append(h("button", { class: "btn small py-retry", type: "button", onclick: start }, "Try again"));
+      },
+    );
+  };
+  start();
   return () => {
     disposed = true;
+    if (pythonSink === print) pythonSink = undefined;
     host.classList.remove("py-host");
   };
 }

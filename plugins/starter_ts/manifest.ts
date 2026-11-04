@@ -15,7 +15,7 @@ export const STARTER_MANIFEST: Manifest = {
   kind: "tool",
   enabledByDefault: false,
   description: "An empty tool plugin to copy: a tab listing the scene's layers, a counter kept in the scene, and a command.",
-  guide: `A starting point for a plugin: copy \`plugins/starter\`, rename it, and change what it does.
+  guide: `A starting point for a plugin: copy \`plugins/starter_ts\`, rename it, and change what it does.
 
 ## What it shows
 - A **tab** listing the scene's layers, drawn again when they change.
