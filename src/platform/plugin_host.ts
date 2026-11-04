@@ -450,15 +450,15 @@ export class PluginHost {
         showPanel: (id) => s.docks.show(id),
         view: (render) => own(s.views.mount(render, owner)),
         toast: (message, kind) => s.ui.toast(message, kind),
+        // Handles whose disposal (by the plugin, or when it deactivates) also forgets them,
+        // so a plugin that makes many over its life does not keep the old ones' closures.
         viewToggle: (spec) => {
           const toggle = s.ui.viewToggle(spec);
-          own(toggle.dispose);
-          return toggle;
+          return { ...toggle, dispose: own(toggle.dispose) };
         },
         overlay: () => {
           const overlay = s.ui.overlay();
-          own(overlay.dispose);
-          return overlay;
+          return { ...overlay, dispose: own(overlay.dispose) };
         },
         screenshotOverlay: (paint) => own(s.ui.screenshotOverlay(paint)),
         confirm: (message) => s.ui.confirm(message),
@@ -469,8 +469,7 @@ export class PluginHost {
         ...s.viewer,
         draw3d: (layer, drawer) => {
           const handle = s.viewer.draw3d(layer, drawer);
-          own(handle.dispose);
-          return handle;
+          return { ...handle, dispose: own(handle.dispose) };
         },
       },
       state: {
