@@ -155,9 +155,34 @@ allows, coarsest first, so a 1 TB TIFF costs a few GB of disk instead of a
 converted copy. An OME-Zarr made once (Export) is still faster to view
 than any of this.
 
-Measured on a 16 GB uint16 BigTIFF (4096 × 4096 × 512, uncompressed
-strips, in memory: `/dev/shm`) and the 512 MB stress TIFF, headless Chrome
-on this machine: see the commit that added this section for the numbers.
+### Measured
+
+These runs used headless Chrome (SwiftShader) on a 64-core machine, with
+the TIFFs held in memory (`/dev/shm`), so disk speed is left out. Chrome read
+those files at about 730 MB/s in 4 MB pieces. "First view" is the time from
+opening the file to every chunk the 4-panel view needs being loaded, zoomed
+out to the whole image. Peak memory is all of the app's JS heaps together,
+ArrayBuffers included (the in-memory caches are most of it).
+
+| | 2.5 GB BigTIFF (2048 × 2048 × 300 uint16, 64-row strips) | | 512 MB stress TIFF (1024 × 1024 × 512 uint8) | |
+|---|---|---|---|---|
+| | before | after | before | after |
+| First view, zoomed out | 165 s | 18.5 s | 15.5 s | 6.9 s |
+| A later visit (page reloaded, file opened again) | 161 s | 2.2 s | 15.6 s | 2.1 s |
+| Every coarser level made | 689 s (each coarse chunk asked for, after the first view) | 16.7 s (the build, nothing viewed) | 0.5 s (all still in memory) | 6.6 s (the build, nothing viewed) |
+| First view after the build | | 1.9 s | | 2.2 s |
+| Kept between visits | nothing | 48 MB (levels 3–5 whole, 85 of 128 chunks of level 2) | nothing | 10 MB (levels 2–4 whole, 4 chunks of level 1) |
+| Peak memory: first view | 595 MB | 575 MB | 515 MB | 497 MB |
+| Peak memory: every coarser level | 959 MB (1.9 GB renderer) | 485 MB | | 442 MB |
+| Export → OME-Zarr, every level | 1,217 s | 85 s (the same 6,044 chunks and 429,018,203 bytes) | | |
+
+A 16 GB BigTIFF (4096 × 4096 × 512) took 308 s to its first view before
+these changes. It was then deleted to keep generated files under 3 GB.
+Measured from the 2.5 GB file, the time after these changes grows with the
+bytes read, about 140 MB/s from memory, so 16 GB would take about 2 minutes.
+Reading Chrome's File in 256 KB strips, and copying, cost more than the
+means (900 MB/s in one thread). A 1 TB TIFF would keep 2 GB: about levels 4
+and coarser whole, and most of level 3.
 
 ## Reading out
 
