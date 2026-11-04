@@ -424,6 +424,8 @@ describe("stepping, colours and CSV", () => {
   it("gives a series as its change from its mean, in percent", () => {
     expect(Array.from(percentChange([90, 110, NaN, 100]))).toEqual([-10, 10, NaN, 0]);
     expect(Array.from(percentChange([0, 0])).every(Number.isNaN)).toBe(true);
+    // A negative mean: values rising still plot as rising.
+    expect(Array.from(percentChange([-110, -90]))).toEqual([-10, 10]);
   });
 
   it("writes the series as CSV: a row per time point, a column per series", () => {

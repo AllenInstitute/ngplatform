@@ -65,6 +65,8 @@ function icon(name: string): SVGSVGElement {
 const STYLE = `
 .dock-pane.ts-host { padding: 0; height: 100%; }
 .ts { display: grid; grid-template-columns: 264px minmax(0, 1fr); height: 100%; min-height: 0; font-size: 12px; }
+.ts[hidden] { display: none; }
+.ts-empty { padding: 12px; }
 .ts-side { display: flex; flex-direction: column; gap: 7px; padding: 8px 10px; border-right: 1px solid var(--line); overflow: auto; min-height: 0; }
 .ts-side select { min-width: 0; width: 100%; }
 .ts-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
@@ -732,7 +734,8 @@ class TimeSeries {
       this.ctx.ui.toast("Choose an image with a time axis in the Time series tab first.");
       return;
     }
-    const voxel = this.cursor?.voxel ?? voxelAt(map, info, this.position());
+    // The voxel under the mouse now (the plotted one is read a moment after the mouse moves).
+    const voxel = this.cursorVoxel() ?? this.cursor?.voxel ?? voxelAt(map, info, this.position());
     if (voxel === undefined) {
       this.ctx.ui.toast("The mouse is not over the image.");
       return;
@@ -922,6 +925,9 @@ class TimeSeries {
     } finally {
       this.surfaceSending = false;
     }
+    // Another surface chosen meanwhile: its wanted time point was not sent by this loop.
+    const wanted = this.surfaceWanted;
+    if (wanted !== undefined && this.surface !== undefined && this.surface !== surface) void this.showOnSurface(wanted);
   }
 
   private step(delta: number): void {
@@ -1054,7 +1060,9 @@ class TimeSeries {
     const legend = el("div", { class: "ts-legend" });
     const actions = el("div", { class: "ts-actions" });
     const time = el("div", { class: "ts-time", "aria-live": "off" });
-    host.replaceChildren(el("div", { class: "ts" }, side, el("div", { class: "ts-main" }, el("div", { class: "ts-head" }, legend, actions), plot.element)));
+    const main = el("div", { class: "ts-main" }, el("div", { class: "ts-head" }, legend, actions), plot.element);
+    const empty = el("p", { class: "empty ts-empty", title: "A 4-D NIfTI, an OME-Zarr image with a t axis, or a GIFTI surface with a CIFTI time series (.dtseries.nii) beside it" }, "No image with a time axis in this scene. Open a 4-D image or a surface with a CIFTI time series.");
+    host.replaceChildren(el("div", { class: "ts" }, side, main), empty);
 
     const button = (name: string, title: string, onclick: () => void, disabled: boolean) =>
       el("button", { class: "btn outline small icon", type: "button", title, "aria-label": title, onclick, disabled }, icon(name));
@@ -1098,9 +1106,13 @@ class TimeSeries {
           return el("option", { value, selected: value === this.region }, r.label);
         }),
       );
+      // Nothing to plot: the empty state alone, not an empty plot with its controls.
+      const none = this.candidates.length === 0;
+      (host.firstElementChild as HTMLElement).hidden = none;
+      empty.hidden = !none;
       const note =
-        this.candidates.length === 0
-          ? "Open an image with a time axis (a 4-D NIfTI, or OME-Zarr with t) to plot its time courses, or a surface with a CIFTI time series beside it to step through and plot its vertices."
+        none
+          ? ""
           : this.openError !== undefined
             ? `Could not read ${layer}: ${this.openError}`
             : this.axisNote !== undefined

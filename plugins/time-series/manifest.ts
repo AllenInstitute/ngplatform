@@ -37,7 +37,7 @@ export const TIME_SERIES_MANIFEST: Manifest = {
 
 ## Saving
 - **Save CSV**: a row per time point (its index and time), a column per plotted series, with the values as read.
-- A movie of the time-lapse: the camera icon → **Movie…**, a sweep along \`t\`.`,
+- A movie of the time-lapse: the camera icon → **Movie: sweep slices or time…**, a sweep along \`t\`.`,
   license: "Apache-2.0",
   activation: [`onView:${TIME_SERIES_PANEL}`, "onCommand:timeSeries.pin", "onCommand:timeSeries.play", "onCommand:timeSeries.pinParcel"],
   contributes: {
