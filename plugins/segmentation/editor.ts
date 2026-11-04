@@ -27,10 +27,11 @@
  */
 import type { Disposer, PlatformContext } from "@ngplatform/sdk";
 import { downloadBlob, el } from "@ngplatform/sdk/dom";
+import { layerSourceUrl } from "@ngplatform/sdk/sources";
 import { mmOf, toGlobal, toVoxel, voxelEdges } from "../annotations/geometry.js";
 import { space as spaceOf } from "../annotations/scene.js";
 import { fileName, fmt } from "../annotations/ui.js";
-import { type ImageLevel, layerStore, readableImages, sourceUrl, type Voxels } from "../annotations/voxels.js";
+import { type ImageLevel, layerStore, readableImages, type Voxels } from "../annotations/voxels.js";
 import { zipFiles } from "../registration/volume_io.js";
 import { storeOf } from "../volume-view/sources.js";
 import { CowVolume, type Original } from "./cow_volume.js";
@@ -755,7 +756,7 @@ export class Editor implements LabelVolumes {
    * The original is hidden and never written.
    */
   private async editInPlace(spec: NewLayer, store: string): Promise<boolean> {
-    const original: Original = { store, layer: spec.layer, source: sourceUrl(this.ctx.viewer.layerSpec(spec.layer)) };
+    const original: Original = { store, layer: spec.layer, source: layerSourceUrl(this.ctx.viewer.layerSpec(spec.layer)) };
     const volume = await this.overOriginal(original, spec.name);
     const session = await Session.open(this.ctx, this.voxels, volume, spec.name);
     await this.theirLabels(spec.layer, session);

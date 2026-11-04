@@ -14,6 +14,7 @@
  */
 import type { Json, LayerTransform, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { downloadBlob, el, safeFileName } from "@ngplatform/sdk/dom";
+import { layerSourceUrl } from "@ngplatform/sdk/sources";
 import { storeOf } from "../volume-view/sources.js";
 import { apply4, describe, fit, type Fit, identity4, invert4, type Mat4, MINIMUM, type Model, multiply4, type Vec3 } from "./fit.js";
 import { needsGeometry, readTransformFile, type VolumeGeometry, writeItk, writeLta, writePlain } from "./formats.js";
@@ -176,15 +177,6 @@ class SaveClient {
 
 /** A file name from a layer's name. */
 const fileName = (name: string) => safeFileName(name, "image");
-
-/** A layer's source as a URL (its first, whatever form the spec gives it in). */
-function sourceUrl(spec: Json | undefined): string | undefined {
-  const source = (spec as { source?: unknown } | undefined)?.source;
-  const first = Array.isArray(source) ? source[0] : source;
-  if (typeof first === "string") return first;
-  const url = (first as { url?: unknown } | undefined)?.url;
-  return typeof url === "string" ? url : undefined;
-}
 
 type FilePicker = {
   showSaveFilePicker?(o?: unknown): Promise<FileSystemFileHandle>;
@@ -486,7 +478,7 @@ class Registration {
   private async warp(): Promise<void> {
     const name = this.layer();
     const t = name ? this.ctx.viewer.layerTransform(name) : undefined;
-    const source = name ? sourceUrl(this.ctx.viewer.layerSpec(name)) : undefined;
+    const source = name ? layerSourceUrl(this.ctx.viewer.layerSpec(name)) : undefined;
     const pairs = this.saved.pairs.filter((q) => q.on && q.fixed && q.moving);
     if (!name || !t) return;
     if (source === undefined) {
@@ -564,7 +556,7 @@ class Registration {
 
   /** The store an image layer reads (OME-Zarr, NIfTI as virtual Zarr, precomputed), for the worker. */
   private storeOf(layer: string): string | undefined {
-    return storeOf(sourceUrl(this.ctx.viewer.layerSpec(layer)));
+    return storeOf(layerSourceUrl(this.ctx.viewer.layerSpec(layer)));
   }
 
   /** Images in the scene whose grid an image can be resampled onto, and whose geometry an LTA can record. */

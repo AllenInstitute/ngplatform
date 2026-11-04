@@ -13,7 +13,7 @@
  * worker runs this; it is plain code, so it is tested without one.
  */
 import { httpAccess, openZarrArray, ShardIndexCache, type ZarrArrayRead, ZarrArrayReader } from "neuroglancer-zarr-vectors/reader";
-import { PrecomputedScale, readInfo } from "@ngplatform/sdk/precomputed";
+import { httpJson, PrecomputedScale, readInfo } from "@ngplatform/sdk/precomputed";
 import { invert, mergeLevels, parseOmeLevels, scaleLevel, type VolumeLevel } from "./ome.js";
 import { PRECOMPUTED } from "./sources.js";
 
@@ -59,13 +59,6 @@ async function each<T>(items: T[], signal: AbortSignal, work: (item: T) => Promi
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, items.length) }, run));
   signal.throwIfAborted();
-}
-
-async function readJson(url: string, signal?: AbortSignal): Promise<any | undefined> {
-  const response = await fetch(url, { signal });
-  if (response.status === 404 || response.status === 403) return undefined;
-  if (!response.ok) throw new Error(`${url}: ${response.status} ${response.statusText}`);
-  return response.json();
 }
 
 /** Element types drawn, and their typed arrays. */
@@ -202,7 +195,7 @@ export class VolumeReader {
     const pyramids = await Promise.all(
       stores.map(async (store) => {
         const url = store.endsWith("/") ? store : `${store}/`;
-        const group = (await readJson(`${url}zarr.json`, signal)) ?? (await readJson(`${url}.zattrs`, signal));
+        const group = (await httpJson(`${url}zarr.json`, signal)) ?? (await httpJson(`${url}.zattrs`, signal));
         if (group === undefined) throw new Error(`${url}: no zarr.json`);
         // Colour voxels packed in a uint32 (this app's RGB TIFF and NIfTI): not intensities to window.
         if (group.attributes?.ngplatform?.rendering === "rgb") throw new Error("colour (RGB) images are not drawn as volumes yet");

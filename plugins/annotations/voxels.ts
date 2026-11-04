@@ -5,6 +5,7 @@
  * image layer reads.
  */
 import type { Json, PlatformContext } from "@ngplatform/sdk";
+import { layerSourceUrl } from "@ngplatform/sdk/sources";
 import { storeOf } from "../volume-view/sources.js";
 import type { Mat4 } from "./geometry.js";
 import type { Region, Summary } from "./statistics.js";
@@ -17,18 +18,9 @@ export interface ImageLevel {
   type: string;
 }
 
-/** A layer's first source as a URL, whatever form the spec gives it in. */
-export function sourceUrl(spec: Json | undefined): string | undefined {
-  const source = (spec as { source?: unknown } | undefined)?.source;
-  const first = Array.isArray(source) ? source[0] : source;
-  if (typeof first === "string") return first;
-  const url = (first as { url?: unknown } | undefined)?.url;
-  return typeof url === "string" ? url : undefined;
-}
-
 /** The store an image (or segmentation) layer reads, as the volume reader opens it; undefined for formats it does not read. */
 export function layerStore(ctx: PlatformContext, layer: string): string | undefined {
-  return storeOf(sourceUrl(ctx.viewer.layerSpec(layer)));
+  return storeOf(layerSourceUrl(ctx.viewer.layerSpec(layer)));
 }
 
 /** Image layers in the scene whose voxels can be read. */
