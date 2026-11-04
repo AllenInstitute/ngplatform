@@ -38,6 +38,7 @@ import { looksAnatomical, type PanelConvention, panelRotations } from "./anatomi
 import { applyLookupTable, layerLookupSource } from "./lookup_tables.js";
 import { addMomentum } from "./momentum.js";
 import { mountInspector } from "./inspector/index.js";
+import { guardSelectedValues, type SelectedValues } from "./selected_values.js";
 import { watchOutlines } from "./outlines.js";
 import { type CaptureOptions, type CapturePanel, captureDimensions, capturePanels, CaptureSession } from "./capture.js";
 
@@ -292,6 +293,7 @@ export class Engine {
       externalSidePanels: true,
       showPanelBorders: true,
     });
+    guardSelectedValues(this.viewer.layerSelectedValues as unknown as SelectedValues);
     this.viewer.coordinateSpace.changed.add(() => {
       this.preferXyz();
       this.applyPanelConvention();

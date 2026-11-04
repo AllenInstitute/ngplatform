@@ -5,7 +5,7 @@
  * annotations themselves are in the annotation table (./table_panel.ts).
  */
 import type { Disposer, PlatformContext } from "@ngplatform/sdk";
-import { type Annotate, TOOLS } from "./annotate.js";
+import { type Annotate, toolHint, TOOLS } from "./annotate.js";
 import { addGroup, groupOf, groupPath, groupsOf, groupTree, hiddenValues, moveGroup, removeGroup, withinGroup, writeGroups } from "./groups.js";
 import { TABLE_PANEL } from "./manifest.js";
 import { parseTerms } from "./ontology.js";
@@ -66,7 +66,12 @@ export class AnnotatePanel {
       host.replaceChildren(
         layerRow,
         tools,
-        el("p", { class: "an-hint", title: "Each new annotation is selected in the annotation table, ready for its values. Pick the tool again to stop." }, "Pick a tool, then Ctrl+click in a view."),
+        el(
+          "p",
+          { class: "an-hint", title: "Each new annotation is selected in the annotation table, ready for its values. Pick the tool again to stop." },
+          // Say which tool is on (a new layer starts with Point on), so picking it does not turn it off unawares.
+          toolHint(tool),
+        ),
         el("div", { class: "an-row" }, button("Open table", () => this.ctx.ui.showPanel(TABLE_PANEL), "The table of every annotation, in the bottom dock")),
         l ? this.groups(l.spec.name) : "",
         l ? this.fields(l.spec.name) : "",

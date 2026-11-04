@@ -682,6 +682,9 @@ textarea.py-in {
 .ins-controls { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
 .ins-controls[hidden] { display: none; }
 .ins-control-list { display: flex; flex-direction: column; gap: 4px; }
+/* Until the histogram and the colour bar first draw, their canvases have the default 300 × 150 size and cover the range buttons below them. */
+.ins-controls .neuroglancer-invlerp-cdfpanel,
+.ins-controls .neuroglancer-invlerp-legend-panel { overflow: hidden; }
 
 /* Source */
 .ins-sources { display: flex; flex-direction: column; }

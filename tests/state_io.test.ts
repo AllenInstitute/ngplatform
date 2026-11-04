@@ -6,6 +6,7 @@ import {
   layerCount,
   layerNameFor,
   parseInput,
+  pasteAction,
   workspaceLink,
 } from "../src/core/state_io.js";
 
@@ -82,5 +83,33 @@ describe("helpers", () => {
     expect(layerCount({ layers: [{}, {}] })).toBe(2);
     expect(layerCount({ layers: { a: "x" } })).toBe(1);
     expect(layerCount({})).toBe(0);
+  });
+});
+
+describe("pasteAction", () => {
+  const paste = (text: string) => pasteAction(text, (f) => JSON.parse(decodeURIComponent(f)));
+
+  it("adds a plain data URL at once", () => {
+    expect(paste("https://example.org/brain.ome.zarr")).toEqual({ kind: "add", url: "https://example.org/brain.ome.zarr", name: "brain.ome" });
+    expect(paste("  zarr://https://example.org/x/  ")).toMatchObject({ kind: "add", url: "zarr://https://example.org/x/" });
+    expect(paste("gs://bucket/data")).toMatchObject({ kind: "add" });
+    expect(paste("https://example.org/tracts.trk")).toMatchObject({ kind: "add" });
+    expect(paste("https://example.org/t.zarrvectors/|zarr-vectors:")).toMatchObject({ kind: "add" });
+    expect(paste("https://example.org/a/precomputed/")).toMatchObject({ kind: "add" });
+  });
+
+  it("asks about another web address", () => {
+    expect(paste("https://example.org/data/brain")).toEqual({ kind: "ask", url: "https://example.org/data/brain", name: "brain" });
+  });
+
+  it("asks before opening a link or a state, which replaces the workspace", () => {
+    const link = "https://neuroglancer-demo.appspot.com/#!" + encodeFragment(JSON.stringify({ layers: [] }));
+    expect(paste(link)).toEqual({ kind: "open", text: link });
+    expect(paste('{"layers": []}')).toMatchObject({ kind: "open" });
+    expect(paste("https://example.org/state.json")).toMatchObject({ kind: "open" });
+  });
+
+  it("leaves other text alone", () => {
+    for (const text of ["", "hello", "12.5", "see https://example.org/brain.ome.zarr here", "{ not json"]) expect(paste(text)).toBeUndefined();
   });
 });

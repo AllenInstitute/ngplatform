@@ -62,14 +62,17 @@ describe("when a plugin is offered", () => {
     expect(await applies(ids("filters"), scene([TRK]))).toBe(false);
   });
 
-  it("offers Segmentation for a label volume, Atlas when it has a lookup table", async () => {
+  it("offers Segmentation for a label volume (listed only for an image), Atlas when it has a lookup table", async () => {
     expect(await applies(ids("segmentation"), scene([LABELS]))).toBe(true);
+    expect(await applies(ids("segmentation"), scene([IMAGE]))).toBe("list");
+    expect(await applies(ids("segmentation"), scene([IMAGE, LABELS]))).toBe(true);
     expect(await applies(ids("atlas"), scene([LABELS]))).toBe(false);
     expect(await applies(ids("atlas"), scene([LABELS], { hasLookupTable: (n) => n === "aseg" }))).toBe(true);
   });
 
-  it("offers Annotations for an annotation layer", async () => {
-    expect(await applies(ids("annotations"), scene([IMAGE]))).toBe(false);
+  it("offers Annotations for an annotation layer, and lists it for an image", async () => {
+    expect(await applies(ids("annotations"), scene([IMAGE]))).toBe("list");
+    expect(await applies(ids("annotations"), scene([TRK]))).toBe(false);
     expect(await applies(ids("annotations"), scene([IMAGE, { name: "points", type: "annotation", sources: ["local://annotations"] }]))).toBe(true);
     // Not Track filtering's regions layer, which it writes from its groups.
     expect(await applies(ids("annotations"), scene([TRK, { name: "tracts regions", type: "annotation", sources: ["local://annotations"], managed: true }]))).toBe(false);

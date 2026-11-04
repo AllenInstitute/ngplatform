@@ -102,7 +102,8 @@ export function shaderSection(scope: Scope, layer: UserLayer, m: ShaderModels): 
     errors.textContent = lines.join("\n");
   });
 
-  root.append(head, ...(m.rows ?? []), props, editor, errors, shaderControls(scope, layer, m));
+  // The controls (contrast, colour) above the code: what is changed most shows without scrolling.
+  root.append(head, ...(m.rows ?? []), shaderControls(scope, layer, m), props, editor, errors);
   refresh();
   return root;
 }

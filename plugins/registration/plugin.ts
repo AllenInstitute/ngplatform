@@ -79,6 +79,15 @@ export function readSaved(raw: unknown): Saved {
   };
 }
 
+/**
+ * The moving layer until one is chosen: with two images or more, the one
+ * added last (a scan opened onto a template opened first).
+ */
+export function defaultMoving(candidates: string[], images: string[]): string | undefined {
+  const movable = images.filter((n) => candidates.includes(n));
+  return movable.length >= 2 ? movable[movable.length - 1] : undefined;
+}
+
 const FIXED_LAYER = "landmarks (fixed)";
 const MOVING_LAYER = "landmarks (moving)";
 
@@ -199,7 +208,7 @@ class Registration {
   private result: Fit | { error: string } | undefined;
   private panelUpdate: ((force?: boolean) => void) | undefined;
   private tab: Tab = "rotate";
-  /** The image save's choices (this session only). */
+  /** The image save's choices (the formats are kept in this browser; the rest this session only). */
   private imageFormat: ImageFormat = "nii.gz";
   private headerOnly = false;
   private method: Method = "linear";
@@ -212,6 +221,10 @@ class Registration {
 
   constructor(private readonly ctx: PlatformContext) {
     this.saved = readSaved(ctx.state.get());
+    // The file formats chosen last, in this browser.
+    const formats = ctx.settings.get<{ transform?: string; image?: string }>("formats") ?? {};
+    if (formats.transform === "lta" || formats.transform === "itk" || formats.transform === "plain") this.transformFormat = formats.transform;
+    if (["nii.gz", "nii", "mgz", "mgh", "zarr"].includes(formats.image ?? "")) this.imageFormat = formats.image as ImageFormat;
     // The state's notice comes for any plugin's change: only a change of this plugin's state is read again
     // (else a drag's move, kept in memory until it ends, would be read over and applied twice).
     let seen = JSON.stringify(ctx.state.get() ?? null);
@@ -234,8 +247,14 @@ class Registration {
   }
 
   private save(patch: Partial<Saved>): void {
+    // The first change made with the default moving layer keeps it chosen, so a layer added later does not take its place.
+    if (this.saved.layer === undefined && !("layer" in patch)) patch = { ...patch, layer: this.layer() };
     this.saved = { ...this.saved, ...patch };
     this.ctx.state.set(this.saved);
+  }
+
+  private keepFormats(): void {
+    this.ctx.settings.set("formats", { transform: this.transformFormat, image: this.imageFormat });
   }
 
   /** Layers that can be moved: 3-D ones, not the landmarks themselves. */
@@ -248,6 +267,10 @@ class Registration {
 
   private layer(): string | undefined {
     const candidates = this.candidates();
+    if (this.saved.layer === undefined) {
+      const images = this.ctx.viewer.layers().filter((l) => l.type === "image").map((l) => l.name);
+      return defaultMoving(candidates, images);
+    }
     return candidates.find((n) => n === this.saved.layer) ?? undefined;
   }
 
@@ -902,7 +925,10 @@ class Registration {
       el(
         "div",
         { class: "rg-row" },
-        select("Format", [["lta", "FreeSurfer LTA"], ["itk", "ITK / ANTs"], ["plain", "4 × 4 text"]], this.transformFormat, (v) => (this.transformFormat = v as typeof this.transformFormat)),
+        select("Format", [["lta", "FreeSurfer LTA"], ["itk", "ITK / ANTs"], ["plain", "4 × 4 text"]], this.transformFormat, (v) => {
+          this.transformFormat = v as typeof this.transformFormat;
+          this.keepFormats();
+        }),
       ),
       el(
         "div",
@@ -915,7 +941,10 @@ class Registration {
       el(
         "div",
         { class: "rg-grid2" },
-        select("Format", [["nii.gz", "NIfTI (.nii.gz)"], ["nii", "NIfTI (.nii)"], ["mgz", "FreeSurfer (.mgz)"], ["mgh", "FreeSurfer (.mgh)"], ["zarr", "OME-Zarr"]], this.imageFormat, (v) => (this.imageFormat = v as ImageFormat)),
+        select("Format", [["nii.gz", "NIfTI (.nii.gz)"], ["nii", "NIfTI (.nii)"], ["mgz", "FreeSurfer (.mgz)"], ["mgh", "FreeSurfer (.mgh)"], ["zarr", "OME-Zarr"]], this.imageFormat, (v) => {
+          this.imageFormat = v as ImageFormat;
+          this.keepFormats();
+        }),
         select("Voxels", [["resample", "Resampled"], ["header", "Unchanged (new header)"]], this.headerOnly ? "header" : "resample", (v) => ((this.headerOnly = v === "header"), redraw())),
         select("Sample method", [["nearest", "Nearest neighbour"], ["linear", "Trilinear"], ["cubic", "Cubic"]], segmentation ? "nearest" : this.method, (v) => (this.method = v as Method), this.headerOnly || segmentation),
         select("Onto the grid of", [["", "Its own (cropped to it)"], [ENLARGE, "Its own, enlarged to hold it all"], ...grids.map((g): [string, string] => [g, g])], this.grid, (v) => (this.grid = v), this.headerOnly),

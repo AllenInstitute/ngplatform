@@ -160,10 +160,14 @@ export class PluginOffers {
     );
     const scene = this.scene();
     const applicable: string[] = [];
+    // Listed only, never toasted, for this data.
+    const listOnly = new Set<string>();
     for (const id of candidates) {
       const entry = this.catalogue.find((e) => e.manifest.id === id)!;
       try {
-        if (await entry.offer!.applies(scene)) applicable.push(id);
+        const applies = await entry.offer!.applies(scene);
+        if (applies) applicable.push(id);
+        if (applies === "list") listOnly.add(id);
       } catch {
         // An offer that cannot tell offers nothing.
       }
@@ -174,7 +178,7 @@ export class PluginOffers {
     this.applicable = applicable;
     if (JSON.stringify([uses, applicable]) !== before) this.changed();
     this.notice(uses.filter((id) => !this.noticed.has(id)));
-    this.toast(offersToToast(applicable, (id) => this.catalogue.find((e) => e.manifest.id === id)?.offer?.toast === true, this.prefs, this.noticed));
+    this.toast(offersToToast(applicable, (id) => !listOnly.has(id) && this.catalogue.find((e) => e.manifest.id === id)?.offer?.toast === true, this.prefs, this.noticed));
   }
 
   private nameOf(id: string): string {

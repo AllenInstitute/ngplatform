@@ -145,6 +145,12 @@ export function readSaved(raw: unknown): Saved {
   return { dataset: s.dataset, groups, editing: groups[0]?.id };
 }
 
+/** The point under the mouse in the views' x, y, z, when the mouse is over a view (else undefined). */
+export function mousePoint(cursor: { active: boolean; position: number[] }): [number, number, number] | undefined {
+  const p = cursor.position;
+  return cursor.active && p.length >= 3 && p.slice(0, 3).every(Number.isFinite) ? [p[0], p[1], p[2]] : undefined;
+}
+
 /**
  * A data source as a key to tell datasets apart by: without the format
  * (|zarr-vectors:) or a trailing slash, Google Cloud Storage as gs://.
@@ -869,7 +875,7 @@ class TrackGroups {
 
   // ------------------------------------------------------------- regions
 
-  private addRoi(shape: RoiShape): void {
+  private addRoi(shape: RoiShape, center = this.viewCentre()): void {
     // A mask needs an image to be one: the label volume added last, else the image added last.
     const image = shape === "mask" ? (readableImages(this.ctx, ["segmentation"]).at(-1) ?? readableImages(this.ctx).at(-1)) : undefined;
     if (shape === "mask" && image === undefined) {
@@ -897,7 +903,7 @@ class TrackGroups {
     const roi: Roi = {
       id: `r${Date.now().toString(36)}`,
       shape,
-      center: this.viewCentre(),
+      center,
       radius: size,
       size: [size * 2, size * 2, size * 2],
       op: "and",
@@ -2092,6 +2098,19 @@ class TrackGroups {
     this.addRoi("box");
   }
 
+  /**
+   * A region at the mouse (else the views' centre), from a key: in the
+   * group being edited, or a new group; the Filtering tab is shown.
+   */
+  addAtMouse(shape: "sphere" | "box"): void {
+    if (this.dataset() === undefined) {
+      this.ctx.ui.toast("Open a tractogram, a segmentation or annotations to filter them.", "error");
+      return;
+    }
+    this.addRoi(shape, mousePoint(this.ctx.viewer.cursor()) ?? this.viewCentre());
+    this.ctx.ui.showPanel(FILTERING_PANEL);
+  }
+
   // ---------------------------------------------------------------- UI
 
   render(host: HTMLElement): Disposer {
@@ -2185,7 +2204,16 @@ class TrackGroups {
     const list = el("div", { class: "tf-groups" });
     const groups = this.groups();
     if (groups.length === 0) {
-      list.append(el("p", { class: "empty" }, "No groups yet. Add one, then regions and attribute ranges to pick its objects."));
+      // A region straight away makes the group too.
+      list.append(
+        el("p", { class: "empty" }, "No groups yet. A region makes one: Alt+Shift+S puts a sphere at the mouse, Alt+Shift+B a box."),
+        el(
+          "div",
+          { class: "tf-row" },
+          el("button", { class: "btn outline small", type: "button", title: "A new group with a sphere at the centre of the views", onclick: () => this.addRoi("sphere") }, "+ Sphere"),
+          el("button", { class: "btn outline small", type: "button", title: "A new group with a box at the centre of the views", onclick: () => this.addRoi("box") }, "+ Box"),
+        ),
+      );
     }
     for (const group of groups) {
       const colour = el("input", { type: "color", class: "tf-swatch", value: group.colour, title: "Colour", "aria-label": `${group.name} colour` }) as HTMLInputElement;
@@ -2393,7 +2421,7 @@ class TrackGroups {
       ),
     );
     if (group.rois.length === 0) {
-      box.append(el("p", { class: "note" }, "A region starts at the centre of the views; Alt-drag it to move it."));
+      box.append(el("p", { class: "note" }, "A region starts at the centre of the views (Alt+Shift+S or B: at the mouse); Alt-drag it to move it."));
     }
     group.rois.forEach((roi, i) => box.append(this.roiControl(group, roi, i)));
 
@@ -2674,6 +2702,8 @@ export const plugin: PluginModule = {
     ctx.commands.register("trackFiltering.newGroup", () => groups.newGroup());
     ctx.commands.register("trackFiltering.addSphere", () => groups.addSphere());
     ctx.commands.register("trackFiltering.addBox", () => groups.addBox());
+    ctx.commands.register("trackFiltering.sphereAtMouse", () => groups.addAtMouse("sphere"));
+    ctx.commands.register("trackFiltering.boxAtMouse", () => groups.addAtMouse("box"));
     ctx.commands.register("trackFiltering.exportCsv", () => groups.exportCsv());
     ctx.commands.register("trackFiltering.saveTrk", () => void groups.saveTrk());
     ctx.commands.register("trackFiltering.densityMap", () => void groups.densityMap());
