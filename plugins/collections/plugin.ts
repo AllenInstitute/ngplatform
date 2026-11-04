@@ -489,7 +489,7 @@ class Collections {
             "div",
             { class: "cl-row" },
             url,
-            el("button", { class: "btn small", type: "button", disabled: this.busy, onclick: () => void this.openInTab(url.value.trim()) }, "Open"),
+            el("button", { class: "btn primary small", type: "button", disabled: this.busy, onclick: () => void this.openInTab(url.value.trim()) }, "Open"),
             el("button", { class: "btn outline small", type: "button", disabled: this.busy, onclick: () => void this.openInTab(EXAMPLE_URL) }, "Example"),
           ),
           this.error ? el("p", { class: "note error" }, this.error) : null,
