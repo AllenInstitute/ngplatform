@@ -24,12 +24,13 @@ export class Stroke {
   set(x: number, y: number, z: number, value: number): boolean {
     const v = this.volume;
     const key = v.key(x >> 6, y >> 6, z >> 6);
-    let chunk = v.chunk(key);
+    const now = v.chunk(key);
     const at = LabelVolume.offset(x, y, z);
-    if ((chunk === undefined ? 0 : chunk[at]) === value) return false;
-    if (!this.before.has(key)) this.before.set(key, chunk?.slice());
-    chunk ??= v.chunk(key, true)!;
-    chunk[at] = value;
+    if ((now === undefined ? 0 : now[at]) === value) return false;
+    // Before: the volume's own copy (none: not there, or, edited in place, the original's).
+    if (!this.before.has(key)) this.before.set(key, v.own(key)?.slice());
+    // Written: the volume's own (edited in place, a copy of the original's made now).
+    v.chunk(key, true)![at] = value;
     this.dirty.add(key);
     ++this.changes;
     return true;
@@ -43,15 +44,13 @@ export class Stroke {
     return keys;
   }
 
-  /** Ends the stroke: chunks left all 0 are dropped, and the after copies kept. */
+  /** Ends the stroke: chunks left saying nothing of their own (all 0; edited in place, as the original) are dropped, and the after copies kept. */
   finish(): number[] {
     const keys = this.flush();
     this.after = new Map();
     for (const key of this.before.keys()) {
-      const c = this.volume.chunk(key);
-      if (c !== undefined && isEmpty(c)) this.volume.putChunk(key, undefined);
-      const now = this.volume.chunk(key);
-      this.after.set(key, now?.slice());
+      this.volume.settle(key);
+      this.after.set(key, this.volume.own(key)?.slice());
     }
     return keys;
   }
@@ -67,11 +66,6 @@ export class Stroke {
   keys(): number[] {
     return [...this.before.keys()];
   }
-}
-
-function isEmpty(c: LabelArray): boolean {
-  for (let i = 0; i < c.length; ++i) if (c[i] !== 0) return false;
-  return true;
 }
 
 /** Undo and redo of strokes, keeping at most `budget` bytes of copies (the oldest go first). */

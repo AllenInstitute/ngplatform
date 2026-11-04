@@ -15,9 +15,9 @@ import { answer, type VirtualRequest } from "@ngplatform/sdk/virtual";
 
 export const LABEL_STORE_EXTENSION = ".ngplabels";
 
-/** A store's keys: metadata and chunks, or undefined for none. */
+/** A store's keys: metadata and chunks, or undefined for none; at once, or (a volume edited in place, which may read its original first) later. */
 export interface InPageStore {
-  getKey(key: string): Uint8Array | undefined;
+  serve(key: string): Uint8Array | undefined | Promise<Uint8Array | undefined>;
 }
 
 const stores = new Map<string, InPageStore>();
@@ -40,7 +40,7 @@ const inPageWorker = {
       port.postMessage({ status: 410, message: "This label volume is no longer open." });
       return;
     }
-    void answer({ get: async (key) => store.getKey(key) }, request.key, request.range, request.head ?? false).then(
+    void answer({ get: async (key) => store.serve(key) }, request.key, request.range, request.head ?? false).then(
       (reply) => port.postMessage(reply, reply.body ? [reply.body] : []),
       (e) => port.postMessage({ status: 500, message: String(e) }),
     );

@@ -9,6 +9,7 @@ import { voxelEdges, voxelVolume } from "../annotations/geometry.js";
 import { button, el, field, numberInput, physical, select } from "../annotations/ui.js";
 import { layerStore, readableImages, type Voxels } from "../annotations/voxels.js";
 import { type Editor, fmtBytes, type ImageLevel, labelTypeOf, MAX_COPY, MAX_NIFTI } from "./editor.js";
+import { CowVolume } from "./cow_volume.js";
 import { iconButton } from "./icons.js";
 import { LABEL_MAX, type LabelType } from "./label_volume.js";
 import { niftiBytes } from "./save.js";
@@ -23,7 +24,8 @@ export class Panel {
   private newLevel = 0;
   private newType: LabelType = "uint8";
   private newName = "";
-  private newCopy = true;
+  /** A segmentation's new layer starts as a copy of its labels, edits it in place, or starts empty. */
+  private newStart: "copy" | "inPlace" | "empty" = "copy";
   private showForm = false;
   /** A segment row is being dragged (onto a group): the list waits to be redrawn. */
   private dragging = false;
@@ -104,7 +106,7 @@ export class Panel {
         }, "A new segmentation layer"),
         button("Close", () => void e.close(session), "Remove it from the scene"),
       ),
-      el("span", { class: "an-faint sg-size" }, `${volume.size.join(" × ")} voxels of ${edges.map((x) => physical(x)).join(" × ")} · ${volume.type}`),
+      el("span", { class: "an-faint sg-size" }, `${volume.size.join(" × ")} voxels of ${edges.map((x) => physical(x)).join(" × ")} · ${volume.type}${volume instanceof CowVolume ? ` · ${volume.original.layer} edited in place` : ""}`),
     );
   }
 
@@ -119,7 +121,6 @@ export class Panel {
       this.newLevel = 0;
     }
     const isSegmentation = segmentations.includes(this.newLayer);
-    const copy = isSegmentation && this.newCopy;
     const store = this.newLayer ? layerStore(this.ctx, this.newLayer) : undefined;
     if (store !== undefined && this.levels?.store !== store) {
       this.levels = { store, levels: [] };
@@ -132,25 +133,30 @@ export class Panel {
       );
     }
     const levels = this.levels?.store === store ? (this.levels?.levels ?? []) : [];
-    const type = copy && levels[this.newLevel] ? labelTypeOf(levels[this.newLevel].type) : this.newType;
+    const voxelsAt = (l: ImageLevel | undefined) => (l ? l.size[0] * l.size[1] * l.size[2] : 0);
+    // Too large to copy: edited in place instead.
+    const tooLarge = isSegmentation && this.newStart === "copy" && voxelsAt(levels[this.newLevel]) > MAX_COPY;
+    const inPlace = isSegmentation && (this.newStart === "inPlace" || tooLarge);
+    const copy = isSegmentation && this.newStart === "copy" && !tooLarge;
+    const type = (copy || inPlace) && levels[inPlace ? 0 : this.newLevel] ? labelTypeOf(levels[inPlace ? 0 : this.newLevel].type) : this.newType;
     const levelLabel = (l: ImageLevel, i: number) => {
       const n = l.size[0] * l.size[1] * l.size[2];
       const bytes = n * (type === "uint8" ? 1 : type === "uint16" ? 2 : 4);
-      return `${i}: ${l.size.join(" × ")}, ${physical(l.voxelSize)} (${copy ? (n > MAX_COPY ? "too large to copy" : `${fmtBytes(bytes)} at most`) : `${fmtBytes(bytes)} if all painted`})`;
+      return `${i}: ${l.size.join(" × ")}, ${physical(l.voxelSize)} (${isSegmentation && this.newStart === "copy" ? (n > MAX_COPY ? "too large to copy: edited in place" : `${fmtBytes(bytes)} at most`) : `${fmtBytes(bytes)} if all painted`})`;
     };
-    const defaultName = copy ? `${this.newLayer} (edited)` : "Segmentation";
+    const defaultName = copy || inPlace ? `${this.newLayer} (edited)` : "Segmentation";
     const name = el("input", { class: "text-input", type: "text", value: this.newName, placeholder: defaultName, "aria-label": "Name" }) as HTMLInputElement;
     name.addEventListener("change", () => (this.newName = name.value.trim()));
-    const create = button(copy ? "Copy and edit" : "Create", () => {
+    const create = button(inPlace ? "Edit in place" : copy ? "Copy and edit" : "Create", () => {
       create.disabled = true;
-      void e.create({ layer: this.newLayer, level: this.newLevel, type: this.newType, name: this.newName || defaultName, copy }).then((made) => {
+      void e.create({ layer: this.newLayer, level: inPlace ? 0 : this.newLevel, type: this.newType, name: this.newName || defaultName, copy, inPlace }).then((made) => {
         if (made) {
           this.showForm = false;
           this.newName = "";
         }
         e.changed();
       });
-    }, copy ? "A copy of this segmentation's labels at this level, to edit (the original is hidden and not changed)" : "An empty label volume on this layer's grid", "btn primary small");
+    }, inPlace ? "Edit this segmentation at its finest level without copying it: chunks are read from it until changed (it is hidden and never written)" : copy ? "A copy of this segmentation's labels at this level, to edit (the original is hidden and not changed)" : "An empty label volume on this layer's grid", "btn primary small");
     create.disabled = !this.newLayer || levels.length === 0;
     return el(
       "div",
@@ -167,23 +173,26 @@ export class Panel {
               e.changed();
             }, "Layer")),
             field("Name", name),
-            field("Level", select(levels.map((l, i) => [String(i), levelLabel(l, i)]), String(this.newLevel), (v) => {
-              this.newLevel = Number(v);
-              e.changed();
-            }, "Level")),
+            inPlace && !tooLarge
+              ? field("Level", el("span", { class: "an-faint" }, levels[0] ? `0: ${levels[0].size.join(" × ")}, ${physical(levels[0].voxelSize)} (the finest)` : "…"))
+              : field("Level", select(levels.map((l, i) => [String(i), levelLabel(l, i)]), String(this.newLevel), (v) => {
+                  this.newLevel = Number(v);
+                  e.changed();
+                }, "Level")),
             isSegmentation
-              ? field("Start", select([["copy", "A copy of its labels"], ["empty", "Empty"]], this.newCopy ? "copy" : "empty", (v) => {
-                  this.newCopy = v === "copy";
+              ? field("Start", select([["copy", "A copy of its labels"], ["inPlace", "Edit it in place (nothing copied)"], ["empty", "Empty"]], this.newStart, (v) => {
+                  this.newStart = v as "copy" | "inPlace" | "empty";
                   e.changed();
                 }, "Start"))
               : null,
-            copy
+            copy || inPlace
               ? null
               : field("Labels", select([["uint8", "8-bit (to 255)"], ["uint16", "16-bit (to 65,535)"], ["uint32", "32-bit"]], this.newType, (v) => {
                   this.newType = v as LabelType;
                   e.changed();
                 }, "Type")),
           ),
+      inPlace ? this.inPlaceHint(tooLarge ? levels[this.newLevel] : undefined) : null,
       e.keptHere.length
         ? el(
             "div",
@@ -194,7 +203,7 @@ export class Panel {
                 "div",
                 { class: "an-row" },
                 el("span", {}, k.name),
-                el("span", { class: "an-faint" }, `${k.size.join(" × ")}, ${new Date(k.time).toLocaleString()}`),
+                el("span", { class: "an-faint" }, `${k.size.join(" × ")}${k.original ? `, edits of ${k.original.layer}` : ""}, ${new Date(k.time).toLocaleString()}`),
                 el("span", { class: "an-spacer" }),
                 button("Open", () => void e.reopen(k).then(() => e.refreshKept(), (err) => this.ctx.ui.toast(`Could not open it: ${(err as Error).message}`, "error")), "Open it again as a new layer"),
                 button("Discard", () => void e.discardKept(k.id), "Forget it"),
@@ -207,6 +216,7 @@ export class Panel {
         { class: "an-row" },
         layers.length ? create : null,
         button("Open NIfTI…", () => e.pickNifti(), "Edit a label image from this computer (.nii, .nii.gz)"),
+        button("Open edits…", () => e.pickEdits(), "Edits of a segmentation saved here (Save → Edits only, an OME-Zarr folder), opened over the original again"),
         e.current
           ? button("Cancel", () => {
               this.showForm = false;
@@ -214,6 +224,17 @@ export class Panel {
             })
           : null,
       ),
+    );
+  }
+
+  /** What editing in place keeps, and where. */
+  private inPlaceHint(level: ImageLevel | undefined): HTMLElement {
+    const layer = this.newLayer;
+    return el(
+      "p",
+      { class: "an-hint sg-inplace" },
+      level ? `Level ${this.newLevel} is ${level.size.join(" × ")} voxels, more than a copy holds (${MAX_COPY / 2 ** 20} M), so it is edited in place. ` : "",
+      `Edit in place copies nothing first: ${layer}'s chunks (64³ voxels) are read at its finest level as they are shown or drawn on, and a chunk is copied when you first change it. Only the changed chunks are kept: in this page (up to 512 MB), and in this browser's storage (OPFS) a moment after each stroke, beyond which they are read back from there. ${layer} itself is hidden and never written. Save writes the edits alone (an OME-Zarr that names ${layer}) or the whole volume.`,
     );
   }
 
@@ -231,13 +252,44 @@ export class Panel {
       this.toolOptions(),
       el("h4", { class: "an-sub" }, "Image values"),
       this.intensity(session),
-      el("p", { class: "an-hint" }, `In the page: ${volume.chunkCount} chunks, ${fmtBytes(volume.bytes)}. ${session.unsaved ? `${session.unsaved} change${session.unsaved === 1 ? "" : "s"} not saved.` : "Nothing unsaved."}`),
+      el(
+        "p",
+        { class: "an-hint" },
+        volume instanceof CowVolume
+          ? `Edited in place over ${volume.original.layer}: ${volume.chunkCount} chunk${volume.chunkCount === 1 ? "" : "s"} of 64³ edited (${fmtBytes(volume.bytes)} in this page${volume.spilledCount ? `, ${volume.spilledCount} more kept only in this browser` : ""}); the rest is read from ${volume.original.store}. Segment voxels are counted in the edited chunks. `
+          : `In the page: ${volume.chunkCount} chunks, ${fmtBytes(volume.bytes)}. `,
+        session.unsaved ? `${session.unsaved} change${session.unsaved === 1 ? "" : "s"} not saved.` : "Nothing unsaved.",
+      ),
       e.editing ? null : el("p", { class: "an-hint" }, "Edit shows the tool bar over the views; B, E, L, F, I, Q pick tools there."),
     );
   }
 
   private saveRow(session: Session): HTMLElement {
     const e = this.editor;
+    if (session.volume instanceof CowVolume) {
+      return el(
+        "div",
+        { class: "sg-save" },
+        el(
+          "div",
+          { class: "an-row" },
+          select([["edits", "Edits only (OME-Zarr)"], ["whole", "The whole volume (OME-Zarr, a job)"]], e.saveInPlace, (v) => {
+            e.saveInPlace = v as "edits" | "whole";
+            e.changed();
+          }, "Save"),
+          el("span", { class: "an-spacer" }),
+          button("Save", () => void e.save(), "Save to this computer", "btn primary small"),
+        ),
+        el(
+          "p",
+          { class: "an-hint" },
+          e.saveInPlace === "edits"
+            ? `The edited chunks only, on ${session.volume.original.layer}'s levels, with a note of where it is; Open edits… opens them over it again.`
+            : "Every chunk, into a folder, as a job: the original's copied a block at a time, the edited ones as edited.",
+        ),
+        e.note ? el("p", { class: "an-hint" }, e.note) : null,
+      );
+    }
     const saveBox = el("input", { type: "checkbox", "aria-label": "Only the painted box" }) as HTMLInputElement;
     saveBox.checked = e.saveCrop;
     saveBox.addEventListener("change", () => (e.saveCrop = saveBox.checked));

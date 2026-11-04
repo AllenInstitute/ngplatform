@@ -126,6 +126,8 @@ export interface FillResult {
   reached: number;
   /** It stopped at its limit of voxels before the region ended. */
   limited: boolean;
+  /** It reached its box where the volume goes on beyond it. */
+  edge: boolean;
 }
 
 /**
@@ -150,7 +152,7 @@ export function floodFill(
     hi[options.axis] = s[options.axis] + 1;
   }
   const size = [0, 1, 2].map((k) => hi[k] - lo[k]);
-  if (size.some((n) => n <= 0) || s.some((v, k) => v < lo[k] || v >= hi[k]) || !inside(...s)) return { changed: 0, reached: 0, limited: false };
+  if (size.some((n) => n <= 0) || s.some((v, k) => v < lo[k] || v >= hi[k]) || !inside(...s)) return { changed: 0, reached: 0, limited: false, edge: false };
   const max = options.maxVoxels ?? 64 * 2 ** 20;
   const visited = new Uint8Array(size[0] * size[1] * size[2]);
   const index = (x: number, y: number, z: number) => x - lo[0] + size[0] * (y - lo[1] + size[1] * (z - lo[2]));
@@ -178,6 +180,7 @@ export function floodFill(
   let reached = 0;
   let changed = 0;
   let limited = false;
+  let edge = false;
   const neighbours = [
     [1, 0, 0],
     [-1, 0, 0],
@@ -201,14 +204,17 @@ export function floodFill(
       const X = x + dx;
       const Y = y + dy;
       const Z = z + dz;
-      if (X < lo[0] || Y < lo[1] || Z < lo[2] || X >= hi[0] || Y >= hi[1] || Z >= hi[2]) continue;
+      if (X < lo[0] || Y < lo[1] || Z < lo[2] || X >= hi[0] || Y >= hi[1] || Z >= hi[2]) {
+        if (volume.inside(X, Y, Z)) edge = true;
+        continue;
+      }
       const j = index(X, Y, Z);
       if (visited[j]) continue;
       visited[j] = 1;
       if (inside(X, Y, Z)) push(j);
     }
   }
-  return { changed, reached, limited };
+  return { changed, reached, limited, edge };
 }
 
 /**

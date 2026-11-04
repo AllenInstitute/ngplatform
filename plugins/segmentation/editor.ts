@@ -16,6 +16,10 @@
  *    shown or hidden, gone to, merged and deleted; and their groups
  *    (./segment_groups.ts), kept in the plugin's per-scene state.
  *  - Undo and redo of strokes; Save as NIfTI or OME-Zarr (./save.ts).
+ *  - A segmentation too large to copy edited in place, copy-on-write
+ *    (./cow_volume.ts): its chunks read from it until edited; every tool
+ *    first reads the chunks it may reach (`ready`); its edits saved alone
+ *    (and opened again over it) or the whole volume saved as a job.
  *
  * The volume lives in the page (./label_volume.ts) and shows as a
  * segmentation layer that reads it as an OME-Zarr store (./session.ts).
@@ -24,18 +28,19 @@ import type { Disposer, PlatformContext } from "@ngplatform/sdk";
 import { mmOf, toGlobal, toVoxel, voxelEdges } from "../annotations/geometry.js";
 import { space as spaceOf } from "../annotations/scene.js";
 import { download, el, fileName, fmt } from "../annotations/ui.js";
-import { type ImageLevel, layerStore, readableImages, type Voxels } from "../annotations/voxels.js";
+import { type ImageLevel, layerStore, readableImages, sourceUrl, type Voxels } from "../annotations/voxels.js";
 import { zipFiles } from "../registration/volume_io.js";
 import { storeOf } from "../volume-view/sources.js";
+import { CowVolume, type Original } from "./cow_volume.js";
 import { chooseUndo, Stroke } from "./history.js";
 import { ballReach, ballShape, dabsBetween, fillOutline, floodFill, type ImageBlock, inRange, interpolate, type Paint, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "./kernels.js";
-import { discard, type KeptInfo, kept, restore } from "./keep.js";
-import { LABEL_MAX, type LabelType, LabelVolume } from "./label_volume.js";
+import { discard, type KeptInfo, kept, restore, restoreInto } from "./keep.js";
+import { CHUNK, LABEL_ARRAYS, LABEL_MAX, type LabelType, LabelVolume } from "./label_volume.js";
 import { BRUSHING, DRAWING, EDITING, PREVIEWING, SEGMENTATION_PANEL, SELECTING } from "./manifest.js";
 import { Painter, type ViewPoint } from "./painter.js";
 import { maskCount, PreviewOverlay } from "./preview.js";
 import { type Mask, type Prompt, QuickSelectRegistry } from "./quick_select.js";
-import { cropped, niftiBytes, niftiGz, omeZarr } from "./save.js";
+import { cropped, editsZarr, niftiBytes, niftiGz, omeZarr, readEdits, type SavedLabel, writeWhole } from "./save.js";
 import { addGroup, assign, editGroup, groupOf, members, readGroups, removeGroup, type SegmentationSaved, type VolumeGroups } from "./segment_groups.js";
 import { isVisible, nextSegment, type SegmentRow, segmentRows, type SegmentsState, withVisibility } from "./segments.js";
 import { type Reference, Session } from "./session.js";
@@ -47,6 +52,35 @@ export const MAX_NIFTI = 2 * 2 ** 30;
 export const MAX_COPY = 512 * 2 ** 20;
 /** The block a copy is read in, in voxels. */
 const COPY_BLOCK: Vec3 = [256, 256, 64];
+/** Edited in place, a tool reads at most this many bytes of chunks before it runs (256 chunks of 64³ at 32 bits). */
+export const MAX_REACH_BYTES = 256 * 2 ** 20;
+
+/** The chunks a tool may read at once in a volume edited in place. */
+export function reachChunks(volume: LabelVolume): number {
+  return Math.floor(MAX_REACH_BYTES / (CHUNK ** 3 * LABEL_ARRAYS[volume.type].BYTES_PER_ELEMENT));
+}
+
+/**
+ * The largest box round `seed` within `lo`..`hi` (an axis one voxel thick,
+ * a section's, kept as it is) that touches at most `max` chunks, and
+ * whether it is smaller than the box asked for.
+ */
+export function capBox(seed: Vec3, lo: Vec3, hi: Vec3, max: number, chunksIn: (lo: Vec3, hi: Vec3) => number): { lo: Vec3; hi: Vec3; capped: boolean } {
+  if (chunksIn(lo, hi) <= max) return { lo, hi, capped: false };
+  const box = (r: number) => ({
+    lo: lo.map((v, k) => (hi[k] - v <= 1 ? v : Math.max(v, seed[k] - r))) as Vec3,
+    hi: hi.map((v, k) => (v - lo[k] <= 1 ? v : Math.min(v, seed[k] + r + 1))) as Vec3,
+  });
+  let a = 0;
+  let b = Math.max(...hi.map((v, k) => v - lo[k]));
+  while (a < b) {
+    const m = Math.ceil((a + b) / 2);
+    const t = box(m);
+    if (chunksIn(t.lo, t.hi) <= max) a = m;
+    else b = m - 1;
+  }
+  return { ...box(a), capped: true };
+}
 
 /** The label volumes this plugin has open, for other plugins (Annotations' Statistics). */
 export interface LabelVolumes {
@@ -60,6 +94,8 @@ export interface NewLayer {
   type: LabelType;
   name: string;
   copy: boolean;
+  /** Edit the segmentation in place (copy-on-write over its finest level) rather than copy it. */
+  inPlace?: boolean;
 }
 
 type FilePicker = {
@@ -105,6 +141,8 @@ export class Editor implements LabelVolumes {
   pending: { session: Session; mask: Mask; voxels: number } | undefined;
   saveFormat: "nii.gz" | "zarr" = "nii.gz";
   saveCrop = false;
+  /** Edited in place: save the edits only, or the whole volume (a job). */
+  saveInPlace: "edits" | "whole" = "edits";
   /** What the last save (or the one under way) said. */
   note = "";
   /** Label volumes kept in this browser and not open now. */
@@ -281,7 +319,9 @@ export class Editor implements LabelVolumes {
     const s = this.current;
     if (s === undefined) return [];
     const state = this.segmentsState(s);
-    const rows = segmentRows(s.counts, s.labels, (v) => s.colour(v), (v) => isVisible(state, v));
+    // Edited in place: the original's names for its segments met in the edits.
+    const names = s.theirs.size ? new Map([...[...s.counts.keys()].filter((v) => s.theirs.has(v)).map((v) => [v, s.theirs.get(v)!] as const), ...s.labels]) : s.labels;
+    const rows = segmentRows(s.counts, names, (v) => s.colour(v), (v) => isVisible(state, v));
     if (!rows.some((r) => r.value === this.value)) rows.push({ value: this.value, name: "", colour: s.colour(this.value), voxels: 0, visible: isVisible(state, this.value) });
     return rows.sort((a, b) => a.value - b.value);
   }
@@ -304,7 +344,9 @@ export class Editor implements LabelVolumes {
     const s = this.current;
     if (s === undefined) return;
     s.counts = s.volume.counts();
-    const v = nextSegment([...s.counts.keys(), ...s.labels.keys(), this.value], LABEL_MAX[s.volume.type]);
+    // Edited in place: above every label read from the original so far too.
+    const seen = s.volume instanceof CowVolume ? [s.volume.largestSeen] : [];
+    const v = nextSegment([...s.counts.keys(), ...s.labels.keys(), this.value, ...seen], LABEL_MAX[s.volume.type]);
     if (v === 0) {
       this.ctx.ui.toast(`Every value of a ${s.volume.type} label volume is used.`);
       return;
@@ -422,14 +464,17 @@ export class Editor implements LabelVolumes {
     if (s) this.showSegments(s, members(this.groups(s), id, this.rows().map((r) => r.value)), visible);
   }
 
-  /** Moves the views to a segment: its voxel nearest its centre. */
-  goTo(value: number): void {
+  /** Moves the views to a segment: its voxel nearest its centre (edited in place, of its voxels in the edited chunks). */
+  async goTo(value: number): Promise<void> {
     const s = this.current;
     const placed = s?.placement();
     if (s === undefined || placed === undefined) return;
-    const voxel = s.volume.centre(value);
+    const v = s.volume;
+    const release = v instanceof CowVolume ? await v.prepareKeys(v.keysWith(value)) : undefined;
+    const voxel = v.centre(value);
+    release?.();
     if (voxel === undefined) {
-      this.ctx.ui.toast(`Segment ${value} is not painted.`);
+      this.ctx.ui.toast(v instanceof CowVolume ? `Segment ${value} is not in the edited chunks.` : `Segment ${value} is not painted.`);
       return;
     }
     const position = (this.ctx.viewer.getState() as { position?: number[] }).position ?? [];
@@ -441,10 +486,13 @@ export class Editor implements LabelVolumes {
     const s = this.current;
     if (s === undefined) return;
     const n = s.counts.get(value) ?? 0;
-    if (n > 0 && !(await this.ctx.ui.confirm(`Delete segment ${value}: erase its ${n.toLocaleString()} voxels? (Undo brings them back.)`))) return;
-    this.enqueue(() => {
+    const inPlace = s.volume instanceof CowVolume;
+    if (n > 0 && !(await this.ctx.ui.confirm(`Delete segment ${value}: erase its ${n.toLocaleString()} voxels${inPlace ? " in the edited chunks (the original's elsewhere stay)" : ""}? (Undo brings them back.)`))) return;
+    this.enqueue(async () => {
       const stroke = new Stroke(s.volume);
+      const release = await s.volume.prepareKeys(s.volume.keys());
       relabel(stroke, value, 0);
+      release();
       s.labels.delete(value);
       if (this.groups(s).of[String(value)] !== undefined) this.assignGroup([value], undefined);
       s.changed([]);
@@ -458,13 +506,15 @@ export class Editor implements LabelVolumes {
   merge(from: number, into = this.value): void {
     const s = this.current;
     if (s === undefined || from === into) return;
-    this.enqueue(() => {
+    this.enqueue(async () => {
       const stroke = new Stroke(s.volume);
+      const release = await s.volume.prepareKeys(s.volume.keys());
       const n = relabel(stroke, from, into);
+      release();
       s.labels.delete(from);
       if (this.groups(s).of[String(from)] !== undefined) this.assignGroup([from], undefined);
       s.changed([]);
-      this.ctx.ui.toast(`Merged segment ${from} into ${into}: ${n.toLocaleString()} voxels.`);
+      this.ctx.ui.toast(`Merged segment ${from} into ${into}: ${n.toLocaleString()} voxels${s.volume instanceof CowVolume ? " in the edited chunks" : ""}.`);
       this.commit(stroke, s, into);
       this.changed();
     });
@@ -507,12 +557,74 @@ export class Editor implements LabelVolumes {
 
   /** A kept volume opened again: into a layer that shows it (`replace`), or as a new one. */
   async reopen(info: KeptInfo, replace?: string): Promise<void> {
+    if (info.original !== undefined) return this.reopenInPlace(info, replace);
     const volume = await restore(info);
     const session = await Session.open(this.ctx, this.voxels, volume, info.name, { id: info.id, replace });
     for (const [value, label] of info.labels) session.labels.set(value, label);
     if (info.reference && this.ctx.viewer.layers().some((l) => l.name === info.reference)) await this.chooseReference(session, info.reference);
     this.adopt(session, replace === undefined);
     session.applyColours([...session.counts.keys(), ...session.labels.keys()]);
+  }
+
+  /** A segmentation edited in place, kept in this browser, opened again over its original (an error if that cannot be read). */
+  private async reopenInPlace(info: KeptInfo, replace?: string): Promise<void> {
+    const volume = await this.overOriginal(info.original!, info.name, info.size);
+    const session = await Session.open(this.ctx, this.voxels, volume, info.name, { id: info.id, replace });
+    for (const [value, label] of info.labels) session.labels.set(value, label);
+    await restoreInto(volume, info);
+    await this.theirLabels(info.original!.layer, session);
+    if (info.reference && this.ctx.viewer.layers().some((l) => l.name === info.reference)) await this.chooseReference(session, info.reference);
+    this.adopt(session, replace === undefined);
+    session.applyColours([...session.labels.keys()]);
+    session.refresh();
+  }
+
+  /**
+   * A volume edited in place over an original: an error saying so if the
+   * original cannot be read, or (`size`) is no longer the size it was.
+   */
+  private async overOriginal(original: Original, name: string, size?: number[]): Promise<CowVolume> {
+    let levels: ImageLevel[];
+    try {
+      levels = await this.voxels.levels(original.store);
+    } catch (e) {
+      throw new Error(`its original, ${original.layer} (${original.store}), cannot be read: ${(e as Error).message}. It may have moved or be gone`);
+    }
+    if (size !== undefined && levels[0].size.some((n, k) => n !== size[k])) throw new Error(`its original, ${original.layer} (${original.store}), is now ${levels[0].size.join(" × ")} voxels, not ${size.join(" × ")}`);
+    return new CowVolume(levels, labelTypeOf(levels[0].type), original, (level, lo, extent, signal) => this.voxels.labels(original.store, level, lo, extent, undefined, signal), name);
+  }
+
+  /**
+   * Edited in place: the original's segment names and colours for the new
+   * layer (its lookup table, or its layer's colours and colour seed), so
+   * its segments look as they did.
+   */
+  private async theirLabels(layer: string, session: Session): Promise<void> {
+    const hex = (c: number[]) => `#${c.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+    const lut = this.ctx.viewer.layers().some((l) => l.name === layer) ? this.ctx.viewer.lookupTables.of(layer) : undefined;
+    if (lut !== undefined) {
+      try {
+        const table = await this.ctx.viewer.lookupTables.load(lut);
+        for (const e of table.entries) session.theirs.set(Number(e.value), { name: e.name, colour: hex(e.colour) });
+        await this.ctx.viewer.lookupTables.apply(session.layer, lut);
+        return;
+      } catch {
+        // Without its table, its layer's colours below.
+      }
+    }
+    const spec = this.ctx.viewer.layerSpec(layer) as { segmentColors?: Record<string, string>; colorSeed?: number; segmentDefaultColor?: string } | undefined;
+    if (spec === undefined) return;
+    for (const [id, colour] of Object.entries(spec.segmentColors ?? {})) session.theirs.set(Number(id), { name: "", colour });
+    this.ctx.viewer.patchState(
+      (ng) => {
+        const own = ((ng.layers as Record<string, unknown>[] | undefined) ?? []).find((l) => l.name === session.layer);
+        if (own === undefined) return;
+        if (spec.segmentColors) own.segmentColors = { ...spec.segmentColors, ...((own.segmentColors as Record<string, string> | undefined) ?? {}) };
+        if (spec.colorSeed !== undefined) own.colorSeed = spec.colorSeed;
+        if (spec.segmentDefaultColor !== undefined) own.segmentDefaultColor = spec.segmentDefaultColor;
+      },
+      { quiet: true },
+    );
   }
 
   async refreshKept(): Promise<void> {
@@ -531,6 +643,7 @@ export class Editor implements LabelVolumes {
     const store = layerStore(this.ctx, spec.layer);
     if (store === undefined) return false;
     try {
+      if (spec.inPlace) return await this.editInPlace(spec, store);
       const levels = await this.voxels.levels(store);
       const index = Math.min(spec.level, levels.length - 1);
       const level = levels[index];
@@ -558,6 +671,29 @@ export class Editor implements LabelVolumes {
       this.ctx.ui.toast(`Could not make the segmentation layer: ${(e as Error).message}`, "error");
       return false;
     }
+  }
+
+  /**
+   * Edits a segmentation layer in place: a volume over its finest level
+   * whose chunks are read from it until edited (nothing is copied first).
+   * The original is hidden and never written.
+   */
+  private async editInPlace(spec: NewLayer, store: string): Promise<boolean> {
+    const original: Original = { store, layer: spec.layer, source: sourceUrl(this.ctx.viewer.layerSpec(spec.layer)) };
+    const volume = await this.overOriginal(original, spec.name);
+    const session = await Session.open(this.ctx, this.voxels, volume, spec.name);
+    await this.theirLabels(spec.layer, session);
+    this.ctx.viewer.setLayerVisible(spec.layer, false);
+    await this.chooseReference(session, readableImages(this.ctx).find((l) => l !== session.layer));
+    this.adopt(session);
+    // Its description (with where the original is) kept at once; the active segment a new one, above the labels the original shows.
+    await volume.survey().catch(() => 0);
+    this.newSegment();
+    const n = volume.size[0] * volume.size[1] * volume.size[2];
+    this.ctx.log.info(
+      `New segmentation layer “${session.layer}”: ${spec.layer} edited in place (${volume.size.join(" × ")} voxels, ${(n / 2 ** 30).toFixed(1)} G): its chunks are read from it as needed, and only those you change are kept, in this page and this browser. ${spec.layer} is hidden and unchanged.`,
+    );
+    return true;
   }
 
   /**
@@ -611,6 +747,8 @@ export class Editor implements LabelVolumes {
   private adopt(session: Session, edit = true): void {
     this.sessions.push(session);
     this.current = session;
+    // What the last save said was of another volume.
+    this.note = "";
     session.counts = session.volume.counts();
     this.value = [...session.counts.keys()].sort((a, b) => a - b)[0] ?? 1;
     session.applyColours([...session.counts.keys(), this.value]);
@@ -724,6 +862,29 @@ export class Editor implements LabelVolumes {
     return mm * perMm;
   }
 
+  /**
+   * Has the chunks a tool reaches (a box of voxels) ready: edited in place,
+   * the original's are read first.  Resolves the function that lets them
+   * go, or undefined (and says why) when the box holds more chunks than a
+   * tool reads at once.
+   */
+  private async ready(session: Session, lo: Vec3, hi: Vec3, what: string): Promise<(() => void) | undefined> {
+    const v = session.volume;
+    if (!(v instanceof CowVolume)) return () => {};
+    const n = v.chunksIn(lo, hi);
+    const max = reachChunks(v);
+    if (n > max) {
+      this.ctx.ui.toast(`${what} reaches ${n.toLocaleString()} chunks of 64³ voxels; edited in place, a tool reads at most ${max} of the original's at once. Make it smaller.`);
+      return undefined;
+    }
+    try {
+      return await v.prepare(lo, hi);
+    } catch (e) {
+      this.ctx.ui.toast(`Could not read ${v.original.layer} there: ${(e as Error).message}`, "error");
+      return undefined;
+    }
+  }
+
   private enqueue(work: () => Promise<void> | void): void {
     this.queue = this.queue.then(work).catch((e) => {
       this.ctx.log.error(`Drawing: ${(e as Error).message}`);
@@ -749,13 +910,19 @@ export class Editor implements LabelVolumes {
   private async dab(b: Brushing, at: Vec3, normal: Vec3 | undefined): Promise<void> {
     const reach = ballReach(b.q);
     const paint: Paint = { ...b.paint };
+    const lo = at.map((v, k) => Math.floor(v - reach[k]) - 1) as Vec3;
+    const hi = at.map((v, k) => Math.ceil(v + reach[k]) + 2) as Vec3;
     if (b.range !== undefined) {
-      const lo = at.map((v, k) => Math.floor(v - reach[k]) - 1) as Vec3;
-      const hi = at.map((v, k) => Math.ceil(v + reach[k]) + 2) as Vec3;
       const block = await b.session.imageBlock(lo, hi);
       if (block) paint.where = inRange(block, b.range[0], b.range[1]);
     }
-    paintBall(b.stroke, at, b.q, paint, b.disc ? normal : undefined);
+    const release = await this.ready(b.session, lo, hi, "The brush");
+    if (release === undefined) return;
+    try {
+      paintBall(b.stroke, at, b.q, paint, b.disc ? normal : undefined);
+    } finally {
+      release();
+    }
     if (b.stroke.flush().length) b.session.refresh(true);
   }
 
@@ -774,9 +941,22 @@ export class Editor implements LabelVolumes {
         break;
       }
       case "pick": {
-        const v = session.volume.get(...(voxel.map(voxelIndex) as Vec3));
-        if (v > 0) this.activate(v);
-        else this.ctx.ui.toast("No segment there (0).");
+        const at = voxel.map(voxelIndex) as Vec3;
+        const pick = (v: number) => {
+          if (v > 0) this.activate(v);
+          else this.ctx.ui.toast("No segment there (0).");
+        };
+        if (!(session.volume instanceof CowVolume)) pick(session.volume.get(...at));
+        else {
+          // Edited in place: the chunk may have to be read first.
+          this.enqueue(async () => {
+            const release = await this.ready(session, at, at.map((v) => v + 1) as Vec3, "Pick");
+            if (release === undefined) return;
+            const v = session.volume.get(...at);
+            release();
+            pick(v);
+          });
+        }
         break;
       }
       case "fill": {
@@ -805,14 +985,25 @@ export class Editor implements LabelVolumes {
     const value = this.value;
     const axis = this.axis;
     const only = this.overwrite === "empty" ? 0 : undefined;
-    this.enqueue(() => {
-      const box = session.volume.paintedBox(value);
+    this.enqueue(async () => {
+      const v = session.volume;
+      // Edited in place: the sections drawn are those in the edited chunks.
+      const own = v instanceof CowVolume ? await v.prepareKeys(v.keysWith(value)) : undefined;
+      const box = v.paintedBox(value);
+      own?.();
       if (box === undefined) {
         this.ctx.ui.toast(`Segment ${value} is not drawn yet.`);
         return;
       }
+      const release = await this.ready(session, box.lo, box.hi, "Interpolating it");
+      if (release === undefined) return;
       const stroke = new Stroke(session.volume);
-      const sections = interpolate(stroke, value, axis, box, only);
+      let sections: number;
+      try {
+        sections = interpolate(stroke, value, axis, box, only);
+      } finally {
+        release();
+      }
       this.ctx.ui.toast(
         sections
           ? `Filled ${sections} section${sections === 1 ? "" : "s"} of segment ${value} between those drawn: ${stroke.changes.toLocaleString()} voxels${only === 0 ? " (empty ones only)" : ""}.`
@@ -897,21 +1088,29 @@ export class Editor implements LabelVolumes {
       return;
     }
     const paint: Paint = this.lassoErase ? { value: 0, only: this.eraseOnly ? this.value : undefined } : { value: this.value, only: this.overwrite === "empty" ? 0 : undefined };
+    // The outline's box in its section.
+    const [u, w] = [0, 1, 2].filter((k) => k !== axis);
+    const lo: Vec3 = [0, 0, 0];
+    const hi: Vec3 = [0, 0, 0];
+    lo[axis] = index;
+    hi[axis] = index + 1;
+    lo[u] = Math.floor(Math.min(...points.map((p) => p[0])));
+    hi[u] = Math.ceil(Math.max(...points.map((p) => p[0]))) + 1;
+    lo[w] = Math.floor(Math.min(...points.map((p) => p[1])));
+    hi[w] = Math.ceil(Math.max(...points.map((p) => p[1]))) + 1;
     if (this.limit && session.reference) {
-      const [u, w] = [0, 1, 2].filter((k) => k !== axis);
-      const lo: Vec3 = [0, 0, 0];
-      const hi: Vec3 = [0, 0, 0];
-      lo[axis] = index;
-      hi[axis] = index + 1;
-      lo[u] = Math.floor(Math.min(...points.map((p) => p[0])));
-      hi[u] = Math.ceil(Math.max(...points.map((p) => p[0]))) + 1;
-      lo[w] = Math.floor(Math.min(...points.map((p) => p[1])));
-      hi[w] = Math.ceil(Math.max(...points.map((p) => p[1]))) + 1;
       const block = await session.imageBox(lo, hi);
       if (block) paint.where = inRange(block, this.low, this.high);
     }
+    const release = await this.ready(session, lo, hi, "The outline");
+    if (release === undefined) return;
     const stroke = new Stroke(session.volume);
-    const n = fillOutline(stroke, axis, index, points, paint);
+    let n: number;
+    try {
+      n = fillOutline(stroke, axis, index, points, paint);
+    } finally {
+      release();
+    }
     if (n === 0) this.ctx.ui.toast(this.lassoErase ? "Nothing to erase inside the outline." : "Nothing painted: the outline holds no voxel it may paint (Paint over, the image's range).");
     this.commit(stroke, session, paint.value);
   }
@@ -933,6 +1132,23 @@ export class Editor implements LabelVolumes {
       lo = s.map((v) => v - this.reach) as Vec3;
       hi = s.map((v) => v + this.reach + 1) as Vec3;
     }
+    // Edited in place, a fill reads the original's chunks it may reach first: at most a tool's worth round the click.
+    let capped = false;
+    if (session.volume instanceof CowVolume) {
+      const v = session.volume;
+      const clamp = (b: Vec3) => b.map((x, k) => Math.max(0, Math.min(size[k], x))) as Vec3;
+      ({ lo, hi, capped } = capBox(s, clamp(lo), clamp(hi), reachChunks(v), (a, b) => v.chunksIn(a, b)));
+    }
+    const release = await this.ready(session, lo, hi, "The fill");
+    if (release === undefined) return;
+    try {
+      await this.fillIn(session, s, axis, lo, hi, capped);
+    } finally {
+      release();
+    }
+  }
+
+  private async fillIn(session: Session, s: Vec3, axis: number | undefined, lo: Vec3, hi: Vec3, capped: boolean): Promise<void> {
     let inside = sameLabel(session.volume, s);
     if (this.fillBy === "image") {
       if (session.reference === undefined) {
@@ -947,7 +1163,8 @@ export class Editor implements LabelVolumes {
     const result = floodFill(stroke, s, inside, { value: this.value, only: this.overwrite === "empty" ? 0 : undefined }, { axis, box: { lo, hi }, maxVoxels: 64 * 2 ** 20 });
     if (result.reached === 0) this.ctx.ui.toast(this.fillBy === "image" ? `The value clicked is outside ${fmt(this.low)} to ${fmt(this.high)}.` : "Nothing to fill there.");
     else if (result.limited) this.ctx.ui.toast(`The fill stopped at its limit of ${result.reached.toLocaleString()} voxels.`);
-    this.commit(stroke);
+    else if (capped && result.edge) this.ctx.ui.toast(`The fill stopped at the edge of the ${[0, 1, 2].map((k) => hi[k] - lo[k]).join(" × ")} voxels round the click it may read at once (edited in place, it reads the original's chunks first). Fill again beyond it to go on.`);
+    this.commit(stroke, session);
   }
 
   private async runQuick(start: { voxel: Vec3; axis?: number }, end: Vec3): Promise<void> {
@@ -1002,7 +1219,7 @@ export class Editor implements LabelVolumes {
       return;
     }
     if (this.quickMode === "paint" || decided === "accept") {
-      this.paintMask(session, mask);
+      await this.paintMask(session, mask);
       return;
     }
     // Shown first: Enter (or Accept) paints it, Escape (or Cancel) drops it; a new prompt replaces it.
@@ -1041,7 +1258,17 @@ export class Editor implements LabelVolumes {
   }
 
   /** Paints a mask with the active segment, as one stroke. */
-  private paintMask(session: Session, mask: Mask): void {
+  private async paintMask(session: Session, mask: Mask): Promise<void> {
+    const release = await this.ready(session, mask.lo as Vec3, mask.lo.map((v, k) => v + mask.size[k]) as Vec3, "The mask");
+    if (release === undefined) return;
+    try {
+      this.paintMaskNow(session, mask);
+    } finally {
+      release();
+    }
+  }
+
+  private paintMaskNow(session: Session, mask: Mask): void {
     const stroke = new Stroke(session.volume);
     const only = this.overwrite === "empty" ? 0 : undefined;
     let i = 0;
@@ -1147,6 +1374,7 @@ export class Editor implements LabelVolumes {
       return;
     }
     const volume = session.volume;
+    if (volume instanceof CowVolume) return this.saveEdited(session, volume);
     const box = this.saveCrop ? volume.paintedBox() : undefined;
     if (this.saveCrop && box === undefined) {
       this.ctx.ui.toast("Nothing is painted yet.");
@@ -1177,24 +1405,8 @@ export class Editor implements LabelVolumes {
     try {
       let where: string;
       if (zarr) {
-        const groups = this.groups(session);
-        const labels = [...session.counts.keys()].sort((a, b) => a - b).map((value) => ({ value, name: session.labels.get(value)?.name || undefined, colour: session.colour(value), group: groupOf(groups, value)?.name }));
-        const files = await omeZarr(out, description, (done, total) => this.setNote(`Writing: ${Math.round((100 * done) / total)}%`), labels);
-        if (folder) {
-          const root = await folder.getDirectoryHandle(base + suffix, { create: true });
-          for (const [path, bytes] of files) {
-            const parts = path.split("/");
-            let dir = root;
-            for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part, { create: true });
-            const w = await (await dir.getFileHandle(parts[parts.length - 1], { create: true })).createWritable();
-            await w.write(bytes as unknown as BufferSource);
-            await w.close();
-          }
-          where = `${folder.name}/${base}${suffix}`;
-        } else {
-          download(zipFiles(new Map([...files].map(([p, b]) => [`${base}${suffix}/${p}`, b]))), `${base}${suffix}.zip`);
-          where = `${base}${suffix}.zip`;
-        }
+        const files = await omeZarr(out, description, (done, total) => this.setNote(`Writing: ${Math.round((100 * done) / total)}%`), this.savedLabels(session));
+        where = await writeFolder(files, folder, base + suffix);
       } else {
         const bytes = await niftiGz(out, description);
         if (file) {
@@ -1215,6 +1427,114 @@ export class Editor implements LabelVolumes {
     }
   }
 
+  /** The segments' names, colours and groups, as saved. */
+  private savedLabels(session: Session): SavedLabel[] {
+    const groups = this.groups(session);
+    return [...new Set([...session.counts.keys(), ...session.labels.keys()])]
+      .filter((v) => v > 0)
+      .sort((a, b) => a - b)
+      .map((value) => ({ value, name: session.labels.get(value)?.name || session.theirs.get(value)?.name || undefined, colour: session.colour(value), group: groupOf(groups, value)?.name }));
+  }
+
+  /**
+   * Saves a segmentation edited in place: its edits only (an OME-Zarr of
+   * the edited chunks naming the original), or the whole volume (an
+   * OME-Zarr written into a folder as a job: the original's chunks copied
+   * a block at a time, the edited ones as edited).
+   */
+  private async saveEdited(session: Session, volume: CowVolume): Promise<void> {
+    const whole = this.saveInPlace === "whole";
+    const picker = window as unknown as FilePicker;
+    if (whole && !picker.showDirectoryPicker) {
+      this.ctx.ui.toast("Saving the whole volume writes a folder, which this browser cannot (Chrome and Edge can): save the edits only.", "error");
+      return;
+    }
+    const name = `${fileName(session.layer)}${whole ? "" : "_edits"}.ome.zarr`;
+    let folder: FileSystemDirectoryHandle | undefined;
+    try {
+      if (picker.showDirectoryPicker) folder = await picker.showDirectoryPicker({ id: "ngplatform-save", mode: "readwrite" });
+    } catch (e) {
+      if ((e as DOMException).name === "AbortError") return;
+      throw e;
+    }
+    const original = volume.original;
+    const description = whole ? `${session.layer}: ${original.layer} edited in ngplatform` : `${session.layer}: edits of ${original.layer} (${original.store}) made in ngplatform`;
+    const labels = this.savedLabels(session);
+    if (!whole) {
+      this.setNote("Writing the edits…");
+      try {
+        const files = await editsZarr(volume, description, (done, total) => this.setNote(`Writing the edits: ${Math.round((100 * done) / total)}%`), labels);
+        const where = await writeFolder(files, folder, name);
+        session.unsaved = 0;
+        this.setNote(`Saved the edits as ${where}: ${volume.chunkCount} chunks of 64³; the rest is ${original.layer} (${original.store}), which they name. Open edits… opens them over it again.`);
+        this.ctx.log.info(`Saved the edits of ${session.layer} as ${where}.`);
+      } catch (e) {
+        this.setNote(`Could not save: ${(e as Error).message}`);
+      }
+      return;
+    }
+    const root = await folder!.getDirectoryHandle(name, { create: true });
+    const where = `${folder!.name}/${name}`;
+    this.setNote(`Writing the whole volume into ${where}, a job (see Jobs); edits made meanwhile may or may not be in it.`);
+    try {
+      const n = await this.ctx.jobs.run(`Saving ${session.layer}`, (job) =>
+        writeWhole(volume, (path, bytes) => writeFile(root, path, bytes), {
+          description,
+          labels,
+          progress: (done, total) => job.progress(done / total, `Block ${done} of ${total}`),
+          cancelled: () => job.cancelled,
+        }),
+      );
+      session.unsaved = 0;
+      this.setNote(`Saved the whole volume as ${where}: ${n.toLocaleString()} chunks.`);
+      this.ctx.log.info(`Saved ${session.layer} (the whole volume) as ${where}.`);
+    } catch (e) {
+      this.setNote(`Could not save the whole volume: ${(e as Error).message}`);
+    }
+  }
+
+  /** Asks for a saved edits folder (Save → Edits only) and opens it over its original. */
+  pickEdits(): void {
+    const input = el("input", { type: "file" }) as HTMLInputElement;
+    input.webkitdirectory = true;
+    input.addEventListener("change", () => {
+      if (input.files?.length) void this.openEdits([...input.files]);
+    });
+    input.click();
+  }
+
+  /**
+   * Opens saved edits (the files of an edits-only OME-Zarr folder, with
+   * their paths) over their original again, as a segmentation edited in
+   * place; says so if the original cannot be read.
+   */
+  async openEdits(files: File[]): Promise<boolean> {
+    // Paths within the folder: "x_edits.ome.zarr/0/c/1/2/3" → "0/c/1/2/3".
+    const byPath = new Map<string, Blob>();
+    for (const f of files) byPath.set((f.webkitRelativePath || f.name).split("/").slice(f.webkitRelativePath ? 1 : 0).join("/"), f);
+    const folder = files[0]?.webkitRelativePath.split("/")[0] || "the folder";
+    try {
+      const saved = await readEdits(byPath);
+      const name = folder.replace(/(_edits)?\.ome\.zarr$/i, "") || `${saved.note.original.layer} (edited)`;
+      const volume = await this.overOriginal(saved.note.original, name, saved.note.size);
+      if (volume.type !== saved.note.type) throw new Error(`its original now holds ${volume.type} labels, the edits ${saved.note.type}`);
+      for (const c of saved.chunks) volume.putChunk(volume.key(...c.at), c.data);
+      const session = await Session.open(this.ctx, this.voxels, volume, name);
+      for (const l of saved.labels) if (l.name || l.colour) session.labels.set(l.value, { name: l.name ?? "", colour: l.colour ?? session.colour(l.value) });
+      await this.theirLabels(saved.note.original.layer, session);
+      await this.chooseReference(session, readableImages(this.ctx).find((l) => l !== session.layer));
+      this.adopt(session);
+      session.changed(volume.keys());
+      session.applyColours([...session.labels.keys()]);
+      session.refresh();
+      this.ctx.log.info(`Opened ${folder}: ${saved.chunks.length} edited chunks over ${saved.note.original.layer} (${saved.note.original.store}).`);
+      return true;
+    } catch (e) {
+      this.ctx.ui.toast(`Could not open ${folder}: ${(e as Error).message}`, "error");
+      return false;
+    }
+  }
+
   private setNote(text: string): void {
     this.note = text;
     this.changed();
@@ -1229,6 +1549,27 @@ interface Brushing {
   /** The image range it is limited to. */
   range: [number, number] | undefined;
   disc: boolean;
+}
+
+/** Writes a file by its path under a folder, making the folders on the way. */
+async function writeFile(root: FileSystemDirectoryHandle, path: string, bytes: Uint8Array): Promise<void> {
+  const parts = path.split("/");
+  let dir = root;
+  for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part, { create: true });
+  const w = await (await dir.getFileHandle(parts[parts.length - 1], { create: true })).createWritable();
+  await w.write(bytes as unknown as BufferSource);
+  await w.close();
+}
+
+/** Files by path written into `name` in a folder, or (no folder) downloaded as `name`.zip; resolves where. */
+async function writeFolder(files: Map<string, Uint8Array>, folder: FileSystemDirectoryHandle | undefined, name: string): Promise<string> {
+  if (folder) {
+    const root = await folder.getDirectoryHandle(name, { create: true });
+    for (const [path, bytes] of files) await writeFile(root, path, bytes);
+    return `${folder.name}/${name}`;
+  }
+  download(zipFiles(new Map([...files].map(([p, b]) => [`${name}/${p}`, b]))), `${name}.zip`);
+  return `${name}.zip`;
 }
 
 /** The voxel axis a normal is closest to. */

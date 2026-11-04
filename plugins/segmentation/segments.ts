@@ -76,3 +76,31 @@ export function segmentRows(
 
 /** A segment's name as the list shows it: its own, or "Segment <id>". */
 export const segmentName = (row: { value: number; name: string }): string => row.name || `Segment ${row.value}`;
+
+/** Murmur3's mixing of a 32-bit value into a hash state, without the final steps (Neuroglancer's `hashCombine`). */
+function hashCombine(state: number, value: number): number {
+  value = Math.imul(value >>> 0, 0xcc9e2d51) >>> 0;
+  value = ((value << 15) | (value >>> 17)) >>> 0;
+  value = Math.imul(value, 0x1b873593) >>> 0;
+  state = ((state >>> 0) ^ value) >>> 0;
+  state = ((state << 13) | (state >>> 19)) >>> 0;
+  return (state * 5 + 0xe6546b64) >>> 0;
+}
+
+/**
+ * The colour Neuroglancer gives a segment that has none of its own: a hue
+ * and saturation from a hash of its id and the layer's colour seed
+ * (`SegmentColorHash`), as #rrggbb.
+ */
+export function hashColour(value: number, seed = 0): string {
+  let h = hashCombine(seed, value >>> 0);
+  h = hashCombine(h, Math.floor(value / 2 ** 32));
+  const hue = ((h & 0xff) / 255) * 6;
+  const s = 0.5 + 0.5 * (((h >> 8) & 0xff) / 255);
+  const i = Math.floor(hue);
+  const f = hue - i;
+  const [p, q, t] = [1 - s, 1 - s * f, 1 - s * (1 - f)];
+  const rgb = [[1, t, p], [q, 1, p], [p, 1, t], [p, q, 1], [t, p, 1], [1, p, q]][i % 6];
+  // Through 32-bit floats, as Neuroglancer keeps the colour.
+  return `#${rgb.map((c) => Math.round(Math.fround(c) * 255).toString(16).padStart(2, "0")).join("")}`;
+}
