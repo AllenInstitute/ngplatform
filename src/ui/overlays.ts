@@ -274,9 +274,14 @@ export interface MenuItem {
 
 let openMenu: HTMLElement | null = null;
 
+/** Removes the open menu's document listeners. */
+let menuListeners: (() => void) | null = null;
+
 export function closeMenu(): void {
   openMenu?.remove();
   openMenu = null;
+  menuListeners?.();
+  menuListeners = null;
 }
 
 /** A small menu below `anchor` (or at the pointer). */
@@ -320,14 +325,20 @@ export function showMenu(anchor: HTMLElement | { x: number; y: number }, items: 
   const dismiss = (e: Event) => {
     if (e instanceof KeyboardEvent && e.key !== "Escape") return;
     if (e.target instanceof Node && menu.contains(e.target) && !(e instanceof KeyboardEvent)) return;
-    closeMenu();
-    document.removeEventListener("mousedown", dismiss, true);
-    document.removeEventListener("keydown", dismiss, true);
+    if (openMenu === menu) closeMenu();
   };
-  setTimeout(() => {
+  // Added once this click is over; removed by closeMenu however the menu
+  // closes (an item chosen, another menu opened), so a menu opened from an
+  // item is not closed by its parent's listener.
+  const timer = setTimeout(() => {
     document.addEventListener("mousedown", dismiss, true);
     document.addEventListener("keydown", dismiss, true);
   });
+  menuListeners = () => {
+    clearTimeout(timer);
+    document.removeEventListener("mousedown", dismiss, true);
+    document.removeEventListener("keydown", dismiss, true);
+  };
 }
 
 // ------------------------------------------------------------------ toasts

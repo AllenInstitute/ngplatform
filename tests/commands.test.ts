@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type Command, CommandRegistry, matchCommands } from "../src/core/commands.js";
+import { type Command, CommandRegistry, matchCommands, runsWithoutArgs } from "../src/core/commands.js";
 
 const command = (id: string, title: string, group = "View"): Command => ({ id, title, group, run: () => {} });
 
@@ -21,5 +21,14 @@ describe("CommandRegistry", () => {
     expect(matchCommands(list, "layout 3d").map((c) => c.id)).toEqual(["1"]);
     expect(matchCommands(list, "undo").map((c) => c.id)).toEqual(["3"]);
     expect(matchCommands(list, "").length).toBe(3);
+  });
+});
+
+describe("runsWithoutArgs", () => {
+  it("leaves out of the palette commands whose required arguments have no default", () => {
+    const needsId: Command = { ...command("scene.switch", "Switch to a scene"), args: { type: "object", required: ["id"], properties: { id: { type: "string" } } } };
+    const defaulted: Command = { ...command("brush", "Brush size"), args: { type: "object", required: ["notches"], properties: { notches: { type: "number", default: 1 } } } };
+    const optional: Command = { ...command("step", "Step"), args: { type: "object", properties: { n: { type: "number" } } } };
+    expect([command("a", "A"), needsId, defaulted, optional].filter(runsWithoutArgs).map((c) => c.id)).toEqual(["a", "brush", "step"]);
   });
 });
