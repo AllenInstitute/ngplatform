@@ -66,6 +66,8 @@ function remembered(): Partial<CaptureSettings> {
 function unitLabel(scale: number, unit: string): string {
   if (unit === "") return "its coordinates";
   const text = formatScaleWithUnitAsString(scale, unit, { precision: 3 });
+  // "mm" (or "1mm"): that unit; "0.5mm": steps of it.
+  if (!/^\d/.test(text)) return text;
   return /^1[^\d.]/.test(text) ? text.slice(1) : `steps of ${text}`;
 }
 
