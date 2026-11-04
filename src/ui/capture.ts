@@ -340,7 +340,7 @@ async function capture(wb: Workbench, s: CaptureSettings, folder?: FileSystemDir
           encoding(i);
           entries.push({ name: frameName("frame_", i, kept.length), data: new Uint8Array(await (await pngOf(kept[i])).arrayBuffer()) });
         }
-        downloadBlob(new Blob(zipStore(entries), { type: "application/zip" }), `${name}-frames.zip`);
+        downloadBlob(new Blob(zipStore(entries, undefined, "The frames are too large for one zip file; save them to a folder instead."), { type: "application/zip" }), `${name}-frames.zip`);
         break;
       }
       case "folder": {

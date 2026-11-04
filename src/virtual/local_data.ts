@@ -18,6 +18,7 @@
  * writing can be changed too: track groups saved into a zarr-vectors store.
  */
 
+import { idbRequest } from "../core/idb.js";
 import type { VirtualFormat } from "../sdk/types.js";
 import { MGH_FILE } from "./images/mgh.js";
 import { NPY_FILE } from "./images/npy.js";
@@ -127,30 +128,7 @@ interface Open extends Stored {
   needsPermission: boolean;
 }
 
-const DB = "ngplatform";
-const STORE = "localData";
-
-function db(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB, 1);
-    request.onupgradeneeded = () => {
-      for (const name of ["localPlugins", STORE]) {
-        if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name, { keyPath: name === STORE ? "id" : "key" });
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-async function idb<T>(mode: IDBTransactionMode, work: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
-  const database = await db();
-  return new Promise((resolve, reject) => {
-    const request = work(database.transaction(STORE, mode).objectStore(STORE));
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
+const idb = <T>(mode: IDBTransactionMode, work: (store: IDBObjectStore) => IDBRequest<T>) => idbRequest<T>("localData", mode, work);
 
 /**
  * The colours Freeview gives FreeSurfer's surfaces, so their outlines on the
