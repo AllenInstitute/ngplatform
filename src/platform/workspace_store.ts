@@ -9,8 +9,8 @@
  * layers that show it without the UI noticing.
  */
 import { type SliceSpec, readSlice, writeSlice } from "../core/app_state.js";
-import { describeChange } from "../core/change_label.js";
-import { type HistoryRow, StateHistory } from "../core/history.js";
+import { describeStep } from "../core/change_label.js";
+import { type HistoryData, type HistoryNode, type HistoryRow, StateHistory } from "../core/history.js";
 import { encodeFragment, type WorkspaceState } from "../core/state_io.js";
 import {
   activeScene,
@@ -74,7 +74,8 @@ export interface StoreOptions {
 }
 
 export class WorkspaceStore {
-  readonly history = new StateHistory();
+  /** Every settled state, as a tree (see src/core/history.ts); replaced when a kept tree is resumed. */
+  history = new StateHistory();
   private app: Json = {};
   private platform: PlatformState = emptyPlatform();
   private settleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -206,7 +207,8 @@ export class WorkspaceStore {
     if (this.amend || echo || !this.inputSinceOpen || (this.lastEditKey !== undefined && editKey === this.lastEditKey && !this.history.isAdopting)) {
       this.history.replaceCurrent(snapshot);
     } else {
-      this.history.record(snapshot, this.nextLabel ?? describeChange(this.lastWorkspace, workspace));
+      const step = describeStep(this.lastWorkspace, workspace);
+      this.history.record(snapshot, this.nextLabel === undefined ? step : { ...step, label: this.nextLabel });
     }
     this.nextLabel = undefined;
     this.lastWorkspace = workspace;
@@ -259,10 +261,19 @@ export class WorkspaceStore {
     return changed ? { ...ng, layers } : ng;
   }
 
-  /** Replaces the whole workspace. */
-  open(state: WorkspaceState, from: string): void {
+  /**
+   * Replaces the whole workspace.  With `resume` (a tree this browser kept
+   * for this link), the history is that tree and the state opened is its
+   * current node's, not a new step.
+   */
+  open(state: WorkspaceState, from: string, options: { resume?: HistoryData } = {}): void {
     this.opened++;
     state = { ...state, ng: this.withRules(state.ng) };
+    const kept = options.resume === undefined ? undefined : StateHistory.import(options.resume);
+    if (kept !== undefined) {
+      this.history = kept;
+      this.history.adoptNext();
+    }
     this.apply(state);
     // Opening is one undo step, and what follows on its own is part of it.
     this.inputSinceOpen = true;
@@ -353,7 +364,25 @@ export class WorkspaceStore {
     return this.history.rows();
   }
 
-  /** Goes back or forward to a row of `historyRows()`, as that many undos or redos. */
+  /** Every node of the history tree, for the history view. */
+  historyTree(): HistoryNode[] {
+    return this.history.tree();
+  }
+
+  /** Goes to any node of the history tree, restoring its state. */
+  goToNode(id: number): boolean {
+    this.settle();
+    const label = this.history.tree().find((n) => n.id === id)?.label ?? "a change";
+    return this.restore(this.history.jump(id), `Went to “${label}”.`);
+  }
+
+  /** Goes to the branch before (-1) or after (1) this one at the nearest fork (see StateHistory.switchBranch). */
+  switchBranch(direction: 1 | -1): boolean {
+    this.settle();
+    return this.restore(this.history.switchBranch(direction), direction < 0 ? "Went to the previous branch." : "Went to the next branch.");
+  }
+
+  /** Goes back or forward to a row of `historyRows()` (the current path), as that many undos or redos. */
   goToHistory(row: number): boolean {
     this.settle();
     const rows = this.history.rows();
