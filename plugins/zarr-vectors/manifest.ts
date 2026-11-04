@@ -23,7 +23,7 @@ https://storage.googleapis.com/bucket/tracts.zarrvectors/|zarr-vectors:
 Stores ending in \`.zarrvectors\` are recognised without it. A store on this computer opens with Add → Local file or folder.
 
 ## Tractograms on this computer
-A tractogram (TrackVis \`.trk\`, MRtrix \`.tck\` or \`.trx\`) opens in place (Open → Open from device), with nothing converted: the file is read once, in a worker, and served as a zarr-vectors store made from it, so it draws, selects and filters like any store. Points are in RAS+ millimetres, as nibabel reads them.
+A tractogram (TrackVis \`.trk\`, MRtrix \`.tck\` or \`.trx\`) opens in place (Open → Open from device), with nothing converted: the file is read once, in a worker, and served as a zarr-vectors store made from it, so it draws, selects and filters like any store. Points are in RAS+ millimetres, as nibabel reads them. A large file's cells are kept in the browser's private storage while it is open (about 1.4 times the file), with only an index and the cells last used in memory (View settings sets how much); coarse views come from sample levels of about one streamline in 10, 100, 1000. A file the browser cannot hold opens through the local runner instead (Jobs → This computer).
 
 ## Meshes on this computer
 A mesh or surface (\`.obj\`, \`.stl\`, \`.ply\`, GIFTI \`.gii\`, FreeSurfer \`lh.pial\` and the like) opens in place too; anatomical GIFTI and FreeSurfer surfaces are moved into scanner RAS as zarr-vectors-tools does: each \`.obj\` object (\`o\`/\`g\`) or the whole file is one object, ids from 1, at the file's coordinates (millimetres, or nanometres when it spans more than 50,000).

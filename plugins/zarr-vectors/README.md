@@ -315,6 +315,36 @@ Not read yet (reported once in the console):
 - Link attributes (per-edge or per-face values).
 - Rank other than 3.
 
+## Stores made from files on this computer
+
+The platform serves tractograms, meshes, neurons and point tables on this
+computer as virtual stores of this format (`src/virtual/vectors/`, tested
+here in `src/virtual/*.spec.ts`). For large files:
+
+- **Tractograms** (`.trk`, `.tck`, `.trx`): the `vlen_manifests_v1` object
+  index (rows are the streamlines' numbers in the file, no `object_ids`
+  array), level 0 in cells of about 4 MB of points, and sample levels 1 to
+  4 (about one streamline in 10ᵏ, by a hash of its number, every 2ᵏ⁺¹th
+  point, cells 2ᵏ times as large). The store keeps its cells in a spill
+  file in the browser's private storage and an index in memory; see
+  `src/virtual/README.md` ("Large tractograms: what is kept"). It answers
+  `{ curves: { level, ids } }` messages with those streamlines read from the
+  file itself, which Track filtering uses instead of reading every chunk
+  their manifests name. While its first pass runs, its keys are answered
+  `503`, which `httpAccess` (`reader.ts`) asks again, as Neuroglancer's
+  reads do. Past what the browser can hold, it fails naming the local
+  runner ("Open through the local runner (Jobs → This computer)").
+- **Meshes** of more than a million triangles: one face group per vertex
+  fragment in every cell and no cross-cell faces (border vertices are
+  copied), with levels whose chunks double (`coarsening_method:
+  mesh_vertex_clustering`, `bin_shape`), so each level is a level of detail
+  of the multiscale mesh.
+- An object table whose rows are its ids (no `object_ids` or
+  `object_attributes/segment_id`) makes its segment ids only when something
+  reads them, and does not send them to the chunk worker (`identityTable`
+  in `objects.ts`), so tens of millions of streamlines do not cost 8 bytes
+  each per level.
+
 ## Segment properties
 
 `properties` is built from level 0's `object_attributes/` (found by listing

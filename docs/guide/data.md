@@ -35,12 +35,45 @@ is never loaded whole and coarser levels appear first.
 | refkv vzip archives (`.vzip`), opened with the files they reference (the folder that holds both, or both dropped together) | the archive's own Zarr hierarchy | A Zarr hierarchy whose chunks reference byte ranges of other files (TIFF, CZI, ND2, HDF5 … zarrified by [refkv](https://github.com/d-v-b/refkv)). References to local files are found beside the archive by name; http(s) ones are read with range requests. Codecs Neuroglancer does not read (refkv's TIFF deflate and LZW, the TIFF predictor) are decoded on the fly; JPEG and JPEG 2000 chunks are not read yet. Format version 0, as refkv 0.2.0 writes it. |
 | NumPy arrays (`.npy`, 2-D to 4-D) | a virtual OME-Zarr image, with a pyramid | Indexed [z, y, x] as Python imaging code does (the last axis is x); 1-unit voxels. |
 | A FreeSurfer subject folder (with `mri/` and `surf/`) | its T1, aparc+aseg and white and pial surfaces | Surfaces in Freeview's colours, drawn as outlines on the slices. |
-| Tractograms (`.trk`, `.tck`, `.trx`) | a virtual Zarr Vectors streamline store | Split into spatial cells, with a coarse level for large files; track groups work on them. |
-| Meshes (`.obj`, `.stl`, `.ply`), GIFTI and FreeSurfer surfaces (`lh.pial` …) | a virtual Zarr Vectors mesh store | Surfaces are placed in scanner RAS. A surface brings the values beside it (curvature, thickness, `.mgh` overlays, `.annot` and `.label` parcellations, GIFTI shape and label files, and CIFTI beside a GIFTI surface whose name gives its hemisphere: each map of a `.dscalar.nii` or `.dlabel.nii`, and a `.dtseries.nii`'s mean and standard deviation over time and its values at one time point, which the Time series plugin steps through, on that hemisphere's cortex); see [Surfaces](interface.md#surfaces). |
+| Tractograms (`.trk`, `.tck`, `.trx`) | a virtual Zarr Vectors streamline store | Split into spatial cells, with sample levels (about one streamline in 10, 100, 1000 …) for large files; track groups work on them. A large file is read once, and its cells kept in the browser's private storage while it is open; see [Large tractograms and meshes](#large-tractograms-and-meshes). |
+| Meshes (`.obj`, `.stl`, `.ply`), GIFTI and FreeSurfer surfaces (`lh.pial` …) | a virtual Zarr Vectors mesh store | A mesh of more than a million triangles opens in cells with simplified levels. Surfaces are placed in scanner RAS. A surface brings the values beside it (curvature, thickness, `.mgh` overlays, `.annot` and `.label` parcellations, GIFTI shape and label files, and CIFTI beside a GIFTI surface whose name gives its hemisphere: each map of a `.dscalar.nii` or `.dlabel.nii`, and a `.dtseries.nii`'s mean and standard deviation over time and its values at one time point, which the Time series plugin steps through, on that hemisphere's cortex); see [Surfaces](interface.md#surfaces). |
 | Neurons (`.swc`, or a folder of them) | a virtual Zarr Vectors skeleton store | One object per tree, with cable length and branch points. |
 | Graphs: GraphML (`.graphml`), or an edge list (`…edges.csv`, rows of `source, target`) dropped with its node table beside it (`…nodes.csv`, rows of `node_id, x, y, z`) | a virtual Zarr Vectors graph store | One object per connected component, every edge drawn (cycles too); node positions from `x`, `y`, `z`; each node's degree and other numeric values become properties. |
 | Point tables (`.csv`, `.tsv`, `.xyz`, `.parquet`, Feather `.feather`/`.arrow`) and LAS point clouds (`.las`, and compressed `.laz`) | a virtual Zarr Vectors point store | x, y, z from columns named so (or `x_location`, `x_um` …, as Xenium writes transcripts); other numeric columns become properties. Large clouds get coarse levels. |
 | A folder of OME-Zarr, Zarr Vectors or precomputed data | the stores themselves | Read file by file. |
+
+### Large tractograms and meshes
+
+A tractogram is read once when it is opened, in a worker: about a minute
+for a 3 GB `.trk` (10 million streamlines) on a desktop, roughly 7 minutes
+for 20 GB. While that pass runs the layer waits (its reads are answered
+"still reading the file" and asked again). The pass copies the points into
+spatial cells in the browser's private storage (OPFS): about 1.4 times the
+file's size, kept while the file is open and deleted when it is closed or
+its tab is. Memory holds an index of the cells (about 25 MB for 20 million
+streamlines) and the cells last used, up to a budget: 1/32 of this
+device's memory, between 64 and 512 MB, or what **View settings →
+Tractograms on this computer** sets.
+
+Coarse views come from sample levels (about one streamline in 10, 100,
+1000 …, chosen by a hash of each streamline's number, so each level is a
+subset of the one before). Track filtering's regions read only the cells
+they touch, a sample level first, then level 0. A group's own streamlines,
+and **Save .trk**, read just those streamlines from the file. A group of
+more points than the page draws whole (8 million) is drawn from a sample
+level, and its note says so.
+
+When the browser cannot hold a file (its private storage has less room
+than the copy needs, or it is a private window, which keeps that storage
+in memory), opening it fails with a message to open it through the local
+runner instead (Jobs → This computer), which serves it with
+`zvtools virtual serve`.
+
+A mesh of more than a million triangles opens in cells with simplified
+levels (by vertex clustering), so the view shows a coarse level first and
+finer cells load as you zoom in on a selected object. Surfaces with values
+beside them (curvature, labels, time series) are kept whole as one cell.
+Binary PLY reads fastest; very large OBJ and STL files still read slowly.
 
 Chrome and Edge remember local files between visits (you are asked to allow
 reading them again); links to them work in the same browser while the tab
