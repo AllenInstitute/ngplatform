@@ -462,11 +462,18 @@ export class LocalData {
     const at = this.parse(url);
     if (at === undefined || this.entries.get(at.id)?.files === undefined) return;
     this.entries.delete(at.id);
+    this.release(at.id);
     this.changed();
+  }
+
+  /** Has the format workers let go of the stores made from an entry's files (a large tractogram's spill, say). */
+  private release(id: string): void {
+    for (const worker of this.virtualWorkers.values()) worker.postMessage({ type: "close", store: `${id}/` });
   }
 
   async forget(id: string): Promise<void> {
     this.entries.delete(id);
+    this.release(id);
     await idb("readwrite", (s) => s.delete(id)).catch(() => {});
     this.changed();
   }

@@ -18,10 +18,11 @@ export { answer, blobSource, type ByteSource, jsonBytes, Lru, type Range, type V
 /**
  * What local data sends a format's worker for each key, with the reply
  * port; or, with type "message", a message from the page for the store
- * (`VirtualStore.message`), in `body`.
+ * (`VirtualStore.message`), in `body`; or, with type "close" (no port),
+ * that the stores whose place starts with `store` are let go.
  */
 export interface VirtualRequest {
-  type: "get" | "message";
+  type: "get" | "message" | "close";
   /** The file's place: its local entry and path. */
   store: string;
   file: File;
@@ -80,6 +81,15 @@ export function serveVirtualStores(open: (file: File, related: Record<string, Fi
   };
   self.addEventListener("message", (event: MessageEvent<VirtualRequest>) => {
     const request = event.data;
+    if (request?.type === "close") {
+      // Local data let go of these files: so do their stores (and what they keep).
+      for (const [key, made] of stores) {
+        if (!key.startsWith(request.store)) continue;
+        stores.delete(key);
+        made.then((s) => s.close?.(), () => {});
+      }
+      return;
+    }
     const port = event.ports[0];
     if (port === undefined) return;
     if (request?.type === "message") {
