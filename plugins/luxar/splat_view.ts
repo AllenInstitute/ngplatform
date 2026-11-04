@@ -26,7 +26,7 @@ import { type GpuSplats, SplatRenderer } from "./splat_gl.js";
 import { SplatView2d } from "./splat_view2d.js";
 import { BLOCK, CELL, type SplatImageInfo } from "./splat_worker.js";
 import { COLORMAP_INDEX, type LayerStyle, rgbOf, TONE_INDEX } from "./style.js";
-import { apply, boxInFrustum, invertAffine, multiply } from "./view_math.js";
+import { apply, boxInFrustum, columnMajor, invertAffine, multiply } from "./view_math.js";
 
 /** GPU memory for one image's splats. */
 const GPU_BYTES = 512 * 1024 * 1024;
@@ -38,9 +38,6 @@ const SPLAT_DEPTH = 0.5;
 const GLOW = 0.3;
 /** Of a level's cells, about this share is taken to hold tissue, for the budget. */
 const FILL = 0.3;
-
-/** Row-major (as the volume view keeps matrices) to column-major. */
-const columnMajor = (m: ArrayLike<number>) => Float32Array.from({ length: 16 }, (_, i) => m[4 * (i % 4) + Math.floor(i / 4)]);
 
 export class SplatView {
   private readonly worker: Worker;
