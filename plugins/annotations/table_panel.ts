@@ -281,7 +281,7 @@ export class TablePanel {
         el(
           "div",
           { class: "an-comment" },
-          el("div", { class: "an-faint" }, c.time.slice(0, 16).replace("T", " "), button("×", () => this.model.removeComment(selected, i), "Remove the comment", "btn small icon an-comment-x")),
+          el("div", { class: "an-faint", title: c.time }, localTime(c.time), button("×", () => this.model.removeComment(selected, i), "Remove the comment", "btn small icon an-comment-x")),
           el("div", {}, c.text),
         ),
       ),
@@ -379,4 +379,12 @@ export class TablePanel {
     if (!(await this.ctx.ui.confirm(`Delete the ${rows.length} annotation${rows.length === 1 ? "" : "s"} found${this.query ? ` by “${this.query}”` : ""}${kept ? ` (not the ${kept} track filtering region${kept === 1 ? "" : "s"})` : ""}? Undo brings them back.`))) return;
     this.model.delete(rows.map((r) => ({ layer: r.layer, id: r.id })));
   }
+}
+
+/** A comment's time (kept in UTC) as this computer's local time, to the minute. */
+function localTime(iso: string): string {
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return iso.slice(0, 16).replace("T", " ");
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}`;
 }
