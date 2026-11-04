@@ -182,6 +182,56 @@ describe("CrossChunkLinks on a zarr-vectors-py store", () => {
     for (const count of seen.values()) expect(count).toBe(2);
   });
 
+  it("does not keep a network error as no links: it warns, and finds them on the next read", async () => {
+    const read = fixtureRead("poly_raw");
+    let failing = true;
+    const warnings: string[] = [];
+    const links = new CrossChunkLinks({
+      cells: new LevelCells(
+        {
+          read: async (path, options) => {
+            // The network fails for one cross-chunk array's metadata, once.
+            if (failing && /^0\/links\/0\/[^/]*\+[^/]*\/zarr\.json$/.test(path)) {
+              failing = false;
+              throw Object.assign(new Error("Network or CORS error"), { status: 0 });
+            }
+            return read(path, options);
+          },
+          shardIndexes: new ShardIndexCache(),
+        },
+        "0",
+      ),
+      listDirectories: (path) => fixtureListDirectories("poly_raw")(`0/${path}`),
+      warn: (m) => warnings.push(m),
+    });
+    await expect(links.discover()).rejects.toThrow("Network");
+    expect(warnings.join(" ")).toMatch(/could not be read/);
+    expect((await links.discover())?.arrays.length).toBe(2);
+    let total = 0;
+    for (const chunk of chunks) total += (await links.linksOwnedBy(chunk)).length;
+    expect(total).toBe(5);
+  });
+
+  it("warns and tries again when listing fails on the network, not falling back to probing", async () => {
+    let failing = true;
+    const warnings: string[] = [];
+    const links = new CrossChunkLinks({
+      cells: new LevelCells({ read: fixtureRead("poly_raw"), shardIndexes: new ShardIndexCache() }, "0"),
+      listDirectories: async (path) => {
+        if (failing) {
+          failing = false;
+          throw Object.assign(new Error("HTTP error 503"), { status: 503 });
+        }
+        return fixtureListDirectories("poly_raw")(`0/${path}`);
+      },
+      warn: (m) => warnings.push(m),
+    });
+    await expect(links.discover()).rejects.toThrow("503");
+    expect(warnings.join(" ")).toMatch(/could not be listed/);
+    expect((await links.discover())?.arrays.length).toBe(2);
+    expect(warnings.join(" ")).not.toMatch(/without directory listing/);
+  });
+
   it("finds the same links by probing neighbours when listing is unsupported", async () => {
     const listed = make(true);
     const probed = make(false);
