@@ -218,7 +218,7 @@ export function planSection(
     if (slabVoxels(visible, slab) > options.maxGlyphs) continue;
     const spacingPx = info.voxelSize * section.pxPerMm;
     // Glyphs a few pixels across show nothing but noise.
-    if (spacingPx < 4) return { note: "glyphs would be under 4 pixels apart: zoom in" };
+    if (spacingPx < 4) return { note: "Zoom in to show glyphs (under 4 pixels apart)" };
     // A finer sphere only where glyphs are big enough to show it.
     const subdivisions = spacingPx * options.size >= 40 ? 3 : 2;
     const key = `${level}|${slab.n.map((v) => v.toFixed(4)).join(",")}|${Math.round(slab.d * 1e3)}|${subdivisions}`;

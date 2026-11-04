@@ -163,6 +163,9 @@ class Orientations {
   private store: string | undefined;
   private opened: Opened | undefined;
   private openError: string | undefined;
+  /** An image that failed to open, not asked for again until then. */
+  private failed: { url: string; until: number } | undefined;
+  private disposed = false;
   private overlay: { element: HTMLElement; dispose(): void } | undefined;
   private glyphOverlay: GlyphOverlay | undefined;
   private handle: { redraw(): void; dispose(): void } | undefined;
@@ -227,7 +230,11 @@ class Orientations {
       if (slot.shown) slot.shown.key = "";
     }
     this.update();
-    if (tell) void this.retellStore();
+    if (tell) void this.retellStore().catch((e: Error) => {
+      if (this.disposed) return;
+      this.openError = `Could not remake the image's coarser levels: ${e.message}`;
+      this.panelUpdate?.();
+    });
   }
 
   private readSpace(): void {
@@ -363,8 +370,9 @@ class Orientations {
       this.glyphOverlay = new GlyphOverlay(this.overlay.element);
     }
     const url = omeZarrUrl(target.sources[0])!;
-    if (url !== this.store) {
+    if (url !== this.store && !(url === this.failed?.url && Date.now() < this.failed.until)) {
       this.store = url;
+      this.failed = undefined;
       this.opened = undefined;
       this.openError = undefined;
       this.clearSlots();
@@ -405,7 +413,16 @@ class Orientations {
       this.opened = opened;
       this.schedule();
     } catch (e) {
-      if (this.store === url) this.openError = `Could not read the image: ${(e as Error).message}`;
+      if (this.store === url && !this.disposed) {
+        this.openError = `Could not read the image: ${(e as Error).message}. Trying again in a few seconds.`;
+        // Not kept as open (a network blip need not stick): opened afresh by a later update, at most every few seconds.
+        this.store = undefined;
+        this.probed.delete(url);
+        this.failed = { url, until: Date.now() + 5000 };
+        setTimeout(() => {
+          if (!this.disposed) this.update();
+        }, 5100);
+      }
     }
     this.panelUpdate?.();
   }
@@ -476,7 +493,8 @@ class Orientations {
     this.queued = true;
     requestAnimationFrame(() => {
       this.queued = false;
-      this.frame();
+      // A frame queued before the plugin was switched off draws nothing.
+      if (!this.disposed) this.frame();
     });
   }
 
@@ -811,7 +829,7 @@ class Orientations {
     const level0 = opened.levels[0];
     if (level0.componentChunk < level0.components) {
       // Neuroglancer's shaders see a channel dimension only whole in one chunk.
-      this.ctx.ui.toast(`Direction colour needs each voxel's ${level0.components} components in one chunk; this image stores ${level0.componentChunk} per chunk (a 4-D NIfTI whose header marks its 4th axis as time stores one). Write it as OME-Zarr with whole channel chunks (see the plugin's README).`, "error");
+      this.ctx.ui.toast(`Can't colour by direction: this image splits each voxel's ${level0.components} components over chunks of ${level0.componentChunk}. Write it as OME-Zarr with whole channel chunks (see the README).`, "error");
       return;
     }
     const edit = this.channelEdit(target.name, "^");
@@ -961,13 +979,24 @@ class Orientations {
           }),
         ),
       );
-      const status = [this.openError, ...this.describe(), this.cursorLine].filter((s): s is string => !!s);
+      const noTarget = saved.on && candidates.length > 0 && this.target() === undefined ? "None of these images has a component axis (c) to draw as glyphs." : undefined;
+      const status = [this.openError, noTarget, this.glyphOverlay?.problem, ...this.describe(), this.cursorLine].filter((s): s is string => !!s);
+      if (candidates.length === 0) {
+        host.replaceChildren(
+          el(
+            "div",
+            { class: "or-panel" },
+            el("label", { class: "or-row" }, el("span", { class: "or-label" }, "Orientation glyphs"), on),
+            el("p", { class: "note" }, "Add an image of orientations (ODFs, tensors or peaks): an OME-Zarr or 4-D NIfTI with a component axis."),
+          ),
+        );
+        return;
+      }
       host.replaceChildren(
         el(
           "div",
           { class: "or-panel" },
-          el("label", { class: "or-row" }, el("span", { class: "or-label" }, "Orientation glyphs"), on),
-          el("p", { class: "note" }, "ODFs, tensors and peaks over an image with a channel axis of components. Also “Glyphs” beside “Sections” in the 3-D view."),
+          el("label", { class: "or-row", title: "ODFs, tensors and peaks over an image with a component axis. Also Glyphs beside Sections in the 3-D view." }, el("span", { class: "or-label" }, "Orientation glyphs"), on),
           select(
             "Image",
             target?.name ?? "",
@@ -996,7 +1025,7 @@ class Orientations {
                 saved.shGlyph,
                 [
                   ["odf", "ODF shape"],
-                  ["peaks", "Peaks (up to 3, over half the largest)"],
+                  ["peaks", "Peaks (up to 3)"],
                 ],
                 (v) => this.set({ shGlyph: v as Saved["shGlyph"] }),
               )
@@ -1049,7 +1078,7 @@ class Orientations {
               title: "Set the image layer's shader to show the principal direction as colour, weighted by anisotropy",
               onclick: () => this.applyDirectionColour(),
             },
-            "Direction colour on the image",
+            "Colour image by direction",
           ),
           status.length ? el("div", { class: "note or-status" }, ...status.map((s) => el("div", {}, s))) : null,
         ),
@@ -1063,6 +1092,8 @@ class Orientations {
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.cursorRead?.abort();
     this.offs.forEach((off) => off());
     this.clearSlots();
     this.handle?.dispose();
