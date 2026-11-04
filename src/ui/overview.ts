@@ -141,18 +141,20 @@ export function renderOverviewSettings(host: HTMLElement, wb: Workbench): void {
   };
   clear(
     host,
-    h("h3", { class: "section-title" }, "Overviews of large images on this computer"),
     h(
-      "p",
-      { class: "note" },
-      "The coarser levels of an image read from a file here (TIFF, NIfTI, …) are made as they are viewed. The coarsest are kept in this browser's storage for later visits, within a budget: coarsest levels first (cheapest to keep, dearest to make again); finer levels are made again from the file. Images under 64 MB keep nothing.",
+      "h3",
+      {
+        class: "section-title",
+        title:
+          "The coarser levels of a large local image (TIFF, NIfTI, …) are made as they are viewed. The coarsest are kept in this browser for later visits, within this budget; finer levels are made again from the file. Images under 64 MB keep nothing.",
+      },
+      "Overviews of local images",
     ),
     h(
       "div",
       { class: "overview-settings" },
-      h("label", {}, "Each image keeps up to", percent, "% of its size,"),
-      h("label", {}, "at most", maxGB, "GB;"),
-      h("label", {}, "all images together at most", totalGB, "GB"),
+      h("label", {}, "Per image", percent, "% of its size, at most", maxGB, "GB"),
+      h("label", {}, "All images", totalGB, "GB"),
     ),
     list,
     h("div", { class: "row-actions" }, total, h("button", { class: "btn outline small", type: "button", onclick: () => void clearAll() }, "Clear all")),

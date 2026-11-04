@@ -15,6 +15,7 @@ import { ATLAS_PANEL } from "./manifest.js";
 
 const STYLE = `
 .at { display: grid; gap: 8px; padding: 10px 12px; font-size: 12px; }
+.at-body { display: contents; }
 .at-grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
 .at-grid2 select { min-width: 0; width: 100%; }
 .at-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -66,7 +67,7 @@ class AtlasPanel {
   private readonly countCache = new Map<string, Promise<Counted>>();
   private readonly client = new LabelClient();
   private catalogue: LookupTableInfo[];
-  private parts?: { head: HTMLElement; cursor: HTMLElement; tree: HTMLElement; chosen: HTMLElement; volumes: HTMLElement };
+  private parts?: { head: HTMLElement; body: HTMLElement; cursor: HTMLElement; tree: HTMLElement; chosen: HTMLElement; volumes: HTMLElement };
 
   constructor(private readonly ctx: PlatformContext) {
     this.catalogue = ctx.viewer.lookupTables.catalogue();
@@ -98,6 +99,8 @@ class AtlasPanel {
       this.counted = undefined;
       this.totals = undefined;
       this.chosen = undefined;
+      // A count still going for the last layer says nothing about this one.
+      this.counting = "";
     }
     const table = this.layer === "" ? undefined : this.ctx.viewer.lookupTables.of(this.layer);
     if (table !== this.table) void this.load(table);
@@ -169,7 +172,7 @@ class AtlasPanel {
     const store = layerStore(this.ctx, layer);
     this.countingFor = `${layer}|${store}`;
     if (store === undefined) {
-      this.counting = "Volumes and Go to need a label image this app reads voxels of (OME-Zarr, NIfTI, MGH, precomputed).";
+      this.counting = "Volumes and Go to need an OME-Zarr, NIfTI, MGH or precomputed label image.";
       this.drawVolumes();
       return undefined;
     }
@@ -239,20 +242,28 @@ class AtlasPanel {
 
   /** Moves the views to the region's voxel nearest its centre. */
   private async goTo(region: Region): Promise<void> {
+    // The layer and table asked about: the answer is dropped if either changes meanwhile.
+    const layer = this.layer;
+    const atlas = this.atlas;
+    if (atlas === undefined) return;
     const counted = this.counted ?? (await this.count());
-    if (counted === undefined) return;
-    const voxel = await this.client.centre(counted, this.atlas!.values(region)).catch((e: Error) => {
-      this.ctx.ui.toast(`Could not find ${region.name}: ${e.message}`, "error");
-      return undefined;
-    });
+    if (counted === undefined || this.layer !== layer || this.atlas !== atlas) return;
+    let voxel: [number, number, number] | undefined;
+    try {
+      voxel = await this.client.centre(counted, atlas.values(region));
+    } catch (e) {
+      this.ctx.ui.toast(`Could not find ${region.name}: ${(e as Error).message}`, "error");
+      return;
+    }
+    if (this.layer !== layer) return;
     if (voxel === undefined) {
-      this.ctx.ui.toast(`${region.name} has no voxels in ${this.layer}.`);
+      this.ctx.ui.toast(`${region.name} has no voxels in ${layer}.`);
       return;
     }
     const space = globalSpace(this.ctx.viewer.getState());
-    const placed = placement(this.ctx.viewer.layerTransform(this.layer), counted.voxelToRas, space);
+    const placed = placement(this.ctx.viewer.layerTransform(layer), counted.voxelToRas, space);
     if (placed === undefined) {
-      this.ctx.ui.toast(`Cannot place ${this.layer} in the view's space.`, "error");
+      this.ctx.ui.toast(`Can't go to ${region.name}: ${layer} has no x, y, z placement in the view.`, "error");
       return;
     }
     const at = apply(placed.voxelToGlobal, voxel);
@@ -288,26 +299,20 @@ class AtlasPanel {
       this.onlyPresent = only.checked;
       this.drawTree();
     });
-    this.parts = { head: el("div", { class: "at-grid2" }), cursor: el("div", { class: "at-cursor" }), tree: el("div", { class: "at-tree", role: "tree" }), chosen: el("div"), volumes: el("div", { class: "at-row" }) };
-    host.replaceChildren(
-      el(
-        "div",
-        { class: "at" },
-        this.parts.head,
-        el("div", { class: "at-faint" }, "Under the cursor"),
-        this.parts.cursor,
-        search,
-        el("label", { class: "field check" }, only, el("span", {}, "Only regions in the image")),
-        this.parts.tree,
-        this.parts.chosen,
-        this.parts.volumes,
-      ),
-    );
+    const cursor = el("div", { class: "at-cursor" });
+    const tree = el("div", { class: "at-tree", role: "tree" });
+    const chosen = el("div");
+    const volumes = el("div", { class: "at-row" });
+    // Everything but the head, hidden while the scene has no segmentation.
+    const body = el("div", { class: "at-body" }, el("div", { class: "at-faint" }, "Under the cursor"), cursor, search, el("label", { class: "field check" }, only, el("span", {}, "Only regions in the image")), tree, chosen, volumes);
+    this.parts = { head: el("div", { class: "at-grid2" }), body, cursor, tree, chosen, volumes };
+    host.replaceChildren(el("div", { class: "at" }, this.parts.head, body));
     this.draw();
     return () => (this.parts = undefined);
   }
 
   private draw(): void {
+    if (this.parts !== undefined) this.parts.body.hidden = this.layer === "";
     this.drawHead();
     this.drawCursor();
     this.drawTree();
@@ -338,13 +343,12 @@ class AtlasPanel {
     table.addEventListener("change", () => void this.setTable(table.value === "" ? undefined : table.value));
     const status =
       this.layer === ""
-        ? "Open a segmentation (a label image) to see its regions."
+        ? "Add a segmentation (a label image) to see its regions."
         : this.note || (this.atlas ? `${this.atlas.size.toLocaleString()} regions: ${KIND_TEXT[this.atlas.kind]}.` : "This layer has no lookup table: choose its atlas.");
-    head.replaceChildren(
-      el("label", { class: "field" }, el("span", {}, "Layer"), layer),
-      el("label", { class: "field" }, el("span", {}, "Atlas"), table),
-      el("p", { class: "note first", style: "grid-column: 1 / -1; margin: 0" }, status),
-    );
+    const note = el("p", { class: "note first", style: "grid-column: 1 / -1; margin: 0" }, status);
+    // No segmentation: only the note.
+    if (this.layer === "") head.replaceChildren(note);
+    else head.replaceChildren(el("label", { class: "field" }, el("span", {}, "Layer"), layer), el("label", { class: "field" }, el("span", {}, "Atlas"), table), note);
   }
 
   private drawCursor(): void {
@@ -361,7 +365,7 @@ class AtlasPanel {
       const path = atlas!.path(region).slice(0, -1);
       box.replaceChildren(
         el("span", { class: "at-cursor-name" }, region.name, region.acronym ? el("span", { class: "at-acronym" }, ` ${region.acronym}`) : null, el("span", { class: "at-faint" }, ` · ${value}`)),
-        el("span", { class: "at-path" }, path.length > 0 ? path.map((r) => r.name).join(" › ") : "(a top-level region)"),
+        el("span", { class: "at-path" }, path.length > 0 ? path.map((r) => r.name).join(" › ") : "Top level"),
       );
     }
   }
@@ -423,7 +427,7 @@ class AtlasPanel {
     const r = this.chosen;
     const atlas = this.atlas;
     if (r === undefined || atlas === undefined) {
-      box.replaceChildren(el("p", { class: "note first", style: "margin: 0" }, "Choose a region to show it or go to it (double-click does both)."));
+      box.replaceChildren(el("p", { class: "note first", style: "margin: 0" }, "Choose a region to show it or go to it (double-click: both)."));
       return;
     }
     const n = this.totals?.get(r) ?? (this.counted ? 0 : undefined);
@@ -439,7 +443,7 @@ class AtlasPanel {
           "div",
           { class: "at-row" },
           button("Show only", () => this.show(r, "only"), "Show this region and its descendants, and no other segments"),
-          button("Add", () => this.show(r, "add"), "Add this region and its descendants to the segments shown"),
+          button("Add to shown", () => this.show(r, "add"), "Add this region and its descendants to the segments shown"),
           button("Show all", () => this.showAll(), "Show every segment again"),
           button("Go to", () => void this.goTo(r), "Move to this region's voxel nearest its centre"),
         ),

@@ -118,7 +118,7 @@ function leaf(r: JobRegion): ZvfNode {
 
 /** Why a group cannot be run on this computer, or undefined when it can. */
 export function cannotRun(filter: FilterSpec): string | undefined {
-  if (filter.includeTags.length > 0 || filter.excludeTags.length > 0) return "a group that chooses by tags (stored groups) cannot be run on this computer yet; use regions and attribute ranges";
+  if (filter.includeTags.length > 0 || filter.excludeTags.length > 0) return "Groups that choose by tags (stored groups) cannot run on this computer yet: use regions and attribute ranges";
   return undefined;
 }
 

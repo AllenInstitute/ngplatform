@@ -97,16 +97,12 @@ or reduced-resolution pages) is read as it is, not made again.
   once and keeps what the budget allows, and it appears in the Jobs tab with
   its progress (you can cancel it). It is also in Datasets → the row's ⋯,
   beside **Clear its kept overview**.
-- **Settings.** **View settings → Overviews of large images** sets the
+- **Settings.** **View settings → Overviews of local images** sets the
   budget, lists what each image keeps, and clears it.
 
 Converting to OME-Zarr (Export, below) is still the fastest to view. An
 overview is for looking at a TIFF straight away, without waiting for a
 conversion or making a full copy.
-
-!!! note "Coming"
-    Stepping through a CIFTI time series is on the
-    [work plan](https://github.com/AllenInstitute/ngplatform/blob/main/TODO.md).
 
 ## Exporting
 
@@ -120,8 +116,8 @@ What can be saved today, and where:
 | A local point table or SWC | the same | CSV |
 | A local graph (GraphML or edge list) | the same | GraphML, or its nodes as CSV |
 | A track group's streamlines | Filtering → a group → **Save .trk** | TrackVis `.trk` |
-| A track group's density | Filtering → **Density map** | NIfTI |
-| Group statistics | Filtering → **CSV** | CSV |
+| A track group's density | Filtering → a group → **Make density map** | NIfTI |
+| Group statistics | Filtering → Statistics → **Export CSV** | CSV |
 | A transform | Registration → **Save transform** | FreeSurfer `.lta`, ITK / ANTs `.txt`, plain 4 × 4 |
 | A moved (registered) image | Registration → **Save image…** | NIfTI (`.nii`, `.nii.gz`) or OME-Zarr |
 | A picture of the views | Camera icon → **Picture…**: magnified, trimmed | PNG |
@@ -129,6 +125,6 @@ What can be saved today, and where:
 | The workspace itself | the link in the address bar, or **Share** | link or JSON |
 
 !!! note "Coming"
-    Saving large data without making terabyte files: a whole pyramid
-    written chunk by chunk to a folder, or only your edits as a small layer
-    over the original; remote images; TIFF and `.trx` output.
+    Saving large data without making terabyte files: only your edits as a
+    small layer over the original (Segmentation does this for label
+    volumes); remote images; TIFF and `.trx` output.

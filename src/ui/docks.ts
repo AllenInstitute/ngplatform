@@ -246,6 +246,9 @@ export class DockManager {
     dock.el.classList.toggle("collapsed", collapsed);
     this.root.classList.toggle(`${slot}-collapsed`, collapsed);
     if (!collapsed && dock.selected !== undefined) this.render(dock.tabs.get(dock.selected)!);
+    // A transient tab (Chunk statistics) stops its work while its dock is shut, as when another tab is chosen.
+    const shown = dock.selected !== undefined ? dock.tabs.get(dock.selected) : undefined;
+    if (collapsed && shown?.tab.transient) this.unrender(shown);
     if (remember) prefs.set(`${slot}.collapsed`, collapsed ? "1" : "0");
   }
 

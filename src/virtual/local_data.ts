@@ -261,7 +261,11 @@ export class LocalData {
     this.worker ??= (async () => {
       navigator.serviceWorker.addEventListener("message", (event) => {
         const data = event.data;
-        if (data?.type === "local-read") void this.restoring.then(() => this.answer({ ...data, path: data.file }, event.ports[0]));
+        // A read that fails (a file changed on disk since it was opened, say) says so at once, rather than leaving the worker to time out.
+        if (data?.type === "local-read")
+          void this.restoring
+            .then(() => this.answer({ ...data, path: data.file }, event.ports[0]))
+            .catch((e: unknown) => event.ports[0]?.postMessage({ status: 500, message: `Could not read ${data.file}: ${(e as Error)?.message ?? e}. If it changed on disk, open it again.` }));
         if (data?.type === "local-has") void this.restoring.then(() => event.ports[0]?.postMessage(this.entries.has(data.id)));
       });
       // Control can come after start() stops waiting (a busy page): tell the
@@ -566,7 +570,7 @@ export class LocalData {
       return;
     }
     if (entry.needsPermission) {
-      port.postMessage({ status: 403 });
+      port.postMessage({ status: 403, message: "Reading this local data needs your permission again: click Allow access in the Datasets tab." });
       return;
     }
     const virtual = splitVirtual(request.path, this.formats);

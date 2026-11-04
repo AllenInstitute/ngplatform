@@ -21,10 +21,19 @@ export class OrientationClient {
       if (msg.type === "error") p.reject(new Error(msg.message));
       else p.resolve(msg);
     };
+    // A worker that fails to load (or throws outside a request) answers nothing: say so to every request.
+    this.worker.onerror = (event: ErrorEvent) => {
+      this.broken = `the orientation reader stopped: ${event.message || "it could not start"}. Reload the page to try again`;
+      for (const p of this.pending.values()) p.reject(new Error(this.broken));
+      this.pending.clear();
+    };
   }
+
+  private broken: string | undefined;
 
   private request<T>(message: object, signal?: AbortSignal): Promise<T> {
     const id = this.nextId++;
+    if (this.broken !== undefined) return Promise.reject(new Error(this.broken));
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       signal?.addEventListener("abort", () => {

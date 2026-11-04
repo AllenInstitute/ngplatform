@@ -45,6 +45,16 @@ export class LabelClient {
         if (msg.type === "error") p.reject(new Error(msg.message));
         else p.resolve(msg);
       };
+      // A worker that fails to load (or throws outside a request) answers nothing: every request
+      // waiting fails, and the next one starts a new worker.
+      const started = this.worker;
+      started.onerror = (event: ErrorEvent) => {
+        if (this.worker !== started) return;
+        started.terminate();
+        this.worker = undefined;
+        for (const p of this.pending.values()) p.reject(new Error(`the label counter stopped: ${event.message || "it could not start"}`));
+        this.pending.clear();
+      };
     }
     const id = this.nextId++;
     const worker = this.worker;

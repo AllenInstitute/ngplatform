@@ -105,11 +105,6 @@ const DISK_THICKNESS = 0.04;
  */
 const GROUP_STORE_POINTS = 8_000_000;
 const GROUP_STORE_DELAY_MS = 400;
-/**
- * Past GROUP_STORE_POINTS, the hand-off to the local runner's filter job
- * (a later merge wires a button to it; for now the note names it).
- */
-const GROUP_RUNNER_HINT = "run the filter job on the local runner (Jobs → This computer)";
 /** A first look at a big group, from a sample level: about this many points at most. */
 const GROUP_PREVIEW_POINTS = 1_000_000;
 /** A density map's look: a heat colour map, clear where it is zero. */
@@ -429,6 +424,8 @@ class TrackGroups {
   private trkLevel = 0;
   /** What the last save of each group did. */
   private saved_ = new Map<string, string>();
+  /** The "too large to draw whole" note a group shows, to take it away when the group shrinks. */
+  private sizeNotes = new Map<string, string>();
   /** The Statistics section: open or not, the attribute shown, and statistics by answer. */
   private statsOpen = false;
   private statsColumn: string | undefined;
@@ -490,6 +487,15 @@ class TrackGroups {
     for (const off of this.layerWatches.values()) off();
     for (const t of this.exactTimers.values()) clearTimeout(t);
     if (this.commitTimer !== undefined) clearTimeout(this.commitTimer);
+    // Work still going stops.  (The groups' own stores stay open: their layers may still show them.)
+    for (const entry of this.groupStores.values()) {
+      entry.controller.abort();
+      if (entry.timer !== undefined) clearTimeout(entry.timer);
+    }
+    for (const entry of this.curveCache.values()) entry.controller.abort();
+    this.curveCache.clear();
+    this.saving?.controller.abort();
+    this.serviceListeners.clear();
     this.engine?.dispose();
     this.labels?.dispose();
   }
@@ -744,6 +750,15 @@ class TrackGroups {
     const groups = this.saved.groups.filter((g) => g.id !== group.id);
     this.results.delete(group.id);
     this.dropGroupStore(group.id);
+    // Its answers still being worked out are dropped when they come (a new token), its timers cleared.
+    const exact = this.exactTimers.get(group.id);
+    if (exact !== undefined) clearTimeout(exact);
+    this.exactTimers.delete(group.id);
+    this.tokens.set(group.id, (this.tokens.get(group.id) ?? 0) + 1);
+    this.versions.delete(group.id);
+    this.saved_.delete(group.id);
+    this.sizeNotes.delete(group.id);
+    this.densities.delete(group.id);
     this.save({ groups, editing: this.saved.editing === group.id ? groups[0]?.id : this.saved.editing });
     this.writeAnnotations();
   }
@@ -858,7 +873,7 @@ class TrackGroups {
     // A mask needs an image to be one: the label volume added last, else the image added last.
     const image = shape === "mask" ? (readableImages(this.ctx, ["segmentation"]).at(-1) ?? readableImages(this.ctx).at(-1)) : undefined;
     if (shape === "mask" && image === undefined) {
-      this.ctx.ui.toast("A mask is an image's voxels: open an image or a label volume (OME-Zarr, NIfTI, precomputed) first.", "error");
+      this.ctx.ui.toast("Open an image or label volume (OME-Zarr, NIfTI, precomputed) to use as a mask.", "error");
       return;
     }
     let group = this.editing();
@@ -885,7 +900,7 @@ class TrackGroups {
       center: this.viewCentre(),
       radius: size,
       size: [size * 2, size * 2, size * 2],
-      op: group.rois.length === 0 ? "and" : "and",
+      op: "and",
       // A disk lies across z (an axial plane) until another axis is chosen.
       ...(shape === "disk" ? { axis: 2, radius: size * 2 } : {}),
       ...(image !== undefined ? { mask: { layer: image } } : {}),
@@ -1103,7 +1118,7 @@ class TrackGroups {
     this.tokens.set(group.id, token);
     const current = () => this.tokens.get(group.id) === token;
     if (this.info?.objects === false) {
-      this.setResult(group, { mask: undefined, count: 0, state: "error", detail: "This store has no objects (points too many to be one each, say), so there is nothing to group." });
+      this.setResult(group, { mask: undefined, count: 0, state: "error", detail: "This store has no objects to group." });
       return;
     }
     if (props === undefined || rowOf === undefined) {
@@ -1373,7 +1388,7 @@ class TrackGroups {
 
   /** Whether the dataset's groups are drawn from stores of their own: Zarr Vectors streamlines. */
   private drawsOwnStores(): boolean {
-    return this.kind() === "zarr-vectors" && /^(streamline|polyline|line)$/.test(this.info?.geometry ?? "");
+    return this.kind() === "zarr-vectors" && /^(streamline|polyline|line)s?$/.test(this.info?.geometry ?? "");
   }
 
   /** Makes a group's own store once its exact answer has stayed a moment. */
@@ -1388,8 +1403,10 @@ class TrackGroups {
     this.groupStores.set(group.id, entry);
     entry.timer = setTimeout(() => {
       entry.timer = undefined;
+      const engine = this.engine;
       this.buildGroupStore(group.id, entry).catch((e) => {
-        if (!entry.controller.signal.aborted) this.ctx.log.error(`Could not draw ${group.name}'s streamlines whole: ${(e as Error).message}`);
+        // Not a failure when the dataset changed meanwhile (its reader was closed).
+        if (!entry.controller.signal.aborted && this.engine === engine) this.ctx.log.error(`Could not draw ${group.name}'s streamlines whole: ${(e as Error).message}`);
       });
     }, GROUP_STORE_DELAY_MS);
   }
@@ -1411,10 +1428,14 @@ class TrackGroups {
     if (level > 0) {
       // Past what the page draws whole: the group is drawn from a sample level.
       const sample = Math.round((100 * (info.levels[level].vertexCount ?? 0)) / Math.max(1, total));
-      this.saved_.set(
-        id,
-        `${ids.length.toLocaleString()} streamlines (about ${(estimate(info.levels[0]) / 1e6).toFixed(0)} M points) are more than the page draws whole (${GROUP_STORE_POINTS / 1e6} M points): drawn from level ${level} (about ${sample}% of the points). Save .trk writes every one; to make track files from it at full size, ${GROUP_RUNNER_HINT}.`,
-      );
+      const note = `Too large to draw whole (${ids.length.toLocaleString()} streamlines, ~${(estimate(info.levels[0]) / 1e6).toFixed(0)} M points): showing level ${level}, ~${sample}% of the points. Save .trk writes all of them.`;
+      this.saved_.set(id, note);
+      this.sizeNotes.set(id, note);
+      this.updateAll();
+    } else if (this.sizeNotes.has(id)) {
+      // The group has shrunk: its size note goes (a note from saving since stays).
+      if (this.saved_.get(id) === this.sizeNotes.get(id)) this.saved_.delete(id);
+      this.sizeNotes.delete(id);
       this.updateAll();
     }
     // A big group first from a sample level (read in seconds), then whole.
@@ -1426,8 +1447,9 @@ class TrackGroups {
       if (group === undefined) return;
       const file = new File([writeTrk(curves, trkSpace(info))], fileName(group.name, ".trk"));
       const [found] = await this.ctx.workspace.local.open(file, { derived: true });
-      signal.throwIfAborted();
+      // Moved on while it opened: useGroupStore closes the store just made (throwing first would leak it).
       if (!this.useGroupStore(id, entry, found?.source)) return;
+      signal.throwIfAborted();
     }
   }
 
@@ -1590,7 +1612,7 @@ class TrackGroups {
       return;
     }
     if (result.state !== "exact") {
-      this.ctx.ui.toast("The group's exact answer is still being worked out; save once it is.", "error");
+      this.ctx.ui.toast("Wait for the exact count, then save.", "error");
       return;
     }
     const ids = passingIds(props, result.mask);
@@ -1680,7 +1702,7 @@ class TrackGroups {
       return;
     }
     if (result.state !== "exact") {
-      this.ctx.ui.toast("The group's exact answer is still being worked out; map it once it is.", "error");
+      this.ctx.ui.toast("Wait for the exact count, then make the map.", "error");
       return;
     }
     const ids = passingIds(props, result.mask);
@@ -1746,12 +1768,22 @@ class TrackGroups {
   private async saveDensity(group: Group): Promise<void> {
     const file = this.densities.get(group.id);
     if (file === undefined) return;
-    const target = await saveTarget(file.name, "NIfTI image", ".nii");
-    if (target === undefined) return;
-    const stream = await target.open();
-    await stream.write(await file.arrayBuffer());
-    await stream.close();
-    this.ctx.log.info(`Saved ${file.name}.`);
+    try {
+      const target = await saveTarget(file.name, "NIfTI image", ".nii");
+      if (target === undefined) return;
+      const stream = await target.open();
+      try {
+        await stream.write(await file.arrayBuffer());
+        await stream.close();
+      } catch (e) {
+        await stream.abort().catch(() => {});
+        throw e;
+      }
+      this.ctx.log.info(`Saved ${file.name}.`);
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return;
+      this.ctx.ui.toast(`Could not save ${file.name}: ${(e as Error).message}. Check there is room and try again.`, "error");
+    }
   }
 
   /**
@@ -1775,7 +1807,7 @@ class TrackGroups {
     const info = this.info;
     const engine = this.engine;
     if (reason !== undefined || this.kind() !== "zarr-vectors" || source === undefined || dims === undefined || info === undefined || engine === undefined) {
-      toast(reason ?? "Only a Zarr Vectors dataset's groups (a tractogram or a store) run on this computer, once it is open.", "error");
+      toast(reason ?? "Only groups of an open Zarr Vectors dataset (a tractogram or store) run on this computer.", "error");
       return;
     }
     let filter: ZvfDocument;
@@ -1850,10 +1882,16 @@ class TrackGroups {
     toast(`${job.title}: started on this computer${job.pid !== null ? ` (PID ${job.pid})` : ""}; it shows in the Jobs tab.`);
     this.runs.set(group.id, job);
     this.updateAll();
-    const done = await runner.wait(job.id, (now) => {
-      this.runs.set(group.id, now);
-      this.updateAll();
-    });
+    let done: RunnerJob;
+    try {
+      done = await runner.wait(job.id, (now) => {
+        this.runs.set(group.id, now);
+        this.updateAll();
+      });
+    } catch (e) {
+      // The runner went away: the job is no longer followed, and the button comes back.
+      done = { ...job, state: "failed", message: `${(e as Error).message}. See the Jobs tab.` };
+    }
     this.runs.set(group.id, done);
     this.updateAll();
     if (done.state === "failed") toast(`${done.title} failed: ${done.message}`, "error");
@@ -1895,11 +1933,11 @@ class TrackGroups {
     const local = this.localStore();
     const { engine, props } = this;
     if (local === undefined || !local.writable) {
-      this.ctx.ui.toast("Groups are written only into a local zarr-vectors folder (Chrome or Edge).", "error");
+      this.ctx.ui.toast("To save groups, open the store from a local folder (Chrome or Edge).", "error");
       return;
     }
     if (engine === undefined || props === undefined) {
-      this.ctx.ui.toast("The dataset is still opening.", "error");
+      this.ctx.ui.toast("The dataset is still opening: try again in a moment.", "error");
       return;
     }
     const groups = this.groups().filter((g) => this.results.get(g.id)?.state === "exact");
@@ -1923,7 +1961,9 @@ class TrackGroups {
       );
       const level = `${local.url}${stored.levelPath}/`;
       for (const [path, bytes] of groupFiles(merged)) await this.ctx.workspace.local.write(level + path, bytes);
-      const levelJson = await (await fetch(`${level}zarr.json`, { cache: "no-store" })).text();
+      const levelResponse = await fetch(`${level}zarr.json`, { cache: "no-store" });
+      if (!levelResponse.ok) throw new Error(`${stored.levelPath}/zarr.json could not be read (${levelResponse.status})`);
+      const levelJson = await levelResponse.text();
       await this.ctx.workspace.local.write(`${level}zarr.json`, withGroupsListed(levelJson));
       const message = `Wrote ${mine.length} group${mine.length === 1 ? "" : "s"} into ${stored.levelPath}/groups (${merged.length} in the store)${missing ? `; ${missing} objects had no object id and were left out` : ""}.`;
       this.ctx.log.info(message);
@@ -2074,7 +2114,7 @@ class TrackGroups {
       this.dataset()?.id,
       this.props?.ids.length,
       this.info !== undefined,
-      this.groups().map((g) => [g.id, g.name, g.colour, g.layer, g.rois.map((r) => [r.id, r.shape, r.op])]),
+      this.groups().map((g) => [g.id, g.name, g.colour, g.layer, g.rois.map((r) => [r.id, r.shape, r.op, r.mask?.layer])]),
       editing?.id,
       this.renaming,
       editing?.filter.includeTags,
@@ -2091,8 +2131,7 @@ class TrackGroups {
     const dataset = this.dataset();
     if (dataset === undefined) {
       root.append(
-        el("p", { class: "tf-intro" }, "Groups keep the objects that pass through regions: tracts, points, segments or annotations. Each group is a layer."),
-        el("p", { class: "empty" }, el("strong", {}, "Nothing to filter in this scene. "), "Add tracts, a segmentation or annotations in Datasets."),
+        el("p", { class: "empty", title: "Groups keep the objects that pass through regions: tracts, points, segments or annotations. Each group is a layer." }, "Add a tractogram, a segmentation or annotations to filter them."),
       );
       return;
     }
@@ -2118,7 +2157,7 @@ class TrackGroups {
       el(
         "div",
         { class: "tf-row" },
-        el("h3", { class: "section-title", style: "margin:0;flex:1" }, "Track groups"),
+        el("h3", { class: "section-title", style: "margin:0;flex:1" }, "Groups"),
         el("button", { class: "btn outline small", type: "button", onclick: () => this.newGroup() }, "+ New group"),
       ),
     );
@@ -2196,7 +2235,7 @@ class TrackGroups {
     for (const c of props?.numeric ?? []) select.append(el("option", { value: c.id }, c.id));
     if (props?.numeric.some((c) => c.id === this.statsColumn)) select.value = this.statsColumn!;
     const table = el("table", { class: "tf-stats-table" });
-    const csv = el("button", { class: "btn small", type: "button", title: "Every attribute's statistics for every group, as CSV", onclick: () => this.exportStatistics(groups) }, "CSV");
+    const csv = el("button", { class: "btn small", type: "button", title: "Every attribute's statistics for every group, as CSV", onclick: () => this.exportStatistics(groups) }, "Export CSV");
     const format = (v: number) => (Number.isFinite(v) ? Number(v.toPrecision(4)).toLocaleString() : "–");
     const update = () => {
       if (!details.open) return;
@@ -2257,7 +2296,7 @@ class TrackGroups {
   private saveControl(group: Group): HTMLElement {
     const info = this.info;
     const button = el("button", { class: "btn small", type: "button", onclick: () => void this.saveTrk(group) }, "Save .trk") as HTMLButtonElement;
-    const density = el("button", { class: "btn small", type: "button", onclick: () => void this.densityMap(group) }, "Density map") as HTMLButtonElement;
+    const density = el("button", { class: "btn small", type: "button", onclick: () => void this.densityMap(group) }, "Make density map") as HTMLButtonElement;
     const saveNii = el("button", { class: "btn small", type: "button", title: "Save the density map as a NIfTI file", onclick: () => void this.saveDensity(group) }, "Save .nii") as HTMLButtonElement;
     const cancel = el("button", { class: "btn outline small", type: "button", onclick: () => this.saving?.controller.abort() }, "Cancel") as HTMLButtonElement;
     const run = el("button", { class: "btn small tf-run-local", type: "button", onclick: () => void this.runOnComputer(group) }, "Run on this computer") as HTMLButtonElement;
@@ -2322,7 +2361,7 @@ class TrackGroups {
         "div",
         { class: "tf-row" },
         name,
-        el("button", { class: "btn small", type: "button", title: "Export this group's objects as CSV", onclick: () => this.exportCsv() }, "CSV"),
+        el("button", { class: "btn small", type: "button", title: "Export this group's objects as CSV", onclick: () => this.exportCsv() }, "Export CSV"),
         el("button", { class: "btn small", type: "button", title: "Delete this group", onclick: () => this.deleteGroup(group) }, "Delete"),
       ),
     );
@@ -2337,7 +2376,7 @@ class TrackGroups {
     });
     box.append(status);
     // Streamlines only: .trk holds lines.
-    if (kind === "zarr-vectors" && /^(streamline|polyline)s?$/.test(this.info?.geometry ?? "")) box.append(this.saveControl(group));
+    if (kind === "zarr-vectors" && /^(streamline|polyline|line)s?$/.test(this.info?.geometry ?? "")) box.append(this.saveControl(group));
 
     // Regions.
     box.append(
@@ -2506,7 +2545,7 @@ class TrackGroups {
         { class: "tf-roi-head" },
         el("span", { class: "label" }, `${roi.shape === "sphere" ? "Sphere" : roi.shape === "disk" ? "Disk" : "Box"} ${index + 1}`),
         op,
-        el("button", { class: "btn small", type: "button", title: "Apply the typed values", onclick: () => typed.forEach((apply) => apply()) }, "Set"),
+        el("button", { class: "btn small", type: "button", title: "Apply the typed values", onclick: () => typed.forEach((apply) => apply()) }, "Apply"),
         el("button", { class: "btn small", type: "button", title: "Move it to the centre of the views", onclick: () => this.updateRoi(group, roi.id, { center: this.viewCentre() }) }, "Here"),
         el("button", { class: "btn small", type: "button", title: "Go to it", onclick: () => this.ctx.viewer.setPosition([...current().center]) }, "Go"),
         el("button", { class: "btn small", type: "button", title: "Remove it", "aria-label": "Remove", onclick: () => this.removeRoi(group, roi.id) }, "×"),

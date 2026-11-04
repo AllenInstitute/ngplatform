@@ -24,10 +24,11 @@ const joinPath = (folder: string, name: string) => `${folder.replace(/[\\/]+$/, 
 
 function elapsed(job: RunnerJob): string {
   if (job.started === null) return "";
-  const seconds = Math.max(0, (job.finished ?? Date.now() / 1000) - job.started);
-  if (seconds < 60) return `${seconds.toFixed(0)} s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s`;
-  return `${Math.floor(seconds / 3600)} h ${Math.round((seconds % 3600) / 60)} min`;
+  // Whole seconds first, so 119.6 s reads "1 min 59 s", never "1 min 60 s".
+  const seconds = Math.floor(Math.max(0, (job.finished ?? Date.now() / 1000) - job.started));
+  if (seconds < 60) return `${seconds} s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
+  return `${Math.floor(seconds / 3600)} h ${Math.floor(seconds / 60) % 60} min`;
 }
 
 /** Whether an output can be added as a layer. */
@@ -103,9 +104,9 @@ function pairForm(runner: RunnerService, note?: string): HTMLElement {
     h(
       "p",
       { class: "note" },
-      "Long jobs (converting, filtering a whole tractogram into a new .trk or store, density maps) run as Python processes on this computer through the runner. Start it in a terminal with ",
+      "Runs long jobs (conversions, whole-tractogram filters) on this computer. Start it with ",
       h("code", {}, START_COMMAND),
-      " (in the Python that has zarr-vectors-tools), then open the link it prints, or enter its address and token here. ",
+      ", then open the link it prints or paste its token here. ",
       h("a", { href: LOCAL_JOBS_GUIDE, target: "_blank", rel: "noopener" }, "How it works ↗"),
     ),
   );
@@ -243,7 +244,7 @@ export function renderRunnerSection(wb: Workbench, runner: RunnerService): { ele
       body,
       head,
       jobs.length === 0 && state === "connected"
-        ? h("p", { class: "empty runner-empty" }, "No jobs on this computer yet. Track filtering's “Run on this computer” sends a group here; so does Convert.")
+        ? h("p", { class: "empty runner-empty" }, "No jobs on this computer yet.")
         : h("div", { class: "jobs runner-jobs" }, ...jobs.map((job) => jobRow(wb, runner, job, openLogs))),
     );
     if (openLogs.size > 0) void fillLogs();
@@ -382,7 +383,7 @@ async function convertDialog(runner: RunnerService): Promise<void> {
   try {
     const job = await runner.start("convert", { input, output, levels: 3 });
     toast(`Started ${job.title} (PID ${job.pid ?? "queued"})`);
-    void runner.wait(job.id).then((done) => {
+    void runner.wait(job.id).catch((e: Error) => ({ state: "failed", title: job.title, message: e.message }) as unknown as RunnerJob).then((done) => {
       if (done.state === "done") toast(`${done.title}: done. Open it from the Jobs tab.`);
       else if (done.state === "failed") toast(`${done.title} failed: ${done.message}`, "error");
     });

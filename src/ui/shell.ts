@@ -4,7 +4,7 @@
  * itself (that is the WorkspaceStore's) and no panel logic (that is in
  * ui/panels); what remains here is composition and the core commands.
  */
-import { CommandError, CommandRegistry } from "../core/commands.js";
+import { CommandError, CommandRegistry, runsWithoutArgs } from "../core/commands.js";
 import { KeybindingTable } from "../core/keybindings.js";
 import { InputError, layerNameFor, neuroglancerLink, parseInput, type FragmentParser, workspaceLink } from "../core/state_io.js";
 import { ContextKeys } from "../core/when.js";
@@ -139,16 +139,16 @@ export class Shell {
             { label: "Movie: sweep slices or time…", run: () => this.wb.run("view.captureSweep") },
             { label: "Movie: turn the 3-D view…", run: () => this.wb.run("view.captureTurntable") },
             "-",
-            { label: "Neuroglancer's screenshot dialog…", run: () => this.wb.run("view.screenshot") },
+            { label: "Screenshot (Neuroglancer)…", run: () => this.wb.run("view.screenshot") },
           ]),
         ),
         iconButton("settings", "Settings and reloading", (e) =>
           showMenu(e.currentTarget as HTMLElement, [
             { label: "View settings…", run: () => this.wb.run("view.settings") },
-            { label: "Which way up the views are…", run: () => this.wb.run("view.panelConvention") },
+            { label: "View orientation…", run: () => this.wb.run("view.panelConvention") },
             "-",
             { label: "Reload the scene's layers", run: () => this.wb.run("view.reloadLayers") },
-            { label: "Hard reset: reload everything fresh", run: () => this.wb.run("view.hardReset") },
+            { label: "Reload page and all data", run: () => this.wb.run("view.hardReset") },
           ]),
         ),
         iconButton("keyboard", "Keyboard and mouse", () => this.wb.run("help.shortcuts"), { class: "btn icon hide-narrow" }),
@@ -480,7 +480,7 @@ export class Shell {
       group: "Help",
       run: () =>
         showPalette(
-          () => c.list(),
+          () => c.list().filter(runsWithoutArgs),
           (command) => c.available(command.id),
           (command) => command.keys ?? wb.keybindings.keyFor(command.id),
           (command) => wb.run(command.id),
@@ -668,7 +668,7 @@ export class Shell {
     });
     add({
       id: "view.hardReset",
-      title: "Hard reset: reload everything fresh",
+      title: "Reload page and all data",
       group: "View",
       hint: "Reloads the page, checking every file with its server, for data that changed since it was loaded",
       run: () => {
@@ -834,7 +834,7 @@ export class Shell {
     });
     add({
       id: "view.panelConvention",
-      title: "Which way up the views are…",
+      title: "View orientation…",
       group: "View",
       run: () => {
         const { preference } = engine.panelConvention();
@@ -852,7 +852,7 @@ export class Shell {
       run: ({ position }: { position: number[] }) => engine.setPosition(position),
     });
     add({ id: "view.settings", title: "View settings…", group: "View", run: () => showSettingsSheet(wb) });
-    add({ id: "view.screenshot", title: "Screenshot…", group: "View", run: () => engine.showScreenshotDialog() });
+    add({ id: "view.screenshot", title: "Screenshot (Neuroglancer)…", group: "View", run: () => engine.showScreenshotDialog() });
     add({ id: "view.capture", title: "Capture a picture (magnified, trimmed)…", group: "View", run: () => showCaptureSheet(wb, "picture") });
     add({ id: "view.captureSweep", title: "Capture a movie: sweep slices or time…", group: "View", run: () => showCaptureSheet(wb, "sweep") });
     add({ id: "view.captureTurntable", title: "Capture a movie: turn the 3-D view…", group: "View", run: () => showCaptureSheet(wb, "turntable") });
@@ -931,6 +931,8 @@ export class Shell {
   }
 
   private onKey(e: KeyboardEvent): void {
+    // The modifier no binding uses here (Ctrl on macOS, the Windows key elsewhere): not "1" pressed alone.
+    if (isMac() ? e.ctrlKey : e.metaKey) return;
     const target = e.target as HTMLElement | null;
     const typing =
       target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable === true;
@@ -1113,9 +1115,9 @@ export class Shell {
   private showShareMenu(anchor: HTMLElement): void {
     const run = (id: string) => () => void this.wb.run(id);
     showMenu(anchor, [
-      { label: "Copy link to the workspace", run: run("workspace.share") },
-      { label: "Copy this scene as a Neuroglancer link", run: run("workspace.copyPlainLink") },
-      { label: "Copy this scene as Neuroglancer JSON", run: run("workspace.copyState") },
+      { label: "Copy workspace link", run: run("workspace.share") },
+      { label: "Copy scene as Neuroglancer link", run: run("workspace.copyPlainLink") },
+      { label: "Copy scene as Neuroglancer JSON", run: run("workspace.copyState") },
       "-",
       { label: "Open in Neuroglancer ↗", run: run("workspace.openInNeuroglancer") },
       { label: "Open in Neuroglancer with Zarr Vectors ↗", run: run("workspace.openInPlainNeuroglancer") },
@@ -1172,6 +1174,14 @@ export class Shell {
               const k = e as KeyboardEvent;
               if (k.key === "Enter") store.switchScene(scene.id);
               if (k.key === "Delete") close(scene.id, scene.name);
+              // Arrow keys move between scenes (only the active tab is in the tab order).
+              if (k.key === "ArrowLeft" || k.key === "ArrowRight") {
+                const next = p.scenes[index + (k.key === "ArrowLeft" ? -1 : 1)];
+                if (next === undefined) return;
+                k.preventDefault();
+                store.switchScene(next.id);
+                requestAnimationFrame(() => this.sceneTabs.querySelector<HTMLElement>('.scene-tab[aria-selected="true"]')?.focus());
+              }
             },
           },
           kind ? h("span", { class: "scene-kind-mark", title: kind.title, "aria-hidden": "true" }) : null,
@@ -1201,11 +1211,16 @@ export class Shell {
             "div",
             {
               class: `scene-tab scene-kind scene-kind-${k.kind} scene-kind-new`,
-              role: "tab",
-              tabindex: -1,
-              "aria-selected": "false",
+              role: "button",
+              tabindex: 0,
               title: `Open ${k.title}`,
               onclick: () => store.newScene({ name: k.title, kind: k.kind }),
+              onkeydown: (e: Event) => {
+                if ((e as KeyboardEvent).key === "Enter" || (e as KeyboardEvent).key === " ") {
+                  e.preventDefault();
+                  store.newScene({ name: k.title, kind: k.kind });
+                }
+              },
             },
             h("span", { class: "scene-kind-mark", "aria-hidden": "true" }),
             h("span", { class: "scene-tab-name" }, k.title),

@@ -134,8 +134,38 @@ export function describe(s: Step): string {
   }
 }
 
-/** Whether the pipeline's output is a mask or labels (shown as a segmentation), not an image. */
+/** What a python step's `#output` line says it returns: an image, labels or a mask (undefined: not said). */
+export function pythonOutput(code: string): "image" | "label" | "mask" | undefined {
+  const line = /^#output\b(.*)$/m.exec(code)?.[1] ?? "";
+  return (/\b(image|label|mask)\b/.exec(line)?.[1] as "image" | "label" | "mask" | undefined) ?? undefined;
+}
+
+/**
+ * Whether the pipeline's output is a mask or labels (shown as a segmentation), not an image:
+ * a threshold followed only by morphology, or a last python step whose #output says label or mask.
+ */
 export function makesLabels(steps: Step[]): boolean {
+  const lastStep = steps.at(-1);
+  if (lastStep?.kind === "python") {
+    const out = pythonOutput(lastStep.code);
+    if (out !== undefined) return out !== "image";
+  }
   const last = steps.findLastIndex((s) => s.kind === "threshold");
-  return last !== -1 && steps.slice(last + 1).every((s) => s.kind === "morphology");
+  // After it, morphology, or python that does not say what it returns (chunkmirage: the input's kind).
+  return last !== -1 && steps.slice(last + 1).every((s) => s.kind === "morphology" || (s.kind === "python" && pythonOutput(s.code) === undefined));
+}
+
+/** Whether a step has a setting left empty that it needs (a threshold's "below" may be empty). */
+export function blankSetting(s: Step): boolean {
+  const needed: number[] =
+    s.kind === "gaussian" || s.kind === "dog"
+      ? [s.sigma]
+      : s.kind === "frangi"
+        ? [s.sigmaLow, s.sigmaHigh]
+        : s.kind === "threshold"
+          ? [s.low]
+          : s.kind === "python"
+            ? []
+            : [s.radius];
+  return needed.some((v) => !Number.isFinite(v));
 }

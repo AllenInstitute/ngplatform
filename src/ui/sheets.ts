@@ -3,6 +3,7 @@
  * and Edit state.  Settings and the view bindings are Neuroglancer's own
  * panels, shown here instead of over the views.
  */
+import { shortcutRows } from "../core/keybindings.js";
 import { InputError, layerCount, parseInput } from "../core/state_io.js";
 import { layerNameFor } from "../core/state_io.js";
 import { closeSheet, sheet, showSheet, toast } from "./overlays.js";
@@ -46,7 +47,7 @@ async function addLocalEntry(wb: Workbench, entry: LocalEntry): Promise<boolean>
   const local = wb.localData;
   const datasets = await local.detect(entry.id);
   if (datasets.length === 0) {
-    toast(`Nothing to open in ${entry.name}. Files: ${LOCAL_FORMATS}.`, "error");
+    toast(`Nothing readable in ${entry.name}. Open a file or folder of: ${LOCAL_FORMATS}.`, "error");
     void local.forget(entry.id);
     return false;
   }
@@ -62,7 +63,7 @@ export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
   const input = h("textarea", {
     class: "state-input",
     id: "open-input",
-    placeholder: 'https://…/#!{…}   or   {"layers": …}   or   gs://bucket/store.zarrvectors/|zarr-vectors:',
+    placeholder: "Paste a Neuroglancer link, state JSON or data URL",
     "aria-label": "Link, state or data URL",
     spellcheck: "false",
   });
@@ -149,7 +150,7 @@ export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
               { class: "row-actions open-device" },
               h("button", { class: "btn primary", type: "button", onclick: fromDevice(false) }, icon("open"), "Open from device…"),
               h("button", { class: "btn outline", type: "button", onclick: fromDevice(true) }, "Folder…"),
-              h("span", { class: "note-inline" }, LOCAL_FORMATS + "; read in place, not uploaded."),
+              h("span", { class: "note-inline", title: `Reads ${LOCAL_FORMATS}.` }, "Read in place, not uploaded."),
             )]
           : []),
         input,
@@ -321,7 +322,7 @@ export function showLocalSheet(wb: Workbench, local: LocalData): void {
       status.classList.toggle("bad", choices.length === 0);
       status.textContent = choices.length
         ? `${choices.length} dataset${choices.length === 1 ? "" : "s"} in ${entry.name}.`
-        : `No dataset found in ${entry.name}: it reads OME-Zarr, zarr-vectors, precomputed, NIfTI, tractograms and meshes (a folder of them is fine).`;
+        : `Nothing readable in ${entry.name}. Choose a file or folder of: ${LOCAL_FORMATS}.`;
     } catch (e) {
       status.textContent = (e as Error).message;
       status.classList.add("bad");
@@ -329,7 +330,7 @@ export function showLocalSheet(wb: Workbench, local: LocalData): void {
   };
   add.addEventListener("click", () => {
     for (const { dataset, box } of choices) {
-      if (box.checked) wb.store.addDataset({ source: dataset.source, name: dataset.name, kind: dataset.kind });
+      if (box.checked) wb.store.addDataset({ source: dataset.source, name: dataset.name, kind: dataset.kind, layer: dataset.layer });
     }
     closeSheet();
     wb.docks.show("layer");
@@ -347,7 +348,7 @@ export function showLocalSheet(wb: Workbench, local: LocalData): void {
         h(
           "p",
           { class: "note" },
-          "A file (NIfTI, TIFF, a tractogram, mesh or surface, SWC, a point table) or a folder (OME-Zarr, zarr-vectors, precomputed, or several), read in place. ",
+          "Read in place, not uploaded. ",
           "Links to it work only in this browser, while this tab is open.",
           LocalData.canWrite ? "" : " This browser cannot remember folders or write into them: use Chrome or Edge for that.",
         ),
@@ -372,19 +373,19 @@ export function showSettingsSheet(wb: Workbench): void {
     sheet(
       "View settings",
       [
+        h("h3", { class: "section-title", title: "Saved with the workspace: a shared link shows the same" }, "Views"),
         panel,
-        h("p", { class: "note" }, "Saved with the workspace, so a shared link shows the same. Memory limits apply to this browser tab."),
         overviews,
+        h("h3", { class: "section-title" }, "Local tractograms"),
         h(
           "label",
-          { class: "field" },
-          h("span", {}, "Tractograms on this computer: memory for decoded cells, MB (0: automatic, 1/32 of this device's memory, 64 to 512 MB)"),
+          {
+            class: "field",
+            title:
+              "Kept in this browser. A large tractogram's points are copied into cells in the browser's private storage while it is open (about 1.2 to 1.5 times the file's size, deleted when it closes); only the cells last used stay in memory. 0 is automatic: 1/32 of this device's memory, 64 to 512 MB.",
+          },
+          h("span", {}, "Memory for decoded cells (MB, 0 = automatic)"),
           cache,
-        ),
-        h(
-          "p",
-          { class: "note" },
-          "Kept in this browser. A large tractogram's points are copied into cells in the browser's private storage while it is open (about 1.2 to 1.5 times the file's size; deleted when it closes); only an index and the cells last used stay in memory.",
         ),
       ],
       [h("button", { class: "btn primary", type: "button", onclick: () => closeSheet() }, "Done")],
@@ -398,10 +399,8 @@ export function showSettingsSheet(wb: Workbench): void {
 
 export function showShortcutsSheet(wb: Workbench): void {
   const table = h("dl", { class: "facts keys" });
-  for (const binding of wb.keybindings.list()) {
-    const command = wb.commands.get(binding.command);
-    if (command === undefined) continue;
-    table.append(h("dt", {}, h("kbd", {}, keyLabel(binding.key))), h("dd", {}, command.title));
+  for (const row of shortcutRows(wb.keybindings.list(), (id) => wb.commands.get(id)?.title)) {
+    table.append(h("dt", {}, ...row.keys.map((key) => h("kbd", {}, keyLabel(key)))), h("dd", {}, row.title));
   }
   const views = h("div", { class: "ng-host bindings-host" });
   let unmount: (() => void) | undefined;

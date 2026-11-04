@@ -85,8 +85,8 @@ const COLORMAPS: Colormap[] = ["viridis", "magma", "inferno", "plasma", "turbo",
 const TONE_MAPS: ToneMap[] = ["aces-hue", "aces", "reinhard", "clamp"];
 
 export const BLENDING_LABELS: [Blending, string][] = [
-  ["glow", "Glow (additive, behind things in front)"],
-  ["glow-through", "Glow through (additive, over everything)"],
+  ["glow", "Glow (behind what is in front)"],
+  ["glow-through", "Glow through (over everything)"],
   ["emission", "Emission and absorption"],
   ["solid", "Solid tubes"],
 ];

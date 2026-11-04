@@ -30,6 +30,12 @@ function open(store: string) {
     r = reader.open([store], undefined).then(({ levels }) => ({ reader, levels }));
     readers.set(store, r);
     r.catch(() => readers.delete(store));
+    // Each reader holds up to 128 MB of chunks: keep the last two stores' only.
+    while (readers.size > 2) readers.delete(readers.keys().next().value!);
+  } else {
+    // Used again: the newest.
+    readers.delete(store);
+    readers.set(store, r);
   }
   return r;
 }

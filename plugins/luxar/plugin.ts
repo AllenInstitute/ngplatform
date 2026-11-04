@@ -143,8 +143,9 @@ class Luxar {
 
   toggle(name: string): void {
     const style = this.styleOf(name);
-    this.setStyle(name, { on: !style.on });
+    // The panel redraws in setStyle: it shows this layer's settings.
     this.editing = name;
+    this.setStyle(name, { on: !style.on });
   }
 
   /**
@@ -293,7 +294,7 @@ class Luxar {
         const view = this.editing === undefined ? undefined : this.views.get(this.editing);
         // While the view of the layer's previous store still draws, both say how they are.
         const out = this.editing === undefined ? undefined : this.outgoing.get(this.editing);
-        status.textContent = view === undefined ? "" : out !== undefined ? `${out.view.status()} — its new store, not drawn until read: ${view.status()}` : view.status();
+        status.textContent = view === undefined ? "" : out !== undefined ? `${out.view.status()} · loading the new store: ${view.status()}` : view.status();
       };
       this.statusUpdate = updateStatus;
       updateStatus();
@@ -301,15 +302,15 @@ class Luxar {
         el(
           "div",
           { class: "lx-panel" },
-          el("p", { class: "note" }, "Draws a Zarr Vectors layer the way Luxar does, in these views: light added up and tone mapped, smooth lines with mitred joins. Tick a layer; the others stay as they are."),
-          candidates.length ? list : el("p", { class: "note" }, "No Zarr Vectors layer in this scene (a store, or a .trk, .tck, .trx or SWC file opened in place)."),
+          el("p", { class: "note", title: "Draws a layer the way Luxar does, in these views: light added up and tone mapped, smooth lines with mitred joins. The layers not ticked stay as they are." }, "Tick a layer to draw it as glowing light."),
+          candidates.length ? list : el("p", { class: "note" }, "Add a Zarr Vectors layer (a store, or a .trk, .tck, .trx or SWC file) or an image to draw it with Luxar."),
           this.editing ? this.settings(this.editing) : null,
           status,
           el(
             "label",
             { class: "field check" },
             this.checkbox(this.saved.momentum, (v) => this.write({ ...this.saved, momentum: v })),
-            el("span", {}, "Momentum when rotating the 3-D view (Luxar's camera feel)"),
+            el("span", { title: "Luxar's camera feel" }, "Keep turning the 3-D view after a drag"),
           ),
         ),
       );
@@ -352,7 +353,7 @@ class Luxar {
 
   /** Bloom: how much of the bright light glows around it, 0 off. */
   private bloomSlider(name: string): HTMLElement {
-    return this.slider(name, "Bloom (glow around bright light)", "bloom", 0, 3, 0.05, (v) => (v === 0 ? "off" : v.toFixed(2)));
+    return this.slider(name, "Bloom", "bloom", 0, 3, 0.05, (v) => (v === 0 ? "off" : v.toFixed(2)));
   }
 
   /** An image's settings: splats coloured by intensity or one colour, brightness, tone map, detail. */
@@ -362,7 +363,7 @@ class Luxar {
     const solid = style.colourBy === "solid";
     const parts: Child[] = [
       el("h3", { class: "lx-heading" }, `Settings: ${name}`),
-      el("p", { class: "note" }, "Drawn as Gaussian splats made from its voxels as they are read, each level of the image giving its own: in the 3-D view, and cut by each section in the 2-D views, in place of Neuroglancer's drawing of it."),
+      el("p", { class: "note", title: "Splats are made from the voxels as they are read, each level of the image giving its own: in the 3-D view, and cut by each section in the 2-D views, in place of Neuroglancer's drawing of it." }, "Drawn as Gaussian splats of its voxels."),
       this.select("Blending", style.blending === "emission" ? "emission" : "glow", [["emission", "Emission and absorption (looks solid)"], ["glow", "Glow (light added up)"]] as ["emission" | "glow", string][], (blending) => set({ blending })),
       this.select("Colour", solid ? "solid" : "attribute", [["attribute", "By intensity, through a colormap"], ["solid", "One colour"]] as ["attribute" | "solid", string][], (v) => set({ colourBy: v })),
     ];
@@ -398,7 +399,9 @@ class Luxar {
       this.select("Colour", style.colourBy, COLOUR_LABELS, (colourBy) => set({ colourBy, attribute: colourBy === "attribute" ? (style.attribute ?? attributes[0]?.id) : style.attribute })),
     ];
     if (style.colourBy === "attribute") {
-      if (attributes.length === 0) parts.push(el("p", { class: "note" }, info ? "This store has no vertex attributes." : "The store's attributes show once it is open."));
+      // Chosen before the store was open: the attribute the menu shows is the one drawn.
+      if (style.attribute === undefined && attributes.length > 0) queueMicrotask(() => set({ attribute: attributes[0].id, range: undefined }));
+      if (attributes.length === 0) parts.push(el("p", { class: "note" }, info ? "This store has no vertex attributes." : "Tick the layer to load its attributes."));
       else
         parts.push(
           this.select(
@@ -424,7 +427,7 @@ class Luxar {
           "div",
           { class: "field" },
           el("span", {}, style.range ? "Range" : "Range (from what has loaded)"),
-          el("div", { class: "lx-row" }, lo, hi, style.range ? el("button", { type: "button", class: "lx-small", onclick: () => set({ range: undefined }) }, "Auto") : null),
+          el("div", { class: "lx-row" }, lo, hi, style.range ? el("button", { type: "button", class: "lx-small", onclick: () => set({ range: undefined }), title: "Back to the range the data has" }, "Reset range") : null),
         ),
       );
     }
@@ -436,7 +439,7 @@ class Luxar {
     }
     const points = info?.primitive === "points";
     const mesh = info?.primitive === "triangles";
-    if (mesh) parts.push(el("p", { class: "note" }, "A mesh: lit surfaces in the 3-D view (direction colours by the surface's normal), and in the 2-D views the outline where the section cuts it."));
+    if (mesh) parts.push(el("p", { class: "note", title: "Direction colours by the surface's normal" }, "A mesh: lit in 3-D, outlined in 2-D."));
     parts.push(
       points
         ? this.slider(name, "Point size (pixels)", "width", 0.5, 12, 0.25, (v) => `${3 * v} px`)
@@ -449,9 +452,9 @@ class Luxar {
       parts.push(this.slider(name, "Glow depth (light from behind the nearest surface, as a share of the layer's size; 0 adds every fold up)", "glowDepth", 0, 0.2, 0.005, (v) => (v === 0 ? "off" : `${(100 * v).toFixed(1)} %`)));
     if (style.blending !== "solid") parts.push(this.select("Tone map", style.toneMap, TONE_LABELS, (toneMap) => set({ toneMap })), this.bloomSlider(name));
     parts.push(
-      this.slider(name, "2-D slab (thickness shown around a section)", "slab", 0.5, 40, 0.5, (v) => `${v} mm`),
+      this.slider(name, "2-D slab thickness", "slab", 0.5, 40, 0.5, (v) => `${v} mm`),
       this.slider(name, "Detail (vertices per view)", "detail", 0.25, 12, 0.25, (v) => `${v} M`),
-      el("label", { class: "field check" }, this.checkbox(style.autoBrightness, (autoBrightness) => set({ autoBrightness })), el("span", {}, "Automatic brightness (dimmer lines where they crowd the view)")),
+      el("label", { class: "field check" }, this.checkbox(style.autoBrightness, (autoBrightness) => set({ autoBrightness })), el("span", { title: "Dimmer lines where they crowd the view" }, "Automatic brightness")),
     );
     if (!style.on) parts.push(el("p", { class: "note" }, "Tick the layer above to draw it this way."));
     return el("div", { class: "lx-settings" }, ...parts);

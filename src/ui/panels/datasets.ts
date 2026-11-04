@@ -29,6 +29,15 @@ function statusDot(layers: LayerInfo[]): HTMLElement {
   return h("span", { class: ready ? "dot ok" : "dot busy", title: ready ? "Ready" : "Loading" });
 }
 
+/** A dataset's source URL, whether stored as a string or as Neuroglancer's {url, …}. */
+function sourceText(source: unknown): string {
+  if (typeof source === "string") return source;
+  const first = Array.isArray(source) ? source[0] : source;
+  if (typeof first === "string") return first;
+  const url = (first as { url?: unknown } | undefined)?.url;
+  return typeof url === "string" ? url : "";
+}
+
 /** The Add menu: a dataset by URL, local data, or a new annotation layer. */
 export function showAddMenu(anchor: HTMLElement, wb: Workbench): void {
   showMenu(anchor, [
@@ -49,11 +58,12 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
   const permission = h(
     "div",
     { class: "note-bar", hidden: true },
-    h("span", {}, "Local data in this scene needs a click to be read again."),
-    h("button", { class: "btn small", type: "button", onclick: () => wb.run("dataset.reconnectLocal") }, "Allow"),
+    h("span", {}, "The browser needs your permission to read local data again."),
+    h("button", { class: "btn small", type: "button", onclick: () => wb.run("dataset.reconnectLocal") }, "Allow access"),
   );
   const gone = h("div", { class: "note-bar", hidden: true });
-  host.append(h("div", { class: "panel-actions" }, addButton), permission, gone, list, others);
+  const actions = h("div", { class: "panel-actions" }, addButton);
+  host.append(actions, permission, gone, list, others);
 
   const render = () => {
     const localBase = `${wb.localData.base}local/`;
@@ -72,12 +82,14 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
     if (lost.length > 0) {
       clear(
         gone,
-        h("span", {}, `${lost.map((l) => l.name).join(", ")}: ${lost.length === 1 ? "its" : "their"} files on this computer are no longer open in this tab. Open them again (Add → Local, or drop them here).`),
+        h("span", {}, `${lost.map((l) => l.name).join(", ")}: local files closed with the tab. Open them again (Add → Local file or folder) or drop them here.`),
       );
     }
     const entries = store.sceneDatasets();
     const layerInfo = new Map(engine.layers().map((l) => [l.name, l]));
     const selected = engine.selectedLayer();
+    // The empty state has its own buttons.
+    actions.hidden = entries.length === 0;
 
     if (entries.length === 0) {
       clear(
@@ -85,13 +97,13 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
         h(
           "div",
           { class: "empty-state" },
-          h("p", { class: "empty" }, h("strong", {}, "This scene shows no datasets. "), "Add one by URL or from this computer, start an annotation layer, or open a link or an example."),
+          h("p", { class: "empty" }, h("strong", {}, "No datasets in this scene. "), "Add one, or drop files here."),
           h(
             "div",
             { class: "row-actions" },
-            h("button", { class: "btn primary small", type: "button", onclick: () => wb.run("dataset.add") }, icon("plus"), "From a URL"),
-            h("button", { class: "btn outline small", type: "button", disabled: !wb.commands.available("dataset.addLocal"), onclick: () => wb.run("dataset.addLocal") }, icon("open"), "Local…"),
-            h("button", { class: "btn outline small", type: "button", onclick: () => wb.run("dataset.newAnnotations") }, icon("plus"), "Annotation layer"),
+            h("button", { class: "btn primary small", type: "button", onclick: () => wb.run("dataset.add") }, icon("plus"), "Add from URL"),
+            h("button", { class: "btn outline small", type: "button", disabled: !wb.commands.available("dataset.addLocal"), onclick: () => wb.run("dataset.addLocal") }, icon("open"), "Add local data…"),
+            h("button", { class: "btn outline small", type: "button", onclick: () => wb.run("dataset.newAnnotations") }, icon("plus"), "New annotation layer"),
             h("button", { class: "btn outline small", type: "button", onclick: () => wb.run("workspace.open") }, icon("open"), "Open…"),
           ),
         ),
@@ -155,6 +167,8 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
                 menu({ x: m.clientX, y: m.clientY });
               },
               onkeydown: (e: Event) => {
+                // Keys on the row itself, not on its tick box or ⋯ button.
+                if (e.target !== e.currentTarget) return;
                 const k = (e as KeyboardEvent).key;
                 if (k === "Enter") select();
                 if (k === " ") {
@@ -167,12 +181,12 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
             statusDot(layers),
             h("span", { class: "ds-name" }, dataset.name),
             // Only where the data lives when that is this computer: the type is plain from the views.
-            h("span", { class: "type" }, where(layers[0]?.sources[0] ?? String(dataset.source ?? ""))),
+            h("span", { class: "type" }, where(layers[0]?.sources[0] ?? sourceText(dataset.source))),
             iconButton("more", "More actions", (e) => {
               e.stopPropagation();
               menu(e.currentTarget as HTMLElement);
             }),
-            h("span", { class: "sub" }, layers[0]?.error ?? shortSource(layers[0]?.sources[0] ?? String(dataset.source ?? ""))),
+            h("span", { class: "sub" }, layers[0]?.error ?? shortSource(layers[0]?.sources[0] ?? sourceText(dataset.source))),
           );
           if (entry.layers.length <= 1) return row;
           const views = h(
@@ -229,13 +243,13 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
           { class: "list" },
           ...notShown.map((dataset) => {
             const scenes = store.scenesShowing(dataset.id);
-            const source = shortSource(typeof dataset.source === "string" ? dataset.source : String((dataset.source as { url?: string } | undefined)?.url ?? ""));
+            const source = shortSource(sourceText(dataset.source));
             return h(
               "div",
               { class: "ds-row other", title: `Add “${dataset.name}” to this scene`, onclick: () => store.showDataset(dataset.id) },
               h("span", { class: "ds-icon" }, icon("database")),
               h("span", { class: "ds-name" }, dataset.name),
-              h("span", { class: "type" }, where(typeof dataset.source === "string" ? dataset.source : String((dataset.source as { url?: string } | undefined)?.url ?? ""))),
+              h("span", { class: "type" }, where(sourceText(dataset.source))),
               iconButton("plus", `Add “${dataset.name}” to this scene`, (e) => {
                 e.stopPropagation();
                 store.showDataset(dataset.id);

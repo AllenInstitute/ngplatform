@@ -297,14 +297,15 @@ const calls: Record<string, (msg: any) => Promise<{ value: unknown; transfer?: T
     if (table === undefined) throw new Error(`${levelPath} has no object table`);
     const rowOf = new Map<bigint, number>();
     for (let r = 0; r < table.numObjects; ++r) rowOf.set(table.segmentIds[r], r);
-    const objectIds = new BigUint64Array(segmentIds.length);
-    let missing = 0;
-    segmentIds.forEach((id, i) => {
+    // Only the ids found: a missing one left as 0 would be saved as object 0.
+    const found = new BigUint64Array(segmentIds.length);
+    let n = 0;
+    for (const id of segmentIds) {
       const row = rowOf.get(id);
-      if (row === undefined) missing++;
-      else objectIds[i] = table.objectIds?.[row] ?? BigInt(row);
-    });
-    return { value: { objectIds, missing }, transfer: [objectIds.buffer] };
+      if (row !== undefined) found[n++] = table.objectIds?.[row] ?? BigInt(row);
+    }
+    const objectIds = found.slice(0, n);
+    return { value: { objectIds, missing: segmentIds.length - n }, transfer: [objectIds.buffer] };
   },
   async groups({ level }: { level: number }) {
     const levelPath = store!.levels[level].path;

@@ -24,7 +24,8 @@ export class StoreClient {
   private chunks = new Map<string, BuiltChunk | null>();
   private bytes = 0;
   private requested = new Set<string>();
-  private failed = new Set<string>();
+  /** Chunks whose read failed, with when they may be asked for again (a network blip need not leave a hole for good). */
+  private failed = new Map<string, number>();
   private wants = new Map<string, string[]>();
   private sendQueued = false;
   private scalar = "none";
@@ -74,12 +75,13 @@ export class StoreClient {
       this.requested.delete(msg.key);
       if (msg.type === "chunk") {
         const chunk = msg.chunk as BuiltChunk;
+        if (this.failed.size === 0) this.error = undefined;
         this.store(msg.key, chunk);
         if (chunk.valueRange !== undefined) this.widenRange(chunk.valueRange);
       } else if (msg.type === "empty") {
         this.store(msg.key, null);
       } else if (msg.type === "error") {
-        this.failed.add(msg.key);
+        this.failed.set(msg.key, performance.now() + 15_000);
         this.error = msg.message;
       }
       ++this.arrivals;
@@ -136,7 +138,16 @@ export class StoreClient {
 
   /** Whether a chunk has been read (empty or not), so a view need not wait for it. */
   has(key: string): boolean {
-    return this.chunks.has(key) || this.failed.has(key);
+    return this.chunks.has(key) || this.failedRecently(key);
+  }
+
+  /** Whether a chunk's read failed lately: counted as read until it may be asked for again. */
+  private failedRecently(key: string): boolean {
+    const retry = this.failed.get(key);
+    if (retry === undefined) return false;
+    if (performance.now() < retry) return true;
+    this.failed.delete(key);
+    return false;
   }
 
   /** A view's wanted chunks, most wanted first; replaces its last list. */
@@ -163,7 +174,7 @@ export class StoreClient {
         const k = l[i];
         if (k === undefined || seen.has(k)) continue;
         seen.add(k);
-        if (this.chunks.has(k) || this.failed.has(k)) continue;
+        if (this.chunks.has(k) || this.failedRecently(k)) continue;
         merged.push(k);
       }
     }

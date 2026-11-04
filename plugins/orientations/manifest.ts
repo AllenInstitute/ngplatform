@@ -11,7 +11,7 @@ export const ORIENTATIONS_MANIFEST: Manifest = {
   kind: "tool",
   enabledByDefault: false,
   description: "Draws orientation glyphs over an OME-Zarr image: ODFs from spherical harmonics, diffusion tensors as ellipsoids, and peaks or vectors as lines, finer as you zoom in.",
-  guide: `Open an image whose voxels hold orientations: an OME-Zarr with a channel axis \`c\` (or a 4-D NIfTI, whose fourth axis holds them), then switch on **Orientations** (in its tab, or **Glyphs** beside **Sections** in the 3-D panel). Neuroglancer still shows the image itself (the first component); the plugin draws a glyph per voxel over it.
+  guide: `Open an image whose voxels hold orientations: an OME-Zarr with a channel axis \`c\` (or a 4-D NIfTI, whose fourth axis holds them), then switch on **Orientation glyphs** (in the Orientations tab, or **Glyphs** beside **Sections** in the 3-D panel). Neuroglancer still shows the image itself (the first component); the plugin draws a glyph per voxel over it.
 
 ## What it reads
 - **Spherical harmonics**: 6, 15, 28, 45, 66 or 91 coefficients per voxel (orders 2 to 12), drawn as ODF glyphs (exact: each pixel's ray meets the ODF's surface), coloured by direction. Choose the basis: DIPY writes \`descoteaux07\` (its legacy form unless told otherwise), MRtrix3 writes \`tournier07\`.
@@ -52,7 +52,7 @@ The glyphs of the 2-D views' sections are drawn on those sections in the 3-D vie
   provides: { services: ["orientations.status"] },
   contributes: {
     panels: [{ id: ORIENTATIONS_PANEL, title: "Orientations", slot: "left", order: 55 }],
-    commands: [{ id: "orientations.toggle", title: "Orientation glyphs on or off", group: "View" }],
+    commands: [{ id: "orientations.toggle", title: "Toggle orientation glyphs", group: "View" }],
     appState: { key: ORIENTATIONS_STATE_KEY, version: 1 },
   },
 };

@@ -6,6 +6,7 @@
  * and written in a worker (src/virtual/out/export_worker.ts); the result is
  * saved where the system's save dialog says, or downloaded.
  */
+import { JobCancelled } from "../platform/jobs.js";
 import type { DatasetRecord } from "../core/workspace.js";
 import { type ExportFormat, exportKind } from "../virtual/out/kinds.js";
 import { zipFiles } from "../virtual/out/volume.js";
@@ -64,6 +65,19 @@ function request(worker: Worker, message: object, onProgress?: (what: string, do
   });
 }
 
+/** `work`, unless the job is cancelled first: then the worker is stopped and JobCancelled thrown (nothing is saved). */
+function unlessCancelled<T>(worker: Worker, control: { readonly cancelled: boolean }, work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const cancelled = new Promise<never>((_, reject) => {
+    timer = setInterval(() => {
+      if (!control.cancelled) return;
+      worker.terminate();
+      reject(new JobCancelled());
+    }, 200);
+  });
+  return Promise.race([work, cancelled]).finally(() => clearInterval(timer));
+}
+
 const sizeText = (bytes: number) => (bytes >= 2 ** 30 ? `${(bytes / 2 ** 30).toFixed(1)} GB` : `${Math.max(0.1, bytes / 2 ** 20).toFixed(1)} MB`);
 
 const sourceOf = (dataset: DatasetRecord) => (typeof dataset.source === "string" ? dataset.source : String((dataset.source as { url?: string } | undefined)?.url ?? ""));
@@ -103,7 +117,7 @@ export async function exportDataset(wb: Workbench, dataset: DatasetRecord): Prom
       const target = await chooseTarget(false, dataset.name + chosen.suffix);
       if (target === null) return;
       await wb.jobs.run(`Export ${dataset.name}`, async (control) => {
-        const done = await request(worker, { type: "export", file: found.file, format: chosen.format }, (what, n, total) => control.progress(n / Math.max(1, total), what));
+        const done = await unlessCancelled(worker, control, request(worker, { type: "export", file: found.file, format: chosen.format }, (what, n, total) => control.progress(n / Math.max(1, total), what)));
         await save(new Map<string, Uint8Array>(done.files), dataset.name + chosen.suffix, false, target);
       });
       toast(`Exported ${dataset.name} as ${dataset.name}${chosen.suffix}.`);
@@ -126,7 +140,7 @@ export async function exportDataset(wb: Workbench, dataset: DatasetRecord): Prom
       // Any size: nothing is held whole.  Needs a browser that writes folders.
       ...((window as unknown as Pickers).showDirectoryPicker ? [{ label: PYRAMID, level: 0, box: false }] : []),
     ];
-    if (choices.length === 0) throw new Error("every level is larger than 2 GB");
+    if (choices.length === 0) throw new Error("every level is larger than 2 GB. Use Chrome or Edge to write it into a folder level by level");
     const answer = await formDialog<{ format: string; what: string }>(
       `Export ${dataset.name}`,
       {
@@ -164,12 +178,13 @@ export async function exportDataset(wb: Workbench, dataset: DatasetRecord): Prom
     const target = await chooseTarget(chosen.format === "zarr", base + chosen.suffix);
     if (target === null) return;
     await wb.jobs.run(`Export ${dataset.name}`, async (control) => {
-      const done = await request(worker, { type: "export", file: found.file, format: chosen.format, level: level.index, region }, (what, n, total) => control.progress(n / Math.max(1, total), what));
+      const done = await unlessCancelled(worker, control, request(worker, { type: "export", file: found.file, format: chosen.format, level: level.index, region }, (what, n, total) => control.progress(n / Math.max(1, total), what)));
       await save(new Map<string, Uint8Array>(done.files), base + chosen.suffix, chosen.format === "zarr", target);
     });
     toast(`Exported ${dataset.name} as ${base}${chosen.suffix}.`);
   } catch (e) {
-    toast(`Could not export ${dataset.name}: ${(e as Error).message}`, "error");
+    if (e instanceof JobCancelled) toast(`Export of ${dataset.name} cancelled.`);
+    else toast(`Could not export ${dataset.name}: ${(e as Error).message}`, "error");
   } finally {
     worker.terminate();
   }

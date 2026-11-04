@@ -24,7 +24,7 @@ export function renderJobsPanel(host: HTMLElement, wb: Workbench): () => void {
   const render = () => {
     const jobs = wb.jobs.list();
     if (jobs.length === 0) {
-      clear(list, h("p", { class: "empty" }, "No jobs. Filters, statistics and scripts from plugins queue here, with progress and a cancel button."));
+      clear(list, h("p", { class: "empty" }, "No jobs running."));
       return;
     }
     clear(

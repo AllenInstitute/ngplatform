@@ -36,7 +36,7 @@ Nothing is converted and no files are written: the store (or the file read in pl
   contributes: {
     panels: [{ id: LUXAR_PANEL, title: "Luxar", slot: "left", order: 55 }],
     commands: [
-      { id: "luxar.toggle", title: "Luxar rendering of the selected layer on or off", group: "View", when: "sourceFormat == zarr-vectors" },
+      { id: "luxar.toggle", title: "Toggle Luxar for the selected layer", group: "View", when: "sourceFormat == zarr-vectors" },
       { id: "luxar.show", title: "Show the Luxar rendering settings", group: "View" },
     ],
     appState: { key: LUXAR_STATE_KEY, version: 1 },

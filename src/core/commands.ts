@@ -117,6 +117,17 @@ export class CommandRegistry {
   }
 }
 
+/**
+ * Whether a command runs without arguments, as the palette and menus run it:
+ * none of its required arguments lacks a default.  ("Switch to a scene"
+ * needs a scene id; keys and buttons give it one, the palette cannot.)
+ */
+export function runsWithoutArgs(command: Command): boolean {
+  const args = command.args;
+  if (args === undefined) return true;
+  return (args.required ?? []).every((name) => args.properties?.[name]?.default !== undefined);
+}
+
 /** Ranks commands against a palette query: every word must appear somewhere. */
 export function matchCommands(commands: Command[], query: string): Command[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);

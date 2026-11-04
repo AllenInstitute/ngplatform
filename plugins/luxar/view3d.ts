@@ -23,6 +23,7 @@ import { apply, boxInFrustum, coverage, eyeOf, glowFalloff, invert4, invertAffin
 const GPU_BYTES = 768 * 1024 * 1024;
 /** GPU memory for its chosen objects read whole. */
 const GPU_SET_BYTES = 512 * 1024 * 1024;
+const SOLID_INSTEAD = "This GPU cannot add light up in a float target here: drawing solid lines instead.";
 
 interface SavedState {
   framebuffer: WebGLFramebuffer | null;
@@ -91,7 +92,22 @@ export class View3d implements Drawer3d {
     gl.activeTexture(gl.TEXTURE0);
   }
 
+  /** Draws, unless drawing has failed (a shader this GPU cannot compile, say): then the panel says why, and it is not tried every frame. */
   draw(frame: Frame3d): void {
+    // (A new GL context, after a context loss, is tried again.)
+    if (this.failed !== undefined && this.renderer?.gl === frame.gl) return;
+    this.failed = undefined;
+    try {
+      this.drawNow(frame);
+    } catch (e) {
+      this.failed = `The 3-D view could not draw this layer: ${(e as Error).message}`;
+      this.problem = this.failed;
+    }
+  }
+
+  private failed: string | undefined;
+
+  private drawNow(frame: Frame3d): void {
     const { gl } = frame;
     const { view } = this;
     if (this.renderer?.gl !== gl) {
@@ -110,7 +126,7 @@ export class View3d implements Drawer3d {
       this.problem = `The 3-D view shows ${frame.dimensions.names.join(", ")}, which this layer does not have.`;
       return;
     }
-    this.problem = undefined;
+    this.problem = this.broken ? SOLID_INSTEAD : undefined;
     this.chunks ??= new GpuChunks(this.renderer, view.client, GPU_BYTES);
     this.sets ??= new GpuChunks(this.renderer, view.client.objects, GPU_SET_BYTES);
     const chunks = this.chunks;
@@ -184,7 +200,7 @@ export class View3d implements Drawer3d {
       // Add the light up.
       if (!this.target!.bind(width, height, depthBuffer)) {
         this.broken = true;
-        this.problem = "This GPU cannot add light up in a float target here; drawing solid lines instead.";
+        this.problem = SOLID_INSTEAD;
         return;
       }
       // A mesh's glow: first the nearest surface at each pixel.

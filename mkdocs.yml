@@ -63,5 +63,6 @@ nav:
       - Ideas for new plugins: plugins/ideas.md
       - Page template: plugins/template.md
   - Contributing: contributing.md
+  - "Audit: platform and seven plugins": dev/audit.md
   - Design notes:
       - The repository plan: editor_repo_plan.md
