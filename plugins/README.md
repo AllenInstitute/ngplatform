@@ -38,8 +38,11 @@ scene's state):
    - `tests/*.test.ts`: run by `npm test` with the platform's tests.
    - `README.md`: what it does, who looks after it.
 2. **Import the platform only through the SDK**, `@ngplatform/sdk` (types,
-   `checkManifest`) and `@ngplatform/sdk/workers` (for a worker of your own
-   that reads chunks through Neuroglancer's codecs). Everything a plugin may
+   `checkManifest`), `@ngplatform/sdk/workers` (for a worker of your own
+   that reads chunks through Neuroglancer's codecs), `@ngplatform/sdk/dom`
+   (`el`, `button`, `select`, `numberInput`, `field`, `svgEl`,
+   `downloadBlob`, `safeFileName`) and `@ngplatform/sdk/format` (`csv`,
+   `csvField`, `ticks`, `mmText`, `bytesText`). Everything a plugin may
    do goes through the `ctx` it is given; nothing in `src/` is imported
    directly. Neuroglancer itself can be imported (`neuroglancer/unstable/…`)
    when a plugin needs its internals, as the data types do.

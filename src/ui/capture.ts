@@ -13,6 +13,7 @@ import { captureName, evenBox, frameName, sweepFrames, trimBox, turntableFrames,
 import { GifEncoder } from "../core/gif.js";
 import { muxMp4, type Mp4Sample } from "../core/mp4.js";
 import { zipStore } from "../core/zip.js";
+import { downloadBlob } from "../sdk/dom.js";
 import type { JobControl } from "../sdk/types.js";
 import { formatScaleWithUnitAsString } from "../engine/neuroglancer.js";
 import { h } from "./dom.js";
@@ -75,14 +76,6 @@ const canPickFolder = () => "showDirectoryPicker" in window;
 const canRecordWebm = () => typeof MediaRecorder !== "undefined" && ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].some((t) => MediaRecorder.isTypeSupported(t));
 const canEncodeMp4 = () => typeof (globalThis as { VideoEncoder?: unknown }).VideoEncoder !== "undefined";
 
-function saveBlob(blob: Blob, name: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = h("a", { href: url, download: name });
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
-}
 
 function canvasPng(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Could not make a PNG of the frame."))), "image/png"));
@@ -317,7 +310,7 @@ async function capture(wb: Workbench, s: CaptureSettings, folder?: FileSystemDir
     const note = incomplete > 0 ? ` (${incomplete} frame${incomplete === 1 ? "" : "s"} taken before all their data had loaded)` : "";
 
     if (s.mode === "picture") {
-      saveBlob(await pngOf(kept[0]), `${name}.png`);
+      downloadBlob(await pngOf(kept[0]), `${name}.png`);
       wb.log.add(`Saved a picture of the views, ${box.width} × ${box.height}${note}.`, "ok");
       return;
     }
@@ -332,14 +325,14 @@ async function capture(wb: Workbench, s: CaptureSettings, folder?: FileSystemDir
           // Let the page breathe between frames.
           await new Promise((r) => setTimeout(r, 0));
         }
-        saveBlob(new Blob([gif.finish() as BlobPart], { type: "image/gif" }), `${name}.gif`);
+        downloadBlob(new Blob([gif.finish() as BlobPart], { type: "image/gif" }), `${name}.gif`);
         break;
       }
       case "webm":
-        saveBlob(await recordWebm(kept, frame, s.fps, control, encoding), `${name}.webm`);
+        downloadBlob(await recordWebm(kept, frame, s.fps, control, encoding), `${name}.webm`);
         break;
       case "mp4":
-        saveBlob(await encodeMp4(kept, frame, s.fps, box, control, encoding), `${name}.mp4`);
+        downloadBlob(await encodeMp4(kept, frame, s.fps, box, control, encoding), `${name}.mp4`);
         break;
       case "zip": {
         const entries = [];
@@ -347,7 +340,7 @@ async function capture(wb: Workbench, s: CaptureSettings, folder?: FileSystemDir
           encoding(i);
           entries.push({ name: frameName("frame_", i, kept.length), data: new Uint8Array(await (await pngOf(kept[i])).arrayBuffer()) });
         }
-        saveBlob(new Blob(zipStore(entries), { type: "application/zip" }), `${name}-frames.zip`);
+        downloadBlob(new Blob(zipStore(entries), { type: "application/zip" }), `${name}-frames.zip`);
         break;
       }
       case "folder": {

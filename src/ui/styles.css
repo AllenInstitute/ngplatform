@@ -393,6 +393,8 @@ kbd {
 }
 textarea.text-input { height: auto; padding: 8px 10px; }
 .text-input.mono { font: 12px/1.5 var(--mono); }
+/* numberInput (@ngplatform/sdk/dom) */
+.num-input { height: 24px; padding: 0 4px; font: 12px/1 var(--mono); min-width: 0; width: 64px; }
 .form-errors { color: var(--err); margin: 0; font-size: 12px; min-height: 1em; }
 
 /* layer: Neuroglancer's own tabs at full height, under a one-line header */

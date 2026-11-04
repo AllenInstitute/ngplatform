@@ -7,6 +7,7 @@
  * runner's conversion.
  */
 import { isActive, normaliseAddress, pairingFromHash, type RunnerEntry, RunnerError, type RunnerService } from "../platform/runner.js";
+import { bytesText } from "../sdk/format.js";
 import type { RunnerApi, RunnerJob, RunnerOutput } from "../sdk/types.js";
 import { clear, h, iconButton } from "./dom.js";
 import { diskBudget, type SpillPlan, spillPlan, storageEstimate } from "../virtual/vectors/spill.js";
@@ -18,7 +19,6 @@ export const LOCAL_JOBS_GUIDE = "https://ngplatform.readthedocs.io/en/latest/gui
 const START_COMMAND = "python -m ngplatform_runner --root ~/data";
 const TRACTOGRAM = /\.(trk|tck|trx)$/i;
 
-const sizeText = (bytes: number) => (bytes >= 2 ** 30 ? `${(bytes / 2 ** 30).toFixed(1)} GB` : bytes >= 2 ** 20 ? `${(bytes / 2 ** 20).toFixed(0)} MB` : `${Math.max(1, Math.round(bytes / 1024))} kB`);
 const baseName = (path: string) => path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? path;
 const folderOf = (path: string) => path.replace(/[\\/]+$/, "").replace(/[\\/][^\\/]*$/, "") || "/";
 const joinPath = (folder: string, name: string) => `${folder.replace(/[\\/]+$/, "")}/${name}`;
@@ -319,7 +319,7 @@ export function choosePath(runner: RunnerService, options: Parameters<RunnerApi[
           const button = h("button", { class: "linkish", type: "button" }, label);
           button.addEventListener("click", () => (entry.type === "dir" ? void go(entry.path) : pick(entry, row)));
           if (entry.type === "store") button.addEventListener("dblclick", () => void go(entry.path));
-          row.append(button, entry.size !== undefined ? h("span", { class: "type" }, sizeText(entry.size)) : entry.type === "store" ? h("span", { class: "type" }, "store") : "");
+          row.append(button, entry.size !== undefined ? h("span", { class: "type" }, bytesText(entry.size)) : entry.type === "store" ? h("span", { class: "type" }, "store") : "");
           rows.push(row);
         }
         if (listing.truncated) rows.push(h("li", { class: "note" }, "More entries are not shown."));
@@ -453,12 +453,12 @@ const askedKey = (file: { name: string; size: number }) => `${file.name}|${file.
 
 /** Why a tractogram is past the limit, in plain words. */
 function limitText(file: { name: string; size: number }, plan: SpillPlan): string {
-  const limit = plan.budget > 0 ? `past the ${sizeText(plan.budget)} limit` : "and none is allowed";
-  return `${file.name} is ${sizeText(file.size)}. Reading all of it here would copy about ${sizeText(plan.wholeBytes)} into this browser's storage, ${limit} (View settings → Local tractograms).`;
+  const limit = plan.budget > 0 ? `past the ${bytesText(plan.budget)} limit` : "and none is allowed";
+  return `${file.name} is ${bytesText(file.size)}. Reading all of it here would copy about ${bytesText(plan.wholeBytes)} into this browser's storage, ${limit} (View settings → Local tractograms).`;
 }
 
 /** What a sample keeps, in plain words. */
-const sampleText = (plan: SpillPlan) => `about ${sizeText(plan.bytes)} copied${plan.place === "memory" ? ", in memory" : ", deleted when the tab closes"}`;
+const sampleText = (plan: SpillPlan) => `about ${bytesText(plan.bytes)} copied${plan.place === "memory" ? ", in memory" : ", deleted when the tab closes"}`;
 
 /** Converts (or serves) a tractogram through the runner, after finding where it is under the runner's folders. */
 async function throughRunner(wb: Workbench, runner: RunnerService, file: { name: string; size: number }, choice: "serve" | "convert"): Promise<void> {
