@@ -44,12 +44,12 @@ is never loaded whole and coarser levels appear first.
 
 ### Large tractograms and meshes
 
-A tractogram is read once when it is opened, in a worker: about a minute
-for a 3 GB `.trk` (10 million streamlines) on a desktop, roughly 7 minutes
-for 20 GB. While that pass runs the layer waits (its reads are answered
-"still reading the file" and asked again). The pass copies the points into
-spatial cells in the browser's private storage (OPFS): about 1.4 times the
-file's size, kept while the file is open and deleted when it is closed or
+A tractogram is read once when it is opened, in a worker: about 45 seconds
+for a 3 GB `.trk` (10 million streamlines) on a desktop, so roughly 5
+minutes for 20 GB. While that pass runs the layer waits (its reads are
+answered "still reading the file" and asked again). The pass copies the
+points into spatial cells in the browser's private storage (OPFS): about
+1.2 to 1.5 times the file's size, kept while the file is open and deleted when it is closed or
 its tab is. Memory holds an index of the cells (about 25 MB for 20 million
 streamlines) and the cells last used, up to a budget: 1/32 of this
 device's memory, between 64 and 512 MB, or what **View settings →

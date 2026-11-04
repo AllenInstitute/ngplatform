@@ -380,7 +380,7 @@ export function showSettingsSheet(wb: Workbench): void {
         h(
           "p",
           { class: "note" },
-          "Kept in this browser. A large tractogram's points are copied into cells in the browser's private storage while it is open (about 1.5 times the file's size; deleted when it closes); only an index and the cells last used stay in memory.",
+          "Kept in this browser. A large tractogram's points are copied into cells in the browser's private storage while it is open (about 1.2 to 1.5 times the file's size; deleted when it closes); only an index and the cells last used stay in memory.",
         ),
       ],
       [h("button", { class: "btn primary", type: "button", onclick: () => closeSheet() }, "Done")],
