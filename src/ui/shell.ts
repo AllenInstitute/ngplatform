@@ -23,6 +23,8 @@ import { PluginHost } from "../platform/plugin_host.js";
 import { ExampleRegistry, OpenHandlerRegistry } from "../platform/registries.js";
 import { ServiceRegistry } from "../platform/services.js";
 import { WorkspaceStore } from "../platform/workspace_store.js";
+import { HistoryKeep, IndexedDbHistoryBackend } from "../platform/history_keep.js";
+import type { HistoryData } from "../core/history.js";
 import { type Choices, type Resolution, saveChoices, toggle as togglePlugin } from "../platform/plugin_switches.js";
 import type { CatalogueEntry } from "../../plugins/index.js";
 import { registerBuiltins } from "../builtins/index.js";
@@ -46,6 +48,7 @@ import { offerRunnerForLarge, pairFromLink, runnerApi } from "./runner.js";
 import { openDropped, showAddDatasetSheet, showEditStateSheet, showLocalSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
 import type { Workbench } from "./workbench.js";
 import { createPlatformApis } from "./apis.js";
+import { closeHistoryView, showHistoryView } from "./history_view.js";
 
 /** The code, linked from the top bar. */
 const REPOSITORY = "https://github.com/AllenInstitute/ngplatform";
@@ -416,8 +419,16 @@ export class Shell {
       }
     });
 
+    // The history tree is kept in this browser beside the link (src/platform/history_keep.ts).
+    const keep = framed ? undefined : new HistoryKeep(new IndexedDbHistoryBackend());
+    if (keep !== undefined) this.keepHistory(keep);
     if (location.hash.startsWith("#!")) {
-      void this.openText(location.href, "the link", false);
+      const link = location.href;
+      void (async () => {
+        const resume = await keep?.find(location.hash);
+        await this.openText(link, "the link", false, resume);
+        if (resume !== undefined) log.add("The history of changes kept in this browser for this link is back (the ⋯ beside undo and redo).");
+      })();
     } else {
       const example = examples.get(defaultExample) ?? examples.list()[0];
       if (example !== undefined) store.open(example.state(), `the example “${example.title}”`);
@@ -568,6 +579,11 @@ export class Shell {
     add({ id: "edit.undo", title: "Undo", group: "Edit", when: "canUndo", run: () => store.undo() });
     add({ id: "edit.redo", title: "Redo", group: "Edit", when: "canRedo", run: () => store.redo() });
     add({ id: "edit.history", title: "History of changes…", group: "Edit", run: () => this.showHistory() });
+    const branch = (direction: 1 | -1) => () => {
+      if (!store.switchBranch(direction)) toast("No other branch that way: branches start where a change was made after going back.");
+    };
+    add({ id: "edit.previousBranch", title: "Previous branch of the history", group: "Edit", run: branch(-1) });
+    add({ id: "edit.nextBranch", title: "Next branch of the history", group: "Edit", run: branch(1) });
 
     // Scenes
     add({
@@ -899,6 +915,8 @@ export class Shell {
     k.add({ key: "mod+z", command: "edit.undo" });
     k.add({ key: "mod+shift+z", command: "edit.redo" });
     k.add({ key: "mod+y", command: "edit.redo" });
+    k.add({ key: "mod+alt+z", command: "edit.previousBranch" });
+    k.add({ key: "mod+alt+shift+z", command: "edit.nextBranch" });
     k.add({ key: "mod+/", command: "help.shortcuts" });
     k.add({ key: "shift+n", command: "dataset.add" });
     k.add({ key: "alt+pagedown", command: "scene.next" });
@@ -1032,7 +1050,7 @@ export class Shell {
   }
 
   /** Opens whatever was pasted or linked; returns whether it worked. */
-  async openText(text: string, from: string, asScene: boolean): Promise<boolean> {
+  async openText(text: string, from: string, asScene: boolean, resume?: HistoryData): Promise<boolean> {
     const { store, log } = this.wb;
     try {
       const handler = this.wb.openHandlers.match(text);
@@ -1044,7 +1062,7 @@ export class Shell {
       if (parsed.kind === "state") {
         const hasScenes = (parsed.state.app.platform as { scenes?: unknown[] } | undefined)?.scenes !== undefined;
         if (asScene && !hasScenes) store.openAsScene(parsed.state.ng, "Opened scene", from);
-        else store.open(parsed.state, from);
+        else store.open(parsed.state, from, { resume });
       } else if (parsed.kind === "remote") {
         this.setStatus("busy", "Fetching state");
         const response = await fetch(parsed.url);
@@ -1303,21 +1321,33 @@ export class Shell {
    * choosing a row goes back or forward to it.
    */
   private showHistory(): void {
+    if (closeHistoryView()) return;
+    showHistoryView(this.historyButton, this.wb.store);
+  }
+
+  /**
+   * Saves the history tree in this browser a second after each change
+   * settles, and when the page is hidden or left, filed under the link.
+   */
+  private keepHistory(keep: HistoryKeep): void {
     const store = this.wb.store;
-    const rows = store.historyRows();
-    const time = (t: number) => new Date(t).toLocaleTimeString(undefined, { hour12: false });
-    const items = rows
-      .map((row, i) => ({
-        label: row.label,
-        detail: time(row.time),
-        muted: row.state === "undone",
-        current: row.state === "current",
-        run: () => {
-          store.goToHistory(i);
-        },
-      }))
-      .reverse();
-    showMenu(this.historyButton, items.length > 0 ? items : [{ label: "No changes yet", disabled: true, run: () => {} }]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const save = () => {
+      clearTimeout(timer);
+      timer = undefined;
+      if (store.currentHash !== "") void keep.save(store.currentHash, store.history.export());
+    };
+    store.onChange(() => {
+      clearTimeout(timer);
+      timer = setTimeout(save, 1000);
+    });
+    const flush = () => {
+      if (timer !== undefined) save();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") flush();
+    });
   }
 
   private updateControls(): void {

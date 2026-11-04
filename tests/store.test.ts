@@ -353,3 +353,102 @@ describe("sign-ins", () => {
     expect(store.relinkSources(OLD, NEW, "again")).toBe(0);
   });
 });
+
+describe("the history tree", () => {
+  it("keeps the old future as a branch when a change is made after going back, and goes to any state", () => {
+    const { store, engine } = setup();
+    store.open({ ng: { layers: [{ name: "img", type: "image", source: IMAGE }] }, app: {} }, "test");
+    store.noteInput();
+    const first = store.state().activeScene;
+    store.setRawSlice("org.x", 1, { a: 1 });
+    store.newScene({ name: "Other" });
+    store.patchState((ng) => {
+      ng.layout = "3d";
+    });
+    store.settle();
+    expect(store.historyRows().map((r) => r.label)).toEqual(["Opened", "Org.x", "Added a scene", "Layout: 3d"]);
+    // Back to just after opening, then something else.
+    expect(store.goToHistory(0)).toBe(true);
+    store.setLayerVisible("img", false);
+    store.settle();
+    expect(store.historyRows().map((r) => r.label)).toEqual(["Opened", "Hid img"]);
+    const tree = store.historyTree();
+    expect(tree.map((n) => `${n.label}:${n.state}`)).toEqual(["Opened:done", "Org.x:branch", "Added a scene:branch", "Layout: 3d:branch", "Hid img:current"]);
+    // Each step knows its scene and datasets.
+    expect(tree.find((n) => n.label === "Hid img")).toMatchObject({ scene: "Scene 1", datasets: ["img"] });
+    expect(tree.find((n) => n.label === "Layout: 3d")).toMatchObject({ scene: "Other" });
+    // Jump into the old branch: its plugin state comes back; then to its end, with its scenes.
+    expect(store.goToNode(tree.find((n) => n.label === "Org.x")!.id)).toBe(true);
+    expect(store.rawSlice("org.x")).toEqual({ a: 1 });
+    expect(engine.layers()[0].visible).toBe(true);
+    expect(store.goToNode(tree.find((n) => n.label === "Layout: 3d")!.id)).toBe(true);
+    expect(store.state().scenes.map((s) => s.name)).toEqual(["Scene 1", "Other"]);
+    expect(engine.ng.layout).toBe("3d");
+    // Undo walks that branch; redo follows it back (the branch last visited).
+    expect(store.undo()).toBe(true);
+    expect(store.state().scenes).toHaveLength(2);
+    expect(engine.ng.layout).toBeUndefined();
+    expect(store.redo()).toBe(true);
+    expect(engine.ng.layout).toBe("3d");
+    // A scene switch is a step of its own, on this branch.
+    store.switchScene(first);
+    expect(store.historyTree()).toHaveLength(6);
+    // Over to the other branch, at the fork after opening.
+    expect(store.switchBranch(1)).toBe(true);
+    expect(store.historyRows().map((r) => r.label)).toEqual(["Opened", "Hid img"]);
+    expect(engine.layers()[0].visible).toBe(false);
+    expect(store.state().scenes).toHaveLength(1);
+    expect(store.rawSlice("org.x")).toBeUndefined();
+    expect(store.switchBranch(1)).toBe(false);
+    expect(store.historyTree()).toHaveLength(6);
+  });
+
+  it("keeps quiet amends on the current node, and the restored state is adopted, not a branch", () => {
+    const { store, engine } = setup();
+    store.open({ ng: { layers: [{ name: "a", source: IMAGE }], position: [0, 0, 0] }, app: {} }, "test");
+    store.noteInput();
+    store.patchState((ng) => {
+      ng.layout = "3d";
+    });
+    store.settle();
+    store.undo();
+    store.settle();
+    // A plugin's quiet edit after going back amends the current node: no branch.
+    store.patchState(
+      (ng) => {
+        ng.position = [3, 0, 0];
+      },
+      { quiet: true },
+    );
+    expect(store.historyTree()).toHaveLength(2);
+    expect(store.redo()).toBe(true);
+    expect(engine.ng.layout).toBe("3d");
+  });
+
+  it("resumes a kept tree when the same workspace is opened again, without a new step", () => {
+    const { store } = setup();
+    store.open({ ng: { layers: [{ name: "a", source: IMAGE }] }, app: {} }, "test");
+    store.noteInput();
+    store.patchState((ng) => {
+      ng.layout = "3d";
+    });
+    store.settle();
+    store.undo();
+    store.patchState((ng) => {
+      ng.layout = "xy";
+    });
+    store.settle();
+    const kept = JSON.parse(JSON.stringify(store.history.export()));
+    const { store: again, engine } = setup();
+    again.open(JSON.parse(store.serialize()), "the link", { resume: kept });
+    expect(again.historyTree().map((n) => `${n.label}:${n.state}`)).toEqual(["Opened:done", "Layout: 3d:branch", "Layout: xy:current"]);
+    expect(again.undo()).toBe(true);
+    expect(engine.ng.layout).toBeUndefined();
+    expect(again.goToNode(again.historyTree()[1].id)).toBe(true);
+    expect(engine.ng.layout).toBe("3d");
+    // A tree that cannot be read is ignored: the history starts afresh.
+    const { store: other } = setup();
+    other.open(JSON.parse(store.serialize()), "the link", { resume: { version: 9 } as never });
+    expect(other.historyTree().map((n) => n.label)).toEqual(["Opened"]);
+  });
+});
