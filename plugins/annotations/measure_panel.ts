@@ -172,7 +172,7 @@ export class Measure {
     const profile = el("div", { class: "an-profile" });
     host.append(
       el("div", { class: "an-row" }, tools),
-      el("p", { class: "an-hint" }, "Pick a tool, then Ctrl+click in a view: twice for a line or box, the centre then the extent for an ellipsoid, points ending with a double-click for a polyline. Pick the tool again to stop. Click a row to go to it."),
+      el("p", { class: "an-hint", title: "Twice for a line or box; the centre then the extent for an ellipsoid; points ending with a double-click for a polyline. Pick the tool again to stop." }, "Pick a tool, then Ctrl+click in a view. Click a row to go to it."),
       table,
       el("div", { class: "an-row" }, button("Save as CSV", () => this.exportCsv(), "Every measurement in a table")),
       el("h4", { class: "an-sub" }, "Line profile"),

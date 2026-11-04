@@ -59,6 +59,19 @@ export class Voxels {
         if (msg.type === "error") p.reject(new Error(msg.message));
         else p.resolve(msg);
       };
+      // A worker that fails to start or dies (out of memory, say) answers nothing: every request fails, and the next starts a new one.
+      const failed = (why: string) => {
+        this.worker?.terminate();
+        this.worker = undefined;
+        this.levelsCache.clear();
+        for (const p of this.pending.values()) p.reject(new Error(why));
+        this.pending.clear();
+      };
+      this.worker.onerror = (e) => {
+        e.preventDefault();
+        failed(`The reader stopped${e.message ? ` (${e.message})` : ""}: try a smaller region or a coarser level.`);
+      };
+      this.worker.onmessageerror = () => failed("The reader's answer could not be read.");
     }
     const id = this.nextId++;
     const worker = this.worker;

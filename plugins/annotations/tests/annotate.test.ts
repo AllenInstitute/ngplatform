@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { addGroup, groupOf, groupPath, groupsOf, groupTree, hiddenValues, layerShader, moveGroup, removeGroup, setGroup, SHADER_MARK, withShader, writeGroups } from "../groups.js";
 import type { AnnotationJson } from "../measure.js";
 import { ancestorNames, findTerm, lookupTerms, parseTerms, searchTerms } from "../ontology.js";
-import { BUILTIN_COLUMNS, buildRows, fieldColumns, importCsv, matches, parseCsv, parseQuery, sortRows, tableCsv, type TableLayer } from "../table.js";
+import { BUILTIN_COLUMNS, buildRows, commentsText, fieldColumns, importCsv, parseComments, matches, parseCsv, parseQuery, sortRows, tableCsv, type TableLayer } from "../table.js";
 import { csv } from "../ui.js";
 import { addField, emptyMeta, fieldId, fieldsOf, type LayerMeta, type LayerSpec, prune, readValue, removeField, setValue, updateField } from "../values.js";
 
@@ -271,6 +271,24 @@ describe("table", () => {
     const result = importCsv("layer,id,description\ncells,p1,x\n", new Map([["cells", managed]]), undefined, () => "n");
     expect(result.skipped).toBe(1);
     expect(result.layers.size).toBe(0);
+  });
+
+  it("does not copy rows of another plugin's layer into the target, nor write into such a layer", () => {
+    const managed: TableLayer = { ...l, spec: { ...l.spec, name: "regions" }, managed: true };
+    const empty: TableLayer = { spec: { name: "copy", annotations: [] }, meta: emptyMeta(), managed: false };
+    const layers = new Map([["regions", managed], ["copy", empty]]);
+    const text = "layer,id,type,description,point\nregions,r1,point,a region,1 2 3\nelsewhere,p9,point,mine,4 5 6\n";
+    const result = importCsv(text, layers, "copy", () => "n");
+    expect([result.added, result.skipped]).toEqual([1, 1]);
+    expect(result.layers.get("copy")!.spec.annotations.map((a) => a.description)).toEqual(["mine"]);
+    // The managed layer as the target: nothing written, nothing thrown.
+    const none = importCsv(text, layers, "regions", () => "n");
+    expect([none.added, none.skipped, none.layers.size]).toEqual([0, 2, 0]);
+  });
+
+  it("keeps a comment of several lines as one through CSV", () => {
+    const comments = [{ time: "2026-11-03T10:00:00Z", text: "first line\nsecond \\ line" }, { time: "2026-11-03T11:00:00Z", text: "another" }];
+    expect(parseComments(commentsText(comments))).toEqual(comments);
   });
 });
 
