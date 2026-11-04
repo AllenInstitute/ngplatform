@@ -193,6 +193,47 @@ function columnsOf(model: CiftiModel, vertexCount: number): Int32Array {
   return columns;
 }
 
+/**
+ * The mean and standard deviation (n - 1) across time courses added one at
+ * a time (a parcel's vertices), at each time point: Welford's running sums,
+ * values that are not numbers left out at their time point.
+ */
+export class CourseStats {
+  private readonly n: Int32Array;
+  private readonly mean: Float64Array;
+  private readonly m2: Float64Array;
+
+  constructor(readonly rows: number) {
+    this.n = new Int32Array(rows);
+    this.mean = new Float64Array(rows);
+    this.m2 = new Float64Array(rows);
+  }
+
+  add(values: ArrayLike<number>): void {
+    const { n, mean, m2 } = this;
+    for (let t = 0; t < this.rows; ++t) {
+      const x = values[t];
+      if (!Number.isFinite(x)) continue;
+      const k = ++n[t];
+      const d = x - mean[t];
+      mean[t] += d / k;
+      m2[t] += d * (x - mean[t]);
+    }
+  }
+
+  /** NaN at a time point with no values (and the SD where there is one). */
+  result(): { mean: Float32Array; sd: Float32Array; count: Int32Array } {
+    const mean = new Float32Array(this.rows);
+    const sd = new Float32Array(this.rows);
+    for (let t = 0; t < this.rows; ++t) {
+      const k = this.n[t];
+      mean[t] = k > 0 ? this.mean[t] : NaN;
+      sd[t] = k > 1 ? Math.sqrt(this.m2[t] / (k - 1)) : k === 1 ? 0 : NaN;
+    }
+    return { mean, sd, count: Int32Array.from(this.n) };
+  }
+}
+
 /** The most a series' values on one structure may take in memory to be stepped through (float32). */
 const SERIES_BYTES = 1 << 30;
 
@@ -264,6 +305,56 @@ export class CiftiSeries {
     const value = reader(new DataView(bytes.buffer), header.datatype, header.littleEndian);
     for (let t = 0; t < rows; ++t) out[t] = value(size * t);
     return out;
+  }
+
+  /**
+   * The mean and standard deviation over `vertices` (a parcel) at every
+   * time point: from the series read already, else from the file, the
+   * parcel's columns read in runs (columns a few apart read together,
+   * at most 32 MB at a time).  Vertices the file has no column for (the
+   * medial wall) are left out.
+   */
+  async parcel(vertices: ArrayLike<number>): Promise<{ mean: Float32Array; sd: Float32Array; count: Int32Array }> {
+    const { header, model } = this;
+    const rows = header.rows;
+    const columnOf = (this.columns ??= columnsOf(model, this.vertexCount));
+    const columns: number[] = [];
+    for (let i = 0; i < vertices.length; ++i) {
+      const v = vertices[i];
+      if (!(Number.isInteger(v) && v >= 0 && v < this.vertexCount)) throw new Error(`vertex ${v} is outside 0–${this.vertexCount - 1}`);
+      if (columnOf[v] !== -1) columns.push(columnOf[v]);
+    }
+    columns.sort((a, b) => a - b);
+    const stats = new CourseStats(rows);
+    const column = new Float32Array(rows);
+    if (this.matrix !== undefined) {
+      const matrix = await this.matrix;
+      for (const k of columns) {
+        for (let t = 0; t < rows; ++t) column[t] = matrix[t * model.count + k];
+        stats.add(column);
+      }
+      return stats.result();
+    }
+    const size = SIZES[header.datatype];
+    if (size === undefined) throw new Error(`CIFTI data type ${header.datatype} is not read`);
+    const most = Math.max(1, Math.floor((32 << 20) / (rows * size)));
+    for (let i = 0; i < columns.length; ) {
+      // A run: the next columns while the gaps are small and the read stays within its size.
+      let j = i + 1;
+      while (j < columns.length && columns[j] - columns[j - 1] <= 32 && columns[j] - columns[i] < most) ++j;
+      const k0 = columns[i];
+      const k1 = columns[j - 1] + 1;
+      const start = header.offset + size * rows * (model.offset + k0);
+      const bytes = new Uint8Array(await this.file.slice(start, start + size * rows * (k1 - k0)).arrayBuffer());
+      const value = reader(new DataView(bytes.buffer), header.datatype, header.littleEndian);
+      for (let c = i; c < j; ++c) {
+        const at = size * rows * (columns[c] - k0);
+        for (let t = 0; t < rows; ++t) column[t] = value(at + size * t);
+        stats.add(column);
+      }
+      i = j;
+    }
+    return stats.result();
   }
 
   /** The structure's part of the file, by time point then column. */

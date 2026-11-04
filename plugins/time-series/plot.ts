@@ -60,6 +60,36 @@ export function linePath(xs: ArrayLike<number>, ys: ArrayLike<number>, sx: (x: n
   return d;
 }
 
+/**
+ * An SVG path around a band, mean ± sd at each point: one closed shape for
+ * each run of time points where both are numbers.
+ */
+export function bandPath(xs: ArrayLike<number>, mean: ArrayLike<number>, sd: ArrayLike<number>, sx: (x: number) => number, sy: (y: number) => number): string {
+  let d = "";
+  let run: number[] = [];
+  const close = () => {
+    if (run.length > 0) {
+      const top = run.map((i) => `${sx(xs[i]).toFixed(1)},${sy(mean[i] + sd[i]).toFixed(1)}`);
+      const bottom = run.map((i) => `${sx(xs[i]).toFixed(1)},${sy(mean[i] - sd[i]).toFixed(1)}`).reverse();
+      d += `M${[...top, ...bottom].join("L")}Z`;
+    }
+    run = [];
+  };
+  for (let i = 0; i < xs.length; ++i) {
+    if (Number.isFinite(mean[i]) && Number.isFinite(sd[i])) run.push(i);
+    else close();
+  }
+  close();
+  return d;
+}
+
+/** The values a band reaches (mean - sd and mean + sd), for the plot's range. */
+export function bandEdges(mean: ArrayLike<number>, sd: ArrayLike<number>): Float32Array[] {
+  const lo = Float32Array.from(mean, (m, i) => m - sd[i]);
+  const hi = Float32Array.from(mean, (m, i) => m + sd[i]);
+  return [lo, hi];
+}
+
 /** A number for a tick or readout: a few significant digits. */
 export function fmt(v: number, digits = 4): string {
   if (!Number.isFinite(v)) return "–";
@@ -77,6 +107,8 @@ export interface PlotSeries {
    * right until the finest values replace it.
    */
   coarse?: string;
+  /** A spread around the values (a parcel's SD across its vertices), drawn as a band. */
+  sd?: ArrayLike<number>;
 }
 
 export interface PlotData {
@@ -160,7 +192,7 @@ export class Plot {
     const pad = { left: 52, right: 10, top: 8, bottom: 22 };
     const w = width - pad.left - pad.right;
     const h = height - pad.top - pad.bottom;
-    const [lo, hi] = valueRange(series.map((s) => s.values));
+    const [lo, hi] = valueRange(series.flatMap((s) => (s.sd === undefined ? [s.values] : [s.values, ...bandEdges(s.values, s.sd)])));
     const x0 = times[0] ?? 0;
     const x1 = times.length > 1 ? times[times.length - 1] : x0 + 1;
     const sx = (x: number) => pad.left + ((x - x0) / (x1 - x0 || 1)) * w;
@@ -187,6 +219,8 @@ export class Plot {
     root.append(unitLabel);
     this.marker = svg("line", { y1: pad.top, y2: pad.top + h, class: "ts-now", visibility: "hidden" });
     root.append(this.marker);
+    // Bands under every line.
+    for (const s of series) if (s.sd !== undefined) root.append(svg("path", { d: bandPath(times, s.values, s.sd, sx, sy), class: "ts-band", fill: s.colour }));
     for (const s of series) {
       root.append(svg("path", { d: linePath(times, s.values, sx, sy, s.coarse !== undefined), class: `ts-line${s.coarse !== undefined ? " ts-coarse" : ""}`, stroke: s.colour }));
     }
@@ -232,7 +266,8 @@ export class Plot {
           const swatch = document.createElement("span");
           swatch.className = "ts-swatch";
           swatch.style.background = s.colour;
-          return ["  ", swatch, ` ${s.label} ${fmt(s.values[i])}${valueUnit}`];
+          const spread = s.sd !== undefined && Number.isFinite(s.sd[i]) ? ` ± ${fmt(s.sd[i])}` : "";
+          return ["  ", swatch, ` ${s.label} ${fmt(s.values[i])}${spread}${valueUnit}`];
         }),
       );
     });

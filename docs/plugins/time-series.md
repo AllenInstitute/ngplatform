@@ -71,14 +71,28 @@ for images; playing makes none until it stops.
 
 Move the mouse onto the surface, in the 3-D view or near its outline in a
 2-D one: the plot shows the values of the nearest vertex at every time
-point, if one is within 4 mm of the mouse (the legend names the vertex by
-its number in the surface file). Off the surface, the last vertex stays
+point, if one is within 4 mm of the mouse, and the legend names the
+vertex by its number in the surface file (and the parcel it is in, when the surface has a
+parcellation). Off the surface, the last vertex stays
 plotted. **Pin** (or **Alt+P**) keeps the vertex, **Save CSV** saves the
 plotted vertices, and **% change** works as for voxels; pins are kept in
 the link with the surface and the vertex number. A vertex on the medial
 wall has no values in the file: the legend says so and nothing is drawn.
 The surface layer may be moved (Registration, the Source tab's transform):
 the vertex is the one shown under the mouse.
+
+### Parcels
+
+With a parcellation beside the surface (an `.annot` file, or `.label`
+files, in FreeSurfer's `label` folder; a CIFTI `.dlabel.nii`), the tab
+offers its parcels (with how many vertices each has; a parcellation menu
+when there are several). **Pin mean** pins the parcel chosen; **Its
+parcel** (or **Alt+Shift+M** over the views) pins the parcel of the vertex
+under the mouse. A parcel is plotted as the mean over its vertices at each
+time point, with a shaded band of ± one standard deviation across them;
+**Save CSV** writes the mean and, in the next column, the SD. Vertices
+with no values (the medial wall) are left out. Parcel pins are kept in the
+link.
 
 ## Notes from users
 

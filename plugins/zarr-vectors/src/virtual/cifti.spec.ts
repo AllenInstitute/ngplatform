@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseMeshFile } from "../../../../src/virtual/vectors/mesh_files.js";
+import { CourseStats } from "../../../../src/virtual/vectors/cifti.js";
 import { MeshStore } from "../../../../src/virtual/vectors/meshes.js";
 import { surfaceCompanions, surfaceRelated } from "../../../../src/virtual/vectors/surfaces.js";
 
@@ -114,9 +115,81 @@ describe("CIFTI on a surface", () => {
     expect(() => store.message({ series: "rest_t", vertex: 1.5 })).toThrow(/not a vertex/);
   });
 
+  it("answers a parcel's mean and SD at every time point, and its parcellation's labels", async () => {
+    const related = { "sub.rest.dtseries.nii": file("sub.rest.dtseries.nii"), "sub.aparc.dlabel.nii": file("sub.aparc.dlabel.nii") };
+    const companions = await surfaceCompanions("sub.L.midthickness.surf.gii", related, 12);
+    const mesh = await parseMeshFile(new Uint8Array(fs.readFileSync(path.join(DIR, "sub.L.midthickness.surf.gii"))), "sub.L.midthickness.surf.gii");
+    const store = new MeshStore(mesh, "sub.L.midthickness", companions);
+    const codes = expected.aparc as number[];
+    const rows = expected.rest_t as (number | null)[][];
+    // The parcellation, its labels counted.
+    const listed = (await store.message({ series: "rest_t", parcellations: true })) as { parcellations: { name: string; labels: { code: number; name: string; vertices: number }[]; codes: Float32Array }[] };
+    expect(listed.parcellations.map((p) => p.name)).toEqual(["aparc"]);
+    const [aparc] = listed.parcellations;
+    expect(Array.from(aparc.codes)).toEqual(codes);
+    for (const l of aparc.labels) expect(l.vertices, l.name).toBe(codes.filter((c) => c === l.code).length);
+    // Each parcel's mean and SD (ddof 1) over its vertices with values, at each time point, by code and by name.
+    const check = async (parcel: number | string, code: number) => {
+      const answer = (await store.message({ series: "rest_t", parcel })) as { parcellation: string; parcel: number; name: string; vertices: number; mean: Float32Array; sd: Float32Array };
+      const members = codes.map((c, v) => (c === code && rows[0][v] !== null ? v : -1)).filter((v) => v >= 0);
+      expect([answer.parcellation, answer.parcel, answer.vertices]).toEqual(["aparc", code, members.length]);
+      rows.forEach((row, t) => {
+        const xs = members.map((v) => row[v]!);
+        const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+        const sd = Math.sqrt(xs.reduce((a, b) => a + (b - mean) ** 2, 0) / (xs.length - 1));
+        expect(answer.mean[t]).toBeCloseTo(mean, 3);
+        expect(answer.sd[t]).toBeCloseTo(sd, 3);
+      });
+      return answer;
+    };
+    for (const l of aparc.labels) if (l.vertices > 1) await check(l.code, l.code);
+    expect((await check("precentral", 1)).name).toBe("precentral");
+    // The same from the series read whole (after stepping through it).
+    store.message({ series: "rest_t", time: 2 });
+    await store.get("0/vertex_attributes/rest_t/c/0/0/0");
+    await check(2, 2);
+    await expect(store.message({ series: "rest_t", parcel: "nowhere" }) as Promise<unknown>).rejects.toThrow(/no label/);
+    expect(() => store.message({ series: "rest_t", parcellation: "other", parcel: 1 })).toThrow(/no parcellation/);
+  });
+
   it("leaves a file out when its hemisphere has another vertex count", async () => {
     const { maps, skipped } = await surfaceCompanions("sub.L.midthickness.surf.gii", { "sub.thickness.dscalar.nii": file("sub.thickness.dscalar.nii") }, 40);
     expect(maps).toEqual([]);
     expect(skipped[0]).toMatch(/another vertex count/);
+  });
+});
+
+describe("a parcel's mean and spread over time", () => {
+  it("is each time point's mean and SD (n - 1) across the courses, values that are not numbers left out", () => {
+    const courses = [
+      [1, 2, NaN, 4],
+      [3, 2, 5, NaN],
+      [5, 2, 7, 8],
+    ];
+    const stats = new CourseStats(4);
+    for (const c of courses) stats.add(c);
+    const { mean, sd, count } = stats.result();
+    expect(Array.from(count)).toEqual([3, 3, 2, 2]);
+    expect(Array.from(mean)).toEqual([3, 2, 6, 6]);
+    expect(sd[0]).toBeCloseTo(2, 6);
+    expect(sd[1]).toBe(0);
+    expect(sd[2]).toBeCloseTo(Math.SQRT2, 6);
+    expect(sd[3]).toBeCloseTo(2 * Math.SQRT2, 6);
+    // None at all: NaN; one: its value, spread 0.
+    const one = new CourseStats(2);
+    one.add([7, NaN]);
+    const r = one.result();
+    expect(r.mean[0]).toBe(7);
+    expect(r.sd[0]).toBe(0);
+    expect(r.mean[1]).toBeNaN();
+    expect(r.sd[1]).toBeNaN();
+  });
+
+  it("keeps its precision over a long, offset series (Welford's sums)", () => {
+    const stats = new CourseStats(1);
+    for (let i = 0; i < 10_000; ++i) stats.add([1e6 + (i % 2)]);
+    const { mean, sd } = stats.result();
+    expect(mean[0]).toBeCloseTo(1e6 + 0.5, 3);
+    expect(sd[0]).toBeCloseTo(Math.sqrt((10_000 * 0.25) / 9_999), 6);
   });
 });

@@ -4,7 +4,8 @@
  * serves the series a time point at a time as one vertex attribute
  * (`<stem>_t`), lists it in its header (`headers/surface`, `time_series`),
  * and takes the time point in a message (`WorkspaceApi.local.send`); it
- * also finds the vertex nearest a point and answers a vertex's values at
+ * also finds the vertex nearest a point, answers a vertex's values at
+ * every time point, its parcellations, and a parcel's mean and SD at
  * every time point.  Plain code, without the page.
  */
 import type { LayerTransform } from "@ngplatform/sdk";
@@ -65,6 +66,46 @@ export function surfaceAxis(series: SurfaceSeries): TimeAxis {
 
 /** How near a vertex the pointer must be for that vertex's time course to be plotted, in millimetres. */
 export const VERTEX_REACH_MM = 4;
+
+/** A parcellation a surface's store has: its labels (how many vertices each) and each vertex's code. */
+export interface Parcellation {
+  name: string;
+  labels: { code: number; name: string; vertices: number }[];
+  /** Each vertex's label code, by the surface file's vertex numbers. */
+  codes: Float32Array;
+}
+
+/** The store's answer to `{ series, parcellations: true }`: those with a label on some vertex. */
+export function parcellationsOf(answer: unknown): Parcellation[] {
+  const list = (answer as { parcellations?: unknown })?.parcellations;
+  if (!Array.isArray(list)) return [];
+  const out: Parcellation[] = [];
+  for (const p of list as { name?: unknown; labels?: unknown; codes?: unknown }[]) {
+    if (typeof p?.name !== "string" || !(p.codes instanceof Float32Array) || !Array.isArray(p.labels)) continue;
+    const labels = (p.labels as { code?: unknown; name?: unknown; vertices?: unknown }[])
+      .filter((l) => typeof l?.code === "number" && typeof l.name === "string" && Number(l.vertices) > 0)
+      .map((l) => ({ code: l.code as number, name: l.name as string, vertices: Number(l.vertices) }));
+    if (labels.length > 0) out.push({ name: p.name, labels, codes: p.codes });
+  }
+  return out;
+}
+
+/** The label a vertex has in a parcellation, if any. */
+export function parcelAt(parcellation: Parcellation, vertex: number): { code: number; name: string } | undefined {
+  const code = parcellation.codes[vertex];
+  return parcellation.labels.find((l) => l.code === code);
+}
+
+/** The store's answer to `{ series, parcellation, parcel }`: the parcel's mean and SD at every time point. */
+export function parcelCourseOf(answer: unknown): { mean: Float32Array; sd: Float32Array; vertices: number; name: string } | undefined {
+  const a = answer as { mean?: unknown; sd?: unknown; vertices?: unknown; name?: unknown } | undefined;
+  return a?.mean instanceof Float32Array && a.sd instanceof Float32Array ? { mean: a.mean, sd: a.sd, vertices: Number(a.vertices) || 0, name: String(a.name ?? "") } : undefined;
+}
+
+/** A parcel as the legend names it: "precentral (aparc mean)" (its SD is the band around it). */
+export function parcelLabel(name: string, parcellation: string): string {
+  return `${name} (${parcellation} mean)`;
+}
 
 /**
  * `mm` millimetres as a distance in a surface layer's source coordinates

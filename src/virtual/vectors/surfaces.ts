@@ -113,6 +113,8 @@ export interface SurfaceSeries {
   time: number;
   /** A vertex's values at every time point (NaN where the file has none for it). */
   course(vertex: number): Promise<Float32Array>;
+  /** The mean and SD over some vertices (a parcel) at every time point, and how many had values. */
+  parcel(vertices: ArrayLike<number>): Promise<{ mean: Float32Array; sd: Float32Array; count: Int32Array }>;
 }
 
 const MAP_ORDER = ["curv", "sulc", "thickness", "area", "aparc", "aparc_a2009s", "labels", "volume"];
@@ -227,6 +229,7 @@ export async function surfaceCompanions(surfaceName: string, related: Record<str
               ...axis,
               time: 0,
               course: (vertex) => values.course(vertex),
+              parcel: (vertices) => values.parcel(vertices),
             };
             maps.push(entry.map);
             series.push(entry);

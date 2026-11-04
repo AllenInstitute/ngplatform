@@ -14,6 +14,7 @@
 import type { MeshData } from "./mesh_files.js";
 import { fragmentIndex } from "./streamlines.js";
 import { DEFAULT_MAPS, labelTable, type SurfaceCompanions, type SurfaceMap } from "./surfaces.js";
+import type { SurfaceLabel } from "./surface_values.js";
 import { VertexGrid } from "./vertex_grid.js";
 
 const MANIFEST_ROWS = 16384;
@@ -83,6 +84,8 @@ export class MeshStore {
   private readonly attributeBytes = new Map<string, Promise<Uint8Array>>();
   /** The stored vertices by place, for the vertex nearest a point; made when first asked for. */
   private grid: VertexGrid | undefined;
+  /** Each parcellation's codes by the file's vertex numbers, and its labels, read when first asked for. */
+  private readonly parcellations = new Map<string, Promise<{ values: Float32Array; labels: SurfaceLabel[] }>>();
   readonly count: number;
 
   /**
@@ -222,11 +225,53 @@ export class MeshStore {
    * - `{ series, vertex }` answers that vertex's values at every time point:
    *   `{ series, vertex, values }` (a Float32Array, NaN where the file has
    *   none for it, as on the medial wall).
+   * - `{ series, parcellations: true }` answers the surface's parcellations
+   *   (its `.annot`, `.label` and CIFTI dlabel maps): `{ series,
+   *   parcellations: [{ name, labels: [{ code, name, rgba, vertices }],
+   *   codes }] }`, `codes` each vertex's label code (a Float32Array by the
+   *   surface file's vertex numbers), `vertices` how many have the label.
+   * - `{ series, parcellation?, parcel }` answers the mean and standard
+   *   deviation (n - 1) over the vertices with label `parcel` (its code, or
+   *   its name) in `parcellation` (the first if not named) at every time
+   *   point: `{ series, parcellation, parcel, name, vertices, mean, sd }`
+   *   (Float32Arrays; `vertices` how many have values in the series).
    */
   message(body: unknown): unknown {
-    const { series: name, time, nearest, within, vertex } = (body ?? {}) as { series?: unknown; time?: unknown; nearest?: unknown; within?: unknown; vertex?: unknown };
+    const { series: name, time, nearest, within, vertex, parcellations, parcellation, parcel } = (body ?? {}) as {
+      series?: unknown;
+      time?: unknown;
+      nearest?: unknown;
+      within?: unknown;
+      vertex?: unknown;
+      parcellations?: unknown;
+      parcellation?: unknown;
+      parcel?: unknown;
+    };
     const series = this.companions.series?.find((s) => s.map.name === name);
     if (series === undefined) throw new Error(`no time series ${String(name)} on this surface`);
+    if (parcellations === true) {
+      const maps = this.companions.maps.filter((m) => m.parcellation);
+      return Promise.all(
+        maps.map(async (m) => {
+          const { values, labels } = await this.parcellation(m);
+          const counts = new Map<number, number>();
+          for (const v of values) if (Number.isFinite(v)) counts.set(v, (counts.get(v) ?? 0) + 1);
+          return { name: m.name, labels: labels.map((l) => ({ ...l, vertices: counts.get(l.code) ?? 0 })), codes: values };
+        }),
+      ).then((list) => ({ series: series.map.name, parcellations: list }));
+    }
+    if (parcel !== undefined) {
+      const map = parcellation === undefined ? this.companions.maps.find((m) => m.parcellation) : this.companions.maps.find((m) => m.parcellation && m.name === parcellation);
+      if (map === undefined) throw new Error(parcellation === undefined ? "this surface has no parcellation" : `no parcellation ${String(parcellation)} on this surface`);
+      return this.parcellation(map).then(async ({ values, labels }) => {
+        const label = labels.find((l) => l.code === parcel || l.name === parcel) ?? (typeof parcel === "number" ? { code: parcel, name: String(parcel) } : undefined);
+        if (label === undefined) throw new Error(`no label ${String(parcel)} in ${map.name}`);
+        const vertices: number[] = [];
+        values.forEach((v, i) => v === label.code && vertices.push(i));
+        const { mean, sd, count } = await series.parcel(vertices);
+        return { series: series.map.name, parcellation: map.name, parcel: label.code, name: label.name, vertices: Math.max(0, ...count), mean, sd };
+      });
+    }
     if (nearest !== undefined) {
       const point = Array.isArray(nearest) && nearest.length === 3 ? nearest.map(Number) : [];
       if (point.length !== 3 || !point.every(Number.isFinite)) throw new Error("nearest takes a point [x, y, z]");
@@ -246,6 +291,21 @@ export class MeshStore {
       series.time = time as number;
     }
     return { series: series.map.name, time: series.time, count: series.count };
+  }
+
+  /** A parcellation's codes and labels (a map without a table names each code by its number). */
+  private parcellation(map: SurfaceMap): Promise<{ values: Float32Array; labels: SurfaceLabel[] }> {
+    let p = this.parcellations.get(map.name);
+    if (p === undefined) {
+      p = map.load().then(({ values, labels }) => {
+        if (labels !== undefined) return { values, labels };
+        const codes = [...new Set(Array.from(values).filter(Number.isFinite))].sort((a, b) => a - b);
+        return { values, labels: codes.map((code) => ({ code, name: String(code), rgba: [0.5, 0.5, 0.5, 1] as [number, number, number, number] })) };
+      });
+      this.parcellations.set(map.name, p);
+      p.catch(() => this.parcellations.delete(map.name));
+    }
+    return p;
   }
 
   /**
