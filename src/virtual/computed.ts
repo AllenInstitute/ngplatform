@@ -257,6 +257,10 @@ export class ComputedImages {
   listen(): void {
     if (!("serviceWorker" in navigator) || !window.isSecureContext) return;
     navigator.serviceWorker.addEventListener("controllerchange", () => this.setGoogleTokens(this.googleTokens));
+    // The worker keeps the tokens in memory only: started again by the browser, it asks for them.
+    navigator.serviceWorker.addEventListener("message", (e: MessageEvent) => {
+      if ((e.data as { type?: string } | null)?.type === "google-tokens-ask") e.ports[0]?.postMessage(this.googleTokens);
+    });
     route(`/${COMPUTED_PATH}`, (ask, port) => void this.reply(ask, port));
     const active = () => {
       if (document.visibilityState === "visible") navigator.serviceWorker.controller?.postMessage({ type: "ngp-active" });
