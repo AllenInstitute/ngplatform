@@ -165,6 +165,10 @@ export function seedObjectTable(
 ) {
   let cache = tableCache.get(access);
   if (cache === undefined) tableCache.set(access, (cache = new Map()));
+  // A table whose rows are its ids came without them (see `identityTable`).
+  if (table.idSource === "row" && (table as { segmentIds?: unknown }).segmentIds === undefined) {
+    table = identityTable(table);
+  }
   if (!cache.has(levelPath)) cache.set(levelPath, Promise.resolve(table));
   if (usesZstd(table.manifestsJson)) void warmZstdDecoder();
 }
@@ -245,9 +249,14 @@ async function loadObjectTable(
     segmentIds = objectIds;
     idSource = "object_ids";
   } else {
-    segmentIds = new BigUint64Array(numObjects);
-    for (let i = 0; i < numObjects; ++i) segmentIds[i] = BigInt(i);
-    idSource = "row";
+    return identityTable({
+      numObjects,
+      objectIds,
+      idSource: "row",
+      manifestsJson: manifests,
+      dense,
+      objectIndexAttrs,
+    });
   }
   return {
     numObjects,
@@ -258,6 +267,31 @@ async function loadObjectTable(
     dense,
     objectIndexAttrs,
   };
+}
+
+/**
+ * A table whose rows are its ids: `segmentIds` (0, 1, 2 …) made only when
+ * first read, and not copied when the table is sent to a worker (the
+ * property is not enumerable), so a store of tens of millions of objects
+ * does not cost 8 bytes an object per level until something needs them.
+ */
+export function identityTable(
+  table: Omit<ZarrVectorsObjectTable, "segmentIds">,
+): ZarrVectorsObjectTable {
+  const out = { ...table } as ZarrVectorsObjectTable;
+  let ids: BigUint64Array | undefined;
+  Object.defineProperty(out, "segmentIds", {
+    enumerable: false,
+    configurable: true,
+    get: () => {
+      if (ids === undefined) {
+        ids = new BigUint64Array(table.numObjects);
+        for (let i = 0; i < table.numObjects; ++i) ids[i] = BigInt(i);
+      }
+      return ids;
+    },
+  });
+  return out;
 }
 
 /** Maps a segment id back to its row. */

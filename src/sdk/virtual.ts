@@ -18,10 +18,11 @@ export { answer, blobSource, type ByteSource, jsonBytes, Lru, type Range, type V
 /**
  * What local data sends a format's worker for each key, with the reply
  * port; or, with type "message", a message from the page for the store
- * (`VirtualStore.message`), in `body`.
+ * (`VirtualStore.message`), in `body`; or, with type "close" (no port),
+ * that the stores whose place starts with `store` are let go.
  */
 export interface VirtualRequest {
-  type: "get" | "message";
+  type: "get" | "message" | "close";
   /** The file's place: its local entry and path. */
   store: string;
   file: File;
@@ -36,27 +37,59 @@ export interface VirtualRequest {
 }
 
 /**
+ * How long a key waits for its store to open before it is answered 503
+ * ("still reading", which Neuroglancer's reads retry), so a first pass over
+ * a large file outlasts the browser's limit on a service worker's answer
+ * (five minutes).
+ */
+export const OPENING_WAIT_MS = 45_000;
+
+/**
  * Answers local data's requests in this worker, opening a store per file
- * (once; again when the file changes, by size or time) with `open`.  Replies
+ * (once; again when the file changes, by size or time) with `open`, which
+ * may report how much of the file it has read (`progress`, 0 to 1).  Replies
  * go straight back to the service worker, on the port each request brings.
  */
-export function serveVirtualStores(open: (file: File, related: Record<string, File>) => Promise<VirtualStore>): void {
+export function serveVirtualStores(open: (file: File, related: Record<string, File>, progress: (fraction: number) => void) => Promise<VirtualStore>): void {
   const stores = new Map<string, Promise<VirtualStore>>();
+  const opened = new Set<Promise<VirtualStore>>();
+  const progressOf = new Map<Promise<VirtualStore>, () => number>();
   const storeFor = (request: VirtualRequest) => {
     const related = Object.entries(request.related ?? {}).map(([path, f]) => `${path}:${f.size}:${f.lastModified}`).sort().join("|");
     const key = `${request.store}\n${request.file.size}\n${request.file.lastModified}\n${related}`;
     let store = stores.get(key);
     if (store === undefined) {
       // The file changed: forget what was made from it before.
-      for (const old of stores.keys()) if (old.startsWith(`${request.store}\n`)) stores.delete(old);
-      store = open(request.file, request.related ?? {});
+      for (const [old, made] of stores) {
+        if (!old.startsWith(`${request.store}\n`)) continue;
+        stores.delete(old);
+        made.then((s) => s.close?.(), () => {});
+      }
+      // How much of the file it has read, until it opens.
+      let fraction = 0;
+      const made = (store = open(request.file, request.related ?? {}, (f) => (fraction = f)));
+      progressOf.set(made, () => fraction);
       stores.set(key, store);
-      store.catch(() => stores.delete(key));
+      made
+        .then(
+          () => void opened.add(made),
+          () => void stores.delete(key),
+        )
+        .finally(() => progressOf.delete(made));
     }
     return store;
   };
   self.addEventListener("message", (event: MessageEvent<VirtualRequest>) => {
     const request = event.data;
+    if (request?.type === "close") {
+      // Local data let go of these files: so do their stores (and what they keep).
+      for (const [key, made] of stores) {
+        if (!key.startsWith(request.store)) continue;
+        stores.delete(key);
+        made.then((s) => s.close?.(), () => {});
+      }
+      return;
+    }
     const port = event.ports[0];
     if (port === undefined) return;
     if (request?.type === "message") {
@@ -74,7 +107,20 @@ export function serveVirtualStores(open: (file: File, related: Record<string, Fi
     if (request?.type !== "get") return;
     void (async () => {
       try {
-        const reply = await answer(await storeFor(request), request.key, request.range, request.head ?? false);
+        const pending = storeFor(request);
+        if (!opened.has(pending)) {
+          // Still reading the file: answer 503 after a while, to be asked again.
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const late = new Promise<"late">((resolve) => (timer = setTimeout(() => resolve("late"), OPENING_WAIT_MS)));
+          const first = await Promise.race([pending, late]);
+          clearTimeout(timer);
+          if (first === "late") {
+            const percent = Math.round(100 * (progressOf.get(pending)?.() ?? 0));
+            port.postMessage({ status: 503, message: `${request.file.name}: still reading the file (${percent}% read)` });
+            return;
+          }
+        }
+        const reply = await answer(await pending, request.key, request.range, request.head ?? false);
         port.postMessage(reply, reply.body ? [reply.body] : []);
       } catch (e) {
         port.postMessage({ status: 500, message: `${request.file.name}: ${e instanceof Error ? e.message : String(e)}` });

@@ -105,6 +105,11 @@ const DISK_THICKNESS = 0.04;
  */
 const GROUP_STORE_POINTS = 8_000_000;
 const GROUP_STORE_DELAY_MS = 400;
+/**
+ * Past GROUP_STORE_POINTS, the hand-off to the local runner's filter job
+ * (a later merge wires a button to it; for now the note names it).
+ */
+const GROUP_RUNNER_HINT = "run the filter job on the local runner (Jobs → This computer)";
 /** A first look at a big group, from a sample level: about this many points at most. */
 const GROUP_PREVIEW_POINTS = 1_000_000;
 /** A density map's look: a heat colour map, clear where it is zero. */
@@ -643,6 +648,14 @@ class TrackGroups {
       } else if (url !== undefined) {
         const engine = new RoiEngine(url);
         this.engine = engine;
+        // A tractogram on this computer reads whole streamlines from its file by id.
+        void this.ctx.workspace.local.send(url, { capabilities: true }).then(
+          (answer) => {
+            if (this.engine !== engine || !(answer as { curves?: boolean } | undefined)?.curves) return;
+            engine.direct = (ids, level) => this.ctx.workspace.local.send(url, { curves: { level, ids } }) as Promise<{ ids: BigUint64Array; offsets: Uint32Array; positions: Float32Array }>;
+          },
+          () => {},
+        );
         engine.ready.then(
           (info) => {
             if (this.engine !== engine) return;
@@ -1395,6 +1408,15 @@ class TrackGroups {
     const perObject = total / Math.max(1, props.ids.length);
     const estimate = (l: StoreInfo["levels"][number]) => ids.length * perObject * ((l.vertexCount ?? total) / Math.max(1, total));
     const level = info.levels.find((l) => estimate(l) <= GROUP_STORE_POINTS)?.index ?? info.levels[info.levels.length - 1].index;
+    if (level > 0) {
+      // Past what the page draws whole: the group is drawn from a sample level.
+      const sample = Math.round((100 * (info.levels[level].vertexCount ?? 0)) / Math.max(1, total));
+      this.saved_.set(
+        id,
+        `${ids.length.toLocaleString()} streamlines (about ${(estimate(info.levels[0]) / 1e6).toFixed(0)} M points) are more than the page draws whole (${GROUP_STORE_POINTS / 1e6} M points): drawn from level ${level} (about ${sample}% of the points). Save .trk writes every one; to make track files from it at full size, ${GROUP_RUNNER_HINT}.`,
+      );
+      this.updateAll();
+    }
     // A big group first from a sample level (read in seconds), then whole.
     const preview = info.levels.find((l) => l.index > level && estimate(l) <= GROUP_PREVIEW_POINTS && estimate(l) >= GROUP_PREVIEW_POINTS / 20)?.index;
     for (const at of preview === undefined ? [level] : [preview, level]) {

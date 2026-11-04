@@ -10,7 +10,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { readSegmentProperties } from "../objects.js";
 import { LevelPipeline, ObjectReader, openZarrVectorsStore, readObjectTable, ShardIndexCache } from "../reader.js";
-import { cellSize, fragmentIndex, StreamlineStore } from "../../../../src/virtual/vectors/streamlines.js";
+import { cellSize, fragmentIndex, sampleDepth, StreamlineStore } from "../../../../src/virtual/vectors/streamlines.js";
 import { openTractogram, openTrk } from "../../../../src/virtual/vectors/tractograms.js";
 import type { TrkBatch } from "../../../../src/virtual/vectors/trk.js";
 
@@ -141,12 +141,17 @@ describe("virtual streamline store", () => {
     const a = access(store);
     const zv = await openZarrVectorsStore(a as never, []);
     expect(zv.levels.length).toBe(2);
-    expect(zv.levels[1].vertexCount).toBe(2 * (n / 10));
-    const curves = await new ObjectReader(a as never, zv.description, zv.levels[1]).readCurves([0n, 1n, 10n, 24990n], signal);
-    expect(curves.ids).toEqual([0n, 10n, 24990n]);
+    // The streamlines whose hash says level 1 (about one in ten).
+    const kept = Array.from({ length: n }, (_, i) => i).filter((i) => sampleDepth(i, 1) >= 1);
+    expect(kept.length).toBeGreaterThan(n / 10 - 300);
+    expect(kept.length).toBeLessThan(n / 10 + 300);
+    expect(zv.levels[1].vertexCount).toBe(2 * kept.length);
+    const asked = [...new Set([0, 1, 2, 3, 4, 5, kept[1], kept[2], kept[kept.length - 1]])];
+    const curves = await new ObjectReader(a as never, zv.description, zv.levels[1]).readCurves(asked.map(BigInt), signal);
+    expect(curves.ids).toEqual([...new Set(asked)].filter((i) => kept.includes(i)).map(BigInt));
   });
 
-  it("gives a large tractogram nested levels, one streamline in 10, 100, 1000, while each keeps about 2,000", async () => {
+  it("gives a large tractogram nested levels, about one streamline in 10, 100, 1000, while each keeps about 2,000", async () => {
     const n = 2_500_000;
     const store = await StreamlineStore.build({
       scalarNames: [],
@@ -173,8 +178,12 @@ describe("virtual streamline store", () => {
     const zv = await openZarrVectorsStore(a as never, []);
     // 2.5 M, 250 k, 25 k, 2.5 k: one more (250) would hold too few.
     expect(zv.levels.length).toBe(4);
-    expect(zv.levels.map((l) => l.vertexCount)).toEqual([2 * n, 2 * (n / 10), 2 * (n / 100), 2 * (n / 1000)]);
-    const curves = await new ObjectReader(a as never, zv.description, zv.levels[3]).readCurves([0n, 10n, 1000n, 2_499_000n], signal);
-    expect(curves.ids).toEqual([0n, 1000n, 2_499_000n]);
+    const depth = Array.from({ length: n }, (_, i) => sampleDepth(i, 3));
+    const per = [0, 1, 2, 3].map((k) => depth.filter((d) => d >= k).length);
+    expect(zv.levels.map((l) => l.vertexCount)).toEqual(per.map((c) => 2 * c));
+    per.forEach((c, k) => expect(Math.abs(c - n / 10 ** k)).toBeLessThan(4 * Math.sqrt(n / 10 ** k)));
+    const deep = depth.flatMap((d, i) => (d >= 3 ? [i] : [])).slice(0, 3);
+    const curves = await new ObjectReader(a as never, zv.description, zv.levels[3]).readCurves([...new Set([0, 10, ...deep])].map(BigInt), signal);
+    expect(curves.ids).toEqual([...new Set([0, 10, ...deep])].filter((i) => depth[i] >= 3).sort((a, b) => a - b).map(BigInt));
   }, 60_000);
 });

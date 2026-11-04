@@ -17,3 +17,11 @@ plugin.
 | `runner_job.ts` | A group as a filter job for the runner on this computer ("Run on this computer"): its regions and ranges as a zvf-predicate tree, masks as voxels |
 | `trk.ts` | TrackVis v2 writing |
 | `tests/` | `npm test` runs them |
+
+On a tractogram opened from this computer, a group's own streamlines (the
+store its layer draws, and **Save .trk**) are read from the file by id
+through the store's `curves` message, not from the chunks every streamline
+passes through. A group of more than 8 million points is drawn from the
+finest sample level that fits, and its note says so; making track files from
+such a group at full size is the local runner's filter job (Jobs → This
+computer). Regions read only the chunks they touch, a sample level first.

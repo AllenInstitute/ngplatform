@@ -33,6 +33,8 @@ export interface VirtualStore {
    * series on a surface serves.
    */
   message?(body: unknown): unknown;
+  /** Lets go of what the store keeps (a spill file), when its file changes or closes. */
+  close?(): void;
 }
 
 /** Random access to a file's bytes. */

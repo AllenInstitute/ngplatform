@@ -12,7 +12,7 @@ to the page, and a worker here answers it from the file.
 | `images/` | Images as OME-Zarr 0.6: NIfTI and Analyze (`nifti.ts`), TIFF stacks and their own pyramids (`tiff.ts`), the store and its pyramid (`store.ts`), levels made in slabs (`slabs.ts`), the overview cache (`overview_cache.ts`), the worker (`worker.ts`) |
 | `computed.ts` | Images computed as they are viewed by [chunkmirage](https://github.com/JaneliaSciComp/chunkmirage)'s browser engine (`vendor/chunkmirage`, a submodule): a pipeline of its ops over any image, served under `<app>/virtual/ngp/<pipeline>/` |
 | `warp.ts` | Images resampled through a smooth map as they are viewed, for `computed.ts`: a thin-plate spline from landmark pairs, or a displacement field between affines |
-| `vectors/` | Geometry as Zarr Vectors: tractograms (`trk.ts`, `tck.ts`, `trx.ts` → `streamlines.ts`), meshes and surfaces (`mesh_files.ts` → `meshes.ts`), SWC neurons and point tables (`point_files.ts` → `points.ts`), the formats (`formats.ts`) and the worker (`worker.ts`) |
+| `vectors/` | Geometry as Zarr Vectors: tractograms (`trk.ts`, `tck.ts`, `trx.ts` → `tractograms.ts` → `streamlines.ts`, kept in a spill: `spill.ts`), meshes and surfaces (`mesh_files.ts` → `meshes.ts`, or for a large mesh `mesh_cells.ts` with levels from `mesh_levels.ts`), SWC neurons and point tables (`point_files.ts` → `points.ts`), the formats (`formats.ts`) and the worker (`worker.ts`) |
 
 ## Reading in
 
@@ -22,7 +22,8 @@ URL for Neuroglancer, and the worker that serves its keys. The platform's
 own formats are listed in `local_data.ts`; a data type plugin can add more
 (`addFormats`). A store's keys are made when asked: an image's chunk
 `0/c/0/3/2/1` reads only the bytes of those voxels; a tractogram is read
-once, binned into spatial cells, then every key is made from that.
+once, binned into spatial cells kept in a spill file, then every key is
+made from those (see [Large tractograms](#large-tractograms-what-is-kept)).
 
 A format can name files beside its file that its store reads too
 (`related`): a FreeSurfer or GIFTI surface's morphometry, overlays,
@@ -57,7 +58,92 @@ already read.
 
 Every store has coarser levels, so a view of the whole thing loads quickly:
 an image's pyramid (means of the finer level; the first voxel for labels),
-a tractogram's sample level (one streamline in ten).
+a tractogram's sample levels (about one streamline in 10, 100, 1000 …), a
+large mesh's simplified levels.
+
+A store that takes a while to make (a first pass over a large file)
+answers its keys `503` ("still reading the file, N% read") after 45 s
+(`OPENING_WAIT_MS` in `src/sdk/virtual.ts`), which Neuroglancer's reads
+and the Zarr Vectors reader ask again; so a pass longer than the five
+minutes a browser gives a service worker's answer does not fail the layer.
+
+## Large tractograms: what is kept
+
+A tractogram (`vectors/tractograms.ts`; `.trk`, `.tck`, `.trx`) is read
+once, in batches, in the vectors worker. That pass bins every streamline
+into spatial cells and writes, as it goes, into a **spill**
+(`vectors/spill.ts`):
+
+- each cell's fragments (a one-word header: the streamline, as a step from
+  the cell's last one, and the point count; then the points as float32, and
+  the per-point values), and its bridges to the next cell (direction and
+  the two rows, two or three words);
+- each level's manifests (varint cell and fragment numbers per streamline,
+  one segment per 16 384 streamlines);
+- the per-streamline columns (length, point count, the file's properties),
+  one segment per 65 536 streamlines.
+
+A large file's spill is a file in the browser's private storage (OPFS),
+written through a synchronous access handle (in 8 MB writes, the file grown
+512 MB at a time); a small file's (under 256 MB) is in memory. The spill
+lives while the store does: it is deleted when the file changes or its tab
+closes (a spill left by a closed tab is deleted the next time one is made).
+It is about 1.3 to 1.5 times the file's size: a copy of level 0's points
+plus their fragments, bridges and manifests. The levels' cells are 2, 4, 8
+… times level 0's; level 0's cell is a round number of millimetres giving
+about ten cells across the space, smaller for a large file, so a cell holds
+about 4 MB of points (`cellSize`).
+
+Memory keeps an index: per cell its segments, rows, fragments, bounds and
+bridge directions; per 16 384 streamlines where their manifests are; per
+16 streamlines where they start in the file (`CHECKPOINT`). For 20 million
+streamlines that is about 25 MB. Cells are decoded from the spill when a
+key asks for them, and the decoded cells last used are kept up to a budget:
+1/32 of the device's memory (`navigator.deviceMemory`), between 64 and
+512 MB, or what View settings sets (the vectors worker gets it as a
+`settings` message, `setVectorCacheMegabytes` in `vectors/formats.ts`).
+
+The sample levels keep streamline `id` while a hash of the id is below
+2³²/10ᵏ (`sampleDepth`), so they are decided from the id alone as the file
+streams past, each level is a subset of the one before, and the choice is
+uniform over the streamlines like zarr-vectors-tools' `random` sparsity
+strategy (though not the same ids, and about rather than exactly one in
+ten). Levels are made while a level keeps about 2 000 streamlines, up to
+level 4. zarr-vectors-tools' `virtual serve` twin keeps every 10th id
+instead.
+
+Whole streamlines by id (`message({ curves: { level, ids } })`, which Track
+filtering uses for a group's own store and for saving) are read from the
+file itself, not from the cells: a `.trk` or `.tck` from the checkpoint
+before each id, a TRX (stored, not deflated) from its `offsets` and
+`positions` arrays in place. Reading a cell in place instead was measured
+and not chosen: a cell's streamlines are spread through the file, so
+reading one 2.7 MB cell of a 584 MB `.trk` in place read 513 MB of it
+(about 190 ms against 7 ms from the spill), and that grows with the file.
+
+Past what the browser can hold, opening fails with a message naming the
+local runner ("Open through the local runner (Jobs → This computer)"):
+when the origin's free storage is less than the spill needs, or when the
+storage refuses to grow (a private window keeps OPFS in memory, with less
+room). `NeedsRunner` (`kind: "runner"`) in `vectors/spill.ts` is the hook
+for the page to offer the hand-off.
+
+## Large meshes
+
+A mesh file with more than a million triangles (other than a surface with
+values beside it) is served in cells with coarser levels
+(`vectors/mesh_levels.ts`, `vectors/mesh_cells.ts`). Each face goes to the
+cell holding its centroid. Each cell keeps, per object, the vertices its
+faces use there, so a vertex on a border is stored in each cell that uses
+it, at the same position. Level k's cells are 2^k times level 0's. Coarser
+levels are made by vertex clustering with quadric representatives, each
+from the one before with bins twice as large, until a level has 131 000
+faces or fewer. This runs in a worker of its own
+(`vectors/mesh_levels_worker.ts`), on the whole mesh before it is split, so
+cells meet without cracks. Kept in memory: every level's cells, about the
+file's triangles and vertices again plus about 40% for the coarser levels
+(250 MB for 10 M triangles). A 10 M-triangle PLY opens in about 6 s.
+Surfaces with values beside them stay one cell, as before.
 
 ## Large images: levels made in slabs, and kept within a budget
 
