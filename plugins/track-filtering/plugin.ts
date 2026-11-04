@@ -394,6 +394,12 @@ class TrackGroups {
   /** For a segmentation: the region tests on its volume. */
   private labels: LabelsEngine | undefined;
   private info: StoreInfo | undefined;
+  /**
+   * A tractogram on this computer opened as a sample (past the storage
+   * limit): about one streamline in `every` of the file's `total` is in the
+   * store (`present`), and only those are found, drawn and saved.
+   */
+  private sample: { every: number; present: number; total: number } | undefined;
   private results = new Map<string, GroupResult>();
   private roiStatus = new Map<string, string>();
   /** Mask images' levels, by store. */
@@ -651,6 +657,7 @@ class TrackGroups {
       this.labels?.dispose();
       this.labels = undefined;
       this.info = undefined;
+      this.sample = undefined;
       this.engineUrl = url;
       if (url !== undefined && (kind === "segmentation" || kind === "precomputed-annotations")) {
         this.labels = new LabelsEngine(url);
@@ -665,6 +672,19 @@ class TrackGroups {
           (answer) => {
             if (this.engine !== engine || !(answer as { curves?: boolean } | undefined)?.curves) return;
             engine.direct = (ids, level) => this.ctx.workspace.local.send(url, { curves: { level, ids } }) as Promise<{ ids: BigUint64Array; offsets: Uint32Array; positions: Float32Array }>;
+            // Opened as a sample: counts, density maps and saves say so.
+            if ((answer as { stats?: boolean }).stats) {
+              void this.ctx.workspace.local.send(url, { stats: true }).then(
+                (stats) => {
+                  const st = stats as { streamlines?: number; sampleEvery?: number; levels?: { streamlines: number }[] } | undefined;
+                  if (this.engine !== engine || st?.sampleEvery === undefined || st.sampleEvery <= 1) return;
+                  this.sample = { every: st.sampleEvery, present: st.levels?.[0]?.streamlines ?? 0, total: st.streamlines ?? 0 };
+                  this.updateAll();
+                  this.renderPanel();
+                },
+                () => {},
+              );
+            }
           },
           () => {},
         );
@@ -1428,13 +1448,13 @@ class TrackGroups {
       return;
     }
     const total = info.levels[0].vertexCount ?? 0;
-    const perObject = total / Math.max(1, props.ids.length);
+    const perObject = total / Math.max(1, this.sample?.present ?? props.ids.length);
     const estimate = (l: StoreInfo["levels"][number]) => ids.length * perObject * ((l.vertexCount ?? total) / Math.max(1, total));
     const level = info.levels.find((l) => estimate(l) <= GROUP_STORE_POINTS)?.index ?? info.levels[info.levels.length - 1].index;
     if (level > 0) {
       // Past what the page draws whole: the group is drawn from a sample level.
       const sample = Math.round((100 * (info.levels[level].vertexCount ?? 0)) / Math.max(1, total));
-      const note = `Too large to draw whole (${ids.length.toLocaleString()} streamlines, ~${(estimate(info.levels[0]) / 1e6).toFixed(0)} M points): showing level ${level}, ~${sample}% of the points. Save .trk writes all of them.`;
+      const note = `Too large to draw whole (${ids.length.toLocaleString()} streamlines, ~${(estimate(info.levels[0]) / 1e6).toFixed(0)} M points): showing level ${level}, ~${sample}% of the points. Save .trk writes all of them${this.sample ? " (all in the sample)" : ""}.`;
       this.saved_.set(id, note);
       this.sizeNotes.set(id, note);
       this.updateAll();
@@ -1638,7 +1658,7 @@ class TrackGroups {
     // they come, so memory stays the same whatever the group's size.  The
     // header's streamline count is written last.
     const total = info.levels[level]?.vertexCount ?? info.levels[0].vertexCount ?? 0;
-    const perObject = total / Math.max(1, props.ids.length);
+    const perObject = total / Math.max(1, this.sample?.present ?? props.ids.length);
     const batch = Math.max(1, Math.floor(BATCH_POINTS / Math.max(1, perObject)));
     let stream: Awaited<ReturnType<SaveTarget["open"]>> | undefined;
     try {
@@ -1672,7 +1692,7 @@ class TrackGroups {
       stream = undefined;
       const seconds = (performance.now() - started) / 1000;
       const message =
-        `Saved ${tracks.toLocaleString()} streamlines (${points.toLocaleString()} points, ` +
+        `Saved ${tracks.toLocaleString()} streamlines${this.sample ? ` of the 1 in ${this.sample.every.toLocaleString()} sample` : ""} (${points.toLocaleString()} points, ` +
         `${(bytes / 2 ** 20).toFixed(1)} MB) to ${target.name} in ${seconds.toFixed(1)} s.`;
       this.saved_.set(group.id, message);
       this.ctx.log.info(`${group.name}: ${message}`);
@@ -1726,7 +1746,7 @@ class TrackGroups {
     const counts = new Float32Array(voxels);
     const stamp = new Int32Array(voxels);
     const total = info.levels[level]?.vertexCount ?? info.levels[0].vertexCount ?? 0;
-    const perObject = total / Math.max(1, props.ids.length);
+    const perObject = total / Math.max(1, this.sample?.present ?? props.ids.length);
     const batch = Math.max(1, Math.floor(BATCH_POINTS / Math.max(1, perObject)));
     try {
       for (let from = 0; from < ids.length; from += batch) {
@@ -1757,7 +1777,7 @@ class TrackGroups {
         });
       }
       const seconds = (performance.now() - started) / 1000;
-      const message = `Density map of ${ids.length.toLocaleString()} streamlines on a ${grid.dims.join(" × ")} grid of ${grid.voxel} mm voxels, in ${seconds.toFixed(1)} s.`;
+      const message = `Density map of ${ids.length.toLocaleString()} streamlines${this.sample ? ` (of the 1 in ${this.sample.every.toLocaleString()} sample)` : ""} on a ${grid.dims.join(" × ")} grid of ${grid.voxel} mm voxels, in ${seconds.toFixed(1)} s.`;
       this.densities.set(group.id, file);
       this.saved_.set(group.id, message);
       this.ctx.log.info(`${group.name}: ${message}`);
@@ -2022,7 +2042,7 @@ class TrackGroups {
     const ids = passingIds(props, mask);
     // Points at a level: its share of the streamlines, at the store's mean length.
     const total = info.levels[0].vertexCount ?? 0;
-    const perObject = total / Math.max(1, props.ids.length);
+    const perObject = total / Math.max(1, this.sample?.present ?? props.ids.length);
     const estimate = (l: StoreInfo["levels"][number]) => ids.length * perObject * ((l.vertexCount ?? total) / Math.max(1, total));
     const level = info.levels.find((l) => estimate(l) <= maxPoints)?.index ?? info.levels[info.levels.length - 1].index;
     const scale = millimetres(info);
@@ -2229,7 +2249,7 @@ class TrackGroups {
         const r = this.results.get(group.id);
         count.textContent = r === undefined || (r.mask === undefined && r.ids === undefined) ? "…" : `${r.count.toLocaleString()}${r.state === "preview" ? "~" : ""}`;
         count.className = r?.state === "exact" || r?.state === "empty" ? "count" : "count busy";
-        count.title = r?.detail ?? "";
+        count.title = [r?.detail, this.sampleNote(group)].filter(Boolean).join("; ");
       });
       const rename = (e: Event) => {
         e.stopPropagation();
@@ -2321,6 +2341,22 @@ class TrackGroups {
   }
 
   /** Save as .trk: the level to save from, progress, and cancel. */
+  /** "of 1,700,000 in the sample (1 in 10 of 17,000,000)": what a group's count is of. */
+  private ofObjects(group: Group, rows: number): string {
+    const s = this.sample;
+    if (s === undefined) return `of ${rows.toLocaleString()} objects`;
+    // Attributes alone are tested on every streamline's columns, in the sample or not.
+    if (group.rois.length === 0) return `of ${s.total.toLocaleString()} in the file (attributes only; the sample holds 1 in ${s.every.toLocaleString()})`;
+    return `of ${s.present.toLocaleString()} in the sample (1 in ${s.every.toLocaleString()} of ${s.total.toLocaleString()})`;
+  }
+
+  /** The count's title on a sample. */
+  private sampleNote(group: Group): string {
+    const s = this.sample;
+    if (s === undefined) return "";
+    return group.rois.length === 0 ? `attributes of every streamline in the file; the sample holds 1 in ${s.every.toLocaleString()}` : `counted in the sample: 1 in ${s.every.toLocaleString()} of the file's ${s.total.toLocaleString()} streamlines`;
+  }
+
   private saveControl(group: Group): HTMLElement {
     const info = this.info;
     const button = el("button", { class: "btn small", type: "button", onclick: () => void this.saveTrk(group) }, "Save .trk") as HTMLButtonElement;
@@ -2333,7 +2369,7 @@ class TrackGroups {
     const total = info?.levels[0]?.vertexCount;
     for (const l of info?.levels ?? [{ index: 0, vertexCount: undefined, chunkShape: [] }]) {
       const share = l.index === 0 || total === undefined || l.vertexCount === undefined ? undefined : (100 * l.vertexCount) / total;
-      const label = l.index === 0 ? "All streamlines" : `Level ${l.index} sample${share === undefined ? "" : ` (about ${share >= 1 ? Math.round(share) : Number(share.toPrecision(1))}%)`}`;
+      const label = l.index === 0 ? (this.sample ? `All in the sample (1 in ${this.sample.every.toLocaleString()})` : "All streamlines") : `Level ${l.index} sample${share === undefined ? "" : ` (about ${share >= 1 ? Math.round(share) : Number(share.toPrecision(1))}%)`}`;
       level.append(el("option", { value: String(l.index) }, label));
     }
     level.value = String(this.trkLevel);
@@ -2344,9 +2380,10 @@ class TrackGroups {
       const busy = this.saving !== undefined;
       const mine = this.saving?.groupId === group.id;
       button.disabled = busy || r?.state !== "exact" || r.count === 0;
-      button.title = r?.state === "exact" ? "Save this group's streamlines, whole, as a TrackVis .trk file" : "Available once the group's exact answer is in";
+      const inSample = this.sample === undefined ? "" : `. Only the streamlines in the sample (1 in ${this.sample.every.toLocaleString()} of the file): Run on this computer filters every one`;
+      button.title = r?.state === "exact" ? `Save this group's streamlines, whole, as a TrackVis .trk file${inSample}` : "Available once the group's exact answer is in";
       density.disabled = button.disabled;
-      density.title = r?.state === "exact" ? "Count the group's streamlines through each voxel, shown as an image layer" : "Available once the group's exact answer is in";
+      density.title = r?.state === "exact" ? `Count the group's streamlines through each voxel, shown as an image layer${inSample}` : "Available once the group's exact answer is in";
       saveNii.hidden = !this.densities.has(group.id);
       level.disabled = busy;
       cancel.hidden = !mine;
@@ -2398,7 +2435,7 @@ class TrackGroups {
       const r = this.results.get(group.id);
       status.replaceChildren(
         el("strong", {}, r?.mask === undefined && r?.ids === undefined ? "–" : `${r!.count.toLocaleString()}${r!.state === "preview" ? "~" : ""}`),
-        props === undefined ? "" : `of ${props.ids.length.toLocaleString()} objects · `,
+        props === undefined ? "" : `${this.ofObjects(group, props.ids.length)} · `,
         r?.detail ?? "",
       );
     });
