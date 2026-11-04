@@ -24,7 +24,7 @@ when it runs out. Proofreading and axon segmentation last.
 - [ ] B3. AI quick select (a SAM-style model in the page, ONNX Runtime Web).
 
 **Wave C**
-- [ ] C1. Ray-cast SH ODF glyphs; Luxar glow on folded surfaces; region and parcel time courses on surfaces; vertex reach by mesh spacing.
+- [x] C1. (Done: ODF glyphs ray-cast from their harmonics written as one polynomial, 2.5–6× the glyphs per frame of the coarse mesh on SwiftShader, the same look; a mesh's Luxar glow fades behind its nearest surface (Glow depth), so lh.white reads as a surface; a parcel's mean and SD on a surface, pinned and in the CSV; the vertex under the mouse within three median edge lengths. Left: ODFs on a real GPU unmeasured here (headless Chrome hangs on the GPU); parcels by clicking in the views.) Ray-cast SH ODF glyphs; Luxar glow on folded surfaces; region and parcel time courses on surfaces; vertex reach by mesh spacing.
 - [ ] C2. Defaults: every plugin off except Zarr Vectors, with one-click offers when data a plugin handles is opened.
 - [ ] C3. Plugin-by-plugin audit (bugs, half-done features, verbose UI), scorecards.
 

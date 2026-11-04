@@ -23,7 +23,7 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
 | `plugin.ts` | The panel: the image, transport, pins and regions, the legend; the voxel under the mouse; playing; CSV. |
 | `space.ts` | Positions (global, and a layer's local dimensions after them: `Place`) to a layer's source coordinates and back, in any number of dimensions (`LayerMap`). |
 | `series.ts` | The time axis as the views show it (its global dimension, start, step and unit), the voxel at a position, stepping, colours, percent change, CSV. |
-| `surface.ts` | Time series on surfaces: a Zarr Vectors layer's store, the series its surface header lists (`time_series`), their time axis; the mouse in the store's coordinates, 4 mm in its units, the nearest-vertex answer; parcellations and a parcel's course as the store answers them. |
+| `surface.ts` | Time series on surfaces: a Zarr Vectors layer's store, the series its surface header lists (`time_series`), their time axis; the mouse in the store's coordinates, how near a vertex it must be (three median edge lengths), the nearest-vertex answer; parcellations and a parcel's course as the store answers them. |
 | `region.ts` | Boxes and ellipsoids from annotation layers; the image voxels whose centres are inside one. |
 | `reader.ts` | `SeriesReader`: an OME-Zarr image's levels read along time at some voxels, averaged (the finest, or a coarse read while the mouse moves: `movingPlan`); a byte-bounded chunk cache. |
 | `worker.ts`, `client.ts` | The reader in a worker. |
@@ -114,9 +114,9 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   to the store's coordinates: the file's less `coordinate_offset`, which
   the layer's default transform adds back, so a moved layer is read where
   it shows. The store is asked for the vertex nearest that point within
-  4 mm (`{ series, nearest, within }`, `storeDistance` turning millimetres
-  into the source's units; a grid over the vertices answers it,
-  `src/virtual/vectors/vertex_grid.ts`), then for that vertex's values at
+  three of the surface's median edge lengths (`{ series, nearest, within }`;
+  a grid over the vertices answers it, `src/virtual/vectors/vertex_grid.ts`),
+  then for that vertex's values at
   every time point (`{ series, vertex }`: its column of the CIFTI file).
   An answer to an older lookup is dropped. Off the surface the last vertex
   stays (so it can be pinned from the panel). A vertex pin keeps the
@@ -124,6 +124,18 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   read again the same way when the link is opened. A vertex the file has
   no column for (the medial wall) gets NaN at every time point: the legend
   says "no values" and nothing is plotted or saved for it.
+- **How near a vertex.** It was 4 mm, which on a coarse mesh (fsaverage5,
+  10 242 vertices a hemisphere, edges of 4–5 mm; or a test sphere of 162
+  vertices, edges of 15 mm) left the middles of edges and triangles with no
+  vertex at all: the plot did not follow the mouse. Now the store finds
+  its surface's median edge length once (`{ series, spacing: true }` →
+  `{ medianEdge }`, `medianEdgeLength` in `vertex_grid.ts`: each
+  triangle's three edges, at most 100 000 triangles looked at, evenly
+  spread), and the reach is three of them (`vertexReach`), in the store's
+  own units; 4 mm only while the store has not said (or for a mesh with no
+  triangles). A point on a triangle is within one edge of its corners, so
+  three leaves no gaps, and on a fine mesh (1 mm edges) the reach is 3 mm,
+  less than before.
 - **Parcels.** The surface's parcellations are the store's maps marked as
   one (`.annot`, FreeSurfer `.label` files together, a CIFTI `.dlabel.nii`
   map). When a series is chosen the store is asked for them once
@@ -202,12 +214,16 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   `cifti.spec.ts` also checks the parcels against nibabel's fixture: the
   parcellation's codes and label counts, each parcel's mean and SD at
   every time point (by code and by name, from the file and from the series
-  in memory); `CourseStats` against hand sums (values that are not
-  numbers left out, one value, none, a long offset series).
+  in memory), and the median edge length; `CourseStats` against hand
+  sums (values that are not numbers left out, one value, none, a long
+  offset series); `vertex_grid.spec.ts` the median edge of regular meshes
+  of two spacings, whole and sampled.
   In the browser: a 162-vertex sphere (edges of 15 mm; made with nibabel
   as the 2562-vertex one above, a wave plus noise, and four sectors as a
-  CIFTI dlabel). The legend names the sector of the vertex under the
-  mouse. **Its parcel** and **Pin mean** pinned two sectors, drawn with their
+  CIFTI dlabel). With the mouse at the middle of an edge (7 mm from both
+  ends) the old build plotted nothing ("Move the mouse onto the
+  surface"); now the nearer vertex, and the legend names its sector.
+  **Its parcel** and **Pin mean** pinned two sectors, drawn with their
   bands; the CSV's mean and SD columns equal numpy's over the sector's
   vertices with values (worst differences 5e-5 and 6e-7).
 

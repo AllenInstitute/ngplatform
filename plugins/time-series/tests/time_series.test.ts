@@ -14,7 +14,7 @@ import { ChunkCache, describePlan, levelVoxel, movingPlan, readBytes, type Serie
 import { inside, regionVoxels, shapeOf } from "../region.js";
 import { coordinateOf, formatTime, freeColour, indexAt, nextIndex, percentChange, percentChangeSpread, seriesCsv, stepIndex, type TimeAxis, timeAxis, timeOf, timesOf, voxelAt, voxelLabel } from "../series.js";
 import { type GlobalSpace, invert, LayerMap, placeOf } from "../space.js";
-import { nearestOf, parcelAt, parcelCourseOf, parcelLabel, parcellationsOf, storeDistance, storePoint, surfaceAxis, surfaceSeriesOf, vertexLabel, zarrVectorsStore } from "../surface.js";
+import { nearestOf, parcelAt, parcelCourseOf, parcelLabel, parcellationsOf, REACH_EDGES, storeDistance, storePoint, surfaceAxis, surfaceSeriesOf, vertexLabel, vertexReach, zarrVectorsStore } from "../surface.js";
 
 const FIXTURE = path.join(__dirname, "fixtures", "tiny.nii.gz");
 /** The fixture's value at voxel (x, y, z), time point t. */
@@ -496,6 +496,12 @@ describe("time series on surfaces", () => {
     expect(nearestOf({ series: "rest_t", vertex: 7, distance: 1.5, position: [0, 0, 0] })).toEqual({ vertex: 7, distance: 1.5 });
     expect(nearestOf({ series: "rest_t", vertex: null })).toBeUndefined();
     expect(vertexLabel(7)).toBe("vertex 7");
+    // How near a vertex the mouse must be: three median edges when the store has said, else 4 mm.
+    expect(REACH_EDGES).toBe(3);
+    expect(vertexReach(4.6, offset)).toBeCloseTo(13.8, 9);
+    expect(vertexReach(0.9, offset)).toBeCloseTo(2.7, 9);
+    expect(vertexReach(undefined, offset)).toBeCloseTo(4);
+    expect(vertexReach(0, { ...offset, input: { ...offset.input, scales: [1e-6, 1e-6, 1e-6] } })).toBeCloseTo(4000);
   });
 
   it("reads a store's parcellations and a parcel's mean and SD, and keeps the SD in the plot and the CSV", () => {

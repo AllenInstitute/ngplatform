@@ -115,7 +115,7 @@ describe("CIFTI on a surface", () => {
     expect(() => store.message({ series: "rest_t", vertex: 1.5 })).toThrow(/not a vertex/);
   });
 
-  it("answers a parcel's mean and SD at every time point, and its parcellation's labels", async () => {
+  it("answers a parcel's mean and SD at every time point, its parcellation's labels, and the vertices' spacing", async () => {
     const related = { "sub.rest.dtseries.nii": file("sub.rest.dtseries.nii"), "sub.aparc.dlabel.nii": file("sub.aparc.dlabel.nii") };
     const companions = await surfaceCompanions("sub.L.midthickness.surf.gii", related, 12);
     const mesh = await parseMeshFile(new Uint8Array(fs.readFileSync(path.join(DIR, "sub.L.midthickness.surf.gii"))), "sub.L.midthickness.surf.gii");
@@ -150,6 +150,16 @@ describe("CIFTI on a surface", () => {
     await check(2, 2);
     await expect(store.message({ series: "rest_t", parcel: "nowhere" }) as Promise<unknown>).rejects.toThrow(/no label/);
     expect(() => store.message({ series: "rest_t", parcellation: "other", parcel: 1 })).toThrow(/no parcellation/);
+    // The spacing: the median of the triangles' edges.
+    const edges: number[] = [];
+    for (let t = 0; t < mesh.triangles.length / 3; ++t)
+      for (let e = 0; e < 3; ++e) {
+        const [a, b] = [mesh.triangles[3 * t + e], mesh.triangles[3 * t + ((e + 1) % 3)]];
+        edges.push(Math.hypot(...[0, 1, 2].map((k) => mesh.positions[3 * a + k] - mesh.positions[3 * b + k])));
+      }
+    edges.sort((a, b) => a - b);
+    const median = (edges[edges.length / 2 - 1] + edges[edges.length / 2]) / 2;
+    expect(((await store.message({ series: "rest_t", spacing: true })) as { medianEdge: number }).medianEdge).toBeCloseTo(median, 4);
   });
 
   it("leaves a file out when its hemisphere has another vertex count", async () => {

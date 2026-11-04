@@ -32,7 +32,7 @@ export const TIME_SERIES_MANIFEST: Manifest = {
 
 ## Surfaces
 - A GIFTI surface opened from this computer with a CIFTI time series (\`.dtseries.nii\`) beside it: choose the series in **Image** ("surface: name_t (file)") and press **Show name_t as the overlay**. The play and step buttons change the time point the surface shows.
-- Move the mouse onto the surface: the plot shows the nearest vertex's values (within 4 mm of the mouse). **Pin**, **Alt+P**, **% change** and **Save CSV** work as for voxels. A vertex on the medial wall has no values.
+- Move the mouse onto the surface: the plot shows the nearest vertex's values (within three of the surface's median edge lengths of the mouse, so a coarse mesh has no gaps). **Pin**, **Alt+P**, **% change** and **Save CSV** work as for voxels. A vertex on the medial wall has no values.
 - **Parcels**: with a parcellation beside the surface (an \`.annot\` file or \`.label\` files in FreeSurfer's \`label\` folder, or a CIFTI \`.dlabel.nii\`), choose a parcel and **Pin mean**, or press **Its parcel** (**Alt+Shift+M**) with the mouse on the surface for the parcel of the vertex under it. The plot shows the mean over the parcel's vertices at each time point, with a band of ± one standard deviation across them; the CSV has a column for the mean and one for the SD. The legend names the parcel the vertex under the mouse is in.
 
 ## Saving

@@ -5,7 +5,7 @@
  * and a 160 000-vertex sphere looked up quickly.
  */
 import { describe, expect, it } from "vitest";
-import { VertexGrid } from "../../../../src/virtual/vectors/vertex_grid.js";
+import { medianEdgeLength, VertexGrid } from "../../../../src/virtual/vectors/vertex_grid.js";
 
 /** A small seeded generator (mulberry32), so failures repeat. */
 function random(seed: number): () => number {
@@ -114,5 +114,30 @@ describe("the vertex nearest a point", () => {
     for (let q = 0; q < 20; ++q) expect(found[q]!.distance).toBeCloseTo(bruteForce(vertices, points[q])!.distance, 4);
     expect(build).toBeLessThan(2000);
     expect(each).toBeLessThan(1);
+  });
+});
+
+describe("a mesh's median edge length", () => {
+  /** A square grid of n × n vertices `h` apart, each square two triangles: edges h (twice as many) and h√2. */
+  function grid(n: number, h: number): { vertices: Float32Array; faces: Int32Array } {
+    const vertices = new Float32Array(3 * n * n);
+    for (let j = 0; j < n; ++j) for (let i = 0; i < n; ++i) vertices.set([i * h, j * h, 0], 3 * (j * n + i));
+    const faces: number[] = [];
+    for (let j = 0; j + 1 < n; ++j)
+      for (let i = 0; i + 1 < n; ++i) {
+        const a = j * n + i;
+        faces.push(a, a + 1, a + n + 1, a, a + n + 1, a + n);
+      }
+    return { vertices, faces: Int32Array.from(faces) };
+  }
+
+  it("is the spacing of a regular mesh, however coarse, and the same from a sample of a large one", () => {
+    for (const h of [0.8, 4.5]) {
+      const { vertices, faces } = grid(30, h);
+      expect(medianEdgeLength(vertices, faces)).toBeCloseTo(h, 5);
+      // A sample of the triangles (every 17th) gives the same.
+      expect(medianEdgeLength(vertices, faces, faces.length / 3 / 17)).toBeCloseTo(h, 5);
+    }
+    expect(medianEdgeLength(new Float32Array(9), new Int32Array(0))).toBe(0);
   });
 });

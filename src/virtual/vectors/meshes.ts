@@ -15,7 +15,7 @@ import type { MeshData } from "./mesh_files.js";
 import { fragmentIndex } from "./streamlines.js";
 import { DEFAULT_MAPS, labelTable, type SurfaceCompanions, type SurfaceMap } from "./surfaces.js";
 import type { SurfaceLabel } from "./surface_values.js";
-import { VertexGrid } from "./vertex_grid.js";
+import { medianEdgeLength, VertexGrid } from "./vertex_grid.js";
 
 const MANIFEST_ROWS = 16384;
 const COLUMN_ROWS = 65536;
@@ -84,6 +84,8 @@ export class MeshStore {
   private readonly attributeBytes = new Map<string, Promise<Uint8Array>>();
   /** The stored vertices by place, for the vertex nearest a point; made when first asked for. */
   private grid: VertexGrid | undefined;
+  /** The median edge length, store units; found when first asked for. */
+  private medianEdge: number | undefined;
   /** Each parcellation's codes by the file's vertex numbers, and its labels, read when first asked for. */
   private readonly parcellations = new Map<string, Promise<{ values: Float32Array; labels: SurfaceLabel[] }>>();
   readonly count: number;
@@ -225,6 +227,9 @@ export class MeshStore {
    * - `{ series, vertex }` answers that vertex's values at every time point:
    *   `{ series, vertex, values }` (a Float32Array, NaN where the file has
    *   none for it, as on the medial wall).
+   * - `{ series, spacing: true }` answers how far apart the vertices are:
+   *   `{ series, medianEdge }`, the median edge length in the store's
+   *   coordinates (found once).
    * - `{ series, parcellations: true }` answers the surface's parcellations
    *   (its `.annot`, `.label` and CIFTI dlabel maps): `{ series,
    *   parcellations: [{ name, labels: [{ code, name, rgba, vertices }],
@@ -237,18 +242,23 @@ export class MeshStore {
    *   (Float32Arrays; `vertices` how many have values in the series).
    */
   message(body: unknown): unknown {
-    const { series: name, time, nearest, within, vertex, parcellations, parcellation, parcel } = (body ?? {}) as {
+    const { series: name, time, nearest, within, vertex, spacing, parcellations, parcellation, parcel } = (body ?? {}) as {
       series?: unknown;
       time?: unknown;
       nearest?: unknown;
       within?: unknown;
       vertex?: unknown;
+      spacing?: unknown;
       parcellations?: unknown;
       parcellation?: unknown;
       parcel?: unknown;
     };
     const series = this.companions.series?.find((s) => s.map.name === name);
     if (series === undefined) throw new Error(`no time series ${String(name)} on this surface`);
+    if (spacing === true) {
+      this.medianEdge ??= medianEdgeLength(this.vertices, this.faces);
+      return { series: series.map.name, medianEdge: this.medianEdge };
+    }
     if (parcellations === true) {
       const maps = this.companions.maps.filter((m) => m.parcellation);
       return Promise.all(

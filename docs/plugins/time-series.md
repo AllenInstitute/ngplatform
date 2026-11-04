@@ -71,8 +71,10 @@ for images; playing makes none until it stops.
 
 Move the mouse onto the surface, in the 3-D view or near its outline in a
 2-D one: the plot shows the values of the nearest vertex at every time
-point, if one is within 4 mm of the mouse, and the legend names the
-vertex by its number in the surface file (and the parcel it is in, when the surface has a
+point, if one is within three of the surface's typical edge lengths of
+the mouse (its median; so a coarse mesh such as fsaverage5 has no gaps
+between vertices), and the legend names the vertex by its number in the
+surface file (and the parcel it is in, when the surface has a
 parcellation). Off the surface, the last vertex stays
 plotted. **Pin** (or **Alt+P**) keeps the vertex, **Save CSV** saves the
 plotted vertices, and **% change** works as for voxels; pins are kept in

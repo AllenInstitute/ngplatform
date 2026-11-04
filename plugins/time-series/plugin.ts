@@ -8,9 +8,9 @@
  * store (a NIfTI opened from this computer is one, read in place).  A
  * CIFTI time series beside a surface opened from this computer is stepped
  * through instead (./surface.ts): its store serves the values at the time
- * point the transport chooses, finds the vertex nearest the mouse, sends a
- * vertex's values at every time point, and a parcel's mean and SD over its
- * vertices.  Where
+ * point the transport chooses, finds the vertex nearest the mouse (within
+ * three median edge lengths), sends a vertex's values at every time point,
+ * and a parcel's mean and SD over its vertices.  Where
  * a position is in the image, and which time point the views show, come
  * from the layer's transform (./space.ts), so a moved layer reads where it
  * shows.  Pins are kept in the plugin's state (in the link); their values
@@ -25,7 +25,7 @@ import { describePlan, movingPlan } from "./reader.js";
 import { type AnnotationJson, regionVoxels, shapeOf } from "./region.js";
 import { COLOURS, coordinateOf, formatTime, freeColour, indexAt, nextIndex, percentChange, percentChangeSpread, RATES, seriesCsv, stepIndex, type TimeAxis, timeAxis, timeOf, timesOf, voxelAt, voxelLabel } from "./series.js";
 import { LayerMap, type Place, placeOf } from "./space.js";
-import { nearestOf, type Parcellation, parcelAt, parcelCourseOf, parcelLabel, parcellationsOf, storeDistance, storePoint, type SurfaceSeries, surfaceAxis, surfaceSeriesOf, VERTEX_REACH_MM, vertexLabel, zarrVectorsStore } from "./surface.js";
+import { nearestOf, type Parcellation, parcelAt, parcelCourseOf, parcelLabel, parcellationsOf, storePoint, type SurfaceSeries, surfaceAxis, surfaceSeriesOf, vertexLabel, vertexReach, zarrVectorsStore } from "./surface.js";
 
 type Child = Node | string | null | undefined | false;
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
@@ -221,6 +221,8 @@ class TimeSeries {
   private vertexCursor: VertexCursor | undefined;
   /** Counts the nearest-vertex lookups sent, so an answer to an older one is dropped. */
   private vertexLookups = 0;
+  /** Each surface store's median edge length (store units), once it has said. */
+  private readonly spacings = new Map<string, number>();
   /** Each surface series' parcellations (by `store|series`), once its store has said. */
   private readonly parcellations = new Map<string, Parcellation[] | "reading">();
   /** The parcellation and parcel chosen in the panel (its name, a label's code). */
@@ -503,7 +505,8 @@ class TimeSeries {
    * The vertex under the mouse, on the surface whose series is chosen: the
    * mouse's position through the inverse of the surface layer's transform
    * to the store's coordinates, the store asked for the vertex nearest it
-   * (within VERTEX_REACH_MM), then for that vertex's values at every time
+   * (within three of the surface's median edge lengths, `vertexReach`),
+   * then for that vertex's values at every time
    * point.  Away from the surface, the last vertex stays plotted (so it can
    * be pinned from the panel).
    */
@@ -519,7 +522,7 @@ class TimeSeries {
     const lookup = ++this.vertexLookups;
     let found: { vertex: number; distance: number } | undefined;
     try {
-      found = nearestOf(await this.ctx.workspace.local.send(surface.store, { series: surface.series.name, nearest: point, within: storeDistance(t, VERTEX_REACH_MM) }));
+      found = nearestOf(await this.ctx.workspace.local.send(surface.store, { series: surface.series.name, nearest: point, within: vertexReach(this.spacings.get(surface.store), t) }));
     } catch (e) {
       if (lookup === this.vertexLookups && this.surface === surface) this.setStatus(`Could not find the vertex under the mouse: ${(e as Error).message}`, true);
       return;
@@ -806,10 +809,19 @@ class TimeSeries {
     }
   }
 
-  /** A surface's parcellations: asked of its store once. */
+  /** How far apart a surface's vertices are, and its parcellations: asked of its store once. */
   private readSurfaceExtras(surface: SurfaceStep): void {
     const { store } = surface;
     const series = surface.series.name;
+    if (!this.spacings.has(store)) {
+      this.ctx.workspace.local.send(store, { series, spacing: true }).then(
+        (answer) => {
+          const edge = (answer as { medianEdge?: unknown } | undefined)?.medianEdge;
+          if (typeof edge === "number" && edge > 0) this.spacings.set(store, edge);
+        },
+        () => undefined,
+      );
+    }
     const key = `${store}|${series}`;
     if (this.parcellations.has(key)) return;
     this.parcellations.set(key, "reading");
