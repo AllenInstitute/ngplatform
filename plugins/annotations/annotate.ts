@@ -19,7 +19,7 @@ import { measure, type AnnotationJson } from "./measure.js";
 import { lookupTerms, type Term } from "./ontology.js";
 import { rankOf, space, toGlobalOf } from "./scene.js";
 import { buildRows, rowName, type Row, type TableLayer } from "./table.js";
-import { withShader } from "./groups.js";
+import { withShaderKept } from "./groups.js";
 import { el, physical } from "./ui.js";
 import { type Comment, type Field, fieldsOf, type LayerMeta, type LayerSpec, metaOf, prune, readValue } from "./values.js";
 
@@ -197,7 +197,9 @@ export class Annotate {
     const current = this.layer(name);
     if (current === undefined) return;
     const fields = fieldsOf(spec, meta);
-    const next = current.managed ? spec : withShader(spec, meta, fields, this.range(spec, meta, fields));
+    // A shader of the user's own is kept while one made here stands in for it, and put back after.
+    const [next, kept] = current.managed ? [spec, meta] : withShaderKept(spec, meta, fields, this.range(spec, meta, fields));
+    meta = kept;
     this.ctx.viewer.patchState((ng) => {
       const l = ((ng.layers as Json[] | undefined) ?? []).find((x) => x.name === name);
       if (l === undefined) return;

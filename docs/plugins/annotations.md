@@ -46,7 +46,7 @@ ontology, and comments, all in a table you search.
 - **Colour by** also takes a list field (a colour for each value) or a
   number field (blue to yellow from its lowest to its highest value).
   Hiding and colours are the layer's shader: a shader you wrote yourself is
-  replaced while they are on.
+  replaced while they are on, and put back when they are off.
 
 ### Fields
 

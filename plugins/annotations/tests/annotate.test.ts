@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addGroup, groupOf, groupPath, groupsOf, groupTree, hiddenValues, layerShader, moveGroup, removeGroup, setGroup, SHADER_MARK, withShader, writeGroups } from "../groups.js";
+import { addGroup, groupOf, groupPath, groupsOf, groupTree, hiddenValues, layerShader, moveGroup, removeGroup, setGroup, SHADER_MARK, withShader, withShaderKept, writeGroups } from "../groups.js";
 import type { AnnotationJson } from "../measure.js";
 import { ancestorNames, findTerm, lookupTerms, parseTerms, searchTerms } from "../ontology.js";
 import { BUILTIN_COLUMNS, buildRows, commentsText, fieldColumns, importCsv, parseComments, matches, parseCsv, parseQuery, sortRows, tableCsv, type TableLayer } from "../table.js";
@@ -146,6 +146,23 @@ describe("groups", () => {
     meta = { ...meta, colourBy: undefined };
     expect(withShader({ ...spec, shader: byKind }, meta, fieldsOf(spec, meta)).shader).toBeUndefined();
     expect(withShader({ ...spec, shader: "void main() { setColor(vec3(1.0)); }" }, meta, fieldsOf(spec, meta)).shader).toContain("vec3(1.0)");
+  });
+
+  it("puts a user's own shader back when the one made for hidden groups is no longer needed", () => {
+    let [spec, meta] = layer([point("a")]);
+    const mine = "void main() { setColor(vec3(1.0, 0.0, 0.0)); }";
+    spec = { ...spec, shader: mine };
+    const { groups } = addGroup([], "A");
+    [spec, meta] = writeGroups(spec, meta, [{ ...groups[0], hidden: true }]);
+    // Hiding the group needs a shader made here: the user's is kept in the record.
+    [spec, meta] = withShaderKept(spec, meta, fieldsOf(spec, meta));
+    expect(spec.shader!.startsWith(SHADER_MARK)).toBe(true);
+    expect(meta.userShader).toBe(mine);
+    // Shown again: the user's shader comes back, and the record forgets it.
+    meta = { ...meta, groups: [{ ...groups[0], hidden: false }] };
+    [spec, meta] = withShaderKept(spec, meta, fieldsOf(spec, meta));
+    expect(spec.shader).toBe(mine);
+    expect(meta.userShader).toBeUndefined();
   });
 });
 
