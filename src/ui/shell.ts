@@ -1211,11 +1211,16 @@ export class Shell {
             "div",
             {
               class: `scene-tab scene-kind scene-kind-${k.kind} scene-kind-new`,
-              role: "tab",
-              tabindex: -1,
-              "aria-selected": "false",
+              role: "button",
+              tabindex: 0,
               title: `Open ${k.title}`,
               onclick: () => store.newScene({ name: k.title, kind: k.kind }),
+              onkeydown: (e: Event) => {
+                if ((e as KeyboardEvent).key === "Enter" || (e as KeyboardEvent).key === " ") {
+                  e.preventDefault();
+                  store.newScene({ name: k.title, kind: k.kind });
+                }
+              },
             },
             h("span", { class: "scene-kind-mark", "aria-hidden": "true" }),
             h("span", { class: "scene-tab-name" }, k.title),

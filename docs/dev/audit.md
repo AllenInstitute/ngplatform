@@ -20,12 +20,12 @@ hours of work for one person who knows the code.
 | Area | Complete | Fixed here | Left (h) |
 |---|---|---|---|
 | Top bar and menus | 90% | 3 | 2 |
-| Scenes and the scene tab bar | 90% | 1 | 1 |
+| Scenes and the scene tab bar | 90% | 2 | 0.5 |
 | Datasets tab | 90% | 4 | 3 |
 | Layer tab (Source, Render, Segments…) | 85% | 4 | 3 |
 | View settings | 85% | 2 | 1 |
 | Command palette and keyboard reference | 90% | 3 | 1 |
-| Activity, Jobs, Chunk statistics | 85% | 5 | 4 |
+| Activity, Jobs, Chunk statistics | 85% | 5 | 3.5 |
 | Local data (Add → Local, drops) | 85% | 3 | 6 |
 | Sharing and Neuroglancer links | 90% | 0 | 1 |
 | History menu | 95% | 0 | 0.5 |
@@ -80,12 +80,11 @@ duplicate; plugins' scene kinds (Collections) as tabs that make one.
 
 **Bugs fixed.** Only the active tab is in the tab order, so the other
 scenes could not be reached from the keyboard; Left and Right now move
-between scenes.
+between scenes. A scene kind's tab that makes one (Collections) was a
+"tab" out of the tab order; it is a button that Enter or Space opens.
 
-**Left.** A scene kind's "new" tab (Collections) is a tab that acts as a
-button and is not reachable from the keyboard (0.5 h). Closing the last
-scene could say it leaves a blank one in the confirm, not only the
-tooltip (0.5 h).
+**Left.** Closing the last scene could say it leaves a blank one in the
+confirm, not only the tooltip (0.5 h).
 
 ### Datasets tab
 
@@ -187,7 +186,7 @@ and on this computer (the runner), and Neuroglancer's chunk statistics.
 - Shorter empty states ("No jobs running.", "No jobs on this computer
   yet.") and runner note; a failed Convert wait is caught.
 
-**Left.** The Activity tab has no empty state (0.5 h). Job states
+**Left.** Job states
 ("running", "not paired") are lower-case chips (0.5 h). The Jobs tab
 still polls the runner while it is hidden, when paired (1 h). Neuroglancer's
 chunk statistics table shows raw JSON keys (2 h, or leave it as
