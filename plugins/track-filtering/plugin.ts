@@ -21,6 +21,7 @@
  */
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
 import type { DatasetInfo, Disposer, Json, PlatformContext, PluginModule, RunnerJob, SegmentProperties } from "@ngplatform/sdk";
+import { downloadBlob, el } from "@ngplatform/sdk/dom";
 import { precomputedUrl } from "@ngplatform/sdk/sources";
 import { annotationGeometry, annotationMeets } from "./annotation_regions.js";
 import { addDensity, densityGrid, displayMax, niftiFile } from "./density.js";
@@ -239,9 +240,7 @@ async function saveTarget(name: string, description: string, extension: string):
           throw new Error(`cannot rewrite bytes ${position}..${position + part.byteLength} of ${length}`);
         },
         async close() {
-          const a = el("a", { href: URL.createObjectURL(new Blob(parts, { type: "application/octet-stream" })), download: name });
-          a.click();
-          setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+          downloadBlob(new Blob(parts, { type: "application/octet-stream" }), name);
         },
         async abort() {
           parts.length = 0;
@@ -252,20 +251,6 @@ async function saveTarget(name: string, description: string, extension: string):
 }
 
 // ------------------------------------------------------------------- DOM
-
-type Child = Node | string | null | undefined | false;
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === undefined || v === false) continue;
-    if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2), v as EventListener);
-    else if (k === "class") e.className = String(v);
-    else e.setAttribute(k, v === true ? "" : String(v));
-  }
-  for (const c of children) if (c !== null && c !== undefined && c !== false) e.append(c);
-  return e;
-}
 
 /** A pencil, as the platform's edit icon draws it. */
 function pencil(): SVGSVGElement {
@@ -1582,9 +1567,7 @@ class TrackGroups {
     const ids = group && this.results.get(group.id)?.ids;
     if (group !== undefined && ids !== undefined) {
       const blob = new Blob([["id", ...ids].join("\n") + "\n"], { type: "text/csv" });
-      const a = el("a", { href: URL.createObjectURL(blob), download: `${group.name}.csv` });
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      downloadBlob(blob, `${group.name}.csv`);
       this.ctx.log.info(`Exported ${ids.length.toLocaleString()} ids of ${group.name} as CSV.`);
       return;
     }
@@ -1594,9 +1577,7 @@ class TrackGroups {
       return;
     }
     const blob = new Blob([toCsv(this.props, mask)], { type: "text/csv" });
-    const a = el("a", { href: URL.createObjectURL(blob), download: `${group.name}.csv` });
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    downloadBlob(blob, `${group.name}.csv`);
     this.ctx.log.info(`Exported ${countPassing(mask).toLocaleString()} objects of ${group.name} as CSV.`);
   }
 
@@ -2314,9 +2295,7 @@ class TrackGroups {
       return { name: g.name, count: r?.state === "exact" ? r.count : NaN, columns: props && r?.mask && r.state === "exact" ? groupStatistics(props, r.mask) : [] };
     });
     const blob = new Blob([statisticsCsv(rows)], { type: "text/csv" });
-    const a = el("a", { href: URL.createObjectURL(blob), download: fileName(`${this.dataset()?.name ?? "groups"} statistics`, ".csv") });
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    downloadBlob(blob, fileName(`${this.dataset()?.name ?? "groups"} statistics`, ".csv"));
     this.ctx.log.info(`Exported the statistics of ${groups.length} groups as CSV.`);
   }
 

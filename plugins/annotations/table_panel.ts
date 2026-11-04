@@ -6,11 +6,13 @@
  * as CSV, and CSV read into the layers.
  */
 import type { Disposer, PlatformContext } from "@ngplatform/sdk";
+import { button, downloadBlob, el, select } from "@ngplatform/sdk/dom";
+import { csv } from "@ngplatform/sdk/format";
 import type { Annotate, Selected } from "./annotate.js";
 import { groupOf, groupsOf, groupTree, setGroup, addGroup, writeGroups } from "./groups.js";
 import { findTerm, searchTerms, termLabel } from "./ontology.js";
 import { BUILTIN_COLUMNS, type Column, fieldColumns, importCsv, matches, parseQuery, type Row, rowName, sortRows, tableCsv, type TableLayer } from "./table.js";
-import { button, csv, download, el, fileName, physical, select } from "./ui.js";
+import { fileName, physical } from "./ui.js";
 import { type Field, fieldsOf, readValue, setValue, valueText } from "./values.js";
 
 /** Rows drawn at once; a query finds the others. */
@@ -343,7 +345,7 @@ export class TablePanel {
     const v = this.view();
     const titles = [...new Set(v.fields.map((f) => f.title))];
     const name = v.layers.length === 1 ? v.layers[0].spec.name : "annotations";
-    download(new Blob([csv(tableCsv(v.rows, titles))], { type: "text/csv" }), `${fileName(name)}.csv`);
+    downloadBlob(new Blob([csv(tableCsv(v.rows, titles))], { type: "text/csv" }), `${fileName(name)}.csv`);
   }
 
   private async importFile(file: File): Promise<void> {

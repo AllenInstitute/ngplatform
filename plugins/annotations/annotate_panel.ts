@@ -5,11 +5,11 @@
  * annotations themselves are in the annotation table (./table_panel.ts).
  */
 import type { Disposer, PlatformContext } from "@ngplatform/sdk";
+import { button, el, select } from "@ngplatform/sdk/dom";
 import { type Annotate, toolHint, TOOLS } from "./annotate.js";
 import { addGroup, groupOf, groupPath, groupsOf, groupTree, hiddenValues, moveGroup, removeGroup, withinGroup, writeGroups } from "./groups.js";
 import { TABLE_PANEL } from "./manifest.js";
 import { parseTerms } from "./ontology.js";
-import { button, el, select } from "./ui.js";
 import { addField, type Field, fieldsOf, type FieldKind, GROUP, type Group, type LayerMeta, type OntologyRef, removeField, updateField } from "./values.js";
 
 const KINDS: [FieldKind, string][] = [

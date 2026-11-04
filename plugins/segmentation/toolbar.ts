@@ -6,7 +6,7 @@
  * over the 3-D view, where the left button rotates).
  */
 import type { Disposer, PlatformContext } from "@ngplatform/sdk";
-import { el } from "../annotations/ui.js";
+import { el } from "@ngplatform/sdk/dom";
 import type { Editor } from "./editor.js";
 import { iconButton } from "./icons.js";
 import { LABEL_MAX } from "./label_volume.js";

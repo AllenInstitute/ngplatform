@@ -26,9 +26,10 @@
  * segmentation layer that reads it as an OME-Zarr store (./session.ts).
  */
 import type { Disposer, PlatformContext } from "@ngplatform/sdk";
+import { downloadBlob, el } from "@ngplatform/sdk/dom";
 import { mmOf, toGlobal, toVoxel, voxelEdges } from "../annotations/geometry.js";
 import { space as spaceOf } from "../annotations/scene.js";
-import { download, el, fileName, fmt } from "../annotations/ui.js";
+import { fileName, fmt } from "../annotations/ui.js";
 import { type ImageLevel, layerStore, readableImages, sourceUrl, type Voxels } from "../annotations/voxels.js";
 import { zipFiles } from "../registration/volume_io.js";
 import { storeOf } from "../volume-view/sources.js";
@@ -1683,7 +1684,7 @@ export class Editor implements LabelVolumes {
           await w.close();
           where = file.name;
         } else {
-          download(new Blob([bytes as BlobPart]), base + suffix);
+          downloadBlob(new Blob([bytes as BlobPart]), base + suffix);
           where = base + suffix;
         }
       }
@@ -1837,7 +1838,7 @@ async function writeFolder(files: Map<string, Uint8Array>, folder: FileSystemDir
     for (const [path, bytes] of files) await writeFile(root, path, bytes);
     return `${folder.name}/${name}`;
   }
-  download(zipFiles(new Map([...files].map(([p, b]) => [`${name}/${p}`, b]))), `${name}.zip`);
+  downloadBlob(zipFiles(new Map([...files].map(([p, b]) => [`${name}/${p}`, b]))), `${name}.zip`);
   return `${name}.zip`;
 }
 

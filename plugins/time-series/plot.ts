@@ -4,25 +4,8 @@
  * out every series at the time under the pointer.  A click picks that time.
  * Plain SVG, sized to its container.
  */
-
-const NS = "http://www.w3.org/2000/svg";
-
-function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number> = {}): SVGElementTagNameMap[K] {
-  const e = document.createElementNS(NS, tag);
-  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
-  return e;
-}
-
-/** About `count` round tick values covering [lo, hi]. */
-export function ticks(lo: number, hi: number, count = 4): number[] {
-  if (!(hi > lo)) return [lo];
-  const raw = (hi - lo) / count;
-  const power = 10 ** Math.floor(Math.log10(raw));
-  const step = [1, 2, 5, 10].map((m) => m * power).find((s) => s >= raw * (1 - 1e-9)) ?? raw;
-  const out: number[] = [];
-  for (let v = Math.ceil(lo / step - 1e-9) * step; v <= hi + step * 1e-9; v += step) out.push(Number(v.toPrecision(12)));
-  return out;
-}
+import { svgEl } from "@ngplatform/sdk/dom";
+import { ticks } from "@ngplatform/sdk/format";
 
 /** The range of the series' finite values, with a little room; [0, 1] when there are none. */
 export function valueRange(series: ArrayLike<number>[]): [number, number] {
@@ -122,7 +105,7 @@ export interface PlotData {
 
 export class Plot {
   readonly element = document.createElement("div");
-  private readonly root = svg("svg", { class: "ts-plot", role: "img" });
+  private readonly root = svgEl("svg", { class: "ts-plot", role: "img" });
   private readonly readout = document.createElement("div");
   private data: PlotData = { times: [], unit: "", series: [] };
   private current = -1;
@@ -200,41 +183,41 @@ export class Plot {
     this.sx = sx;
     root.setAttribute("aria-label", `${series.map((s) => s.label).join(", ") || "Nothing"} against time`);
     for (const t of ticks(lo, hi, Math.max(3, Math.floor(h / 30)))) {
-      root.append(svg("line", { x1: pad.left, x2: pad.left + w, y1: sy(t), y2: sy(t), class: "ts-grid" }));
-      const label = svg("text", { x: pad.left - 5, y: sy(t) + 3, class: "ts-tick", "text-anchor": "end" });
+      root.append(svgEl("line", { x1: pad.left, x2: pad.left + w, y1: sy(t), y2: sy(t), class: "ts-grid" }));
+      const label = svgEl("text", { x: pad.left - 5, y: sy(t) + 3, class: "ts-tick", "text-anchor": "end" });
       label.textContent = `${fmt(t)}${valueUnit}`;
       root.append(label);
     }
     if (times.length > 0) {
       for (const t of ticks(x0, x1, Math.max(2, Math.floor(w / 80)))) {
-        const label = svg("text", { x: sx(t), y: pad.top + h + 14, class: "ts-tick", "text-anchor": "middle" });
+        const label = svgEl("text", { x: sx(t), y: pad.top + h + 14, class: "ts-tick", "text-anchor": "middle" });
         label.textContent = fmt(t);
         root.append(label);
       }
     }
-    root.append(svg("line", { x1: pad.left, x2: pad.left + w, y1: pad.top + h, y2: pad.top + h, class: "ts-axis" }));
+    root.append(svgEl("line", { x1: pad.left, x2: pad.left + w, y1: pad.top + h, y2: pad.top + h, class: "ts-axis" }));
     // The x axis's unit, under the y axis's ticks, clear of the time ticks.
-    const unitLabel = svg("text", { x: pad.left - 8, y: pad.top + h + 14, class: "ts-tick", "text-anchor": "end" });
+    const unitLabel = svgEl("text", { x: pad.left - 8, y: pad.top + h + 14, class: "ts-tick", "text-anchor": "end" });
     unitLabel.textContent = unit ? `t (${unit})` : "t";
     root.append(unitLabel);
-    this.marker = svg("line", { y1: pad.top, y2: pad.top + h, class: "ts-now", visibility: "hidden" });
+    this.marker = svgEl("line", { y1: pad.top, y2: pad.top + h, class: "ts-now", visibility: "hidden" });
     root.append(this.marker);
     // Bands under every line.
-    for (const s of series) if (s.sd !== undefined) root.append(svg("path", { d: bandPath(times, s.values, s.sd, sx, sy), class: "ts-band", fill: s.colour }));
+    for (const s of series) if (s.sd !== undefined) root.append(svgEl("path", { d: bandPath(times, s.values, s.sd, sx, sy), class: "ts-band", fill: s.colour }));
     for (const s of series) {
-      root.append(svg("path", { d: linePath(times, s.values, sx, sy, s.coarse !== undefined), class: `ts-line${s.coarse !== undefined ? " ts-coarse" : ""}`, stroke: s.colour }));
+      root.append(svgEl("path", { d: linePath(times, s.values, sx, sy, s.coarse !== undefined), class: `ts-line${s.coarse !== undefined ? " ts-coarse" : ""}`, stroke: s.colour }));
     }
     const coarse = series.find((s) => s.coarse !== undefined);
     if (coarse !== undefined) {
-      const note = svg("text", { x: pad.left + w - 4, y: pad.top + 12, class: "ts-tick ts-coarse-note", "text-anchor": "end" });
+      const note = svgEl("text", { x: pad.left + w - 4, y: pad.top + 12, class: "ts-tick ts-coarse-note", "text-anchor": "end" });
       note.textContent = `coarse (${coarse.coarse}) until the finest values are read`;
       root.append(note);
     }
-    const cross = svg("line", { y1: pad.top, y2: pad.top + h, class: "ts-cross", visibility: "hidden" });
-    const dots = series.map((s) => svg("circle", { r: 3.5, class: "ts-dot", fill: s.colour, visibility: "hidden" }));
+    const cross = svgEl("line", { y1: pad.top, y2: pad.top + h, class: "ts-cross", visibility: "hidden" });
+    const dots = series.map((s) => svgEl("circle", { r: 3.5, class: "ts-dot", fill: s.colour, visibility: "hidden" }));
     root.append(cross, ...dots);
     // The hover target is the whole plot area, wider than the lines.
-    const hit = svg("rect", { x: pad.left, y: pad.top, width: w, height: h, fill: "transparent", class: "ts-hit" });
+    const hit = svgEl("rect", { x: pad.left, y: pad.top, width: w, height: h, fill: "transparent", class: "ts-hit" });
     root.append(hit);
     const indexAt = (e: MouseEvent) => {
       const box = root.getBoundingClientRect();

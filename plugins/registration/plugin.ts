@@ -13,6 +13,7 @@
  * to their fixed partner.
  */
 import type { Json, LayerTransform, PlatformContext, PluginModule } from "@ngplatform/sdk";
+import { downloadBlob, el, safeFileName } from "@ngplatform/sdk/dom";
 import { storeOf } from "../volume-view/sources.js";
 import { apply4, describe, fit, type Fit, identity4, invert4, type Mat4, MINIMUM, type Model, multiply4, type Vec3 } from "./fit.js";
 import { needsGeometry, readTransformFile, type VolumeGeometry, writeItk, writeLta, writePlain } from "./formats.js";
@@ -123,19 +124,6 @@ export function neuroglancer(t: LayerTransform, p: Mat4): Float64Array {
   return m;
 }
 
-type Child = Node | string | null | undefined | false;
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === undefined || v === false) continue;
-    if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2), v as EventListener);
-    else if (k === "class") e.className = String(v);
-    else e.setAttribute(k, v === true ? "" : String(v));
-  }
-  for (const c of children) if (c !== null && c !== undefined && c !== false) e.append(c);
-  return e;
-}
-
 const fmt = (v: number) => (Math.abs(v) >= 100 ? v.toFixed(1) : v.toFixed(2));
 
 /** A number for a typed field: no more decimals than `step` needs, and one more. */
@@ -187,7 +175,7 @@ class SaveClient {
 }
 
 /** A file name from a layer's name. */
-const fileName = (name: string) => name.replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "") || "image";
+const fileName = (name: string) => safeFileName(name, "image");
 
 /** A layer's source as a URL (its first, whatever form the spec gives it in). */
 function sourceUrl(spec: Json | undefined): string | undefined {
@@ -598,12 +586,6 @@ class Registration {
     }
   }
 
-  private download(blob: Blob, name: string): void {
-    const a = el("a", { href: URL.createObjectURL(blob), download: name });
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
-  }
-
   /** Freeview's Save Reg: the moving layer's placement (relative to its file's) as a transform file. */
   private async exportFile(format: "plain" | "itk" | "lta"): Promise<void> {
     const r = this.relative();
@@ -617,7 +599,7 @@ class Registration {
     } else {
       text = format === "itk" ? writeItk(r.move) : writePlain(r.move);
     }
-    this.download(new Blob([text], { type: "text/plain" }), `${fileName(r.name)}_reg.${format === "lta" ? "lta" : "txt"}`);
+    downloadBlob(new Blob([text], { type: "text/plain" }), `${fileName(r.name)}_reg.${format === "lta" ? "lta" : "txt"}`);
   }
 
   private async importFile(file: File): Promise<void> {
@@ -725,7 +707,7 @@ class Registration {
         } else {
           // No folder can be written here: the store as a zip.
           const zipped = new Map([...files].map(([path, bytes]) => [`${base}${suffix}/${path}`, bytes]));
-          this.download(zipFiles(zipped), `${base}${suffix}.zip`);
+          downloadBlob(zipFiles(zipped), `${base}${suffix}.zip`);
           where = `${base}${suffix}.zip`;
         }
       } else {
@@ -736,7 +718,7 @@ class Registration {
           await writable.close();
           where = file.name;
         } else {
-          this.download(new Blob([bytes as BlobPart]), base + suffix);
+          downloadBlob(new Blob([bytes as BlobPart]), base + suffix);
           where = base + suffix;
         }
       }

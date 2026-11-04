@@ -7,12 +7,14 @@
  * chooses a level); each result is a row of a table, saved as CSV.
  */
 import type { Disposer, PlatformContext } from "@ngplatform/sdk";
+import { button, downloadBlob, el, field, numberInput, select } from "@ngplatform/sdk/dom";
+import { csv } from "@ngplatform/sdk/format";
 import { apply, between, invertOr, multiply, voxelVolume } from "./geometry.js";
 import type { AnnotationJson } from "./measure.js";
 import { annotationFromGlobal, annotationLayers, imagePlacement, rankOf, toGlobalOf } from "./scene.js";
 import type { LabelVolumes } from "../segmentation/editor.js";
 import { corners, levelWithin, type Region, type Summary, voxelBox } from "./statistics.js";
-import { button, csv, download, el, field, fmt, numberInput, physical, select } from "./ui.js";
+import { fmt, physical } from "./ui.js";
 import { layerStore, readableImages, type Voxels } from "./voxels.js";
 
 interface Row extends Summary {
@@ -182,7 +184,7 @@ export class Statistics {
   private exportCsv(): void {
     const head = ["image", "region", "level", "voxel_size_mm", "voxels", "volume_mm3", "mean", "sd", "min", "max", "median"];
     const rows = this.rows.map((r) => [r.image, r.region, r.level, r.voxelSize, r.count, r.volume, r.mean, r.sd, r.min, r.max, r.median]);
-    download(new Blob([csv([head, ...rows])], { type: "text/csv" }), "label_statistics.csv");
+    downloadBlob(new Blob([csv([head, ...rows])], { type: "text/csv" }), "label_statistics.csv");
   }
 
   render(host: HTMLElement): Disposer {

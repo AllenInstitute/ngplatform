@@ -6,11 +6,13 @@
  * values along a line or polyline, shown as a plot and saved as CSV.
  */
 import type { Disposer, Json, PlatformContext } from "@ngplatform/sdk";
+import { button, downloadBlob, el, select } from "@ngplatform/sdk/dom";
+import { csv } from "@ngplatform/sdk/format";
 import { toVoxel } from "./geometry.js";
 import { type Measurement, measureAll, powerOf, samplePath, sampleCount } from "./measure.js";
 import { linePlot } from "./plot.js";
 import { annotationLayers, imagePlacement, rankOf, space, toGlobalOf } from "./scene.js";
-import { button, csv, download, el, fileName, fmt, physical, select } from "./ui.js";
+import { fileName, fmt, physical } from "./ui.js";
 import { layerStore, readableImages, type Voxels } from "./voxels.js";
 
 const LAYER = "measurements";
@@ -94,7 +96,7 @@ export class Measure {
     for (const m of this.measurements()) {
       rows.push([m.layer, m.id, m.description, m.type, m.quantity, m.value, ["mm", "mm2", "mm3"][powerOf(m.quantity) - 1], (m.sides ?? []).map((v) => fmt(v, 6)).join(" ")]);
     }
-    download(new Blob([csv(rows)], { type: "text/csv" }), "measurements.csv");
+    downloadBlob(new Blob([csv(rows)], { type: "text/csv" }), "measurements.csv");
   }
 
   /** Moves the views to an annotation. */
@@ -154,7 +156,7 @@ export class Measure {
     const names = space(this.ctx).names;
     const rows: (string | number)[][] = [["distance_mm", ...names.map((n) => `global_${n}`), "voxel_x", "voxel_y", "voxel_z", "value"]];
     p.distances.forEach((d, i) => rows.push([d, ...p.positions[i], ...p.voxels[i].map((v) => Number(v.toFixed(3))), p.values[i]]));
-    download(new Blob([csv(rows)], { type: "text/csv" }), `${fileName(p.image)}_profile.csv`);
+    downloadBlob(new Blob([csv(rows)], { type: "text/csv" }), `${fileName(p.image)}_profile.csv`);
   }
 
   // -------------------------------------------------------------- panel

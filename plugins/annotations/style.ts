@@ -18,9 +18,8 @@ export const STYLE = `
 .an-grid2 select, .an-grid2 .text-input { min-width: 0; width: 100%; }
 .an-end { display: flex; justify-content: flex-end; }
 .an-inline { display: flex; gap: 4px; align-items: center; }
-.an-inline .an-num { width: 0; flex: 1; min-width: 44px; }
+.an-inline .num-input { width: 0; flex: 1; min-width: 44px; }
 .an-grid2 .an-inline select { width: auto; flex: none; }
-.an-num { height: 24px; padding: 0 4px; font: 12px/1 var(--mono); min-width: 0; width: 64px; }
 .an-tools { align-self: start; }
 .an-tools button[aria-pressed="true"] { color: var(--accent-ink); background: var(--accent); }
 .an-table-wrap { overflow-x: auto; }

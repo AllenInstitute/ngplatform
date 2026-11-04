@@ -7,6 +7,7 @@
  * the workspace (this plugin's state).
  */
 import type { Disposer, PlatformContext, ViewPanelInfo } from "@ngplatform/sdk";
+import { el } from "@ngplatform/sdk/dom";
 import type { AnnotationJson } from "./measure.js";
 import { rankOf, toGlobalOf } from "./scene.js";
 
@@ -93,20 +94,6 @@ interface Placed {
   at: [number, number];
   fx: number;
   fy: number;
-}
-
-type Child = Node | string | null | undefined | false;
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === undefined || v === false) continue;
-    if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2), v as EventListener);
-    else if (k === "class") e.className = String(v);
-    else if (k === "value") (e as HTMLInputElement).value = String(v);
-    else e.setAttribute(k, v === true ? "" : String(v));
-  }
-  for (const c of children) if (c !== null && c !== undefined && c !== false) e.append(c);
-  return e;
 }
 
 export class Labels {

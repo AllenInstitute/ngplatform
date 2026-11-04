@@ -5,8 +5,9 @@
  * themselves are also on the tool bar over the views (./toolbar.ts).
  */
 import type { Disposer, PlatformContext } from "@ngplatform/sdk";
+import { button, el, field, numberInput, select } from "@ngplatform/sdk/dom";
 import { voxelEdges, voxelVolume } from "../annotations/geometry.js";
-import { button, el, field, numberInput, physical, select } from "../annotations/ui.js";
+import { physical } from "../annotations/ui.js";
 import { layerStore, readableImages, type Voxels } from "../annotations/voxels.js";
 import { type Editor, fmtBytes, type ImageLevel, labelTypeOf, MAX_COPY, MAX_NIFTI } from "./editor.js";
 import { CowVolume } from "./cow_volume.js";

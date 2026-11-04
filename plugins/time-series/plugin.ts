@@ -17,6 +17,7 @@
  * are read again when the link is opened.
  */
 import type { Disposer, PlatformContext, PluginModule } from "@ngplatform/sdk";
+import { downloadBlob, el, safeFileName } from "@ngplatform/sdk/dom";
 import { omeZarrUrl } from "../volume-view/sources.js";
 import { type ReadPlan, SeriesClient, type SeriesInfo } from "./client.js";
 import { TIME_SERIES_PANEL } from "./manifest.js";
@@ -26,20 +27,6 @@ import { type AnnotationJson, regionVoxels, shapeOf } from "./region.js";
 import { COLOURS, coordinateOf, formatTime, freeColour, indexAt, nextIndex, percentChange, percentChangeSpread, RATES, seriesCsv, stepIndex, type TimeAxis, timeAxis, timeOf, timesOf, voxelAt, voxelLabel } from "./series.js";
 import { LayerMap, type Place, placeOf } from "./space.js";
 import { nearestOf, type Parcellation, parcelAt, parcelCourseOf, parcelLabel, parcellationsOf, storePoint, type SurfaceSeries, surfaceAxis, surfaceSeriesOf, vertexLabel, vertexReach, zarrVectorsStore } from "./surface.js";
-
-type Child = Node | string | null | undefined | false;
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === undefined || v === false) continue;
-    if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2), v as EventListener);
-    else if (k === "class") e.className = String(v);
-    else if (k === "value") (e as HTMLInputElement).value = String(v);
-    else e.setAttribute(k, v === true ? "" : String(v));
-  }
-  for (const c of children) if (c !== null && c !== undefined && c !== false) e.append(c);
-  return e;
-}
 
 const NS = "http://www.w3.org/2000/svg";
 /** Transport icons, 16 × 16. */
@@ -1017,10 +1004,8 @@ class TimeSeries {
       this.ctx.ui.toast("Nothing is plotted to save.");
       return;
     }
-    const name = (this.layer() ?? "image").replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "") || "image";
-    const a = el("a", { href: URL.createObjectURL(new Blob([seriesCsv(axis, series)], { type: "text/csv" })), download: `${name}_time_series.csv` });
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+    const name = safeFileName(this.layer() ?? "image", "image");
+    downloadBlob(new Blob([seriesCsv(axis, series)], { type: "text/csv" }), `${name}_time_series.csv`);
   }
 
   // ------------------------------------------------------------- panel

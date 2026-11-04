@@ -6,8 +6,10 @@
  * in a worker (./label_worker.ts), for each region's volume and centre.
  */
 import type { LookupTableInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
+import { downloadBlob, el } from "@ngplatform/sdk/dom";
+import { csv } from "@ngplatform/sdk/format";
 import { apply, globalSpace, placement } from "../annotations/geometry.js";
-import { csv, download, el, fileName, physical } from "../annotations/ui.js";
+import { fileName, physical } from "../annotations/ui.js";
 import { layerStore } from "../annotations/voxels.js";
 import { Atlas, KIND_TEXT, type Region } from "./hierarchy.js";
 import { type Counted, LabelClient } from "./label_client.js";
@@ -283,7 +285,7 @@ class AtlasPanel {
       const n = r.value === undefined ? 0 : (own.get(r.value) ?? 0);
       rows.push([r.value?.toString() ?? "", r.acronym ?? "", r.name, atlas.pathText(r, " > "), n, n * counted.voxelVolume, total, total * counted.voxelVolume]);
     }
-    download(new Blob([csv(rows)], { type: "text/csv" }), `${fileName(this.layer)}_regions.csv`);
+    downloadBlob(new Blob([csv(rows)], { type: "text/csv" }), `${fileName(this.layer)}_regions.csv`);
   }
 
   // ------------------------------------------------------------ views

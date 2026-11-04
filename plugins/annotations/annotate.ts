@@ -14,13 +14,14 @@
  * comments beside it.
  */
 import type { Disposer, Json, PlatformContext } from "@ngplatform/sdk";
+import { el } from "@ngplatform/sdk/dom";
 import { TABLE_PANEL } from "./manifest.js";
 import { measure, type AnnotationJson } from "./measure.js";
 import { lookupTerms, type Term } from "./ontology.js";
 import { rankOf, space, toGlobalOf } from "./scene.js";
 import { buildRows, rowName, type Row, type TableLayer } from "./table.js";
 import { withShaderKept } from "./groups.js";
-import { el, physical } from "./ui.js";
+import { physical } from "./ui.js";
 import { type Comment, type Field, fieldsOf, type LayerMeta, type LayerSpec, metaOf, prune, readValue } from "./values.js";
 
 /** Neuroglancer's annotation tools, by the names the Annotate section gives them. */

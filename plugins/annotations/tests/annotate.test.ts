@@ -1,9 +1,9 @@
+import { csv } from "@ngplatform/sdk/format";
 import { describe, expect, it } from "vitest";
 import { addGroup, groupOf, groupPath, groupsOf, groupTree, hiddenValues, layerShader, moveGroup, removeGroup, setGroup, SHADER_MARK, withShader, withShaderKept, writeGroups } from "../groups.js";
 import type { AnnotationJson } from "../measure.js";
 import { ancestorNames, findTerm, lookupTerms, parseTerms, searchTerms } from "../ontology.js";
 import { BUILTIN_COLUMNS, buildRows, commentsText, fieldColumns, importCsv, parseComments, matches, parseCsv, parseQuery, sortRows, tableCsv, type TableLayer } from "../table.js";
-import { csv } from "../ui.js";
 import { addField, emptyMeta, fieldId, fieldsOf, type LayerMeta, type LayerSpec, prune, readValue, removeField, setValue, updateField } from "../values.js";
 
 const line = (id: string, description?: string): AnnotationJson => ({ type: "line", id, pointA: [0, 0, 0], pointB: [3, 4, 0], ...(description ? { description } : {}) });

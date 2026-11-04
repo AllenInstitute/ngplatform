@@ -4,6 +4,7 @@
  * so they are tested without a viewer.
  */
 import type { SegmentProperties } from "@ngplatform/sdk";
+import { csvField } from "@ngplatform/sdk/format";
 
 export interface FilterSpec {
   /** Property id → inclusive [min, max]; a property without one is not filtered. */
@@ -107,9 +108,8 @@ export function tagCounts(props: SegmentProperties, mask?: Uint8Array): Uint32Ar
 
 /** CSV of the passing objects: id, then every numeric column, then tags. */
 export function toCsv(props: SegmentProperties, mask: Uint8Array): string {
-  const quote = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
   const header = ["id", ...props.numeric.map((p) => p.id), ...(props.tags ? ["tags"] : [])];
-  const lines = [header.map(quote).join(",")];
+  const lines = [header.map(csvField).join(",")];
   for (let i = 0; i < mask.length; ++i) {
     if (!mask[i]) continue;
     const row = [props.ids[i].toString(), ...props.numeric.map((p) => (Number.isFinite(p.values[i]) ? String(p.values[i]) : ""))];
@@ -121,7 +121,7 @@ export function toCsv(props: SegmentProperties, mask: Uint8Array): string {
           .join(";"),
       );
     }
-    lines.push(row.map(quote).join(","));
+    lines.push(row.map(csvField).join(","));
   }
   return lines.join("\n") + "\n";
 }
@@ -157,12 +157,11 @@ export function groupStatistics(props: SegmentProperties, mask: Uint8Array): Col
 
 /** CSV of groups' statistics: a row per group and column (group, objects, column, n, mean, sd, median, min, max). */
 export function statisticsCsv(groups: { name: string; count: number; columns: ColumnStatistics[] }[]): string {
-  const quote = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
   const number = (v: number) => (Number.isFinite(v) ? String(Number(v.toPrecision(7))) : "");
   const lines = ["group,objects,attribute,n,mean,sd,median,min,max"];
   for (const g of groups) {
-    if (g.columns.length === 0) lines.push([quote(g.name), g.count, "", "", "", "", "", "", ""].join(","));
-    for (const c of g.columns) lines.push([quote(g.name), g.count, quote(c.id), c.n, number(c.mean), number(c.sd), number(c.median), number(c.min), number(c.max)].join(","));
+    if (g.columns.length === 0) lines.push([csvField(g.name), g.count, "", "", "", "", "", "", ""].join(","));
+    for (const c of g.columns) lines.push([csvField(g.name), g.count, csvField(c.id), c.n, number(c.mean), number(c.sd), number(c.median), number(c.min), number(c.max)].join(","));
   }
   return lines.join("\n") + "\n";
 }
