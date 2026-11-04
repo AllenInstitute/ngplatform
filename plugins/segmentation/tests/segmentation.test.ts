@@ -307,6 +307,26 @@ describe("relabelling", () => {
     history.undo();
     expect(count(v, 2)).toBe(33);
   });
+
+  it("puts back what a stroke's hooks hold (a deleted segment's name) with its voxels", () => {
+    const v = vol();
+    const s = new Stroke(v);
+    paintBall(s, [10, 10, 10], ballShape(2, "voxels"), { value: 3 });
+    s.finish();
+    const labels = new Map([[3, "kept"]]);
+    const history = new History();
+    const d = new Stroke(v);
+    relabel(d, 3, 0);
+    d.finish();
+    labels.delete(3);
+    d.onUndo = () => labels.set(3, "kept");
+    d.onRedo = () => labels.delete(3);
+    history.push(d);
+    history.undo();
+    expect([count(v, 3), labels.get(3)]).toEqual([33, "kept"]);
+    history.redo();
+    expect([count(v, 3), labels.has(3)]).toEqual([0, false]);
+  });
 });
 
 describe("interpolation between sections", () => {
