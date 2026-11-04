@@ -59,7 +59,8 @@ function segmentsView(scope: Scope, layer: SegmentationUserLayer): HTMLElement[]
   const input = el("input", {
     type: "search",
     class: "ins-text ins-query",
-    placeholder: "ids, label prefix, /regex, #tag, prop>1, <prop sorts, |prop shows · Enter shows them",
+    placeholder: "Search ids, labels, #tags…",
+    title: "Ids, a label prefix, /regex/, #tag, prop>1 (a range), <prop (sort by it), |prop (show it as a column). Enter shows the matches.",
     "aria-label": "Segment query",
     spellcheck: "false",
   }) as HTMLInputElement;
@@ -168,7 +169,7 @@ function segmentsView(scope: Scope, layer: SegmentationUserLayer): HTMLElement[]
       );
     } else {
       const r = listing.result;
-      status.textContent = r?.errors ? "" : `${listing.count.toLocaleString()}${r !== undefined && r.total >= 0 ? ` of ${r.total.toLocaleString()}` : ""} match.`;
+      status.textContent = r?.errors ? "" : `${listing.count.toLocaleString()}${r !== undefined && r.total >= 0 ? ` of ${r.total.toLocaleString()}` : ""} ${listing.count === 1 ? "match" : "matches"}.`;
     }
   };
 
@@ -289,6 +290,8 @@ function segmentsView(scope: Scope, layer: SegmentationUserLayer): HTMLElement[]
   // ------------------------------------------------------------------ rows
   const renderRows = () => {
     const db = propertyMap.value;
+    // No empty black box: the status line above says what to do.
+    viewport.hidden = header.hidden = listing.count === 0;
     spacer.style.height = `${listing.count * ROW}px`;
     const first = Math.max(0, Math.floor(viewport.scrollTop / ROW) - 5);
     const last = Math.min(listing.count, Math.ceil((viewport.scrollTop + viewport.clientHeight) / ROW) + 5);
@@ -323,7 +326,7 @@ function segmentsView(scope: Scope, layer: SegmentationUserLayer): HTMLElement[]
         colours().segmentStatedColors.delete(id);
       });
       const idCell = el("button", { type: "button", class: "ins-id-btn", title: "Copy the id" }, id.toString());
-      idCell.addEventListener("click", () => void navigator.clipboard?.writeText(id.toString()));
+      idCell.addEventListener("click", () => copy(id.toString(), idCell));
       const label = index >= 0 ? (db?.getSegmentLabel(id) ?? "") : "";
       const row = el(
         "div",
@@ -348,6 +351,10 @@ function segmentsView(scope: Scope, layer: SegmentationUserLayer): HTMLElement[]
     body.replaceChildren(...rows);
   };
   viewport.addEventListener("scroll", () => requestAnimationFrame(renderRows));
+  // The rows that fit are known once the list is laid out (and again when the dock is resized or opened).
+  const resized = new ResizeObserver(() => requestAnimationFrame(renderRows));
+  resized.observe(viewport);
+  scope.add(() => resized.disconnect());
 
   // --------------------------------------------------------------- actions
   const listed = (): bigint[] => {
@@ -362,8 +369,8 @@ function segmentsView(scope: Scope, layer: SegmentationUserLayer): HTMLElement[]
     button("Hide all", () => visible.set(listed(), false), "Hide every segment listed"),
     button("Star all", () => starred.set(listed(), true), "Star every segment listed"),
     button("Unstar all", () => starred.set(listed(), false), "Unstar every segment listed"),
-    button("Copy ids", () => void navigator.clipboard?.writeText(listed().join(", ")), "Copy the listed ids, comma separated"),
-    button("Copy shown ids", () => void navigator.clipboard?.writeText(listed().filter((id) => visible.has(id)).join(", ")), "Copy the ids of the listed segments that are shown"),
+    button("Copy ids", (e) => copy(listed().join(", "), e.currentTarget as HTMLElement), "Copy the listed ids, comma separated"),
+    button("Copy shown ids", (e) => copy(listed().filter((id) => visible.has(id)).join(", "), e.currentTarget as HTMLElement), "Copy the ids of the listed segments that are shown"),
   );
 
   scope.watchSoon(
@@ -379,6 +386,17 @@ function segmentsView(scope: Scope, layer: SegmentationUserLayer): HTMLElement[]
 function fmt(v: number): string {
   if (!Number.isFinite(v)) return String(v);
   return Number.isInteger(v) ? v.toLocaleString() : Number(v.toPrecision(4)).toString();
+}
+
+/** Copies text, saying so on the button for a moment ("Copied", or why not). */
+function copy(text: string, target: HTMLElement): void {
+  const before = target.textContent;
+  const say = (word: string) => {
+    target.textContent = word;
+    setTimeout(() => (target.textContent = before), 1200);
+  };
+  if (navigator.clipboard === undefined) return say("No clipboard");
+  navigator.clipboard.writeText(text).then(() => say("Copied"), () => say("Copy refused"));
 }
 
 /** A small bar chart of a histogram's counts. */
