@@ -65,7 +65,8 @@ empty group list says so, and offers **+ Sphere** and **+ Box** itself
 while the mouse was over a view (the group's layer, from the key) threw
 in Neuroglancer's reading of the values under the mouse, which reached a
 layer still being made, and the state restore failed. The values are now
-read once every layer is made (`src/engine/selected_values.ts`). (The
+read from the layers that are made, leaving out one still being made
+(`src/engine/selected_values.ts`). (The
 group's count differs, 2 against 1 streamline, because a right-click
 snaps the position to a voxel centre and the key uses the mouse's exact
 point.)

@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { guardSelectedValues, type SelectedValues } from "../src/engine/selected_values.js";
 
-/** Neuroglancer's LayerSelectedValues, cut down: update stamps every made layer; get reads a layer's stamp. */
-function values(layers: { layer: { selectionState?: { generation?: number } } | null }[]) {
-  let count = 1;
+type State = { generation?: number };
+
+/** Neuroglancer's LayerSelectedValues, cut down: update stamps every layer in the manager's list; get reads a layer's stamp. */
+function values(layers: { layer: { selectionState?: State } | null }[]) {
+  const count = 1;
   const v = {
     layerManager: { managedLayers: layers },
-    updates: 0,
     update() {
-      for (const l of layers) l.layer!.selectionState!.generation = count;
-      v.updates++;
+      for (const l of v.layerManager.managedLayers) l.layer!.selectionState!.generation = count;
     },
-    get(layer: { selectionState?: { generation?: number } }) {
+    get(layer: { selectionState?: State }) {
       v.update();
       return layer.selectionState!.generation === count ? layer.selectionState : undefined;
     },
@@ -20,17 +20,16 @@ function values(layers: { layer: { selectionState?: { generation?: number } } | 
 }
 
 describe("the values under the mouse while a layer is being made", () => {
-  it("waits for the layer instead of throwing, then reads as before", () => {
-    const made = { layer: { selectionState: {} as { generation?: number } } };
-    const making: { layer: { selectionState?: { generation?: number } } } = { layer: {} };
+  it("reads the layers that are made, leaves out the one being made, and does not throw", () => {
+    const made = { layer: { selectionState: {} as State } };
+    const making: { layer: { selectionState?: State } } = { layer: {} };
     const v = values([made, making]);
     guardSelectedValues(v as unknown as SelectedValues);
-    expect(() => v.get(made.layer)).not.toThrow();
-    expect(v.get(made.layer)).toBeUndefined();
-    expect(v.get(making.layer)).toBeUndefined();
-    expect(v.updates).toBe(0);
-    making.layer.selectionState = {};
     expect(v.get(made.layer)).toEqual({ generation: 1 });
-    expect(v.updates).toBe(1);
+    expect(v.get(making.layer)).toBeUndefined();
+    // The manager's own list is put back.
+    expect(v.layerManager.managedLayers).toHaveLength(2);
+    making.layer.selectionState = {};
+    expect(v.get(making.layer)).toEqual({ generation: 1 });
   });
 });
