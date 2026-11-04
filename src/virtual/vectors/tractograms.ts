@@ -4,25 +4,13 @@
  * spill file in the origin's private file system (./spill.ts), so memory
  * holds only an index; whole streamlines by id are read from the file.
  */
-import { freeStorage, OpfsSpill, openSpill, type Spill } from "./spill.js";
+import { freeStorage, NeedsRunner, OpfsSpill, openSpill, type Spill } from "./spill.js";
 import { CHECKPOINT, type StreamlineInput, StreamlineStore } from "./streamlines.js";
 import { parseTckHeader, readTck, readTckStreamlines } from "./tck.js";
 import { parseTrkHeader, readTrk, readTrkStreamlines, TRK_HEADER_SIZE } from "./trk.js";
 import { openTrxInfo, readTrx, readTrxStreamlines, trxInPlace } from "./trx.js";
 
-/** What to say when a file is past what the browser can do here: the local runner can. */
-export const RUNNER_HINT = "Open through the local runner (Jobs → This computer)";
-
-/**
- * A file past what this browser can do (`reason`): its message names the
- * local runner.  `kind: "runner"` lets the page offer the hand-off.
- */
-export class NeedsRunner extends Error {
-  readonly kind = "runner";
-  constructor(readonly reason: string) {
-    super(`${reason}. ${RUNNER_HINT}.`);
-  }
-}
+export { NeedsRunner, RUNNER_HINT } from "./spill.js";
 
 /**
  * The spill a tractogram of `bytes` bytes needs (its points copied into
@@ -48,12 +36,15 @@ async function build(input: StreamlineInput, size: number): Promise<StreamlineSt
   return StreamlineStore.build(input, { spill: await spillFor(size, input.name) });
 }
 
-export async function openTrk(file: Blob, name: string): Promise<StreamlineStore> {
+/** Reports how much of the file has been read, 0 to 1. */
+export type Progress = (fraction: number) => void;
+
+export async function openTrk(file: Blob, name: string, progress?: Progress): Promise<StreamlineStore> {
   const header = parseTrkHeader(new Uint8Array(await file.slice(0, TRK_HEADER_SIZE).arrayBuffer()));
   const extent = Math.max(...header.dims.map((d, k) => d * header.voxelSize[k]));
   return build(
     {
-      read: (onBatch) => readTrk(file, header, onBatch),
+      read: (onBatch) => readTrk(file, header, onBatch, { progress: (done, total) => progress?.(done / total) }),
       streamlines: (ids, checkpoints) => readTrkStreamlines(file, header, ids, checkpoints, CHECKPOINT),
       scalarNames: header.scalarNames,
       propertyNames: header.propertyNames,
@@ -71,7 +62,7 @@ export async function openTrk(file: Blob, name: string): Promise<StreamlineStore
  * An MRtrix .tck: no extent in the header, so the extent of its first
  * streamlines (at least 150 mm, as a brain's), for the cell size.
  */
-export async function openTck(file: Blob, name: string): Promise<StreamlineStore> {
+export async function openTck(file: Blob, name: string, progress?: Progress): Promise<StreamlineStore> {
   const header = parseTckHeader(new Uint8Array(await file.slice(0, 64 * 1024).arrayBuffer()));
   let extent = 0;
   if (file.size > 64 * 1024 * 1024) {
@@ -88,7 +79,7 @@ export async function openTck(file: Blob, name: string): Promise<StreamlineStore
   }
   return build(
     {
-      read: (onBatch) => readTck(file, header, onBatch),
+      read: (onBatch) => readTck(file, header, onBatch, { progress: (done, total) => progress?.(done / total) }),
       streamlines: (ids, checkpoints) => readTckStreamlines(file, header, ids, checkpoints, CHECKPOINT),
       scalarNames: [],
       propertyNames: [],
@@ -102,7 +93,7 @@ export async function openTck(file: Blob, name: string): Promise<StreamlineStore
 }
 
 /** A TRX: its extent from the reference volume (dimensions times voxel sizes). */
-export async function openTrx(file: Blob, name: string): Promise<StreamlineStore> {
+export async function openTrx(file: Blob, name: string, progress?: Progress): Promise<StreamlineStore> {
   const info = await openTrxInfo(file);
   const sizes = [0, 1, 2].map((c) => Math.hypot(...[0, 1, 2].map((r) => Number(info.voxelToRas[r]?.[c] ?? 0))));
   const extent = Math.max(0, ...info.dims.map((d, k) => Number(d) * (sizes[k] || 1)));
@@ -110,7 +101,7 @@ export async function openTrx(file: Blob, name: string): Promise<StreamlineStore
   const pointBytes = 12 * (info.vertices || 0) + 4 * (info.vertices || 0) * info.scalars.length || file.size;
   return build(
     {
-      read: (onBatch) => readTrx(file, info, onBatch),
+      read: (onBatch) => readTrx(file, info, onBatch, { progress: (done, total) => progress?.(done / total) }),
       // Stored arrays are read in place; deflated ones from the cells.
       ...(trxInPlace(info) ? { streamlines: (ids: Uint32Array) => readTrxStreamlines(file, info, ids) } : {}),
       scalarNames: info.scalars.map((s) => s.name),
@@ -125,8 +116,8 @@ export async function openTrx(file: Blob, name: string): Promise<StreamlineStore
 }
 
 /** A tractogram by its name: .trk, .tck or .trx. */
-export function openTractogram(file: Blob, name: string): Promise<StreamlineStore> {
-  if (/\.tck$/i.test(name)) return openTck(file, name.replace(/\.tck$/i, ""));
-  if (/\.trx$/i.test(name)) return openTrx(file, name.replace(/\.trx$/i, ""));
-  return openTrk(file, name.replace(/\.trk$/i, ""));
+export function openTractogram(file: Blob, name: string, progress?: Progress): Promise<StreamlineStore> {
+  if (/\.tck$/i.test(name)) return openTck(file, name.replace(/\.tck$/i, ""), progress);
+  if (/\.trx$/i.test(name)) return openTrx(file, name.replace(/\.trx$/i, ""), progress);
+  return openTrk(file, name.replace(/\.trk$/i, ""), progress);
 }

@@ -238,7 +238,12 @@ async function entryStream(file: Blob, entry: ZipEntry): Promise<(n: number) => 
 }
 
 /** Reads every streamline, `perBatch` streamlines at a time, each array streamed; resolves to how many there were. */
-export async function readTrx(file: Blob, info: TrxInfo, onBatch: (batch: TrkBatch) => void | Promise<void>, options: { perBatch?: number } = {}): Promise<number> {
+export async function readTrx(
+  file: Blob,
+  info: TrxInfo,
+  onBatch: (batch: TrkBatch) => void | Promise<void>,
+  options: { perBatch?: number; progress?: (done: number, total: number) => void } = {},
+): Promise<number> {
   const perBatch = options.perBatch ?? 100_000;
   const offsetSize = SIZES[info.offsets.dtype];
   const positionSize = 3 * SIZES[info.positions.dtype];
@@ -275,6 +280,7 @@ export async function readTrx(file: Blob, info: TrxInfo, onBatch: (batch: TrkBat
       for (let s = 0; s < column.length; ++s) props[s * properties.length + k] = column[s];
     }
     await onBatch({ points, offsets: batchOffsets, scalars: values, properties: props, starts });
+    options.progress?.(last, count);
   }
   return count;
 }

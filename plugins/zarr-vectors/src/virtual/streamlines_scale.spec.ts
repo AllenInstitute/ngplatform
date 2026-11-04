@@ -4,7 +4,9 @@
  * (by a hash of the id), and how it reads streamlines by id from the file
  * itself (.trk, .tck, .trx) rather than from its cells.
  */
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ObjectReader, openZarrVectorsStore, ShardIndexCache, LevelPipeline } from "../reader.js";
@@ -13,6 +15,7 @@ import { CHECKPOINT, cellSize, sampleDepth, sampleLevels, StreamlineStore } from
 import { parseTckHeader, readTck, readTckStreamlines } from "../../../../src/virtual/vectors/tck.js";
 import { openTractogram } from "../../../../src/virtual/vectors/tractograms.js";
 import { parseTrkHeader, readTrk, readTrkStreamlines, TRK_HEADER_SIZE, type TrkBatch } from "../../../../src/virtual/vectors/trk.js";
+import { writeStore } from "./write_store.js";
 
 const DIR = path.resolve(import.meta.dirname, "../../testdata/tractograms");
 const expected = { ...JSON.parse(fs.readFileSync(path.join(DIR, "expected.json"), "utf8")), ...JSON.parse(fs.readFileSync(path.join(DIR, "expected_trx.json"), "utf8")) };
@@ -232,6 +235,41 @@ describe("the spill and the index", () => {
     expect(spill.read(1, 2)).toEqual(new Uint8Array([2, 3]));
     expect(spill.read(at2 + 32 * 2 ** 20 - 5, 10)).toEqual(big.subarray(32 * 2 ** 20 - 5, 32 * 2 ** 20 + 5));
   });
+});
+
+const PYTHON = path.join(os.homedir(), ".conda/envs/zarr-vectors/bin/python");
+const hasValidator = fs.existsSync(PYTHON) && spawnSync(PYTHON, ["-c", "import zarr_vectors.validate"]).status === 0;
+
+describe("zarr-vectors-py", () => {
+  it.skipIf(!hasValidator)("validates a written copy of a streamline store with sample levels (conformance level 5), and reads its streamlines", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zv-streamlines-"));
+    try {
+      const lines = synthetic(25_000, 5);
+      const store = await openTractogram(trkFile(lines), "s.trk");
+      expect(store.stats().levels.length).toBe(2);
+      expect(await writeStore(store, dir)).toBeGreaterThan(20);
+      const script = [
+        "import sys, numpy as np",
+        "from zarr_vectors.validate import validate",
+        "r = validate(sys.argv[1], level=5)",
+        "print(r.summary())",
+        "import json",
+        "from zarr_vectors.types.polylines import read_polylines",
+        "got = read_polylines(sys.argv[1], object_ids=[0, 1, 24999])",
+        "print('LINES ' + json.dumps([[int(i), np.concatenate(p).reshape(-1).tolist()] for i, p in zip(got['object_ids'], got['polylines'])]))",
+        "sys.exit(0 if r.ok else 1)",
+      ].join("\n");
+      const run = spawnSync(PYTHON, ["-c", script, dir], { encoding: "utf8" });
+      expect(run.stdout + run.stderr).toContain("PASS");
+      expect(run.status).toBe(0);
+      // zarr-vectors-py reads the streamlines back whole.
+      const read: [number, number[]][] = JSON.parse(/^LINES (.*)$/m.exec(run.stdout)![1]);
+      expect(read.map(([id]) => id)).toEqual([0, 1, 24999]);
+      for (const [id, points] of read) points.forEach((v, k) => expect(v).toBeCloseTo(lines[id].flat()[k], 4));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
 });
 
 describe("streamlines by id, from the file", () => {

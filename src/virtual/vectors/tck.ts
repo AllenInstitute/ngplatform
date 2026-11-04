@@ -46,9 +46,9 @@ export async function readTck(
   file: Blob,
   header: TckHeader,
   onBatch: (batch: TrkBatch) => void | Promise<void>,
-  options: { slice?: number; signal?: AbortSignal } = {},
+  options: { slice?: number; signal?: AbortSignal; progress?: (done: number, total: number) => void } = {},
 ): Promise<number> {
-  const slice = Math.max(12, Math.floor((options.slice ?? 32 * 1024 * 1024) / 12) * 12);
+  const slice = Math.max(12, Math.floor((options.slice ?? 8 * 1024 * 1024) / 12) * 12);
   const little = header.littleEndian;
   let at = header.offset;
   let streamlines = 0;
@@ -111,6 +111,7 @@ export async function readTck(
       streamlines += ends;
       // (Points after the last separator went to the carry, not here.)
       await onBatch({ points: points.subarray(0, 3 * n), offsets, scalars: new Float32Array(0), properties: new Float32Array(0), starts });
+      options.progress?.(at, file.size);
     } else {
       const grown = new Float32Array(carry.length + 3 * stop);
       grown.set(carry);

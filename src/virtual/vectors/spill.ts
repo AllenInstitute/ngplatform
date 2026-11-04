@@ -15,6 +15,21 @@
  * device's memory unless the page set a budget (Settings).
  */
 
+/** What to say when a file is past what the browser can do here: the local runner can. */
+export const RUNNER_HINT = "Open through the local runner (Jobs → This computer)";
+
+/**
+ * A file past what this browser can do (`reason`): its message names the
+ * local runner.  `kind: "runner"` is the hook for the page to offer the
+ * hand-off (a later merge wires it to the runner's `POST /serve`).
+ */
+export class NeedsRunner extends Error {
+  readonly kind = "runner";
+  constructor(readonly reason: string) {
+    super(`${reason}. ${RUNNER_HINT}.`);
+  }
+}
+
 export interface Spill {
   /** Appends bytes; resolves to nothing, returns their offset. */
   append(bytes: Uint8Array): number;
@@ -79,6 +94,7 @@ export class MemorySpill implements Spill {
 interface SyncHandle {
   write(data: Uint8Array, options: { at: number }): number;
   read(data: Uint8Array, options: { at: number }): number;
+  truncate(size: number): void;
   flush(): void;
   close(): void;
 }
@@ -117,8 +133,18 @@ function cleanStale(dir: FileSystemDirectoryHandle): Promise<void> {
   })());
 }
 
+/** Appends are gathered into writes of this size … */
+const STAGE = 8 * 1024 * 1024;
+/** … into a file grown this much at a time (each growth asks for quota). */
+const GROW = 512 * 1024 * 1024;
+
 export class OpfsSpill implements Spill {
   size = 0;
+  /** Bytes appended but not yet written: [written, size). */
+  private stage = new Uint8Array(STAGE);
+  private staged = 0;
+  private written = 0;
+  private allocated = 0;
 
   private constructor(
     private readonly dir: FileSystemDirectoryHandle,
@@ -147,19 +173,58 @@ export class OpfsSpill implements Spill {
 
   append(bytes: Uint8Array): number {
     const at = this.size;
-    let done = 0;
-    while (done < bytes.byteLength) done += this.handle.write(bytes.subarray(done), { at: at + done });
+    if (this.staged + bytes.byteLength > STAGE) this.writeStage();
+    if (bytes.byteLength > STAGE) this.write(bytes);
+    else {
+      this.stage.set(bytes, this.staged);
+      this.staged += bytes.byteLength;
+    }
     this.size += bytes.byteLength;
     return at;
   }
 
+  /** Writes what is staged. */
+  private writeStage(): void {
+    if (this.staged === 0) return;
+    this.write(this.stage.subarray(0, this.staged));
+    this.staged = 0;
+  }
+
+  private write(bytes: Uint8Array): void {
+    const end = this.written + bytes.byteLength;
+    if (end > this.allocated) {
+      // Small writes past the end each ask for quota: grow the file in large steps instead.
+      const want = Math.ceil(end / GROW) * GROW;
+      this.handle.truncate(want);
+      // Where the file cannot grow so far (a private window), it grows write by write.
+      this.allocated = (this.handle as { getSize?(): number }).getSize?.() === want ? want : end;
+    }
+    let done = 0;
+    while (done < bytes.byteLength) {
+      const n = this.handle.write(bytes.subarray(done), { at: this.written + done });
+      // A failed write returns 0, or (in some versions) a negative count read as unsigned.
+      if (!(n > 0 && n <= bytes.byteLength - done)) {
+        const gb = ((this.written + done) / 2 ** 30).toFixed(1);
+        throw new NeedsRunner(`this browser's private storage would not take more than ${gb} GB (a private or guest window keeps it in memory, with less room)`);
+      }
+      done += n;
+    }
+    this.written = end;
+  }
+
   read(offset: number, length: number): Uint8Array {
     const out = new Uint8Array(length);
+    // Bytes still staged come from the stage.
+    const fromFile = Math.max(0, Math.min(length, this.written - offset));
     let done = 0;
-    while (done < length) {
-      const n = this.handle.read(out.subarray(done), { at: offset + done });
+    while (done < fromFile) {
+      const n = this.handle.read(out.subarray(done, fromFile), { at: offset + done });
       if (n <= 0) throw new Error(`the spill file ends at ${offset + done} (wanted ${offset + length})`);
       done += n;
+    }
+    if (fromFile < length) {
+      const start = offset + fromFile - this.written;
+      out.set(this.stage.subarray(start, start + length - fromFile), fromFile);
     }
     return out;
   }

@@ -143,7 +143,7 @@ export async function readTrk(
   onBatch: (batch: TrkBatch) => void | Promise<void>,
   options: { slice?: number; signal?: AbortSignal; progress?: (done: number, total: number) => void } = {},
 ): Promise<number> {
-  const slice = options.slice ?? 32 * 1024 * 1024;
+  const slice = options.slice ?? 8 * 1024 * 1024;
   const ns = header.scalarNames.length;
   const np = header.propertyNames.length;
   const toRas = header.toRas;
@@ -231,16 +231,34 @@ export async function readRanges(
   each: (index: number, bytes: Uint8Array, at: number) => void,
   gap = 64 * 1024,
   window = 16 * 1024 * 1024,
+  concurrency = 16,
 ): Promise<void> {
-  let i = 0;
-  while (i < ranges.length) {
+  // The windows: [first range, last range + 1).
+  const windows: [number, number][] = [];
+  for (let i = 0; i < ranges.length; ) {
     let j = i + 1;
     let end = ranges[i].end;
     while (j < ranges.length && ranges[j].start - end <= gap && ranges[j].end - ranges[i].start <= window) end = Math.max(end, ranges[j++].end);
-    const start = ranges[i].start;
-    const bytes = new Uint8Array(await file.slice(start, end).arrayBuffer());
-    for (let k = i; k < j; ++k) each(k, bytes, ranges[k].start - start);
+    windows.push([i, j]);
     i = j;
+  }
+  // Several reads in flight (a browser's file reads each wait on another process); handed on in order.
+  const reads = new Array<Promise<Uint8Array> | undefined>(windows.length);
+  const read = (w: number) => {
+    const [i, j] = windows[w];
+    const end = ranges.slice(i, j).reduce((e, r) => Math.max(e, r.end), 0);
+    return file
+      .slice(ranges[i].start, end)
+      .arrayBuffer()
+      .then((b) => new Uint8Array(b));
+  };
+  for (let w = 0; w < Math.min(concurrency, windows.length); ++w) reads[w] = read(w);
+  for (let w = 0; w < windows.length; ++w) {
+    const bytes = await reads[w]!;
+    reads[w] = undefined;
+    if (w + concurrency < windows.length) reads[w + concurrency] = read(w + concurrency);
+    const [i, j] = windows[w];
+    for (let k = i; k < j; ++k) each(k, bytes, ranges[k].start - ranges[i].start);
   }
 }
 

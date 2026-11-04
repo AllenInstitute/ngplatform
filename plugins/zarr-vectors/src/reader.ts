@@ -56,7 +56,13 @@ export function httpAccess(storeUrl: string, options: { listing?: boolean } = {}
         if (range !== undefined) {
           headers.Range = "suffixLength" in range ? `bytes=-${range.suffixLength}` : `bytes=${range.offset}-${range.offset + range.length - 1}`;
         }
-        const response = await fetch(url, { headers, signal: options.signal });
+        let response = await fetch(url, { headers, signal: options.signal });
+        // A store still being made from a file on this computer answers 503 for a while: ask again.
+        for (let attempt = 0; response.status === 503 && attempt < 120; ++attempt) {
+          await new Promise((resolve) => setTimeout(resolve, Math.min(10_000, 500 * 2 ** attempt)));
+          options.signal?.throwIfAborted();
+          response = await fetch(url, { headers, signal: options.signal });
+        }
         if (response.status === 404 || response.status === 403) return undefined;
         if (!response.ok) throw new Error(`${url}: ${response.status} ${response.statusText}`);
         // Where the returned bytes start: a 206 says; a 200 is the whole file.

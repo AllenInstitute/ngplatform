@@ -22,7 +22,7 @@ self.addEventListener("message", (event: MessageEvent<{ type?: string; settings?
   if (event.data?.type === "settings" && event.data.settings !== undefined) setSpillSettings(event.data.settings);
 });
 
-serveVirtualStores(async (file, related) => {
+serveVirtualStores(async (file, related, progress) => {
   if (/\.(obj|stl|ply|gii)$/i.test(file.name) || FREESURFER_SURFACE.test(file.name)) {
     const mesh = await parseMeshFile(new Uint8Array(await file.arrayBuffer()), file.name);
     // A surface's values on its vertices, from the files beside it.
@@ -48,5 +48,5 @@ serveVirtualStores(async (file, related) => {
   if (/\.las$/i.test(file.name)) return pointStore(parseLas(new Uint8Array(await file.arrayBuffer())), file.name.replace(/\.las$/i, ""));
   if (/\.laz$/i.test(file.name)) return pointStore(parseLas(lazToLas(new Uint8Array(await file.arrayBuffer()), await lazPerf())), file.name.replace(/\.laz$/i, ""));
   if (/\.(csv|tsv|xyz)$/i.test(file.name)) return pointStore(parsePointTable(await file.text()), file.name.replace(/\.(csv|tsv|xyz)$/i, ""));
-  return openTractogram(file, file.name);
+  return openTractogram(file, file.name, progress);
 });
