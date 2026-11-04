@@ -305,7 +305,9 @@ class TimeSeries {
   // ------------------------------------------------------------- the image
 
   private sourceOf(layer: string): string | undefined {
-    const s = this.ctx.viewer.layerSpec(layer)?.source;
+    const spec = this.ctx.viewer.layerSpec(layer)?.source;
+    // A source is a string, {url}, or a list of either (the first is the image's).
+    const s = Array.isArray(spec) ? spec[0] : spec;
     const url = typeof s === "string" ? s : typeof (s as { url?: unknown })?.url === "string" ? (s as { url: string }).url : undefined;
     return omeZarrUrl(url);
   }
