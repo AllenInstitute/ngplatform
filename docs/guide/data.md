@@ -119,7 +119,8 @@ or reduced-resolution pages) is read as it is, not made again.
   its progress (you can cancel it). It is also in Datasets → the row's ⋯,
   beside **Clear its kept overview**. A 5 GB uncompressed TIFF (4096 × 4096
   × 160, 16-bit) builds in about 21 s (245 MB/s; reading the file alone
-  takes 7 s), measured headless with the file in memory.
+  takes 7 s), and its first zoomed-out view, without the build, takes
+  about 21 s; measured headless with the file in memory.
 - **Settings.** **View settings → Overviews of local images** sets the
   budget, lists what each image keeps, and clears it.
 
