@@ -254,7 +254,10 @@ converted voxels) it is read and decoded here and handed over. At most
 512 MB of finer slabs are read or reduced at once, and the level above
 asks for four of its slabs ahead so that each worker has work. A 5 GB TIFF
 (4096 × 4096 × 160 uint16, 64-row strips): 8.3 s, 615 MB/s, against 20.4 s
-(250 MB/s) in one worker; reading the file alone takes 6.3 to 7.4 s. Until it is done, chunks are made on request as
+(250 MB/s) in one worker; reading the file alone takes 6.3 to 7.4 s.
+Its first zoomed-out view without the build: 12.7 s against 21.3 s; the
+JS heaps peak at 489 MB against 873 MB, the renderer's resident memory at
+1.25 GB against 0.98 GB (the workers). Until it is done, chunks are made on request as
 above, and a cancelled build resumes from the levels already kept. The
 platform offers the build when an image of 1 GB or more is first viewed
 ("Build the overview of this 16 GB image in the background? … at most
