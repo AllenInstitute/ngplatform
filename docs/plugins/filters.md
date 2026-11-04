@@ -37,6 +37,11 @@ full-resolution result.
    Someone opening a link with your own Python is shown the code and asked
    before it runs.
 
+The tab's image and steps are kept with the workspace: a reload, undo or a
+shared link brings them back. Opening a link from before that, the tab
+shows the steps of its newest filtered layer. A filtered layer lies where
+its image does, oblique and flipped files included.
+
 ## Notes from users
 
 *Add your tips, workflows and problems here (edit this page on GitHub).*

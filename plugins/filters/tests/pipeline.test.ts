@@ -1,6 +1,6 @@
 /** The Filters tab's steps as chunkmirage ops. */
 import { describe, expect, it } from "vitest";
-import { blankSetting, FRANGI, makesLabels, MEDIAN, newStep, opOf, opsOf } from "../pipeline.js";
+import { blankSetting, FRANGI, makesLabels, MEDIAN, newStep, opOf, opsOf, readSteps, type Step, stepsOf } from "../pipeline.js";
 
 const halo = (code: unknown) => Number(/^#halo (\d+)$/m.exec(String(code))?.[1]);
 
@@ -51,5 +51,39 @@ describe("a python step", () => {
   it("is chunkmirage's python op with the code as written", () => {
     expect(opOf({ ...newStep("python"), code: "def apply(block):\n    return block\n" })).toEqual({ op: "python", code: "def apply(block):\n    return block\n" });
     expect(String(opOf(newStep("python")).code)).toMatch(/^#halo 0\n#output float32 image\n/);
+  });
+});
+
+describe("steps read back", () => {
+  const every: Step[] = [
+    { ...newStep("gaussian"), sigma: 2.5 },
+    { ...newStep("mean"), radius: 2 },
+    { ...newStep("median"), radius: 3 },
+    { ...newStep("dog"), sigma: 1.5 },
+    { ...newStep("frangi"), sigmaLow: 1, sigmaHigh: 4, bright: false },
+    { ...newStep("threshold"), low: 50, high: 90 },
+    { ...newStep("threshold"), low: 7 },
+    { ...newStep("morphology"), operation: "close", radius: 2 },
+    { ...newStep("python"), code: "#halo 1\ndef apply(block):\n    return block\n" },
+  ];
+
+  it("from a filtered layer's ops, which they make again", () => {
+    const steps = stepsOf(opsOf(every))!;
+    expect(steps.map((s) => s.kind)).toEqual(every.map((s) => s.kind));
+    expect(opsOf(steps)).toEqual(opsOf(every));
+    expect(stepsOf([{ op: "resample" }])).toBeUndefined();
+    expect(stepsOf([])).toBeUndefined();
+  });
+
+  it("from the workspace, an emptied setting empty again", () => {
+    const json = JSON.parse(JSON.stringify(every.map((s) => ({ ...s })), (_, v) => (typeof v === "number" && !Number.isFinite(v) ? null : v)));
+    const steps = readSteps(json)!;
+    expect(opsOf(steps)).toEqual(opsOf(every));
+    expect(Number.isNaN(steps[6].high)).toBe(true);
+    const emptied = readSteps([{ kind: "gaussian", sigma: null }, { kind: "nonsense" }])!;
+    expect(Number.isNaN(emptied[0].sigma)).toBe(true);
+    expect(blankSetting(emptied[0])).toBe(true);
+    expect(emptied[1].kind).toBe("gaussian");
+    expect(readSteps(undefined)).toBeUndefined();
   });
 });

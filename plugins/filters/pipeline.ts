@@ -169,3 +169,72 @@ export function blankSetting(s: Step): boolean {
             : [s.radius];
   return needed.some((v) => !Number.isFinite(v));
 }
+
+const sameCode = (a: unknown, b: string) => String(a ?? "").replace(/^#halo[ \d]*$/m, "#halo") === b.replace(/^#halo[ \d]*$/m, "#halo");
+
+/** A number read back (from ops or saved steps, where NaN was written as null), or `fallback`. */
+const numberOr = (value: unknown, fallback: number) => (typeof value === "number" && Number.isFinite(value) ? value : fallback);
+
+/**
+ * The steps that make `ops` (the inverse of `opsOf`), so a filtered layer's
+ * pipeline can be edited again; undefined when an op is not one a step makes.
+ */
+export function stepsOf(ops: Record<string, unknown>[] | undefined): Step[] | undefined {
+  if (!Array.isArray(ops) || ops.length === 0) return undefined;
+  const steps: Step[] = [];
+  for (const op of ops) {
+    const params = (op.params ?? {}) as Record<string, unknown>;
+    switch (op.op) {
+      case "gaussian":
+      case "dog":
+        steps.push({ ...newStep(op.op), sigma: numberOr(op.sigma, 1) });
+        break;
+      case "uniform":
+        steps.push({ ...newStep("mean"), radius: Math.max(1, Math.round((numberOr(op.size, 3) - 1) / 2)) });
+        break;
+      case "threshold":
+        steps.push({ ...newStep("threshold"), low: numberOr(op.low, 100), high: numberOr(op.high, Number.NaN) });
+        break;
+      case "morphology":
+        steps.push({ ...newStep("morphology"), operation: op.operation === "close" ? "close" : "open", radius: numberOr(op.radius, 1) });
+        break;
+      case "python":
+        if (sameCode(op.code, MEDIAN)) steps.push({ ...newStep("median"), radius: numberOr(params.radius, 1) });
+        else if (sameCode(op.code, FRANGI)) steps.push({ ...newStep("frangi"), sigmaLow: numberOr(params.sigma_low, 1), sigmaHigh: numberOr(params.sigma_high, 3), bright: params.bright !== false });
+        else steps.push({ ...newStep("python"), code: String(op.code ?? "") });
+        break;
+      default:
+        return undefined;
+    }
+  }
+  return steps;
+}
+
+/** The Filters tab as kept in the workspace (and its link): the image chosen and the steps. */
+export interface SavedFilters {
+  image?: string;
+  steps?: Partial<Record<keyof Step, unknown>>[];
+}
+
+/** Steps kept in the workspace, read back (each setting checked, a missing one the default). */
+export function readSteps(saved: SavedFilters["steps"]): Step[] | undefined {
+  if (!Array.isArray(saved) || saved.length === 0) return undefined;
+  return saved.map((s) => {
+    const kind = STEP_KINDS.some(([k]) => k === s.kind) ? (s.kind as StepKind) : "gaussian";
+    const d = newStep(kind);
+    // An emptied setting was kept as null: empty again (NaN); a missing one is the default.
+    const num = (v: unknown, fallback: number) => (v === null ? Number.NaN : numberOr(v, fallback));
+    return {
+      kind,
+      sigma: num(s.sigma, d.sigma),
+      radius: num(s.radius, d.radius),
+      sigmaLow: num(s.sigmaLow, d.sigmaLow),
+      sigmaHigh: num(s.sigmaHigh, d.sigmaHigh),
+      bright: typeof s.bright === "boolean" ? s.bright : d.bright,
+      low: num(s.low, d.low),
+      high: num(s.high, Number.NaN),
+      operation: s.operation === "close" ? "close" : "open",
+      code: typeof s.code === "string" ? s.code : d.code,
+    };
+  });
+}
