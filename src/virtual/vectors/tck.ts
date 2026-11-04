@@ -51,6 +51,14 @@ export async function readTck(
   const slice = Math.max(12, Math.floor((options.slice ?? 8 * 1024 * 1024) / 12) * 12);
   const little = header.littleEndian;
   let at = header.offset;
+  // The next slice is read while this one is handed on.
+  let ahead = at;
+  const readAhead = () => {
+    const start = ahead;
+    ahead = Math.min(file.size, ahead + slice);
+    return start < file.size ? file.slice(start, ahead).arrayBuffer() : Promise.resolve(new ArrayBuffer(0));
+  };
+  let next = readAhead();
   let streamlines = 0;
   // The streamline being read, carried across slices: its points and where it starts.
   let carry = new Float32Array(0);
@@ -59,7 +67,8 @@ export async function readTck(
   while (!done && at < file.size) {
     options.signal?.throwIfAborted();
     const sliceStart = at;
-    const bytes = new Uint8Array(await file.slice(at, Math.min(file.size, at + slice)).arrayBuffer());
+    const bytes = new Uint8Array(await next);
+    next = readAhead();
     at += bytes.byteLength;
     const f = floatsOf(bytes.subarray(0, bytes.byteLength - (bytes.byteLength % 12)), little);
     const triplets = f.length / 3;

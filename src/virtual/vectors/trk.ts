@@ -150,10 +150,19 @@ export async function readTrk(
   const little = header.littleEndian;
   let carry = new Uint8Array(0);
   let at = TRK_HEADER_SIZE;
+  // The next slice is read while this one is binned.
+  let ahead = at;
+  const readAhead = () => {
+    const start = ahead;
+    ahead = Math.min(file.size, ahead + slice);
+    return start < file.size ? file.slice(start, ahead).arrayBuffer() : Promise.resolve(new ArrayBuffer(0));
+  };
+  let next = readAhead();
   let streamlines = 0;
   while (at < file.size || carry.byteLength > 0) {
     options.signal?.throwIfAborted();
-    const fresh = at < file.size ? new Uint8Array(await file.slice(at, Math.min(file.size, at + slice)).arrayBuffer()) : new Uint8Array(0);
+    const fresh = new Uint8Array(await next);
+    next = readAhead();
     at += fresh.byteLength;
     let bytes = fresh;
     if (carry.byteLength > 0) {
