@@ -217,7 +217,11 @@ export function middleauthProvider(env: AuthEnvironment): AuthProvider {
       pending = env
         .fetch(`${app}/auth_info`)
         .then(async (r) => (r.ok ? normaliseServer(String((await r.json()).login_url ?? "")) : undefined))
-        .catch(() => undefined);
+        .catch(() => {
+          // Not reached (offline, say): asked again next time rather than taken as "not an app" for the visit.
+          loginUrls.delete(app);
+          return undefined;
+        });
       loginUrls.set(app, pending);
     }
     return pending;

@@ -15,7 +15,14 @@ import { statusLabel } from "../../platform/auth.js";
 import { accountLabel, accountStatus, GOOGLE_SCOPES, type GoogleSignIn } from "../../platform/google_auth.js";
 import type { AuthService, AuthStatus, SourceSignIn } from "../../sdk/types.js";
 import { clear, h } from "../dom.js";
+import { toast } from "../overlays.js";
 import type { Workbench } from "../workbench.js";
+
+/** An error from a click here: shown at once (a toast) and kept in the Activity tab. */
+function authError(wb: Workbench, message: string): void {
+  wb.log.add(message, "error", "Auth");
+  toast(message, "error");
+}
 
 /** The user guide's page on signing in. */
 export const SIGNING_IN_GUIDE = "https://ngplatform.readthedocs.io/en/latest/guide/signing-in/";
@@ -66,15 +73,10 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
     h(
       "div",
       { class: "section" },
-      h("p", { class: "note first" }, "Sign-ins for data that needs one, and who you are signed in as. Sign-ins and rules stay in this browser, never in the link."),
-      h("h3", { class: "section-title" }, "Google accounts"),
+      h("p", { class: "note first" }, "Kept in this browser, never in the link."),
+      h("h3", { class: "section-title", title: "Each account keeps its own sign-in. The default account reads every gs+google:// bucket that no rule gives another account." }, "Google accounts"),
       accounts,
       addAccount,
-      h(
-        "p",
-        { class: "note" },
-        "Each account keeps its own sign-in. The default account reads every gs+google:// bucket that no rule gives another account; a rule (below) chooses the account for a bucket or a folder.",
-      ),
     ),
     h("div", { class: "section" }, h("h3", { class: "section-title" }, "Other sign-ins"), list, reload),
     h(
@@ -90,8 +92,8 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
       ruleEditor,
       h(
         "p",
-        { class: "note" },
-        "A rule gives the data under an address a sign-in: gs://bucket/, gs://bucket/folder/ or https://host/path/. The longest address that covers a source wins. A layer gets its rule's sign-in when it is added or the workspace is opened, and a gs+google:// bucket is read with its rule's Google account (else the default one). Kept in this browser.",
+        { class: "note", title: "The longest address that covers a source wins. A layer gets its rule's sign-in when it is added or the workspace is opened." },
+        "A rule gives data under an address (gs://bucket/, https://host/path/) a sign-in.",
       ),
     ),
     adding.element,
@@ -102,8 +104,8 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
       layers,
       h(
         "p",
-        { class: "note" },
-        "The sign-in a layer reads its data with is part of its source (gs+google://bucket/… for gs://bucket/…), so the link keeps it; the Google account does not go in the link: choosing one sets the rule for the layer's bucket.",
+        { class: "note", title: "The sign-in is part of a layer's source (gs+google://bucket/… for gs://bucket/…), so the link keeps it. The Google account does not go in the link: choosing one sets the rule for the layer's bucket." },
+        "The link keeps each layer's kind of sign-in, not the account.",
       ),
     ),
     googleSection(wb, google),
@@ -139,7 +141,7 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
       wb.log.add(`${what === "in" ? "Signed in to" : "Signed out of"} ${service.title}.`, "info", "Auth");
       reload.hidden = false;
     } catch (e) {
-      wb.log.add(`${service.title}: ${(e as Error).message}`, "error", "Auth");
+      authError(wb, `${service.title}: ${(e as Error).message}`);
     }
     check(service);
   };
@@ -193,7 +195,7 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
     try {
       wb.log.add(await run(), "info", "Auth");
     } catch (e) {
-      wb.log.add(`Google: ${(e as Error).message}`, "error", "Auth");
+      authError(wb, `Google: ${(e as Error).message}`);
     }
   };
 
@@ -203,7 +205,7 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
     const configured = google.clientId() !== undefined;
     clear(
       accounts,
-      ...(all.length === 0 ? [h("p", { class: "empty" }, configured ? "No Google account is signed in here yet." : "Google sign-in is not set up: it needs an OAuth client ID (Google sign-in, below).")] : []),
+      ...(all.length === 0 ? [h("p", { class: "empty" }, configured ? "No Google account signed in." : "Google sign-in is not set up: set an OAuth client ID under Google sign-in setup, below.")] : []),
       ...all.map(({ email }) => {
         const status = accountStatus(google, email);
         const label = accountLabel(email);
@@ -251,7 +253,7 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
       void googleAct(async () => `Signed in to Google as ${accountLabel(await google.signIn())}.`);
     });
     button.disabled = !configured;
-    button.title = configured ? "Opens Google's account chooser" : "Set a Google OAuth client ID first (Google sign-in, below)";
+    button.title = configured ? "Opens Google's account chooser" : "Set a Google OAuth client ID first (Google sign-in setup, below)";
     clear(addAccount, button);
   };
 
@@ -285,7 +287,7 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
       if (apply) applyRule(kept);
       return kept;
     } catch (e) {
-      wb.log.add((e as Error).message, "error", "Auth");
+      authError(wb, (e as Error).message);
       return undefined;
     }
   };
@@ -295,7 +297,7 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
     const signIns = auth.sourceSignIns(sources());
     clear(
       ruleList,
-      ...(all.length === 0 ? [h("p", { class: "empty" }, "No rules: each layer keeps the sign-in its source names, and gs+google:// buckets are read with the default account.")] : []),
+      ...(all.length === 0 ? [h("p", { class: "empty", title: "Each layer keeps the sign-in its source names; gs+google:// buckets are read with the default account." }, "No rules.")] : []),
       ...all.map((rule) => {
         const select = targetSelect(storageOf(rule.prefix) ?? "gs", google, signIns, ruleValue(rule));
         select.setAttribute("aria-label", `Sign-in for ${rule.prefix}`);
@@ -378,7 +380,7 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
           try {
             return (await provider.services({ sources: all, manual: auth.manual(provider.id) })).map((service) => ({ provider: provider.id, service }));
           } catch (e) {
-            wb.log.add(`${provider.title}: ${(e as Error).message}`, "error", "Auth");
+            authError(wb, `${provider.title}: ${(e as Error).message}`);
             return [];
           }
         }),
@@ -616,7 +618,7 @@ function addServerSection(wb: Workbench): { element: HTMLElement; dispose: () =>
       auth.addManual(input.value, kind.value || undefined);
       input.value = "";
     } catch (e) {
-      wb.log.add((e as Error).message, "error", "Auth");
+      authError(wb, (e as Error).message);
     }
   };
   input.addEventListener("keydown", (e) => {
@@ -629,8 +631,8 @@ function addServerSection(wb: Workbench): { element: HTMLElement; dispose: () =>
     h("div", { class: "auth-add auth-add-server" }, input, kind, h("button", { class: "btn outline small", type: "button", onclick: add }, "Add")),
     h(
       "p",
-      { class: "note" },
-      "To sign in before opening the data. Middleauth: a CAVE or CATMAID site's address (it names its sign-in server) or the sign-in server's own. ngauth: the server that hands out tokens for gs+ngauth+https:// buckets.",
+      { class: "note", title: "Middleauth: a CAVE or CATMAID site's address (it names its sign-in server) or the sign-in server's own. ngauth: the server that hands out tokens for gs+ngauth+https:// buckets." },
+      "To sign in before opening the data.",
     ),
   );
   return { element, dispose: auth.onChanged(kinds) };
@@ -647,33 +649,34 @@ function googleSection(wb: Workbench, google: GoogleSignIn): HTMLElement {
   const save = () => {
     google.setClientId(input.value);
     wb.log.add(input.value.trim() === "" ? "Google sign-in uses the built-in client ID again." : "Google OAuth client ID saved in this browser.", "info", "Auth");
-    if (google.clientId() !== undefined) void google.prepare().catch((e) => wb.log.add(`Google: ${(e as Error).message}`, "error", "Auth"));
+    if (google.clientId() !== undefined) void google.prepare().catch((e) => authError(wb, `Google: ${(e as Error).message}`));
   };
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") save();
   });
-  return h(
-    "div",
+  // Setting up: folded away once the site has a client ID, open while it has none.
+  const details = h(
+    "details",
     { class: "section auth-google" },
-    h("h3", { class: "section-title" }, "Google sign-in"),
+    h("summary", { class: "section-title" }, "Google sign-in setup"),
     h(
       "p",
-      { class: "note first" },
-      "Signs this browser in to Google, for Google Cloud Storage buckets your accounts can read: a layer reads one with Google chosen above (gs+google://). A token lasts about an hour; sign in again to renew it. It asks to:",
+      { class: "note first", title: "A layer reads a bucket with Google when its source is gs+google://. A token lasts about an hour; sign in again to renew it." },
+      "For Google Cloud Storage buckets your accounts can read. It asks to:",
     ),
     h("ul", { class: "note auth-scopes" }, ...GOOGLE_SCOPES.map((s) => h("li", {}, h("code", {}, s.scope), `: ${s.what}`))),
     h("label", { class: "auth-field" }, h("span", {}, "Google OAuth client ID"), h("span", { class: "auth-add" }, input, h("button", { class: "btn outline small", type: "button", onclick: save }, "Save"))),
     h(
       "p",
       { class: "note" },
-      google.builtInClientId
-        ? "This site has one built in; one set here replaces it in this browser (empty goes back to it). "
-        : "This site has none built in. ",
-      "Make one in the Google Cloud console: an OAuth consent screen, then a client of type Web application whose authorised JavaScript origins include this site's address (",
-      h("code", {}, location.origin),
-      "). ",
+      google.builtInClientId ? "This site has one built in; one set here replaces it in this browser (empty goes back to it). " : "This site has none built in. ",
+      "To make one, see ",
       h("a", { href: SIGNING_IN_GUIDE, target: "_blank", rel: "noopener noreferrer" }, "Signing in"),
-      " in the guide has the steps.",
+      " (its origin is ",
+      h("code", {}, location.origin),
+      ").",
     ),
-  );
+  ) as HTMLDetailsElement;
+  details.open = google.clientId() === undefined;
+  return details;
 }
