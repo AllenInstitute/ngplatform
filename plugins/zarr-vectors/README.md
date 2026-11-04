@@ -332,8 +332,12 @@ here in `src/virtual/*.spec.ts`). For large files:
   file itself, which Track filtering uses instead of reading every chunk
   their manifests name. While its first pass runs, its keys are answered
   `503`, which `httpAccess` (`reader.ts`) asks again, as Neuroglancer's
-  reads do. Past what the browser can hold, it fails naming the local
-  runner ("Open through the local runner (Jobs → This computer)").
+  reads do. Past the storage limit (View settings → Local tractograms,
+  4 GB by default) only a sample is kept: level 0 is then about 1 in 10ᵏ
+  streamlines, whole (`coarsening_method: "subsample"`), and the page
+  offers the runner's conversion. Past even 1 in 10 000, it fails naming
+  the local runner ("Open through the local runner (Jobs → This
+  computer)").
 - **Meshes** of more than a million triangles: one face group per vertex
   fragment in every cell and no cross-cell faces (border vertices are
   copied), with levels whose chunks double (`coarsening_method:

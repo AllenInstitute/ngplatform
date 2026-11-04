@@ -351,7 +351,8 @@ async function decodeBlock(stack: Pick<Stack, "littleEndian">, page: Page, raw: 
     const padded = new Uint8Array(expected);
     padded.set(data);
     data = padded;
-  } else if (data.byteLength > expected || data.byteOffset !== 0) data = data.slice(0, expected);
+  } else if (data.byteLength > expected) data = data.subarray(0, expected);
+  // Uncompressed blocks are views of what was read (several blocks at once), changed in place below: each its own bytes.
   if (page.predictor === 3) return undoFloatPredictor(data, width * page.samples, rows, size, page.samples);
   if (!stack.littleEndian && size > 1) {
     for (let i = 0; i < data.length; i += size) data.subarray(i, i + size).reverse();
@@ -393,6 +394,38 @@ function undoFloatPredictor(data: Uint8Array, samples: number, rows: number, siz
   return out;
 }
 
+/** Decoded strips and tiles kept by a TIFF source. */
+const BLOCK_CACHE = 256 << 20;
+/** Small strips are read several at once, about this many bytes (one read costs about as much as 0.5 MB more). */
+const READ_AHEAD = 1 << 20;
+/** One read is at most this long. */
+const MAX_READ = 32 << 20;
+
+/**
+ * Blocks `indices` of a page (strips or tiles, ascending), as stored: runs
+ * of blocks that follow one another in the file are read at once (each
+ * block then a view of that read).
+ */
+async function readBlocks(file: Blob, page: Page, indices: number[]): Promise<Uint8Array[]> {
+  const out: Uint8Array[] = new Array(indices.length);
+  const reads: Promise<void>[] = [];
+  for (let i = 0; i < indices.length; ) {
+    const start = page.offsets[indices[i]];
+    let end = start + page.counts[indices[i]];
+    let j = i + 1;
+    while (j < indices.length && page.offsets[indices[j]] === end && end + page.counts[indices[j]] - start <= MAX_READ) end += page.counts[indices[j++]];
+    const [from, to] = [i, j];
+    reads.push(
+      bytesAt(file, start, end).then((bytes) => {
+        for (let k = from; k < to; ++k) out[k] = bytes.subarray(page.offsets[indices[k]] - start, page.offsets[indices[k]] - start + page.counts[indices[k]]);
+      }),
+    );
+    i = j;
+  }
+  await Promise.all(reads);
+  return out;
+}
+
 /**
  * The stack as one array, planes, y, x, little-endian (plane p being page
  * `pageOf(p)`): rows are decoded from their strips or tiles as they are
@@ -417,24 +450,36 @@ export function tiffSource(file: Blob, stack: Pick<Stack, "pages" | "littleEndia
     }
     return out;
   };
-  const blocks = new Lru<Uint8Array>(128 << 20);
+  const blocks = new Lru<Uint8Array>(BLOCK_CACHE);
+  const decodedSize = (d: Uint8Array) => d.byteLength;
+  const stripRows = (page: Page, b: number) => Math.min(page.blockHeight, page.height - b * page.blockHeight);
+  const decodeStrip = async (page: Page, b: number, raw: Uint8Array) => rgba(await decodeBlock(stack, page, raw, page.width, stripRows(page, b)), page.samples);
+  /** Strips read at once: as many as make about READ_AHEAD bytes (small strips cost a read each), in aligned groups. */
+  const perRead = (page: Page) => (page.tiled ? 1 : Math.max(1, Math.min(64, Math.floor(READ_AHEAD / Math.max(1, rowBytes * page.blockHeight)))));
   /** Rows [b·blockHeight, …) of a page, the whole width: one strip, or one row of tiles. */
-  const band = (z: number, b: number) =>
-    blocks.get(
+  const band = (z: number, b: number) => {
+    const page = stack.pages[z];
+    const per = perRead(page);
+    if (per > 1 && !blocks.has(`${z}:${b}`)) {
+      // The strip's group, those not kept yet: read in as few reads as the file allows, then each decoded.
+      const first = b - (b % per);
+      const wanted: number[] = [];
+      for (let i = first; i < Math.min(page.offsets.length, first + per); ++i) if (i === b || !blocks.has(`${z}:${i}`)) wanted.push(i);
+      const raws = readBlocks(file, page, wanted);
+      raws.catch(() => {});
+      wanted.forEach((i, k) => void blocks.get(`${z}:${i}`, async () => decodeStrip(page, i, (await raws)[k]), decodedSize).catch(() => {}));
+    }
+    return blocks.get(
       `${z}:${b}`,
       async () => {
-        const page = stack.pages[z];
-        const rows = Math.min(page.blockHeight, page.height - b * page.blockHeight);
-        if (!page.tiled) {
-          const raw = await bytesAt(file, page.offsets[b], page.offsets[b] + page.counts[b]);
-          return rgba(await decodeBlock(stack, page, raw, page.width, rows), page.samples);
-        }
+        const rows = stripRows(page, b);
+        if (!page.tiled) return decodeStrip(page, b, await bytesAt(file, page.offsets[b], page.offsets[b] + page.counts[b]));
         const across = Math.ceil(page.width / page.blockWidth);
         const out = new Uint8Array(rows * rowBytes);
+        // A row of tiles, read in as few reads as the file allows (tiles usually follow one another).
+        const raws = await readBlocks(file, page, Array.from({ length: across }, (_, t) => b * across + t));
         await Promise.all(
-          Array.from({ length: across }, async (_, t) => {
-            const index = b * across + t;
-            const raw = await bytesAt(file, page.offsets[index], page.offsets[index] + page.counts[index]);
+          raws.map(async (raw, t) => {
             const tile = rgba(await decodeBlock(stack, page, raw, page.blockWidth, page.blockHeight), page.samples);
             const x0 = t * page.blockWidth;
             const w = Math.min(page.blockWidth, page.width - x0);
@@ -443,29 +488,40 @@ export function tiffSource(file: Blob, stack: Pick<Stack, "pages" | "littleEndia
         );
         return out;
       },
-      (d) => d.byteLength,
+      decodedSize,
     );
+  };
+  /** Decodes rows [start, end) into `out`; the blocks wanted are decoded at once. */
+  const readInto = async (start: number, end: number, out: Uint8Array): Promise<number> => {
+    end = Math.min(end, planeBytes * planes, start + out.byteLength);
+    const parts: { at: number; z: number; b: number; from: number; take: number }[] = [];
+    for (let at = start; at < end; ) {
+      const plane = Math.floor(at / planeBytes);
+      const z = pageOf(plane);
+      const inPlane = at - plane * planeBytes;
+      const page = stack.pages[z];
+      const b = Math.floor(Math.floor(inPlane / rowBytes) / page.blockHeight);
+      const from = inPlane - b * page.blockHeight * rowBytes;
+      const take = Math.min(end - at, Math.min(page.blockHeight, page.height - b * page.blockHeight) * rowBytes - from);
+      parts.push({ at, z, b, from, take });
+      at += take;
+    }
+    await Promise.all(
+      parts.map(async ({ at, z, b, from, take }) => {
+        const data = await band(z, b);
+        out.set(data.subarray(from, from + take), at - start);
+      }),
+    );
+    return Math.max(0, end - start);
+  };
   return {
     size: planeBytes * planes,
     async read(start, end) {
-      const out = new Uint8Array(Math.max(0, end - start));
-      let at = start;
-      while (at < end) {
-        const plane = Math.floor(at / planeBytes);
-        if (plane >= planes) break;
-        const z = pageOf(plane);
-        const inPlane = at - plane * planeBytes;
-        const y = Math.floor(inPlane / rowBytes);
-        const page = stack.pages[z];
-        const b = Math.floor(y / page.blockHeight);
-        const data = await band(z, b);
-        const from = inPlane - b * page.blockHeight * rowBytes;
-        const take = Math.min(end - at, data.byteLength - from);
-        out.set(data.subarray(from, from + take), at - start);
-        at += take;
-      }
+      const out = new Uint8Array(Math.max(0, Math.min(end, planeBytes * planes) - start));
+      await readInto(start, end, out);
       return out;
     },
+    readInto,
   };
 }
 

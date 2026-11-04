@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ObjectReader, openZarrVectorsStore, ShardIndexCache, LevelPipeline } from "../reader.js";
-import { cacheBudget, MemorySpill, setSpillSettings, type Spill } from "../../../../src/virtual/vectors/spill.js";
+import { cacheBudget, diskBudget, MemorySpill, setSpillSettings, type Spill, spillPlan } from "../../../../src/virtual/vectors/spill.js";
 import { CHECKPOINT, cellSize, sampleDepth, sampleLevels, StreamlineStore } from "../../../../src/virtual/vectors/streamlines.js";
 import { parseTckHeader, readTck, readTckStreamlines } from "../../../../src/virtual/vectors/tck.js";
 import { openTractogram } from "../../../../src/virtual/vectors/tractograms.js";
@@ -265,6 +265,77 @@ describe("the spill and the index", () => {
     expect(spill.size).toBe(3 + big.byteLength);
     expect(spill.read(1, 2)).toEqual(new Uint8Array([2, 3]));
     expect(spill.read(at2 + 32 * 2 ** 20 - 5, 10)).toEqual(big.subarray(32 * 2 ** 20 - 5, 32 * 2 ** 20 + 5));
+  });
+});
+
+describe("the disk budget", () => {
+  const GB = 2 ** 30;
+  it("copies every streamline within the budget, else the coarsest sample that fits", () => {
+    const budget = diskBudget(undefined, { quota: 600 * GB, free: 300 * GB });
+    expect(budget).toBe(4 * GB);
+    // 100 MB of points: in memory, whole.
+    expect(spillPlan(100 * 2 ** 20, budget)).toMatchObject({ mode: "whole", every: 1, place: "memory" });
+    // 2 GB: on disk, whole (about 3 GB).
+    expect(spillPlan(2 * GB, budget)).toMatchObject({ mode: "whole", every: 1, place: "disk" });
+    // 20 GB would copy 30 GB: one in ten is about 3.6 GB.
+    const plan = spillPlan(20 * GB, budget);
+    expect(plan).toMatchObject({ mode: "sample", every: 10, place: "disk" });
+    expect(plan.bytes).toBeLessThanOrEqual(budget);
+    expect(plan.wholeBytes).toBe(30 * GB);
+    // A smaller limit: one in a hundred; none on disk: a sample small enough for memory.
+    expect(spillPlan(20 * GB, 1 * GB)).toMatchObject({ mode: "sample", every: 100 });
+    expect(spillPlan(5 * GB, diskBudget(0, { quota: 600 * GB, free: 300 * GB }))).toMatchObject({ mode: "sample", every: 100, place: "memory" });
+    // Where the worker cannot write to disk: the same, in memory.
+    expect(spillPlan(2 * GB, budget, false)).toMatchObject({ mode: "sample", place: "memory" });
+    // Past what even one in 10,000 needs.
+    expect(spillPlan(20000 * GB, 1 * GB).mode).toBe("none");
+    // The quota and free space bound the budget.
+    expect(diskBudget(100 * GB, { quota: 50 * GB, free: 50 * GB })).toBe(5 * GB);
+    expect(diskBudget(100 * GB, { quota: 600 * GB, free: 2 * GB })).toBeCloseTo(1.6 * GB);
+  });
+
+  it("keeps only a sample past it: level 0 the sampled streamlines whole, read back by id as the file has them", async () => {
+    const lines = synthetic(60_000, 11);
+    const input = {
+      scalarNames: [],
+      propertyNames: [],
+      expectedCount: lines.length,
+      extent: 120,
+      name: "s",
+      async read(onBatch: (b: TrkBatch) => void | Promise<void>) {
+        const offsets = new Uint32Array(lines.length + 1);
+        lines.forEach((l, i) => (offsets[i + 1] = offsets[i] + l.length));
+        await onBatch({ points: Float32Array.from(lines.flat(2)), offsets, scalars: new Float32Array(0), properties: new Float32Array(0) });
+        return lines.length;
+      },
+    };
+    const whole = await StreamlineStore.build(input);
+    const sample = await StreamlineStore.build(input, { sampleEvery: 10 });
+    const kept = lines.map((_, i) => i).filter((i) => sampleDepth(i, 1) >= 1);
+    const s = sample.stats();
+    expect(s.sampleEvery).toBe(10);
+    expect(s.streamlines).toBe(lines.length);
+    expect(s.levels[0].streamlines).toBe(kept.length);
+    expect(s.levels[0].vertices).toBe(kept.reduce((n, i) => n + lines[i].length, 0));
+    // Level 0 holds the ids the whole store's level 1 does (60,000 streamlines give one sample level).
+    expect(s.levels.map((l) => l.streamlines)).toEqual([whole.stats().levels[1].streamlines]);
+    expect(s.spillBytes).toBeLessThan(whole.stats().spillBytes / 5);
+    const level0 = JSON.parse(new TextDecoder().decode((await sample.get("0/zarr.json"))!)).attributes.zarr_vectors_level;
+    expect(level0.coarsening_method).toBe("subsample");
+    expect(level0.object_sparsity).toBeCloseTo(kept.length / lines.length, 5);
+    // The reader sees a store of the sampled streamlines, every point of each.
+    const a = access(sample);
+    const zv = await openZarrVectorsStore(a as never, []);
+    const ids = [kept[0], kept[1], kept[kept.length - 1]].map(BigInt);
+    const curves = await new ObjectReader(a as never, zv.description, zv.levels[0]).readCurves(ids, signal);
+    ids.forEach((id, i) => expect(Array.from(curves.positions.subarray(3 * curves.offsets[i], 3 * curves.offsets[i + 1]))).toEqual(lines[Number(id)].flat()));
+    // By id (as Track filtering asks): the sampled ones only, whole.
+    const notKept = lines.findIndex((_, i) => sampleDepth(i, 1) === 0);
+    const byId = await sample.curves([kept[0], notKept], 0);
+    expect(Array.from(byId.ids, Number)).toEqual([kept[0]]);
+    expect(Array.from(byId.positions)).toEqual(lines[kept[0]].flat());
+    whole.close();
+    sample.close();
   });
 });
 

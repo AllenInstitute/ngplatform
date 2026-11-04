@@ -7,11 +7,11 @@ import { shortcutRows } from "../core/keybindings.js";
 import { InputError, layerCount, parseInput } from "../core/state_io.js";
 import { layerNameFor } from "../core/state_io.js";
 import { closeSheet, sheet, showSheet, toast } from "./overlays.js";
-import { collectDropped, LocalData, type FoundDataset, type LocalEntry } from "../virtual/local_data.js";
+import { type DroppedItem, LocalData, type FoundDataset, type LocalEntry } from "../virtual/local_data.js";
 import { clear, h, icon, keyLabel } from "./dom.js";
 import { kindLabel } from "./panels/format.js";
 import { renderOverviewSettings } from "./overview.js";
-import { setVectorCacheMegabytes, vectorCacheMegabytes } from "../virtual/vectors/formats.js";
+import { setTractogramDiskGigabytes, setVectorCacheMegabytes, tractogramDiskGigabytes, vectorCacheMegabytes } from "../virtual/vectors/formats.js";
 import type { Workbench } from "./workbench.js";
 
 // -------------------------------------------------------------------- open
@@ -35,15 +35,16 @@ export async function openFromDevice(wb: Workbench, folder: boolean): Promise<bo
 
 /**
  * Opens what was dropped on the window (files or folders): read in place,
- * as Open from device reads them.  Call it from the drop event itself.
+ * as Open from device reads them.  `dropped` is taken from the drop event
+ * itself (`collectDropped`), which the browser empties once it returns.
  */
-export async function openDropped(wb: Workbench, transfer: DataTransfer): Promise<boolean> {
-  const entry = await wb.localData.openDropped(collectDropped(transfer));
-  return entry !== undefined && (await addLocalEntry(wb, entry));
+export async function openDroppedItems(wb: Workbench, dropped: Promise<DroppedItem[]>, name?: (name: string) => string): Promise<boolean> {
+  const entry = await wb.localData.openDropped(dropped);
+  return entry !== undefined && (await addLocalEntry(wb, entry, name));
 }
 
 /** Adds what a local entry holds as datasets of the scene; false when it holds nothing readable. */
-async function addLocalEntry(wb: Workbench, entry: LocalEntry): Promise<boolean> {
+async function addLocalEntry(wb: Workbench, entry: LocalEntry, name: (name: string) => string = (n) => n): Promise<boolean> {
   const local = wb.localData;
   const datasets = await local.detect(entry.id);
   if (datasets.length === 0) {
@@ -51,7 +52,7 @@ async function addLocalEntry(wb: Workbench, entry: LocalEntry): Promise<boolean>
     void local.forget(entry.id);
     return false;
   }
-  for (const dataset of datasets) wb.store.addDataset({ source: dataset.source, name: dataset.name, kind: dataset.kind, layer: dataset.layer });
+  for (const dataset of datasets) wb.store.addDataset({ source: dataset.source, name: name(dataset.name), kind: dataset.kind, layer: dataset.layer });
   wb.docks.show("layer");
   return true;
 }
@@ -369,6 +370,8 @@ export function showSettingsSheet(wb: Workbench): void {
   // Kept in this browser, not the workspace: what the tab may hold of large local files.
   const cache = h("input", { class: "text-input", type: "number", min: "0", step: "64", value: String(vectorCacheMegabytes()), "aria-label": "Memory for tractogram cells, MB" }) as HTMLInputElement;
   cache.addEventListener("change", () => setVectorCacheMegabytes(Math.max(0, Number(cache.value) || 0)));
+  const disk = h("input", { class: "text-input", type: "number", min: "0", step: "1", placeholder: "4", value: String(tractogramDiskGigabytes() ?? ""), "aria-label": "Browser storage for a tractogram, GB" }) as HTMLInputElement;
+  disk.addEventListener("change", () => setTractogramDiskGigabytes(disk.value.trim() === "" || !(Number(disk.value) >= 0) ? undefined : Number(disk.value)));
   // Kept in this browser: offers of the plugins that are off (src/ui/plugin_offers.ts).
   const offers = h("input", { type: "checkbox", id: "show-offers" }) as HTMLInputElement;
   offers.checked = wb.offers.enabled;
@@ -390,6 +393,16 @@ export function showSettingsSheet(wb: Workbench): void {
           },
           h("span", {}, "Memory for decoded cells (MB, 0 = automatic)"),
           cache,
+        ),
+        h(
+          "label",
+          {
+            class: "field",
+            title:
+              "Kept in this browser. Reading a tractogram copies its points into the browser's storage, about 1.5 times the file, while it is open. Past this limit only a sample is copied (1 in 10, 100, … streamlines), and the runner on this computer is offered for the whole file. Never more than 10% of the browser's quota or 80% of what is free. Empty: 4 GB. 0: nothing on disk (a sample of up to 256 MB in memory).",
+          },
+          h("span", {}, "Storage for a tractogram (GB, empty = 4)"),
+          disk,
         ),
         h(
           "label",

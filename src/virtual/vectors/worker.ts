@@ -17,7 +17,7 @@ import { pointStore, skeletonStore } from "./points.js";
 import { openTractogram } from "./tractograms.js";
 import { setSpillSettings, type SpillSettings } from "./spill.js";
 
-// The page's limits (Settings → View settings): memory for decoded cells.
+// The page's limits (Settings → View settings): memory for decoded cells, storage for a tractogram's spill.
 self.addEventListener("message", (event: MessageEvent<{ type?: string; settings?: SpillSettings }>) => {
   if (event.data?.type === "settings" && event.data.settings !== undefined) setSpillSettings(event.data.settings);
 });

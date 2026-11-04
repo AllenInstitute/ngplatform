@@ -38,7 +38,7 @@
  */
 import { cacheBudget, levelsKept, memoryBudgets, OverviewCache, readSettings } from "./overview_cache.js";
 import { type Box, chunkFromSlab, chunksOf, finerSlabs, type Grid, levelSlabs, Reducer, type Slab, slabFromChunks, slabOf, slabWidth, type Voxels } from "./slabs.js";
-import { type ByteSource, blobSource, gunzipHead, gunzipSource, isGzip, jsonBytes, Lru, type VirtualStore } from "./store.js";
+import { type ByteSource, blobSource, gunzipHead, gunzipSource, isGzip, jsonBytes, Lru, readInto, type VirtualStore } from "./store.js";
 import { LogEuclideanSum, NIFTI_INTENT_SYMMATRIX, TENSOR_ORDER_NAMES, type TensorOrder } from "./tensors.js";
 
 export interface NiftiHeader {
@@ -316,6 +316,19 @@ export interface CacheKey {
 const SLAB_LIMIT = 256 * 2 ** 20;
 /** Files smaller than this keep no overview: their coarser levels are made in a moment. */
 const MIN_CACHED = 64 * 2 ** 20;
+/** Bytes of the overview cache's writes that may wait while slabs are made. */
+const WRITES_AHEAD = 64 * 2 ** 20;
+/** The longest the worker works on slabs without letting other requests in, ms. */
+const PAUSE_EVERY = 100;
+let lastPause = 0;
+
+/** Lets requests waiting on this worker in, once PAUSE_EVERY ms have passed since the last time (a pause costs a few ms). */
+async function pause(): Promise<void> {
+  if (performance.now() - lastPause < PAUSE_EVERY) return;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  lastPause = performance.now();
+}
+
 /** Chunk rows made at once for the viewer (each may read a large part of the file). */
 const ROWS_AT_ONCE = 2;
 
@@ -382,16 +395,6 @@ class Gate {
       this.queue.shift()?.();
     }
   }
-}
-
-function concat(parts: Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.byteLength, 0));
-  let at = 0;
-  for (const part of parts) {
-    out.set(part, at);
-    at += part.byteLength;
-  }
-  return out;
 }
 
 function swapBytes(data: Uint8Array, size: number): void {
@@ -859,13 +862,26 @@ export class NiftiStore implements VirtualStore {
     }
     const grid = this.grid(index);
     const reducer = new Reducer(grid, this.grid(index - 1), box, this.slots, this.label || this.outType === "uint64" ? "nearest" : "mean", this.makeVoxels);
-    for (const finer of finerSlabs(grid, this.grid(index - 1), box, this.width(index - 1))) {
+    const boxes = finerSlabs(grid, this.grid(index - 1), box, this.width(index - 1));
+    // The next finer slabs are read (or made) while this one is added, so the file is read while the
+    // worker reduces: two ahead when they are read from the file, one when they are made.
+    const ahead = this.levels[index - 1].read !== undefined ? 2 : 1;
+    const started: Promise<Slab>[] = [];
+    const start = (i: number) => {
+      if (i >= boxes.length || started[i] !== undefined) return;
+      started[i] = this.slab(index - 1, e, boxes[i], ctx);
+      started[i].catch(() => {});
+    };
+    for (let i = 0; i < ahead; ++i) start(i);
+    for (let i = 0; i < boxes.length; ++i) {
       if (ctx.cancelled?.()) throw new Cancelled();
-      const slab = await this.slab(index - 1, e, finer, ctx);
+      const slab = await started[i];
+      delete started[i];
+      start(i + ahead);
       await ctx.emit?.(index - 1, e, slab);
       reducer.add(slab);
-      // Let requests waiting on this worker in.
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      // Let requests waiting on this worker in (now and then: each pause costs a few ms).
+      await pause();
     }
     const slab = reducer.finish();
     await this.keep(index, e, slab);
@@ -899,7 +915,9 @@ export class NiftiStore implements VirtualStore {
     const cache = await this.overviewCache();
     if (cache === undefined || !cache.writer || index < cache.policy.floor) return;
     const grid = this.grid(index);
-    for (const b of chunksOf(grid, slab.box)) await cache.put(`${index}/${e}/${b.join("/")}`, index, chunkFromSlab(grid, slab, b, BYTES[this.outType]));
+    // Written in the background: this waits only while more than WRITES_AHEAD bytes are still to be written.
+    for (const b of chunksOf(grid, slab.box)) void cache.put(`${index}/${e}/${b.join("/")}`, index, chunkFromSlab(grid, slab, b, BYTES[this.outType]));
+    await cache.drained(WRITES_AHEAD);
   }
 
   /** A slab of a level read from the file, from its bands, as the type served. */
@@ -912,12 +930,18 @@ export class NiftiStore implements VirtualStore {
     const bk = box.lo[2] / ck;
     const bj = box.lo[1] / cj;
     if (box.lo[0] % ci !== 0 || !Number.isInteger(bk) || !Number.isInteger(bj)) throw new Error("a slab off the chunks");
+    const inSize = BYTES[this.inType];
+    // A piece of a very wide level: only its part of each row is read.
+    const bandOf = (v: number) => (ni === nx ? this.band(index, v, bk, bj) : this.readBand(index, v, bk, bj, box.lo[0], box.hi[0]));
+    if (this.raw && volumes.length === 1) {
+      // The file's bytes are the slab's voxels: no copy (the band is only read from).
+      const band = await bandOf(volumes[0]);
+      if (band.byteOffset % inSize === 0) return { box, slots: 1, data: typed(this.outType, band.subarray(0, ni * nj * nk * inSize)) as Voxels };
+    }
     const out = this.makeVoxels(volumes.length * ni * nj * nk);
     const { slope, inter } = this.scale ?? { slope: 1, inter: 0 };
-    const inSize = BYTES[this.inType];
     for (let slot = 0; slot < volumes.length; ++slot) {
-      // A piece of a very wide level: only its part of each row is read.
-      const band = ni === nx ? await this.band(index, volumes[slot], bk, bj) : await this.readBand(index, volumes[slot], bk, bj, box.lo[0], box.hi[0]);
+      const band = await bandOf(volumes[slot]);
       const at = slot * ni * nj * nk;
       if (this.raw) {
         const dst = new Uint8Array(out.buffer, out.byteOffset, out.byteLength);
@@ -955,19 +979,29 @@ export class NiftiStore implements VirtualStore {
     const plane = ny * row;
     const base = (level.offset ?? 0) + v * nz * plane;
     let data: Uint8Array;
+    const short = () => new Error("the file is shorter than its header says");
     if (x0 !== undefined && x1 !== undefined && (x0 > 0 || x1 < nx)) {
-      const parts: Uint8Array[] = [];
+      // A piece of each row, read straight into place.
+      const piece = (x1 - x0) * size;
+      data = new Uint8Array((z1 - z0) * (y1 - y0) * piece);
       for (let z = z0; z < z1; ++z) {
-        parts.push(...(await Promise.all(Array.from({ length: y1 - y0 }, (_, dy) => source.read(base + z * plane + (y0 + dy) * row + x0 * size, base + z * plane + (y0 + dy) * row + x1 * size)))));
+        const got = await Promise.all(
+          Array.from({ length: y1 - y0 }, (_, dy) => {
+            const from = base + z * plane + (y0 + dy) * row + x0 * size;
+            return readInto(source, from, from + piece, data.subarray(((z - z0) * (y1 - y0) + dy) * piece, ((z - z0) * (y1 - y0) + dy + 1) * piece));
+          }),
+        );
+        if (got.some((n) => n < piece)) throw short();
       }
-      data = concat(parts);
-      if (data.byteLength < (z1 - z0) * (y1 - y0) * (x1 - x0) * size) throw new Error("the file is shorter than its header says");
     } else if (y0 === 0 && y1 === ny) data = await source.read(base + z0 * plane, base + z1 * plane);
     else {
-      const parts = await Promise.all(Array.from({ length: z1 - z0 }, (_, dz) => source.read(base + (z0 + dz) * plane + y0 * row, base + (z0 + dz) * plane + y1 * row)));
-      data = concat(parts);
+      // The rows of each plane, read straight into place (no copy to join them).
+      const part = (y1 - y0) * row;
+      data = new Uint8Array((z1 - z0) * part);
+      const got = await Promise.all(Array.from({ length: z1 - z0 }, (_, dz) => readInto(source, base + (z0 + dz) * plane + y0 * row, base + (z0 + dz) * plane + y1 * row, data.subarray(dz * part, (dz + 1) * part))));
+      if (got.some((n) => n < part)) throw short();
     }
-    if (x0 === undefined && data.byteLength < (z1 - z0) * (y1 - y0) * row) throw new Error("the file is shorter than its header says");
+    if (x0 === undefined && data.byteLength < (z1 - z0) * (y1 - y0) * row) throw short();
     if (data.byteOffset !== 0 || data.byteLength !== data.buffer.byteLength) data = data.slice();
     if (!this.header.littleEndian && size > 1) swapBytes(data, size);
     return data;

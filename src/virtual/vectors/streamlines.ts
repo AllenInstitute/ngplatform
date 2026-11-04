@@ -33,7 +33,7 @@
  * are kept in a least-recently-used cache (`cacheBudget()`).  Whole
  * streamlines by id (`message({ curves })`) are read from the file itself.
  */
-import { cacheBudget, MemorySpill, type Spill } from "./spill.js";
+import { cacheBudget, MemorySpill, type Spill, type SpillPlan } from "./spill.js";
 import type { TrkBatch } from "./trk.js";
 
 const MAGIC = 0x5a564647;
@@ -603,6 +603,15 @@ export interface BuildOptions {
   spill?: Spill;
   /** Decoded cells kept in memory, bytes (default: `cacheBudget()`). */
   cacheBytes?: number;
+  /**
+   * Keep only about one streamline in this many (10, 100, …; default 1,
+   * every one): the store's level 0 is then that sample, whole, and its
+   * coarser levels samples of it.  For a file whose spill would pass the
+   * disk budget (`spillPlan`).
+   */
+  sampleEvery?: number;
+  /** The plan it was built by, reported in `stats()`. */
+  plan?: SpillPlan;
 }
 
 const NICE = [1, 2, 4, 5, 8, 10, 16, 20, 25, 32, 40, 50, 64, 100, 128, 200, 256];
@@ -716,6 +725,8 @@ export class StreamlineStore {
     cacheBytes: number | undefined,
     /** Seconds the pass over the file took, and of them binning (the rest: reading and parsing). */
     readonly timing: { seconds: number; binning: number },
+    /** How much of the file the spill was allowed to copy. */
+    readonly plan?: SpillPlan,
   ) {
     this.levels = levels;
     this.count = count;
@@ -744,15 +755,17 @@ export class StreamlineStore {
     const spill = options.spill ?? new MemorySpill();
     try {
       const writer = new Writer(spill);
-      const chunk = cellSize(input.extent, input.bytes ?? 0);
+      // A sample only (past the disk budget): level 0 keeps the ids sampled at depth `first`.
+      const first = Math.max(0, Math.round(Math.log10(options.sampleEvery ?? 1)));
+      const chunk = cellSize(input.extent, (input.bytes ?? 0) / 10 ** first);
       const nValues = input.scalarNames.length;
       const nProperties = input.propertyNames.length;
-      const depth = sampleLevels(input.expectedCount);
-      const levels = [new Level("0", chunk, input.scalarNames, 0, 1, writer)];
+      const depth = Math.max(first, sampleLevels(input.expectedCount));
+      const levels = [new Level("0", chunk, input.scalarNames, first, 1, writer)];
       // Coarser levels for large tractograms, each about one streamline in
       // ten of the last (a subset of it), in cells twice as large, with
       // fewer points each, while a level still holds a couple of thousand.
-      for (let k = 1; k <= depth; ++k) levels.push(new Level(String(k), 2 ** k * chunk, [], k, 2 ** (k + 1), writer));
+      for (let k = 1; k <= depth - first; ++k) levels.push(new Level(String(k), 2 ** k * chunk, [], first + k, 2 ** (k + 1), writer));
       const columns = [new Column("length"), new Column("n_points"), ...input.propertyNames.map((name) => new Column(name))];
       const checkpoints = new Grow(f64, 1024);
       let end = 0;
@@ -786,7 +799,7 @@ export class StreamlineStore {
       for (const column of columns) column.finish(spill);
       checkpoints.push(end);
       const timing = { seconds: (performance.now() - started) / 1000, binning: binning / 1000 };
-      return new StreamlineStore(levels, count, columns, input.name, spill, checkpoints.view().slice(), input, options.cacheBytes, timing);
+      return new StreamlineStore(levels, count, columns, input.name, spill, checkpoints.view().slice(), input, options.cacheBytes, timing, options.plan);
     } catch (e) {
       spill.close();
       throw e;
@@ -801,7 +814,19 @@ export class StreamlineStore {
   }
 
   /** What the store keeps: spill bytes, the cache, and the index in memory (about). */
-  stats(): { streamlines: number; levels: { path: string; cells: number; vertices: number; streamlines: number; chunk: number }[]; spillBytes: number; cacheBytes: number; cachedCells: number; indexBytes: number; seconds: number; binningSeconds: number } {
+  stats(): {
+    streamlines: number;
+    levels: { path: string; cells: number; vertices: number; streamlines: number; chunk: number }[];
+    spillBytes: number;
+    cacheBytes: number;
+    cachedCells: number;
+    indexBytes: number;
+    seconds: number;
+    binningSeconds: number;
+    /** About one streamline in this many is in the store (1: every one). */
+    sampleEvery: number;
+    plan?: SpillPlan;
+  } {
     let index = this.checkpoints.byteLength;
     for (const level of this.levels) {
       index += level.manifestSegments.length * 8;
@@ -816,6 +841,8 @@ export class StreamlineStore {
       indexBytes: index,
       seconds: this.timing.seconds,
       binningSeconds: this.timing.binning,
+      sampleEvery: 10 ** this.levels[0].depth,
+      plan: this.plan,
     };
   }
 
@@ -864,7 +891,7 @@ export class StreamlineStore {
     for (let i = 0; i < ids.length; ++i) {
       const id = Number(ids[i]);
       if (!(id >= 0 && id < this.count) || !Number.isInteger(id)) continue;
-      if (level.depth > 0 && sampleDepth(id, this.levels.length - 1) < level.depth) continue;
+      if (level.depth > 0 && sampleDepth(id, this.levels[this.levels.length - 1].depth) < level.depth) continue;
       wanted.push(id);
     }
     const sorted = Uint32Array.from(new Set(wanted)).sort();
@@ -967,8 +994,11 @@ export class StreamlineStore {
               level: Number(level.path),
               vertex_count: level.vertexCount,
               arrays_present: ["vertices", "object_index"],
-              ...(level.path === "0"
+              ...(level.path === "0" && level.depth === 0
                 ? { object_sparsity: 1, coarsening_method: "none", parent_level: null, fragments_tile: true }
+                : level.path === "0"
+                ? // A sample of the file's streamlines (past the disk budget), each whole.
+                  { object_sparsity: level.present / Math.max(1, this.count), coarsening_method: "subsample", parent_level: null, preserves_object_ids: true, inherited_num_objects: this.count, fragments_tile: true }
                 : {
                     chunk_shape: [level.chunk, level.chunk, level.chunk],
                     object_sparsity: level.present / Math.max(1, this.count),

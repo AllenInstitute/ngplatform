@@ -121,12 +121,33 @@ and not chosen: a cell's streamlines are spread through the file, so
 reading one 2.7 MB cell of a 584 MB `.trk` in place read 513 MB of it
 (about 190 ms against 7 ms from the spill), and that grows with the file.
 
-Past what the browser can hold, opening fails with a message naming the
-local runner ("Open through the local runner (Jobs → This computer)"):
-when the origin's free storage is less than the spill needs, or when the
-storage refuses to grow (a private window keeps OPFS in memory, with less
-room). `NeedsRunner` (`kind: "runner"`) in `vectors/spill.ts` is the hook
-for the page to offer the hand-off.
+**The disk budget** (`spillPlan` in `vectors/spill.ts`). Before the pass,
+the worker decides how much of the file its spill may copy: every
+streamline (about 1.5 times the points' bytes) when that fits in the
+budget, else only the streamlines of a sample depth: about 1 in 10, 100,
+1 000 or 10 000 (`sampleDepth`, the same hash as the sample levels), the
+first whose spill fits, plus a few bytes per streamline of every one (the
+columns and manifests, about 3 % of the file). The budget is the page's
+setting (View settings → Local tractograms, `tractogramDiskGigabytes` in
+`vectors/formats.ts`, sent as `diskBytes`), 4 GB by default, at most 10 %
+of the origin's quota and 80 % of what is free. A spill of 256 MB or less
+is kept in memory, so a budget of 0 still gives a sample. A sample's store
+has the sampled streamlines whole as its level 0 (`coarsening_method:
+"subsample"`, `object_sparsity` about 1/10ᵏ, the same ids), and coarser
+samples of them above; `curves` gives only sampled ids; `stats()` says
+`sampleEvery` and the plan. The page decides the same way before a drop
+(`tractogramPlan` in `src/ui/runner.ts`) and offers the sample or the
+runner's conversion; opened another way, it says a sample is shown.
+
+Measured headless on a 4.6 GB `.trk` of 17 million streamlines held in
+memory: every streamline, 73 s and a 7.3 GB spill (binning 57 s of it);
+1 in 10, 22 s and 0.8 GB; 1 in 100, 19 s and 0.23 GB in memory.
+
+When even 1 in 10 000 does not fit, or the storage refuses to grow (a
+private window keeps OPFS in memory, with less room), opening fails with
+a message naming the local runner ("Open through the local runner (Jobs →
+This computer)"). `NeedsRunner` (`kind: "runner"`) in `vectors/spill.ts`
+is the hook for the page to offer the hand-off.
 
 ## Large meshes
 

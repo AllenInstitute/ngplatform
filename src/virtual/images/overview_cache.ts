@@ -181,6 +181,8 @@ export function memoryBudgets(deviceMemory: number | undefined = (globalThis.nav
 export const ROOT = "ngplatform-overviews";
 const SETTINGS = "settings.json";
 const INDEX = "index.json";
+/** Chunks written at once. */
+const WRITERS = 8;
 
 /** What a cache's index.json holds. */
 export interface CacheIndex {
@@ -224,19 +226,8 @@ async function readJson<T>(dir: Dir, name: string): Promise<T | undefined> {
 
 async function writeFile(dir: Dir, name: string, bytes: Uint8Array): Promise<void> {
   const handle = await dir.getFileHandle(name, { create: true });
-  // In a worker, a synchronous handle writes fastest; elsewhere, a writable stream.
-  const sync = (handle as unknown as { createSyncAccessHandle?(): Promise<{ write(b: Uint8Array, o: { at: number }): number; truncate(n: number): void; flush(): void; close(): void }> }).createSyncAccessHandle;
-  if (typeof sync === "function" && typeof (globalThis as { WorkerGlobalScope?: unknown }).WorkerGlobalScope !== "undefined") {
-    const access = await sync.call(handle);
-    try {
-      access.truncate(0);
-      access.write(bytes, { at: 0 });
-      access.flush();
-    } finally {
-      access.close();
-    }
-    return;
-  }
+  // A writable stream, in a worker too: a synchronous access handle was seen to wait for good in
+  // Chrome (asked for while chunks were written in the background as a large TIFF was read).
   const writable = await handle.createWritable();
   await writable.write(bytes as unknown as BufferSource);
   await writable.close();
@@ -324,7 +315,14 @@ const fileName = (key: string) => key.replace(/\//g, "-");
  */
 export class OverviewCache {
   private dirty: ReturnType<typeof setTimeout> | undefined;
-  private writes: Promise<unknown> = Promise.resolve();
+  /** Writes under way or waiting (chunks several at once, WRITERS at most; the index one at a time). */
+  private readonly writes = new Set<Promise<unknown>>();
+  private writing = 0;
+  private readonly waiting: (() => void)[] = [];
+  private indexWrite: Promise<unknown> = Promise.resolve();
+  /** Chunks put and not yet written (each its write), and their bytes. */
+  private readonly pending = new Map<string, Promise<unknown>>();
+  private pendingBytes = 0;
   built: boolean;
 
   private constructor(
@@ -388,6 +386,9 @@ export class OverviewCache {
 
   async get(key: string): Promise<Uint8Array | undefined> {
     if (!this.policy.entries.has(key)) return undefined;
+    // Put and not written yet: read once it is.
+    await this.pending.get(key);
+    if (!this.policy.entries.has(key)) return undefined;
     try {
       const bytes = new Uint8Array(await (await (await this.dir.getFileHandle(fileName(key))).getFile()).arrayBuffer());
       if (bytes.byteLength !== this.policy.entries.get(key)?.bytes) throw new Error("a chunk of the wrong size");
@@ -406,22 +407,47 @@ export class OverviewCache {
     if (!this.writer) return Promise.resolve();
     const drop = this.policy.admit(key, level, bytes.byteLength, Date.now());
     if (drop === undefined) return Promise.resolve();
-    const job = this.writes.then(async () => {
-      for (const k of drop) await this.dir.removeEntry(fileName(k)).catch(() => {});
+    const job = (async () => {
+      // A writable stream takes about 25 ms a file in Chrome: several chunks are written at once.
+      if (this.writing >= WRITERS) await new Promise<void>((go) => this.waiting.push(go));
+      this.writing++;
       try {
+        for (const k of drop) if (!this.pending.has(k)) await this.dir.removeEntry(fileName(k)).catch(() => {});
         await writeFile(this.dir, fileName(key), bytes);
       } catch {
         this.policy.remove(key);
+      } finally {
+        this.writing--;
+        this.waiting.shift()?.();
       }
       this.save();
+    })();
+    const written = this.track(job);
+    this.pending.set(key, written);
+    this.pendingBytes += bytes.byteLength;
+    void written.then(() => {
+      if (this.pending.get(key) === written) this.pending.delete(key);
+      this.pendingBytes -= bytes.byteLength;
     });
-    this.writes = job.catch(() => {});
     return job;
   }
 
+  /** Counts a write until it settles; resolves when it does, whether or not it worked. */
+  private track(job: Promise<unknown>): Promise<unknown> {
+    const settled = job.catch(() => {});
+    this.writes.add(settled);
+    void settled.then(() => this.writes.delete(settled));
+    return settled;
+  }
+
+  /** Waits while more than `bytes` of the chunks put are still to be written. */
+  async drained(bytes: number): Promise<void> {
+    while (this.pendingBytes > bytes && this.writes.size > 0) await Promise.race(this.writes);
+  }
+
   /** Waits for the writes so far. */
-  flush(): Promise<unknown> {
-    return this.writes;
+  async flush(): Promise<void> {
+    while (this.writes.size > 0) await Promise.all(this.writes);
   }
 
   /** The budget and floor again (settings changed): chunks beyond them dropped. */
@@ -435,7 +461,7 @@ export class OverviewCache {
 
   /** Drops every chunk kept. */
   async clear(): Promise<void> {
-    await this.writes;
+    await this.flush();
     for (const k of [...this.policy.entries.keys()]) this.policy.remove(k);
     this.built = false;
     if (!this.writer) return;
@@ -461,7 +487,7 @@ export class OverviewCache {
         built: this.built,
         chunks: Object.fromEntries([...this.policy.entries].map(([k, e]) => [k, [e.level, e.bytes, e.used]])),
       };
-      this.writes = this.writes.then(() => writeFile(this.dir, INDEX, new TextEncoder().encode(JSON.stringify(index)))).catch(() => {});
+      this.indexWrite = this.track(this.indexWrite.then(() => writeFile(this.dir, INDEX, new TextEncoder().encode(JSON.stringify(index)))));
     }, 1000);
   }
 }

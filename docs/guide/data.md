@@ -44,16 +44,39 @@ is never loaded whole and coarser levels appear first.
 
 ### Large tractograms and meshes
 
-A tractogram is read once when it is opened, in a worker: about 45 seconds
-for a 3 GB `.trk` (10 million streamlines) on a desktop, so roughly 5
-minutes for 20 GB. While that pass runs the layer waits (its reads are
-answered "still reading the file" and asked again). The pass copies the
-points into spatial cells in the browser's private storage (OPFS): about
-1.2 to 1.5 times the file's size, kept while the file is open and deleted when it is closed or
-its tab is. Memory holds an index of the cells (about 25 MB for 20 million
+A tractogram is read once when it is opened, in a worker. The pass copies
+the points into spatial cells in the browser's private storage (OPFS),
+kept while the file is open and deleted when it is closed or its tab is.
+Memory holds an index of the cells (about 25 MB for 20 million
 streamlines) and the cells last used, up to a budget: 1/32 of this
-device's memory, between 64 and 512 MB, or what **View settings →
-Tractograms on this computer** sets.
+device's memory, between 64 and 512 MB, or what **View settings → Local
+tractograms → Memory for decoded cells** sets. While the pass runs the
+layer waits (its reads are answered "still reading the file" and asked
+again).
+
+**How much is copied.** Copying every streamline takes about 1.5 times the
+file's size. **View settings → Local tractograms → Storage for a tractogram**
+sets the most a tractogram may copy: 4 GB by default (never more than 10 %
+of the browser's quota or 80 % of what is free; 0 copies nothing to disk).
+Within it, every streamline is copied. Past it, only a sample is: about 1
+in 10 streamlines, or 1 in 100, 1 000 or 10 000, the first that fits
+(in memory when it is 256 MB or less). The rest of the file is not copied.
+
+| A 4.6 GB `.trk`, 17 million streamlines (measured headless, file in memory) | Copied | Open |
+|---|---|---|
+| Every streamline (limit set to 10 GB) | 7.3 GB | 73 s |
+| 1 in 10 (the default 4 GB limit) | 0.8 GB | 22 s |
+| 1 in 100 (limit 0: in memory) | 0.23 GB | 19 s |
+
+A dropped tractogram past the limit asks first: **Open 1 in 10** (the
+dataset is named so, `t17m (1 in 10)`), **Convert it** or **Serve it**
+with the runner on this computer (see [Jobs on this computer](local-jobs.md)).
+Opened another way (Open from device, a folder, a reload), it opens as the
+sample and a notice offers the conversion. With a sample, the view,
+regions and groups use only the sampled streamlines; Track filtering's
+**Run on this computer** reads the whole file. For every streamline of a
+large file without the copy, convert it: the store is read a chunk at a
+time.
 
 Coarse views come from sample levels (about one streamline in 10, 100,
 1000 …, chosen by a hash of each streamline's number, so each level is a
@@ -63,11 +86,9 @@ and **Save .trk**, read just those streamlines from the file. A group of
 more points than the page draws whole (8 million) is drawn from a sample
 level, and its note says so.
 
-When the browser cannot hold a file (its private storage has less room
-than the copy needs, or it is a private window, which keeps that storage
-in memory), opening it fails with a message to open it through the local
-runner instead (Jobs → This computer), which serves it with
-`zvtools virtual serve`.
+When the browser's storage refuses to grow (a private window keeps it in
+memory, with less room), opening fails with a message to open the file
+through the runner on this computer instead (Jobs → This computer).
 
 A mesh of more than a million triangles opens in cells with simplified
 levels (by vertex clustering), so the view shows a coarse level first and
@@ -96,7 +117,10 @@ or reduced-resolution pages) is read as it is, not made again.
   you are offered **Build the overview in the background**. It reads the file
   once and keeps what the budget allows, and it appears in the Jobs tab with
   its progress (you can cancel it). It is also in Datasets → the row's ⋯,
-  beside **Clear its kept overview**.
+  beside **Clear its kept overview**. A 5 GB uncompressed TIFF (4096 × 4096
+  × 160, 16-bit) builds in about 21 s (245 MB/s; reading the file alone
+  takes 7 s), and its first zoomed-out view, without the build, takes
+  about 21 s; measured headless with the file in memory.
 - **Settings.** **View settings → Overviews of local images** sets the
   budget, lists what each image keeps, and clears it.
 
