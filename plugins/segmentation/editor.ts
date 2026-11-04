@@ -10,8 +10,9 @@
  *  - Tools, in the views (./painter.ts): Move (Neuroglancer's own), a
  *    brush (a ball, or its disc in the section), an eraser, fills of the
  *    section and of a box round the click, a picker, and quick select
- *    (./quick_select.ts).  Brush and fills can be limited to an intensity
- *    range of an image.
+ *    (./quick_select.ts: by threshold, or by MobileSAM, ./sam_model.ts),
+ *    spread to neighbouring sections.  Brush and fills can be limited to
+ *    an intensity range of an image.
  *  - Segments (./segments.ts): the active one, new ones, names, colours,
  *    shown or hidden, gone to, merged and deleted; and their groups
  *    (./segment_groups.ts), kept in the plugin's per-scene state.
@@ -39,7 +40,9 @@ import { CHUNK, LABEL_ARRAYS, LABEL_MAX, type LabelType, LabelVolume } from "./l
 import { BRUSHING, DRAWING, EDITING, PREVIEWING, SEGMENTATION_PANEL, SELECTING } from "./manifest.js";
 import { Painter, type ViewPoint } from "./painter.js";
 import { maskCount, PreviewOverlay } from "./preview.js";
-import { type Mask, type Prompt, QuickSelectRegistry } from "./quick_select.js";
+import { type Mask, type Prompt, type QuickSelectMethod, type QuickSelectRequest, QuickSelectRegistry } from "./quick_select.js";
+import { layerWindow, sectionAxes, sectionBounds, stackMasks } from "./sam.js";
+import { SamModel, samMethod } from "./sam_model.js";
 import { cropped, editsZarr, niftiBytes, niftiGz, omeZarr, readEdits, type SavedLabel, writeWhole } from "./save.js";
 import { addGroup, assign, editGroup, groupOf, members, readGroups, removeGroup, type SegmentationSaved, type VolumeGroups } from "./segment_groups.js";
 import { isVisible, nextSegment, type SegmentRow, segmentRows, type SegmentsState, withVisibility } from "./segments.js";
@@ -109,6 +112,8 @@ export class Editor implements LabelVolumes {
   /** The current volume is being edited: the tool bar shows and the tools' keys work. */
   editing = false;
   readonly quickSelect = new QuickSelectRegistry();
+  /** Quick select's model (AI (MobileSAM)): its files, the runtime, the last timings. */
+  readonly sam = new SamModel();
   private readonly painter: Painter;
   private readonly previewOverlay: PreviewOverlay;
   private readonly offs: Disposer[] = [];
@@ -137,8 +142,16 @@ export class Editor implements LabelVolumes {
   tolerance = 0.1;
   /** Quick select shows its mask first (Enter paints it, Escape drops it), or paints at once. */
   quickMode: "preview" | "paint" = "preview";
-  /** Quick select's mask waiting to be accepted or cancelled. */
-  pending: { session: Session; mask: Mask; voxels: number } | undefined;
+  /** Quick select's mask waiting to be accepted or cancelled; `axis` is the section's normal when it came from a 2-D view. */
+  pending: { session: Session; mask: Mask; voxels: number; axis?: number } | undefined;
+  /** A model method looks at least this many voxels across round the prompt. */
+  quickContext = 256;
+  /** What quick select is doing while it takes a while (a download, an embedding, spreading), and how far along. */
+  quickStatus: { text: string; fraction?: number } | undefined;
+  /** For a method that refines: the prompts given in one section so far (a box, clicks wanted or not). */
+  quickPrompts: { session: Session; method: string; axis: number; index: number; box?: { lo: Vec3; hi: Vec3 }; points: { at: Vec3; positive: boolean }[] } | undefined;
+  /** Spread goes this many sections each way. */
+  spreadCount = 5;
   saveFormat: "nii.gz" | "zarr" = "nii.gz";
   saveCrop = false;
   /** Edited in place: save the edits only, or the whole volume (a job). */
@@ -155,7 +168,8 @@ export class Editor implements LabelVolumes {
   private lastNormal: Vec3 | undefined;
   /** The voxel axis across the 2-D view last drawn in: interpolation runs along it. */
   private axis = 2;
-  private quickStart: { voxel: Vec3; axis?: number } | undefined;
+  private quickStart: { voxel: Vec3; axis?: number; negative: boolean } | undefined;
+  private quickAbort: AbortController | undefined;
   private quickEnd: Vec3 | undefined;
   /** The lasso's outline being drawn: the section (across `axis`, at `index`) and its points (u, w) in voxels. */
   private lasso: { session: Session; axis: number; index: number; points: [number, number][] } | undefined;
@@ -168,7 +182,7 @@ export class Editor implements LabelVolumes {
     private readonly voxels: Voxels,
   ) {
     this.painter = new Painter(ctx, {
-      down: (p) => this.down(p),
+      down: (p, e) => this.down(p, e),
       drag: (p) => this.drag(p),
       up: () => this.up(),
       ring: (p) => this.ring(p),
@@ -182,12 +196,20 @@ export class Editor implements LabelVolumes {
     });
     this.previewOverlay = new PreviewOverlay(ctx, {
       preview: () => {
-        const p = this.pending;
-        const placement = p?.session.placement();
-        return p === undefined || placement === undefined || p.session !== this.current ? undefined : { mask: p.mask, placement, colour: p.session.colour(this.value) };
+        const p = this.pending?.session === this.current ? this.pending : undefined;
+        const q = this.quickPrompts?.session === this.current ? this.quickPrompts : undefined;
+        const placement = this.current?.placement();
+        if ((p === undefined && q === undefined) || placement === undefined) return undefined;
+        return { mask: p?.mask, placement, colour: this.current!.colour(this.value), points: q && { axis: q.axis, index: q.index, points: q.points } };
       },
     });
-    this.offs.push(ctx.services.provide("segmentation.quickSelect", this.quickSelect), ctx.services.provide("segmentation.labelVolumes", this as LabelVolumes), this.quickSelect.onChanged(() => this.changed()));
+    this.offs.push(
+      ctx.services.provide("segmentation.quickSelect", this.quickSelect),
+      ctx.services.provide("segmentation.labelVolumes", this as LabelVolumes),
+      this.quickSelect.onChanged(() => this.changed()),
+      this.quickSelect.register(samMethod(this.sam)),
+      this.sam.onChanged(() => this.changed()),
+    );
     const c = ctx.commands;
     c.register("segmentation.newLayer", () => ctx.ui.showPanel(SEGMENTATION_PANEL));
     c.register("segmentation.openNifti", () => this.pickNifti());
@@ -252,6 +274,7 @@ export class Editor implements LabelVolumes {
     this.offs.forEach((off) => off());
     this.painter.dispose();
     this.previewOverlay.dispose();
+    this.sam.dispose();
     for (const s of this.sessions) s.dispose();
     clearTimeout(this.countsTimer);
   }
@@ -926,7 +949,7 @@ export class Editor implements LabelVolumes {
     if (b.stroke.flush().length) b.session.refresh(true);
   }
 
-  private down(p: ViewPoint): void {
+  private down(p: ViewPoint, e?: MouseEvent): void {
     const session = this.current;
     const where = session && this.locate(p);
     if (session === undefined || where === undefined) return;
@@ -965,7 +988,8 @@ export class Editor implements LabelVolumes {
         break;
       }
       case "quick":
-        this.quickStart = { voxel, axis: normal ? dominant(normal) : undefined };
+        // Shift or Alt: a click on what is not wanted (for a method that refines).
+        this.quickStart = { voxel, axis: normal ? dominant(normal) : undefined, negative: e?.shiftKey === true || e?.altKey === true };
         this.quickEnd = voxel;
         break;
       case "lasso": {
@@ -1167,10 +1191,38 @@ export class Editor implements LabelVolumes {
     this.commit(stroke, session);
   }
 
-  private async runQuick(start: { voxel: Vec3; axis?: number }, end: Vec3): Promise<void> {
+  /** The method chosen (the first if it has gone). */
+  quickMethod(): QuickSelectMethod {
+    return this.quickSelect.methods().find((m) => m.id === this.method) ?? this.quickSelect.methods()[0];
+  }
+
+  /** What a method may know of the volume's image beyond the block it is handed. */
+  private quickExtras(session: Session): Pick<QuickSelectRequest, "read" | "source" | "context" | "progress"> {
+    const r = session.reference;
+    const affine = session.referenceAffine();
+    return {
+      read: (lo, hi, signal) => session.imageBox(lo, hi, signal),
+      source:
+        r === undefined
+          ? undefined
+          : {
+              key: `${r.store}|${r.level}|${affine ? Array.from(affine, (v) => +v.toFixed(6)).join(",") : ""}`,
+              window: layerWindow(this.ctx.viewer.layerSpec(r.layer)),
+              spacing: voxelEdges(session.volume.voxelToRas),
+              size: [...session.volume.size] as Vec3,
+            },
+      context: this.quickContext,
+      progress: (text, fraction) => {
+        this.quickStatus = { text, fraction };
+        this.changed();
+      },
+    };
+  }
+
+  private async runQuick(start: { voxel: Vec3; axis?: number; negative: boolean }, end: Vec3): Promise<void> {
     const session = this.current;
     if (session === undefined) return;
-    const method = this.quickSelect.methods().find((m) => m.id === this.method) ?? this.quickSelect.methods()[0];
+    const method = this.quickMethod();
     const a = start.voxel.map(voxelIndex) as Vec3;
     const b = end.map(voxelIndex) as Vec3;
     const moved = Math.max(...a.map((v, k) => Math.abs(v - b[k]))) >= 2;
@@ -1196,6 +1248,23 @@ export class Editor implements LabelVolumes {
       this.ctx.ui.toast(`${method.title} takes a box: drag one in a 2-D view.`);
       return;
     }
+    // A method that refines: a box starts the section's prompt again; a click adds to it (wanted, or not with Shift or Alt).
+    let prompts: QuickSelectRequest["prompts"];
+    if (method.refines && start.axis !== undefined) {
+      const axis = start.axis;
+      const index = a[axis];
+      const q = this.quickPrompts;
+      const same = q !== undefined && q.session === session && q.method === method.id && q.axis === axis && q.index === index;
+      if (prompt.kind === "box") this.quickPrompts = { session, method: method.id, axis, index, box: { lo, hi }, points: [] };
+      else if (same) q.points.push({ at: a, positive: !start.negative });
+      else if (start.negative) {
+        this.ctx.ui.toast("Shift+click or Alt+click marks what is not wanted: first click on what is, or draw a box round it.");
+        return;
+      } else this.quickPrompts = { session, method: method.id, axis, index, points: [{ at: a, positive: true }] };
+      const p = this.quickPrompts!;
+      prompts = { box: p.box, points: p.points.map((x) => ({ ...x })) };
+      this.previewOverlay.draw();
+    }
     const image: ImageBlock | undefined = await session.imageBox(lo, hi);
     if (image === undefined) {
       this.ctx.ui.toast("Quick select reads an image: choose one under “Image values”.");
@@ -1204,11 +1273,20 @@ export class Editor implements LabelVolumes {
     // Enter or Escape while the mask is computed says now what to do with it.
     this.decided = undefined;
     this.ctx.context.set(SELECTING, true);
+    const abort = (this.quickAbort = new AbortController());
     let mask: Mask;
     try {
-      mask = await method.run({ prompt, image, axis: start.axis, tolerance: this.tolerance }, new AbortController().signal);
+      mask = await method.run({ prompt, image, axis: start.axis, tolerance: this.tolerance, prompts, ...this.quickExtras(session) }, abort.signal);
+    } catch (e) {
+      if (!abort.signal.aborted) this.ctx.ui.toast(`${method.title}: ${e instanceof Error ? e.message : String(e)}`);
+      this.quickPrompts = undefined;
+      this.previewOverlay.draw();
+      return;
     } finally {
       this.ctx.context.set(SELECTING, false);
+      if (this.quickAbort === abort) this.quickAbort = undefined;
+      this.quickStatus = undefined;
+      this.changed();
     }
     const decided = this.decided;
     this.decided = undefined;
@@ -1219,12 +1297,110 @@ export class Editor implements LabelVolumes {
       return;
     }
     if (this.quickMode === "paint" || decided === "accept") {
+      this.quickPrompts = undefined;
       await this.paintMask(session, mask);
+      this.previewOverlay.draw();
       return;
     }
     // Shown first: Enter (or Accept) paints it, Escape (or Cancel) drops it; a new prompt replaces it.
-    this.pending = { session, mask, voxels };
+    this.pending = { session, mask, voxels, axis: start.axis };
     this.ctx.context.set(PREVIEWING, true);
+    this.previewOverlay.draw();
+    this.changed();
+  }
+
+  /** Whether the mask proposed lies in one section of a 2-D view, so it can be spread to the next. */
+  canSpread(): boolean {
+    const p = this.pending;
+    return p !== undefined && p.axis !== undefined && p.mask.size[p.axis] === 1 && this.quickMethod().prompts.includes("box");
+  }
+
+  /**
+   * Spreads the mask proposed, in one section, to `n` sections each way:
+   * each section's prompt is the box round the mask in the section before
+   * (a tenth larger each side), with the method chosen; it stops where the
+   * mask comes back empty, or four times smaller or larger than the one
+   * before.  The masks are proposed together, so Enter paints them as one
+   * stroke (one undo).
+   */
+  spread(n = this.spreadCount): void {
+    const p = this.pending;
+    if (p === undefined || !this.canSpread()) {
+      this.ctx.ui.toast("Spread takes a mask in one section: make one with quick select in a 2-D view first.");
+      return;
+    }
+    this.enqueue(() => this.runSpread(p, n));
+  }
+
+  private async runSpread(p: NonNullable<Editor["pending"]>, n: number): Promise<void> {
+    const { session } = p;
+    const axis = p.axis!;
+    const method = this.quickMethod();
+    const [ua, wa] = sectionAxes(axis);
+    const size = session.volume.size;
+    const base = p.mask.lo[axis];
+    const masks: Mask[] = [p.mask];
+    const abort = (this.quickAbort = new AbortController());
+    this.ctx.context.set(SELECTING, true);
+    const extras = this.quickExtras(session);
+    let done = 0;
+    try {
+      for (const dir of [-1, 1]) {
+        let before = p.mask;
+        let count = p.voxels;
+        for (let k = 1; k <= n; ++k) {
+          const index = base + dir * k;
+          if (index < 0 || index >= size[axis]) break;
+          const bounds = sectionBounds(before, axis);
+          if (bounds === undefined) break;
+          const lo = [0, 0, 0] as Vec3;
+          const hi = [0, 0, 0] as Vec3;
+          lo[axis] = index;
+          hi[axis] = index + 1;
+          for (const [i, ax] of [[0, ua], [1, wa]] as const) {
+            const pad = Math.max(1, Math.round(0.1 * (bounds.hi[i] - bounds.lo[i])));
+            lo[ax] = Math.max(0, bounds.lo[i] - pad);
+            hi[ax] = Math.min(size[ax], bounds.hi[i] + pad);
+          }
+          ++done;
+          const step = `Spreading: section ${index} (${done} of up to ${2 * n})`;
+          this.quickStatus = { text: `${step}…`, fraction: done / (2 * n) };
+          this.changed();
+          const image = await session.imageBox(lo, hi, abort.signal);
+          if (image === undefined || abort.signal.aborted || this.pending !== p) return;
+          const progress = (text: string, fraction?: number) => {
+            this.quickStatus = { text: `${step}: ${text}`, fraction: fraction ?? done / (2 * n) };
+            this.changed();
+          };
+          const mask = await method.run({ prompt: { kind: "box", lo, hi }, image, axis, tolerance: this.tolerance, prompts: { box: { lo, hi }, points: [] }, ...extras, progress }, abort.signal);
+          if (abort.signal.aborted || this.pending !== p) return;
+          const voxels = maskCount(mask);
+          if (voxels === 0 || voxels * 4 < count || voxels > 4 * count) break;
+          masks.push(mask);
+          before = mask;
+          count = voxels;
+        }
+      }
+    } catch (e) {
+      if (!abort.signal.aborted) this.ctx.ui.toast(`Spread: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    } finally {
+      this.ctx.context.set(SELECTING, false);
+      if (this.quickAbort === abort) this.quickAbort = undefined;
+      this.quickStatus = undefined;
+      this.changed();
+    }
+    if (this.pending !== p) return;
+    const mask = stackMasks(masks)!;
+    const voxels = maskCount(mask);
+    this.pending = { session, mask, voxels };
+    const first = mask.lo[axis];
+    const last = first + mask.size[axis] - 1;
+    this.ctx.ui.toast(
+      masks.length > 1
+        ? `Spread over ${masks.length} sections (${first} to ${last} along ${"xyz"[axis]}), ${voxels.toLocaleString()} voxels: Enter paints them as one stroke.`
+        : "Spread found nothing in the next sections.",
+    );
     this.previewOverlay.draw();
     this.changed();
   }
@@ -1241,10 +1417,17 @@ export class Editor implements LabelVolumes {
     this.enqueue(() => this.paintMask(p.session, p.mask));
   }
 
-  /** Drops quick select's proposed mask. */
+  /** Drops quick select's proposed mask (and stops what it is computing). */
   cancelPreview(): void {
+    this.quickAbort?.abort();
     if (this.pending !== undefined) this.clearPreview();
-    else this.decided = "cancel";
+    else {
+      this.decided = "cancel";
+      if (this.quickPrompts !== undefined) {
+        this.quickPrompts = undefined;
+        this.previewOverlay.draw();
+      }
+    }
   }
 
   /** What Enter or Escape asked for while quick select was computing. */
@@ -1252,6 +1435,7 @@ export class Editor implements LabelVolumes {
 
   private clearPreview(): void {
     this.pending = undefined;
+    this.quickPrompts = undefined;
     this.ctx.context.set(PREVIEWING, false);
     this.previewOverlay.draw();
     this.changed();
