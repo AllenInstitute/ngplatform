@@ -11,8 +11,10 @@
  *   left behind by a closed tab is deleted the next time one is made.
  * - `MemorySpill`: the same in memory, for small files and for tests.
  *
- * `spillBudget()` says how much memory decoded cells may take, from the
- * device's memory unless the page set a budget (Settings).
+ * `cacheBudget()` says how much memory decoded cells may take, from the
+ * device's memory unless the page set a budget (Settings); `spillPlan()`
+ * how much of a tractogram is copied into a spill at all, within the disk
+ * budget (Settings): every streamline, or a sample of them.
  */
 
 /** What to say when a file is past what the browser can do here: the local runner can. */
@@ -244,6 +246,8 @@ export class OpfsSpill implements Spill {
 export interface SpillSettings {
   /** Decoded cells kept in memory, bytes. */
   cacheBytes?: number;
+  /** At most this many bytes of a tractogram's spill in the browser's storage (0: none; absent: `DEFAULT_DISK_BYTES`). */
+  diskBytes?: number;
 }
 
 let settings: SpillSettings = {};
@@ -272,16 +276,90 @@ export function cacheBudget(): number {
   return Math.min(512, Math.max(64, (gb * 1024) / 32)) * 1024 * 1024;
 }
 
+/** A spill this small or smaller is kept in memory. */
+export const IN_MEMORY_BYTES = 256 * 1024 * 1024;
+
 /** A spill for `expected` bytes: on disk when it can be and the file is large, else in memory. */
-export async function openSpill(expected: number, inMemoryUpTo = 256 * 1024 * 1024): Promise<Spill> {
+export async function openSpill(expected: number, inMemoryUpTo = IN_MEMORY_BYTES): Promise<Spill> {
   if (expected <= inMemoryUpTo || !canSpillToDisk()) return new MemorySpill();
   return OpfsSpill.create();
 }
 
+/** The origin's storage: what it may use in all (quota) and what is still free, bytes (Infinity when the browser does not say). */
+export async function storageEstimate(): Promise<{ quota: number; free: number }> {
+  const storage = (globalThis.navigator as { storage?: { estimate?(): Promise<{ quota?: number; usage?: number }> } } | undefined)?.storage;
+  if (storage?.estimate === undefined) return { quota: Infinity, free: Infinity };
+  const { quota, usage } = await storage.estimate().catch(() => ({ quota: undefined, usage: undefined }));
+  return quota === undefined ? { quota: Infinity, free: Infinity } : { quota, free: quota - (usage ?? 0) };
+}
+
 /** Free space the origin may still use, bytes (Infinity when the browser does not say). */
 export async function freeStorage(): Promise<number> {
-  const storage = (globalThis.navigator as { storage?: { estimate?(): Promise<{ quota?: number; usage?: number }> } } | undefined)?.storage;
-  if (storage?.estimate === undefined) return Infinity;
-  const { quota, usage } = await storage.estimate().catch(() => ({ quota: undefined, usage: undefined }));
-  return quota === undefined ? Infinity : quota - (usage ?? 0);
+  return (await storageEstimate()).free;
+}
+
+// ---------------------------------------------------------------- the disk budget
+
+/** The disk budget when the page set none: 4 GB, … */
+export const DEFAULT_DISK_BYTES = 4 * 2 ** 30;
+/** … and never more than this share of the origin's quota, … */
+export const QUOTA_SHARE = 0.1;
+/** … nor more than this share of what is free. */
+export const FREE_SHARE = 0.8;
+/** Sample levels kept at most: one streamline in 10 000. */
+const MAX_SAMPLE = 4;
+
+/**
+ * How much of a tractogram is copied into a spill, decided before it is read:
+ *
+ * - `whole`: every streamline (about 1.5 times the points' bytes), in memory
+ *   when that is at most `IN_MEMORY_BYTES`, else on disk within the budget;
+ * - `sample`: past the budget, only about one streamline in `every` (10,
+ *   100, … 10 000) is copied, whole, with coarser samples of it: the
+ *   coarsest choice that fits (in memory, or on disk within the budget).
+ *   The rest of the file is not copied; streamlines by id are still read
+ *   from the file itself;
+ * - `none`: not even one in 10 000 fits.
+ *
+ * Besides the points, a spill keeps a few bytes per streamline of every one
+ * (length, point count, the file's properties, manifests): about 3% of the
+ * file, counted in `bytes`.
+ */
+export interface SpillPlan {
+  mode: "whole" | "sample" | "none";
+  /** One streamline kept in this many (1 for whole). */
+  every: number;
+  /** The spill's size, about. */
+  bytes: number;
+  /** The spill for every streamline, about. */
+  wholeBytes: number;
+  /** Where: memory or the browser's storage. */
+  place: "memory" | "disk";
+  /** The disk budget it was decided by (the setting, within the quota and free space). */
+  budget: number;
+}
+
+/** The disk budget: the setting (or 4 GB), at most 10% of the quota and 80% of what is free. */
+export function diskBudget(setting: number | undefined, storage: { quota: number; free: number }): number {
+  const wanted = setting === undefined || !(setting >= 0) ? DEFAULT_DISK_BYTES : setting;
+  return Math.max(0, Math.min(wanted, QUOTA_SHARE * storage.quota, FREE_SHARE * storage.free));
+}
+
+/** The plan for a tractogram whose points take `pointBytes` (as float32 with their values), given the disk budget. */
+export function spillPlan(pointBytes: number, budget: number, canUseDisk = true): SpillPlan {
+  const wholeBytes = Math.round(pointBytes * 1.5);
+  const fixed = Math.round(pointBytes * 0.03);
+  for (let k = 0; k <= MAX_SAMPLE; ++k) {
+    const bytes = k === 0 ? wholeBytes : Math.round(wholeBytes / 10 ** k) + fixed;
+    const place = bytes <= IN_MEMORY_BYTES ? "memory" : canUseDisk && bytes <= budget ? "disk" : undefined;
+    if (place !== undefined) return { mode: k === 0 ? "whole" : "sample", every: 10 ** k, bytes, wholeBytes, place, budget };
+  }
+  return { mode: "none", every: 0, bytes: 0, wholeBytes, place: "memory", budget };
+}
+
+/** The plan in this context, with the page's settings and the origin's storage. */
+export async function currentSpillPlan(pointBytes: number): Promise<SpillPlan> {
+  const disk = canSpillToDisk();
+  const storage = disk ? await storageEstimate() : { quota: 0, free: 0 };
+  return spillPlan(pointBytes, diskBudget(settings.diskBytes, storage), disk);
 }

@@ -542,6 +542,7 @@ textarea.text-input { height: auto; padding: 8px 10px; }
 .runner-files li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 6px; }
 .runner-files li.chosen { background: var(--accent-soft, rgba(90, 140, 255, 0.18)); }
 .runner-files li.store > button { font-weight: 500; }
+.runner-drop-choices { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 6px; color: var(--muted, inherit); }
 .runner-serves { display: grid; gap: 4px; }
 .runner-serves .runner-entry { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .runner-serves .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }

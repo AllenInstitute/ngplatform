@@ -16,11 +16,46 @@ let shared: Worker | undefined;
 const worker = () => {
   if (shared === undefined) {
     shared = new Worker(new URL("./worker.ts", import.meta.url), { type: "module", name: "virtual zarr-vectors" });
-    const megabytes = vectorCacheMegabytes();
-    shared.postMessage({ type: "settings", settings: { cacheBytes: megabytes > 0 ? megabytes * 2 ** 20 : undefined } });
+    shared.postMessage({ type: "settings", settings: workerSettings() });
   }
   return shared;
 };
+
+/** The settings the worker is told (Settings → View settings). */
+function workerSettings(): { cacheBytes?: number; diskBytes?: number } {
+  const megabytes = vectorCacheMegabytes();
+  const disk = tractogramDiskGigabytes();
+  return { cacheBytes: megabytes > 0 ? megabytes * 2 ** 20 : undefined, diskBytes: disk === undefined ? undefined : disk * 2 ** 30 };
+}
+
+const DISK_KEY = "ngplatform.tractogramDiskGB";
+
+/**
+ * The most, GB, a tractogram on this computer may copy into the browser's
+ * storage while it is open (undefined: the default, 4 GB; 0: nothing on
+ * disk, a sample in memory).  Past it only a sample of the streamlines is
+ * copied (`spillPlan`).  Kept in this browser.
+ */
+export function tractogramDiskGigabytes(): number | undefined {
+  try {
+    const raw = globalThis.localStorage?.getItem(DISK_KEY);
+    const value = raw === null || raw === undefined ? NaN : Number(raw);
+    return Number.isFinite(value) && value >= 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Sets that limit (undefined: the default) and tells the worker. */
+export function setTractogramDiskGigabytes(gigabytes: number | undefined): void {
+  try {
+    if (gigabytes !== undefined && gigabytes >= 0) globalThis.localStorage?.setItem(DISK_KEY, String(gigabytes));
+    else globalThis.localStorage?.removeItem(DISK_KEY);
+  } catch {
+    // Storage refused: the setting holds for this visit.
+  }
+  shared?.postMessage({ type: "settings", settings: workerSettings() });
+}
 
 const CACHE_KEY = "ngplatform.vectorCacheMB";
 
@@ -46,7 +81,7 @@ export function setVectorCacheMegabytes(megabytes: number): void {
   } catch {
     // Storage refused: the setting holds for this visit.
   }
-  shared?.postMessage({ type: "settings", settings: { cacheBytes: megabytes > 0 ? megabytes * 2 ** 20 : undefined } });
+  shared?.postMessage({ type: "settings", settings: workerSettings() });
 }
 
 export const ZARR_VECTORS_VIRTUAL: VirtualFormat[] = [

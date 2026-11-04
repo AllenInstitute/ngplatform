@@ -4,7 +4,7 @@
  * spill file in the origin's private file system (./spill.ts), so memory
  * holds only an index; whole streamlines by id are read from the file.
  */
-import { freeStorage, NeedsRunner, OpfsSpill, openSpill, type Spill } from "./spill.js";
+import { currentSpillPlan, NeedsRunner, OpfsSpill, type SpillPlan } from "./spill.js";
 import { CHECKPOINT, type StreamlineInput, StreamlineStore } from "./streamlines.js";
 import { parseTckHeader, readTck, readTckStreamlines } from "./tck.js";
 import { parseTrkHeader, readTrk, readTrkStreamlines, TRK_HEADER_SIZE } from "./trk.js";
@@ -12,28 +12,21 @@ import { openTrxInfo, readTrx, readTrxStreamlines, trxInPlace } from "./trx.js";
 
 export { NeedsRunner, RUNNER_HINT } from "./spill.js";
 
-/**
- * The spill a tractogram of `bytes` bytes needs (its points copied into
- * cells, about 1.5 times the points' bytes with the fragments, bridges and
- * manifests), on disk when large; a NeedsRunner error when the origin's
- * storage cannot hold it.
- */
-async function spillFor(bytes: number, name: string): Promise<Spill> {
-  const expected = Math.round(bytes * 1.5);
-  const spill = await openSpill(expected);
-  if (spill instanceof OpfsSpill) {
-    const free = await freeStorage();
-    if (free < expected) {
-      spill.close();
-      const gb = (b: number) => `${(b / 2 ** 30).toFixed(1)} GB`;
-      throw new NeedsRunner(`${name} needs about ${gb(expected)} of this browser's storage to be read here, and ${gb(Math.max(0, free))} is free`);
-    }
-  }
-  return spill;
-}
+const gb = (b: number) => `${(b / 2 ** 30).toFixed(1)} GB`;
 
-async function build(input: StreamlineInput, size: number): Promise<StreamlineStore> {
-  return StreamlineStore.build(input, { spill: await spillFor(size, input.name) });
+/**
+ * Reads a tractogram whose points take about `bytes` into a store, copying
+ * into its spill what the plan allows (`spillPlan`): every streamline, or
+ * past the disk budget a sample of them; a NeedsRunner error when not even
+ * the sparsest sample fits.
+ */
+async function build(input: StreamlineInput, bytes: number): Promise<StreamlineStore> {
+  const plan: SpillPlan = await currentSpillPlan(bytes);
+  if (plan.mode === "none") {
+    throw new NeedsRunner(`${input.name} would need about ${gb(plan.wholeBytes)} of this browser's storage to be read here, and even one streamline in 10,000 is past the ${gb(plan.budget)} allowed (View settings)`);
+  }
+  const spill = plan.place === "disk" ? await OpfsSpill.create() : undefined;
+  return StreamlineStore.build(input, { spill, sampleEvery: plan.every, plan });
 }
 
 /** Reports how much of the file has been read, 0 to 1. */

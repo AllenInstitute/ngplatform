@@ -2,22 +2,23 @@
  * The runner in the interface: the Jobs tab's "This computer" section
  * (pairing, the runner's jobs with their PID, progress, log, Cancel and
  * Open), the chooser for paths under the runner's folders, opening a path
- * as a layer (served by the runner), and the offer to open a tractogram
- * too large for the browser through the runner.
+ * as a layer (served by the runner), and, for a tractogram past the
+ * browser's storage limit, the choice of a sample in the browser or the
+ * runner's conversion.
  */
 import { isActive, normaliseAddress, pairingFromHash, type RunnerEntry, RunnerError, type RunnerService } from "../platform/runner.js";
 import type { RunnerApi, RunnerJob, RunnerOutput } from "../sdk/types.js";
 import { clear, h, iconButton } from "./dom.js";
-import { closeSheet, confirmDialog, sheet, showSheet, toast } from "./overlays.js";
+import { diskBudget, type SpillPlan, spillPlan, storageEstimate } from "../virtual/vectors/spill.js";
+import { tractogramDiskGigabytes } from "../virtual/vectors/formats.js";
+import { closeSheet, confirmDialog, offer, sheet, showSheet, toast } from "./overlays.js";
 import type { Workbench } from "./workbench.js";
 
 export const LOCAL_JOBS_GUIDE = "https://ngplatform.readthedocs.io/en/latest/guide/local-jobs/";
 const START_COMMAND = "python -m ngplatform_runner --root ~/data";
-/** Tractograms larger than this are offered to the runner when dropped: the browser reads a tractogram whole. */
-export const BROWSER_TRACTOGRAM_LIMIT = 2 * 2 ** 30;
 const TRACTOGRAM = /\.(trk|tck|trx)$/i;
 
-const sizeText = (bytes: number) => (bytes >= 2 ** 30 ? `${(bytes / 2 ** 30).toFixed(1)} GB` : bytes >= 2 ** 20 ? `${(bytes / 2 ** 20).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} kB`);
+const sizeText = (bytes: number) => (bytes >= 2 ** 30 ? `${(bytes / 2 ** 30).toFixed(1)} GB` : bytes >= 2 ** 20 ? `${(bytes / 2 ** 20).toFixed(0)} MB` : `${Math.max(1, Math.round(bytes / 1024))} kB`);
 const baseName = (path: string) => path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? path;
 const folderOf = (path: string) => path.replace(/[\\/]+$/, "").replace(/[\\/][^\\/]*$/, "") || "/";
 const joinPath = (folder: string, name: string) => `${folder.replace(/[\\/]+$/, "")}/${name}`;
@@ -437,22 +438,78 @@ async function convertDialog(runner: RunnerService): Promise<void> {
 // ------------------------------------------------------------------ large files
 
 /**
- * Tractograms among dropped files that are too large to read in the browser
- * (it reads a tractogram whole), when a runner is paired: offers to open
- * them through the runner instead (the first of them).  Resolves false
- * when the drop is not such a file.
+ * What the browser will copy of a tractogram of `bytes` bytes (the vectors
+ * worker decides the same way, `spillPlan` in src/virtual/vectors/spill.ts):
+ * every streamline, or past the storage limit (View settings) a sample.
  */
-export async function offerRunnerForLarge(wb: Workbench, runner: RunnerService, files: { name: string; size: number }[]): Promise<boolean> {
-  if (!offerRunnerForLarge.applies(files)) return false;
-  const file = files[0];
-  const what = `${file.name} is ${sizeText(file.size)}: too large to read in the browser, which reads a tractogram whole.`;
+export async function tractogramPlan(bytes: number): Promise<SpillPlan> {
+  const setting = tractogramDiskGigabytes();
+  return spillPlan(bytes, diskBudget(setting === undefined ? undefined : setting * 2 ** 30, await storageEstimate()), true);
+}
+
+/** Tractograms already asked about this visit (name and size), so the notice on opening is not shown again. */
+const asked = new Set<string>();
+const askedKey = (file: { name: string; size: number }) => `${file.name}|${file.size}`;
+
+/** Why a tractogram is past the limit, in plain words. */
+function limitText(file: { name: string; size: number }, plan: SpillPlan): string {
+  const limit = plan.budget > 0 ? `past the ${sizeText(plan.budget)} limit` : "and none is allowed";
+  return `${file.name} is ${sizeText(file.size)}. Reading all of it here would copy about ${sizeText(plan.wholeBytes)} into this browser's storage, ${limit} (View settings → Local tractograms).`;
+}
+
+/** What a sample keeps, in plain words. */
+const sampleText = (plan: SpillPlan) => `about ${sizeText(plan.bytes)} copied${plan.place === "memory" ? ", in memory" : ", deleted when the tab closes"}`;
+
+/** Converts (or serves) a tractogram through the runner, after finding where it is under the runner's folders. */
+async function throughRunner(wb: Workbench, runner: RunnerService, file: { name: string; size: number }, choice: "serve" | "convert"): Promise<void> {
   if (!runner.available()) {
-    toast(`${what} Pair the runner on this computer (Jobs tab) to open it through a Python process.`, "error");
-    return true;
+    toast(`Start the runner on this computer (${START_COMMAND}) and pair it in Jobs → This computer, then open ${file.name} again.`, "error");
+    wb.docks.show("jobs");
+    return;
   }
-  const choice = await new Promise<"serve" | "convert" | undefined>((resolve) => {
+  const path = await choosePath(runner, { title: `Where is ${file.name}?`, mode: "open", find: { name: file.name, size: file.size }, note: "The browser does not tell the page where a dropped file is: choose it under the runner's folders." }).catch((e) => {
+    toast((e as Error).message, "error");
+    return undefined;
+  });
+  if (path === undefined) return;
+  if (choice === "serve") {
+    toast(`The runner is reading ${file.name}; it is added when it is ready`);
+    void openRunnerPath(wb, runner, path).catch((e) => toast(`Could not open ${file.name}: ${(e as Error).message}`, "error"));
+    return;
+  }
+  const output = `${folderOf(path)}/${baseName(path).replace(TRACTOGRAM, "")}.zarr`;
+  try {
+    const job = await runner.start("convert", { input: path, output, levels: 3 });
+    toast(`Converting ${file.name} (PID ${job.pid ?? "queued"}); it is added when done`);
+    wb.docks.show("jobs");
+    const done = await runner.wait(job.id);
+    if (done.state === "done") await openRunnerPath(wb, runner, output);
+    else if (done.state === "failed") toast(`Converting ${file.name} failed: ${done.message}`, "error");
+  } catch (e) {
+    toast((e as Error).message, "error");
+  }
+}
+
+/**
+ * A dropped tractogram whose points would pass the browser's storage limit
+ * (`tractogramPlan`): asks whether to open a sample of it here, or have the
+ * runner on this computer convert (or serve) the whole file.  Resolves
+ * `open` when the drop should be opened in the browser as usual (nothing
+ * too large, or a sample chosen: `sample` says which file, how sparse).
+ */
+export async function offerRunnerForLarge(wb: Workbench, runner: RunnerService, files: { name: string; size: number }[]): Promise<{ open: boolean; sample?: { name: string; every: number } }> {
+  const tractograms = files.filter((f) => TRACTOGRAM.test(f.name));
+  if (tractograms.length === 0) return { open: true };
+  const file = tractograms.reduce((a, b) => (b.size > a.size ? b : a));
+  const plan = await tractogramPlan(file.size);
+  if (plan.mode === "whole") return { open: true };
+  asked.add(askedKey(file));
+  const paired = runner.available();
+  const every = `1 in ${plan.every.toLocaleString("en")}`;
+  const item = (name: string, text: string) => h("li", {}, h("strong", {}, name), `: ${text}`);
+  const choice = await new Promise<"serve" | "convert" | "sample" | undefined>((resolve) => {
     let answered = false;
-    const answer = (value: "serve" | "convert" | undefined) => {
+    const answer = (value: "serve" | "convert" | "sample" | undefined) => {
       if (answered) return;
       answered = true;
       closeSheet();
@@ -460,55 +517,52 @@ export async function offerRunnerForLarge(wb: Workbench, runner: RunnerService, 
     };
     showSheet(
       sheet(
-        "Open through the runner",
+        "Too large to copy into the browser",
         [
-          h("p", { class: "lead" }, what),
+          h("p", { class: "lead" }, limitText(file, plan), plan.mode === "none" ? " Even 1 in 10,000 streamlines is past it." : ""),
           h(
-            "p",
-            { class: "empty" },
-            "The runner on this computer can read it instead. ",
-            h("strong", {}, "Serve it"),
-            ": a Python process reads the file once and serves it to the viewer as a store (it needs memory for the whole file). ",
-            h("strong", {}, "Convert it"),
-            ": a job writes a Zarr Vectors store with coarser levels next to it, which the viewer and Track filtering read a chunk at a time; it takes a while, once.",
+            "ul",
+            { class: "runner-drop-choices" },
+            ...(plan.mode === "sample" ? [item(`Open ${every}`, `${sampleText(plan)}. The view, regions and groups use only those streamlines; Track filtering's Run on this computer filters the whole file.`)] : []),
+            item("Convert it", "the runner on this computer writes a Zarr Vectors store next to the file (about the file's size, on your disk). The viewer reads it a chunk at a time, every streamline."),
+            item("Serve it", "the runner reads the whole file into memory and serves it."),
           ),
+          ...(paired ? [] : [h("p", { class: "note" }, `The runner is not paired: start it (${START_COMMAND}) and pair it in Jobs → This computer.`)]),
         ],
         [
           h("button", { class: "btn", type: "button", onclick: () => answer(undefined) }, "Cancel"),
-          h("button", { class: "btn runner-drop-convert", type: "button", onclick: () => answer("convert") }, "Convert it"),
-          h("button", { class: "btn primary runner-drop-serve", type: "button", onclick: () => answer("serve") }, "Serve it"),
+          h("button", { class: "btn runner-drop-serve", type: "button", onclick: () => answer("serve") }, "Serve it"),
+          h("button", { class: `btn${paired || plan.mode !== "sample" ? " primary" : ""} runner-drop-convert`, type: "button", onclick: () => answer("convert") }, "Convert it"),
+          ...(plan.mode === "sample" ? [h("button", { class: `btn${paired ? "" : " primary"} runner-drop-sample`, type: "button", onclick: () => answer("sample") }, `Open ${every}`)] : []),
         ],
       ),
       () => answer(undefined),
     );
   });
-  if (choice === undefined) return true;
-  const path = await choosePath(runner, { title: `Where is ${file.name}?`, mode: "open", find: { name: file.name, size: file.size }, note: "The browser does not tell the page where a dropped file is: choose it under the runner's folders." }).catch((e) => {
-    toast((e as Error).message, "error");
-    return undefined;
-  });
-  if (path === undefined) return true;
-  if (choice === "serve") {
-    toast(`The runner is reading ${file.name}; it is added when it is ready`);
-    void openRunnerPath(wb, runner, path).catch((e) => toast(`Could not open ${file.name}: ${(e as Error).message}`, "error"));
-  } else {
-    const output = `${folderOf(path)}/${baseName(path).replace(TRACTOGRAM, "")}.zarr`;
-    try {
-      const job = await runner.start("convert", { input: path, output, levels: 3 });
-      toast(`Converting ${file.name} (PID ${job.pid ?? "queued"}); it is added when done`);
-      wb.docks.show("jobs");
-      const done = await runner.wait(job.id);
-      if (done.state === "done") await openRunnerPath(wb, runner, output);
-      else if (done.state === "failed") toast(`Converting ${file.name} failed: ${done.message}`, "error");
-    } catch (e) {
-      toast((e as Error).message, "error");
-    }
-  }
-  return true;
+  if (choice === "sample") return { open: true, sample: { name: file.name, every: plan.every } };
+  if (choice !== undefined) await throughRunner(wb, runner, file, choice);
+  return { open: false };
 }
 
-/** Whether a drop is one large tractogram (or several), which the browser cannot read. */
-offerRunnerForLarge.applies = (files: { name: string; size: number }[]): boolean => files.length > 0 && files.every((f) => TRACTOGRAM.test(f.name) && f.size > BROWSER_TRACTOGRAM_LIMIT);
+/**
+ * Says so when a tractogram opened another way (Open from device, a
+ * folder, a reload) is read as a sample, with the runner's conversion
+ * offered.  A drop asks first instead (`offerRunnerForLarge`).
+ */
+export function offerSampledTractograms(wb: Workbench, runner: RunnerService): void {
+  wb.localData.onVirtualOpen(({ file }) => {
+    if (!TRACTOGRAM.test(file.name) || asked.has(askedKey(file))) return;
+    asked.add(askedKey(file));
+    void tractogramPlan(file.size).then((plan) => {
+      if (plan.mode === "whole") return;
+      const what = plan.mode === "sample" ? ` Showing about 1 in ${plan.every.toLocaleString("en")} streamlines (${sampleText(plan)}).` : " It cannot be read here.";
+      offer(`${limitText(file, plan)}${what} The runner on this computer can convert the whole file.`, [
+        { label: "Not now" },
+        { label: "Convert it", primary: true, run: () => void throughRunner(wb, runner, file, "convert") },
+      ], 60000);
+    });
+  });
+}
 
 /** The SDK's runner API, over the service and these dialogs. */
 export function runnerApi(wb: () => Workbench, runner: RunnerService): RunnerApi {

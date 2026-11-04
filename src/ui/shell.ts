@@ -17,7 +17,7 @@ import { applyRulesToNewLayers, type SignInRules } from "../platform/sign_in_rul
 import { JobService } from "../platform/jobs.js";
 import { RunnerService } from "../platform/runner.js";
 import { ComputedImages } from "../virtual/computed.js";
-import { LocalData } from "../virtual/local_data.js";
+import { collectDropped, LocalData } from "../virtual/local_data.js";
 import { LocalPlugins } from "../platform/local_plugins.js";
 import { PluginHost } from "../platform/plugin_host.js";
 import { ExampleRegistry, OpenHandlerRegistry } from "../platform/registries.js";
@@ -58,8 +58,8 @@ import {
 import { CONVENTION_LABELS, type PanelConvention } from "../engine/anatomical.js";
 import { showCaptureSheet } from "./capture.js";
 import { offerOverviews } from "./overview.js";
-import { offerRunnerForLarge, pairFromLink, runnerApi } from "./runner.js";
-import { openDropped, showAddDatasetSheet, showEditStateSheet, showLocalSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
+import { offerRunnerForLarge, offerSampledTractograms, pairFromLink, runnerApi } from "./runner.js";
+import { openDroppedItems, showAddDatasetSheet, showEditStateSheet, showLocalSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
 import type { Workbench } from "./workbench.js";
 import { createPlatformApis } from "./apis.js";
 import { closeHistoryView, showHistoryView } from "./history_view.js";
@@ -385,6 +385,7 @@ export class Shell {
     void wb.localData.start();
     // A large image first viewed: offer to build its overview in the background.
     offerOverviews(wb);
+    offerSampledTractograms(wb, wb.runner);
     // Local data opened again (dropped files go with a reload): the layers
     // that read it before read it again, under its new id.
     const relink = async () => {
@@ -1470,13 +1471,16 @@ export class Shell {
         depth = 0;
         hint.hidden = true;
         this.wb.store.noteInput();
-        // A tractogram too large for the browser goes to the runner on this computer instead.
+        // What was dropped is taken now (the browser lets go of it after the event); a tractogram past the
+        // browser's storage limit asks first: a sample here, or the runner on this computer.
         const files = Array.from(e.dataTransfer!.files).map((f) => ({ name: f.name, size: f.size }));
-        if (offerRunnerForLarge.applies(files)) {
-          void offerRunnerForLarge(this.wb, this.wb.runner, files).catch((err) => toast((err as Error).message, "error"));
-          return;
-        }
-        openDropped(this.wb, e.dataTransfer!).catch((err) => toast(`Could not open what was dropped: ${(err as Error).message}`, "error"));
+        const dropped = collectDropped(e.dataTransfer!);
+        void (async () => {
+          const { open, sample } = await offerRunnerForLarge(this.wb, this.wb.runner, files);
+          // A sample's dataset says so in its name: "t17m (1 in 10)".
+          const stem = sample?.name.replace(/\.(trk|tck|trx)$/i, "");
+          if (open) await openDroppedItems(this.wb, dropped, (name) => (name === stem ? `${name} (1 in ${sample!.every.toLocaleString("en")})` : name));
+        })().catch((err) => toast(`Could not open what was dropped: ${(err as Error).message}`, "error"));
       },
       { capture: true },
     );
