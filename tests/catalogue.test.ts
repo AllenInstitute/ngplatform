@@ -17,6 +17,16 @@ describe("the plugin catalogue", () => {
     }
   });
 
+  it("lists each plugin requirements first, with a line for the Plugins tab and an offer for every tool", () => {
+    const seen = new Set<string>();
+    for (const { manifest, summary, offer } of CATALOGUE) {
+      for (const r of manifest.requires?.plugins ?? []) expect(seen.has(r), `${manifest.id} after ${r}`).toBe(true);
+      seen.add(manifest.id);
+      expect(summary.length, manifest.id).toBeGreaterThan(0);
+      if (manifest.kind === "tool") expect(offer, manifest.id).toBeDefined();
+    }
+  });
+
   it("requires only plugins it ships", () => {
     const ids = new Set(CATALOGUE.map((e) => e.manifest.id));
     for (const { manifest } of CATALOGUE) for (const r of manifest.requires?.plugins ?? []) expect(ids.has(r), `${manifest.id} → ${r}`).toBe(true);

@@ -25,7 +25,7 @@ export const SEGMENTATION_MANIFEST: Manifest = {
   name: "Segmentation",
   version: "0.1.0",
   kind: "tool",
-  enabledByDefault: true,
+  enabledByDefault: false,
   description: "Label volumes drawn by hand, as in WebKnossos: a new segmentation layer on an image's grid or a copy of a segmentation, a tool bar over the views (brush, erase, lasso, fill, pick, quick select by threshold or by a Segment Anything model), a segment list, undo, saving as NIfTI or OME-Zarr.",
   guide: `Label volumes drawn by hand, in the **Segmentation** tab, shown as a segmentation layer that updates as you draw.
 

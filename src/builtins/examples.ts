@@ -97,6 +97,9 @@ const onTemplate = (store: string, name: string) => () => ({
   app: { trackFiltering: mniGroups(store) },
 });
 
+/** The track groups are Track filtering's: the examples switch it on for the tab (src/ui/shell.ts, openExample). */
+const TRACK_FILTERING = "org.ngplatform.track-filtering";
+
 export const EXAMPLES: ExampleSpec[] = [
   {
     id: "s2146-mni",
@@ -104,6 +107,7 @@ export const EXAMPLES: ExampleSpec[] = [
     description:
       "3.3 million streamlines (zarr-vectors) from a whole brain imaged at 50 µm by HiP-CT, anatomically constrained (BRIDGE) and registered to MNI space, on SRB 2026a, with three track groups set up in Filtering.",
     remote: true,
+    plugins: [TRACK_FILTERING],
     state: onTemplate(S2146, "S-21-46"),
   },
   {
@@ -111,6 +115,7 @@ export const EXAMPLES: ExampleSpec[] = [
     title: "HCP-1065 tractogram on the SRB 2026a template",
     description: "503,085 streamlines (zarr-vectors) of the HCP-1065 population tractogram on SRB 2026a, with three track groups set up in Filtering.",
     remote: true,
+    plugins: [TRACK_FILTERING],
     state: onTemplate(HCP1065, "HCP-1065"),
   },
   {

@@ -368,6 +368,10 @@ export function showSettingsSheet(wb: Workbench): void {
   // Kept in this browser, not the workspace: what the tab may hold of large local files.
   const cache = h("input", { class: "text-input", type: "number", min: "0", step: "64", value: String(vectorCacheMegabytes()), "aria-label": "Memory for tractogram cells, MB" }) as HTMLInputElement;
   cache.addEventListener("change", () => setVectorCacheMegabytes(Math.max(0, Number(cache.value) || 0)));
+  // Kept in this browser: offers of the plugins that are off (src/ui/plugin_offers.ts).
+  const offers = h("input", { type: "checkbox", id: "show-offers" }) as HTMLInputElement;
+  offers.checked = wb.offers.enabled;
+  offers.addEventListener("change", () => wb.offers.setEnabled(offers.checked));
   showSheet(
     sheet(
       "View settings",
@@ -385,6 +389,12 @@ export function showSettingsSheet(wb: Workbench): void {
           "p",
           { class: "note" },
           "Kept in this browser. A large tractogram's points are copied into cells in the browser's private storage while it is open (about 1.2 to 1.5 times the file's size; deleted when it closes); only an index and the cells last used stay in memory.",
+        ),
+        h("label", { class: "field check" }, offers, h("span", {}, "Show offers for tools that are off")),
+        h(
+          "p",
+          { class: "note" },
+          "Kept in this browser. A plugin that is off is offered when you open data it works with. Ticking this again brings back the offers you said “Not now” to.",
         ),
       ],
       [h("button", { class: "btn primary", type: "button", onclick: () => closeSheet() }, "Done")],

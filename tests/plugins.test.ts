@@ -141,6 +141,33 @@ describe("PluginHost", () => {
     expect(loads.n).toBe(0);
   });
 
+  it("switches on a plugin registered off without a reload: its contributions appear, its code loads on use", async () => {
+    const { s, tabs } = services();
+    const host = new PluginHost(s);
+    const loads = { n: 0 };
+    host.register(manifest, counterPlugin(loads), { enabled: false });
+    let changes = 0;
+    host.onChange(() => changes++);
+    host.switchOn(manifest.id);
+    expect(changes).toBe(1);
+    expect(host.list()[0].status).toBe("registered");
+    expect(s.commands.has("counter.add")).toBe(true);
+    expect(tabs.map((t) => t.id)).toEqual(["counter.panel"]);
+    expect(loads.n).toBe(0);
+    expect(await s.commands.invoke("counter.add", { by: 2 })).toBe(2);
+    // Once on, switching on again changes nothing.
+    host.switchOn(manifest.id);
+    expect(tabs).toHaveLength(1);
+    // A plugin that activates on startup activates at once.
+    const eager: Manifest = { ...manifest, id: "org.example.eager", activation: ["onStartup"], contributes: { appState: { key: "eager", version: 1 } } };
+    const eagerLoads = { n: 0 };
+    host.register(eager, async () => (eagerLoads.n++, { activate() {} }), { enabled: false });
+    host.switchOn(eager.id);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(eagerLoads.n).toBe(1);
+    expect(host.list().find((r) => r.manifest.id === eager.id)?.status).toBe("active");
+  });
+
   it("shows declared contributions without loading code, and loads on first use", async () => {
     const { s, tabs, slices } = services();
     const host = new PluginHost(s);

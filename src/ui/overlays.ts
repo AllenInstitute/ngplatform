@@ -348,7 +348,7 @@ export function toast(message: string, kind: "info" | "error" = "info"): void {
 }
 
 /** A toast asking a question, with a button for each answer; gone after a choice, or after `timeout` ms. */
-export function offer(message: string, actions: { label: string; primary?: boolean; run?: () => void }[], timeout = 30000): void {
+export function offer(message: string, actions: { label: string; primary?: boolean; run?: () => void }[], timeout = 30000): () => void {
   const el = h(
     "div",
     { class: "toast offer" },
@@ -363,6 +363,7 @@ export function offer(message: string, actions: { label: string; primary?: boole
   );
   toastHost().append(el);
   setTimeout(() => el.remove(), timeout);
+  return () => el.remove();
 }
 
 /**

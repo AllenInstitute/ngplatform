@@ -48,6 +48,8 @@ export interface ExampleSpec {
   description: string;
   remote?: boolean;
   owner?: string;
+  /** Tool plugins it is shown with: opening it switches them on for the tab, unless this browser chose them off. */
+  plugins?: string[];
   state: () => { ng: Json; app: Json };
 }
 
@@ -181,6 +183,21 @@ export class PluginHost {
     if (enabled) this.declare(entry);
     this.changed();
     if (enabled && manifest.activation?.includes("onStartup")) void this.activate(manifest.id).catch(() => {});
+  }
+
+  /**
+   * Switches on a plugin registered switched off, without a reload: what its
+   * manifest declares appears, and it activates as its manifest says (at
+   * once for `onStartup`).  For tool plugins; a data type plugin's
+   * Neuroglancer modules load only with the page.
+   */
+  switchOn(id: string): void {
+    const entry = this.plugins.get(id);
+    if (entry === undefined || entry.status !== "off") return;
+    entry.status = "registered";
+    this.declare(entry);
+    this.changed();
+    if (entry.manifest.activation?.includes("onStartup")) void this.activate(id).catch(() => {});
   }
 
   /** Removes a plugin and everything it added. */
