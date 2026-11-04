@@ -25,6 +25,24 @@ export interface QuickSelectRequest {
   axis?: number;
   /** For point prompts: how far from the clicked value counts as the same, as a fraction of the image's range in the block. */
   tolerance: number;
+  /**
+   * For a method that `refines`: every prompt given in this section so far,
+   * the latest included (a box, and clicks on what is wanted or not).
+   */
+  prompts?: { box?: { lo: Vec3; hi: Vec3 }; points: { at: Vec3; positive: boolean }[] };
+  /** The image's values over any box of label voxels (`hi` exclusive), for a method that reads more than `image`. */
+  read?: (lo: Vec3, hi: Vec3, signal?: AbortSignal) => Promise<ImageBlock | undefined>;
+  /**
+   * The image read: `key` names it (its store, level and placement; for
+   * what a method keeps per image), `window` the range its layer shows
+   * (black to white) when the layer has one, `spacing` the label voxel's
+   * sides in mm, `size` the label grid's size in voxels.
+   */
+  source?: { key: string; window?: [number, number]; spacing: Vec3; size: Vec3 };
+  /** How much of the section round the prompt a model looks at: at least this many voxels across. */
+  context?: number;
+  /** Says what the method is doing when it takes a while (a download, an embedding), and how far along (0 … 1). */
+  progress?: (text: string, fraction?: number) => void;
 }
 
 /** A mask on the label grid: `size` voxels from `lo`, x fastest; 1 is selected. */
@@ -40,6 +58,8 @@ export interface QuickSelectMethod {
   description?: string;
   /** Which prompts it takes. */
   prompts: ("box" | "point")[];
+  /** Clicks add to the prompt in the section (wanted, or not with Shift or Alt) rather than replacing it; the request's `prompts` holds them all. */
+  refines?: boolean;
   run(request: QuickSelectRequest, signal: AbortSignal): Promise<Mask>;
 }
 

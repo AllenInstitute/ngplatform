@@ -9,6 +9,9 @@
  * view's normal, at the view's position): the section is a small image, a
  * pixel a voxel, placed with the screen's affine map of its voxels (from
  * the view's own projection), so it follows panning, zooming and rotation.
+ *
+ * A model method's clicks show too, in the views showing their section:
+ * a green dot with + for what is wanted, a red one with − for what is not.
  */
 import type { Disposer, PlatformContext } from "@ngplatform/sdk";
 import { type Placement, toGlobal, toVoxel } from "../annotations/geometry.js";
@@ -52,9 +55,16 @@ export function maskCount(mask: Mask): number {
   return n;
 }
 
+/** Clicks given to quick select in one section (along `axis`, at `index`): wanted or not. */
+export interface PromptPoints {
+  axis: number;
+  index: number;
+  points: { at: Vec3; positive: boolean }[];
+}
+
 export interface PreviewSource {
-  /** The mask proposed, the grid it is on, and the colour to show it in; undefined for none. */
-  preview(): { mask: Mask; placement: Placement; colour: string } | undefined;
+  /** The mask proposed (if any), the clicks given (if any), the grid they are on, and the colour to show the mask in; undefined for none. */
+  preview(): { mask?: Mask; points?: PromptPoints; placement: Placement; colour: string } | undefined;
 }
 
 export class PreviewOverlay {
@@ -107,14 +117,15 @@ export class PreviewOverlay {
       this.images.clear();
       return;
     }
-    if (this.drawn?.mask !== shown.mask || this.drawn.colour !== shown.colour) {
-      this.drawn = { mask: shown.mask, colour: shown.colour };
+    if (this.drawn?.mask !== shown.mask || this.drawn?.colour !== shown.colour) {
+      this.drawn = shown.mask && { mask: shown.mask, colour: shown.colour };
       this.images.clear();
     }
     const position = (this.ctx.viewer.getState() as { position?: number[] }).position;
     if (position === undefined) return;
-    const { mask, placement } = shown;
-    const centre = mask.lo.map((v, k) => v + (mask.size[k] - 1) / 2) as Vec3;
+    const { mask, placement, points } = shown;
+    const centre = mask ? (mask.lo.map((v, k) => v + (mask.size[k] - 1) / 2) as Vec3) : points?.points[0]?.at;
+    if (centre === undefined) return;
     for (const panel of this.ctx.viewer.panels()) {
       if (panel.kind !== "2d") continue;
       const project = (v: Vec3) => panel.project(toGlobal(placement, v, position));
@@ -127,6 +138,9 @@ export class PreviewOverlay {
       });
       const axis = depth.indexOf(Math.max(...depth));
       const index = voxelIndex(toVoxel(placement, position)[axis]);
+      const r = panel.element.getBoundingClientRect();
+      if (points !== undefined && points.axis === axis && points.index === index) this.drawPoints(g, ratio, r.left - base.left, r.top - base.top, r, points, project);
+      if (mask === undefined) continue;
       const image = this.image(mask, axis, index, shown.colour);
       if (image === null) continue;
       const [u, w] = [0, 1, 2].filter((k) => k !== axis);
@@ -139,7 +153,6 @@ export class PreviewOverlay {
       const pu = project(corner.map((v, i) => (i === u ? v + 1 : v)) as Vec3);
       const pw = project(corner.map((v, i) => (i === w ? v + 1 : v)) as Vec3);
       if (o === undefined || pu === undefined || pw === undefined) continue;
-      const r = panel.element.getBoundingClientRect();
       g.save();
       g.setTransform(ratio, 0, 0, ratio, 0, 0);
       g.beginPath();
@@ -150,6 +163,37 @@ export class PreviewOverlay {
       g.drawImage(image, 0, 0);
       g.restore();
     }
+  }
+
+  /** Clicks as dots over a view (offset `x`, `y` in the overlay): green with + wanted, red with − not. */
+  private drawPoints(g: CanvasRenderingContext2D, ratio: number, x: number, y: number, r: DOMRect, points: PromptPoints, project: (v: Vec3) => { x: number; y: number } | undefined): void {
+    g.save();
+    g.setTransform(ratio, 0, 0, ratio, 0, 0);
+    g.beginPath();
+    g.rect(x, y, r.width, r.height);
+    g.clip();
+    for (const p of points.points) {
+      const s = project(p.at);
+      if (s === undefined) continue;
+      const cx = x + s.x;
+      const cy = y + s.y;
+      g.beginPath();
+      g.arc(cx, cy, 6, 0, 2 * Math.PI);
+      g.fillStyle = p.positive ? "#2e9d47" : "#d63a3a";
+      g.fill();
+      g.lineWidth = 1.5;
+      g.strokeStyle = "#ffffff";
+      g.stroke();
+      g.beginPath();
+      g.moveTo(cx - 3, cy);
+      g.lineTo(cx + 3, cy);
+      if (p.positive) {
+        g.moveTo(cx, cy - 3);
+        g.lineTo(cx, cy + 3);
+      }
+      g.stroke();
+    }
+    g.restore();
   }
 
   /** A section's image, a pixel a voxel: tinted inside, solid on the outline; null where the mask has nothing. */

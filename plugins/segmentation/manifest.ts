@@ -26,7 +26,7 @@ export const SEGMENTATION_MANIFEST: Manifest = {
   version: "0.1.0",
   kind: "tool",
   enabledByDefault: true,
-  description: "Label volumes drawn by hand, as in WebKnossos: a new segmentation layer on an image's grid or a copy of a segmentation, a tool bar over the views (brush, erase, lasso, fill, pick, quick select), a segment list, undo, saving as NIfTI or OME-Zarr.",
+  description: "Label volumes drawn by hand, as in WebKnossos: a new segmentation layer on an image's grid or a copy of a segmentation, a tool bar over the views (brush, erase, lasso, fill, pick, quick select by threshold or by a Segment Anything model), a segment list, undo, saving as NIfTI or OME-Zarr.",
   guide: `Label volumes drawn by hand, in the **Segmentation** tab, shown as a segmentation layer that updates as you draw.
 
 ## A new segmentation layer
@@ -36,7 +36,7 @@ export const SEGMENTATION_MANIFEST: Manifest = {
 
 ## The tool bar
 While a label volume is edited, a tool bar shows at the top of the views:
-- **Move** (\`M\`): the views as usual. **Brush** (\`B\`) and **Erase** (\`E\`): the left button paints the active segment, or 0; a ring shows the brush; **Alt+wheel** or \`[\` \`]\` change its size. **Lasso** (\`L\`): draw a closed outline in a 2-D view; inside it is painted (or erased) in that section. **Fill** (\`F\`): the region clicked, in its section (2-D) or in a box round it (3-D, \`Shift+F\`). **Pick segment** (\`I\`). **Quick select** (\`Q\`): drag a box round a structure, or click it; its mask shows first, \`Enter\` paints it and \`Escape\` drops it (or paint at once, in the tab).
+- **Move** (\`M\`): the views as usual. **Brush** (\`B\`) and **Erase** (\`E\`): the left button paints the active segment, or 0; a ring shows the brush; **Alt+wheel** or \`[\` \`]\` change its size. **Lasso** (\`L\`): draw a closed outline in a 2-D view; inside it is painted (or erased) in that section. **Fill** (\`F\`): the region clicked, in its section (2-D) or in a box round it (3-D, \`Shift+F\`). **Pick segment** (\`I\`). **Quick select** (\`Q\`): drag a box round a structure, or click it; its mask shows first, \`Enter\` paints it and \`Escape\` drops it (or paint at once, in the tab). Its method is **Threshold** or **AI (MobileSAM)**, a Segment Anything model run in the page (44.7 MB, Apache-2.0, downloaded on first use and kept in the browser): click what you want, \`Shift+click\` or \`Alt+click\` what you do not, each click refining the mask; **Spread** proposes it in the next sections too, painted as one stroke.
 - \`W\` and \`Shift+W\` step through the tools; hold **Space** to move the view with the left button while a drawing tool is on; \`Escape\` goes back to Move.
 - **New segment** (\`C\`), the active segment's colour and name; **Undo** and **Redo** (\`Ctrl+Z\`, \`Ctrl+Y\`: strokes and workspace changes as one history); **Interpolate** (\`V\`) fills the sections between two where the segment is drawn; **Save**.
 

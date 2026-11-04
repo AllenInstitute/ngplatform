@@ -172,6 +172,10 @@ export class Painter {
     if (panel?.kind !== "2d") return;
     e.preventDefault();
     e.stopPropagation();
+    // The press is held back from the page, so focus would stay where it was (a field of the tab, say), and
+    // keys such as Enter and Escape would go there: the views take it.
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && focused !== document.body && !panel.element.contains(focused)) focused.blur();
     const p = this.point(panel, e);
     if (p === undefined) return;
     this.dragging = panel;

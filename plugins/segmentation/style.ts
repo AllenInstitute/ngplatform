@@ -67,6 +67,16 @@ export const STYLE =
 .sg-dims button { height: 24px; padding: 0 8px; font-size: 12px; }
 .sg-bar .sg-icon.sg-unsaved { color: var(--warn); }
 .sg-bar .sg-icon.sg-accept { color: var(--ok, #7bd88f); }
+.sg-bar .segmented + .segmented { margin-left: 4px; }
+.sg-text { height: 24px; padding: 0 8px; font: 12px var(--ui); color: var(--text); background: var(--ink-2, #1a1a1a); border: 1px solid var(--line); cursor: pointer; }
+.sg-text:hover { background: var(--ink-4); }
+.sg-status { max-width: 300px; padding: 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text); }
+.sg-progress { width: 120px; height: 8px; }
+.sg-model { display: grid; gap: 6px; padding: 6px 8px; border: 1px solid var(--line); font-size: 12px; grid-column: 1 / -1; }
+.sg-model-form { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: end; }
+.sg-model-form > .sg-model, .sg-model-form > .an-hint { grid-column: 1 / -1; }
+.sg-model progress { width: 100%; height: 8px; }
+.sg-error { color: var(--warn); }
 
 .sg-ring { position: absolute; pointer-events: none; border: 1.5px solid rgba(255, 255, 255, 0.85); border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5); }
 .sg-box { position: absolute; pointer-events: none; border: 1.5px dashed #ffd166; background: rgba(255, 209, 102, 0.08); }

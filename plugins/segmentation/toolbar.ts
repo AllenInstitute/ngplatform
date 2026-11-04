@@ -115,16 +115,37 @@ export class Toolbar {
         } }, label));
       }
       option = group(dims);
+    } else if (e.tool === "quick" && e.quickStatus) {
+      // A download, an embedding or spreading under way: what, how far, and Stop.
+      const s = e.quickStatus;
+      option = group(
+        el("span", { class: "sg-status", title: s.text }, s.text),
+        s.fraction === undefined ? null : el("progress", { class: "sg-progress", max: "1", value: String(s.fraction) }),
+        iconButton("close", "Stop (Escape)", () => e.cancelPreview()),
+      );
     } else if (e.tool === "quick" && e.pending) {
-      // The proposed mask, shown over the views: paint it or drop it.
+      // The proposed mask, shown over the views: paint it or drop it, or spread it to the next sections.
       const accept = iconButton("check", "Accept: paint the mask with the active segment (Enter)", () => e.acceptPreview());
       accept.classList.add("sg-accept");
+      const spread = e.canSpread()
+        ? el("button", { type: "button", class: "sg-text", title: `Spread the mask to ${e.spreadCount} sections each way (each section's prompt is the box round the mask before it); Enter paints them as one stroke`, onclick: () => e.spread() }, `Spread ±${e.spreadCount}`)
+        : null;
       option = group(
         el("span", { class: "sg-value", title: "The voxels quick select proposes" }, `${e.pending.voxels.toLocaleString()} voxels`),
+        spread,
         accept,
         iconButton("close", "Cancel: drop the mask (Escape)", () => e.cancelPreview()),
       );
     } else if (e.tool === "quick") {
+      // The method (Threshold, AI (MobileSAM), and any a plugin adds), and whether the mask shows first.
+      const methods = el("div", { class: "segmented sg-dims" });
+      const chosen = e.quickMethod();
+      for (const m of e.quickSelect.methods()) {
+        methods.append(el("button", { type: "button", title: m.description ?? m.title, "aria-pressed": String(m === chosen), onclick: () => {
+          e.method = m.id;
+          e.changed();
+        } }, m.title));
+      }
       const modes = el("div", { class: "segmented sg-dims" });
       for (const [mode, label, title] of [["preview", "Preview", "Show the mask first: Enter paints it, Escape drops it"], ["paint", "At once", "Paint the mask at once (undo takes it back)"]] as const) {
         modes.append(el("button", { type: "button", title, "aria-pressed": String(e.quickMode === mode), onclick: () => {
@@ -132,7 +153,7 @@ export class Toolbar {
           e.changed();
         } }, label));
       }
-      option = group(modes);
+      option = group(methods, modes);
     }
 
     // The active segment: its colour, id and name, the others to choose from, and New segment.

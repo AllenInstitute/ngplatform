@@ -11,6 +11,7 @@ import { layerStore, readableImages, type Voxels } from "../annotations/voxels.j
 import { type Editor, fmtBytes, type ImageLevel, labelTypeOf, MAX_COPY, MAX_NIFTI } from "./editor.js";
 import { iconButton } from "./icons.js";
 import { LABEL_MAX, type LabelType } from "./label_volume.js";
+import { MOBILE_SAM, MODEL_BYTES, ORT_VERSION, type Provider } from "./sam_model.js";
 import { niftiBytes } from "./save.js";
 import { groupOf, grouped } from "./segment_groups.js";
 import { segmentName } from "./segments.js";
@@ -446,12 +447,27 @@ export class Panel {
       if (e.fill3d) options.append(field("Reach (voxels)", numberInput(e.reach, (v) => (e.reach = Math.max(1, Math.min(256, Math.round(v)))), { min: 1, max: 256, step: 1 }), "The fill stays in a box this far round the click"));
     } else if (e.tool === "quick") {
       const methods = e.quickSelect.methods();
+      const method = e.quickMethod();
       options.append(
-        field("Method", select(methods.map((m) => [m.id, m.title]), e.method, (v) => {
+        field("Method", select(methods.map((m) => [m.id, m.title]), method.id, (v) => {
           e.method = v;
           e.changed();
-        }, "Method"), methods.find((m) => m.id === e.method)?.description),
-        field("Tolerance", numberInput(e.tolerance, (v) => (e.tolerance = Math.max(0, Math.min(1, v))), { min: 0, max: 1, step: 0.01 }), "For a click: how far from its value, as a fraction of the range"),
+        }, "Method"), method.description),
+      );
+      if (method.id === MOBILE_SAM.id) options.append(this.model());
+      else if (method.id === "threshold") options.append(field("Tolerance", numberInput(e.tolerance, (v) => (e.tolerance = Math.max(0, Math.min(1, v))), { min: 0, max: 1, step: 0.01 }), "For a click: how far from its value, as a fraction of the range"));
+      if (e.quickStatus) {
+        options.append(
+          el(
+            "div",
+            { class: "sg-model" },
+            el("span", {}, e.quickStatus.text),
+            e.quickStatus.fraction === undefined ? null : el("progress", { max: "1", value: String(e.quickStatus.fraction) }),
+            el("div", { class: "an-row" }, el("span", { class: "an-spacer" }), button("Stop", () => e.cancelPreview(), "Stop (Escape)")),
+          ),
+        );
+      }
+      options.append(
         field("Result", select([["preview", "Preview first (Enter paints, Escape drops)"], ["paint", "Paint at once"]], e.quickMode, (v) => {
           e.quickMode = v as "preview" | "paint";
           e.changed();
@@ -473,10 +489,69 @@ export class Panel {
           ),
         );
       }
+      options.append(
+        field("Spread to sections", numberInput(e.spreadCount, (v) => {
+          e.spreadCount = Math.max(1, Math.min(200, Math.round(v)));
+          e.changed();
+        }, { min: 1, max: 200, step: 1 }), "Each way from the mask's section: each section's prompt is the box round the mask in the one before; Enter paints them all as one stroke"),
+      );
+      if (e.canSpread()) options.append(el("div", { class: "an-row" }, el("span", { class: "an-spacer" }), button(`Spread to ${e.spreadCount} sections each way`, () => e.spread(), "Propose the mask in the next sections too (the method chosen, a box prompt in each)")));
     } else if (e.tool === "move") {
       return el("p", { class: "an-hint" }, "Move: the views as Neuroglancer moves them. Pick a tool to draw; Escape comes back here.");
     }
     return options.childElementCount ? options : null;
+  }
+
+  /** The model's note: its size and licence, kept in this browser or not (a progress bar while it comes), what it runs on, its last timings. */
+  private model(): HTMLElement {
+    const e = this.editor;
+    const m = e.sam;
+    const mb = (n: number) => `${(n / 1e6).toFixed(1)} MB`;
+    const link = (href: string, text: string) => el("a", { href, target: "_blank", rel: "noopener" }, text);
+    const box = el(
+      "div",
+      { class: "sg-model" },
+      el(
+        "span",
+        {},
+        `${MOBILE_SAM.name} (`,
+        link(MOBILE_SAM.home, MOBILE_SAM.licence),
+        `): ${mb(MODEL_BYTES)} (an image encoder and a prompt decoder, `,
+        link(MOBILE_SAM.files, "from Hugging Face"),
+        `), downloaded on first use and kept in this browser. It runs here with ONNX Runtime Web ${ORT_VERSION} (MIT), loaded from jsDelivr.`,
+      ),
+    );
+    if (m.state === "loading" && m.progress) {
+      box.append(el("span", { class: "an-faint" }, `Downloading: ${mb(m.progress.loaded)} of ${mb(m.progress.total)}`), el("progress", { max: String(m.progress.total), value: String(m.progress.loaded) }));
+    } else if (m.state === "loading") box.append(el("span", { class: "an-faint" }, "Loading the model…"));
+    else if (m.state === "failed") box.append(el("span", { class: "sg-error" }, `Could not load the model: ${m.error}`));
+    const kept = m.kept > 0 ? `Kept in this browser: ${mb(m.kept)}` : "Not in this browser yet: the first prompt downloads it.";
+    const running = m.running ? ` · runs on ${m.running === "webgpu" ? "WebGPU (the GPU)" : `WASM (the CPU, ${m.threads} thread${m.threads === 1 ? "" : "s"})`}` : "";
+    box.append(
+      el(
+        "div",
+        { class: "an-row" },
+        el("span", { class: "an-faint" }, kept + running),
+        el("span", { class: "an-spacer" }),
+        m.kept === 0 && m.state !== "loading" ? button("Download now", () => void m.load().catch(() => {}), `Download ${MOBILE_SAM.name} (${mb(MODEL_BYTES)}) now`) : null,
+        m.kept > 0 && m.state !== "loading" ? button("Forget", () => void m.forget(), "Delete the model's files from this browser") : null,
+      ),
+    );
+    if (m.encodeMs !== undefined || m.decodeMs !== undefined) {
+      const t = (ms: number | undefined) => (ms === undefined ? "–" : ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`);
+      box.append(el("span", { class: "an-faint sg-timings" }, `Last: embedding ${t(m.encodeMs)}, mask ${t(m.decodeMs)}`));
+    }
+    return el(
+      "div",
+      { class: "sg-model-form" },
+      box,
+      field("Run on", select([["auto", "WebGPU if there is a GPU, else WASM"], ["webgpu", "WebGPU"], ["wasm", "WASM (the CPU)"]], m.provider, (v) => m.setProvider(v as Provider), "Run on")),
+      field("Context (voxels)", numberInput(e.quickContext, (v) => {
+        e.quickContext = Math.max(32, Math.min(2048, Math.round(v)));
+        e.changed();
+      }, { min: 32, max: 2048, step: 32 }), "How much of the section round the prompt the model sees: at least this many voxels across (more for a larger box)"),
+      el("p", { class: "an-hint" }, "Click what you want; Shift+click or Alt+click what you do not; or drag a box. Each click refines the mask in its section; the first in a region computes the image's embedding, later ones are quick."),
+    );
   }
 
   /** The image whose values limit the tools. */
