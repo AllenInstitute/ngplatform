@@ -15,9 +15,11 @@ segmentations, and annotation layers.
 ## Using it
 
 1. Pick the dataset at the top of the Filtering tab.
-2. **+ New group**, then **+ Sphere** or **+ Box**. Move a region with its
-   sliders or typed values, **Here** (to the position) or **Go** (the view to
-   it).
+2. **+ New group**, then **+ Sphere** or **+ Box** (at the centre of the
+   views). Quicker: point at a place in a view and press ++alt+shift+s++
+   for a sphere there, ++alt+shift+b++ for a box; with no group being
+   edited, the first region makes one. Move a region with its sliders or
+   typed values, **Here** (to the position) or **Go** (the view to it).
 3. On streamlines and skeletons, a region can ask for *passes through*,
    *either end in it* or *both ends in it*.
 4. **+ Disk** is TrackVis's disk: a flat region across x, y or z that a

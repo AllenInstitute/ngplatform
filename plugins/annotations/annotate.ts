@@ -32,6 +32,12 @@ export const TOOLS: [string, string, string][] = [
   ["annotatePolyline", "Polyline", "Ctrl+click its points; Ctrl+double-click ends it"],
 ];
 
+/** The line under the tools: which is on and what to do with it (a new layer starts with Point on). */
+export function toolHint(tool: string | undefined): string {
+  const t = TOOLS.find(([id]) => id === tool);
+  return t === undefined ? "Pick a tool, then Ctrl+click in a view." : `${t[1]} is on: ${t[2]} in a view. Pick it again to stop.`;
+}
+
 /** The plugin's record, in its state slice under `annotate`. */
 interface Saved {
   /** The layer new annotations go to. */

@@ -26,12 +26,15 @@ export interface OfferScene {
   isLocal(url: string): boolean;
 }
 
+/** Whether an offer applies; "list": in the Datasets tab only, never in a toast (a use worth offering, not pressing). */
+export type Applies = boolean | "list";
+
 export interface Offer {
   /** What it does for this data, in a few words after its name: "Track filtering: select streamlines through regions". */
   pitch: string;
   /** Also offered once in a toast (else only in the Datasets tab). */
   toast: boolean;
-  applies(scene: OfferScene): boolean | Promise<boolean>;
+  applies(scene: OfferScene): Applies | Promise<Applies>;
 }
 
 const VECTORS = /\|zarr-vectors:|^zarr-vectors:\/\/|\.zarrvectors\/?($|\|)/i;
@@ -85,12 +88,14 @@ export const OFFERS: Record<string, Offer> = {
   "org.ngplatform.annotations": {
     pitch: "a table of annotations, with groups, values and comments",
     toast: true,
-    applies: (scene) => scene.layers.some((l) => l.type === "annotation" && !l.managed),
+    // On an image, points or boxes are a common first step: listed, not toasted.
+    applies: (scene) => scene.layers.some((l) => l.type === "annotation" && !l.managed) || (images(scene).length > 0 && "list"),
   },
   "org.ngplatform.segmentation": {
     pitch: "edit label volumes with a brush, fill and quick select",
     toast: true,
-    applies: (scene) => labelVolumes(scene).length > 0,
+    // On an image, a new label volume on its grid: listed, not toasted.
+    applies: (scene) => labelVolumes(scene).length > 0 || (images(scene).length > 0 && "list"),
   },
   "org.ngplatform.atlas": {
     pitch: "its regions as a tree: search, show, go to",

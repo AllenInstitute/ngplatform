@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readSaved, sourceKey } from "../plugin.js";
+import { mousePoint, readSaved, sourceKey } from "../plugin.js";
 import { compactChunk, groupMask, IdSet, type RoiGeometry, roiBounds, roiKey, rowIndex, rowMask, segmentHitsBox, testChunk } from "../roi.js";
 import { previewLevel, type StoreInfo, toStore } from "../roi_client.js";
 import { fileName, trkSpace, writeTrk } from "../trk.js";
@@ -165,6 +165,13 @@ describe("saved groups", () => {
     const keys = ["https://storage.googleapis.com/b/x.zarrvectors/|zarr-vectors:", "gs://b/x.zarrvectors/", "gs://b/x.zarrvectors"].map(sourceKey);
     expect(new Set(keys).size).toBe(1);
     expect(sourceKey("http://127.0.0.1/local/a/cells.csv/|zarr-vectors:")).toBe("http://127.0.0.1/local/a/cells.csv");
+  });
+
+  it("puts a region from a key at the mouse when it is over a view", () => {
+    expect(mousePoint({ active: true, position: [1, 2, 3, 0] })).toEqual([1, 2, 3]);
+    expect(mousePoint({ active: false, position: [1, 2, 3] })).toBeUndefined();
+    expect(mousePoint({ active: true, position: [1, NaN, 3] })).toBeUndefined();
+    expect(mousePoint({ active: true, position: [1, 2] })).toBeUndefined();
   });
 });
 

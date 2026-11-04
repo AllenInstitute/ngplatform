@@ -53,6 +53,21 @@ export function renderLayerPanel(host: HTMLElement, wb: Workbench): () => void {
     if (name !== undefined && token !== undefined) unmount = engine.mountLayerControls(controls, name);
   };
 
+  /** Another view of the dataset (the next channel, say), on the tab the one shown now is on. */
+  const pickView = (from: string, to: string) => {
+    const tab = engine.layerSpec(from)?.tab;
+    if (typeof tab === "string" && engine.layerSpec(to)?.tab !== tab) {
+      store.patchState(
+        (ng) => {
+          const target = (ng.layers as { name?: string; tab?: string }[] | undefined)?.find((l) => l.name === to);
+          if (target !== undefined) target.tab = tab;
+        },
+        { quiet: true },
+      );
+    }
+    store.selectLayer(to);
+  };
+
   const render = () => {
     const { dataset, layer } = layerTarget(wb);
     empty.hidden = layer !== undefined;
@@ -86,7 +101,7 @@ export function renderLayerPanel(host: HTMLElement, wb: Workbench): () => void {
             "div",
             { class: "segmented views" },
             ...views.map((name) =>
-              h("button", { type: "button", "aria-pressed": String(name === layer.name), onclick: () => store.selectLayer(name) }, name),
+              h("button", { type: "button", "aria-pressed": String(name === layer.name), onclick: () => pickView(layer.name, name) }, name),
             ),
           )
         : null,

@@ -115,6 +115,35 @@ export function parseInput(text: string, parseFragment: FragmentParser): ParsedI
   );
 }
 
+/** A URL's path names data the viewer reads (a Zarr, N5 or NIfTI store, a tractogram, a mesh…). */
+const DATA_PATH = /\.(zarr|zarrvectors|zv|n5|nii|nii\.gz|mgz|mgh|trk|tck|trx|vzip)(\/|\?|$)|\/precomputed(\/|$)/i;
+
+/**
+ * What to do with text pasted on the window (outside a text field):
+ * - `add`: a data URL, plainly one (a format prefix such as `zarr://`, a
+ *   bucket, or a path ending in a data format): added to the scene;
+ * - `ask`: some other web address: asked whether to add it;
+ * - `open`: a link, state JSON or remote state: asked whether to open it,
+ *   as it replaces the workspace;
+ * - undefined: anything else (words, numbers), left alone.
+ */
+export type PasteAction = { kind: "add" | "ask"; url: string; name: string } | { kind: "open"; text: string };
+
+export function pasteAction(text: string, parseFragment: FragmentParser): PasteAction | undefined {
+  const input = text.trim();
+  // One line, or a JSON object: not a paragraph that happens to hold a URL.
+  if (input === "" || (!input.startsWith("{") && /\s/.test(input))) return undefined;
+  let parsed: ParsedInput;
+  try {
+    parsed = parseInput(input, parseFragment);
+  } catch {
+    return undefined;
+  }
+  if (parsed.kind !== "source") return { kind: "open", text: input };
+  const plain = DATA_SOURCE.test(input) || /^(gs|s3):\/\//i.test(input) || DATA_PATH.test(input.split("|")[0]);
+  return { kind: plain ? "add" : "ask", url: parsed.url, name: parsed.name };
+}
+
 /** Percent-encodes a state fragment the way Neuroglancer writes its own links. */
 export function encodeFragment(json: string): string {
   return encodeURI(json).replace(

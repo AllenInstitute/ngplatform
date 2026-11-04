@@ -33,7 +33,7 @@ when it runs out. Proofreading and axon segmentation last.
 - [ ] D1. UI tidy (shorter text, consistent controls, empty and error states).
 - [x] D2. (Done: segment properties of large Zarr Vectors stores found by binary search instead of an id table per layer (S-21-46: 3 × 1.9 s of main thread and 128 MiB gone), Track filtering's visible sets sized once (282 → 137 ms), Python, capture and history loaded on first use, Zarr Vectors preloaded with the page; start-up and drawing unchanged within noise; measured with tests/e2e/speed.mjs, docs/dev/speed.md. Left: shaders compiled in parallel, CodeMirror on demand, a budget for Track filtering's curve cache, a GPU machine to measure on.) Speed (startup, bundle, time to first image, memory, drawing), before and after.
 - [ ] D3. Code review (shared helpers in the SDK, dead code, test gaps).
-- [ ] D4. UX workflows: about ten common tasks, interactions counted, quicker paths built, counted again.
+- [x] D4. (Done: ten tasks counted in headless Chrome, 71 → 57 interactions, five things to know → one: a data URL pasted on the window, Annotations and Segmentation listed for images, the annotation tool on named, Alt+Shift+S/B regions at the mouse, the moving layer by default, contrast controls above the shader code; bugs found: the range buttons covered by an undrawn histogram, a layer added with the mouse over a view threw; docs/dev/workflows.md. Left: Filters on a local NIfTI fails (axes), saving a filtered view, scenes side by side.) UX workflows: about ten common tasks, interactions counted, quicker paths built, counted again.
 - [ ] D5. Examples report (every feature, screenshots, measurements).
 
 **Last**: proofreading; axon segmentation and tracing.

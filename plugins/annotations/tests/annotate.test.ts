@@ -366,3 +366,12 @@ describe("a layer renamed keeps its record", () => {
     expect(renamedFrom(s(), [["e1", s()], ["e2", s()]])).toBeUndefined();
   });
 });
+
+describe("the tool line", () => {
+  it("names the tool that is on, so picking it again is not a surprise", async () => {
+    const { toolHint } = await import("../annotate.js");
+    expect(toolHint(undefined)).toBe("Pick a tool, then Ctrl+click in a view.");
+    expect(toolHint("annotatePoint")).toBe("Point is on: Ctrl+click a point in a view. Pick it again to stop.");
+    expect(toolHint("annotateSomethingElse")).toBe("Pick a tool, then Ctrl+click in a view.");
+  });
+});

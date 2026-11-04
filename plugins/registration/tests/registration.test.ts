@@ -144,3 +144,13 @@ describe("transforms relative to both voxel grids", () => {
     Array.from(readTransformFile("a.txt", text)).forEach((v, i) => expect(a[i]).toBeCloseTo(v, 12));
   });
 });
+
+describe("the moving layer until one is chosen", () => {
+  it("is the image added last, with two images or more", async () => {
+    const { defaultMoving } = await import("../plugin.js");
+    expect(defaultMoving(["T1", "scan", "labels"], ["T1", "scan"])).toBe("scan");
+    expect(defaultMoving(["T1", "labels"], ["T1"])).toBeUndefined();
+    // An image that cannot be moved (not 3-D) is not one.
+    expect(defaultMoving(["T1"], ["T1", "movie"])).toBeUndefined();
+  });
+});

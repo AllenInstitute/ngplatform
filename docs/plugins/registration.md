@@ -12,6 +12,10 @@ transform, or the moved image.
 
 ## Using it
 
+- **Moving layer:** until you choose one, the image added last (with two
+  images or more: a scan opened onto a template opened first, say). The
+  first change you make keeps it chosen. The file formats you pick for
+  saving are remembered in this browser.
 - **By hand:** the Rotate, Translate, Scale and Flip tabs, along X (L-R),
   Y (P-A) and Z (I-S), each a slider and a typed value. The layer moves as
   you drag. Rotate about the volume's centre or the cursor (the views' centre); **Move centre to

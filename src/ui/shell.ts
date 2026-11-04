@@ -6,7 +6,7 @@
  */
 import { CommandError, CommandRegistry, runsWithoutArgs } from "../core/commands.js";
 import { KeybindingTable } from "../core/keybindings.js";
-import { InputError, layerNameFor, neuroglancerLink, parseInput, type FragmentParser, workspaceLink } from "../core/state_io.js";
+import { InputError, layerNameFor, neuroglancerLink, parseInput, pasteAction, type FragmentParser, workspaceLink } from "../core/state_io.js";
 import { ContextKeys } from "../core/when.js";
 import { activeScene, layersOf, sourceUrls } from "../core/workspace.js";
 import { type Engine, LAYOUTS } from "../engine/engine.js";
@@ -449,6 +449,7 @@ export class Shell {
     if (runner.pairing() !== undefined) void runner.refresh();
 
     window.addEventListener("keydown", (e) => this.onKey(e), true);
+    window.addEventListener("paste", (e) => this.onPaste(e));
     this.acceptDrops();
     // Changes before the user's first input after opening belong to opening (see WorkspaceStore.noteInput).
     for (const type of ["keydown", "pointerdown", "wheel"]) window.addEventListener(type, () => this.wb.store.noteInput(), { capture: true, passive: true });
@@ -968,6 +969,38 @@ export class Shell {
       k.add({ key: String(i), command: "dataset.toggle", args: { index: i } });
       k.add({ key: `alt+${i}`, command: "dataset.select", args: { index: i } });
     }
+  }
+
+  /**
+   * Text pasted on the window, outside a text field: a data URL is added to
+   * the scene; another web address, or a link or state (which replaces the
+   * workspace), is asked about first (src/core/state_io.ts, pasteAction).
+   */
+  private onPaste(e: ClipboardEvent): void {
+    const target = e.target as HTMLElement | null;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable === true || sheetIsOpen()) return;
+    const action = pasteAction(e.clipboardData?.getData("text/plain") ?? "", this.wb.parseFragment);
+    if (action === undefined) return;
+    e.preventDefault();
+    const short = (s: string) => (s.length > 60 ? `${s.slice(0, 57)}…` : s);
+    const add = (url: string, name: string) => {
+      this.wb.store.addDataset({ source: url, name });
+      this.docks.show("datasets");
+    };
+    if (action.kind === "open") {
+      const { text } = action;
+      offer("Open the pasted link? It replaces this workspace (Undo brings it back).", [
+        { label: "Not now" },
+        { label: "As a new scene", run: () => void this.openText(text, "the pasted link", true) },
+        { label: "Open", primary: true, run: () => void this.openText(text, "the pasted link", false) },
+      ]);
+      return;
+    }
+    const { url, name } = action;
+    if (action.kind === "add") {
+      add(url, name);
+      toast(`Added the pasted address as “${name}”.`);
+    } else offer(`Add ${short(url)} as a dataset?`, [{ label: "Not now" }, { label: "Add", primary: true, run: () => add(url, name) }]);
   }
 
   private onKey(e: KeyboardEvent): void {

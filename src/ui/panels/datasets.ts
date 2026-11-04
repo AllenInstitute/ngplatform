@@ -126,7 +126,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
         h(
           "div",
           { class: "empty-state" },
-          h("p", { class: "empty" }, h("strong", {}, "No datasets in this scene. "), "Add one, or drop files here."),
+          h("p", { class: "empty" }, h("strong", {}, "No datasets in this scene. "), "Add one, drop files here, or paste a data URL."),
           h(
             "div",
             { class: "row-actions" },

@@ -69,3 +69,4 @@ nav:
       - "Audit, part 1: platform and seven plugins": dev/audit.md
       - "Audit, part 2: annotations to capture": dev/audit-2.md
       - "Speed: startup, bundle, first image, memory, drawing": dev/speed.md
+      - "Workflows: ten tasks, counted": dev/workflows.md

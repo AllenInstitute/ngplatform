@@ -2,7 +2,7 @@
 
 ![Labels pinned to structures, in 2-D and 3-D](../images/plugins/labels.png)
 
-**Kind:** tool · **Off by default** (offered when you open an annotation layer; or turn it on in the Plugins tab) · the **Annotations** tab and the **Annotation table** (bottom dock) ·
+**Kind:** tool · **Off by default** (offered when you open an annotation layer, and listed under *Tools for this data* for an image; or turn it on in the Plugins tab) · the **Annotations** tab and the **Annotation table** (bottom dock) ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/annotations)
 
 Everything you add to annotate a dataset, in one tab with four sections:
@@ -31,7 +31,10 @@ ontology, and comments, all in a table you search.
   **Polyline**, then ++ctrl++ + click in a view: once for a point, the two
   ends of a line, two corners of a box, the centre then the extent of an
   ellipsoid, the points of a polyline (++ctrl++ + double-click ends it).
-  Pick the tool again to stop.
+  Pick the tool again to stop. The tool that is on is highlighted and named
+  under the tools ("Point is on: …"); a layer made by **Add → New
+  annotation layer** starts with Point on. With no annotation layer yet,
+  picking a tool makes one.
 - Each new annotation is selected in the **Annotation table** (opened if
   it was not), ready for its values, in the group chosen under **New
   annotations go to**.
