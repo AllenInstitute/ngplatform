@@ -123,10 +123,6 @@ export function propsOf(a: AnnotationJson, specs: PropertySpec[]): (number | str
   return specs.map((p, i) => a.props?.[i] ?? defaultOf(p));
 }
 
-export function propertyIndex(spec: LayerSpec, id: string): number {
-  return (spec.annotationProperties ?? []).findIndex((p) => p.id === id);
-}
-
 /** The layer's fields: its properties (but the group), in order, then the text and ontology fields. */
 export function fieldsOf(spec: LayerSpec, meta: LayerMeta): Field[] {
   const out: Field[] = [];

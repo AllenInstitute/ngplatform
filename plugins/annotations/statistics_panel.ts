@@ -11,7 +11,7 @@ import { button, downloadBlob, el, field, numberInput, select } from "@ngplatfor
 import { csv } from "@ngplatform/sdk/format";
 import { apply, between, invertOr, multiply, voxelVolume } from "./geometry.js";
 import type { AnnotationJson } from "./measure.js";
-import { annotationFromGlobal, annotationLayers, imagePlacement, rankOf, toGlobalOf } from "./scene.js";
+import { annotationFromGlobal, annotationLayers, imagePlacement, rankOf } from "./scene.js";
 import type { LabelVolumes } from "../segmentation/editor.js";
 import { corners, levelWithin, type Region, type Summary, voxelBox } from "./statistics.js";
 import { fmt, physical } from "./ui.js";

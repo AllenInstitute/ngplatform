@@ -145,7 +145,6 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
           const layers = entry.layers.map((n) => layerInfo.get(n)).filter((l): l is LayerInfo => l !== undefined);
           const visible = layers.some((l) => l.visible);
           const isSelected = selected !== undefined && entry.layers.includes(selected);
-          const type = layers[0]?.type && layers[0].type !== "new" ? layers[0].type : dataset.kind;
           const select = () => {
             store.selectDataset(dataset.id);
             wb.docks.show("layer");

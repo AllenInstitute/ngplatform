@@ -22,7 +22,7 @@ import { lmaxOf, SH_BASES, type ShBasis } from "./sh.js";
 import { describeVoxel } from "./readout.js";
 import { directionShader } from "./shader.js";
 import { TENSOR_ORDERS, type TensorOrder } from "./tensor.js";
-import { type Box, chooseLevel, layerMove, type SectionPlan, contains, invert4, planesAround, planSection, type Section, sectionOf, type Slab, type Vec3, applyAffine } from "./view.js";
+import { type Box, chooseLevel, layerMove, type SectionPlan, contains, invert4, planesAround, planSection, type Section, sectionOf, type Vec3, applyAffine } from "./view.js";
 
 export interface Saved {
   on: boolean;

@@ -4,7 +4,7 @@
  * as promises, with progress and cancelling.  Also finding the store an
  * image layer reads.
  */
-import type { Json, PlatformContext } from "@ngplatform/sdk";
+import type { PlatformContext } from "@ngplatform/sdk";
 import { layerSourceUrl } from "@ngplatform/sdk/sources";
 import { WorkerRpc } from "@ngplatform/sdk/worker_rpc";
 import { storeOf } from "../volume-view/sources.js";

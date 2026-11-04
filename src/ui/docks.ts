@@ -53,7 +53,7 @@ class Dock {
 
   constructor(
     readonly slot: DockSlot,
-    private readonly manager: DockManager,
+    manager: DockManager,
   ) {
     this.el = h("aside", { class: `dock dock-${slot}`, "aria-label": TITLES[slot] });
     const toggle = h(

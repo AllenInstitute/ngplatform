@@ -273,7 +273,6 @@ function fmt(v: number): string {
 
 const STYLE = `
 .tf { display: grid; gap: 10px; }
-.tf-intro { margin: 0; color: var(--muted); font-size: 12px; }
 .tf-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .tf-groups { display: grid; gap: 3px; }
 .tf-group { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 5px 6px; border-radius: var(--r); border: 1px solid transparent; cursor: pointer; }

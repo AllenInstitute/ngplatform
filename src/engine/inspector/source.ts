@@ -23,7 +23,7 @@ import {
   type WatchableCoordinateSpaceTransform,
 } from "../neuroglancer.js";
 import { signal } from "./render.js";
-import { button, el, growingInput, messagesView, note, type Scope, textInput, type Watch } from "./ui.js";
+import { button, el, growingInput, messagesView, type Scope, textInput, type Watch } from "./ui.js";
 
 /** What kind of data a subsource holds, in words. */
 export function subsourceKind(subsource: any): string {
@@ -361,8 +361,4 @@ function setOutput(t: WatchableCoordinateSpaceTransform, i: number, change: { na
   }
   timestamps[i] = Date.now();
   t.outputSpace.value = makeCoordinateSpace({ ...space, names, scales, units, timestamps, ids: space.ids, boundingBoxes: space.boundingBoxes } as never);
-}
-
-export function emptySource(): HTMLElement {
-  return note("No data sources.");
 }

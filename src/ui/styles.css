@@ -306,7 +306,6 @@ kbd {
   letter-spacing: 0.09em;
   color: var(--muted);
 }
-.eyebrow { font: 600 10px/1 var(--ui); text-transform: uppercase; letter-spacing: 0.1em; color: var(--faint); }
 .empty { color: var(--muted); margin: 0; }
 .empty strong { color: var(--text); font-weight: 500; }
 .empty.error, .error { color: var(--err); }
@@ -316,10 +315,6 @@ kbd {
 .row-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .empty-state .row-actions { margin-top: 0; }
 
-.panel-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
-.panel-head .row-actions { margin: 0; }
-.panel-title { display: grid; gap: 4px; min-width: 0; }
-.scene-name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .type { font: 11px/1 var(--mono); color: var(--muted); white-space: nowrap; }
@@ -362,23 +357,13 @@ kbd {
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; font: 12px/1.45 var(--mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .facts.keys dt { text-align: right; display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 4px; }
-.source-line { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-.source-line code { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--muted); }
 
 .coords { display: grid; grid-template-columns: repeat(auto-fit, minmax(76px, 1fr)); gap: 6px; }
 .coord { background: var(--ink-1); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 8px; }
 .coord .axis { font: 600 11px/1 var(--mono); }
 .coord .value { font: 13px/1.5 var(--mono); font-variant-numeric: tabular-nums; }
 .coord .unit { color: var(--faint); font: 11px/1 var(--mono); }
-.axis-0, .axis-1, .axis-2 { color: var(--text); }
 
-.layout-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
-.layout-btn {
-  height: 28px; border: 1px solid var(--line); border-radius: var(--r); background: transparent;
-  color: var(--muted); cursor: pointer; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.layout-btn:hover { color: var(--text); background: var(--ink-3); }
-.layout-btn[aria-pressed="true"] { color: var(--text); border-color: #8a8a8a; background: var(--accent-soft); }
 .options { display: grid; gap: 4px; }
 
 /* fields */
@@ -552,7 +537,6 @@ textarea.text-input { height: auto; padding: 8px 10px; }
 .linkish:hover { color: var(--accent); }
 .mono { font-family: var(--mono); }
 .lead { margin: 0; }
-.track-run-note { font-size: 12px; color: var(--muted); }
 
 /* python console */
 .dock-pane.py-host { display: flex; flex-direction: column; padding: 0; height: 100%; }
@@ -587,7 +571,7 @@ textarea.py-in {
 /* A docked panel closes with its dock, not its own button. */
 .ngp-docked-panel > .neuroglancer-side-panel-titlebar > .neuroglancer-icon:last-child { display: none; }
 .dock-pane[data-tab="selection"], .dock-pane[data-tab="statistics"] { display: flex; flex-direction: column; }
-.selection-host, .statistics-host, .settings-host, .bindings-host { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.statistics-host, .settings-host, .bindings-host { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 /* In a sheet, Neuroglancer's panels need a height: their bodies scroll inside it. */
 .settings-host { height: min(400px, 45vh); flex: none; }
 .bindings-host { height: 50vh; flex: none; }
@@ -764,9 +748,6 @@ textarea.ins-grow { display: block; width: 100%; box-sizing: border-box; resize:
 .ins-schema-head, .ins-schema-row { display: grid; grid-template-columns: minmax(70px, 1fr) 82px minmax(70px, 1.2fr) 64px 22px; gap: 4px; align-items: center; }
 .ins-schema-head { color: var(--faint); font-size: 11px; }
 
-.position-host { display: grid; gap: 6px; }
-.position-host .ngp-position { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; font: 12px/1.4 var(--mono); }
-.position-host .ngp-mouse-position { color: var(--muted); font: 12px/1.4 var(--mono); min-height: 1.4em; }
 
 /* --------------------------------------------------------------- overlays */
 .scrim {
@@ -923,9 +904,6 @@ textarea.state-input.tall { min-height: 50vh; }
   .dock-bottom { height: min(var(--bh), 30vh); }
 }
 
-.note.explain { display: grid; gap: 6px; color: var(--muted); }
-.note.explain p { margin: 0; }
-.note.explain strong { color: var(--text); font-weight: 500; }
 
 /* Neuroglancer's own bar inside the viewer: position, left; tool status. */
 .engine .neuroglancer-viewer-top-row { background: var(--ink-1); border-bottom: 1px solid var(--line); margin-bottom: 0; min-height: 26px; }

@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { splitVirtual, TIFF_FORMAT } from "../src/virtual/local_data.js";
-import { lzwDecode, openTiff, packBitsDecode, readTiffStack, tiffLayout, tiffSource, tiffSpacing } from "../src/virtual/images/tiff.js";
+import { lzwDecode, openTiff, packBitsDecode, readTiffStack, tiffLayout, tiffSpacing } from "../src/virtual/images/tiff.js";
 
 const DIR = new URL("./testdata/tiff/", import.meta.url);
 const expected: Record<string, { dim: number[]; size: number[]; sha256: string }> = JSON.parse(readFileSync(new URL("expected.json", DIR), "utf8"));
