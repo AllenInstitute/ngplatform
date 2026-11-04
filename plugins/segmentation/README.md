@@ -15,7 +15,8 @@ their history) and that section was taken out of Annotations.
 - **The tool bar** over the 2-D views while a volume is edited (centred
   over the top row of 2-D views, so it never covers the 3-D view): Move (the
   views as Neuroglancer moves them; the default), Brush, Erase, Lasso, Fill
-  (2-D or 3-D), Pick segment and Quick select; the brush's size; the active
+  (2-D or 3-D), Pick segment and Quick select (by threshold, or by
+  MobileSAM, a Segment Anything model run in the page); the brush's size; the active
   segment and New segment; Undo, Redo, Interpolate, Save; and a button that
   hides it.
 - **The segment list**: each segment's colour, name, voxels (and volume, on
@@ -48,6 +49,9 @@ with WebKnossos.
 | `session.ts` | A volume being drawn: its layer, history, colours, the image that limits the tools |
 | `kernels.ts`, `history.ts` | Brush, fills and their limits, the lasso's inside (`polygonRuns`, `fillOutline`), interpolation between sections (signed distances); strokes, undo and redo (pure) |
 | `quick_select.ts` | The quick select interface, the threshold method, the registry other plugins add to |
+| `sam.ts` | Around the model (pure): the crop round a prompt, the layer's window, the model's image, prompt coordinates, the mask back on the grid, the parts kept, masks of several sections put together |
+| `sam_model.ts` | The AI (MobileSAM) method: the model's files (pinned URLs, size, licence), kept in the browser, the worker it runs in, the embeddings kept by section |
+| `sam_worker.ts` | ONNX Runtime Web (loaded from jsDelivr at 1.30.0), WebGPU or WASM; the downloads and Cache Storage; the encoder and the decoder |
 | `preview.ts` | Quick select's proposed mask over the 2-D views (its sections, tinted with an outline), until Enter or Escape |
 | `save.ts` | NIfTI and OME-Zarr out, the painted box |
 | `keep.ts` | Volumes kept in the browser (OPFS) while drawn, brought back after a reload |
@@ -82,6 +86,19 @@ and rotation), and the context key `segmentation.previewing` gives
 `Enter` (paint it with the active segment, as **Paint over** says) and
 `Escape` (drop it) to the editor. A new prompt replaces it; another tool,
 another volume or hiding the bar drops it.
+
+A method that `refines` (the model) keeps the prompts given in a section
+(`quickPrompts`: a box, and clicks wanted or not, Shift or Alt marking
+the latter) and is handed them all with each click, so each click redraws
+the mask; the clicks are drawn over the views as dots (green +, red −) by
+`preview.ts`. Accepting, dropping, a box, or a click in another section
+starts again. **Spread** (`spread`) takes a mask proposed in one section
+and runs the method chosen in the next sections each way, each with the
+box round the mask before it (a tenth larger each side) as its prompt,
+stopping where the mask is empty or changes size more than four times; the
+masks are put together (`stackMasks`) and proposed as one, so Enter paints
+them as one stroke and one undo takes them back. It works with any
+method that takes boxes (Threshold too).
 
 The editor keeps the tool and whether a volume is edited; `Painter`
 (`painter.ts`) takes the mouse in the 2-D views while a tool that draws is
@@ -244,6 +261,105 @@ does not have yet.
 It also uses the volume view's reader (`../volume-view/volume_reader.ts`)
 and Registration's writers (`../registration/volume_io.ts`).
 
+## AI quick select (MobileSAM)
+
+**AI (MobileSAM)** is a quick select method registered by the editor
+beside Threshold. MobileSAM (Zhang et al. 2023,
+[github.com/ChaoningZhang/MobileSAM](https://github.com/ChaoningZhang/MobileSAM),
+Apache-2.0) is Segment Anything with a small image encoder (TinyViT, 5.8 M
+parameters) in place of SAM's ViT-H, and SAM's own prompt decoder. The
+ONNX files are the ones published at
+[huggingface.co/Acly/MobileSAM](https://huggingface.co/Acly/MobileSAM)
+(an export of those weights; the repository's card says MIT, the weights
+are MobileSAM's, Apache-2.0), fetched from a pinned commit:
+`mobile_sam_image_encoder.onnx` (28.2 MB; it takes an image of height ×
+width × 3 values 0 … 255, its longest side 1024, and normalises and pads
+it itself) and `sam_mask_decoder_single.onnx` (16.5 MB; SAM's ONNX
+decoder, one mask). Nothing is converted in our build and no weights are
+in the repository. Other models looked at: EfficientSAM-Ti (Apache-2.0;
+its repository publishes an ONNX encoder, 24.8 MB, and decoder, 16.6 MB,
+with a decoder interface of its own), SAM 2.1 tiny (Apache-2.0; ONNX
+exports on Hugging Face, but its encoder is 134 MB in 32 bits, 28.5 MB
+only at 4 bits), SlimSAM (Apache-2.0; 23.3 + 16.6 MB). MobileSAM was
+chosen for SAM's standard ONNX decoder (the inputs SAM's own browser
+demo uses) and a small encoder.
+
+The first prompt downloads the two files (44.7 MB) with a progress bar
+(the tab and the tool bar) and keeps them in the browser's Cache Storage
+(`ngplatform-models`, under their URLs); later visits read them from
+there. The tab shows the size kept and **Forget** (deletes them).
+
+The runtime is ONNX Runtime Web 1.30.0, the version chunkmirage's ONNX
+stage is built against (`vendor/chunkmirage/web/package.json`); it is not
+installed here, so the worker imports it from jsDelivr at that pinned
+version when the method first runs (as the Python console loads Pyodide),
+and points its `wasmPaths` there too. With a GPU adapter (and **Run on**
+left at Auto or set to WebGPU) it loads the WebGPU build
+(`ort.webgpu.bundle.min.mjs` and its 27 MB runtime) and builds the
+sessions on WebGPU, falling back to WASM if they fail; otherwise the WASM
+build (14 MB runtime), with threads when the page is cross-origin
+isolated, else one. Calls into the runtime are made one at a time in the
+worker, as chunkmirage's `exclusive` does (`vendor/chunkmirage/web/src/onnx.ts`:
+its WebGPU build allows one suspended call at a time); its session code
+could not be imported as it is, since it imports `onnxruntime-web` as a
+package.
+
+A prompt, in a 2-D view (`SamModel.segment`):
+
+1. **The crop** (`cropFor`): a square of the section round the prompt, on
+   the label grid, at least **Context** voxels across (256 by default; in
+   the tab) and 1.5 times a box's longest side, square in millimetres,
+   moved inside the volume where it fits (where it does not, the image
+   outside reads as 0).
+2. **The image** (`modelImage`): the crop read with `session.imageBox`
+   (the reference image's values on the label grid), mapped through the
+   layer's window (its `normalized` control's range, set or in its
+   shader; else the crop's 0.5 and 99.5 % quantiles) to 0 … 255,
+   resampled bilinearly to 1024 × 1024, three equal channels.
+3. **The embedding**: the encoder, once per crop; kept in the worker (the
+   last 12, about 4 MB each) under a key of the image (store, level,
+   placement), section, crop and window. A later prompt in the same
+   section whose extent sits in the middle 80 % of a kept crop (not more
+   than twice the size a fresh crop would be) uses it: the decoder alone
+   runs.
+4. **The prompt** (`promptTensors`): clicks as points labelled 1 (wanted)
+   or 0 (not), a box as two corners labelled 2 and 3, in the model's
+   pixels (`pointToModel`: a voxel's centre, less SAM's half pixel;
+   `boxToModel`: the box's edges); without a box a padding point labelled
+   -1, as SAM's decoder expects.
+5. **The mask** (`maskOnGrid`): the decoder's 256 × 256 low-resolution
+   logits, over the 1024 input, sampled bilinearly at each label voxel's
+   centre in the crop; above 0 is selected; voxels outside the volume are
+   left out. Of its connected parts, those holding a wanted click are
+   kept (`keepParts`): the decoder sometimes adds a like structure
+   elsewhere (the other ventricle).
+
+It is checked in `tests/sam.test.ts` (the crop, the window, the image
+resampled and windowed, prompt coordinates, the mask on the grid for each
+axis, a round trip, the parts kept, sections put together). With the
+real model, outside the tests (it is not in the repository): a synthetic
+section with a disc, a square and an ellipse, each found from a click or
+a box with an IoU of 0.996 to 1.
+
+**Timings** (headless Chrome on this machine's CPU: WASM, one thread, as
+the page is not cross-origin isolated; there is no real GPU headless, so
+WebGPU was not measured): the encoder about 3.8 s per crop, the decoder
+about 0.2 s per prompt. Over three runs on SRB 2026a: the first prompt
+took 8 to 62 s, nearly all of it the download (4 to 38 s from Hugging
+Face, as the network allowed) and one embedding; a second click in the
+same crop about 0.2 s (the decoder); a box elsewhere 5 to 7 s (a new
+embedding); Spread to 3 sections each way 27 to 91 s (an embedding per
+section, and each section's image read over the network). On a GPU through WebGPU the
+encoder should take a small fraction of that.
+
+**On SRB 2026a** (the default workspace's image), a click in the left
+lateral ventricle's frontal horn (an axial section, the layer's window
+0 … 255): the model's mask covered 98 % of the threshold method's mask
+from the same click (tolerance 0.1) and was larger (the horn's edges, which
+the tolerance leaves out); IoU 0.73. A box round the horn: IoU 0.84
+with Threshold's box (Otsu). The masks are in
+the run's screenshots (`sam_quick.mjs`, kept outside the repository).
+
 ## Adding a quick select method
 
 ```ts
@@ -261,3 +377,13 @@ ctx.subscriptions.push(
   }),
 );
 ```
+
+A method may also use `request.read(lo, hi)` (the image's values over any
+box of label voxels), `request.source` (a key naming the image, the
+window its layer shows, the label voxel's sides, the grid's size),
+`request.context` (how much of the section round the prompt to look at)
+and `request.progress(text, fraction)` (shown on the tool bar and in the
+tab while it works). With `refines: true`, clicks add to the section's
+prompt rather than replacing it, and `request.prompts` holds them all
+(and the box), each marked wanted or not. Throwing an `Error` shows its
+message; `signal` is aborted by Escape.

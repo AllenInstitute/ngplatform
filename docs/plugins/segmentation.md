@@ -48,7 +48,7 @@ While a segmentation layer is edited, a tool bar shows at the top of the
 | **Lasso** | ++l++ | Hold the left button and draw round a structure in a 2-D view: when you let go, the outline closes and its inside is painted with the active segment in that section (as **Paint over** says, and within the image's range when that is on). **Erase** on the bar erases inside it instead |
 | **Fill** | ++f++, ++shift+f++ | Fills the region clicked with the active segment: **2-D** in its section (++f++), or **3-D** in a box round the click (++shift+f++) |
 | **Pick segment** | ++i++ | The segment clicked becomes the active one |
-| **Quick select** | ++q++ | Drag a box round a structure in a 2-D view (Otsu's threshold inside it), or click it (values near the one clicked). The mask shows first, tinted with its outline: ++enter++ (or ✓ on the bar) paints it with the active segment, ++escape++ (or ×) drops it; pressed while it is still being worked out, they apply as soon as it is |
+| **Quick select** | ++q++ | Drag a box round a structure in a 2-D view, or click it. **Threshold** (on the bar): Otsu's threshold inside the box, or values near the one clicked. **AI (MobileSAM)**: a Segment Anything model run in the page; ++shift++ + click or ++alt++ + click marks what is not wanted (see below). The mask shows first, tinted with its outline: ++enter++ (or ✓ on the bar) paints it with the active segment, ++escape++ (or ×) drops it; pressed while it is still being worked out, they apply as soon as it is |
 
 - **Brush size**: ++alt++ + wheel over a 2-D view, ++bracket-left++ and
   ++bracket-right++, or **−** and **+** on the tool bar. The size is in
@@ -78,6 +78,39 @@ click replaces it, and the active segment can be changed (++c++, or the
 list) before ++enter++. **Preview** / **At once** on the bar (or
 **Result** in the tab) switches to painting at once, as before; undo
 takes a mask painted at once back.
+
+### AI quick select
+
+**AI (MobileSAM)**, chosen on the bar or under **Method** in the tab,
+segments with [MobileSAM](https://github.com/ChaoningZhang/MobileSAM), a
+small Segment Anything model (Apache-2.0), run in this page with ONNX
+Runtime Web.
+
+- **First use**: the model (44.7 MB: an image encoder and a prompt
+  decoder, from [Hugging Face](https://huggingface.co/Acly/MobileSAM)) is
+  downloaded with a progress bar and kept in this browser; the tab shows
+  the size kept and **Forget**, or **Download now** before the first
+  prompt. The runtime (ONNX Runtime Web 1.30.0, MIT, 14 MB, or 27 MB with
+  WebGPU) comes from jsDelivr.
+- **Click** what you want in a 2-D view; ++shift++ + click or ++alt++ +
+  click what you do not; each click redraws the mask in that section
+  (green and red dots show the clicks). Or **drag a box** round it.
+- The first prompt in a region computes the image's embedding ("Computing
+  the image's embedding…" on the bar): a few seconds on the CPU, much less
+  on a GPU. Further clicks near it take a fraction of a second.
+- The model sees the section round the prompt, at least **Context**
+  voxels across (256; in the tab), with the image's values as its layer
+  shows them (the layer's window).
+- **Run on** (in the tab): WebGPU when there is a GPU, else WASM (the
+  CPU); the tab shows which, and the last timings.
+- ++escape++ drops the clicks and the mask; ++enter++ paints it.
+
+**Spread** (on the bar while a mask shows, or **Spread to sections** in
+the tab): the mask is proposed in the next sections each way too, each
+section prompted with the box round the mask in the one before; it stops
+where nothing is found or the size jumps. ++enter++ paints all the
+sections as one stroke, which one undo takes back. It works with
+Threshold too.
 
 **Interpolate**: draw the active segment in two sections a few apart (in
 the same 2-D view), then press ++v++: each section between gets a shape

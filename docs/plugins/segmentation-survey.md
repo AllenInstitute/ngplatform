@@ -75,7 +75,8 @@ Neuroglancer reads its chunks again (see the plugin's README).
 | Segment picker | **Pick segment** (`I`) | Now |
 | Create new segment ID (C) | **New segment** (`C`): one more than the largest id used | Now |
 | Quick select, threshold | **Quick select** with a box (Otsu's threshold, the side the box's middle is on, its connected part) or a click (a tolerance round the value) | Now |
-| Quick select, AI (SAM) | The same tool takes other methods through the `segmentation.quickSelect` service: a method gets the prompt and the image's values round it on the label grid, and returns a mask. A Segment Anything method served elsewhere (or in the page with ONNX Runtime Web) can plug in without changing the tool | Later |
+| Quick select, AI (SAM) | **AI (MobileSAM)**: MobileSAM (Apache-2.0, 44.7 MB, downloaded on first use and kept in the browser) run in the page with ONNX Runtime Web (WebGPU, else WASM) in a worker; a box, or clicks wanted and not wanted (Shift or Alt) refining the mask; each section's embedding kept, so later clicks run the decoder alone. Other methods still plug in through the `segmentation.quickSelect` service | Now |
+| Quick select over several sections | **Spread** to N sections each way, each prompted with the box round the mask in the section before; previewed together, painted as one stroke (one undo) | Now |
 | Preview, Enter / Escape | Quick select's mask shows over the 2-D views (tinted, outlined) until **Enter** paints it or **Escape** drops it; **At once** paints straight away | Now |
 | Undo / redo | **Undo**, **Redo** (`Ctrl+Z`, `Ctrl+Y` while a layer is edited): strokes (within a memory budget) and the workspace's changes as one history, whichever came last | Now |
 | Trace (lasso) | **Lasso** (`L`): an outline drawn in a 2-D view, closed when the button is let go, its inside painted (or erased) in that section, as **Paint over** and the intensity range allow | Now |
