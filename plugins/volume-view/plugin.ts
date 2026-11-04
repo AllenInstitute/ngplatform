@@ -78,6 +78,9 @@ class VolumeRendering {
   private handleLayer: string | undefined;
   private levels: LevelInfo[] = [];
   private store: string | undefined;
+  /** An image that failed to open, not asked for again until then. */
+  private failed: { url: string; until: number } | undefined;
+  private disposed = false;
   private loaded: string | undefined;
   private loading: AbortController | undefined;
   private status = "";
@@ -237,12 +240,19 @@ class VolumeRendering {
     const target = saved.on ? this.target() : undefined;
     this.sectionBackground(saved.on && target !== undefined);
     if (!saved.on || target === undefined) {
+      // Nothing drawn: reads stop and the bricks (and their GPU memory) go; a load cut short is made again when switched on.
+      if (this.loading !== undefined) {
+        this.loading.abort();
+        this.loading = undefined;
+        this.loaded = undefined;
+      }
+      this.drawer.setBricks(undefined);
       this.fineSections(undefined);
       this.handle?.dispose();
       this.handle = undefined;
       this.handleLayer = undefined;
       if (saved.on) {
-        const message = "No image here that volume rendering reads (OME-Zarr or precomputed).";
+        const message = "Add an OME-Zarr or precomputed image to render it.";
         if (this.status !== message) this.ctx.ui.toast(message);
         this.setStatus(message);
       } else this.setStatus("");
@@ -255,7 +265,10 @@ class VolumeRendering {
       });
     }
     const url = storeOf(target.sources[0])!;
-    if (url !== this.store) {
+    if (url !== this.store && !(url === this.failed?.url && Date.now() < this.failed.until)) {
+      // The last image's reads stop, so they cannot land after this one's.
+      this.loading?.abort();
+      this.loading = undefined;
       this.store = url;
       this.levels = [];
       this.loaded = undefined;
@@ -448,7 +461,14 @@ class VolumeRendering {
       if (this.levels.length === 0) throw new Error("it has no image levels");
       this.update();
     } catch (e) {
-      if (this.store === url) this.setStatus(`Could not open the image: ${(e as Error).message}`);
+      if (this.store !== url) return;
+      this.setStatus(`Could not open the image: ${(e as Error).message}. Trying again in a few seconds.`);
+      // Opened again on a later update (a network blip need not stick), at most every few seconds.
+      this.store = undefined;
+      this.failed = { url, until: Date.now() + 5000 };
+      setTimeout(() => {
+        if (!this.disposed) this.update();
+      }, 5100);
     }
   }
 
@@ -512,6 +532,8 @@ class VolumeRendering {
       if (controller.signal.aborted) return;
       this.loaded = undefined;
       this.setStatus(`Could not load the solid: ${(e as Error).message}`);
+    } finally {
+      if (this.loading === controller) this.loading = undefined;
     }
   }
 
@@ -536,7 +558,7 @@ class VolumeRendering {
       detail.append(el("option", { value: "0" }, `Automatic${bricks ? " (finer near the camera)" : saved.solid === 0 && chosen ? ` (${mm(chosen.voxelSize)})` : ""}`));
       for (const l of this.levels) {
         const big = Math.max(...l.size) > WHOLE;
-        detail.append(el("option", { value: String(l.voxelSize) }, `${mm(l.voxelSize)} · ${!big ? l.size.join(" × ") : bricks ? "bricks down to this" : `a ${BOX}³ box`}`));
+        detail.append(el("option", { value: String(l.voxelSize) }, `${mm(l.voxelSize)} · ${!big ? l.size.join(" × ") : bricks ? "bricks" : `a ${BOX}³ box`}`));
       }
       detail.value = saved.solid === 0 || chosen === undefined ? "0" : String(chosen.voxelSize);
       detail.disabled = this.levels.length === 0;
@@ -560,17 +582,16 @@ class VolumeRendering {
         el(
           "div",
           { class: "vv-panel" },
-          el("label", { class: "vv-row" }, el("span", { class: "vv-label" }, "Volume rendering"), on),
-          el("p", { class: "note" }, "An image as a solid in the 3-D view, cut open at the position. Also “Volume” beside “Sections” there."),
-          el("label", { class: "field" }, el("span", {}, "Image"), candidates.length ? layer : el("span", { class: "note" }, "No OME-Zarr or precomputed image here.")),
+          el("label", { class: "vv-row", title: "Draws the image as a solid in the 3-D view, cut open at the position. Also Volume beside Sections in the 3-D view." }, el("span", { class: "vv-label" }, "Volume rendering"), on),
+          el("label", { class: "field" }, el("span", {}, "Image"), candidates.length ? layer : el("span", { class: "note" }, "Add an OME-Zarr or precomputed image to render it.")),
           el("label", { class: "field" }, el("span", {}, "Detail"), detail),
           el("label", { class: "field" }, el("span", {}, "Tissue threshold"), el("div", { class: "vv-row" }, threshold, thresholdValue)),
-          el("label", { class: "field check" }, cut, el("span", {}, "Cut away the octant facing the camera")),
+          el("label", { class: "field check", title: "Cuts away the octant facing the camera" }, cut, el("span", {}, "Cut open at the position")),
           el(
             "label",
             { class: "field check", title: "Sections of their own on the cut's faces, as fine as the 3-D zoom shows (up to the finest level, within 2048 pixels a side around the position). Off: the 2-D views' sections, at their zoom (Sections in the 3-D view)." },
             fine,
-            el("span", {}, "Fine sections on the cut, following the 3-D zoom"),
+            el("span", {}, "Fine sections on the cut"),
           ),
           this.status ? el("p", { class: "note" }, this.status) : null,
           this.bricks ? null : el("p", { class: "note" }, `No bricks on this GPU (${this.drawer.bricksFailed}): finer levels are drawn as a box around the position.`),
@@ -586,7 +607,10 @@ class VolumeRendering {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.offs.forEach((off) => off());
+    // The 3-D view's section background comes back with the plugin off.
+    this.sectionBackground(false);
     this.fineSections(undefined);
     this.loading?.abort();
     this.handle?.dispose();

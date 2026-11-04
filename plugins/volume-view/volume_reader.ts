@@ -225,7 +225,7 @@ export class VolumeReader {
         if (array === undefined) throw new Error(`${level.url}${level.path}: no array`);
         const wide = array.elementType in NARROWED ? (array.elementType as keyof typeof NARROWED) : undefined;
         if (!(array.elementType in NUMERIC) && wide === undefined) throw new Error(`${level.url}${level.path}: ${array.elementType} images are not drawn`);
-        if (array.shape.length !== 3) throw new Error(`${level.url}${level.path}: ${array.shape.length}-D images are not drawn (3-D only)`);
+        if (array.shape.length !== 3) throw new Error(`${level.url}${level.path} is ${array.shape.length}-D (${level.axes.join("")}): volume rendering reads 3-D images (z, y, x) only, not yet ones with t or c axes`);
         const dimOf = [0, 1, 2].map((k) => level.axes.indexOf("xyz"[k])) as [number, number, number];
         const chunkShape = array.readChunkShape;
         const info: LevelInfo = {
