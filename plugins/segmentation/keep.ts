@@ -5,8 +5,14 @@
  * raw bytes, written a moment after strokes stop.  This is not saving (the
  * files stay in the browser, which may clear them when short of space);
  * Save is.
+ *
+ * A segmentation edited in place keeps its edited chunks here the same
+ * way, with where its original is; past its memory budget the edited
+ * chunks kept here are let go from memory and read back from here
+ * (`readKept`) when needed.
  */
-import type { LabelType } from "./label_volume.js";
+import type { CowVolume, Original } from "./cow_volume.js";
+import type { LabelArray, LabelType } from "./label_volume.js";
 import { LABEL_ARRAYS, LabelVolume } from "./label_volume.js";
 
 const ROOT = "ngplatform-label-volumes";
@@ -25,6 +31,8 @@ export interface KeptInfo {
   /** When last written (ms since 1970). */
   time: number;
   chunks: number;
+  /** Edited in place: the original its unedited chunks are read from. */
+  original?: Original;
 }
 
 type Dir = FileSystemDirectoryHandle & {
@@ -49,14 +57,25 @@ async function write(dir: FileSystemDirectoryHandle, name: string, data: BufferS
   await w.close();
 }
 
-/** Writes a volume's changed chunks (and its description) into its folder; resolves false where the browser keeps nothing. */
-export async function keep(volume: LabelVolume, info: Omit<KeptInfo, "size" | "type" | "voxelToRas" | "time" | "chunks">, keys: Iterable<number>): Promise<boolean> {
+/**
+ * Writes a volume's changed chunks (and its description) into its folder;
+ * resolves false where the browser keeps nothing.  Each chunk is written as
+ * it is at its `versionOf` given (`versions`, in the order of `keys`), so
+ * the volume knows which writes are still current.
+ */
+export async function keep(volume: LabelVolume, info: Omit<KeptInfo, "size" | "type" | "voxelToRas" | "time" | "chunks">, keys: Iterable<number>, versions?: number[]): Promise<boolean> {
   const top = await root();
   if (top === undefined) return false;
   try {
     const dir = (await top.getDirectoryHandle(info.id, { create: true })) as Dir;
+    let i = 0;
     for (const key of keys) {
-      const c = volume.chunk(key);
+      const at = i++;
+      const c = volume.own(key);
+      // A chunk let go from memory is here already, as it is.
+      if (c === undefined && volume.edited(key)) continue;
+      // Changed since: the next keep writes it.
+      if (versions !== undefined && volume.versionOf(key) !== versions[at]) continue;
       if (c === undefined) await dir.removeEntry(`c${key}`).catch(() => {});
       else await write(dir, `c${key}`, c.slice().buffer as ArrayBuffer);
     }
@@ -105,6 +124,34 @@ export async function restore(info: KeptInfo): Promise<LabelVolume> {
     volume.putChunk(Number(m[1]), new Type(bytes));
   }
   return volume;
+}
+
+/** Reads back a volume's chunk kept here (undefined: not kept). */
+export async function readKept(id: string, key: number, type: LabelType): Promise<LabelArray | undefined> {
+  const top = await root();
+  try {
+    const dir = await top?.getDirectoryHandle(id);
+    const bytes = await (await dir?.getFileHandle(`c${key}`))?.getFile().then((f) => f.arrayBuffer());
+    const Type = LABEL_ARRAYS[type];
+    return bytes?.byteLength === 64 ** 3 * Type.BYTES_PER_ELEMENT ? new Type(bytes) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Puts a kept volume's edited chunks back into a volume edited in place over the same original (kept here already). */
+export async function restoreInto(volume: CowVolume, info: KeptInfo): Promise<void> {
+  const top = await root();
+  if (top === undefined) throw new Error("this browser keeps no files");
+  const dir = (await top.getDirectoryHandle(info.id)) as Dir;
+  const Type = LABEL_ARRAYS[info.type];
+  for await (const [name, handle] of dir.entries()) {
+    const m = /^c(\d+)$/.exec(name);
+    if (m === null || handle.kind !== "file") continue;
+    const bytes = await (await (handle as FileSystemFileHandle).getFile()).arrayBuffer();
+    if (bytes.byteLength !== 64 ** 3 * Type.BYTES_PER_ELEMENT) continue;
+    volume.restoreChunk(Number(m[1]), new Type(bytes));
+  }
 }
 
 /** Forgets a kept volume. */

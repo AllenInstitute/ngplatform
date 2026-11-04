@@ -10,8 +10,10 @@ their history) and that section was taken out of Annotations.
 - **A new segmentation layer**: an empty label volume on the grid of an
   image or a segmentation, at one of its levels (the same voxels and
   placement); or a copy of a segmentation's labels at a level, to edit (the
-  original is hidden, not changed); or a NIfTI label image opened from this
-  computer.
+  original is hidden, not changed); or a segmentation of any size **edited
+  in place** (copy-on-write: its chunks read from it until changed, only
+  the changed ones kept); or a NIfTI label image opened from this
+  computer; or edits saved earlier, opened over their original again.
 - **The tool bar** over the 2-D views while a volume is edited (centred
   over the top row of 2-D views, so it never covers the 3-D view): Move (the
   views as Neuroglancer moves them; the default), Brush, Erase, Lasso, Fill
@@ -24,7 +26,9 @@ their history) and that section was taken out of Annotations.
   coloured, folded, deleted), segments put in one by dragging or by the
   active segment's **Group**, a whole group hidden or shown.
 - **Save** as NIfTI or OME-Zarr (only painted chunks written), the whole
-  grid or the painted box; at the top of the tab and on the tool bar.
+  grid or the painted box; at the top of the tab and on the tool bar. A
+  segmentation edited in place saves its edits alone (an OME-Zarr that
+  names the original) or the whole volume (an OME-Zarr folder, as a job).
 - Each scene shows its own label volumes: the tab and the tool bar follow
   the scene shown.
 
@@ -44,13 +48,14 @@ with WebKnossos.
 | `segment_groups.ts` | Segment groups: made, renamed, coloured, folded, removed, segments assigned, the list in sections (pure) |
 | `painter.ts` | The mouse in the 2-D views: drawing, the brush ring, Alt+wheel, the quick-select box, the lasso's outline |
 | `label_volume.ts` | The label volume held in the page: chunks, counts by chunk, a segment's centre, its pyramid, the OME-Zarr store it answers |
+| `cow_volume.ts` | A segmentation edited in place: chunks read from the original until edited, edits spilled to the browser past a budget, coarse levels the original's except over edits |
 | `store_format.ts` | Serving those stores to Neuroglancer through local data (loaded with the catalogue) |
 | `session.ts` | A volume being drawn: its layer, history, colours, the image that limits the tools |
 | `kernels.ts`, `history.ts` | Brush, fills and their limits, the lasso's inside (`polygonRuns`, `fillOutline`), interpolation between sections (signed distances); strokes, undo and redo (pure) |
 | `quick_select.ts` | The quick select interface, the threshold method, the registry other plugins add to |
 | `preview.ts` | Quick select's proposed mask over the 2-D views (its sections, tinted with an outline), until Enter or Escape |
-| `save.ts` | NIfTI and OME-Zarr out, the painted box |
-| `keep.ts` | Volumes kept in the browser (OPFS) while drawn, brought back after a reload |
+| `save.ts` | NIfTI and OME-Zarr out, the painted box; edits alone, the whole of a volume edited in place, edits read back |
+| `keep.ts` | Volumes kept in the browser (OPFS) while drawn, brought back after a reload; edits let go from memory read back |
 | `style.ts` | The tab's and the tool bar's styles |
 | `tests/` | `npm test` runs them |
 
@@ -190,8 +195,77 @@ labels (uint64, int64, precomputed) are narrowed to 32 bits as the volume
 view's reader does (`narrow`), and one past 32 bits, or a negative or
 fractional value, stops the copy with an error. Names and colours come from the source's lookup table when it has
 one, otherwise from its layer's segment colours. The source is hidden and
-not changed. Editing a large segmentation in place (copy-on-write over the
-source) is not done: see *Large data*.
+not changed. A level past 512 M voxels is edited in place instead (next
+section).
+
+### Edited in place (copy-on-write)
+
+**Edit in place** (the tab's **Start**, and what **Copy and edit**
+becomes when the level is too large to copy) makes a `CowVolume`
+(`cow_volume.ts`) over the segmentation's finest level. Nothing is copied
+first:
+
+- **Unedited chunks** (64³ voxels on level 0's grid) are the original's.
+  The store served to Neuroglancer answers them asynchronously: it reads
+  the original through the volume view's reader (`Voxels.labels`, exactly,
+  64-bit labels narrowed to 32 as for a copy) and caches what it read (up
+  to 256 MB, oldest first).
+- **The first change to a chunk copies it**: the original's labels there,
+  as the volume's type (8 and 16 bits as they are, anything else 32), into
+  the volume's own chunk, which is changed from then on. A stroke that
+  leaves a chunk as the original has it drops the copy.
+- **Edited chunks** stay in memory up to 512 MB (`memoryBudget`). Each is
+  written to the browser's storage (`keep.ts`, as any volume drawn here) a
+  moment after the stroke; past the budget the least recently used ones
+  already written there are let go from memory and read back from there
+  (`readKept`) when a tool, the store or a save needs them.
+- **Coarser levels** are the original's own levels, as many as divide the
+  level before by whole numbers (2, or 1 along an axis not halved) with
+  matching voxel sizes; the first that does not ends the pyramid. A coarse
+  chunk with nothing edited under it is read from the original's level as
+  it is; one over edits is made again from the level below (each coarse
+  voxel the commonest label of the 2 × 2 × 2 under it, a tie going to a
+  label that is not 0), and made again after each stroke under it.
+- **Tools** read and write synchronously, so before each one runs the
+  editor reads the chunks it may reach (`Editor.ready`, `CowVolume.prepare`)
+  and keeps them in memory until it is done; reading a chunk not prepared
+  is an error, never a silent 0. A tool reads at most 256 MB of chunks at
+  once (256 at 32 bits, 1,024 at 8): a brush dab its ball's box; a fill
+  (2-D or 3-D) a box round the click cut to that size (`capBox`; a fill
+  that reaches its edge says so); the lasso its outline's box; quick
+  select its mask's box; interpolation the box of the segment in the
+  edited chunks; pick one chunk. Undo and redo put back the chunk copies a
+  stroke kept (none before the first edit: the chunk goes back to being
+  the original's).
+- **Segments** are counted in the edited chunks only (the original is not
+  counted). Names and colours come from the original's lookup table if it
+  has one (given to the new layer too), otherwise its layer's colours and
+  colour seed are given to the new layer, and segments without a colour of
+  their own keep Neuroglancer's (`hashColour`, as `SegmentColorHash`). New
+  segment gives one more than the largest label read so far, from edits or
+  from the original (its coarsest level is read for this when editing
+  starts); a label only in parts never read may be reused. Delete and
+  Merge act on the edited chunks. Hiding a segment lists the others known
+  (those in the edits) as shown, so the original's other segments hide
+  too.
+- **Saving**: **Edits only** writes an OME-Zarr on the original's levels
+  holding each edited chunk of level 0 and each coarse chunk over edits
+  (all written, even all 0, since the original may not be 0 there), with
+  `attributes.ngplatform.edits` naming the original (`store`, `layer`,
+  `source`), the size and type; chunks absent are the original's.
+  **The whole volume** writes every chunk that is not all 0 into a folder
+  (`writeWhole`), as a job that can be cancelled: each level a block of
+  256 × 256 × 64 voxels of the original at a time, chunks over edits as
+  edited or made again; it needs a browser that writes folders.
+- **Opening again**: **Open edits…** reads an edits folder (`readEdits`:
+  its note, segments and level-0 chunks; coarse chunks are made again),
+  opens the original named there and puts the edits over it. A volume
+  kept in the browser records its original too, so a reload brings it
+  back over it. If the original cannot be read, or is no longer the size
+  the edits were made on, it says so and opens nothing.
+
+The original is never written. Statistics (Annotations) sees the edited
+chunks only.
 
 ### Kept in the browser
 
@@ -212,14 +286,12 @@ painted chunk; undo keeps up to 512 MB of chunk copies; a fill stops at
 are capped at 2 GB, so for a large grid save the painted box or as OME-Zarr
 (painted chunks only).
 
-The plan for data too large for the page is a **sparse edit layer over the
-source**: strokes kept as chunks of a Zarr array on the source's grid
-(absent chunks meaning "no edit"), written to a folder on this computer as
-they are made (with `workspace.local.write`), shown over the source as they
-are now, and merged with it (an existing segmentation, or nothing) only on
-export, at the resolution asked for. The store and its pyramid already work
-chunk by chunk, so the change is where the chunks live, not how they are
-drawn.
+A segmentation larger than a copy holds is edited in place (above): its
+size is not limited; what is held is its edited chunks (512 MB in memory,
+the rest in the browser's storage, which the browser may limit), 256 MB of
+the original's chunks read, and what a single tool reads (256 MB). Edits
+are not yet written to a folder on this computer as they are made: they
+live in the browser until saved.
 
 ## What it uses from the platform
 

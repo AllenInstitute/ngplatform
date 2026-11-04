@@ -22,6 +22,14 @@ export const LABEL_MAX: Record<LabelType, number> = { uint8: 255, uint16: 65535,
 export const CHUNK = 64;
 const C3 = CHUNK * CHUNK * CHUNK;
 
+export type Vec3 = [number, number, number];
+
+/** Whether every voxel of a chunk is 0. */
+export function isEmpty(c: ArrayLike<number>): boolean {
+  for (let i = 0; i < c.length; ++i) if (c[i] !== 0) return false;
+  return true;
+}
+
 export interface Box {
   lo: [number, number, number];
   /** Exclusive. */
@@ -30,13 +38,13 @@ export interface Box {
 
 export class LabelVolume {
   readonly grid: [number, number, number];
-  private readonly chunks = new Map<number, LabelArray>();
+  protected readonly chunks = new Map<number, LabelArray>();
   /** Each chunk's labels and their voxels, counted when asked for and kept until it changes. */
-  private readonly chunkCounts = new Map<number, Map<number, number>>();
+  protected readonly chunkCounts = new Map<number, Map<number, number>>();
   /** Coarser levels' chunks, made when asked for (null: nothing there). */
-  private readonly coarse: Map<string, LabelArray | null>[];
+  protected readonly coarse: Map<string, LabelArray | null>[];
   readonly levels: LevelGrid[];
-  private metadata: Map<string, Uint8Array> | undefined;
+  protected metadata: Map<string, Uint8Array> | undefined;
   /** Counts each change, for whoever caches what it read. */
   version = 0;
 
@@ -45,13 +53,15 @@ export class LabelVolume {
     readonly type: LabelType,
     readonly voxelToRas: Mat4,
     readonly name = "labels",
+    levels?: LevelGrid[],
   ) {
     this.grid = size.map((n) => Math.ceil(n / CHUNK)) as [number, number, number];
     // A coarse voxel sums up the 2 × 2 × 2 below it, so it is placed at
     // their centre (as a mean would be): placed at its first voxel instead,
     // a stroke one section thick would show half a coarse voxel off, often
-    // in the next section, when zoomed out.
-    this.levels = pyramidGrids({ size, voxelToRas }, false, CHUNK);
+    // in the next section, when zoomed out.  (A volume edited in place
+    // takes its original's levels instead.)
+    this.levels = levels ?? pyramidGrids({ size, voxelToRas }, false, CHUNK);
     this.coarse = this.levels.map(() => new Map());
   }
 
@@ -97,6 +107,58 @@ export class LabelVolume {
   keys(): number[] {
     return [...this.chunks.keys()];
   }
+
+  /**
+   * The volume's own copy of a chunk (what undo keeps): here every chunk
+   * there is; a volume edited in place has its own only where edited.
+   */
+  own(key: number): LabelArray | undefined {
+    return this.chunks.get(key);
+  }
+
+  /** Whether the volume has its own chunk there (in memory or, edited in place, set aside in the browser). */
+  edited(key: number): boolean {
+    return this.chunks.has(key);
+  }
+
+  /** After a stroke: a chunk that now says nothing of its own is dropped (here, one all 0). */
+  settle(key: number): void {
+    const c = this.chunks.get(key);
+    if (c !== undefined && isEmpty(c)) this.putChunk(key, undefined);
+  }
+
+  /**
+   * Has the chunks in a box (voxels, `hi` exclusive) ready to read and
+   * write at once, until the returned function is called.  Here they
+   * always are; a volume edited in place reads its original's first.
+   */
+  async prepare(_lo: Vec3, _hi: Vec3, _signal?: AbortSignal): Promise<() => void> {
+    return () => {};
+  }
+
+  /** As `prepare`, for chunks by key. */
+  async prepareKeys(_keys: Iterable<number>): Promise<() => void> {
+    return () => {};
+  }
+
+  /** How many chunks a box (voxels, `hi` exclusive) touches. */
+  chunksIn(lo: Vec3, hi: Vec3): number {
+    let n = 1;
+    for (let k = 0; k < 3; ++k) {
+      const a = Math.max(0, Math.floor(lo[k] / CHUNK));
+      const b = Math.min(this.grid[k], Math.ceil(hi[k] / CHUNK));
+      n *= Math.max(0, b - a);
+    }
+    return n;
+  }
+
+  /** A change counter of a chunk, for whoever keeps it elsewhere (`keptAt`). */
+  versionOf(_key: number): number {
+    return 0;
+  }
+
+  /** Chunks written to the browser's storage as they were at these versions (a volume edited in place may then let them go from memory). */
+  keptAt(_keys: number[], _versions: number[]): void {}
 
   /** Puts a chunk in (or, undefined, takes it out): undo and redo do. */
   putChunk(key: number, data: LabelArray | undefined): void {
@@ -322,10 +384,15 @@ export class LabelVolume {
 
   // ---------------------------------------------------------- as a store
 
+  /** The store's metadata (Zarr v3, OME), its chunks raw. */
+  protected getMetadata(): Map<string, Uint8Array> {
+    this.metadata ??= omeZarrMetadata(this.levels, this.type, this.name, { label: true, chunk: CHUNK, codecs: [{ name: "bytes", configuration: { endian: "little" } }] });
+    return this.metadata;
+  }
+
   /** The store's key: metadata or a chunk's raw bytes; undefined for chunks not painted (the fill value, 0). */
   getKey(key: string): Uint8Array | undefined {
-    this.metadata ??= omeZarrMetadata(this.levels, this.type, this.name, { label: true, chunk: CHUNK, codecs: [{ name: "bytes", configuration: { endian: "little" } }] });
-    const meta = this.metadata.get(key);
+    const meta = this.getMetadata().get(key);
     if (meta !== undefined) return meta;
     const m = /^(\d+)\/c\/(\d+)\/(\d+)\/(\d+)$/.exec(key);
     if (m === null) return undefined;
@@ -333,5 +400,10 @@ export class LabelVolume {
     if (level >= this.levels.length) return undefined;
     const c = this.levelChunk(level, Number(m[4]), Number(m[3]), Number(m[2]));
     return c === undefined ? undefined : new Uint8Array(c.buffer, c.byteOffset, c.byteLength);
+  }
+
+  /** A key as served to Neuroglancer: `getKey`'s answer (a volume edited in place answers later). */
+  serve(key: string): Uint8Array | undefined | Promise<Uint8Array | undefined> {
+    return this.getKey(key);
   }
 }

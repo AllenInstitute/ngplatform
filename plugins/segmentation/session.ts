@@ -7,7 +7,9 @@
  * After a stroke the layer's data is read again: Neuroglancer drops the
  * chunks it holds from the store and asks for those on screen, which the
  * page answers from memory at once.  Strokes are told a few times a second
- * while they last, and once when they end.
+ * while they last, and once when they end.  (A segmentation edited in
+ * place, ./cow_volume.ts, answers its unedited chunks from its original,
+ * which it may have to read first.)
  */
 import type { PlatformContext } from "@ngplatform/sdk";
 import { between, type Placement, placement } from "../annotations/geometry.js";
@@ -16,7 +18,9 @@ import type { ImageLevel, Voxels } from "../annotations/voxels.js";
 import { History } from "./history.js";
 import type { ImageBlock, Vec3 } from "./kernels.js";
 import { CHUNK, LabelVolume } from "./label_volume.js";
-import { discard, keep } from "./keep.js";
+import { CowVolume } from "./cow_volume.js";
+import { discard, keep, readKept } from "./keep.js";
+import { hashColour } from "./segments.js";
 import { LABEL_STORE_EXTENSION, serveInPage } from "./store_format.js";
 
 /** Distinct colours for labels 1, 2, 3, … (then round again). */
@@ -37,6 +41,8 @@ export class Session {
   readonly history = new History();
   /** Names and colours of labels, by value. */
   readonly labels = new Map<number, { name: string; colour: string }>();
+  /** Edited in place: the original's segments' names and colours (its lookup table's, or its layer's colours). */
+  readonly theirs = new Map<number, { name: string; colour: string }>();
   layer = "";
   source = "";
   /** The store's http(s) URL, which Neuroglancer's chunk sources name. */
@@ -63,6 +69,8 @@ export class Session {
     readonly fileName: string,
   ) {
     this.unserve = serveInPage(fileName, volume);
+    // Edited in place: edits let go from memory are read back from the browser's copy.
+    if (volume instanceof CowVolume) volume.spill = { read: (key) => readKept(this.id, key, volume.type) };
   }
 
   /** Makes the session and shows its layer (named `name`) in the scene. */
@@ -123,7 +131,11 @@ export class Session {
     this.keepTimer = setTimeout(() => {
       const keys = [...this.dirty];
       this.dirty.clear();
-      this.keeping = this.keeping.then(() => keep(this.volume, { id: this.id, name: this.layer, labels: [...this.labels], reference: this.reference?.layer }, keys));
+      const versions = keys.map((k) => this.volume.versionOf(k));
+      const original = this.volume instanceof CowVolume ? this.volume.original : undefined;
+      this.keeping = this.keeping.then(async () => {
+        if (await keep(this.volume, { id: this.id, name: this.layer, labels: [...this.labels], reference: this.reference?.layer, original }, keys, versions)) this.volume.keptAt(keys, versions);
+      });
     }, 1500);
   }
 
@@ -235,15 +247,25 @@ export class Session {
     }, wait);
   }
 
-  /** The label's colour, picked from the palette the first time. */
+  /** The label's colour, picked from the palette the first time (edited in place, the original's if it has one). */
   colour(value: number): string {
-    return this.labels.get(value)?.colour ?? colourOf(value);
+    const own = this.labels.get(value)?.colour ?? this.theirs.get(value)?.colour;
+    if (own !== undefined) return own;
+    if (!(this.volume instanceof CowVolume)) return colourOf(value);
+    // Edited in place, the original's segments keep Neuroglancer's colours: the layer's default, or its hash.
+    const spec = this.ctx.viewer.layerSpec(this.layer) as { colorSeed?: number; segmentDefaultColor?: string } | undefined;
+    return spec?.segmentDefaultColor ?? hashColour(value, spec?.colorSeed ?? 0);
   }
 
-  /** Gives the layer the labels' colours (Neuroglancer otherwise picks its own). */
+  /**
+   * Gives the layer the labels' colours (Neuroglancer otherwise picks its
+   * own).  Edited in place, a segment of the original's that has no colour
+   * of its own keeps the one Neuroglancer gives it, as in the original.
+   */
   applyColours(values: number[]): void {
     const wanted: Record<string, string> = {};
-    for (const v of values) if (v > 0) wanted[String(v)] = this.colour(v);
+    const inPlace = this.volume instanceof CowVolume;
+    for (const v of values) if (v > 0 && (!inPlace || this.labels.has(v) || this.theirs.has(v))) wanted[String(v)] = this.colour(v);
     this.ctx.viewer.patchState(
       (ng) => {
         const layer = ((ng.layers as Record<string, unknown>[] | undefined) ?? []).find((l) => l.name === this.layer);
