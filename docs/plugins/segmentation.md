@@ -8,7 +8,7 @@ bar over the views ·
 
 Label volumes drawn by hand, as in WebKnossos's volume annotation: a new
 segmentation layer on an image's grid (or a copy of a segmentation to
-edit), painted with a brush, fills and quick select, its segments named,
+edit, or a segmentation of any size edited in place), painted with a brush, fills and quick select, its segments named,
 coloured, hidden, merged and deleted, and saved as NIfTI or OME-Zarr. (It
 was the last section of the Annotations tab.) See
 [the survey](segmentation-survey.md) for how it compares with WebKnossos.
@@ -25,11 +25,16 @@ In the Segmentation tab, under **New segmentation layer**:
 - On a segmentation's grid, **Start: A copy of its labels** and **Copy and
   edit** copy its labels at that level into the new layer, with the names
   and colours of its lookup table if it has one. The original is hidden and
-  not changed. Copies are limited to 512 million voxels: choose a coarser
-  level for a larger segmentation. Labels copy exactly up to 4,294,967,295
-  (32 bits; 64-bit labels within that range too); a label past 32 bits
-  stops the copy with an error.
+  not changed. Copies are limited to 512 million voxels; at a level larger
+  than that the button becomes **Edit in place** (below). Labels copy
+  exactly up to 4,294,967,295 (32 bits; 64-bit labels within that range
+  too); a label past 32 bits stops the copy with an error.
+- On a segmentation's grid, **Start: Edit it in place** (or a level too
+  large to copy) and **Edit in place** edit the segmentation itself, at its
+  finest level, without copying it: see below.
 - **Open NIfTI…** reads a label image from your computer to edit.
+- **Open edits…** opens edits saved earlier (a folder saved with **Save →
+  Edits only**) over the segmentation they were made on.
 
 The new layer opens with the tool bar shown and the brush chosen. Each
 scene has its own segmentation layers; the tab shows the scene you are in.
@@ -89,6 +94,37 @@ colours, ++v++ default
 annotations, ++space++ layout, ++escape++, ++alt++ + wheel); hide the tool
 bar to have them back.
 
+## Editing a segmentation in place
+
+For a segmentation too large to copy (an OME-Zarr or precomputed
+segmentation at a URL, or one opened from your computer, of any size),
+**Edit in place** makes a new layer over it in which nothing is copied
+first:
+
+- The new layer reads the segmentation's chunks (blocks of 64 × 64 × 64
+  voxels) as they are shown, and shows them as they are. When zoomed out it
+  shows the segmentation's own coarser levels.
+- The first time you change a chunk, it is copied (as the segmentation has
+  it) and the copy is changed. Only changed chunks are kept: in the page
+  (up to 512 MB), and in this browser's storage a moment after each stroke;
+  past 512 MB the oldest are read back from the browser's storage when
+  needed. The tab says how many chunks are changed and where they are.
+- The original layer is hidden and never written.
+- Every tool works. Before a tool paints, it reads the chunks it can reach,
+  which can take a moment on a slow connection. A tool reads at most
+  256 MB of chunks at once: a 2-D fill stays in a square about 1,000
+  voxels wide round the click at 32 bits (2,000 at 8 bits), a 3-D fill as far as its
+  **Reach** within that; a fill that stops at that edge says so, and you
+  can fill again from beyond it. A lasso or quick select box larger than
+  that is refused with a message.
+- Undo and redo work as usual; undoing the first change to a chunk makes it
+  the segmentation's again.
+- The segment list counts voxels in the changed chunks only. **+ New
+  segment** gives one more than the largest label seen so far (in the
+  changed chunks and those read); **Delete** and **Merge** act on the
+  changed chunks. Hiding a segment hides the segmentation's other segments
+  too (those not in the list).
+
 ## Segments
 
 The **Segments** list shows each segment of the layer: whether it shows
@@ -139,13 +175,28 @@ painted, placed where it was. OME-Zarr writes only the painted chunks, so
 it suits large grids, and carries the segments' names and colours; NIfTI
 holds every voxel.
 
+A segmentation edited in place saves as OME-Zarr in one of two ways:
+
+- **Edits only**: the changed chunks, on the segmentation's grid and
+  levels, and a note of where the segmentation is (its URL). It is small.
+  **Open edits…** (under **New…**) opens it over the segmentation again;
+  if the segmentation is no longer at that URL (or has changed size), it
+  says so. On its own, the folder shows the changed chunks and nothing
+  else.
+- **The whole volume**: every chunk, the segmentation's copied a block at
+  a time and the changed ones as changed, written into a folder you
+  choose, as a job (see **Jobs**; it can be cancelled). It can take long
+  for a large segmentation, and needs a browser that can write folders
+  (Chrome, Edge).
+
 !!! warning "Save before you leave"
     A segmentation layer drawn here lives in the page until saved. While you
     draw it is also kept in this browser, so a reload brings it back into
     its layer, and one whose page was closed is offered again under **New…**
     (*Kept in this browser*: Open or Discard). That copy is not a save: the
     browser may clear it, and the link does not carry it to another
-    computer. **Close** forgets it.
+    computer. **Close** forgets it. A segmentation edited in place is kept
+    the same way (its changed chunks, and where the segmentation is).
 
 ## Notes from users
 
