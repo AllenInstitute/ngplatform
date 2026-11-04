@@ -74,6 +74,8 @@ export class View2d {
     this.queued = true;
     requestAnimationFrame(() => {
       this.queued = false;
+      // Nothing after dispose (a frame queued before it).
+      if (this.disposed) return;
       try {
         this.render();
       } catch (e) {
@@ -171,6 +173,8 @@ export class View2d {
     if (signature === this.signature && style === this.drawnStyle && !this.more) return;
     this.signature = signature;
     this.drawnStyle = style;
+    // This drawing says its own problem, if any: one that has passed does not stay.
+    this.problem = undefined;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, width, height);
     gl.clearColor(0, 0, 0, 0);
@@ -317,7 +321,10 @@ export class View2d {
     context.restore();
   }
 
+  private disposed = false;
+
   dispose(): void {
+    this.disposed = true;
     this.offScreenshot();
     this.offRendered();
     this.chunks?.clear();

@@ -30,6 +30,8 @@ import { apply, boxInFrustum, invertAffine, multiply } from "./view_math.js";
 
 /** GPU memory for one image's splats. */
 const GPU_BYTES = 512 * 1024 * 1024;
+/** A block whose read failed is asked for again after this long (ms). */
+const RETRY_MS = 15_000;
 /** Optical depth of a full-intensity splat of level 0 at Absorption 1 (a coarser level's, by its voxel size). */
 const SPLAT_DEPTH = 0.5;
 /** In glow, light per splat as a share of that. */
@@ -46,6 +48,8 @@ export class SplatView {
   private error: string | undefined;
   private readonly blocks = new Map<string, { gpu?: GpuSplats; data?: { centres: Float32Array; covariances: Float32Array; weights: Float32Array }; used: number }>();
   private readonly empty = new Set<string>();
+  /** Blocks whose read failed, with when they may be asked for again. */
+  private readonly failed = new Map<string, number>();
   private wanted: string[] = [];
   /** Blocks each kind of view wants read, merged for the worker. */
   private readonly wants = new Map<"3d" | "2d", string[]>();
@@ -73,9 +77,17 @@ export class SplatView {
     this.worker.onmessage = (event: MessageEvent) => {
       const msg = event.data;
       if (msg.type === "opened") this.info = msg.info;
-      else if (msg.type === "splats") this.blocks.set(msg.key, { data: msg, used: this.frame });
+      else if (msg.type === "splats") {
+        this.blocks.set(msg.key, { data: msg, used: this.frame });
+        // Reads work again: an earlier block's failure is no longer news.
+        if (this.failed.size === 0) this.error = undefined;
+      }
       else if (msg.type === "empty") this.empty.add(msg.key);
-      else if (msg.type === "error") this.error = msg.message;
+      else if (msg.type === "error") {
+        this.error = msg.message;
+        // A block that failed counts as read for now (the view can finish: screenshots wait for it), and is asked for again later.
+        if (msg.key !== undefined) this.failed.set(msg.key, performance.now() + RETRY_MS);
+      }
       this.handle.redraw();
       this.view2d.schedule();
       this.onStatus?.();
@@ -102,7 +114,12 @@ export class SplatView {
 
   /** Whether a block has been read (splats or none). */
   arrived(key: string): boolean {
-    return this.blocks.has(key) || this.empty.has(key);
+    if (this.blocks.has(key) || this.empty.has(key)) return true;
+    const retry = this.failed.get(key);
+    if (retry === undefined) return false;
+    if (performance.now() < retry) return true;
+    this.failed.delete(key);
+    return false;
   }
 
   /** A block's splats as read, while kept. */

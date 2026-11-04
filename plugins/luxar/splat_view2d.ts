@@ -91,6 +91,9 @@ export class SplatView2d {
     this.queued = true;
     requestAnimationFrame(() => {
       this.queued = false;
+      // Nothing after dispose (a frame queued before it); each render says its own problem, so a passing one does not stay.
+      if (this.disposed) return;
+      this.problem = undefined;
       try {
         this.render();
       } catch (e) {
@@ -291,7 +294,10 @@ export class SplatView2d {
     context.restore();
   }
 
+  private disposed = false;
+
   dispose(): void {
+    this.disposed = true;
     this.offScreenshot();
     this.offRendered();
     for (const b of this.gpu.values()) this.renderer?.release(b.splats);
