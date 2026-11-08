@@ -25,7 +25,7 @@ No Cinematic Anatomy manual is public. What follows is from those sources
 | Export | Ranges: rotation about the horizontal or vertical axis, half or full circle, a step in degrees, a preview, images saved to a folder; a snapshot in a chosen format (Playground); movies with export (syngo.via "Movie (incl. export)") | Rotation ranges (axis, half or full, step); MP4 (H.264) or PNG frames on the host, downloaded in the page; stills as PNG at a chosen size and sample count. Not yet: a preview before rendering |
 | Annotations | Added to structures (flyer) | Neuroglancer's annotations, drawn with the render's depth |
 | Stereo, VR, walls | Stereo glasses, VR headsets, 8K wall with active shutter glasses, Vision Pro | Not yet |
-| Speed | Rendering on the PC or headset; Siemens' denoising and temporal reuse (Martschinke 2019, Hofmann 2020) | CUDA on a host (an A6000: 45–65 ms a pass at 834 × 684 for a 135-million-voxel brain, 100–330 ms with labels and cuts), or WebGPU in the page; frames at half size while moving. Not yet: a denoiser, reprojection |
+| Speed | Rendering on the PC or headset; Siemens' denoising and temporal reuse (Martschinke 2019, Hofmann 2020) | CUDA on a host (an A6000: 45–65 ms a pass at 834 × 684 for a 135-million-voxel brain, 100–330 ms with labels and cuts), or WebGPU in the page; frames at half size while moving; an edge-avoiding wavelet denoiser for the first samples. Not yet: a learned denoiser, reprojection between frames |
 
 ## Sources
 

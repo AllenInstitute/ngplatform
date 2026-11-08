@@ -50,8 +50,11 @@ It renders in one of two places:
   the tissue, so one preset suits scans of different scaling.
 - **Density** (opacity per mm), **Exposure**, and the key light's direction
   (relative to the camera, so the light follows as you turn the view).
+- **View**: Left, Right, Anterior, Posterior, Superior and Inferior turn the
+  3-D view to those sides (for images in RAS: x right, y anterior, z up).
 - **Cuts**: planes through the current position across x, y or z, keeping
-  either side, with an offset. Regions listed under **Kept through cuts**
+  either side, with an offset in mm (a slider or a number). A **clip box**
+  keeps a box of the volume (six sliders, as fractions of it). Regions listed under **Kept through cuts**
   stay whole (vessels through a cut brain, say).
 - **Regions**: colour by a co-registered OME-Zarr segmentation (its labels'
   FreeSurfer colours), how much of the region's colour to use, and regions
@@ -61,6 +64,12 @@ It renders in one of two places:
   budget, a level is made by downsampling a finer one as it is read (means
   for images, majority vote for labels) and kept in a cache on the host.
 - **Samples per pixel**: when a still view stops refining.
+- **Load a preset file…**: a preset (or a list) as JSON, in the form of
+  `runner/ngplatform_render/presets/*.json`; it is kept with the scene.
+- **Save still (PNG)**: the view now, path-traced on the host at the movie's
+  size and twice its samples.
+- **Render rotation**: a turn about the position from the view now, about
+  the vertical or the horizontal, a full or half circle, by a step in degrees.
 - **Movie**: **Add keyframe from the view** as you move, set each one's
   time, then **Render movie on the host**: every frame is path-traced to the
   sample count and the frames are encoded as an MP4 (H.264) on the host,
@@ -78,7 +87,10 @@ Henyey–Greenstein phase function, chosen by the gradient's magnitude (Kroes
 et al. 2012); a directional key light and a sky-like environment; a thin-lens
 camera; a filmic tone curve. Each pass adds one sample per pixel and the
 image is their mean, so it refines while the view is still. While the
-camera moves, frames are rendered at half size.
+camera moves, frames are rendered at half size, and for the first 12
+samples after a change the host smooths the image with an edge-avoiding
+wavelet filter guided by the distance to the tissue (about half the error at
+4 samples; **Smooth the first frames** switches it off).
 
 On an RTX A6000 a 834 × 684 view of a 135-million-voxel brain takes about
 45 ms a pass (some 200 samples in 10 s); with region colours and a cut,
