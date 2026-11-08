@@ -29,7 +29,7 @@ const GPUShaderStage = new Proxy({}, { get: (_t, k) => webgpu.GPUShaderStage[k] 
 const GPUMapMode = new Proxy({}, { get: (_t, k) => webgpu.GPUMapMode[k] }) as Record<string, number>;
 
 export const TF_SIZE = 1024;
-const BRICK = 8;
+const BRICK = 4;
 
 export const OFFSETS: Record<string, number> = {};
 export const NPARAMS = (() => {

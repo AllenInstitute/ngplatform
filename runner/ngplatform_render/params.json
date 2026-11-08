@@ -215,6 +215,11 @@
    "name": "INSET",
    "size": 1,
    "about": "voxels along the gradient at which a collision takes its colour, on the more opaque side (0: where it is), so a surface shows the tissue beneath it, not the values between it and the medium"
+  },
+  {
+   "name": "FAST",
+   "size": 1,
+   "about": "1: frames while the camera moves; through dense bricks the tracking steps a voxel at a time, summing optical depth (approximate, its cost bounded by the voxels crossed, not the density), 0: exact delta and ratio tracking"
   }
  ]
 }

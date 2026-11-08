@@ -17,8 +17,10 @@ const FS = (o: Frame3d["outputs"]) => `#version 300 es
 precision highp float;
 uniform sampler2D uColor;
 uniform highp sampler2D uDepth;
+uniform sampler2D uAlpha;
 uniform vec4 uViewport;
 uniform float uHasDepth;
+uniform float uHasAlpha;
 layout(location = ${o.color}) out vec4 out_color;
 layout(location = ${o.z}) out highp vec4 out_z;
 layout(location = ${o.pick}) out highp vec4 out_pickId;
@@ -26,6 +28,8 @@ void main() {
   vec2 uv = (gl_FragCoord.xy - uViewport.xy) / uViewport.zw;
   uv.y = 1.0 - uv.y;
   vec4 c = texture(uColor, uv);
+  // A JPEG frame's alpha comes apart, and its colour is not premultiplied.
+  if (uHasAlpha > 0.5) c = vec4(c.rgb * texture(uAlpha, uv).r, texture(uAlpha, uv).r);
   if (c.a < 0.5) discard;
   float d = uHasDepth > 0.5 ? texture(uDepth, uv).r : 0.5;
   d = clamp(d, 0.0, 0.99999);
@@ -37,6 +41,8 @@ void main() {
 
 export interface Picture {
   bitmap: ImageBitmap;
+  /** One byte a pixel, rows from the top: the alpha of a colour that is not premultiplied (a JPEG frame). */
+  alpha?: { width: number; height: number; data: Uint8Array };
   depth?: { width: number; height: number; data: Float32Array };
 }
 
@@ -46,12 +52,14 @@ export class PictureDrawer implements Drawer3d {
   private picture: Picture | undefined;
   private uploaded: Picture | undefined;
   private uploadedDepth: Picture["depth"] | undefined;
+  private uploadedAlpha: Picture["alpha"] | undefined;
   private gl: WebGL2RenderingContext | undefined;
   private program: WebGLProgram | undefined;
   private programFor = "";
   private vao: WebGLVertexArrayObject | undefined;
   private color: WebGLTexture | undefined;
   private depth: WebGLTexture | undefined;
+  private alpha: WebGLTexture | undefined;
 
   set(picture: Picture | undefined): void {
     this.picture = picture;
@@ -84,16 +92,28 @@ export class PictureDrawer implements Drawer3d {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, pic.depth.width, pic.depth.height, 0, gl.RED, gl.FLOAT, pic.depth.data);
       this.uploadedDepth = pic.depth;
     }
+    if (pic.alpha !== undefined && this.uploadedAlpha !== pic.alpha) {
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, this.alpha!);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, pic.alpha.width, pic.alpha.height, 0, gl.RED, gl.UNSIGNED_BYTE, pic.alpha.data);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+      this.uploadedAlpha = pic.alpha;
+    }
     gl.useProgram(program);
     const vp = gl.getParameter(gl.VIEWPORT) as Int32Array;
     gl.uniform4f(gl.getUniformLocation(program, "uViewport"), vp[0], vp[1], vp[2], vp[3]);
     gl.uniform1f(gl.getUniformLocation(program, "uHasDepth"), pic.depth !== undefined ? 1 : 0);
+    gl.uniform1f(gl.getUniformLocation(program, "uHasAlpha"), pic.alpha !== undefined ? 1 : 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.color!);
     gl.uniform1i(gl.getUniformLocation(program, "uColor"), 0);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.depth!);
     gl.uniform1i(gl.getUniformLocation(program, "uDepth"), 1);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.alpha!);
+    gl.uniform1i(gl.getUniformLocation(program, "uAlpha"), 2);
     gl.bindVertexArray(this.vao!);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindVertexArray(null);
@@ -106,6 +126,7 @@ export class PictureDrawer implements Drawer3d {
     this.programFor = "";
     this.uploaded = undefined;
     this.uploadedDepth = undefined;
+    this.uploadedAlpha = undefined;
     this.vao = gl.createVertexArray()!;
     const tex = (filter: number) => {
       const t = gl.createTexture()!;
@@ -118,6 +139,7 @@ export class PictureDrawer implements Drawer3d {
     };
     this.color = tex(gl.LINEAR);
     this.depth = tex(gl.NEAREST);
+    this.alpha = tex(gl.LINEAR);
   }
 
   private compile(gl: WebGL2RenderingContext, outputs: Frame3d["outputs"]): WebGLProgram | undefined {

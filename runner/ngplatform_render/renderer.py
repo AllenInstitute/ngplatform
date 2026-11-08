@@ -10,6 +10,7 @@ sample count starts the mean again.
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -18,7 +19,8 @@ import numpy as np
 from . import kernels
 from .presets import Preset, transfer_table
 
-BRICK = 8
+BAND_MS = 15.0  # how long a band of a pass takes (step with stop): a new view waits at most about this
+BRICK = 4  # majorant bricks: 4 voxels a side (8 took about 60% longer a pass, its majorants looser at surfaces)
 DENOISE_UNTIL = 12
 
 
@@ -88,6 +90,9 @@ class RenderState:
     aperture: float = 0.0
     focus: float = 0.0
     unit_mm: float = 1.0  # how many mm one world (display) unit is
+    # A frame while the camera moves: approximate tracking through dense tissue, a voxel at a time
+    # (kernels.track); it is not accumulated into a still view's samples.
+    fast: float = 0.0  # > 0: the step, in voxels
 
 
 def _tex_for(cp, data: np.ndarray):
@@ -185,6 +190,7 @@ class Renderer:
         self._world_from_vox_label = None
         self.samples = 0
         self._frame = 0
+        self._band_rows: int | None = None  # rows a band of a pass takes (step with stop)
         self._tf_key: Any = None
         self._label_ids = np.zeros(0, np.int64)
         self._env_tex = None
@@ -221,6 +227,13 @@ class Renderer:
             self.reset()
 
     # ------------------------------------------------------------ view
+    def set_fast(self, step: float) -> None:
+        """Fast tracking (steps of `step` voxels through dense bricks), or exact tracking (0), for the passes to come."""
+        with self.lock, self.device:
+            self._params[kernels.OFFSETS["FAST"]] = float(step)
+            if step == 0 and self._band_rows:
+                self._band_rows = max(8, self._band_rows // 6)  # exact passes take several times as long
+
     def reset(self) -> None:
         self.samples = 0
         if self._accum is not None:
@@ -331,6 +344,7 @@ class Renderer:
         P[O["BG"]:O["BG"] + 4] = s.background
         P[O["EXPOSURE"]] = pr.exposure
         P[O["MAX_BOUNCES"]] = s.max_bounces
+        P[O["FAST"]] = float(s.fast)
         clips = list(s.clips)[:6]
         P[O["NCLIP"]] = len(clips)
         for i, c in enumerate(clips):
@@ -381,26 +395,42 @@ class Renderer:
         )
         self._env_tex, self._env_arr, self._env_name = texture.TextureObject(res, tdesc), arr, name
 
-    def step(self, n: int = 1) -> int:
-        """Adds n samples per pixel; returns the samples so far."""
-        cp = self.cp
+    def step(self, n: int = 1, stop=None) -> int:
+        """Adds n samples per pixel; returns the samples so far. With `stop` (a function), each pass
+        is rendered in bands of rows of about BAND_MS of work, and `stop()` is asked after each band:
+        when it is true the pass is left unfinished (the view has changed; set_view starts again)."""
         s = self._state
         if s is None:
             raise RuntimeError("no view")
         with self.lock, self.device:
             W, H = s.width, s.height
-            grid, block = (-(-W // 16), -(-H // 8)), (16, 8)
+            block = (16, 8)
             f = _kernels().get_function("trace")
             O = kernels.OFFSETS["FRAME"]
             for _ in range(n):
                 self._frame += 1
                 self._params[O] = float(self._frame % 16777216)
-                f(grid, block, self._args() + (self._accum, np.int32(W), np.int32(H)))
+                if stop is None:
+                    f((-(-W // 16), -(-H // 8)), block, self._args() + (self._accum, np.int32(W), np.int32(H), np.int32(0), np.int32(H)))
+                else:
+                    y0 = 0
+                    while y0 < H:
+                        rows = max(8, min(H, self._band_rows or -(-H // 8)))
+                        t = time.perf_counter()
+                        f((-(-W // 16), -(-rows // 8)), block, self._args() + (self._accum, np.int32(W), np.int32(H), np.int32(y0), np.int32(y0 + rows)))
+                        self.cp.cuda.Stream.null.synchronize()
+                        ms = (time.perf_counter() - t) * 1000
+                        y0 += rows
+                        # Bands of about BAND_MS: rows scaled by how long this band took.
+                        self._band_rows = int(max(8, min(H, rows * BAND_MS / max(ms, 0.5))))
+                        if y0 < H and stop():
+                            return self.samples
                 self.samples += 1
             return self.samples
 
-    def image(self) -> np.ndarray:
-        """The mean so far, tone-mapped: (H, W, 4) uint8, premultiplied alpha."""
+    def image(self, premultiplied: bool = True):
+        """The mean so far, tone-mapped: (H, W, 4) uint8, premultiplied alpha; or (not premultiplied)
+        the colour divided by the alpha, (H, W, 3) uint8, and the alpha, (H, W) uint8 (made on the GPU)."""
         cp = self.cp
         s = self._state
         assert s is not None
@@ -422,7 +452,11 @@ class Renderer:
                 (-(-W // 16), -(-H // 8)), (16, 8),
                 (src, inv_n, np.float32(s.preset.exposure), out, np.int32(W), np.int32(H)),
             )
-            return cp.asnumpy(out)
+            if premultiplied:
+                return cp.asnumpy(out)
+            a = out[..., 3:4].astype(cp.uint16)
+            rgb = cp.where(a > 0, cp.minimum((out[..., :3].astype(cp.uint16) * 255 + a // 2) // cp.maximum(a, 1), 255), 0).astype(cp.uint8)
+            return cp.asnumpy(rgb), cp.asnumpy(out[..., 3])
 
     def depth(self) -> np.ndarray:
         """(H, W, 2) float32: GL depth 0..1 where the view first becomes mostly opaque (1: nothing), and the world distance (-1)."""

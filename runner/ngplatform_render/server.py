@@ -78,7 +78,8 @@ class Session:
         self.view: dict[str, Any] | None = None
         self.view_version = 0
         self.applied_version = -1
-        self.frame: tuple[int, int, int, bytes, int, int] | None = None  # number, samples, version, webp, w, h
+        # number, samples, version, the encoded frame, w, h, its type, where its alpha plane starts (jpeg) or 0
+        self.frame: tuple[int, int, int, bytes, int, int, str, int] | None = None
         self.frame_number = 0
         self.depth: tuple[int, bytes, int, int] | None = None
         self.max_samples = 1024
@@ -217,7 +218,9 @@ class Session:
             crop=(tuple(crop[0]), tuple(crop[1])) if crop else None,
             label_colors=colors, keep_labels=keep, label_mix=mix,
             background=tuple(view.get("background", (0, 0, 0, 0))),
-            max_bounces=int(view.get("max_bounces", 4)),
+            # While the camera moves (frames below full size): fast tracking and at most 2 bounces.
+            max_bounces=int(view.get("max_bounces", 4)) if scale >= 1 else min(2, int(view.get("max_bounces", 4))),
+            fast=1.0 if scale < 1 else 0.0,
             denoise=bool(view.get("denoise", True)),
             aperture=float(view.get("aperture", 0.0)), focus=float(view.get("focus", 0.0)),
             unit_mm=float(view.get("unit_mm", 1.0)),
@@ -246,13 +249,33 @@ class Session:
                     self.applied_version = version
                     batch = 1
                     last_publish = 0.0
+                    if not st.fast:
+                        # A still view: one fast pass first, published at once, then exact samples from the start.
+                        R.set_fast(1.0)
+                        R.step(1, stop=lambda: self.view_version != version)
+                        R.synchronize()
+                        self._publish(version)
+                        R.set_fast(0.0)
+                        R.reset()
+                        if self.view_version != version:
+                            continue
                 t = time.time()
-                R.step(batch)
-                R.synchronize()
-                dt = (time.time() - t) / batch
+                done = 0
+                changed = lambda: self.view_version != version  # noqa: E731
+                for _ in range(batch):
+                    # A pass at a time, in bands of rows, so a new view (the camera moving) is taken up
+                    # after the band under way, not after the pass or the batch.
+                    R.step(1, stop=changed)
+                    R.synchronize()
+                    done += 1
+                    if changed():
+                        break
+                dt = (time.time() - t) / done
                 self.passes_ms = dt * 1000
-                # Grow batches to about 60 ms of work, so a new view is taken up quickly.
+                # Batches of about 60 ms of work between frames published.
                 batch = max(1, min(64, int(0.06 / max(dt, 1e-4))))
+                if self.view_version != version:
+                    continue
                 n = R.samples
                 pow2 = n & (n - 1) == 0
                 if pow2 or time.time() - last_publish > 0.25 or n >= self.max_samples:
@@ -272,12 +295,22 @@ class Session:
         from PIL import Image
 
         R = self.renderer
-        img = R.image()
         b = io.BytesIO()
-        Image.fromarray(img, "RGBA").save(b, "WEBP", quality=88, method=0)
+        if (self.view or {}).get("frame_format") == "jpeg":
+            # Colour as a JPEG (divided by the alpha on the GPU), then the alpha plane deflated: several
+            # times as quick to make as a WebP with alpha.
+            rgb, alpha = R.image(premultiplied=False)
+            Image.fromarray(rgb, "RGB").save(b, "JPEG", quality=88)
+            offset = b.tell()
+            b.write(zlib.compress(alpha.tobytes(), 1))
+            kind, (h, w) = "image/jpeg", alpha.shape
+        else:
+            img = R.image()
+            Image.fromarray(img, "RGBA").save(b, "WEBP", quality=88, method=0)
+            offset, kind, (h, w) = 0, "image/webp", img.shape[:2]
         with self.cond:
             self.frame_number += 1
-            self.frame = (self.frame_number, R.samples, version, b.getvalue(), img.shape[1], img.shape[0])
+            self.frame = (self.frame_number, R.samples, version, b.getvalue(), w, h, kind, offset)
             self.cond.notify_all()
 
     def wait_frame(self, after: int, timeout: float):
@@ -550,9 +583,10 @@ class Handler(BaseHTTPRequestHandler):
                     if f is None:
                         self._send(204, b"", headers={"X-Status": s.status, "X-Error": (s.error or "")[:200]})
                         return
-                    n, samples, version, data, w, h = f
-                    self._send(200, data, "image/webp", {"X-Frame": str(n), "X-Samples": str(samples), "X-Version": str(version),
-                                                         "X-Width": str(w), "X-Height": str(h), "X-Ms-Per-Pass": f"{s.passes_ms:.1f}"})
+                    n, samples, version, data, w, h, kind, offset = f
+                    extra = {"X-Alpha-Offset": str(offset)} if offset else {}
+                    self._send(200, data, kind, {"X-Frame": str(n), "X-Samples": str(samples), "X-Version": str(version),
+                                                 "X-Width": str(w), "X-Height": str(h), "X-Ms-Per-Pass": f"{s.passes_ms:.1f}", **extra})
                 elif method == "GET" and rest == ["depth"]:
                     d = s.depth
                     if d is None:

@@ -135,6 +135,8 @@ export interface ViewSpec {
   max_bounces?: number;
   /** Filter the image while it has few samples (the service's; default on). */
   denoise?: boolean;
+  /** "jpeg": frames as a JPEG and an alpha plane (quicker to make than the default WebP). */
+  frame_format?: "jpeg" | "webp";
   /** The light: a light map by name ("" for the preset's sky colours), turned about the camera's up by `rotation` degrees. */
   environment?: { map?: string; rotation?: number; scale?: number };
   max_samples?: number;
@@ -144,6 +146,8 @@ export interface ViewSpec {
 
 export interface Frame {
   bitmap: ImageBitmap;
+  /** The alpha plane (one byte a pixel, rows from the top), when the colour came as a JPEG (not premultiplied). */
+  alpha?: Uint8Array;
   number: number;
   samples: number;
   version: number;
@@ -209,9 +213,14 @@ export class RenderService {
     if (r.status === 204) return undefined;
     if (!r.ok) throw new ServiceError(`frame: ${r.status}`);
     const blob = await r.blob();
-    const bitmap = await createImageBitmap(blob, { premultiplyAlpha: "none" });
     const n = (k: string) => Number(r.headers.get(k) ?? 0);
-    return { bitmap, number: n("X-Frame"), samples: n("X-Samples"), version: n("X-Version"), width: n("X-Width"), height: n("X-Height"), msPerPass: n("X-Ms-Per-Pass") };
+    const offset = n("X-Alpha-Offset");
+    // A JPEG then its alpha plane deflated, or a WebP with its alpha.
+    const [bitmap, alpha] = await Promise.all([
+      createImageBitmap(offset ? blob.slice(0, offset, "image/jpeg") : blob, { premultiplyAlpha: "none" }),
+      offset ? new Response(blob.slice(offset).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer().then((b) => new Uint8Array(b)) : undefined,
+    ]);
+    return { bitmap, alpha, number: n("X-Frame"), samples: n("X-Samples"), version: n("X-Version"), width: n("X-Width"), height: n("X-Height"), msPerPass: n("X-Ms-Per-Pass") };
   }
 
   /** The depth (GL 0..1, 1 where nothing) of the view `version`, at the frame's size. */

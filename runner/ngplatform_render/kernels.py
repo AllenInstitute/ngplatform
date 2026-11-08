@@ -196,6 +196,12 @@ __device__ float track(const Scene& S, V3 ow, V3 dw, V3 ov, V3 dv, float t0, flo
   int gx = (int)P[P_MGRID], gy = (int)P[P_MGRID + 1], gz = (int)P[P_MGRID + 2];
   float T = 1.f;
   float t = t0;
+  // Fast tracking (frames while the camera moves): through a brick whose majorant is more than a
+  // little optical depth per voxel, step a voxel at a time (jittered), summing optical depth, and
+  // collide where it passes a depth drawn once for the ray; transmittance as exp(-depth).
+  bool fast = P[P_FAST] > 0.f;
+  float hw = 1.f / fmaxf(len3(dv), 1e-6f);  // world length of one voxel along the ray
+  float tau = 0.f, target = -logf(1.f - rnd(rng));
   // Brick coordinates of the start (bricks start at voxel -0.5).
   V3 p = ov + dv * (t + 1e-4f);
   int c[3] = {(int)floorf((p.x + 0.5f) / B), (int)floorf((p.y + 0.5f) / B), (int)floorf((p.z + 0.5f) / B)};
@@ -213,7 +219,35 @@ __device__ float track(const Scene& S, V3 ow, V3 dw, V3 ov, V3 dv, float t0, flo
     int ax = (tnext[0] < tnext[1]) ? ((tnext[0] < tnext[2]) ? 0 : 2) : ((tnext[1] < tnext[2]) ? 1 : 2);
     float tend = fminf(tnext[ax], t1);
     float mj = S.maj[((u64)c[2] * gy + c[1]) * gx + c[0]];
-    if (mj > 0.f) {
+    if (mj > 0.f && fast && mj * hw > 0.25f) {
+      // Steps of P_FAST voxels (the first a random part of one), optical depth by the trapezoid
+      // rule; where it passes the target, the collision is found by bisection (4 more samples),
+      // since at high densities a surface is far sharper than a step. Images come out a little
+      // darker than exact tracking's: about 2-3% at 20 optical depths a voxel, 7% at 40.
+      float h = hw * P[P_FAST];
+      float ta = t, sa = medium(S, ow + dw * t, ov + dv * t, 0);
+      float tb = fminf(t + h * fmaxf(rnd(rng), 0.05f), tend);
+      while (ta < tend) {
+        float sb = medium(S, ow + dw * tb, ov + dv * tb, 0);
+        float dtau = 0.5f * (sa + sb) * (tb - ta);
+        if (mode == 0 && tau + dtau >= target) {
+          float a0 = ta, b0 = tb, s0 = sa, s1 = sb, ta0 = tau;
+          for (int it = 0; it < 4; ++it) {
+            float m = 0.5f * (a0 + b0);
+            float sm = medium(S, ow + dw * m, ov + dv * m, 0);
+            float tm = ta0 + 0.5f * (s0 + sm) * (m - a0);
+            if (tm >= target) { b0 = m; s1 = sm; } else { a0 = m; s0 = sm; ta0 = tm; }
+          }
+          float sm = fmaxf(0.5f * (s0 + s1), 1e-12f);
+          return fminf(b0, a0 + (target - ta0) / sm);
+        }
+        tau += dtau;
+        if (mode == 1 && tau > 4.6f) return 0.f;  // transmittance under 1%
+        ta = tb; sa = sb;
+        tb = fminf(tb + h, tend);
+        if (tb <= ta) break;
+      }
+    } else if (mj > 0.f) {
       for (int k = 0; k < 1024; ++k) {
         t -= logf(1.f - rnd(rng)) / mj;
         if (t >= tend) break;
@@ -236,7 +270,7 @@ __device__ float track(const Scene& S, V3 ow, V3 dw, V3 ov, V3 dv, float t0, flo
     if (c[ax] < 0 || c[ax] >= g[ax]) break;
     tnext[ax] += tdelta[ax];
   }
-  return mode == 0 ? -1.f : T;
+  return mode == 0 ? -1.f : T * expf(-tau);
 }
 
 __device__ __forceinline__ V3 envlight(const Scene& S, V3 d) {
@@ -324,9 +358,10 @@ __device__ __forceinline__ void ray(const float* P, int x, int y, int W, int H, 
 
 extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const float* tf, const float* maj,
                                  const unsigned short* lab, const float* lut, const float* lutflags, cudaTextureObject_t env,
-                                 float4* accum, int W, int H) {
-  int x = blockIdx.x * blockDim.x + threadIdx.x, y = blockIdx.y * blockDim.y + threadIdx.y;
-  if (x >= W || y >= H) return;
+                                 float4* accum, int W, int H, int y0, int y1) {
+  // Rows y0 .. y1 - 1 of the image (a band of it, so a long pass can be cut short by a new view).
+  int x = blockIdx.x * blockDim.x + threadIdx.x, y = y0 + blockIdx.y * blockDim.y + threadIdx.y;
+  if (x >= W || y >= min(H, y1)) return;
   Scene S; S.P = P; S.vol = vol; S.tf = tf; S.maj = maj; S.lab = lab; S.lut = lut; S.lutflags = lutflags; S.env = env;
   Rng rng; rng.s = pcg((u32)(y * W + x) ^ pcg((u32)P[P_FRAME] * 9781u + 1u));
   V3 ow, dw;

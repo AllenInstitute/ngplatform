@@ -439,7 +439,7 @@ class AnatomicalRendering {
           const d = await service.depth(id);
           if (d !== undefined) this.depth = d;
         }
-        this.drawer.set({ bitmap: f.bitmap, depth: this.depth });
+        this.drawer.set({ bitmap: f.bitmap, alpha: f.alpha ? { width: f.width, height: f.height, data: f.alpha } : undefined, depth: this.depth });
         this.frameText = `${f.samples} samples, ${f.width}×${f.height}, ${f.msPerPass.toFixed(0)} ms a pass`;
         this.handle?.redraw();
         this.statusUpdate?.();
@@ -482,6 +482,7 @@ class AnatomicalRendering {
       background: [0, 0, 0, 0],
       max_samples: s.maxSamples,
       denoise: s.denoise,
+      frame_format: "jpeg",
     };
   }
 

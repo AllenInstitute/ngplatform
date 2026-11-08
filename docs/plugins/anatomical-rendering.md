@@ -165,9 +165,27 @@ samples after a change the host smooths the image with an edge-avoiding
 wavelet filter guided by the distance to the tissue (about half the error at
 4 samples; **Smooth the first frames** switches it off).
 
-On an RTX A6000 a 834 × 684 view of a 135-million-voxel brain takes about
-45 ms a pass (some 200 samples in 10 s); with region colours and a cut,
-about 100–150 ms.
+While the camera moves, frames are made for speed, then the still view is
+refined exactly:
+
+- **Moving** (half size): tracking through dense tissue steps a voxel at a
+  time, summing optical depth, and finds the collision by bisection, so a
+  pass costs what the voxels crossed cost, not what the density does (a
+  little darker than exact tracking: 2–3% at the presets' densities); at
+  most 2 bounces.
+- **Still**: one fast pass at full size first, shown at once, then exact
+  delta and ratio tracking from the start, refining.
+- Passes run in bands of about 15 ms, so a new view is taken up after the
+  band under way, not after the pass. Frames come as a JPEG and a deflated
+  alpha plane (the colour divided by the alpha on the GPU), several times
+  quicker to make than a WebP with alpha. Empty space is skipped by bricks
+  of 4 voxels.
+
+On an RTX A6000, for a HiP-CT brain of 102 million voxels in a 1200 × 900
+view, from the page sending the view to the frame arriving through the
+runner: about 25 ms while moving (half size, about 7 ms of it the pass) and
+90 ms for the first full-size still frame. Exact passes then take 30–150 ms
+each, by the preset's density and bounces.
 
 ## Limits
 

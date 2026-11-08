@@ -201,7 +201,49 @@ def test_service_session(tmp_path, monkeypatch):
     assert depth.shape == (48, 64) and depth.min() < 1
     with pytest.raises(urllib.error.HTTPError):
         call("POST", f"/sessions/{s['id']}/movies", {"keyframes": [{"time": 0, "view": {}}], "output": "/etc"})
+    # Frames as a JPEG and its alpha plane, for a view that asks; while moving (half size), fast tracking.
+    from PIL import Image
+    import io as _io
+
+    v = call("PUT", f"/sessions/{s['id']}/view", {"inv_view_projection": np.linalg.inv(cam.view_projection(64, 48)).T.ravel().tolist(), "width": 64, "height": 48,
+                                                "scale": 0.5, "max_samples": 4, "frame_format": "jpeg"})["version"]
+    after = 0
+    for _ in range(50):
+        st, h, data = call("GET", f"/sessions/{s['id']}/frame?after={after}&timeout=20", raw=True)
+        after = int(h["X-Frame"])
+        if int(h["X-Version"]) == v:
+            break
+    off = int(h["X-Alpha-Offset"])
+    assert h["Content-Type"] == "image/jpeg" and Image.open(_io.BytesIO(data[:off])).size == (32, 24)
+    alpha = np.frombuffer(zlib.decompress(data[off:]), np.uint8).reshape(24, 32)
+    assert alpha[12, 16] > 128 and alpha[0, 0] == 0
     srv.shutdown()
+
+
+@needs_gpu
+def test_fast_tracking_is_close_and_passes_stop_for_a_new_view():
+    from ngplatform_render import renderer
+
+    data = ball(48)
+    R = renderer.Renderer(0)
+    R.set_volume(renderer.Volume(data, np.diag([0.5, 0.5, 0.5, 1.0]), 0.0, 255.0, volumes.tissue_percentiles(data, 0, 255)))
+    lo, hi = bounds(np.diag([0.5, 0.5, 0.5, 1.0]), data.shape)
+    cam = orbit((lo + hi) / 2, framing_radius(lo, hi, 30), 30, 20)
+    p = presets.builtin()["HiP-CT brain"].with_overrides(density=40.0)
+    means = []
+    for fast in (0.0, 1.0):
+        R.set_view(renderer.RenderState(np.linalg.inv(cam.view_projection(96, 72)), 96, 72, p, fast=fast, denoise=False))
+        R.step(64)
+        img = R.image()
+        means.append(img[img[..., 3] > 128, :3].astype(float).mean())
+    # Steps a voxel long, the collision found by bisection: within a few per cent of exact tracking
+    # (measured: -0.3% at 20 per mm, -3% at 40, -7% at 80 on this ball of 0.5 mm voxels).
+    assert abs(means[1] - means[0]) < 0.05 * means[0], means
+    # A pass in bands stops when asked, and does not count as a sample.
+    R.set_view(renderer.RenderState(np.linalg.inv(cam.view_projection(96, 72)), 96, 72, p))
+    R._band_rows = 8
+    assert R.step(1, stop=lambda: True) == 0
+    assert R.step(1, stop=lambda: False) == 1
 
 
 def test_movie_names_stay_in_their_folder():
