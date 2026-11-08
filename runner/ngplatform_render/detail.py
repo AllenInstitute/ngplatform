@@ -148,13 +148,13 @@ def contains(outer, inner) -> bool:
 _arrays: dict[tuple[str, str], object] = {}
 
 
-def _array(url: str, path: str):
+def _array(url: str, path: str, ms: volumes.Multiscale | None = None):
     import zarr
 
     key = (url, path)
     if key not in _arrays:
         zarr.config.set({"async.concurrency": 64})
-        _arrays[key] = zarr.open_group(store=volumes._store(url), mode="r")[path]
+        _arrays[key] = volumes.level_array(url, ms, path) if ms is not None else zarr.open_group(store=volumes._store(url), mode="r")[path]
     return _arrays[key]
 
 
@@ -164,7 +164,7 @@ def read_region(url: str, ms: volumes.Multiscale, level: volumes.Level, lo: tupl
     """Voxels lo .. hi - 1 (x, y, z) of a level as a (z, y, x) array, chunk by chunk through the
     cache; None when cancelled."""
     cache = cache if cache is not None else CACHE
-    arr = _array(url, level.path)
+    arr = _array(url, level.path, ms)
     chunks = getattr(arr, "chunks")
     xi, yi, zi = ms.spatial
     axes = (zi, yi, xi)

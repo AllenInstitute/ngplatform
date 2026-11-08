@@ -36,6 +36,7 @@ import numpy as np
 
 from . import __version__
 from .lightmaps import names as lightmap_names
+from . import presets as presets_mod
 from .presets import Preset, builtin
 
 MAX_BODY = 8 << 20
@@ -118,6 +119,8 @@ class Session:
                 "percentiles": {str(k): v for k, v in sorted(L.percentiles.items())}, "source_shape": list(L.source_shape),
                 "made": L.made, "from_cache": L.from_cache, "seconds": round(L.seconds, 2),
                 "window": list(L.window) if L.window else None, "cylinder": v.get("cylinder"),
+                "histogram_matched": L.quantiles is not None,
+                "histogram": presets_mod.histogram(L.data, L.lo, L.hi),
                 "tissue_mm": volumes.tissue_box(L.data, L.affine, L.percentiles.get(0.0, L.lo), L.lo, L.hi),
             }
             lab = self.spec.get("labels")
@@ -134,7 +137,7 @@ class Session:
             self._start_detail(url, L, float(v.get("detail_budget", 256e6)))
             self._set_progress(1.0, "uploading to the GPU")
             R = renderer.Renderer(self.device)
-            R.set_volume(renderer.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window))
+            R.set_volume(renderer.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles))
             if self.closed:
                 return
             self.renderer = R
@@ -490,7 +493,7 @@ class Movie:
             # A renderer of its own, so the interactive view goes on.
             R = rmod.Renderer(S.device)
             L = S.loaded
-            R.set_volume(rmod.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window))
+            R.set_volume(rmod.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles))
             sp = self.spec
             fps = int(sp.get("fps", 25))
             samples = int(sp.get("samples", 256))
@@ -709,6 +712,25 @@ class Handler(BaseHTTPRequestHandler):
                         extra["X-Detail"] = s.detail_text()
                     self._send(200, data, kind, {"X-Frame": str(n), "X-Samples": str(samples), "X-Version": str(version),
                                                  "X-Width": str(w), "X-Height": str(h), "X-Ms-Per-Pass": f"{s.passes_ms:.1f}", **extra})
+                elif method == "POST" and rest == ["resolve"]:
+                    # A preset (a name, or one given whole, with overrides) at this image's data values: for the editor.
+                    if s.status != "ready":
+                        raise BadRequest("the session's volume is not loaded")
+                    body = self._body()
+                    pr = body.get("preset") or "HiP-CT brain"
+                    if isinstance(pr, str):
+                        if pr not in builtin():
+                            raise BadRequest(f"no preset {pr!r}")
+                        p = builtin()[pr]
+                    else:
+                        p = Preset.from_dict(pr)
+                    if body.get("overrides"):
+                        p = p.with_overrides(**body["overrides"])
+                    from . import renderer as rmod
+
+                    L = s.loaded
+                    vol = rmod.Volume(L.data[:1, :1, :1], L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles)
+                    self._json(200, presets_mod.resolved(p, vol).to_dict())
                 elif method == "GET" and rest == ["depth"]:
                     d = s.depth
                     if d is None:
@@ -740,7 +762,7 @@ class Handler(BaseHTTPRequestHandler):
                     view.update(width=w, height=h, scale=1.0)
                     R = rmod.Renderer(s.device)
                     L = s.loaded
-                    R.set_volume(rmod.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window))
+                    R.set_volume(rmod.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles))
                     held = s.renderer.detail if s.renderer is not None else None
                     if held is not None:
                         # The still is of the view in the page: the finer detail held for it too.

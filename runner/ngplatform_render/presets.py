@@ -76,6 +76,11 @@ class Preset:
     # Where the colours came from: photographs (title, page, author, licence) and the colours measured on them.
     reference: list[dict[str, Any]] = field(default_factory=list)
     measured: dict[str, Any] = field(default_factory=dict)  # tissue -> its colour on the photographs (sRGB), and which
+    # The tissue's histogram on the scan the preset was made on: its values (window units) at volumes.QUANTILES.
+    # With it, a "window" preset's stops follow each scan's own histogram (the same quantiles), not the
+    # window's two anchors alone: HiP-CT values are not calibrated, but an organ's histogram keeps its shape.
+    histogram: list[float] | None = None
+    design_scan: str = ""  # the scan the preset was made on (its histogram)
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "Preset":
@@ -130,7 +135,21 @@ def _to_texture(value: float, preset: Preset, volume) -> float:
         w = preset.window or getattr(volume, "window", None)
         if not w:
             raise ValueError("window presets need a window (the page's, or the volume's guess)")
-        value = w[0] + value * (w[1] - w[0])
+        qs = getattr(volume, "quantiles", None)
+        if preset.histogram and qs and not preset.window:
+            # Histogram matching: the stop's quantile on the preset's scan, then this scan's value there;
+            # past either end, the window's scale.
+            ref = np.asarray(preset.histogram, np.float64)
+            mine = np.asarray(qs, np.float64)
+            width = w[1] - w[0]
+            if value <= ref[0]:
+                value = mine[0] + (value - ref[0]) * width
+            elif value >= ref[-1]:
+                value = mine[-1] + (value - ref[-1]) * width
+            else:
+                value = float(np.interp(value, ref, mine))
+        else:
+            value = w[0] + value * (w[1] - w[0])
     span = volume.hi - volume.lo
     return (value - volume.lo) / span if span else 0.0
 
@@ -155,6 +174,23 @@ def transfer_table(preset: Preset, volume) -> np.ndarray:
     # Outside the stops the opacity is the end stop's (a preset ends at 0 to be transparent there).
     tab[:, 3] = np.interp(t, xs, ops)
     return tab.ravel()
+
+
+def resolved(preset: Preset, volume) -> Preset:
+    """The preset with its stops at this volume's data values ("data" domain): where its window (or
+    histogram matching, or percentiles) puts them here. What the page's editor shows and moves."""
+    span = volume.hi - volume.lo
+    d = preset.to_dict()
+    d.update(domain="data", window=None, histogram=None)
+    d["stops"] = [dict(st, value=volume.lo + _to_texture(st["value"], preset, volume) * span) for st in d["stops"]]
+    return Preset.from_dict(d)
+
+
+def histogram(q: np.ndarray, lo: float, hi: float, bins: int = 256) -> dict:
+    """Counts of the volume's values (every 2nd voxel) in `bins` bins over its data range, for the page's editor."""
+    top = 255 if q.dtype == np.uint8 else 65535
+    h, _ = np.histogram(q[::2, ::2, ::2], bins=bins, range=(0, top + 1))
+    return {"lo": float(lo), "hi": float(hi), "counts": h.tolist()}
 
 
 def material_table(preset: Preset, volume) -> np.ndarray:

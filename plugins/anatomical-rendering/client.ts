@@ -173,6 +173,11 @@ export class RenderService {
   info(signal?: AbortSignal): Promise<ServiceInfo> {
     return call(this.link, "GET", "/info", undefined, signal);
   }
+  /** A preset at this session's image's data values (its window or histogram matching resolved): for the editor. */
+  resolve(id: string, preset: string | Record<string, unknown>, overrides: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    return call(this.link, "POST", `/sessions/${id}/resolve`, { preset, overrides });
+  }
+
   presets(): Promise<PresetInfo[]> {
     return call(this.link, "GET", "/presets");
   }

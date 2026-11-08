@@ -11,6 +11,7 @@ import type { Disposer, Frame3d, LayerInfo, PlatformContext, PluginModule } from
 import { button, clear, downloadBlob, el, field, numberInput, select } from "@ngplatform/sdk/dom";
 import { hostLink, type Link, linkOf, type MovieInfo, type PresetInfo, RenderService, type ServiceInfo, type SessionInfo, type ViewSpec } from "./client.js";
 import { PictureDrawer } from "./draw.js";
+import { ColourmapEditor, type DataStop, shifted, type Tuning } from "./editor.js";
 import { LocalRenderer, PRESETS as LOCAL_PRESETS } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
 import { ANATOMICAL_VIEWS, clipPlanes, type Cut, displayFromPhysical, lightDirection, omeZarrSource, orientationLooking, unitMm, viewKey } from "./view.js";
@@ -31,6 +32,8 @@ export interface Saved {
   exposure: number;
   /** For "window" presets: the data values at the window's ends, per image (its OME-Zarr store); else the host's guess. */
   windows: Record<string, [number, number]>;
+  /** The colourmap tuned for an image (its OME-Zarr store): stops edited over its histogram (data values), shift and compression. */
+  tunings: Record<string, Tuning>;
   lightAzimuth: number;
   lightElevation: number;
   /** A light map on the host ("" for the preset's sky colours) and its turn in degrees. */
@@ -85,6 +88,11 @@ export function readSaved(raw: unknown): Saved {
       Object.entries(s.windows && typeof s.windows === "object" ? s.windows : {}).filter(
         (e): e is [string, [number, number]] => Array.isArray(e[1]) && e[1].length === 2 && e[1].every((x) => typeof x === "number" && Number.isFinite(x)) && e[1][1] > e[1][0],
       ),
+    ),
+    tunings: Object.fromEntries(
+      Object.entries(s.tunings && typeof s.tunings === "object" ? s.tunings : {})
+        .filter((e): e is [string, Tuning] => !!e[1] && typeof e[1] === "object")
+        .map(([k, t]) => [k, { shift: num(t.shift, 0), scale: num(t.scale, 1), stops: Array.isArray(t.stops) ? t.stops.filter((x) => x && typeof x.value === "number") : undefined }]),
     ),
     lightAzimuth: num(s.lightAzimuth, 30),
     lightElevation: num(s.lightElevation, 40),
@@ -310,6 +318,131 @@ class AnatomicalRendering {
     );
   }
 
+  /** The chosen preset at this image's data values, as the host resolves it (its window, histogram matching): what the editor shows. */
+  private resolved: { key: string; preset: Record<string, unknown> } | undefined;
+  private editor: ColourmapEditor | undefined;
+
+  private presetRequest(): { key: string; preset: string | Record<string, unknown>; overrides: Record<string, unknown> } | undefined {
+    const s = this.saved;
+    const src = this.target() ? omeZarrSource(this.target()!.sources[0]) : undefined;
+    if (this.session?.status !== "ready" || src === undefined) return undefined;
+    const preset = (s.customPresets.find((p) => p.name === s.preset) as Record<string, unknown> | undefined) ?? (s.preset || "HiP-CT brain");
+    const overrides: Record<string, unknown> = s.windows[src] && this.presetDomain() === "window" ? { window: s.windows[src] } : {};
+    return { key: JSON.stringify([this.session.id, preset, overrides]), preset, overrides };
+  }
+
+  /** Ask the host where the chosen preset's stops fall on this image (when that may have changed). */
+  private async resolvePreset(): Promise<void> {
+    const r = this.presetRequest();
+    if (r === undefined || this.resolved?.key === r.key || !this.service) return;
+    try {
+      const preset = await this.service.resolve(this.session!.id, r.preset, r.overrides);
+      this.resolved = { key: r.key, preset };
+      this.editorUpdate?.();
+      this.lastKey = "";
+      this.handle?.redraw();
+    } catch {
+      // An older host without /resolve: no editor.
+    }
+  }
+
+  private currentTuning(): { src: string; tuning: Tuning } | undefined {
+    const src = this.target() ? omeZarrSource(this.target()!.sources[0]) : undefined;
+    if (src === undefined) return undefined;
+    return { src, tuning: this.saved.tunings[src] ?? { shift: 0, scale: 1 } };
+  }
+
+  /** The stops the editor shows: as tuned for this image (or as resolved), then shifted and compressed. */
+  private editedStops(): { stops: DataStop[]; base: DataStop[]; centre: number } | undefined {
+    const r = this.presetRequest();
+    if (!this.resolved || r === undefined || this.resolved.key !== r.key) return undefined;
+    const base = (this.resolved.preset.stops as DataStop[]) ?? [];
+    const t = this.currentTuning()?.tuning;
+    const stops = t?.stops ?? base;
+    const vis = base.filter((x) => x.opacity > 0.01);
+    const centre = vis.length ? (vis[0].value + vis[vis.length - 1].value) / 2 : 0;
+    return { stops: shifted(stops, t?.shift ?? 0, t?.scale ?? 1, centre), base: stops, centre };
+  }
+
+  /** The preset as tuned for this image (whole, at data values), when it is tuned; else undefined. */
+  private tunedPreset(): Record<string, unknown> | undefined {
+    const t = this.currentTuning()?.tuning;
+    if (!t || (!t.stops && t.shift === 0 && t.scale === 1)) return undefined;
+    const e = this.editedStops();
+    if (!e || !this.resolved) return undefined;
+    // Without what only describes it (photographs, measured colours): it goes with every view.
+    const { reference: _r, measured: _m, histogram: _h, design_scan: _d, ...rest } = this.resolved.preset;
+    return { ...rest, stops: e.stops, domain: "data", window: null, histogram: null };
+  }
+
+  private editorUpdate: (() => void) | undefined;
+
+  /** The colourmap over the image's histogram, with its control points; shift and compression; per image. */
+  private editorField(): HTMLElement | "" {
+    if (this.saved.where !== "host") return "";
+    const cur = this.currentTuning();
+    if (!cur) return "";
+    if (!this.editor) {
+      this.editor = new ColourmapEditor((stops) => {
+        // Edits are kept unshifted, so shift and compression stay apart from them.
+        const c = this.currentTuning();
+        if (!c) return;
+        const e = this.editedStops();
+        const scale = c.tuning.scale || 1;
+        const unshifted = stops.map((x) => ({ ...x, value: (e ? e.centre : 0) + (x.value - c.tuning.shift - (e ? e.centre : 0)) / scale }));
+        this.save((x) => (x.tunings[c.src] = { ...c.tuning, stops: unshifted }));
+      });
+    }
+    const hist = (this.session?.volume as { histogram?: { lo: number; hi: number; counts: number[] } } | undefined)?.histogram;
+    this.editorUpdate = () => {
+      const e = this.editedStops();
+      if (e && !this.editor!.dragging) this.editor!.set(hist, e.stops);
+    };
+    this.editorUpdate();
+    void this.resolvePreset();
+    const t = cur.tuning;
+    const width = (() => {
+      const e = this.editedStops();
+      const vis = e?.base.filter((x) => x.opacity > 0.01) ?? [];
+      return vis.length ? vis[vis.length - 1].value - vis[0].value : 1;
+    })();
+    const set = (f: (t: Tuning) => void) => {
+      this.save((x) => {
+        const n = { ...(x.tunings[cur.src] ?? { shift: 0, scale: 1 }) };
+        f(n);
+        x.tunings[cur.src] = n;
+      });
+      this.editorUpdate?.();
+    };
+    const slider = (value: number, min: number, max: number, step: number, on: (v: number) => void, title: string) => {
+      const r = el("input", { type: "range", min: String(min), max: String(max), step: String(step), value: String(value), style: "width: 130px", title }) as HTMLInputElement;
+      r.oninput = () => on(Number(r.value));
+      return r;
+    };
+    return el(
+      "div",
+      { style: "margin: 6px 0" },
+      el("div", { class: "muted", style: "font-size: 11px; margin-bottom: 3px" }, "Colourmap for this image, over its histogram: drag a point (left-right moves it, up-down its opacity), double-click to colour it, Ctrl-click to add one, right-click to remove one"),
+      this.editor.element,
+      el(
+        "div",
+        { style: "display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 4px" },
+        el("label", {}, "Shift ", slider(width ? t.shift / width : 0, -1, 1, 0.01, (v) => set((n) => (n.shift = v * width)), "Move the whole map along the values (a fraction of its width)")),
+        el("label", {}, "Compress ", slider(t.scale, 0.4, 2.5, 0.01, (v) => set((n) => (n.scale = v)), "Narrow (below 1) or widen (above 1) the map about its middle")),
+        button("Reset", () => {
+          this.save((x) => delete x.tunings[cur.src]);
+          this.editorUpdate?.();
+        }, "Back to the preset as it falls on this image"),
+        button("Save as a preset file", () => {
+          const p = this.tunedPreset() ?? this.resolved?.preset;
+          if (!p) return;
+          const name = `${String(p.name ?? "preset")} (tuned)`;
+          downloadBlob(new Blob([JSON.stringify([{ ...p, name }], null, 1)], { type: "application/json" }), "preset.json");
+        }, "The map as tuned, at this image's values (load it with Load a preset file…)"),
+      ),
+    );
+  }
+
   /** A "window" preset's control: the data values at its ends for this image, the host's guess until set. */
   private windowField(): HTMLElement | "" {
     if (this.presetDomain() !== "window") return "";
@@ -376,6 +509,7 @@ class AnatomicalRendering {
       }
       this.statusUpdate?.();
       if (info.status !== "ready" || abort.signal.aborted) return;
+      await this.resolvePreset();
       this.lastKey = "";
       this.handle?.redraw();
       void this.frameLoop(info.id, abort.signal);
@@ -470,6 +604,7 @@ class AnatomicalRendering {
     if (s.density !== undefined) overrides.density = s.density;
     const src = this.target() ? omeZarrSource(this.target()!.sources[0]) : undefined;
     if (src !== undefined && s.windows[src] && this.presetDomain() === "window") overrides.window = s.windows[src];
+    const tuned = this.tunedPreset();
     return {
       inv_view_projection: Array.from(frame.invViewProjection),
       width: frame.width,
@@ -478,8 +613,8 @@ class AnatomicalRendering {
       world_from_physical: wfp,
       orbit_center: Array.from(frame.position),
       unit_mm: unitMm(frame.dimensions),
-      preset: (s.customPresets.find((p) => p.name === s.preset) as Record<string, unknown> | undefined) ?? (s.preset || "HiP-CT brain"),
-      overrides,
+      preset: tuned ?? (s.customPresets.find((p) => p.name === s.preset) as Record<string, unknown> | undefined) ?? (s.preset || "HiP-CT brain"),
+      overrides: tuned ? { exposure: s.exposure, ...(s.density !== undefined ? { density: s.density } : {}) } : overrides,
       crop_fraction: s.box.on ? [s.box.lo, s.box.hi] : undefined,
       light: { direction: lightDirection(s.lightAzimuth, s.lightElevation), camera_space: true },
       environment: s.lightMap ? { map: s.lightMap, rotation: s.lightMapRotation } : undefined,
@@ -497,7 +632,7 @@ class AnatomicalRendering {
     const local = this.saved.where === "browser" ? this.local : undefined;
     const sid = local ? "local" : this.session?.status === "ready" ? this.session.id : undefined;
     if (sid === undefined || (local && !this.localText.startsWith("level"))) return;
-    const look = JSON.stringify([this.saved.box, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.windows, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
+    const look = JSON.stringify([this.saved.box, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
     const key = viewKey(frame.invViewProjection, frame.width, frame.height) + look;
     const scale = frame.moving ? 0.5 : 1;
     if (key === this.lastKey && !(this.lastScale < 1 && !frame.moving)) return;
@@ -768,6 +903,7 @@ class AnatomicalRendering {
         this.referenceNote(),
         button("Load a preset file…", () => this.loadPresetFile(), "A JSON preset (or a list of them): name, domain, stops of value, colour and opacity, and material"),
         this.windowField(),
+        this.editorField(),
         s.where === "host"
           ? el("label", { style: "display: flex; gap: 6px; align-items: center", title: "Render only a cylinder about the scan's axis, leaving out the jar's wall (HiP-CT organs in their jars)" }, (() => {
               const cb = el("input", { type: "checkbox" }) as HTMLInputElement;

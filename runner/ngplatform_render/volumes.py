@@ -32,9 +32,15 @@ UNIT_MM = {
 }
 
 
+def is_n5(url: str) -> bool:
+    """An N5 multiscale (n5://..., as Neuroglancer and the Human Organ Atlas name them, or ….n5)."""
+    u = url.strip().rstrip("/")
+    return u.startswith("n5://") or u.endswith(".n5")
+
+
 def http_url(url: str) -> str:
     url = url.strip()
-    for p in ("zarr3://", "zarr2://", "zarr://"):
+    for p in ("zarr3://", "zarr2://", "zarr://", "n5://"):
         if url.startswith(p):
             url = url[len(p):]
     url = url.split("|")[0]
@@ -72,6 +78,127 @@ class Multiscale:
     levels: list[Level]
     name: str = ""
     labels: bool = False
+    n5: bool = False
+
+
+class N5Array:
+    """A level of an N5 multiscale as an array (z, y, x) that can be sliced like a zarr array: blocks
+    (x, y, z fastest-last, big-endian, blosc/gzip/raw) read over HTTP or from disk, in parallel."""
+
+    def __init__(self, base: str, path: str):
+        self.base, self.path = base.rstrip("/"), path
+        a = _n5_json(f"{self.base}/{path}/attributes.json")
+        dims, block = a["dimensions"], a["blockSize"]  # x, y, z
+        self.shape = (int(dims[2]), int(dims[1]), int(dims[0]))
+        self.chunks = (int(block[2]), int(block[1]), int(block[0]))
+        self.dtype = np.dtype(a["dataType"])
+        comp = a.get("compression") or {"type": "raw"}
+        self._codec = None
+        if comp.get("type") == "blosc":
+            from numcodecs import Blosc
+
+            self._codec = Blosc(cname=comp.get("cname", "lz4"), clevel=int(comp.get("clevel", 5)), shuffle=int(comp.get("shuffle", 1)))
+        elif comp.get("type") == "gzip":
+            from numcodecs import GZip
+
+            self._codec = GZip(level=int(comp.get("level", 5)))
+        elif comp.get("type") not in (None, "raw"):
+            raise ValueError(f"N5 compression {comp.get('type')!r} is not read here")
+
+    def _block(self, bz: int, by: int, bx: int) -> np.ndarray:
+        cz, cy, cx = self.chunks
+        full = (min(cz, self.shape[0] - bz * cz), min(cy, self.shape[1] - by * cy), min(cx, self.shape[2] - bx * cx))
+        raw = _n5_bytes(f"{self.base}/{self.path}/{bx}/{by}/{bz}")
+        if raw is None:
+            return np.zeros(full, self.dtype)
+        mode, nd = int.from_bytes(raw[0:2], "big"), int.from_bytes(raw[2:4], "big")
+        dims = [int.from_bytes(raw[4 + 4 * i: 8 + 4 * i], "big") for i in range(nd)]  # x, y, z
+        off = 4 + 4 * nd + (4 if mode == 1 else 0)
+        data = raw[off:]
+        if self._codec is not None:
+            data = self._codec.decode(data)
+        a = np.frombuffer(data, self.dtype.newbyteorder(">"), count=int(np.prod(dims))).astype(self.dtype)
+        a = a.reshape(dims[::-1])  # z, y, x
+        out = np.zeros(full, self.dtype)
+        out[: a.shape[0], : a.shape[1], : a.shape[2]] = a[: full[0], : full[1], : full[2]]
+        return out
+
+    def __getitem__(self, sel):
+        from concurrent.futures import ThreadPoolExecutor
+
+        sl = [s if isinstance(s, slice) else slice(s, s + 1) for s in sel]
+        lo = [s.start or 0 for s in sl]
+        hi = [s.stop if s.stop is not None else n for s, n in zip(sl, self.shape)]
+        out = np.zeros([h - l for l, h in zip(lo, hi)], self.dtype)
+        rng = [range(lo[k] // self.chunks[k], (hi[k] - 1) // self.chunks[k] + 1) for k in range(3)]
+        keys = [(z, y, x) for z in rng[0] for y in rng[1] for x in rng[2]]
+
+        def one(b):
+            a = self._block(*b)
+            o = [b[k] * self.chunks[k] for k in range(3)]
+            s_out = tuple(slice(max(lo[k], o[k]) - lo[k], min(hi[k], o[k] + a.shape[k]) - lo[k]) for k in range(3))
+            s_in = tuple(slice(max(lo[k], o[k]) - o[k], min(hi[k], o[k] + a.shape[k]) - o[k]) for k in range(3))
+            out[s_out] = a[s_in]
+
+        with ThreadPoolExecutor(max_workers=16) as ex:
+            list(ex.map(one, keys))
+        return out
+
+
+def _n5_bytes(url: str) -> bytes | None:
+    if url.startswith(("http://", "https://")):
+        import urllib.error
+        import urllib.request
+
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "ngplatform-render"}), timeout=120) as f:
+                return f.read()
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 404):
+                return None
+            raise
+    p = Path(url)
+    return p.read_bytes() if p.is_file() else None
+
+
+def _n5_json(url: str) -> dict:
+    b = _n5_bytes(url)
+    if b is None:
+        raise FileNotFoundError(url)
+    return json.loads(b)
+
+
+def _open_n5(url: str) -> Multiscale:
+    """An N5 multiscale (s0, s1, ... with downsamplingFactors and resolution at the top) as levels (z, y, x arrays)."""
+    base = http_url(url)
+    top = _n5_json(f"{base}/attributes.json")
+    res = np.asarray(top.get("resolution") or top.get("pixelResolution", {}).get("dimensions") or [1, 1, 1], np.float64)  # x, y, z
+    units = top.get("units") or [top.get("pixelResolution", {}).get("unit", "um")] * 3
+    mm = np.array([UNIT_MM.get(u, UNIT_MM.get({"um": "micrometer", "nm": "nanometer", "mm": "millimeter"}.get(u, u), 1.0)) for u in units])
+    factors = top.get("downsamplingFactors") or top.get("scales") or [[1, 1, 1]]
+    levels = []
+    for k, f in enumerate(factors):
+        try:
+            arr = N5Array(base, f"s{k}")
+        except FileNotFoundError:
+            break
+        f = np.asarray(f, np.float64)
+        A = np.eye(4)
+        A[:3, :3] = np.diag(res * f * mm)
+        A[:3, 3] = (f - 1) / 2 * res * mm  # a coarse voxel's centre: the mean of the fine voxels it holds
+        levels.append(Level(f"s{k}", arr.shape, str(arr.dtype), A, tuple(float(x) for x in res * f * mm)))
+    levels.sort(key=lambda lv: math.prod(lv.shape))
+    levels.reverse()
+    return Multiscale(url, ["z", "y", "x"], [2, 1, 0], levels, base.rstrip("/").split("/")[-1], False, True)
+
+
+def level_array(url: str, ms: Multiscale, path: str):
+    """A level's array: zarr's, or an N5Array."""
+    import zarr
+
+    if ms.n5:
+        return N5Array(http_url(url), path)
+    return zarr.open_group(store=_store(url), mode="r")[path]
 
 
 def _mat_scale_translate(transforms: list[dict], ndim: int) -> np.ndarray:
@@ -104,6 +231,8 @@ def _mat_scale_translate(transforms: list[dict], ndim: int) -> np.ndarray:
 def open_multiscale(url: str) -> Multiscale:
     import zarr
 
+    if is_n5(url):
+        return _open_n5(url)
     store = _store(url)
     g = zarr.open_group(store=store, mode="r")
     attrs = dict(g.attrs)
@@ -173,6 +302,7 @@ class Loaded:
     made: bool = False  # made by downsampling here (from the cache, or now)
     from_cache: bool = False
     window: tuple[float, float] | None = None  # a guess at the tissue's values (data units), for "window" presets
+    quantiles: list[float] | None = None  # the tissue's values at QUANTILES (data units), for matching histograms
 
 
 def _spatial_view(arr, ms: Multiscale):
@@ -199,8 +329,7 @@ def _read(url: str, level: Level, ms: Multiscale, progress: Callable[[float, str
     from concurrent.futures import ThreadPoolExecutor
 
     zarr.config.set({"async.concurrency": 64})
-    g = zarr.open_group(store=_store(url), mode="r")
-    arr = g[level.path]
+    arr = level_array(url, ms, level.path)
     shard = getattr(arr, "shards", None) or arr.chunks
     zi, yi, xi = ms.spatial[2], ms.spatial[1], ms.spatial[0]
     n = (arr.shape[zi], arr.shape[yi], arr.shape[xi])
@@ -289,6 +418,44 @@ def tissue_percentiles(q: np.ndarray, lo: float, hi: float) -> dict[float, float
         out[p] = lo + (hi - lo) * (min(i, len(h) - 1) / top)
     out[0.0] = lo + (hi - lo) * ((bg + 1) / top)
     return out
+
+
+QUANTILES = tuple(range(1, 100))  # the tissue's percentiles a scan's histogram is matched by
+
+
+def tissue_quantiles(q: np.ndarray, lo: float, hi: float, window: tuple[float, float]) -> list[float] | None:
+    """The tissue's values (data units) at QUANTILES: the voxels inside a ring about the scan's axis (as
+    guess_window), on the tissue's side of the window's edge at the medium (above it when the window
+    starts there), up to 3 windows past it (not the jar's wall). For matching one scan's histogram to
+    another's (presets.histogram)."""
+    if q.ndim != 3 or min(q.shape) < 8:
+        return None
+    s = q[::2, ::2, ::2]
+    _, Y, X = s.shape
+    yy, xx = np.mgrid[:Y, :X]
+    r = np.hypot((yy - (Y - 1) / 2) / (Y / 2), (xx - (X - 1) / 2) / (X / 2))
+    top = 255.0 if q.dtype == np.uint8 else 65535.0
+    v = lo + (hi - lo) * s[:, r < 0.9].astype(np.float32) / top
+    w0, w1 = window
+    u = (v - w0) / (w1 - w0)
+    above = window_side(q, lo, hi, window) == "above"
+    t = v[(u > 0.1) & (u < 3.0)] if above else v[(u < 0.9) & (u > -2.0)]
+    if t.size < 1000:
+        return None
+    return [float(x) for x in np.percentile(t, QUANTILES)]
+
+
+def window_side(q: np.ndarray, lo: float, hi: float, window: tuple[float, float]) -> str:
+    """Which side of the medium the tissue is: "above" when the window starts at the medium's edge (most
+    organs), "below" when it ends there (tissue less dense than its medium)."""
+    s = q[::4, ::4, ::4]
+    top = 255.0 if q.dtype == np.uint8 else 65535.0
+    v = lo + (hi - lo) * s.astype(np.float32) / top
+    w0, w1 = window
+    # The medium is the commonest value: the window's low end sits just above it, or its high end just below.
+    h, e = np.histogram(v, bins=512, range=(lo, hi))
+    m = 0.5 * (e[np.argmax(h[1:]) + 1] + e[np.argmax(h[1:]) + 2])
+    return "above" if abs(m - w0) <= abs(m - w1) else "below"
 
 
 def guess_window(q: np.ndarray, lo: float, hi: float) -> tuple[float, float] | None:
@@ -444,4 +611,5 @@ def load(url: str, budget: int = 400_000_000, labels: bool | None = None, level:
     name = chosen.path if factor == 1 else f"{chosen.path}/{factor}x"
     src = tuple(chosen.shape[i] for i in ms.spatial)
     win = None if is_labels else guess_window(q, lo, hi)
-    return Loaded(q, A, lo, hi, pc, name, vox, src, time.time() - t0, made, from_cache, win)
+    qs = tissue_quantiles(q, lo, hi, win) if win else None
+    return Loaded(q, A, lo, hi, pc, name, vox, src, time.time() - t0, made, from_cache, win, qs)
