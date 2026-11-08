@@ -94,6 +94,8 @@ export interface VolumeMeta {
   made: boolean;
   from_cache: boolean;
   seconds: number;
+  /** The box holding the tissue (physical mm, x, y, z: low, high). */
+  tissue_mm?: [number[], number[]] | null;
 }
 
 export interface SessionInfo {

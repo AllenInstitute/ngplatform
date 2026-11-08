@@ -290,6 +290,21 @@ def tissue_percentiles(q: np.ndarray, lo: float, hi: float) -> dict[float, float
     return out
 
 
+def tissue_box(q: np.ndarray, affine: np.ndarray, background: float, lo: float, hi: float) -> tuple[list[float], list[float]] | None:
+    """The box (physical mm, x, y, z) holding the voxels above the background, from every 4th voxel."""
+    top = 255.0 if q.dtype == np.uint8 else 65535.0
+    t = (background - lo) / (hi - lo) * top if hi > lo else 0
+    s = q[::4, ::4, ::4] > t
+    if not s.any():
+        return None
+    idx = [np.flatnonzero(s.any(axis=tuple(a for a in range(3) if a != k))) for k in range(3)]  # z, y, x
+    vlo = np.array([idx[2][0], idx[1][0], idx[0][0]], np.float64) * 4
+    vhi = np.array([idx[2][-1], idx[1][-1], idx[0][-1]], np.float64) * 4 + 3
+    corners = np.array([[x, y, z, 1.0] for x in (vlo[0], vhi[0]) for y in (vlo[1], vhi[1]) for z in (vlo[2], vhi[2])])
+    w = (affine @ corners.T).T[:, :3]
+    return w.min(axis=0).tolist(), w.max(axis=0).tolist()
+
+
 def load(url: str, budget: int = 400_000_000, labels: bool | None = None, level: str | None = None,
          progress: Callable[[float, str], None] | None = None, make_from: str | None = None, factor: int | None = None) -> Loaded:
     """Reads the finest level with at most `budget` voxels (or the level named), making coarser

@@ -486,6 +486,29 @@ class AnatomicalRendering {
     return f ? this.viewSpec(f, 1) : this.lastSpec;
   }
 
+  /** Moves the view to the middle of the tissue and zooms to show all of it. */
+  private centreOnTissue(): void {
+    const box = (this.session?.volume as { tissue_mm?: [number[], number[]] | null } | undefined)?.tissue_mm;
+    const f = this.lastFrame;
+    if (!box || f === undefined) {
+      this.ctx.ui.toast("Render first: the tissue's box comes with the rendered image.", "error");
+      return;
+    }
+    const m = displayFromPhysical(f.dimensions);
+    if (m === undefined) return;
+    const toDisplay = (p: number[]) => [0, 1, 2].map((r) => m[r] * p[0] + m[4 + r] * p[1] + m[8 + r] * p[2] + m[12 + r]);
+    const a = toDisplay(box[0]), b = toDisplay(box[1]);
+    const centre = a.map((v, i) => (v + b[i]) / 2);
+    const size = Math.max(...a.map((v, i) => Math.abs(b[i] - v)));
+    this.ctx.viewer.patchState((ng) => {
+      const s = ng as { position?: number[]; projectionScale?: number };
+      const pos = Array.isArray(s.position) ? s.position.slice() : [0, 0, 0];
+      for (let i = 0; i < 3; ++i) pos[i] = centre[i];
+      s.position = pos;
+      s.projectionScale = size * 1.4;
+    });
+  }
+
   private async saveStill(): Promise<void> {
     const sid = this.session?.id;
     const view = this.currentSpec();
@@ -677,6 +700,7 @@ class AnatomicalRendering {
           : "",
         el("h4", {}, "View"),
         el("div", { style: "display: flex; gap: 4px; flex-wrap: wrap" },
+          button("Centre on the tissue", () => this.centreOnTissue(), "Move the position to the middle of the tissue and zoom to show all of it"),
           ...ANATOMICAL_VIEWS.map((v) => button(v.name, () => this.ctx.viewer.patchState((ng) => void ((ng as { projectionOrientation?: number[] }).projectionOrientation = orientationLooking(v.forward, v.up)))))),
         el("h4", {}, "Cuts (through the position)"),
         cutRow(0), cutRow(1), cutRow(2),

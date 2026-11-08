@@ -285,3 +285,12 @@ def test_light_maps(tmp_path):
     hdr = tmp_path / "t.hdr"
     hdr.write_bytes(b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 2\n" + bytes([128, 64, 0, 129, 128, 128, 128, 130]))
     assert lightmaps.read_rgbe(hdr).tolist() == [[[1.0, 0.5, 0.0], [2.0, 2.0, 2.0]]]
+
+
+def test_tissue_box():
+    q = np.zeros((40, 40, 40), np.uint8)
+    q[8:20, 4:36, 12:16] = 200  # z, y, x
+    lo, hi = volumes.tissue_box(q, np.diag([0.5, 0.5, 0.5, 1.0]), 10.0, 0.0, 255.0)
+    # Sampled every 4th voxel, so the box is within 4 voxels (2 mm) of the tissue.
+    assert lo == pytest.approx([6.0, 2.0, 4.0], abs=2.0) and hi == pytest.approx([8.0, 18.0, 10.0], abs=2.0)
+    assert volumes.tissue_box(np.zeros((8, 8, 8), np.uint8), np.eye(4), 10.0, 0.0, 255.0) is None

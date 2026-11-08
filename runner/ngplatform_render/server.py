@@ -105,6 +105,7 @@ class Session:
                 "voxel_mm": list(L.voxel_mm), "affine": L.affine.T.ravel().tolist(), "lo": L.lo, "hi": L.hi,
                 "percentiles": {str(k): v for k, v in sorted(L.percentiles.items())}, "source_shape": list(L.source_shape),
                 "made": L.made, "from_cache": L.from_cache, "seconds": round(L.seconds, 2),
+                "tissue_mm": volumes.tissue_box(L.data, L.affine, L.percentiles.get(0.0, L.lo), L.lo, L.hi),
             }
             lab = self.spec.get("labels")
             if lab and lab.get("url"):
