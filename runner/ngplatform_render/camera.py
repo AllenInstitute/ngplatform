@@ -63,10 +63,12 @@ def _smooth(u: float) -> float:
     return u * u * (3 - 2 * u)
 
 
-def interpolate_cameras(a: Camera, b: Camera, u: float) -> Camera:
+def interpolate_cameras(a: Camera, b: Camera, u: float, ease: bool = True) -> Camera:
     """Between two cameras: the target and up linearly, the eye along the orbit around the target
-    (direction by spherical interpolation, distance geometrically), eased in and out."""
-    u = _smooth(min(max(u, 0.0), 1.0))
+    (direction by spherical interpolation, distance geometrically), eased in and out unless `ease` is false."""
+    u = min(max(u, 0.0), 1.0)
+    if ease:
+        u = _smooth(u)
     ta, tb = a.target, b.target
     target = ta + (tb - ta) * u
     va, vb = a.eye - ta, b.eye - tb

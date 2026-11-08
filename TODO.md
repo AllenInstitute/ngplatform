@@ -4,6 +4,15 @@ What has been asked for or agreed and is not built yet, newest first. Ticked
 items are done (and say where); the rest are in rough order of work.
 `STATUS.md` says what exists.
 
+## Asked for on 2026-11-07: GPUs over SSH, anatomical rendering
+
+- [x] Remote compute over SSH: the runner's `--public-url`, services (`--service NAME=COMMAND`, `/svc/<name>/…`), `python -m ngplatform_runner tunnel HOST` (ssh -L, start the remote runner, the pairing link), several paired computers in the Jobs tab and `ctx.hosts` (branch `remote-host`, merged into `anatomical-rendering`). Not yet run over a real ssh (no login worked from czi001); tested with a forwarder standing in for `ssh -L`.
+- [x] Anatomical rendering (plugin + `runner/ngplatform_render`): CUDA path tracer as a runner service, WebGPU in the page, presets by modality and region, cuts, movies, dynamic downsampling of levels a store does not have (branch `anatomical-rendering`).
+- [ ] Try over a real SSH tunnel (msm12; a cluster node through its login node).
+- [ ] Measure Cinematic Anatomy's functions against these (keyframe editor and export: wait for the user's notes).
+- [ ] Rendering: a denoiser and reprojection while the camera moves (Martschinke 2019, Hofmann 2020); HDR environment maps from files; bricks of finer levels near the camera (as the volume view's); the layer's own transform; several images at once; carve (a painted mask); stereo; region colours in the WebGPU renderer.
+- [ ] chunkmirage: serve levels made by downsampling for any virtual store (the render service makes them only for itself).
+
 ## Overnight plan (approved 2026-11-03, 23:00 GMT)
 
 Run in waves of up to three worktree agents; each merged after tests, build

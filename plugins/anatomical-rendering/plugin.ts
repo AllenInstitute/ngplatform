@@ -40,7 +40,7 @@ export interface Saved {
   budget: number;
   maxSamples: number;
   keyframes: Keyframe[];
-  movie: { fps: number; width: number; height: number; samples: number };
+  movie: { fps: number; width: number; height: number; samples: number; easing: "smooth" | "linear" };
 }
 
 const DEFAULT_CUTS: Cut[] = [
@@ -71,7 +71,7 @@ export function readSaved(raw: unknown): Saved {
     budget: num(s.budget, 4e8),
     maxSamples: num(s.maxSamples, 512),
     keyframes: Array.isArray(s.keyframes) ? s.keyframes : [],
-    movie: { fps: 25, width: 1280, height: 720, samples: 128, ...(s.movie ?? {}) },
+    movie: { fps: 25, width: 1280, height: 720, samples: 128, easing: "smooth", ...(s.movie ?? {}) },
   };
 }
 
@@ -460,7 +460,7 @@ class AnatomicalRendering {
     if (sid === undefined || this.saved.keyframes.length < 1) return;
     const m = this.saved.movie;
     try {
-      let info = await this.service!.movie(sid, { keyframes: this.saved.keyframes, fps: m.fps, width: m.width, height: m.height, samples: m.samples, name: "anatomical-rendering" });
+      let info = await this.service!.movie(sid, { keyframes: this.saved.keyframes, fps: m.fps, width: m.width, height: m.height, samples: m.samples, easing: m.easing, name: "anatomical-rendering" });
       this.movie = info;
       this.panelUpdate?.();
       while (info.status === "queued" || info.status === "running") {
@@ -615,7 +615,8 @@ class AnatomicalRendering {
           field("fps", numberInput(s.movie.fps, (v) => this.save((x) => (x.movie.fps = v)), { style: "width: 50px" })),
           field("width", numberInput(s.movie.width, (v) => this.save((x) => (x.movie.width = v)), { style: "width: 70px" })),
           field("height", numberInput(s.movie.height, (v) => this.save((x) => (x.movie.height = v)), { style: "width: 70px" })),
-          field("samples", numberInput(s.movie.samples, (v) => this.save((x) => (x.movie.samples = v)), { style: "width: 60px" }))),
+          field("samples", numberInput(s.movie.samples, (v) => this.save((x) => (x.movie.samples = v)), { style: "width: 60px" })),
+          field("camera", select([["smooth", "slows at keyframes"], ["linear", "steady"]], s.movie.easing, (v) => this.save((x) => (x.movie.easing = v as "smooth" | "linear"))))),
         el("div", { style: "display: flex; gap: 6px" },
           button("Render movie on the host", () => void this.renderMovie()),
           movie?.status === "running" ? button("Cancel", () => void this.service?.cancelMovie(movie.id)) : "",

@@ -61,7 +61,8 @@ def _lerp(a, b, u):
     return a
 
 
-def frames_for(keyframes: list[dict[str, Any]], fps: int) -> list[dict[str, Any]]:
+def frames_for(keyframes: list[dict[str, Any]], fps: int, easing: str = "smooth") -> list[dict[str, Any]]:
+    """The view of every frame; `easing` "smooth" slows the camera into and out of each keyframe, "linear" does not."""
     kf = sorted(keyframes, key=lambda k: float(k.get("time", 0)))
     if len(kf) == 1:
         return [kf[0]["view"]]
@@ -76,7 +77,7 @@ def frames_for(keyframes: list[dict[str, Any]], fps: int) -> list[dict[str, Any]
         ta, tb = float(a.get("time", 0)), float(b.get("time", 0))
         u = 0.0 if tb <= ta else min(1.0, max(0.0, (t - ta) / (tb - ta)))
         (ca, asp, na, fa), (cb, _, nb, fb) = cams[j], cams[j + 1]
-        cam = interpolate_cameras(ca, cb, u)
+        cam = interpolate_cameras(ca, cb, u, ease=easing != "linear")
         near = na + (nb - na) * u
         far = fa + (fb - fa) * u
         vp = look_at(cam.eye, cam.target, cam.up, cam.fovy, asp, near, far)

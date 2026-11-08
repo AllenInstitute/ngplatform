@@ -309,7 +309,7 @@ class Movie:
             sp = self.spec
             fps = int(sp.get("fps", 25))
             samples = int(sp.get("samples", 256))
-            views = frames_for(sp["keyframes"], fps)
+            views = frames_for(sp["keyframes"], fps, sp.get("easing", "smooth"))
             self.out_dir.mkdir(parents=True, exist_ok=True)
             frames = self.out_dir / "frames"
             frames.mkdir(exist_ok=True)
