@@ -4,7 +4,7 @@
  *
  * The runner listens on 127.0.0.1 only and answers requests that carry its
  * pairing token.  The address and token are kept in localStorage, never in
- * the link.  While something watches (the Jobs tab) or a job is running,
+ * the link.  While something watches (the Jobs or Remote tab) or a job is running,
  * the job list is fetched every 1.5 s.
  */
 import type { HostGpu, HostServiceState, RunnerJob } from "../sdk/types.js";
@@ -363,7 +363,7 @@ export class RunnerService {
   }
 
   private need(): RunnerClient {
-    if (this.clientValue === undefined) throw new RunnerError("This browser is not paired with a runner: pair it in the Jobs tab, under This computer", 0);
+    if (this.clientValue === undefined) throw new RunnerError("This browser is not paired with a runner: pair This computer in the Remote tab", 0);
     return this.clientValue;
   }
 

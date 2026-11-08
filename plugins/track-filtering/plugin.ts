@@ -1785,7 +1785,7 @@ class TrackGroups {
     const toast = this.ctx.ui.toast;
     if (group === undefined) return;
     if (!runner.available()) {
-      toast("Pair the runner on this computer first: Jobs tab, This computer.", "error");
+      toast("Pair the runner on this computer first: Remote tab, This computer.", "error");
       return;
     }
     const reason = cannotRun(group.filter);

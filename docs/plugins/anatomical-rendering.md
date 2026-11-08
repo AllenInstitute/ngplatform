@@ -39,10 +39,14 @@ Organ Atlas serves most of its scans; on a host).
    `python -m ngplatform_runner tunnel me@workstation` (it prints the pairing
    link). On a cluster, start the runner inside an interactive GPU job and
    tunnel through the login node (`--jump`).
-2. Pair the app with that runner (its link, or Jobs → **Add a computer…**).
-3. Turn the plugin on, open the **Render** tab: the **Host** list shows the
-   paired computers whose runner has the render service. Choose the image,
-   then switch on **Render** (also beside **Sections** in the 3-D view).
+2. Pair the app with that runner: its link, or the **Remote (SSH)** tab at
+   the bottom (**This computer**, or **Add a computer (SSH)…**). Addresses
+   and tokens are kept there, for every function, not per image.
+3. Turn the plugin on, open the **Render** tab: **Computer** is
+   **Automatic** (the Remote tab's choice, else the first computer with the
+   render service ready) or one of the paired computers whose runner has
+   the render service. Choose the image, then switch on **Render** (also
+   beside **Sections** in the 3-D view).
 
 ## What you can set
 

@@ -48,6 +48,7 @@ import { h, icon, iconButton, isMac, keyLabel, mark } from "./dom.js";
 import { closeSheet, confirmDialog, copyText, formDialog, offer, promptDialog, sheetIsOpen, showMenu, showPalette, toast } from "./overlays.js";
 import { ActivityLog } from "./panels/activity.js";
 import { renderAuthPanel } from "./panels/auth.js";
+import { renderRemotePanel } from "./panels/remote.js";
 import { renderDatasetsPanel, showAddMenu } from "./panels/datasets.js";
 import { layerTarget, renderLayerPanel } from "./panels/layer.js";
 import {
@@ -511,6 +512,7 @@ export class Shell {
     add({ id: "jobs", title: "Jobs", slot: "bottom", order: 20, render: (host) => renderJobsPanel(host, wb) });
     add({ id: "statistics", title: "Chunk statistics", slot: "bottom", order: 30, transient: true, render: (host) => renderStatisticsPanel(host, wb) });
     add({ id: "python", title: "Python", slot: "bottom", order: 40, render: async (host) => (await pythonPanel()).renderPythonPanel(host, wb) });
+    add({ id: "remote", title: "Remote (SSH)", slot: "bottom", order: 50, minSize: 320, render: (host) => renderRemotePanel(host, wb) });
   }
 
   // ---------------------------------------------------------- commands
@@ -933,6 +935,7 @@ export class Shell {
       ["jobs", "Jobs"],
       ["statistics", "Chunk statistics"],
       ["python", "Python"],
+      ["remote", "Remote (SSH)"],
       ["plugins", "Plugins"],
     ]) {
       add({ id: `panel.${tab}`, title: `Show the ${title} panel`, group: "Panels", run: () => this.docks.show(tab) });

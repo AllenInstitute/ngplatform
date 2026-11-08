@@ -15,7 +15,7 @@ export const ANATOMICAL_RENDERING_MANIFEST: Manifest = {
   guide: `Path-traced ("cinematic") rendering of an OME-Zarr image, read straight from its store: light is followed through the tissue as it scatters, so surfaces get soft shadows and depth, and translucent tissue glows. It runs on a GPU with CUDA, through the runner's **render** service: on this computer, or on a workstation or cluster node reached over SSH (see *Jobs on this computer*). Frames come back as they refine and are drawn in Neuroglancer's 3-D view, hiding what is behind the tissue.
 
 ## Starting it
-1. Start a runner with the render service where the GPU is (\`--service render="python -m ngplatform_render.server"\`), and pair with it (the Jobs tab, or the link it prints; over SSH, \`python -m ngplatform_runner tunnel HOST\`).
+1. Start a runner with the render service where the GPU is (\`--service render="python -m ngplatform_render.server"\`), and pair with it (the Remote tab at the bottom, or the link it prints; over SSH, \`python -m ngplatform_runner tunnel HOST\`).
 2. In the **Render** tab choose the host, the image and (optionally) a segmentation for region colours, then switch on **Render** (also beside **Sections** in the 3-D panel).
 
 ## Settings

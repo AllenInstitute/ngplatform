@@ -1,10 +1,11 @@
-/** The smaller panels: Statistics, Jobs and Plugins. */
+/** The smaller panels: Statistics, Jobs and Plugins (the computers are in remote.ts). */
 import type { LocalPlugins, UrlPluginOffer } from "../../platform/local_plugins.js";
 import type { Manifest } from "../../sdk/types.js";
 import { clear, h, icon, iconButton } from "../dom.js";
 import { renderMarkdown } from "../markdown.js";
 import { closeSheet, sheet, showMenu, showSheet } from "../overlays.js";
-import { addHostDialog, renderRunnerSection } from "../runner.js";
+import { LOCAL_HOST } from "../../platform/hosts.js";
+import { renderRunnerSection } from "../runner.js";
 import type { Workbench } from "../workbench.js";
 import { type CatalogueEntry, GROUP_TITLES, type PluginGroup } from "../../../plugins/index.js";
 
@@ -20,12 +21,11 @@ export function renderStatisticsPanel(host: HTMLElement, wb: Workbench): () => v
 
 export function renderJobsPanel(host: HTMLElement, wb: Workbench): () => void {
   const list = h("div", { class: "jobs" });
-  const runner = renderRunnerSection(wb, wb.runner);
-  // A section for each other computer (through an SSH tunnel), made again only when one is added or removed.
-  const others = h("div", { class: "runner-hosts" });
+  // The jobs on each computer paired in the Remote tab (This computer always, to say how to pair it), made again only when one is added or removed.
+  const computers = h("div", { class: "runner-hosts" });
   let sections: { name: string; dispose: () => void }[] = [];
   const renderHosts = () => {
-    const names = wb.hosts.others();
+    const names = [LOCAL_HOST, ...wb.hosts.others()];
     if (names.join("\n") === sections.map((s) => s.name).join("\n")) return;
     for (const section of sections) section.dispose();
     sections = [];
@@ -33,18 +33,13 @@ export function renderJobsPanel(host: HTMLElement, wb: Workbench): () => void {
     for (const name of names) {
       const service = wb.hosts.runner(name);
       if (service === undefined) continue;
-      const section = renderRunnerSection(wb, service, name);
+      const section = renderRunnerSection(wb, service, name, "jobs");
       sections.push({ name, dispose: section.dispose });
       elements.push(section.element);
     }
-    clear(others, ...elements);
+    clear(computers, ...elements);
   };
-  const add = h(
-    "div",
-    { class: "row-actions runner-add-host" },
-    h("button", { class: "btn small outline", type: "button", title: "A runner on another computer, reached through an SSH tunnel", onclick: () => addHostDialog(wb) }, "Add a computer…"),
-  );
-  host.append(h("div", { class: "section" }, h("h3", { class: "section-title" }, "In this page"), list), runner.element, others, add);
+  host.append(h("div", { class: "section" }, h("h3", { class: "section-title" }, "In this page"), list), computers);
   renderHosts();
   const offHosts = wb.hosts.onChange(renderHosts);
   const render = () => {
@@ -76,7 +71,6 @@ export function renderJobsPanel(host: HTMLElement, wb: Workbench): () => void {
   return () => {
     off();
     offHosts();
-    runner.dispose();
     for (const section of sections) section.dispose();
   };
 }

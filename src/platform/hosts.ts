@@ -16,6 +16,8 @@ import { normaliseAddress, type Pairing, type RunnerInfo, RunnerError, RunnerSer
 /** The name of the runner on this computer, which `ctx.runner` is. */
 export const LOCAL_HOST = "This computer";
 const HOSTS_KEY = "ngplatform.hosts";
+/** The host chosen in the Remote tab for work that can run on any (pick() tries it first). */
+const PREFERRED_KEY = "ngplatform.hosts.preferred";
 
 export interface SavedHost {
   name: string;
@@ -97,7 +99,7 @@ export class HostList {
       // A list that cannot be read is no list.
     }
     local.onChange(() => {
-      // This computer's runner answered the Jobs tab: no need to wait for its next check.
+      // This computer's runner answered: no need to wait for its next check.
       if (local.available() && !this.state(LOCAL_HOST).available) void this.check(true);
       this.changed();
     });
@@ -204,15 +206,28 @@ export class HostList {
 
   pick(options: { gpu?: boolean; service?: string } = {}): Host | undefined {
     const matching = this.list().filter((h) => h.available && (!options.gpu || hasGpu(h)) && (options.service === undefined || h.info?.services[options.service]?.ready === true));
-    // Stable: in the list's order, GPU hosts first.
-    const best = [...matching.filter(hasGpu), ...matching.filter((h) => !hasGpu(h))][0];
+    // The chosen host when it has what is asked for; else stable, in the list's order, GPU hosts first.
+    const preferred = this.preferred();
+    const best = matching.find((h) => h.name === preferred) ?? [...matching.filter(hasGpu), ...matching.filter((h) => !hasGpu(h))][0];
     return best === undefined ? undefined : this.get(best.name);
+  }
+
+  /** The host chosen for work that can run on any, or undefined (automatic: a GPU host first). */
+  preferred(): string | undefined {
+    const name = this.storage.getItem(PREFERRED_KEY);
+    return name !== null && this.names().includes(name) ? name : undefined;
+  }
+
+  prefer(name: string | undefined): void {
+    if (name === undefined || name === "") this.storage.removeItem(PREFERRED_KEY);
+    else this.storage.setItem(PREFERRED_KEY, hostName(name));
+    this.changed(true);
   }
 
   /** A request to `<address>/svc/<path>` on a host, with its token. */
   async fetch(name: string, path: string, init: RequestInit = {}): Promise<Response> {
     const client = this.runner(name)?.client();
-    if (client === undefined) throw new RunnerError(`${name} is not paired: pair it in the Jobs tab`, 0);
+    if (client === undefined) throw new RunnerError(`${name} is not paired: pair it in the Remote tab`, 0);
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Bearer ${client.token}`);
     const fetchImpl = this.fetchImpl ?? ((input: RequestInfo | URL, options?: RequestInit) => fetch(input, options));

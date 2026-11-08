@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { halfToFloat, linkOf } from "../client.js";
-import { parseHostText, readSaved } from "../plugin.js";
+import { halfToFloat, hostLink } from "../client.js";
+import { readSaved } from "../plugin.js";
 import { ANATOMICAL_VIEWS, clipPlanes, columnMajor, displayFromPhysical, lightDirection, omeZarrSource, orientationLooking, unitMm } from "../view.js";
 
 const MM = { names: ["x", "y", "z"], scales: [1e-3, 1e-3, 1e-3], units: ["m", "m", "m"] };
@@ -42,10 +42,9 @@ describe("anatomical rendering views", () => {
     expect(omeZarrSource("precomputed://gs://b/p")).toBeUndefined();
   });
 
-  it("reads half floats, links and pairing links", () => {
+  it("reads half floats and links", () => {
     expect(Array.from(halfToFloat(new Uint16Array([0x3c00, 0x0000, 0x3800, 0xc000])))).toEqual([1, 0, 0.5, -2]);
-    expect(linkOf("http://localhost:7000/", "t", true).base).toBe("http://localhost:7000/svc/render");
-    expect(parseHostText("https://app/#runner=http%3A%2F%2Flocalhost%3A7000&token=abc&name=ws")).toEqual({ address: "http://localhost:7000", token: "abc", viaRunner: true });
+    expect(hostLink("ws", "http://localhost:7000/", () => Promise.reject(new Error())).base).toBe("http://localhost:7000/svc/render");
     const s = readSaved({ cuts: "bad", budget: -1 });
     expect(s.cuts).toHaveLength(3);
     expect(s.on).toBe(false);

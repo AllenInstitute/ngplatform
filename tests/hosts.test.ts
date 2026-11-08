@@ -181,6 +181,15 @@ describe("HostList", () => {
     expect(api.pick({ service: "render" })?.name).toBe("workstation");
     expect(api.pick({ service: "other" })).toBeUndefined();
     expect(hostStatusLine(api.list()[1])).toBe("node (node12): GPU (gpu requires reset) — render restarting");
+    // The host chosen in the Remote tab first, when it has what is asked for.
+    hosts.prefer(LOCAL_HOST);
+    expect(hosts.preferred()).toBe(LOCAL_HOST);
+    expect(api.pick()?.name).toBe(LOCAL_HOST);
+    expect(api.pick({ gpu: true })?.name).toBe("workstation");
+    hosts.prefer("nowhere");
+    expect(hosts.preferred()).toBeUndefined();
+    hosts.prefer(undefined);
+    expect(api.pick()?.name).toBe("workstation");
     fake.hosts.get(WS)!.down = true;
     await hosts.check();
     expect(api.pick({ gpu: true })).toBeUndefined();

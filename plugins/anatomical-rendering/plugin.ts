@@ -9,7 +9,7 @@
  */
 import type { Disposer, Frame3d, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { button, clear, downloadBlob, el, field, numberInput, select } from "@ngplatform/sdk/dom";
-import { hostLink, type Link, linkOf, type MovieInfo, type PresetInfo, RenderService, type ServiceInfo, type SessionInfo, type ViewSpec } from "./client.js";
+import { hostLink, type Link, type MovieInfo, type PresetInfo, RenderService, type ServiceInfo, type SessionInfo, type ViewSpec } from "./client.js";
 import { PictureDrawer } from "./draw.js";
 import { ColourmapEditor, type DataStop, histogramHandles, shifted, type Tuning, type WarpPoint, warpInverse } from "./editor.js";
 import { LocalRenderer, PRESETS as LOCAL_PRESETS } from "./local/local.js";
@@ -149,27 +149,13 @@ export function readSaved(raw: unknown): Saved {
   };
 }
 
-/** Where the render service is, kept per browser (not in the link: it holds a token). */
+/** Which paired computer (the Remote tab's, ctx.hosts) renders, kept per browser: none named for the Remote tab's choice. */
 interface HostSetting {
-  /** A paired host's name (ctx.hosts), or "" for the address below. */
   name?: string;
-  address: string;
-  token: string;
-  viaRunner: boolean;
 }
 
 const HOST_KEY = "host";
-
-/** A pairing link (`…#runner=<address>&token=<token>`) or an address alone. */
-export function parseHostText(text: string): Partial<HostSetting> {
-  const t = text.trim();
-  const hash = t.includes("#") ? t.slice(t.indexOf("#") + 1) : "";
-  if (hash.includes("runner=")) {
-    const p = new URLSearchParams(hash);
-    return { address: p.get("runner") ?? "", token: p.get("token") ?? "", viaRunner: true };
-  }
-  return { address: t };
-}
+const NO_HOST = "No paired computer has the render service: pair one in the Remote tab at the bottom (its runner started with --service render=…), or render in this browser";
 
 class AnatomicalRendering {
   private saved: Saved;
@@ -218,7 +204,7 @@ class AnatomicalRendering {
 
   constructor(private readonly ctx: PlatformContext) {
     this.saved = readSaved(ctx.state.get());
-    this.host = { address: "http://127.0.0.1:8765", token: "", viaRunner: true, ...(ctx.settings.get<HostSetting>(HOST_KEY) ?? {}) };
+    this.host = { name: ctx.settings.get<HostSetting>(HOST_KEY)?.name || undefined };
     this.drawer.onFrame = (frame) => this.onFrame(frame);
     this.toggle = ctx.ui.viewToggle({ label: "Render", title: "Path-traced rendering (Anatomical rendering)", value: this.saved.on, onChange: (v) => this.setOn(v) });
     this.offs.push(
@@ -235,8 +221,9 @@ class AnatomicalRendering {
       ctx.commands.register("anatomicalRendering.toggle", () => this.setOn(!this.saved.on)),
       ctx.ui.panel(RENDER_PANEL, (el) => this.panel(el)),
       ctx.hosts.onChanged(() => {
-        const ready = this.link().label !== undefined;
-        if (ready && this.serviceInfo === undefined && !this.connecting) void this.connect();
+        // A computer with the render service paired or come up, or another chosen in the Remote tab.
+        const label = this.link()?.label;
+        if (!this.connecting && label !== undefined && (this.serviceInfo === undefined || label !== this.service?.link.label)) void this.connect();
         this.panelUpdate?.();
       }),
     );
@@ -281,27 +268,27 @@ class AnatomicalRendering {
     return this.ctx.hosts.list().filter((h) => h.info?.services?.render !== undefined);
   }
 
-  private link(): Link {
-    const name = this.host.name ?? this.ctx.hosts.pick({ service: "render" })?.name;
-    const h = name ? this.ctx.hosts.get(name) : undefined;
-    if (h !== undefined) return hostLink(h.name, h.address, (path, init) => h.fetch(path, init));
-    return linkOf(this.host.address, this.host.token, this.host.viaRunner);
+  /** The chosen computer, else the one the Remote tab picks with the render service ready; undefined when none is paired. */
+  private link(): Link | undefined {
+    const h = (this.host.name ? this.ctx.hosts.get(this.host.name) : undefined) ?? this.ctx.hosts.pick({ service: "render" });
+    return h === undefined ? undefined : hostLink(h.name, h.address, (path, init) => h.fetch(path, init));
   }
 
   private connecting = false;
 
   private async connect(): Promise<void> {
     this.connecting = true;
-    this.service = new RenderService(this.link());
+    const link = this.link();
+    this.service = link === undefined ? undefined : new RenderService(link);
     this.serviceInfo = undefined;
     this.problem = "";
     try {
+      if (this.service === undefined) throw new Error(NO_HOST);
       this.serviceInfo = await this.service.info(AbortSignal.timeout(8000));
       this.presets = await this.service.presets();
       if (!this.saved.preset && this.presets.length > 0) this.saved.preset = this.presets[0].name;
     } catch (e) {
-      const l = this.link();
-      this.problem = `No render service ${l.label ? `on ${l.label}` : `at ${l.base}`}: ${(e as Error).message}`;
+      this.problem = this.service === undefined ? NO_HOST : `No render service on ${this.service.link.label}: ${(e as Error).message}`;
     }
     this.connecting = false;
     this.sessionKey = "";
@@ -940,16 +927,6 @@ class AnatomicalRendering {
       const presetList = s.where === "browser" ? LOCAL_PRESETS.map((p) => ({ name: p.name, modality: p.modality ?? "", density: p.density })) : this.presets;
       const allPresets = [...presetList, ...s.customPresets.map((p) => ({ name: String(p.name), modality: "from a file", density: Number(p.density ?? 40) }))];
       const presetOptions: [string, string][] = allPresets.map((p) => [p.name, p.modality ? `${p.name} (${p.modality})` : p.name]);
-      const hostText = el("input", { type: "text", value: this.host.address, style: "width: 100%", title: "The runner's address (or a pairing link), e.g. http://localhost:7000 at the end of an SSH tunnel" }) as HTMLInputElement;
-      const tokenText = el("input", { type: "password", value: this.host.token, style: "width: 100%", placeholder: "pairing token" }) as HTMLInputElement;
-      const via = el("input", { type: "checkbox" }) as HTMLInputElement;
-      via.checked = this.host.viaRunner;
-      const applyHost = () => {
-        const parsed = parseHostText(hostText.value);
-        this.host = { name: "", address: parsed.address ?? hostText.value, token: parsed.token ?? tokenText.value, viaRunner: parsed.viaRunner ?? via.checked };
-        this.ctx.settings.set(HOST_KEY, this.host);
-        void this.connect();
-      };
       const cutRow = (i: number) => {
         const c = s.cuts[i];
         const on = el("input", { type: "checkbox" }) as HTMLInputElement;
@@ -995,28 +972,35 @@ class AnatomicalRendering {
       );
       const movie = this.movie;
       const hosts = this.renderHosts();
-      const chosen = this.host.name ?? this.ctx.hosts.pick({ service: "render" })?.name ?? "";
+      const using = this.link()?.label;
       const hostChoice = select(
-        [...hosts.map((h): [string, string] => [h.name, `${h.name}${h.info?.hostname ? ` (${h.info.hostname})` : ""}${h.available ? "" : ": not answering"}`]), ["", "An address…"]],
-        hosts.some((h) => h.name === chosen) ? chosen : "",
+        [["", `Automatic${!this.host.name && using ? `: ${using}` : ""}`], ...hosts.map((h): [string, string] => [h.name, `${h.name}${h.info?.hostname && h.info.hostname !== h.name ? ` (${h.info.hostname})` : ""}${h.available ? "" : ": not answering"}`])],
+        hosts.some((h) => h.name === this.host.name) ? this.host.name! : "",
         (v) => {
-          this.host = { ...this.host, name: v || undefined };
-          if (!v) this.host.name = "";
+          this.host = { name: v || undefined };
           this.ctx.settings.set(HOST_KEY, this.host);
           void this.connect();
           render();
         },
       );
-      const manual = !hosts.some((h) => h.name === chosen);
+      const remoteTab = el("a", { href: "#", title: "Pairing, SSH computers and which one does the work" }, "Remote tab");
+      remoteTab.onclick = (e) => {
+        e.preventDefault();
+        void this.ctx.commands.invoke("panel.remote");
+      };
       clear(
         host,
         el("h3", {}, "Anatomical rendering"),
         el("p", { class: "muted" }, "Path-traced views of an OME-Zarr image, rendered on a GPU through a runner (this computer, or another over SSH)."),
-        field("Host", hostChoice, hosts.length ? "Computers paired in the Jobs tab whose runner has the render service" : "Pair a computer in the Jobs tab (its runner started with the render service), or give an address"),
-        manual ? field("Address", hostText, "The runner's address, or paste its pairing link") : "",
-        manual ? field("Token", tokenText) : "",
-        manual ? el("label", { style: "display: flex; gap: 6px; align-items: center" }, via, "Through a runner (/svc/render)") : "",
-        button(manual ? "Connect" : "Reconnect", manual ? applyHost : () => void this.connect()),
+        field("Computer", hostChoice),
+        el(
+          "p",
+          { class: "muted", style: "font-size: 11px; margin: 2px 0 6px" },
+          hosts.length ? "Computers whose runner has the render service; pair others, over SSH too, in the " : "No paired computer has the render service: pair one, here or over SSH, in the ",
+          remoteTab,
+          " at the bottom.",
+        ),
+        hosts.length ? button("Reconnect", () => void this.connect()) : "",
         el("hr"),
         field("Where", select([["host", "On the host (CUDA, through the runner)"], ["browser", "In this browser (WebGPU)"]], s.where, (v) => {
           this.save((x) => (x.where = v as Saved["where"]));

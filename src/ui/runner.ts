@@ -1,8 +1,8 @@
 /**
- * The runner in the interface: the Jobs tab's "This computer" section
- * (pairing, the runner's jobs with their PID, progress, log, Cancel and
- * Open), a section like it for each other computer paired through an SSH
- * tunnel (with "Add a computer…"), the chooser for paths under the
+ * The runner in the interface: a section for This computer and for each
+ * other computer paired through an SSH tunnel, in the Remote tab (pairing,
+ * status, served files, "Add a computer…") and in the Jobs tab (the jobs on
+ * it with their PID, progress, log, Cancel and Open), the chooser for paths under the
  * runner's folders, opening a path as a layer (served by the runner), and,
  * for a tractogram past the browser's storage limit, the choice of a
  * sample in the browser or the runner's conversion.
@@ -82,7 +82,7 @@ export function pairFromLink(wb: Workbench, runner: RunnerService, hash = locati
     try {
       const info = other ? await wb.hosts.add(pairing.name!, pairing.address, pairing.token) : await runner.pair(pairing.address, pairing.token);
       toast(other ? `Paired with ${pairing.name}, the runner at ${info.address}` : `Paired with the runner at ${info.address}`);
-      wb.docks.show("jobs");
+      wb.docks.show("remote");
     } catch (e) {
       toast(`Could not pair: ${(e as Error).message}`, "error");
     }
@@ -187,8 +187,12 @@ function jobRow(wb: Workbench, runner: RunnerService, job: RunnerJob, openLogs: 
 /** Rerenders a runner section now (a log opened or closed). */
 const runnerRefresh = new WeakMap<RunnerService, () => void>();
 
-/** The Jobs tab's section for a computer's runner: "This computer", or another by its name (`host`). */
-export function renderRunnerSection(wb: Workbench, runner: RunnerService, host = LOCAL_HOST): { element: HTMLElement; dispose: () => void } {
+/**
+ * A computer's runner ("This computer", or another by its name, `host`):
+ * in the Remote tab (`part` "host") its pairing, status and served files;
+ * in the Jobs tab ("jobs") the jobs on it.
+ */
+export function renderRunnerSection(wb: Workbench, runner: RunnerService, host = LOCAL_HOST, part: "host" | "jobs" = "host"): { element: HTMLElement; dispose: () => void } {
   const local = host === LOCAL_HOST;
   const where = local ? "this computer" : host;
   const body = h("div", { class: "runner-body" });
@@ -196,7 +200,7 @@ export function renderRunnerSection(wb: Workbench, runner: RunnerService, host =
   const status = h("p", { class: "note first runner-host-status", hidden: true });
   const element = h(
     "div",
-    { class: "section runner-section", "data-host": host },
+    { class: `section runner-section runner-${part}`, "data-host": host },
     h("div", { class: "section-head" }, h("h3", { class: "section-title" }, host), h("span", { class: "type runner-connection" })),
     status,
     body,
@@ -204,7 +208,7 @@ export function renderRunnerSection(wb: Workbench, runner: RunnerService, host =
   const connection = element.querySelector(".runner-connection") as HTMLElement;
   const showStatus = () => {
     const info = wb.hosts.info(host);
-    status.hidden = info === undefined || (info.info === undefined && !info.available);
+    status.hidden = part === "jobs" || info === undefined || (info.info === undefined && !info.available);
     if (info !== undefined) status.textContent = hostStatusLine(info);
   };
   const openLogs = new Map<string, HTMLElement>();
@@ -230,6 +234,21 @@ export function renderRunnerSection(wb: Workbench, runner: RunnerService, host =
     const state = runner.connection();
     connection.textContent = state === "connected" ? "connected" : state === "unpaired" ? "not paired" : state;
     connection.dataset.state = state;
+    if ((state === "unpaired" || state === "refused") && part === "jobs") {
+      form = undefined;
+      formFor = "";
+      clear(
+        body,
+        h(
+          "p",
+          { class: "note first runner-unpaired" },
+          state === "refused" ? `${host} refused this browser's pairing: pair it again in the ` : `To run jobs on ${where}, pair its runner in the `,
+          h("a", { href: "#", class: "runner-remote-link", onclick: (e: Event) => (e.preventDefault(), wb.docks.show("remote")) }, "Remote tab"),
+          ".",
+        ),
+      );
+      return;
+    }
     if (state === "unpaired" || state === "refused") {
       // Kept while typing: only made again when the state changes.
       if (form === undefined || formFor !== state) {
@@ -256,17 +275,26 @@ export function renderRunnerSection(wb: Workbench, runner: RunnerService, host =
             info.tools ? `zarr-vectors-tools ${info.tools}.` : h("strong", { class: "error" }, "zarr-vectors-tools is missing from the runner's Python: jobs will fail."),
           )
         : h("p", { class: "note first error runner-error" }, state === "connecting" ? `Connecting to ${pairing.address}…` : (runner.error() ?? `The runner at ${pairing.address} does not answer.`)),
-      h(
-        "div",
-        { class: "row-actions" },
-        state === "connected" ? h("button", { class: "btn small runner-convert", type: "button", onclick: () => void convertDialog(runner) }, "Convert a tractogram…") : null,
-        state === "connected" ? h("button", { class: "btn small runner-open-path", type: "button", onclick: () => void openDialog(wb, runner, where) }, "Open a file…") : null,
-        state !== "connected" ? h("button", { class: "btn small", type: "button", onclick: () => void runner.refresh() }, "Try again") : null,
-        state === "connected" ? h("button", { class: "btn small runner-served", type: "button", title: "Files and folders the runner serves to the viewer", onclick: () => void servedDialog(runner) }, "Served…") : null,
-        runner.jobs().some((j) => !isActive(j) && j.kind !== "serve") ? h("button", { class: "btn small", type: "button", onclick: () => void runner.clearFinished() }, "Clear finished") : null,
-        h("button", { class: "btn small", type: "button", onclick: () => runner.unpair() }, "Unpair"),
-      ),
+      part === "host"
+        ? h(
+            "div",
+            { class: "row-actions" },
+            state !== "connected" ? h("button", { class: "btn small", type: "button", onclick: () => void runner.refresh() }, "Try again") : null,
+            state === "connected" ? h("button", { class: "btn small runner-served", type: "button", title: "Files and folders the runner serves to the viewer", onclick: () => void servedDialog(runner) }, "Served…") : null,
+            h("button", { class: "btn small runner-unpair", type: "button", title: local ? "Forget this computer's runner in this browser" : `Forget ${host} in this browser`, onclick: () => runner.unpair() }, local ? "Unpair" : "Remove"),
+          )
+        : h(
+            "div",
+            { class: "row-actions" },
+            state === "connected" ? h("button", { class: "btn small runner-convert", type: "button", onclick: () => void convertDialog(runner) }, "Convert a tractogram…") : null,
+            state === "connected" ? h("button", { class: "btn small runner-open-path", type: "button", onclick: () => void openDialog(wb, runner, where) }, "Open a file…") : null,
+            runner.jobs().some((j) => !isActive(j) && j.kind !== "serve") ? h("button", { class: "btn small", type: "button", onclick: () => void runner.clearFinished() }, "Clear finished") : null,
+          ),
     );
+    if (part === "host") {
+      clear(body, head);
+      return;
+    }
     const jobs = runner.jobs().filter((j) => j.kind !== "serve" || isActive(j));
     for (const id of [...openLogs.keys()]) if (!jobs.some((j) => j.id === id)) openLogs.delete(id);
     clear(
@@ -349,7 +377,7 @@ export function addHostDialog(wb: Workbench): void {
  */
 export function choosePath(runner: RunnerService, options: Parameters<RunnerApi["choose"]>[0]): Promise<string | undefined> {
   const client = runner.client();
-  if (client === undefined || !runner.available()) return Promise.reject(new RunnerError("Pair with the runner first (Jobs tab, This computer)", 0));
+  if (client === undefined || !runner.available()) return Promise.reject(new RunnerError("Pair with the runner first (Remote tab, This computer)", 0));
   return new Promise((resolve) => {
     let answered = false;
     let folder = "";

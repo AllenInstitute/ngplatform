@@ -5,7 +5,10 @@ a new `.trk`, converting it to Zarr Vectors, a density map of millions of
 streamlines. The **runner** does that work as Python processes on your own
 computer. The app starts the jobs and shows them in the **Jobs** tab, under
 **This computer**: each one's process id (PID), progress, log, a Cancel
-button, and its output files with **Open**, which adds them as layers.
+button, and its output files with **Open**, which adds them as layers. The
+computers themselves (pairing, what each has, which one takes work) are in
+the **Remote (SSH)** tab at the bottom, for every function that runs on a
+runner: jobs, rendering and plugins' services.
 
 The runner is in this repository's `runner/` folder (a Python package,
 `ngplatform_runner`). It uses
@@ -32,14 +35,15 @@ Do one of these, once per browser:
 
 - Open the link the runner printed. The app asks whether to pair with the
   runner at that address; choose **Pair**.
-- Or, in the **Jobs** tab under **This computer**, enter the address and
-  the token, then **Pair**.
+- Or, in the **Remote (SSH)** tab under **This computer**, enter the
+  address and the token, then **Pair**.
 
 The address and token are kept in this browser (not in links you share).
 The section then shows the runner's version, its folders and the
 zarr-vectors-tools version jobs run with. **Unpair** forgets the pairing.
 If the runner is stopped, the section says it does not answer; start it
-again and choose **Try again**.
+again and choose **Try again**. Its jobs are in the **Jobs** tab, with
+**Convert a tractogram…** and **Open a file…**.
 
 ## What it does
 
@@ -82,10 +86,8 @@ conversion of the streamlines that pass.
 The runner can also be on another computer: a workstation with a GPU, or a
 node of a cluster in an interactive job. The browser reaches it through an
 SSH tunnel, at an address of its own computer (`http://localhost:7000`).
-The Jobs tab then has a section for that computer, under its name, beside
-**This computer**: its jobs, **Convert a tractogram…**, **Open a file…**
-(files under its folders, served to the viewer through the tunnel), and a
-line saying what it has, such as
+The Remote (SSH) tab then has a section for that computer, under its name,
+beside **This computer**, with a line saying what it has, such as
 
 ```
 workstation (czi001): RTX A6000, 47 GB free — render ready
@@ -94,8 +96,14 @@ workstation (czi001): RTX A6000, 47 GB free — render ready
 (the computer's name, its GPUs with their free memory, and the services
 its runner runs, such as a renderer). The app checks every computer every
 5 seconds and says when one does not answer (the tunnel closed, the runner
-stopped). Plugins choose among them with `ctx.hosts` (a computer with a GPU
-first).
+stopped). The Jobs tab has a section for it too: its jobs, **Convert a
+tractogram…** and **Open a file…** (files under its folders, served to the
+viewer through the tunnel).
+
+**Run work on**, at the top of the Remote (SSH) tab, says which computer
+takes work that can run on any: **Automatic** (a computer with a GPU
+first), or one by name. Plugins choose among the computers with
+`ctx.hosts`, which tries that one first.
 
 ### With the tunnel command
 
@@ -138,12 +146,12 @@ ssh -N -L 7000:127.0.0.1:8765 me@workstation
 ssh -N -J me@login.cluster -L 7000:127.0.0.1:8765 node123     (a cluster node)
 ```
 
-Then open the link the runner printed, or in the Jobs tab choose **Add a
-computer…** and enter a name, the address `http://localhost:7000` and the
+Then open the link the runner printed, or in the Remote (SSH) tab choose
+**Add a computer (SSH)…** and enter a name, the address `http://localhost:7000` and the
 token it printed. For a second computer use another local port (`-L
 7001:127.0.0.1:8765`, address `http://localhost:7001`).
 
-The section's **Unpair** forgets that computer. Each computer is paired
+The section's **Remove** forgets that computer. Each computer is paired
 once per browser, like This computer, and kept in this browser.
 
 ## What it cannot do

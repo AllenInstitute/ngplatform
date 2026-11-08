@@ -31,11 +31,6 @@ function go(link: Link, path: string, init: RequestInit = {}, json = false): Pro
   return fetch(`${link.base}${path}`, { ...init, headers: { ...headers(link, json), ...(init.headers as Record<string, string> | undefined) } });
 }
 
-export function linkOf(address: string, token: string, viaRunner: boolean): Link {
-  const a = address.trim().replace(/\/+$/, "");
-  return { base: viaRunner ? `${a}/svc/render` : a, token: token.trim(), viaRunner };
-}
-
 function headers(link: Link, json: boolean): Record<string, string> {
   const h: Record<string, string> = {};
   if (link.token) {

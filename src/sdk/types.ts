@@ -573,7 +573,7 @@ export interface RunnerJob {
 
 /**
  * The runner: Python jobs on the user's own computer (`python -m
- * ngplatform_runner`), which the app is paired with in the Jobs tab.  Jobs
+ * ngplatform_runner`), which the app is paired with in the Remote tab.  Jobs
  * read and write files only under the folders the runner was started with.
  */
 export interface RunnerApi {
