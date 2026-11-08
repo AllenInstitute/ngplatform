@@ -607,6 +607,79 @@ export interface RunnerApi {
   open(path: string, options?: { name?: string }): Promise<string>;
 }
 
+// ------------------------------------------------------------------ hosts
+
+/** A GPU on a host, as nvidia-smi reports it; memory in MiB. */
+export interface HostGpu {
+  index: number;
+  /** As nvidia-smi names it ("NVIDIA RTX A6000"). */
+  name: string;
+  memoryTotal: number | null;
+  memoryUsed: number | null;
+  memoryFree: number | null;
+  busId: string;
+  /** False when the card cannot be used (it needs a reset, it does not answer); `problem` says why. */
+  ok: boolean;
+  problem?: string;
+}
+
+/** A service the host's runner runs beside it (`--service NAME=COMMAND`), reached at `/svc/<name>/`. */
+export interface HostServiceState {
+  ready: boolean;
+  /** Why it is not ready: it ended and is being started again, or the runner gave up on it (with its log's last lines). */
+  error: string | null;
+  pid: number | null;
+}
+
+/** What a host's runner says about its computer. */
+export interface HostDetails {
+  hostname: string;
+  platform: string;
+  gpus: HostGpu[];
+  services: Record<string, HostServiceState>;
+}
+
+/** A computer with a runner the app is paired with: This computer, or another reached through an SSH tunnel. */
+export interface HostInfo {
+  /** "This computer", or the name it was paired with ("workstation"). */
+  name: string;
+  /** The runner's address in this browser (`http://localhost:7000` through a tunnel). */
+  address: string;
+  /** Whether it answered the last check (every 5 s). */
+  available: boolean;
+  /** As last fetched; undefined before it first answers. */
+  info?: HostDetails;
+  /** Why it is not available. */
+  error?: string;
+}
+
+/** One host, for calls to its services. */
+export interface Host {
+  readonly name: string;
+  readonly address: string;
+  available(): boolean;
+  info(): HostInfo;
+  /**
+   * A request to one of its services: `path` is relative to `/svc/`
+   * (`render/sessions` is the render service's `/sessions`).  The pairing
+   * token is added; resolves with the Response as it arrives (its body
+   * streams), whatever its status.  Rejects when the host is not paired or
+   * does not answer.
+   */
+  fetch(path: string, init?: RequestInit): Promise<Response>;
+}
+
+/** The computers with runners the app is paired with; `ctx.runner` is the first of them, This computer. */
+export interface HostsApi {
+  /** This computer (when paired) first, then the others, in the order they were paired. */
+  list(): HostInfo[];
+  /** Called when a host is added or removed, goes up or down, or what it reports changes. */
+  onChanged(callback: () => void): Disposer;
+  get(name: string): Host | undefined;
+  /** The first available host with what is asked for (a usable GPU, a ready service), a GPU host before others. */
+  pick(options?: { gpu?: boolean; service?: string }): Host | undefined;
+}
+
 export interface PlatformContext {
   readonly plugin: { id: string; version: string; manifest: Manifest };
   commands: {
@@ -655,6 +728,8 @@ export interface PlatformContext {
   jobs: { run<T>(title: string, work: (control: JobControl) => Promise<T>): Promise<T> };
   /** Jobs on this computer, through the runner the app is paired with (see RunnerApi). */
   runner: RunnerApi;
+  /** Every computer with a paired runner, This computer and others over SSH, for their services (see HostsApi). */
+  hosts: HostsApi;
   services: {
     provide<T>(name: string, implementation: T): Disposer;
     get<T>(name: string): Promise<T>;

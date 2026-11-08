@@ -12,6 +12,7 @@ import type { AuthRegistry } from "../platform/auth.js";
 import type { GoogleSignIn } from "../platform/google_auth.js";
 import type { SignInRules } from "../platform/sign_in_rules.js";
 import type { JobService } from "../platform/jobs.js";
+import type { HostList } from "../platform/hosts.js";
 import type { RunnerService } from "../platform/runner.js";
 import type { ComputedImages } from "../virtual/computed.js";
 import type { LocalData } from "../virtual/local_data.js";
@@ -37,6 +38,8 @@ export interface Workbench {
   jobs: JobService;
   /** The runner on this computer (Python jobs the app starts and watches), when paired. */
   runner: RunnerService;
+  /** Every computer with a paired runner: This computer (`runner`) and others reached through an SSH tunnel. */
+  hosts: HostList;
   services: ServiceRegistry;
   /** The sign-in methods (the Auth tab's). */
   auth: AuthRegistry;
