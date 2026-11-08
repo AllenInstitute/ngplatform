@@ -112,6 +112,11 @@ export const OFFERS: Record<string, Offer> = {
     toast: false,
     applies: (scene) => images(scene).length > 0,
   },
+  "org.ngplatform.anatomical-rendering": {
+    pitch: "photorealistic, path-traced views on a GPU",
+    toast: false,
+    applies: (scene) => images(scene).length > 0,
+  },
   "org.ngplatform.registration": {
     pitch: "move one image onto another",
     toast: false,

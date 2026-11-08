@@ -38,6 +38,7 @@ from . import __version__
 from .presets import Preset, builtin
 
 MAX_BODY = 8 << 20
+_LOCAL_ORIGIN = re.compile(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$")
 IDLE_SECONDS = 20 * 60
 
 
@@ -416,6 +417,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         for k, v in (headers or {}).items():
             self.send_header(k, v)
+        origin = self.headers.get("Origin") or ""
+        if _LOCAL_ORIGIN.match(origin):
+            # Straight from a page on this computer (without the runner, which adds its own).
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Expose-Headers", ", ".join(k for k in (headers or {}) if k.startswith("X-")))
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -560,7 +567,7 @@ class Handler(BaseHTTPRequestHandler):
         # Direct use from a page on this computer (without the runner): CORS for localhost only.
         origin = self.headers.get("Origin") or ""
         self.send_response(204)
-        if re.match(r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$", origin):
+        if _LOCAL_ORIGIN.match(origin):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-NGP-Service-Token")

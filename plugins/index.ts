@@ -8,6 +8,7 @@
  * offered when data they serve is opened (./offers.ts). See ./README.md.
  */
 import type { Manifest, PluginModule, VirtualFormat } from "@ngplatform/sdk";
+import { ANATOMICAL_RENDERING_MANIFEST } from "./anatomical-rendering/manifest.js";
 import { ANNOTATIONS_MANIFEST } from "./annotations/manifest.js";
 import { ATLAS_MANIFEST } from "./atlas/manifest.js";
 import { COLLECTIONS_MANIFEST } from "./collections/manifest.js";
@@ -85,6 +86,13 @@ export const CATALOGUE: CatalogueEntry[] = [
     summary: "Draws an image as a solid in the 3-D view.",
     group: "images",
     offer: offer(VOLUME_VIEW_MANIFEST.id),
+  },
+  {
+    manifest: ANATOMICAL_RENDERING_MANIFEST,
+    load: async () => (await import("./anatomical-rendering/plugin.js")).plugin,
+    summary: "Path-traced, photorealistic views of an image, on a GPU here or over SSH.",
+    group: "images",
+    offer: offer(ANATOMICAL_RENDERING_MANIFEST.id),
   },
   {
     manifest: REGISTRATION_MANIFEST,
