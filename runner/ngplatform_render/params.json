@@ -190,6 +190,26 @@
    "name": "OPAQUE_LIMIT",
    "size": 1,
    "about": "depth pass: accumulated opacity where the surface is"
+  },
+  {
+   "name": "ENVMAP",
+   "size": 1,
+   "about": "1: the environment is a light map (a texture), 0: the three colours"
+  },
+  {
+   "name": "ENV_RIGHT",
+   "size": 3,
+   "about": "light map frame: right (world, unit)"
+  },
+  {
+   "name": "ENV_BACK",
+   "size": 3,
+   "about": "light map frame: back (world, unit); up is ENV_UP"
+  },
+  {
+   "name": "ENV_ROT",
+   "size": 1,
+   "about": "light map turned about up, radians"
   }
  ]
 }

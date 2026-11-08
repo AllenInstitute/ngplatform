@@ -26,4 +26,4 @@ ngplatform-runner = "ngplatform_runner.__main__:main"
 packages = ["ngplatform_runner", "ngplatform_runner.tasks", "ngplatform_render"]
 
 [tool.setuptools.package-data]
-ngplatform_render = ["params.json", "presets/*.json"]
+ngplatform_render = ["params.json", "presets/*.json", "lightmaps/*.npy", "lightmaps/credits.json"]

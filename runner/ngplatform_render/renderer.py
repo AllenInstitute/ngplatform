@@ -186,6 +186,9 @@ class Renderer:
         self._frame = 0
         self._tf_key: Any = None
         self._label_ids = np.zeros(0, np.int64)
+        self._env_tex = None
+        self._env_arr = None
+        self._env_name: str | None = None
 
     # ------------------------------------------------------------ data
     def set_volume(self, volume: Volume) -> None:
@@ -238,6 +241,7 @@ class Renderer:
                 self._tf = cp.asarray(transfer_table(state.preset, self.volume))
                 self._tf_key = key
             self._update_lut(state)
+            self._set_env(state.preset.environment.get("map") or None)
             # The first opaque point of each pixel: the denoiser's guide, and the depth the page draws with.
             self._depth_gpu = cp.zeros((H, W, 2), cp.float32)
             n = self._bmin.size
@@ -316,6 +320,12 @@ class Renderer:
         P[O["ENV_BOTTOM"]:O["ENV_BOTTOM"] + 3] = env["bottom"]
         P[O["ENV_UP"]:O["ENV_UP"] + 3] = up
         P[O["ENV_SCALE"]] = env.get("scale", 1.0)
+        if env.get("map"):
+            # The light map turns with the camera (as the key light does), about its up, by `rotation`.
+            P[O["ENVMAP"]] = 1
+            P[O["ENV_RIGHT"]:O["ENV_RIGHT"] + 3] = right
+            P[O["ENV_BACK"]:O["ENV_BACK"] + 3] = back
+            P[O["ENV_ROT"]] = np.radians(float(env.get("rotation", 0.0)))
         P[O["BG"]:O["BG"] + 4] = s.background
         P[O["EXPOSURE"]] = pr.exposure
         P[O["MAX_BOUNCES"]] = s.max_bounces
@@ -344,7 +354,30 @@ class Renderer:
     def _args(self):
         cp = self.cp
         lab = self._lab if self._lab is not None else cp.zeros(1, cp.uint16)
-        return (self._params, self._tex, self._tf, self._maj, lab, self._lut, self._lutflags)
+        if self._env_tex is None:
+            self._set_env(None)
+        return (self._params, self._tex, self._tf, self._maj, lab, self._lut, self._lutflags, self._env_tex)
+
+    def _set_env(self, name: str | None) -> None:
+        """The light map on the GPU (a 2 x 1 black one when there is none, so the kernels always have a texture)."""
+        from cupy.cuda import runtime, texture
+
+        from .lightmaps import load
+
+        if name == self._env_name and self._env_tex is not None:
+            return
+        img = np.minimum(load(name), 64.0) if name else np.zeros((1, 2, 3), np.float32)  # suns clamped: no fireflies
+        h, w = img.shape[:2]
+        rgba = np.concatenate([img, np.ones((h, w, 1), np.float32)], axis=2).astype(np.float32)
+        desc = texture.ChannelFormatDescriptor(32, 32, 32, 32, runtime.cudaChannelFormatKindFloat)
+        arr = texture.CUDAarray(desc, w, h)
+        arr.copy_from(np.ascontiguousarray(rgba).reshape(h, w * 4))  # CuPy takes the channels flattened along a row
+        res = texture.ResourceDescriptor(runtime.cudaResourceTypeArray, cuArr=arr)
+        tdesc = texture.TextureDescriptor(
+            addressModes=(runtime.cudaAddressModeWrap, runtime.cudaAddressModeClamp),
+            filterMode=runtime.cudaFilterModeLinear, readMode=runtime.cudaReadModeElementType, normalizedCoords=1,
+        )
+        self._env_tex, self._env_arr, self._env_name = texture.TextureObject(res, tdesc), arr, name
 
     def step(self, n: int = 1) -> int:
         """Adds n samples per pixel; returns the samples so far."""

@@ -273,3 +273,15 @@ def test_rotation_ranges_and_reshaped_stills():
     wide = movie.reshaped(v["inv_view_projection"], 2.0, [0, 0, 0])
     cam, aspect, _, _ = movie.camera_from_inverse(wide, [0, 0, 0])
     assert aspect == pytest.approx(2.0) and cam.eye == pytest.approx(c.eye, abs=1e-3)
+
+
+def test_light_maps(tmp_path):
+    from ngplatform_render import lightmaps
+
+    assert {"studio", "photo-studio", "sky"} <= set(lightmaps.names())
+    m = lightmaps.load("sky")
+    assert m.shape == (128, 256, 3) and np.isfinite(m).all() and m.max() > 1
+    # A flat (not run-length encoded) RGBE file: 1.0 is mantissa 128 at exponent 129.
+    hdr = tmp_path / "t.hdr"
+    hdr.write_bytes(b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 2\n" + bytes([128, 64, 0, 129, 128, 128, 128, 130]))
+    assert lightmaps.read_rgbe(hdr).tolist() == [[[1.0, 0.5, 0.0], [2.0, 2.0, 2.0]]]

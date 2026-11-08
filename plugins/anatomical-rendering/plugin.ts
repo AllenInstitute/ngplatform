@@ -31,6 +31,9 @@ export interface Saved {
   exposure: number;
   lightAzimuth: number;
   lightElevation: number;
+  /** A light map on the host ("" for the preset's sky colours) and its turn in degrees. */
+  lightMap: string;
+  lightMapRotation: number;
   cuts: Cut[];
   regions: boolean;
   labelMix: number;
@@ -70,6 +73,8 @@ export function readSaved(raw: unknown): Saved {
     exposure: num(s.exposure, 1),
     lightAzimuth: num(s.lightAzimuth, 30),
     lightElevation: num(s.lightElevation, 40),
+    lightMap: typeof s.lightMap === "string" ? s.lightMap : "",
+    lightMapRotation: num(s.lightMapRotation, 0),
     cuts,
     regions: s.regions === true,
     labelMix: num(s.labelMix, 0.85),
@@ -400,6 +405,7 @@ class AnatomicalRendering {
       overrides,
       crop_fraction: s.box.on ? [s.box.lo, s.box.hi] : undefined,
       light: { direction: lightDirection(s.lightAzimuth, s.lightElevation), camera_space: true },
+      environment: s.lightMap ? { map: s.lightMap, rotation: s.lightMapRotation } : undefined,
       clips: clipPlanes(s.cuts, frame.position, frame.dimensions),
       labels: s.regions ? { show: true, mix: s.labelMix, keep: s.keep, hidden: s.hidden } : { show: false },
       background: [0, 0, 0, 0],
@@ -413,7 +419,7 @@ class AnatomicalRendering {
     const local = this.saved.where === "browser" ? this.local : undefined;
     const sid = local ? "local" : this.session?.status === "ready" ? this.session.id : undefined;
     if (sid === undefined || (local && !this.localText.startsWith("level"))) return;
-    const look = JSON.stringify([this.saved.box, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
+    const look = JSON.stringify([this.saved.box, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
     const key = viewKey(frame.invViewProjection, frame.width, frame.height) + look;
     const scale = frame.moving ? 0.5 : 1;
     if (key === this.lastKey && !(this.lastScale < 1 && !frame.moving)) return;
@@ -664,6 +670,11 @@ class AnatomicalRendering {
         field("Light (azimuth, elevation °)", el("div", { style: "display: flex; gap: 6px" },
           numberInput(s.lightAzimuth, (v) => this.save((x) => (x.lightAzimuth = v)), { step: "10", style: "width: 70px" }),
           numberInput(s.lightElevation, (v) => this.save((x) => (x.lightElevation = v)), { step: "10", style: "width: 70px" }))),
+        s.where === "host" && (this.serviceInfo?.lightmaps?.length ?? 0) > 0
+          ? field("Light map", el("div", { style: "display: flex; gap: 6px" },
+              select([["", "sky colours (the preset's)"], ...this.serviceInfo!.lightmaps!.map((m): [string, string] => [m, m])], s.lightMap, (v) => this.save((x) => (x.lightMap = v))),
+              numberInput(s.lightMapRotation, (v) => this.save((x) => (x.lightMapRotation = v)), { step: "15", style: "width: 60px", title: "Turn the light map (degrees)" })), "Image-based light: HDR panoramas (CC0, Poly Haven)")
+          : "",
         el("h4", {}, "View"),
         el("div", { style: "display: flex; gap: 4px; flex-wrap: wrap" },
           ...ANATOMICAL_VIEWS.map((v) => button(v.name, () => this.ctx.viewer.patchState((ng) => void ((ng as { projectionOrientation?: number[] }).projectionOrientation = orientationLooking(v.forward, v.up)))))),

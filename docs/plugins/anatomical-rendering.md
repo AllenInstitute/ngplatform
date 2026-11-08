@@ -50,6 +50,10 @@ It renders in one of two places:
   the tissue, so one preset suits scans of different scaling.
 - **Density** (opacity per mm), **Exposure**, and the key light's direction
   (relative to the camera, so the light follows as you turn the view).
+- **Light map** (on a host): image-based light from an HDR panorama
+  (studio, photo studio, sky; CC0 images from [Poly Haven](https://polyhaven.com),
+  reduced to 256 × 128), turned about the view's vertical; or the preset's
+  sky colours.
 - **View**: Left, Right, Anterior, Posterior, Superior and Inferior turn the
   3-D view to those sides (for images in RAS: x right, y anterior, z up).
 - **Cuts**: planes through the current position across x, y or z, keeping

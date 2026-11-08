@@ -22,7 +22,7 @@ describe("the browser renderer's parameters", () => {
     r.grid = [31, 37, 30];
     const { P } = r.pack(view as never, 834, 684);
     for (const f of params.fields) {
-      if (["FRAME", "STEP", "OPAQUE_LIMIT", "CROP_LO", "CROP_HI"].includes(f.name)) continue;
+      if (["FRAME", "STEP", "OPAQUE_LIMIT", "CROP_LO", "CROP_HI"].includes(f.name) || !(f.name in ref)) continue;
       const got = Array.from(P.slice(OFFSETS[f.name], OFFSETS[f.name] + f.size));
       const want = (ref as Record<string, number[]>)[f.name];
       got.forEach((g, i) => expect(g, `${f.name}[${i}]`).toBeCloseTo(want[i], Math.abs(want[i]) > 1000 ? -1 : 3));

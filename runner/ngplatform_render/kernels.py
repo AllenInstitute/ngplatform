@@ -92,6 +92,7 @@ struct Scene {
   const unsigned short* lab; // label volume (x fastest), or null
   const float* lut;          // NLUT x (r, g, b, opacity scale)
   const float* lutflags;     // NLUT x (keep-when-cut)
+  cudaTextureObject_t env;   // light map (latitude-longitude, rgba float), when P[P_ENVMAP] > 0
 };
 
 __device__ __forceinline__ float texval(const Scene& S, V3 v) {
@@ -238,7 +239,15 @@ __device__ float track(const Scene& S, V3 ow, V3 dw, V3 ov, V3 dv, float t0, flo
   return mode == 0 ? -1.f : T;
 }
 
-__device__ __forceinline__ V3 envlight(const float* P, V3 d) {
+__device__ __forceinline__ V3 envlight(const Scene& S, V3 d) {
+  const float* P = S.P;
+  if (P[P_ENVMAP] > 0.f) {
+    float x = dot3(d, pv(P, P_ENV_RIGHT)), y = dot3(d, pv(P, P_ENV_UP)), z = dot3(d, pv(P, P_ENV_BACK));
+    float phi = atan2f(x, -z) + P[P_ENV_ROT];
+    float th = acosf(fminf(fmaxf(y, -1.f), 1.f));
+    float4 c = tex2D<float4>(S.env, phi * 0.15915494f + 0.5f, th * 0.31830989f);
+    return v3(c.x, c.y, c.z) * P[P_ENV_SCALE];
+  }
   float u = dot3(d, pv(P, P_ENV_UP));
   V3 top = pv(P, P_ENV_TOP), hor = pv(P, P_ENV_HORIZON), bot = pv(P, P_ENV_BOTTOM);
   V3 c = u > 0.f ? hor * (1.f - u) + top * u : hor * (1.f + u) + bot * (-u);
@@ -314,11 +323,11 @@ __device__ __forceinline__ void ray(const float* P, int x, int y, int W, int H, 
 }
 
 extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const float* tf, const float* maj,
-                                 const unsigned short* lab, const float* lut, const float* lutflags,
+                                 const unsigned short* lab, const float* lut, const float* lutflags, cudaTextureObject_t env,
                                  float4* accum, int W, int H) {
   int x = blockIdx.x * blockDim.x + threadIdx.x, y = blockIdx.y * blockDim.y + threadIdx.y;
   if (x >= W || y >= H) return;
-  Scene S; S.P = P; S.vol = vol; S.tf = tf; S.maj = maj; S.lab = lab; S.lut = lut; S.lutflags = lutflags;
+  Scene S; S.P = P; S.vol = vol; S.tf = tf; S.maj = maj; S.lab = lab; S.lut = lut; S.lutflags = lutflags; S.env = env;
   Rng rng; rng.s = pcg((u32)(y * W + x) ^ pcg((u32)P[P_FRAME] * 9781u + 1u));
   V3 ow, dw;
   ray(P, x, y, W, H, rnd(rng), rnd(rng), rng, &ow, &dw, true);
@@ -336,7 +345,7 @@ extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const 
         L = pv(P, P_BG) * P[P_BG + 3];
         alpha = P[P_BG + 3];
       } else {
-        L = L + thr * envlight(P, dw);
+        L = L + thr * envlight(S, dw);
       }
       break;
     }
@@ -397,7 +406,7 @@ extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const 
 
 // Where each pixel's ray first becomes mostly opaque: GL depth (0..1) and the world distance, or 1 / -1.
 extern "C" __global__ void firsthit(const float* P, cudaTextureObject_t vol, const float* tf, const float* maj,
-                                    const unsigned short* lab, const float* lut, const float* lutflags,
+                                    const unsigned short* lab, const float* lut, const float* lutflags, cudaTextureObject_t env,
                                     float* depth, int W, int H) {
   int x = blockIdx.x * blockDim.x + threadIdx.x, y = blockIdx.y * blockDim.y + threadIdx.y;
   if (x >= W || y >= H) return;

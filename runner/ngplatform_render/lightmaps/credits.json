@@ -1,0 +1,20 @@
+[
+ {
+  "name": "studio",
+  "source": "https://polyhaven.com/a/studio_small_09",
+  "licence": "CC0",
+  "made": "1k .hdr, means of 4x4 blocks to 256 x 128, float16"
+ },
+ {
+  "name": "photo-studio",
+  "source": "https://polyhaven.com/a/brown_photostudio_02",
+  "licence": "CC0",
+  "made": "1k .hdr, means of 4x4 blocks to 256 x 128, float16"
+ },
+ {
+  "name": "sky",
+  "source": "https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky",
+  "licence": "CC0",
+  "made": "1k .hdr, means of 4x4 blocks to 256 x 128, float16"
+ }
+]

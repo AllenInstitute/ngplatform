@@ -69,6 +69,7 @@ export interface ServiceInfo {
   version: string;
   gpu: { backend: string; name?: string; free_mb?: number; total_mb?: number; error?: string };
   presets: string[];
+  lightmaps?: string[];
 }
 
 export interface PresetInfo {
@@ -132,6 +133,8 @@ export interface ViewSpec {
   max_bounces?: number;
   /** Filter the image while it has few samples (the service's; default on). */
   denoise?: boolean;
+  /** The light: a light map by name ("" for the preset's sky colours), turned about the camera's up by `rotation` degrees. */
+  environment?: { map?: string; rotation?: number; scale?: number };
   max_samples?: number;
   aperture?: number;
   focus?: number;

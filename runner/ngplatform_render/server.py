@@ -35,6 +35,7 @@ from typing import Any
 import numpy as np
 
 from . import __version__
+from .lightmaps import names as lightmap_names
 from .presets import Preset, builtin
 
 MAX_BODY = 8 << 20
@@ -162,6 +163,14 @@ class Session:
             preset = Preset.from_dict(pr)
         if view.get("overrides"):
             preset = preset.with_overrides(**view["overrides"])
+        if view.get("environment"):
+            # The light: a light map by name ("" for the preset's sky colours), its turn and strength.
+            env = {**preset.environment, **view["environment"]}
+            if not env.get("map"):
+                env.pop("map", None)
+            elif env["map"] not in lightmap_names():
+                raise BadRequest(f"no light map {env['map']!r}")
+            preset = preset.with_overrides(environment=env)
         # The volume (and labels) in world coordinates.
         vol_world = wfp @ L.affine
         if R.volume is None or not np.allclose(R.volume.world_from_voxel, vol_world):
@@ -494,7 +503,7 @@ class Handler(BaseHTTPRequestHandler):
         S = self.server
         try:
             if method == "GET" and parts in ([], ["info"]):
-                self._json(200, {"service": "render", "version": __version__, "gpu": S.gpu(), "presets": list(builtin())})
+                self._json(200, {"service": "render", "version": __version__, "gpu": S.gpu(), "presets": list(builtin()), "lightmaps": lightmap_names()})
             elif method == "GET" and parts == ["presets"]:
                 self._json(200, [p.to_dict() for p in builtin().values()])
             elif method == "POST" and parts == ["sessions"]:
