@@ -129,7 +129,9 @@ Organ Atlas serves most of its scans; on a host).
 
 Each organ's tissues were given colours measured on openly licensed
 photographs of real organs: 75 photographs from many photographers (4 to 8
-an organ), each tissue marked by boxes on them, and photographs with
+an organ) with each tissue marked by boxes, of which 54 are used (not those
+with strong casts and nothing neutral, animal fat where human is shown, or
+fixed tissue where fresh is shown for a fresh look); photographs with
 something neutral in them (a steel table, paper, a white background)
 white-balanced on it. Each photograph's own exposure and cast are taken
 out by fitting every tissue's colour together with an offset per
