@@ -127,6 +127,8 @@ export interface ViewSpec {
   clips?: [number, number, number, number][];
   labels?: { show?: boolean; mix?: number; hidden?: number[]; keep?: number[]; colors?: Record<string, [number, number, number, number]> };
   background?: [number, number, number, number];
+  /** A clip box: fractions (0..1) of the volume along its x, y, z, low and high. */
+  crop_fraction?: [[number, number, number], [number, number, number]];
   max_bounces?: number;
   max_samples?: number;
   aperture?: number;
@@ -172,6 +174,12 @@ export class RenderService {
   }
   setView(id: string, view: ViewSpec): Promise<{ version: number }> {
     return call(this.link, "PUT", `/sessions/${id}/view`, view);
+  }
+  /** One view path-traced to a sample count at a size, as a PNG. */
+  async still(id: string, spec: Record<string, unknown>): Promise<Blob> {
+    const r = await go(this.link, `/sessions/${id}/still`, { method: "POST", body: JSON.stringify(spec) }, true);
+    if (!r.ok) throw new ServiceError(`still: ${((await r.json().catch(() => ({}))) as { error?: string }).error ?? r.status}`);
+    return r.blob();
   }
   movie(id: string, spec: Record<string, unknown>): Promise<MovieInfo> {
     return call(this.link, "POST", `/sessions/${id}/movies`, spec);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { halfToFloat, linkOf } from "../client.js";
 import { parseHostText, readSaved } from "../plugin.js";
-import { clipPlanes, columnMajor, displayFromPhysical, lightDirection, omeZarrSource, unitMm } from "../view.js";
+import { ANATOMICAL_VIEWS, clipPlanes, columnMajor, displayFromPhysical, lightDirection, omeZarrSource, orientationLooking, unitMm } from "../view.js";
 
 const MM = { names: ["x", "y", "z"], scales: [1e-3, 1e-3, 1e-3], units: ["m", "m", "m"] };
 
@@ -40,5 +40,19 @@ describe("anatomical rendering views", () => {
     const s = readSaved({ cuts: "bad", budget: -1 });
     expect(s.cuts).toHaveLength(3);
     expect(s.on).toBe(false);
+  });
+
+  it("cuts are offset in mm whatever the display unit", () => {
+    const um = { names: ["x", "y", "z"], scales: [1e-4, 1e-4, 1e-4], units: ["m", "m", "m"] };
+    // 2 mm at 100 µm display units is 20 units.
+    expect(clipPlanes([{ axis: "x", keep: 1, offset: 2, on: true }], [100, 0, 0], um)).toEqual([[1, 0, 0, -120]]);
+  });
+
+  it("makes Neuroglancer orientations for anatomical views", () => {
+    const q = orientationLooking([1, 0, 0], [0, 0, 1]);
+    const want = [-0.5, 0.5, -0.5, 0.5];
+    const sign = Math.sign(q[3]) || 1;
+    q.forEach((v, i) => expect(v * sign).toBeCloseTo(want[i], 6));
+    for (const v of ANATOMICAL_VIEWS) expect(Math.hypot(...orientationLooking(v.forward, v.up))).toBeCloseTo(1, 9);
   });
 });

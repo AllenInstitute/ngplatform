@@ -53,6 +53,40 @@ def camera_from_inverse(inv_cm: list[float], center=None) -> tuple[Camera, float
     return Camera(eye, target, up, fovy), half_w / half_h, near, far
 
 
+def reshaped(inv_cm: list[float], aspect: float, center=None) -> list[float]:
+    """The same camera (eye, target, up, vertical field of view) at another aspect, column-major."""
+    cam, _, near, far = camera_from_inverse(inv_cm, center)
+    vp = look_at(cam.eye, cam.target, cam.up, cam.fovy, aspect, near, far)
+    return np.linalg.inv(vp).T.ravel().tolist()
+
+
+def rotation_frames(view: dict[str, Any], axis: str, degrees: float, step: float, aspect: float | None = None) -> list[dict[str, Any]]:
+    """Views turning about the view's orbit centre, by `step` degrees up to `degrees` (360: a full
+    circle, 180: half): about the camera's up axis ("vertical") or its right axis ("horizontal")."""
+    if step <= 0 or degrees <= 0:
+        raise ValueError("step and degrees must be positive")
+    cam, asp, near, far = camera_from_inverse(view["inv_view_projection"], view.get("orbit_center"))
+    centre = np.asarray(view.get("orbit_center") or cam.target, np.float64)
+    off = cam.eye - centre
+    fwd = cam.target - cam.eye
+    fwd /= np.linalg.norm(fwd)
+    right = np.cross(fwd, cam.up)
+    right /= np.linalg.norm(right)
+    k = cam.up / np.linalg.norm(cam.up) if axis == "vertical" else right
+    n = int(np.floor(degrees / step + 1e-9)) + (0 if abs(degrees - 360) < 1e-9 else 1)
+    out = []
+    for i in range(n):
+        t = np.radians(i * step)
+        # Rodrigues' rotation of the eye's offset and the up vector about k.
+        rot = lambda v: v * np.cos(t) + np.cross(k, v) * np.sin(t) + k * (k @ v) * (1 - np.cos(t))  # noqa: E731
+        eye, up = centre + rot(off), rot(cam.up)
+        vp = look_at(eye, centre, up, cam.fovy, aspect or asp, near, far)
+        v = dict(view)
+        v["inv_view_projection"] = np.linalg.inv(vp).T.ravel().tolist()
+        out.append(v)
+    return out
+
+
 def _lerp(a, b, u):
     if isinstance(a, (int, float)) and isinstance(b, (int, float)) and not isinstance(a, bool):
         return a + (b - a) * u

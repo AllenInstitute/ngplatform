@@ -13,7 +13,7 @@ import { hostLink, type Link, linkOf, type MovieInfo, type PresetInfo, RenderSer
 import { PictureDrawer } from "./draw.js";
 import { LocalRenderer, PRESETS as LOCAL_PRESETS } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
-import { clipPlanes, type Cut, displayFromPhysical, lightDirection, omeZarrSource, unitMm, viewKey } from "./view.js";
+import { ANATOMICAL_VIEWS, clipPlanes, type Cut, displayFromPhysical, lightDirection, omeZarrSource, orientationLooking, unitMm, viewKey } from "./view.js";
 
 export interface Keyframe {
   time: number;
@@ -40,6 +40,11 @@ export interface Saved {
   budget: number;
   maxSamples: number;
   keyframes: Keyframe[];
+  /** A clip box: fractions of the volume along x, y, z. */
+  box: { on: boolean; lo: [number, number, number]; hi: [number, number, number] };
+  /** Presets loaded from files (as the service takes them). */
+  customPresets: Record<string, unknown>[];
+  rotation: { axis: "vertical" | "horizontal"; degrees: number; step: number };
   movie: { fps: number; width: number; height: number; samples: number; easing: "smooth" | "linear" };
 }
 
@@ -71,6 +76,9 @@ export function readSaved(raw: unknown): Saved {
     budget: num(s.budget, 4e8),
     maxSamples: num(s.maxSamples, 512),
     keyframes: Array.isArray(s.keyframes) ? s.keyframes : [],
+    box: { on: s.box?.on === true, lo: s.box?.lo ?? [0, 0, 0], hi: s.box?.hi ?? [1, 1, 1] },
+    customPresets: Array.isArray(s.customPresets) ? s.customPresets.filter((p) => p && typeof (p as { name?: unknown }).name === "string") : [],
+    rotation: { axis: "vertical", degrees: 360, step: 2, ...(s.rotation ?? {}) },
     movie: { fps: 25, width: 1280, height: 720, samples: 128, easing: "smooth", ...(s.movie ?? {}) },
   };
 }
@@ -385,8 +393,9 @@ class AnatomicalRendering {
       world_from_physical: wfp,
       orbit_center: Array.from(frame.position),
       unit_mm: unitMm(frame.dimensions),
-      preset: s.preset || "HiP-CT brain",
+      preset: (s.customPresets.find((p) => p.name === s.preset) as Record<string, unknown> | undefined) ?? (s.preset || "HiP-CT brain"),
       overrides,
+      crop_fraction: s.box.on ? [s.box.lo, s.box.hi] : undefined,
       light: { direction: lightDirection(s.lightAzimuth, s.lightElevation), camera_space: true },
       clips: clipPlanes(s.cuts, frame.position, frame.dimensions),
       labels: s.regions ? { show: true, mix: s.labelMix, keep: s.keep, hidden: s.hidden } : { show: false },
@@ -400,7 +409,7 @@ class AnatomicalRendering {
     const local = this.saved.where === "browser" ? this.local : undefined;
     const sid = local ? "local" : this.session?.status === "ready" ? this.session.id : undefined;
     if (sid === undefined || (local && !this.localText.startsWith("level"))) return;
-    const look = JSON.stringify([this.saved.preset, this.saved.density, this.saved.exposure, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, frame.position]);
+    const look = JSON.stringify([this.saved.box, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, frame.position]);
     const key = viewKey(frame.invViewProjection, frame.width, frame.height) + look;
     const scale = frame.moving ? 0.5 : 1;
     if (key === this.lastKey && !(this.lastScale < 1 && !frame.moving)) return;
@@ -461,12 +470,61 @@ class AnatomicalRendering {
     this.panelUpdate?.();
   }
 
-  private async renderMovie(): Promise<void> {
+  /** The view now, full size, for a still, a rotation or a keyframe. */
+  private currentSpec(): ViewSpec | undefined {
+    const f = this.lastFrame;
+    return f ? this.viewSpec(f, 1) : this.lastSpec;
+  }
+
+  private async saveStill(): Promise<void> {
     const sid = this.session?.id;
-    if (sid === undefined || this.saved.keyframes.length < 1) return;
+    const view = this.currentSpec();
+    if (sid === undefined || view === undefined) return;
+    const m = this.saved.movie;
+    this.ctx.ui.toast(`Rendering a ${m.width} × ${m.height} still at ${m.samples * 2} samples on the host…`);
+    try {
+      const blob = await this.service!.still(sid, { view, width: m.width, height: m.height, samples: m.samples * 2, name: "anatomical-rendering" });
+      downloadBlob(blob, "anatomical-rendering.png");
+    } catch (e) {
+      this.ctx.ui.toast(`Still: ${(e as Error).message}`, "error");
+    }
+  }
+
+  private async renderRotation(): Promise<void> {
+    const view = this.currentSpec();
+    if (view === undefined) return;
+    const r = this.saved.rotation;
+    await this.renderMovie({ keyframes: [{ time: 0, view: { ...view, scale: 1 } }], rotation: r, name: `rotation-${r.axis}-${r.degrees}` });
+  }
+
+  private loadPresetFile(): void {
+    const input = el("input", { type: "file", accept: ".json,application/json" }) as HTMLInputElement;
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const data = JSON.parse(await file.text());
+        const list = (Array.isArray(data) ? data : [data]).filter((p) => p && typeof p.name === "string" && Array.isArray(p.stops));
+        if (list.length === 0) throw new Error("no preset in it (a preset has a name and stops)");
+        this.save((x) => {
+          const names = new Set(list.map((p: { name: string }) => p.name));
+          x.customPresets = [...x.customPresets.filter((p) => !names.has(p.name as string)), ...list];
+          x.preset = list[0].name;
+        });
+        this.panelUpdate?.();
+      } catch (e) {
+        this.ctx.ui.toast(`Preset file: ${(e as Error).message}`, "error");
+      }
+    };
+    input.click();
+  }
+
+  private async renderMovie(extra?: Record<string, unknown>): Promise<void> {
+    const sid = this.session?.id;
+    if (sid === undefined || (extra === undefined && this.saved.keyframes.length < 1)) return;
     const m = this.saved.movie;
     try {
-      let info = await this.service!.movie(sid, { keyframes: this.saved.keyframes, fps: m.fps, width: m.width, height: m.height, samples: m.samples, easing: m.easing, name: "anatomical-rendering" });
+      let info = await this.service!.movie(sid, { keyframes: this.saved.keyframes, fps: m.fps, width: m.width, height: m.height, samples: m.samples, easing: m.easing, name: "anatomical-rendering", ...(extra ?? {}) });
       this.movie = info;
       this.panelUpdate?.();
       while (info.status === "queued" || info.status === "running") {
@@ -510,7 +568,8 @@ class AnatomicalRendering {
       const imgs = this.images();
       const segs = this.segmentations();
       const presetList = s.where === "browser" ? LOCAL_PRESETS.map((p) => ({ name: p.name, modality: p.modality ?? "", density: p.density })) : this.presets;
-      const presetOptions: [string, string][] = presetList.map((p) => [p.name, p.modality ? `${p.name} (${p.modality})` : p.name]);
+      const allPresets = [...presetList, ...s.customPresets.map((p) => ({ name: String(p.name), modality: "from a file", density: Number(p.density ?? 40) }))];
+      const presetOptions: [string, string][] = allPresets.map((p) => [p.name, p.modality ? `${p.name} (${p.modality})` : p.name]);
       const hostText = el("input", { type: "text", value: this.host.address, style: "width: 100%", title: "The runner's address (or a pairing link), e.g. http://localhost:7000 at the end of an SSH tunnel" }) as HTMLInputElement;
       const tokenText = el("input", { type: "password", value: this.host.token, style: "width: 100%", placeholder: "pairing token" }) as HTMLInputElement;
       const via = el("input", { type: "checkbox" }) as HTMLInputElement;
@@ -532,7 +591,12 @@ class AnatomicalRendering {
           on,
           el("span", {}, `Cut across ${c.axis}`),
           select([["-1", "keep −"], ["1", "keep +"]], String(c.keep), (v) => this.save((x) => (x.cuts[i].keep = Number(v) as 1 | -1))),
-          numberInput(c.offset, (v) => this.save((x) => (x.cuts[i].offset = v)), { step: "1", style: "width: 70px", title: "Offset from the position (display units)" }),
+          (() => {
+            const r = el("input", { type: "range", min: "-100", max: "100", step: "0.5", value: String(c.offset), style: "width: 90px", title: "Offset from the position (mm)" }) as HTMLInputElement;
+            r.onchange = () => this.save((x) => (x.cuts[i].offset = Number(r.value)));
+            return r;
+          })(),
+          numberInput(c.offset, (v) => this.save((x) => (x.cuts[i].offset = v)), { step: "1", style: "width: 56px", title: "Offset from the position (mm)" }),
         );
       };
       const regions = el("input", { type: "checkbox" }) as HTMLInputElement;
@@ -590,13 +654,31 @@ class AnatomicalRendering {
         })(), el("b", {}, "Render")),
         field("Image", imgs.length ? select(imgs.map((l) => [l.name, l.name]), this.target()?.name ?? "", (v) => this.save((x) => (x.layer = v))) : el("span", { class: "muted" }, "No OME-Zarr image in the scene")),
         field("Preset", presetOptions.length ? select(presetOptions, s.preset, (v) => this.save((x) => (x.preset = v))) : el("span", { class: "muted" }, "(connect first)")),
+        button("Load a preset file…", () => this.loadPresetFile(), "A JSON preset (or a list of them): name, domain, stops of value, colour and opacity, and material"),
         field("Density (per mm)", numberInput(s.density ?? Number(this.presets.find((p) => p.name === s.preset)?.density ?? 40), (v) => this.save((x) => (x.density = v)), { step: "1", min: "0" })),
         field("Exposure", numberInput(s.exposure, (v) => this.save((x) => (x.exposure = v)), { step: "0.1", min: "0" })),
         field("Light (azimuth, elevation °)", el("div", { style: "display: flex; gap: 6px" },
           numberInput(s.lightAzimuth, (v) => this.save((x) => (x.lightAzimuth = v)), { step: "10", style: "width: 70px" }),
           numberInput(s.lightElevation, (v) => this.save((x) => (x.lightElevation = v)), { step: "10", style: "width: 70px" }))),
+        el("h4", {}, "View"),
+        el("div", { style: "display: flex; gap: 4px; flex-wrap: wrap" },
+          ...ANATOMICAL_VIEWS.map((v) => button(v.name, () => this.ctx.viewer.patchState((ng) => void ((ng as { projectionOrientation?: number[] }).projectionOrientation = orientationLooking(v.forward, v.up)))))),
         el("h4", {}, "Cuts (through the position)"),
         cutRow(0), cutRow(1), cutRow(2),
+        el("label", { style: "display: flex; gap: 6px; align-items: center" }, (() => {
+          const cb = el("input", { type: "checkbox" }) as HTMLInputElement;
+          cb.checked = s.box.on;
+          cb.onchange = () => this.save((x) => (x.box.on = cb.checked));
+          return cb;
+        })(), "Clip box (fractions of the volume)"),
+        ...(s.box.on ? (["x", "y", "z"] as const).map((axis, a) => {
+          const slider = (which: "lo" | "hi") => {
+            const r = el("input", { type: "range", min: "0", max: "1", step: "0.01", value: String(s.box[which][a]), style: "width: 90px", title: `${which === "lo" ? "Low" : "High"} ${axis}` }) as HTMLInputElement;
+            r.onchange = () => this.save((x) => (x.box[which][a] = Number(r.value)));
+            return r;
+          };
+          return el("div", { style: "display: flex; gap: 6px; align-items: center" }, el("span", { style: "width: 14px" }, axis), slider("lo"), slider("hi"));
+        }) : []),
         el("h4", {}, "Regions"),
         el("label", { style: "display: flex; gap: 6px; align-items: center" }, regions, "Colour by a segmentation's regions"),
         segs.length ? field("Segmentation", select(segs.map((l) => [l.name, l.name]), segs.find((x) => x.name === s.labels)?.name ?? segs[0].name, (v) => this.save((x) => (x.labels = v)))) : el("p", { class: "muted" }, "No OME-Zarr segmentation in the scene."),
@@ -623,10 +705,16 @@ class AnatomicalRendering {
           field("height", numberInput(s.movie.height, (v) => this.save((x) => (x.movie.height = v)), { style: "width: 70px" })),
           field("samples", numberInput(s.movie.samples, (v) => this.save((x) => (x.movie.samples = v)), { style: "width: 60px" })),
           field("camera", select([["smooth", "slows at keyframes"], ["linear", "steady"]], s.movie.easing, (v) => this.save((x) => (x.movie.easing = v as "smooth" | "linear"))))),
-        el("div", { style: "display: flex; gap: 6px" },
+        el("div", { style: "display: flex; gap: 6px; flex-wrap: wrap" },
+          button("Save still (PNG)", () => void this.saveStill(), "The view now at the movie's size, path-traced to twice its samples"),
           button("Render movie on the host", () => void this.renderMovie()),
           movie?.status === "running" ? button("Cancel", () => void this.service?.cancelMovie(movie.id)) : "",
           movie?.status === "done" ? button("Download", () => void this.service!.movieFile(movie.id).then((b) => downloadBlob(b, "anatomical-rendering.mp4"))) : ""),
+        el("div", { style: "display: flex; gap: 6px; flex-wrap: wrap; align-items: end; margin-top: 4px" },
+          field("rotate", select([["vertical", "about the vertical"], ["horizontal", "about the horizontal"]], s.rotation.axis, (v) => this.save((x) => (x.rotation.axis = v as "vertical" | "horizontal")))),
+          field("circle", select([["360", "full"], ["180", "half"]], String(s.rotation.degrees), (v) => this.save((x) => (x.rotation.degrees = Number(v))))),
+          field("step °", numberInput(s.rotation.step, (v) => this.save((x) => (x.rotation.step = Math.max(0.25, v))), { step: "1", style: "width: 50px" })),
+          button("Render rotation", () => void this.renderRotation(), "A turn about the position from the view now, at the movie's size and samples")),
         statusEl,
       );
       this.statusUpdate?.();

@@ -406,8 +406,9 @@ export class LocalRenderer {
     const clips = (v.clips ?? []).slice(0, 6);
     P[O.NCLIP] = clips.length;
     clips.forEach((c, i) => P.set(c, O.CLIPS + 4 * i));
-    put("CROP_LO", [-1e9, -1e9, -1e9]);
-    put("CROP_HI", [1e9, 1e9, 1e9]);
+    const crop = v.crop_fraction;
+    put("CROP_LO", crop ? crop[0].map((f, a) => f * this.size[a] - 0.5) : [-1e9, -1e9, -1e9]);
+    put("CROP_HI", crop ? crop[1].map((f, a) => f * this.size[a] - 0.5) : [1e9, 1e9, 1e9]);
     P[O.STEP] = 0.5;
     P[O.APERTURE] = v.aperture ?? 0;
     P[O.FOCUS] = v.focus ?? 0;

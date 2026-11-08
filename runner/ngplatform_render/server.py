@@ -191,6 +191,11 @@ class Session:
             mix = float(lab_spec.get("mix", 1.0))
         light = view.get("light") or {}
         crop = view.get("crop")
+        if crop is None and view.get("crop_fraction"):
+            # A clip box as fractions (0..1) of the volume along its x, y, z, in voxel coordinates.
+            lo_f, hi_f = view["crop_fraction"]
+            n = L.data.shape[::-1]
+            crop = [[float(lo_f[a]) * n[a] - 0.5 for a in range(3)], [float(hi_f[a]) * n[a] - 0.5 for a in range(3)]]
         return renderer.RenderState(
             inv_view_projection=inv, width=W, height=H, preset=preset,
             light=renderer.Light(tuple(light.get("direction", (0.4, 0.7, 0.6))), tuple(light.get("rgb", (3.2, 3.0, 2.8))), bool(light.get("camera_space", True))),
@@ -307,7 +312,7 @@ class Movie:
         from PIL import Image
 
         from . import renderer as rmod
-        from .movie import frames_for
+        from .movie import frames_for, rotation_frames
 
         try:
             self.status = "running"
@@ -324,7 +329,11 @@ class Movie:
             width, height = int(sp.get("width", 1280)), int(sp.get("height", 720))
             if not (8 <= width <= 8192 and 8 <= height <= 8192):
                 raise BadRequest("width and height must be 8 to 8192")
-            views = frames_for(sp["keyframes"], fps, sp.get("easing", "smooth"), aspect=width / height)
+            if sp.get("rotation"):
+                r = sp["rotation"]
+                views = rotation_frames(sp["keyframes"][0]["view"], r.get("axis", "vertical"), float(r.get("degrees", 360)), float(r.get("step", 2)), aspect=width / height)
+            else:
+                views = frames_for(sp["keyframes"], fps, sp.get("easing", "smooth"), aspect=width / height)
             self.out_dir.mkdir(parents=True, exist_ok=True)
             frames = self.out_dir / "frames"
             frames.mkdir(exist_ok=True)
@@ -537,6 +546,44 @@ class Handler(BaseHTTPRequestHandler):
                     version, dz, w, h = d
                     self._send(200, dz, "application/octet-stream", {"X-Version": str(version), "X-Width": str(w), "X-Height": str(h),
                                                                      "X-Format": "float16-zlib"})
+                elif method == "POST" and rest == ["still"]:
+                    # One view, path-traced to a sample count at a size, as a PNG (a renderer of its own).
+                    from PIL import Image
+
+                    from . import renderer as rmod
+
+                    if s.status != "ready":
+                        raise BadRequest("the session's volume is not loaded")
+                    body = self._body()
+                    view = dict(body.get("view") or {})
+                    w, h = int(body.get("width", view.get("width", 1920))), int(body.get("height", view.get("height", 1080)))
+                    if not (8 <= w <= 8192 and 8 <= h <= 8192):
+                        raise BadRequest("width and height must be 8 to 8192")
+                    if "inv_view_projection" not in view:
+                        raise BadRequest("view.inv_view_projection is needed")
+                    if (view.get("width"), view.get("height")) != (w, h) and view.get("width"):
+                        # The same camera at another shape: widen or narrow the view, not stretch it.
+                        from .movie import reshaped
+
+                        view["inv_view_projection"] = reshaped(view["inv_view_projection"], w / h, view.get("orbit_center"))
+                    view.update(width=w, height=h, scale=1.0)
+                    R = rmod.Renderer(s.device)
+                    L = s.loaded
+                    R.set_volume(rmod.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles))
+                    R.set_view(s._state(view, R))
+                    R.step(max(1, min(4096, int(body.get("samples", 256)))))
+                    img = R.image()
+                    bg = body.get("background")
+                    if bg is not None:
+                        a = img[..., 3:4].astype(np.float32) / 255
+                        rgb = np.clip(img[..., :3].astype(np.float32) + np.asarray(bg[:3], np.float32) * 255 * (1 - a), 0, 255).astype(np.uint8)
+                        pic = Image.fromarray(rgb)
+                    else:
+                        pic = Image.fromarray(img, "RGBA")
+                    out = io.BytesIO()
+                    pic.save(out, "PNG")
+                    del R
+                    self._send(200, out.getvalue(), "image/png", {"Content-Disposition": f'attachment; filename="{safe_name(body.get("name"), "still")}.png"'})
                 elif method == "POST" and rest == ["movies"]:
                     spec = self._body()
                     if not spec.get("keyframes"):

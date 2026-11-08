@@ -253,3 +253,18 @@ def test_local_stores_only_under_the_roots(tmp_path):
             srv.check_source(str(tmp_path / ".." / "elsewhere.zarr"))
     finally:
         srv.server_close()
+
+
+def test_rotation_ranges_and_reshaped_stills():
+    c = orbit((0, 0, 0), 100, 0, 0)
+    v = {"inv_view_projection": np.linalg.inv(c.view_projection(400, 300)).T.ravel().tolist(), "width": 400, "height": 300, "orbit_center": [0, 0, 0]}
+    full = movie.rotation_frames(v, "vertical", 360, 90)
+    assert len(full) == 4  # 0, 90, 180, 270: the last frame is not the first again
+    half = movie.rotation_frames(v, "horizontal", 180, 45)
+    assert len(half) == 5
+    eyes = [movie.camera_from_inverse(f["inv_view_projection"], [0, 0, 0])[0].eye for f in full]
+    assert [np.linalg.norm(e) for e in eyes] == pytest.approx([100] * 4, rel=1e-3)
+    assert eyes[2] == pytest.approx(-eyes[0], abs=1e-2)
+    wide = movie.reshaped(v["inv_view_projection"], 2.0, [0, 0, 0])
+    cam, aspect, _, _ = movie.camera_from_inverse(wide, [0, 0, 0])
+    assert aspect == pytest.approx(2.0) and cam.eye == pytest.approx(c.eye, abs=1e-3)
