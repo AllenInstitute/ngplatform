@@ -172,6 +172,7 @@ class Loaded:
     seconds: float = 0.0
     made: bool = False  # made by downsampling here (from the cache, or now)
     from_cache: bool = False
+    window: tuple[float, float] | None = None  # a guess at the tissue's values (data units), for "window" presets
 
 
 def _spatial_view(arr, ms: Multiscale):
@@ -290,6 +291,77 @@ def tissue_percentiles(q: np.ndarray, lo: float, hi: float) -> dict[float, float
     return out
 
 
+def guess_window(q: np.ndarray, lo: float, hi: float) -> tuple[float, float] | None:
+    """A window over the tissue of a specimen in a mounting medium (data units): from just past
+    the medium, on the side of it that holds more of the rest (tissue is usually denser), to as
+    far again as the tissue's commonest value, so that value is at the window's middle whatever
+    else (calcium, metal) the scan holds. The medium is the commonest value in a ring about the
+    scan's axis just inside its sides, and only what lies within that ring counts, so what lies
+    outside a round jar (the corners) does not."""
+    if q.ndim != 3 or min(q.shape) < 8:
+        return None
+    s = q[::2, ::2, ::2]
+    _, Y, X = s.shape
+    yy, xx = np.mgrid[:Y, :X]
+    r = np.hypot((yy - (Y - 1) / 2) / (Y / 2), (xx - (X - 1) / 2) / (X / 2))
+    ring = s[:, (r > 0.75) & (r < 0.9)]
+    inside = s[:, r < 0.9]
+    top = 255 if q.dtype == np.uint8 else 65535
+    shift = 0 if q.dtype == np.uint8 else 4
+    nb = (top >> shift) + 1
+    h = np.bincount((ring.ravel() >> shift).astype(np.int64), minlength=nb).astype(np.float64)
+    h[0] = 0
+    if h.sum() == 0:
+        return None
+    hs = np.convolve(h, np.ones(5) / 5, mode="same")
+    m = int(np.argmax(hs))
+    j0 = m
+    while j0 > 0 and hs[j0] > 0.2 * hs[m]:
+        j0 -= 1
+    j1 = m
+    while j1 < nb - 1 and hs[j1] > 0.2 * hs[m]:
+        j1 += 1
+    w = max(m - j0, j1 - m, 2)
+    allh = np.bincount((inside.ravel() >> shift).astype(np.int64), minlength=nb).astype(np.float64)
+    allh[0] = 0
+    above, below = allh[m + w:], allh[: max(0, m - w)]
+    unit = (hi - lo) / top * (1 << shift)
+    at = lambda k: lo + k * unit
+    def middle(x: np.ndarray) -> int:
+        """Bins from the window's edge (x[0]) to the tissue's commonest value: the largest peak
+        clear of the edge (the medium's tail falls away from it), or else the 99th percentile."""
+        nz = np.flatnonzero(x)
+        if nz.size == 0:
+            return 1
+        k = max(5, (int(nz[-1]) + 1) // 40) | 1  # smoothing over a 40th of the values' range (stepped data combs)
+        hs = np.convolve(x, np.ones(k) / k, mode="same")
+        best = -1
+        for i in range(k, len(hs) - 1):
+            low = hs[: i - k // 2].min()
+            if hs[i] >= hs[i - 1] and hs[i] > hs[i + 1] and hs[i] > 1.3 * low and hs[i] > 0.05 * hs.max() and (best < 0 or hs[i] > hs[best]):
+                best = i
+        if best < 0:
+            best = int(np.searchsorted(np.cumsum(x) / x.sum(), 0.99)) // 2
+        return max(best, 1)
+
+    if above.sum() >= below.sum() and above.sum() > 0:
+        return at(m + w), at(m + w + 2 * middle(above))
+    if below.sum() > 0:
+        edge = max(0, m - w)
+        return at(edge - 2 * middle(below[::-1])), at(edge)
+    return None
+
+
+def hide_outside_cylinder(q: np.ndarray, fraction: float) -> None:
+    """Clears (to the lowest value) what lies outside a cylinder about the volume's z axis, of
+    `fraction` of its half widths in x and y: the jar around a specimen scanned by HiP-CT, whose
+    wall is as dense as tissue. In place."""
+    _, Y, X = q.shape
+    yy, xx = np.mgrid[:Y, :X]
+    r = np.hypot((yy - (Y - 1) / 2) / (Y / 2), (xx - (X - 1) / 2) / (X / 2))
+    q[:, r > fraction] = 0
+
+
 def tissue_box(q: np.ndarray, affine: np.ndarray, background: float, lo: float, hi: float) -> tuple[list[float], list[float]] | None:
     """The box (physical mm, x, y, z) holding the voxels above the background, from every 4th voxel."""
     top = 255.0 if q.dtype == np.uint8 else 65535.0
@@ -367,4 +439,5 @@ def load(url: str, budget: int = 400_000_000, labels: bool | None = None, level:
     vox = tuple(float(np.linalg.norm(A[:3, c])) for c in range(3))
     name = chosen.path if factor == 1 else f"{chosen.path}/{factor}x"
     src = tuple(chosen.shape[i] for i in ms.spatial)
-    return Loaded(q, A, lo, hi, pc, name, vox, src, time.time() - t0, made, from_cache)
+    win = None if is_labels else guess_window(q, lo, hi)
+    return Loaded(q, A, lo, hi, pc, name, vox, src, time.time() - t0, made, from_cache, win)

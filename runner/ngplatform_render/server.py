@@ -99,12 +99,16 @@ class Session:
             url = v["url"]
             budget = int(v.get("budget") or 400_000_000)
             L = volumes.load(url, budget=budget, level=v.get("level"), progress=self._set_progress)
+            if v.get("cylinder"):
+                # Only a cylinder about the scan's axis (the specimen inside its jar).
+                volumes.hide_outside_cylinder(L.data, float(v["cylinder"]))
             self.loaded = L
             self.meta = {
                 "url": url, "level": L.level, "shape": list(L.data.shape), "dtype": str(L.data.dtype),
                 "voxel_mm": list(L.voxel_mm), "affine": L.affine.T.ravel().tolist(), "lo": L.lo, "hi": L.hi,
                 "percentiles": {str(k): v for k, v in sorted(L.percentiles.items())}, "source_shape": list(L.source_shape),
                 "made": L.made, "from_cache": L.from_cache, "seconds": round(L.seconds, 2),
+                "window": list(L.window) if L.window else None, "cylinder": v.get("cylinder"),
                 "tissue_mm": volumes.tissue_box(L.data, L.affine, L.percentiles.get(0.0, L.lo), L.lo, L.hi),
             }
             lab = self.spec.get("labels")
@@ -120,7 +124,7 @@ class Session:
                 return
             self._set_progress(1.0, "uploading to the GPU")
             R = renderer.Renderer(self.device)
-            R.set_volume(renderer.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles))
+            R.set_volume(renderer.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window))
             if self.closed:
                 return
             self.renderer = R
@@ -333,7 +337,7 @@ class Movie:
             # A renderer of its own, so the interactive view goes on.
             R = rmod.Renderer(S.device)
             L = S.loaded
-            R.set_volume(rmod.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles))
+            R.set_volume(rmod.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window))
             sp = self.spec
             fps = int(sp.get("fps", 25))
             samples = int(sp.get("samples", 256))
@@ -580,7 +584,7 @@ class Handler(BaseHTTPRequestHandler):
                     view.update(width=w, height=h, scale=1.0)
                     R = rmod.Renderer(s.device)
                     L = s.loaded
-                    R.set_volume(rmod.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles))
+                    R.set_volume(rmod.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window))
                     R.set_view(s._state(view, R))
                     R.step(max(1, min(4096, int(body.get("samples", 256)))))
                     img = R.image()

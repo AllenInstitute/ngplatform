@@ -10,7 +10,14 @@ of two domains:
 * ``"percentile"``: percentiles of the volume's tissue (its values above
   the background), for modalities whose values do not (MR, HiP-CT,
   histology, light-sheet), so one preset suits scans of different
-  scaling.
+  scaling;
+* ``"window"``: fractions of a window of the data's values, 0 at its low
+  end and 1 at its high end, for a specimen in a mounting medium (an
+  organ scanned by HiP-CT), whose medium can fill most of the scan and
+  sit above or below the tissue. The window is the page's (set as one
+  sets a window in a viewer), or else a guess from the volume: from just
+  past the medium seen at the scan's sides, with the tissue's commonest
+  value at 0.5 (denser tissue, calcium or metal run past 1).
 
 Presets are JSON (``presets/*.json`` here, or given whole by the app);
 ``Preset.from_dict`` reads one.
@@ -37,6 +44,7 @@ class Stop:
     value: float
     color: tuple[float, float, float]
     opacity: float
+    tissue: str = ""  # what it colours, where a preset names it
 
 
 @dataclass
@@ -51,22 +59,36 @@ class Preset:
     specular: float = 0.15
     phase_g: float = 0.0
     albedo: float = 0.9
+    # Voxels inwards (along the gradient, to the more opaque side) at which a collision takes its
+    # colour: a surface then shows the tissue beneath it, not the values between it and the
+    # medium around it (0: the colour where it is).
+    surface_inset: float = 0.0
     exposure: float = 1.0
     light_scale: float = 1.0
     environment: dict[str, Any] = field(default_factory=lambda: dict(DEFAULT_ENV))
     modality: str = ""  # what it is for: "CT", "MR", "HiP-CT", "histology", "light-sheet", "labels"
     description: str = ""
+    window: list[float] | None = None  # data values at 0 and 1 of a "window" preset (else the volume's guess)
+    organ: str = ""
+    # Where the colours came from: photographs (title, page, author, licence) and the colours measured on them.
+    reference: list[dict[str, Any]] = field(default_factory=list)
+    measured: dict[str, Any] = field(default_factory=dict)  # tissue -> its colour on the photographs (sRGB), and which
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "Preset":
         d = dict(d)
-        stops = [Stop(float(s["value"]), tuple(float(c) for c in s["color"]), float(s["opacity"])) for s in d.pop("stops", [])]
+        stops = [Stop(float(s["value"]), tuple(float(c) for c in s["color"]), float(s["opacity"]), str(s.get("tissue", ""))) for s in d.pop("stops", [])]
         env = dict(DEFAULT_ENV)
         env.update(d.pop("environment", {}) or {})
         known = {f for f in Preset.__dataclass_fields__}
         p = Preset(**{k: v for k, v in d.items() if k in known}, stops=stops, environment=env)
-        if p.domain not in ("data", "percentile"):
-            raise ValueError(f"preset {p.name!r}: domain must be 'data' or 'percentile'")
+        if p.window is not None:
+            w = [float(x) for x in p.window]
+            if len(w) != 2 or not w[1] > w[0]:
+                raise ValueError(f"preset {p.name!r}: window must be [low, high] with high > low")
+            p.window = w
+        if p.domain not in ("data", "percentile", "window"):
+            raise ValueError(f"preset {p.name!r}: domain must be 'data', 'percentile' or 'window'")
         return p
 
     def to_dict(self) -> dict[str, Any]:
@@ -99,6 +121,11 @@ def _to_texture(value: float, preset: Preset, volume) -> float:
         ks = np.array(sorted(pc))
         vs = np.array([pc[k] for k in ks])
         value = float(np.interp(value, ks, vs))
+    elif preset.domain == "window":
+        w = preset.window or getattr(volume, "window", None)
+        if not w:
+            raise ValueError("window presets need a window (the page's, or the volume's guess)")
+        value = w[0] + value * (w[1] - w[0])
     span = volume.hi - volume.lo
     return (value - volume.lo) / span if span else 0.0
 

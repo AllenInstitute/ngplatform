@@ -210,6 +210,11 @@
    "name": "ENV_ROT",
    "size": 1,
    "about": "light map turned about up, radians"
+  },
+  {
+   "name": "INSET",
+   "size": 1,
+   "about": "voxels along the gradient at which a collision takes its colour, on the more opaque side (0: where it is), so a surface shows the tissue beneath it, not the values between it and the medium"
   }
  ]
 }

@@ -124,7 +124,7 @@ export interface ViewSpec {
   /** How many mm one display unit is. */
   unit_mm?: number;
   preset: string | Record<string, unknown>;
-  overrides?: Record<string, number>;
+  overrides?: Record<string, number | number[]>;
   light?: { direction: [number, number, number]; rgb?: [number, number, number]; camera_space?: boolean };
   /** World planes (nx, ny, nz, d), kept where n.x + d >= 0. */
   clips?: [number, number, number, number][];
@@ -170,7 +170,7 @@ export class RenderService {
   presets(): Promise<PresetInfo[]> {
     return call(this.link, "GET", "/presets");
   }
-  open(volume: { url: string; budget?: number; level?: string }, labels?: { url: string }): Promise<SessionInfo> {
+  open(volume: { url: string; budget?: number; level?: string; cylinder?: number }, labels?: { url: string }): Promise<SessionInfo> {
     return call(this.link, "POST", "/sessions", { volume, labels });
   }
   session(id: string): Promise<SessionInfo> {

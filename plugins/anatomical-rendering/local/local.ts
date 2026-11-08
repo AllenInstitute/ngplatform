@@ -55,6 +55,7 @@ export interface LocalPreset {
   gradient_scale?: number;
   roughness?: number;
   specular?: number;
+  surface_inset?: number;
   phase_g?: number;
   albedo?: number;
   exposure?: number;
@@ -92,6 +93,85 @@ export function tissuePercentiles(data: Uint8Array): Map<number, number> {
   return out;
 }
 
+/**
+ * A window (0..255 here) over the tissue of a specimen in a mounting medium, as the host guesses
+ * it (volumes.guess_window): the medium is the commonest value in a ring about the scan's axis,
+ * and the window runs from just past it, on the side holding more of what lies inside the ring,
+ * to as far again as the tissue's commonest value (which is then at its middle).
+ */
+export function guessWindow(data: Uint8Array, nx: number, ny: number, nz: number): [number, number] | undefined {
+  if (Math.min(nx, ny, nz) < 8) return undefined;
+  const ring = new Float64Array(256);
+  const inside = new Float64Array(256);
+  for (let y = 0; y < ny; y += 2) {
+    for (let x = 0; x < nx; x += 2) {
+      const r = Math.hypot((y - (ny - 1) / 2) / (ny / 2), (x - (nx - 1) / 2) / (nx / 2));
+      if (r >= 0.9) continue;
+      const inRing = r > 0.75;
+      for (let z = 0; z < nz; z += 2) {
+        const v = data[(z * ny + y) * nx + x];
+        inside[v]++;
+        if (inRing) ring[v]++;
+      }
+    }
+  }
+  ring[0] = 0;
+  inside[0] = 0;
+  const hs = ring.map((_, i) => {
+    let a = 0;
+    for (let k = i - 2; k <= i + 2; ++k) if (k >= 0 && k < 256) a += ring[k];
+    return a / 5;
+  });
+  let m = 0;
+  for (let i = 1; i < 256; ++i) if (hs[i] > hs[m]) m = i;
+  if (hs[m] === 0) return undefined;
+  let j0 = m;
+  while (j0 > 0 && hs[j0] > 0.2 * hs[m]) j0--;
+  let j1 = m;
+  while (j1 < 255 && hs[j1] > 0.2 * hs[m]) j1++;
+  const w = Math.max(m - j0, j1 - m, 1);
+  let above = 0;
+  let below = 0;
+  for (let i = m + w; i < 256; ++i) above += inside[i];
+  for (let i = 0; i < m - w; ++i) below += inside[i];
+  // Bins from the window's edge to the tissue's commonest value: the largest peak clear of the edge (the
+  // medium's tail falls away from it), smoothed over a 40th of the values' range, or else the 99th percentile.
+  const middle = (x: Float64Array): number => {
+    let last = -1;
+    for (let i = 0; i < x.length; ++i) if (x[i] > 0) last = i;
+    if (last < 0) return 1;
+    const k = Math.max(5, Math.floor((last + 1) / 40)) | 1;
+    const hs = new Float64Array(x.length);
+    for (let i = 0; i < x.length; ++i) {
+      let a = 0;
+      for (let j = i - (k >> 1); j <= i + (k >> 1); ++j) if (j >= 0 && j < x.length) a += x[j];
+      hs[i] = a / k;
+    }
+    const top = Math.max(...hs);
+    let best = -1;
+    let low = Infinity;
+    for (let j = 0; j < k - (k >> 1) - 1; ++j) low = Math.min(low, hs[j]);
+    for (let i = k; i < hs.length - 1; ++i) {
+      low = Math.min(low, hs[i - (k >> 1) - 1]);
+      if (hs[i] >= hs[i - 1] && hs[i] > hs[i + 1] && hs[i] > 1.3 * low && hs[i] > 0.05 * top && (best < 0 || hs[i] > hs[best])) best = i;
+    }
+    if (best < 0) {
+      const total = x.reduce((a, b) => a + b, 0);
+      let acc = 0;
+      best = x.length - 1;
+      for (let i = 0; i < x.length; ++i) if ((acc += x[i]) / total >= 0.99) { best = i; break; }
+      best = Math.floor(best / 2);
+    }
+    return Math.max(best, 1);
+  };
+  if (above >= below && above > 0) return [m + w, m + w + 2 * middle(inside.slice(m + w))];
+  if (below > 0) {
+    const edge = Math.max(0, m - w);
+    return [edge - 2 * middle(inside.slice(0, edge).reverse()), edge];
+  }
+  return undefined;
+}
+
 function interp(x: number, xs: number[], ys: number[]): number {
   if (x <= xs[0]) return ys[0];
   for (let i = 1; i < xs.length; ++i) if (x <= xs[i]) return ys[i - 1] + ((ys[i] - ys[i - 1]) * (x - xs[i - 1])) / (xs[i] - xs[i - 1] || 1);
@@ -99,9 +179,11 @@ function interp(x: number, xs: number[], ys: number[]): number {
 }
 
 /** The preset's transfer function at TF_SIZE texture values (0..1 = data 0..255). */
-export function transferTable(p: LocalPreset, pct: Map<number, number>): Float32Array {
+export function transferTable(p: LocalPreset, pct: Map<number, number>, window?: [number, number]): Float32Array {
   const keys = [...pct.keys()].sort((a, b) => a - b);
-  const toTex = (v: number) => (p.domain === "percentile" ? interp(v, keys, keys.map((k) => pct.get(k)!)) : v) / 255;
+  const w = window ?? [0, 255];
+  const toTex = (v: number) =>
+    (p.domain === "percentile" ? interp(v, keys, keys.map((k) => pct.get(k)!)) : p.domain === "window" ? w[0] + v * (w[1] - w[0]) : v) / 255;
   const stops = p.stops.map((s) => ({ x: toTex(s.value), c: s.color, a: s.opacity })).sort((a, b) => a.x - b.x);
   const xs = stops.map((s) => s.x);
   const out = new Float32Array(TF_SIZE * 4);
@@ -204,6 +286,8 @@ export class LocalRenderer {
   private size: [number, number, number] = [1, 1, 1];
   private voxelToRas: M = [];
   private pct = new Map<number, number>();
+  /** The guessed window for "window" presets (0..255); the browser keeps its own, not the page's data values. */
+  private window: [number, number] | undefined;
   private params: GPUBuffer | undefined;
   private tf: GPUBuffer | undefined;
   private accum: GPUBuffer | undefined;
@@ -246,6 +330,7 @@ export class LocalRenderer {
     this.size = size;
     this.voxelToRas = Array.from(level.voxelToRas);
     this.pct = tissuePercentiles(data);
+    this.window = guessWindow(data, size[0], size[1], size[2]);
     // The texture (rows padded to 256 bytes for the copy).
     const [nx, ny, nz] = size;
     this.tex = device.createTexture({ size: [nx, ny, nz], dimension: "3d", format: "r8unorm", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
@@ -386,6 +471,7 @@ export class LocalRenderer {
     P[O.SPECULAR] = preset.specular ?? 0.15;
     P[O.PHASE_G] = preset.phase_g ?? 0;
     P[O.ALBEDO] = preset.albedo ?? 0.9;
+    P[O.INSET] = preset.surface_inset ?? 0;
     const [right, up, back] = cameraAxes(inv);
     const ld = v.light?.direction ?? [0.4, 0.7, 0.6];
     let L = v.light?.camera_space === false ? ld : [0, 1, 2].map((i) => ld[0] * right[i] + ld[1] * up[i] + ld[2] * back[i]);
@@ -435,7 +521,7 @@ export class LocalRenderer {
           this.resize(W, H);
           const { P, preset } = this.pack(v, W, H);
           device.queue.writeBuffer(this.params!, 0, P);
-          device.queue.writeBuffer(this.tf!, 0, transferTable(preset, this.pct));
+          device.queue.writeBuffer(this.tf!, 0, transferTable(preset, this.pct, this.window));
           device.queue.writeBuffer(this.uni!, 0, new Uint32Array([W, H, 0, 0]));
           const enc = device.createCommandEncoder();
           enc.clearBuffer(this.accum!);

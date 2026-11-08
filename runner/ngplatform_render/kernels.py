@@ -360,6 +360,13 @@ extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const 
                texval(S, v + v3(0.f, h, 0.f)) - texval(S, v - v3(0.f, h, 0.f)),
                texval(S, v + v3(0.f, 0.f, h)) - texval(S, v - v3(0.f, 0.f, h))) * 0.5f;
     float gm = len3(gv);
+    if (P[P_INSET] > 0.f && gm > 1e-6f && P[P_HAS_LABELS] <= 0.f) {
+      // The colour a little way along the gradient, on the more opaque side: the tissue beneath a surface.
+      V3 d = gv * (P[P_INSET] / gm);
+      float4 ca = tflookup(S, texval(S, v + d)), cb = tflookup(S, texval(S, v - d));
+      float4 c = ca.w >= cb.w ? ca : cb;
+      albedo = v3(c.x, c.y, c.z) * P[P_ALBEDO];
+    }
     float psurf = P[P_SHADE_MIX] * (1.f - expf(-P[P_GRAD_SCALE] * gm));
     V3 wo = dw * -1.f;
     V3 sw = w;

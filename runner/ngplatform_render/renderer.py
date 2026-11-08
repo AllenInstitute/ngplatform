@@ -52,6 +52,7 @@ class Volume:
     lo: float = 0.0  # the data value at texture 0 ..
     hi: float = 1.0  # .. and at texture 1
     percentiles: dict[float, float] = field(default_factory=dict)  # data value at each percentile (of non-background)
+    window: tuple[float, float] | None = None  # the guessed window (data values), for "window" presets
 
 
 @dataclass
@@ -306,6 +307,7 @@ class Renderer:
         P[O["SPECULAR"]] = pr.specular
         P[O["PHASE_G"]] = pr.phase_g
         P[O["ALBEDO"]] = pr.albedo
+        P[O["INSET"]] = pr.surface_inset
         # Camera axes in world, for lights given in camera space.
         right, up, back = _camera_axes(inv)
         ld = np.asarray(s.light.direction, np.float64)

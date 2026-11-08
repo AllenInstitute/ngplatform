@@ -247,10 +247,19 @@ fn trace(@builtin(global_invocation_id) gid: vec3u) {
     if (bounce == 0u) { alpha = 1.0; }
     let w = ow + dw * tc;
     let v = ov + dv * tc;
-    let albedo = medium(w, v).col * P[P_ALBEDO];
+    var albedo = medium(w, v).col * P[P_ALBEDO];
     let gv = vec3f(texval(v + vec3f(1.0, 0.0, 0.0)) - texval(v - vec3f(1.0, 0.0, 0.0)),
                    texval(v + vec3f(0.0, 1.0, 0.0)) - texval(v - vec3f(0.0, 1.0, 0.0)),
                    texval(v + vec3f(0.0, 0.0, 1.0)) - texval(v - vec3f(0.0, 0.0, 1.0))) * 0.5;
+    let gm = length(gv);
+    if (P[P_INSET] > 0.0 && gm > 1e-6) {
+      // The colour a little way along the gradient, on the more opaque side: the tissue beneath a surface.
+      let d = gv * (P[P_INSET] / gm);
+      let ca = tflookup(texval(v + d));
+      let cb = tflookup(texval(v - d));
+      let c = select(cb, ca, ca.w >= cb.w);
+      albedo = c.rgb * P[P_ALBEDO];
+    }
     let psurf = P[P_SHADE_MIX] * (1.0 - exp(-P[P_GRAD_SCALE] * length(gv)));
     let wo = -dw;
     let lvo = aff(P_VOX_FROM_WORLD, w);
