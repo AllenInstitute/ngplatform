@@ -338,7 +338,7 @@ def load(url: str, budget: int = 400_000_000, labels: bool | None = None, level:
                 src_dtype = np.dtype(chosen.dtype)
                 if src_dtype.kind in "ui":
                     data = np.clip(np.rint(data), np.iinfo(src_dtype).min, np.iinfo(src_dtype).max).astype(src_dtype)
-            tmp = cache.with_suffix(".tmp.npy")
+            tmp = cache.with_name(f"{cache.stem}.{os.getpid()}.{threading.get_ident()}.tmp.npy")
             np.save(tmp, data)
             os.replace(tmp, cache)
     A = chosen.affine.copy()

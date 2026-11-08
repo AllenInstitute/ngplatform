@@ -46,6 +46,12 @@ class BadRequest(Exception):
     pass
 
 
+def safe_name(name: Any, fallback: str = "movie") -> str:
+    """A file name of letters, digits, dots, dashes and underscores only (no folders)."""
+    s = re.sub(r"[^A-Za-z0-9._-]+", "_", str(name or "")).strip("._")
+    return s[:80] or fallback
+
+
 def _mat(v, name: str) -> np.ndarray:
     a = np.asarray(v, np.float64)
     if a.size != 16:
@@ -107,9 +113,14 @@ class Session:
                 vals = np.unique(LB.data)
                 self.label_meta = {"url": lab["url"], "level": LB.level, "shape": list(LB.data.shape), "values": [int(x) for x in vals[:4096]],
                                    "affine": LB.affine.T.ravel().tolist()}
+            if self.closed:
+                self.status, self.message = "failed", "closed while loading"
+                return
             self._set_progress(1.0, "uploading to the GPU")
             R = renderer.Renderer(self.device)
             R.set_volume(renderer.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles))
+            if self.closed:
+                return
             self.renderer = R
             self.status = "ready"
             self.message = f"level {L.level} {tuple(L.data.shape[::-1])} voxels of {', '.join(f'{x:.3g}' for x in L.voxel_mm)} mm"
@@ -129,12 +140,13 @@ class Session:
             self.cond.notify_all()
             return self.view_version
 
-    def _state(self, view: dict[str, Any]):
+    def _state(self, view: dict[str, Any], R=None):
+        """The view as the renderer takes it, placing the volume and labels on `R` (the session's own by default)."""
         from . import renderer
         from .luts import freesurfer
 
         L = self.loaded
-        R = self.renderer
+        R = R if R is not None else self.renderer
         wfp = _mat(view["world_from_physical"], "world_from_physical") if view.get("world_from_physical") else np.eye(4)
         scale = float(view.get("scale") or 1.0)
         W = max(8, int(round(int(view["width"]) * scale)))
@@ -309,21 +321,21 @@ class Movie:
             sp = self.spec
             fps = int(sp.get("fps", 25))
             samples = int(sp.get("samples", 256))
-            views = frames_for(sp["keyframes"], fps, sp.get("easing", "smooth"))
+            width, height = int(sp.get("width", 1280)), int(sp.get("height", 720))
+            if not (8 <= width <= 8192 and 8 <= height <= 8192):
+                raise BadRequest("width and height must be 8 to 8192")
+            views = frames_for(sp["keyframes"], fps, sp.get("easing", "smooth"), aspect=width / height)
             self.out_dir.mkdir(parents=True, exist_ok=True)
             frames = self.out_dir / "frames"
             frames.mkdir(exist_ok=True)
-            orig = S.renderer
+            for old in frames.glob("[0-9][0-9][0-9][0-9][0-9].png"):
+                old.unlink()  # a shorter movie in the same folder must not pick up an earlier one's frames
             for i, view in enumerate(views):
                 if self.cancelled:
                     raise RuntimeError("cancelled")
                 view = dict(view)
-                view["width"], view["height"], view["scale"] = int(sp.get("width", 1280)), int(sp.get("height", 720)), 1.0
-                S.renderer = R  # _state reads the session's renderer for label placement
-                try:
-                    st = S._state(view)
-                finally:
-                    S.renderer = orig
+                view["width"], view["height"], view["scale"] = width, height, 1.0
+                st = S._state(view, R)
                 R.set_view(st)
                 R.step(samples)
                 img = R.image()
@@ -336,8 +348,7 @@ class Movie:
             if sp.get("format", "mp4") == "mp4":
                 self.message = "encoding"
                 ff = shutil.which("ffmpeg") or "ffmpeg"
-                out = self.out_dir / (sp.get("name") or "movie")
-                out = out.with_suffix(".mp4")
+                out = self.out_dir / f"{safe_name(sp.get('name'))}.mp4"
                 cmd = [ff, "-y", "-loglevel", "error", "-framerate", str(fps), "-i", str(frames / "%05d.png"),
                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", str(sp.get("crf", 18)), str(out)]
                 subprocess.run(cmd, check=True, capture_output=True, timeout=3600)
@@ -351,6 +362,8 @@ class Movie:
             self.status = "cancelled" if self.cancelled else "failed"
             self.error = f"{type(e).__name__}: {e}"
             traceback.print_exc()
+        finally:
+            self.session = None  # a finished movie does not keep the session (and its volume) alive
 
     def info(self) -> dict[str, Any]:
         return {"id": self.id, "status": self.status, "progress": round(self.progress, 3), "message": self.message,
@@ -392,6 +405,17 @@ class RenderServer(ThreadingHTTPServer):
             return {"backend": "cuda", "name": p["name"].decode() if isinstance(p["name"], bytes) else p["name"], "free_mb": free >> 20, "total_mb": total >> 20}
         except Exception as e:  # noqa: BLE001
             return {"backend": "none", "error": f"{type(e).__name__}: {e}"}
+
+    def check_source(self, url: str) -> None:
+        """Stores on this computer are read only under the runner's folders; http(s), gs:// and s3:// stores are read as given."""
+        from .volumes import http_url
+
+        u = http_url(url)
+        if u.startswith(("http://", "https://")):
+            return
+        p = Path(u.removeprefix("file://")).expanduser().resolve()
+        if not any(p == r or r in p.parents for r in self.roots):
+            raise BadRequest("a store on this computer must be under one of the runner's folders")
 
     def output_dir(self, requested: str | None, mid: str) -> Path:
         if not requested:
@@ -467,6 +491,9 @@ class Handler(BaseHTTPRequestHandler):
                 spec = self._body()
                 if not (spec.get("volume") or {}).get("url"):
                     raise BadRequest("volume.url is needed")
+                for part in ("volume", "labels"):
+                    if (spec.get(part) or {}).get("url"):
+                        S.check_source(spec[part]["url"])
                 sid = uuid.uuid4().hex[:12]
                 with S.lock:
                     s = Session(sid, spec, S.device)
@@ -518,6 +545,9 @@ class Handler(BaseHTTPRequestHandler):
                     out = S.output_dir(spec.get("output"), mid)
                     m = Movie(mid, s, spec, out)
                     S.movies[mid] = m
+                    done = [k for k, v in S.movies.items() if v.status in ("done", "failed", "cancelled")]
+                    for k in done[:-20]:
+                        del S.movies[k]
                     self._json(200, m.info())
                 else:
                     self._json(404, {"error": "not found"})
@@ -532,7 +562,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(200, m.info())
                 elif method == "GET" and parts[2:] == ["file"] and m.file and m.file.is_file():
                     data = m.file.read_bytes()
-                    self._send(200, data, "video/mp4", {"Content-Disposition": f'attachment; filename="{m.file.name}"'})
+                    self._send(200, data, "video/mp4", {"Content-Disposition": f'attachment; filename="{safe_name(m.file.stem)}.mp4"'})
                 else:
                     self._json(404, {"error": "not found"})
             else:
@@ -582,12 +612,26 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--device", type=int, default=0, help="the CUDA device (after CUDA_VISIBLE_DEVICES)")
     p.add_argument("--out", default=None, help="where movies go by default (default <state-dir>/renders)")
     args = p.parse_args(argv)
+    if not args.token:
+        # Never open: any web page can send a simple POST to 127.0.0.1.
+        args.token = secrets.token_urlsafe(24)
+        print(f"token: {args.token}  (give it as the token; started without one)", flush=True)
     roots = [Path(r).expanduser().resolve() for r in json.loads(os.environ.get("NGP_ROOTS", "[]"))]
     state = Path(os.environ.get("NGP_STATE_DIR", "~/.ngplatform-runner")).expanduser()
     out_root = Path(args.out).expanduser().resolve() if args.out else state / "renders"
     roots.append(out_root)
     srv = RenderServer(args.port, args.token, roots, args.device, out_root)
     print(f"ngplatform render {__version__}: GPU {srv.gpu()}", flush=True)
+    if os.environ.get("NGP_SERVICE_TOKEN"):
+        # Started by a runner: end with it, however it ends (a dropped ssh session, kill -9).
+        parent = os.getppid()
+
+        def watch() -> None:
+            while os.getppid() == parent:
+                time.sleep(2)
+            os._exit(0)
+
+        threading.Thread(target=watch, daemon=True).start()
     print(f"ready http://127.0.0.1:{srv.server_port}", flush=True)
     try:
         srv.serve_forever(poll_interval=0.25)

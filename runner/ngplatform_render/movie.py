@@ -29,6 +29,8 @@ def camera_from_inverse(inv_cm: list[float], center=None) -> tuple[Camera, float
         return p[:3] / p[3]
 
     e = inv @ np.array([0.0, 0.0, 1.0, 0.0])  # the camera centre: clip (0, 0, *, 0)
+    if abs(e[3]) < 1e-12 * max(1.0, float(np.abs(e[:3]).max())):
+        raise ValueError("movies need the perspective 3-D view (this keyframe is orthographic)")
     eye = e[:3] / e[3]
     n0, f0 = un(0, 0, -1), un(0, 0, 1)
     fwd = f0 - n0
@@ -61,8 +63,9 @@ def _lerp(a, b, u):
     return a
 
 
-def frames_for(keyframes: list[dict[str, Any]], fps: int, easing: str = "smooth") -> list[dict[str, Any]]:
-    """The view of every frame; `easing` "smooth" slows the camera into and out of each keyframe, "linear" does not."""
+def frames_for(keyframes: list[dict[str, Any]], fps: int, easing: str = "smooth", aspect: float | None = None) -> list[dict[str, Any]]:
+    """The view of every frame, at `aspect` (the movie's width / height; the keyframes' own by default);
+    `easing` "smooth" slows the camera into and out of each keyframe, "linear" does not."""
     kf = sorted(keyframes, key=lambda k: float(k.get("time", 0)))
     if len(kf) == 1:
         return [kf[0]["view"]]
@@ -80,7 +83,7 @@ def frames_for(keyframes: list[dict[str, Any]], fps: int, easing: str = "smooth"
         cam = interpolate_cameras(ca, cb, u, ease=easing != "linear")
         near = na + (nb - na) * u
         far = fa + (fb - fa) * u
-        vp = look_at(cam.eye, cam.target, cam.up, cam.fovy, asp, near, far)
+        vp = look_at(cam.eye, cam.target, cam.up, cam.fovy, aspect or asp, near, far)
         view = dict(a["view"])
         for k in ("overrides", "light", "aperture", "focus", "clips"):
             if k in a["view"] and k in b["view"]:

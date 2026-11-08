@@ -126,6 +126,9 @@ def main(argv: list[str] | None = None) -> int:
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, stop)
+    # A dropped ssh session (SIGHUP) stops it too, so its services do not outlive it.
+    if hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, stop)
     try:
         server.serve_forever(poll_interval=0.25)
     except KeyboardInterrupt:

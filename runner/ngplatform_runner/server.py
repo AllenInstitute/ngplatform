@@ -548,16 +548,21 @@ class Handler(BaseHTTPRequestHandler):
         if empty:
             return
         try:
+            sent = 0
             while True:
                 data = response.read1(1 << 16)
                 if not data:
                     break
+                sent += len(data)
                 if chunked:
                     self.wfile.write(f"{len(data):x}\r\n".encode() + data + b"\r\n")
                 else:
                     self.wfile.write(data)
             if chunked:
                 self.wfile.write(b"0\r\n\r\n")
+            elif length is not None and sent < int(length):
+                # The service ended before the length it promised: closing tells the browser the answer is cut short.
+                self.close_connection = True
         except (OSError, http.client.HTTPException):
             # The service or the browser went away mid-answer: nothing more can be said on this connection.
             self.close_connection = True

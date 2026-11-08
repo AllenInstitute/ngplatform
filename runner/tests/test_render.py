@@ -197,3 +197,59 @@ def test_service_session(tmp_path, monkeypatch):
     with pytest.raises(urllib.error.HTTPError):
         call("POST", f"/sessions/{s['id']}/movies", {"keyframes": [{"time": 0, "view": {}}], "output": "/etc"})
     srv.shutdown()
+
+
+def test_movie_names_stay_in_their_folder():
+    from ngplatform_render.server import safe_name
+
+    assert safe_name("/tmp/x") == "tmp_x"
+    assert safe_name("../../../.config/x") == "config_x"
+    assert safe_name('a"b\r\nc') == "a_b_c"
+    assert safe_name("") == "movie"
+
+
+def test_labels_above_65535_keep_their_identity():
+    from ngplatform_render.renderer import label_index
+
+    data = np.array([[[0, 484682470, 65537], [1, 65537, 0]]], np.uint32)
+    ids, index = label_index(data)
+    assert list(ids) == [0, 1, 65537, 484682470]
+    assert index.dtype == np.uint16 and ids[index].tolist() == data.tolist()
+    small = np.array([[[0, 3, 7]]], np.uint16)
+    ids, index = label_index(small)
+    assert len(ids) == 8 and np.array_equal(index, small)
+
+
+def test_movie_frames_take_the_movie_shape():
+    c = orbit((0, 0, 0), 100, 0, 0)
+
+    def view(cam, w, h):
+        return {"inv_view_projection": np.linalg.inv(cam.view_projection(w, h)).T.ravel().tolist(), "width": w, "height": h, "orbit_center": [0, 0, 0]}
+
+    # Keyframes from a square panel, a 16:9 movie: the frames' projection is 16:9.
+    frames = movie.frames_for([{"time": 0, "view": view(c, 500, 500)}, {"time": 1, "view": view(orbit((0, 0, 0), 100, 30, 0), 500, 500)}], 2, aspect=16 / 9)
+    _, aspect, _, _ = movie.camera_from_inverse(frames[1]["inv_view_projection"])
+    assert aspect == pytest.approx(16 / 9, rel=1e-3)
+
+
+def test_orthographic_keyframes_are_refused():
+    ortho = np.eye(4)
+    ortho[2, 2] = -0.01
+    with pytest.raises(ValueError, match="perspective"):
+        movie.camera_from_inverse(np.linalg.inv(ortho).T.ravel().tolist())
+
+
+def test_local_stores_only_under_the_roots(tmp_path):
+    from ngplatform_render.server import BadRequest, RenderServer
+
+    srv = RenderServer(0, "tok", [tmp_path], 0, tmp_path / "renders")
+    try:
+        srv.check_source(str(tmp_path / "a.ome.zarr"))
+        srv.check_source("gs://bucket/a.ome.zarr")
+        srv.check_source("https://host/a.ome.zarr")
+        with pytest.raises(BadRequest):
+            srv.check_source("/etc/passwd")
+        with pytest.raises(BadRequest):
+            srv.check_source(str(tmp_path / ".." / "elsewhere.zarr"))
+    finally:
+        srv.server_close()

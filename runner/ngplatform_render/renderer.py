@@ -125,6 +125,18 @@ def brick_bounds(cp, data_gpu, brick: int = BRICK):
     return mn / scale, mx / scale, (gx, gy, gz)
 
 
+def label_index(data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The distinct labels (sorted) and each voxel's index among them, as uint16.  Labels 0..65535
+    are their own index; larger ones (Allen CCF's, say) are numbered in order."""
+    lo, hi = int(data.min()), int(data.max())
+    if lo >= 0 and hi < 65536:
+        return np.arange(hi + 1, dtype=np.int64), data.astype(np.uint16, copy=False)
+    ids, inverse = np.unique(data, return_inverse=True)
+    if len(ids) > 65536:
+        raise ValueError(f"{len(ids)} different labels: at most 65536 can be coloured")
+    return ids.astype(np.int64), inverse.reshape(data.shape).astype(np.uint16)
+
+
 def look_at(eye, target, up, fovy_deg: float, aspect: float, near: float, far: float) -> np.ndarray:
     """View-projection (column-major in the sense of OpenGL: returns the 4x4 as a numpy matrix M with clip = M @ p)."""
     eye, target, up = (np.asarray(a, np.float64) for a in (eye, target, up))
@@ -171,6 +183,7 @@ class Renderer:
         self.samples = 0
         self._frame = 0
         self._tf_key: Any = None
+        self._label_ids = np.zeros(0, np.int64)
 
     # ------------------------------------------------------------ data
     def set_volume(self, volume: Volume) -> None:
@@ -192,9 +205,12 @@ class Renderer:
         with self.lock, self.device:
             if labels is None:
                 self.labels, self._lab = None, None
+                self._label_ids = np.zeros(0, np.int64)
             else:
                 self.labels = labels
-                self._lab = cp.asarray(np.ascontiguousarray(labels.data.astype(np.uint16)))
+                ids, index = label_index(labels.data)
+                self._label_ids = ids
+                self._lab = cp.asarray(np.ascontiguousarray(index))
             self._lut_key = None
             self.reset()
 
@@ -232,16 +248,25 @@ class Renderer:
                 self._lutflags = cp.zeros(1, cp.float32)
             self._nlut = 0
             return
-        top = max(max(state.label_colors.keys(), default=0), 1) + 1
+        # One entry per distinct label in the volume (the GPU holds each voxel's index among them).
+        ids = self._label_ids
+        top = max(len(ids), 1)
         lut = np.zeros((top, 4), np.float32)
         lut[:, 0] = -1.0  # labels not given (0 among them) leave the image's own colour and opacity
-        for k, (r, g, b, a) in state.label_colors.items():
-            if 0 <= k < top:
-                lut[k] = (r, g, b, a)
         flags = np.zeros(top, np.float32)
+
+        def where(k: int) -> int:
+            i = int(np.searchsorted(ids, k))
+            return i if i < len(ids) and ids[i] == k else -1
+
+        for k, (r, g, b, a) in state.label_colors.items():
+            i = where(int(k))
+            if i >= 0:
+                lut[i] = (r, g, b, a)
         for k in state.keep_labels:
-            if 0 <= k < top:
-                flags[k] = 1.0
+            i = where(int(k))
+            if i >= 0:
+                flags[i] = 1.0
         self._lut = cp.asarray(lut.ravel())
         self._lutflags = cp.asarray(flags)
         self._nlut = top
@@ -302,7 +327,7 @@ class Renderer:
             P[O["LABEL_FROM_WORLD"]:O["LABEL_FROM_WORLD"] + 12] = lfw[:3, :4].ravel()
             lz, ly, lx = self.labels.data.shape
             P[O["LDIMS"]:O["LDIMS"] + 3] = (lx, ly, lz)
-            P[O["NLUT"]] = max(max(s.label_colors.keys(), default=0), 1) + 1
+            P[O["NLUT"]] = max(len(self._label_ids), 1)
             P[O["LABEL_MIX"]] = s.label_mix
         P[O["STEP"]] = 0.5
         P[O["APERTURE"]] = s.aperture

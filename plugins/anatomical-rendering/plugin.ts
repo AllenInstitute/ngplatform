@@ -270,11 +270,17 @@ class AnatomicalRendering {
     this.abort = abort;
     try {
       let info = await service.open({ url, budget: this.saved.budget }, labels ? { url: labels } : undefined);
+      if (abort.signal.aborted) {
+        // Another image (or detail) was asked for while this one was opening: it is not wanted.
+        void service.close(info.id).catch(() => undefined);
+        return;
+      }
       this.session = info;
       while (info.status === "loading" && !abort.signal.aborted) {
         this.statusUpdate?.();
         await new Promise((r) => setTimeout(r, 400));
         info = await service.session(info.id);
+        if (abort.signal.aborted) break;
         this.session = info;
       }
       this.statusUpdate?.();
