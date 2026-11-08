@@ -631,9 +631,20 @@ class AnatomicalRendering {
       );
       this.statusUpdate?.();
     };
-    this.panelUpdate = render;
+    // Rebuilt after the event that changed the state has finished (a field's change comes with its blur).
+    let pending = false;
+    let alive = true;
+    this.panelUpdate = () => {
+      if (pending) return;
+      pending = true;
+      setTimeout(() => {
+        pending = false;
+        if (alive) render();
+      }, 0);
+    };
     render();
     return () => {
+      alive = false;
       this.panelUpdate = undefined;
       this.statusUpdate = undefined;
     };
