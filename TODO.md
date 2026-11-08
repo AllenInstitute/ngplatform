@@ -6,11 +6,12 @@ items are done (and say where); the rest are in rough order of work.
 
 ## Asked for on 2026-11-07: GPUs over SSH, anatomical rendering
 
-- [x] Remote compute over SSH: the runner's `--public-url`, services (`--service NAME=COMMAND`, `/svc/<name>/…`), `python -m ngplatform_runner tunnel HOST` (ssh -L, start the remote runner, the pairing link), several paired computers in the Jobs tab and `ctx.hosts` (branch `remote-host`, merged into `anatomical-rendering`). Not yet run over a real ssh (no login worked from czi001); tested with a forwarder standing in for `ssh -L`.
+- [x] Remote compute over SSH: the runner's `--public-url`, services (`--service NAME=COMMAND`, `/svc/<name>/…`), `python -m ngplatform_runner tunnel HOST` (ssh -L, start the remote runner, the pairing link), several paired computers in the Jobs tab and `ctx.hosts` (branch `remote-host`, merged into `anatomical-rendering`). Run over real OpenSSH on 2026-11-08 (a temporary sshd on czi001's 127.0.0.1:2222; `tunnel` opened it, read the token, reconnected after ssh was killed; the app rendered and made a movie through it); not yet between two computers (msm12 refuses czi001's key).
 - [x] Anatomical rendering (plugin + `runner/ngplatform_render`): CUDA path tracer as a runner service, WebGPU in the page, presets by modality and region, cuts, movies, dynamic downsampling of levels a store does not have (branch `anatomical-rendering`).
-- [ ] Try over a real SSH tunnel (msm12; a cluster node through its login node).
+- [ ] Try between two computers (msm12 to czi001; a cluster node through its login node).
+- [x] From Cinematic Anatomy and Cinematic Playground (docs/dev/cinematic-anatomy-survey.md): anatomical view buttons, cut sliders in mm, a clip box, stills, rotation ranges, preset files, HDR light maps, a denoiser for the first samples, Centre on the tissue.
 - [ ] Measure Cinematic Anatomy's functions against these (keyframe editor and export: wait for the user's notes).
-- [ ] Rendering: a denoiser and reprojection while the camera moves (Martschinke 2019, Hofmann 2020); HDR environment maps from files; bricks of finer levels near the camera (as the volume view's); the layer's own transform; several images at once; carve (a painted mask); stereo; region colours in the WebGPU renderer.
+- [ ] Rendering: reprojection while the camera moves (Martschinke 2019) and a learned denoiser (Hofmann 2020); light maps from the user's own HDR files; a transfer-function editor in the page; handles for cuts and the box in the view; an orientation cube; a gamepad; bricks of finer levels near the camera (as the volume view's); the layer's own transform; several images at once; carve (a painted mask); stereo; region colours in the WebGPU renderer.
 - [ ] chunkmirage: serve levels made by downsampling for any virtual store (the render service makes them only for itself).
 
 ## Overnight plan (approved 2026-11-03, 23:00 GMT)
