@@ -81,12 +81,21 @@ Organ Atlas serves most of its scans; on a host).
   to load again.
 - **Density** (opacity per mm), **Exposure**, and the key light's direction
   (relative to the camera, so the light follows as you turn the view).
+- **Lighting** (on a host): a style, **Studio** (a photographer's studio),
+  **Soft** (light from all round, faint shadows), **Hard** (one strong light,
+  deep shadows) or **Sky** (daylight), or as set by hand: the key light's
+  direction (around the view and up, sliders; it turns with the camera) and
+  the strengths of the key light and of the light from all round.
 - **Light map** (on a host): image-based light from an HDR panorama
   (studio, photo studio, sky; CC0 images from [Poly Haven](https://polyhaven.com),
   reduced to 256 × 128), turned about the view's vertical; or the preset's
   sky colours.
 - **View**: Left, Right, Anterior, Posterior, Superior and Inferior turn the
   3-D view to those sides (for images in RAS: x right, y anterior, z up).
+- **Cut facing the view**: a plane across the view, an offset in mm past the
+  position, keeping what lies beyond it; it turns with the camera, or
+  **Leave it here** keeps it at the angle it has now (an oblique cut), and
+  **Follow the view** lets it turn again.
 - **Cuts**: planes through the current position across x, y or z, keeping
   either side, with an offset in mm (a slider or a number). A **clip box**
   keeps a box of the volume (six sliders, as fractions of it). Regions listed under **Kept through cuts**
@@ -206,6 +215,12 @@ camera moves, frames are rendered at half size, and for the first 12
 samples after a change the host smooths the image with an edge-avoiding
 wavelet filter guided by the distance to the tissue (about half the error at
 4 samples; **Smooth the first frames** switches it off).
+
+Each frame comes with the distance along each pixel's ray to where it meets
+tissue, and the page draws it as points in space (a mesh of them) with the
+camera it has now, not as a flat picture: the render turns and zooms with
+the view at once, and the next frame fills what came into view (a gap for a
+moment at an edge, not a stretched one).
 
 While the camera moves, frames are made for speed, then the still view is
 refined exactly:
