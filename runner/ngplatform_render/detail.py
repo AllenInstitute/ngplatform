@@ -100,7 +100,15 @@ def plan(inv_view_projection, width: int, height: int, dist: np.ndarray, levels:
         return None
     o, dw = pixel_rays(inv_view_projection, width, height, xs * width / W, ys * height / H)
     o, dw, d = o[hit], dw[hit], d[hit]
+    # What the view meets near it: tissue far beyond (seen at a glancing angle along a surface) covers
+    # few pixels, and is drawn well enough from the coarse level, so it does not widen the region.
+    near = float(np.percentile(d, 10))
+    close = d <= 1.6 * near
+    o, dw, d = o[close], dw[close], d[close]
     p = o + dw * d[:, None]
+    if len(p) > 20:
+        keep = np.all((p >= np.percentile(p, 1, axis=0)) & (p <= np.percentile(p, 99, axis=0)), axis=1)
+        o, dw, d, p = o[keep], dw[keep], d[keep], p[keep]
     # How deep behind the surface to hold: half the width of what is seen, at least 8 coarse voxels.
     span = float(np.max(p.max(0) - p.min(0))) if len(p) > 1 else 0.0
     depth = max(0.5 * span, 8 * coarse_voxel)
@@ -109,7 +117,6 @@ def plan(inv_view_projection, width: int, height: int, dist: np.ndarray, levels:
     c = np.array([width / 2, width / 2 + 1]), np.array([height / 2, height / 2])
     _, dd = pixel_rays(inv_view_projection, width, height, *c)
     angle = float(np.linalg.norm(dd[1] - dd[0]))
-    near = float(np.percentile(d, 10))
     footprint = max(angle * near, 1e-9)
     for i, (shape, wfv) in enumerate(levels):
         vs = voxel_size(wfv)
