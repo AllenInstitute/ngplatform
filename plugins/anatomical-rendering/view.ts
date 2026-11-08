@@ -75,6 +75,9 @@ export function lightDirection(azimuth: number, elevation: number): [number, num
 export function omeZarrSource(source: string | undefined): string | undefined {
   if (source === undefined) return undefined;
   let url = source.trim();
+  // An N5 multiscale (the Human Organ Atlas serves most scans so): passed on as n5://…, which the host reads.
+  const n5 = /^n5:\/\/(.*?)(\|n5:?)?\/?$/i.exec(url);
+  if (n5) return /^(https?|gs|s3):\/\//.test(n5[1]) || n5[1].startsWith("/") ? `n5://${n5[1].replace(/\/+$/, "")}` : undefined;
   const scheme = /^(zarr2?|zarr3):\/\//i.exec(url);
   const pipe = /\|zarr[23]?(:[^|]*)?$/i.exec(url);
   if (scheme === null && pipe === null && !/\.ome\.zarr\/?$/i.test(url)) return undefined;

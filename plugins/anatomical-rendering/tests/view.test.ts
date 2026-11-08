@@ -5,6 +5,15 @@ import { ANATOMICAL_VIEWS, clipPlanes, columnMajor, displayFromPhysical, lightDi
 
 const MM = { names: ["x", "y", "z"], scales: [1e-3, 1e-3, 1e-3], units: ["m", "m", "m"] };
 
+describe("image sources the host reads", () => {
+  it("passes N5 multiscales on as n5://", () => {
+    expect(omeZarrSource("n5://gs://bucket/S-21-46/brain/19.57um/")).toBe("n5://gs://bucket/S-21-46/brain/19.57um");
+    expect(omeZarrSource("n5://https://example.org/x.n5|n5:")).toBe("n5://https://example.org/x.n5");
+    expect(omeZarrSource("n5://relative/path")).toBeUndefined();
+    expect(omeZarrSource("zarr3://gs://b/x.ome.zarr/")).toBe("gs://b/x.ome.zarr");
+  });
+});
+
 describe("anatomical rendering views", () => {
   it("maps physical mm to display coordinates", () => {
     expect(displayFromPhysical(MM)).toEqual(columnMajor([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]));

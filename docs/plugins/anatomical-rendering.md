@@ -24,6 +24,9 @@ It renders in one of two places:
 
 ## Starting it
 
+Images are OME-Zarr (0.4–0.6) or N5 multiscales (`n5://…`, as the Human
+Organ Atlas serves most of its scans; on a host).
+
 1. Where the GPU is, start a runner with the render service, in a Python
    with `numpy`, `zarr` (3), `fsspec`, `aiohttp`, `pillow` and `cupy`:
    ```
@@ -59,8 +62,23 @@ It renders in one of two places:
   the medium (seen in a ring inside the scan's sides), on the side of it
   where the tissue is, with the tissue's commonest value at the window's
   middle. Change the two values if the guess misses; **Guess** goes back to
-  it. **Hide the jar** renders only a cylinder about the scan's axis, which
+  it. Each organ preset also records its tissue's histogram on the scan it
+  was made on (its percentiles), and on another scan its colours are placed
+  at the same percentiles of that scan's tissue (histogram matching): HiP-CT
+  values are not calibrated and vary between scans, but an organ's
+  histogram keeps its shape (a brain's two peaks, grey and white matter).
+  A window set by hand is used as it is. **Hide the jar** renders only a cylinder about the scan's axis, which
   leaves out the jar's wall (as dense as tissue).
+- **Colourmap for this image** (on a host): the image's histogram (grey,
+  log counts) with the preset's colourmap and opacity curve over it, at
+  the image's own values. Drag a control point left or right to move it
+  (the stops between its neighbours follow) and up or down to change its
+  opacity; double-click it to choose its colour; Ctrl-click to add a point,
+  right-click to remove one. **Shift** moves the whole map along the
+  values, **Compress** narrows or widens it about its middle. The tuning is
+  kept per image (with the scene), **Reset** returns to the preset, and
+  **Save as a preset file** writes the tuned map (at this image's values)
+  to load again.
 - **Density** (opacity per mm), **Exposure**, and the key light's direction
   (relative to the camera, so the light follows as you turn the view).
 - **Light map** (on a host): image-based light from an HDR panorama
@@ -110,10 +128,18 @@ It renders in one of two places:
 ## The HiP-CT organ presets
 
 Each organ's tissues were given colours measured on openly licensed
-photographs of real organs. The colours inside the organ were clustered
-(k-means in Lab), each cluster was named as a tissue, and photographs with
-something neutral in them (a steel table, paper, a white background) were
-white-balanced on it. Each colour was then made into a material colour by
+photographs of real organs: 75 photographs from many photographers (4 to 8
+an organ), each tissue marked by boxes on them, and photographs with
+something neutral in them (a steel table, paper, a white background)
+white-balanced on it. Each photograph's own exposure and cast are taken
+out by fitting every tissue's colour together with an offset per
+photograph (photographs showing two tissues fix the difference between
+them, as grey and white matter on one brain slice), and each photograph
+counts once. A tissue then has a dark, a middle and a light shade (the
+25th, 50th and 75th percentiles of its lightness), spread across its band
+of the image's values, and the colour runs smoothly (in Lab) from one
+tissue to the next, so the image's own texture shows as shades of the
+tissue rather than one flat colour. Each colour was then made into a material colour by
 rendering a flat slab of tissue under the renders' light (the photo-studio
 map and the key light) and tone curve, and changing the material until the
 slab shows the photograph's colour relative to its white. Multiple
