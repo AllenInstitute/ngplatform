@@ -31,6 +31,7 @@ it on in the Plugins tab.
 | [Segmentation](segmentation.md) | tool | a segmentation (label volume) | Label volumes drawn by hand, as in WebKnossos: a new segmentation layer on an image's grid or a copy of a segmentation, a tool bar over the views, a segment list, saving as NIfTI or OME-Zarr. |
 | [Registration](registration.md) | tool | two images | Move a layer by hand (as Freeview) or by landmarks; save the transform or the moved image. |
 | [Volume rendering](volume-rendering.md) | tool | an image | An image drawn as a solid in the 3-D view, cut open at the position. |
+| [Anatomical rendering](anatomical-rendering.md) | tool | an image | Photorealistic, path-traced views of an image on a GPU: this computer, another over SSH, or WebGPU in the page. |
 | [Filters](filters.md) | tool | an image | An image filtered on the fly (mean, median, Gaussian, Frangi vesselness) as a layer of its own. |
 | [Collections](collections.md) | tool | an image inside an OME collection | OME-Zarr collections (RFC-8, draft): members, coordinate systems, transforms, and a scene of them. |
 | [Luxar rendering](luxar.md) | tool | a tractogram or Zarr Vectors store | Chosen Zarr Vectors layers drawn as Luxar draws lines (HDR glow, mitred joins), in the 2-D and 3-D views. |

@@ -54,6 +54,7 @@ nav:
       - "Drawing labels: a survey": plugins/segmentation-survey.md
       - Registration: plugins/registration.md
       - Volume rendering: plugins/volume-rendering.md
+      - Anatomical rendering: plugins/anatomical-rendering.md
       - Collections: plugins/collections.md
       - Filters: plugins/filters.md
       - Luxar rendering: plugins/luxar.md

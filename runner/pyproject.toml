@@ -16,9 +16,14 @@ dependencies = []
 
 [project.optional-dependencies]
 jobs = ["zarr-vectors-tools"]
+# The render service (ngplatform_render), on a computer with an NVIDIA GPU.
+render = ["numpy", "zarr>=3", "fsspec", "aiohttp", "pillow", "cupy-cuda12x"]
 
 [project.scripts]
 ngplatform-runner = "ngplatform_runner.__main__:main"
 
 [tool.setuptools]
-packages = ["ngplatform_runner", "ngplatform_runner.tasks"]
+packages = ["ngplatform_runner", "ngplatform_runner.tasks", "ngplatform_render"]
+
+[tool.setuptools.package-data]
+ngplatform_render = ["params.json", "presets/*.json"]

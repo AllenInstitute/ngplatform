@@ -184,6 +184,23 @@ python -m ngplatform_runner --root ~/data --service echo="python -m ngplatform_r
 curl -H "Authorization: Bearer $(cat ~/.ngplatform-runner/token)" "http://127.0.0.1:8765/svc/echo/stream?n=3"
 ```
 
+### The render service
+
+`ngplatform_render` (beside the runner here) is a service that path-traces
+OME-Zarr images on an NVIDIA GPU for the Anatomical rendering plugin. It
+needs `pip install ./runner[render]` (numpy, zarr 3, fsspec, aiohttp,
+pillow, CuPy) in the Python it runs with:
+
+```
+python -m ngplatform_runner --root ~/data \
+  --service render="/path/to/env/bin/python -m ngplatform_render.server"
+```
+
+It uses the first GPU CUDA sees (set `CUDA_VISIBLE_DEVICES` to choose), keeps
+levels it makes in `<its state dir>/render-cache` and movies in
+`<its state dir>/renders` (or a folder under the roots the app names). Its
+API is in [plugins/anatomical-rendering/README.md](../plugins/anatomical-rendering/README.md).
+
 ## Using a GPU on another machine over SSH
 
 The browser on one computer (a laptop) can use a runner on another (a
