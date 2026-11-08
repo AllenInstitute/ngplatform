@@ -7,3 +7,6 @@ See runner/README.md.
 """
 
 __version__ = "0.1.0"
+
+#: The app's address, for pairing links.
+DEFAULT_APP = "https://alleninstitute.github.io/ngplatform/"

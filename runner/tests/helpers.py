@@ -34,17 +34,19 @@ def tools_available() -> bool:
 class Runner:
     """A runner on a free port, with a temporary root and state folder."""
 
-    def __init__(self, state: Path | None = None, root: Path | None = None, max_running: int = 2):
+    def __init__(self, state: Path | None = None, root: Path | None = None, max_running: int = 2, public_url: str | None = None, services=None):
         self.tmp = tempfile.TemporaryDirectory(prefix="ngp-runner-")
         base = Path(self.tmp.name)
         self.state = state or base / "state"
         self.root = root or base / "root"
         self.root.mkdir(parents=True, exist_ok=True)
+        self.public_url = public_url
+        self.services = services
         self.start(max_running)
 
     def start(self, max_running: int = 2) -> None:
         self.manager = JobManager(self.state, kinds_for(True), python=sys.executable, max_running=max_running, poll=0.05)
-        self.server = RunnerServer(0, TOKEN, Roots([self.root]), self.manager, python=sys.executable, tools=None)
+        self.server = RunnerServer(0, TOKEN, Roots([self.root]), self.manager, python=sys.executable, tools=None, public_url=self.public_url, services=self.services)
         self.port = self.server.server_port
         self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
         self.thread.start()
@@ -58,9 +60,10 @@ class Runner:
         self.stop(cancel_running=True)
         self.tmp.cleanup()
 
-    def request(self, method: str, path: str, body=None, *, token: str | None = TOKEN, headers: dict | None = None):
-        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=30)
-        all_headers = {"Host": f"127.0.0.1:{self.port}"}
+    def request(self, method: str, path: str, body=None, *, token: str | None = TOKEN, headers: dict | None = None, port: int | None = None):
+        port = port or self.port
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        all_headers = {"Host": f"127.0.0.1:{port}"}
         if token is not None:
             all_headers["Authorization"] = f"Bearer {token}"
         data = None
