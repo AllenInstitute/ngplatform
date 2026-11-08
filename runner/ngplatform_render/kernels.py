@@ -23,47 +23,11 @@ sampled directly, so no contribution is counted twice.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 # Names of the float parameters, in order.  Vectors take consecutive slots.
-_FIELDS: list[tuple[str, int]] = [
-    ("INVVP", 16),       # clip -> display (world) coordinates, column-major
-    ("VP", 16),          # world -> clip, column-major
-    ("VOX_FROM_WORLD", 12),  # 3x4 row-major: voxel index coordinates (x fastest) from world
-    ("WORLD_NORMAL", 9),     # 3x3 row-major: the transpose of VOX_FROM_WORLD's linear part
-    ("DIMS", 3),         # volume size in voxels, x, y, z
-    ("BRICK", 1),        # majorant brick size in voxels
-    ("MGRID", 3),        # majorant grid size, x, y, z
-    ("DENSITY", 1),      # extinction per display unit at opacity 1
-    ("SHADE_MIX", 1),    # 0: volume scattering only .. 1: surfaces where gradients are strong
-    ("GRAD_SCALE", 1),   # how quickly the gradient's magnitude makes a surface (per texture unit per voxel)
-    ("ROUGHNESS", 1),
-    ("SPECULAR", 1),
-    ("PHASE_G", 1),
-    ("ALBEDO", 1),       # scales the transfer function's colour
-    ("LIGHT_DIR", 3),    # direction towards the key light, world, unit
-    ("LIGHT_RGB", 3),    # key light radiance (irradiance at normal incidence)
-    ("ENV_TOP", 3),      # environment: colour above (world "up")
-    ("ENV_HORIZON", 3),
-    ("ENV_BOTTOM", 3),
-    ("ENV_UP", 3),       # world up for the environment, unit
-    ("ENV_SCALE", 1),
-    ("BG", 4),           # background shown where primary rays leave (alpha 0: transparent)
-    ("EXPOSURE", 1),
-    ("MAX_BOUNCES", 1),
-    ("NCLIP", 1),
-    ("CLIPS", 24),       # up to 6 planes, (nx, ny, nz, d) in world: kept where n.x + d >= 0
-    ("CROP_LO", 3),      # crop box in voxel coordinates (inclusive), x, y, z
-    ("CROP_HI", 3),
-    ("HAS_LABELS", 1),
-    ("LABEL_FROM_WORLD", 12),  # 3x4 row-major: label voxel coordinates from world
-    ("LDIMS", 3),
-    ("NLUT", 1),
-    ("LABEL_MIX", 1),    # 0: the transfer function's colour .. 1: the label's colour
-    ("STEP", 1),         # depth pass: step in voxels
-    ("FRAME", 1),        # pass number, for the random sequence
-    ("APERTURE", 1),     # thin lens: aperture radius in display units (0: pinhole)
-    ("FOCUS", 1),        # thin lens: focal distance in display units
-    ("OPAQUE_LIMIT", 1), # depth pass: accumulated opacity where the surface is
-]
+_FIELDS: list[tuple[str, int]] = [(f["name"], f["size"]) for f in json.loads((Path(__file__).parent / "params.json").read_text())["fields"]]
 
 OFFSETS: dict[str, int] = {}
 _o = 0

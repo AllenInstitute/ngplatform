@@ -11,6 +11,7 @@ import type { Disposer, Frame3d, LayerInfo, PlatformContext, PluginModule } from
 import { button, clear, downloadBlob, el, field, numberInput, select } from "@ngplatform/sdk/dom";
 import { type Link, linkOf, type MovieInfo, type PresetInfo, RenderService, type ServiceInfo, type SessionInfo, type ViewSpec } from "./client.js";
 import { PictureDrawer } from "./draw.js";
+import { LocalRenderer, PRESETS as LOCAL_PRESETS } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
 import { clipPlanes, type Cut, displayFromPhysical, lightDirection, omeZarrSource, unitMm, viewKey } from "./view.js";
 
@@ -21,6 +22,8 @@ export interface Keyframe {
 
 export interface Saved {
   on: boolean;
+  /** Where frames are rendered: the render service on a host (CUDA), or this browser (WebGPU). */
+  where: "host" | "browser";
   layer?: string;
   labels?: string;
   preset: string;
@@ -52,6 +55,7 @@ export function readSaved(raw: unknown): Saved {
   const cuts = Array.isArray(s.cuts) && s.cuts.length === 3 ? s.cuts.map((c, i) => ({ ...DEFAULT_CUTS[i], ...c })) : DEFAULT_CUTS.map((c) => ({ ...c }));
   return {
     on: s.on === true,
+    where: s.where === "browser" ? "browser" : "host",
     layer: typeof s.layer === "string" ? s.layer : undefined,
     labels: typeof s.labels === "string" ? s.labels : undefined,
     preset: typeof s.preset === "string" ? s.preset : "",
@@ -114,6 +118,9 @@ class AnatomicalRendering {
   private frameText = "";
   private problem = "";
   private movie: MovieInfo | undefined;
+  private local: LocalRenderer | undefined;
+  private localKey = "";
+  private localText = "";
   private readonly toggle: { set(value: boolean): void; dispose(): void };
   private panelUpdate: (() => void) | undefined;
   private statusUpdate: (() => void) | undefined;
@@ -191,12 +198,16 @@ class AnatomicalRendering {
 
   private update(): void {
     const target = this.target();
-    if (!this.saved.on || target === undefined || this.serviceInfo === undefined) {
+    const browser = this.saved.where === "browser";
+    if (!this.saved.on || target === undefined || (!browser && this.serviceInfo === undefined)) {
       this.handle?.dispose();
       this.handle = undefined;
       this.handleLayer = undefined;
       this.drawer.set(undefined);
-      if (!this.saved.on) this.closeSession();
+      if (!this.saved.on) {
+        this.closeSession();
+        this.closeLocal();
+      }
       this.panelUpdate?.();
       return;
     }
@@ -209,7 +220,13 @@ class AnatomicalRendering {
         dispose: () => undefined,
       });
     }
-    void this.ensureSession(target);
+    if (browser) {
+      this.closeSession();
+      void this.ensureLocal(target);
+    } else {
+      this.closeLocal();
+      void this.ensureSession(target);
+    }
     this.handle?.redraw();
     this.panelUpdate?.();
   }
@@ -249,6 +266,43 @@ class AnatomicalRendering {
       this.problem = (e as Error).message;
       this.statusUpdate?.();
     }
+  }
+
+  private async ensureLocal(target: LayerInfo): Promise<void> {
+    const url = omeZarrSource(target.sources[0])!;
+    const key = JSON.stringify([url, this.saved.budget]);
+    if (key === this.localKey) return;
+    this.closeLocal();
+    this.localKey = key;
+    const r = new LocalRenderer();
+    this.local = r;
+    r.onFrame = (f) => {
+      if (this.local !== r) return;
+      this.drawer.set({ bitmap: f.bitmap, depth: f.depth });
+      this.frameText = `${f.samples} samples, ${f.width}×${f.height}, ${f.msPerPass.toFixed(0)} ms a pass (this browser)`;
+      this.handle?.redraw();
+      this.statusUpdate?.();
+    };
+    try {
+      this.localText = "Loading in this browser…";
+      this.statusUpdate?.();
+      this.localText = await r.load(url, Math.min(this.saved.budget, 64e6), (msg) => {
+        this.localText = msg;
+        this.statusUpdate?.();
+      });
+      this.lastKey = "";
+      this.handle?.redraw();
+    } catch (e) {
+      this.localText = `This browser cannot render it: ${(e as Error).message}`;
+    }
+    this.statusUpdate?.();
+  }
+
+  private closeLocal(): void {
+    this.local?.dispose();
+    this.local = undefined;
+    this.localKey = "";
+    this.localText = "";
   }
 
   private closeSession(): void {
@@ -316,8 +370,9 @@ class AnatomicalRendering {
 
   private onFrame(frame: Frame3d): void {
     this.lastFrame = frame;
-    const sid = this.session?.status === "ready" ? this.session.id : undefined;
-    if (sid === undefined) return;
+    const local = this.saved.where === "browser" ? this.local : undefined;
+    const sid = local ? "local" : this.session?.status === "ready" ? this.session.id : undefined;
+    if (sid === undefined || (local && !this.localText.startsWith("level"))) return;
     const look = JSON.stringify([this.saved.preset, this.saved.density, this.saved.exposure, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, frame.position]);
     const key = viewKey(frame.invViewProjection, frame.width, frame.height) + look;
     const scale = frame.moving ? 0.5 : 1;
@@ -345,6 +400,10 @@ class AnatomicalRendering {
 
   /** One request at a time; the latest view waits for it. */
   private send(sid: string, spec: ViewSpec): void {
+    if (sid === "local") {
+      this.local?.setView(spec);
+      return;
+    }
     if (this.sending) {
       this.queued = spec;
       return;
@@ -398,7 +457,7 @@ class AnatomicalRendering {
   // ------------------------------------------------------------------ panel
   private status(): string {
     const parts: string[] = [];
-    const g = this.serviceInfo?.gpu;
+    const g = this.saved.where === "host" ? this.serviceInfo?.gpu : undefined;
     if (g) parts.push(g.backend === "cuda" ? `GPU: ${g.name} (${Math.round((g.free_mb ?? 0) / 1024)} of ${Math.round((g.total_mb ?? 0) / 1024)} GB free)` : `No GPU: ${g.error ?? ""}`);
     const s = this.session;
     if (s) {
@@ -409,6 +468,7 @@ class AnatomicalRendering {
         parts.push(`${s.message}${v.made ? (v.from_cache ? " (made here, from the cache)" : " (made here by downsampling)") : ""}`);
       }
     }
+    if (this.saved.where === "browser" && this.localText) parts.push(this.localText);
     if (this.frameText) parts.push(this.frameText);
     if (this.movie) parts.push(`Movie: ${this.movie.status} ${Math.round(this.movie.progress * 100)}% ${this.movie.message}${this.movie.error ? ` (${this.movie.error})` : ""}`);
     if (this.problem) parts.push(this.problem);
@@ -422,7 +482,8 @@ class AnatomicalRendering {
       const s = this.saved;
       const imgs = this.images();
       const segs = this.segmentations();
-      const presetOptions: [string, string][] = this.presets.map((p) => [p.name, p.modality ? `${p.name} (${p.modality})` : p.name]);
+      const presetList = s.where === "browser" ? LOCAL_PRESETS.map((p) => ({ name: p.name, modality: p.modality ?? "", density: p.density })) : this.presets;
+      const presetOptions: [string, string][] = presetList.map((p) => [p.name, p.modality ? `${p.name} (${p.modality})` : p.name]);
       const hostText = el("input", { type: "text", value: this.host.address, style: "width: 100%", title: "The runner's address (or a pairing link), e.g. http://localhost:7000 at the end of an SSH tunnel" }) as HTMLInputElement;
       const tokenText = el("input", { type: "password", value: this.host.token, style: "width: 100%", placeholder: "pairing token" }) as HTMLInputElement;
       const via = el("input", { type: "checkbox" }) as HTMLInputElement;
@@ -474,6 +535,11 @@ class AnatomicalRendering {
         el("label", { style: "display: flex; gap: 6px; align-items: center" }, via, "Through a runner (/svc/render)"),
         button("Connect", applyHost),
         el("hr"),
+        field("Where", select([["host", "On the host (CUDA, through the runner)"], ["browser", "In this browser (WebGPU)"]], s.where, (v) => {
+          this.save((x) => (x.where = v as Saved["where"]));
+          this.update();
+          render();
+        })),
         el("label", { style: "display: flex; gap: 6px; align-items: center" }, (() => {
           const cb = el("input", { type: "checkbox" }) as HTMLInputElement;
           cb.checked = s.on;

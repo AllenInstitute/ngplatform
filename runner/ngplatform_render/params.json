@@ -1,0 +1,195 @@
+{
+ "about": "The path tracer's parameter block: float slots in this order (vectors take consecutive slots). Read by kernels.py (CUDA) and the plugin's WGSL renderer.",
+ "fields": [
+  {
+   "name": "INVVP",
+   "size": 16,
+   "about": "clip -> display (world) coordinates, column-major"
+  },
+  {
+   "name": "VP",
+   "size": 16,
+   "about": "world -> clip, column-major"
+  },
+  {
+   "name": "VOX_FROM_WORLD",
+   "size": 12,
+   "about": "3x4 row-major: voxel index coordinates (x fastest) from world"
+  },
+  {
+   "name": "WORLD_NORMAL",
+   "size": 9,
+   "about": "3x3 row-major: the transpose of VOX_FROM_WORLD's linear part"
+  },
+  {
+   "name": "DIMS",
+   "size": 3,
+   "about": "volume size in voxels, x, y, z"
+  },
+  {
+   "name": "BRICK",
+   "size": 1,
+   "about": "majorant brick size in voxels"
+  },
+  {
+   "name": "MGRID",
+   "size": 3,
+   "about": "majorant grid size, x, y, z"
+  },
+  {
+   "name": "DENSITY",
+   "size": 1,
+   "about": "extinction per display unit at opacity 1"
+  },
+  {
+   "name": "SHADE_MIX",
+   "size": 1,
+   "about": "0: volume scattering only .. 1: surfaces where gradients are strong"
+  },
+  {
+   "name": "GRAD_SCALE",
+   "size": 1,
+   "about": "how quickly the gradient's magnitude makes a surface (per texture unit per voxel)"
+  },
+  {
+   "name": "ROUGHNESS",
+   "size": 1,
+   "about": ""
+  },
+  {
+   "name": "SPECULAR",
+   "size": 1,
+   "about": ""
+  },
+  {
+   "name": "PHASE_G",
+   "size": 1,
+   "about": ""
+  },
+  {
+   "name": "ALBEDO",
+   "size": 1,
+   "about": "scales the transfer function's colour"
+  },
+  {
+   "name": "LIGHT_DIR",
+   "size": 3,
+   "about": "direction towards the key light, world, unit"
+  },
+  {
+   "name": "LIGHT_RGB",
+   "size": 3,
+   "about": "key light radiance (irradiance at normal incidence)"
+  },
+  {
+   "name": "ENV_TOP",
+   "size": 3,
+   "about": "environment: colour above (world \"up\")"
+  },
+  {
+   "name": "ENV_HORIZON",
+   "size": 3,
+   "about": ""
+  },
+  {
+   "name": "ENV_BOTTOM",
+   "size": 3,
+   "about": ""
+  },
+  {
+   "name": "ENV_UP",
+   "size": 3,
+   "about": "world up for the environment, unit"
+  },
+  {
+   "name": "ENV_SCALE",
+   "size": 1,
+   "about": ""
+  },
+  {
+   "name": "BG",
+   "size": 4,
+   "about": "background shown where primary rays leave (alpha 0: transparent)"
+  },
+  {
+   "name": "EXPOSURE",
+   "size": 1,
+   "about": ""
+  },
+  {
+   "name": "MAX_BOUNCES",
+   "size": 1,
+   "about": ""
+  },
+  {
+   "name": "NCLIP",
+   "size": 1,
+   "about": ""
+  },
+  {
+   "name": "CLIPS",
+   "size": 24,
+   "about": "up to 6 planes, (nx, ny, nz, d) in world: kept where n.x + d >= 0"
+  },
+  {
+   "name": "CROP_LO",
+   "size": 3,
+   "about": "crop box in voxel coordinates (inclusive), x, y, z"
+  },
+  {
+   "name": "CROP_HI",
+   "size": 3,
+   "about": ""
+  },
+  {
+   "name": "HAS_LABELS",
+   "size": 1,
+   "about": ""
+  },
+  {
+   "name": "LABEL_FROM_WORLD",
+   "size": 12,
+   "about": "3x4 row-major: label voxel coordinates from world"
+  },
+  {
+   "name": "LDIMS",
+   "size": 3,
+   "about": ""
+  },
+  {
+   "name": "NLUT",
+   "size": 1,
+   "about": ""
+  },
+  {
+   "name": "LABEL_MIX",
+   "size": 1,
+   "about": "0: the transfer function's colour .. 1: the label's colour"
+  },
+  {
+   "name": "STEP",
+   "size": 1,
+   "about": "depth pass: step in voxels"
+  },
+  {
+   "name": "FRAME",
+   "size": 1,
+   "about": "pass number, for the random sequence"
+  },
+  {
+   "name": "APERTURE",
+   "size": 1,
+   "about": "thin lens: aperture radius in display units (0: pinhole)"
+  },
+  {
+   "name": "FOCUS",
+   "size": 1,
+   "about": "thin lens: focal distance in display units"
+  },
+  {
+   "name": "OPAQUE_LIMIT",
+   "size": 1,
+   "about": "depth pass: accumulated opacity where the surface is"
+  }
+ ]
+}
