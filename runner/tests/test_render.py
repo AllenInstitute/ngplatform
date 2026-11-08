@@ -157,6 +157,11 @@ def test_render_ball(tmp_path):
     R.set_view(st2)
     R.step(8)
     assert 0 < (R.image()[..., 3] > 128).sum() < covered.sum()
+    # A clip box of the volume's lower half in x (voxel coordinates) leaves part of it too.
+    st3 = renderer.RenderState(st.inv_view_projection, 96, 72, st.preset, crop=((-0.5, -0.5, -0.5), (23.5, 47.5, 47.5)))
+    R.set_view(st3)
+    R.step(8)
+    assert 0 < (R.image()[..., 3] > 128).sum() < covered.sum()
 
 
 @needs_gpu
