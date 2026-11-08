@@ -14,6 +14,7 @@ import json
 import os
 import shlex
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -214,6 +215,30 @@ class EndToEndTest(unittest.TestCase):
         self.assertIn("https://app.example/#runner=http%3A%2F%2Flocalhost%3A", text)
         self.assertIn("GPU", text)
         self.assertIn("ssh -N -J LOGIN -L", text)
+
+    def test_terminating_it_closes_the_tunnel(self):
+        argv = [sys.executable, "-m", "ngplatform_runner", "tunnel", "me@ws", "--remote-port", str(self.remote), "--local-port", str(self.local),
+                "--state-dir", str(self.state), "--ssh", str(self.fake), "--start-remote", self.args().start_remote]
+        proc = subprocess.Popen(argv, cwd=str(RUNNER), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            deadline = time.time() + 60
+            for line in proc.stdout:
+                if "The tunnel stays open" in line or time.time() > deadline:
+                    break
+            self.runner_pid = self._runner_pid_from_log()
+            proc.send_signal(signal.SIGTERM)
+            proc.wait(timeout=20)
+            # The port is free again: ssh (here its stand-in) went with it.
+            deadline = time.time() + 10
+            free = False
+            while time.time() < deadline and not free:
+                with socket.socket() as s:
+                    free = s.connect_ex(("127.0.0.1", self.local)) != 0
+                time.sleep(0.1)
+            self.assertTrue(free, "the local port is still forwarded after the tunnel was terminated")
+        finally:
+            if proc.poll() is None:
+                proc.kill()
 
     def _runner_pid_from_log(self):
         log = self.state / "remote.log"

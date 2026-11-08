@@ -19,6 +19,7 @@ import http.client
 import json
 import os
 import shlex
+import signal
 import socket
 import subprocess
 import sys
@@ -361,8 +362,17 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
+def _interrupt(*_: object) -> None:
+    raise KeyboardInterrupt
+
+
 def main(argv: list[str] | None = None, ssh: Ssh | None = None) -> int:
     args = parser().parse_args(argv)
+    if threading.current_thread() is threading.main_thread():
+        # Ended by a signal (kill, a closed terminal) as by Ctrl-C: ssh is stopped, so the port is free again.
+        signal.signal(signal.SIGTERM, _interrupt)
+        if hasattr(signal, "SIGHUP"):
+            signal.signal(signal.SIGHUP, _interrupt)
     try:
         tunnel, _token, info, link = connect(args, ssh)
     except TunnelError as e:
