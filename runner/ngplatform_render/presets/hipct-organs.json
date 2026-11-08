@@ -1,0 +1,1534 @@
+[
+ {
+  "name": "HiP-CT organ: brain",
+  "organ": "brain",
+  "modality": "HiP-CT",
+  "domain": "window",
+  "description": "A brain in its jar: cortex pinkish-grey, white matter cream, vessels dark red.",
+  "stops": [
+   {
+    "value": 0,
+    "color": [
+     0.67,
+     0.469,
+     0.38
+    ],
+    "opacity": 0,
+    "tissue": "grey matter"
+   },
+   {
+    "value": 0.06,
+    "color": [
+     0.67,
+     0.469,
+     0.38
+    ],
+    "opacity": 0,
+    "tissue": "grey matter"
+   },
+   {
+    "value": 0.15,
+    "color": [
+     0.67,
+     0.469,
+     0.38
+    ],
+    "opacity": 0.75,
+    "tissue": "grey matter"
+   },
+   {
+    "value": 0.3,
+    "color": [
+     0.67,
+     0.469,
+     0.38
+    ],
+    "opacity": 0.85,
+    "tissue": "grey matter"
+   },
+   {
+    "value": 0.45,
+    "color": [
+     0.828,
+     0.626,
+     0.522
+    ],
+    "opacity": 0.95,
+    "tissue": "white matter"
+   },
+   {
+    "value": 0.9,
+    "color": [
+     0.828,
+     0.626,
+     0.522
+    ],
+    "opacity": 1,
+    "tissue": "white matter"
+   },
+   {
+    "value": 1.4,
+    "color": [
+     0.05,
+     0.0,
+     0.0
+    ],
+    "opacity": 1,
+    "tissue": "vessels"
+   }
+  ],
+  "density": 60.0,
+  "shade_mix": 0.85,
+  "gradient_scale": 30.0,
+  "roughness": 0.5,
+  "specular": 0.12,
+  "albedo": 0.9,
+  "surface_inset": 1.5,
+  "exposure": 1.8,
+  "reference": [
+   {
+    "photo": "brain_1",
+    "title": "File:Human brain frontal (coronal) section.JPG",
+    "page": "https://commons.wikimedia.org/wiki/File:Human_brain_frontal_(coronal)_section.JPG",
+    "author": "John A. Beal, PhD, Dept. of Cellular Biology & Anatomy, LSU Health Sciences Center Shreveport",
+    "licence": "CC BY 2.5",
+    "licence_url": "https://creativecommons.org/licenses/by/2.5",
+    "shows": "Single whole-brain coronal slice through thalamus and brainstem: cortex, white matter, basal ganglia/thalamus, lateral ventricles",
+    "fresh_or_fixed": "fixed (appearance of a formalin-fixed brain slice; not stated on the file page)",
+    "notes": "Normal adult brain. Neutral grey background, neutral white balance; slightly pinkish-beige fixed-tissue tones (fresh grey matter is darker/greyer). Small red inset in lower-left corner showing the slice level on a lateral brain view (crop it out). Only 702 px wide (original size).",
+    "white_balanced_on": [
+     0.86,
+     0.1,
+     0.98,
+     0.3
+    ]
+   }
+  ],
+  "measured": {
+   "grey matter": {
+    "srgb": [
+     0.784,
+     0.64,
+     0.562
+    ],
+    "photos": [
+     "brain_1"
+    ]
+   },
+   "white matter": {
+    "srgb": [
+     0.867,
+     0.742,
+     0.669
+    ],
+    "photos": [
+     "brain_1"
+    ]
+   },
+   "vessels": {
+    "srgb": [
+     0.258,
+     0.081,
+     0.048
+    ],
+    "photos": [
+     "brain_1"
+    ]
+   }
+  }
+ },
+ {
+  "name": "HiP-CT organ: heart",
+  "organ": "heart",
+  "modality": "HiP-CT",
+  "domain": "window",
+  "description": "A heart: myocardium red-brown, epicardial fat yellow, valves and fibrous tissue pale.",
+  "stops": [
+   {
+    "value": 0,
+    "color": [
+     0.763,
+     0.494,
+     0.112
+    ],
+    "opacity": 0,
+    "tissue": "epicardial fat"
+   },
+   {
+    "value": 0.06,
+    "color": [
+     0.763,
+     0.494,
+     0.112
+    ],
+    "opacity": 0,
+    "tissue": "epicardial fat"
+   },
+   {
+    "value": 0.15,
+    "color": [
+     0.763,
+     0.494,
+     0.112
+    ],
+    "opacity": 0.6,
+    "tissue": "epicardial fat"
+   },
+   {
+    "value": 0.3,
+    "color": [
+     0.461,
+     0.088,
+     0.011
+    ],
+    "opacity": 0.85,
+    "tissue": "myocardium"
+   },
+   {
+    "value": 0.5,
+    "color": [
+     0.461,
+     0.088,
+     0.011
+    ],
+    "opacity": 0.9,
+    "tissue": "myocardium"
+   },
+   {
+    "value": 0.9,
+    "color": [
+     0.701,
+     0.584,
+     0.479
+    ],
+    "opacity": 1,
+    "tissue": "valves and fibrous tissue"
+   },
+   {
+    "value": 1.5,
+    "color": [
+     0.701,
+     0.584,
+     0.479
+    ],
+    "opacity": 1,
+    "tissue": "valves and fibrous tissue"
+   }
+  ],
+  "density": 60.0,
+  "shade_mix": 0.85,
+  "gradient_scale": 30.0,
+  "roughness": 0.5,
+  "specular": 0.12,
+  "albedo": 0.9,
+  "surface_inset": 1.5,
+  "exposure": 1.8,
+  "reference": [
+   {
+    "photo": "heart_1",
+    "title": "File:\u041f\u0435\u0440\u0435\u0441\u0430\u0436\u0435\u043d\u043d\u043e\u0435 \u0441\u0435\u0440\u0434\u0446\u0435 \u0432 \u0433\u0440\u0443\u0434\u043d\u043e\u0439 \u043a\u043b\u0435\u0442\u043a\u0435 \u0440\u0435\u0446\u0438\u043f\u0438\u0435\u043d\u0442\u0430.JPG",
+    "page": "https://commons.wikimedia.org/wiki/File:%D0%9F%D0%B5%D1%80%D0%B5%D1%81%D0%B0%D0%B6%D0%B5%D0%BD%D0%BD%D0%BE%D0%B5_%D1%81%D0%B5%D1%80%D0%B4%D1%86%D0%B5_%D0%B2_%D0%B3%D1%80%D1%83%D0%B4%D0%BD%D0%BE%D0%B9_%D0%BA%D0%BB%D0%B5%D1%82%D0%BA%D0%B5_%D1%80%D0%B5%D1%86%D0%B8%D0%BF%D0%B8%D0%B5%D0%BD%D1%82%D0%B0.JPG",
+    "author": "Vasily I. Kaleda",
+    "licence": "CC BY-SA 3.0",
+    "licence_url": "https://creativecommons.org/licenses/by-sa/3.0",
+    "shows": "Exterior of a transplanted (donor) heart in the recipient's open chest: epicardial fat, coronary vessels, great-vessel anastomoses",
+    "fresh_or_fixed": "fresh (living, in situ)",
+    "notes": "Intraoperative; donor heart presumed normal. Surgical lighting is warm and blood-smeared surfaces exaggerate red; specular highlights. Pacing wires and sutures visible.",
+    "white_balanced_on": null
+   },
+   {
+    "photo": "heart_2",
+    "title": "File:Human heart male adult autopsy.jpg",
+    "page": "https://commons.wikimedia.org/wiki/File:Human_heart_male_adult_autopsy.jpg",
+    "author": "Jebulon",
+    "licence": "CC0 1.0",
+    "licence_url": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "shows": "Whole adult male heart, anterior exterior on black background: heavy yellow epicardial fat along coronary grooves, coronary vessels, purple-brown myocardium showing through",
+    "fresh_or_fixed": "unknown (autopsy specimen; fixation not stated)",
+    "notes": "No disease stated. Colour looks warm/oversaturated (fat is very saturated yellow); treat hue with caution. Black background, no reference white.",
+    "white_balanced_on": null
+   }
+  ],
+  "measured": {
+   "epicardial fat": {
+    "srgb": [
+     0.837,
+     0.658,
+     0.312
+    ],
+    "photos": [
+     "heart_2",
+     "heart_2"
+    ]
+   },
+   "myocardium": {
+    "srgb": [
+     0.642,
+     0.294,
+     0.186
+    ],
+    "photos": [
+     "heart_2",
+     "heart_1"
+    ]
+   },
+   "valves and fibrous tissue": {
+    "srgb": [
+     0.8,
+     0.72,
+     0.64
+    ],
+    "photos": [],
+    "note": "not measured: no usable openly licensed photograph shows it"
+   }
+  }
+ },
+ {
+  "name": "HiP-CT organ: lung",
+  "organ": "lung",
+  "modality": "HiP-CT",
+  "domain": "window",
+  "description": "A lung: faint pink parenchyma, purple-red vessels, pale cartilage of the airways.",
+  "stops": [
+   {
+    "value": 0,
+    "color": [
+     0.894,
+     0.278,
+     0.192
+    ],
+    "opacity": 0,
+    "tissue": "parenchyma"
+   },
+   {
+    "value": 0.04,
+    "color": [
+     0.894,
+     0.278,
+     0.192
+    ],
+    "opacity": 0,
+    "tissue": "parenchyma"
+   },
+   {
+    "value": 0.1,
+    "color": [
+     0.894,
+     0.278,
+     0.192
+    ],
+    "opacity": 0.012,
+    "tissue": "parenchyma"
+   },
+   {
+    "value": 0.3,
+    "color": [
+     0.511,
+     0.106,
+     0.047
+    ],
+    "opacity": 0.5,
+    "tissue": "vessels"
+   },
+   {
+    "value": 0.7,
+    "color": [
+     0.511,
+     0.106,
+     0.047
+    ],
+    "opacity": 0.9,
+    "tissue": "vessels"
+   },
+   {
+    "value": 1.3,
+    "color": [
+     0.77,
+     0.616,
+     0.47
+    ],
+    "opacity": 1,
+    "tissue": "airway cartilage"
+   }
+  ],
+  "density": 30.0,
+  "shade_mix": 0.85,
+  "gradient_scale": 30.0,
+  "roughness": 0.5,
+  "specular": 0.12,
+  "albedo": 0.9,
+  "surface_inset": 1.5,
+  "exposure": 1.8,
+  "reference": [
+   {
+    "photo": "lung_1",
+    "title": "File:Normal lung (3661495238).jpg",
+    "page": "https://commons.wikimedia.org/wiki/File:Normal_lung_(3661495238).jpg",
+    "author": "Yale Rosen (Flickr), via Wikimedia Commons",
+    "licence": "CC BY-SA 2.0",
+    "licence_url": "https://creativecommons.org/licenses/by-sa/2.0",
+    "shows": "Cut surface of a normal lung slice across an interlobar fissure: parenchyma, small airways and vessels, pleura at edges",
+    "fresh_or_fixed": "formalin-fixed (formalin-perfused, autopsy)",
+    "notes": "Normal lung, but fixation turns parenchyma tan-brown; fresh lung is pink-red. Blue background (may bias auto white balance slightly). Some anthracotic grey speckling on pleura.",
+    "white_balanced_on": null
+   },
+   {
+    "photo": "lung_2",
+    "title": "File:Lungs filled with air.jpg",
+    "page": "https://commons.wikimedia.org/wiki/File:Lungs_filled_with_air.jpg",
+    "author": "P\u00f6ll\u00f6",
+    "licence": "CC BY 3.0",
+    "licence_url": "https://creativecommons.org/licenses/by/3.0",
+    "shows": "Pair of fresh inflated PIG lungs (outer pleural surface) hung from the trachea, lobular pattern visible",
+    "fresh_or_fixed": "fresh",
+    "notes": "ANIMAL (domestic pig, Sus scrofa domesticus); used because no openly licensed fresh normal human lung photo was found. Flash lighting, fairly neutral; a few slaughter-related haemorrhagic patches on the right lung. A person's lower face/hands visible in background (crop).",
+    "white_balanced_on": null
+   }
+  ],
+  "measured": {
+   "parenchyma": {
+    "srgb": [
+     0.902,
+     0.482,
+     0.392
+    ],
+    "photos": [
+     "lung_2"
+    ]
+   },
+   "vessels": {
+    "srgb": [
+     0.675,
+     0.314,
+     0.239
+    ],
+    "photos": [
+     "lung_2"
+    ]
+   },
+   "airway cartilage": {
+    "srgb": [
+     0.839,
+     0.737,
+     0.627
+    ],
+    "photos": [
+     "lung_1"
+    ]
+   }
+  }
+ },
+ {
+  "name": "HiP-CT organ: kidney",
+  "organ": "kidney",
+  "modality": "HiP-CT",
+  "domain": "window",
+  "description": "A kidney: red-brown cortex and medulla, yellow sinus fat, pale capsule and vessel walls.",
+  "stops": [
+   {
+    "value": 0,
+    "color": [
+     0.586,
+     0.395,
+     0.306
+    ],
+    "opacity": 0,
+    "tissue": "sinus fat"
+   },
+   {
+    "value": 0.06,
+    "color": [
+     0.586,
+     0.395,
+     0.306
+    ],
+    "opacity": 0,
+    "tissue": "sinus fat"
+   },
+   {
+    "value": 0.2,
+    "color": [
+     0.586,
+     0.395,
+     0.306
+    ],
+    "opacity": 0.6,
+    "tissue": "sinus fat"
+   },
+   {
+    "value": 0.35,
+    "color": [
+     0.205,
+     0.025,
+     0.013
+    ],
+    "opacity": 0.85,
+    "tissue": "cortex and medulla"
+   },
+   {
+    "value": 0.5,
+    "color": [
+     0.205,
+     0.025,
+     0.013
+    ],
+    "opacity": 0.9,
+    "tissue": "cortex and medulla"
+   },
+   {
+    "value": 0.8,
+    "color": [
+     0.63,
+     0.626,
+     0.588
+    ],
+    "opacity": 1,
+    "tissue": "capsule and vessel walls"
+   },
+   {
+    "value": 1.2,
+    "color": [
+     0.63,
+     0.626,
+     0.588
+    ],
+    "opacity": 1,
+    "tissue": "capsule and vessel walls"
+   }
+  ],
+  "density": 60.0,
+  "shade_mix": 0.85,
+  "gradient_scale": 30.0,
+  "roughness": 0.5,
+  "specular": 0.12,
+  "albedo": 0.9,
+  "surface_inset": 1.5,
+  "exposure": 1.8,
+  "reference": [
+   {
+    "photo": "kidney_1",
+    "title": "File:Pig-kidney.JPG",
+    "page": "https://commons.wikimedia.org/wiki/File:Pig-kidney.JPG",
+    "author": "Thor-Rune Hansen (Wikimedia user ThorRune)",
+    "licence": "Public domain (PD-self)",
+    "licence_url": "https://commons.wikimedia.org/wiki/Template:PD-self",
+    "shows": "Fresh PIG kidney sliced open lengthwise: dark red-brown cortex, darker red medullary pyramids, pale sinus fat/pelvis",
+    "fresh_or_fixed": "fresh",
+    "notes": "ANIMAL (pig); no openly licensed photo of a fresh, normal, bisected human kidney was found. Pig kidney is multipapillary like human. On paper towel; on-camera flash gives specular highlights and slightly warm cast.",
+    "white_balanced_on": [
+     0.02,
+     0.8,
+     0.15,
+     0.95
+    ]
+   }
+  ],
+  "measured": {
+   "sinus fat": {
+    "srgb": [
+     0.727,
+     0.577,
+     0.497
+    ],
+    "photos": [
+     "kidney_1"
+    ]
+   },
+   "cortex and medulla": {
+    "srgb": [
+     0.425,
+     0.218,
+     0.192
+    ],
+    "photos": [
+     "kidney_1"
+    ]
+   },
+   "capsule and vessel walls": {
+    "srgb": [
+     0.755,
+     0.746,
+     0.711
+    ],
+    "photos": [
+     "kidney_1"
+    ]
+   }
+  }
+ },
+ {
+  "name": "HiP-CT organ: liver",
+  "organ": "liver",
+  "modality": "HiP-CT",
+  "domain": "window",
+  "description": "A liver: red-brown parenchyma, pale portal tracts and capsule.",
+  "stops": [
+   {
+    "value": 0,
+    "color": [
+     0.433,
+     0.062,
+     0.148
+    ],
+    "opacity": 0,
+    "tissue": "parenchyma"
+   },
+   {
+    "value": 0.1,
+    "color": [
+     0.433,
+     0.062,
+     0.148
+    ],
+    "opacity": 0,
+    "tissue": "parenchyma"
+   },
+   {
+    "value": 0.3,
+    "color": [
+     0.433,
+     0.062,
+     0.148
+    ],
+    "opacity": 0.8,
+    "tissue": "parenchyma"
+   },
+   {
+    "value": 0.5,
+    "color": [
+     0.433,
+     0.062,
+     0.148
+    ],
+    "opacity": 0.9,
+    "tissue": "parenchyma"
+   },
+   {
+    "value": 0.9,
+    "color": [
+     0.649,
+     0.382,
+     0.429
+    ],
+    "opacity": 1,
+    "tissue": "capsule and portal tracts"
+   },
+   {
+    "value": 1.5,
+    "color": [
+     0.649,
+     0.382,
+     0.429
+    ],
+    "opacity": 1,
+    "tissue": "capsule and portal tracts"
+   }
+  ],
+  "density": 60.0,
+  "shade_mix": 0.85,
+  "gradient_scale": 30.0,
+  "roughness": 0.5,
+  "specular": 0.12,
+  "albedo": 0.9,
+  "surface_inset": 1.5,
+  "exposure": 1.8,
+  "reference": [
+   {
+    "photo": "liver_1",
+    "title": "File:Human Hepar.jpg",
+    "page": "https://commons.wikimedia.org/wiki/File:Human_Hepar.jpg",
+    "author": "Suseno",
+    "licence": "Public domain (PD-self)",
+    "licence_url": "https://commons.wikimedia.org/wiki/Template:PD-self",
+    "shows": "Whole fresh human liver, diaphragmatic (outer) surface, right and left lobes and falciform ligament, on a steel table",
+    "fresh_or_fixed": "fresh (autopsy)",
+    "notes": "Labelled human liver from an autopsy; no disease visible. Colour reads quite pink-purple, partly from red light reflected off blood on the steel table; real fresh liver is more red-brown. No cut surface.",
+    "white_balanced_on": [
+     0.0,
+     0.0,
+     0.1,
+     0.12
+    ]
+   }
+  ],
+  "measured": {
+   "parenchyma": {
+    "srgb": [
+     0.623,
+     0.265,
+     0.348
+    ],
+    "photos": [
+     "liver_1"
+    ]
+   },
+   "capsule and portal tracts": {
+    "srgb": [
+     0.766,
+     0.573,
+     0.597
+    ],
+    "photos": [
+     "liver_1"
+    ]
+   }
+  }
+ },
+ {
+  "name": "HiP-CT organ: spleen",
+  "organ": "spleen",
+  "modality": "HiP-CT",
+  "domain": "window",
+  "description": "A spleen: dark purple-red pulp, grey capsule.",
+  "stops": [
+   {
+    "value": 0,
+    "color": [
+     0.118,
+     0.0,
+     0.0
+    ],
+    "opacity": 0,
+    "tissue": "red pulp"
+   },
+   {
+    "value": 0.1,
+    "color": [
+     0.118,
+     0.0,
+     0.0
+    ],
+    "opacity": 0,
+    "tissue": "red pulp"
+   },
+   {
+    "value": 0.3,
+    "color": [
+     0.118,
+     0.0,
+     0.0
+    ],
+    "opacity": 0.8,
+    "tissue": "red pulp"
+   },
+   {
+    "value": 0.5,
+    "color": [
+     0.118,
+     0.0,
+     0.0
+    ],
+    "opacity": 0.9,
+    "tissue": "red pulp"
+   },
+   {
+    "value": 0.9,
+    "color": [
+     0.394,
+     0.088,
+     0.153
+    ],
+    "opacity": 1,
+    "tissue": "capsule"
+   },
+   {
+    "value": 1.5,
+    "color": [
+     0.394,
+     0.088,
+     0.153
+    ],
+    "opacity": 1,
+    "tissue": "capsule"
+   }
+  ],
+  "density": 60.0,
+  "shade_mix": 0.85,
+  "gradient_scale": 30.0,
+  "roughness": 0.5,
+  "specular": 0.12,
+  "albedo": 0.9,
+  "surface_inset": 1.5,
+  "exposure": 1.8,
+  "reference": [
+   {
+    "photo": "spleen_1",
+    "title": "File:Gross pathology of an accessory spleen.jpg",
+    "page": "https://commons.wikimedia.org/wiki/File:Gross_pathology_of_an_accessory_spleen.jpg",
+    "author": "Mikael H\u00e4ggstr\u00f6m, M.D.",
+    "licence": "CC0 1.0",
+    "licence_url": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "shows": "Accessory spleen (splenule) bisected: cut surface of red pulp and capsule, with attached fat; ruler",
+    "fresh_or_fixed": "partially fixed (fixed grey outer rim, unfixed red-purple centre, per file description)",
+    "notes": "Normal splenic tissue (an accessory spleen, not the main organ). Inner unfixed area approximates fresh red-pulp colour; grey rim is a fixation artefact. White background, neutral lighting.",
+    "white_balanced_on": [
+     0.85,
+     0.05,
+     0.98,
+     0.2
+    ]
+   },
+   {
+    "photo": "spleen_2",
+    "title": "File:Spleen.jpg",
+    "page": "https://commons.wikimedia.org/wiki/File:Spleen.jpg",
+    "author": "Hic et nunc",
+    "licence": "CC BY-SA 3.0",
+    "licence_url": "https://creativecommons.org/licenses/by-sa/3.0",
+    "shows": "Laparoscopic view of a normal-looking human spleen (outer surface) with adjacent omental fat and peritoneum",
+    "fresh_or_fixed": "fresh (living, in situ)",
+    "notes": "Endoscope light source: strong pink/red cast and specular highlights; useful for in-vivo hue only. 750 px wide (original size).",
+    "white_balanced_on": null
+   }
+  ],
+  "measured": {
+   "red pulp": {
+    "srgb": [
+     0.333,
+     0.109,
+     0.125
+    ],
+    "photos": [
+     "spleen_1"
+    ]
+   },
+   "capsule": {
+    "srgb": [
+     0.592,
+     0.294,
+     0.357
+    ],
+    "photos": [
+     "spleen_2"
+    ]
+   }
+  }
+ },
+ {
+  "name": "HiP-CT organ: colon",
+  "organ": "colon",
+  "modality": "HiP-CT",
+  "domain": "window",
+  "description": "A colon: pink-tan mucosa and muscular wall, yellow fat.",
+  "stops": [
+   {
+    "value": 0,
+    "color": [
+     0.429,
+     0.135,
+     0.089
+    ],
+    "opacity": 0,
+    "tissue": "mucosa"
+   },
+   {
+    "value": 0.15,
+    "color": [
+     0.429,
+     0.135,
+     0.089
+    ],
+    "opacity": 0,
+    "tissue": "mucosa"
+   },
+   {
+    "value": 0.3,
+    "color": [
+     0.429,
+     0.135,
+     0.089
+    ],
+    "opacity": 0.7,
+    "tissue": "mucosa"
+   },
+   {
+    "value": 0.5,
+    "color": [
+     0.429,
+     0.135,
+     0.089
+    ],
+    "opacity": 0.9,
+    "tissue": "mucosa"
+   },
+   {
+    "value": 1.0,
+    "color": [
+     0.503,
+     0.189,
+     0.11
+    ],
+    "opacity": 1,
+    "tissue": "wall"
+   }
+  ],
+  "density": 60.0,
+  "shade_mix": 0.85,
+  "gradient_scale": 30.0,
+  "roughness": 0.5,
+  "specular": 0.12,
+  "albedo": 0.9,
+  "surface_inset": 1.5,
+  "exposure": 1.8,
+  "reference": [
+   {
+    "photo": "colon_1",
+    "title": "File:Colonoscopy splenic flexure.jpg",
+    "page": "https://commons.wikimedia.org/wiki/File:Colonoscopy_splenic_flexure.jpg",
+    "author": "melvil",
+    "licence": "CC BY-SA 4.0",
+    "licence_url": "https://creativecommons.org/licenses/by-sa/4.0",
+    "shows": "Colonoscopic view of normal colonic mucosa at the splenic flexure with submucosal vessel network",
+    "fresh_or_fixed": "fresh (living, colonoscopy)",
+    "notes": "Endoscopic white-light image: warm orange cast and vignetting from the scope light; mucosa only, no serosa. 617 px wide (original size).",
+    "white_balanced_on": null
+   },
+   {
+    "photo": "colon_2",
+    "title": "File:Rectum-2016-12.jpg",
+    "page": "https://commons.wikimedia.org/wiki/File:Rectum-2016-12.jpg",
+    "author": "melvil",
+    "licence": "CC BY-SA 4.0",
+    "licence_url": "https://creativecommons.org/licenses/by-sa/4.0",
+    "shows": "Colonoscopic view of normal rectal mucosa (70-year-old patient)",
+    "fresh_or_fixed": "fresh (living, colonoscopy)",
+    "notes": "Rectum, not colon proper (same large-bowel mucosa). Endoscope lighting, warm/pink cast, specular glints. 638 px wide (original size).",
+    "white_balanced_on": null
+   }
+  ],
+  "measured": {
+   "mucosa": {
+    "srgb": [
+     0.62,
+     0.341,
+     0.284
+    ],
+    "photos": [
+     "colon_1",
+     "colon_2"
+    ]
+   },
+   "wall": {
+    "srgb": [
+     0.671,
+     0.4,
+     0.31
+    ],
+    "photos": [
+     "colon_1"
+    ]
+   }
+  }
+ },
+ {
+  "name": "HiP-CT organ: eye",
+  "organ": "eye",
+  "modality": "HiP-CT",
+  "domain": "window",
+  "description": "An eye: white sclera, amber lens, dark uvea.",
+  "stops": [
+   {
+    "value": 0,
+    "color": [
+     0.671,
+     0.552,
+     0.493
+    ],
+    "opacity": 0,
+    "tissue": "sclera"
+   },
+   {
+    "value": 0.08,
+    "color": [
+     0.671,
+     0.552,
+     0.493
+    ],
+    "opacity": 0,
+    "tissue": "sclera"
+   },
+   {
+    "value": 0.2,
+    "color": [
+     0.056,
+     0.012,
+     0.0
+    ],
+    "opacity": 0.5,
+    "tissue": "uvea"
+   },
+   {
+    "value": 0.35,
+    "color": [
+     0.671,
+     0.552,
+     0.493
+    ],
+    "opacity": 0.85,
+    "tissue": "sclera"
+   },
+   {
+    "value": 0.6,
+    "color": [
+     0.671,
+     0.552,
+     0.493
+    ],
+    "opacity": 1,
+    "tissue": "sclera"
+   },
+   {
+    "value": 0.85,
+    "color": [
+     0.575,
+     0.538,
+     0.551
+    ],
+    "opacity": 0.5,
+    "tissue": "lens"
+   },
+   {
+    "value": 1.2,
+    "color": [
+     0.575,
+     0.538,
+     0.551
+    ],
+    "opacity": 0.5,
+    "tissue": "lens"
+   }
+  ],
+  "density": 60.0,
+  "shade_mix": 0.85,
+  "gradient_scale": 30.0,
+  "roughness": 0.5,
+  "specular": 0.12,
+  "albedo": 0.9,
+  "surface_inset": 1.5,
+  "exposure": 1.8,
+  "reference": [
+   {
+    "photo": "eye_1",
+    "title": "File:Eye pig cut open.jpg",
+    "page": "https://commons.wikimedia.org/wiki/File:Eye_pig_cut_open.jpg",
+    "author": "Carsten Niehaus",
+    "licence": "Public domain (PD-self)",
+    "licence_url": "https://commons.wikimedia.org/wiki/Template:PD-self",
+    "shows": "PIG eyeball cut open into two halves: sclera rim, dark pigmented choroid/retina interior, vitreous, lens seen through the anterior half",
+    "fresh_or_fixed": "fresh",
+    "notes": "ANIMAL (pig); no openly licensed photo of a sectioned human globe was found (Commons human-eye 'sections' are all diagrams). Cut is roughly equatorial, not a true sagittal section. Held in a pale glove; slight warm cast.",
+    "white_balanced_on": null
+   },
+   {
+    "photo": "eye_2",
+    "title": "File:Schweineauge.jpg",
+    "page": "https://commons.wikimedia.org/wiki/File:Schweineauge.jpg",
+    "author": "Honge (de.wikipedia user)",
+    "licence": "Public domain (PD-user-de)",
+    "licence_url": "https://commons.wikimedia.org/wiki/Template:PD-user-de",
+    "shows": "Whole PIG eyeball exterior: clouded cornea, white sclera, attached extraocular muscle and conjunctiva",
+    "fresh_or_fixed": "fresh (2 days after slaughter)",
+    "notes": "ANIMAL (pig). Cornea is post-mortem cloudy (blue-grey). Dark grey bench background; neutral-to-cool lighting.",
+    "white_balanced_on": null
+   }
+  ],
+  "measured": {
+   "uvea": {
+    "srgb": [
+     0.263,
+     0.196,
+     0.098
+    ],
+    "photos": [
+     "eye_1"
+    ]
+   },
+   "sclera": {
+    "srgb": [
+     0.78,
+     0.698,
+     0.651
+    ],
+    "photos": [
+     "eye_2"
+    ]
+   },
+   "lens": {
+    "srgb": [
+     0.722,
+     0.69,
+     0.686
+    ],
+    "photos": [
+     "eye_1"
+    ]
+   }
+  }
+ },
+ {
+  "name": "HiP-CT organ: placenta",
+  "organ": "placenta",
+  "modality": "HiP-CT",
+  "domain": "window",
+  "description": "A placenta: maroon villous tissue, bluish-white membranes and vessels.",
+  "stops": [
+   {
+    "value": 0,
+    "color": [
+     0.113,
+     0.0,
+     0.0
+    ],
+    "opacity": 0,
+    "tissue": "villous tissue"
+   },
+   {
+    "value": 0.06,
+    "color": [
+     0.113,
+     0.0,
+     0.0
+    ],
+    "opacity": 0,
+    "tissue": "villous tissue"
+   },
+   {
+    "value": 0.25,
+    "color": [
+     0.113,
+     0.0,
+     0.0
+    ],
+    "opacity": 0.8,
+    "tissue": "villous tissue"
+   },
+   {
+    "value": 0.5,
+    "color": [
+     0.113,
+     0.0,
+     0.0
+    ],
+    "opacity": 0.9,
+    "tissue": "villous tissue"
+   },
+   {
+    "value": 0.9,
+    "color": [
+     0.492,
+     0.469,
+     0.54
+    ],
+    "opacity": 1,
+    "tissue": "membranes"
+   },
+   {
+    "value": 1.5,
+    "color": [
+     0.492,
+     0.469,
+     0.54
+    ],
+    "opacity": 1,
+    "tissue": "membranes"
+   }
+  ],
+  "density": 60.0,
+  "shade_mix": 0.85,
+  "gradient_scale": 30.0,
+  "roughness": 0.5,
+  "specular": 0.12,
+  "albedo": 0.9,
+  "surface_inset": 1.5,
+  "exposure": 1.8,
+  "reference": [
+   {
+    "photo": "placenta_1",
+    "title": "File:Human placenta baby side.jpg",
+    "page": "https://commons.wikimedia.org/wiki/File:Human_placenta_baby_side.jpg",
+    "author": "Habj (Wikimedia user)",
+    "licence": "Public domain (PD-self)",
+    "licence_url": "https://commons.wikimedia.org/wiki/Template:PD-self",
+    "shows": "Fetal (chorionic) surface of a term human placenta with umbilical cord and branching chorionic vessels, amnion fringe",
+    "fresh_or_fixed": "fresh (minutes after birth)",
+    "notes": "Normal delivery placenta. Pale blue tray and flash give a slight cool/blue cast to the membranes. Gloved hand in frame.",
+    "white_balanced_on": null
+   },
+   {
+    "photo": "placenta_2",
+    "title": "File:Human placenta uterine side.jpg",
+    "page": "https://commons.wikimedia.org/wiki/File:Human_placenta_uterine_side.jpg",
+    "author": "Ravedave (Wikimedia user)",
+    "licence": "Public domain (PD-self)",
+    "licence_url": "https://commons.wikimedia.org/wiki/Template:PD-self",
+    "shows": "Maternal (uterine) surface of a term human placenta: dark red cotyledons, cord at right",
+    "fresh_or_fixed": "fresh (minutes after birth)",
+    "notes": "Normal delivery placenta. Flash; blue tray/drape around it, otherwise neutral.",
+    "white_balanced_on": null
+   }
+  ],
+  "measured": {
+   "villous tissue": {
+    "srgb": [
+     0.333,
+     0.075,
+     0.11
+    ],
+    "photos": [
+     "placenta_2"
+    ]
+   },
+   "membranes": {
+    "srgb": [
+     0.663,
+     0.635,
+     0.682
+    ],
+    "photos": [
+     "placenta_1"
+    ]
+   }
+  }
+ },
+ {
+  "name": "HiP-CT organ: prostate",
+  "organ": "prostate",
+  "modality": "HiP-CT",
+  "domain": "window",
+  "description": "A prostate (here darker than its medium): tan-grey glandular tissue.",
+  "stops": [
+   {
+    "value": 0,
+    "color": [
+     0.701,
+     0.503,
+     0.365
+    ],
+    "opacity": 0,
+    "tissue": "glandular tissue"
+   },
+   {
+    "value": 0.1,
+    "color": [
+     0.701,
+     0.503,
+     0.365
+    ],
+    "opacity": 0,
+    "tissue": "glandular tissue"
+   },
+   {
+    "value": 0.3,
+    "color": [
+     0.701,
+     0.503,
+     0.365
+    ],
+    "opacity": 0.8,
+    "tissue": "glandular tissue"
+   },
+   {
+    "value": 0.5,
+    "color": [
+     0.701,
+     0.503,
+     0.365
+    ],
+    "opacity": 0.9,
+    "tissue": "glandular tissue"
+   },
+   {
+    "value": 1.0,
+    "color": [
+     0.701,
+     0.503,
+     0.365
+    ],
+    "opacity": 1,
+    "tissue": "glandular tissue"
+   },
+   {
+    "value": 1.6,
+    "color": [
+     0.933,
+     0.9,
+     0.807
+    ],
+    "opacity": 1,
+    "tissue": "calcification"
+   }
+  ],
+  "density": 60.0,
+  "shade_mix": 0.85,
+  "gradient_scale": 30.0,
+  "roughness": 0.5,
+  "specular": 0.12,
+  "albedo": 0.9,
+  "surface_inset": 1.5,
+  "exposure": 1.8,
+  "reference": [
+   {
+    "photo": "prostate_1",
+    "title": "File:Prostate middle lobe orig.jpg",
+    "page": "https://commons.wikimedia.org/wiki/File:Prostate_middle_lobe_orig.jpg",
+    "author": "Steven Fruitsmaak",
+    "licence": "CC BY-SA 3.0",
+    "licence_url": "https://creativecommons.org/licenses/by-sa/3.0",
+    "shows": "Fresh prostate (adenoma enucleation) opened along the urethra with an instrument in it; tan-white fibromuscular cut surface",
+    "fresh_or_fixed": "fresh (surgical specimen)",
+    "notes": "NOT NORMAL: benign prostatic hyperplasia (large median lobe), removed by transvesical prostatectomy. Included only because no normal prostate photo was found; tissue colour is typical but surface is blood-smeared (exaggerates red). Green drape background, flash.",
+    "white_balanced_on": null
+   }
+  ],
+  "measured": {
+   "glandular tissue": {
+    "srgb": [
+     0.8,
+     0.66,
+     0.55
+    ],
+    "photos": [],
+    "note": "not measured: the only openly licensed photograph (listed) is an enlarged gland covered in blood; a tan for a clean cut surface instead"
+   },
+   "calcification": {
+    "srgb": [
+     0.92,
+     0.9,
+     0.85
+    ],
+    "photos": [],
+    "note": "not measured: no usable openly licensed photograph shows it"
+   }
+  }
+ },
+ {
+  "name": "HiP-CT organ: testis",
+  "organ": "testis",
+  "modality": "HiP-CT",
+  "domain": "window",
+  "description": "A testis: tan-brown parenchyma inside a white tunica albuginea.",
+  "stops": [
+   {
+    "value": 0,
+    "color": [
+     0.671,
+     0.447,
+     0.285
+    ],
+    "opacity": 0,
+    "tissue": "parenchyma"
+   },
+   {
+    "value": 0.08,
+    "color": [
+     0.671,
+     0.447,
+     0.285
+    ],
+    "opacity": 0,
+    "tissue": "parenchyma"
+   },
+   {
+    "value": 0.18,
+    "color": [
+     0.671,
+     0.447,
+     0.285
+    ],
+    "opacity": 0.75,
+    "tissue": "parenchyma"
+   },
+   {
+    "value": 0.35,
+    "color": [
+     0.671,
+     0.447,
+     0.285
+    ],
+    "opacity": 0.85,
+    "tissue": "parenchyma"
+   },
+   {
+    "value": 0.6,
+    "color": [
+     0.838,
+     0.599,
+     0.55
+    ],
+    "opacity": 1,
+    "tissue": "tunica albuginea"
+   },
+   {
+    "value": 1.2,
+    "color": [
+     0.838,
+     0.599,
+     0.55
+    ],
+    "opacity": 1,
+    "tissue": "tunica albuginea"
+   }
+  ],
+  "density": 60.0,
+  "shade_mix": 0.85,
+  "gradient_scale": 30.0,
+  "roughness": 0.5,
+  "specular": 0.12,
+  "albedo": 0.9,
+  "surface_inset": 1.5,
+  "exposure": 1.8,
+  "reference": [
+   {
+    "photo": "testis_1",
+    "title": "File:Bull testicles \u0411\u044b\u0447\u0438\u0439 \u0441\u0435\u043c\u0435\u043d\u043d\u0438\u043a 1.jpg",
+    "page": "https://commons.wikimedia.org/wiki/File:Bull_testicles_%D0%91%D1%8B%D1%87%D0%B8%D0%B9_%D1%81%D0%B5%D0%BC%D0%B5%D0%BD%D0%BD%D0%B8%D0%BA_1.jpg",
+    "author": "Jurfeld",
+    "licence": "CC BY-SA 4.0",
+    "licence_url": "https://creativecommons.org/licenses/by-sa/4.0",
+    "shows": "Bovine (BULL) testis exterior: white-pink tunica albuginea with tortuous surface vessels and attached epididymis",
+    "fresh_or_fixed": "fresh",
+    "notes": "ANIMAL (bull); no openly licensed photo of a normal human testis (outer or cut surface) was found. Studio white background, neutral white balance. No cut surface.",
+    "white_balanced_on": [
+     0.02,
+     0.02,
+     0.12,
+     0.12
+    ]
+   }
+  ],
+  "measured": {
+   "parenchyma": {
+    "srgb": [
+     0.78,
+     0.62,
+     0.48
+    ],
+    "photos": [],
+    "note": "not measured: no usable openly licensed photograph shows it"
+   },
+   "tunica albuginea": {
+    "srgb": [
+     0.871,
+     0.725,
+     0.682
+    ],
+    "photos": [
+     "testis_1"
+    ]
+   }
+  }
+ },
+ {
+  "name": "HiP-CT organ: uterus",
+  "organ": "uterus",
+  "modality": "HiP-CT",
+  "domain": "window",
+  "description": "A uterus: pink-tan myometrium, red-brown endometrium.",
+  "stops": [
+   {
+    "value": 0,
+    "color": [
+     0.262,
+     0.143,
+     0.028
+    ],
+    "opacity": 0,
+    "tissue": "endometrium"
+   },
+   {
+    "value": 0.06,
+    "color": [
+     0.262,
+     0.143,
+     0.028
+    ],
+    "opacity": 0,
+    "tissue": "endometrium"
+   },
+   {
+    "value": 0.25,
+    "color": [
+     0.262,
+     0.143,
+     0.028
+    ],
+    "opacity": 0.75,
+    "tissue": "endometrium"
+   },
+   {
+    "value": 0.5,
+    "color": [
+     0.653,
+     0.502,
+     0.359
+    ],
+    "opacity": 0.9,
+    "tissue": "myometrium"
+   },
+   {
+    "value": 0.9,
+    "color": [
+     0.653,
+     0.502,
+     0.359
+    ],
+    "opacity": 1,
+    "tissue": "myometrium"
+   },
+   {
+    "value": 1.4,
+    "color": [
+     0.653,
+     0.502,
+     0.359
+    ],
+    "opacity": 1,
+    "tissue": "myometrium"
+   }
+  ],
+  "density": 60.0,
+  "shade_mix": 0.85,
+  "gradient_scale": 30.0,
+  "roughness": 0.5,
+  "specular": 0.12,
+  "albedo": 0.9,
+  "surface_inset": 1.5,
+  "exposure": 1.8,
+  "reference": [
+   {
+    "photo": "uterus_2",
+    "title": "File:Uterus in museum.jpg",
+    "page": "https://commons.wikimedia.org/wiki/File:Uterus_in_museum.jpg",
+    "author": "Tiia Monto",
+    "licence": "CC BY-SA 3.0",
+    "licence_url": "https://creativecommons.org/licenses/by-sa/3.0",
+    "shows": "Human uterus opened from the front showing the endometrial cavity, cervical canal, tubes and an ovary",
+    "fresh_or_fixed": "fixed/preserved museum specimen (method not stated)",
+    "notes": "Museum display (Kulturama, Zurich) on black background. Preserved tissue is uniformly pale cream/yellow, so useful for anatomy, not fresh colour; preservation method unknown, could be a dry or plastinated preparation. Only 566 px wide.",
+    "white_balanced_on": null
+   }
+  ],
+  "measured": {
+   "myometrium": {
+    "srgb": [
+     0.769,
+     0.663,
+     0.545
+    ],
+    "photos": [
+     "uterus_2"
+    ]
+   },
+   "endometrium": {
+    "srgb": [
+     0.482,
+     0.353,
+     0.216
+    ],
+    "photos": [
+     "uterus_2"
+    ]
+   }
+  }
+ }
+]

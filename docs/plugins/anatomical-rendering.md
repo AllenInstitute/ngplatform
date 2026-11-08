@@ -48,6 +48,19 @@ It renders in one of two places:
   colour). A preset is a transfer function (colour and opacity from the
   image's values) with material and light; its values are percentiles of
   the tissue, so one preset suits scans of different scaling.
+- **HiP-CT organs**: a preset for each organ in the Human Organ Atlas (brain,
+  heart, lung, kidney, liver, spleen, colon, eye, placenta, prostate, testis,
+  uterus), its colours measured on photographs of real organs (each preset
+  lists them, with their authors and licences). These presets spread their
+  colours over a **Window** of the image's values, as a window is set in a
+  viewer. HiP-CT organs lie in a mounting medium (ethanol and agar) that can
+  fill most of the scan and be denser or less dense than the tissue, so
+  percentiles do not suit them. The host guesses the window: from just past
+  the medium (seen in a ring inside the scan's sides), on the side of it
+  where the tissue is, with the tissue's commonest value at the window's
+  middle. Change the two values if the guess misses; **Guess** goes back to
+  it. **Hide the jar** renders only a cylinder about the scan's axis, which
+  leaves out the jar's wall (as dense as tissue).
 - **Density** (opacity per mm), **Exposure**, and the key light's direction
   (relative to the camera, so the light follows as you turn the view).
 - **Light map** (on a host): image-based light from an HDR panorama
@@ -80,6 +93,48 @@ It renders in one of two places:
   then **Download**. Between keyframes the camera turns around the position;
   cuts, density, exposure and the light change smoothly.
 
+## The HiP-CT organ presets
+
+Each organ's tissues were given colours measured on openly licensed
+photographs of real organs. The colours inside the organ were clustered
+(k-means in Lab), each cluster was named as a tissue, and photographs with
+something neutral in them (a steel table, paper, a white background) were
+white-balanced on it. Each colour was then made into a material colour by
+rendering a flat slab of tissue under the renders' light (the photo-studio
+map and the key light) and tone curve, and changing the material until the
+slab shows the photograph's colour relative to its white. Multiple
+scattering darkens and saturates colour, so the material colours are
+darker than the photographs'. Each preset lists its photographs (author,
+licence, what they show, and caveats) under `reference`, and the colour
+measured for each tissue under `measured`.
+
+Few photographs of normal fresh human organs are openly licensed. Animal
+organs stand in for the kidney and eye (pig) and the testis (bull). The
+brain and uterus are fixed specimens, as HiP-CT organs are. The colon was
+measured on colonoscopy views of its lining. The heart, liver and spleen
+photographs have warm or pink casts. Tissues no usable photograph shows
+were given a colour by hand and are marked "not measured".
+
+| Organ | HiP-CT scan (Human Organ Atlas) | Photographs the colours were measured on | Not measured |
+|---|---|---|---|
+| brain | LADAF-2021-64 brain | [Human brain frontal (coronal) section.JPG](https://commons.wikimedia.org/wiki/File:Human_brain_frontal_(coronal)_section.JPG) (John A. Beal, PhD, Dept. of Cellular Biology & Anatomy, LSU Health Sciences Center Shreveport, CC BY 2.5, fixed (appearance of a formalin-fixed brain slice; not stated on the file page)) | — |
+| heart | LADAF-2021-17 heart | [Пересаженное сердце в грудной клетке реципиента.JPG](https://commons.wikimedia.org/wiki/File:%D0%9F%D0%B5%D1%80%D0%B5%D1%81%D0%B0%D0%B6%D0%B5%D0%BD%D0%BD%D0%BE%D0%B5_%D1%81%D0%B5%D1%80%D0%B4%D1%86%D0%B5_%D0%B2_%D0%B3%D1%80%D1%83%D0%B4%D0%BD%D0%BE%D0%B9_%D0%BA%D0%BB%D0%B5%D1%82%D0%BA%D0%B5_%D1%80%D0%B5%D1%86%D0%B8%D0%BF%D0%B8%D0%B5%D0%BD%D1%82%D0%B0.JPG) (Vasily I. Kaleda, CC BY-SA 3.0, fresh (living, in situ)); [Human heart male adult autopsy.jpg](https://commons.wikimedia.org/wiki/File:Human_heart_male_adult_autopsy.jpg) (Jebulon, CC0 1.0, unknown (autopsy specimen; fixation not stated)) | valves and fibrous tissue |
+| lung | LADAF-2020-27 left lung | [Normal lung (3661495238).jpg](https://commons.wikimedia.org/wiki/File:Normal_lung_(3661495238).jpg) (Yale Rosen, CC BY-SA 2.0, formalin-fixed (formalin-perfused, autopsy)); [Lungs filled with air.jpg](https://commons.wikimedia.org/wiki/File:Lungs_filled_with_air.jpg) (Pöllö, CC BY 3.0, fresh) | — |
+| kidney | LADAF-2020-27 left kidney | [Pig-kidney.JPG](https://commons.wikimedia.org/wiki/File:Pig-kidney.JPG) (Thor-Rune Hansen, Public domain (PD-self), fresh) | — |
+| liver | LADAF-2021-17 liver | [Human Hepar.jpg](https://commons.wikimedia.org/wiki/File:Human_Hepar.jpg) (Suseno, Public domain (PD-self), fresh (autopsy)) | — |
+| spleen | LADAF-2020-27 spleen | [Gross pathology of an accessory spleen.jpg](https://commons.wikimedia.org/wiki/File:Gross_pathology_of_an_accessory_spleen.jpg) (Mikael Häggström, M.D., CC0 1.0, partially fixed (fixed grey outer rim, unfixed red-purple centre, per file description)); [Spleen.jpg](https://commons.wikimedia.org/wiki/File:Spleen.jpg) (Hic et nunc, CC BY-SA 3.0, fresh (living, in situ)) | — |
+| colon | LADAF-2021-17 colon | [Colonoscopy splenic flexure.jpg](https://commons.wikimedia.org/wiki/File:Colonoscopy_splenic_flexure.jpg) (melvil, CC BY-SA 4.0, fresh (living, colonoscopy)); [Rectum-2016-12.jpg](https://commons.wikimedia.org/wiki/File:Rectum-2016-12.jpg) (melvil, CC BY-SA 4.0, fresh (living, colonoscopy)) | — |
+| eye | LADAF-2024-38 right eye | [Eye pig cut open.jpg](https://commons.wikimedia.org/wiki/File:Eye_pig_cut_open.jpg) (Carsten Niehaus, Public domain (PD-self), fresh); [Schweineauge.jpg](https://commons.wikimedia.org/wiki/File:Schweineauge.jpg) (Honge, Public domain (PD-user-de), fresh (2 days after slaughter)) | — |
+| placenta | MR-1 placenta | [Human placenta baby side.jpg](https://commons.wikimedia.org/wiki/File:Human_placenta_baby_side.jpg) (Habj, Public domain (PD-self), fresh (minutes after birth)); [Human placenta uterine side.jpg](https://commons.wikimedia.org/wiki/File:Human_placenta_uterine_side.jpg) (Ravedave, Public domain (PD-self), fresh (minutes after birth)) | — |
+| prostate | LADAF-2021-17 prostate | [Prostate middle lobe orig.jpg](https://commons.wikimedia.org/wiki/File:Prostate_middle_lobe_orig.jpg) (Steven Fruitsmaak, CC BY-SA 3.0, fresh (surgical specimen)) | glandular tissue, calcification |
+| testis | LADAF-2021-17 testis | [Bull testicles Бычий семенник 1.jpg](https://commons.wikimedia.org/wiki/File:Bull_testicles_%D0%91%D1%8B%D1%87%D0%B8%D0%B9_%D1%81%D0%B5%D0%BC%D0%B5%D0%BD%D0%BD%D0%B8%D0%BA_1.jpg) (Jurfeld, CC BY-SA 4.0, fresh) | parenchyma |
+| uterus | AUMC-005 uterus | [Uterus in museum.jpg](https://commons.wikimedia.org/wiki/File:Uterus_in_museum.jpg) (Tiia Monto, CC BY-SA 3.0, fixed/preserved museum specimen (method not stated)) | — |
+
+Lungs: at the 0.34 mm of a whole-organ scan the alveoli are finer than a
+voxel and the parenchyma has the mounting medium's value, so the lung
+preset shows the vessels and airways, with the parenchyma only as a faint
+haze.
+
 ## How it works
 
 The renderer follows the published methods of Monte Carlo volume
@@ -89,7 +144,11 @@ ratio tracking (Novák et al. 2018); at each collision either surface
 scattering with the gradient as normal or volume scattering with a
 Henyey–Greenstein phase function, chosen by the gradient's magnitude (Kroes
 et al. 2012); a directional key light and a sky-like environment; a thin-lens
-camera; a filmic tone curve. Each pass adds one sample per pixel and the
+camera; a filmic tone curve. Where a preset asks for it (`surface_inset`, in
+voxels), a collision takes its colour a voxel or two inwards along the
+gradient, on the more opaque side, so a surface shows the tissue beneath it
+rather than the values between it and the medium around it (which would
+otherwise colour a kidney's capsule as fat). Each pass adds one sample per pixel and the
 image is their mean, so it refines while the view is still. While the
 camera moves, frames are rendered at half size, and for the first 12
 samples after a change the host smooths the image with an edge-avoiding

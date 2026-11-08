@@ -29,6 +29,8 @@ export interface Saved {
   preset: string;
   density?: number;
   exposure: number;
+  /** For "window" presets: the data values at the window's ends, per image (its OME-Zarr store); else the host's guess. */
+  windows: Record<string, [number, number]>;
   lightAzimuth: number;
   lightElevation: number;
   /** A light map on the host ("" for the preset's sky colours) and its turn in degrees. */
@@ -41,6 +43,8 @@ export interface Saved {
   hidden: number[];
   /** Voxels the GPU holds. */
   budget: number;
+  /** Hide the jar: render only a cylinder about the scan's axis (an organ scanned by HiP-CT in its jar), on the host. */
+  jar: boolean;
   maxSamples: number;
   /** Smooth the first frames after the view changes (the host's denoiser). */
   denoise: boolean;
@@ -52,6 +56,9 @@ export interface Saved {
   rotation: { axis: "vertical" | "horizontal"; degrees: number; step: number };
   movie: { fps: number; width: number; height: number; samples: number; easing: "smooth" | "linear" };
 }
+
+/** What "Hide the jar" keeps: a cylinder of this fraction of the scan's half width (a HiP-CT jar's wall is at about 0.95). */
+const JAR_FRACTION = 0.9;
 
 const DEFAULT_CUTS: Cut[] = [
   { axis: "x", keep: -1, offset: 0, on: false },
@@ -71,6 +78,11 @@ export function readSaved(raw: unknown): Saved {
     preset: typeof s.preset === "string" ? s.preset : "",
     density: typeof s.density === "number" ? s.density : undefined,
     exposure: num(s.exposure, 1),
+    windows: Object.fromEntries(
+      Object.entries(s.windows && typeof s.windows === "object" ? s.windows : {}).filter(
+        (e): e is [string, [number, number]] => Array.isArray(e[1]) && e[1].length === 2 && e[1].every((x) => typeof x === "number" && Number.isFinite(x)) && e[1][1] > e[1][0],
+      ),
+    ),
     lightAzimuth: num(s.lightAzimuth, 30),
     lightElevation: num(s.lightElevation, 40),
     lightMap: typeof s.lightMap === "string" ? s.lightMap : "",
@@ -81,6 +93,7 @@ export function readSaved(raw: unknown): Saved {
     keep: Array.isArray(s.keep) ? s.keep.filter((x) => typeof x === "number") : [],
     hidden: Array.isArray(s.hidden) ? s.hidden.filter((x) => typeof x === "number") : [],
     budget: num(s.budget, 4e8),
+    jar: s.jar === true,
     maxSamples: num(s.maxSamples, 512),
     denoise: s.denoise !== false,
     keyframes: Array.isArray(s.keyframes) ? s.keyframes : [],
@@ -267,6 +280,62 @@ class AnatomicalRendering {
     this.panelUpdate?.();
   }
 
+  /** The chosen preset's domain ("percentile", "data" or "window"), as far as the page knows it. */
+  private presetDomain(): string | undefined {
+    const s = this.saved;
+    const custom = s.customPresets.find((p) => p.name === s.preset) as { domain?: unknown } | undefined;
+    const d = custom?.domain ?? (s.where === "browser" ? LOCAL_PRESETS.find((p) => p.name === s.preset)?.domain : this.presets.find((p) => p.name === s.preset)?.domain);
+    return typeof d === "string" ? d : undefined;
+  }
+
+  /** Where a preset's colours came from: the photographs it lists (with their authors and licences). */
+  private referenceNote(): HTMLElement | "" {
+    const info = this.presets.find((p) => p.name === this.saved.preset);
+    const refs = Array.isArray(info?.reference) ? (info!.reference as { title?: string; page?: string; author?: string; licence?: string }[]) : [];
+    if (this.saved.where === "browser" || refs.length === 0) return "";
+    return el(
+      "p",
+      { class: "muted", style: "font-size: 11px; margin: 2px 0 6px" },
+      "Colours measured on: ",
+      ...refs.flatMap((r, i) => [
+        i ? "; " : "",
+        el("a", { href: r.page ?? "#", target: "_blank", rel: "noopener" }, (r.title ?? "a photograph").replace(/^File:/, "")),
+        ` (${r.author ?? "unknown"}, ${r.licence ?? ""})`,
+      ]),
+    );
+  }
+
+  /** A "window" preset's control: the data values at its ends for this image, the host's guess until set. */
+  private windowField(): HTMLElement | "" {
+    if (this.presetDomain() !== "window") return "";
+    if (this.saved.where === "browser") return field("Window", el("span", { class: "muted" }, "Guessed in this browser (from just past the mounting medium; the commonest tissue value at its middle)"));
+    const target = this.target();
+    const src = target ? omeZarrSource(target.sources[0]) : undefined;
+    if (src === undefined) return "";
+    const vol = this.session?.volume as { window?: [number, number] | null; lo?: number; hi?: number } | undefined;
+    const guess = vol?.window ?? undefined;
+    const w = this.saved.windows[src] ?? guess;
+    const set = (i: 0 | 1, v: number) =>
+      this.save((x) => {
+        const cur = x.windows[src] ?? guess ?? [v, v + 1];
+        const next: [number, number] = [cur[0], cur[1]];
+        next[i] = v;
+        if (next[1] > next[0]) x.windows[src] = next;
+      });
+    const step = vol && vol.hi !== undefined && vol.lo !== undefined ? String(Math.max(1, Math.round((vol.hi - vol.lo) / 1000))) : "1";
+    return field(
+      "Window (low, high)",
+      el(
+        "div",
+        { style: "display: flex; gap: 6px; align-items: center" },
+        numberInput(w ? w[0] : 0, (v) => set(0, v), { step, style: "width: 80px" }),
+        numberInput(w ? w[1] : 1, (v) => set(1, v), { step, style: "width: 80px" }),
+        button("Guess", () => this.save((x) => delete x.windows[src]), "Back to the host's guess: from just past the mounting medium, with the commonest tissue value at the middle"),
+      ),
+      this.saved.windows[src] ? "The image's values the preset's colours are spread over" : "The host's guess: from just past the mounting medium, the commonest tissue value at the middle; change it to fit",
+    );
+  }
+
   private labelsSource(): string | undefined {
     if (!this.saved.regions) return undefined;
     const segs = this.segmentations();
@@ -278,14 +347,14 @@ class AnatomicalRendering {
     const service = this.service!;
     const url = omeZarrSource(target.sources[0])!;
     const labels = this.labelsSource();
-    const key = JSON.stringify([service.link.base, url, labels, this.saved.budget]);
+    const key = JSON.stringify([service.link.base, url, labels, this.saved.budget, this.saved.jar]);
     if (key === this.sessionKey) return;
     this.closeSession();
     this.sessionKey = key;
     const abort = new AbortController();
     this.abort = abort;
     try {
-      let info = await service.open({ url, budget: this.saved.budget }, labels ? { url: labels } : undefined);
+      let info = await service.open({ url, budget: this.saved.budget, ...(this.saved.jar ? { cylinder: JAR_FRACTION } : {}) }, labels ? { url: labels } : undefined);
       if (abort.signal.aborted) {
         // Another image (or detail) was asked for while this one was opening: it is not wanted.
         void service.close(info.id).catch(() => undefined);
@@ -391,8 +460,10 @@ class AnatomicalRendering {
       return undefined;
     }
     const s = this.saved;
-    const overrides: Record<string, number> = { exposure: s.exposure };
+    const overrides: Record<string, number | number[]> = { exposure: s.exposure };
     if (s.density !== undefined) overrides.density = s.density;
+    const src = this.target() ? omeZarrSource(this.target()!.sources[0]) : undefined;
+    if (src !== undefined && s.windows[src] && this.presetDomain() === "window") overrides.window = s.windows[src];
     return {
       inv_view_projection: Array.from(frame.invViewProjection),
       width: frame.width,
@@ -419,7 +490,7 @@ class AnatomicalRendering {
     const local = this.saved.where === "browser" ? this.local : undefined;
     const sid = local ? "local" : this.session?.status === "ready" ? this.session.id : undefined;
     if (sid === undefined || (local && !this.localText.startsWith("level"))) return;
-    const look = JSON.stringify([this.saved.box, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
+    const look = JSON.stringify([this.saved.box, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.windows, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
     const key = viewKey(frame.invViewProjection, frame.width, frame.height) + look;
     const scale = frame.moving ? 0.5 : 1;
     if (key === this.lastKey && !(this.lastScale < 1 && !frame.moving)) return;
@@ -687,7 +758,20 @@ class AnatomicalRendering {
         })(), el("b", {}, "Render")),
         field("Image", imgs.length ? select(imgs.map((l) => [l.name, l.name]), this.target()?.name ?? "", (v) => this.save((x) => (x.layer = v))) : el("span", { class: "muted" }, "No OME-Zarr image in the scene")),
         field("Preset", presetOptions.length ? select(presetOptions, s.preset, (v) => this.save((x) => (x.preset = v))) : el("span", { class: "muted" }, "(connect first)")),
+        this.referenceNote(),
         button("Load a preset file…", () => this.loadPresetFile(), "A JSON preset (or a list of them): name, domain, stops of value, colour and opacity, and material"),
+        this.windowField(),
+        s.where === "host"
+          ? el("label", { style: "display: flex; gap: 6px; align-items: center", title: "Render only a cylinder about the scan's axis, leaving out the jar's wall (HiP-CT organs in their jars)" }, (() => {
+              const cb = el("input", { type: "checkbox" }) as HTMLInputElement;
+              cb.checked = s.jar;
+              cb.onchange = () => {
+                this.save((x) => (x.jar = cb.checked));
+                this.update();
+              };
+              return cb;
+            })(), "Hide the jar")
+          : "",
         field("Density (per mm)", numberInput(s.density ?? Number(this.presets.find((p) => p.name === s.preset)?.density ?? 40), (v) => this.save((x) => (x.density = v)), { step: "1", min: "0" })),
         field("Exposure", numberInput(s.exposure, (v) => this.save((x) => (x.exposure = v)), { step: "0.1", min: "0" })),
         field("Light (azimuth, elevation °)", el("div", { style: "display: flex; gap: 6px" },

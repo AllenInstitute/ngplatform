@@ -294,3 +294,51 @@ def test_tissue_box():
     # Sampled every 4th voxel, so the box is within 4 voxels (2 mm) of the tissue.
     assert lo == pytest.approx([6.0, 2.0, 4.0], abs=2.0) and hi == pytest.approx([8.0, 18.0, 10.0], abs=2.0)
     assert volumes.tissue_box(np.zeros((8, 8, 8), np.uint8), np.eye(4), 10.0, 0.0, 255.0) is None
+
+
+def _specimen(tissue: float, medium: float, dtype=np.uint16, calcium: float | None = None, seed: int = 0) -> np.ndarray:
+    """A HiP-CT-like scan: a round jar (outside it 0) of medium, a ball of tissue, maybe a fleck of calcium."""
+    rng = np.random.default_rng(seed)
+    n = 64
+    z, y, x = np.mgrid[:n, :n, :n].astype(np.float32)
+    r_axis = np.hypot(y - (n - 1) / 2, x - (n - 1) / 2) / (n / 2)
+    a = np.where(r_axis < 0.97, medium, 0.0) + rng.normal(0, abs(tissue - medium) * 0.04, (n, n, n)) * (r_axis < 0.97)
+    ball = np.hypot(np.hypot(z - 32, y - 32), x - 30) < 18
+    a[ball] = tissue + rng.normal(0, abs(tissue - medium) * 0.1, ball.sum())
+    if calcium is not None:
+        a[30:34, 30:34, 28:32] = calcium
+    top = np.iinfo(dtype).max
+    return np.clip(a, 0, top).astype(dtype)
+
+
+@pytest.mark.parametrize("tissue,medium,calcium", [(30000, 20000, 65000), (8000, 20000, None), (180, 90, 255)])
+def test_window_guess_puts_the_tissue_in_the_middle(tissue, medium, calcium):
+    dtype = np.uint8 if tissue < 256 else np.uint16
+    q = _specimen(tissue, medium, dtype, calcium)
+    top = float(np.iinfo(dtype).max)
+    lo, hi = volumes.guess_window(q, 0.0, top)
+    # The medium is outside the window, and the tissue near its middle, whatever the calcium.
+    assert not (lo <= medium <= hi)
+    assert (lo + hi) / 2 == pytest.approx(tissue, rel=0.05)
+
+
+def test_window_presets_take_the_window():
+    vol = volumes.Loaded(np.zeros((1, 1, 1), np.uint16), np.eye(4), 0.0, 1000.0, {}, "0", (1, 1, 1), (1, 1, 1), window=(100.0, 300.0))
+    p = presets.Preset.from_dict({"name": "w", "domain": "window", "stops": [{"value": 0, "color": [0, 0, 0], "opacity": 0}, {"value": 1, "color": [1, 1, 1], "opacity": 1}]})
+    tab = presets.transfer_table(p, vol).reshape(-1, 4)
+    t = np.linspace(0, 1, len(tab))
+    assert tab[t < 0.1, 3].max() == 0 and tab[t > 0.3, 3].min() == pytest.approx(1)
+    # The page's window wins over the guess.
+    tab = presets.transfer_table(p.with_overrides(window=[500, 900]), vol).reshape(-1, 4)
+    assert tab[t < 0.5, 3].max() == 0 and tab[t > 0.9, 3].min() == pytest.approx(1)
+    with pytest.raises(ValueError):
+        p.with_overrides(window=[5, 5])
+    organs = [q for q in presets.builtin().values() if q.modality == "HiP-CT" and q.organ]
+    assert len(organs) >= 10 and all(q.domain == "window" and q.reference for q in organs)
+
+
+def test_hide_the_jar():
+    q = _specimen(30000, 20000)
+    volumes.hide_outside_cylinder(q, 0.9)
+    assert q[:, 0, 0].max() == 0 and q[:, 32, 2].max() == 0  # a corner, and the jar's side
+    assert q[32, 32, 30] > 25000  # the tissue stays
