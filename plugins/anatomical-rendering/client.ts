@@ -130,6 +130,8 @@ export interface ViewSpec {
   /** A clip box: fractions (0..1) of the volume along its x, y, z, low and high. */
   crop_fraction?: [[number, number, number], [number, number, number]];
   max_bounces?: number;
+  /** Filter the image while it has few samples (the service's; default on). */
+  denoise?: boolean;
   max_samples?: number;
   aperture?: number;
   focus?: number;

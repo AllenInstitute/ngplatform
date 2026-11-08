@@ -443,6 +443,41 @@ extern "C" __global__ void majorant(const float* P, const float* tf, const float
   maj[i] = P[P_DENSITY] * m;
 }
 
+// One pass of an edge-avoiding a-trous wavelet filter (Dammertz et al. 2010) over the mean image: a 5 x 5
+// B3-spline at a spacing of `step` pixels, weighted down across colour differences (compressed as c / (1 + c))
+// and across differences in the distance to the first opaque point (depth[2 * i + 1], -1 where the ray met nothing).
+extern "C" __global__ void atrous(const float4* in, float4* out, const float* depth, int W, int H, int step, float sigma_c, float sigma_d) {
+  int x = blockIdx.x * blockDim.x + threadIdx.x, y = blockIdx.y * blockDim.y + threadIdx.y;
+  if (x >= W || y >= H) return;
+  const float h[5] = {1.f / 16.f, 1.f / 4.f, 3.f / 8.f, 1.f / 4.f, 1.f / 16.f};
+  int i = y * W + x;
+  float4 c = in[i];
+  float dp = depth[2 * i + 1];
+  float cx = c.x / (1.f + c.x), cy = c.y / (1.f + c.y), cz = c.z / (1.f + c.z);
+  float4 acc = make_float4(0.f, 0.f, 0.f, 0.f);
+  float wsum = 0.f;
+  for (int dy = -2; dy <= 2; ++dy) {
+    int yy = y + dy * step;
+    if (yy < 0 || yy >= H) continue;
+    for (int dx = -2; dx <= 2; ++dx) {
+      int xx = x + dx * step;
+      if (xx < 0 || xx >= W) continue;
+      int j = yy * W + xx;
+      float4 q = in[j];
+      float dq = depth[2 * j + 1];
+      if ((dp < 0.f) != (dq < 0.f)) continue;  // a silhouette: never mix the tissue with the background
+      float ex = q.x / (1.f + q.x) - cx, ey = q.y / (1.f + q.y) - cy, ez = q.z / (1.f + q.z) - cz, ea = q.w - c.w;
+      float wc = __expf(-(ex * ex + ey * ey + ez * ez + ea * ea) / (sigma_c * sigma_c));
+      float wd = dp < 0.f ? 1.f : __expf(-fabsf(dp - dq) / (sigma_d * step + 1e-6f));
+      float w = h[dx + 2] * h[dy + 2] * wc * wd;
+      acc.x += q.x * w; acc.y += q.y * w; acc.z += q.z * w; acc.w += q.w * w;
+      wsum += w;
+    }
+  }
+  float k = wsum > 0.f ? 1.f / wsum : 0.f;
+  out[i] = wsum > 0.f ? make_float4(acc.x * k, acc.y * k, acc.z * k, acc.w * k) : c;
+}
+
 // Mean of the accumulation buffer, exposure, ACES tone curve (Narkowicz's fit), sRGB, 8 bits.
 extern "C" __global__ void tonemap(const float4* accum, float inv_n, float exposure, unsigned char* rgba, int W, int H) {
   int x = blockIdx.x * blockDim.x + threadIdx.x, y = blockIdx.y * blockDim.y + threadIdx.y;

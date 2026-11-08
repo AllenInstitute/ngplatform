@@ -19,6 +19,7 @@ from . import kernels
 from .presets import Preset, transfer_table
 
 BRICK = 8
+DENOISE_UNTIL = 12
 
 
 def _cupy():
@@ -82,6 +83,7 @@ class RenderState:
     label_mix: float = 1.0
     background: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
     max_bounces: int = 4
+    denoise: bool = True  # filter the image while it has few samples (none from DENOISE_UNTIL samples on)
     aperture: float = 0.0
     focus: float = 0.0
     unit_mm: float = 1.0  # how many mm one world (display) unit is
@@ -236,8 +238,11 @@ class Renderer:
                 self._tf = cp.asarray(transfer_table(state.preset, self.volume))
                 self._tf_key = key
             self._update_lut(state)
+            # The first opaque point of each pixel: the denoiser's guide, and the depth the page draws with.
+            self._depth_gpu = cp.zeros((H, W, 2), cp.float32)
             n = self._bmin.size
             _kernels().get_function("majorant")((-(-n // 256),), (256,), (self._params, self._tf, self._bmin, self._bmax, self._maj, np.int32(n)))
+            _kernels().get_function("firsthit")((-(-W // 16), -(-H // 8)), (16, 8), self._args() + (self._depth_gpu, np.int32(W), np.int32(H)))
             self.reset()
 
     def _update_lut(self, state: RenderState) -> None:
@@ -367,9 +372,20 @@ class Renderer:
         with self.lock, self.device:
             W, H = s.width, s.height
             out = cp.zeros((H, W, 4), cp.uint8)
+            src, inv_n = self._accum, np.float32(1.0 / max(self.samples, 1))
+            if s.denoise and 0 < self.samples < DENOISE_UNTIL:
+                mean = self._accum * inv_n
+                a, b = mean, cp.empty_like(mean)
+                f = _kernels().get_function("atrous")
+                for it, step in enumerate((1, 2, 4)):
+                    f((-(-W // 16), -(-H // 8)), (16, 8), (a, b, self._depth_gpu, np.int32(W), np.int32(H), np.int32(step), np.float32(0.3 / 2**it), np.float32(1.0 / max(s.unit_mm, 1e-6))))
+                    a, b = b, a
+                # Less of the filtered image as samples come: none at DENOISE_UNTIL.
+                keep = self.samples / DENOISE_UNTIL
+                src, inv_n = a * (1 - keep) + mean * keep, np.float32(1.0)
             _kernels().get_function("tonemap")(
                 (-(-W // 16), -(-H // 8)), (16, 8),
-                (self._accum, np.float32(1.0 / max(self.samples, 1)), np.float32(s.preset.exposure), out, np.int32(W), np.int32(H)),
+                (src, inv_n, np.float32(s.preset.exposure), out, np.int32(W), np.int32(H)),
             )
             return cp.asnumpy(out)
 
@@ -380,11 +396,7 @@ class Renderer:
         assert s is not None
         with self.lock, self.device:
             W, H = s.width, s.height
-            out = cp.zeros((H, W, 2), cp.float32)
-            _kernels().get_function("firsthit")(
-                (-(-W // 16), -(-H // 8)), (16, 8), self._args() + (out, np.int32(W), np.int32(H))
-            )
-            return cp.asnumpy(out)
+            return cp.asnumpy(self._depth_gpu)
 
     def synchronize(self) -> None:
         with self.device:

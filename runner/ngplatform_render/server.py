@@ -204,6 +204,7 @@ class Session:
             label_colors=colors, keep_labels=keep, label_mix=mix,
             background=tuple(view.get("background", (0, 0, 0, 0))),
             max_bounces=int(view.get("max_bounces", 4)),
+            denoise=bool(view.get("denoise", True)),
             aperture=float(view.get("aperture", 0.0)), focus=float(view.get("focus", 0.0)),
             unit_mm=float(view.get("unit_mm", 1.0)),
         )

@@ -39,6 +39,8 @@ export interface Saved {
   /** Voxels the GPU holds. */
   budget: number;
   maxSamples: number;
+  /** Smooth the first frames after the view changes (the host's denoiser). */
+  denoise: boolean;
   keyframes: Keyframe[];
   /** A clip box: fractions of the volume along x, y, z. */
   box: { on: boolean; lo: [number, number, number]; hi: [number, number, number] };
@@ -75,6 +77,7 @@ export function readSaved(raw: unknown): Saved {
     hidden: Array.isArray(s.hidden) ? s.hidden.filter((x) => typeof x === "number") : [],
     budget: num(s.budget, 4e8),
     maxSamples: num(s.maxSamples, 512),
+    denoise: s.denoise !== false,
     keyframes: Array.isArray(s.keyframes) ? s.keyframes : [],
     box: { on: s.box?.on === true, lo: s.box?.lo ?? [0, 0, 0], hi: s.box?.hi ?? [1, 1, 1] },
     customPresets: Array.isArray(s.customPresets) ? s.customPresets.filter((p) => p && typeof (p as { name?: unknown }).name === "string") : [],
@@ -401,6 +404,7 @@ class AnatomicalRendering {
       labels: s.regions ? { show: true, mix: s.labelMix, keep: s.keep, hidden: s.hidden } : { show: false },
       background: [0, 0, 0, 0],
       max_samples: s.maxSamples,
+      denoise: s.denoise,
     };
   }
 
@@ -409,7 +413,7 @@ class AnatomicalRendering {
     const local = this.saved.where === "browser" ? this.local : undefined;
     const sid = local ? "local" : this.session?.status === "ready" ? this.session.id : undefined;
     if (sid === undefined || (local && !this.localText.startsWith("level"))) return;
-    const look = JSON.stringify([this.saved.box, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, frame.position]);
+    const look = JSON.stringify([this.saved.box, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
     const key = viewKey(frame.invViewProjection, frame.width, frame.height) + look;
     const scale = frame.moving ? 0.5 : 1;
     if (key === this.lastKey && !(this.lastScale < 1 && !frame.moving)) return;
@@ -695,6 +699,12 @@ class AnatomicalRendering {
         })()),
         el("h4", {}, "Quality"),
         field("Detail (million voxels on the GPU)", numberInput(s.budget / 1e6, (v) => this.save((x) => (x.budget = Math.max(1, v) * 1e6)), { step: "50", min: "1" })),
+        el("label", { style: "display: flex; gap: 6px; align-items: center" }, (() => {
+          const cb = el("input", { type: "checkbox" }) as HTMLInputElement;
+          cb.checked = s.denoise;
+          cb.onchange = () => this.save((x) => (x.denoise = cb.checked));
+          return cb;
+        })(), "Smooth the first frames after a change (host)"),
         field("Samples per pixel", numberInput(s.maxSamples, (v) => this.save((x) => (x.maxSamples = Math.max(1, Math.round(v)))), { step: "64", min: "1" })),
         el("h4", {}, "Movie"),
         ...keyframeRows,
