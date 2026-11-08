@@ -82,7 +82,7 @@ class Session:
         # number, samples, version, the encoded frame, w, h, its type, where its alpha plane starts (jpeg) or 0
         self.frame: tuple[int, int, int, bytes, int, int, str, int] | None = None
         self.frame_number = 0
-        self.depth: tuple[int, bytes, int, int] | None = None
+        self.depth: tuple[int, bytes, int, int, bytes] | None = None  # version, GL depth (float16), w, h, distance (float32)
         self.max_samples = 1024
         self.last_used = time.time()
         self.closed = False
@@ -362,8 +362,11 @@ class Session:
                     if self.detail_loader is not None and not st.fast:
                         self._plan_detail(R, st, d[..., 1])
                     dz = zlib.compress(d[..., 0].astype(np.float16).tobytes(), 1)
+                    # The distance along each pixel's ray to where it first meets tissue (-1: none), float32:
+                    # what the page rebuilds the frame's points from, to draw it moving with the view.
+                    dd = zlib.compress(np.ascontiguousarray(d[..., 1], np.float32).tobytes(), 1)
                     with self.cond:
-                        self.depth = (version, dz, st.width, st.height)
+                        self.depth = (version, dz, st.width, st.height, dd)
                     self.applied_version = version
                     batch = 1
                     last_publish = 0.0
@@ -737,9 +740,13 @@ class Handler(BaseHTTPRequestHandler):
                     if d is None:
                         self._send(204, b"")
                         return
-                    version, dz, w, h = d
-                    self._send(200, dz, "application/octet-stream", {"X-Version": str(version), "X-Width": str(w), "X-Height": str(h),
-                                                                     "X-Format": "float16-zlib"})
+                    version, dz, w, h, dd = d
+                    if q.get("channel") == "distance":
+                        self._send(200, dd, "application/octet-stream", {"X-Version": str(version), "X-Width": str(w), "X-Height": str(h),
+                                                                         "X-Format": "float32-zlib"})
+                    else:
+                        self._send(200, dz, "application/octet-stream", {"X-Version": str(version), "X-Width": str(w), "X-Height": str(h),
+                                                                         "X-Format": "float16-zlib"})
                 elif method == "POST" and rest == ["still"]:
                     # One view, path-traced to a sample count at a size, as a PNG (a renderer of its own).
                     from PIL import Image

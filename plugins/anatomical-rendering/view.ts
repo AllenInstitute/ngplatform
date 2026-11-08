@@ -65,6 +65,35 @@ export function clipPlanes(cuts: Cut[], position: ArrayLike<number>, d: Dimensio
   return out;
 }
 
+/** The camera's forward direction (display coordinates) from its inverse view-projection (column-major). */
+export function viewForward(inv: ArrayLike<number>): [number, number, number] {
+  const un = (z: number) => {
+    const x = inv[8] * z + inv[12], y = inv[9] * z + inv[13], zz = inv[10] * z + inv[14], w = inv[11] * z + inv[15];
+    return [x / w, y / w, zz / w];
+  };
+  const a = un(-1), b = un(1);
+  const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const l = Math.hypot(...d) || 1;
+  return [d[0] / l, d[1] / l, d[2] / l];
+}
+
+/** A cut facing the camera: the plane across the view `offsetMm` past the position, keeping what lies beyond it. */
+export function viewCutPlane(inv: ArrayLike<number>, position: ArrayLike<number>, offsetMm: number, d: Dimensions): [number, number, number, number] {
+  const f = viewForward(inv);
+  const u = offsetMm / unitMm(d);
+  const p = [position[0] + f[0] * u, position[1] + f[1] * u, position[2] + f[2] * u];
+  return [f[0], f[1], f[2], -(f[0] * p[0] + f[1] * p[1] + f[2] * p[2])];
+}
+
+/** Lighting styles: the light map and how strong it is, and the key light's strength. */
+export const LIGHTING: Record<string, { name: string; map: string; envScale: number; key: number }> = {
+  studio: { name: "Studio", map: "photo-studio", envScale: 1.0, key: 1.0 },
+  soft: { name: "Soft (diffuse, faint shadows)", map: "studio", envScale: 1.7, key: 0.25 },
+  hard: { name: "Hard (one strong light, deep shadows)", map: "studio", envScale: 0.2, key: 2.2 },
+  sky: { name: "Sky (daylight)", map: "sky", envScale: 1.0, key: 1.2 },
+  plain: { name: "The preset's own (sky colours)", map: "", envScale: 1.0, key: 1.0 },
+};
+
 /** A direction in camera space (x right, y up, z towards the viewer) from azimuth and elevation in degrees. */
 export function lightDirection(azimuth: number, elevation: number): [number, number, number] {
   const a = (azimuth * Math.PI) / 180, e = (elevation * Math.PI) / 180;

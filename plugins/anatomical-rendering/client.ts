@@ -230,6 +230,15 @@ export class RenderService {
     return { bitmap, alpha, detail: r.headers.get("X-Detail") ?? undefined, number: n("X-Frame"), samples: n("X-Samples"), version: n("X-Version"), width: n("X-Width"), height: n("X-Height"), msPerPass: n("X-Ms-Per-Pass") };
   }
 
+  /** The distance along each pixel's ray (from the near plane) to where it first meets tissue, -1 where nothing: the frame's points, to draw it moving with the view. */
+  async distance(id: string): Promise<{ version: number; width: number; height: number; data: Float32Array } | undefined> {
+    const r = await go(this.link, `/sessions/${id}/depth?channel=distance`);
+    if (r.status === 204 || !r.ok || r.headers.get("X-Format") !== "float32-zlib") return undefined;
+    const width = Number(r.headers.get("X-Width")), height = Number(r.headers.get("X-Height")), version = Number(r.headers.get("X-Version"));
+    const buf = await new Response(r.body!.pipeThrough(new DecompressionStream("deflate"))).arrayBuffer();
+    return { version, width, height, data: new Float32Array(buf) };
+  }
+
   /** The depth (GL 0..1, 1 where nothing) of the view `version`, at the frame's size. */
   async depth(id: string): Promise<{ version: number; width: number; height: number; data: Float32Array } | undefined> {
     const r = await go(this.link, `/sessions/${id}/depth`);

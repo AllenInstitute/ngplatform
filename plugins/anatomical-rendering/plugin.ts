@@ -14,7 +14,7 @@ import { PictureDrawer } from "./draw.js";
 import { ColourmapEditor, type DataStop, shifted, type Tuning } from "./editor.js";
 import { LocalRenderer, PRESETS as LOCAL_PRESETS } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
-import { ANATOMICAL_VIEWS, clipPlanes, type Cut, displayFromPhysical, lightDirection, omeZarrSource, orientationLooking, unitMm, viewKey } from "./view.js";
+import { ANATOMICAL_VIEWS, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, omeZarrSource, orientationLooking, unitMm, viewCutPlane, viewKey } from "./view.js";
 
 export interface Keyframe {
   time: number;
@@ -39,6 +39,12 @@ export interface Saved {
   /** A light map on the host ("" for the preset's sky colours) and its turn in degrees. */
   lightMap: string;
   lightMapRotation: number;
+  /** A lighting style (LIGHTING), or "" for the light map as set; and the light map's and the key light's strength. */
+  lightStyle: string;
+  envScale: number;
+  lightKey: number;
+  /** A cut facing the camera, `offset` mm past the position, following the view; or `fixed` where it was left (a display plane). */
+  viewCut: { on: boolean; offset: number; fixed: number[] | null };
   cuts: Cut[];
   regions: boolean;
   labelMix: number;
@@ -98,6 +104,14 @@ export function readSaved(raw: unknown): Saved {
     lightElevation: num(s.lightElevation, 40),
     lightMap: typeof s.lightMap === "string" ? s.lightMap : "",
     lightMapRotation: num(s.lightMapRotation, 0),
+    lightStyle: typeof s.lightStyle === "string" ? s.lightStyle : "",
+    envScale: num(s.envScale, 1),
+    lightKey: num(s.lightKey, 1),
+    viewCut: {
+      on: s.viewCut?.on === true,
+      offset: num(s.viewCut?.offset, 0),
+      fixed: Array.isArray(s.viewCut?.fixed) && s.viewCut!.fixed.length === 4 ? s.viewCut!.fixed : null,
+    },
     cuts,
     regions: s.regions === true,
     labelMix: num(s.labelMix, 0.85),
@@ -159,6 +173,9 @@ class AnatomicalRendering {
   private queued: ViewSpec | undefined;
   private settle: ReturnType<typeof setTimeout> | undefined;
   private depth: { version: number; width: number; height: number; data: Float32Array } | undefined;
+  private distance: { version: number; width: number; height: number; data: Float32Array } | undefined;
+  /** The camera (inverse view-projection, column-major) of each view sent, by the version the host gave it. */
+  private views = new Map<number, number[]>();
   private frameText = "";
   private problem = "";
   private movie: MovieInfo | undefined;
@@ -443,6 +460,12 @@ class AnatomicalRendering {
     );
   }
 
+  private slider(value: number, min: number, max: number, step: number, on: (v: number) => void, title: string): HTMLInputElement {
+    const r = el("input", { type: "range", min: String(min), max: String(max), step: String(step), value: String(value), style: "width: 110px", title }) as HTMLInputElement;
+    r.oninput = () => on(Number(r.value));
+    return r;
+  }
+
   /** A "window" preset's control: the data values at its ends for this image, the host's guess until set. */
   private windowField(): HTMLElement | "" {
     if (this.presetDomain() !== "window") return "";
@@ -576,10 +599,15 @@ class AnatomicalRendering {
         if (f === undefined) continue;
         after = f.number;
         if (this.depth === undefined || this.depth.version !== f.version) {
-          const d = await service.depth(id);
+          const [d, dist] = await Promise.all([service.depth(id), service.distance(id).catch(() => undefined)]);
           if (d !== undefined) this.depth = d;
+          this.distance = dist;
         }
-        this.drawer.set({ bitmap: f.bitmap, alpha: f.alpha ? { width: f.width, height: f.height, data: f.alpha } : undefined, depth: this.depth });
+        // With the camera it was rendered from and each pixel's distance, the frame is drawn as points in
+        // space: it turns and zooms with the view at once, not only when the next frame comes.
+        const cam = this.views.get(f.version);
+        const view = cam && this.distance && this.distance.version === f.version && this.distance.width === f.width ? { invViewProjection: cam, distance: this.distance } : undefined;
+        this.drawer.set({ bitmap: f.bitmap, alpha: f.alpha ? { width: f.width, height: f.height, data: f.alpha } : undefined, depth: this.depth, view });
         this.frameText = `${f.samples} samples, ${f.width}×${f.height}, ${f.msPerPass.toFixed(0)} ms a pass${f.detail ? `\nDetail: ${f.detail}` : ""}`;
         this.handle?.redraw();
         this.statusUpdate?.();
@@ -616,9 +644,12 @@ class AnatomicalRendering {
       preset: tuned ?? (s.customPresets.find((p) => p.name === s.preset) as Record<string, unknown> | undefined) ?? (s.preset || "HiP-CT brain"),
       overrides: tuned ? { exposure: s.exposure, ...(s.density !== undefined ? { density: s.density } : {}) } : overrides,
       crop_fraction: s.box.on ? [s.box.lo, s.box.hi] : undefined,
-      light: { direction: lightDirection(s.lightAzimuth, s.lightElevation), camera_space: true },
-      environment: s.lightMap ? { map: s.lightMap, rotation: s.lightMapRotation } : undefined,
-      clips: clipPlanes(s.cuts, frame.position, frame.dimensions),
+      light: { direction: lightDirection(s.lightAzimuth, s.lightElevation), camera_space: true, rgb: [3.2 * s.lightKey, 3.0 * s.lightKey, 2.8 * s.lightKey] },
+      environment: s.lightMap ? { map: s.lightMap, rotation: s.lightMapRotation, scale: s.envScale } : { scale: s.envScale },
+      clips: [
+        ...clipPlanes(s.cuts, frame.position, frame.dimensions),
+        ...(s.viewCut.on ? [s.viewCut.fixed ?? viewCutPlane(frame.invViewProjection, frame.position, s.viewCut.offset, frame.dimensions)] : []),
+      ] as [number, number, number, number][],
       labels: s.regions ? { show: true, mix: s.labelMix, keep: s.keep, hidden: s.hidden } : { show: false },
       background: [0, 0, 0, 0],
       max_samples: s.maxSamples,
@@ -632,7 +663,7 @@ class AnatomicalRendering {
     const local = this.saved.where === "browser" ? this.local : undefined;
     const sid = local ? "local" : this.session?.status === "ready" ? this.session.id : undefined;
     if (sid === undefined || (local && !this.localText.startsWith("level"))) return;
-    const look = JSON.stringify([this.saved.box, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
+    const look = JSON.stringify([this.saved.box, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.lightStyle, this.saved.envScale, this.saved.lightKey, this.saved.viewCut, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
     const key = viewKey(frame.invViewProjection, frame.width, frame.height) + look;
     const scale = frame.moving ? 0.5 : 1;
     if (key === this.lastKey && !(this.lastScale < 1 && !frame.moving)) return;
@@ -669,6 +700,10 @@ class AnatomicalRendering {
     }
     this.sending = true;
     void this.service!.setView(sid, spec)
+      .then((r) => {
+        this.views.set(r.version, spec.inv_view_projection);
+        for (const k of this.views.keys()) if (k < r.version - 64) this.views.delete(k);
+      })
       .catch((e) => {
         this.problem = (e as Error).message;
         this.statusUpdate?.();
@@ -917,9 +952,23 @@ class AnatomicalRendering {
           : "",
         field("Density (per mm)", numberInput(s.density ?? Number(this.presets.find((p) => p.name === s.preset)?.density ?? 40), (v) => this.save((x) => (x.density = v)), { step: "1", min: "0" })),
         field("Exposure", numberInput(s.exposure, (v) => this.save((x) => (x.exposure = v)), { step: "0.1", min: "0" })),
-        field("Light (azimuth, elevation °)", el("div", { style: "display: flex; gap: 6px" },
-          numberInput(s.lightAzimuth, (v) => this.save((x) => (x.lightAzimuth = v)), { step: "10", style: "width: 70px" }),
-          numberInput(s.lightElevation, (v) => this.save((x) => (x.lightElevation = v)), { step: "10", style: "width: 70px" }))),
+        s.where === "host"
+          ? field("Lighting", select([["", "As set below"], ...Object.entries(LIGHTING).map(([k, l]): [string, string] => [k, l.name])], s.lightStyle, (v) =>
+              this.save((x) => {
+                x.lightStyle = v;
+                const l = LIGHTING[v];
+                if (l) [x.lightMap, x.envScale, x.lightKey] = [l.map, l.envScale, l.key];
+              })), "Studio: a photographer's studio; Soft: light from all round, faint shadows; Hard: one strong light, deep shadows; Sky: daylight")
+          : "",
+        field("Light direction", el("div", { style: "display: flex; gap: 10px; align-items: center; flex-wrap: wrap" },
+          el("label", {}, "around ", this.slider(s.lightAzimuth, -180, 180, 5, (v) => this.save((x) => (x.lightAzimuth = v)), "Around the view: 0 from the camera, 90 from the right, -90 from the left")),
+          el("label", {}, "up ", this.slider(s.lightElevation, -90, 90, 5, (v) => this.save((x) => (x.lightElevation = v)), "Up and down: 90 from above, -90 from below"))),
+          "The key light, relative to the camera (it turns with the view)"),
+        s.where === "host"
+          ? field("Strength (key light, surroundings)", el("div", { style: "display: flex; gap: 10px; align-items: center" },
+              this.slider(s.lightKey, 0, 4, 0.05, (v) => this.save((x) => ((x.lightKey = v), (x.lightStyle = ""))), "The key light: what makes shadows"),
+              this.slider(s.envScale, 0, 3, 0.05, (v) => this.save((x) => ((x.envScale = v), (x.lightStyle = ""))), "The light map (or sky colours): light from all round")))
+          : "",
         s.where === "host" && (this.serviceInfo?.lightmaps?.length ?? 0) > 0
           ? field("Light map", el("div", { style: "display: flex; gap: 6px" },
               select([["", "sky colours (the preset's)"], ...this.serviceInfo!.lightmaps!.map((m): [string, string] => [m, m])], s.lightMap, (v) => this.save((x) => (x.lightMap = v))),
@@ -931,6 +980,24 @@ class AnatomicalRendering {
           ...ANATOMICAL_VIEWS.map((v) => button(v.name, () => this.ctx.viewer.patchState((ng) => void ((ng as { projectionOrientation?: number[] }).projectionOrientation = orientationLooking(v.forward, v.up)))))),
         el("h4", {}, "Cuts (through the position)"),
         cutRow(0), cutRow(1), cutRow(2),
+        el("div", { style: "display: flex; gap: 6px; align-items: center; flex-wrap: wrap" },
+          (() => {
+            const cb = el("input", { type: "checkbox" }) as HTMLInputElement;
+            cb.checked = s.viewCut.on;
+            cb.onchange = () => this.save((x) => (x.viewCut = { ...x.viewCut, on: cb.checked }));
+            return cb;
+          })(),
+          el("span", { title: "A cut across the view, keeping what lies beyond it: it turns with the camera until left in place" }, "Cut facing the view"),
+          this.slider(s.viewCut.offset, -100, 100, 0.5, (v) => this.save((x) => (x.viewCut = { ...x.viewCut, offset: v, fixed: null })), "Past the position (mm): positive cuts deeper"),
+          numberInput(s.viewCut.offset, (v) => this.save((x) => (x.viewCut = { ...x.viewCut, offset: v, fixed: null })), { step: "1", style: "width: 56px", title: "Past the position (mm)" }),
+          s.viewCut.fixed
+            ? button("Follow the view", () => this.save((x) => (x.viewCut = { ...x.viewCut, fixed: null })), "The cut turns with the camera again")
+            : button("Leave it here", () => {
+                const f = this.lastFrame;
+                if (!f) return;
+                this.save((x) => (x.viewCut = { ...x.viewCut, on: true, fixed: viewCutPlane(f.invViewProjection, f.position, x.viewCut.offset, f.dimensions) }));
+              }, "Keep the cut where it is now, at this angle, as you turn the view"),
+        ),
         el("label", { style: "display: flex; gap: 6px; align-items: center" }, (() => {
           const cb = el("input", { type: "checkbox" }) as HTMLInputElement;
           cb.checked = s.box.on;
