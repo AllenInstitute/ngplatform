@@ -483,3 +483,70 @@ def test_a_session_reads_finer_detail_where_the_view_is_close(tmp_path, monkeypa
     held = call("GET", f"/sessions/{s['id']}")["detail"]["held"]
     assert det.startswith("level 0") and held["path"] == "0" and held["voxels"] < 128**3, (det, held)
     srv.shutdown()
+
+
+def _write_n5(path: Path, data: np.ndarray, levels: int = 2, block: int = 16, res_um: float = 500.0):
+    """A small N5 multiscale (s0, s1, ...: blosc, big-endian, blocks x, y, z) of `data` (z, y, x)."""
+    from numcodecs import Blosc
+
+    codec = Blosc(cname="zstd", clevel=3, shuffle=1)
+    path.mkdir()
+    (path / "attributes.json").write_text(json.dumps({"axes": ["x", "y", "z"], "resolution": [res_um] * 3, "units": ["um"] * 3,
+                                                      "downsamplingFactors": [[2**k] * 3 for k in range(levels)], "multiScale": True}))
+    a = data
+    for k in range(levels):
+        d = path / f"s{k}"
+        d.mkdir()
+        nz, ny, nx = a.shape
+        (d / "attributes.json").write_text(json.dumps({"dimensions": [nx, ny, nz], "blockSize": [block] * 3, "dataType": "uint16",
+                                                       "compression": {"type": "blosc", "cname": "zstd", "clevel": 3, "shuffle": 1}}))
+        for bz in range(-(-nz // block)):
+            for by in range(-(-ny // block)):
+                for bx in range(-(-nx // block)):
+                    b = a[bz * block:(bz + 1) * block, by * block:(by + 1) * block, bx * block:(bx + 1) * block]
+                    head = (0).to_bytes(2, "big") + (3).to_bytes(2, "big") + b"".join(int(x).to_bytes(4, "big") for x in b.shape[::-1])
+                    (d / str(bx) / str(by)).mkdir(parents=True, exist_ok=True)
+                    (d / str(bx) / str(by) / str(bz)).write_bytes(head + codec.encode(np.ascontiguousarray(b.astype(">u2"))))
+        a = a[::2, ::2, ::2]
+    return f"n5://{path}"
+
+
+def test_n5_multiscales_are_read(tmp_path):
+    from ngplatform_render import detail
+
+    data = (np.arange(40 * 36 * 50) % 4000).astype(np.uint16).reshape(40, 36, 50)
+    url = _write_n5(tmp_path / "x.n5", data)
+    ms = volumes.open_multiscale(url)
+    assert [lv.path for lv in ms.levels] == ["s0", "s1"] and ms.levels[0].shape == (40, 36, 50)
+    assert ms.levels[1].voxel_mm == pytest.approx((1.0, 1.0, 1.0))
+    L = volumes.load(url, level="s0")
+    assert np.array_equal(L.data, data)
+    a = detail.read_region(url, ms, ms.levels[0], (3, 5, 7), (45, 30, 33), cache=detail.ChunkCache(1 << 28))
+    assert np.array_equal(a, data[7:33, 5:30, 3:45])
+
+
+def test_window_presets_follow_each_scans_histogram():
+    # One specimen scanned twice: the second's values bent (not just scaled), as two HiP-CT scans' can be.
+    base = _specimen(30000, 20000, seed=1)
+    bent = base.astype(np.float64)
+    tissue = bent > 22000
+    bent[tissue] = 22000 + 9000 * ((bent[tissue] - 22000) / 9000) ** 1.8
+    bent = bent.astype(np.uint16)
+    vols = []
+    for q in (base, bent):
+        w = volumes.guess_window(q, 0.0, 65535.0)
+        vols.append(volumes.Loaded(q, np.eye(4), 0.0, 65535.0, {}, "0", (1, 1, 1), q.shape, window=w, quantiles=volumes.tissue_quantiles(q, 0.0, 65535.0, w)))
+    w0 = vols[0].window
+    ref = [(x - w0[0]) / (w0[1] - w0[0]) for x in vols[0].quantiles]
+    band = {"name": "b", "domain": "window", "histogram": ref,
+            "stops": [{"value": 0.0, "color": [1, 1, 1], "opacity": 0.0}, {"value": 0.45, "color": [1, 1, 1], "opacity": 1.0}]}
+    matched, window_only = presets.Preset.from_dict(band), presets.Preset.from_dict(dict(band, histogram=None))
+
+    def share(p, v):
+        cut = v.lo + presets._to_texture(0.45, p, v) * (v.hi - v.lo)
+        t = v.data[(v.data >= v.quantiles[0]) & (v.data <= v.quantiles[-1])]
+        return float((t <= cut).mean())
+
+    # Matched, the same share of each scan's tissue falls below the stop; by the window alone, not.
+    assert share(matched, vols[1]) == pytest.approx(share(matched, vols[0]), abs=0.03)
+    assert abs(share(window_only, vols[1]) - share(window_only, vols[0])) > 0.05
