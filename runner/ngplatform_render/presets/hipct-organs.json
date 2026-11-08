@@ -1,17 +1,17 @@
 [
  {
-  "name": "HiP-CT organ: brain",
+  "name": "HiP-CT organ: brain (fixed)",
   "organ": "brain",
   "modality": "HiP-CT",
   "domain": "window",
-  "description": "A brain in its jar: cortex pinkish-grey, white matter cream, vessels dark red.",
+  "description": "A formalin-fixed brain, as HiP-CT's are: grey matter tan, white matter cream; colours measured on fixed brain slices.",
   "stops": [
    {
     "value": 0,
     "color": [
-     0.67,
-     0.469,
-     0.38
+     0.769,
+     0.617,
+     0.535
     ],
     "opacity": 0,
     "tissue": "grey matter"
@@ -19,9 +19,9 @@
    {
     "value": 0.06,
     "color": [
-     0.67,
-     0.469,
-     0.38
+     0.769,
+     0.617,
+     0.535
     ],
     "opacity": 0,
     "tissue": "grey matter"
@@ -29,29 +29,29 @@
    {
     "value": 0.15,
     "color": [
-     0.67,
-     0.469,
-     0.38
+     0.769,
+     0.617,
+     0.535
     ],
     "opacity": 0.75,
     "tissue": "grey matter"
    },
    {
-    "value": 0.3,
+    "value": 0.44,
     "color": [
-     0.67,
-     0.469,
-     0.38
+     0.769,
+     0.617,
+     0.535
     ],
-    "opacity": 0.85,
+    "opacity": 0.9,
     "tissue": "grey matter"
    },
    {
-    "value": 0.45,
+    "value": 0.56,
     "color": [
-     0.828,
-     0.626,
-     0.522
+     0.878,
+     0.729,
+     0.655
     ],
     "opacity": 0.95,
     "tissue": "white matter"
@@ -59,9 +59,9 @@
    {
     "value": 0.9,
     "color": [
-     0.828,
-     0.626,
-     0.522
+     0.878,
+     0.729,
+     0.655
     ],
     "opacity": 1,
     "tissue": "white matter"
@@ -69,9 +69,9 @@
    {
     "value": 1.4,
     "color": [
-     0.05,
-     0.0,
-     0.0
+     0.215,
+     0.064,
+     0.039
     ],
     "opacity": 1,
     "tissue": "vessels"
@@ -135,7 +135,162 @@
      "brain_1"
     ]
    }
-  }
+  },
+  "id": "brain",
+  "calibrated_on": "a cut face"
+ },
+ {
+  "name": "HiP-CT organ: brain (fresh frozen)",
+  "organ": "brain",
+  "modality": "HiP-CT",
+  "domain": "window",
+  "description": "The brain as fresh (or fresh-frozen) tissue looks: grey matter pink-tan, white matter pink-white, vessels red with blood; colours measured on unfixed tissue.",
+  "stops": [
+   {
+    "value": 0,
+    "color": [
+     0.707,
+     0.419,
+     0.303
+    ],
+    "opacity": 0,
+    "tissue": "grey matter"
+   },
+   {
+    "value": 0.06,
+    "color": [
+     0.707,
+     0.419,
+     0.303
+    ],
+    "opacity": 0,
+    "tissue": "grey matter"
+   },
+   {
+    "value": 0.15,
+    "color": [
+     0.707,
+     0.419,
+     0.303
+    ],
+    "opacity": 0.75,
+    "tissue": "grey matter"
+   },
+   {
+    "value": 0.44,
+    "color": [
+     0.707,
+     0.419,
+     0.303
+    ],
+    "opacity": 0.9,
+    "tissue": "grey matter"
+   },
+   {
+    "value": 0.56,
+    "color": [
+     0.842,
+     0.556,
+     0.442
+    ],
+    "opacity": 0.95,
+    "tissue": "white matter"
+   },
+   {
+    "value": 0.9,
+    "color": [
+     0.842,
+     0.556,
+     0.442
+    ],
+    "opacity": 1,
+    "tissue": "white matter"
+   },
+   {
+    "value": 1.4,
+    "color": [
+     0.396,
+     0.121,
+     0.081
+    ],
+    "opacity": 1,
+    "tissue": "vessels"
+   }
+  ],
+  "density": 60.0,
+  "shade_mix": 0.85,
+  "gradient_scale": 30.0,
+  "roughness": 0.5,
+  "specular": 0.12,
+  "albedo": 0.9,
+  "surface_inset": 1.5,
+  "exposure": 1.8,
+  "reference": [
+   {
+    "photo": "brain_2",
+    "title": "File:Gross pathology of brain after sectioning.jpg",
+    "page": "https://commons.wikimedia.org/wiki/File:Gross_pathology_of_brain_after_sectioning.jpg",
+    "author": "Mikael H\u00e4ggstr\u00f6m, M.D.",
+    "licence": "CC0 1.0",
+    "licence_url": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "shows": "Complete normal brain cut into coronal cerebral slabs plus horizontal cerebellum/pons/medulla slices on a cutting board",
+    "fresh_or_fixed": "partially fixed (12 days in formalin: tan fixed surface, pink unfixed deep tissue, per file description)",
+    "notes": "Described as a normal brain. Pink centres of white matter are unfixed tissue (gives a hint of fresh colour); grey/white contrast clear. Slightly warm room lighting, white board in frame for white-balance reference.",
+    "white_balanced_on": null
+   },
+   {
+    "photo": "heart_1",
+    "title": "File:\u041f\u0435\u0440\u0435\u0441\u0430\u0436\u0435\u043d\u043d\u043e\u0435 \u0441\u0435\u0440\u0434\u0446\u0435 \u0432 \u0433\u0440\u0443\u0434\u043d\u043e\u0439 \u043a\u043b\u0435\u0442\u043a\u0435 \u0440\u0435\u0446\u0438\u043f\u0438\u0435\u043d\u0442\u0430.JPG",
+    "page": "https://commons.wikimedia.org/wiki/File:%D0%9F%D0%B5%D1%80%D0%B5%D1%81%D0%B0%D0%B6%D0%B5%D0%BD%D0%BD%D0%BE%D0%B5_%D1%81%D0%B5%D1%80%D0%B4%D1%86%D0%B5_%D0%B2_%D0%B3%D1%80%D1%83%D0%B4%D0%BD%D0%BE%D0%B9_%D0%BA%D0%BB%D0%B5%D1%82%D0%BA%D0%B5_%D1%80%D0%B5%D1%86%D0%B8%D0%BF%D0%B8%D0%B5%D0%BD%D1%82%D0%B0.JPG",
+    "author": "Vasily I. Kaleda",
+    "licence": "CC BY-SA 3.0",
+    "licence_url": "https://creativecommons.org/licenses/by-sa/3.0",
+    "shows": "Exterior of a transplanted (donor) heart in the recipient's open chest: epicardial fat, coronary vessels, great-vessel anastomoses",
+    "fresh_or_fixed": "fresh (living, in situ)",
+    "notes": "Intraoperative; donor heart presumed normal. Surgical lighting is warm and blood-smeared surfaces exaggerate red; specular highlights. Pacing wires and sutures visible.",
+    "white_balanced_on": null
+   }
+  ],
+  "measured": {
+   "grey matter": {
+    "srgb": [
+     0.73,
+     0.457,
+     0.339
+    ],
+    "photos": [
+     "brain_2",
+     "brain_2"
+    ],
+    "note": "unfixed deep grey matter (the putamen) where formalin had not reached; no unfixed cortex shows"
+   },
+   "white matter": {
+    "srgb": [
+     0.839,
+     0.589,
+     0.472
+    ],
+    "photos": [
+     "brain_2",
+     "brain_2",
+     "brain_2"
+    ],
+    "note": "unfixed white matter where formalin had not reached"
+   },
+   "vessels": {
+    "srgb": [
+     0.441,
+     0.149,
+     0.098
+    ],
+    "photos": [
+     "heart_1"
+    ],
+    "note": "blood, measured on the heart transplant photograph"
+   }
+  },
+  "id": "brain-frozen",
+  "calibrated_on": "a cut face"
  },
  {
   "name": "HiP-CT organ: heart",
@@ -281,7 +436,8 @@
     "photos": [],
     "note": "not measured: no usable openly licensed photograph shows it"
    }
-  }
+  },
+  "id": "heart"
  },
  {
   "name": "HiP-CT organ: lung",
@@ -416,7 +572,8 @@
      "lung_1"
     ]
    }
-  }
+  },
+  "id": "lung"
  },
  {
   "name": "HiP-CT organ: kidney",
@@ -554,7 +711,8 @@
      "kidney_1"
     ]
    }
-  }
+  },
+  "id": "kidney"
  },
  {
   "name": "HiP-CT organ: liver",
@@ -672,7 +830,8 @@
      "liver_1"
     ]
    }
-  }
+  },
+  "id": "liver"
  },
  {
   "name": "HiP-CT organ: spleen",
@@ -802,7 +961,8 @@
      "spleen_2"
     ]
    }
-  }
+  },
+  "id": "spleen"
  },
  {
   "name": "HiP-CT organ: colon",
@@ -918,7 +1078,8 @@
      "colon_1"
     ]
    }
-  }
+  },
+  "id": "colon"
  },
  {
   "name": "HiP-CT organ: eye",
@@ -1063,7 +1224,8 @@
      "eye_1"
     ]
    }
-  }
+  },
+  "id": "eye"
  },
  {
   "name": "HiP-CT organ: placenta",
@@ -1188,7 +1350,8 @@
      "placenta_1"
     ]
    }
-  }
+  },
+  "id": "placenta"
  },
  {
   "name": "HiP-CT organ: prostate",
@@ -1299,7 +1462,8 @@
     "photos": [],
     "note": "not measured: no usable openly licensed photograph shows it"
    }
-  }
+  },
+  "id": "prostate"
  },
  {
   "name": "HiP-CT organ: testis",
@@ -1416,7 +1580,8 @@
      "testis_1"
     ]
    }
-  }
+  },
+  "id": "testis"
  },
  {
   "name": "HiP-CT organ: uterus",
@@ -1529,6 +1694,7 @@
      "uterus_2"
     ]
    }
-  }
+  },
+  "id": "uterus"
  }
 ]

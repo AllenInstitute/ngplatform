@@ -130,6 +130,16 @@ were given a colour by hand and are marked "not measured".
 | testis | LADAF-2021-17 testis | [Bull testicles Бычий семенник 1.jpg](https://commons.wikimedia.org/wiki/File:Bull_testicles_%D0%91%D1%8B%D1%87%D0%B8%D0%B9_%D1%81%D0%B5%D0%BC%D0%B5%D0%BD%D0%BD%D0%B8%D0%BA_1.jpg) (Jurfeld, CC BY-SA 4.0, fresh) | parenchyma |
 | uterus | AUMC-005 uterus | [Uterus in museum.jpg](https://commons.wikimedia.org/wiki/File:Uterus_in_museum.jpg) (Tiia Monto, CC BY-SA 3.0, fixed/preserved museum specimen (method not stated)) | — |
 
+The brain has two presets. **Brain (fixed)** is a formalin-fixed brain, as
+HiP-CT's are (tan grey matter, cream white matter). **Brain (fresh frozen)**
+shows the same scan as fresh or fresh-frozen tissue looks: pink-tan grey
+matter, pink-white white matter and red vessels. It was measured on the
+unfixed centres of a part-fixed brain (Häggström, CC0); the cortex takes
+the unfixed deep grey matter's colour, and the vessels take blood measured
+on the heart photograph. Both brain presets were calibrated on a cut face
+(light scattered within the tissue), since their photographs are slices;
+the others were calibrated on a surface.
+
 Lungs: at the 0.34 mm of a whole-organ scan the alveoli are finer than a
 voxel and the parenchyma has the mounting medium's value, so the lung
 preset shows the vessels and airways, with the parenchyma only as a faint
