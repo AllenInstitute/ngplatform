@@ -10,6 +10,25 @@ export interface Link {
   token: string;
   /** The service answers through a runner (bearer token) rather than on its own (service token). */
   viaRunner: boolean;
+  /** A paired host's own fetch (ctx.hosts: `path` relative to `/svc/`, the token added), used instead of base and token. */
+  hostFetch?: (path: string, init?: RequestInit) => Promise<Response>;
+  /** What to call it in messages. */
+  label?: string;
+}
+
+/** A link through a host the app is paired with (ctx.hosts). */
+export function hostLink(name: string, address: string, hostFetch: (path: string, init?: RequestInit) => Promise<Response>): Link {
+  return { base: `${address.replace(/\/+$/, "")}/svc/render`, token: "", viaRunner: true, hostFetch, label: name };
+}
+
+/** A request to the service at `path` (from `/sessions` on). */
+function go(link: Link, path: string, init: RequestInit = {}, json = false): Promise<Response> {
+  if (link.hostFetch) {
+    const h = new Headers(init.headers);
+    if (json) h.set("Content-Type", "application/json");
+    return link.hostFetch(`render${path}`, { ...init, headers: h });
+  }
+  return fetch(`${link.base}${path}`, { ...init, headers: { ...headers(link, json), ...(init.headers as Record<string, string> | undefined) } });
 }
 
 export function linkOf(address: string, token: string, viaRunner: boolean): Link {
@@ -30,12 +49,7 @@ function headers(link: Link, json: boolean): Record<string, string> {
 export class ServiceError extends Error {}
 
 async function call<T>(link: Link, method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-  const r = await fetch(`${link.base}${path}`, {
-    method,
-    headers: headers(link, body !== undefined),
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal,
-  });
+  const r = await go(link, path, { method, body: body === undefined ? undefined : JSON.stringify(body), signal }, body !== undefined);
   const text = await r.text();
   let data: unknown;
   try {
@@ -100,6 +114,8 @@ export interface ViewSpec {
   height: number;
   /** Render at this fraction of the size (cheaper while the camera moves). */
   scale?: number;
+  /** The point the view turns about (the viewer's position, display coordinates): movies move the camera around it. */
+  orbit_center?: number[];
   /** Physical mm (x, y, z) to display coordinates, column-major. */
   world_from_physical?: number[];
   /** How many mm one display unit is. */
@@ -167,14 +183,14 @@ export class RenderService {
     return call(this.link, "DELETE", `/movies/${id}`);
   }
   async movieFile(id: string): Promise<Blob> {
-    const r = await fetch(`${this.link.base}/movies/${id}/file`, { headers: headers(this.link, false) });
+    const r = await go(this.link, `/movies/${id}/file`);
     if (!r.ok) throw new ServiceError(`movie file: ${r.status}`);
     return r.blob();
   }
 
   /** The next frame after `after`, or undefined when none came within the wait. */
   async frame(id: string, after: number, signal?: AbortSignal): Promise<Frame | undefined> {
-    const r = await fetch(`${this.link.base}/sessions/${id}/frame?after=${after}&timeout=20`, { headers: headers(this.link, false), signal });
+    const r = await go(this.link, `/sessions/${id}/frame?after=${after}&timeout=20`, { signal });
     if (r.status === 204) return undefined;
     if (!r.ok) throw new ServiceError(`frame: ${r.status}`);
     const blob = await r.blob();
@@ -185,7 +201,7 @@ export class RenderService {
 
   /** The depth (GL 0..1, 1 where nothing) of the view `version`, at the frame's size. */
   async depth(id: string): Promise<{ version: number; width: number; height: number; data: Float32Array } | undefined> {
-    const r = await fetch(`${this.link.base}/sessions/${id}/depth`, { headers: headers(this.link, false) });
+    const r = await go(this.link, `/sessions/${id}/depth`);
     if (r.status === 204 || !r.ok) return undefined;
     const width = Number(r.headers.get("X-Width")), height = Number(r.headers.get("X-Height")), version = Number(r.headers.get("X-Version"));
     const stream = r.body!.pipeThrough(new DecompressionStream("deflate"));

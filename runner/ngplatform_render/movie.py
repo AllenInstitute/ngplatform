@@ -1,8 +1,9 @@
 """Keyframes to the views of a movie's frames.
 
 A keyframe is a view, as the page sends it to a session, with a time in
-seconds.  Between two keyframes the camera moves along the orbit around
-its target (the inverse view-projection is taken apart into eye, target,
+seconds; its ``orbit_center`` (the viewer's position, which its 3-D view
+turns about) is the point the camera moves around.  Between two
+keyframes the camera moves along the orbit around its target (the inverse view-projection is taken apart into eye, target,
 up and field of view, interpolated, and put together again), clip planes
 and numbers of the look (the preset's overrides, light, aperture) change
 linearly, and everything else is the earlier keyframe's.
@@ -18,8 +19,8 @@ from .camera import Camera, interpolate_cameras
 from .renderer import look_at
 
 
-def camera_from_inverse(inv_cm: list[float]) -> tuple[Camera, float, float, float]:
-    """Eye, target (the point at the middle of the view at the near/far mean), up and vertical field of view,
+def camera_from_inverse(inv_cm: list[float], center=None) -> tuple[Camera, float, float, float]:
+    """Eye, target (on the view's axis, level with `center` when given), up and vertical field of view,
     and the aspect and near/far, of a perspective inverse view-projection (column-major)."""
     inv = np.asarray(inv_cm, np.float64).reshape(4, 4).T
 
@@ -41,8 +42,12 @@ def camera_from_inverse(inv_cm: list[float]) -> tuple[Camera, float, float, floa
     up /= half_h
     half_w = float(np.linalg.norm(right - n0))
     fovy = float(np.degrees(2 * np.arctan(half_h / near)))
-    # The target: where the view's middle meets the volume is not known here; use the far/near geometric mean.
-    target = eye + fwd * float(np.sqrt(near * far))
+    # The target: the point the view orbits (the viewer's position), when given, else the near/far geometric mean.
+    if center is not None:
+        c = np.asarray(center, np.float64)
+        target = eye + fwd * float(max((c - eye) @ fwd, near))
+    else:
+        target = eye + fwd * float(np.sqrt(near * far))
     return Camera(eye, target, up, fovy), half_w / half_h, near, far
 
 
@@ -62,7 +67,7 @@ def frames_for(keyframes: list[dict[str, Any]], fps: int) -> list[dict[str, Any]
         return [kf[0]["view"]]
     t0, t1 = float(kf[0].get("time", 0)), float(kf[-1].get("time", 0))
     n = max(1, int(round((t1 - t0) * fps)) + 1)
-    cams = [camera_from_inverse(k["view"]["inv_view_projection"]) for k in kf]
+    cams = [camera_from_inverse(k["view"]["inv_view_projection"], k["view"].get("orbit_center")) for k in kf]
     out = []
     for i in range(n):
         t = t0 + i / fps

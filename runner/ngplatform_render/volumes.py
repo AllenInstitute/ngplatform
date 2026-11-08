@@ -291,9 +291,10 @@ def tissue_percentiles(q: np.ndarray, lo: float, hi: float) -> dict[float, float
 
 
 def load(url: str, budget: int = 400_000_000, labels: bool | None = None, level: str | None = None,
-         progress: Callable[[float, str], None] | None = None) -> Loaded:
+         progress: Callable[[float, str], None] | None = None, make_from: str | None = None, factor: int | None = None) -> Loaded:
     """Reads the finest level with at most `budget` voxels (or the level named), making coarser
-    levels from a finer stored one when no stored level is within 4x under the budget."""
+    levels from a finer stored one when no stored level is within 4x under the budget.
+    `make_from` and `factor` (a power of 2) make a level from that stored level regardless."""
     t0 = time.time()
     ms = open_multiscale(url)
     is_labels = ms.labels if labels is None else labels
@@ -301,7 +302,12 @@ def load(url: str, budget: int = 400_000_000, labels: bool | None = None, level:
     def nvox(lv: Level) -> int:
         return math.prod(lv.shape[i] for i in ms.spatial)
 
-    if level is not None:
+    if make_from is not None:
+        chosen = next(lv for lv in ms.levels if lv.path == make_from)
+        factor = int(factor or 2)
+        if factor & (factor - 1):
+            raise ValueError("factor must be a power of 2")
+    elif level is not None:
         chosen = next(lv for lv in ms.levels if lv.path == level)
         factor = 1
     else:

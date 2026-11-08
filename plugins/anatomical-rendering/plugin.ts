@@ -9,7 +9,7 @@
  */
 import type { Disposer, Frame3d, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { button, clear, downloadBlob, el, field, numberInput, select } from "@ngplatform/sdk/dom";
-import { type Link, linkOf, type MovieInfo, type PresetInfo, RenderService, type ServiceInfo, type SessionInfo, type ViewSpec } from "./client.js";
+import { hostLink, type Link, linkOf, type MovieInfo, type PresetInfo, RenderService, type ServiceInfo, type SessionInfo, type ViewSpec } from "./client.js";
 import { PictureDrawer } from "./draw.js";
 import { LocalRenderer, PRESETS as LOCAL_PRESETS } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
@@ -77,6 +77,8 @@ export function readSaved(raw: unknown): Saved {
 
 /** Where the render service is, kept per browser (not in the link: it holds a token). */
 interface HostSetting {
+  /** A paired host's name (ctx.hosts), or "" for the address below. */
+  name?: string;
   address: string;
   token: string;
   viaRunner: boolean;
@@ -139,6 +141,11 @@ class AnatomicalRendering {
       }),
       ctx.commands.register("anatomicalRendering.toggle", () => this.setOn(!this.saved.on)),
       ctx.ui.panel(RENDER_PANEL, (el) => this.panel(el)),
+      ctx.hosts.onChanged(() => {
+        const ready = this.link().label !== undefined;
+        if (ready && this.serviceInfo === undefined && !this.connecting) void this.connect();
+        this.panelUpdate?.();
+      }),
     );
     void this.connect();
   }
@@ -176,11 +183,22 @@ class AnatomicalRendering {
   }
 
   // ------------------------------------------------------------------ service
+  /** Paired hosts whose runner runs the render service. */
+  private renderHosts() {
+    return this.ctx.hosts.list().filter((h) => h.info?.services?.render !== undefined);
+  }
+
   private link(): Link {
+    const name = this.host.name ?? this.ctx.hosts.pick({ service: "render" })?.name;
+    const h = name ? this.ctx.hosts.get(name) : undefined;
+    if (h !== undefined) return hostLink(h.name, h.address, (path, init) => h.fetch(path, init));
     return linkOf(this.host.address, this.host.token, this.host.viaRunner);
   }
 
+  private connecting = false;
+
   private async connect(): Promise<void> {
+    this.connecting = true;
     this.service = new RenderService(this.link());
     this.serviceInfo = undefined;
     this.problem = "";
@@ -189,8 +207,10 @@ class AnatomicalRendering {
       this.presets = await this.service.presets();
       if (!this.saved.preset && this.presets.length > 0) this.saved.preset = this.presets[0].name;
     } catch (e) {
-      this.problem = `No render service at ${this.link().base}: ${(e as Error).message}`;
+      const l = this.link();
+      this.problem = `No render service ${l.label ? `on ${l.label}` : `at ${l.base}`}: ${(e as Error).message}`;
     }
+    this.connecting = false;
     this.sessionKey = "";
     this.update();
     this.panelUpdate?.();
@@ -357,6 +377,7 @@ class AnatomicalRendering {
       height: frame.height,
       scale,
       world_from_physical: wfp,
+      orbit_center: Array.from(frame.position),
       unit_mm: unitMm(frame.dimensions),
       preset: s.preset || "HiP-CT brain",
       overrides,
@@ -490,7 +511,7 @@ class AnatomicalRendering {
       via.checked = this.host.viaRunner;
       const applyHost = () => {
         const parsed = parseHostText(hostText.value);
-        this.host = { address: parsed.address ?? hostText.value, token: parsed.token ?? tokenText.value, viaRunner: parsed.viaRunner ?? via.checked };
+        this.host = { name: "", address: parsed.address ?? hostText.value, token: parsed.token ?? tokenText.value, viaRunner: parsed.viaRunner ?? via.checked };
         this.ctx.settings.set(HOST_KEY, this.host);
         void this.connect();
       };
@@ -526,14 +547,29 @@ class AnatomicalRendering {
         ),
       );
       const movie = this.movie;
+      const hosts = this.renderHosts();
+      const chosen = this.host.name ?? this.ctx.hosts.pick({ service: "render" })?.name ?? "";
+      const hostChoice = select(
+        [...hosts.map((h): [string, string] => [h.name, `${h.name}${h.info?.hostname ? ` (${h.info.hostname})` : ""}${h.available ? "" : ": not answering"}`]), ["", "An address…"]],
+        hosts.some((h) => h.name === chosen) ? chosen : "",
+        (v) => {
+          this.host = { ...this.host, name: v || undefined };
+          if (!v) this.host.name = "";
+          this.ctx.settings.set(HOST_KEY, this.host);
+          void this.connect();
+          render();
+        },
+      );
+      const manual = !hosts.some((h) => h.name === chosen);
       clear(
         host,
         el("h3", {}, "Anatomical rendering"),
         el("p", { class: "muted" }, "Path-traced views of an OME-Zarr image, rendered on a GPU through a runner (this computer, or another over SSH)."),
-        field("Host", hostText, "The runner's address, or paste its pairing link"),
-        field("Token", tokenText),
-        el("label", { style: "display: flex; gap: 6px; align-items: center" }, via, "Through a runner (/svc/render)"),
-        button("Connect", applyHost),
+        field("Host", hostChoice, hosts.length ? "Computers paired in the Jobs tab whose runner has the render service" : "Pair a computer in the Jobs tab (its runner started with the render service), or give an address"),
+        manual ? field("Address", hostText, "The runner's address, or paste its pairing link") : "",
+        manual ? field("Token", tokenText) : "",
+        manual ? el("label", { style: "display: flex; gap: 6px; align-items: center" }, via, "Through a runner (/svc/render)") : "",
+        button(manual ? "Connect" : "Reconnect", manual ? applyHost : () => void this.connect()),
         el("hr"),
         field("Where", select([["host", "On the host (CUDA, through the runner)"], ["browser", "In this browser (WebGPU)"]], s.where, (v) => {
           this.save((x) => (x.where = v as Saved["where"]));
