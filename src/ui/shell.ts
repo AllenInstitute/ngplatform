@@ -15,6 +15,7 @@ import { accountLabel, type GoogleSignIn, googleProvider } from "../platform/goo
 import { googleTokenTable, sourceWithRules } from "../core/sign_in_rules.js";
 import { applyRulesToNewLayers, type SignInRules } from "../platform/sign_in_rules.js";
 import { JobService } from "../platform/jobs.js";
+import { HostList } from "../platform/hosts.js";
 import { RunnerService } from "../platform/runner.js";
 import { ComputedImages } from "../virtual/computed.js";
 import { collectDropped, LocalData } from "../virtual/local_data.js";
@@ -223,6 +224,7 @@ export class Shell {
     const openHandlers = new OpenHandlerRegistry();
     const jobs = new JobService();
     const runner = new RunnerService(localStorage);
+    const hosts = new HostList(runner, localStorage);
     const services = new ServiceRegistry();
     const auth = new AuthRegistry(localStorage);
     const authEnvironment = browserAuthEnvironment();
@@ -262,6 +264,7 @@ export class Shell {
       openHandlers,
       jobs,
       runner,
+      hosts,
       services,
       auth,
       google,
@@ -337,6 +340,7 @@ export class Shell {
       },
       jobs,
       runner: runnerApi(() => wb, runner),
+      hosts: hosts.api(),
       services,
       auth,
       log: (message, level, source) => log.add(message, level, source),
@@ -442,9 +446,12 @@ export class Shell {
     commands.onChange(() => this.updateControls());
     jobs.onChange(() => this.updateStatus());
     runner.onChange(() => this.updateStatus());
+    hosts.onChange(() => this.updateStatus());
     // A link the runner printed pairs this browser (after asking); the fragment is removed.
     pairFromLink(wb, runner);
     if (runner.pairing() !== undefined) void runner.refresh();
+    // Every 5 s: which paired computers answer, their GPUs and services.
+    hosts.start();
 
     window.addEventListener("keydown", (e) => this.onKey(e), true);
     window.addEventListener("paste", (e) => this.onPaste(e));
@@ -1458,7 +1465,9 @@ export class Shell {
   private updateStatus(): void {
     if (this.wb === undefined) return;
     const layers = this.wb.engine.layers();
-    const jobs = this.wb.jobs.running() + this.wb.runner.jobs().filter((j) => j.state === "running" && j.kind !== "serve").length;
+    const jobs =
+      this.wb.jobs.running() +
+      [this.wb.runner, ...this.wb.hosts.others().map((name) => this.wb.hosts.runner(name))].reduce((n, r) => n + (r?.jobs().filter((j) => j.state === "running" && j.kind !== "serve").length ?? 0), 0);
     const failed = layers.filter((l) => l.error !== undefined).length;
     const loading = layers.filter((l) => !l.ready && l.error === undefined).length;
     const n = layersOf(this.wb.store.ng()).length;

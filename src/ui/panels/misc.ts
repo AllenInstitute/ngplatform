@@ -4,7 +4,7 @@ import type { Manifest } from "../../sdk/types.js";
 import { clear, h, icon, iconButton } from "../dom.js";
 import { renderMarkdown } from "../markdown.js";
 import { closeSheet, sheet, showMenu, showSheet } from "../overlays.js";
-import { renderRunnerSection } from "../runner.js";
+import { addHostDialog, renderRunnerSection } from "../runner.js";
 import type { Workbench } from "../workbench.js";
 import { type CatalogueEntry, GROUP_TITLES, type PluginGroup } from "../../../plugins/index.js";
 
@@ -21,7 +21,32 @@ export function renderStatisticsPanel(host: HTMLElement, wb: Workbench): () => v
 export function renderJobsPanel(host: HTMLElement, wb: Workbench): () => void {
   const list = h("div", { class: "jobs" });
   const runner = renderRunnerSection(wb, wb.runner);
-  host.append(h("div", { class: "section" }, h("h3", { class: "section-title" }, "In this page"), list), runner.element);
+  // A section for each other computer (through an SSH tunnel), made again only when one is added or removed.
+  const others = h("div", { class: "runner-hosts" });
+  let sections: { name: string; dispose: () => void }[] = [];
+  const renderHosts = () => {
+    const names = wb.hosts.others();
+    if (names.join("\n") === sections.map((s) => s.name).join("\n")) return;
+    for (const section of sections) section.dispose();
+    sections = [];
+    const elements: HTMLElement[] = [];
+    for (const name of names) {
+      const service = wb.hosts.runner(name);
+      if (service === undefined) continue;
+      const section = renderRunnerSection(wb, service, name);
+      sections.push({ name, dispose: section.dispose });
+      elements.push(section.element);
+    }
+    clear(others, ...elements);
+  };
+  const add = h(
+    "div",
+    { class: "row-actions runner-add-host" },
+    h("button", { class: "btn small outline", type: "button", title: "A runner on another computer, reached through an SSH tunnel", onclick: () => addHostDialog(wb) }, "Add a computer…"),
+  );
+  host.append(h("div", { class: "section" }, h("h3", { class: "section-title" }, "In this page"), list), runner.element, others, add);
+  renderHosts();
+  const offHosts = wb.hosts.onChange(renderHosts);
   const render = () => {
     const jobs = wb.jobs.list();
     if (jobs.length === 0) {
@@ -50,7 +75,9 @@ export function renderJobsPanel(host: HTMLElement, wb: Workbench): () => void {
   render();
   return () => {
     off();
+    offHosts();
     runner.dispose();
+    for (const section of sections) section.dispose();
   };
 }
 

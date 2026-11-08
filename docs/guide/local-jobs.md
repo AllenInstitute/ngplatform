@@ -77,6 +77,75 @@ reference engine: on a laptop about 45 MB of file a second for a sphere,
 so a 20 GB tractogram takes some minutes. Writing a store adds a
 conversion of the streamlines that pass.
 
+## A GPU on another computer
+
+The runner can also be on another computer: a workstation with a GPU, or a
+node of a cluster in an interactive job. The browser reaches it through an
+SSH tunnel, at an address of its own computer (`http://localhost:7000`).
+The Jobs tab then has a section for that computer, under its name, beside
+**This computer**: its jobs, **Convert a tractogram…**, **Open a file…**
+(files under its folders, served to the viewer through the tunnel), and a
+line saying what it has, such as
+
+```
+workstation (czi001): RTX A6000, 47 GB free — render ready
+```
+
+(the computer's name, its GPUs with their free memory, and the services
+its runner runs, such as a renderer). The app checks every computer every
+5 seconds and says when one does not answer (the tunnel closed, the runner
+stopped). Plugins choose among them with `ctx.hosts` (a computer with a GPU
+first).
+
+### With the tunnel command
+
+On the computer the browser is on, with the runner's package there too
+(`cd ngplatform/runner`, or `pip install ./runner`):
+
+```
+python -m ngplatform_runner tunnel me@workstation --start-remote '/path/to/env/bin/python -m ngplatform_runner --root /data'
+```
+
+It opens the tunnel (and opens it again if it drops), starts the runner on
+the workstation if none answers there (with `--start-remote`), reads its
+token over ssh, prints the workstation's GPUs, and prints a link. Open the
+link: the app asks whether to pair with **workstation**; choose **Pair**.
+Keep the command running while you use it; Ctrl-C closes the tunnel (the
+runner on the workstation carries on).
+
+For a cluster, through its login node: `--jump me@login.cluster`, with the
+node's name as the computer:
+
+```
+python -m ngplatform_runner tunnel node123 --jump me@login.cluster
+```
+
+with the runner started on the node, in your interactive job, as below.
+
+### By hand
+
+On the other computer (in the interactive job, on a cluster):
+
+```
+python -m ngplatform_runner --root /data --public-url http://localhost:7000
+```
+
+`--public-url` lets it answer requests that come through the tunnel. On the
+browser's computer:
+
+```
+ssh -N -L 7000:127.0.0.1:8765 me@workstation
+ssh -N -J me@login.cluster -L 7000:127.0.0.1:8765 node123     (a cluster node)
+```
+
+Then open the link the runner printed, or in the Jobs tab choose **Add a
+computer…** and enter a name, the address `http://localhost:7000` and the
+token it printed. For a second computer use another local port (`-L
+7001:127.0.0.1:8765`, address `http://localhost:7001`).
+
+The section's **Unpair** forgets that computer. Each computer is paired
+once per browser, like This computer, and kept in this browser.
+
 ## What it cannot do
 
 - It runs only the kinds of job listed above. It cannot run a command or
@@ -95,6 +164,8 @@ conversion of the streamlines that pass.
 ## Safety
 
 - The runner listens on 127.0.0.1 only, so other computers cannot reach it.
+  A runner on another computer is reached through your own SSH login to it
+  (the tunnel), and still needs its token.
 - Every request to its API needs the token. A page asking must also be
   this app's site (or `localhost`, for development; `--allow-origin` adds
   another), and the request must be addressed to this computer, which stops

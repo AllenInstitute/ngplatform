@@ -45,6 +45,8 @@ Pair the app with it: open this link (it pairs this browser once)
 | `--max-jobs N` | Jobs run at once (default 2); more wait in a queue. Serving a file does not count. |
 | `--allow-origin URL` | Another site the app is served from. ngplatform's site and `localhost` are allowed already. |
 | `--app URL` | The app's address, for the pairing link. |
+| `--public-url URL` | The address the browser reaches the runner at through an SSH tunnel, such as `http://localhost:7000`. The runner then answers requests addressed to it too, prints it, and hands back addresses (of served files) made from it. See [below](#using-a-gpu-on-another-machine-over-ssh). |
+| `--service NAME=COMMAND` | A program to run beside the runner, which the app reaches at `/svc/NAME/`. Repeat for more. See [Services](#services). |
 | `--new-token` | A new pairing token; browsers paired before must pair again. |
 
 Ctrl-C stops the runner. Jobs still running carry on; when the runner
@@ -60,9 +62,11 @@ again when it starts.
   (readable by you only). A request from a web page must also come from an
   **allowed origin** (ngplatform's site, `http://localhost:*`,
   `http://127.0.0.1:*`, and any `--allow-origin`), and the `Host` header must
-  name this computer, which stops DNS-rebinding pages.
+  name this computer at the runner's port (or the `--public-url`), which
+  stops DNS-rebinding pages.
 - Jobs are of **known kinds only** (below), with checked arguments. There is
-  no way to run a shell command or arbitrary code through it.
+  no way to run a shell command or arbitrary code through it. Services run
+  only the commands given with `--service` when the runner was started.
 - Every path is resolved (links followed, `..` removed) and must be under a
   **root**: inputs to read, outputs to write, folders to list, files to
   serve. An output that exists is refused unless the request says
@@ -121,7 +125,7 @@ and `/stores/` needs the token.
 
 | Request | Answer |
 |---|---|
-| `GET /status` | Version, PID, roots, the jobs' Python and its zarr-vectors-tools version, the job kinds |
+| `GET /status`, `GET /info` | Version, PID, `address` (the one this request reached), `publicUrl`, roots, the jobs' Python and its zarr-vectors-tools version, the job kinds; the computer's `hostname` and `platform`; `gpus` (`[{index, name, memoryTotal, memoryUsed, memoryFree, busId, ok, problem?}]`, memory in MiB, from `nvidia-smi`, at most 10 s old; empty without it; a card that "requires reset" or does not answer has `ok: false`); `services` (`{name: {ready, error, pid}}`) |
 | `GET /jobs` | `{jobs: [...]}`, newest first: `id, kind, title, args, pid, state` (queued, running, done, failed, cancelled), `created, started, finished` (seconds since 1970), `progress` (0–1 or null), `message, outputs` (`[{path, type}]`), `returncode` |
 | `POST /jobs` `{kind, args}` | The job, started or queued (201). An `input` that is a URL this runner serves is read as its file. |
 | `GET /jobs/<id>` | One job |
@@ -134,19 +138,153 @@ and `/stores/` needs the token.
 | `GET /serve`, `DELETE /serve/<id>` | What is served; stop serving one |
 | `GET /resolve?url=` | The path behind a URL this runner serves |
 | `GET /stores/<id>/…` | The served files, with byte ranges and folder listings (no token) |
+| `GET, POST, PUT, DELETE /svc/<name>/<rest>` | Passed to the service (below) as `/<rest>?<query>`; its answer streamed back |
 
 Preflights (`OPTIONS`) answer CORS for the allowed origins and
 `Access-Control-Allow-Private-Network: true` when Chrome asks (Private
 Network Access: an https page calling http://127.0.0.1).
 
+## Services
+
+`--service NAME=COMMAND` runs a program of its own beside the runner, for
+work that needs a long-lived process (a renderer on the GPU, say), and
+passes the app's requests to it. COMMAND is split as a shell would split it
+but run without one, in the runner's working folder, with this package
+importable. It gets:
+
+| Variable | What |
+|---|---|
+| `NGP_SERVICE_PORT` | A free port on 127.0.0.1 to listen on |
+| `NGP_SERVICE_TOKEN` | A random token. Every request the runner passes on carries it as `X-NGP-Service-Token`; refuse requests without it (other programs on the computer can reach the port) |
+| `NGP_ROOTS` | The runner's roots, a JSON list of paths |
+| `NGP_STATE_DIR` | A folder of its own, `<state-dir>/services/<name>/` |
+
+It prints a line containing `ready http://127.0.0.1:<port>` once it
+answers there; until then requests to it get 503 with `Retry-After`. Its
+output goes to `<state-dir>/services/<name>.log`. If it ends, it is started
+again (after 1 s, 2 s, 4 s … up to 30 s); after 5 ends in a row each within
+30 s of starting, the runner stops trying and `/info` shows the error with
+the log's last lines. It is stopped (SIGTERM, then SIGKILL after 5 s) when
+the runner stops.
+
+`/svc/<name>/<rest>?<query>` needs the pairing token and an allowed origin,
+like the rest of the API, and goes to `http://127.0.0.1:<port>/<rest>?<query>`
+with the same method (GET, HEAD, POST, PUT, DELETE; preflights are answered
+by the runner), a body of up to 64 MB, `X-*` headers and the usual request
+headers (`Content-Type`, `Accept`, `Range`, …), but not the runner's own
+`Authorization`. The answer is streamed back as it comes (chunked when the
+service gives no length), with its status, `Content-Type` and the like, and
+its `X-*` headers, which pages may read. A service may take up to 300 s
+between parts of an answer, so long polls work.
+
+`python -m ngplatform_runner.echo_service` is a small one for trying it:
+
+```
+python -m ngplatform_runner --root ~/data --service echo="python -m ngplatform_runner.echo_service"
+curl -H "Authorization: Bearer $(cat ~/.ngplatform-runner/token)" "http://127.0.0.1:8765/svc/echo/stream?n=3"
+```
+
+## Using a GPU on another machine over SSH
+
+The browser on one computer (a laptop) can use a runner on another (a
+workstation with a GPU, a node of a cluster) through an SSH tunnel. The
+runner still listens on 127.0.0.1 only, on its own computer; the tunnel
+carries the browser's requests to it.
+
+On the computer the browser is on, with this package (`pip install
+./runner`, or from `runner/`):
+
+```
+python -m ngplatform_runner tunnel me@workstation --start-remote '/path/to/env/bin/python -m ngplatform_runner --root /data'
+```
+
+It
+
+1. opens `ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -L
+   7000:127.0.0.1:8765 me@workstation`, and opens it again when it drops;
+2. checks whether a runner answers through it, and if not, with
+   `--start-remote`, starts one there in the background (`nohup … >
+   ~/.ngplatform-runner/remote.log 2>&1 &`, adding `--public-url
+   http://localhost:7000`, `--port` and `--state-dir` when the command does
+   not give them), then waits for it;
+3. reads the runner's token there (`ssh me@workstation cat
+   ~/.ngplatform-runner/token`);
+4. asks the runner for `/info` through the tunnel and prints the computer,
+   its GPUs and services;
+5. prints a link that pairs the app with it as a computer of its own name
+   (`…#runner=http%3A%2F%2Flocalhost%3A7000&token=…&name=workstation`),
+   and the same steps as commands to run by hand.
+
+It keeps the tunnel open until Ctrl-C; the runner on the other computer
+keeps running.
+
+| Option | What |
+|---|---|
+| `[user@]HOST` | The computer the runner is on, as you would give it to ssh (a name from `~/.ssh/config` works) |
+| `--jump J`, `-J J` | Reach HOST through J (`ssh -J`), such as a cluster's login node |
+| `--remote-port N` | The runner's port on HOST (default 8765) |
+| `--local-port N` | The port on this computer the browser uses (default 7000) |
+| `--start-remote 'COMMAND'` | Start the runner on HOST with this command when nothing answers. Give the full path of the Python that has the runner (a login shell may not have your environment); `cd ~/ngplatform/runner && python -m ngplatform_runner …` works too |
+| `--state-dir DIR` | The runner's `--state-dir` on HOST, where its token is (default `~/.ngplatform-runner`) |
+| `--name NAME` | The name the app shows (default HOST) |
+| `--app URL` | The app's address, for the link |
+| `--ssh PROGRAM`, `-o OPTION` | The ssh program, and `-o` options for it |
+
+Each step is an ssh login of its own (the tunnel, starting the runner,
+reading the token), so a login that asks for a password or a second factor
+asks up to three times.
+
+### By hand
+
+On the other computer:
+
+```
+python -m ngplatform_runner --root /data --public-url http://localhost:7000 --service render="/path/to/env/bin/python -m ngplatform_render.server"
+```
+
+It prints a link with `&name=<its hostname>`. On the browser's computer:
+
+```
+ssh -N -L 7000:127.0.0.1:8765 me@workstation
+```
+
+then open the link (or the app's Jobs tab, **Add a computer…**, with the
+address `http://localhost:7000` and the token).
+
+### On a cluster
+
+Start an interactive job, and in it start the runner as above (on the node,
+127.0.0.1 is the node's own). Then from the browser's computer, through the
+login node:
+
+```
+ssh -N -J me@login.cluster -L 7000:127.0.0.1:8765 node123
+```
+
+or `python -m ngplatform_runner tunnel node123 --jump me@login.cluster`. The
+node must accept ssh from the login node, as most clusters allow while you
+have a job on it.
+
+### What the browser sees
+
+The runner is at `http://localhost:7000`, an address of the browser's own
+computer, so the app treats it as it treats This computer: the same
+pairing, the same Private Network Access checks in Chrome. Files it serves
+have addresses at `http://localhost:7000/stores/…`, which the viewer reads
+through the tunnel; they stop loading when the tunnel closes. Several
+computers can be paired at once, each on its own local port
+(`--local-port 7001` for the second).
+
 ## Tests
 
 ```
 cd runner/tests
-python -m unittest -v
+python -m unittest -v      # or, from the repository: python -m pytest runner/tests -q
 ```
 
-They start runners on free ports with temporary folders. The tests of real
-jobs (filtering, converting, serving a `.trk`) run when zarr-vectors-tools
-can be imported, and use the tractograms in
+They start runners on free ports with temporary folders. The tests of the
+tunnel use a fake ssh (`tests/fake_ssh.py`) whose forward is a TCP
+forwarder on this computer (`tests/forwarder.py`), since they cannot log in
+anywhere. The tests of real jobs (filtering, converting, serving a `.trk`)
+run when zarr-vectors-tools can be imported, and use the tractograms in
 `plugins/zarr-vectors/testdata/tractograms`.

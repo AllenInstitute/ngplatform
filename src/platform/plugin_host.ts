@@ -19,6 +19,7 @@ import type {
   DatasetInfo,
   Disposer,
   DockSlot,
+  HostsApi,
   JobControl,
   Json,
   Manifest,
@@ -76,6 +77,14 @@ const NO_RUNNER: RunnerApi = {
   open: unpaired,
 };
 
+/** The hosts API where the host has none: no computers. */
+const NO_HOSTS: HostsApi = {
+  list: () => [],
+  onChanged: () => () => {},
+  get: () => undefined,
+  pick: () => undefined,
+};
+
 /** What the platform gives the host; the shell supplies it, tests fake it. */
 export interface HostServices {
   commands: CommandRegistry;
@@ -105,6 +114,8 @@ export interface HostServices {
   jobs: { run<T>(title: string, work: (control: JobControl) => Promise<T>, owner?: string): Promise<T> };
   /** The runner on this computer; none (tests): a runner that is never available. */
   runner?: RunnerApi;
+  /** The computers with paired runners (This computer and others over SSH); none (tests): no computers. */
+  hosts?: HostsApi;
   services: ServiceRegistry;
   auth: { register(provider: AuthProvider, owner?: string): Disposer };
   log(message: string, level: "info" | "error", source?: string): void;
@@ -493,6 +504,7 @@ export class PluginHost {
       context: { set: (key, value) => s.context.set(key, value) },
       jobs: { run: (title, work) => s.jobs.run(title, work, owner) },
       runner: s.runner === undefined ? NO_RUNNER : { ...s.runner, onChanged: (callback) => own(s.runner!.onChanged(callback)) },
+      hosts: s.hosts === undefined ? NO_HOSTS : { ...s.hosts, onChanged: (callback) => own(s.hosts!.onChanged(callback)) },
       services: {
         provide: (name, implementation) => own(s.services.provide(name, implementation, owner)),
         get: (name) => s.services.get(name),

@@ -7,7 +7,7 @@
  * the link.  While something watches (the Jobs tab) or a job is running,
  * the job list is fetched every 1.5 s.
  */
-import type { RunnerJob } from "../sdk/types.js";
+import type { HostGpu, HostServiceState, RunnerJob } from "../sdk/types.js";
 
 export interface RunnerKind {
   kind: string;
@@ -26,6 +26,13 @@ export interface RunnerInfo {
   tools: string | null;
   maxRunning: number;
   kinds: RunnerKind[];
+  /** The address it was started to be reached at through a tunnel (--public-url), if any. */
+  publicUrl?: string | null;
+  /** Its computer (runners before 0.1.0's tunnel support do not say). */
+  hostname?: string;
+  platform?: string;
+  gpus?: HostGpu[];
+  services?: Record<string, HostServiceState>;
 }
 
 export interface RunnerServe {
@@ -60,6 +67,8 @@ export interface RunnerListing {
 export interface Pairing {
   address: string;
   token: string;
+  /** A link's `name=`: the pairing is for another computer of that name (through a tunnel), not This computer. */
+  name?: string;
 }
 
 export type RunnerConnection = "unpaired" | "connecting" | "connected" | "unreachable" | "refused";
@@ -95,15 +104,20 @@ export function normaliseAddress(text: string): string {
   return `http://${url.host}`;
 }
 
-/** The pairing a link's fragment carries (`#runner=<address>&token=<token>`, as the runner prints it), if any. */
+/**
+ * The pairing a link's fragment carries (`#runner=<address>&token=<token>`,
+ * as the runner prints it, with `&name=<name>` for another computer, as
+ * `python -m ngplatform_runner tunnel` prints it), if any.
+ */
 export function pairingFromHash(hash: string): Pairing | undefined {
   if (!hash.startsWith("#runner=")) return undefined;
   const params = new URLSearchParams(hash.slice(1));
   const address = params.get("runner");
   const token = params.get("token");
+  const name = params.get("name")?.trim().replace(/\s+/g, " ");
   if (address === null || token === null || token.length < 16) return undefined;
   try {
-    return { address: normaliseAddress(address), token };
+    return { address: normaliseAddress(address), token, ...(name ? { name: name.slice(0, 64) } : {}) };
   } catch {
     return undefined;
   }

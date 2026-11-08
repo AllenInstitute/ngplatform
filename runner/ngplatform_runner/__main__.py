@@ -1,4 +1,8 @@
-"""``python -m ngplatform_runner --root ~/data``: start the runner and print how to pair the app with it."""
+"""``python -m ngplatform_runner --root ~/data``: start the runner and print how to pair the app with it.
+
+``python -m ngplatform_runner tunnel [user@]host``: from the computer the
+browser is on, reach a runner on another computer over SSH (tunnel.py).
+"""
 
 from __future__ import annotations
 
@@ -6,18 +10,18 @@ import argparse
 import os
 import secrets
 import signal
+import socket
 import subprocess
 import sys
 import urllib.parse
 from pathlib import Path
 
-from . import __version__
+from . import DEFAULT_APP, __version__
 from .jobs import JobManager
 from .kinds import kinds_for
 from .paths import Roots
-from .server import RunnerServer
-
-DEFAULT_APP = "https://alleninstitute.github.io/ngplatform/"
+from .server import RunnerServer, public_netlocs
+from .services import Services, parse_spec
 
 
 def _token(state_dir: Path, new: bool) -> str:
@@ -49,6 +53,11 @@ def _tools_version(python: str) -> str | None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv[:1] == ["tunnel"]:
+        from .tunnel import main as tunnel_main
+
+        return tunnel_main(argv[1:])
     p = argparse.ArgumentParser(
         prog="python -m ngplatform_runner",
         description="Runs zarr-vectors-tools jobs on this computer for ngplatform, and serves files under the roots to its viewer.",
@@ -60,6 +69,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--max-jobs", type=int, default=2, help="jobs run at once; more wait in a queue (default 2)")
     p.add_argument("--allow-origin", action="append", default=[], metavar="ORIGIN", help="another site the app is served from (https://alleninstitute.github.io and localhost are allowed)")
     p.add_argument("--app", default=DEFAULT_APP, help=f"the app's address, for the pairing link (default {DEFAULT_APP})")
+    p.add_argument("--public-url", metavar="URL", help="the address the browser reaches the runner at through a tunnel, such as http://localhost:7000 (ssh -L 7000:127.0.0.1:8765)")
+    p.add_argument("--service", action="append", default=[], metavar="NAME=COMMAND", help="a program to run beside the runner, reached by the app at /svc/NAME/ (repeat for more)")
     p.add_argument("--new-token", action="store_true", help="make a new pairing token (apps paired before must pair again)")
     p.add_argument("--test-kinds", action="store_true", help="also offer the 'sleep' job kind, for tests")
     p.add_argument("--version", action="version", version=f"ngplatform-runner {__version__}")
@@ -68,6 +79,8 @@ def main(argv: list[str] | None = None) -> int:
         p.error("give at least one --root FOLDER: jobs read and write only under the roots")
     try:
         roots = Roots(args.root)
+        public_netlocs(args.public_url)
+        specs = [parse_spec(text) for text in args.service]
     except ValueError as e:
         p.error(str(e))
     state_dir = Path(os.path.expanduser(args.state_dir)).resolve()
@@ -76,21 +89,34 @@ def main(argv: list[str] | None = None) -> int:
     tools = _tools_version(args.python)
     manager = JobManager(state_dir, kinds_for(args.test_kinds), python=args.python, max_running=max(1, args.max_jobs))
     try:
-        server = RunnerServer(args.port, token, roots, manager, origins=args.allow_origin, python=args.python, tools=tools)
+        services = Services(specs, roots=[str(r) for r in roots], state_dir=state_dir)
+    except ValueError as e:
+        manager.stop()
+        p.error(str(e))
+    try:
+        server = RunnerServer(args.port, token, roots, manager, origins=args.allow_origin, python=args.python, tools=tools, public_url=args.public_url, services=services)
     except OSError as e:
         manager.stop()
         print(f"error: cannot listen on 127.0.0.1:{args.port}: {e}", file=sys.stderr)
         return 1
+    services.start()
     address = server.base
     link = f"{args.app}#runner={urllib.parse.quote(address, safe='')}&token={token}"
-    print(f"ngplatform runner {__version__} listening on {address} (PID {os.getpid()})")
+    if server.public_url:
+        # Reached through a tunnel: another computer, which the app keeps beside This computer.
+        link += f"&name={urllib.parse.quote(socket.gethostname(), safe='')}"
+    print(f"ngplatform runner {__version__} listening on {server.local_base} (PID {os.getpid()})")
+    if server.public_url:
+        print(f"  reached at {server.public_url} (through a tunnel)")
     print(f"  roots:  {', '.join(str(r) for r in roots)}")
     print(f"  jobs:   {args.python}" + (f" (zarr-vectors-tools {tools})" if tools else "  -- zarr-vectors-tools is NOT importable there; jobs will fail"))
     print(f"  state:  {state_dir}")
+    for name, service in services.services.items():
+        print(f"  service {name}: {' '.join(service.argv)}  (log: {service.log_path})")
     print()
     print("Pair the app with it: open this link (it pairs this browser once)")
     print(f"  {link}")
-    print("or in the app's Jobs tab, under 'This computer', enter")
+    print("or in the app's Jobs tab, under 'Add a computer…', enter" if server.public_url else "or in the app's Jobs tab, under 'This computer', enter")
     print(f"  address: {address}")
     print(f"  token:   {token}")
     print()
@@ -109,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
         for serve in list(server.serves.values()):
             if serve.get("job"):
                 manager.cancel(serve["job"])
+        services.stop()
         server.server_close()
         manager.stop()
         print("runner stopped", flush=True)

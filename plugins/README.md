@@ -405,6 +405,31 @@ coordinates the viewer shows the input in (Track filtering's
 `runner_job.ts` turns a group into one). The kinds and their arguments are
 in [runner/README.md](../runner/README.md).
 
+### Other computers and their services
+
+`ctx.runner` is the runner on This computer. The app may be paired with
+runners on other computers too (a workstation, a cluster node, reached
+through an SSH tunnel), and a runner may run services beside it
+(`--service render=COMMAND`), which answer at `/svc/<name>/` on it.
+`ctx.hosts` lists them all and reaches their services:
+
+```ts
+const host = ctx.hosts.pick({ gpu: true, service: "render" }); // a GPU computer first
+if (host === undefined) return ctx.ui.toast("No computer with the render service answers", "error");
+const response = await host.fetch("render/sessions", { method: "POST", body: JSON.stringify({ layer: "brain" }), headers: { "Content-Type": "application/json" } });
+const session = await response.json();
+// A long answer streams: response.body is read as it arrives.
+```
+
+| Call | What |
+|---|---|
+| `list()` | `[{name, address, available, info?, error?}]`: This computer (when paired) first. `info` is `{hostname, platform, gpus, services}`: `gpus` as nvidia-smi lists them (`name, memoryTotal, memoryFree` in MiB, `ok` false for a card that cannot be used), `services` as `{name: {ready, error, pid}}` |
+| `onChanged(cb)` | Called when a computer is added or removed, goes up or down (checked every 5 s), or what it reports changes |
+| `get(name)` | A computer by its name (`"This computer"`, `"workstation"`), or undefined |
+| `pick({gpu?, service?})` | The first computer that answers with a usable GPU and/or that service ready, a GPU computer before others |
+| `host.fetch(path, init)` | `fetch` of `<address>/svc/<path>` with the pairing token; resolves with the Response as it arrives, whatever its status |
+| `host.available()`, `host.info()` | As in `list()`, now |
+
 ### Failure and trust
 
 - A plugin's exceptions are logged against it and never reach the shell or

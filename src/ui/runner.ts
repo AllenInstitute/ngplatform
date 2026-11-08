@@ -1,11 +1,13 @@
 /**
  * The runner in the interface: the Jobs tab's "This computer" section
  * (pairing, the runner's jobs with their PID, progress, log, Cancel and
- * Open), the chooser for paths under the runner's folders, opening a path
- * as a layer (served by the runner), and, for a tractogram past the
- * browser's storage limit, the choice of a sample in the browser or the
- * runner's conversion.
+ * Open), a section like it for each other computer paired through an SSH
+ * tunnel (with "Add a computer…"), the chooser for paths under the
+ * runner's folders, opening a path as a layer (served by the runner), and,
+ * for a tractogram past the browser's storage limit, the choice of a
+ * sample in the browser or the runner's conversion.
  */
+import { type HostList, hostStatusLine, LOCAL_HOST } from "../platform/hosts.js";
 import { isActive, normaliseAddress, pairingFromHash, type RunnerEntry, RunnerError, type RunnerService } from "../platform/runner.js";
 import { bytesText } from "../sdk/format.js";
 import type { RunnerApi, RunnerJob, RunnerOutput } from "../sdk/types.js";
@@ -17,6 +19,7 @@ import type { Workbench } from "./workbench.js";
 
 export const LOCAL_JOBS_GUIDE = "https://ngplatform.readthedocs.io/en/latest/guide/local-jobs/";
 const START_COMMAND = "python -m ngplatform_runner --root ~/data";
+const TUNNEL_COMMAND = "python -m ngplatform_runner tunnel [user@]host";
 const TRACTOGRAM = /\.(trk|tck|trx)$/i;
 
 const baseName = (path: string) => path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? path;
@@ -57,20 +60,28 @@ async function openOutput(wb: Workbench, runner: RunnerService, output: RunnerOu
 
 // ------------------------------------------------------------------ pairing
 
-/** Pairs with the runner a link names (`#runner=…&token=…`, as the runner prints it), after asking; the fragment is removed either way. */
+/**
+ * Pairs with the runner a link names (`#runner=…&token=…`, as the runner
+ * prints it), after asking; the fragment is removed either way.  A link
+ * with `&name=…` (from `python -m ngplatform_runner tunnel`) adds or
+ * updates the computer of that name, beside This computer.
+ */
 export function pairFromLink(wb: Workbench, runner: RunnerService, hash = location.hash): void {
   const pairing = pairingFromHash(hash);
   if (pairing === undefined) return;
   history.replaceState(null, "", location.pathname + location.search);
+  const other = pairing.name !== undefined && pairing.name !== LOCAL_HOST;
   void (async () => {
     const yes = await confirmDialog(
-      `Pair this browser with the runner at ${pairing.address}? It runs jobs on this computer and serves files under its folders to this app.`,
+      other
+        ? `Pair this browser with ${pairing.name}, the runner at ${pairing.address}? It runs jobs on that computer and serves files under its folders to this app.${wb.hosts.others().includes(pairing.name!) ? ` It replaces the pairing with ${pairing.name} this browser has.` : ""}`
+        : `Pair this browser with the runner at ${pairing.address}? It runs jobs on this computer and serves files under its folders to this app.`,
       "Pair",
     );
     if (!yes) return;
     try {
-      const info = await runner.pair(pairing.address, pairing.token);
-      toast(`Paired with the runner at ${info.address}`);
+      const info = other ? await wb.hosts.add(pairing.name!, pairing.address, pairing.token) : await runner.pair(pairing.address, pairing.token);
+      toast(other ? `Paired with ${pairing.name}, the runner at ${info.address}` : `Paired with the runner at ${info.address}`);
       wb.docks.show("jobs");
     } catch (e) {
       toast(`Could not pair: ${(e as Error).message}`, "error");
@@ -78,7 +89,7 @@ export function pairFromLink(wb: Workbench, runner: RunnerService, hash = locati
   })();
 }
 
-function pairForm(runner: RunnerService, note?: string): HTMLElement {
+function pairForm(runner: RunnerService, note?: string, where = "this computer"): HTMLElement {
   const address = h("input", { class: "text-input mono runner-address", type: "text", value: runner.pairing()?.address ?? "http://127.0.0.1:8765", "aria-label": "Runner address", spellcheck: "false" }) as HTMLInputElement;
   const token = h("input", { class: "text-input mono runner-token", type: "password", placeholder: "Token", "aria-label": "Runner token", autocomplete: "off", spellcheck: "false" }) as HTMLInputElement;
   const message = h("p", { class: "note runner-pair-error error", hidden: true });
@@ -87,7 +98,7 @@ function pairForm(runner: RunnerService, note?: string): HTMLElement {
     try {
       normaliseAddress(address.value);
       await runner.pair(address.value, token.value);
-      toast("Paired with the runner on this computer");
+      toast(`Paired with the runner on ${where}`);
     } catch (e) {
       message.textContent = (e as Error).message;
       message.hidden = false;
@@ -176,11 +187,26 @@ function jobRow(wb: Workbench, runner: RunnerService, job: RunnerJob, openLogs: 
 /** Rerenders a runner section now (a log opened or closed). */
 const runnerRefresh = new WeakMap<RunnerService, () => void>();
 
-/** The Jobs tab's "This computer" section. */
-export function renderRunnerSection(wb: Workbench, runner: RunnerService): { element: HTMLElement; dispose: () => void } {
+/** The Jobs tab's section for a computer's runner: "This computer", or another by its name (`host`). */
+export function renderRunnerSection(wb: Workbench, runner: RunnerService, host = LOCAL_HOST): { element: HTMLElement; dispose: () => void } {
+  const local = host === LOCAL_HOST;
+  const where = local ? "this computer" : host;
   const body = h("div", { class: "runner-body" });
-  const element = h("div", { class: "section runner-section" }, h("div", { class: "section-head" }, h("h3", { class: "section-title" }, "This computer"), h("span", { class: "type runner-connection" })), body);
+  // The computer, its GPUs and services, from the check every 5 s: only this line is updated by it.
+  const status = h("p", { class: "note first runner-host-status", hidden: true });
+  const element = h(
+    "div",
+    { class: "section runner-section", "data-host": host },
+    h("div", { class: "section-head" }, h("h3", { class: "section-title" }, host), h("span", { class: "type runner-connection" })),
+    status,
+    body,
+  );
   const connection = element.querySelector(".runner-connection") as HTMLElement;
+  const showStatus = () => {
+    const info = wb.hosts.info(host);
+    status.hidden = info === undefined || (info.info === undefined && !info.available);
+    if (info !== undefined) status.textContent = hostStatusLine(info);
+  };
   const openLogs = new Map<string, HTMLElement>();
   let form: HTMLElement | undefined;
   let formFor = "";
@@ -207,7 +233,7 @@ export function renderRunnerSection(wb: Workbench, runner: RunnerService): { ele
     if (state === "unpaired" || state === "refused") {
       // Kept while typing: only made again when the state changes.
       if (form === undefined || formFor !== state) {
-        form = pairForm(runner, state === "refused" ? runner.error() : undefined);
+        form = pairForm(runner, state === "refused" ? runner.error() : undefined, where);
         formFor = state;
         clear(body, form, state === "refused" ? h("div", { class: "row-actions" }, h("button", { class: "btn small", type: "button", onclick: () => runner.unpair() }, "Unpair")) : null);
       }
@@ -234,7 +260,7 @@ export function renderRunnerSection(wb: Workbench, runner: RunnerService): { ele
         "div",
         { class: "row-actions" },
         state === "connected" ? h("button", { class: "btn small runner-convert", type: "button", onclick: () => void convertDialog(runner) }, "Convert a tractogram…") : null,
-        state === "connected" ? h("button", { class: "btn small runner-open-path", type: "button", onclick: () => void openDialog(wb, runner) }, "Open a file…") : null,
+        state === "connected" ? h("button", { class: "btn small runner-open-path", type: "button", onclick: () => void openDialog(wb, runner, where) }, "Open a file…") : null,
         state !== "connected" ? h("button", { class: "btn small", type: "button", onclick: () => void runner.refresh() }, "Try again") : null,
         state === "connected" ? h("button", { class: "btn small runner-served", type: "button", title: "Files and folders the runner serves to the viewer", onclick: () => void servedDialog(runner) }, "Served…") : null,
         runner.jobs().some((j) => !isActive(j) && j.kind !== "serve") ? h("button", { class: "btn small", type: "button", onclick: () => void runner.clearFinished() }, "Clear finished") : null,
@@ -247,22 +273,72 @@ export function renderRunnerSection(wb: Workbench, runner: RunnerService): { ele
       body,
       head,
       jobs.length === 0 && state === "connected"
-        ? h("p", { class: "empty runner-empty" }, "No jobs on this computer yet.")
+        ? h("p", { class: "empty runner-empty" }, `No jobs on ${where} yet.`)
         : h("div", { class: "jobs runner-jobs" }, ...jobs.map((job) => jobRow(wb, runner, job, openLogs))),
     );
     if (openLogs.size > 0) void fillLogs();
   };
   runnerRefresh.set(runner, render);
   const off = runner.onChange(render);
+  const offHosts = wb.hosts.onChange(showStatus);
   const unwatch = runner.watch();
   render();
+  showStatus();
   return {
     element,
     dispose: () => {
       off();
+      offHosts();
       unwatch();
     },
   };
+}
+
+/** The sheet for pairing with a runner on another computer, reached through an SSH tunnel. */
+export function addHostDialog(wb: Workbench): void {
+  const name = h("input", { class: "text-input host-name", type: "text", placeholder: "workstation", "aria-label": "Name", spellcheck: "false" }) as HTMLInputElement;
+  const address = h("input", { class: "text-input mono host-address", type: "text", value: "http://localhost:7000", "aria-label": "Address", spellcheck: "false" }) as HTMLInputElement;
+  const token = h("input", { class: "text-input mono host-token", type: "password", placeholder: "Token", "aria-label": "Token", autocomplete: "off", spellcheck: "false" }) as HTMLInputElement;
+  const message = h("p", { class: "note error host-error", hidden: true });
+  const pair = h("button", { class: "btn primary host-pair", type: "button" }, "Pair") as HTMLButtonElement;
+  const submit = async () => {
+    message.hidden = true;
+    pair.disabled = true;
+    try {
+      const info = await wb.hosts.add(name.value, address.value, token.value);
+      closeSheet();
+      toast(`Paired with ${name.value.trim()}, the runner at ${info.address}`);
+    } catch (e) {
+      message.textContent = (e as Error).message;
+      message.hidden = false;
+      pair.disabled = false;
+    }
+  };
+  pair.addEventListener("click", () => void submit());
+  token.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") void submit();
+  });
+  showSheet(
+    sheet(
+      "Add a computer",
+      [
+        h(
+          "p",
+          { class: "note first" },
+          "A runner on another computer (a workstation, a cluster node), reached through an SSH tunnel. On this computer run ",
+          h("code", {}, TUNNEL_COMMAND),
+          ": it opens the tunnel and prints a link that pairs this browser. Or enter what it prints here. ",
+          h("a", { href: `${LOCAL_JOBS_GUIDE}#a-gpu-on-another-computer`, target: "_blank", rel: "noopener" }, "Guide ↗"),
+        ),
+        h("label", { class: "field" }, h("span", {}, "Name"), name),
+        h("label", { class: "field" }, h("span", {}, "Address"), address),
+        h("label", { class: "field" }, h("span", {}, "Token"), token),
+        message,
+      ],
+      [h("button", { class: "btn", type: "button", onclick: () => closeSheet() }, "Cancel"), pair],
+    ),
+  );
+  name.focus();
 }
 
 // ------------------------------------------------------------------ chooser
@@ -373,8 +449,8 @@ export function choosePath(runner: RunnerService, options: Parameters<RunnerApi[
   });
 }
 
-async function openDialog(wb: Workbench, runner: RunnerService): Promise<void> {
-  const path = await choosePath(runner, { title: "Open a file on this computer", mode: "open", note: "A Zarr Vectors store, a tractogram, mesh, SWC or point table (served as a store: the file is read whole first), or a NIfTI image. The runner serves it to the viewer." });
+async function openDialog(wb: Workbench, runner: RunnerService, where = "this computer"): Promise<void> {
+  const path = await choosePath(runner, { title: `Open a file on ${where}`, mode: "open", note: "A Zarr Vectors store, a tractogram, mesh, SWC or point table (served as a store: the file is read whole first), or a NIfTI image. The runner serves it to the viewer." });
   if (path !== undefined) await openOutput(wb, runner, { path, type: "file" });
 }
 
