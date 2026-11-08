@@ -95,7 +95,9 @@ Organ Atlas serves most of its scans; on a host).
 - **Cut facing the view**: a plane across the view, an offset in mm past the
   position, keeping what lies beyond it; it turns with the camera, or
   **Leave it here** keeps it at the angle it has now (an oblique cut), and
-  **Follow the view** lets it turn again.
+  **Follow the view** lets it turn again. A cut turned on starts through the
+  point the cursor was last over in the 3-D view (on the rendered tissue),
+  and **At the cursor** moves the cuts that are on there.
 - **Cuts**: planes through the current position across x, y or z, keeping
   either side, with an offset in mm (a slider or a number). A **clip box**
   keeps a box of the volume (six sliders, as fractions of it). Regions listed under **Kept through cuts**

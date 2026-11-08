@@ -14,7 +14,7 @@ import { PictureDrawer } from "./draw.js";
 import { ColourmapEditor, type DataStop, shifted, type Tuning } from "./editor.js";
 import { LocalRenderer, PRESETS as LOCAL_PRESETS } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
-import { ANATOMICAL_VIEWS, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, omeZarrSource, orientationLooking, unitMm, viewCutPlane, viewKey } from "./view.js";
+import { ANATOMICAL_VIEWS, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, omeZarrSource, orientationLooking, unitMm, viewCutPlane, viewForward, viewKey } from "./view.js";
 
 export interface Keyframe {
   time: number;
@@ -176,6 +176,17 @@ class AnatomicalRendering {
   private distance: { version: number; width: number; height: number; data: Float32Array } | undefined;
   /** The camera (inverse view-projection, column-major) of each view sent, by the version the host gave it. */
   private views = new Map<number, number[]>();
+  private lastCursor: number[] | undefined;
+
+  /** Offsets (mm from the position) that put the cuts through the last point the cursor was over; undefined when there is none. */
+  private cursorOffsets(): { axis: number[]; view: number } | undefined {
+    const f = this.lastFrame, c = this.lastCursor;
+    if (!f || !c) return undefined;
+    const mm = unitMm(f.dimensions);
+    const d = [0, 1, 2].map((i) => c[i] - f.position[i]);
+    const fw = viewForward(f.invViewProjection);
+    return { axis: d.map((x) => Math.round(x * mm * 10) / 10), view: Math.round((fw[0] * d[0] + fw[1] * d[1] + fw[2] * d[2]) * mm * 10) / 10 };
+  }
   private frameText = "";
   private problem = "";
   private movie: MovieInfo | undefined;
@@ -194,6 +205,11 @@ class AnatomicalRendering {
     this.toggle = ctx.ui.viewToggle({ label: "Render", title: "Path-traced rendering (Anatomical rendering)", value: this.saved.on, onChange: (v) => this.setOn(v) });
     this.offs.push(
       ctx.viewer.onLayersChanged(() => this.update()),
+      ctx.viewer.onCursorChanged(() => {
+        // The last point the cursor was over (in the 3-D view, on the rendered tissue): where a cut starts.
+        const c = ctx.viewer.cursor();
+        if (c.active && c.position.length >= 3 && c.position.slice(0, 3).every(Number.isFinite)) this.lastCursor = c.position.slice(0, 3);
+      }),
       ctx.state.onChanged(() => {
         this.saved = readSaved(ctx.state.get());
         this.update();
@@ -865,7 +881,14 @@ class AnatomicalRendering {
         const c = s.cuts[i];
         const on = el("input", { type: "checkbox" }) as HTMLInputElement;
         on.checked = c.on;
-        on.onchange = () => this.save((x) => (x.cuts[i].on = on.checked));
+        on.onchange = () =>
+          this.save((x) => {
+            x.cuts[i].on = on.checked;
+            // A cut turned on starts through the point the cursor was last over (the axis's display index i).
+            const o = on.checked ? this.cursorOffsets() : undefined;
+            const k = this.lastFrame?.dimensions.names.indexOf(x.cuts[i].axis) ?? -1;
+            if (o && k >= 0 && k < 3) x.cuts[i].offset = o.axis[k];
+          });
         return el(
           "div",
           { style: "display: flex; gap: 6px; align-items: center" },
@@ -979,12 +1002,32 @@ class AnatomicalRendering {
           button("Centre on the tissue", () => this.centreOnTissue(), "Move the position to the middle of the tissue and zoom to show all of it"),
           ...ANATOMICAL_VIEWS.map((v) => button(v.name, () => this.ctx.viewer.patchState((ng) => void ((ng as { projectionOrientation?: number[] }).projectionOrientation = orientationLooking(v.forward, v.up)))))),
         el("h4", {}, "Cuts (through the position)"),
+        el("div", { style: "display: flex; gap: 6px; align-items: center" },
+          button("At the cursor", () => {
+            const o = this.cursorOffsets();
+            if (!o) return;
+            this.save((x) => {
+              const names = this.lastFrame!.dimensions.names;
+              for (const c of x.cuts) {
+                const k = names.indexOf(c.axis);
+                if (c.on && k >= 0 && k < 3) c.offset = o.axis[k];
+              }
+              if (x.viewCut.on) x.viewCut = { ...x.viewCut, offset: o.view, fixed: null };
+            });
+            render();
+          }, "Move the cuts that are on through the point the cursor was last over in the 3-D view (a cut turned on starts there too)"),
+          el("span", { class: "muted", style: "font-size: 11px" }, this.lastCursor ? "" : "point at the tissue in the 3-D view first")),
         cutRow(0), cutRow(1), cutRow(2),
         el("div", { style: "display: flex; gap: 6px; align-items: center; flex-wrap: wrap" },
           (() => {
             const cb = el("input", { type: "checkbox" }) as HTMLInputElement;
             cb.checked = s.viewCut.on;
-            cb.onchange = () => this.save((x) => (x.viewCut = { ...x.viewCut, on: cb.checked }));
+            cb.onchange = () =>
+              this.save((x) => {
+                // Turned on, it starts through the point the cursor was last over.
+                const o = cb.checked ? this.cursorOffsets() : undefined;
+                x.viewCut = { ...x.viewCut, on: cb.checked, ...(o ? { offset: o.view, fixed: null } : {}) };
+              });
             return cb;
           })(),
           el("span", { title: "A cut across the view, keeping what lies beyond it: it turns with the camera until left in place" }, "Cut facing the view"),
