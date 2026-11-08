@@ -27,6 +27,60 @@ No Cinematic Anatomy manual is public. What follows is from those sources
 | Stereo, VR, walls | Stereo glasses, VR headsets, 8K wall with active shutter glasses, Vision Pro | Not yet |
 | Speed | Rendering on the PC or headset; Siemens' denoising and temporal reuse (Martschinke 2019, Hofmann 2020) | CUDA on a host (an A6000: 45–65 ms a pass at 834 × 684 for a 135-million-voxel brain, 100–330 ms with labels and cuts), or WebGPU in the page; frames at half size while moving; an edge-avoiding wavelet denoiser for the first samples. Not yet: a learned denoiser, reprojection between frames |
 
+## How its colours are made
+
+Nothing public says Siemens derives colours from photographs. What is
+documented:
+
+- **A preset is drawn by hand.** The Preset Editor (Cinematic Playground 1.0,
+  2025) shows a piecewise-linear transfer function over the data's
+  histogram: control points with a colour and an opacity, over HU for CT or
+  raw intensity for MR, several curves to a preset, saved under a new name.
+  A preset also holds material classifications and fixed clip planes
+  (Niedermayr et al. 2024). The Vision Pro study credits the realism to
+  "Siemens Healthineers' dedicated team working extensively to perfect the
+  transfer functions for each specific use case", and rescaled its data to
+  fit Siemens' presets rather than editing them.
+- **CT is calibrated, MR is not.** HU fixes air, fat, water, muscle, contrast
+  and bone, so one CT preset gives each tissue its colour on any scanner. MR
+  intensity has no fixed scale and does not follow tissue colour, which is
+  why most published Cinematic Rendering is CT.
+- **Each region gets its own preset.** Playground 1.0 segments the volume (or
+  reads DICOM SEG) and gives every region a preset of its own, such as
+  `CT_MSK_Transp_Skin_small` or `CT_Lung_Airways`, with a priority order,
+  inversion, and hiding ("punching"). This is Siemens' "semantic cinematic
+  volume rendering" patent (US 2017/0061672, Zhou, Engel et al.): the
+  transfer function depends on the place's tissue class, and each material
+  has its own phase function from a database.
+- **Light does much of the work.** HDR light maps photographed in real places,
+  light passing through some tissue layers and scattering in deeper ones,
+  then tone mapping.
+
+How Anatomical rendering differs, as of 2026-11-08:
+
+- It uses one transfer function for the whole volume, and a region's colour is a flat tint on it
+  (`label_mix`). It is not the region's own transfer function and material.
+- The MR, HiP-CT and histology colours were chosen by eye, on percentiles.
+- The albedo is the transfer function's colour and the extinction is grey.
+  Over n bounces the colour goes as albedo^n, so it saturates and darkens.
+  In real tissue, absorption depends on the wavelength: haemoglobin takes
+  blue and green, so red light goes deeper.
+
+Open work on this:
+
+- **Presets per region:** a label table that names a material per label.
+- **Colours measured from photographs** of registered real tissue. Candidates
+  are the Visible Human colour cryosections and NextBrain's dissection
+  photographs; fixed tissue needs its own photographs. The albedo would be
+  fitted so that a rendered slab matches the photographed colour.
+- **Extinction per colour channel.**
+- **A transfer-function editor** in the manner of Playground's.
+
+NiiVue's cinematic mode (PR #473) maps MR labels' CSF, grey and white matter
+medians to 0, 100 and 200 so that one table fits every scanner, and
+modulates the transfer function by label. That is a class-based
+normalisation, where Anatomical rendering uses percentiles.
+
 ## Sources
 
 - Siemens Healthineers, [Anatomical lectures with Cinematic Anatomy](https://www.siemens-healthineers.com/perspectives/cinematic-anatomy): windowing, clip planes, carve and crop, gamepad, stereo, VR.
@@ -37,3 +91,8 @@ No Cinematic Anatomy manual is public. What follows is from those sources
 - Luijten et al., [Cinematic Reality on the Apple Vision Pro](https://www.frontiersin.org/journals/virtual-reality/articles/10.3389/frvir.2025.1666614/full), Frontiers in VR (2025): presets, clipping planes and boxes, light map settings; no segmentation or measurement.
 - Niedermair et al., [On the added benefit of virtual anatomy for dissection-based skills](https://anatomypubs.onlinelibrary.wiley.com/doi/10.1002/ase.2234), Anat Sci Educ (2023): Cinematic Anatomy VA70A on JKU's 8K wall with a controller.
 - Ars Electronica Futurelab, [Cinematic Anatomy x Deep Space](https://ars.electronica.art/futurelab/en/projects-virtual-anatomy/): keyframes set in Cinematic Rendering, Unreal Engine through its SDK, stereo on walls.
+- Siemens Healthineers, [Cinematic Playground: instructions for use, 1.0](https://marketplace.teamplay.siemens-healthineers.com/api/download/media/Siemens%20Healthcare%20GmbH/1.0/Instruction_for_use_1.0.pdf) (2025): the Preset Editor, presets per segmented region, the DICOM segmentation organiser, render tasks.
+- Zhou, Engel, Liu, Yu, Geiger, Lay, [Semantic cinematic volume rendering](https://patents.google.com/patent/US20170061672A1/en), US 2017/0061672 (Siemens).
+- Undark, [Cinematic rendering: medical images go to the movies](https://undark.org/2016/07/01/medical-imaging-cinematic-rendering/) (2016): light maps photographed in real places.
+- NiiVue, [cinematic render mode for CT and MR](https://github.com/niivue/mono/pull/473): label-modulated presets, MR tissue normalisation.
+- Devkota et al., [Reference based colour transfer for medical volume rendering](https://arxiv.org/abs/2210.08083) (2022), and Azkue et al., [True-colour 3D rendering from cryosection data](https://onlinelibrary.wiley.com/doi/10.1111/joa.13647), J Anat (2022): colour from the Visible Human cryosections.
