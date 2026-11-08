@@ -17,7 +17,7 @@ from typing import Any
 import numpy as np
 
 from . import kernels
-from .presets import Preset, transfer_table
+from .presets import Preset, material_table, transfer_table
 
 BAND_MS = 15.0  # how long a band of a pass takes (step with stop): a new view waits at most about this
 BRICK = 4  # majorant bricks: 4 voxels a side (8 took about 60% longer a pass, its majorants looser at surfaces)
@@ -280,7 +280,8 @@ class Renderer:
             self._params = cp.asarray(self._pack(state))
             key = (state.preset.key(), self.volume.lo, self.volume.hi)
             if key != self._tf_key:
-                self._tf = cp.asarray(transfer_table(state.preset, self.volume))
+                # Colour and opacity, then (after TF_SIZE of them) the surface's specular and roughness.
+                self._tf = cp.asarray(np.concatenate([transfer_table(state.preset, self.volume), material_table(state.preset, self.volume)]))
                 self._tf_key = key
             self._update_lut(state)
             self._set_env(state.preset.environment.get("map") or None)

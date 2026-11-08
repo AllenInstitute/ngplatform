@@ -87,7 +87,7 @@ __device__ __forceinline__ V3 lin3(const float* A, V3 d) {  // 3x3 row-major
 struct Scene {
   const float* P;
   cudaTextureObject_t vol;   // texture values 0..1, linear filtering, unnormalised coordinates
-  const float* tf;           // TF_SIZE x (r, g, b, a)
+  const float* tf;           // TF_SIZE x (r, g, b, a), then TF_SIZE x (specular, roughness)
   const float* maj;          // majorant per brick (extinction per display unit)
   const unsigned short* lab; // label volume (x fastest), or null
   const float* lut;          // NLUT x (r, g, b, opacity scale)
@@ -100,6 +100,15 @@ struct Scene {
 __device__ __forceinline__ float texval(const Scene& S, V3 v) {
   // v: voxel index coordinates (centre of voxel i at i); texture centres are at i + 0.5.
   return tex3D<float>(S.vol, v.x + 0.5f, v.y + 0.5f, v.z + 0.5f);
+}
+
+// The surface's specular (k 0) or roughness (k 1) at texture value t.
+__device__ __forceinline__ float tfmat(const Scene& S, float t, int k) {
+  float f = fminf(fmaxf(t, 0.f), 1.f) * (TF_SIZE - 1);
+  int i = min((int)f, TF_SIZE - 2);
+  float w = f - i;
+  const float* m = S.tf + 4 * TF_SIZE + 2 * i + k;
+  return m[0] + w * (m[2] - m[0]);
 }
 
 // Whether world point w is in the detail (one voxel in from its faces, where interpolation reads
@@ -301,8 +310,30 @@ __device__ float trackgrid(const Scene& S, const float* maj, int gx, int gy, int
 // scattered or shadowed outside the region in view still meets the rest of the volume).  mode 0: delta
 // tracking, returns the collision distance or -1 when the ray leaves.  mode 1: ratio tracking, returns
 // the transmittance.
+// Narrows [t0, t1] to the part of the ray the cuts keep (the planes' kept half-spaces meet in one
+// convex region, so one interval); false when none is kept.  Not when labels may be kept through a
+// cut (they are found by sampling).
+__device__ __forceinline__ bool cutinterval(const float* P, V3 ow, V3 dw, float* t0, float* t1) {
+  if (P[P_HAS_LABELS] > 0.f) return true;
+  int n = (int)P[P_NCLIP];
+  for (int i = 0; i < n; ++i) {
+    const float* c = P + P_CLIPS + 4 * i;
+    float nd = c[0] * dw.x + c[1] * dw.y + c[2] * dw.z, n0 = c[0] * ow.x + c[1] * ow.y + c[2] * ow.z + c[3];
+    if (fabsf(nd) < 1e-12f) {
+      if (n0 < 0.f) return false;
+    } else if (nd > 0.f) {
+      *t0 = fmaxf(*t0, -n0 / nd);
+    } else {
+      *t1 = fminf(*t1, -n0 / nd);
+    }
+  }
+  return *t1 > *t0;
+}
+
 __device__ float track(const Scene& S, V3 ow, V3 dw, V3 ov, V3 dv, float t0, float t1, Rng& rng, int mode) {
   const float* P = S.P;
+  // What a cut takes away is empty: skip it, rather than step through its bricks' majorants.
+  if (!cutinterval(P, ow, dw, &t0, &t1)) return mode == 0 ? -1.f : 1.f;
   Track tr;
   tr.T = 1.f;
   tr.tau = 0.f;
@@ -480,11 +511,15 @@ extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const 
                tv(S, det, vg + v3(0.f, h, 0.f)) - tv(S, det, vg - v3(0.f, h, 0.f)),
                tv(S, det, vg + v3(0.f, 0.f, h)) - tv(S, det, vg - v3(0.f, 0.f, h))) * 0.5f;
     float gm = len3(gv);
+    float tm = tv(S, det, vg);  // the value the surface's gloss is read at
     if (P[P_INSET] > 0.f && gm > 1e-6f && P[P_HAS_LABELS] <= 0.f) {
       // The colour a little way along the gradient, on the more opaque side: the tissue beneath a surface.
       V3 d = gv * (P[P_INSET] / gm);
-      float4 ca = tflookup(S, tv(S, det, vg + d)), cb = tflookup(S, tv(S, det, vg - d));
-      float4 c = ca.w >= cb.w ? ca : cb;
+      float ta = tv(S, det, vg + d), tb = tv(S, det, vg - d);
+      float4 ca = tflookup(S, ta), cb = tflookup(S, tb);
+      bool a = ca.w >= cb.w;
+      float4 c = a ? ca : cb;
+      tm = a ? ta : tb;
       albedo = v3(c.x, c.y, c.z) * P[P_ALBEDO];
     }
     float psurf = P[P_SHADE_MIX] * (1.f - expf(-P[P_GRAD_SCALE] * gm * (det ? P[P_DETAIL_GSCALE] : 1.f)));
@@ -497,7 +532,7 @@ extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const 
     if (rnd(rng) < psurf) {
       V3 n = norm3(lin3(P + (det ? P_DETAIL_NORMAL : P_WORLD_NORMAL), gv)) * -1.f;  // pointing from high values to low
       if (dot3(n, wo) < 0.f) n = n * -1.f;
-      float spec = P[P_SPECULAR], rough = P[P_ROUGHNESS];
+      float spec = tfmat(S, tm, 0), rough = tfmat(S, tm, 1);  // the tissue's gloss (the preset's, unless its stops say)
       if (Tl > 0.f) L = L + thr * brdf_cos(n, wo, ldir, albedo, spec, rough) * lrgb * Tl;
       V3 nd;
       if (rnd(rng) < spec) {
@@ -546,7 +581,7 @@ extern "C" __global__ void firsthit(const float* P, cudaTextureObject_t vol, con
   V3 ov = aff(A, ow), dv = lin(A, dw);
   float t0, t1;
   float out = 1.f, dist = -1.f;
-  if (boxhit(P, ov, dv, &t0, &t1)) {
+  if (boxhit(P, ov, dv, &t0, &t1) && cutinterval(P, ow, dw, &t0, &t1)) {
     float vlen = len3(dv);
     float dt = P[P_STEP] / fmaxf(vlen, 1e-12f);
     float acc = 0.f;

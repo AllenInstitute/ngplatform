@@ -45,6 +45,9 @@ class Stop:
     color: tuple[float, float, float]
     opacity: float
     tissue: str = ""  # what it colours, where a preset names it
+    # The surface's gloss here (wet tissue is glossier than fat), when not the preset's own.
+    specular: float | None = None
+    roughness: float | None = None
 
 
 @dataclass
@@ -77,7 +80,9 @@ class Preset:
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "Preset":
         d = dict(d)
-        stops = [Stop(float(s["value"]), tuple(float(c) for c in s["color"]), float(s["opacity"]), str(s.get("tissue", ""))) for s in d.pop("stops", [])]
+        opt = lambda s, k: None if s.get(k) is None else float(s[k])  # noqa: E731
+        stops = [Stop(float(s["value"]), tuple(float(c) for c in s["color"]), float(s["opacity"]), str(s.get("tissue", "")),
+                      opt(s, "specular"), opt(s, "roughness")) for s in d.pop("stops", [])]
         env = dict(DEFAULT_ENV)
         env.update(d.pop("environment", {}) or {})
         known = {f for f in Preset.__dataclass_fields__}
@@ -149,4 +154,20 @@ def transfer_table(preset: Preset, volume) -> np.ndarray:
         tab[:, c] = np.interp(t, xs, cols[:, c])
     # Outside the stops the opacity is the end stop's (a preset ends at 0 to be transparent there).
     tab[:, 3] = np.interp(t, xs, ops)
+    return tab.ravel()
+
+
+def material_table(preset: Preset, volume) -> np.ndarray:
+    """The surface's specular and roughness at TF_SIZE texture values: (TF_SIZE * 2,) float32, from the
+    stops that give them (the preset's own elsewhere)."""
+    n = kernels.TF_SIZE
+    t = np.linspace(0.0, 1.0, n)
+    tab = np.empty((n, 2), np.float32)
+    tab[:, 0], tab[:, 1] = preset.specular, preset.roughness
+    if preset.stops:
+        xs = np.array([_to_texture(s.value, preset, volume) for s in preset.stops])
+        order = np.argsort(xs, kind="stable")
+        for k, name, own in ((0, "specular", preset.specular), (1, "roughness", preset.roughness)):
+            v = np.array([getattr(preset.stops[i], name) if getattr(preset.stops[i], name) is not None else own for i in order], np.float64)
+            tab[:, k] = np.interp(t, xs[order], v)
     return tab.ravel()
