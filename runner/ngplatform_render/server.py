@@ -211,7 +211,8 @@ class Session:
         for _, lv in self.detail_levels:
             shape = tuple(lv.shape[a] for a in self.detail_loader.ms.spatial)  # x, y, z
             levels.append((shape, self._wfp @ lv.affine))
-        p = detail.plan(st.inv_view_projection, st.width, st.height, dist, levels, detail.voxel_size(self._wfp @ L.affine), self.detail_budget)
+        held = next((k for k, (lvi, _) in enumerate(self.detail_levels) if self.detail_meta and lvi == self.detail_meta["level"]), None)
+        p = detail.plan(st.inv_view_projection, st.width, st.height, dist, levels, detail.voxel_size(self._wfp @ L.affine), self.detail_budget, held=held)
         if p is None:
             self.detail_loader.cancel()
             if R.detail is not None:

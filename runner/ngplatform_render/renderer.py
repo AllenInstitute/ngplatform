@@ -124,17 +124,26 @@ def _tex_for(cp, data: np.ndarray):
     return texture.TextureObject(res, tdesc), arr
 
 
-def brick_bounds(cp, data_gpu, brick: int = BRICK):
+def brick_bounds(cp, data, brick: int = BRICK, slab_bricks: int = 16):
     """The least and greatest value (0..1) in each brick of `brick` voxels a side, with one
-    voxel of overlap (trilinear samples near a face read the neighbour)."""
-    nz, ny, nx = data_gpu.shape
-    scale = 255.0 if data_gpu.dtype == cp.uint8 else 65535.0
+    voxel of overlap (trilinear samples near a face read the neighbour). `data` is a host (numpy)
+    or GPU array; it goes to the GPU a slab of bricks at a time, so the memory this takes beyond the
+    volume's texture is a slab's, not the volume's again."""
+    nz, ny, nx = data.shape
+    scale = 255.0 if data.dtype == np.uint8 else 65535.0
     gz, gy, gx = (-(-n // brick) for n in (nz, ny, nx))
-    pad = [(0, gz * brick - nz), (0, gy * brick - ny), (0, gx * brick - nx)]
-    v = cp.pad(data_gpu, pad, mode="edge")
-    b = v.reshape(gz, brick, gy, brick, gx, brick)
-    mn = b.min(axis=(1, 3, 5)).astype(cp.float32)
-    mx = b.max(axis=(1, 3, 5)).astype(cp.float32)
+    mn = cp.empty((gz, gy, gx), cp.float32)
+    mx = cp.empty((gz, gy, gx), cp.float32)
+    for z0 in range(0, gz, slab_bricks):
+        z1 = min(gz, z0 + slab_bricks)
+        v = cp.asarray(data[z0 * brick:min(nz, z1 * brick)])
+        pad = [(0, (z1 - z0) * brick - v.shape[0]), (0, gy * brick - ny), (0, gx * brick - nx)]
+        if any(p[1] for p in pad):
+            v = cp.pad(v, pad, mode="edge")
+        b = v.reshape(z1 - z0, brick, gy, brick, gx, brick)
+        mn[z0:z1] = b.min(axis=(1, 3, 5)).astype(cp.float32)
+        mx[z0:z1] = b.max(axis=(1, 3, 5)).astype(cp.float32)
+        del v, b
     # Overlap: a brick also takes its neighbours' extremes (conservative for interpolation).
     for ax in range(3):
         for s in (1, -1):
@@ -214,9 +223,7 @@ class Renderer:
         cp = self.cp
         with self.lock, self.device:
             tex, arr = _tex_for(cp, volume.data)
-            g = cp.asarray(volume.data)
-            bmin, bmax, grid = brick_bounds(cp, g)
-            del g
+            bmin, bmax, grid = brick_bounds(cp, volume.data)
             self._tex, self._arr = tex, arr
             self._bmin, self._bmax, self._grid = bmin.ravel(), bmax.ravel(), grid
             self._maj = cp.zeros(bmin.size, cp.float32)
@@ -233,9 +240,7 @@ class Renderer:
             if detail is None:
                 return
             tex, arr = _tex_for(cp, detail.data)
-            g = cp.asarray(detail.data)
-            bmin, bmax, grid = brick_bounds(cp, g)
-            del g
+            bmin, bmax, grid = brick_bounds(cp, detail.data)
             self._dtex, self._darr = tex, arr
             self._dbmin, self._dbmax, self._dgrid = bmin.ravel(), bmax.ravel(), grid
             self._dmaj = cp.zeros(bmin.size, cp.float32)

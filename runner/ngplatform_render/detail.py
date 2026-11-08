@@ -82,7 +82,8 @@ def pixel_rays(inv_view_projection: np.ndarray, width: int, height: int, xs: np.
 
 
 def plan(inv_view_projection, width: int, height: int, dist: np.ndarray, levels: list[tuple[tuple[int, int, int], np.ndarray]],
-         coarse_voxel: float, budget: float, margin: float = 0.25, samples: int = 24):
+         coarse_voxel: float, budget: float, margin: float = 0.25, samples: int = 24, held: int | None = None,
+         explain: list | None = None):
     """The detail for a view: (index into `levels`, the box to load lo (x, y, z), hi (exclusive), and
     the box the view needs, within it: a detail already held that holds that need not be read again),
     or None.
@@ -90,6 +91,9 @@ def plan(inv_view_projection, width: int, height: int, dist: np.ndarray, levels:
     dist: (H, W) world distance along each pixel's ray to where it first meets tissue (-1: never).
     levels: the stored levels finer than the coarse one, finest first: (shape x, y, z; world from voxel).
     coarse_voxel: the coarse level's voxel size (world units). budget: voxels the region may hold.
+    held: the level held now: it stays until it is clearly finer than a pixel (half one, not 0.7), and a
+    finer one is taken only when it fits 85% of the budget, so a view near the line between two levels
+    does not swap them back and forth.
     """
     H, W = dist.shape
     ys, xs = np.meshgrid(np.linspace(0, H - 1, samples), np.linspace(0, W - 1, samples), indexing="ij")
@@ -107,11 +111,12 @@ def plan(inv_view_projection, width: int, height: int, dist: np.ndarray, levels:
     o, dw, d = o[close], dw[close], d[close]
     p = o + dw * d[:, None]
     if len(p) > 20:
-        keep = np.all((p >= np.percentile(p, 1, axis=0)) & (p <= np.percentile(p, 99, axis=0)), axis=1)
+        keep = np.all((p >= np.percentile(p, 2, axis=0)) & (p <= np.percentile(p, 98, axis=0)), axis=1)
         o, dw, d, p = o[keep], dw[keep], d[keep], p[keep]
-    # How deep behind the surface to hold: half the width of what is seen, at least 8 coarse voxels.
+    # How deep behind the surface to hold: half the width of what is seen, but from 8 to 24 coarse voxels
+    # (light goes a little way into tissue; more only makes the region swing with the view, and bigger).
     span = float(np.max(p.max(0) - p.min(0))) if len(p) > 1 else 0.0
-    depth = max(0.5 * span, 8 * coarse_voxel)
+    depth = min(max(0.5 * span, 8 * coarse_voxel), 24 * coarse_voxel)
     pts = np.concatenate([p - dw * (2 * coarse_voxel), p + dw * depth])
     # A pixel's width where the view is nearest: the angle between neighbouring pixels' rays times the distance.
     c = np.array([width / 2, width / 2 + 1]), np.array([height / 2, height / 2])
@@ -122,8 +127,13 @@ def plan(inv_view_projection, width: int, height: int, dist: np.ndarray, levels:
         vs = voxel_size(wfv)
         if vs >= 0.95 * coarse_voxel:
             return None  # no finer than the coarse level
-        if vs < 0.7 * footprint:
+        if vs < (0.5 if i == held else 0.7) * footprint:
+            if explain is not None:
+                explain.append((i, "finer than a pixel", round(vs / footprint, 3)))
             continue  # finer than a pixel: no use
+        # A level finer than the one held must fit well within the budget (85%), so a view near the
+        # budget's edge does not swap levels back and forth; the one held keeps the whole budget.
+        b_i = 0.85 * budget if held is not None and i < held else budget
         v = (np.c_[pts, np.ones(len(pts))] @ np.linalg.inv(wfv).T)[:, :3]
         lo0, hi0 = v.min(0), v.max(0)
         n = np.asarray(shape, np.float64)
@@ -132,9 +142,12 @@ def plan(inv_view_projection, width: int, height: int, dist: np.ndarray, levels:
         pad = (hi0 - lo0) * margin + 2
         lo = np.clip(np.floor(lo0 - pad), 0, n - 1).astype(int)
         hi = np.clip(np.ceil(hi0 + pad) + 1, 1, n).astype(int)
-        if (hi > lo).all() and math.prod((hi - lo).tolist()) > budget and math.prod((need_hi - need_lo).tolist()) <= budget:
+        if (hi > lo).all() and math.prod((hi - lo).tolist()) > b_i and math.prod((need_hi - need_lo).tolist()) <= b_i:
             lo, hi = need_lo, need_hi  # the margin does not fit; what is needed does
-        if (hi > lo).all() and math.prod((hi - lo).tolist()) <= budget:
+        if explain is not None:
+            explain.append((i, "need / load voxels (M)", round(math.prod((need_hi - need_lo).tolist()) / 1e6), round(math.prod((hi - lo).tolist()) / 1e6),
+                            "vs/pixel", round(vs / footprint, 3)))
+        if (hi > lo).all() and math.prod((hi - lo).tolist()) <= b_i:
             t = lambda a: tuple(int(x) for x in a)  # noqa: E731
             return i, t(lo), t(hi), t(need_lo), t(need_hi)
     return None
