@@ -136,9 +136,28 @@ __device__ __forceinline__ float medium(const Scene& S, V3 w, V3 v, V3* rgb) {
       if (lab < nl && S.lut[4 * lab] >= 0.f) {  // a negative red: the label leaves the medium as it is
         const float* L = S.lut + 4 * lab;
         sigma *= L[3];
-        float m = P[P_LABEL_MIX];
-        col = col * (1.f - m) + v3(L[0], L[1], L[2]) * m;
         keep = S.lutflags[lab] > 0.f;
+      }
+      if (rgb) {
+        // The colour from the 8 nearest label voxels, weighted trilinearly, so coarse labels do not show their voxels.
+        float fx = floorf(lv.x), fy = floorf(lv.y), fz = floorf(lv.z);
+        float wx = lv.x - fx, wy = lv.y - fy, wz = lv.z - fz;
+        V3 acc = v3(0.f, 0.f, 0.f);
+        float wsum = 0.f;
+        for (int k = 0; k < 8; ++k) {
+          int jx = (int)fx + (k & 1), jy = (int)fy + ((k >> 1) & 1), jz = (int)fz + ((k >> 2) & 1);
+          if (jx < 0 || jy < 0 || jz < 0 || jx >= lx || jy >= ly || jz >= lz) continue;
+          int l2 = S.lab[((u64)jz * ly + jy) * lx + jx];
+          float w = ((k & 1) ? wx : 1.f - wx) * (((k >> 1) & 1) ? wy : 1.f - wy) * (((k >> 2) & 1) ? wz : 1.f - wz);
+          V3 c2 = col;
+          if (l2 < nl && S.lut[4 * l2] >= 0.f) c2 = v3(S.lut[4 * l2], S.lut[4 * l2 + 1], S.lut[4 * l2 + 2]);
+          acc = acc + c2 * w;
+          wsum += w;
+        }
+        if (wsum > 0.f) {
+          float m = P[P_LABEL_MIX];
+          col = col * (1.f - m) + acc * (m / wsum);
+        }
       }
     }
   }
