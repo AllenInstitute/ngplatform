@@ -6,6 +6,7 @@ Tests that render need CuPy and a CUDA GPU, and are skipped without them.
 from __future__ import annotations
 
 import json
+import math
 import threading
 import time
 import urllib.request
@@ -384,3 +385,101 @@ def test_hide_the_jar():
     volumes.hide_outside_cylinder(q, 0.9)
     assert q[:, 0, 0].max() == 0 and q[:, 32, 2].max() == 0  # a corner, and the jar's side
     assert q[32, 32, 30] > 25000  # the tissue stays
+
+
+def test_detail_plan_picks_the_level_the_view_needs():
+    from ngplatform_render import detail
+
+    # Levels of a 64 mm cube: 0.25, 0.5 mm (finer than the coarse 1 mm one), finest first.
+    def level(vox):
+        A = np.diag([vox, vox, vox, 1.0])
+        A[:3, 3] = vox / 2
+        return (int(64 / vox),) * 3, A
+
+    levels = [level(0.25), level(0.5)]
+    centre = np.array([32.0, 32.0, 32.0])
+
+    def view(radius, W=200, H=150):
+        cam = orbit(centre, radius, 30, 20)
+        inv = np.linalg.inv(cam.view_projection(W, H))
+        ys, xs = np.mgrid[:H, :W]
+        o, d = detail.pixel_rays(inv, W, H, xs.ravel().astype(float), ys.ravel().astype(float))
+        # The view meets a ball of radius 20 mm about the centre.
+        oc = o - centre
+        b = (oc * d).sum(1)
+        disc = b * b - ((oc * oc).sum(1) - 400)
+        t = -b - np.sqrt(np.maximum(disc, 0))
+        dist = np.where(disc > 0, t, -1.0).reshape(H, W)
+        return inv, W, H, dist
+
+    # The whole ball in view: a pixel is wider than the coarse voxel, so no finer detail.
+    assert detail.plan(*view(400.0), levels, 1.0, 1e9) is None
+    # Close: the finest level, around where the view meets the ball, within the level.
+    inv, W, H, dist = view(30.0)
+    i, lo, hi, nlo, nhi = detail.plan(inv, W, H, dist, levels, 1.0, 1e9)
+    assert i == 0 and all(0 <= a < b <= 256 for a, b in zip(lo, hi)) and detail.contains((lo, hi), (nlo, nhi))
+    assert math.prod(np.subtract(hi, lo).tolist()) < 256**3
+    # A small budget: the coarser of the finer levels.
+    i2, lo2, hi2, _, _ = detail.plan(inv, W, H, dist, levels, 1.0, math.prod(np.subtract(hi, lo).tolist()) // 4)
+    assert i2 == 1
+    # Nothing in view: nothing to read.
+    assert detail.plan(inv, W, H, np.full_like(dist, -1.0), levels, 1.0, 1e9) is None
+
+
+def test_detail_regions_read_through_the_chunk_cache(tmp_path):
+    from ngplatform_render import detail
+
+    data = (np.arange(40 * 50 * 60) % 251).astype(np.uint8).reshape(40, 50, 60)
+    url = write_store(tmp_path / "r.ome.zarr", data, levels=1)
+    ms = volumes.open_multiscale(url)
+    cache = detail.ChunkCache(max_bytes=1 << 30)
+    lo, hi = (5, 7, 3), (45, 33, 38)  # x, y, z
+    a = detail.read_region(url, ms, ms.levels[0], lo, hi, cache=cache)
+    assert np.array_equal(a, data[3:38, 7:33, 5:45])
+    held = cache.bytes
+    b = detail.read_region(url, ms, ms.levels[0], lo, hi, cache=cache)
+    assert np.array_equal(a, b) and cache.bytes == held  # every chunk from the cache
+    assert detail.read_region(url, ms, ms.levels[0], lo, hi, cache=cache, cancelled=lambda: True) is None
+
+
+@needs_gpu
+def test_a_session_reads_finer_detail_where_the_view_is_close(tmp_path, monkeypatch):
+    from ngplatform_render import server
+
+    monkeypatch.setenv("NGP_RENDER_CACHE", str(tmp_path / "cache"))
+    url = write_store(tmp_path / "s.ome.zarr", ball(128), voxel_um=250.0, levels=3)
+    srv = server.RenderServer(0, "tok", [tmp_path], 0, tmp_path / "renders")
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_port}"
+
+    def call(method, path, body=None, raw=False):
+        r = urllib.request.Request(base + path, method=method, data=None if body is None else json.dumps(body).encode(),
+                                   headers={"X-NGP-Service-Token": "tok", "Content-Type": "application/json"})
+        with urllib.request.urlopen(r, timeout=60) as f:
+            data = f.read()
+            return (f.status, f.headers, data) if raw else json.loads(data or b"null")
+
+    # The whole volume at the coarsest level (32^3); detail from the 128^3 and 64^3 ones.
+    s = call("POST", "/sessions", {"volume": {"url": url, "budget": 40000, "detail_budget": 4e6}})
+    for _ in range(200):
+        info = call("GET", f"/sessions/{s['id']}")
+        if info["status"] != "loading":
+            break
+        time.sleep(0.05)
+    assert info["status"] == "ready" and info["volume"]["shape"] == [32, 32, 32] and info["detail"]["levels"] == ["0", "1"], info
+    A = np.asarray(info["volume"]["affine"]).reshape(4, 4).T
+    lo, hi = bounds(A, info["volume"]["shape"])
+    cam = orbit((lo + hi) / 2, 9.0, 0, 0)  # close to the ball's surface (radius 11 mm)
+    call("PUT", f"/sessions/{s['id']}/view", {"inv_view_projection": np.linalg.inv(cam.view_projection(120, 90)).T.ravel().tolist(),
+                                            "width": 120, "height": 90, "max_samples": 16})
+    after, det = 0, ""
+    for _ in range(100):
+        st, h, _ = call("GET", f"/sessions/{s['id']}/frame?after={after}&timeout=5", raw=True)
+        if st == 200:
+            after = int(h["X-Frame"])
+            det = h.get("X-Detail", "")
+            if det.startswith("level 0"):
+                break
+    held = call("GET", f"/sessions/{s['id']}")["detail"]["held"]
+    assert det.startswith("level 0") and held["path"] == "0" and held["voxels"] < 128**3, (det, held)
+    srv.shutdown()

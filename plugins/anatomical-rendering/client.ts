@@ -148,6 +148,8 @@ export interface Frame {
   bitmap: ImageBitmap;
   /** The alpha plane (one byte a pixel, rows from the top), when the colour came as a JPEG (not premultiplied). */
   alpha?: Uint8Array;
+  /** What finer detail the host holds or is reading for the view, in a few words. */
+  detail?: string;
   number: number;
   samples: number;
   version: number;
@@ -174,7 +176,7 @@ export class RenderService {
   presets(): Promise<PresetInfo[]> {
     return call(this.link, "GET", "/presets");
   }
-  open(volume: { url: string; budget?: number; level?: string; cylinder?: number }, labels?: { url: string }): Promise<SessionInfo> {
+  open(volume: { url: string; budget?: number; level?: string; cylinder?: number; detail_budget?: number }, labels?: { url: string }): Promise<SessionInfo> {
     return call(this.link, "POST", "/sessions", { volume, labels });
   }
   session(id: string): Promise<SessionInfo> {
@@ -220,7 +222,7 @@ export class RenderService {
       createImageBitmap(offset ? blob.slice(0, offset, "image/jpeg") : blob, { premultiplyAlpha: "none" }),
       offset ? new Response(blob.slice(offset).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer().then((b) => new Uint8Array(b)) : undefined,
     ]);
-    return { bitmap, alpha, number: n("X-Frame"), samples: n("X-Samples"), version: n("X-Version"), width: n("X-Width"), height: n("X-Height"), msPerPass: n("X-Ms-Per-Pass") };
+    return { bitmap, alpha, detail: r.headers.get("X-Detail") ?? undefined, number: n("X-Frame"), samples: n("X-Samples"), version: n("X-Version"), width: n("X-Width"), height: n("X-Height"), msPerPass: n("X-Ms-Per-Pass") };
   }
 
   /** The depth (GL 0..1, 1 where nothing) of the view `version`, at the frame's size. */

@@ -93,12 +93,29 @@ struct Scene {
   const float* lut;          // NLUT x (r, g, b, opacity scale)
   const float* lutflags;     // NLUT x (keep-when-cut)
   cudaTextureObject_t env;   // light map (latitude-longitude, rgba float), when P[P_ENVMAP] > 0
+  cudaTextureObject_t det;   // the detail: a finer level's region (as vol), when P[P_DETAIL] > 0
+  const float* dmaj;         // the detail's majorant per brick
 };
 
 __device__ __forceinline__ float texval(const Scene& S, V3 v) {
   // v: voxel index coordinates (centre of voxel i at i); texture centres are at i + 0.5.
   return tex3D<float>(S.vol, v.x + 0.5f, v.y + 0.5f, v.z + 0.5f);
 }
+
+// Whether world point w is in the detail (one voxel in from its faces, where interpolation reads
+// only its own voxels); q: its voxel coordinates there.
+__device__ __forceinline__ bool indetail(const float* P, V3 w, V3* q) {
+  if (P[P_DETAIL] <= 0.f) return false;
+  V3 v = aff(P + P_DETAIL_FROM_WORLD, w);
+  if (v.x < 0.5f || v.y < 0.5f || v.z < 0.5f || v.x > P[P_DETAIL_DIMS] - 1.5f || v.y > P[P_DETAIL_DIMS + 1] - 1.5f ||
+      v.z > P[P_DETAIL_DIMS + 2] - 1.5f)
+    return false;
+  *q = v;
+  return true;
+}
+__device__ __forceinline__ float detval(const Scene& S, V3 q) { return tex3D<float>(S.det, q.x + 0.5f, q.y + 0.5f, q.z + 0.5f); }
+// The texture value at p: in the detail's voxel coordinates when det, else the coarse level's.
+__device__ __forceinline__ float tv(const Scene& S, bool det, V3 p) { return det ? detval(S, p) : texval(S, p); }
 
 __device__ __forceinline__ float4 tflookup(const Scene& S, float t) {
   float f = fminf(fmaxf(t, 0.f), 1.f) * (TF_SIZE - 1);
@@ -122,7 +139,8 @@ __device__ __forceinline__ bool cut(const float* P, V3 w, V3 v) {
 // The medium at world point w (voxel point v): extinction, and colour in rgb.
 __device__ __forceinline__ float medium(const Scene& S, V3 w, V3 v, V3* rgb) {
   const float* P = S.P;
-  float t = texval(S, v);
+  V3 q;
+  float t = indetail(P, w, &q) ? detval(S, q) : texval(S, v);
   float4 c = tflookup(S, t);
   float sigma = P[P_DENSITY] * c.w;
   V3 col = v3(c.x, c.y, c.z);
@@ -187,21 +205,26 @@ __device__ __forceinline__ bool boxhit(const float* P, V3 ov, V3 dv, float* t0, 
   return hi > lo;
 }
 
-// Walks the majorant grid along the ray (world origin ow, unit direction dw; voxel origin ov, direction dv)
-// from t0 to t1.  mode 0: delta tracking, returns the collision distance or -1 when the ray leaves.
-// mode 1: ratio tracking, returns the transmittance.
-__device__ float track(const Scene& S, V3 ow, V3 dw, V3 ov, V3 dv, float t0, float t1, Rng& rng, int mode) {
+// A ray's progress through the medium, across the grids it is tracked through.
+struct Track { float T, tau, target; };
+
+// Walks one majorant grid (maj, g*: the coarse level's or the detail's) along the ray (world origin ow,
+// unit direction dw; that grid's voxel origin ov, direction dv; the coarse level's voxel origin gov,
+// direction gdv, for cuts) from t0 to t1.  mode 0: delta tracking, returns the collision distance or -1
+// when the segment ends.  mode 1: ratio tracking, the transmittance in tr (0: opaque, stop).
+__device__ float trackgrid(const Scene& S, const float* maj, int gx, int gy, int gz, V3 ow, V3 dw, V3 ov, V3 dv,
+                           V3 gov, V3 gdv, float t0, float t1, Rng& rng, int mode, Track& tr) {
   const float* P = S.P;
   float B = P[P_BRICK];
-  int gx = (int)P[P_MGRID], gy = (int)P[P_MGRID + 1], gz = (int)P[P_MGRID + 2];
-  float T = 1.f;
+  float& T = tr.T;
+  float& tau = tr.tau;
+  float target = tr.target;
   float t = t0;
   // Fast tracking (frames while the camera moves): through a brick whose majorant is more than a
   // little optical depth per voxel, step a voxel at a time (jittered), summing optical depth, and
   // collide where it passes a depth drawn once for the ray; transmittance as exp(-depth).
   bool fast = P[P_FAST] > 0.f;
   float hw = 1.f / fmaxf(len3(dv), 1e-6f);  // world length of one voxel along the ray
-  float tau = 0.f, target = -logf(1.f - rnd(rng));
   // Brick coordinates of the start (bricks start at voxel -0.5).
   V3 p = ov + dv * (t + 1e-4f);
   int c[3] = {(int)floorf((p.x + 0.5f) / B), (int)floorf((p.y + 0.5f) / B), (int)floorf((p.z + 0.5f) / B)};
@@ -218,23 +241,23 @@ __device__ float track(const Scene& S, V3 ow, V3 dw, V3 ov, V3 dv, float t0, flo
   for (int guard = 0; guard < 4096 && t < t1; ++guard) {
     int ax = (tnext[0] < tnext[1]) ? ((tnext[0] < tnext[2]) ? 0 : 2) : ((tnext[1] < tnext[2]) ? 1 : 2);
     float tend = fminf(tnext[ax], t1);
-    float mj = S.maj[((u64)c[2] * gy + c[1]) * gx + c[0]];
+    float mj = maj[((u64)c[2] * gy + c[1]) * gx + c[0]];
     if (mj > 0.f && fast && mj * hw > 0.25f) {
       // Steps of P_FAST voxels (the first a random part of one), optical depth by the trapezoid
       // rule; where it passes the target, the collision is found by bisection (4 more samples),
       // since at high densities a surface is far sharper than a step. Images come out a little
       // darker than exact tracking's: about 2-3% at 20 optical depths a voxel, 7% at 40.
       float h = hw * P[P_FAST];
-      float ta = t, sa = medium(S, ow + dw * t, ov + dv * t, 0);
+      float ta = t, sa = medium(S, ow + dw * t, gov + gdv * t, 0);
       float tb = fminf(t + h * fmaxf(rnd(rng), 0.05f), tend);
       while (ta < tend) {
-        float sb = medium(S, ow + dw * tb, ov + dv * tb, 0);
+        float sb = medium(S, ow + dw * tb, gov + gdv * tb, 0);
         float dtau = 0.5f * (sa + sb) * (tb - ta);
         if (mode == 0 && tau + dtau >= target) {
           float a0 = ta, b0 = tb, s0 = sa, s1 = sb, ta0 = tau;
           for (int it = 0; it < 4; ++it) {
             float m = 0.5f * (a0 + b0);
-            float sm = medium(S, ow + dw * m, ov + dv * m, 0);
+            float sm = medium(S, ow + dw * m, gov + gdv * m, 0);
             float tm = ta0 + 0.5f * (s0 + sm) * (m - a0);
             if (tm >= target) { b0 = m; s1 = sm; } else { a0 = m; s0 = sm; ta0 = tm; }
           }
@@ -242,7 +265,7 @@ __device__ float track(const Scene& S, V3 ow, V3 dw, V3 ov, V3 dv, float t0, flo
           return fminf(b0, a0 + (target - ta0) / sm);
         }
         tau += dtau;
-        if (mode == 1 && tau > 4.6f) return 0.f;  // transmittance under 1%
+        if (mode == 1 && tau > 4.6f) { T = 0.f; return -1.f; }  // transmittance under 1%
         ta = tb; sa = sb;
         tb = fminf(tb + h, tend);
         if (tb <= ta) break;
@@ -251,14 +274,14 @@ __device__ float track(const Scene& S, V3 ow, V3 dw, V3 ov, V3 dv, float t0, flo
       for (int k = 0; k < 1024; ++k) {
         t -= logf(1.f - rnd(rng)) / mj;
         if (t >= tend) break;
-        V3 w = ow + dw * t, v = ov + dv * t;
+        V3 w = ow + dw * t, v = gov + gdv * t;
         float s = medium(S, w, v, 0);
         if (mode == 0) {
           if (rnd(rng) * mj < s) return t;
         } else {
           T *= fmaxf(0.f, 1.f - s / mj);
           if (T < 0.05f) {  // Russian roulette on low transmittance
-            if (rnd(rng) < 0.5f) return 0.f;
+            if (rnd(rng) < 0.5f) { T = 0.f; return -1.f; }
             T *= 2.f;
           }
         }
@@ -270,7 +293,64 @@ __device__ float track(const Scene& S, V3 ow, V3 dw, V3 ov, V3 dv, float t0, flo
     if (c[ax] < 0 || c[ax] >= g[ax]) break;
     tnext[ax] += tdelta[ax];
   }
-  return mode == 0 ? -1.f : T * expf(-tau);
+  return -1.f;
+}
+
+// Tracks the ray (world origin ow, unit direction dw; coarse voxel origin ov, direction dv) from t0 to t1:
+// through the detail's grid where it is in the detail, through the coarse level's elsewhere (so light
+// scattered or shadowed outside the region in view still meets the rest of the volume).  mode 0: delta
+// tracking, returns the collision distance or -1 when the ray leaves.  mode 1: ratio tracking, returns
+// the transmittance.
+__device__ float track(const Scene& S, V3 ow, V3 dw, V3 ov, V3 dv, float t0, float t1, Rng& rng, int mode) {
+  const float* P = S.P;
+  Track tr;
+  tr.T = 1.f;
+  tr.tau = 0.f;
+  tr.target = -logf(1.f - rnd(rng));
+  int gx = (int)P[P_MGRID], gy = (int)P[P_MGRID + 1], gz = (int)P[P_MGRID + 2];
+  // The ray's interval in the detail (its box one voxel in from the faces, as indetail).
+  float da = 1e30f, db = -1e30f;
+  V3 ovd = ov, dvd = dv;
+  if (P[P_DETAIL] > 0.f) {
+    ovd = aff(P + P_DETAIL_FROM_WORLD, ow);
+    dvd = lin(P + P_DETAIL_FROM_WORLD, dw);
+    float lo = -1e30f, hi = 1e30f;
+    float o[3] = {ovd.x, ovd.y, ovd.z}, d[3] = {dvd.x, dvd.y, dvd.z};
+    for (int a = 0; a < 3; ++a) {
+      float bmin = 0.5f, bmax = P[P_DETAIL_DIMS + a] - 1.5f;
+      if (fabsf(d[a]) < 1e-12f) {
+        if (o[a] < bmin || o[a] > bmax) { lo = 1e30f; hi = -1e30f; }
+        continue;
+      }
+      float inv = 1.f / d[a];
+      float ta = (bmin - o[a]) * inv, tb = (bmax - o[a]) * inv;
+      if (ta > tb) { float x = ta; ta = tb; tb = x; }
+      lo = fmaxf(lo, ta);
+      hi = fminf(hi, tb);
+    }
+    da = fmaxf(lo, t0);
+    db = fminf(hi, t1);
+  }
+  float r;
+  if (db > da) {
+    if (da > t0) {
+      r = trackgrid(S, S.maj, gx, gy, gz, ow, dw, ov, dv, ov, dv, t0, da, rng, mode, tr);
+      if (mode == 0 && r >= 0.f) return r;
+      if (mode == 1 && tr.T <= 0.f) return 0.f;
+    }
+    int hx = (int)P[P_DETAIL_MGRID], hy = (int)P[P_DETAIL_MGRID + 1], hz = (int)P[P_DETAIL_MGRID + 2];
+    r = trackgrid(S, S.dmaj, hx, hy, hz, ow, dw, ovd, dvd, ov, dv, da, db, rng, mode, tr);
+    if (mode == 0 && r >= 0.f) return r;
+    if (mode == 1 && tr.T <= 0.f) return 0.f;
+    if (t1 > db) {
+      r = trackgrid(S, S.maj, gx, gy, gz, ow, dw, ov, dv, ov, dv, db, t1, rng, mode, tr);
+      if (mode == 0 && r >= 0.f) return r;
+    }
+  } else {
+    r = trackgrid(S, S.maj, gx, gy, gz, ow, dw, ov, dv, ov, dv, t0, t1, rng, mode, tr);
+    if (mode == 0 && r >= 0.f) return r;
+  }
+  return mode == 0 ? -1.f : tr.T * expf(-tr.tau);
 }
 
 __device__ __forceinline__ V3 envlight(const Scene& S, V3 d) {
@@ -358,11 +438,12 @@ __device__ __forceinline__ void ray(const float* P, int x, int y, int W, int H, 
 
 extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const float* tf, const float* maj,
                                  const unsigned short* lab, const float* lut, const float* lutflags, cudaTextureObject_t env,
-                                 float4* accum, int W, int H, int y0, int y1) {
+                                 cudaTextureObject_t det, const float* dmaj, float4* accum, int W, int H, int y0, int y1) {
   // Rows y0 .. y1 - 1 of the image (a band of it, so a long pass can be cut short by a new view).
   int x = blockIdx.x * blockDim.x + threadIdx.x, y = y0 + blockIdx.y * blockDim.y + threadIdx.y;
   if (x >= W || y >= min(H, y1)) return;
   Scene S; S.P = P; S.vol = vol; S.tf = tf; S.maj = maj; S.lab = lab; S.lut = lut; S.lutflags = lutflags; S.env = env;
+  S.det = det; S.dmaj = dmaj;
   Rng rng; rng.s = pcg((u32)(y * W + x) ^ pcg((u32)P[P_FRAME] * 9781u + 1u));
   V3 ow, dw;
   ray(P, x, y, W, H, rnd(rng), rnd(rng), rng, &ow, &dw, true);
@@ -389,20 +470,24 @@ extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const 
     V3 col;
     medium(S, w, v, &col);
     V3 albedo = col * P[P_ALBEDO];
-    // Gradient in voxel space, then in world space (transpose of the linear part).
+    // Gradient in voxel space (the detail's where the collision is in it), then in world space
+    // (transpose of the linear part); its magnitude per coarse voxel, whichever it came from.
+    V3 q;
+    bool det = indetail(P, w, &q);
+    V3 vg = det ? q : v;
     float h = 1.f;
-    V3 gv = v3(texval(S, v + v3(h, 0.f, 0.f)) - texval(S, v - v3(h, 0.f, 0.f)),
-               texval(S, v + v3(0.f, h, 0.f)) - texval(S, v - v3(0.f, h, 0.f)),
-               texval(S, v + v3(0.f, 0.f, h)) - texval(S, v - v3(0.f, 0.f, h))) * 0.5f;
+    V3 gv = v3(tv(S, det, vg + v3(h, 0.f, 0.f)) - tv(S, det, vg - v3(h, 0.f, 0.f)),
+               tv(S, det, vg + v3(0.f, h, 0.f)) - tv(S, det, vg - v3(0.f, h, 0.f)),
+               tv(S, det, vg + v3(0.f, 0.f, h)) - tv(S, det, vg - v3(0.f, 0.f, h))) * 0.5f;
     float gm = len3(gv);
     if (P[P_INSET] > 0.f && gm > 1e-6f && P[P_HAS_LABELS] <= 0.f) {
       // The colour a little way along the gradient, on the more opaque side: the tissue beneath a surface.
       V3 d = gv * (P[P_INSET] / gm);
-      float4 ca = tflookup(S, texval(S, v + d)), cb = tflookup(S, texval(S, v - d));
+      float4 ca = tflookup(S, tv(S, det, vg + d)), cb = tflookup(S, tv(S, det, vg - d));
       float4 c = ca.w >= cb.w ? ca : cb;
       albedo = v3(c.x, c.y, c.z) * P[P_ALBEDO];
     }
-    float psurf = P[P_SHADE_MIX] * (1.f - expf(-P[P_GRAD_SCALE] * gm));
+    float psurf = P[P_SHADE_MIX] * (1.f - expf(-P[P_GRAD_SCALE] * gm * (det ? P[P_DETAIL_GSCALE] : 1.f)));
     V3 wo = dw * -1.f;
     V3 sw = w;
     // Key light: a shadow ray by ratio tracking.
@@ -410,7 +495,7 @@ extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const 
     float s0, s1, Tl = 1.f;
     if (boxhit(P, lvo, lvd, &s0, &s1)) Tl = track(S, sw, ldir, lvo, lvd, fmaxf(s0, 0.f), s1, rng, 1);
     if (rnd(rng) < psurf) {
-      V3 n = norm3(lin3(P + P_WORLD_NORMAL, gv)) * -1.f;  // pointing from high values to low
+      V3 n = norm3(lin3(P + (det ? P_DETAIL_NORMAL : P_WORLD_NORMAL), gv)) * -1.f;  // pointing from high values to low
       if (dot3(n, wo) < 0.f) n = n * -1.f;
       float spec = P[P_SPECULAR], rough = P[P_ROUGHNESS];
       if (Tl > 0.f) L = L + thr * brdf_cos(n, wo, ldir, albedo, spec, rough) * lrgb * Tl;
@@ -449,10 +534,11 @@ extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const 
 // Where each pixel's ray first becomes mostly opaque: GL depth (0..1) and the world distance, or 1 / -1.
 extern "C" __global__ void firsthit(const float* P, cudaTextureObject_t vol, const float* tf, const float* maj,
                                     const unsigned short* lab, const float* lut, const float* lutflags, cudaTextureObject_t env,
-                                    float* depth, int W, int H) {
+                                    cudaTextureObject_t det, const float* dmaj, float* depth, int W, int H) {
   int x = blockIdx.x * blockDim.x + threadIdx.x, y = blockIdx.y * blockDim.y + threadIdx.y;
   if (x >= W || y >= H) return;
   Scene S; S.P = P; S.vol = vol; S.tf = tf; S.maj = maj; S.lab = lab; S.lut = lut; S.lutflags = lutflags;
+  S.env = env; S.det = det; S.dmaj = dmaj;
   Rng rng; rng.s = 1u;
   V3 ow, dw;
   ray(P, x, y, W, H, 0.5f, 0.5f, rng, &ow, &dw, false);

@@ -220,6 +220,36 @@
    "name": "FAST",
    "size": 1,
    "about": "1: frames while the camera moves; through dense bricks the tracking steps a voxel at a time, summing optical depth (approximate, its cost bounded by the voxels crossed, not the density), 0: exact delta and ratio tracking"
+  },
+  {
+   "name": "DETAIL",
+   "size": 1,
+   "about": "1 when a finer level's region (the detail) is held beside the coarse level"
+  },
+  {
+   "name": "DETAIL_FROM_WORLD",
+   "size": 12,
+   "about": "3x4 row-major: the detail's voxel index coordinates from world"
+  },
+  {
+   "name": "DETAIL_NORMAL",
+   "size": 9,
+   "about": "3x3 row-major: the transpose of DETAIL_FROM_WORLD's linear part"
+  },
+  {
+   "name": "DETAIL_DIMS",
+   "size": 3,
+   "about": "the detail's size in voxels, x, y, z"
+  },
+  {
+   "name": "DETAIL_MGRID",
+   "size": 3,
+   "about": "the detail's majorant grid size, x, y, z"
+  },
+  {
+   "name": "DETAIL_GSCALE",
+   "size": 1,
+   "about": "coarse voxel size over detail voxel size: gradients per detail voxel to per coarse voxel"
   }
  ]
 }

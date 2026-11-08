@@ -41,8 +41,11 @@ export interface Saved {
   labelMix: number;
   keep: number[];
   hidden: number[];
-  /** Voxels the GPU holds. */
+  /** Voxels the GPU holds of the whole volume (one level). */
   budget: number;
+  /** Finer detail where the view looks: a finer level's region beside the whole volume (on a host), and its voxels. */
+  detail: boolean;
+  detailBudget: number;
   /** Hide the jar: render only a cylinder about the scan's axis (an organ scanned by HiP-CT in its jar), on the host. */
   jar: boolean;
   maxSamples: number;
@@ -93,6 +96,8 @@ export function readSaved(raw: unknown): Saved {
     keep: Array.isArray(s.keep) ? s.keep.filter((x) => typeof x === "number") : [],
     hidden: Array.isArray(s.hidden) ? s.hidden.filter((x) => typeof x === "number") : [],
     budget: num(s.budget, 4e8),
+    detail: s.detail !== false,
+    detailBudget: num(s.detailBudget, 2e8),
     jar: s.jar === true,
     maxSamples: num(s.maxSamples, 512),
     denoise: s.denoise !== false,
@@ -347,14 +352,15 @@ class AnatomicalRendering {
     const service = this.service!;
     const url = omeZarrSource(target.sources[0])!;
     const labels = this.labelsSource();
-    const key = JSON.stringify([service.link.base, url, labels, this.saved.budget, this.saved.jar]);
+    const detailBudget = this.saved.detail ? this.saved.detailBudget : 0;
+    const key = JSON.stringify([service.link.base, url, labels, this.saved.budget, this.saved.jar, detailBudget]);
     if (key === this.sessionKey) return;
     this.closeSession();
     this.sessionKey = key;
     const abort = new AbortController();
     this.abort = abort;
     try {
-      let info = await service.open({ url, budget: this.saved.budget, ...(this.saved.jar ? { cylinder: JAR_FRACTION } : {}) }, labels ? { url: labels } : undefined);
+      let info = await service.open({ url, budget: this.saved.budget, detail_budget: detailBudget, ...(this.saved.jar ? { cylinder: JAR_FRACTION } : {}) }, labels ? { url: labels } : undefined);
       if (abort.signal.aborted) {
         // Another image (or detail) was asked for while this one was opening: it is not wanted.
         void service.close(info.id).catch(() => undefined);
@@ -440,7 +446,7 @@ class AnatomicalRendering {
           if (d !== undefined) this.depth = d;
         }
         this.drawer.set({ bitmap: f.bitmap, alpha: f.alpha ? { width: f.width, height: f.height, data: f.alpha } : undefined, depth: this.depth });
-        this.frameText = `${f.samples} samples, ${f.width}×${f.height}, ${f.msPerPass.toFixed(0)} ms a pass`;
+        this.frameText = `${f.samples} samples, ${f.width}×${f.height}, ${f.msPerPass.toFixed(0)} ms a pass${f.detail ? `\nDetail: ${f.detail}` : ""}`;
         this.handle?.redraw();
         this.statusUpdate?.();
       } catch (e) {
@@ -818,7 +824,24 @@ class AnatomicalRendering {
           return t;
         })()),
         el("h4", {}, "Quality"),
-        field("Detail (million voxels on the GPU)", numberInput(s.budget / 1e6, (v) => this.save((x) => (x.budget = Math.max(1, v) * 1e6)), { step: "50", min: "1" })),
+        field("Whole volume (million voxels on the GPU)", numberInput(s.budget / 1e6, (v) => this.save((x) => (x.budget = Math.max(1, v) * 1e6)), { step: "50", min: "1" }), "One level of the whole image: the finest stored level within this, or one made from a finer level"),
+        s.where === "host"
+          ? el("label", { style: "display: flex; gap: 6px; align-items: center", title: "When the view comes close, the region in view is read at a finer level and rendered from it; the rest of the volume (shadows, light scattered from outside the view) stays at the whole volume's level" }, (() => {
+              const cb = el("input", { type: "checkbox" }) as HTMLInputElement;
+              cb.checked = s.detail;
+              cb.onchange = () => {
+                this.save((x) => (x.detail = cb.checked));
+                this.update();
+              };
+              return cb;
+            })(), "Finer detail where you zoom")
+          : "",
+        s.where === "host" && s.detail
+          ? field("Detail where you look (million voxels)", numberInput(s.detailBudget / 1e6, (v) => {
+              this.save((x) => (x.detailBudget = Math.max(1, v) * 1e6));
+              this.update();
+            }, { step: "50", min: "1" }), "The finest stored level whose region in view fits this, and no finer than a pixel there")
+          : "",
         el("label", { style: "display: flex; gap: 6px; align-items: center" }, (() => {
           const cb = el("input", { type: "checkbox" }) as HTMLInputElement;
           cb.checked = s.denoise;

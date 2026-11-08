@@ -86,6 +86,14 @@ class Session:
         self.last_used = time.time()
         self.closed = False
         self.passes_ms = 0.0
+        # Finer detail where the view looks (detail.py): the levels finer than the loaded one, the loader,
+        # a region read and waiting to be taken up, and the one held (its level, box, physical affine).
+        self.detail_levels: list[tuple[int, Any]] = []
+        self.detail_loader = None
+        self._detail_pending: tuple[dict, Any] | None = None
+        self.detail_meta: dict[str, Any] | None = None
+        self._detail_affine: np.ndarray | None = None
+        self._wfp = np.eye(4)
         threading.Thread(target=self._load, daemon=True).start()
 
     # ---------------------------------------------------------------- loading
@@ -123,6 +131,7 @@ class Session:
             if self.closed:
                 self.status, self.message = "failed", "closed while loading"
                 return
+            self._start_detail(url, L, float(v.get("detail_budget", 256e6)))
             self._set_progress(1.0, "uploading to the GPU")
             R = renderer.Renderer(self.device)
             R.set_volume(renderer.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window))
@@ -136,6 +145,100 @@ class Session:
             self.status = "failed"
             self.error = f"{type(e).__name__}: {e}"
             traceback.print_exc()
+
+    # ---------------------------------------------------------------- detail
+    def _start_detail(self, url: str, L, budget: float) -> None:
+        """A loader for regions of the levels finer than L, when the store has any (and budget > 0)."""
+        from . import detail, volumes
+
+        self.detail_budget = budget
+        if budget <= 0:
+            return
+        ms = volumes.open_multiscale(url)
+        coarse = detail.voxel_size(L.affine)
+        self.detail_levels = [(i, lv) for i, lv in enumerate(ms.levels) if detail.voxel_size(lv.affine) < 0.95 * coarse]
+        if not self.detail_levels:
+            return
+        top = 255 if L.data.dtype == np.uint8 else 65535
+
+        def quantize(a: np.ndarray) -> np.ndarray:
+            # Onto the loaded level's scale (its texture reads 0..1 the same way).
+            if a.dtype == L.data.dtype:
+                return a
+            f = (a.astype(np.float32) - L.lo) / max(L.hi - L.lo, 1e-12)
+            return np.clip(f * top + 0.5, 0, top).astype(L.data.dtype)
+
+        def arrived(req: dict, data: np.ndarray) -> None:
+            with self.cond:
+                self._detail_pending = (req, data)
+                self.cond.notify_all()
+
+        self.detail_loader = detail.DetailLoader(url, ms, arrived, quantize)
+
+    def _take_detail(self, R) -> bool:
+        """Hold the region read last, if one is waiting; True when the view should start again with it."""
+        from . import renderer
+
+        with self.cond:
+            pending, self._detail_pending = self._detail_pending, None
+        if pending is None:
+            return False
+        req, data = pending
+        lv = self.detail_loader.ms.levels[req["level"]]
+        cyl = self.spec["volume"].get("cylinder")
+        if cyl:
+            from . import volumes
+
+            volumes.hide_outside_cylinder(data, float(cyl), req["lo"], tuple(lv.shape[a] for a in self.detail_loader.ms.spatial))
+        T = np.eye(4)
+        T[:3, 3] = req["lo"]
+        self._detail_affine = lv.affine @ T  # region voxel -> physical mm
+        R.set_detail(renderer.Detail(data, self._wfp @ self._detail_affine))
+        self.detail_meta = {"level": req["level"], "path": lv.path, "lo": list(req["lo"]), "hi": list(req["hi"]),
+                            "need_lo": list(req["need_lo"]), "need_hi": list(req["need_hi"]),
+                            "voxel_mm": [round(x, 6) for x in lv.voxel_mm], "voxels": int(data.size)}
+        return True
+
+    def _plan_detail(self, R, st, dist: np.ndarray) -> None:
+        """Ask for the detail this (still) view needs, or let go of the one held when it needs none."""
+        from . import detail
+
+        L = self.loaded
+        levels = []
+        for _, lv in self.detail_levels:
+            shape = tuple(lv.shape[a] for a in self.detail_loader.ms.spatial)  # x, y, z
+            levels.append((shape, self._wfp @ lv.affine))
+        p = detail.plan(st.inv_view_projection, st.width, st.height, dist, levels, detail.voxel_size(self._wfp @ L.affine), self.detail_budget)
+        if p is None:
+            self.detail_loader.cancel()
+            if R.detail is not None:
+                R.set_detail(None)
+                self.detail_meta = None
+                self._detail_affine = None
+                R.set_view(st)
+            return
+        i, lo, hi, need_lo, need_hi = p
+        level = self.detail_levels[i][0]
+        cur = self.detail_meta
+        if cur is not None and cur["level"] == level and detail.contains((cur["lo"], cur["hi"]), (need_lo, need_hi)):
+            self.detail_loader.cancel()  # what is held will do
+            return
+        self.detail_loader.request({"level": level, "lo": lo, "hi": hi, "need_lo": need_lo, "need_hi": need_hi})
+
+    def detail_text(self) -> str:
+        """What detail is held or being read, in a few words (the X-Detail header)."""
+        ld = self.detail_loader
+        if ld is None:
+            return ""
+        st = ld.status
+        if st.get("state") == "loading":
+            return f"reading level {st['level']} ({min(st['voxel_mm']):.3g} mm): {st['progress'] * 100:.0f}%"
+        if st.get("state") == "failed":
+            return f"detail failed: {st.get('error', '')[:120]}"
+        m = self.detail_meta
+        if m is None:
+            return "coarse level (no finer detail needed here)"
+        return f"level {m['path']} ({min(m['voxel_mm']):.3g} mm) where you look, {m['voxels'] / 1e6:.0f} M voxels"
 
     # ---------------------------------------------------------------- views
     def set_view(self, view: dict[str, Any]) -> int:
@@ -155,6 +258,10 @@ class Session:
         L = self.loaded
         R = R if R is not None else self.renderer
         wfp = _mat(view["world_from_physical"], "world_from_physical") if view.get("world_from_physical") else np.eye(4)
+        if R is self.renderer:
+            self._wfp = wfp
+        if R.detail is not None and self._detail_affine is not None:
+            R.detail.world_from_voxel = wfp @ self._detail_affine
         scale = float(view.get("scale") or 1.0)
         W = max(8, int(round(int(view["width"]) * scale)))
         H = max(8, int(round(int(view["height"]) * scale)))
@@ -233,16 +340,23 @@ class Session:
         batch = 1
         while not self.closed:
             with self.cond:
-                while not self.closed and (self.view is None or (self.applied_version == self.view_version and R.samples >= self.max_samples)):
+                while not self.closed and self._detail_pending is None and (
+                        self.view is None or (self.applied_version == self.view_version and R.samples >= self.max_samples)):
                     self.cond.wait(timeout=1.0)
                 if self.closed:
                     return
                 version, view = self.view_version, self.view
             try:
+                if self._take_detail(R):
+                    self.applied_version = -1  # the view starts again, with the detail
+                if view is None:
+                    continue
                 if version != self.applied_version:
                     st = self._state(view)
                     R.set_view(st)
                     d = R.depth()
+                    if self.detail_loader is not None and not st.fast:
+                        self._plan_detail(R, st, d[..., 1])
                     dz = zlib.compress(d[..., 0].astype(np.float16).tobytes(), 1)
                     with self.cond:
                         self.depth = (version, dz, st.width, st.height)
@@ -254,7 +368,7 @@ class Session:
                         R.set_fast(1.0)
                         R.step(1, stop=lambda: self.view_version != version)
                         R.synchronize()
-                        self._publish(version)
+                        self._publish(version, R)
                         R.set_fast(0.0)
                         R.reset()
                         if self.view_version != version:
@@ -279,7 +393,7 @@ class Session:
                 n = R.samples
                 pow2 = n & (n - 1) == 0
                 if pow2 or time.time() - last_publish > 0.25 or n >= self.max_samples:
-                    self._publish(version)
+                    self._publish(version, R)
                     last_publish = time.time()
             except BadRequest as e:
                 self.error = str(e)
@@ -291,10 +405,12 @@ class Session:
                 traceback.print_exc()
                 time.sleep(0.5)
 
-    def _publish(self, version: int) -> None:
+    def _publish(self, version: int, R=None) -> None:
         from PIL import Image
 
-        R = self.renderer
+        R = R if R is not None else self.renderer  # the loop's own (close() lets go of the session's)
+        if R is None or self.closed:
+            return
         b = io.BytesIO()
         if (self.view or {}).get("frame_format") == "jpeg":
             # Colour as a JPEG (divided by the alpha on the GPU), then the alpha plane deflated: several
@@ -328,6 +444,8 @@ class Session:
         with self.cond:
             self.closed = True
             self.cond.notify_all()
+        if self.detail_loader is not None:
+            self.detail_loader.close()
         self.renderer = None
 
     def info(self) -> dict[str, Any]:
@@ -336,6 +454,8 @@ class Session:
             "id": self.id, "status": self.status, "progress": round(self.progress, 3), "message": self.message, "error": self.error,
             "volume": self.meta, "labels": self.label_meta, "samples": R.samples if R else 0, "ms_per_pass": round(self.passes_ms, 2),
             "view_version": self.view_version, "frame": self.frame[0] if self.frame else 0,
+            "detail": {"held": self.detail_meta, "reading": self.detail_loader.status if self.detail_loader else None,
+                       "levels": [lv.path for _, lv in self.detail_levels], "text": self.detail_text()},
         }
 
 
@@ -585,6 +705,8 @@ class Handler(BaseHTTPRequestHandler):
                         return
                     n, samples, version, data, w, h, kind, offset = f
                     extra = {"X-Alpha-Offset": str(offset)} if offset else {}
+                    if s.detail_loader is not None:
+                        extra["X-Detail"] = s.detail_text()
                     self._send(200, data, kind, {"X-Frame": str(n), "X-Samples": str(samples), "X-Version": str(version),
                                                  "X-Width": str(w), "X-Height": str(h), "X-Ms-Per-Pass": f"{s.passes_ms:.1f}", **extra})
                 elif method == "GET" and rest == ["depth"]:
@@ -619,6 +741,10 @@ class Handler(BaseHTTPRequestHandler):
                     R = rmod.Renderer(s.device)
                     L = s.loaded
                     R.set_volume(rmod.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window))
+                    held = s.renderer.detail if s.renderer is not None else None
+                    if held is not None:
+                        # The still is of the view in the page: the finer detail held for it too.
+                        R.set_detail(rmod.Detail(held.data, held.world_from_voxel.copy()))
                     R.set_view(s._state(view, R))
                     R.step(max(1, min(4096, int(body.get("samples", 256)))))
                     img = R.image()

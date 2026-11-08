@@ -58,6 +58,15 @@ class Volume:
 
 
 @dataclass
+class Detail:
+    """A region of a finer level than the volume's, held beside it (see detail.py): values as the
+    volume's (the same 0..1 scale), and the affine from its voxel index coordinates to world."""
+
+    data: np.ndarray  # (nz, ny, nx), uint8 or uint16
+    world_from_voxel: np.ndarray  # 4x4
+
+
+@dataclass
 class Labels:
     data: np.ndarray  # (nz, ny, nx) integer labels
     world_from_voxel: np.ndarray  # 4x4
@@ -173,6 +182,8 @@ class Renderer:
         self.device = cp.cuda.Device(device)
         self.lock = threading.RLock()
         self.volume: Volume | None = None
+        self.detail: Detail | None = None
+        self._dtex = self._darr = self._dmaj = None
         self.labels: Labels | None = None
         self._tex = None
         self._arr = None
@@ -211,6 +222,23 @@ class Renderer:
             self.volume = volume
             self._tf_key = None
             self.reset()
+
+    def set_detail(self, detail: Detail | None) -> None:
+        """Hold a finer level's region (or none); takes effect at the next set_view."""
+        cp = self.cp
+        with self.lock, self.device:
+            self.detail = None
+            self._dtex = self._darr = None
+            if detail is None:
+                return
+            tex, arr = _tex_for(cp, detail.data)
+            g = cp.asarray(detail.data)
+            bmin, bmax, grid = brick_bounds(cp, g)
+            del g
+            self._dtex, self._darr = tex, arr
+            self._dbmin, self._dbmax, self._dgrid = bmin.ravel(), bmax.ravel(), grid
+            self._dmaj = cp.zeros(bmin.size, cp.float32)
+            self.detail = detail
 
     def set_labels(self, labels: Labels | None) -> None:
         cp = self.cp
@@ -260,6 +288,9 @@ class Renderer:
             self._depth_gpu = cp.zeros((H, W, 2), cp.float32)
             n = self._bmin.size
             _kernels().get_function("majorant")((-(-n // 256),), (256,), (self._params, self._tf, self._bmin, self._bmax, self._maj, np.int32(n)))
+            if self.detail is not None:
+                n = self._dbmin.size
+                _kernels().get_function("majorant")((-(-n // 256),), (256,), (self._params, self._tf, self._dbmin, self._dbmax, self._dmaj, np.int32(n)))
             _kernels().get_function("firsthit")((-(-W // 16), -(-H // 8)), (16, 8), self._args() + (self._depth_gpu, np.int32(W), np.int32(H)))
             self.reset()
 
@@ -311,6 +342,17 @@ class Renderer:
         P[O["DIMS"]:O["DIMS"] + 3] = (nx, ny, nz)
         P[O["BRICK"]] = BRICK
         P[O["MGRID"]:O["MGRID"] + 3] = self._grid
+        det = self.detail
+        if det is not None:
+            dwfv = np.asarray(det.world_from_voxel, np.float64)
+            dvfw = np.linalg.inv(dwfv)
+            P[O["DETAIL"]] = 1
+            P[O["DETAIL_FROM_WORLD"]:O["DETAIL_FROM_WORLD"] + 12] = dvfw[:3, :4].ravel()
+            P[O["DETAIL_NORMAL"]:O["DETAIL_NORMAL"] + 9] = dvfw[:3, :3].T.ravel()
+            dz, dy, dx = det.data.shape
+            P[O["DETAIL_DIMS"]:O["DETAIL_DIMS"] + 3] = (dx, dy, dz)
+            P[O["DETAIL_MGRID"]:O["DETAIL_MGRID"] + 3] = self._dgrid
+            P[O["DETAIL_GSCALE"]] = abs(np.linalg.det(wfv[:3, :3]) / np.linalg.det(dwfv[:3, :3])) ** (1 / 3)
         pr = s.preset
         # Density is given per mm; the world unit is unit_mm mm.
         P[O["DENSITY"]] = pr.density * s.unit_mm
@@ -372,7 +414,11 @@ class Renderer:
         lab = self._lab if self._lab is not None else cp.zeros(1, cp.uint16)
         if self._env_tex is None:
             self._set_env(None)
-        return (self._params, self._tex, self._tf, self._maj, lab, self._lut, self._lutflags, self._env_tex)
+        if self.detail is not None:
+            det, dmaj = self._dtex, self._dmaj
+        else:
+            det, dmaj = self._tex, self._maj  # unused (P_DETAIL is 0), but the kernels take them
+        return (self._params, self._tex, self._tf, self._maj, lab, self._lut, self._lutflags, self._env_tex, det, dmaj)
 
     def _set_env(self, name: str | None) -> None:
         """The light map on the GPU (a 2 x 1 black one when there is none, so the kernels always have a texture)."""

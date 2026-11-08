@@ -76,10 +76,24 @@ It renders in one of two places:
 - **Regions**: colour by a co-registered OME-Zarr segmentation (its labels'
   FreeSurfer colours), how much of the region's colour to use, and regions
   to hide.
-- **Detail**: how many voxels the host holds (400 million by default: the
-  finest stored level within it). When a store has no level near the
-  budget, a level is made by downsampling a finer one as it is read (means
-  for images, majority vote for labels) and kept in a cache on the host.
+- **Whole volume**: how many voxels of the whole image the host holds (400
+  million by default: the finest stored level within it). When a store has
+  no level near the budget, a level is made by downsampling a finer one as
+  it is read (means for images, majority vote for labels) and kept in a
+  cache on the host.
+- **Finer detail where you zoom** (on a host; on by default): when the view
+  comes close, the region in view is read at a finer stored level and
+  rendered from it, while the rest of the volume stays at the whole
+  volume's level, so shadows and light scattered from outside the view
+  still come from it. The level is the finest whose region fits **Detail
+  where you look** (200 million voxels by default) and is no finer than a
+  pixel there. The region is what the view meets, with some depth behind
+  the surface and a margin; it is read in the background (the status line
+  says so) while the whole volume's level is shown, chunk by chunk through
+  a cache in the host's memory (8 GB; `NGP_RENDER_CHUNK_CACHE_GB`), so a
+  view moved a little reads only the chunks it had not. A view that needs
+  no finer level lets the detail go. Stills use the detail held for the
+  view; movies use the whole volume's level.
 - **Samples per pixel**: when a still view stops refining.
 - **Load a preset file…**: a preset (or a list) as JSON, in the form of
   `runner/ngplatform_render/presets/*.json`; it is kept with the scene.
@@ -195,3 +209,6 @@ each, by the preset's density and bounces.
 - One image (and one segmentation) at a time; images with t or c axes are
   not rendered.
 - Rendering is for looking, teaching and figures, not for reading values.
+- Finer detail comes from one stored level at a time, for the view at
+  rest (not while the camera moves), and only on a host: the browser's
+  renderer holds one level.

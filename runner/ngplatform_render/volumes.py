@@ -352,13 +352,17 @@ def guess_window(q: np.ndarray, lo: float, hi: float) -> tuple[float, float] | N
     return None
 
 
-def hide_outside_cylinder(q: np.ndarray, fraction: float) -> None:
+def hide_outside_cylinder(q: np.ndarray, fraction: float, origin: tuple[int, int, int] = (0, 0, 0),
+                          whole: tuple[int, int, int] | None = None) -> None:
     """Clears (to the lowest value) what lies outside a cylinder about the volume's z axis, of
     `fraction` of its half widths in x and y: the jar around a specimen scanned by HiP-CT, whose
-    wall is as dense as tissue. In place."""
+    wall is as dense as tissue. In place. For a region of a level (detail.py): its first voxel
+    `origin` (x, y, z) in the level, and the level's size `whole` (x, y, z)."""
     _, Y, X = q.shape
+    WX, WY = (whole[0], whole[1]) if whole else (X, Y)
     yy, xx = np.mgrid[:Y, :X]
-    r = np.hypot((yy - (Y - 1) / 2) / (Y / 2), (xx - (X - 1) / 2) / (X / 2))
+    yy, xx = yy + origin[1], xx + origin[0]
+    r = np.hypot((yy - (WY - 1) / 2) / (WY / 2), (xx - (WX - 1) / 2) / (WX / 2))
     q[:, r > fraction] = 0
 
 
