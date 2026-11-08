@@ -75,11 +75,16 @@ Organ Atlas serves most of its scans; on a host).
   (the stops between its neighbours follow) and up or down to change its
   opacity; double-click it to choose its colour; Ctrl-click to add a point,
   right-click to remove one. **Shift** moves the whole map along the
-  values, **Compress** narrows or widens it about its middle. The tuning is
+  values, **Compress** narrows or widens it about its middle. Under the
+  histogram, blue triangles hold it at its percentiles: drag them to slide
+  and warp the histogram under the colours (the image's values are remapped
+  before they are coloured, piecewise linearly between the triangles). The tuning is
   kept per image (with the scene), **Reset** returns to the preset, and
   **Save as a preset file** writes the tuned map (at this image's values)
   to load again.
-- **Density** (opacity per mm), **Exposure**, and the key light's direction
+- **Density** (opacity per mm), **Exposure** and the other settings are
+  sliders with their numbers beside them (a budget applies when its slider
+  is let go); and the key light's direction
   (relative to the camera, so the light follows as you turn the view).
 - **Lighting** (on a host): a style, **Studio** (a photographer's studio),
   **Soft** (light from all round, faint shadows), **Hard** (one strong light,
@@ -92,6 +97,10 @@ Organ Atlas serves most of its scans; on a host).
   sky colours.
 - **View**: Left, Right, Anterior, Posterior, Superior and Inferior turn the
   3-D view to those sides (for images in RAS: x right, y anterior, z up).
+- **Crops**: boxes, as many as eight, each with a name, on or off, keeping
+  its inside or cutting it out (fractions of the volume along x, y and z,
+  sliders): what shows is inside any crop that keeps and in none that cuts
+  out (in this browser's renderer, only the first that keeps).
 - **Cut facing the view**: a plane across the view, an offset in mm past the
   position, keeping what lies beyond it; it turns with the camera, or
   **Leave it here** keeps it at the angle it has now (an oblique cut), and
@@ -99,8 +108,7 @@ Organ Atlas serves most of its scans; on a host).
   point the cursor was last over in the 3-D view (on the rendered tissue),
   and **At the cursor** moves the cuts that are on there.
 - **Cuts**: planes through the current position across x, y or z, keeping
-  either side, with an offset in mm (a slider or a number). A **clip box**
-  keeps a box of the volume (six sliders, as fractions of it). Regions listed under **Kept through cuts**
+  either side, with an offset in mm (a slider or a number). Regions listed under **Kept through cuts**
   stay whole (vessels through a cut brain, say).
 - **Regions**: colour by a co-registered OME-Zarr segmentation (its labels'
   FreeSurfer colours), how much of the region's colour to use, and regions

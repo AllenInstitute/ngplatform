@@ -17,11 +17,53 @@ export interface DataStop {
   roughness?: number | null;
 }
 
-/** A sample's tuning: the stops as edited (data values), and the map's shift (data units) and compression. */
+/** A point of the histogram's warp: the image's value `from` goes to `to` on the colourmap's axis. */
+export interface WarpPoint {
+  from: number;
+  to: number;
+}
+
+/** A sample's tuning: the stops as edited (data values), the map's shift (data units) and compression, and the histogram's warp. */
 export interface Tuning {
   stops?: DataStop[];
   shift: number;
   scale: number;
+  warp?: WarpPoint[];
+}
+
+/** An image value on the colourmap's axis: piecewise linear through the warp's points, slope 1 past them. */
+export function warpForward(v: number, warp: WarpPoint[] | undefined): number {
+  if (!warp || warp.length === 0) return v;
+  const w = [...warp].sort((a, b) => a.from - b.from);
+  if (v <= w[0].from) return w[0].to + (v - w[0].from);
+  for (let i = 1; i < w.length; ++i)
+    if (v <= w[i].from) return w[i - 1].to + ((v - w[i - 1].from) * (w[i].to - w[i - 1].to)) / (w[i].from - w[i - 1].from || 1);
+  const l = w[w.length - 1];
+  return l.to + (v - l.from);
+}
+
+/** The image value that goes to `x` on the colourmap's axis (warpForward's inverse). */
+export function warpInverse(x: number, warp: WarpPoint[] | undefined): number {
+  return warpForward(x, warp?.map((p) => ({ from: p.to, to: p.from })));
+}
+
+/** Where the histogram's warp is held: the image values at these fractions of the counts between lo and hi. */
+export function histogramHandles(hist: { lo: number; hi: number; counts: number[] }, lo: number, hi: number, qs = [0.1, 0.3, 0.5, 0.7, 0.9]): number[] {
+  const n = hist.counts.length, w = (hist.hi - hist.lo) / n;
+  const bins = hist.counts.map((c, i) => ({ v: hist.lo + (i + 0.5) * w, c })).filter((b) => b.v >= lo && b.v <= hi);
+  const total = bins.reduce((a, b) => a + b.c, 0);
+  if (!total) return qs.map((q) => lo + q * (hi - lo));
+  let acc = 0, k = 0;
+  const out: number[] = [];
+  for (const b of bins) {
+    acc += b.c;
+    while (k < qs.length && acc / total >= qs[k]) {
+      out.push(b.v);
+      ++k;
+    }
+  }
+  while (out.length < qs.length) out.push(hi);
+  return out.map((v, i) => (i > 0 && v <= out[i - 1] ? out[i - 1] + (hi - lo) * 1e-3 : v));
 }
 
 /** The stops' indices to give handles: where the tissue changes, its ends, and enough between for at most `max`. */
@@ -106,26 +148,32 @@ export class ColourmapEditor {
   private hlo = 0;
   private hhi = 1;
   private drag: number | undefined;
+  private warp: WarpPoint[] = [];
+  private warpDrag: number | undefined;
 
-  /** onChange: the stops as edited (data values), after each change. */
-  constructor(private onChange: (stops: DataStop[]) => void) {
+  /** onChange: the stops as edited (on the colourmap's axis), after each change; onWarp: the histogram's warp, after each change. */
+  constructor(private onChange: (stops: DataStop[]) => void, private onWarp: (warp: WarpPoint[]) => void = () => undefined) {
     this.canvas = el("canvas", { width: "420", height: "150", style: "width: 100%; cursor: crosshair; border: 1px solid #555; border-radius: 3px" }) as HTMLCanvasElement;
     this.element = el("div", {}, this.canvas);
     this.canvas.addEventListener("pointerdown", (e) => this.down(e));
     this.canvas.addEventListener("pointermove", (e) => this.move(e));
-    this.canvas.addEventListener("pointerup", () => (this.drag = undefined));
+    this.canvas.addEventListener("pointerup", () => {
+      this.drag = undefined;
+      this.warpDrag = undefined;
+    });
     this.canvas.addEventListener("dblclick", (e) => this.recolour(e));
     this.canvas.addEventListener("contextmenu", (e) => this.remove(e));
   }
 
   /** Whether a point is being dragged (the page should not set the stops meanwhile). */
   get dragging(): boolean {
-    return this.drag !== undefined;
+    return this.drag !== undefined || this.warpDrag !== undefined;
   }
 
   /** The histogram (counts over [lo, hi]) and the stops (data values) to show. */
-  set(hist: { lo: number; hi: number; counts: number[] } | undefined, stops: DataStop[]): void {
+  set(hist: { lo: number; hi: number; counts: number[] } | undefined, stops: DataStop[], warp: WarpPoint[] = []): void {
     if (this.dragging) return;
+    this.warp = warp.map((p) => ({ ...p }));
     this.stops = stops.map((s) => ({ ...s }));
     this.points = controlPoints(this.stops);
     if (hist) [this.counts, this.hlo, this.hhi] = [hist.counts, hist.lo, hist.hi];
@@ -158,7 +206,8 @@ export class ColourmapEditor {
       g.fillStyle = "#5a5a5a";
       for (let i = 0; i < n; ++i) {
         const v0 = this.hlo + ((this.hhi - this.hlo) * i) / n, v1 = this.hlo + ((this.hhi - this.hlo) * (i + 1)) / n;
-        const x0 = this.x(v0), x1 = this.x(v1);
+        // The histogram through its warp: where each image value falls on the colourmap's axis.
+        const x0 = this.x(warpForward(v0, this.warp)), x1 = this.x(warpForward(v1, this.warp));
         if (x1 < 0 || x0 > W) continue;
         const h = (Math.log1p(this.counts[i]) / top) * (H - 40);
         g.fillRect(x0, H - 30 - h, Math.max(1, x1 - x0), h);
@@ -175,6 +224,17 @@ export class ColourmapEditor {
     g.beginPath();
     this.stops.forEach((s, i) => (i ? g.lineTo(this.x(s.value), this.y(s.opacity)) : g.moveTo(this.x(s.value), this.y(s.opacity))));
     g.stroke();
+    // The histogram's warp handles: triangles under it, dragged left and right.
+    g.fillStyle = "#9fd3ff";
+    for (const p of this.warp) {
+      const x = this.x(p.to), y = H - 30;
+      g.beginPath();
+      g.moveTo(x, y - 7);
+      g.lineTo(x - 5, y + 2);
+      g.lineTo(x + 5, y + 2);
+      g.closePath();
+      g.fill();
+    }
     for (const k of this.points) {
       const s = this.stops[k];
       g.fillStyle = hex(s.color.map((c) => Math.min(1, c * 1.6)));
@@ -216,6 +276,20 @@ export class ColourmapEditor {
 
   private down(e: PointerEvent): void {
     if (e.button !== 0) return;
+    const [px, py] = this.pos(e);
+    if (py > this.canvas.height - 40) {
+      // A warp handle under the histogram.
+      let best = -1, d = 9;
+      this.warp.forEach((p, i) => {
+        const dd = Math.abs(this.x(p.to) - px);
+        if (dd < d) [best, d] = [i, dd];
+      });
+      if (best >= 0) {
+        this.warpDrag = best;
+        this.canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+    }
     const k = this.near(e);
     if (k !== undefined) {
       this.drag = k;
@@ -236,6 +310,17 @@ export class ColourmapEditor {
   }
 
   private move(e: PointerEvent): void {
+    if (this.warpDrag !== undefined) {
+      const [x] = this.pos(e);
+      const i = this.warpDrag;
+      const sorted = this.warp;
+      const lo = i > 0 ? sorted[i - 1].to : -Infinity, hi = i < sorted.length - 1 ? sorted[i + 1].to : Infinity;
+      const span = this.range[1] - this.range[0];
+      sorted[i] = { ...sorted[i], to: Math.min(Math.max(this.v(x), lo + span * 1e-3), hi - span * 1e-3) };
+      this.draw();
+      this.onWarp(this.warp.map((p) => ({ ...p })));
+      return;
+    }
     if (this.drag === undefined) return;
     const [x, y] = this.pos(e);
     const k = this.drag;

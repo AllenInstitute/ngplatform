@@ -91,6 +91,8 @@ class RenderState:
     light: Light = field(default_factory=Light)
     clips: list[tuple[float, float, float, float]] = field(default_factory=list)  # world planes kept where n.x + d >= 0
     crop: tuple[tuple[float, float, float], tuple[float, float, float]] | None = None  # in voxel coordinates
+    # Crops (up to 8): (lo, hi) in voxel coordinates, and True to keep the inside (False cuts it out).
+    boxes: list[tuple[tuple[float, float, float], tuple[float, float, float], bool]] = field(default_factory=list)
     label_colors: dict[int, tuple[float, float, float, float]] | None = None  # label -> r, g, b, opacity scale
     keep_labels: set[int] = field(default_factory=set)  # labels left in place by cuts
     label_mix: float = 1.0
@@ -400,6 +402,10 @@ class Renderer:
             P[O["CLIPS"] + 4 * i:O["CLIPS"] + 4 * i + 4] = c
         lo, hi = s.crop if s.crop is not None else ((-1e9,) * 3, (1e9,) * 3)
         P[O["CROP_LO"]:O["CROP_LO"] + 3] = lo
+        boxes = s.boxes[:8]
+        P[O["NBOX"]] = len(boxes)
+        for i, (blo, bhi, keep) in enumerate(boxes):
+            P[O["BOXES"] + 7 * i:O["BOXES"] + 7 * i + 7] = (*blo, *bhi, 1.0 if keep else -1.0)
         P[O["CROP_HI"]:O["CROP_HI"] + 3] = hi
         if self.labels is not None and s.label_colors is not None:
             P[O["HAS_LABELS"]] = 1

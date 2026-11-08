@@ -254,6 +254,18 @@ class Session:
             self.cond.notify_all()
             return self.view_version
 
+    @staticmethod
+    def _boxes(view: dict[str, Any], L) -> list:
+        """The view's crops ({"lo", "hi": fractions of the volume along x, y, z; "keep": the inside, else it is
+        cut out}) in voxel coordinates."""
+        n = L.data.shape[::-1]
+        out = []
+        for b in (view.get("boxes") or [])[:8]:
+            lo = tuple(float(b["lo"][a]) * n[a] - 0.5 for a in range(3))
+            hi = tuple(float(b["hi"][a]) * n[a] - 0.5 for a in range(3))
+            out.append((lo, hi, bool(b.get("keep", True))))
+        return out
+
     def _state(self, view: dict[str, Any], R=None):
         """The view as the renderer takes it, placing the volume and labels on `R` (the session's own by default)."""
         from . import renderer
@@ -327,6 +339,7 @@ class Session:
             light=renderer.Light(tuple(light.get("direction", (0.4, 0.7, 0.6))), tuple(light.get("rgb", (3.2, 3.0, 2.8))), bool(light.get("camera_space", True))),
             clips=[tuple(float(x) for x in c) for c in view.get("clips", [])],
             crop=(tuple(crop[0]), tuple(crop[1])) if crop else None,
+            boxes=self._boxes(view, L),
             label_colors=colors, keep_labels=keep, label_mix=mix,
             background=tuple(view.get("background", (0, 0, 0, 0))),
             # While the camera moves (frames below full size): fast tracking and at most 2 bounces.

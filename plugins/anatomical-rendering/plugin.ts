@@ -11,7 +11,7 @@ import type { Disposer, Frame3d, LayerInfo, PlatformContext, PluginModule } from
 import { button, clear, downloadBlob, el, field, numberInput, select } from "@ngplatform/sdk/dom";
 import { hostLink, type Link, linkOf, type MovieInfo, type PresetInfo, RenderService, type ServiceInfo, type SessionInfo, type ViewSpec } from "./client.js";
 import { PictureDrawer } from "./draw.js";
-import { ColourmapEditor, type DataStop, shifted, type Tuning } from "./editor.js";
+import { ColourmapEditor, type DataStop, histogramHandles, shifted, type Tuning, type WarpPoint, warpInverse } from "./editor.js";
 import { LocalRenderer, PRESETS as LOCAL_PRESETS } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
 import { ANATOMICAL_VIEWS, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, omeZarrSource, orientationLooking, unitMm, viewCutPlane, viewForward, viewKey } from "./view.js";
@@ -19,6 +19,15 @@ import { ANATOMICAL_VIEWS, clipPlanes, type Cut, displayFromPhysical, LIGHTING, 
 export interface Keyframe {
   time: number;
   view: ViewSpec;
+}
+
+export interface Crop {
+  name: string;
+  on: boolean;
+  /** True keeps the inside; false cuts it out. */
+  keep: boolean;
+  lo: [number, number, number];
+  hi: [number, number, number];
 }
 
 export interface Saved {
@@ -61,8 +70,8 @@ export interface Saved {
   /** Smooth the first frames after the view changes (the host's denoiser). */
   denoise: boolean;
   keyframes: Keyframe[];
-  /** A clip box: fractions of the volume along x, y, z. */
-  box: { on: boolean; lo: [number, number, number]; hi: [number, number, number] };
+  /** Crops: boxes (fractions of the volume along x, y, z), each keeping its inside or cutting it out; what shows is inside any that keeps and in none that cuts out. */
+  boxes: Crop[];
   /** Presets loaded from files (as the service takes them). */
   customPresets: Record<string, unknown>[];
   rotation: { axis: "vertical" | "horizontal"; degrees: number; step: number };
@@ -98,7 +107,12 @@ export function readSaved(raw: unknown): Saved {
     tunings: Object.fromEntries(
       Object.entries(s.tunings && typeof s.tunings === "object" ? s.tunings : {})
         .filter((e): e is [string, Tuning] => !!e[1] && typeof e[1] === "object")
-        .map(([k, t]) => [k, { shift: num(t.shift, 0), scale: num(t.scale, 1), stops: Array.isArray(t.stops) ? t.stops.filter((x) => x && typeof x.value === "number") : undefined }]),
+        .map(([k, t]) => [k, {
+          shift: num(t.shift, 0),
+          scale: num(t.scale, 1),
+          stops: Array.isArray(t.stops) ? t.stops.filter((x) => x && typeof x.value === "number") : undefined,
+          warp: Array.isArray(t.warp) ? t.warp.filter((p) => p && Number.isFinite(p.from) && Number.isFinite(p.to)) : undefined,
+        }]),
     ),
     lightAzimuth: num(s.lightAzimuth, 30),
     lightElevation: num(s.lightElevation, 40),
@@ -124,7 +138,11 @@ export function readSaved(raw: unknown): Saved {
     maxSamples: num(s.maxSamples, 512),
     denoise: s.denoise !== false,
     keyframes: Array.isArray(s.keyframes) ? s.keyframes : [],
-    box: { on: s.box?.on === true, lo: s.box?.lo ?? [0, 0, 0], hi: s.box?.hi ?? [1, 1, 1] },
+    boxes: Array.isArray(s.boxes)
+      ? s.boxes.filter((b) => b && Array.isArray(b.lo) && Array.isArray(b.hi)).map((b, i) => ({ name: String(b.name ?? `Crop ${i + 1}`), on: b.on !== false, keep: b.keep !== false, lo: b.lo, hi: b.hi }))
+      : (s as { box?: { on?: boolean; lo?: [number, number, number]; hi?: [number, number, number] } }).box?.on
+        ? [{ name: "Crop 1", on: true, keep: true, lo: (s as { box: { lo?: [number, number, number] } }).box.lo ?? [0, 0, 0], hi: (s as { box: { hi?: [number, number, number] } }).box.hi ?? [1, 1, 1] }]
+        : [],
     customPresets: Array.isArray(s.customPresets) ? s.customPresets.filter((p) => p && typeof (p as { name?: unknown }).name === "string") : [],
     rotation: { axis: "vertical", degrees: 360, step: 2, ...(s.rotation ?? {}) },
     movie: { fps: 25, width: 1280, height: 720, samples: 128, easing: "smooth", ...(s.movie ?? {}) },
@@ -385,8 +403,9 @@ class AnatomicalRendering {
     return { src, tuning: this.saved.tunings[src] ?? { shift: 0, scale: 1 } };
   }
 
-  /** The stops the editor shows: as tuned for this image (or as resolved), then shifted and compressed. */
-  private editedStops(): { stops: DataStop[]; base: DataStop[]; centre: number } | undefined {
+  /** The stops the editor shows (on the colourmap's axis: as tuned for this image, or as resolved, then shifted and
+   * compressed), the histogram's warp, and the stops at the image's values (through the warp): what is sent. */
+  private editedStops(): { stops: DataStop[]; base: DataStop[]; centre: number; warp: WarpPoint[]; data: DataStop[] } | undefined {
     const r = this.presetRequest();
     if (!this.resolved || r === undefined || this.resolved.key !== r.key) return undefined;
     const base = (this.resolved.preset.stops as DataStop[]) ?? [];
@@ -394,18 +413,25 @@ class AnatomicalRendering {
     const stops = t?.stops ?? base;
     const vis = base.filter((x) => x.opacity > 0.01);
     const centre = vis.length ? (vis[0].value + vis[vis.length - 1].value) / 2 : 0;
-    return { stops: shifted(stops, t?.shift ?? 0, t?.scale ?? 1, centre), base: stops, centre };
+    const shown = shifted(stops, t?.shift ?? 0, t?.scale ?? 1, centre);
+    let warp = t?.warp;
+    if (!warp) {
+      // Not warped yet: handles at the histogram's quantiles over the map's visible range, each where it is.
+      const hist = (this.session?.volume as { histogram?: { lo: number; hi: number; counts: number[] } } | undefined)?.histogram;
+      warp = hist && vis.length ? histogramHandles(hist, vis[0].value, vis[vis.length - 1].value).map((v) => ({ from: v, to: v })) : [];
+    }
+    return { stops: shown, base: stops, centre, warp, data: shown.map((x) => ({ ...x, value: warpInverse(x.value, warp) })) };
   }
 
   /** The preset as tuned for this image (whole, at data values), when it is tuned; else undefined. */
   private tunedPreset(): Record<string, unknown> | undefined {
     const t = this.currentTuning()?.tuning;
-    if (!t || (!t.stops && t.shift === 0 && t.scale === 1)) return undefined;
+    if (!t || (!t.stops && t.shift === 0 && t.scale === 1 && !(t.warp ?? []).some((p) => p.to !== p.from))) return undefined;
     const e = this.editedStops();
     if (!e || !this.resolved) return undefined;
     // Without what only describes it (photographs, measured colours): it goes with every view.
     const { reference: _r, measured: _m, histogram: _h, design_scan: _d, ...rest } = this.resolved.preset;
-    return { ...rest, stops: e.stops, domain: "data", window: null, histogram: null };
+    return { ...rest, stops: e.data, domain: "data", window: null, histogram: null };
   }
 
   private editorUpdate: (() => void) | undefined;
@@ -424,12 +450,16 @@ class AnatomicalRendering {
         const scale = c.tuning.scale || 1;
         const unshifted = stops.map((x) => ({ ...x, value: (e ? e.centre : 0) + (x.value - c.tuning.shift - (e ? e.centre : 0)) / scale }));
         this.save((x) => (x.tunings[c.src] = { ...c.tuning, stops: unshifted }));
+      }, (warp) => {
+        // The histogram slid or warped under the map.
+        const c = this.currentTuning();
+        if (c) this.save((x) => (x.tunings[c.src] = { ...c.tuning, warp }));
       });
     }
     const hist = (this.session?.volume as { histogram?: { lo: number; hi: number; counts: number[] } } | undefined)?.histogram;
     this.editorUpdate = () => {
       const e = this.editedStops();
-      if (e && !this.editor!.dragging) this.editor!.set(hist, e.stops);
+      if (e && !this.editor!.dragging) this.editor!.set(hist, e.stops, e.warp);
     };
     this.editorUpdate();
     void this.resolvePreset();
@@ -455,7 +485,7 @@ class AnatomicalRendering {
     return el(
       "div",
       { style: "margin: 6px 0" },
-      el("div", { class: "muted", style: "font-size: 11px; margin-bottom: 3px" }, "Colourmap for this image, over its histogram: drag a point (left-right moves it, up-down its opacity), double-click to colour it, Ctrl-click to add one, right-click to remove one"),
+      el("div", { class: "muted", style: "font-size: 11px; margin-bottom: 3px" }, "Colourmap for this image, over its histogram: drag a point (left-right moves it, up-down its opacity), double-click to colour it, Ctrl-click to add one, right-click to remove one; drag the blue triangles under the histogram to slide and warp it under the colours"),
       this.editor.element,
       el(
         "div",
@@ -474,6 +504,49 @@ class AnatomicalRendering {
         }, "The map as tuned, at this image's values (load it with Load a preset file…)"),
       ),
     );
+  }
+
+  /** A crop: on, its name, keep or cut out, remove; its box's low and high along x, y and z (fractions of the volume). */
+  private cropRow(b: Crop, i: number, render: () => void): HTMLElement {
+    const on = el("input", { type: "checkbox" }) as HTMLInputElement;
+    on.checked = b.on;
+    on.onchange = () => this.save((x) => (x.boxes[i].on = on.checked));
+    const name = el("input", { type: "text", value: b.name, style: "width: 90px" }) as HTMLInputElement;
+    name.onchange = () => this.save((x) => (x.boxes[i].name = name.value));
+    const axis = (k: number, label: string) =>
+      el("div", { style: "display: flex; gap: 4px; align-items: center" },
+        el("span", { style: "width: 12px" }, label),
+        this.slider(b.lo[k], 0, 1, 0.005, (v) => this.save((x) => (x.boxes[i].lo[k] = Math.min(v, x.boxes[i].hi[k] - 0.005))), `Low ${label}`),
+        this.slider(b.hi[k], 0, 1, 0.005, (v) => this.save((x) => (x.boxes[i].hi[k] = Math.max(v, x.boxes[i].lo[k] + 0.005))), `High ${label}`));
+    return el("div", { style: "border-left: 3px solid #4a7; padding-left: 6px; margin: 4px 0" },
+      el("div", { style: "display: flex; gap: 6px; align-items: center" },
+        on, name,
+        select([["keep", "keep inside"], ["cut", "cut out"]], b.keep ? "keep" : "cut", (v) => this.save((x) => (x.boxes[i].keep = v === "keep"))),
+        button("Remove", () => {
+          this.save((x) => x.boxes.splice(i, 1));
+          render();
+        })),
+      axis(0, "x"), axis(1, "y"), axis(2, "z"));
+  }
+
+  /** A slider and its number, kept together; `live` false: the slider applies when let go (a change that reopens the session). */
+  private sliderNum(value: number, min: number, max: number, step: number, on: (v: number) => void, opts: { live?: boolean; title?: string; width?: string } = {}): HTMLElement {
+    const r = el("input", { type: "range", min: String(min), max: String(max), step: String(step), value: String(value), style: `width: ${opts.width ?? "120px"}`, title: opts.title ?? "" }) as HTMLInputElement;
+    const n = numberInput(value, (v) => {
+      r.value = String(v);
+      on(v);
+    }, { step: String(step), style: "width: 64px", title: opts.title ?? "" });
+    const apply = () => {
+      n.value = r.value;
+      on(Number(r.value));
+    };
+    if (opts.live === false) {
+      r.oninput = () => (n.value = r.value);
+      r.onchange = apply;
+    } else {
+      r.oninput = apply;
+    }
+    return el("div", { style: "display: flex; gap: 6px; align-items: center" }, r, n);
   }
 
   private slider(value: number, min: number, max: number, step: number, on: (v: number) => void, title: string): HTMLInputElement {
@@ -505,8 +578,8 @@ class AnatomicalRendering {
       el(
         "div",
         { style: "display: flex; gap: 6px; align-items: center" },
-        numberInput(w ? w[0] : 0, (v) => set(0, v), { step, style: "width: 80px" }),
-        numberInput(w ? w[1] : 1, (v) => set(1, v), { step, style: "width: 80px" }),
+        this.sliderNum(w ? w[0] : 0, vol?.lo ?? 0, vol?.hi ?? 65535, Number(step), (v) => set(0, v), { title: "Low end", width: "90px" }),
+        this.sliderNum(w ? w[1] : 1, vol?.lo ?? 0, vol?.hi ?? 65535, Number(step), (v) => set(1, v), { title: "High end", width: "90px" }),
         button("Guess", () => this.save((x) => delete x.windows[src]), "Back to the host's guess: from just past the mounting medium, with the commonest tissue value at the middle"),
       ),
       this.saved.windows[src] ? "The image's values the preset's colours are spread over" : "The host's guess: from just past the mounting medium, the commonest tissue value at the middle; change it to fit",
@@ -659,7 +732,7 @@ class AnatomicalRendering {
       unit_mm: unitMm(frame.dimensions),
       preset: tuned ?? (s.customPresets.find((p) => p.name === s.preset) as Record<string, unknown> | undefined) ?? (s.preset || "HiP-CT brain"),
       overrides: tuned ? { exposure: s.exposure, ...(s.density !== undefined ? { density: s.density } : {}) } : overrides,
-      crop_fraction: s.box.on ? [s.box.lo, s.box.hi] : undefined,
+      boxes: s.boxes.filter((b) => b.on).map((b) => ({ lo: b.lo, hi: b.hi, keep: b.keep })),
       light: { direction: lightDirection(s.lightAzimuth, s.lightElevation), camera_space: true, rgb: [3.2 * s.lightKey, 3.0 * s.lightKey, 2.8 * s.lightKey] },
       environment: s.lightMap ? { map: s.lightMap, rotation: s.lightMapRotation, scale: s.envScale } : { scale: s.envScale },
       clips: [
@@ -679,7 +752,7 @@ class AnatomicalRendering {
     const local = this.saved.where === "browser" ? this.local : undefined;
     const sid = local ? "local" : this.session?.status === "ready" ? this.session.id : undefined;
     if (sid === undefined || (local && !this.localText.startsWith("level"))) return;
-    const look = JSON.stringify([this.saved.box, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.lightStyle, this.saved.envScale, this.saved.lightKey, this.saved.viewCut, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
+    const look = JSON.stringify([this.saved.boxes, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.lightStyle, this.saved.envScale, this.saved.lightKey, this.saved.viewCut, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
     const key = viewKey(frame.invViewProjection, frame.width, frame.height) + look;
     const scale = frame.moving ? 0.5 : 1;
     if (key === this.lastKey && !(this.lastScale < 1 && !frame.moving)) return;
@@ -973,8 +1046,8 @@ class AnatomicalRendering {
               return cb;
             })(), "Hide the jar")
           : "",
-        field("Density (per mm)", numberInput(s.density ?? Number(this.presets.find((p) => p.name === s.preset)?.density ?? 40), (v) => this.save((x) => (x.density = v)), { step: "1", min: "0" })),
-        field("Exposure", numberInput(s.exposure, (v) => this.save((x) => (x.exposure = v)), { step: "0.1", min: "0" })),
+        field("Density (per mm)", this.sliderNum(s.density ?? Number(this.presets.find((p) => p.name === s.preset)?.density ?? 40), 0, 200, 1, (v) => this.save((x) => (x.density = v)), { title: "How opaque the tissue is: higher, crisper surfaces; lower, more translucent" })),
+        field("Exposure", this.sliderNum(s.exposure, 0, 5, 0.05, (v) => this.save((x) => (x.exposure = v)), { title: "Brightness" })),
         s.where === "host"
           ? field("Lighting", select([["", "As set below"], ...Object.entries(LIGHTING).map(([k, l]): [string, string] => [k, l.name])], s.lightStyle, (v) =>
               this.save((x) => {
@@ -995,7 +1068,7 @@ class AnatomicalRendering {
         s.where === "host" && (this.serviceInfo?.lightmaps?.length ?? 0) > 0
           ? field("Light map", el("div", { style: "display: flex; gap: 6px" },
               select([["", "sky colours (the preset's)"], ...this.serviceInfo!.lightmaps!.map((m): [string, string] => [m, m])], s.lightMap, (v) => this.save((x) => (x.lightMap = v))),
-              numberInput(s.lightMapRotation, (v) => this.save((x) => (x.lightMapRotation = v)), { step: "15", style: "width: 60px", title: "Turn the light map (degrees)" })), "Image-based light: HDR panoramas (CC0, Poly Haven)")
+              this.sliderNum(s.lightMapRotation, -180, 180, 5, (v) => this.save((x) => (x.lightMapRotation = v)), { title: "Turn the light map (degrees)", width: "90px" })), "Image-based light: HDR panoramas (CC0, Poly Haven)")
           : "",
         el("h4", {}, "View"),
         el("div", { style: "display: flex; gap: 4px; flex-wrap: wrap" },
@@ -1041,24 +1114,17 @@ class AnatomicalRendering {
                 this.save((x) => (x.viewCut = { ...x.viewCut, on: true, fixed: viewCutPlane(f.invViewProjection, f.position, x.viewCut.offset, f.dimensions) }));
               }, "Keep the cut where it is now, at this angle, as you turn the view"),
         ),
-        el("label", { style: "display: flex; gap: 6px; align-items: center" }, (() => {
-          const cb = el("input", { type: "checkbox" }) as HTMLInputElement;
-          cb.checked = s.box.on;
-          cb.onchange = () => this.save((x) => (x.box.on = cb.checked));
-          return cb;
-        })(), "Clip box (fractions of the volume)"),
-        ...(s.box.on ? (["x", "y", "z"] as const).map((axis, a) => {
-          const slider = (which: "lo" | "hi") => {
-            const r = el("input", { type: "range", min: "0", max: "1", step: "0.01", value: String(s.box[which][a]), style: "width: 90px", title: `${which === "lo" ? "Low" : "High"} ${axis}` }) as HTMLInputElement;
-            r.onchange = () => this.save((x) => (x.box[which][a] = Number(r.value)));
-            return r;
-          };
-          return el("div", { style: "display: flex; gap: 6px; align-items: center" }, el("span", { style: "width: 14px" }, axis), slider("lo"), slider("hi"));
-        }) : []),
+        el("h4", {}, "Crops"),
+        el("p", { class: "muted", style: "font-size: 11px; margin: 0 0 4px" }, "Boxes (fractions of the volume): what shows is inside any crop that keeps, and in none that cuts out"),
+        ...s.boxes.map((b, i) => this.cropRow(b, i, render)),
+        button("Add a crop", () => {
+          this.save((x) => x.boxes.push({ name: `Crop ${x.boxes.length + 1}`, on: true, keep: true, lo: [0, 0, 0], hi: [1, 1, 1] }));
+          render();
+        }, "Up to 8 boxes, each keeping its inside or cutting it out"),
         el("h4", {}, "Regions"),
         el("label", { style: "display: flex; gap: 6px; align-items: center" }, regions, "Colour by a segmentation's regions"),
         segs.length ? field("Segmentation", select(segs.map((l) => [l.name, l.name]), segs.find((x) => x.name === s.labels)?.name ?? segs[0].name, (v) => this.save((x) => (x.labels = v)))) : el("p", { class: "muted" }, "No OME-Zarr segmentation in the scene."),
-        field("Region colour", numberInput(s.labelMix, (v) => this.save((x) => (x.labelMix = v)), { step: "0.05", min: "0", max: "1" }), "0: the preset's colours, 1: the regions'"),
+        field("Region colour", this.sliderNum(s.labelMix, 0, 1, 0.05, (v) => this.save((x) => (x.labelMix = v))), "0: the preset's colours, 1: the regions'"),
         field("Hidden regions", (() => {
           const t = el("input", { type: "text", value: s.hidden.join(", "), placeholder: "label ids" }) as HTMLInputElement;
           t.onchange = () => this.save((x) => (x.hidden = ids(t.value)));
@@ -1070,7 +1136,7 @@ class AnatomicalRendering {
           return t;
         })()),
         el("h4", {}, "Quality"),
-        field("Whole volume (million voxels on the GPU)", numberInput(s.budget / 1e6, (v) => this.save((x) => (x.budget = Math.max(1, v) * 1e6)), { step: "50", min: "1" }), "One level of the whole image: the finest stored level within this, or one made from a finer level"),
+        field("Whole volume (million voxels on the GPU)", this.sliderNum(s.budget / 1e6, 10, 2000, 10, (v) => this.save((x) => (x.budget = Math.max(1, v) * 1e6)), { live: false }), "One level of the whole image: the finest stored level within this, or one made from a finer level"),
         s.where === "host"
           ? el("label", { style: "display: flex; gap: 6px; align-items: center", title: "When the view comes close, the region in view is read at a finer level and rendered from it; the rest of the volume (shadows, light scattered from outside the view) stays at the whole volume's level" }, (() => {
               const cb = el("input", { type: "checkbox" }) as HTMLInputElement;
@@ -1083,10 +1149,10 @@ class AnatomicalRendering {
             })(), "Finer detail where you zoom")
           : "",
         s.where === "host" && s.detail
-          ? field("Detail where you look (million voxels)", numberInput(s.detailBudget / 1e6, (v) => {
+          ? field("Detail where you look (million voxels)", this.sliderNum(s.detailBudget / 1e6, 10, 2000, 10, (v) => {
               this.save((x) => (x.detailBudget = Math.max(1, v) * 1e6));
               this.update();
-            }, { step: "50", min: "1" }), "The finest stored level whose region in view fits this, and no finer than a pixel there")
+            }, { live: false }), "The finest stored level whose region in view fits this, and no finer than a pixel there")
           : "",
         el("label", { style: "display: flex; gap: 6px; align-items: center" }, (() => {
           const cb = el("input", { type: "checkbox" }) as HTMLInputElement;
@@ -1094,7 +1160,7 @@ class AnatomicalRendering {
           cb.onchange = () => this.save((x) => (x.denoise = cb.checked));
           return cb;
         })(), "Smooth the first frames after a change (host)"),
-        field("Samples per pixel", numberInput(s.maxSamples, (v) => this.save((x) => (x.maxSamples = Math.max(1, Math.round(v)))), { step: "64", min: "1" })),
+        field("Samples per pixel", this.sliderNum(s.maxSamples, 16, 4096, 16, (v) => this.save((x) => (x.maxSamples = Math.max(1, Math.round(v)))), { title: "When a still view stops refining" })),
         el("h4", {}, "Movie"),
         ...keyframeRows,
         button("Add keyframe from the view", () => this.addKeyframe()),

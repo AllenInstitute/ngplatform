@@ -250,6 +250,16 @@
    "name": "DETAIL_GSCALE",
    "size": 1,
    "about": "coarse voxel size over detail voxel size: gradients per detail voxel to per coarse voxel"
+  },
+  {
+   "name": "NBOX",
+   "size": 1,
+   "about": "how many crops (up to 8)"
+  },
+  {
+   "name": "BOXES",
+   "size": 56,
+   "about": "8 crops x (lo x, y, z; hi x, y, z, voxel coordinates; mode: 1 keeps the inside, -1 cuts it out)"
   }
  ]
 }

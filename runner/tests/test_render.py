@@ -550,3 +550,26 @@ def test_window_presets_follow_each_scans_histogram():
     # Matched, the same share of each scan's tissue falls below the stop; by the window alone, not.
     assert share(matched, vols[1]) == pytest.approx(share(matched, vols[0]), abs=0.03)
     assert abs(share(window_only, vols[1]) - share(window_only, vols[0])) > 0.05
+
+
+@needs_gpu
+def test_crops_keep_their_inside_or_cut_it_out():
+    from ngplatform_render import renderer
+
+    data = ball(48)
+    A = np.diag([0.5, 0.5, 0.5, 1.0])
+    R = renderer.Renderer(0)
+    R.set_volume(renderer.Volume(data, A, 0.0, 255.0, volumes.tissue_percentiles(data, 0, 255)))
+    lo, hi = bounds(A, data.shape)
+    cam = orbit((lo + hi) / 2, framing_radius(lo, hi, 30), 30, 20)
+
+    def covered(boxes):
+        R.set_view(renderer.RenderState(np.linalg.inv(cam.view_projection(96, 72)), 96, 72, presets.builtin()["HiP-CT brain"], boxes=boxes))
+        R.step(8)
+        return int((R.image()[..., 3] > 128).sum())
+
+    full = covered([])
+    left = covered([((-0.5, -0.5, -0.5), (23.5, 47.5, 47.5), True)])
+    ends = covered([((-0.5, -0.5, -0.5), (15.5, 47.5, 47.5), True), ((31.5, -0.5, -0.5), (47.5, 47.5, 47.5), True)])
+    gone = covered([((-0.5, -0.5, -0.5), (47.5, 47.5, 47.5), False)])
+    assert 0 < left < full and 0 < ends < full and gone == 0

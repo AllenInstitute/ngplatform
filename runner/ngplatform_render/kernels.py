@@ -137,6 +137,20 @@ __device__ __forceinline__ float4 tflookup(const Scene& S, float t) {
 __device__ __forceinline__ bool cut(const float* P, V3 w, V3 v) {
   if (v.x < P[P_CROP_LO] || v.y < P[P_CROP_LO + 1] || v.z < P[P_CROP_LO + 2]) return true;
   if (v.x > P[P_CROP_HI] || v.y > P[P_CROP_HI + 1] || v.z > P[P_CROP_HI + 2]) return true;
+  // Crops: a point is kept inside any crop that keeps (when there is one) and in none that cuts out.
+  int nb = (int)P[P_NBOX];
+  bool keeping = false, kept = false;
+  for (int i = 0; i < nb; ++i) {
+    const float* b = P + P_BOXES + 7 * i;
+    bool in = v.x >= b[0] && v.y >= b[1] && v.z >= b[2] && v.x <= b[3] && v.y <= b[4] && v.z <= b[5];
+    if (b[6] > 0.f) {
+      keeping = true;
+      kept = kept || in;
+    } else if (in) {
+      return true;
+    }
+  }
+  if (keeping && !kept) return true;
   int n = (int)P[P_NCLIP];
   for (int i = 0; i < n; ++i) {
     const float* c = P + P_CLIPS + 4 * i;

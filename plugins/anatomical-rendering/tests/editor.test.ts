@@ -41,3 +41,33 @@ describe("the colourmap editor", () => {
     expect(shifted(stops, 0, 1, 300)).toBe(stops);
   });
 });
+
+import { histogramHandles, warpForward, warpInverse } from "../editor.js";
+import { readSaved } from "../plugin.js";
+
+describe("the histogram's warp", () => {
+  const warp = [{ from: 100, to: 120 }, { from: 200, to: 180 }, { from: 300, to: 330 }];
+  it("maps image values through its points (slope 1 past them) and back", () => {
+    expect(warpForward(100, warp)).toBe(120);
+    expect(warpForward(150, warp)).toBe(150);
+    expect(warpForward(50, warp)).toBe(70);
+    expect(warpForward(400, warp)).toBe(430);
+    for (const v of [40, 100, 133, 250, 500]) expect(warpInverse(warpForward(v, warp), warp)).toBeCloseTo(v, 6);
+    expect(warpForward(77, undefined)).toBe(77);
+  });
+  it("holds the histogram at its quantiles", () => {
+    const counts = new Array(100).fill(0).map((_, i) => (i >= 20 && i < 80 ? 10 : 0));
+    const h = histogramHandles({ lo: 0, hi: 100, counts }, 0, 100, [0.25, 0.5, 0.75]);
+    expect(h[0]).toBeCloseTo(34.5, 0);
+    expect(h[1]).toBeCloseTo(49.5, 0);
+    expect(h[2]).toBeCloseTo(64.5, 0);
+  });
+});
+
+describe("crops", () => {
+  it("take an old clip box as the first crop", () => {
+    const s = readSaved({ box: { on: true, lo: [0.1, 0, 0], hi: [0.5, 1, 1] } });
+    expect(s.boxes).toEqual([{ name: "Crop 1", on: true, keep: true, lo: [0.1, 0, 0], hi: [0.5, 1, 1] }]);
+    expect(readSaved({}).boxes).toEqual([]);
+  });
+});

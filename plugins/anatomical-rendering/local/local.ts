@@ -492,7 +492,9 @@ export class LocalRenderer {
     const clips = (v.clips ?? []).slice(0, 6);
     P[O.NCLIP] = clips.length;
     clips.forEach((c, i) => P.set(c, O.CLIPS + 4 * i));
-    const crop = v.crop_fraction;
+    // This browser's renderer takes one box: the first crop that keeps (crops that cut out are the host's).
+    const keepBox = v.boxes?.find((b) => b.keep);
+    const crop = v.crop_fraction ?? (keepBox ? ([keepBox.lo, keepBox.hi] as [[number, number, number], [number, number, number]]) : undefined);
     put("CROP_LO", crop ? crop[0].map((f, a) => f * this.size[a] - 0.5) : [-1e9, -1e9, -1e9]);
     put("CROP_HI", crop ? crop[1].map((f, a) => f * this.size[a] - 0.5) : [1e9, 1e9, 1e9]);
     P[O.STEP] = 0.5;
