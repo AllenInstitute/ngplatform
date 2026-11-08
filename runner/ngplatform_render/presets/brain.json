@@ -1,0 +1,71 @@
+[
+  {
+    "name": "MR T1 brain",
+    "modality": "MR",
+    "description": "A T1-weighted brain: the cortex's surface in warm grey, white matter paler beneath it.",
+    "domain": "percentile",
+    "stops": [
+      {"value": 0, "color": [0.55, 0.42, 0.38], "opacity": 0.0},
+      {"value": 20, "color": [0.62, 0.45, 0.40], "opacity": 0.0},
+      {"value": 40, "color": [0.80, 0.62, 0.55], "opacity": 0.35},
+      {"value": 70, "color": [0.90, 0.78, 0.70], "opacity": 0.8},
+      {"value": 99.5, "color": [0.98, 0.95, 0.90], "opacity": 1.0}
+    ],
+    "density": 40.0, "shade_mix": 0.85, "gradient_scale": 30.0, "roughness": 0.5, "specular": 0.12, "albedo": 0.95
+  },
+  {
+    "name": "HiP-CT brain",
+    "modality": "HiP-CT",
+    "description": "A HiP-CT brain in fixative: tissue in ivory, vessels and dense structure brighter.",
+    "domain": "percentile",
+    "stops": [
+      {"value": 0, "color": [0.75, 0.70, 0.62], "opacity": 0.0},
+      {"value": 10, "color": [0.80, 0.74, 0.66], "opacity": 0.0},
+      {"value": 30, "color": [0.88, 0.80, 0.70], "opacity": 0.4},
+      {"value": 70, "color": [0.95, 0.88, 0.78], "opacity": 0.8},
+      {"value": 99.9, "color": [1.0, 0.97, 0.92], "opacity": 1.0}
+    ],
+    "density": 40.0, "shade_mix": 0.85, "gradient_scale": 30.0, "roughness": 0.45, "specular": 0.15, "albedo": 0.95
+  },
+  {
+    "name": "Histology (BigBrain)",
+    "modality": "histology",
+    "description": "Merker-stained sections: tissue in stain blue-grey, darker where cells are dense.",
+    "domain": "percentile",
+    "stops": [
+      {"value": 0, "color": [0.55, 0.58, 0.72], "opacity": 0.0},
+      {"value": 10, "color": [0.55, 0.58, 0.72], "opacity": 0.0},
+      {"value": 35, "color": [0.62, 0.64, 0.78], "opacity": 0.5},
+      {"value": 80, "color": [0.80, 0.80, 0.88], "opacity": 0.85},
+      {"value": 99.9, "color": [0.95, 0.95, 0.98], "opacity": 1.0}
+    ],
+    "density": 40.0, "shade_mix": 0.85, "gradient_scale": 30.0, "roughness": 0.5, "specular": 0.1, "albedo": 0.95
+  },
+  {
+    "name": "Translucent tissue",
+    "modality": "",
+    "description": "Any volume as a translucent, scattering solid: deep structure shows through the surface.",
+    "domain": "percentile",
+    "stops": [
+      {"value": 0, "color": [0.9, 0.75, 0.65], "opacity": 0.0},
+      {"value": 15, "color": [0.9, 0.75, 0.65], "opacity": 0.0},
+      {"value": 50, "color": [0.95, 0.80, 0.70], "opacity": 0.05},
+      {"value": 95, "color": [1.0, 0.92, 0.85], "opacity": 0.4},
+      {"value": 99.9, "color": [1.0, 1.0, 1.0], "opacity": 0.8}
+    ],
+    "density": 12.0, "shade_mix": 0.3, "gradient_scale": 30.0, "roughness": 0.6, "specular": 0.05, "phase_g": 0.3, "albedo": 0.98
+  },
+  {
+    "name": "Regions (labels)",
+    "modality": "labels",
+    "description": "Each region of a co-registered segmentation in its own colour, on the image's tissue.",
+    "domain": "percentile",
+    "stops": [
+      {"value": 0, "color": [1, 1, 1], "opacity": 0.0},
+      {"value": 15, "color": [1, 1, 1], "opacity": 0.0},
+      {"value": 40, "color": [1, 1, 1], "opacity": 0.6},
+      {"value": 99.9, "color": [1, 1, 1], "opacity": 1.0}
+    ],
+    "density": 40.0, "shade_mix": 0.85, "gradient_scale": 30.0, "roughness": 0.5, "specular": 0.1, "albedo": 0.95
+  }
+]
