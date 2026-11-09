@@ -1164,11 +1164,13 @@ export class Orientations {
       empty.hidden = candidates.length > 0;
       main.hidden = candidates.length === 0;
       on.set(saved.on);
-      const target = saved.on ? this.target() : (candidates.find((l) => l.name === saved.layer) ?? candidates.find((l) => l.name === this.chosen) ?? candidates[0]);
+      // The image drawn; else (off, or none with components found) the one that would be.
+      const target = saved.on ? this.target() : undefined;
+      const shown = target ?? candidates.find((l) => l.name === saved.layer) ?? candidates.find((l) => l.name === this.chosen) ?? candidates[0];
       setOptions(
         image,
         candidates.map((c): [string, string] => [c.name, c.name]),
-        target?.name ?? "",
+        shown?.name ?? "",
       );
       image.disabled = candidates.length < 2;
       noComponents.hidden = !(saved.on && candidates.length > 0 && target === undefined);

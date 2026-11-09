@@ -183,6 +183,17 @@ describe("the Orientations panel", () => {
     o.dispose();
   });
 
+  it("says when no image has an axis of components, still naming the image", async () => {
+    const f = fakeContext();
+    f.add("plain", "zarr://https://example.test/plain.ome.zarr/");
+    const { host, o } = open(f);
+    dom.check(dom.find<HTMLInputElement>(host, "input.switch"), true);
+    await settle();
+    expect(dom.text(host)).toContain("None of these images has an axis of components (c).");
+    expect(host.querySelector<HTMLSelectElement>('select[aria-label="Image"]')!.value).toBe("plain");
+    o.dispose();
+  });
+
   it("groups its controls in cards, every on/off control the SDK's, and shows the fields for the data it reads", async () => {
     const f = fakeContext();
     f.add("dti", "zarr://https://example.test/tensor.ome.zarr/");
