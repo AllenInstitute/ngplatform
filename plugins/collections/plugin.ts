@@ -4,15 +4,15 @@
  * for the workspace's data, by address or from a file, or the example), and
  * a tab per collection (a scene of the plugin's own kind) whose viewer shows
  * only its images, each placed by its transforms in the coordinate system
- * chosen.  The Collection panel beside it: the graph of its coordinate
- * systems and the transforms between them (click a system to view in it),
- * and the collection built there: members, systems and transforms added and
- * removed, a member's placement taken from the view, the JSON downloaded.
- * In an ordinary scene the panel offers the collections that scene's data
- * belongs to.  The model is ./collection.ts.
+ * chosen (label images as segmentations).  The Collection panel beside it:
+ * the graph of its coordinate systems and the transforms between them
+ * (click a system to view in it), and the collection built there: members,
+ * systems and transforms added and removed, a member's placement taken from
+ * the view, the JSON downloaded.  In an ordinary scene the panel offers the
+ * collections that scene's data belongs to.  The model is ./collection.ts.
  */
 import type { LayerTransform, PlatformContext, PluginModule } from "@ngplatform/sdk";
-import { card, el } from "@ngplatform/sdk/dom";
+import { button, card, checkbox, downloadBlob, el, emptyState, field, iconButton, numberInput, region, safeFileName, select, statusLine } from "@ngplatform/sdk/dom";
 import { describeTransform } from "@ngplatform/sdk/ome";
 import { neuroglancer, physical } from "../registration/plugin.js";
 import {
@@ -26,6 +26,7 @@ import {
   firstLevel,
   graph,
   isCollection,
+  isLabelImage,
   type Mat4,
   members,
   parentGroups,
@@ -33,9 +34,12 @@ import {
   placementOf,
   readCollection,
   sceneSystems,
+  stepsMatrix,
   toSystemUnits,
   transformJson,
+  unappliedKinds,
   UNITS,
+  unitOf,
   zarrGroupUrl,
 } from "./collection.js";
 import example from "./examples/srb_gallery.json";
@@ -54,8 +58,27 @@ function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string,
 
 export const EXAMPLE_URL = "https://alleninstitute.github.io/ngplatform/collections/srb_gallery.json";
 
-/** Millimetres in one unit of a coordinate system (its first axis with a unit; mm when none). */
-const unitOf = (system: { units: string[] } | undefined): number => UNITS[system?.units.find((u) => u !== "") ?? "millimeter"] ?? 1;
+/** How long a read of a collection or an image's metadata may take before it is given up (ms). */
+export const READ_TIMEOUT = 15_000;
+
+/**
+ * The JSON at `url`: undefined when it is not there (or not JSON); an
+ * error, said plainly, when it fails or takes longer than READ_TIMEOUT.
+ */
+async function readJson(url: string, missing: "undefined" | "throw" = "undefined"): Promise<unknown> {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(READ_TIMEOUT) });
+    if (!response.ok) {
+      if (missing === "throw") throw new Error(`${response.status} ${response.statusText}`.trim());
+      return undefined;
+    }
+    return missing === "throw" ? await response.json() : await response.json().catch(() => undefined);
+  } catch (e) {
+    const name = (e as Error)?.name;
+    if (name === "TimeoutError" || name === "AbortError") throw new Error(`no answer in ${READ_TIMEOUT / 1000} s`);
+    throw e;
+  }
+}
 
 /** The URL a document read from `url` resolves its paths against (the page's, for one made here). */
 const baseOf = (url: string | undefined): string => (url === undefined || url === "" ? location.href : /\.json$/i.test(url) ? url : `${url.replace(/\/$/, "")}/zarr.json`);
@@ -63,33 +86,40 @@ const baseOf = (url: string | undefined): string => (url === undefined || url ==
 /** x, y, z values in the order of `axes` (z, y, x for an image's own space). */
 const onAxes = (xyz: number[], axes: string[]): number[] => axes.map((n) => xyz[["x", "y", "z"].indexOf(n)] ?? 0);
 
-/** Kinds of transform the panel writes, with what their value field asks for. */
+/** Kinds of transform the panel writes, with what their value field asks for (an affine has its own grid). */
 const KINDS: { type: string; label: string; hint: string }[] = [
   { type: "identity", label: "identity", hint: "" },
   { type: "translation", label: "translation", hint: "x y z, in the target's units" },
   { type: "scale", label: "scale", hint: "x y z" },
-  { type: "affine", label: "affine", hint: "12 numbers: rows x, y, z, each a b c t" },
+  { type: "affine", label: "affine", hint: "" },
   { type: "displacements", label: "displacement field", hint: "the field's Zarr group (URL)" },
 ];
 
-/** The contrast range an image (a Zarr group's URL) is shown with by default (`displayRangeOf`), read once per image. */
-const ranges = new Map<string, Promise<[number, number] | undefined>>();
-function displayRange(url: string): Promise<[number, number] | undefined> {
-  let range = ranges.get(url);
-  if (range === undefined) {
-    const json = async (key: string): Promise<unknown> => {
-      const response = await fetch(`${url}/${key}`).catch(() => undefined);
-      return response?.ok ? response.json().catch(() => undefined) : undefined;
-    };
-    range = (async () => {
-      const group = (await json("zarr.json")) ?? (await json(".zattrs"));
-      const level = firstLevel(group);
-      const array = level === undefined ? undefined : ((await json(`${level}/zarr.json`)) ?? (await json(`${level}/.zarray`)));
-      return displayRangeOf(group, array);
-    })();
-    ranges.set(url, range);
+/** Twelve numbers, rows x, y, z, each a b c t, from text (spaces, commas or semicolons between); undefined when it is not that. */
+export function twelveNumbers(text: string): number[] | undefined {
+  const numbers = text.split(/[\s,;[\]]+/).filter(Boolean).map(Number);
+  return numbers.length === 12 && numbers.every(Number.isFinite) ? numbers : undefined;
+}
+
+/** An image's metadata: its group's zarr.json (or .zattrs), read once per image. */
+const groups = new Map<string, Promise<unknown>>();
+function groupOf(url: string): Promise<unknown> {
+  let group = groups.get(url);
+  if (group === undefined) {
+    const json = (key: string) => readJson(`${url}/${key}`).catch(() => undefined);
+    group = (async () => (await json("zarr.json")) ?? (await json(".zattrs")))();
+    groups.set(url, group);
   }
-  return range;
+  return group;
+}
+
+/** The contrast range an image (a Zarr group's URL) is shown with by default (`displayRangeOf`). */
+async function displayRange(url: string): Promise<[number, number] | undefined> {
+  const group = await groupOf(url);
+  const level = firstLevel(group);
+  const json = (key: string) => readJson(`${url}/${key}`).catch(() => undefined);
+  const array = level === undefined ? undefined : ((await json(`${level}/zarr.json`)) ?? (await json(`${level}/.zarray`)));
+  return displayRangeOf(group, array);
 }
 
 /**
@@ -97,26 +127,22 @@ function displayRange(url: string): Promise<[number, number] | undefined> {
  * was read from, the document as built here (once made or edited here), and
  * the system it is viewed in.
  */
-interface Saved {
+export interface Saved {
   url?: string;
   doc?: unknown;
   system?: string;
 }
 
 const STYLE = `
-.cl { display: grid; gap: 10px; padding: 10px 12px; font-size: 12px; }
-.cl-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.cl-row input { flex: 1; min-width: 120px; }
-.cl-row > .text-input { width: auto; flex: 1; min-width: 0; }
-.cl-row > input.text-input { min-width: 90px; }
-.cl-row > select.text-input { flex: 0 1 auto; }
-.cl-member { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 2px 6px; align-items: center; min-height: 24px; }
-.cl-url { grid-column: 1 / -1; color: var(--faint); font: 11px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cl-member + .cl-member { border-top: 1px solid var(--line); padding-top: 4px; }
-.cl-kind { font: 11px var(--mono); color: var(--muted); }
-.cl-where { color: var(--faint); font: 11px var(--mono); }
-.cl-value { font: 11px var(--mono); overflow-wrap: anywhere; }
-.cl-found { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: var(--r); }
+.cl-name { font-weight: 600; font-size: var(--fs-control); }
+.cl-grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.cl-member { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--sp-1) var(--sp-3); align-items: center; min-height: var(--ctl-h); }
+.cl-member + .cl-member, .cl-nest + .cl-member { border-top: 1px solid var(--line); padding-top: var(--sp-2); }
+.cl-member > .hint, .cl-url { grid-column: 1 / -1; }
+.cl-nest { padding-left: var(--sp-5); }
+.cl-url { color: var(--faint); font: var(--fs-caption) var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cl-kind { font: var(--fs-caption) var(--mono); color: var(--muted); }
+.cl-value { font: var(--fs-caption) var(--mono); overflow-wrap: anywhere; }
 .cl-graph { width: 100%; height: auto; display: block; }
 .cl-graph .cl-sys { cursor: pointer; }
 .cl-graph .cl-sys rect { fill: var(--ink-3); stroke: var(--line-strong); }
@@ -125,30 +151,32 @@ const STYLE = `
 .cl-graph .cl-mem rect { fill: var(--ink-2); stroke: var(--line); }
 .cl-graph .cl-mem.warped rect { stroke: var(--select); stroke-dasharray: 4 2; }
 .cl-graph .cl-mem.hidden text { fill: var(--faint); }
-.cl-tag { margin-left: 6px; padding: 0 5px; border: 1px dashed var(--select); border-radius: var(--r); font: 10px var(--mono); color: var(--muted); }
-.cl-tag.off { border-color: var(--line); color: var(--faint); }
-.cl-graph text { fill: var(--text); font: 11px var(--ui); }
+.cl-graph text { fill: var(--text); font-family: var(--ui); font-size: var(--fs-caption); }
 .cl-graph .cl-edge { stroke: var(--muted); fill: none; }
-.cl-graph .cl-edge-label { fill: var(--faint); font: 10px var(--mono); }
-.cl-name { font: 600 13px var(--ui); background: transparent; border: 1px solid transparent; border-radius: var(--r); padding: 2px 4px; color: var(--text); min-width: 0; flex: 1; }
-.cl-name:hover, .cl-name:focus { border-color: var(--line); }
-.cl-list { display: grid; gap: 2px; }
-.cl-item { display: flex; gap: 6px; align-items: center; min-height: 24px; }
-.cl-item > :first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.cl-x { border: 0; background: transparent; color: var(--faint); cursor: pointer; padding: 0 4px; font-size: 14px; line-height: 1; }
-.cl-x:hover { color: var(--text); }
-.cl-add { display: grid; gap: 6px; padding: 8px; border: 1px dashed var(--line); border-radius: var(--r); }
-.cl-add select, .cl-add input { min-width: 0; }
-.cl-add .cl-row > * { flex: 1; }
-.cl-add .cl-row > button { flex: none; }
-.cl-sheet { display: grid; gap: 14px; font-size: 13px; }
-.cl-sheet section { display: grid; gap: 8px; }
-.cl-sheet .cl-pick { display: grid; gap: 2px; max-height: 180px; overflow: auto; }
-.cl-sheet .cl-pick label { display: grid; grid-template-columns: auto max-content minmax(0, 1fr); gap: 8px; align-items: baseline; }
-.cl-sheet .cl-pick .cl-where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cl-graph .cl-edge-label { fill: var(--faint); font-family: var(--mono); font-size: var(--fs-caption); }
+.cl-tag { margin-left: var(--sp-3); padding: 0 var(--sp-2); border: 1px dashed var(--select); font: var(--fs-caption) var(--mono); color: var(--muted); }
+.cl-tag.off { border-color: var(--line); color: var(--faint); }
+.cl-tag.warn { border-color: var(--warn); }
+.cl-item { display: flex; gap: var(--sp-3); align-items: center; min-height: var(--ctl-h); }
+.cl-add { display: grid; gap: var(--sp-3); padding-top: var(--sp-4); border-top: 1px dashed var(--line); }
+.cl-add .row > .text-input { flex: 1 1 90px; width: auto; min-width: 0; }
+.cl-matrix { display: grid; grid-template-columns: auto repeat(4, minmax(0, 1fr)); gap: var(--sp-2); align-items: center; }
+.cl-matrix > .num-input { width: 100%; }
+.cl-matrix > span { color: var(--faint); font: var(--fs-caption) var(--mono); text-align: center; }
+.cl-sheet { display: grid; gap: var(--sp-6); }
+.cl-sheet section { display: grid; gap: var(--sp-4); }
+.cl-pick { display: grid; gap: var(--sp-1); max-height: 180px; overflow: auto; }
+.cl-pick > div { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--sp-4); align-items: center; }
+.cl-where { color: var(--faint); font: var(--fs-caption) var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 `;
 
-class Collections {
+/** Why a member is hidden in a system: the transforms on its way that cannot be applied, or that nothing joins it to the system. */
+function hiddenWhy(root: CollectionNode, node: CollectionNode): string {
+  const kinds = unappliedKinds(root, node);
+  return kinds.length ? `${kinds.join(", ")} transforms are not applied here` : "no transform to this system";
+}
+
+export class Collections {
   /** The collection the active tab shows, its document (as read, or as built here) and where it was read from ("" when made here). */
   private root: CollectionNode | undefined;
   private doc: unknown;
@@ -165,6 +193,9 @@ class Collections {
   /** Collections found above the workspace's images: group URL to its name (null: none there). */
   private found = new Map<string, string | null>();
   private looking = new Set<string>();
+  /** Members shown warped through a displacement field in the system viewed; members hidden, by name, with why. */
+  private warped = new Set<string>();
+  private hidden = new Map<string, string>();
 
   constructor(private readonly ctx: PlatformContext) {
     ctx.subscriptions.push(
@@ -200,7 +231,7 @@ class Collections {
    * reload, a switch of tab or an undo (the layers are the scene's already:
    * only which members are warped or hidden is worked out again).
    */
-  private async follow(): Promise<void> {
+  async follow(): Promise<void> {
     if (!this.inCollectionScene() || this.busy) return;
     const saved = this.saved();
     const key = this.keyOf(saved);
@@ -244,7 +275,11 @@ class Collections {
     for (const m of members(root)) {
       if (m.node.location === undefined || placeInto(root, m.node, system) !== undefined) continue;
       const steps = chainInto(root, m.node, system);
-      (steps && fieldWarp(steps, 1) ? this.warped : this.hidden).add(m.node.name);
+      if (steps !== undefined && stepsMatrix(steps) !== undefined) continue;
+      if (steps && fieldWarp(steps, 1)) {
+        if (this.ctx.viewer.layerSpec(m.node.name)?.type === "segmentation") this.hidden.set(m.node.name, "a label image is not warped through a field");
+        else this.warped.add(m.node.name);
+      } else this.hidden.set(m.node.name, hiddenWhy(root, m.node));
     }
   }
 
@@ -255,9 +290,7 @@ class Collections {
     this.error = "";
     this.update?.();
     try {
-      const response = await fetch(baseOf(url));
-      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-      return await response.json();
+      return await readJson(baseOf(url), "throw");
     } catch (e) {
       this.error = `Could not read the collection at ${url}: ${(e as Error).message}`;
       return undefined;
@@ -276,25 +309,28 @@ class Collections {
     }
   }
 
+  /** The workspace's datasets' sources, as text. */
+  private sources(): string[] {
+    return this.ctx.workspace.datasets().map((d) => (typeof d.source === "string" ? d.source : typeof (d.source as { url?: unknown })?.url === "string" ? (d.source as { url: string }).url : ""));
+  }
+
   /**
    * Looks for collections above the workspace's images: a parent Zarr
-   * group whose metadata is an OME collection.  Each group is asked once.
+   * group whose metadata is an OME collection.  Each group is asked once;
+   * one that does not answer in time is said in the log.
    */
-  private async discover(): Promise<void> {
-    const sources = this.ctx.workspace
-      .datasets()
-      .map((d) => (typeof d.source === "string" ? d.source : typeof (d.source as { url?: unknown })?.url === "string" ? (d.source as { url: string }).url : ""))
-      .filter((s) => /^(zarr3?|zarr2|ome-zarr):\/\/|\.zarr\/?$/.test(s));
+  async discover(): Promise<void> {
+    const sources = this.sources().filter((s) => /^(zarr3?|zarr2|ome-zarr):\/\/|\.zarr\/?$/.test(s));
     for (const source of sources) {
       for (const group of parentGroups(source)) {
         if (this.found.has(group) || this.looking.has(group)) continue;
         this.looking.add(group);
         try {
-          const response = await fetch(`${group}/zarr.json`);
-          const doc = response.ok ? await response.json().catch(() => undefined) : undefined;
+          const doc = await readJson(`${group}/zarr.json`);
           this.found.set(group, doc !== undefined && isCollection(doc) ? readCollection(doc, `${group}/zarr.json`).name : null);
-        } catch {
+        } catch (e) {
           this.found.set(group, null);
+          this.ctx.log.error(`Looking for a collection at ${group}: ${(e as Error).message}.`);
         } finally {
           this.looking.delete(group);
         }
@@ -305,8 +341,7 @@ class Collections {
 
   /** The collections found for the workspace's images. */
   private foundHere(): { url: string; name: string }[] {
-    const sources = this.ctx.workspace.datasets().map((d) => (typeof d.source === "string" ? d.source : typeof (d.source as { url?: unknown })?.url === "string" ? (d.source as { url: string }).url : ""));
-    const groups = new Set(sources.flatMap((s) => parentGroups(s)));
+    const groups = new Set(this.sources().flatMap((s) => parentGroups(s)));
     return [...this.found].filter(([g, name]) => name && groups.has(g)).map(([url, name]) => ({ url, name: name! }));
   }
 
@@ -361,18 +396,25 @@ class Collections {
     this.ctx.log.info(`Showing ${root.name} in its tab.`);
   }
 
+  /** Whether a member is a label image: by its node, its place in a `labels` group, or its image's metadata. */
+  private async isLabel(node: CollectionNode): Promise<boolean> {
+    const url = node.location?.url ?? "";
+    return node.label === true || isLabelImage(undefined, url) || isLabelImage(await groupOf(url));
+  }
+
   /**
-   * A member's layer showing `source` (the layer replaced when it shows
-   * another), named after the member.  A warped layer (`warpedFrom`: the
-   * member's image) is float32, whose default range would show it white:
-   * it keeps the contrast the layer had, or takes the image's own.
+   * A member's layer showing `source` as `kind` (an image, or a label
+   * image's segmentation; the layer replaced when it shows another), named
+   * after the member.  A warped layer (`warpedFrom`: the member's image) is
+   * float32, whose default range would show it white: it keeps the
+   * contrast the layer had, or takes the image's own.
    */
-  private async setSource(layer: string, source: string, warpedFrom?: string): Promise<void> {
-    const spec = this.ctx.viewer.layerSpec(layer) as { source?: unknown; shader?: unknown; shaderControls?: { normalized?: unknown } } | undefined;
+  private async setSource(layer: string, source: string, kind: "image" | "segmentation", warpedFrom?: string): Promise<void> {
+    const spec = this.ctx.viewer.layerSpec(layer) as { type?: string; source?: unknown; shader?: unknown; shaderControls?: { normalized?: unknown } } | undefined;
     const now = typeof spec?.source === "string" ? spec.source : (spec?.source as { url?: string } | undefined)?.url;
-    if (spec !== undefined && now === source) return;
+    if (spec !== undefined && now === source && (spec.type === undefined || spec.type === kind)) return;
     if (spec !== undefined) this.ctx.workspace.removeLayer(layer);
-    const id = this.ctx.workspace.addDataset({ source, name: warpedFrom === undefined ? layer : `${layer} (warped)`, kind: "image" });
+    const id = this.ctx.workspace.addDataset({ source, name: warpedFrom === undefined ? layer : `${layer} (warped)`, kind });
     const added = this.ctx.workspace.sceneDatasets().find((d) => d.id === id)?.layers.at(-1)?.name;
     // Members sharing an image are views of one dataset: name each layer after its member.
     if (added !== undefined && added !== layer) this.ctx.workspace.renameLayer(added, layer);
@@ -392,57 +434,64 @@ class Collections {
     );
   }
 
-  /** Members shown warped through a displacement field in the system viewed, and members hidden (no chain this can apply), by name. */
-  private warped = new Set<string>();
-  private hidden = new Set<string>();
-
   /**
    * Places each member's layer in `system`, by the chain of transforms to
    * it: affine chains as the layer's transform; a chain through a
    * displacement field as a layer computed as it is viewed (the member
    * resampled back through the chain), placed by the chain's affines; a
-   * member with no chain is hidden (its layer there, not shown).
+   * member with no chain is hidden (its layer there, not shown), with why.
+   * Label images are segmentation layers, and are not warped.
    */
   private async place(system: string | undefined, generation: number): Promise<void> {
     const root = this.root;
     if (root === undefined || system === undefined || !this.current(generation)) return;
-    const unit = unitOf(sceneSystems(root).find((s) => s.id === system));
+    const unit = unitOf(sceneSystems(root).find((s) => s.id === system)).mm;
     this.warped.clear();
     this.hidden.clear();
     for (const m of members(root)) {
       const layer = m.node.name;
       if (m.node.location === undefined) continue;
       const plain = `zarr://${m.node.location.url}/`;
+      const kind = (await this.isLabel(m.node)) ? "segmentation" : "image";
+      if (!this.current(generation)) return;
       let placement = placeInto(root, m.node, system);
       let source = plain;
       let warped = false;
+      let why = "";
       if (placement === undefined) {
         const steps = chainInto(root, m.node, system);
-        const shown = steps && fieldWarp(steps, unit);
-        if (shown !== undefined) {
+        placement = steps && stepsMatrix(steps);
+        const shown = placement === undefined && steps !== undefined ? fieldWarp(steps, unit) : undefined;
+        if (shown !== undefined && kind === "segmentation") why = "a label image is not warped through a field";
+        else if (shown !== undefined) {
           placement = shown.placement;
           try {
             source = await this.ctx.workspace.computed.url({ source: plain, chunk: [64, 64, 64], warp: shown.warp });
             warped = true;
           } catch (e) {
+            why = `it could not be warped: ${(e as Error).message}`;
             this.ctx.log.error(`Could not warp ${layer}: ${(e as Error).message}`);
             placement = undefined;
           }
           if (!this.current(generation)) return;
         }
+        if (placement === undefined && why === "") why = hiddenWhy(root, m.node);
       }
       if (warped) this.warped.add(layer);
       if (placement === undefined) {
-        this.hidden.add(layer);
+        this.hidden.set(layer, why);
         // There to be seen in the layer list, not shown.
-        if (this.ctx.viewer.layerSpec(layer) === undefined) await this.setSource(layer, plain);
-      } else await this.setSource(layer, source, warped ? m.node.location.url : undefined);
+        if (this.ctx.viewer.layerSpec(layer) === undefined) await this.setSource(layer, plain, kind);
+      } else await this.setSource(layer, source, kind, warped ? m.node.location.url : undefined);
       if (!this.current(generation)) return;
       this.setVisible(layer, placement !== undefined);
-      if (placement !== undefined && !(await this.setPlacement(layer, placement, unit))) {
-        // Not placed: hidden rather than shown in the wrong place.
-        this.hidden.add(layer);
-        this.setVisible(layer, false);
+      if (placement !== undefined) {
+        const notPlaced = await this.setPlacement(layer, placement, unit);
+        if (notPlaced !== "") {
+          // Not placed: hidden rather than shown in the wrong place.
+          this.hidden.set(layer, notPlaced);
+          this.setVisible(layer, false);
+        }
       }
       if (!this.current(generation)) return;
     }
@@ -459,31 +508,35 @@ class Collections {
     );
   }
 
-  /** A layer's transform, once Neuroglancer has read its metadata: as shown and as the image gives it (physical, mm), and its output axes; undefined when it has not x, y and z alone. */
-  private async layerPlacement(layer: string): Promise<{ now: Mat4; own: Mat4; names: string[]; t: LayerTransform } | undefined> {
+  /**
+   * A layer's transform, once Neuroglancer has read its metadata: as shown
+   * and as the image gives it (physical, mm), and its output axes; or why
+   * it cannot be placed (it has not x, y and z alone, or its metadata did
+   * not load).
+   */
+  private async layerPlacement(layer: string): Promise<{ now: Mat4; own: Mat4; names: string[]; t: LayerTransform } | string> {
     for (let i = 0; i < 100; ++i) {
       const t = this.ctx.viewer.layerTransform(layer);
       if (t !== undefined) {
         const now = physical(t, t.matrix);
         const own = physical(t, t.defaultMatrix);
-        if (now === undefined || own === undefined) {
-          this.ctx.log.error(`${layer} is not placed: only images with x, y and z alone can be placed (it has ${t.output.names.join(", ")}).`);
-          return undefined;
-        }
+        if (now === undefined || own === undefined) return `only images with x, y and z alone are placed (it has ${t.output.names.join(", ")})`;
         return { now: Array.from(now), own: Array.from(own), names: t.output.names, t };
       }
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
-    this.ctx.log.error(`${layer} is not placed: its metadata did not load.`);
-    return undefined;
+    return "its metadata did not load";
   }
 
-  /** Sets a layer's transform to its own (from its metadata) followed by `placement` (in units of `unit` mm); whether it was placed. */
-  private async setPlacement(layer: string, placement: Mat4, unit: number): Promise<boolean> {
+  /** Sets a layer's transform to its own (from its metadata) followed by `placement` (in units of `unit` mm); "" when placed, else why not. */
+  private async setPlacement(layer: string, placement: Mat4, unit: number): Promise<string> {
     const at = await this.layerPlacement(layer);
-    if (at === undefined) return false;
+    if (typeof at === "string") {
+      this.ctx.log.error(`${layer} is not placed: ${at}.`);
+      return at;
+    }
     const order = ["x", "y", "z"].map((n) => at.names.indexOf(n));
-    if (order.some((k) => k === -1)) return false;
+    if (order.some((k) => k === -1)) return `it has no ${["x", "y", "z"].filter((_, i) => order[i] === -1).join(", ")} axis`;
     // The placement in millimetres, in the layer's output order.
     const a = new Float64Array(16);
     a[15] = 1;
@@ -495,10 +548,10 @@ class Collections {
     const out = new Float64Array(16);
     for (let r = 0; r < 4; ++r) for (let c = 0; c < 4; ++c) for (let k = 0; k < 4; ++k) out[4 * r + c] += a[4 * r + k] * p[4 * k + c];
     this.ctx.viewer.setLayerTransform(layer, neuroglancer(at.t, out));
-    return true;
+    return "";
   }
 
-  private async choose(system: string): Promise<void> {
+  async choose(system: string): Promise<void> {
     const generation = ++this.generation;
     const saved = { ...this.saved(), system };
     this.loadedKey = this.keyOf(saved);
@@ -513,7 +566,7 @@ class Collections {
    * tab from now on), read again, and its images shown (the layers of
    * members gone removed, the rest placed again).
    */
-  private async edit(change: Edit): Promise<void> {
+  async edit(change: Edit): Promise<void> {
     const before = this.root;
     if (this.doc === undefined || before === undefined) return;
     let doc: unknown;
@@ -555,20 +608,20 @@ class Collections {
    * written as its transform into the system viewed: the top collection's
    * transform from it to that system replaced, or one added.
    */
-  private async fromView(node: CollectionNode): Promise<void> {
+  async fromView(node: CollectionNode): Promise<void> {
     const root = this.root;
     const id = this.saved().system;
     const system = root && sceneSystems(root).find((s) => s.id === id);
     if (root === undefined || system === undefined) return;
     const at = await this.layerPlacement(node.name);
-    const mm = at && placementOf(at.now, at.own, at.names);
+    const mm = typeof at === "string" ? undefined : placementOf(at.now, at.own, at.names);
     if (mm === undefined) {
-      this.ctx.ui.toast(`${node.name}'s placement could not be read from the view.`, "error");
+      this.ctx.ui.toast(`${node.name}'s placement could not be read from the view${typeof at === "string" ? `: ${at}` : ""}.`, "error");
       return;
     }
     let transform: any;
     try {
-      transform = { ...transformJson(toSystemUnits(mm, unitOf(system)), system.axes), input: { id: node.id ?? node.name }, output: { id: system.id } };
+      transform = { ...transformJson(toSystemUnits(mm, unitOf(system).mm), system.axes), input: { id: node.id ?? node.name }, output: { id: system.id } };
     } catch (e) {
       this.ctx.ui.toast((e as Error).message, "error");
       return;
@@ -581,10 +634,7 @@ class Collections {
   /** The collection's JSON, as a file to save. */
   private download(): void {
     if (this.doc === undefined || this.root === undefined) return;
-    const blob = new Blob([JSON.stringify(this.doc, null, 2)], { type: "application/json" });
-    const a = el("a", { href: URL.createObjectURL(blob), download: `${this.root.name.replace(/[^\w.-]+/g, "_") || "collection"}.json` }) as HTMLAnchorElement;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    downloadBlob(new Blob([JSON.stringify(this.doc, null, 2)], { type: "application/json" }), `${safeFileName(this.root.name, "collection")}.json`);
   }
 
   // ------------------------------------------------------------- the sheet
@@ -594,13 +644,11 @@ class Collections {
     this.ctx.ui.sheet(
       "Add a collection",
       (body, close) => {
-        const said = el("p", { class: "note error" }) as HTMLElement;
-        said.hidden = true;
+        const said = statusLine();
         const attempt = (work: () => Promise<boolean>) => async () => {
-          said.hidden = true;
+          said.clear();
           if (await work()) return close();
-          said.textContent = this.error || "That could not be opened.";
-          said.hidden = false;
+          said.error(this.error || "That could not be opened.");
         };
         const sections: HTMLElement[] = [this.fromSceneSection(attempt)];
         const found = this.foundHere();
@@ -610,12 +658,10 @@ class Collections {
               "section",
               {},
               el("h3", { class: "section-title" }, "Holding this workspace's images"),
-              ...found.map((f) =>
-                el("div", { class: "cl-row" }, el("strong", { style: "flex: 1" }, f.name), el("button", { class: "btn outline small", type: "button", onclick: attempt(() => this.openUrl(f.url)) }, "Open")),
-              ),
+              ...found.map((f) => el("div", { class: "row" }, el("strong", { class: "cl-grow" }, f.name), button("Open", attempt(() => this.openUrl(f.url))))),
             ),
           );
-        const url = el("input", { class: "text-input mono", type: "text", placeholder: "https://…/collection.json or a Zarr group", "aria-label": "Collection address", spellcheck: "false", value: this.typed }) as HTMLInputElement;
+        const url = el("input", { class: "text-input mono cl-grow", type: "text", placeholder: "https://…/collection.json or a Zarr group", "aria-label": "Collection address", spellcheck: "false", value: this.typed }) as HTMLInputElement;
         url.addEventListener("input", () => (this.typed = url.value));
         const openTyped = attempt(() => this.openUrl(url.value.trim()));
         url.addEventListener("keydown", (e) => {
@@ -640,8 +686,8 @@ class Collections {
             "section",
             {},
             el("h3", { class: "section-title" }, "Open"),
-            el("div", { class: "cl-row" }, url, el("button", { class: "btn primary small", type: "button", onclick: openTyped }, "Open")),
-            el("div", { class: "cl-row" }, el("button", { class: "btn outline small", type: "button", onclick: () => file.click() }, "A .json file on this computer…"), file),
+            el("div", { class: "row" }, url, button("Open", openTyped, undefined, "btn outline small")),
+            el("div", { class: "row" }, button("A .json file on this computer…", () => file.click()), file),
           ),
           el(
             "section",
@@ -652,7 +698,7 @@ class Collections {
               { class: "example" },
               el("span", { class: "title" }, "SRB 2026a gallery"),
               el("span", { class: "desc" }, "The synchrotron reference brain template three times in one coordinate system: as it is, moved, and mirrored left to right."),
-              el("button", { class: "btn outline", type: "button", onclick: attempt(() => this.openUrl(EXAMPLE_URL)) }, "Open"),
+              button("Open", attempt(() => this.openUrl(EXAMPLE_URL)), undefined, "btn outline"),
             ),
           ),
           said,
@@ -667,27 +713,32 @@ class Collections {
   private fromSceneSection(attempt: (work: () => Promise<boolean>) => () => Promise<void>): HTMLElement {
     const title = el("h3", { class: "section-title" }, "From this scene");
     const scene = this.activeScene();
-    if (scene === undefined || scene.kind !== undefined)
-      return el("section", {}, title, el("p", { class: "note" }, "Switch to a scene first."));
+    if (scene === undefined || scene.kind !== undefined) return el("section", {}, title, el("p", { class: "hint" }, "Switch to a scene first."));
     const layers = this.ctx.workspace.sceneDatasets().flatMap((d) => d.layers.map((l) => ({ name: l.name, url: zarrGroupUrl(l.sources[0] ?? d.source) })));
     const images = layers.filter((l): l is { name: string; url: string } => l.url !== undefined);
-    if (images.length === 0)
-      return el("section", {}, title, el("p", { class: "note" }, layers.length ? "No OME-Zarr images in this scene." : "This scene is empty."));
-    const boxes = images.map((image) => ({ image, box: el("input", { type: "checkbox", checked: true }) as HTMLInputElement }));
-    const name = el("input", { class: "text-input", type: "text", value: `${scene.name} collection`, "aria-label": "Collection name", title: "The collection's name (and its tab's)" }) as HTMLInputElement;
-    const unit = el("select", { class: "text-input", "aria-label": "Unit of its coordinate system", title: "The unit of its coordinate system" }, ...Object.keys(UNITS).map((u) => el("option", { value: u, selected: u === "micrometer" }, u))) as HTMLSelectElement;
+    if (images.length === 0) return el("section", {}, title, el("p", { class: "hint" }, layers.length ? "No OME-Zarr images in this scene." : "This scene is empty."));
+    const boxes = images.map((image) => ({ image, box: checkbox(image.name, true, () => {}) }));
+    const name = el("input", { class: "text-input", type: "text", value: `${scene.name} collection` }) as HTMLInputElement;
+    let unitChosen = "micrometer";
+    const unit = select(Object.keys(UNITS).map((u) => [u, u]), unitChosen, (u) => (unitChosen = u));
     const others = layers.length - images.length;
     return el(
       "section",
       {},
       title,
+      el("div", { class: "cl-pick" }, ...boxes.map(({ image, box }) => el("div", {}, box, el("span", { class: "cl-where" }, image.url)))),
+      others ? el("p", { class: "hint" }, `${others} other layer${others === 1 ? "" : "s"} left out (not OME-Zarr).`) : null,
+      el("div", { class: "row" }, field("Name", name), field("Unit", unit)),
       el(
         "div",
-        { class: "cl-pick" },
-        ...boxes.map(({ image, box }) => el("label", {}, box, el("span", {}, image.name), el("span", { class: "cl-where" }, image.url))),
+        { class: "row" },
+        button(
+          "Make the collection",
+          attempt(() => this.fromScene(name.value.trim() || scene.name, unitChosen, boxes.filter((b) => b.box.input.checked).map((b) => b.image))),
+          undefined,
+          "btn primary small",
+        ),
       ),
-      others ? el("p", { class: "note" }, `${others} other layer${others === 1 ? "" : "s"} left out (not OME-Zarr).`) : null,
-      el("div", { class: "cl-row" }, name, unit, el("button", { class: "btn primary small", type: "button", onclick: attempt(() => this.fromScene(name.value.trim() || scene.name, unit.value, boxes.filter((b) => b.box.checked).map((b) => b.image))) }, "Make the collection")),
     );
   }
 
@@ -697,14 +748,12 @@ class Collections {
       this.error = "Choose at least one image.";
       return false;
     }
-    const placed = await Promise.all(
-      images.map(async (image) => {
-        const t = this.ctx.viewer.layerTransform(image.name);
-        const now = t && physical(t, t.matrix);
-        const own = t && physical(t, t.defaultMatrix);
-        return { ...image, placement: now && own ? placementOf(Array.from(now), Array.from(own), t!.output.names) : undefined };
-      }),
-    );
+    const placed = images.map((image) => {
+      const t = this.ctx.viewer.layerTransform(image.name);
+      const now = t && physical(t, t.matrix);
+      const own = t && physical(t, t.defaultMatrix);
+      return { ...image, placement: now && own ? placementOf(Array.from(now), Array.from(own), t!.output.names) : undefined };
+    });
     return this.openDocument(collectionFromScene(name, { name, unit }, placed));
   }
 
@@ -735,7 +784,7 @@ class Collections {
       return svg(
         "g",
         { class: cls, ...(onclick ? { onclick, role: "button", tabindex: 0 } : {}) },
-        svg("rect", { x: p.x, y: p.y, width: 110, height: rowH - 6, rx: 4 }),
+        svg("rect", { x: p.x, y: p.y, width: 110, height: rowH - 6 }),
         svg("text", { x: p.x + 6, y: p.y + rowH / 2 + 1 }, label.length > 17 ? `${label.slice(0, 16)}…` : label),
         svg("title", {}, cls.includes("warped") ? `${label}: warped through a displacement field` : label),
       );
@@ -766,170 +815,98 @@ class Collections {
     );
   }
 
-  private static removeButton(what: string, run: () => void): HTMLElement {
-    return el("button", { class: "cl-x", type: "button", title: `Remove ${what}`, "aria-label": `Remove ${what}`, onclick: run }, "×");
-  }
-
-  /** The members: the tree, each of the top collection's removable and placeable from the view; and a member to add. */
-  private membersView(root: CollectionNode): HTMLElement[] {
+  /** The member tree: each of the top collection's removable and placeable from the view; why one is hidden; a label image tagged. */
+  private memberRows(root: CollectionNode): HTMLElement[] {
     const top = new Set(root.nodes);
     const system = this.saved().system;
-    const tree = (n: CollectionNode, depth: number): HTMLElement[] => [
-      el(
+    const tree = (n: CollectionNode): HTMLElement[] => {
+      const why = this.hidden.get(n.name);
+      const labels = this.ctx.viewer.layerSpec(n.name)?.type === "segmentation";
+      const rows: HTMLElement[] = [
+        el(
+          "div",
+          { class: "cl-member" },
+          el(
+            "span",
+            { class: "cl-grow" },
+            el("span", { class: "cl-kind" }, `${n.type} `),
+            n.name,
+            labels ? el("span", { class: "cl-tag off" }, "labels") : null,
+            this.warped.has(n.name) ? el("span", { class: "cl-tag" }, "warped") : null,
+            why !== undefined ? el("span", { class: "cl-tag off" }, "hidden") : null,
+          ),
+          top.has(n) && n.location && system && !this.warped.has(n.name) && why === undefined ? button("From the view", () => void this.fromView(n)) : null,
+          top.has(n) ? iconButton("close", `Remove ${n.name}`, () => void this.edit({ op: "removeMember", id: n.id ?? n.name })) : null,
+          n.location ? el("span", { class: "cl-url", title: n.location.url }, n.location.url) : null,
+          why ? el("p", { class: "hint" }, `Hidden: ${why}.`) : null,
+        ),
+      ];
+      const children = n.nodes.flatMap(tree);
+      if (children.length) rows.push(el("div", { class: "cl-nest" }, ...children));
+      return rows;
+    };
+    return tree(root);
+  }
+
+  /** The coordinate systems: each viewable and removable, its unit said when it is not one OME-NGFF names. */
+  private systemRows(root: CollectionNode): HTMLElement[] {
+    const chosen = this.saved().system;
+    const own = new Set(root.systems.map((s) => s.id));
+    return sceneSystems(root).map((s) => {
+      const unknown = unitOf(s).unknown;
+      return el(
         "div",
-        { class: "cl-member", style: `padding-left: ${depth * 12}px` },
+        { class: "cl-item" },
         el(
           "span",
-          {},
-          el("span", { class: "cl-kind" }, `${n.type} `),
-          n.name,
-          this.warped.has(n.name) ? el("span", { class: "cl-tag", title: "Resampled through the displacement field in its chain, computed as you view it" }, "warped") : null,
-          this.hidden.has(n.name) ? el("span", { class: "cl-tag off", title: "No chain of transforms to this system that can be applied" }, "hidden") : null,
+          { class: "cl-grow" },
+          el("strong", {}, s.name ?? s.id),
+          el("span", { class: "cl-kind" }, ` ${s.axes.join(", ")}${s.units.some(Boolean) ? `; ${[...new Set(s.units.filter(Boolean))].join(", ")}` : ""}`),
+          unknown !== undefined ? el("span", { class: "cl-tag warn" }, `unit '${unknown}' read as mm`) : null,
         ),
-        top.has(n) && n.location && system && !this.warped.has(n.name) && !this.hidden.has(n.name)
-          ? el(
-              "button",
-              { class: "btn outline small", type: "button", title: "Write where this layer is now (moved in the viewer) as its transform into the system viewed", onclick: () => void this.fromView(n) },
-              "From the view",
-            )
-          : null,
-        top.has(n) ? Collections.removeButton(n.name, () => void this.edit({ op: "removeMember", id: n.id ?? n.name })) : null,
-        n.location ? el("span", { class: "cl-url", title: n.location.url }, n.location.url) : null,
-      ),
-      ...n.nodes.flatMap((c) => tree(c, depth + 1)),
-    ];
-    // The workspace's OME-Zarr datasets not in the collection, to add; or an address.
-    const inside = new Set(members(root).map((m) => m.node.location?.url));
-    const choices = this.ctx.workspace
-      .datasets()
-      .map((d) => ({ name: d.name, url: zarrGroupUrl(d.source) }))
-      .filter((d): d is { name: string; url: string } => d.url !== undefined && !inside.has(d.url));
-    const pick = el(
-      "select",
-      { class: "text-input", "aria-label": "Dataset to add" },
-      el("option", { value: "" }, choices.length ? "A dataset of the workspace…" : "An address below"),
-      ...choices.map((c, i) => el("option", { value: String(i) }, c.name)),
-    ) as HTMLSelectElement;
-    const address = el("input", { class: "text-input mono", type: "text", placeholder: "or an OME-Zarr image's address", spellcheck: "false" }) as HTMLInputElement;
-    const add = () => {
-      const chosen = pick.value === "" ? undefined : choices[Number(pick.value)];
-      const url = chosen?.url ?? zarrGroupUrl(address.value.trim()) ?? (/^https?:\/\//.test(address.value.trim()) ? address.value.trim().replace(/\/+$/, "") : undefined);
-      if (url === undefined) return this.ctx.ui.toast("Choose a dataset, or enter an OME-Zarr image's address.", "error");
-      const name = chosen?.name ?? url.split("/").pop()!.replace(/\.ome\.zarr$|\.zarr$/, "");
-      void this.edit({ op: "addMember", name, url });
-    };
-    return [
-      el("div", { class: "cl-list" }, ...tree(root, 0)),
-      el(
-        "div",
-        { class: "cl-add" },
-        el("div", { class: "cl-row" }, pick),
-        el("div", { class: "cl-row" }, address, el("button", { class: "btn small", type: "button", onclick: add }, "Add member")),
-      ),
-    ];
+        s.id === chosen ? el("span", { class: "cl-tag" }, "viewed") : button("View in it", () => void this.choose(s.id)),
+        own.has(s.id) ? iconButton("close", `Remove ${s.name ?? s.id} and its transforms`, () => void this.edit({ op: "removeSystem", id: s.id })) : null,
+      );
+    });
   }
 
-  /** The coordinate systems: each viewable and removable; and one to add. */
-  private systemsView(root: CollectionNode): HTMLElement[] {
-    const chosen = this.saved().system;
-    const name = el("input", { class: "text-input", type: "text", placeholder: "Name, e.g. Atlas", "aria-label": "System name" }) as HTMLInputElement;
-    const unit = el("select", { class: "text-input", "aria-label": "Unit" }, ...Object.keys(UNITS).map((u) => el("option", { value: u, selected: u === "micrometer" }, u))) as HTMLSelectElement;
-    const add = () => {
-      if (name.value.trim() === "") return this.ctx.ui.toast("Name the coordinate system.", "error");
-      void this.edit({ op: "addSystem", name: name.value.trim(), unit: unit.value });
-    };
-    const own = new Set(root.systems.map((s) => s.id));
-    return [
-      el(
-        "div",
-        { class: "cl-list" },
-        ...sceneSystems(root).map((s) =>
-          el(
-            "div",
-            { class: "cl-item" },
-            el("span", {}, el("strong", {}, s.name ?? s.id), el("span", { class: "cl-kind" }, ` ${s.axes.join(", ")}${s.units.some(Boolean) ? `; ${[...new Set(s.units.filter(Boolean))].join(", ")}` : ""}`)),
-            s.id === chosen ? el("span", { class: "cl-tag" }, "viewed") : el("button", { class: "btn outline small", type: "button", onclick: () => void this.choose(s.id) }, "View in it"),
-            own.has(s.id) ? Collections.removeButton(`${s.name ?? s.id} and its transforms`, () => void this.edit({ op: "removeSystem", id: s.id })) : null,
-          ),
-        ),
-      ),
-      el("div", { class: "cl-add" }, el("div", { class: "cl-row" }, name, unit, el("button", { class: "btn small", type: "button", onclick: add }, "Add system"))),
-    ];
-  }
-
-  /** The transforms as written (the top collection's removable), and a relationship to add between a member or system and another. */
-  private transformsView(root: CollectionNode): HTMLElement[] {
+  /** The transforms as written, the top collection's removable. */
+  private transformRows(root: CollectionNode): HTMLElement[] {
     const g = graph(root);
+    if (g.transforms.length === 0) return [el("p", { class: "hint" }, "No relationships yet.")];
     const own = new Set(root.transforms.map((t) => t.raw));
-    const ends = [
+    return g.transforms.map((t) =>
+      el(
+        "div",
+        { class: "cl-item" },
+        el("span", { class: "cl-grow" }, `${t.input} → ${t.output} `, el("span", { class: "cl-value" }, describeTransform(t.raw))),
+        own.has(t.raw) ? iconButton("close", `Remove ${t.input} → ${t.output}`, () => void this.edit({ op: "removeTransform", index: root.transforms.findIndex((x) => x.raw === t.raw) })) : null,
+      ),
+    );
+  }
+
+  /** The ends a relationship may join: members (their own space, z, y, x) and the collections' systems. */
+  private endsOf(root: CollectionNode): { id: string; label: string; axes: string[] }[] {
+    return [
       ...members(root).map((m) => ({ id: m.node.id ?? m.node.name, label: m.node.name, axes: ["z", "y", "x"] })),
       ...sceneSystems(root).map((s) => ({ id: s.id, label: `${s.name ?? s.id} (system)`, axes: s.axes })),
     ];
-    const options = (selected: number) => ends.map((e, i) => el("option", { value: String(i), selected: i === selected }, e.label));
-    const firstSystem = ends.findIndex((e) => e.label.endsWith("(system)"));
-    const from = el("select", { class: "text-input", "aria-label": "From" }, ...options(0)) as HTMLSelectElement;
-    const to = el("select", { class: "text-input", "aria-label": "To" }, ...options(Math.max(firstSystem, 0))) as HTMLSelectElement;
-    const kind = el("select", { class: "text-input", "aria-label": "Kind" }, ...KINDS.map((k) => el("option", { value: k.type }, k.label))) as HTMLSelectElement;
-    const value = el("input", { class: "text-input mono", type: "text", spellcheck: "false", "aria-label": "Value" }) as HTMLInputElement;
-    const hint = () => {
-      const k = KINDS.find((x) => x.type === kind.value)!;
-      value.placeholder = k.hint;
-      value.hidden = k.hint === "";
-    };
-    kind.addEventListener("change", hint);
-    hint();
-    const add = () => {
-      const a = ends[Number(from.value)];
-      const b = ends[Number(to.value)];
-      if (a === undefined || b === undefined || a.id === b.id) return this.ctx.ui.toast("Choose two different ends.", "error");
-      let t: any;
-      try {
-        t = this.typedTransform(kind.value, value.value, b.axes);
-      } catch (e) {
-        return this.ctx.ui.toast((e as Error).message, "error");
-      }
-      void this.edit({ op: "addTransform", transform: { ...t, input: { id: a.id }, output: { id: b.id } } });
-    };
-    return [
-      g.transforms.length
-        ? el(
-            "div",
-            { class: "cl-list" },
-            ...g.transforms.map((t) =>
-              el(
-                "div",
-                { class: "cl-item" },
-                el("span", {}, `${t.input} → ${t.output} `, el("span", { class: "cl-value" }, describeTransform(t.raw))),
-                own.has(t.raw) ? Collections.removeButton(`${t.input} → ${t.output}`, () => void this.edit({ op: "removeTransform", index: root.transforms.findIndex((x) => x.raw === t.raw) })) : null,
-              ),
-            ),
-          )
-        : el("p", { class: "note" }, "No relationships yet."),
-      el(
-        "div",
-        { class: "cl-add" },
-        el("div", { class: "cl-row" }, from, el("span", { style: "flex: none" }, "→"), to),
-        el("div", { class: "cl-row" }, kind, value, el("button", { class: "btn small", type: "button", onclick: add }, "Add relationship")),
-      ),
-    ];
   }
 
-  /** A transform typed in the panel: numbers on x, y, z (or a field's address), written on the target's `axes`. */
-  private typedTransform(type: string, text: string, axes: string[]): any {
+  /** A transform typed in the panel: numbers on x, y, z (or a field's address; an affine's twelve, rows x, y, z), written on the target's `axes`. */
+  typedTransform(type: string, text: string, axes: string[], affine?: number[]): any {
     const numbers = text.split(/[\s,;]+/).filter(Boolean).map(Number);
-    if (numbers.some((n) => !Number.isFinite(n))) throw new Error("Numbers only, separated by spaces.");
     switch (type) {
       case "identity":
         return { type: "identity" };
       case "translation":
-        if (numbers.length !== 3) throw new Error("A translation is three numbers: x y z.");
-        return { type: "translation", translation: onAxes(numbers, axes) };
       case "scale":
-        if (numbers.length !== 3) throw new Error("A scale is three numbers: x y z.");
-        return { type: "scale", scale: onAxes(numbers, axes) };
+        if (numbers.some((n) => !Number.isFinite(n))) throw new Error("Numbers only, separated by spaces.");
+        if (numbers.length !== 3) throw new Error(`A ${type} is three numbers: x y z.`);
+        return { type, [type]: onAxes(numbers, axes) };
       case "affine":
-        if (numbers.length !== 12) throw new Error("An affine is twelve numbers: rows x, y, z, each a b c t.");
-        return transformJson([...numbers, 0, 0, 0, 1], axes);
+        if (affine === undefined || affine.length !== 12 || !affine.every(Number.isFinite)) throw new Error("An affine is twelve numbers: rows x, y, z, each a b c t.");
+        return transformJson([...affine, 0, 0, 0, 1], axes);
       case "displacements": {
         const url = text.trim();
         if (!/^https?:\/\//.test(url)) throw new Error("A displacement field is its Zarr group's address (https://…).");
@@ -939,77 +916,196 @@ class Collections {
     throw new Error(`Unknown kind ${type}.`);
   }
 
+  /**
+   * The panel, drawn once and brought up to date in place: with no
+   * collection, the ones found and an empty state; in a collection's tab,
+   * its name, the graph and the Members, Coordinate systems and
+   * Relationships cards (their lists regions, their add forms kept, so a
+   * change never loses what is being typed or chosen).
+   */
   render(host: HTMLElement): () => void {
-    const draw = () => {
+    const status = statusLine();
+    const addSheet = () => this.showAddSheet();
+
+    // No collection open.
+    const found = region((key: { list: { url: string; name: string }[]; busy: boolean }) =>
+      key.list.length
+        ? [
+            el("p", { class: "hint" }, "This workspace's images belong to:"),
+            ...key.list.map((f) => el("div", { class: "row" }, el("strong", { class: "cl-grow" }, f.name), Object.assign(button("Open in a tab", () => void this.openUrl(f.url)), { disabled: key.busy }))),
+          ]
+        : null,
+    { class: "stack" });
+    const closed = el("div", { class: "stack" }, found, emptyState("No collection open.", { label: "Add collection…", run: addSheet }));
+
+    // A collection open: its name, the JSON, the graph.
+    const name = el("input", { class: "text-input cl-name", type: "text", "aria-label": "Collection name" }) as HTMLInputElement;
+    name.addEventListener("change", () => {
+      const v = name.value.trim();
+      if (v !== "" && v !== this.root?.name) void this.edit({ op: "rename", name: v });
+    });
+    const copy = () =>
+      void navigator.clipboard.writeText(JSON.stringify(this.doc, null, 2)).then(
+        () => this.ctx.ui.toast("Copied the collection's JSON."),
+        () => this.ctx.ui.toast("Could not copy.", "error"),
+      );
+    const graphRegion = region((_key: unknown) => (this.root ? this.graphView(this.root) : null));
+    const noSystem = el("p", { class: "hint" }, "Add a coordinate system to view the images in.");
+
+    // Members: the tree, and one to add (a dataset of the workspace, or an address).
+    const memberList = region((_key: unknown) => (this.root ? this.memberRows(this.root) : null), { class: "stack" });
+    let choices: { name: string; url: string }[] = [];
+    let picked: HTMLSelectElement | undefined;
+    const pick = region((key: { name: string; url: string }[]) => {
+      choices = key;
+      return (picked = select([["", key.length ? "A dataset of the workspace…" : "An address below"], ...key.map((c, i): [string, string] => [String(i), c.name])], "", () => {}, "Dataset to add"));
+    }, { class: "row" });
+    const address = el("input", { class: "text-input mono", type: "text", placeholder: "or an image's address", "aria-label": "Image address", spellcheck: "false" }) as HTMLInputElement;
+    const addMember = () => {
+      const chosen = picked?.value ? choices[Number(picked.value)] : undefined;
+      const typed = address.value.trim();
+      const url = chosen?.url ?? zarrGroupUrl(typed) ?? (/^https?:\/\//.test(typed) ? typed.replace(/\/+$/, "") : undefined);
+      if (url === undefined) return this.ctx.ui.toast("Choose a dataset, or enter an OME-Zarr image's address.", "error");
+      const member = chosen?.name ?? url.split("/").pop()!.replace(/\.ome\.zarr$|\.zarr$/, "");
+      address.value = "";
+      void this.edit({ op: "addMember", name: member, url });
+    };
+    const membersCard = card(
+      "collections.members",
+      "Members",
+      { open: true, badge: "0" },
+      memberList,
+      el("div", { class: "cl-add" }, pick, el("div", { class: "row" }, address, button("Add member", addMember, undefined, "btn small"))),
+    );
+
+    // Coordinate systems, and one to add.
+    const systemList = region((_key: unknown) => (this.root ? this.systemRows(this.root) : null), { class: "stack" });
+    const systemName = el("input", { class: "text-input", type: "text", placeholder: "Name, e.g. Atlas", "aria-label": "System name" }) as HTMLInputElement;
+    let systemUnit = "micrometer";
+    const unit = select(Object.keys(UNITS).map((u) => [u, u]), systemUnit, (u) => (systemUnit = u), "Unit");
+    const addSystem = () => {
+      if (systemName.value.trim() === "") return this.ctx.ui.toast("Name the coordinate system.", "error");
+      const v = systemName.value.trim();
+      systemName.value = "";
+      void this.edit({ op: "addSystem", name: v, unit: systemUnit });
+    };
+    const systemsCard = card(
+      "collections.systems",
+      "Coordinate systems",
+      { badge: "0" },
+      systemList,
+      el("div", { class: "cl-add" }, el("div", { class: "row" }, systemName, unit, button("Add system", addSystem, undefined, "btn small"))),
+    );
+
+    // Relationships, and one to add: its ends, its kind, and its value (an affine's in a 3 × 4 grid).
+    const transformList = region((_key: unknown) => (this.root ? this.transformRows(this.root) : null), { class: "stack" });
+    let ends: { id: string; label: string; axes: string[] }[] = [];
+    let from: HTMLSelectElement | undefined;
+    let to: HTMLSelectElement | undefined;
+    const endsRegion = region((key: { id: string; label: string; axes: string[] }[]) => {
+      ends = key;
+      const options = key.map((e, i): [string, string] => [String(i), e.label]);
+      const firstSystem = Math.max(key.findIndex((e) => e.label.endsWith("(system)")), 0);
+      from = select(options, "0", () => {}, "From");
+      to = select(options, String(firstSystem), () => {}, "To");
+      return [from, el("span", { "aria-hidden": "true" }, "→"), to];
+    }, { class: "row" });
+    let kindChosen = KINDS[0].type;
+    const value = el("input", { class: "text-input mono", type: "text", spellcheck: "false", "aria-label": "Value" }) as HTMLInputElement;
+    const cells = Array.from({ length: 12 }, (_, i) => numberInput(i % 5 === 0 ? 1 : 0, () => {}, { "aria-label": `Row ${"xyz"[Math.floor(i / 4)]}, ${"abct"[i % 4]}` }));
+    const paste = el("input", { class: "text-input mono", type: "text", spellcheck: "false", placeholder: "or paste 12 numbers, row by row", "aria-label": "Paste twelve numbers" }) as HTMLInputElement;
+    paste.addEventListener("change", () => {
+      if (paste.value.trim() === "") return;
+      const numbers = twelveNumbers(paste.value);
+      if (numbers === undefined) return this.ctx.ui.toast("Paste twelve numbers: rows x, y, z, each a b c t.", "error");
+      numbers.forEach((v, i) => (cells[i].value = String(v)));
+      paste.value = "";
+    });
+    const matrix = el(
+      "div",
+      { class: "stack" },
+      el("div", { class: "cl-matrix", role: "group", "aria-label": "Affine, rows x, y, z" }, el("span"), ...["a", "b", "c", "t"].map((c) => el("span", {}, c)), ...[0, 1, 2].flatMap((r) => [el("span", {}, "xyz"[r]), ...cells.slice(4 * r, 4 * r + 4)])),
+      paste,
+    );
+    const showKind = () => {
+      const k = KINDS.find((x) => x.type === kindChosen)!;
+      value.placeholder = k.hint;
+      value.hidden = k.hint === "";
+      matrix.hidden = k.type !== "affine";
+    };
+    const kind = select(KINDS.map((k) => [k.type, k.label]), kindChosen, (v) => ((kindChosen = v), showKind()), "Kind");
+    showKind();
+    const addTransform = () => {
+      const a = ends[Number(from?.value)];
+      const b = ends[Number(to?.value)];
+      if (a === undefined || b === undefined || a.id === b.id) return this.ctx.ui.toast("Choose two different ends.", "error");
+      let t: any;
+      try {
+        t = this.typedTransform(kindChosen, value.value, b.axes, cells.map((c) => Number(c.value)));
+      } catch (e) {
+        return this.ctx.ui.toast((e as Error).message, "error");
+      }
+      void this.edit({ op: "addTransform", transform: { ...t, input: { id: a.id }, output: { id: b.id } } });
+    };
+    const transformsCard = card(
+      "collections.relationships",
+      "Relationships",
+      { badge: "0" },
+      transformList,
+      el("div", { class: "cl-add" }, endsRegion, el("div", { class: "row" }, kind, value), matrix, el("div", { class: "row" }, button("Add relationship", addTransform, undefined, "btn small"))),
+    );
+
+    const open = el(
+      "div",
+      { class: "stack" },
+      name,
+      el("div", { class: "row" }, button("Download JSON", () => this.download()), button("Copy JSON", copy)),
+      graphRegion,
+      noSystem,
+      membersCard,
+      systemsCard,
+      transformsCard,
+      el("div", { class: "row" }, button("Add collection…", addSheet)),
+    );
+    host.append(closed, open, status);
+
+    const badge = (c: HTMLElement, n: number) => {
+      const b = c.querySelector(".card-badge");
+      if (b !== null && b.textContent !== String(n)) b.textContent = String(n);
+    };
+    const sync = () => {
       const tab = this.inCollectionScene();
       const root = tab ? this.root : undefined;
-      const found = this.foundHere();
-      const chosen = root && sceneSystems(root).find((s) => s.id === this.saved().system);
-      const addButton = el("button", { class: "btn outline small", type: "button", onclick: () => this.showAddSheet() }, "Add collection…");
-      if (root === undefined) {
-        host.replaceChildren(
-          el(
-            "div",
-            { class: "cl" },
-            this.error ? el("p", { class: "note error" }, this.error) : null,
-            !tab && found.length
-              ? el(
-                  "div",
-                  { class: "cl-found" },
-                  el("span", {}, "This workspace's images belong to:"),
-                  ...found.map((f) => el("div", { class: "cl-row" }, el("strong", {}, f.name), el("button", { class: "btn small", type: "button", disabled: this.busy, onclick: () => void this.openUrl(f.url) }, "Open in a tab"))),
-                )
-              : null,
-            el("p", { class: "note", title: "An OME-NGFF collection (RFC-8, draft): images, each placed by its transforms." }, this.busy ? "Reading the collection…" : "No collection open."),
-            el("div", { class: "cl-row" }, addButton),
-          ),
-        );
-        return;
-      }
-      const name = el("input", { class: "cl-name", type: "text", value: root.name, "aria-label": "Collection name", title: "Rename the collection" }) as HTMLInputElement;
-      name.addEventListener("change", () => {
-        const v = name.value.trim();
-        if (v !== "" && v !== root.name) void this.edit({ op: "rename", name: v });
-      });
-      const copy = () =>
-        void navigator.clipboard.writeText(JSON.stringify(this.doc, null, 2)).then(
-          () => this.ctx.ui.toast("Copied the collection's JSON."),
-          () => this.ctx.ui.toast("Could not copy.", "error"),
-        );
-      const edited = this.saved().doc !== undefined;
-      host.replaceChildren(
-        el(
-          "div",
-          { class: "cl" },
-          el("div", { class: "cl-row" }, name),
-          el(
-            "div",
-            { class: "cl-row" },
-            el("button", { class: "btn outline small", type: "button", title: "Save the collection's JSON", onclick: () => this.download() }, "Download JSON"),
-            el("button", { class: "btn outline small", type: "button", onclick: copy }, "Copy JSON"),
-          ),
-          // Where it came from, only when it came from somewhere (its changes stay with the tab: say so in the tooltip).
-          this.documentUrl
-            ? el(
-                "p",
-                { class: "note", title: edited ? "Changes are kept with this tab, not written back." : undefined },
-                `${edited ? "Changed from" : "From"} ${this.documentUrl === EXAMPLE_URL ? "the example" : this.documentUrl}`,
-              )
-            : null,
-          this.error ? el("p", { class: "note error" }, this.error) : null,
-          this.graphView(root),
-          chosen ? null : el("p", { class: "note" }, "Add a coordinate system to view the images in."),
-          this.warped.size ? el("p", { class: "note" }, `Warped: ${[...this.warped].join(", ")}.`) : null,
-          this.hidden.size ? el("p", { class: "note" }, `Hidden (no transform to this system): ${[...this.hidden].join(", ")}.`) : null,
-          card("collections.members", "Members", { open: true, badge: String(members(root).length) }, ...this.membersView(root)),
-          card("collections.systems", "Coordinate systems", { badge: String(sceneSystems(root).length) }, ...this.systemsView(root)),
-          card("collections.relationships", "Relationships", { badge: String(graph(root).transforms.length) }, ...this.transformsView(root)),
-          el("div", { class: "cl-row" }, addButton),
-        ),
+      if (this.busy) status.progress("Reading the collection…");
+      else if (this.error) status.error(this.error);
+      else status.clear();
+      closed.hidden = root !== undefined;
+      open.hidden = root === undefined;
+      found.update({ list: tab ? [] : this.foundHere(), busy: this.busy });
+      if (root === undefined) return;
+      if (name.ownerDocument.activeElement !== name && name.value !== root.name) name.value = root.name;
+      const system = this.saved().system;
+      const labels = members(root).filter((m) => this.ctx.viewer.layerSpec(m.node.name)?.type === "segmentation").map((m) => m.node.name);
+      const key = { doc: this.doc, url: this.documentUrl, system, warped: [...this.warped], hidden: [...this.hidden], labels };
+      graphRegion.update(key);
+      noSystem.hidden = sceneSystems(root).some((s) => s.id === system);
+      memberList.update(key);
+      systemList.update(key);
+      transformList.update(key);
+      const inside = new Set(members(root).map((m) => m.node.location?.url));
+      pick.update(
+        this.ctx.workspace
+          .datasets()
+          .map((d) => ({ name: d.name, url: zarrGroupUrl(d.source) }))
+          .filter((d): d is { name: string; url: string } => d.url !== undefined && !inside.has(d.url)),
       );
+      endsRegion.update(this.endsOf(root));
+      badge(membersCard, members(root).length);
+      badge(systemsCard, sceneSystems(root).length);
+      badge(transformsCard, graph(root).transforms.length);
     };
-    this.update = draw;
-    draw();
+    this.update = sync;
+    sync();
     return () => (this.update = undefined);
   }
 }
