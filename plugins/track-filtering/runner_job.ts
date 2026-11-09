@@ -10,6 +10,13 @@
  * runner's compute them the same way); for a store, its positions as
  * stored.  The group's rule is TrackVis's: every "and" region, at least one
  * "or" region when it has any, no "not" region, and every attribute range.
+ *
+ * Tags (a store's groups and categories, as the viewer names them) go as
+ * the objects they choose: the page works out which objects pass the
+ * group's tags, and the document carries them as a set of object ids (its
+ * `groups`), which the tree's "group" node tests.  The job need not know
+ * how the viewer named the tags, and a tractogram file, which has none of
+ * its own, is filtered the same way.
  */
 import type { FilterSpec } from "./filter.js";
 import type { MaskVolume, RoiGeometry, RoiOp } from "./roi.js";
@@ -18,12 +25,21 @@ export interface ZvfDocument {
   format: "zvf-predicate";
   version: 1;
   tree: ZvfNode;
+  /** The object sets the tree's "group" nodes name by index (ngplatform's addition: the runner reads it). */
+  groups?: ZvfGroup[];
+}
+
+/** A set of object ids: bit k is object k, `size` bits, most significant bit first, in base64. */
+export interface ZvfGroup {
+  size: number;
+  bits: string;
 }
 
 export type ZvfNode =
   | { op: "all" }
   | { op: "passes"; mode: "path" | "endpoints" | "both_endpoints"; region: ZvfRegion }
   | { op: "column"; name: string; cmp: "between"; value: [number, number] }
+  | { op: "group"; ids: number[] }
   | { op: "and" | "or"; args: ZvfNode[] }
   | { op: "not"; arg: ZvfNode };
 
@@ -116,16 +132,37 @@ function leaf(r: JobRegion): ZvfNode {
   return { op: "passes", mode, region: reg };
 }
 
-/** Why a group cannot be run on this computer, or undefined when it can. */
-export function cannotRun(filter: FilterSpec): string | undefined {
-  if (filter.includeTags.length > 0 || filter.excludeTags.length > 0) return "Groups that choose by tags (stored groups) cannot run on this computer yet: use regions and attribute ranges";
-  return undefined;
+/** Whether a group chooses by tags, so that its job needs the objects they choose (`groupPredicate`'s `tagged`). */
+export function usesTags(filter: FilterSpec): boolean {
+  return filter.includeTags.length > 0 || filter.excludeTags.length > 0;
 }
 
-/** The group's filter tree. */
-export function groupPredicate(regions: JobRegion[], filter: FilterSpec): ZvfDocument {
-  const reason = cannotRun(filter);
-  if (reason !== undefined) throw new Error(reason);
+/** The most objects a set can name: ids are bits, so a store of up to 2^31 objects (256 MB of bits). */
+const MAX_OBJECT_ID = 2 ** 31;
+
+/** A set of object ids as a document's group. */
+export function objectSet(objectIds: BigUint64Array): ZvfGroup {
+  let size = 0;
+  for (const id of objectIds) {
+    if (id >= BigInt(MAX_OBJECT_ID)) throw new Error(`object id ${id} is too large to send to the job`);
+    size = Math.max(size, Number(id) + 1);
+  }
+  const packed = new Uint8Array(Math.ceil(size / 8));
+  for (const id of objectIds) {
+    const k = Number(id);
+    packed[k >> 3] |= 0x80 >> (k & 7);
+  }
+  return { size, bits: base64(packed) };
+}
+
+/**
+ * The group's filter tree.  `tagged`: for a group that chooses by tags, the
+ * object ids that pass its tags (in at least one kept tag, none left out),
+ * which the document carries as its group 0.
+ */
+export function groupPredicate(regions: JobRegion[], filter: FilterSpec, tagged?: BigUint64Array): ZvfDocument {
+  const tags = usesTags(filter);
+  if (tags && tagged === undefined) throw new Error("a group that chooses by tags needs the objects its tags choose");
   const args: ZvfNode[] = [];
   for (const r of regions.filter((r) => r.op === "and")) args.push(leaf(r));
   const ors = regions.filter((r) => r.op === "or");
@@ -133,8 +170,9 @@ export function groupPredicate(regions: JobRegion[], filter: FilterSpec): ZvfDoc
   else if (ors.length > 1) args.push({ op: "or", args: ors.map(leaf) });
   for (const r of regions.filter((r) => r.op === "not")) args.push({ op: "not", arg: leaf(r) });
   for (const [name, [lo, hi]] of Object.entries(filter.ranges)) args.push({ op: "column", name, cmp: "between", value: [Math.min(lo, hi), Math.max(lo, hi)] });
+  if (tags) args.push({ op: "group", ids: [0] });
   const tree: ZvfNode = args.length === 0 ? { op: "all" } : args.length === 1 ? args[0] : { op: "and", args };
-  return { format: "zvf-predicate", version: 1, tree };
+  return { format: "zvf-predicate", version: 1, tree, ...(tags ? { groups: [objectSet(tagged!)] } : {}) };
 }
 
 /** A file name from a group's name: letters, digits, dot, dash and underscore. */
