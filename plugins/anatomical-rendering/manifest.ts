@@ -16,15 +16,15 @@ export const ANATOMICAL_RENDERING_MANIFEST: Manifest = {
 
 ## Starting it
 1. Start a runner with the render service where the GPU is (\`--service render="python -m ngplatform_render.server"\`), and pair with it (Settings › Compute, or the link it prints; over SSH, \`python -m ngplatform_runner tunnel HOST\`).
-2. In the **Anatomical** tool: **Remote** picks the computer; switch on **Render** at the top (also beside **Sections** in the 3-D panel). **Rendering** has the image, preset and region colours; **Lighting**, **Crops** (a clip facing the camera, clips across x, y, z, and boxes) and **Output** (stills, movies, splats) follow.
+2. In the **Anatomical** panel: **Remote** picks the computer; switch on **Render** at the top (also beside **Sections** in the 3-D view). **Rendering** has the image, preset and colours; **Regions**, **Quality**, **Lighting**, **Crops** (a clip facing the camera, clips across x, y, z, and boxes), **Output** (size, stills), **Movie** and **Splat** (in progress) follow. A 2-D image is not rendered; of an image with time points or channels, the first of each is.
 
 While the camera moves, the last picture stays in place in 3-D and moves with the view; it is rendered again when the camera stops (or, moving far, at half size).
 
 ## Settings
 - **Preset**: a look per modality (MR, HiP-CT, histology, translucent) or by region (each label in its colour). **Density**, **Exposure** and the light's direction adjust it.
 - **Crops**: a clip facing the camera (pinned or following), clips across x, y or z through the position, and boxes. Regions marked *kept* stay whole through them.
-- **Detail**: how many voxels the GPU holds; levels the store does not have are made by downsampling and kept on the host.
-- **Movie**: add keyframes from the view, then render a movie on the host (frames path-traced to a sample count, encoded as MP4).
+- **Quality**: how many voxels the GPU holds (levels the store does not have are made by downsampling and kept on the host), and finer detail where the view comes close.
+- **Movie**: add keyframes from the view (go back to one, replace it, reorder), then render a movie on the host (frames path-traced to a sample count, encoded as MP4). Stills, movies and splats are jobs, listed in their cards with Cancel and kept across a reload.
 
 Rendering is for looking, teaching and figures, not for reading values.`,
   links: [

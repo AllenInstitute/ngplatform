@@ -2,8 +2,8 @@
 
 ![S-21-46 (HiP-CT, 100 µm) path-traced on a workstation's GPU and drawn in the 3-D view](../images/plugins/anatomical-rendering.png)
 
-**Kind:** tool · **Off by default** (offered when you open an OME-Zarr or N5 image; or turn it on in the Plugins tab) · a
-**Render** switch beside **Sections** in the 3-D view, and **Anatomical** in the Tools panel ·
+**Kind:** tool · **Off by default** (offered when you open an OME-Zarr or N5 image; or turn it on in the Plugins panel) · a
+**Render** switch beside **Sections** in the 3-D view, and the **Anatomical** panel in the Tools dock ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/anatomical-rendering)
 
 Photorealistic views of an OME-Zarr or N5 image (not precomputed volumes such as EM), path-traced on a GPU and drawn in
@@ -43,21 +43,28 @@ Organ Atlas serves most of its scans; on a host).
    (**This computer**, or **Add a computer (SSH)…**; **Pair a computer…** in
    the panel's **Remote** card opens it). Addresses and tokens are kept
    there, for every function, not per image.
-3. Turn the plugin on and open **Anatomical** in the Tools panel. Switch on
+3. Turn the plugin on and open the **Anatomical** panel in the Tools dock. Switch on
    **Render** at the top (also beside **Sections** in the 3-D view); the
-   line beside it says what it is doing (all of it in its tooltip), or the
+   line under it shows work under way (the image loading), or the
    error when something has gone wrong, with **Retry**. **Remote** picks the **Computer**:
    **Automatic** (Compute's choice, else the first computer with the render
    service ready) or one of the paired computers whose runner has the
    render service.
 
 The panel's cards: **Remote** (where it renders), **Rendering** (image,
-preset, colours, density, exposure, regions, quality), **Lighting**,
-**Crops** (a clip facing the camera, clips across x, y and z, and boxes)
-and **Output** (stills, movies, rotations, splats). Each stays open or
-closed as you leave it. The row under the switch turns the view: **Centre**
-on the tissue, or from the left, right, anterior, posterior, superior or
-inferior.
+preset, colours, density, exposure), **Regions** (on a computer), **Quality**
+(how much of the image the GPU holds, detail, samples, and what is rendered
+now), **Lighting**, **Crops** (a clip facing the camera, clips across x, y
+and z, and boxes), **Output** (the size of stills and movies, and stills),
+**Movie** (keyframes and rotations) and **Splat** (*in progress*). Each
+stays open or closed as you leave it. The row under the switch turns the
+view: **Centre** on the tissue, or from each side of the image (see
+**View** below).
+
+Before it opens an image, the panel checks its axes. A 2-D image is not
+rendered (it says so under **Image**). On a computer, an image with time
+points or channels renders its first time point and channel, and says so;
+this browser's renderer takes images with one of each only.
 
 ## What you can set
 
@@ -84,7 +91,7 @@ inferior.
   histogram keeps its shape (a brain's two peaks, grey and white matter).
   A window set by hand is used as it is. **Hide the jar** renders only a cylinder about the scan's axis, which
   leaves out the jar's wall (as dense as tissue).
-- **Colourmap for this image** (on a host): the image's histogram (grey,
+- **Colourmap** (on a host, once the image is open): the image's histogram (grey,
   log counts) with the preset's colourmap and opacity curve over it, at
   the image's own values. Drag a control point left or right to move it
   (the stops between its neighbours follow) and up or down to change its
@@ -110,9 +117,14 @@ inferior.
   (studio, photo studio, sky; CC0 images from [Poly Haven](https://polyhaven.com),
   reduced to 256 × 128), turned about the view's vertical; or the preset's
   sky colours.
-- **View** (the row under the switch: L, R, A, P, S, I): turn the
-  3-D view to those sides (for images in RAS: x right, y anterior, z up).
-- **Boxes** (Crops): as many as eight, each with a name, on or off, keeping
+- **View** (the row under the switch): turn the 3-D view to look from
+  each side of the image. When its OME-Zarr metadata gives each axis an
+  anatomical orientation (`"orientation": {"type": "anatomical", "value":
+  "left-to-right"}`), the buttons are named by side (L, R, A, P, S, I, and
+  D, V and the like for other anatomy) and keep superior up; otherwise they
+  are named by axis (**+x**, **−x**, …: from +x looks towards −x; in RAS,
+  +x is right, +y anterior and +z superior).
+- **Boxes** (Crops): as many as eight, each with a name, a switch, keeping
   its inside or cutting it out (fractions of the volume along x, y and z,
   sliders): what shows is inside any crop that keeps and in none that cuts
   out (in this browser's renderer, only the first that keeps).
@@ -123,25 +135,25 @@ inferior.
   point the cursor was last over in the 3-D view (on the rendered tissue),
   and **Move to the cursor** moves the clips that are on there.
 - **Axis planes** (Crops): clips through the current position across x, y or z, keeping
-  either side, with an offset in mm (a slider or a number). Regions listed under **Kept through crops**
+  either side, with an offset in mm (a slider or a number). Regions listed under **Kept whole** (Regions)
   stay whole (vessels through a cut brain, say).
-- **Regions**: colour by a co-registered OME-Zarr segmentation (its labels'
-  FreeSurfer colours), how much of the region's colour to use, and regions
-  to hide.
+- **Regions** (on a host): **Colour by region** with a co-registered OME-Zarr segmentation (its labels'
+  FreeSurfer colours), how much of the region's colour to use, regions
+  to hide, and regions kept whole through crops. This browser's renderer has no region colours, so the card is hidden there.
 - **Whole volume**: how many voxels of the whole image the host holds (400
   million by default: the finest stored level within it). When a store has
   no level near the budget, a level is made by downsampling a finer one as
   it is read (means for images, majority vote for labels) and kept in a
   cache on the host.
-- **Finer detail where you zoom** (on a host; on by default): when the view
+- **Finer detail** (on a host; on by default): when the view
   comes close, the region in view is read at a finer stored level and
   rendered from it, while the rest of the volume stays at the whole
   volume's level, so shadows and light scattered from outside the view
-  still come from it. The level is the finest whose region fits **Detail
-  where you look** (200 million voxels by default) and is no finer than a
+  still come from it. The level is the finest whose region fits **Detail**
+  (200 million voxels by default) and is no finer than a
   pixel there. The region is what the view meets, with some depth behind
-  the surface and a margin; it is read in the background (the status line
-  says so) while the whole volume's level is shown, chunk by chunk through
+  the surface and a margin; it is read in the background (the line under
+  **Samples per pixel** says so) while the whole volume's level is shown, chunk by chunk through
   a cache in the host's memory (8 GB; `NGP_RENDER_CHUNK_CACHE_GB`), so a
   view moved a little reads only the chunks it had not. Reading starts while
   the camera is still moving (from what the view is coming to, planned at
@@ -151,31 +163,37 @@ inferior.
   one has as many samples (up to 24, or 2 s), then fades into it. A view
   that needs no finer level lets the detail go. Stills use the detail held
   for the view; movies use the whole volume's level.
-- **Samples per pixel**: when a still view stops refining.
-- **File…** (beside Preset): a preset (or a list) as JSON, in the form of
+- **Samples per pixel**: when a still view stops refining. Under it, the
+  level held and the last frame's samples, size and time a pass.
+- **Load…** (beside Preset): a preset (or a list) as JSON, in the form of
   `runner/ngplatform_render/presets/*.json`; it is kept with the scene.
 - **Save still (PNG)** (Output): the view now, path-traced on the host at the
-  output's size and twice its samples, as a job (its progress in Activity,
-  cancellable there); it downloads when done. Width × height × samples is
+  output's size and twice its samples, as a job: its progress in the Output
+  card (with **Cancel**) and in Activity; it downloads when done. Width × height × samples is
   kept within 8192² × 256.
-- **Movie** (Output): **Add keyframe** as you move, set each one's time,
-  then **Preview movie…**: a small, quick version (about 384 pixels, 8
+- **Movie**: **Add keyframe** as you move, set each one's time (**Go to**
+  moves the view back to a keyframe, **Replace** puts the view now in its
+  place, the arrows move it earlier or later), then **Preview movie…**: a small, quick version (about 384 pixels, 8
   samples, 12 frames a second) plays in a window. From there **Render the
-  movie** starts the movie itself as a job, its progress in the line at the
-  bottom and in Activity, cancellable there; the view stays live while it
+  movie** starts the movie itself as a job, its progress in the Movie card (with
+  **Cancel**) and in Activity; the view stays live while it
   renders (its passes go to the GPU one at a time beside the view's). Every
   frame is path-traced to the sample count and encoded as an MP4 (H.264)
   on the host, and downloads when done. Between keyframes the camera turns
   around the position; clips, density, exposure and the light change smoothly.
-- **Rotation** (Output): a turn about the position from the view now, about
+- **Rotation** (Movie): a turn about the position from the view now, about
   the vertical or the horizontal, a full or half turn, by a step in
   degrees; **Preview rotation…** works as the movie's preview.
-- **Splat** (Output; for the web, phones and VR): **Make splat**
+- **Jobs**: stills, movies and splats are listed in their cards and kept
+  in this browser: after a reload the list comes back, those still running
+  on the computer are followed again (in Activity too), and finished ones
+  can be downloaded while the computer keeps them.
+- **Splat** (*in progress*: shown, but no fit has yet run end to end; for the web, phones and VR): **Make splat**
   path-traces the look now from all round the position (**views**, each
   **size** pixels along its longer side at **samples**; **from** every side,
   this half, or near this side; a quarter of them closer in), then fits
   3-D Gaussians to them (**fit steps**; 0 makes the views only). It shows
-  as a job; **View** opens the result in a window (drag to
+  as a job in the Splat card; **View** opens the result in a sheet (drag to
   turn, right or shift drag to move, wheel to come closer) with downloads
   of the `.splat` and `.ply`, and **Open file…** opens one from
   this device. What would differ from view to view is held still: the
@@ -271,7 +289,7 @@ image is their mean, so it refines while the view is still. Frames made
 while the camera moves (see below) are half size, and for the first 12
 samples after a change the host smooths the image with an edge-avoiding
 wavelet filter guided by the distance to the tissue (about half the error at
-4 samples; **Smooth the first frames** switches it off).
+4 samples; **Denoise** switches it off).
 
 Each frame comes with the distance along each pixel's ray to where it meets
 tissue, and the page draws it as a surface in space (a vertex a pixel) with
@@ -341,8 +359,10 @@ from noisy first frames and detail coming in at once).
 - The image is placed by its OME-Zarr transforms in Neuroglancer's x, y, z
   (as the volume view does); a layer's own transform in the viewer is not
   applied yet.
-- One image (and one segmentation) at a time; images with t or c axes are
-  not rendered.
+- One image (and one segmentation) at a time; of an image with time points
+  or channels, the first of each is rendered (on a computer).
+- Splats are *in progress*: the panel offers them, but no fit has yet run
+  end to end.
 - Rendering is for looking, teaching and figures, not for reading values.
 - Finer detail comes from one stored level at a time, and only on a host:
   the browser's renderer holds one level.
