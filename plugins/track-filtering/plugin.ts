@@ -28,17 +28,16 @@ import { addDensity, densityGrid, displayMax, niftiFile } from "./density.js";
 import type { NmRegion } from "./labels.js";
 import { LabelsEngine } from "./labels_client.js";
 import {
+  AnswerCounts,
   type ColumnStatistics,
   computeMask,
   countPassing,
   emptyFilter,
   type FilterSpec,
   groupStatistics,
-  histogram,
   isEmptyFilter,
   passingIds,
   statisticsCsv,
-  tagCounts,
   toCsv,
 } from "./filter.js";
 import { FILTERING_PANEL } from "./manifest.js";
@@ -369,7 +368,28 @@ export function combineIds(results: { op: RoiOp; ids: string[] }[]): string[] {
   return [...(keep ?? [])].filter((id) => !nots.has(id));
 }
 
-class TrackGroups {
+/**
+ * Annotations as compared with what a layer holds: keys in order, numbers
+ * to a tolerance (Neuroglancer keeps coordinates as 32-bit floats, so a
+ * copy written in doubles would never look the same and be written again).
+ */
+export function annotationsKey(list: unknown): string {
+  const norm = (v: unknown): unknown =>
+    typeof v === "number"
+      ? Math.round(v * 1e3) / 1e3
+      : Array.isArray(v)
+        ? v.map(norm)
+        : v !== null && typeof v === "object"
+          ? Object.fromEntries(
+              Object.keys(v)
+                .sort()
+                .map((k) => [k, norm((v as Record<string, unknown>)[k])]),
+            )
+          : v;
+  return JSON.stringify(norm(list ?? []));
+}
+
+export class TrackGroups {
   private saved: Saved;
   private props: SegmentProperties | undefined;
   private rowOf: ((id: bigint) => number | undefined) | undefined;
@@ -420,6 +440,8 @@ class TrackGroups {
   private statsOpen = false;
   private statsColumn: string | undefined;
   private readonly statsCache = new WeakMap<Uint8Array, Map<string, ColumnStatistics>>();
+  /** Histograms, tag counts and passing ids by answer: a progress tick counts nothing again. */
+  private readonly counts = new AnswerCounts();
   /** The density map last made for each group, to save. */
   private readonly densities = new Map<string, File>();
   /** Region ids last written to the annotation layer: only these can be "deleted in a view". */
@@ -1538,29 +1560,45 @@ class TrackGroups {
               ? { type: "ellipsoid", id, center: at(a.points[0], a.nm), radii: at(a.points[1], a.nm) }
               : { type: a.type, id, pointA: at(a.points[0], a.nm), pointB: at(a.points[1], a.nm) },
         );
-        this.ctx.viewer.patchState((ng) => {
-          const target = (ng.layers as Json[] | undefined)?.find((l) => l.name === layer);
-          if (target !== undefined) target.annotations = annotations;
-        });
+        this.writeCopies(layer, result, annotations);
         return;
       }
       if (kind === "annotations") {
         // The group's layer holds copies of the passing annotations.
         const passing = new Set(result.ids);
-        const annotations = this.baseAnnotations().filter((a) => passing.has(String(a.id)));
-        const spec = this.ctx.viewer.layerSpec(layer);
-        if (JSON.stringify(spec?.annotations ?? []) === JSON.stringify(annotations)) return;
-        this.ctx.viewer.patchState((ng) => {
-          const target = (ng.layers as Json[] | undefined)?.find((l) => l.name === layer);
-          if (target !== undefined) target.annotations = annotations;
-        });
+        this.writeCopies(
+          layer,
+          result,
+          this.baseAnnotations().filter((a) => passing.has(String(a.id))),
+        );
       } else {
         this.ctx.viewer.setTemporaryVisibleSegments(layer, BigUint64Array.from(result.ids, (id) => BigInt(id)));
       }
       return;
     }
     if (result.mask === undefined || this.props === undefined) return;
-    this.ctx.viewer.setTemporaryVisibleSegments(layer, passingIds(this.props, result.mask));
+    this.ctx.viewer.setTemporaryVisibleSegments(layer, this.counts.passingIds(this.props, result.mask));
+  }
+
+  /**
+   * Writes a group's passing annotations into its layer: an answer derived
+   * from what the user did, so quietly (it joins that undo step, not one of
+   * its own) and only once the answer is final and differs from what the
+   * layer holds.  An answer still being worked out (the one before, shown
+   * meanwhile) is not written: after an undo it would put back what the
+   * undo took away.
+   */
+  private writeCopies(layer: string, result: GroupResult, annotations: Json[]): void {
+    if (result.state !== "exact" && result.state !== "empty") return;
+    const spec = this.ctx.viewer.layerSpec(layer);
+    if (spec === undefined || annotationsKey(spec.annotations) === annotationsKey(annotations)) return;
+    this.ctx.viewer.patchState(
+      (ng) => {
+        const target = (ng.layers as Json[] | undefined)?.find((l) => l.name === layer);
+        if (target !== undefined) target.annotations = annotations;
+      },
+      { quiet: true },
+    );
   }
 
   exportCsv(): void {
@@ -1730,13 +1768,17 @@ class TrackGroups {
       const found = await this.ctx.workspace.local.open(file);
       if (found[0] !== undefined) {
         this.ctx.workspace.addDataset({ source: found[0].source, name, kind: "image" });
-        // A heat map over the anatomy: clear where no streamline passes.
-        this.ctx.viewer.patchState((ng) => {
-          const layer = (ng.layers as Json[] | undefined)?.find((l) => l.name === name && l.source === found[0].source);
-          if (layer === undefined) return;
-          layer.shader = DENSITY_SHADER;
-          layer.shaderControls = { normalized: { range: [0, displayMax(counts)] } };
-        });
+        // A heat map over the anatomy: clear where no streamline passes.  Part of adding the map
+        // (the undo step), not a step of its own.
+        this.ctx.viewer.patchState(
+          (ng) => {
+            const layer = (ng.layers as Json[] | undefined)?.find((l) => l.name === name && l.source === found[0].source);
+            if (layer === undefined) return;
+            layer.shader = DENSITY_SHADER;
+            layer.shaderControls = { normalized: { range: [0, displayMax(counts)] } };
+          },
+          { quiet: true },
+        );
       }
       const seconds = (performance.now() - started) / 1000;
       const message = `Density map of ${ids.length.toLocaleString()} streamlines on a ${grid.dims.join(" × ")} grid of ${grid.voxel} mm voxels, in ${seconds.toFixed(1)} s.`;
@@ -2407,16 +2449,19 @@ class TrackGroups {
 
     // Attributes and groups.
     if (props !== undefined && props.numeric.length > 0) {
-      const details = el("details", { open: !isEmptyFilter(group.filter) || group.rois.length === 0 });
+      const details = el("details", { open: !isEmptyFilter(group.filter) || group.rois.length === 0 }) as HTMLDetailsElement;
       details.append(el("summary", { class: "section-title" }, "Attributes"));
-      for (const column of props.numeric) details.append(this.rangeControl(group, props, column));
+      // Closed, its histograms are not counted; opened, they are.
+      details.addEventListener("toggle", () => this.updateAll());
+      for (const column of props.numeric) details.append(this.rangeControl(group, props, column, () => details.open));
       box.append(details);
     }
     const tags = props?.tags;
     if (props !== undefined && tags !== undefined && tags.names.length > 0) {
-      const details = el("details", { open: group.filter.includeTags.length > 0 });
+      const details = el("details", { open: group.filter.includeTags.length > 0 }) as HTMLDetailsElement;
       details.append(el("summary", { class: "section-title" }, "Stored groups"), el("p", { class: "note" }, "Ticked: keep objects in any ticked group."));
-      const all = tagCounts(props);
+      details.addEventListener("toggle", () => this.updateAll());
+      const all = this.counts.tagCounts(props);
       const list = el("div", { class: "tf-tags" });
       const counts: HTMLElement[] = [];
       tags.names.forEach((tag, i) => {
@@ -2433,9 +2478,13 @@ class TrackGroups {
         counts.push(c);
         list.append(el("label", { class: "tf-tag", title: tags.descriptions[i] || tag }, tick, el("span", {}, tag), c));
       });
+      let drawn: Uint32Array | undefined | null = null;
       this.updaters.push(() => {
+        if (!details.open) return;
         const mask = this.results.get(group.id)?.mask;
-        const passing = mask === undefined ? undefined : tagCounts(props, mask);
+        const passing = mask === undefined ? undefined : this.counts.tagCounts(props, mask);
+        if (passing === drawn) return;
+        drawn = passing;
         counts.forEach((c, i) => {
           c.textContent = passing === undefined ? `${all[i]}` : `${passing[i]} / ${all[i]}`;
         });
@@ -2601,8 +2650,11 @@ class TrackGroups {
     );
   }
 
-  /** A histogram and a two-handled range for one numeric attribute of the edited group. */
-  private rangeControl(group: Group, props: SegmentProperties, column: SegmentProperties["numeric"][number]): HTMLElement {
+  /**
+   * A histogram and a two-handled range for one numeric attribute of the
+   * edited group; the group's histogram is counted only while `shown`.
+   */
+  private rangeControl(group: Group, props: SegmentProperties, column: SegmentProperties["numeric"][number], shown: () => boolean): HTMLElement {
     const { id, min, max } = column;
     const step = max > min ? (max - min) / 400 : 1;
     const ranges = () => this.saved.groups.find((g) => g.id === group.id)?.filter.ranges ?? {};
@@ -2617,8 +2669,9 @@ class TrackGroups {
     svg.setAttribute("class", "tf-hist");
     svg.setAttribute("viewBox", `0 0 ${BINS} 1`);
     svg.setAttribute("preserveAspectRatio", "none");
-    const all = histogram(column.values, min, max, BINS);
-    const peak = Math.max(1, ...all);
+    const all = this.counts.histogram(column, BINS);
+    let peak = 1;
+    for (const n of all) peak = Math.max(peak, n);
     const bars = (counts: Uint32Array, cls: string) =>
       Array.from(counts, (n, b) => {
         const r = document.createElementNS(svgNs, "rect");
@@ -2650,10 +2703,15 @@ class TrackGroups {
       this.evaluateGroup(this.saved.groups.find((g) => g.id === group.id)!);
     };
     for (const input of [lo, hi]) input.addEventListener("input", live);
+    let drawn: Uint32Array | undefined | null = null;
     this.updaters.push(() => {
       const mask = this.results.get(group.id)?.mask;
-      const passing = mask === undefined ? undefined : histogram(column.values, min, max, BINS, mask);
-      passGroup.replaceChildren(...(passing === undefined ? [] : bars(passing, "pass")));
+      // Counted once per answer, and drawn again only when it changes.
+      const passing = !shown() || mask === undefined ? undefined : this.counts.histogram(column, BINS, mask);
+      if (passing !== drawn) {
+        drawn = passing;
+        passGroup.replaceChildren(...(passing === undefined ? [] : bars(passing, "pass")));
+      }
       const [a, b] = current();
       if (document.activeElement !== lo) lo.value = String(a);
       if (document.activeElement !== hi) hi.value = String(b);
