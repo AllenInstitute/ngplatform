@@ -3,7 +3,7 @@
 ![The time course of the voxel under the mouse, two pinned voxels and a region's mean in a synthetic 4-D brain](../images/plugins/time-series.png)
 
 **Kind:** tool · **Off by default** (offered when you open a 4-D image or a CIFTI series; or turn it on in the Plugins tab) · the
-**Time series** tab in the bottom dock, and **Alt+P** to pin ·
+**Time series** panel in the Activity dock at the bottom, and **Alt+P** to pin ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/time-series)
 
 The values of an image along time: the time course of the voxel under the
@@ -20,12 +20,18 @@ along it.
 
 ## Using it
 
-1. Switch the plugin on, open a 4-D image, and open the **Time series** tab
-   at the bottom (drag the dock's top edge up for a taller plot).
+1. Switch the plugin on and open a 4-D image. The **Time series** panel is
+   in the Activity dock at the bottom, which starts collapsed to a single
+   line: click the line (or the icon at its end) to open the dock, then
+   **Time series** in its tab bar. Drag the dock's top edge up for a
+   taller plot.
 2. Choose the **Image** if there are several. Move the mouse over the
    image: the plot shows that voxel's values at every time point. The x
    axis is in the image's time unit (seconds for NIfTI); the yellow line
-   is the time the views show.
+   is the time the views show. An image layer the panel cannot read (a
+   precomputed or N5 image, a NIfTI from a URL) is named under **Image**
+   with the reason; with none it can read, the panel says so, names the
+   image layers and why each is left out, and offers **Open data…**.
 3. **Pin** (or **Alt+P** with the mouse over the views) keeps the voxel's
    series in a colour of its own; **×** in the legend removes it. Up to
    eight pins; they are kept in the link.
@@ -37,7 +43,8 @@ along it.
    that time in the views.
 6. **Play** steps through time at the chosen rate (time points a second),
    from the start again when **Loop** is on; the other buttons go to the
-   first, previous, next and last time point. **Alt+Shift+P** plays and
+   first, previous, next and last time point, and the **Time point**
+   slider (or its number box) goes to any. **Alt+Shift+P** plays and
    pauses. The readout gives the time and the time point (from 0).
    Playing makes no undo steps: undo after playing undoes what you did
    before it (the buttons for one time point are steps, as other moves).
@@ -50,7 +57,7 @@ To save a movie of the time-lapse, use the camera icon → **Movie: sweep slices
 sweep along `t`.
 
 The finest resolution is read, chunk by chunk along time; the first voxel
-in a new part of a long series takes a moment (the tab shows the
+in a new part of a long series takes a moment (the panel shows the
 progress), and voxels near it are then immediate. When that read is large
 (a long series in large chunks), the voxel under the moving mouse is read
 coarsely first: a sample of the time points, or a coarser resolution
@@ -64,8 +71,8 @@ A GIFTI surface opened from this computer with a CIFTI time series
 vertices' time courses plotted. Choose the series in **Image** (it reads
 "surface: name_t (file)"), and press **Show name_t as the overlay** (or
 choose it in the surface layer's Render → Surface): it holds the values at
-the time point the Time series tab shows, and the play and step buttons
-and clicks on the plot change it. The time point is kept in the link
+the time point the Time series panel shows, and the play and step
+buttons, the slider and clicks on the plot change it. The time point is kept in the link
 (shown again when the workspace opens) and each step is an undo step, as
 for images; playing makes none until it stops.
 
@@ -86,7 +93,7 @@ the vertex is the one shown under the mouse.
 ### Parcels
 
 With a parcellation beside the surface (an `.annot` file, or `.label`
-files, in FreeSurfer's `label` folder; a CIFTI `.dlabel.nii`), the tab
+files, in FreeSurfer's `label` folder; a CIFTI `.dlabel.nii`), the panel
 offers its parcels (with how many vertices each has; a parcellation menu
 when there are several). **Pin mean** pins the parcel chosen; **Its
 parcel** (or **Alt+Shift+M** over the views) pins the parcel of the vertex

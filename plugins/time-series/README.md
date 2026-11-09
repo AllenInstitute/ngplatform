@@ -3,7 +3,7 @@
 ![The time course of the voxel under the mouse, two pinned voxels and a region's mean in a synthetic 4-D brain](../../docs/images/plugins/time-series.png)
 
 A tool plugin (off by default) for images with a time axis: the **Time
-series** tab in the bottom dock plots the values of the voxel under the
+series** panel in the Activity dock (at the bottom) plots the values of the voxel under the
 mouse at every time point, keeps pinned voxels and the mean over a region
 (a box or ellipsoid in an annotation layer) beside it, marks the time the
 views show, plays and steps through time, and saves the plotted series as
@@ -19,8 +19,8 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
 
 | File | What it does |
 |---|---|
-| `manifest.ts` | Id, the bottom-dock panel, commands (pin, play, save CSV) and keys, the user guide. |
-| `plugin.ts` | The panel: the image, transport, pins and regions, the legend; the voxel under the mouse; playing; CSV. |
+| `manifest.ts` | Id, the panel (in the bottom slot: the Activity dock), commands (pin, play, save CSV) and keys, the user guide. |
+| `plugin.ts` | The panel, drawn once from the SDK's parts and updated in place (only the readout, the time slider and the marker change while playing): the image (and the image layers it cannot read, with why), transport, pins and regions, the legend, a status line with Retry; the voxel under the mouse; playing; CSV. |
 | `space.ts` | Positions (global, and a layer's local dimensions after them: `Place`) to a layer's source coordinates and back, in any number of dimensions (`LayerMap`). |
 | `series.ts` | The time axis as the views show it (its global dimension, start, step and unit), the voxel at a position, stepping, colours, percent change, CSV. |
 | `surface.ts` | Time series on surfaces: a Zarr Vectors layer's store, the series its surface header lists (`time_series`), their time axis; the mouse in the store's coordinates, how near a vertex it must be (three median edge lengths), the nearest-vertex answer; parcellations and a parcel's course as the store answers them. |
@@ -159,9 +159,9 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   for a region) and the chosen image are in the plugin's state, in the
   link; their values are read again when it is opened. A region pin is
   read again when its annotation or its layer's transform changes. The
-  rate, loop and percent-change switches are per-user settings.
-- **Colours.** The series under the mouse is drawn in the docks' text
-  colour; pins take eight categorical colours (stepped for a dark ground)
+  rate, loop and percent-change choices are per-user settings.
+- **Colours.** The series under the mouse is drawn in the text colour
+  (`--text`, through `currentColor` on the plot and the swatches); pins take eight categorical colours (stepped for a dark ground)
   in a fixed order, the first free one, and keep it; there are no more pins
   than colours.
 
@@ -173,6 +173,13 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   a chunk and partial edge chunks; positions to voxels and time points,
   with a time offset and a turned layer; regions (box, ellipsoid, the
   limit); CSV, stepping, colours, ticks.
+- `tests/panel.test.ts`: the `TimeSeries` class and its panel against a
+  fake context, with the fixture read in place of the worker: the empty
+  state, its action and the image layers it cannot read (`notRead`); the
+  selects and legend kept (not drawn again) while the mouse's voxel is
+  read and while playing; playing quietly, stepping and the slider as
+  undo steps; pinning and removing a pin; Retry after the image could not
+  be opened.
 - In the browser (headless Chrome, a 64 × 64 × 30 × 100 synthetic NIfTI,
   TR 2 s): the values plotted and saved equal nibabel's at the voxel
   under the mouse, and Neuroglancer's own value at the mouse at that time
