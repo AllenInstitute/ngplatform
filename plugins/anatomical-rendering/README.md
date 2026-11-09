@@ -29,13 +29,14 @@ The parameter block both renderers read is laid out once, in
 
 | Request | What |
 |---|---|
-| `GET /info` | Its GPU and presets |
+| `GET /info` | Its GPU, presets, light maps, whether it can fit splats, and whether it has `ffmpeg` (movies need it) |
 | `GET /presets` | The presets in full |
 | `POST /sessions` `{volume: {url, budget?, level?}, labels?: {url}}` | Loads the image (and labels) and puts it on the GPU; `GET /sessions/<id>` says how far it is, then the level and its placement |
-| `PUT /sessions/<id>/view` | A view: `inv_view_projection` (column-major), `width`, `height`, `scale`, `world_from_physical`, `unit_mm`, `preset`, `overrides`, `light`, `clips`, `labels`, `background`, `max_samples`, `aperture`, `focus`, `orbit_center` |
-| `GET /sessions/<id>/frame?after=N` | The next frame after N (long poll): WebP with alpha, `X-Frame`, `X-Samples`, `X-Version`, `X-Width`, `X-Height` |
+| `PUT /sessions/<id>/view` | A view: `inv_view_projection` (column-major), `width`, `height`, `scale`, `world_from_physical`, `unit_mm`, `preset`, `overrides`, `light`, `clips`, `labels`, `background`, `max_samples`, `aperture`, `focus`, `orbit_center`. Sides are kept to 8–8192 pixels and `max_samples` to 1–4096 |
+| `GET /sessions/<id>/frame?after=N` | The next frame after N (long poll): WebP with alpha, `X-Frame`, `X-Samples`, `X-Version`, `X-Width`, `X-Height`; 410 with the error once the session has failed (out of GPU memory: its memory is let go) |
 | `GET /sessions/<id>/depth` | The view's depth (GL 0..1, float16, zlib) |
-| `POST /sessions/<id>/movies` `{keyframes, fps, width, height, samples, crf?}` | A movie (a preview is one at about 384 px, 8 samples, 12 fps); `GET /movies/<id>` for progress, `/movies/<id>/file` for the MP4. Its passes go to the GPU one at a time (`Renderer.step_beside`), so the live view's wait behind it is one pass, not the frame's |
+| `POST /sessions/<id>/stills` `{view, width, height, samples, background?, name?}` | A still as a job: `GET /stills/<id>` for progress, `DELETE` to cancel, `/stills/<id>/file` for the PNG. At most 8192 × 8192 pixels, 4096 samples, and width × height × samples within 8192² × 256 |
+| `POST /sessions/<id>/movies` `{keyframes, fps, width, height, samples, crf?}` | A movie (a preview is one at about 384 px, 8 samples, 12 fps); `GET /movies/<id>` for progress, `DELETE` to cancel (ffmpeg too), `/movies/<id>/file` for the MP4. Checked before it starts: fps 1–120, sides made even for H.264, frames and pixels within limits, ffmpeg found. Its passes go to the GPU one at a time (`Renderer.step_beside`), so the live view's wait behind it is one pass, not the frame's |
 
 ## Tests
 

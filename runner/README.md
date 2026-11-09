@@ -197,9 +197,14 @@ python -m ngplatform_runner --root ~/data \
 ```
 
 It uses the first GPU CUDA sees (set `CUDA_VISIBLE_DEVICES` to choose), keeps
-levels it makes in `<its state dir>/render-cache` and movies in
-`<its state dir>/renders` (or a folder under the roots the app names). Its
-API is in [plugins/anatomical-rendering/README.md](../plugins/anatomical-rendering/README.md).
+levels it makes in `<its state dir>/render-cache` and stills, movies and
+splats in `<its state dir>/renders` (or a folder under the roots the app
+names), each in a new folder of its own. Movies need `ffmpeg` on the `PATH`;
+`/info` says whether it was found. To read remote stores only from certain
+places, add `--allow-source <url>` (more than once for several, or
+`NGP_RENDER_SOURCES`, space-separated) to the service's command: a store
+must then be under one of them. Its API is in
+[plugins/anatomical-rendering/README.md](../plugins/anatomical-rendering/README.md).
 
 ## Using a GPU on another machine over SSH
 
