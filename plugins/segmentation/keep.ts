@@ -159,3 +159,57 @@ export async function discard(id: string): Promise<void> {
   const top = await root();
   await top?.removeEntry(id, { recursive: true }).catch(() => {});
 }
+
+/** The bytes a kept volume takes: its chunks' raw bytes (the description is small beside them). */
+export function keptBytes(info: KeptInfo): number {
+  return info.chunks * 64 ** 3 * LABEL_ARRAYS[info.type].BYTES_PER_ELEMENT;
+}
+
+/** How long ago `time` was, in the largest whole unit: "just now", "5 min ago", "3 h ago", "2 days ago". */
+export function age(time: number, now = Date.now()): string {
+  const s = Math.max(0, (now - time) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  const days = Math.floor(s / 86400);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+type Storage = { persist?(): Promise<boolean>; persisted?(): Promise<boolean>; estimate?(): Promise<{ usage?: number; quota?: number }> };
+
+let asked: Promise<boolean | undefined> | undefined;
+
+/**
+ * Asks, once a visit, that this browser keep its copies rather than clear
+ * them when short of space.  Resolves true when it will, false when it
+ * refused, undefined where it cannot be asked.
+ */
+export function persist(): Promise<boolean | undefined> {
+  asked ??= (async () => {
+    const storage = navigator.storage as unknown as Storage | undefined;
+    if (storage?.persist === undefined) return undefined;
+    try {
+      if (await storage.persisted?.()) return true;
+      return await storage.persist();
+    } catch {
+      return undefined;
+    }
+  })();
+  return asked;
+}
+
+/** Forgets the answer, so the next `persist()` asks again (for tests). */
+export function forgetPersist(): void {
+  asked = undefined;
+}
+
+/** What this browser's storage for the site holds and allows, and whether it is kept for good (what is not known, left out). */
+export async function storageUse(): Promise<{ usage?: number; quota?: number; persisted?: boolean }> {
+  const storage = navigator.storage as unknown as Storage | undefined;
+  try {
+    const [estimate, persisted] = await Promise.all([storage?.estimate?.(), storage?.persisted?.()]);
+    return { usage: estimate?.usage, quota: estimate?.quota, persisted };
+  } catch {
+    return {};
+  }
+}

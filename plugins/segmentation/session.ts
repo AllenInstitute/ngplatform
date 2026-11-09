@@ -19,7 +19,7 @@ import { History } from "./history.js";
 import type { ImageBlock, Vec3 } from "./kernels.js";
 import { CHUNK, LabelVolume } from "./label_volume.js";
 import { CowVolume } from "./cow_volume.js";
-import { discard, keep, readKept } from "./keep.js";
+import { discard, keep, persist, readKept } from "./keep.js";
 import { hashColour } from "./segments.js";
 import { LABEL_STORE_EXTENSION, serveInPage } from "./store_format.js";
 
@@ -36,6 +36,9 @@ export interface Reference {
 }
 
 let sessions = 0;
+
+/** Whether this browser's refusal to keep the copies for good has been said (once a visit). */
+let refusalTold = false;
 
 export class Session {
   readonly history = new History();
@@ -62,8 +65,15 @@ export class Session {
   private keeping: Promise<unknown> = Promise.resolve();
   /** When the oldest change not yet kept was made: drawing without a pause is kept every few seconds all the same. */
   private dirtySince: number | undefined;
-  /** Leaving the page keeps what is not kept yet. */
+  /**
+   * Leaving the page, or hiding it (another tab, the window minimised, a
+   * phone's app switched), keeps what is not kept yet: hidden comes first,
+   * while there is still time for the browser's storage to be written.
+   */
   private readonly onPageHide = () => this.keepNow();
+  private readonly onHidden = () => {
+    if (document.visibilityState === "hidden") this.keepNow();
+  };
   private blockGeneration = 0;
 
   private constructor(
@@ -135,6 +145,7 @@ export class Session {
     if (this.dirtySince === undefined) {
       this.dirtySince = Date.now();
       window.addEventListener("pagehide", this.onPageHide);
+      document.addEventListener("visibilitychange", this.onHidden);
     }
     // 1.5 s after the last change, or at once when changes have waited 5 s.
     this.keepTimer = setTimeout(() => this.keepNow(), Date.now() - this.dirtySince > 5000 ? 0 : 1500);
@@ -145,7 +156,7 @@ export class Session {
     clearTimeout(this.keepTimer);
     this.keepTimer = undefined;
     this.dirtySince = undefined;
-    window.removeEventListener("pagehide", this.onPageHide);
+    this.unlisten();
     const keys = [...this.dirty];
     this.dirty.clear();
     const versions = keys.map((k) => this.volume.versionOf(k));
@@ -154,6 +165,13 @@ export class Session {
       if (await keep(this.volume, { id: this.id, name: this.layer, labels: [...this.labels], reference: this.reference?.layer, original }, keys, versions)) {
         this.volume.keptAt(keys, versions);
         this.keepFailed = false;
+        // The first copy kept: ask that the browser not clear it when short of space.
+        if ((await persist()) === false && !refusalTold) {
+          refusalTold = true;
+          const text = "This browser may clear the label volumes it keeps when it is short of space: save them to keep them.";
+          this.ctx.ui.toast(text);
+          this.ctx.log.info(text);
+        }
         return;
       }
       // Not kept (storage full, say): kept again with the next change, so a reload does not bring back less.
@@ -165,6 +183,11 @@ export class Session {
 
   /** The last keep failed (said once until one succeeds). */
   private keepFailed = false;
+
+  private unlisten(): void {
+    window.removeEventListener("pagehide", this.onPageHide);
+    document.removeEventListener("visibilitychange", this.onHidden);
+  }
 
   /** Where the label volume's voxels are in the global space (once its layer has loaded). */
   placement(): Placement | undefined {
@@ -311,7 +334,7 @@ export class Session {
     // Changes not kept yet are kept, unless the session is being forgotten.
     if (!forget && this.keepTimer !== undefined) this.keepNow();
     clearTimeout(this.keepTimer);
-    window.removeEventListener("pagehide", this.onPageHide);
+    this.unlisten();
     this.unserve();
     this.ctx.workspace.local.close(this.source);
     if (forget) void this.keeping.then(() => discard(this.id));
