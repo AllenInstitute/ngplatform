@@ -17,7 +17,7 @@ import { httpAccess, openZarrArray, ShardIndexCache, ZarrArrayReader } from "neu
 import { mergeLevels, parseOmeLevels, type VolumeLevel } from "../volume-view/ome.js";
 import { storedOrder } from "../volume-view/volume_reader.js";
 import { spatialGroup } from "./ome4.js";
-import { withZarr2 } from "./zarr2.js";
+import { withZarr2 } from "../volume-view/zarr2.js";
 
 export interface OrientationLevel extends VolumeLevel {
   /** Voxels along x, y and z. */

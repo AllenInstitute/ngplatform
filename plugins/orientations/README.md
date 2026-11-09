@@ -31,7 +31,6 @@ User guide: [docs/plugins/orientations.md](../../docs/plugins/orientations.md)
 | `worker.ts`, `client.ts` | The reader and glyph computation in a worker. |
 | `shader.ts` | The direction-colour shader for the image layer. |
 | `readout.ts` | What the voxel under the cursor holds, in words. |
-| `zarr2.ts` | Zarr v2 arrays (OME-Zarr 0.4) read as v3. |
 | `tools/make_dipy_example.py` | A real example from DIPY's sample data (below). |
 | `tests/` | The maths against DIPY, synthetic multiscale stores read end to end. |
 
@@ -366,8 +365,8 @@ length, all in RAS after the frame and flips.
 ### Stores
 
 OME-Zarr 0.5 (Zarr v3) and 0.4 (Zarr v2, `.zarray`, C or Fortran order:
-`zarr2.ts` presents each array's metadata as v3's), 0.6 coordinate systems
-(through the volume view's `ome.ts`), and 4-D NIfTI read in place by the
+the shared readers' `zarr2.ts` presents each array's metadata as v3's),
+0.6 coordinate systems (through the shared readers' `ome.ts`), and 4-D NIfTI read in place by the
 app. Axes: one component axis (`type: "channel"`, or named `c`, or a
 NIfTI's `t`) beside x, y and z.
 
