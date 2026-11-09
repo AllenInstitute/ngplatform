@@ -22,6 +22,8 @@ export interface CollectionNode {
   /** Where it is, resolved against the document's URL ("zarr": a Zarr group; "json": another document). */
   location?: { type: string; url: string };
   nodes: CollectionNode[];
+  /** A label image by its node's own metadata (`image-label` in its attributes). */
+  label?: boolean;
   /** Coordinate systems, with each axis's name and unit ("" when none). */
   systems: { id: string; name?: string; axes: string[]; units: string[] }[];
   transforms: Transform[];
@@ -80,6 +82,7 @@ function readNode(n: any, documentUrl: string): CollectionNode {
     name: String(n.name ?? n.id ?? "(unnamed)"),
     id: n.id,
     location: path === undefined ? undefined : { type: String(path.type ?? "zarr"), url: resolvePath(String(path.path ?? path), documentUrl) },
+    ...(attributes["image-label"] !== undefined || attributes.ome?.["image-label"] !== undefined ? { label: true } : {}),
     nodes: Array.isArray(n.nodes) ? n.nodes.map((c: any) => readNode(c, documentUrl)) : [],
     systems,
     transforms,
@@ -94,8 +97,9 @@ const multiply = (a: Mat4, b: Mat4): Mat4 => {
 
 /**
  * A transform as a 4 × 4 on x, y, z (the axes in `axes` order, as the
- * output system names them); undefined for kinds this cannot compose
- * (displacement fields, by-coordinate maps).
+ * output system names them): identity, scale, translation, rotation,
+ * mapAxis, affine and sequences of them; undefined for kinds this cannot
+ * compose (displacement fields, by-coordinate maps, by-dimension ones).
  */
 export function transformMatrix(t: any, axes: string[] = ["x", "y", "z"]): Mat4 | undefined {
   const at = ["x", "y", "z"].map((n) => axes.indexOf(n));
@@ -113,6 +117,29 @@ export function transformMatrix(t: any, axes: string[] = ["x", "y", "z"]): Mat4 
       if (!Array.isArray(t.translation)) return undefined;
       const m = [...IDENTITY];
       at.forEach((i, k) => (m[4 * k + 3] = t.translation[i]));
+      return m;
+    }
+    case "rotation": {
+      // An N × N matrix on the axes (nested rows, or flat row by row), no translation.
+      const n = axes.length;
+      const r = Array.isArray(t.rotation) && Array.isArray(t.rotation[0]) ? t.rotation : Array.isArray(t.rotation) && t.rotation.length === n * n ? Array.from({ length: n }, (_, i) => t.rotation.slice(n * i, n * i + n)) : undefined;
+      if (r === undefined) return undefined;
+      const m = [...IDENTITY];
+      at.forEach((row, i) => at.forEach((col, j) => (m[4 * i + j] = r[row]?.[col])));
+      return m.every(Number.isFinite) ? m : undefined;
+    }
+    case "mapAxis": {
+      // Output axis k is input axis mapAxis[k] (0.6: indices, the input taken to be ordered as the output;
+      // the RFC-5 draft: output name to input name).  Only x, y and z can be composed.
+      const map = t.mapAxis;
+      const m = new Array(16).fill(0);
+      m[15] = 1;
+      for (let k = 0; k < 3; ++k) {
+        const from = Array.isArray(map) ? axes[map[at[k]]] : map && typeof map === "object" ? map[axes[at[k]]] : undefined;
+        const col = ["x", "y", "z"].indexOf(String(from));
+        if (col === -1) return undefined;
+        m[4 * k + col] = 1;
+      }
       return m;
     }
     case "affine": {
@@ -135,6 +162,9 @@ export function transformMatrix(t: any, axes: string[] = ["x", "y", "z"]): Mat4 
       }
       return m;
     }
+    case "bijection":
+      // Its forward side; walked backwards, that inverted (an affine's stated inverse is its inverse).
+      return transformMatrix(t.forward, axes);
     default:
       return undefined;
   }
@@ -352,6 +382,45 @@ export function chainInto(root: CollectionNode, member: CollectionNode, system: 
   return undefined;
 }
 
+/** Steps that are affines alone, composed (first step first); undefined when one is a field. */
+export function stepsMatrix(steps: Step[]): Mat4 | undefined {
+  if (steps.some((s) => s.kind !== "affine")) return undefined;
+  return steps.reduce((m, s) => multiply((s as Extract<Step, { kind: "affine" }>).m, m), [...IDENTITY]);
+}
+
+/** The kinds inside a transform that cannot be applied here (a sequence's parts, a bijection's forward side). */
+function kindsNotApplied(t: any, axes: string[] | undefined): string[] {
+  if (t?.type === "sequence") return (t.transformations ?? []).flatMap((x: any) => kindsNotApplied(x, axes));
+  if (t?.type === "bijection") return kindsNotApplied(t.forward, axes);
+  return transformSteps(t, axes, "") === undefined ? [String(t?.type ?? "untyped")] : [];
+}
+
+/**
+ * The kinds of transform (by-dimension maps, those on axes other than x, y
+ * and z…) on the paths leading from `member` that cannot be applied, so a
+ * member hidden for want of them can say which; none when it is hidden only
+ * because nothing joins it to the system.
+ */
+export function unappliedKinds(root: CollectionNode, member: CollectionNode): string[] {
+  const g = graph(root);
+  const known = (id: string) => g.systems.find((s) => s.id === id)?.axes;
+  const reached = new Set([member.id, member.name, ...member.systems.map((s) => s.id)].filter((k): k is string => !!k));
+  const out = new Set<string>();
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const t of g.transforms) {
+      if (!reached.has(t.input) && !reached.has(t.output)) continue;
+      for (const k of kindsNotApplied(t.raw, known(t.output) ?? known(t.input))) out.add(k);
+      for (const end of [t.input, t.output])
+        if (!reached.has(end)) {
+          reached.add(end);
+          grew = true;
+        }
+    }
+  }
+  return [...out];
+}
+
 /** A matrix in system units (its translation) as millimetres, `unit` mm a unit (no −0s, for a tidy link). */
 const inMm = (m: Mat4, unit: number): Mat4 => m.map((v, i) => (i % 4 === 3 && i < 12 ? v * unit : v) + 0);
 
@@ -540,8 +609,57 @@ export function placementOf(now: Mat4, own: Mat4, names: string[]): Mat4 | undef
   return out;
 }
 
-/** Units an OME axis may have, with their size in millimetres. */
+/** Units the panel offers for a new coordinate system, with their size in millimetres. */
 export const UNITS: Record<string, number> = { meter: 1000, millimeter: 1, micrometer: 1e-3, nanometer: 1e-6 };
+
+/** Every space unit OME-NGFF names (UDUNITS-2), in millimetres. */
+const SPACE_UNITS: Record<string, number> = {
+  ...UNITS,
+  angstrom: 1e-7,
+  attometer: 1e-15,
+  centimeter: 10,
+  decimeter: 100,
+  exameter: 1e21,
+  femtometer: 1e-12,
+  foot: 304.8,
+  gigameter: 1e12,
+  hectometer: 1e5,
+  inch: 25.4,
+  kilometer: 1e6,
+  megameter: 1e9,
+  mile: 1609344,
+  parsec: 3.0856775814913673e19,
+  petameter: 1e18,
+  picometer: 1e-9,
+  terameter: 1e15,
+  yard: 914.4,
+  yoctometer: 1e-21,
+  yottameter: 1e27,
+  zeptometer: 1e-18,
+  zettameter: 1e24,
+};
+
+/**
+ * A coordinate system's unit (the first of its axes that has one) in
+ * millimetres, and the unit when it is not one OME-NGFF names, which is
+ * then read as a millimetre.  No unit at all is a millimetre too.
+ */
+export function unitOf(system: { units: string[] } | undefined): { mm: number; unknown?: string } {
+  const unit = system?.units.find((u) => u !== "");
+  if (unit === undefined) return { mm: 1 };
+  const mm = SPACE_UNITS[unit.toLowerCase()];
+  return mm === undefined ? { mm: 1, unknown: unit } : { mm };
+}
+
+/**
+ * Whether an image is a label image: its metadata (a group's zarr.json or
+ * .zattrs) has OME's `image-label`, or it sits in an image's `labels`
+ * group (…/image.zarr/labels/cells).
+ */
+export function isLabelImage(group: any, url = ""): boolean {
+  const ome = group?.attributes?.ome ?? group?.ome ?? group?.attributes ?? group;
+  return (ome !== null && typeof ome === "object" && ome["image-label"] !== undefined) || /\/labels\/[^/]+\/?$/.test(url);
+}
 
 /**
  * A collection document of images as a scene shows them: each image a
@@ -552,7 +670,7 @@ export const UNITS: Record<string, number> = { meter: 1000, millimeter: 1, micro
 export function collectionFromScene(name: string, system: { name: string; unit: string }, images: { name: string; url: string; placement?: Mat4 }[]): any {
   const taken = new Set<string>();
   const systemId = freshId(system.name, taken);
-  const mm = UNITS[system.unit] ?? 1;
+  const mm = SPACE_UNITS[system.unit] ?? 1;
   const nodes = images.map((image) => ({ type: "multiscale", name: image.name, id: freshId(image.name, taken), path: { type: "zarr", path: image.url } }));
   const transforms = images.map((image, i) => ({
     ...transformJson(inUnits(image.placement ?? IDENTITY, mm)),
