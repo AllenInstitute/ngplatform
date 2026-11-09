@@ -74,7 +74,7 @@ Item line numbers are from that commit and move as the code changes.
 
 ## Batches
 
-187 items. Phases run in order; within a phase, batches as each file says.
+188 items (29 done). Phases run in order; within a phase, batches as each file says.
 
 | Phase | Batch | Items | Blockers |
 |---|---|---|---|
@@ -86,7 +86,7 @@ Item line numbers are from that commit and move as the code changes.
 | Phase 2 | [2A · Base styles and tokens](phase-2-one-style.md#2a--base-styles-and-tokens) | 10 |  |
 | Phase 2 | [2B · Shared parts](phase-2-one-style.md#2b--shared-parts) | 10 |  |
 | Phase 2 | [2C · Neuroglancer's controls](phase-2-one-style.md#2c--neuroglancers-controls) | 2 |  |
-| Phase 2 | [2D1 · Panel: Anatomical rendering](phase-2-one-style.md#2d1--panel-anatomical-rendering) | 12 |  |
+| Phase 2 | [2D1 · Panel: Anatomical rendering](phase-2-one-style.md#2d1--panel-anatomical-rendering) | 13 |  |
 | Phase 2 | [2D2 · Panel: Track filtering](phase-2-one-style.md#2d2--panel-track-filtering) | 6 |  |
 | Phase 2 | [2D3 · Panel: Luxar](phase-2-one-style.md#2d3--panel-luxar) | 5 |  |
 | Phase 2 | [2D4 · Panel: Registration](phase-2-one-style.md#2d4--panel-registration) | 11 |  |

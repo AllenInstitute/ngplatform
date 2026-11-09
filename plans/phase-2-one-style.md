@@ -81,7 +81,7 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
 
 **Files:** plugins/anatomical-rendering
 
-**Items:** 12
+**Items:** 13
 
 - [ ] **Major** · S · The muted class used for 9 notes does not exist  
   `plugin.ts:561, 1280, 1413`
@@ -107,6 +107,8 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
   `plugin.ts:668; client.ts:259; README.md:42`
 - [ ] **Plan** · S · Splats stay visible, marked In progress (decision 5): a tag on the Splat card and in the docs, until a fit has run end to end  
   `plugins/anatomical-rendering/plugin.ts (Output); docs/plugins/anatomical-rendering.md`
+- [ ] **Minor** · S · Anatomical rendering: Tests for the session lifecycle (switch computer, reconnect, page close), with a fake context; the page-close request checked in a browser (found in 1C)  
+  `plugin.ts closeSession, connect, pagehide`
 
 ## 2D2 · Panel: Track filtering
 
@@ -126,7 +128,7 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
   `plugins/track-filtering/tests`
 - [ ] **Major** · S · Docs: stale names, Set vs Apply, missing features and files  
   `manifest.ts:16, 26; README`
-- [ ] **Minor** · S–M · CSV export before the exact answer; choosing a group is an undo step; non-atomic store save; density maps at a fixed 1 mm  
+- [ ] **Minor** · S–M · CSV export before the exact answer; choosing a group is an undo step, and + Sphere with no group yet makes up to three; non-atomic store save; density maps at a fixed 1 mm  
   `plugin.ts:758, 1567, 1729, 1950`
 
 ## 2D3 · Panel: Luxar
