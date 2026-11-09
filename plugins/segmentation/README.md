@@ -2,10 +2,8 @@
 
 ![Three segments drawn on SRB 2026a, the tool bar over the views and the segment list](../../docs/images/plugins/segmentation.png)
 
-Label volumes drawn by hand, as WebKnossos's volume annotation: a tab of
-their own (**Segmentation**) and a tool bar over the views. It was the last
-section of the Annotations tab; the code moved here whole (the files keep
-their history) and that section was taken out of Annotations.
+Label volumes drawn by hand, as WebKnossos's volume annotation: a panel of
+their own in the Tools dock (**Segmentation**) and a tool bar over the views.
 
 - **A new segmentation layer**: an empty label volume on the grid of an
   image or a segmentation, at one of its levels (the same voxels and
@@ -27,10 +25,19 @@ their history) and that section was taken out of Annotations.
   coloured, folded, deleted), segments put in one by dragging or by the
   active segment's **Group**, a whole group hidden or shown.
 - **Save** as NIfTI or OME-Zarr (only painted chunks written), the whole
-  grid or the painted box; at the top of the tab and on the tool bar. A
-  segmentation edited in place saves its edits alone (an OME-Zarr that
+  grid or the painted box; the panel's Save card, the tool bar and the command.
+  A segmentation edited in place saves its edits alone (an OME-Zarr that
   names the original) or the whole volume (an OME-Zarr folder, as a job).
-- Each scene shows its own label volumes: the tab and the tool bar follow
+  Progress and a failure show in the panel's status line (a failure opens
+  the Save card); a save done or failed is also a toast and a line in
+  Activity.
+- **Kept in this browser**: the copies kept while drawing (OPFS), written
+  a moment after strokes stop and at once when the page is hidden; the
+  browser asked once to keep them for good (`navigator.storage.persist()`,
+  a toast if it refuses). Those not open are listed with their size and
+  age, to open again or remove (after a confirm), with the site's storage
+  use.
+- Each scene shows its own label volumes: the panel and the tool bar follow
   the scene shown.
 
 See the [user page](../../docs/plugins/segmentation.md) and
@@ -39,10 +46,10 @@ with WebKnossos.
 
 | File | What |
 |---|---|
-| `manifest.ts` | The tab, commands, keys (while a volume is edited), context keys |
-| `plugin.ts` | Activation: the editor, the tab, the tool bar |
+| `manifest.ts` | The panel, commands, keys (while a volume is edited), context keys |
+| `plugin.ts` | Activation: the editor, the panel, the tool bar |
 | `editor.ts` | The volumes open and the current one; tools, drawing, segments, new layers (empty, copied, opened), save |
-| `panel.ts` | The tab |
+| `panel.ts` | The panel: cards drawn once, each body a region drawn again when what it shows changes; the status line |
 | `toolbar.ts`, `icons.ts` | The tool bar over the views, its icons |
 | `tools.ts` | The tools, cycling through them, the brush's size steps (pure) |
 | `segments.ts` | The segment list's rows, new ids, which segments a layer shows (pure) |
@@ -60,7 +67,7 @@ with WebKnossos.
 | `preview.ts` | Quick select's proposed mask over the 2-D views (its sections, tinted with an outline), until Enter or Escape |
 | `save.ts` | NIfTI and OME-Zarr out, the painted box; edits alone, the whole of a volume edited in place, edits read back |
 | `keep.ts` | Volumes kept in the browser (OPFS) while drawn, brought back after a reload; edits let go from memory read back |
-| `style.ts` | The tab's and the tool bar's styles |
+| `style.ts` | The panel's and the tool bar's own styles (the rest are the app's shared classes) |
 | `tests/` | `npm test` runs them |
 
 It reads images through Annotations' worker (`../annotations/voxels.ts`, a
@@ -81,7 +88,7 @@ even-odd rule, row by row), as one stroke: the active segment over what
 **Brush, eraser and lasso only within the range** on, only where the
 image's values (read for the outline's box in that section) are in range.
 
-Quick select shows its mask before painting it (the tab's **Result**, or
+Quick select shows its mask before painting it (the panel's **Result**, or
 **Preview** / **At once** on the bar, chooses): the mask waits in the
 editor (`pending`), `preview.ts` draws its sections over the 2-D views on
 a canvas (each view the section along the voxel axis nearest its normal,
@@ -127,7 +134,7 @@ annotations), `F`, `I`, `M`, `Q`, `W`,
 last stroke or the last workspace change, whichever came last, see
 below); `[` and `]`
 (time steps) with Brush or Erase; `Escape` (Neuroglancer's tool) with a
-drawing tool; `Enter` and `Escape` while quick select's mask waits. Hiding the tool bar (its ×, or **Editing** in the tab) gives
+drawing tool; `Enter` and `Escape` while quick select's mask waits. Hiding the tool bar (its ×, or **Editing** in the panel) gives
 them back.
 
 Strokes have an undo of their own (`history.ts`, chunk copies within a
@@ -217,7 +224,7 @@ section).
 
 ### Edited in place (copy-on-write)
 
-**Edit in place** (the tab's **Start**, and what **Copy and edit**
+**Edit in place** (the panel's **Start**, and what **Copy and edit**
 becomes when the level is too large to copy) makes a `CowVolume`
 (`cow_volume.ts`) over the segmentation's finest level. Nothing is copied
 first:
@@ -357,9 +364,9 @@ chosen for SAM's standard ONNX decoder (the inputs SAM's own browser
 demo uses) and a small encoder.
 
 The first prompt downloads the two files (44.7 MB) with a progress bar
-(the tab and the tool bar) and keeps them in the browser's Cache Storage
+(the panel and the tool bar) and keeps them in the browser's Cache Storage
 (`ngplatform-models`, under their URLs); later visits read them from
-there. The tab shows the size kept and **Forget** (deletes them).
+there. The panel shows the size kept and **Forget** (deletes them).
 
 The runtime is ONNX Runtime Web 1.30.0, the version chunkmirage's ONNX
 stage is built against (`vendor/chunkmirage/web/package.json`); it is not
@@ -380,7 +387,7 @@ A prompt, in a 2-D view (`SamModel.segment`):
 
 1. **The crop** (`cropFor`): a square of the section round the prompt, on
    the label grid, at least **Context** voxels across (256 by default; in
-   the tab) and 1.5 times a box's longest side, square in millimetres,
+   the panel) and 1.5 times a box's longest side, square in millimetres,
    moved inside the volume where it fits (where it does not, the image
    outside reads as 0).
 2. **The image** (`modelImage`): the crop read with `session.imageBox`
@@ -455,7 +462,7 @@ box of label voxels), `request.source` (a key naming the image, the
 window its layer shows, the label voxel's sides, the grid's size),
 `request.context` (how much of the section round the prompt to look at)
 and `request.progress(text, fraction)` (shown on the tool bar and in the
-tab while it works). With `refines: true`, clicks add to the section's
+panel while it works). With `refines: true`, clicks add to the section's
 prompt rather than replacing it, and `request.prompts` holds them all
 (and the box), each marked wanted or not. Throwing an `Error` shows its
 message; `signal` is aborted by Escape.
