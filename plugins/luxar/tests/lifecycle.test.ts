@@ -39,6 +39,7 @@ function context() {
       panels: () => [],
     },
     workspace: { onChanged: () => () => {}, selectedLayer: () => undefined },
+    context: { set: () => {} },
   };
   return { ctx: ctx as unknown as PlatformContext, done };
 }

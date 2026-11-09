@@ -316,19 +316,17 @@ export class SplatView {
     }
   }
 
-  status(): string {
-    if (this.error !== undefined && this.info === undefined) return `Could not open the image: ${this.error}`;
-    if (this.info === undefined) return "Opening the image…";
-    if (this.problem) return this.problem;
-    if (this.view2d.problem) return this.view2d.problem;
+  /** For the panel's status line: what is being read, or what went wrong; neither once all it wants is drawn. */
+  report(): { progress?: string; error?: string } {
+    if (this.error !== undefined && this.info === undefined) return { error: `Could not open the image: ${this.error}` };
+    if (this.info === undefined) return { progress: "Opening the image…" };
+    const problem = this.problem || this.view2d.problem;
+    if (problem) return { error: problem };
+    if (this.error) return { error: `Could not read a block: ${this.error}` };
     // The 3-D view's choice, or (with no 3-D view) the first 2-D view's.
     const s = this.selection ?? this.view2d.selections[0];
-    if (s === undefined) return "";
-    const level = this.info.levels[s.level];
-    const size = level.voxelSize >= 0.1 ? `${+level.voxelSize.toFixed(2)} mm` : `${+(level.voxelSize * 1000).toFixed(1)} µm`;
-    let splats = 0;
-    for (const key of s.draw) splats += this.blocks.get(key)?.data?.weights.length ?? 0;
-    return `Splats from level ${s.level} (${size} voxels): ${splats.toLocaleString()} in ${s.draw.length} blocks${s.complete ? "" : `, ${this.wanted.length} blocks to read`}${this.error ? ` · a block failed: ${this.error}` : ""}`;
+    if (s !== undefined && !s.complete) return { progress: "Reading…" };
+    return {};
   }
 
   dispose(): void {

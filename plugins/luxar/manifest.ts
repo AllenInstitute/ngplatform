@@ -3,6 +3,8 @@ import type { Manifest } from "@ngplatform/sdk";
 
 export const LUXAR_PANEL = "luxar.panel";
 export const LUXAR_STATE_KEY = "luxar";
+/** Context key: the selected layer is one Luxar can draw (a Zarr Vectors layer, an image, a segmentation with meshes). */
+export const LUXAR_CAN_DRAW = "luxar.canDraw";
 
 export const LUXAR_MANIFEST: Manifest = {
   id: "org.ngplatform.luxar",
@@ -14,16 +16,17 @@ export const LUXAR_MANIFEST: Manifest = {
   guide: `Luxar renders lines and points as light: smooth thick lines with mitred joins, added up in HDR and tone mapped, or as emission and absorption. This plugin draws a Zarr Vectors layer (a tractogram, skeletons, a point cloud, or a \`.trk\`, \`.tck\`, \`.trx\` or SWC file opened in place) that way **in Neuroglancer's own views**: the 3-D view and the 2-D sections, in one viewer, with everything else drawn as before.
 
 ## Switching it on
-- In the **Luxar** tab, tick a layer. That layer is then drawn by this plugin instead of by Neuroglancer; other layers (the image under a tractogram, say) are untouched, so a Luxar tractogram can sit on a plain or volume-rendered image.
-- Or select the layer and run **Luxar rendering of the selected layer on or off** from the command palette.
-- A precomputed segmentation with meshes (an EM segmentation such as MICrONS') is listed as **EM meshes: <layer> (N cells)**: ticked, the meshes of the segments the layer shows are drawn, read from its precomputed meshes as a Zarr Vectors mesh store, coarse levels of detail first.
+- In the **Luxar** panel (Tools, under Vectors), switch a layer on. That layer is then drawn by this plugin instead of by Neuroglancer; other layers (the image under a tractogram, say) are untouched, so a Luxar tractogram can sit on a plain or volume-rendered image.
+- Or select the layer and run **Toggle Luxar for the selected layer** from the command palette.
+- An image is drawn as Gaussian splats of its voxels.
+- A precomputed segmentation with meshes (an EM segmentation such as MICrONS') is listed by its name: switched on, the meshes of the segments the layer shows are drawn (up to 2,000 of them), read from its precomputed meshes as a Zarr Vectors mesh store, coarse levels of detail first.
 - Hiding the layer hides its Luxar drawing too. Without this plugin, the same link shows the layer drawn by Neuroglancer as usual.
 
-## Settings (per layer)
+## Settings (per layer, for the layer chosen under **Settings for**)
 - **Blending**: *Glow* adds the lines' light up, hidden by what is in front; *Glow through* shows it over everything; *Emission and absorption* also darkens what is behind dense bundles; *Solid tubes* draws opaque shaded lines.
 - **Colour**: by direction (x red, y green, z blue), each object its own colour, a vertex attribute through a colormap, or one colour.
 - **Width** (pixels), **Brightness** (stops before tone mapping), **Sharpness** (soft to hard edged), **Tone map**.
-- **2-D slab**: in a 2-D view, lines within half this distance of the section show, fading away from it.
+- **Slab thickness** (2-D): in a 2-D view, lines within half this distance of the section show, fading away from it. It follows the data's size (a fortieth of it: about 4 mm for a human brain, 30 µm for a cubic millimetre of EM) until you set it, in the unit that suits the data; **Reset** follows the data again.
 - **Detail**: about how many vertices to read for a view. Like Neuroglancer, the plugin reads the coarsest level first and finer levels as you zoom in, only the chunks in view.
 
 Nothing is converted and no files are written: the store (or the file read in place) is read directly.`,
@@ -37,9 +40,10 @@ Nothing is converted and no files are written: the store (or the file read in pl
   contributes: {
     panels: [{ id: LUXAR_PANEL, title: "Luxar", slot: "left", group: "Vectors", order: 55 }],
     commands: [
-      { id: "luxar.toggle", title: "Toggle Luxar for the selected layer", group: "View", when: "sourceFormat == zarr-vectors" },
+      { id: "luxar.toggle", title: "Toggle Luxar for the selected layer", group: "View", when: LUXAR_CAN_DRAW },
       { id: "luxar.show", title: "Show the Luxar rendering settings", group: "View" },
     ],
     appState: { key: LUXAR_STATE_KEY, version: 1 },
+    contextKeys: [LUXAR_CAN_DRAW],
   },
 };

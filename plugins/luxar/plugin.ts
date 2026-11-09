@@ -20,27 +20,38 @@
  * new store, handed over to as a track-filtering group's new store is.
  */
 import type { Disposer, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
-import { type Child, el } from "@ngplatform/sdk/dom";
+import { button, card, type Child, el, emptyState, field, numberInput, type OnOff, region, select, type Settable, type Slider, slider, statusLine, toggle } from "@ngplatform/sdk/dom";
 import { precomputedUrl } from "@ngplatform/sdk/sources";
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
 import { Momentum } from "./camera.js";
 import { storeOf } from "../volume-view/sources.js";
+import type { StoreInfo } from "./client.js";
 import { LayerView } from "./layer_view.js";
-import { MAX_SEGMENTS, meshIdsFor, meshStoreUrl, parseMeshStoreUrl, volumeHasMeshes } from "./mesh_layers.js";
+import { meshIdsFor, meshStoreUrl, parseMeshStoreUrl, segmentCapNote, volumeHasMeshes } from "./mesh_layers.js";
 import { SplatView } from "./splat_view.js";
 import { drawnSources } from "./sources.js";
-import { LUXAR_PANEL } from "./manifest.js";
+import { LUXAR_CAN_DRAW, LUXAR_PANEL } from "./manifest.js";
 import {
+  autoSlab,
   BLENDING_LABELS,
   COLORMAP_LABELS,
   COLOUR_LABELS,
   DEFAULT_STYLE,
+  extentMm,
   type LayerStyle,
   readSaved,
   readStyle,
   type Saved,
+  type SlabScale,
+  slabScale,
   TONE_LABELS,
 } from "./style.js";
+
+/** The settings a layer has (Luxar.kindOf). */
+type SettingsKind = "splats" | "lines" | "points" | "mesh";
+
+/** A style's numbers set on a slider. */
+type NumberKey = "width" | "exposure" | "sharpness" | "absorption" | "detail" | "bloom" | "glowDepth";
 
 /** At most this long a layer's view of its previous store keeps drawing while the new one reads. */
 const OUTGOING_MS = 30_000;
@@ -92,6 +103,8 @@ export class Luxar {
   private readonly meshVolumes = new Map<string, boolean | undefined>();
   /** Segmentation layers with meshes, watched for the segments they show. */
   private readonly segmentWatch = new Map<string, Disposer>();
+  /** Each layer's store as last opened, for its settings while it is off. */
+  private readonly opened = new Map<string, StoreInfo>();
 
   constructor(private readonly ctx: PlatformContext) {
     this.saved = readSaved(ctx.state.get());
@@ -108,9 +121,19 @@ export class Luxar {
         this.sync();
         this.panelUpdate?.();
       }),
-      ctx.workspace.onChanged(() => this.panelUpdate?.()),
+      ctx.workspace.onChanged(() => {
+        this.updateCanDraw();
+        this.panelUpdate?.();
+      }),
     );
     this.sync();
+  }
+
+  /** Whether the selected layer is one this plugin can draw: the toggle command applies (LUXAR_CAN_DRAW). */
+  private updateCanDraw(): void {
+    if (this.disposed) return;
+    const selected = this.ctx.workspace.selectedLayer();
+    this.ctx.context.set(LUXAR_CAN_DRAW, selected !== undefined && this.candidates().some((l) => l.name === selected));
   }
 
   candidates(): LayerInfo[] {
@@ -335,222 +358,344 @@ export class Luxar {
     const splats = [...this.views.values()].some((v) => v instanceof SplatView);
     this.ctx.viewer.setTemporaryBackground(splats ? [0, 0, 0] : undefined);
     this.momentum.set(this.saved.momentum);
+    this.updateCanDraw();
   }
 
   // ------------------------------------------------------------- panel
 
+  /**
+   * The settings a layer has: an image's splats, or a store's lines, points
+   * or mesh (a store not yet open has the lines' settings until it is).
+   */
+  private kindOf(name: string): SettingsKind {
+    const layer = this.ctx.viewer.layers().find((l) => l.name === name);
+    if (layer !== undefined && imageOfLayer(layer) !== undefined) return "splats";
+    if (layer !== undefined && this.meshVolumeOf(layer) !== undefined) return "mesh";
+    const view = this.views.get(name);
+    const primitive = view instanceof LayerView ? view.client.info?.primitive : undefined;
+    return primitive === "points" ? "points" : primitive === "triangles" ? "mesh" : "lines";
+  }
+
+  /** A layer's store as last opened (its size and attributes), kept while it is off. */
+  private storeInfoOf(name: string): StoreInfo | undefined {
+    const view = this.views.get(name);
+    const info = view instanceof LayerView ? view.client.info : undefined;
+    if (info !== undefined) this.opened.set(name, info);
+    return info ?? this.opened.get(name);
+  }
+
+  /** Draws a layer's view again from scratch: a store that could not be opened is tried again. */
+  private retry(name: string): void {
+    const view = this.views.get(name);
+    if (view === undefined) return;
+    this.views.delete(name);
+    view.dispose();
+    this.sync();
+    this.panelUpdate?.();
+  }
+
+  /**
+   * Draws the panel once and keeps it up to date in place (`sync`): the
+   * layer rows and each control are set from the state, and only what
+   * changes shape (the rows, the cards of another kind of layer) is drawn
+   * again, so an open select, a drag or a number being typed is kept.
+   */
   render(host: HTMLElement): Disposer {
-    const draw = () => {
+    const { ctx } = this;
+    const empty = emptyState("Nothing here Luxar can draw.", { label: "Open data…", run: () => void ctx.commands.invoke("dataset.add") });
+    const rows = new Map<string, { draw: OnOff; cap: HTMLElement }>();
+    const list = region(
+      (names: string[]) => {
+        rows.clear();
+        return names.map((name) => {
+          const draw = toggle(name, this.styleOf(name).on, (on) => {
+            this.editing = name;
+            this.setStyle(name, { on });
+          });
+          const cap = el("p", { class: "hint", hidden: true });
+          rows.set(name, { draw, cap });
+          return el("div", {}, draw, cap);
+        });
+      },
+      { class: "list" },
+    );
+    let chooser: Settable<HTMLSelectElement, string> | undefined;
+    const choose = region((names: string[]) => {
+      if (names.length < 2) return (chooser = undefined);
+      chooser = select(
+        names.map((n) => [n, n]),
+        this.editing ?? names[0],
+        (name) => {
+          this.editing = name;
+          sync();
+        },
+        "Settings for",
+      );
+      return field("Settings for", chooser);
+    });
+    const status = statusLine();
+    let shownStatus = "";
+    let settingsSync: (() => void) | undefined;
+    const settings = region((key: [string, SettingsKind] | null) => {
+      if (key === null) return (settingsSync = undefined);
+      const built = this.settingsCards(key[0], key[1]);
+      settingsSync = built.sync;
+      return built.cards;
+    });
+    const momentum = toggle("Momentum", this.saved.momentum, (v) => this.write({ ...this.saved, momentum: v }), { info: "Keeps the 3-D view turning after a drag, slowing to a stop, as Luxar's camera does." });
+    host.append(card("luxar.layers", "Layers", { open: true }, empty, list, choose, status), settings, card("luxar.view", "3-D view", {}, momentum));
+
+    const updateStatus = () => {
+      const name = this.editing;
+      const view = name === undefined ? undefined : this.views.get(name);
+      const report = view?.report() ?? {};
+      // While the view of the layer's previous store still draws, the new one is reading.
+      const progress = report.progress ?? (name !== undefined && this.outgoing.has(name) ? "Reading…" : undefined);
+      const key = JSON.stringify([report.error, progress]);
+      if (key === shownStatus) return;
+      shownStatus = key;
+      if (report.error !== undefined && name !== undefined) status.error(report.error, { label: "Retry", run: () => this.retry(name) });
+      else if (progress !== undefined) status.progress(progress);
+      else status.clear();
+    };
+    const sync = () => {
       const candidates = this.candidates();
       if (this.editing === undefined || !candidates.some((c) => c.name === this.editing)) {
-        const selected = this.ctx.workspace.selectedLayer();
+        const selected = ctx.workspace.selectedLayer();
         this.editing = candidates.find((c) => c.name === selected)?.name ?? candidates.find((c) => this.saved.layers[c.name]?.on)?.name ?? candidates[0]?.name;
       }
-      const list = el("div", { class: "lx-layers" });
+      const names = candidates.map((c) => c.name);
+      empty.hidden = names.length > 0;
+      list.update(names);
       for (const layer of candidates) {
-        const on = el("input", { type: "checkbox", "aria-label": `Luxar rendering of ${layer.name}` }) as HTMLInputElement;
-        on.checked = this.styleOf(layer.name).on;
-        on.addEventListener("change", () => {
-          this.editing = layer.name;
-          this.setStyle(layer.name, { on: on.checked });
-        });
-        const meshes = this.meshesLabel(layer);
-        const row = el(
-          "div",
-          { class: `lx-layer${layer.name === this.editing ? " lx-editing" : ""}` },
-          on,
-          el("button", { class: "lx-name", type: "button", title: meshes?.title ?? "Show this layer's settings", onclick: () => ((this.editing = layer.name), draw()) }, meshes?.text ?? layer.name),
-        );
-        list.append(row);
+        const row = rows.get(layer.name)!;
+        row.draw.set(this.styleOf(layer.name).on);
+        // A segmentation drawn from its meshes reads at most MAX_SEGMENTS of the segments it shows: said, not silent.
+        const shown = this.meshVolumeOf(layer) === undefined ? undefined : this.ctx.viewer.visibleSegments(layer.name);
+        const cap = shown === undefined || shown.all ? undefined : segmentCapNote(shown.size);
+        row.cap.hidden = cap === undefined;
+        row.cap.textContent = cap ?? "";
       }
-      const status = el("p", { class: "note lx-status" });
-      const updateStatus = () => {
-        const view = this.editing === undefined ? undefined : this.views.get(this.editing);
-        // While the view of the layer's previous store still draws, both say how they are.
-        const out = this.editing === undefined ? undefined : this.outgoing.get(this.editing);
-        status.textContent = view === undefined ? "" : out !== undefined ? `${out.view.status()} · loading the new store: ${view.status()}` : view.status();
-      };
-      this.statusUpdate = updateStatus;
+      choose.update(names);
+      choose.hidden = names.length < 2;
+      if (this.editing !== undefined) chooser?.set(this.editing);
+      settings.update(this.editing === undefined ? null : [this.editing, this.kindOf(this.editing)]);
+      settingsSync?.();
+      momentum.set(this.saved.momentum);
       updateStatus();
-      host.replaceChildren(
-        el(
-          "div",
-          { class: "lx-panel" },
-          el("p", { class: "note", title: "Draws a layer the way Luxar does, in these views: light added up and tone mapped, smooth lines with mitred joins. The layers not ticked stay as they are." }, "Tick a layer to draw it as glowing light."),
-          candidates.length ? list : el("p", { class: "note" }, "Nothing here Luxar can draw: add a Zarr Vectors layer (a store, or a .trk, .tck, .trx or SWC file), an image, or a segmentation with meshes."),
-          this.editing ? this.settings(this.editing) : null,
-          status,
-          el(
-            "label",
-            { class: "field check" },
-            this.checkbox(this.saved.momentum, (v) => this.write({ ...this.saved, momentum: v })),
-            el("span", { title: "Luxar's camera feel" }, "Keep turning the 3-D view after a drag"),
-          ),
-        ),
-      );
     };
-    this.panelUpdate = draw;
-    draw();
+    // A view's news (its store opened, a chunk read: often) changes only the editing layer's settings
+    // (its kind, attributes, the slab's unit, the range) and the status: not the rows.
+    const news = () => {
+      if (this.editing !== undefined) settings.update([this.editing, this.kindOf(this.editing)]);
+      settingsSync?.();
+      updateStatus();
+    };
+    sync();
+    this.panelUpdate = sync;
+    this.statusUpdate = news;
     return () => {
-      if (this.panelUpdate === draw) this.panelUpdate = undefined;
-      this.statusUpdate = undefined;
+      if (this.panelUpdate === sync) this.panelUpdate = undefined;
+      if (this.statusUpdate === news) this.statusUpdate = undefined;
     };
   }
 
-  /** A segmentation drawn from its meshes, as the panel names it: "EM meshes: <layer> (N cells)". */
-  private meshesLabel(layer: LayerInfo): { text: string; title: string } | undefined {
-    if (this.meshVolumeOf(layer) === undefined) return undefined;
-    const shown = this.ctx.viewer.visibleSegments(layer.name);
-    const n = shown === undefined || shown.all ? 0 : shown.size;
-    return {
-      text: `EM meshes: ${layer.name} (${n.toLocaleString()} ${n === 1 ? "cell" : "cells"})`,
-      title:
-        n === 0
-          ? "This segmentation's segments have meshes. Choose segments in the layer to draw their meshes here."
-          : `Draws the meshes of the segments this layer shows${n > MAX_SEGMENTS ? ` (the first ${MAX_SEGMENTS.toLocaleString()})` : ""}, read from its precomputed meshes, coarse first. Neuroglancer's own drawing of the layer is set aside meanwhile.`,
+  /**
+   * The cards of one layer's settings, drawn once for the layer and its
+   * kind, and `sync`, which sets them from its style and its store.
+   */
+  private settingsCards(name: string, kind: SettingsKind): { cards: Child[]; sync: () => void } {
+    const style = () => this.styleOf(name);
+    const set = (patch: Partial<LayerStyle>, save = true) => this.setStyle(name, patch, save);
+    const syncs: (() => void)[] = [];
+    /** Shown only while `when` holds. */
+    const shownWhen = <E extends HTMLElement>(e: E, when: () => boolean): E => {
+      syncs.push(() => void (e.hidden = !when()));
+      return e;
     };
-  }
-
-  private checkbox(value: boolean, change: (v: boolean) => void): HTMLInputElement {
-    const input = el("input", { type: "checkbox" }) as HTMLInputElement;
-    input.checked = value;
-    input.addEventListener("change", () => change(input.checked));
-    return input;
-  }
-
-  private select<T extends string>(label: string, value: T, options: [T, string][], change: (v: T) => void): HTMLElement {
-    const select = el("select", { class: "text-input", "aria-label": label }) as HTMLSelectElement;
-    for (const [v, text] of options) select.append(el("option", { value: v }, text));
-    select.value = value;
-    select.addEventListener("change", () => change(select.value as T));
-    return el("label", { class: "field" }, el("span", {}, label), select);
-  }
-
-  /** A slider that draws as it moves and saves when let go. */
-  private slider(name: string, label: string, key: "width" | "exposure" | "sharpness" | "absorption" | "slab" | "detail" | "bloom" | "glowDepth", min: number, max: number, step: number, format: (v: number) => string): HTMLElement {
-    const style = this.styleOf(name);
-    const input = el("input", { type: "range", min, max, step, value: style[key], "aria-label": label }) as HTMLInputElement;
-    const shown = el("span", { class: "lx-value" }, format(style[key] ?? 4));
-    input.addEventListener("input", () => {
-      shown.textContent = format(Number(input.value));
-      this.setStyle(name, { [key]: Number(input.value) }, false);
-    });
-    input.addEventListener("change", () => this.setStyle(name, { [key]: Number(input.value) }));
-    return el("label", { class: "field" }, el("span", {}, label), el("div", { class: "lx-row" }, input, shown));
-  }
-
-  /** Bloom: how much of the bright light glows around it, 0 off. */
-  private bloomSlider(name: string): HTMLElement {
-    return this.slider(name, "Bloom", "bloom", 0, 3, 0.05, (v) => (v === 0 ? "off" : v.toFixed(2)));
-  }
-
-  /** An image's settings: splats coloured by intensity or one colour, brightness, tone map, detail. */
-  private splatSettings(name: string): HTMLElement {
-    const style = this.styleOf(name);
-    const set = (patch: Partial<LayerStyle>) => this.setStyle(name, patch);
-    const solid = style.colourBy === "solid";
-    const parts: Child[] = [
-      el("h3", { class: "lx-heading" }, `Settings: ${name}`),
-      el("p", { class: "note", title: "Splats are made from the voxels as they are read, each level of the image giving its own: in the 3-D view, and cut by each section in the 2-D views, in place of Neuroglancer's drawing of it." }, "Drawn as Gaussian splats of its voxels."),
-      this.select("Blending", style.blending === "emission" ? "emission" : "glow", [["emission", "Emission and absorption (looks solid)"], ["glow", "Glow (light added up)"]] as ["emission" | "glow", string][], (blending) => set({ blending })),
-      this.select("Colour", solid ? "solid" : "attribute", [["attribute", "By intensity, through a colormap"], ["solid", "One colour"]] as ["attribute" | "solid", string][], (v) => set({ colourBy: v })),
-    ];
-    if (solid) {
-      const colour = el("input", { type: "color", value: style.colour, "aria-label": "Colour" }) as HTMLInputElement;
-      colour.addEventListener("input", () => this.setStyle(name, { colour: colour.value }, false));
-      colour.addEventListener("change", () => set({ colour: colour.value }));
-      parts.push(el("label", { class: "field" }, el("span", {}, "Colour"), colour));
-    } else parts.push(this.select("Colormap", style.colormap, COLORMAP_LABELS, (colormap) => set({ colormap })));
-    parts.push(
-      this.slider(name, "Brightness (stops)", "exposure", -8, 8, 0.25, (v) => (v > 0 ? `+${v}` : `${v}`)),
-      ...(style.blending === "emission" ? [this.slider(name, "Absorption", "absorption", 0, 8, 0.05, (v) => v.toFixed(2))] : []),
-      this.select("Tone map", style.toneMap, TONE_LABELS, (toneMap) => set({ toneMap })),
-      this.bloomSlider(name),
-      this.slider(name, "Detail (splats per view)", "detail", 0.25, 12, 0.25, (v) => `${v} M`),
-    );
-    if (!style.on) parts.push(el("p", { class: "note" }, "Tick the layer above to draw it this way."));
-    return el("div", { class: "lx-settings" }, ...parts);
-  }
-
-  private settings(name: string): HTMLElement {
-    const style = this.styleOf(name);
-    const layer = this.ctx.viewer.layers().find((l) => l.name === name);
-    if (layer !== undefined && imageOfLayer(layer) !== undefined) return this.splatSettings(name);
-    const found = this.views.get(name);
-    const view = found instanceof LayerView ? found : undefined;
-    const info = view?.client.info;
-    const set = (patch: Partial<LayerStyle>) => this.setStyle(name, patch);
-    const attributes = info?.attributes ?? [];
-    const parts: Child[] = [
-      el("h3", { class: "lx-heading" }, `Settings: ${name}`),
-      this.select("Blending", style.blending, BLENDING_LABELS, (blending) => set({ blending })),
-      this.select("Colour", style.colourBy, COLOUR_LABELS, (colourBy) => set({ colourBy, attribute: colourBy === "attribute" ? (style.attribute ?? attributes[0]?.id) : style.attribute })),
-    ];
-    if (style.colourBy === "attribute") {
-      // Chosen before the store was open: the attribute the menu shows is the one drawn.
-      if (style.attribute === undefined && attributes.length > 0) queueMicrotask(() => set({ attribute: attributes[0].id, range: undefined }));
-      if (attributes.length === 0) parts.push(el("p", { class: "note" }, info ? "This store has no vertex attributes." : "Tick the layer to load its attributes."));
-      else
-        parts.push(
-          this.select(
-            "Attribute",
-            (style.attribute ?? attributes[0].id) as string,
-            attributes.map((a) => [a.id, a.name] as [string, string]),
-            (attribute) => set({ attribute, range: undefined }),
-          ),
-        );
-      parts.push(this.select("Colormap", style.colormap, COLORMAP_LABELS, (colormap) => set({ colormap })));
-      const range = style.range ?? view?.client.valueRange;
-      const lo = el("input", { type: "number", class: "text-input", step: "any", value: range ? +range[0].toPrecision(4) : "", "aria-label": "Range from" }) as HTMLInputElement;
-      const hi = el("input", { type: "number", class: "text-input", step: "any", value: range ? +range[1].toPrecision(4) : "", "aria-label": "Range to" }) as HTMLInputElement;
+    /** A style's number on the one slider: drawn as it moves, saved when let go; `scale` shows it in other units. */
+    const number = (label: string, key: NumberKey, o: { min: number; max: number; step: number; unit?: string; scale?: number; info?: string }) => {
+      const k = o.scale ?? 1;
+      const control = slider(style()[key] * k, { min: o.min, max: o.max, step: o.step, unit: o.unit, label, oninput: (v) => set({ [key]: v / k }, false), onchange: (v) => set({ [key]: v / k }) });
+      syncs.push(() => control.set(style()[key] * k));
+      return field(label, control, o.info === undefined ? undefined : { info: o.info });
+    };
+    const choice = <T extends string>(label: string, options: [T, string][], value: () => T, change: (v: T) => void) => {
+      const control = select(options, value(), (v) => change(v as T), label);
+      syncs.push(() => control.set(value()));
+      return field(label, control);
+    };
+    const colourPicker = (label: string) => {
+      const input = el("input", { type: "color", value: style().colour, "aria-label": label });
+      input.addEventListener("input", () => set({ colour: input.value }, false));
+      input.addEventListener("change", () => set({ colour: input.value }));
+      syncs.push(() => {
+        if (input.ownerDocument.activeElement !== input && input.value !== style().colour) input.value = style().colour;
+      });
+      return field(label, input);
+    };
+    const splats = kind === "splats";
+    const solid = () => style().blending === "solid";
+    const look: Child[] = [];
+    if (splats) {
+      look.push(
+        choice<"emission" | "glow">(
+          "Blending",
+          [
+            ["emission", "Emission and absorption (looks solid)"],
+            ["glow", "Glow (light added up)"],
+          ],
+          () => (style().blending === "emission" ? "emission" : "glow"),
+          (blending) => set({ blending }),
+        ),
+        choice<"attribute" | "solid">(
+          "Colour",
+          [
+            ["attribute", "By intensity, through a colormap"],
+            ["solid", "One colour"],
+          ],
+          () => (style().colourBy === "solid" ? "solid" : "attribute"),
+          (colourBy) => set({ colourBy }),
+        ),
+        shownWhen(choice("Colormap", COLORMAP_LABELS, () => style().colormap, (colormap) => set({ colormap })), () => style().colourBy !== "solid"),
+      );
+    } else {
+      look.push(
+        choice("Blending", BLENDING_LABELS, () => style().blending, (blending) => set({ blending })),
+        choice("Colour", COLOUR_LABELS, () => style().colourBy, (colourBy) => {
+          const first = this.storeInfoOf(name)?.attributes[0]?.id;
+          set({ colourBy, attribute: colourBy === "attribute" ? (style().attribute ?? first) : style().attribute });
+        }),
+      );
+      // The store's attributes, once it is open.
+      let attribute: Settable<HTMLSelectElement, string> | undefined;
+      const attributes = region((list: [string, string][]) => {
+        attribute = select(list.length > 0 ? list : [["", "None"]], style().attribute ?? list[0]?.[0] ?? "", (id) => set({ attribute: id, range: undefined }), "Attribute");
+        attribute.disabled = list.length === 0;
+        return field("Attribute", attribute);
+      });
+      const byAttribute = () => style().colourBy === "attribute";
+      const range = () => {
+        const view = this.views.get(name);
+        return style().range ?? (view instanceof LayerView ? view.client.valueRange : undefined);
+      };
       const apply = () => {
         const a = Number(lo.value);
         const b = Number(hi.value);
         if (lo.value !== "" && hi.value !== "" && Number.isFinite(a) && Number.isFinite(b) && a !== b) set({ range: [a, b] });
       };
-      lo.addEventListener("change", apply);
-      hi.addEventListener("change", apply);
-      parts.push(
-        el(
-          "div",
-          { class: "field" },
-          el("span", {}, style.range ? "Range" : "Range (from what has loaded)"),
-          el("div", { class: "lx-row" }, lo, hi, style.range ? el("button", { type: "button", class: "lx-small", onclick: () => set({ range: undefined }), title: "Back to the range the data has" }, "Reset range") : null),
-        ),
+      const lo = numberInput(NaN, apply, { step: "any", "aria-label": "Range from" });
+      const hi = numberInput(NaN, apply, { step: "any", "aria-label": "Range to" });
+      lo.value = hi.value = "";
+      const reset = shownWhen(button("Reset", () => set({ range: undefined }), "Back to the range of the data read"), () => style().range !== undefined);
+      syncs.push(() => {
+        const info = this.storeInfoOf(name);
+        attributes.hidden = !byAttribute() || info === undefined;
+        attributes.update((info?.attributes ?? []).map((a) => [a.id, a.name]));
+        if (info !== undefined && info.attributes.length > 0) attribute?.set(style().attribute ?? info.attributes[0].id);
+        const r = range();
+        if (r !== undefined) {
+          lo.set(+r[0].toPrecision(4));
+          hi.set(+r[1].toPrecision(4));
+        }
+      });
+      look.push(
+        attributes,
+        shownWhen(choice("Colormap", COLORMAP_LABELS, () => style().colormap, (colormap) => set({ colormap })), byAttribute),
+        shownWhen(field("Range", el("div", { class: "row" }, lo, hi, reset)), byAttribute),
       );
     }
-    if (style.colourBy === "solid") {
-      const colour = el("input", { type: "color", value: style.colour, "aria-label": "Colour" }) as HTMLInputElement;
-      colour.addEventListener("input", () => this.setStyle(name, { colour: colour.value }, false));
-      colour.addEventListener("change", () => set({ colour: colour.value }));
-      parts.push(el("label", { class: "field" }, el("span", {}, "Line colour"), colour));
+    look.push(
+      shownWhen(colourPicker("Colour"), () => style().colourBy === "solid"),
+      number("Brightness", "exposure", { min: -8, max: 8, step: 0.25, unit: "stops" }),
+      shownWhen(number("Absorption", "absorption", { min: 0, max: 8, step: 0.05 }), () => style().blending === "emission"),
+      shownWhen(choice("Tone map", TONE_LABELS, () => style().toneMap, (toneMap) => set({ toneMap })), () => !solid()),
+      shownWhen(number("Bloom", "bloom", { min: 0, max: 3, step: 0.05, info: "A glow around bright light: the brightest parts, blurred, added back around them. 0 is off." }), () => !solid()),
+    );
+    const cards: Child[] = [card("luxar.look", "Look", { open: true }, ...look)];
+    if (!splats) {
+      const mesh = kind === "mesh";
+      cards.push(
+        card(
+          "luxar.lines",
+          mesh ? "Surface" : kind === "points" ? "Points" : "Lines",
+          {},
+          kind === "points"
+            ? number("Point size", "width", { min: 1.5, max: 36, step: 0.75, unit: "px", scale: 3 })
+            : number(mesh ? "Outline width" : "Width", "width", { min: 0.5, max: 12, step: 0.25, unit: "px", info: mesh ? "Of the outline where a 2-D section cuts the mesh." : undefined }),
+          number("Sharpness", "sharpness", { min: 0, max: 1, step: 0.05, info: "From a soft glow (0) to a hard edge (1)." }),
+          mesh
+            ? shownWhen(number("Glow depth", "glowDepth", { min: 0, max: 20, step: 0.5, unit: "%", scale: 100, info: "How far light from behind the nearest surface still shows, as a share of the layer's size; 0 adds every fold up." }), () => style().blending === "glow" || style().blending === "glow-through")
+            : null,
+        ),
+        card("luxar.slab", "2-D sections", {}, this.slabField(name, syncs)),
+      );
     }
-    const points = info?.primitive === "points";
-    const mesh = info?.primitive === "triangles";
-    if (layer !== undefined && this.meshVolumeOf(layer) !== undefined) {
-      // A segmentation drawn from its precomputed meshes.
-      const shown = this.ctx.viewer.visibleSegments(name);
-      if (shown === undefined || shown.all || shown.size === 0) parts.push(el("p", { class: "note" }, "Choose segments in the layer to draw their meshes."));
-      else parts.push(el("p", { class: "note", title: "Read from the segmentation's precomputed meshes as a Zarr Vectors mesh store: its levels of detail, coarse first, only the cells in view. Neuroglancer's own drawing of the layer (its meshes and its 2-D segmentation) is set aside while this is on." }, "The segments' meshes: lit in 3-D, outlined in 2-D."));
-    } else if (mesh) parts.push(el("p", { class: "note", title: "Direction colours by the surface's normal" }, "A mesh: lit in 3-D, outlined in 2-D."));
-    parts.push(
-      points
-        ? this.slider(name, "Point size (pixels)", "width", 0.5, 12, 0.25, (v) => `${3 * v} px`)
-        : this.slider(name, mesh ? "Outline width in 2-D (pixels)" : "Width (pixels)", "width", 0.5, 12, 0.25, (v) => `${v} px`),
-      this.slider(name, "Brightness (stops)", "exposure", -8, 8, 0.25, (v) => (v > 0 ? `+${v}` : `${v}`)),
-      this.slider(name, "Sharpness", "sharpness", 0, 1, 0.05, (v) => v.toFixed(2)),
+    const unit = splats ? "M splats" : "M vertices";
+    cards.push(
+      card(
+        "luxar.detail",
+        "Detail",
+        {},
+        number("Detail", "detail", { min: 0.25, max: 12, step: 0.25, unit, info: "About how much a view reads and draws: more is finer and slower." }),
+        splats ? null : this.onOffField(name, syncs),
+      ),
     );
-    if (style.blending === "emission") parts.push(this.slider(name, "Absorption", "absorption", 0, 8, 0.05, (v) => v.toFixed(2)));
-    if (mesh && (style.blending === "glow" || style.blending === "glow-through"))
-      parts.push(this.slider(name, "Glow depth (light from behind the nearest surface, as a share of the layer's size; 0 adds every fold up)", "glowDepth", 0, 0.2, 0.005, (v) => (v === 0 ? "off" : `${(100 * v).toFixed(1)} %`)));
-    if (style.blending !== "solid") parts.push(this.select("Tone map", style.toneMap, TONE_LABELS, (toneMap) => set({ toneMap })), this.bloomSlider(name));
-    parts.push(
-      this.slider(name, "2-D slab thickness", "slab", 0.5, 40, 0.5, (v) => `${v} mm`),
-      this.slider(name, "Detail (vertices per view)", "detail", 0.25, 12, 0.25, (v) => `${v} M`),
-      el("label", { class: "field check" }, this.checkbox(style.autoBrightness, (autoBrightness) => set({ autoBrightness })), el("span", { title: "Dimmer lines where they crowd the view" }, "Automatic brightness")),
-    );
-    if (!style.on) parts.push(el("p", { class: "note" }, "Tick the layer above to draw it this way."));
-    return el("div", { class: "lx-settings" }, ...parts);
+    return { cards, sync: () => syncs.forEach((f) => f()) };
+  }
+
+  /** Automatic brightness, a switch. */
+  private onOffField(name: string, syncs: (() => void)[]): HTMLElement {
+    const control = toggle("Automatic brightness", this.styleOf(name).autoBrightness, (autoBrightness) => this.setStyle(name, { autoBrightness }), { info: "Dims lines where they crowd the view, so a whole brain glows rather than turning white." });
+    syncs.push(() => control.set(this.styleOf(name).autoBrightness));
+    return control;
+  }
+
+  /**
+   * The slab's thickness, in the unit that suits the layer's data (mm for a
+   * brain, µm or nm for EM): drawn again when that changes.  It follows the
+   * data until it is set; Reset follows the data again.  Shown once the
+   * layer's store has been open (its size is known), or once it is set.
+   */
+  private slabField(name: string, syncs: (() => void)[]): HTMLElement {
+    let control: Slider | undefined;
+    let reset: HTMLButtonElement | undefined;
+    let shown: SlabScale | undefined;
+    const part = region((scale: SlabScale | null) => {
+      shown = scale ?? undefined;
+      if (scale === null) return (control = reset = undefined);
+      const toMm = (v: number) => v * scale.perUnit;
+      control = slider(this.slabMm(name)! / scale.perUnit, {
+        min: scale.min,
+        max: scale.max,
+        step: scale.step,
+        unit: scale.unit,
+        label: "Slab thickness",
+        unbounded: true,
+        oninput: (v) => this.setStyle(name, { slab: toMm(v) }, false),
+        // Kept above zero (style.readStyle).
+        onchange: (v) => this.setStyle(name, { slab: toMm(v) }),
+      });
+      reset = button("Reset", () => this.setStyle(name, { slab: undefined }), "Follow the data's size again");
+      return field("Slab thickness", el("div", { class: "row" }, control, reset), { info: "In a 2-D view, what is within half this of the section shows, fading away from it. It follows the data's size until you set it." });
+    });
+    syncs.push(() => {
+      const info = this.storeInfoOf(name);
+      const auto = info === undefined ? undefined : autoSlab(extentMm(info));
+      // The unit and range follow the data; before its store is open, a slab set is shown in its own.
+      part.update(auto !== undefined ? slabScale(auto) : this.styleOf(name).slab !== undefined ? slabScale(this.styleOf(name).slab!) : null);
+      if (reset !== undefined) reset.hidden = this.styleOf(name).slab === undefined;
+      const mm = this.slabMm(name);
+      if (control !== undefined && shown !== undefined && mm !== undefined) control.set(mm / shown.perUnit);
+    });
+    return part;
+  }
+
+  /** A layer's slab in mm: as set, or following its store's size; undefined while neither is known. */
+  private slabMm(name: string): number | undefined {
+    const style = this.styleOf(name);
+    const info = this.storeInfoOf(name);
+    return style.slab ?? (info === undefined ? undefined : autoSlab(extentMm(info)));
   }
 
   /** Releases every view (its worker and WebGL context) and shows the layers' own drawing again. */
@@ -568,22 +713,12 @@ export class Luxar {
     this.drawingHidden.clear();
     this.views.clear();
     this.momentum.dispose();
+    this.ctx.context.set(LUXAR_CAN_DRAW, false);
   }
 }
 
+/** The 2-D views' canvas over Neuroglancer's (view2d.ts, splat_view2d.ts): the panel has no style of its own. */
 const STYLE = `
-.lx-panel { display: grid; gap: 10px; }
-.lx-layers { display: grid; gap: 2px; }
-.lx-layer { display: flex; align-items: center; gap: 8px; padding: 2px 4px; border-radius: var(--r); }
-.lx-layer.lx-editing { background: var(--hover); }
-.lx-name { all: unset; cursor: pointer; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
-.lx-settings { display: grid; gap: 10px; }
-.lx-heading { font-size: 12px; font-weight: 600; margin: 6px 0 0; }
-.lx-row { display: flex; align-items: center; gap: 8px; }
-.lx-row input[type="range"] { flex: 1; min-width: 0; }
-.lx-row input[type="number"] { flex: 1; min-width: 0; }
-.lx-value { font-size: 11px; color: var(--muted); min-width: 44px; text-align: right; }
-.lx-small { font-size: 11px; }
 .luxar-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 `;
 
@@ -604,7 +739,7 @@ export const plugin: PluginModule = {
       const name = ctx.workspace.selectedLayer();
       const layer = name === undefined ? undefined : own.candidates().find((l) => l.name === name);
       if (layer === undefined) {
-        ctx.ui.toast("Select a Zarr Vectors layer first.");
+        ctx.ui.toast("Select a layer Luxar can draw first.");
         return;
       }
       own.toggle(layer.name);
