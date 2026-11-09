@@ -114,6 +114,10 @@ export class Shell {
   private readonly redoButton = iconButton("redo", "Redo", () => this.wb.run("edit.redo"));
   private readonly historyButton: HTMLButtonElement = iconButton("more", "History of changes", () => this.showHistory());
   private wb!: Workbench;
+  /** The Activity log (once attached). */
+  get activity(): ActivityLog {
+    return this.wb.log;
+  }
   /** A plugin's view beside Neuroglancer's, and the divider between them. */
   private readonly viewArea = h("div", { class: "engine-view", hidden: true });
   private readonly viewSplit = h("div", { class: "engine-split", hidden: true, role: "separator", "aria-orientation": "vertical", title: "Drag to resize" });
@@ -216,7 +220,15 @@ export class Shell {
     engine: Engine,
     parseFragment: FragmentParser,
     defaultExample: string,
-    plugins: { catalogue: CatalogueEntry[]; choices: Choices; resolution: Resolution; thisTab: Set<string>; returning: boolean },
+    plugins: {
+      catalogue: CatalogueEntry[];
+      choices: Choices;
+      resolution: Resolution;
+      thisTab: Set<string>;
+      returning: boolean;
+      /** Data type plugins whose Neuroglancer module failed to load (src/main.ts), by id. */
+      failed?: Map<string, Error>;
+    },
     google: GoogleSignIn,
     rules: SignInRules,
   ): void {
@@ -421,10 +433,21 @@ export class Shell {
     wb.localData.onChange(() => void relink());
     for (const entry of plugins.catalogue) {
       const enabled = plugins.resolution.enabled.has(entry.manifest.id);
-      // A data type plugin has no platform code: it was loaded with the viewer.
-      const load = entry.load ?? (async () => ({ activate() {} }));
+      // A data type plugin has no platform code: it was loaded with the viewer,
+      // unless that failed; then its activation fails, and the Plugins tab says why.
+      const failure = plugins.failed?.get(entry.manifest.id);
+      const load =
+        failure !== undefined
+          ? async () => {
+              throw new Error(`could not load: ${failure.message}`);
+            }
+          : (entry.load ?? (async () => ({ activate() {} })));
       wb.plugins.register(entry.manifest, load, { builtin: true, enabled });
       if (enabled && entry.manifest.kind === "datatype") void wb.plugins.activate(entry.manifest.id).catch(() => {});
+    }
+    if (plugins.failed !== undefined && plugins.failed.size > 0) {
+      const names = plugins.catalogue.filter((e) => plugins.failed!.has(e.manifest.id)).map((e) => e.manifest.name);
+      offer(`${listNames(names)} could not load.`, [{ label: "Plugins tab", primary: true, run: () => this.docks.show("plugins") }], 60000);
     }
 
     // Neuroglancer's own status messages (loading, errors) go below the views.

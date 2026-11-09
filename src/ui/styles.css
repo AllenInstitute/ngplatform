@@ -601,6 +601,8 @@ textarea.py-in {
 .log .error { color: var(--err); }
 .log .ok { color: var(--ok); }
 .log .source { color: var(--faint); }
+.log .log-stack summary { color: var(--faint); cursor: pointer; }
+.log .log-stack pre { margin: 2px 0 4px; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 11px; color: var(--muted); }
 
 /* ------------------------------------------- Neuroglancer widgets, docked */
 .ng-host { font-size: 12px; color: var(--text); }
@@ -790,6 +792,10 @@ textarea.ins-grow { display: block; width: 100%; box-sizing: border-box; resize:
 .ins-schema-head, .ins-schema-row { display: grid; grid-template-columns: minmax(70px, 1fr) 82px minmax(70px, 1.2fr) 64px 22px; gap: 4px; align-items: center; }
 .ins-schema-head { color: var(--faint); font-size: 11px; }
 
+
+/* The app could not start (src/main.ts): the reason, and a reload. */
+.boot-failed { padding: 24px; display: grid; gap: 12px; justify-items: start; font: 13px/1.5 var(--ui); color: var(--text); }
+.boot-failed p { margin: 0; }
 
 /* --------------------------------------------------------------- overlays */
 .scrim {

@@ -14,9 +14,11 @@ import { browserGoogleEnvironment, GoogleSignIn, googleTokens } from "./platform
 import { SignInRules } from "./platform/sign_in_rules.js";
 import { CATALOGUE } from "../plugins/index.js";
 
-await loadDataTypePlugins(
+// A plugin that fails to load is left out; Neuroglancer opens without its format.
+const failed = await loadDataTypePlugins(
   CATALOGUE.filter((e) => e.neuroglancer !== undefined).map((e) => ({ id: e.manifest.id, neuroglancer: e.neuroglancer! })),
 );
+for (const [id, error] of failed) console.error(`${id} could not load:`, error);
 const googleEnvironment = browserGoogleEnvironment();
 registerGoogleCredentials(
   googleTokens(new GoogleSignIn(googleEnvironment, import.meta.env.VITE_GOOGLE_CLIENT_ID), new SignInRules(localStorage, googleEnvironment.onStorage)),

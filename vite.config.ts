@@ -109,6 +109,9 @@ export default defineConfig({
   build: {
     target: "es2022",
     chunkSizeWarningLimit: 4 * 1024 * 1024,
+    // Source maps beside the files but not linked from them: the page does
+    // not load them, and a stack saved from Activity can be read against them.
+    sourcemap: "hidden",
     assetsDir: "assets",
     rollupOptions: {
       // The app, and plain Neuroglancer with the plugins' formats.
