@@ -1,5 +1,5 @@
 /**
- * The Layers tab: the scene's datasets (./datasets.ts) above the selected
+ * The Layers panel: the scene's datasets (./datasets.ts) above the selected
  * layer's controls (./layer.ts), in one column.
  */
 import { h } from "../dom.js";

@@ -122,10 +122,10 @@ await page.locator(".ins-query").fill("");
 await page.waitForTimeout(500);
 
 // Hide and show the dataset from its row.
-await page.locator(".datasets .ds-row .vis").first().uncheck({ force: true });
+await page.locator(".datasets .ds-row .choice input").first().uncheck({ force: true });
 await page.waitForTimeout(500);
 check((await layers())[0].visible === false, "the row's checkbox hides the dataset");
-await page.locator(".datasets .ds-row .vis").first().check({ force: true });
+await page.locator(".datasets .ds-row .choice input").first().check({ force: true });
 
 // The 3-D panel is Neuroglancer's own, with its Sections switch.
 check((await page.locator("div.perspective-panel-show-slice-views label").count()) >= 1, "the 3-D panel has Neuroglancer's Sections switch");

@@ -1,13 +1,16 @@
 /**
- * The bottom of the Layers tab: the selected dataset's controls, as
+ * The bottom of the Layers panel: the selected dataset's controls, as
  * Neuroglancer's own layer tabs (Display, Source, Segments, Annotations…,
  * whatever its type has), directly editable.  A one-line header names the
  * dataset and, when it is shown through several layers, which one; below
  * it, only when the data is not public (or failed to load), the sign-in
- * the layer reads it with, as in Settings → Sign-in.
+ * the layer reads it with, as in Settings → Sign-in.  The header is drawn
+ * again only when what it shows changes, so a move of the views does not
+ * close its drop-down.
  */
 import type { DatasetInfo, LayerInfo } from "../../sdk/types.js";
-import { clear, h } from "../dom.js";
+import { region } from "../../sdk/dom.js";
+import { h } from "../dom.js";
 import { promptDialog } from "../overlays.js";
 import type { Workbench } from "../workbench.js";
 import { signInControl } from "./auth.js";
@@ -31,7 +34,7 @@ export function layerTarget(wb: Workbench): LayerTarget {
 
 export function renderLayerPanel(host: HTMLElement, wb: Workbench): () => void {
   const { engine, store } = wb;
-  const head = h("div", { class: "layer-head" });
+  const head = region((key: HeadKey | undefined) => (key === undefined ? null : drawHead(key)), { class: "layer-head" });
   const controls = h("div", { class: "ng-host layer-controls-host" });
   const empty = h("p", { class: "empty" }, "Select a layer above.");
   host.append(empty, head, controls);
@@ -64,19 +67,20 @@ export function renderLayerPanel(host: HTMLElement, wb: Workbench): () => void {
     store.selectLayer(to);
   };
 
-  const render = () => {
-    const { dataset, layer } = layerTarget(wb);
-    // Nothing to say with nothing in the scene: the list above says it.
-    empty.hidden = layer !== undefined || store.sceneDatasets().length === 0;
-    head.hidden = layer === undefined;
-    if (layer === undefined) {
-      mount(undefined);
-      return;
-    }
-    const views = store.sceneDatasets().find((d) => d.dataset.id === dataset?.id)?.layers ?? [layer.name];
-    const signIn = signInControl(wb, layer.name, layer.error === undefined);
-    clear(
-      head,
+  /** What the header shows, and what its sign-in drop-down is made from. */
+  interface HeadKey {
+    dataset: { id: string; name: string } | undefined;
+    layer: string;
+    type: string;
+    error: string | undefined;
+    views: string[];
+    source: unknown;
+    signIns: unknown;
+  }
+
+  const drawHead = (key: HeadKey) => {
+    const signIn = signInControl(wb, key.layer, key.error === undefined);
+    return [
       h(
         "button",
         {
@@ -84,26 +88,49 @@ export function renderLayerPanel(host: HTMLElement, wb: Workbench): () => void {
           type: "button",
           title: "Rename the dataset",
           onclick: async () => {
-            if (dataset === undefined) return;
-            const name = await promptDialog("Rename dataset", "Name", dataset.name);
-            if (name !== undefined) store.renameDataset(dataset.id, name);
+            if (key.dataset === undefined) return;
+            const name = await promptDialog("Rename dataset", "Name", key.dataset.name);
+            if (name !== undefined) store.renameDataset(key.dataset.id, name);
           },
         },
-        dataset?.name ?? layer.name,
+        key.dataset?.name ?? key.layer,
       ),
-      h("span", { class: "type" }, kindLabel(layer.type !== "new" ? layer.type : dataset?.kind)),
-      layer.error !== undefined ? h("p", { class: "empty error" }, layer.error) : null,
-      views.length > 1
+      h("span", { class: "type" }, key.type),
+      key.error !== undefined ? h("p", { class: "empty error" }, key.error) : null,
+      key.views.length > 1
         ? h(
             "div",
             { class: "segmented views" },
-            ...views.map((name) =>
-              h("button", { type: "button", "aria-pressed": String(name === layer.name), onclick: () => pickView(layer.name, name) }, name),
+            ...key.views.map((name) =>
+              h("button", { type: "button", "aria-pressed": String(name === key.layer), onclick: () => pickView(key.layer, name) }, name),
             ),
           )
         : null,
       signIn !== null ? h("div", { class: "layer-sign-in" }, h("span", {}, "Sign-in"), signIn) : null,
-    );
+    ];
+  };
+
+  const render = () => {
+    const { dataset, layer } = layerTarget(wb);
+    // Nothing to say with nothing in the scene: the list above says it.
+    empty.hidden = layer !== undefined || store.sceneDatasets().length === 0;
+    head.hidden = layer === undefined;
+    if (layer === undefined) {
+      head.update(undefined);
+      mount(undefined);
+      return;
+    }
+    const views = store.sceneDatasets().find((d) => d.dataset.id === dataset?.id)?.layers ?? [layer.name];
+    head.update({
+      dataset: dataset && { id: dataset.id, name: dataset.name },
+      layer: layer.name,
+      type: kindLabel(layer.type !== "new" ? layer.type : dataset?.kind),
+      error: layer.error,
+      views,
+      source: engine.layerSpec(layer.name)?.source,
+      // The sign-ins the drop-down offers: the rules, the Google accounts and the providers.
+      signIns: [wb.rules.list(), wb.google.accounts().map((a) => a.email), wb.google.defaultAccount(), wb.auth.list().map((p) => p.id)],
+    });
     mount(layer.name);
   };
 

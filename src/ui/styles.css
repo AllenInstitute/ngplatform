@@ -412,6 +412,8 @@ kbd {
   letter-spacing: var(--label-spacing);
   color: var(--muted);
 }
+/* A section label with an info control after it. */
+.section-title:has(> .info) { display: flex; align-items: center; gap: var(--sp-2); }
 .capture-more > summary { cursor: pointer; margin: var(--sp-2) 0; }
 .keys-all > summary { cursor: pointer; margin: 10px 0 var(--sp-3); }
 .empty { color: var(--muted); margin: 0; }
@@ -446,9 +448,13 @@ kbd {
 .note-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-4); margin-bottom: var(--sp-4); border: 1px solid var(--warn); color: var(--text); font-size: var(--fs-body); }
 .panel-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--sp-3); margin-bottom: var(--sp-4); }
 .ds-row.pick { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+/* Open from this computer: a tick box naming each dataset found, its format, and where it is. */
+.ds-row.local-pick { grid-template-columns: minmax(0, 1fr) auto; cursor: default; }
+.ds-row.local-pick .choice { min-width: 0; }
+.ds-row.local-pick .choice > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.ds-row.local-pick .sub { grid-column: 1 / -1; }
 .ds-icon { display: inline-flex; color: var(--muted); }
 .ds-icon svg { width: 15px; height: 15px; }
-.vis { margin: 0; accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer; }
 .ds-group { display: grid; gap: var(--sp-1); }
 .ds-layers { display: grid; gap: var(--sp-1); margin-left: 22px; padding-left: var(--sp-4); border-left: 1px solid var(--line); }
 .layer-row {
@@ -458,6 +464,8 @@ kbd {
 .layer-row:hover { background: var(--ink-3); }
 .layer-row.selected { border-color: var(--select); background: var(--select-soft); }
 .layer-row .ds-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A view's tick box keeps its row as low as the name beside it. */
+.layer-row .choice { min-height: 0; }
 
 .facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--sp-2) var(--sp-5); margin: 0; }
 .facts dt { color: var(--muted); }
@@ -609,11 +617,11 @@ kbd {
 .gsi-pill-text { overflow: hidden; text-overflow: ellipsis; }
 .auth-layer-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .auth-select { min-width: 0; }
-.auth-scopes { padding-left: 18px; display: grid; gap: var(--sp-1); margin-top: var(--sp-3); }
-.auth-scopes code, .auth-google .note code { font: var(--fs-caption) var(--mono); color: var(--muted); overflow-wrap: anywhere; }
-.auth-google > summary { cursor: pointer; }
-.auth-field { display: grid; gap: var(--sp-2); margin-top: 10px; font-size: var(--fs-body); color: var(--muted); }
-.auth-field .auth-add { margin-top: 0; }
+.field > .auth-add { margin-top: 0; }
+/* Settings › Compute: the computer that takes work, not the sheet's full width. */
+.remote-preferred { max-width: 420px; }
+.guide-link { display: inline-block; margin-top: var(--sp-4); font-size: var(--fs-body); }
+.host-command { user-select: all; }
 .layer-sign-in { display: flex; align-items: flex-start; gap: var(--sp-4); flex-basis: 100%; font-size: var(--fs-body); color: var(--muted); }
 .layer-sign-in > span { white-space: nowrap; line-height: var(--ctl-h); }
 .layer-sign-in > .auth-layer-control { flex: 1; }
