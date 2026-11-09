@@ -548,7 +548,6 @@ export class Shell {
         showOpenSheet(wb, {
           openText: (t, f, s) => this.openText(t, f, s),
           openExample: (id) => this.openExample(id),
-          openBlank: () => store.newScene({ name: "Blank" }),
         }),
     });
     add({

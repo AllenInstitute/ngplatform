@@ -20,8 +20,6 @@ export interface OpenActions {
   /** Opens pasted text; `asScene` opens a state as a new scene instead of replacing the workspace. */
   openText(text: string, from: string, asScene: boolean): Promise<boolean>;
   openExample(id: string): void;
-  /** A new, empty scene. */
-  openBlank(): void;
 }
 
 /**
@@ -170,14 +168,6 @@ export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
       toast((e as Error).message, "error");
     }
   };
-  const card = (title: string, desc: string, run: () => void, disabled = false) =>
-    h(
-      "div",
-      { class: "example" },
-      h("span", { class: "title" }, title),
-      h("span", { class: "desc" }, desc),
-      h("button", { class: "btn outline", type: "button", disabled, onclick: run }, "Open"),
-    );
   showSheet(
     sheet(
       "Open",
@@ -194,14 +184,10 @@ export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
         input,
         asSceneLabel,
         otherScenes(wb),
-        h("h3", { class: "section-title" }, "Examples and templates"),
+        h("h3", { class: "section-title" }, "Examples"),
         h(
           "div",
           { class: "examples" },
-          card("Blank viewer", "An empty scene, beside the ones open now.", () => {
-            closeSheet();
-            actions.openBlank();
-          }),
           ...examples.map((example) =>
             h(
               "div",
