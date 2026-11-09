@@ -52,8 +52,11 @@ Item line numbers are from that commit and move as the code changes.
 - `npm test`: every suite, the Zarr Vectors one included once Phase 0 is done.
 - The render service's tests, for any change under `runner/`:
   `python -m pytest runner/tests`, in the render environment.
-- `npm run ui:audit` (Phase 0): screenshots and style measurements, compared
-  with the baseline below. A batch must not make any number worse.
+- `npm run ui:audit -- <app address>` against a build (as `npm run e2e`):
+  screenshots and style measurements, compared with
+  [ui-audit-baseline.json](ui-audit-baseline.json); it fails when a measure
+  is worse. A batch that improves them records its run as the new baseline
+  (`UI_AUDIT_BASELINE=1`).
 - For a panel batch: its screenshots looked at, at 1440 × 900 and 1280 × 760.
 
 ### Style baseline and targets
@@ -65,7 +68,7 @@ Item line numbers are from that commit and move as the code changes.
 | Input and select styles | 17 | 4 or fewer |
 | Heading styles | 8 | 3 |
 | Corner radii on a square theme | 8 | 0 (pills for status chips only) |
-| Controls in the browser's default font | 63 | 0 |
+| Text in the browser's default font (elements) | 63 | 0 |
 | Elements with inline styles | 90 | Only computed geometry |
 | Panels mixing switches and checkboxes for on/off | 1 | 0 |
 

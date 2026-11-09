@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "test": "vitest --run && vitest --run --root plugins/zarr-vectors",
     "e2e": "node tests/e2e/smoke.mjs",
+    "ui:audit": "node tests/e2e/ui_audit.mjs",
     "typecheck": "tsc -p . && tsc -p plugins/zarr-vectors"
   },
   "dependencies": {

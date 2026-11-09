@@ -3,3 +3,4 @@ dist/
 dist-*/
 public/examples/
 tests/e2e/screenshots/
+tests/e2e/ui-audit/
