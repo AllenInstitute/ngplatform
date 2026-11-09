@@ -47,19 +47,14 @@ import { type DockTab, DockManager, prefs } from "./docks.js";
 import { h, icon, iconButton, isMac, keyLabel, mark } from "./dom.js";
 import { closeSheet, confirmDialog, copyText, formDialog, offer, promptDialog, sheet, sheetIsOpen, showMenu, showPalette, showSheet, toast } from "./overlays.js";
 import { ActivityLog } from "./panels/activity.js";
-import { renderAuthPanel } from "./panels/auth.js";
-import { renderRemotePanel } from "./panels/remote.js";
-import { renderDatasetsPanel, showAddMenu } from "./panels/datasets.js";
-import { layerTarget, renderLayerPanel } from "./panels/layer.js";
-import {
-  renderJobsPanel,
-  renderPluginsPanel,
-  renderStatisticsPanel,
-} from "./panels/misc.js";
+import { showAddMenu } from "./panels/datasets.js";
+import { layerTarget } from "./panels/layer.js";
+import { renderLayersPanel } from "./panels/layers.js";
+import { renderJobsPanel, renderPluginsPanel } from "./panels/misc.js";
 import { CONVENTION_LABELS, type PanelConvention } from "../engine/anatomical.js";
 import { offerOverviews } from "./overview.js";
 import { offerRunnerForLarge, offerSampledTractograms, pairFromLink, runnerApi } from "./runner.js";
-import { openDroppedItems, showAddDatasetSheet, showEditStateSheet, showLocalSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
+import { openDroppedItems, SETTINGS_SECTIONS, type SettingsSection, showAddDatasetSheet, showEditStateSheet, showLocalSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
 import type { Workbench } from "./workbench.js";
 import { createPlatformApis } from "./apis.js";
 
@@ -71,8 +66,25 @@ const pythonPanel = () => import("./panels/python.js");
 const captureSheet = () => import("./capture.js");
 const historyView = () => import("./history_view.js");
 
-/** The code, linked from the top bar. */
+/** The code and the guide, linked from Help. */
 const REPOSITORY = "https://github.com/AllenInstitute/ngplatform";
+const GUIDE = "https://ngplatform.readthedocs.io/en/latest/";
+
+/** The headings tools are listed under in the Tools dock, by panel title. */
+const TOOL_GROUPS: Record<string, string> = {
+  Filters: "Image",
+  Anatomical: "Image",
+  Render: "Image",
+  Orientations: "Image",
+  "Time series": "Image",
+  Annotations: "Labels",
+  Segmentation: "Labels",
+  Atlas: "Labels",
+  Registration: "Space",
+  Collection: "Space",
+  Filtering: "Vectors",
+  Luxar: "Vectors",
+};
 
 /** Inside a frame (such as an artifact viewer), a link cannot carry the state. */
 const framed = (() => {
@@ -94,6 +106,10 @@ export class Shell {
   private readonly statusText = h("span", {}, "Starting");
   private readonly statusStrip = h("div", { class: "ng-status", "aria-live": "polite" });
   private readonly sceneTabs = h("div", { class: "scene-tabs", role: "tablist", "aria-label": "Scenes" });
+  /** Over an empty scene's views: the examples, opening a file, pasting a link. */
+  private readonly startCard = h("div", { class: "start-card", hidden: true });
+  /** In the Activity dock's head, also while it is collapsed: the running job, else the last message. */
+  private readonly activityLine = h("button", { class: "dock-status", type: "button", title: "Show the activity" });
   private readonly undoButton = iconButton("undo", "Undo", () => this.wb.run("edit.undo"));
   private readonly redoButton = iconButton("redo", "Redo", () => this.wb.run("edit.redo"));
   private readonly historyButton: HTMLButtonElement = iconButton("more", "History of changes", () => this.showHistory());
@@ -129,21 +145,9 @@ export class Shell {
         h("button", { class: "btn outline", type: "button", onclick: () => this.wb.run("workspace.open") }, icon("open"), "Open"),
         h(
           "button",
-          { class: "btn outline", type: "button", "aria-haspopup": "menu", onclick: (e: Event) => showAddMenu(e.currentTarget as HTMLElement, this.wb) },
-          icon("plus"),
-          h("span", { class: "hide-narrow" }, "Add"),
-        ),
-        h(
-          "button",
           { class: "btn", type: "button", "aria-haspopup": "menu", onclick: (e: Event) => this.showShareMenu(e.currentTarget as HTMLElement) },
           icon("link"),
           h("span", { class: "hide-narrow" }, "Share"),
-        ),
-        h(
-          "button",
-          { class: "btn hide-phone", type: "button", title: "Open this scene in Neuroglancer, in a new tab", onclick: () => this.wb.run("workspace.openInNeuroglancer") },
-          icon("external"),
-          h("span", { class: "hide-narrow" }, "Neuroglancer"),
         ),
       ),
       h("span", { class: "sep hide-narrow" }),
@@ -155,8 +159,7 @@ export class Shell {
       h(
         "div",
         { class: "group" },
-        h("a", { class: "btn icon", href: REPOSITORY, target: "_blank", rel: "noopener noreferrer", title: "ngplatform on GitHub", "aria-label": "ngplatform on GitHub" }, icon("github")),
-        iconButton("camera", "Capture: pictures and movies", (e) =>
+        iconButton("camera", "Capture", (e) =>
           showMenu(e.currentTarget as HTMLElement, [
             { label: "Picture…", run: () => this.wb.run("view.capture") },
             { label: "Movie: sweep slices or time…", run: () => this.wb.run("view.captureSweep") },
@@ -165,16 +168,14 @@ export class Shell {
             { label: "Screenshot (Neuroglancer)…", run: () => this.wb.run("view.screenshot") },
           ]),
         ),
-        iconButton("settings", "Settings and reloading", (e) =>
+        iconButton("settings", "Settings", () => this.wb.run("settings.open")),
+        iconButton("help", "Help", (e) =>
           showMenu(e.currentTarget as HTMLElement, [
-            { label: "View settings…", run: () => this.wb.run("view.settings") },
-            { label: "View orientation…", run: () => this.wb.run("view.panelConvention") },
-            "-",
-            { label: "Reload the scene's layers", run: () => this.wb.run("view.reloadLayers") },
-            { label: "Reload page and all data", run: () => this.wb.run("view.hardReset") },
+            { label: "Keyboard and mouse", run: () => this.wb.run("help.shortcuts") },
+            { label: "Guide ↗", run: () => window.open(GUIDE, "_blank", "noopener") },
+            { label: "ngplatform on GitHub ↗", run: () => window.open(REPOSITORY, "_blank", "noopener") },
           ]),
         ),
-        iconButton("keyboard", "Keyboard and mouse", () => this.wb.run("help.shortcuts"), { class: "btn icon hide-narrow" }),
       ),
       h(
         "button",
@@ -184,7 +185,7 @@ export class Shell {
         h("kbd", {}, keyLabel("Mod+K")),
       ),
     );
-    const engine = h("section", { class: "engine", "aria-label": "Viewer" }, this.engineHost, this.viewSplit, this.viewArea);
+    const engine = h("section", { class: "engine", "aria-label": "Viewer" }, this.engineHost, this.viewSplit, this.viewArea, this.startCard);
     this.viewSplit.addEventListener("pointerdown", (e) => this.dragViewSplit(e, engine));
     const centre = h("div", { class: "centre" }, engine, this.statusStrip);
     const workspace = h(
@@ -197,6 +198,8 @@ export class Shell {
       this.docks.element("right"),
     );
     this.root.append(topbar, workspace, this.docks.resizer("bottom"), this.docks.element("bottom"));
+    this.activityLine.addEventListener("click", () => this.docks.show("activity"));
+    this.docks.addToHead("bottom", this.activityLine);
     const narrow = window.matchMedia("(max-width: 520px)");
     this.docks.restore(narrow.matches);
     narrow.addEventListener("change", () => {
@@ -246,8 +249,8 @@ export class Shell {
       told.add(account ?? "");
       toast(
         account === undefined
-          ? "Sign in with Google in the Auth tab: data from Google Cloud Storage (gs+google://) waits for it."
-          : `Sign in as ${accountLabel(account)} in the Auth tab: data from Google Cloud Storage (gs+google://) waits for it.`,
+          ? "Data from Google Cloud Storage waits for a Google sign-in (Settings → Sign-in)."
+          : `Data from Google Cloud Storage waits for ${accountLabel(account)} to sign in (Settings → Sign-in).`,
       );
     });
     const store = new WorkspaceStore(engine, {
@@ -308,7 +311,11 @@ export class Shell {
       commands,
       keybindings,
       context: this.context,
-      docks: { addTab: (tab) => this.docks.addTab(tab), show: (id) => this.docks.show(id) },
+      // A plugin's panel in the left slot is a tool: it goes to the Tools dock, under its group.
+      docks: {
+        addTab: (tab) => this.docks.addTab(tab.slot === "left" ? { ...tab, slot: "right", group: TOOL_GROUPS[tab.title] ?? "Other" } : tab),
+        show: (id) => this.docks.show(id),
+      },
       views: { mount: (render, owner) => this.mountView(render, owner) },
       examples,
       open: openHandlers,
@@ -431,7 +438,24 @@ export class Shell {
       this.renderSceneTabs();
       this.showKindPanel();
       this.updateControls();
+      this.updateStartCard();
     };
+    // The activity line: a running job and its progress, else the last message.
+    let last: { message: string; level: string } | undefined;
+    const line = () => {
+      const running = jobs.list().filter((j) => j.state === "running");
+      const job = running[0];
+      this.activityLine.classList.toggle("err", job === undefined && last?.level === "error");
+      this.activityLine.textContent =
+        job !== undefined
+          ? `${job.title}${job.progress !== undefined ? ` ${Math.round(job.progress * 100)}%` : "…"}${running.length > 1 ? ` (+${running.length - 1})` : ""}`
+          : (last?.message ?? "");
+    };
+    log.onAdd((message, level) => {
+      last = { message, level };
+      line();
+    });
+    jobs.onChange(line);
     store.onChange(refresh);
     // A plugin with state in the workspace (a filter in a shared link, say)
     // is loaded as the workspace opens, so its effect shows without opening
@@ -495,33 +519,35 @@ export class Shell {
     // Offers of the plugins that are off, from the data opened (and the workspace's state).
     wb.offers.start();
     this.tellNewDefaults(plugins.returning);
-    log.add(
-      framed
-        ? "Running inside a frame: Share copies the workspace as JSON, since links here cannot carry it."
-        : "Ready. The address bar always holds a link to the current workspace.",
-    );
+    if (framed) log.add("In a frame, links cannot carry the workspace: Share copies it as JSON.");
   }
 
   private registerPanels(): void {
     const wb = this.wb;
     const add = (tab: DockTab) => this.docks.addTab(tab);
-    add({ id: "datasets", title: "Datasets", slot: "left", order: 10, render: (host) => renderDatasetsPanel(host, wb) });
-    add({ id: "auth", title: "Auth", slot: "left", order: 80, render: (host) => renderAuthPanel(host, wb) });
+    add({ id: "layers", title: "Layers", slot: "left", order: 10, render: (host) => renderLayersPanel(host, wb) });
     add({ id: "plugins", title: "Plugins", slot: "left", order: 90, render: (host) => renderPluginsPanel(host, wb, this.localPlugins!) });
-    add({ id: "layer", title: "Layer", slot: "right", order: 10, render: (host) => renderLayerPanel(host, wb) });
     add({
       id: "activity",
       title: "Activity",
       slot: "bottom",
       order: 10,
       render: (host) => {
-        host.append(wb.log.element);
+        // The jobs (when there are any) above the log.
+        const jobs = h("div", { class: "activity-jobs" });
+        host.append(jobs, wb.log.element);
+        return renderJobsPanel(jobs, wb);
       },
     });
-    add({ id: "jobs", title: "Jobs", slot: "bottom", order: 20, render: (host) => renderJobsPanel(host, wb) });
-    add({ id: "statistics", title: "Chunk statistics", slot: "bottom", order: 30, transient: true, render: (host) => renderStatisticsPanel(host, wb) });
     add({ id: "python", title: "Python", slot: "bottom", order: 40, render: async (host) => (await pythonPanel()).renderPythonPanel(host, wb) });
-    add({ id: "remote", title: "Remote (SSH)", slot: "bottom", order: 50, minSize: 320, render: (host) => renderRemotePanel(host, wb) });
+    // Tabs that were merged or moved into Settings: showing one shows where it went.
+    this.docks.redirect("datasets", "layers");
+    this.docks.redirect("layer", "layers");
+    this.docks.redirect("jobs", "activity");
+    const settings = (section: SettingsSection) => () => showSettingsSheet(wb, section);
+    this.docks.redirect("auth", settings("sign-in"));
+    this.docks.redirect("remote", settings("compute"));
+    this.docks.redirect("statistics", settings("developer"));
   }
 
   // ---------------------------------------------------------- commands
@@ -631,7 +657,11 @@ export class Shell {
       args: { type: "object", required: ["id"], properties: { id: { type: "string" } } },
       run: ({ id }: { id: string }) => this.openExample(id),
     });
-    wb.examples.onChange(() => this.registerExampleCommands());
+    wb.examples.onChange(() => {
+      this.registerExampleCommands();
+      this.startCardFor = undefined;
+      this.updateStartCard();
+    });
     this.registerExampleCommands();
 
     // Edit
@@ -895,7 +925,7 @@ export class Shell {
       run: () => {
         const { preference } = engine.panelConvention();
         showMenu(
-          this.root.querySelector<HTMLElement>('button[title="Settings and reloading"]') ?? { x: window.innerWidth - 320, y: 48 },
+          this.root.querySelector<HTMLElement>('.topbar button[title="Settings"]') ?? { x: window.innerWidth - 320, y: 48 },
           conventions.map(([id, title]) => ({ label: `${preference === id ? "✓ " : ""}${title}`, current: preference === id, run: () => engine.setPanelConvention(id) })),
         );
       },
@@ -907,7 +937,16 @@ export class Shell {
       args: { type: "object", required: ["position"], properties: { position: { type: "array", items: { type: "number" } } } },
       run: ({ position }: { position: number[] }) => engine.setPosition(position),
     });
-    add({ id: "view.settings", title: "View settings…", group: "View", run: () => showSettingsSheet(wb) });
+    add({
+      id: "settings.open",
+      title: "Settings…",
+      group: "View",
+      args: { type: "object", properties: { section: { type: "string", enum: Object.keys(SETTINGS_SECTIONS) } } },
+      run: (args?: { section?: SettingsSection }) => showSettingsSheet(wb, args?.section),
+    });
+    add({ id: "view.settings", title: "View settings…", group: "View", run: () => showSettingsSheet(wb, "view") });
+    add({ id: "settings.signIn", title: "Sign-in settings…", group: "View", run: () => showSettingsSheet(wb, "sign-in") });
+    add({ id: "settings.compute", title: "Compute: pair a computer…", group: "View", run: () => showSettingsSheet(wb, "compute") });
     add({ id: "view.screenshot", title: "Screenshot (Neuroglancer)…", group: "View", run: () => engine.showScreenshotDialog() });
     add({ id: "view.capture", title: "Capture a picture (magnified, trimmed)…", group: "View", run: async () => (await captureSheet()).showCaptureSheet(wb, "picture") });
     add({ id: "view.captureSweep", title: "Capture a movie: sweep slices or time…", group: "View", run: async () => (await captureSheet()).showCaptureSheet(wb, "sweep") });
@@ -930,24 +969,51 @@ export class Shell {
       add({ id: `view.toggle.${key}`, title: `Show or hide ${label}`, group: "View", run: () => c.invoke("view.toggleOption", { option: key }) });
     }
     for (const [slot, title] of [
-      ["left", "workspace"],
-      ["right", "layer"],
+      ["left", "layers"],
+      ["right", "tools"],
       ["bottom", "activity"],
     ] as const) {
       add({ id: `view.dock.${slot}`, title: `Show or hide the ${title} dock`, group: "View", run: () => this.docks.toggle(slot) });
     }
     for (const [tab, title] of [
-      ["datasets", "Datasets"],
-      ["layer", "Layer"],
+      ["layers", "Layers"],
       ["activity", "Activity"],
-      ["jobs", "Jobs"],
-      ["statistics", "Chunk statistics"],
       ["python", "Python"],
-      ["remote", "Remote (SSH)"],
       ["plugins", "Plugins"],
     ]) {
       add({ id: `panel.${tab}`, title: `Show the ${title} panel`, group: "Panels", run: () => this.docks.show(tab) });
     }
+  }
+
+  /** Which examples the start card was made with (undefined: make it again). */
+  private startCardFor: string | undefined;
+
+  /** The start card: shown over a scene with no layers (not a plugin's kind of scene), made again when the examples change. */
+  private updateStartCard(): void {
+    const wb = this.wb;
+    const scene = activeScene(wb.store.state());
+    this.startCard.hidden = wb.engine.layers().length > 0 || scene.kind !== undefined;
+    if (this.startCard.hidden) return;
+    const examples = wb.examples.list().filter((e) => e.listed !== false && !(e.remote && wb.framed));
+    const key = examples.map((e) => e.id).join(",");
+    if (key === this.startCardFor) return;
+    this.startCardFor = key;
+    this.startCard.replaceChildren(
+      h(
+        "div",
+        { class: "start-examples" },
+        ...examples.map((e) =>
+          h("button", { class: "start-example", type: "button", title: e.description, onclick: () => this.openExample(e.id) }, h("span", { class: "title" }, e.title), h("span", { class: "desc" }, e.description)),
+        ),
+      ),
+      h(
+        "div",
+        { class: "row-actions" },
+        h("button", { class: "btn primary", type: "button", disabled: !wb.commands.available("dataset.addLocal"), onclick: () => wb.run("dataset.addLocal") }, icon("open"), "Open a file…"),
+        h("button", { class: "btn outline", type: "button", onclick: () => wb.run("workspace.open") }, icon("link"), "Paste a link…"),
+      ),
+      h("p", { class: "note" }, "Or drop files here."),
+    );
   }
 
   private exampleCommands: (() => void)[] = [];
@@ -1092,8 +1158,8 @@ export class Shell {
     const shown = ids.filter((id) => this.wb.pluginSwitches.enabled.has(id));
     if (shown.length === 0) return;
     const panel = manifests.find((m) => m.id === shown[0])?.contributes?.panels?.[0]?.id;
+    // Its panel opening says it is on.
     if (panel !== undefined) this.docks.show(panel);
-    toast(`${listNames(shown.map(nameOf))} ${shown.length === 1 ? "is" : "are"} on.`);
   }
 
   /** A plugin on for this tab only (an example's), kept on in this browser. */
@@ -1164,7 +1230,6 @@ export class Shell {
     if (ids.length === 0) return;
     const names = listNames(ids.map((id) => manifests.find((m) => m.id === id)?.name ?? id));
     const one = ids.length === 1;
-    this.wb.log.add(`${names} ${one ? "is" : "are"} now off by default: offered when your data calls for ${one ? "it" : "them"}, or turned on in the Plugins tab.`);
     offer(
       `${names} ${one ? "is" : "are"} now off until you turn ${one ? "it" : "them"} on.`,
       [
@@ -1193,7 +1258,7 @@ export class Shell {
     const formats = new Set(this.wb.engine.layers().flatMap((l) => l.sources.map((s) => contextKeyFor(s))));
     const zv = this.wb.pluginSwitches.manifests.find((m) => m.id === "org.ngplatform.zarr-vectors");
     if (zv !== undefined && formats.has("zarr-vectors") && !this.wb.pluginSwitches.enabled.has(zv.id)) {
-      const message = "This workspace has Zarr Vectors data, but the Zarr Vectors plugin is off. Switch it on in the Plugins tab.";
+      const message = "This workspace has Zarr Vectors data: turn on Zarr Vectors in the Plugins tab.";
       this.wb.log.add(message, "error");
       toast(message, "error");
       this.docks.show("plugins");

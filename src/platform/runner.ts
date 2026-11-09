@@ -363,7 +363,7 @@ export class RunnerService {
   }
 
   private need(): RunnerClient {
-    if (this.clientValue === undefined) throw new RunnerError("This browser is not paired with a runner: pair This computer in the Remote tab", 0);
+    if (this.clientValue === undefined) throw new RunnerError("This browser is not paired with a runner: pair This computer in Settings → Compute", 0);
     return this.clientValue;
   }
 

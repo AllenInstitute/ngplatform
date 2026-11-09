@@ -115,8 +115,8 @@ function pairForm(runner: RunnerService, note?: string, where = "this computer")
     message,
     h(
       "p",
-      { class: "note" },
-      "Runs long jobs (converting, filtering, density maps) as Python on this computer. Start it with ",
+      { class: "note", title: "The runner runs long jobs (converting, filtering, density maps) as Python on this computer." },
+      "Start it with ",
       h("code", { title: "In the Python that has zarr-vectors-tools" }, START_COMMAND),
       ", then open the link it prints or enter its address and token. ",
       h("a", { href: LOCAL_JOBS_GUIDE, target: "_blank", rel: "noopener" }, "Guide ↗"),
@@ -242,8 +242,8 @@ export function renderRunnerSection(wb: Workbench, runner: RunnerService, host =
         h(
           "p",
           { class: "note first runner-unpaired" },
-          state === "refused" ? `${host} refused this browser's pairing: pair it again in the ` : `To run jobs on ${where}, pair its runner in the `,
-          h("a", { href: "#", class: "runner-remote-link", onclick: (e: Event) => (e.preventDefault(), wb.docks.show("remote")) }, "Remote tab"),
+          state === "refused" ? `${host} refused this browser's pairing: ` : `${where[0].toUpperCase()}${where.slice(1)} is not paired: `,
+          h("a", { href: "#", class: "runner-remote-link", onclick: (e: Event) => (e.preventDefault(), wb.docks.show("remote")) }, "pair it"),
           ".",
         ),
       );
@@ -377,7 +377,7 @@ export function addHostDialog(wb: Workbench): void {
  */
 export function choosePath(runner: RunnerService, options: Parameters<RunnerApi["choose"]>[0]): Promise<string | undefined> {
   const client = runner.client();
-  if (client === undefined || !runner.available()) return Promise.reject(new RunnerError("Pair with the runner first (Remote tab, This computer)", 0));
+  if (client === undefined || !runner.available()) return Promise.reject(new RunnerError("Pair with the runner first (Settings → Compute)", 0));
   return new Promise((resolve) => {
     let answered = false;
     let folder = "";
@@ -531,7 +531,7 @@ async function convertDialog(runner: RunnerService): Promise<void> {
     const job = await runner.start("convert", { input, output, levels: 3 });
     toast(`Started ${job.title} (PID ${job.pid ?? "queued"})`);
     void runner.wait(job.id).catch((e: Error) => ({ state: "failed", title: job.title, message: e.message }) as unknown as RunnerJob).then((done) => {
-      if (done.state === "done") toast(`${done.title}: done. Open it from the Jobs tab.`);
+      if (done.state === "done") toast(`${done.title}: done. Open it from the Activity tab.`);
       else if (done.state === "failed") toast(`${done.title} failed: ${done.message}`, "error");
     });
   } catch (e) {
@@ -567,8 +567,8 @@ const sampleText = (plan: SpillPlan) => `about ${bytesText(plan.bytes)} copied${
 /** Converts (or serves) a tractogram through the runner, after finding where it is under the runner's folders. */
 async function throughRunner(wb: Workbench, runner: RunnerService, file: { name: string; size: number }, choice: "serve" | "convert"): Promise<void> {
   if (!runner.available()) {
-    toast(`Start the runner on this computer (${START_COMMAND}) and pair it in Jobs → This computer, then open ${file.name} again.`, "error");
-    wb.docks.show("jobs");
+    toast(`Start the runner on this computer (${START_COMMAND}) and pair it in Settings → Compute, then open ${file.name} again.`, "error");
+    wb.docks.show("remote");
     return;
   }
   const path = await choosePath(runner, { title: `Where is ${file.name}?`, mode: "open", find: { name: file.name, size: file.size }, note: "The browser does not tell the page where a dropped file is: choose it under the runner's folders." }).catch((e) => {
@@ -631,7 +631,7 @@ export async function offerRunnerForLarge(wb: Workbench, runner: RunnerService, 
             item("Convert it", "the runner on this computer writes a Zarr Vectors store next to the file (about the file's size, on your disk). The viewer reads it a chunk at a time, every streamline."),
             item("Serve it", "the runner reads the whole file into memory and serves it."),
           ),
-          ...(paired ? [] : [h("p", { class: "note" }, `The runner is not paired: start it (${START_COMMAND}) and pair it in Jobs → This computer.`)]),
+          ...(paired ? [] : [h("p", { class: "note" }, `The runner is not paired: start it (${START_COMMAND}) and pair it in Settings → Compute.`)]),
         ],
         [
           h("button", { class: "btn", type: "button", onclick: () => answer(undefined) }, "Cancel"),

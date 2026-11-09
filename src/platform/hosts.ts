@@ -227,7 +227,7 @@ export class HostList {
   /** A request to `<address>/svc/<path>` on a host, with its token. */
   async fetch(name: string, path: string, init: RequestInit = {}): Promise<Response> {
     const client = this.runner(name)?.client();
-    if (client === undefined) throw new RunnerError(`${name} is not paired: pair it in the Remote tab`, 0);
+    if (client === undefined) throw new RunnerError(`${name} is not paired: pair it in Settings → Compute`, 0);
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Bearer ${client.token}`);
     const fetchImpl = this.fetchImpl ?? ((input: RequestInfo | URL, options?: RequestInit) => fetch(input, options));

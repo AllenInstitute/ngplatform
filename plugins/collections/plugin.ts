@@ -12,7 +12,7 @@
  * belongs to.  The model is ./collection.ts.
  */
 import type { LayerTransform, PlatformContext, PluginModule } from "@ngplatform/sdk";
-import { el } from "@ngplatform/sdk/dom";
+import { card, el } from "@ngplatform/sdk/dom";
 import { describeTransform } from "@ngplatform/sdk/ome";
 import { neuroglancer, physical } from "../registration/plugin.js";
 import {
@@ -668,11 +668,11 @@ class Collections {
     const title = el("h3", { class: "section-title" }, "From this scene");
     const scene = this.activeScene();
     if (scene === undefined || scene.kind !== undefined)
-      return el("section", {}, title, el("p", { class: "note" }, "Switch to a scene to make a collection of its images."));
+      return el("section", {}, title, el("p", { class: "note" }, "Switch to a scene first."));
     const layers = this.ctx.workspace.sceneDatasets().flatMap((d) => d.layers.map((l) => ({ name: l.name, url: zarrGroupUrl(l.sources[0] ?? d.source) })));
     const images = layers.filter((l): l is { name: string; url: string } => l.url !== undefined);
     if (images.length === 0)
-      return el("section", {}, title, el("p", { class: "note" }, layers.length ? "This scene has no OME-Zarr images (a collection's members are OME-Zarr images)." : "This scene is empty: add images to it first."));
+      return el("section", {}, title, el("p", { class: "note" }, layers.length ? "No OME-Zarr images in this scene." : "This scene is empty."));
     const boxes = images.map((image) => ({ image, box: el("input", { type: "checkbox", checked: true }) as HTMLInputElement }));
     const name = el("input", { class: "text-input", type: "text", value: `${scene.name} collection`, "aria-label": "Collection name", title: "The collection's name (and its tab's)" }) as HTMLInputElement;
     const unit = el("select", { class: "text-input", "aria-label": "Unit of its coordinate system", title: "The unit of its coordinate system" }, ...Object.keys(UNITS).map((u) => el("option", { value: u, selected: u === "micrometer" }, u))) as HTMLSelectElement;
@@ -681,13 +681,12 @@ class Collections {
       "section",
       {},
       title,
-      el("p", { class: "note" }, "Each image a member, placed as this scene shows it, in one coordinate system. It opens in a tab of its own with the graph of how they relate, where you can build on it."),
       el(
         "div",
         { class: "cl-pick" },
         ...boxes.map(({ image, box }) => el("label", {}, box, el("span", {}, image.name), el("span", { class: "cl-where" }, image.url))),
       ),
-      others ? el("p", { class: "note" }, `${others} other layer${others === 1 ? " is" : "s are"} not OME-Zarr and left out.`) : null,
+      others ? el("p", { class: "note" }, `${others} other layer${others === 1 ? "" : "s"} left out (not OME-Zarr).`) : null,
       el("div", { class: "cl-row" }, name, unit, el("button", { class: "btn primary small", type: "button", onclick: attempt(() => this.fromScene(name.value.trim() || scene.name, unit.value, boxes.filter((b) => b.box.checked).map((b) => b.image))) }, "Make the collection")),
     );
   }
@@ -826,7 +825,6 @@ class Collections {
         { class: "cl-add" },
         el("div", { class: "cl-row" }, pick),
         el("div", { class: "cl-row" }, address, el("button", { class: "btn small", type: "button", onclick: add }, "Add member")),
-        el("span", { class: "note" }, "A new member is hidden until a relationship places it."),
       ),
     ];
   }
@@ -962,7 +960,7 @@ class Collections {
                   ...found.map((f) => el("div", { class: "cl-row" }, el("strong", {}, f.name), el("button", { class: "btn small", type: "button", disabled: this.busy, onclick: () => void this.openUrl(f.url) }, "Open in a tab"))),
                 )
               : null,
-            el("p", { class: "note", title: "An OME-NGFF collection (RFC-8, draft): images, each placed by its transforms." }, this.busy ? "Reading the collection…" : "A collection opens in a tab of its own: make one of a scene's images, or open one."),
+            el("p", { class: "note", title: "An OME-NGFF collection (RFC-8, draft): images, each placed by its transforms." }, this.busy ? "Reading the collection…" : "No collection open."),
             el("div", { class: "cl-row" }, addButton),
           ),
         );
@@ -990,24 +988,22 @@ class Collections {
             el("button", { class: "btn outline small", type: "button", title: "Save the collection's JSON", onclick: () => this.download() }, "Download JSON"),
             el("button", { class: "btn outline small", type: "button", onclick: copy }, "Copy JSON"),
           ),
-          el(
-            "p",
-            { class: "note" },
-            this.documentUrl
-              ? `${edited ? "Changed here from" : "Read from"} ${this.documentUrl === EXAMPLE_URL ? "the example" : this.documentUrl}${edited ? "; the changes are kept with this tab, not written back." : "."}`
-              : "Made here: kept with this tab (and its link). Download it to keep it as a file.",
-          ),
+          // Where it came from, only when it came from somewhere (its changes stay with the tab: say so in the tooltip).
+          this.documentUrl
+            ? el(
+                "p",
+                { class: "note", title: edited ? "Changes are kept with this tab, not written back." : undefined },
+                `${edited ? "Changed from" : "From"} ${this.documentUrl === EXAMPLE_URL ? "the example" : this.documentUrl}`,
+              )
+            : null,
           this.error ? el("p", { class: "note error" }, this.error) : null,
           this.graphView(root),
-          el("p", { class: "note" }, chosen ? `Viewed in ${chosen.name ?? chosen.id} (${chosen.axes.join(", ")}${chosen.units.some(Boolean) ? `; ${[...new Set(chosen.units.filter(Boolean))].join(", ")}` : ""}). Click another system to view in it.` : "Add a coordinate system to view the images in."),
-          this.warped.size ? el("p", { class: "note" }, `Warped through a displacement field (computed as you view it, placed by the chain's affines): ${[...this.warped].join(", ")}.`) : null,
-          this.hidden.size ? el("p", { class: "note" }, `Hidden, with no chain of transforms to this system that can be applied: ${[...this.hidden].join(", ")}.`) : null,
-          el("h3", { class: "section-title" }, "Members"),
-          ...this.membersView(root),
-          el("h3", { class: "section-title" }, "Coordinate systems"),
-          ...this.systemsView(root),
-          el("h3", { class: "section-title" }, "Relationships"),
-          ...this.transformsView(root),
+          chosen ? null : el("p", { class: "note" }, "Add a coordinate system to view the images in."),
+          this.warped.size ? el("p", { class: "note" }, `Warped: ${[...this.warped].join(", ")}.`) : null,
+          this.hidden.size ? el("p", { class: "note" }, `Hidden (no transform to this system): ${[...this.hidden].join(", ")}.`) : null,
+          card("collections.members", "Members", { open: true, badge: String(members(root).length) }, ...this.membersView(root)),
+          card("collections.systems", "Coordinate systems", { badge: String(sceneSystems(root).length) }, ...this.systemsView(root)),
+          card("collections.relationships", "Relationships", { badge: String(graph(root).transforms.length) }, ...this.transformsView(root)),
           el("div", { class: "cl-row" }, addButton),
         ),
       );

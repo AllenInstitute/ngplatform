@@ -349,7 +349,7 @@ export class GoogleSignIn {
    * with the email of the account that signed in.
    */
   signIn(account?: string): Promise<string> {
-    if (this.clientId() === undefined) return Promise.reject(new Error("Set a Google OAuth client ID first (in the Auth tab, or see Signing in in the guide)."));
+    if (this.clientId() === undefined) return Promise.reject(new Error("Set a Google OAuth client ID first (Settings → Sign-in, or see Signing in in the guide)."));
     if (!this.ready() || this.client === undefined) {
       void this.prepare().catch(() => {});
       return Promise.reject(new Error("Google sign-in is still loading: click again in a moment."));

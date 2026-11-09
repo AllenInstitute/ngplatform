@@ -88,11 +88,11 @@ Dapi channel · **1-99%**.
   path ending in `.zarr`, `.n5`, `.nii.gz`, `.trk` and the like); another
   web address is asked about first; a pasted Neuroglancer link or state
   asks whether to open it (it replaces the workspace) or open it as a new
-  scene (`pasteAction` in `src/core/state_io.ts`). The empty Datasets tab
-  says so.
-- The Render tab shows the shader's controls (contrast, colour) above the
+  scene (`pasteAction` in `src/core/state_io.ts`). The start card over
+  an empty scene says so ("Or drop files here").
+- The Display tab (once Render) shows the shader's controls (contrast, colour) above the
   shader's code, so the contrast is in view without scrolling.
-- Picking another view of a dataset in the Layer tab's header keeps the
+- Picking another view of a dataset in the Layers tab's header keeps the
   tab you are on.
 - A bug: until the histogram and the colour bar first draw, their
   canvases keep the default 300 × 150 size and lay over the **Min-Max**,
@@ -119,7 +119,7 @@ data* · **Point** (with no layer yet, it makes one) · three Ctrl+clicks ·
 **Save CSV** (the table opens with the first point).
 
 **What changed.** Annotations and Segmentation are listed under *Tools
-for this data* for any image, in the Datasets tab only (no toast: a use
+for this data* for any image, in the Layers tab only (no toast: a use
 worth offering, not pressing). Offers can now say "list only"
 (`plugins/offers.ts`). The tool that is on is highlighted and named under
 the tools: "Point is on: Ctrl+click a point in a view. Pick it again to

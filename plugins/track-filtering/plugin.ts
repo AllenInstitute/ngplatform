@@ -1785,7 +1785,7 @@ class TrackGroups {
     const toast = this.ctx.ui.toast;
     if (group === undefined) return;
     if (!runner.available()) {
-      toast("Pair the runner on this computer first: Remote tab, This computer.", "error");
+      toast("Pair the runner on this computer first: Settings → Compute.", "error");
       return;
     }
     const reason = cannotRun(group.filter);
@@ -1867,7 +1867,7 @@ class TrackGroups {
       toast(`The runner did not start the job: ${(e as Error).message}`, "error");
       return;
     }
-    toast(`${job.title}: started on this computer${job.pid !== null ? ` (PID ${job.pid})` : ""}; it shows in the Jobs tab.`);
+    toast(`${job.title}: started on this computer${job.pid !== null ? ` (PID ${job.pid})` : ""}; it shows in the Activity tab.`);
     this.runs.set(group.id, job);
     this.updateAll();
     let done: RunnerJob;
@@ -1878,7 +1878,7 @@ class TrackGroups {
       });
     } catch (e) {
       // The runner went away: the job is no longer followed, and the button comes back.
-      done = { ...job, state: "failed", message: `${(e as Error).message}. See the Jobs tab.` };
+      done = { ...job, state: "failed", message: `${(e as Error).message}. See the Activity tab.` };
     }
     this.runs.set(group.id, done);
     this.updateAll();

@@ -97,3 +97,36 @@ export function downloadBlob(blob: Blob, name: string): void {
 export function safeFileName(name: string, fallback = "file"): string {
   return name.replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "") || fallback;
 }
+
+/**
+ * A collapsible card: a `<details class="card">` whose summary is `title`
+ * (and `badge`, a short status, on the right) and whose body is `children`.
+ * Whether it is open is kept per browser under `id` (name it after the
+ * panel: "registration.landmarks"); until it is first toggled it is open
+ * when `open` says.  `attention` opens it whatever was kept (something in
+ * it needs doing).
+ */
+export function card(id: string, title: string, options: { open?: boolean; badge?: Child; attention?: boolean; tooltip?: string }, ...children: Child[]): HTMLDetailsElement {
+  const key = `ngplatform.card.${id}`;
+  let kept: string | null = null;
+  try {
+    kept = localStorage.getItem(key);
+  } catch {
+    // Storage refused: the default stands.
+  }
+  const d = el(
+    "details",
+    { class: "card", "data-card": id },
+    el("summary", { class: "card-head", title: options.tooltip }, el("span", { class: "card-title" }, title), options.badge ? el("span", { class: "card-badge" }, options.badge) : null),
+    el("div", { class: "card-body" }, ...children),
+  );
+  d.open = options.attention === true || (kept === null ? options.open === true : kept === "1");
+  d.addEventListener("toggle", () => {
+    try {
+      localStorage.setItem(key, d.open ? "1" : "0");
+    } catch {
+      // Not kept: it opens as before next time.
+    }
+  });
+  return d;
+}

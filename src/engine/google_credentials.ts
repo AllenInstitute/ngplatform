@@ -87,8 +87,8 @@ async function waitWithStatus(tokens: GoogleTokens, account: string | undefined,
     };
     say(
       refused === undefined
-        ? `Data from Google Cloud Storage (${url.replace(/^gs:/, "gs+google:")}…) waits for ${who} to sign in: sign in in the Auth tab. `
-        : `The sign-in of ${who} has expired or was refused: sign in again in the Auth tab. `,
+        ? `Data from Google Cloud Storage (${url.replace(/^gs:/, "gs+google:")}…) waits for ${who} to sign in: sign in (Settings → Sign-in). `
+        : `The sign-in of ${who} has expired or was refused: sign in again (Settings → Sign-in). `,
     );
     entry = { status, users: 0 };
     waiting.set(key, entry);

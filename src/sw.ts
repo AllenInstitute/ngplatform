@@ -205,7 +205,7 @@ async function google(request: Request, url: URL): Promise<Response> {
     return fetch(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(object)}?alt=media`, { method: request.method, headers });
   };
   const googleToken = tokenFromTable(googleTokens, bucket, object);
-  if (googleToken === null) return new Response("Sign in with Google in the Auth tab to read this bucket (with the account its sign-in rule names).", { status: 401 });
+  if (googleToken === null) return new Response("Sign in with Google (Settings → Sign-in) to read this bucket (with the account its sign-in rule names).", { status: 401 });
   const response = await fetchWith(googleToken);
   if (response.status !== 401) return response;
   // An expired token: the page may have a newer one.

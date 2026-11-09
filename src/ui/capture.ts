@@ -105,7 +105,8 @@ export function showCaptureSheet(wb: Workbench, initialMode: Mode = "picture"): 
   const third = dims.findIndex((d, i) => d.displayed && dims.slice(0, i).filter((e) => e.displayed).length === 2);
   const defaultDim = hidden >= 0 ? hidden : third >= 0 ? third : Math.max(0, dims.length - 1);
 
-  const field = (label: string, control: HTMLElement, hint?: string) => h("label", { class: "field" }, h("span", {}, label), control, hint ? h("span", { class: "field-hint" }, hint) : null);
+  // A hint is the field's tooltip: the label says what it is.
+  const field = (label: string, control: HTMLElement, hint?: string) => h("label", { class: "field", ...(hint ? { title: hint } : {}) }, h("span", {}, label), control);
   const number = (value: number, attrs: Record<string, string | number> = {}) => h("input", { class: "text-input", type: "number", value, ...attrs }) as HTMLInputElement;
   const select = (options: [string, string][], value: string) => {
     const s = h("select", { class: "text-input" }, ...options.map(([v, l]) => h("option", { value: v }, l))) as HTMLSelectElement;
@@ -160,7 +161,7 @@ export function showCaptureSheet(wb: Workbench, initialMode: Mode = "picture"): 
   const count = h("span", { class: "detected" });
 
   const pictureRows = h("div", { class: "field-row" }, field("View", panel), field("Magnification (×)", scale, "2 doubles the width and height"));
-  const trimRow = h("div", { class: "field-row" }, h("label", { class: "field check" }, trim, h("span", {}, "Trim empty borders")), field("Margin after trimming (px)", margin));
+  const trimRow = h("div", { class: "field-row" }, h("label", { class: "field check" }, trim, h("span", {}, "Trim empty borders")), h("span"));
   const sweepRows = h(
     "div",
     { class: "capture-sweep" },
@@ -170,7 +171,13 @@ export function showCaptureSheet(wb: Workbench, initialMode: Mode = "picture"): 
   );
   const turnRows = h("div", { class: "field-row" }, field("Frames per turn", frames), field("Angle (°)", degrees, "360 is a whole turn"));
   const movieRows = h("div", { class: "field-row" }, field("Format", format), field("Frames per second", fps));
-  const waitRow = h("div", { class: "field-row" }, field("Max wait per frame (s)", timeout, "A frame is taken when its data has loaded, or after this."), h("span"));
+  // Rarely changed: folded away.
+  const waitRow = h(
+    "details",
+    { class: "capture-more" },
+    h("summary", {}, "More"),
+    h("div", { class: "field-row" }, field("Margin after trimming (px)", margin), field("Max wait per frame (s)", timeout, "A frame is taken when its data has loaded, or after this.")),
+  );
 
   const settings = (): CaptureSettings => ({
     mode: mode.value as Mode,
@@ -200,7 +207,7 @@ export function showCaptureSheet(wb: Workbench, initialMode: Mode = "picture"): 
     movieRows.hidden = m === "picture";
     const s = settings();
     const n = planFrames(s, [0, 0, 0, 1]).length;
-    count.textContent = m === "picture" ? "One picture of the views as they are." : n === 0 ? "No frames: check the range and step." : `${n} frame${n === 1 ? "" : "s"}, ${(n / s.fps).toFixed(1)} s at ${s.fps} fps.`;
+    count.textContent = m === "picture" ? "" : n === 0 ? "No frames: check the range and step." : `${n} frame${n === 1 ? "" : "s"}, ${(n / s.fps).toFixed(1)} s at ${s.fps} fps.`;
     start.disabled = n === 0;
   };
   const start = h("button", { class: "btn primary", type: "button" }, "Capture") as HTMLButtonElement;
@@ -261,7 +268,7 @@ interface Kept {
 let capturing = false;
 
 export async function runCapture(wb: Workbench, s: CaptureSettings, folder?: FileSystemDirectoryHandle): Promise<void> {
-  if (capturing) throw new Error("another capture is under way: wait for it, or cancel it in the Jobs tab");
+  if (capturing) throw new Error("another capture is under way: wait for it, or cancel it in the Activity tab");
   capturing = true;
   try {
     await capture(wb, s, folder);

@@ -30,7 +30,7 @@ so the sign-in a layer uses is part of its source:
 | Source | Read with |
 |---|---|
 | `gs://bucket/path` | nothing: a public Google Cloud Storage bucket |
-| `gs+google://bucket/path` | the **Google** sign-in of the Auth tab |
+| `gs+google://bucket/path` | the **Google** sign-in of Settings → Sign-in |
 | `gs+ngauth+https://server/bucket/path` | a token from an **ngauth** server |
 | `https://host/path` | nothing: a public web server |
 | `middleauth+https://host/path` | a **middleauth** sign-in (CAVE, and CATMAID set up for it) |
@@ -218,7 +218,7 @@ The client ID is not a secret. Give it to the site in either of two ways:
     that builds the site).
 
 - **In this browser**: paste it under **Google OAuth client ID** in the
-  Auth tab and press **Save**. It replaces the built-in one in this browser;
+  Settings → Sign-in (**Google sign-in setup**) and press **Save**. It replaces the built-in one in this browser;
   saving it empty goes back to the built-in one.
 
 Reading a bucket also needs the account that reads it to be allowed to:

@@ -28,7 +28,7 @@ export const ANNOTATIONS_MANIFEST: Manifest = {
 
 ## Annotate
 Points, lines, boxes, ellipsoids and polylines in a local annotation layer, organised as in WebKnossos and Neuroglass.
-- Choose the **layer** (or **+ New layer**) and a **tool**, then Ctrl+click in a view (Ctrl+double-click ends a polyline). The new annotation is selected in the annotation table, ready for its values.
+- Choose the **layer** (or **+ New layer**), then **Draw…**: the layer's Annotations tab (in Layers) has the tools; Ctrl+click in a view (Ctrl+double-click ends a polyline). The new annotation is selected in the annotation table, ready for its values.
 - **Groups**: named, nested; tick to show or hide one (and the groups in it), pick its colour, choose the group new annotations go to, and **Colour by** group or by a field.
 - **Fields**: values each annotation has: a **list** of values (cell types, say), a **number**, **text**, or an **ontology term** (from a lookup table such as the Allen structures, or a list, OBO or JSON file). Lists and numbers are kept as Neuroglancer annotation properties; text and terms in this plugin's state.
 

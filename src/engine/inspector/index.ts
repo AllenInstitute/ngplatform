@@ -2,8 +2,9 @@
  * The layer inspector: a layer's settings as the platform's own interface.
  *
  * The tabs are the layer's own (Neuroglancer decides which a layer has:
- * Source, Render, Segments, Annotations, Schema…), and the selected tab is
- * kept in the layer's state as Neuroglancer keeps it. Each tab is built
+ * Display, Source, Segments, Annotations, Schema…), Display first, and the
+ * selected tab is kept in the layer's state as Neuroglancer keeps it.  A
+ * layer first shown here opens on Display, unless its tab was chosen. Each tab is built
  * here from the layer's models; a tab this file does not know (a plugin's,
  * or the graph tab of a graphene layer) is shown as Neuroglancer draws it.
  */
@@ -18,7 +19,7 @@ type Builder = (scope: Scope, layer: UserLayer) => HTMLElement[];
 
 const NATIVE: Record<string, { label: string; build: Builder }> = {
   source: { label: "Source", build: sourceTab },
-  rendering: { label: "Render", build: renderTab },
+  rendering: { label: "Display", build: renderTab },
   segments: {
     label: "Segments",
     build: (scope, layer) => (layer instanceof SegmentationUserLayer ? segmentsTab(scope, layer) : []),
@@ -37,6 +38,9 @@ interface TabOption {
   getter: () => { element: HTMLElement; visibility: { value: number }; dispose(): void };
 }
 
+/** Layers shown here already: a layer opens on Display the first time only, so the tab chosen after stays. */
+const seen = new WeakSet<UserLayer>();
+
 export function mountInspector(host: HTMLElement, layer: UserLayer): () => void {
   const scope = new Scope();
   const options = (layer as any).tabs.options as Map<string, TabOption>;
@@ -48,17 +52,24 @@ export function mountInspector(host: HTMLElement, layer: UserLayer): () => void 
   const root = el("div", { class: "ins-root" }, strip, content);
   host.append(root);
 
-  /** The tabs shown: the layer's own, in their order (Annotations always, as Neuroglancer shows it). */
+  /** The tabs shown: the layer's own, in their order, Display first (Annotations always, as Neuroglancer shows it). */
   const tabs = () =>
     [...options]
       .filter(([, o]) => !(o.hidden?.value ?? false))
-      .sort(([, a], [, b]) => (a.order ?? 0) - (b.order ?? 0))
+      .sort(([a, x], [b, y]) => (a === "rendering" ? -1 : 0) - (b === "rendering" ? -1 : 0) || (x.order ?? 0) - (y.order ?? 0))
       .map(([id, o]) => ({ id, label: NATIVE[id]?.label ?? o.label }));
+  // Neuroglancer opens a layer on Source; here it opens on Display, the controls used most,
+  // without changing the layer's state (that would be a change to undo) until a tab is clicked.
+  let override: string | undefined;
+  if (!seen.has(layer)) {
+    seen.add(layer);
+    if ((selected.value === undefined || selected.value === "source") && options.has("rendering") && layer.dataSources.some((s) => s.spec.url !== "")) override = "rendering";
+  }
 
   let shown: { id: string; scope: Scope } | undefined;
   const show = () => {
     const list = tabs();
-    let id = selected.value;
+    let id = override !== undefined && list.some((t) => t.id === override) ? override : selected.value;
     if (!list.some((t) => t.id === id)) {
       id = list[0]?.id;
       if (id !== undefined && selected.value !== id) {
@@ -70,7 +81,17 @@ export function mountInspector(host: HTMLElement, layer: UserLayer): () => void 
       ...list.map((t) =>
         el(
           "button",
-          { type: "button", role: "tab", class: "ins-tab", "aria-selected": String(t.id === id), onclick: () => (selected.value = t.id) },
+          {
+            type: "button",
+            role: "tab",
+            class: "ins-tab",
+            "aria-selected": String(t.id === id),
+            onclick: () => {
+              override = undefined;
+              if (selected.value === t.id) show();
+              else selected.value = t.id;
+            },
+          },
           t.label,
         ),
       ),

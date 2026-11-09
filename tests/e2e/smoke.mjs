@@ -98,19 +98,19 @@ const chrome = await page.evaluate(() => {
 check(chrome.layerPanel + chrome.sidePanels + chrome.status === 0, `no layer bar, side panels or status inside the views ${JSON.stringify(chrome)}`);
 check(chrome.position === 1 && chrome.layoutButtons > 0, "position top left and layout buttons on the panels, as in Neuroglancer");
 
-// Datasets tab and Inspector.
-check((await page.locator(".datasets .ds-row").count()) >= 1, "Datasets lists the scene's datasets");
+// Layers tab: the datasets, and the selected layer's controls below them.
+check((await page.locator(".datasets .ds-row").count()) >= 1, "Layers lists the scene's datasets");
 await click(page.locator(".datasets .ds-row", { hasText: TRACTOGRAM.layer }).first());
 await page.waitForTimeout(800);
-check((await page.locator(".ins-tab").count()) > 0 && (await page.locator(".ins-root .neuroglancer-tab-label").count()) === 0, "the Layer tab shows the layer's controls in the platform's own tabs");
+check((await page.locator(".ins-tab").count()) > 0 && (await page.locator(".ins-root .neuroglancer-tab-label").count()) === 0, "Layers shows the layer's controls in the platform's own tabs");
 // The inspector's tabs, built by the platform from the layer's models.
 await click(page.locator(".ins-tab", { hasText: "Source" }));
 await page.waitForTimeout(800);
 check((await page.locator(".ins-url").first().inputValue()).includes(TRACTOGRAM.url), "Source shows the data source URL");
 check((await page.locator(".ins-tx-grid input").count()) > 0, "Source shows the transform as an editable table");
-await click(page.locator(".ins-tab", { hasText: "Render" }));
+await click(page.locator(".ins-tab", { hasText: "Display" }));
 await page.waitForTimeout(800);
-check((await page.locator(".ins-content .ins-slider").count()) >= 4, "Render shows the layer's sliders");
+check((await page.locator(".ins-content .ins-slider").count()) >= 4, "Display shows the layer's sliders");
 await click(page.locator(".ins-tab", { hasText: "Segments" }));
 await page.waitForTimeout(800);
 // The segment properties (a row a streamline: 3.3 million) arrive after the views.
@@ -184,7 +184,9 @@ await click(page.locator(".scene-add"));
 await page.waitForTimeout(800);
 check((await page.locator(".scene-tab").count()) === 2, "New scene adds a scene tab");
 check((await layers()).length === 0, "the new scene starts empty");
-await click(page.locator(".ds-row.other .btn").first());
+// Datasets of other scenes are offered in the Open sheet.
+await page.keyboard.press("Control+o");
+await click(page.locator(".ds-row.other").first());
 await page.waitForTimeout(800);
 // The dataset's own layer, and its track groups' layers with it.
 check((await layers()).length >= 1, "a workspace dataset adds to the new scene");
@@ -195,7 +197,10 @@ check((await page.locator('.scene-tab[aria-selected="true"]').innerText()) === "
 // Plugins: both listed with a switch; the filtering tab reads the attributes.
 await click(page.locator("#tab-plugins"));
 check((await page.locator(".plugin .switch").count()) >= 2, "the Plugins tab lists the plugins with switches");
-await click(page.locator('[id="tab-trackFiltering.panel"]'));
+// Tools are chosen from the Tools dock's menu (the dock starts collapsed).
+if ((await page.locator(".dock-right.collapsed").count()) > 0) await click(page.locator(".dock-right .dock-toggle"));
+await click(page.locator(".dock-right .dock-picker"));
+await click(page.locator(".menu .menu-item", { hasText: "Filtering" }));
 await page
   .waitForFunction(() => { const c = [...document.querySelectorAll(".tf-group .count")]; return c.length === 3 && c.every((e) => /^[0-9,]+$/.test(e.textContent ?? "")); }, null, { timeout: 180_000 })
   .catch(() => {});

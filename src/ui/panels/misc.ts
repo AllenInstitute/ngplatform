@@ -21,11 +21,11 @@ export function renderStatisticsPanel(host: HTMLElement, wb: Workbench): () => v
 
 export function renderJobsPanel(host: HTMLElement, wb: Workbench): () => void {
   const list = h("div", { class: "jobs" });
-  // The jobs on each computer paired in the Remote tab (This computer always, to say how to pair it), made again only when one is added or removed.
+  // The jobs on each paired computer (Settings → Compute), made again only when one is paired, added or removed.
   const computers = h("div", { class: "runner-hosts" });
   let sections: { name: string; dispose: () => void }[] = [];
   const renderHosts = () => {
-    const names = [LOCAL_HOST, ...wb.hosts.others()];
+    const names = [LOCAL_HOST, ...wb.hosts.others()].filter((name) => wb.hosts.runner(name)?.pairing() !== undefined);
     if (names.join("\n") === sections.map((s) => s.name).join("\n")) return;
     for (const section of sections) section.dispose();
     sections = [];
@@ -39,15 +39,15 @@ export function renderJobsPanel(host: HTMLElement, wb: Workbench): () => void {
     }
     clear(computers, ...elements);
   };
-  host.append(h("div", { class: "section" }, h("h3", { class: "section-title" }, "In this page"), list), computers);
+  const here = h("div", { class: "section" }, h("h3", { class: "section-title" }, "Jobs"), list);
+  host.append(here, computers);
   renderHosts();
   const offHosts = wb.hosts.onChange(renderHosts);
   const render = () => {
     const jobs = wb.jobs.list();
-    if (jobs.length === 0) {
-      clear(list, h("p", { class: "empty", title: "Filters, statistics, captures and scripts from plugins run here, with progress and Cancel." }, "No jobs."));
-      return;
-    }
+    // No jobs: nothing to show (the log is below).
+    here.hidden = jobs.length === 0;
+    if (jobs.length === 0) return clear(list);
     clear(
       list,
       h("div", { class: "row-actions" }, h("button", { class: "btn small", type: "button", onclick: () => wb.jobs.clearFinished() }, "Clear finished")),
@@ -191,7 +191,7 @@ export function renderPluginsPanel(host: HTMLElement, wb: Workbench, local: Loca
     h(
       "div",
       { class: "panel-intro" },
-      h("p", { class: "note" }, "Only Zarr Vectors is on by default. Tools turn on at once; turning one off reloads the page."),
+      h("span", { class: "note", title: "Tools turn on at once; turning one off reloads the page." }),
       addButton,
     ),
     list,

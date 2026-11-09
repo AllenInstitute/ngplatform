@@ -3,12 +3,16 @@
  * platform and plugins contribute.  A tab renders the first time it is
  * shown and stays mounted (Neuroglancer widgets keep their state), unless it
  * is marked transient, in which case it is disposed whenever it is hidden.
- * Sizes, open tabs and collapsed docks are remembered per browser.
+ * The right dock (Tools) picks its tab from one grouped menu instead of a
+ * row of tabs, and is not there while it has none.  Sizes, open tabs and
+ * collapsed docks are remembered per browser; the right and bottom docks
+ * start collapsed.
  */
 import type { ContextKeys } from "../core/when.js";
 import type { DockTabSpec } from "../platform/plugin_host.js";
 import type { Disposer, DockSlot } from "../sdk/types.js";
 import { h, icon } from "./dom.js";
+import { showMenu } from "./overlays.js";
 
 export const prefs = {
   get(key: string): string | null {
@@ -30,6 +34,8 @@ export const prefs = {
 export interface DockTab extends DockTabSpec {
   /** Disposed when hidden, rendered again when shown (e.g. polling views). */
   transient?: boolean;
+  /** The heading it is listed under in a dock with a menu (the Tools dock). */
+  group?: string;
 }
 
 interface Mounted {
@@ -40,8 +46,10 @@ interface Mounted {
   dispose?: Disposer;
 }
 
-const TITLES: Record<DockSlot, string> = { left: "Workspace", right: "Inspector", bottom: "Activity" };
+const TITLES: Record<DockSlot, string> = { left: "Layers", right: "Tools", bottom: "Activity" };
 const DEFAULT_SIZE: Record<DockSlot, string> = { left: "300px", right: "360px", bottom: "190px" };
+/** Collapsed until the person opens them. */
+const START_COLLAPSED: Record<DockSlot, boolean> = { left: false, right: true, bottom: true };
 
 class Dock {
   readonly el: HTMLElement;
@@ -50,11 +58,14 @@ class Dock {
   readonly body = h("div", { class: "dock-body" });
   readonly tabs = new Map<string, Mounted>();
   selected: string | undefined;
+  /** The Tools dock: one button naming the tab shown, whose menu lists them all by group. */
+  readonly menu: boolean;
 
   constructor(
     readonly slot: DockSlot,
-    manager: DockManager,
+    private readonly manager: DockManager,
   ) {
+    this.menu = slot === "right";
     this.el = h("aside", { class: `dock dock-${slot}`, "aria-label": TITLES[slot] });
     const toggle = h(
       "button",
@@ -78,7 +89,30 @@ class Dock {
   }
 
   layoutTabs(): void {
-    this.tabsEl.replaceChildren(...this.ordered().map((m) => m.button));
+    if (!this.menu) {
+      this.tabsEl.replaceChildren(...this.ordered().map((m) => m.button));
+      return;
+    }
+    const shown = this.selected !== undefined ? this.tabs.get(this.selected) : undefined;
+    const picker = h(
+      "button",
+      { class: "tab dock-picker", type: "button", "aria-haspopup": "menu", "aria-selected": "true", title: "Choose a tool" },
+      shown?.tab.title ?? "Tools",
+      icon("chevron-down"),
+    );
+    picker.addEventListener("click", () => {
+      const groups = new Map<string, Mounted[]>();
+      for (const m of this.visibleTabs()) groups.set(m.tab.group ?? "Other", [...(groups.get(m.tab.group ?? "Other") ?? []), m]);
+      showMenu(
+        picker,
+        [...groups].flatMap(([group, tabs], i) => [
+          ...(i > 0 ? (["-"] as const) : []),
+          { label: group, muted: true, disabled: true, run: () => {} },
+          ...tabs.map((m) => ({ label: m.tab.title, current: m.tab.id === this.selected, run: () => this.manager.show(m.tab.id) })),
+        ]),
+      );
+    });
+    this.tabsEl.replaceChildren(picker);
   }
 
   visibleTabs(): Mounted[] {
@@ -90,6 +124,8 @@ export class DockManager {
   private readonly docks: Record<DockSlot, Dock>;
   private readonly bySlotOf = new Map<string, DockSlot>();
   private readonly listeners = new Set<(id: string) => void>();
+  /** Tabs that moved (Datasets into Layers, Auth into Settings): what showing one does now. */
+  private readonly redirects = new Map<string, () => void>();
 
   constructor(
     private readonly root: HTMLElement,
@@ -101,6 +137,33 @@ export class DockManager {
 
   element(slot: DockSlot): HTMLElement {
     return this.docks[slot].el;
+  }
+
+  /** What `show(id)` does for a tab that is no longer one: another tab's id (merged into it), or something to do. */
+  redirect(id: string, to: string | (() => void)): void {
+    if (typeof to === "string") this.aliases.set(id, to);
+    else this.redirects.set(id, to);
+  }
+
+  private readonly aliases = new Map<string, string>();
+
+  private alias(id: string): string {
+    return this.aliases.get(id) ?? id;
+  }
+
+  /** An element in a dock's head, after its tabs (the bottom dock's status line). */
+  addToHead(slot: DockSlot, element: HTMLElement): void {
+    const dock = this.docks[slot];
+    dock.head.insertBefore(element, dock.tabsEl.nextSibling);
+  }
+
+  /** A dock with no tab to show is not there at all (the Tools dock with no tool on). */
+  private applyEmpty(): void {
+    for (const dock of Object.values(this.docks)) {
+      const empty = dock.visibleTabs().length === 0;
+      dock.el.hidden = empty;
+      this.root.classList.toggle(`${dock.slot}-empty`, empty);
+    }
   }
 
   addTab(tab: DockTab): Disposer {
@@ -138,6 +201,7 @@ export class DockManager {
       const next = dock.visibleTabs()[0];
       if (next !== undefined) this.select(slot, next.tab.id);
     }
+    this.applyEmpty();
   }
 
   private unrender(mounted: Mounted): void {
@@ -190,6 +254,7 @@ export class DockManager {
     dock.selected = id;
     mounted.button.setAttribute("aria-selected", "true");
     mounted.host.hidden = false;
+    if (dock.menu) dock.layoutTabs();
     if (!dock.el.classList.contains("collapsed")) this.render(mounted);
     prefs.set(`${slot}.tab`, id);
     for (const listener of this.listeners) listener(id);
@@ -197,6 +262,9 @@ export class DockManager {
 
   /** Shows a tab: selects it and opens its dock. */
   show(id: string): void {
+    const redirect = this.redirects.get(id);
+    if (redirect !== undefined) return redirect();
+    id = this.alias(id);
     const slot = this.bySlotOf.get(id);
     if (slot === undefined) return;
     this.setCollapsed(slot, false);
@@ -216,7 +284,7 @@ export class DockManager {
   }
 
   isShowing(id: string): boolean {
-    const slot = this.bySlotOf.get(id);
+    const slot = this.bySlotOf.get(this.alias(id));
     return slot !== undefined && this.docks[slot].selected === id && !this.docks[slot].el.classList.contains("collapsed");
   }
 
@@ -232,7 +300,9 @@ export class DockManager {
         const next = dock.visibleTabs()[0];
         if (next !== undefined) this.select(dock.slot, next.tab.id);
       }
+      if (dock.menu) dock.layoutTabs();
     }
+    this.applyEmpty();
   }
 
   // ------------------------------------------------------------- sizing
@@ -260,7 +330,8 @@ export class DockManager {
   restore(narrow: boolean): void {
     for (const slot of ["left", "right", "bottom"] as const) {
       this.root.style.setProperty(`--${slot}`, prefs.get(`${slot}.size`) || DEFAULT_SIZE[slot]);
-      const collapsed = prefs.get(`${slot}.collapsed`) === "1" || (narrow && slot !== "bottom");
+      const kept = prefs.get(`${slot}.collapsed`);
+      const collapsed = (kept === null ? START_COLLAPSED[slot] : kept === "1") || (narrow && slot !== "bottom");
       this.setCollapsed(slot, collapsed, false);
     }
   }

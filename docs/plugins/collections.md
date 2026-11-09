@@ -44,7 +44,7 @@ close a tab like any scene.
   member, one of the workspace's OME-Zarr datasets or an address; it stays
   hidden until a relationship places it. Remove one with ×, and its
   transforms go with it. **From the view** writes where a member's layer is
-  now (after moving it in the viewer, with the Layer tab's transform or the
+  now (after moving it in the viewer, with the layer's Source → Details transform or the
   Registration plugin) as its transform into the system viewed, replacing
   the one there was.
 - **Coordinate systems**: add one (a name and a unit; axes z, y, x), or

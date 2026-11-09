@@ -1,10 +1,10 @@
 /**
- * The Layer tab: the selected dataset's controls, as Neuroglancer's own
- * layer tabs (Source, Render, Seg., Annotations…, whatever its type has),
- * at full height and directly editable.  A one-line header names the
+ * The bottom of the Layers tab: the selected dataset's controls, as
+ * Neuroglancer's own layer tabs (Display, Source, Segments, Annotations…,
+ * whatever its type has), directly editable.  A one-line header names the
  * dataset and, when it is shown through several layers, which one; below
- * it, the sign-in the layer reads its data with (and its Google account),
- * as in the Auth tab.
+ * it, only when the data is not public (or failed to load), the sign-in
+ * the layer reads it with, as in Settings → Sign-in.
  */
 import type { DatasetInfo, LayerInfo } from "../../sdk/types.js";
 import { clear, h } from "../dom.js";
@@ -33,11 +33,7 @@ export function renderLayerPanel(host: HTMLElement, wb: Workbench): () => void {
   const { engine, store } = wb;
   const head = h("div", { class: "layer-head" });
   const controls = h("div", { class: "ng-host layer-controls-host" });
-  const empty = h(
-    "div",
-    { class: "empty-state" },
-    h("p", { class: "empty" }, h("strong", {}, "No dataset selected. "), "Choose one in the Datasets tab to see its controls here."),
-  );
+  const empty = h("p", { class: "empty" }, "Select a layer above.");
   host.append(empty, head, controls);
 
   let mountedFor: { name: string; token: object | undefined } | undefined;
@@ -70,14 +66,15 @@ export function renderLayerPanel(host: HTMLElement, wb: Workbench): () => void {
 
   const render = () => {
     const { dataset, layer } = layerTarget(wb);
-    empty.hidden = layer !== undefined;
+    // Nothing to say with nothing in the scene: the list above says it.
+    empty.hidden = layer !== undefined || store.sceneDatasets().length === 0;
     head.hidden = layer === undefined;
     if (layer === undefined) {
       mount(undefined);
       return;
     }
     const views = store.sceneDatasets().find((d) => d.dataset.id === dataset?.id)?.layers ?? [layer.name];
-    const signIn = signInControl(wb, layer.name);
+    const signIn = signInControl(wb, layer.name, layer.error === undefined);
     clear(
       head,
       h(

@@ -319,7 +319,6 @@ export class PluginHost {
         entry.module = await entry.load();
         await entry.module.activate(this.contextFor(entry));
         entry.status = "active";
-        this.services.log(`Activated ${entry.manifest.name} ${entry.manifest.version}.`, "info", entry.manifest.id);
       } catch (e) {
         entry.status = "failed";
         entry.error = (e as Error).message;

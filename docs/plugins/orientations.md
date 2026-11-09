@@ -55,7 +55,7 @@ zoom in and the finer level's glyphs load in and take their place.
   through the position.
 - **Direction colour on the image** sets the image layer's colours to the
   principal direction (red left-right, green front-back, blue up-down),
-  weighted by the anisotropy, as Freeview's `-dti` display. Its Render tab
+  weighted by the anisotropy, as Freeview's `-dti` display. Its Display tab
   has a brightness slider.
 
 The tab also says what the voxel under the cursor holds: a tensor's FA,

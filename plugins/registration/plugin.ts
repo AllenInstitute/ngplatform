@@ -13,7 +13,7 @@
  * to their fixed partner.
  */
 import type { Json, LayerTransform, PlatformContext, PluginModule } from "@ngplatform/sdk";
-import { downloadBlob, el, safeFileName } from "@ngplatform/sdk/dom";
+import { card, downloadBlob, el, safeFileName } from "@ngplatform/sdk/dom";
 import { layerSourceUrl } from "@ngplatform/sdk/sources";
 import { WorkerRpc } from "@ngplatform/sdk/worker_rpc";
 import { storeOf } from "../volume-view/sources.js";
@@ -1115,7 +1115,7 @@ class Registration {
           this.saveControls(name),
         ),
       );
-      foldSections(host.firstElementChild as HTMLElement, this.ctx);
+      foldSections(host.firstElementChild as HTMLElement);
     };
     this.panelUpdate = draw;
     draw(true);
@@ -1128,39 +1128,36 @@ class Registration {
 
 /**
  * The panel's sections (each heading and what follows it, to the next) as
- * folding sections, open or closed as the user left them (in this browser).
+ * cards, open or closed as the user left them (in this browser); the first
+ * open until then.
  */
-function foldSections(root: HTMLElement, ctx: PlatformContext): void {
-  const open = ctx.settings.get<Record<string, boolean>>("openSections") ?? {};
+function foldSections(root: HTMLElement): void {
   const children = [...root.children].flatMap((c) => (c.classList.contains("rg-save") ? [...c.children] : [c]));
   const out: Element[] = [];
-  let body: HTMLElement | undefined;
+  let body: Element[] | undefined;
+  const sections: { title: string; body: Element[] }[] = [];
   for (const c of children) {
     if (c.tagName === "H3" && c.classList.contains("section-title")) {
-      const title = c.textContent ?? "";
-      body = el("div", { class: "rg-body" });
-      const details = el("details", { class: "rg-section" }, el("summary", { class: "section-title" }, title), body) as HTMLDetailsElement;
-      details.open = open[title] !== false;
-      details.addEventListener("toggle", () => {
-        const now = ctx.settings.get<Record<string, boolean>>("openSections") ?? {};
-        ctx.settings.set("openSections", { ...now, [title]: details.open });
-      });
-      out.push(details);
-    } else if (body !== undefined) body.append(c);
+      body = [];
+      sections.push({ title: c.textContent ?? "", body });
+      out.push(c);
+    } else if (body !== undefined) body.push(c);
     else out.push(c);
   }
-  root.replaceChildren(...out);
+  let first = true;
+  root.replaceChildren(
+    ...out.map((c) => {
+      const section = sections.find((x) => c.tagName === "H3" && x.title === c.textContent);
+      if (section === undefined) return c;
+      const made = card(`registration.${section.title}`, section.title, { open: first }, ...(section.body as HTMLElement[]));
+      first = false;
+      return made;
+    }),
+  );
 }
 
 const STYLE = `
 .rg { display: grid; gap: 8px; }
-.rg-section { border-top: 1px solid var(--line); padding-top: 4px; }
-.rg-section > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; margin: 0; padding: 4px 0; user-select: none; }
-.rg-section > summary::-webkit-details-marker { display: none; }
-.rg-section > summary::before { content: "▸"; color: var(--faint); font-size: 10px; width: 10px; }
-.rg-section[open] > summary::before { content: "▾"; }
-.rg-section[open] > summary { margin-bottom: 6px; }
-.rg-body { display: grid; gap: 8px; }
 .rg .section-title { margin: 8px 0 0; }
 .rg-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .rg-tight { margin: 0; }

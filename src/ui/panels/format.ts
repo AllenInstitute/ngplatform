@@ -12,6 +12,14 @@ export function shortSource(url: string): string {
     .replace(/\|zarr-vectors:$/, " (zarr-vectors)");
 }
 
+/** A data URL by where it is and its file's name ("gs://bucket/…/brain.ome.zarr"), for a list; the whole URL goes in its tooltip. */
+export function sourceName(url: string): string {
+  const short = shortSource(url.replace(/^[a-z0-9+-]+:\/\/(?=[a-z0-9+-]+:\/\/)/i, "").replace(/\|.*$/, "")).replace(/\/+$/, "");
+  const m = /^([a-z0-9+-]+:\/\/[^/]+)\/(.*\/)?([^/]+)$/i.exec(short);
+  if (m === null) return short;
+  return m[2] ? `${m[1]}/…/${m[3]}` : `${m[1]}/${m[3]}`;
+}
+
 const KINDS: Record<string, string> = {
   image: "image",
   segmentation: "segmentation",

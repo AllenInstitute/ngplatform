@@ -5,7 +5,7 @@
  * themselves are also on the tool bar over the views (./toolbar.ts).
  */
 import type { Disposer, PlatformContext } from "@ngplatform/sdk";
-import { button, el, field, numberInput, select } from "@ngplatform/sdk/dom";
+import { button, card, el, field, numberInput, select } from "@ngplatform/sdk/dom";
 import { voxelEdges, voxelVolume } from "../annotations/geometry.js";
 import { physical } from "../annotations/ui.js";
 import { layerStore, readableImages, type Voxels } from "../annotations/voxels.js";
@@ -261,14 +261,10 @@ export class Panel {
     return el(
       "div",
       { class: "sg-session" },
-      this.saveRow(session),
-      el("h4", { class: "an-sub" }, "Segments"),
-      this.segmentList(session),
-      el("h4", { class: "an-sub" }, "Tool"),
-      this.toolRow(),
-      this.toolOptions(),
-      el("h4", { class: "an-sub" }, "Image values"),
-      this.intensity(session),
+      card("segmentation.segments", "Segments", { open: true, badge: String(e.rows().length) }, this.segmentList(session)),
+      card("segmentation.tool", "Tool", { open: true }, this.toolRow(), this.toolOptions()),
+      card("segmentation.values", "Image values", {}, this.intensity(session)),
+      card("segmentation.save", "Save", { badge: session.unsaved ? `${session.unsaved} unsaved` : undefined }, this.saveRow(session)),
       el(
         "p",
         { class: "an-hint", title: volume instanceof CowVolume ? `The rest is read from ${volume.original.store}. Segment voxels are counted in the edited chunks only.` : "" },

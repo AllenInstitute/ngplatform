@@ -11,6 +11,9 @@ import { type DroppedItem, LocalData, type FoundDataset, type LocalEntry } from 
 import { clear, h, icon, keyLabel } from "./dom.js";
 import { kindLabel } from "./panels/format.js";
 import { renderOverviewSettings } from "./overview.js";
+import { renderAuthPanel } from "./panels/auth.js";
+import { renderStatisticsPanel } from "./panels/misc.js";
+import { renderRemotePanel } from "./panels/remote.js";
 import { setTractogramDiskGigabytes, setVectorCacheMegabytes, tractogramDiskGigabytes, vectorCacheMegabytes } from "../virtual/vectors/formats.js";
 import type { Workbench } from "./workbench.js";
 
@@ -104,13 +107,13 @@ export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
     spellcheck: "false",
   });
   const asScene = h("input", { type: "checkbox", id: "open-as-scene" });
-  const asSceneLabel = h("label", { class: "field check" }, asScene, h("span", {}, "Open as a new scene, keeping this workspace"));
-  const detected = h("span", { class: "detected" }, "Paste something to open.");
+  const asSceneLabel = h("label", { class: "field check" }, asScene, h("span", {}, "As a new scene"));
+  const detected = h("span", { class: "detected" });
   const openButton = h("button", { class: "btn primary", type: "button", disabled: true }, "Open");
   const describe = () => {
     asSceneLabel.hidden = true;
     if (input.value.trim() === "") {
-      detected.textContent = "Paste something to open.";
+      detected.textContent = "";
       detected.classList.remove("bad");
       openButton.disabled = true;
       return;
@@ -176,9 +179,8 @@ export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
           ? [h(
               "div",
               { class: "row-actions open-device" },
-              h("button", { class: "btn primary", type: "button", onclick: fromDevice(false) }, icon("open"), "Open from device…"),
+              h("button", { class: "btn primary", type: "button", title: `Read in place, not uploaded: ${LOCAL_FORMATS}`, onclick: fromDevice(false) }, icon("open"), "Open a file…"),
               h("button", { class: "btn outline", type: "button", onclick: fromDevice(true) }, "Folder…"),
-              h("span", { class: "note-inline", title: `Reads ${LOCAL_FORMATS}.` }, "Read in place, not uploaded."),
             )]
           : []),
         input,
@@ -245,7 +247,7 @@ export function showAddDatasetSheet(wb: Workbench): void {
   const name = h("input", { class: "text-input", type: "text", id: "dataset-name", placeholder: "From the URL", "aria-label": "Name" });
   const type = h("select", { class: "text-input", id: "dataset-type", "aria-label": "Show as" });
   for (const [value, label] of TYPES) type.append(h("option", { value }, label));
-  const note = h("span", { class: "detected" }, "A URL Neuroglancer can read, with its format when it cannot be guessed.");
+  const note = h("span", { class: "detected" });
   const add = h("button", { class: "btn primary", type: "button", disabled: true }, "Add");
   const update = () => {
     const value = url.value.trim();
@@ -386,89 +388,148 @@ export function showLocalSheet(wb: Workbench, local: LocalData): void {
 
 // ---------------------------------------------------------------- settings
 
-export function showSettingsSheet(wb: Workbench): void {
-  const panel = h("div", { class: "ng-host settings-host" });
-  const overviews = h("div", { class: "section overview-section" });
-  renderOverviewSettings(overviews, wb);
-  let unmount: (() => void) | undefined;
-  // Kept in this browser, not the workspace: what the tab may hold of large local files.
-  const cache = h("input", { class: "text-input", type: "number", min: "0", step: "64", value: String(vectorCacheMegabytes()), "aria-label": "Memory for tractogram cells, MB" }) as HTMLInputElement;
-  cache.addEventListener("change", () => setVectorCacheMegabytes(Math.max(0, Number(cache.value) || 0)));
-  const disk = h("input", { class: "text-input", type: "number", min: "0", step: "1", placeholder: "4", value: String(tractogramDiskGigabytes() ?? ""), "aria-label": "Browser storage for a tractogram, GB" }) as HTMLInputElement;
-  disk.addEventListener("change", () => setTractogramDiskGigabytes(disk.value.trim() === "" || !(Number(disk.value) >= 0) ? undefined : Number(disk.value)));
-  // Kept in this browser: offers of the plugins that are off (src/ui/plugin_offers.ts).
-  const offers = h("input", { type: "checkbox", id: "show-offers" }) as HTMLInputElement;
-  offers.checked = wb.offers.enabled;
-  offers.addEventListener("change", () => wb.offers.setEnabled(offers.checked));
-  showSheet(
-    sheet(
-      "View settings",
-      [
-        h("h3", { class: "section-title", title: "Saved with the workspace: a shared link shows the same" }, "Views"),
-        panel,
-        overviews,
-        h("h3", { class: "section-title" }, "Local tractograms"),
-        h(
-          "label",
-          {
-            class: "field",
-            title:
-              "Kept in this browser. A large tractogram's points are copied into cells in the browser's private storage while it is open (about 1.2 to 1.5 times the file's size, deleted when it closes); only the cells last used stay in memory. 0 is automatic: 1/32 of this device's memory, 64 to 512 MB.",
-          },
-          h("span", {}, "Memory for decoded cells (MB, 0 = automatic)"),
-          cache,
-        ),
-        h(
-          "label",
-          {
-            class: "field",
-            title:
-              "Kept in this browser. Reading a tractogram copies its points into the browser's storage, about 1.5 times the file, while it is open. Past this limit only a sample is copied (1 in 10, 100, … streamlines), and the runner on this computer is offered for the whole file. Never more than 10% of the browser's quota or 80% of what is free. Empty: 4 GB. 0: nothing on disk (a sample of up to 256 MB in memory).",
-          },
-          h("span", {}, "Storage for a tractogram (GB, empty = 4)"),
-          disk,
-        ),
-        h(
-          "label",
-          {
-            class: "field check",
-            title: "Kept in this browser. A plugin that is off is offered when you open data it works with. Ticking this again brings back the offers you said “Not now” to.",
-          },
-          offers,
-          h("span", {}, "Show offers for tools that are off"),
-        ),
-      ],
-      [h("button", { class: "btn primary", type: "button", onclick: () => closeSheet() }, "Done")],
-    ),
-    () => unmount?.(),
-  );
-  unmount = wb.engine.mountSettings(panel);
+/** The sections of Settings, by the id `settings.open` takes. */
+export const SETTINGS_SECTIONS = { view: "View", "sign-in": "Sign-in", compute: "Compute", storage: "Storage", developer: "Developer" } as const;
+export type SettingsSection = keyof typeof SETTINGS_SECTIONS;
+
+/**
+ * Settings: the views (saved with the workspace), the sign-ins and the
+ * computers this browser uses, what it keeps of local data, and tools for
+ * developers.  One section at a time, each made when chosen.
+ */
+export function showSettingsSheet(wb: Workbench, section: SettingsSection = "view"): void {
+  const nav = h("div", { class: "segmented settings-nav", role: "tablist" });
+  const body = h("div", { class: "settings-body" });
+  let dispose: (() => void) | undefined;
+  const choose = (id: SettingsSection) => {
+    dispose?.();
+    dispose = undefined;
+    body.replaceChildren();
+    for (const b of nav.querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.dataset.section === id));
+    dispose = SECTION_RENDER[id](body, wb);
+  };
+  for (const [id, title] of Object.entries(SETTINGS_SECTIONS) as [SettingsSection, string][]) {
+    nav.append(h("button", { type: "button", "data-section": id, "aria-pressed": "false", onclick: () => choose(id) }, title));
+  }
+  showSheet(sheet("Settings", [nav, body], [h("button", { class: "btn primary", type: "button", onclick: () => closeSheet() }, "Done")], { wide: true }), () => dispose?.());
+  choose(section in SETTINGS_SECTIONS ? section : "view");
 }
+
+const SECTION_RENDER: Record<SettingsSection, (host: HTMLElement, wb: Workbench) => (() => void) | undefined> = {
+  view: (host, wb) => {
+    const panel = h("div", { class: "ng-host settings-host" });
+    // Kept in this browser: offers of the plugins that are off (src/ui/plugin_offers.ts).
+    const offers = h("input", { type: "checkbox", id: "show-offers" }) as HTMLInputElement;
+    offers.checked = wb.offers.enabled;
+    offers.addEventListener("change", () => wb.offers.setEnabled(offers.checked));
+    host.append(
+      h("p", { class: "note" }, "Saved with the workspace."),
+      panel,
+      h("div", { class: "row-actions" }, h("button", { class: "btn outline small", type: "button", onclick: () => wb.run("view.panelConvention") }, "Orientation of the views…")),
+      h(
+        "label",
+        { class: "field check", title: "Kept in this browser. Ticking it again brings back the offers you said “Not now” to." },
+        offers,
+        h("span", {}, "Offer tools that are off when the data suits them"),
+      ),
+    );
+    return wb.engine.mountSettings(panel);
+  },
+  "sign-in": (host, wb) => renderAuthPanel(host, wb),
+  compute: (host, wb) => renderRemotePanel(host, wb),
+  storage: (host, wb) => {
+    const overviews = h("div", { class: "section overview-section" });
+    renderOverviewSettings(overviews, wb);
+    // Kept in this browser, not the workspace: what the tab may hold of large local files.
+    const cache = h("input", { class: "text-input", type: "number", min: "0", step: "64", value: String(vectorCacheMegabytes()), "aria-label": "Memory for tractogram cells, MB" }) as HTMLInputElement;
+    cache.addEventListener("change", () => setVectorCacheMegabytes(Math.max(0, Number(cache.value) || 0)));
+    const disk = h("input", { class: "text-input", type: "number", min: "0", step: "1", placeholder: "4", value: String(tractogramDiskGigabytes() ?? ""), "aria-label": "Browser storage for a tractogram, GB" }) as HTMLInputElement;
+    disk.addEventListener("change", () => setTractogramDiskGigabytes(disk.value.trim() === "" || !(Number(disk.value) >= 0) ? undefined : Number(disk.value)));
+    host.append(
+      overviews,
+      h("h3", { class: "section-title" }, "Local tractograms"),
+      h(
+        "label",
+        {
+          class: "field",
+          title:
+            "Kept in this browser. A large tractogram's points are copied into cells in the browser's private storage while it is open (about 1.2 to 1.5 times the file's size, deleted when it closes); only the cells last used stay in memory. 0 is automatic: 1/32 of this device's memory, 64 to 512 MB.",
+        },
+        h("span", {}, "Memory for cells (MB, 0 = automatic)"),
+        cache,
+      ),
+      h(
+        "label",
+        {
+          class: "field",
+          title:
+            "Kept in this browser. Reading a tractogram copies its points into the browser's storage, about 1.5 times the file, while it is open. Past this limit only a sample is copied (1 in 10, 100, … streamlines), and the runner on this computer is offered for the whole file. Never more than 10% of the browser's quota or 80% of what is free. Empty: 4 GB. 0: nothing on disk (a sample of up to 256 MB in memory).",
+        },
+        h("span", {}, "Storage per tractogram (GB, empty = 4)"),
+        disk,
+      ),
+    );
+    return undefined;
+  },
+  developer: (host, wb) => {
+    const statistics = h("div", { class: "settings-statistics" });
+    host.append(
+      h(
+        "div",
+        { class: "row-actions" },
+        h("button", { class: "btn outline small", type: "button", onclick: () => wb.run("view.reloadLayers") }, "Reload the scene's layers"),
+        h("button", { class: "btn outline small", type: "button", title: "Reloads the page, checking every file with its server", onclick: () => wb.run("view.hardReset") }, "Reload page and all data"),
+        h("button", { class: "btn outline small", type: "button", onclick: () => wb.run("workspace.editState") }, "Edit the state as JSON…"),
+      ),
+      h("h3", { class: "section-title" }, "Chunk statistics"),
+      statistics,
+    );
+    return renderStatisticsPanel(statistics, wb);
+  },
+};
 
 // --------------------------------------------------------------- shortcuts
 
+/** The keys and clicks most used, in plain words; the rest are under All keys. */
+const COMMON_KEYS: [string[], string][] = [
+  [["Mod+K"], "All commands"],
+  [["Mod+O"], "Open"],
+  [["Shift+N"], "Add data"],
+  [["Mod+Z"], "Undo"],
+  [["Mod+Shift+Z"], "Redo"],
+  [["1–9"], "Show or hide a dataset"],
+  [["Space"], "Change the layout"],
+  [["drag"], "Move the section; turn the 3-D view"],
+  [["Shift", "drag"], "Turn the section; move the 3-D view"],
+  [["wheel"], "Next or previous section"],
+  [["Ctrl", "wheel"], "Zoom"],
+  [["right-click"], "Go to the point"],
+  [["double-click"], "Select a segment"],
+  [["Ctrl", "click"], "Draw with the annotation tool on"],
+  [["S"], "Show or hide the sections in 3-D"],
+  [["Alt+PageDown"], "Next scene"],
+];
+
 export function showShortcutsSheet(wb: Workbench): void {
+  const common = h("dl", { class: "facts keys" });
+  for (const [keys, title] of COMMON_KEYS) {
+    common.append(h("dt", {}, ...keys.map((key) => h("kbd", {}, /^[a-z-]+$/.test(key) ? key : keyLabel(key)))), h("dd", {}, title));
+  }
   const table = h("dl", { class: "facts keys" });
   for (const row of shortcutRows(wb.keybindings.list(), (id) => wb.commands.get(id)?.title)) {
     table.append(h("dt", {}, ...row.keys.map((key) => h("kbd", {}, keyLabel(key)))), h("dd", {}, row.title));
   }
   const views = h("div", { class: "ng-host bindings-host" });
   let unmount: (() => void) | undefined;
+  // Neuroglancer's own list of its bindings, made when opened.
+  const all = h("details", { class: "keys-all" }, h("summary", {}, "All keys"), table, h("h3", { class: "section-title" }, "In the views"), views);
+  all.addEventListener("toggle", () => {
+    if (all.open && unmount === undefined) unmount = wb.engine.mountBindingsHelp(views);
+  });
   showSheet(
-    sheet(
-      "Keyboard and mouse",
-      [
-        h("h3", { class: "section-title" }, "Workspace"),
-        table,
-        h("h3", { class: "section-title" }, "In the views"),
-        views,
-      ],
-      [h("button", { class: "btn primary", type: "button", onclick: () => closeSheet() }, "Done")],
-      { wide: true },
-    ),
+    sheet("Keyboard and mouse", [common, all], [h("button", { class: "btn primary", type: "button", onclick: () => closeSheet() }, "Done")], { wide: true }),
     () => unmount?.(),
   );
-  unmount = wb.engine.mountBindingsHelp(views);
 }
 
 // -------------------------------------------------------------- edit state
@@ -476,7 +537,7 @@ export function showShortcutsSheet(wb: Workbench): void {
 export function showEditStateSheet(wb: Workbench, apply: (text: string) => Promise<boolean>): void {
   const area = h("textarea", { class: "state-input tall", id: "state-editor", spellcheck: "false", "aria-label": "Workspace state" });
   area.value = JSON.stringify(wb.store.workspace(), null, 2);
-  const status = h("span", { class: "detected" }, "The whole workspace: {ng: this scene's Neuroglancer state, app: scenes, datasets and plugin state}.");
+  const status = h("span", { class: "detected", title: "{ng: this scene's Neuroglancer state, app: scenes, datasets and plugin state}" });
   const applyButton = h("button", { class: "btn primary", type: "button" }, "Apply");
   applyButton.addEventListener("click", async () => {
     try {

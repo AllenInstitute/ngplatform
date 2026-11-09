@@ -77,6 +77,9 @@ input[type="checkbox"].switch:disabled { opacity: 0.4; cursor: default; }
 .app.left-collapsed { --lw: 34px; }
 .app.right-collapsed { --rw: 34px; }
 .app.bottom-collapsed { --bh: 34px; }
+/* The Tools dock with no tool on is not there */
+.app.right-empty { --rw: 0px; }
+.app.right-empty .dock-right, .app.right-empty .resizer-right { display: none; }
 
 /* ---------------------------------------------------------------- top bar */
 .topbar {
@@ -177,6 +180,36 @@ a.btn { text-decoration: none; }
 .scene-kind-new { border-style: dashed; border-color: var(--line); padding-right: 12px; }
 .scene-kind-new .scene-tab-name { font-style: italic; }
 .scene-kind-add { gap: 4px; color: var(--muted); }
+/* The Tools dock's picker: the tool shown, its menu lists them all */
+.dock-picker { display: inline-flex; align-items: center; gap: 4px; }
+.dock-picker svg { width: 12px; height: 12px; }
+/* The Activity line: the running job, else the last message, also while the dock is collapsed */
+.dock-status { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; border: 0; background: transparent; color: var(--muted); font: 12px var(--mono); padding: 0 8px; cursor: pointer; }
+.dock-status.err { color: var(--err, #e5484d); }
+.dock-status:empty { visibility: hidden; }
+.dock.collapsed .dock-status { display: block; }
+/* Open, the dock shows the jobs and the log themselves */
+.dock-bottom:not(.collapsed) .dock-status { visibility: hidden; }
+.activity-jobs:empty { display: none; }
+.activity-jobs { padding-bottom: 6px; }
+/* Settings: one section at a time */
+.settings-nav { margin-bottom: 12px; }
+.settings-body { display: grid; gap: 10px; min-height: 280px; }
+.settings-statistics { display: flex; flex-direction: column; min-height: 240px; }
+.capture-more > summary { cursor: pointer; color: var(--muted); margin: 4px 0; }
+.keys-all > summary { cursor: pointer; color: var(--muted); margin: 10px 0 6px; }
+/* Source details folded */
+.ins-details > summary { cursor: pointer; color: var(--muted); font-size: 12px; margin: 6px 0; }
+/* Over an empty scene */
+.start-card { position: absolute; inset: 0; margin: auto; width: min(460px, calc(100% - 32px)); height: fit-content; display: grid; gap: 12px; padding: 18px; background: var(--ink-1); border: 1px solid var(--line); border-radius: 10px; z-index: 5; }
+.start-card[hidden] { display: none; }
+.start-examples { display: grid; gap: 8px; }
+.start-example { display: grid; gap: 2px; text-align: left; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--ink-2); color: var(--text); cursor: pointer; }
+.start-example:hover { border-color: var(--line-strong); background: var(--ink-3); }
+.start-example .title { font-weight: 500; }
+.start-example .desc { color: var(--muted); font-size: 12px; }
+.start-card .row-actions { margin: 0; }
+.start-card .note { margin: 0; }
 .scene-kind-add svg { width: 11px; height: 11px; }
 .plugin-sheet { display: grid; gap: 12px; }
 
@@ -385,7 +418,14 @@ textarea.text-input { height: auto; padding: 8px 10px; }
 .form-errors { color: var(--err); margin: 0; font-size: 12px; min-height: 1em; }
 
 /* layer: Neuroglancer's own tabs at full height, under a one-line header */
-.dock-pane[data-tab="layer"] { display: flex; flex-direction: column; gap: 8px; padding: 8px; height: 100%; }
+/* Layers: the list above the selected layer's controls, each scrolling on its own */
+.dock-pane[data-tab="layers"] { display: flex; flex-direction: column; padding: 0; height: 100%; }
+.layers-list { flex: 0 1 auto; max-height: 45%; overflow: auto; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.layers-controls { flex: 1 1 0; min-height: 120px; display: flex; flex-direction: column; gap: 8px; padding: 8px; overflow: hidden; }
+.layers-controls > .empty { padding: 4px; }
+.layers-list .panel-actions { justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.layers-list .panel-actions .section-title { margin: 0; }
+.layers-list .ds-row .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .layer-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: none; padding: 0 2px; }
 .layer-head .empty.error { flex-basis: 100%; font-size: 12px; }
 .layer-head .views { flex-basis: 100%; }
@@ -929,3 +969,16 @@ textarea.state-input.tall { min-height: 50vh; }
 
 /* code shown in a confirmation (a pipeline's Python) */
 .confirm-detail { max-height: 40vh; overflow: auto; margin: 8px 0 0; padding: 8px 10px; background: var(--ink-1); border: 1px solid var(--line); border-radius: var(--r); font: 11px/1.45 var(--mono); white-space: pre; }
+
+/* card (@ngplatform/sdk/dom): a collapsible section of a panel */
+.card { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 8px; }
+.card > .card-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px; font-weight: 600; font-size: 12.5px; cursor: pointer; list-style: none; user-select: none; }
+.card > .card-head::-webkit-details-marker { display: none; }
+.card > .card-head::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform 0.12s; flex: none; }
+.card[open] > .card-head::before { transform: rotate(45deg); }
+.card > .card-head:hover { background: var(--ink-2); border-radius: 6px; }
+.card-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-badge { font: 400 11px var(--mono); color: var(--muted); }
+.card > .card-body { display: grid; gap: 8px; padding: 2px 10px 10px; }
+.card .section-title:first-child { margin-top: 0; }
+.card[data-card="compute.this"] .runner-section > .section-head > .section-title { display: none; }

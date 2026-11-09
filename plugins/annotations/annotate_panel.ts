@@ -1,12 +1,13 @@
 /**
- * The Annotate section: the layer new annotations go to, the tools that
- * draw them, its groups (shown or hidden, coloured, nested) and its fields
- * (a list of values, a number, text, or an ontology's terms).  The
+ * The Annotate section: the layer new annotations go to, its groups (shown
+ * or hidden, coloured, nested) and its fields (a list of values, a number,
+ * text, or an ontology's terms).  They are drawn with the layer's own tools
+ * (Layers → the layer's Annotations tab), which "Draw" opens; the
  * annotations themselves are in the annotation table (./table_panel.ts).
  */
 import type { Disposer, PlatformContext } from "@ngplatform/sdk";
 import { button, el, select } from "@ngplatform/sdk/dom";
-import { type Annotate, toolHint, TOOLS } from "./annotate.js";
+import type { Annotate } from "./annotate.js";
 import { addGroup, groupOf, groupPath, groupsOf, groupTree, hiddenValues, moveGroup, removeGroup, withinGroup, writeGroups } from "./groups.js";
 import { TABLE_PANEL } from "./manifest.js";
 import { parseTerms } from "./ontology.js";
@@ -59,20 +60,27 @@ export class AnnotatePanel {
           : el("span", { class: "an-hint" }, "No annotation layer yet."),
         button("+ New layer", () => this.model.newLayer(), "A local annotation layer, kept in the link"),
       );
-      const tools = el("div", { class: "segmented an-tools" });
-      for (const [id, label, title] of TOOLS) {
-        tools.append(el("button", { type: "button", title, "aria-pressed": String(tool === id), onclick: () => this.model.useTool(id) }, label));
-      }
+      // Drawing is in one place, the layer's own Annotations tab; each new annotation is selected in the table.
+      const drawIn = () => {
+        if (name === undefined) return;
+        this.ctx.workspace.selectLayer(name);
+        this.ctx.viewer.patchState(
+          (ng) => {
+            const spec = ((ng as { layers?: Record<string, unknown>[] }).layers ?? []).find((x) => x.name === name);
+            if (spec !== undefined) spec.tab = "annotations";
+          },
+          { quiet: true },
+        );
+        this.ctx.ui.showPanel("layers");
+      };
       host.replaceChildren(
         layerRow,
-        tools,
         el(
-          "p",
-          { class: "an-hint", title: "Each new annotation is selected in the annotation table, ready for its values. Pick the tool again to stop." },
-          // Say which tool is on (a new layer starts with Point on), so picking it does not turn it off unawares.
-          toolHint(tool),
+          "div",
+          { class: "an-row" },
+          button("Draw…", drawIn, "Draw with the layer's tools (Layers → Annotations)"),
+          button("Open table", () => this.ctx.ui.showPanel(TABLE_PANEL), "The table of every annotation, in the bottom dock"),
         ),
-        el("div", { class: "an-row" }, button("Open table", () => this.ctx.ui.showPanel(TABLE_PANEL), "The table of every annotation, in the bottom dock")),
         l ? this.groups(l.spec.name) : "",
         l ? this.fields(l.spec.name) : "",
       );

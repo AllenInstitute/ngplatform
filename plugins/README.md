@@ -11,7 +11,7 @@ plugins/
   workers.ts           the worker modules of data-type plugins, by plugin id
   zarr-vectors/        a data type: Zarr Vectors stores in Neuroglancer (an npm package)
   track-filtering/     a tool: TrackVis-style track groups, saved as .trk
-  volume-view/         a tool: a solid, cut-open brain in place of the 3-D panel
+  volume-view/         not a plugin: volume readers (OME-Zarr, precomputed, NIfTI) the tools share
   luxar/               a tool: chosen Zarr Vectors layers drawn as Luxar draws lines, in the 2-D and 3-D views
   atlas/               a tool: a segmentation's regions as a tree (Allen CCF, FreeSurfer), shown, gone to, under the cursor
 ```
@@ -111,7 +111,7 @@ The choice is kept in this browser.
   which.
 - A plugin whose requirement is off is off, and the tab says why.
 - **Offers.** When data a tool plugin works with is opened while it is
-  off, the Datasets tab lists it under *Tools for this data*, with a button
+  off, the Layers tab lists it under *Tools for this data*, with a button
   to turn it on and one for "Not now"; some offers also show once in a
   toast. Each entry in [`index.ts`](index.ts) has an `offer`
   ([`offers.ts`](offers.ts)): a few words on what it does, whether it is
@@ -136,7 +136,7 @@ built with the app.
 | Kind | What it does | Its code | Example |
 |---|---|---|---|
 | **Data type** (`kind: "datatype"`) | Teaches Neuroglancer a format: a data source, with code in Neuroglancer's workers | A Neuroglancer plugin package: a main-thread module (registers the data source) and worker modules | [`zarr-vectors/`](zarr-vectors/) |
-| **Tool** (`kind: "tool"`) | Adds to the workspace around the viewer: a tab in the left dock, commands, a view beside Neuroglancer's, analyses | A platform module with `activate(ctx)`, using only the `PlatformContext` | [`track-filtering/`](track-filtering/) (requires Zarr Vectors), [`volume-view/`](volume-view/) |
+| **Tool** (`kind: "tool"`) | Adds to the workspace around the viewer: a tab in the left dock, commands, a view beside Neuroglancer's, analyses | A platform module with `activate(ctx)`, using only the `PlatformContext` | [`track-filtering/`](track-filtering/) (requires Zarr Vectors), [`filters/`](filters/) |
 
 A data type plugin has no platform code and contributes no commands or
 panels; tools that work on its data are separate tool plugins that declare
@@ -289,26 +289,26 @@ it is deactivated. Subscriptions a plugin makes itself go in
 | Part | For |
 |---|---|
 | `commands.register / invoke` | Supply declared commands; call any command with arguments (validated against the declared schema, defaults filled in). |
-| `ui.panel / showPanel` | Render declared panels; return a disposer for cleanup. |
+| `ui.panel / showPanel` | Render declared panels; return a disposer for cleanup. A panel declared in the `left` slot is a tool: it shows in the Tools dock on the right, chosen from its menu (`bottom` panels stay in the bottom dock). Break a long panel up with `card(id, title, {open, badge, attention, tooltip}, …children)` from `@ngplatform/sdk/dom`: a collapsible section whose open state is kept per browser under `id` ("myplugin.section"). |
 | `ui.view` | Show a view beside Neuroglancer's, where its 3-D panel would be; one at a time, with a draggable divider. |
 | `ui.viewToggle` | A switch beside "Sections" in the 3-D panel (volume rendering's "Volume"). |
 | `ui.overlay / screenshotOverlay` | An element over the views, and painting into Neuroglancer's screenshots (labels use both). |
-| `ui.toast / confirm / form` | Messages, confirmation, and a dialog generated from a schema. |
+| `ui.toast / confirm / form / sheet` | Messages, confirmation, a dialog generated from a schema, and a sheet whose body the plugin draws. |
 | `workspace` | Scenes, datasets, layers and the selection; add datasets and derived layers, remove layers. `undoSteps` gives the change the workspace's undo and redo would take, with when it was made (Segmentation undoes strokes and workspace changes as one history with it). |
 | `viewer` | The active scene's Neuroglancer state as JSON (`patchState` applies only what changed, as one undo step), layers, the pointer, the position, a segmentation layer's segment properties, and a temporary set of visible segments (not saved in the link). `draw3d` draws in the 3-D view with a layer (raw WebGL2, Neuroglancer's camera and depth; volume rendering uses it); `panels` and `onRendered` place things over the views; `layerTransform` and `setLayerTransform` read and set a layer's transform (registration); `reloadData` has Neuroglancer read again what it holds from a URL (data a plugin serves and changed: Segmentation's label volumes). `lookupTables` lists the lookup tables that come with the app, reads one, and reads or sets a segmentation layer's (Atlas). |
 | `workspace.local` | Files of data opened from this computer: whether a URL is one, writing into it (track filtering saves groups this way), and opening a file the plugin made in the page as data (track filtering's density maps). |
 | `state` | The plugin's slice of the workspace state: in the link, undoable, versioned. |
 | `settings` | Per-user settings kept in this browser, never in the link. |
-| `jobs.run` | Long work with progress and cancel, shown in the Jobs tab. |
-| `runner` | Jobs on the user's own computer, through the runner they paired in the Jobs tab (see below). |
+| `jobs.run` | Long work with progress and cancel, shown in the Activity tab. |
+| `runner` | Jobs on the user's own computer, through the runner they paired in Settings → Compute (see below). |
 | `services.provide / get` | Share an API with other plugins (`get` waits for the provider). |
 | `open.handler` | Handle pasted text matching a declared pattern. |
 | `log` | Lines in the Activity tab, tagged with the plugin. |
-| `auth.register` | Add a sign-in method to the Auth tab (see below). |
+| `auth.register` | Add a sign-in method to Settings → Sign-in (see below). |
 
 ### Sign-in
 
-The Auth tab lists the sign-ins available, with who is signed in, and
+Settings → Sign-in lists the sign-ins available, with who is signed in, and
 buttons to sign in, sign out and check; below them, each layer of the
 active scene has a drop-down of the sign-ins its data can be read with.
 Built in are Google (one or more accounts for the browser, read as
@@ -325,7 +325,7 @@ ctx.auth.register({
   accepts: (server) => server.startsWith("https://data.my-lab.org"),
   async services({ sources, manual }) {
     // One service per thing to sign in to, found from the workspace's
-    // data sources and the servers typed into the Auth tab for this provider.
+    // data sources and the servers typed into Settings → Sign-in for this provider.
     return [{
       id: "my-lab:main",
       title: "data.my-lab.org",
@@ -359,7 +359,7 @@ sourceSignIns: () => [{
 The scheme itself (`mylab+https://`) is registered with Neuroglancer by a
 data type plugin.
 
-The sign-in rules of the Auth tab (an address prefix and a sign-in, kept in
+The sign-in rules of Settings → Sign-in (an address prefix and a sign-in, kept in
 the browser) can name a provider's source sign-in by its `id`: a layer from
 an address a rule covers is given that sign-in when it is added or its
 workspace opens, through `wrap`. Keep `id`s stable, since rules store them.
@@ -371,7 +371,7 @@ a conversion) runs as a Python process on the user's computer, through the
 runner (`runner/` in this repository; [the guide](../docs/guide/local-jobs.md)).
 The runner offers known job kinds only (`convert`, `filter`, `density`),
 reads and writes only under the folders it was started with, and the app
-must be paired with it in the Jobs tab. `ctx.runner` is the plugin's way to
+must be paired with it in Settings → Compute. `ctx.runner` is the plugin's way to
 it:
 
 ```ts

@@ -100,7 +100,7 @@ function sourceCard(scope: Scope, layer: UserLayer, source: LayerDataSource): { 
     loadedScope = undefined;
     body.replaceChildren();
     if (source.spec.url === "") {
-      status.textContent = "Type or paste a data source URL above.";
+      status.textContent = "Paste a data URL above.";
       return;
     }
     if (state === undefined) {
@@ -114,9 +114,11 @@ function sourceCard(scope: Scope, layer: UserLayer, source: LayerDataSource): { 
     }
     status.textContent = "";
     loadedScope = scope.child();
-    body.append(...loadedSource(loadedScope, state as LoadedLayerDataSource));
+    // Parts, transform, the image's coordinate systems and levels: rarely changed, so folded away.
+    const details = el("details", { class: "ins-details" }, el("summary", {}, "Details"), ...loadedSource(loadedScope, state as LoadedLayerDataSource));
     const base = omeBase(source.spec.url);
-    if (base !== undefined) body.append(omeSection(base));
+    if (base !== undefined) details.append(omeSection(base));
+    body.append(details);
   });
   return { element, focus: () => url.input.focus() };
 }

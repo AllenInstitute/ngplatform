@@ -548,7 +548,7 @@ export class LocalData {
       return;
     }
     if (entry.needsPermission) {
-      port.postMessage({ status: 403, message: "Reading this local data needs your permission again: click Allow access in the Datasets tab." });
+      port.postMessage({ status: 403, message: "Reading this local data needs your permission again: click Allow access in the Layers tab." });
       return;
     }
     const virtual = splitVirtual(request.path, this.formats);

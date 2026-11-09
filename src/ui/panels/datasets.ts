@@ -1,16 +1,18 @@
 /**
- * The Datasets tab: what the active scene shows.
+ * The top of the Layers tab: what the active scene shows.
  *
- * One row per dataset, with its visibility, load state and type; a dataset
- * shown through several layers lists them beneath it.  Selecting a row
- * brings its controls up in the Layer tab.  Datasets that other scenes show
- * are offered in the Open sheet and the Add a dataset sheet, not here.
+ * One row per dataset, with its visibility, load state and where it is; a
+ * dataset shown through several layers lists them beneath it.  Selecting a
+ * row brings its controls up below (./layer.ts).  Datasets that other
+ * scenes show are offered in the Open sheet and the Add a dataset sheet,
+ * not here.  Below the list, up to three tools that are off but would serve
+ * this data, the rest behind More.
  */
 import type { LayerInfo } from "../../engine/engine.js";
 import { clear, h, icon, iconButton } from "../dom.js";
 import { promptDialog, showMenu } from "../overlays.js";
 import type { Workbench } from "../workbench.js";
-import { shortSource } from "./format.js";
+import { sourceName } from "./format.js";
 import { canExport, exportDataset } from "../export.js";
 import { buildOverview, clearOverview, overviewUrl } from "../overview.js";
 
@@ -52,27 +54,39 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
   /** "Local" for data on this computer; nothing for data from the web. */
   const where = (url: string) => (wb.localData.parse(url.replace(/^[a-z0-9+]+:\/\/(?=https?:)/, "")) !== undefined ? "Local" : "");
   const list = h("div", { class: "datasets" });
-  const addButton = h("button", { class: "btn outline small", type: "button", "aria-haspopup": "menu" }, icon("plus"), "Add");
-  addButton.addEventListener("click", () => showAddMenu(addButton, wb));
+  const addButton = iconButton("plus", "Add data", () => showAddMenu(addButton, wb), { class: "btn icon", "aria-haspopup": "menu" });
   const permission = h(
     "div",
     { class: "note-bar", hidden: true },
-    h("span", {}, "The browser needs your permission to read local data again."),
+    h("span", {}, "Local data needs your permission again."),
     h("button", { class: "btn small", type: "button", onclick: () => wb.run("dataset.reconnectLocal") }, "Allow access"),
   );
   const gone = h("div", { class: "note-bar", hidden: true });
   // Tools that are off but would serve this scene's data (src/ui/plugin_offers.ts).
   const tools = h("div", { class: "ds-offers", hidden: true });
-  const actions = h("div", { class: "panel-actions" }, addButton);
+  const actions = h("div", { class: "panel-actions" }, h("span", { class: "section-title" }, "Data"), addButton);
   host.append(actions, permission, gone, list, tools);
 
+  /** The tools shown as buttons; the rest are behind More. */
+  const SHOWN = 3;
   const renderOffers = () => {
     const items = wb.offers.list();
     tools.hidden = items.length === 0;
+    const more = items.slice(SHOWN);
+    const moreButton: HTMLButtonElement = h(
+      "button",
+      {
+        class: "btn small outline",
+        type: "button",
+        "aria-haspopup": "menu",
+        onclick: () => showMenu(moreButton, more.map((item) => ({ label: `Turn on ${item.name}`, detail: item.pitch, run: () => wb.offers.accept([item.id]) }))),
+      },
+      "More…",
+    ) as HTMLButtonElement;
     clear(
       tools,
       h("span", { class: "ds-offers-title" }, "Tools for this data"),
-      ...items.map((item) =>
+      ...items.slice(0, SHOWN).map((item) =>
         h(
           "span",
           { class: "offer-chip" },
@@ -90,6 +104,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
           item.uses ? null : iconButton("close", `Not now: stop offering ${item.name}`, () => wb.offers.notNow([item.id]), { class: "btn icon offer-no" }),
         ),
       ),
+      more.length ? moreButton : null,
     );
   };
 
@@ -110,32 +125,15 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
     if (lost.length > 0) {
       clear(
         gone,
-        h("span", {}, `${lost.map((l) => l.name).join(", ")}: local files closed with the tab. Open them again (Add → Local file or folder) or drop them here.`),
+        h("span", {}, `${lost.map((l) => l.name).join(", ")}: closed with the tab. Open the files again (+ → Local file or folder) or drop them here.`),
       );
     }
     const entries = store.sceneDatasets();
     const layerInfo = new Map(engine.layers().map((l) => [l.name, l]));
     const selected = engine.selectedLayer();
-    // The empty state has its own buttons.
-    actions.hidden = entries.length === 0;
 
     if (entries.length === 0) {
-      clear(
-        list,
-        h(
-          "div",
-          { class: "empty-state" },
-          h("p", { class: "empty" }, h("strong", {}, "No datasets in this scene. "), "Add one, drop files here, or paste a data URL."),
-          h(
-            "div",
-            { class: "row-actions" },
-            h("button", { class: "btn primary small", type: "button", onclick: () => wb.run("dataset.add") }, icon("plus"), "Add from URL"),
-            h("button", { class: "btn outline small", type: "button", disabled: !wb.commands.available("dataset.addLocal"), onclick: () => wb.run("dataset.addLocal") }, icon("open"), "Add local data…"),
-            h("button", { class: "btn outline small", type: "button", onclick: () => wb.run("dataset.newAnnotations") }, icon("plus"), "New annotation layer"),
-            h("button", { class: "btn outline small", type: "button", onclick: () => wb.run("workspace.open") }, icon("open"), "Open…"),
-          ),
-        ),
-      );
+      clear(list, h("p", { class: "empty" }, "No data in this scene."));
     } else {
       clear(
         list,
@@ -144,10 +142,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
           const layers = entry.layers.map((n) => layerInfo.get(n)).filter((l): l is LayerInfo => l !== undefined);
           const visible = layers.some((l) => l.visible);
           const isSelected = selected !== undefined && entry.layers.includes(selected);
-          const select = () => {
-            store.selectDataset(dataset.id);
-            wb.docks.show("layer");
-          };
+          const select = () => store.selectDataset(dataset.id);
           const menu = (anchor: HTMLElement | { x: number; y: number }) =>
             showMenu(anchor, [
               { label: "Show controls", run: select },
@@ -181,7 +176,6 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
               tabindex: 0,
               role: "button",
               "aria-pressed": String(isSelected),
-              title: "Show this dataset's controls",
               onclick: select,
               ondblclick: async (e: Event) => {
                 if ((e.target as HTMLElement).closest(".ds-name") === null) return;
@@ -213,7 +207,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
               e.stopPropagation();
               menu(e.currentTarget as HTMLElement);
             }),
-            h("span", { class: "sub" }, layers[0]?.error ?? shortSource(layers[0]?.sources[0] ?? sourceText(dataset.source))),
+            ((url) => h("span", { class: "sub", title: url }, layers[0]?.error ?? sourceName(url)))(layers[0]?.sources[0] ?? sourceText(dataset.source)),
           );
           if (entry.layers.length <= 1) return row;
           const views = h(
@@ -225,11 +219,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
                 {
                   class: layer.name === selected ? "layer-row selected" : "layer-row",
                   tabindex: 0,
-                  title: "Show this layer's controls",
-                  onclick: () => {
-                    store.selectLayer(layer.name);
-                    wb.docks.show("layer");
-                  },
+                  onclick: () => store.selectLayer(layer.name),
                   oncontextmenu: (e: Event) => {
                     e.preventDefault();
                     const m = e as MouseEvent;
