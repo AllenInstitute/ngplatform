@@ -29,7 +29,10 @@ export interface VolumeLevel {
   voxelToRas: Mat4;
   /** About how many millimetres a voxel is (the mean of its edges). */
   voxelSize: number;
-  /** The array's axis names, in its order (C order: the last varies fastest). */
+  /**
+   * The array's axis names, in its order (C order: the last varies fastest):
+   * x, y and z, and any non-spatial axes (t, c) the metadata names.
+   */
   axes: string[];
 }
 
@@ -90,6 +93,8 @@ export function apply(m: Mat4, p: ArrayLike<number>): [number, number, number] {
 const UNIT_MM: Record<string, number> = {
   meter: 1000,
   m: 1000,
+  centimeter: 10,
+  cm: 10,
   millimeter: 1,
   mm: 1,
   micrometer: 1e-3,
@@ -98,12 +103,19 @@ const UNIT_MM: Record<string, number> = {
   micron: 1e-3,
   nanometer: 1e-6,
   nm: 1e-6,
+  angstrom: 1e-7,
+  // The letter Å, and the Ångström sign, which looks the same.
+  "\u00c5": 1e-7,
+  "\u212b": 1e-7,
 };
 
 interface Axis {
   name: string;
+  type?: string;
   unit?: string;
 }
+
+const SPATIAL = ["x", "y", "z"];
 
 interface Transform {
   type: string;
@@ -172,8 +184,13 @@ export function parseOmeLevels(url: string, group: any, space?: string): Pyramid
   const inputAxes: Axis[] = base?.axes ?? multiscale.axes ?? [];
   const n = inputAxes.length;
   if (n === 0) throw new Error(`${url}: the image names no axes`);
-  const spatial = inputAxes.filter((a) => ["x", "y", "z"].includes(a.name));
-  if (spatial.length !== 3 || n !== 3) throw new Error(`${url}: only 3-D images (axes z, y, x) are shown; this one has ${inputAxes.map((a) => a.name).join(", ")}`);
+  // x, y and z, and any other axes that are not space (t, c): those are
+  // read at index 0, and the readers refuse them unless they are size 1.
+  const spatial = inputAxes.filter((a) => SPATIAL.includes(a.name));
+  const other = inputAxes.filter((a) => !SPATIAL.includes(a.name));
+  if (spatial.length !== 3 || new Set(spatial.map((a) => a.name)).size !== 3 || other.some((a) => a.type === "space")) {
+    throw new Error(`${url}: the image's axes are ${inputAxes.map((a) => a.name).join(", ")}; a 3-D image (x, y and z) is needed`);
+  }
 
   // Transforms applied after each dataset's: 0.4/0.5's shared ones, or
   // 0.6's chain from the datasets' system to the one asked for.
@@ -197,13 +214,15 @@ export function parseOmeLevels(url: string, group: any, space?: string): Pyramid
   const toRas: number[][] = Array.from({ length: 4 }, (_, r) => Array.from({ length: n + 1 }, (_, c) => (r === 3 && c === n ? 1 : 0)));
   outputAxes.forEach((axis, i) => {
     const row = { x: 0, y: 1, z: 2 }[axis.name as "x" | "y" | "z"];
+    if (row === undefined) return;
     const factor = UNIT_MM[axis.unit ?? "millimeter"] ?? 1;
     toRas[row][i] = factor;
   });
   // Voxel (x, y, z) to the array's axis order.
   const fromVoxel: number[][] = Array.from({ length: n + 1 }, (_, r) => Array.from({ length: 4 }, (_, c) => (r === n && c === 3 ? 1 : 0)));
   inputAxes.forEach((axis, i) => {
-    fromVoxel[i][{ x: 0, y: 1, z: 2 }[axis.name as "x" | "y" | "z"]] = 1;
+    const column = { x: 0, y: 1, z: 2 }[axis.name as "x" | "y" | "z"];
+    if (column !== undefined) fromVoxel[i][column] = 1;
   });
 
   const levels = datasets.map((dataset): VolumeLevel => {
