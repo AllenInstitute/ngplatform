@@ -32,6 +32,8 @@
  * HTTP and decoding Draco is the caller's (plugins/luxar/precomputed_meshes.ts).
  */
 
+import { AsyncLru } from "../util.js";
+
 const MANIFEST_ROWS = 16384;
 const COLUMN_ROWS = 65536;
 const FACES = "links/0/0.0.0_0.0.0";
@@ -242,6 +244,31 @@ export function fragmentIndex(counts: ArrayLike<number>): Uint8Array {
   return out;
 }
 
+/** A cell's fragments read and put together: per object, its vertices, then its faces as rows of the cell. */
+async function decodeCell(cell: Cell): Promise<DecodedCell> {
+  const parts = await Promise.all(cell.fragments.map((list) => Promise.all(list.map((f) => f.read()))));
+  const vertexCounts = parts.map((list) => list.reduce((n, p) => n + p.positions.length / 3, 0));
+  const faceCounts = parts.map((list) => list.reduce((n, p) => n + p.triangles.length / 3, 0));
+  const vertices = new Float32Array(3 * vertexCounts.reduce((a, b) => a + b, 0));
+  const faces = new Int32Array(3 * faceCounts.reduce((a, b) => a + b, 0));
+  let v = 0;
+  let t = 0;
+  for (const list of parts) {
+    for (const p of list) {
+      const n = p.positions.length / 3;
+      vertices.set(p.positions, 3 * v);
+      for (let j = 0; j < p.triangles.length; ++j) {
+        const r = p.triangles[j];
+        // A corner past the fragment's vertices would name another fragment's row.
+        faces[t + j] = r < n ? v + r : v;
+      }
+      v += n;
+      t += p.triangles.length;
+    }
+  }
+  return { vertices, faces, vertexCounts, faceCounts, bytes: vertices.byteLength + faces.byteLength };
+}
+
 /** One vlen-bytes element. */
 function element(payload: Uint8Array): Uint8Array {
   const out = new Uint8Array(8 + payload.byteLength);
@@ -269,12 +296,19 @@ function column(n: number, rows: number, dataType: string, fill: unknown): unkno
 export class PrecomputedMeshStore {
   private readonly served: Served[];
   private readonly directories = new Set<string>();
-  /** Decoded cells by "level/x/y/z", least recently asked for first. */
-  private readonly decoded = new Map<string, Promise<DecodedCell>>();
-  private decodedBytes = 0;
+  /**
+   * Decoded cells by level and cell, least recently asked for first, bounded
+   * by their bytes; a cell still being read is never evicted, so its bytes
+   * are counted once it is read and taken off once it goes.
+   */
+  private readonly decoded: AsyncLru<DecodedCell>;
   readonly count: number;
 
-  constructor(readonly plan: MeshStorePlan) {
+  constructor(
+    readonly plan: MeshStorePlan,
+    cacheBytes = CELL_CACHE_BYTES,
+  ) {
+    this.decoded = new AsyncLru<DecodedCell>(Infinity, cacheBytes, (c) => c.bytes);
     this.count = plan.ids.length;
     this.served = plan.levels.map((level) => {
       const byKey = new Map<string, Cell>();
@@ -299,8 +333,17 @@ export class PrecomputedMeshStore {
         cell.owners = order.map(([o]) => o);
       }
       cells.sort((a, b) => a.at[2] - b.at[2] || a.at[1] - b.at[1] || a.at[0] - b.at[0]);
-      const origin = [0, 1, 2].map((k) => (cells.length ? Math.min(...cells.map((c) => c.at[k])) : 0));
-      const shape = [0, 1, 2].map((k) => (cells.length ? Math.max(...cells.map((c) => c.at[k])) - origin[k] + 1 : 1));
+      // A loop, not Math.min over a spread: a level can have more cells than a call takes arguments.
+      const lo = [Infinity, Infinity, Infinity];
+      const hi = [-Infinity, -Infinity, -Infinity];
+      for (const c of cells) {
+        for (let k = 0; k < 3; ++k) {
+          lo[k] = Math.min(lo[k], c.at[k]);
+          hi[k] = Math.max(hi[k], c.at[k]);
+        }
+      }
+      const origin = [0, 1, 2].map((k) => (cells.length ? lo[k] : 0));
+      const shape = [0, 1, 2].map((k) => (cells.length ? hi[k] - origin[k] + 1 : 1));
       const cellByKey = new Map<string, number>();
       const blocks: [number, number][][] = Array.from({ length: this.count }, () => []);
       cells.forEach((cell, i) => {
@@ -463,54 +506,14 @@ export class PrecomputedMeshStore {
     return bytesOf(ids);
   }
 
-  /** A cell's fragments read and put together: per object, its vertices, then its faces as rows of the cell. */
+  /** Bytes of the decoded cells kept. */
+  get cachedBytes(): number {
+    return this.decoded.size;
+  }
+
+  /** A cell's fragments read and put together, or kept from before. */
   private cell(k: number, s: Served, i: number): Promise<DecodedCell> {
-    const key = `${k}/${i}`;
-    const kept = this.decoded.get(key);
-    if (kept !== undefined) {
-      // Most recently asked for last.
-      this.decoded.delete(key);
-      this.decoded.set(key, kept);
-      return kept;
-    }
-    const cell = s.cells[i];
-    const made = (async () => {
-      const parts = await Promise.all(cell.fragments.map((list) => Promise.all(list.map((f) => f.read()))));
-      const vertexCounts = parts.map((list) => list.reduce((n, p) => n + p.positions.length / 3, 0));
-      const faceCounts = parts.map((list) => list.reduce((n, p) => n + p.triangles.length / 3, 0));
-      const vertices = new Float32Array(3 * vertexCounts.reduce((a, b) => a + b, 0));
-      const faces = new Int32Array(3 * faceCounts.reduce((a, b) => a + b, 0));
-      let v = 0;
-      let t = 0;
-      for (const list of parts) {
-        for (const p of list) {
-          const n = p.positions.length / 3;
-          vertices.set(p.positions, 3 * v);
-          for (let j = 0; j < p.triangles.length; ++j) {
-            const r = p.triangles[j];
-            // A corner past the fragment's vertices would name another fragment's row.
-            faces[t + j] = r < n ? v + r : v;
-          }
-          v += n;
-          t += p.triangles.length;
-        }
-      }
-      return { vertices, faces, vertexCounts, faceCounts, bytes: vertices.byteLength + faces.byteLength };
-    })();
-    this.decoded.set(key, made);
-    made.then(
-      (c) => {
-        if (this.decoded.get(key) !== made) return;
-        this.decodedBytes += c.bytes;
-        for (const [old, p] of this.decoded) {
-          if (this.decodedBytes <= CELL_CACHE_BYTES || old === key) break;
-          this.decoded.delete(old);
-          void p.then((d) => (this.decodedBytes -= d.bytes), () => {});
-        }
-      },
-      () => this.decoded.delete(key),
-    );
-    return made;
+    return this.decoded.get(`${k}/${i}`, () => decodeCell(s.cells[i]));
   }
 
   /** A chunk of manifests: per object, u32 blocks, then per block int64 x3 cell, u8 mode 0, int64 fragment. */

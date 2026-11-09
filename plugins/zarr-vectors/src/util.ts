@@ -64,6 +64,11 @@ export class AsyncLru<T> {
     }
   }
 
+  /** The total size of the loaded entries kept. */
+  get size(): number {
+    return this.totalSize;
+  }
+
   /** The cached entry, without loading. */
   peek(key: string): Promise<T> | undefined {
     return this.entries.get(key);
