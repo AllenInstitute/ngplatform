@@ -3,11 +3,13 @@
  * and Edit state.  Settings and the view bindings are Neuroglancer's own
  * panels, shown here instead of over the views.
  */
+import { logFileName } from "../core/errors.js";
 import { shortcutRows } from "../core/keybindings.js";
 import { InputError, layerCount, parseInput } from "../core/state_io.js";
 import { layerNameFor } from "../core/state_io.js";
 import { closeSheet, sheet, showSheet, toast } from "./overlays.js";
 import { type DroppedItem, LocalData, type FoundDataset, type LocalEntry } from "../virtual/local_data.js";
+import { downloadBlob } from "../sdk/dom.js";
 import { clear, h, icon, keyLabel } from "./dom.js";
 import { kindLabel } from "./panels/format.js";
 import { renderOverviewSettings } from "./overview.js";
@@ -482,6 +484,11 @@ const SECTION_RENDER: Record<SettingsSection, (host: HTMLElement, wb: Workbench)
         h("button", { class: "btn outline small", type: "button", onclick: () => wb.run("view.reloadLayers") }, "Reload the scene's layers"),
         h("button", { class: "btn outline small", type: "button", title: "Reloads the page, checking every file with its server", onclick: () => wb.run("view.hardReset") }, "Reload page and all data"),
         h("button", { class: "btn outline small", type: "button", onclick: () => wb.run("workspace.editState") }, "Edit the state as JSON…"),
+        h(
+          "button",
+          { class: "btn outline small", type: "button", title: "The Activity log, errors included, as a text file", onclick: () => downloadBlob(new Blob([wb.log.text()], { type: "text/plain" }), logFileName(new Date())) },
+          "Save log",
+        ),
       ),
       h("h3", { class: "section-title" }, "Chunk statistics"),
       statistics,
