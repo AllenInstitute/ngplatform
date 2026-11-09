@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import gzip
 import json
 import struct
@@ -172,11 +173,56 @@ class FilterTaskTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             task.main([str(FIXTURES / "ras.trk"), "--filter", str(path), "--density", str(self.dir / "none.nii")])
 
+    def test_groups_the_document_carries(self):
+        # Tags from the browser: the rows they choose, as a set the tree's group node tests.
+        source = FIXTURES / "ras.trk"
+        t, everything = self.oracle(source, {"op": "all"})
+        chosen = np.arange(0, len(everything), 3)
+        packed = np.packbits(np.isin(np.arange(len(everything)), chosen))
+        group = {"size": len(everything), "bits": base64.b64encode(packed.tobytes()).decode()}
+        for tree, expected in (
+            ({"op": "group", "ids": [0]}, chosen),
+            ({"op": "and", "args": [SPHERE, {"op": "group", "ids": [0]}]}, np.intersect1d(chosen, np.flatnonzero(self.oracle(source, SPHERE)[1]))),
+        ):
+            path = self.dir / "filter.json"
+            path.write_text(json.dumps({**doc(tree), "groups": [group]}))
+            out = self.dir / "groups.trk"
+            self.assertEqual(task.main([str(source), "--filter", str(path), "--trk", str(out), "--overwrite"]), 0)
+            got = next(open_trk(out).batches(), None)
+            self.assertEqual(0 if got is None else len(got.offsets) - 1, len(expected))
+            if len(expected):
+                self.assertTrue(np.array_equal(got.points, np.concatenate([t.polyline(k) for k in expected])))
+
     def test_gzip_nifti_is_readable(self):
         nii = self.dir / "d.nii.gz"
         self.run_task(FIXTURES / "ras.trk", SPHERE, "--density", str(nii))
         with gzip.open(nii) as f:
             self.assertEqual(struct.unpack("<i", f.read(4))[0], 348)
+
+
+class CarriedGroupsTest(unittest.TestCase):
+    """The row sets a filter document carries, read without zarr-vectors-tools."""
+
+    def setUp(self):
+        global np, filter_task
+        import numpy as np
+
+        from ngplatform_runner.tasks import filter as filter_task
+
+    def test_bits_to_rows(self):
+        bits = base64.b64encode(bytes([0b10010000, 0b01000000])).decode()
+        rows = filter_task.document_groups({"groups": [{"size": 10, "bits": bits}, {"size": 0, "bits": ""}]})
+        self.assertEqual([r.tolist() for r in rows], [[0, 3, 9], []])
+        self.assertIsNone(filter_task.document_groups({"tree": {"op": "all"}}))
+        # Bits beyond the size are not rows.
+        self.assertEqual(filter_task.document_groups({"groups": [{"size": 4, "bits": bits}]})[0].tolist(), [0, 3])
+        for bad in ({"groups": {}}, {"groups": [{"size": 20, "bits": bits}]}, {"groups": [{"bits": bits}]}, {"groups": [{"size": 1, "bits": "!!"}]}):
+            with self.assertRaises(ValueError):
+                filter_task.document_groups(bad)
+
+    def test_rows_within_a_batch(self):
+        groups = [np.array([0, 3, 9, 12]), np.array([], np.int64)]
+        self.assertEqual([g.tolist() for g in filter_task.batch_groups(groups, 3, 7)], [[0, 6], []])
 
 
 if __name__ == "__main__":

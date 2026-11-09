@@ -11,6 +11,12 @@ streamlines is tested with zarr-vectors-tools' reference engine
 (``filtering.oracle``), so the answer is the one the browser's filters are
 tested against.
 
+The tree's ``group`` nodes test a store's own groups, unless the document
+carries ``groups`` of its own: sets of rows (object ids of a store,
+streamline numbers of a file), each ``{"size": n, "bits": base64}`` with bit
+k (most significant first) for row k.  The browser sends a track group's
+tags that way, as the objects they choose.
+
 - ``--trk``: from a .trk, the passing records are copied unchanged (header,
   scalars and properties kept); from a .tck or .trx, written in RAS+ mm;
   from a store, exported with zarr-vectors-tools' ``export_trk``.
@@ -24,6 +30,7 @@ tested against.
 from __future__ import annotations
 
 import argparse
+import base64
 import gzip
 import json
 import struct
@@ -48,6 +55,31 @@ def _stored_space(store: Path) -> str:
 
     space, trk, _ = stored_space(store)
     return "voxmm" if space == "voxmm" and trk is not None else "rasmm"
+
+
+def document_groups(doc: dict) -> list[np.ndarray] | None:
+    """The row sets a filter document carries (see the module), as sorted rows; None when it carries none."""
+    groups = doc.get("groups")
+    if groups is None:
+        return None
+    if not isinstance(groups, list):
+        raise ValueError("the filter's groups must be a list")
+    out = []
+    for k, group in enumerate(groups):
+        try:
+            size = int(group["size"])
+            bits = np.frombuffer(base64.b64decode(group["bits"], validate=True), np.uint8)
+        except (KeyError, TypeError, ValueError) as e:
+            raise ValueError(f"the filter's group {k} is not {{size, bits}}: {e}") from e
+        if size < 0 or len(bits) * 8 < size:
+            raise ValueError(f"the filter's group {k} has {len(bits) * 8} bits, fewer than its size {size}")
+        out.append(np.flatnonzero(np.unpackbits(bits, count=size)).astype(np.int64))
+    return out
+
+
+def batch_groups(groups: list[np.ndarray], first: int, n: int) -> list[np.ndarray]:
+    """Each group's rows within a batch of ``n`` rows from ``first``, numbered from the batch's start."""
+    return [g[(g >= first) & (g < first + n)] - first for g in groups]
 
 
 def _tractogram(batch: Batch, groups):
@@ -141,7 +173,9 @@ class Density:
 def run(args: argparse.Namespace) -> dict:
     from zarr_vectors_tools.filtering import from_json
 
-    tree = from_json(Path(args.filter).read_text())
+    document = json.loads(Path(args.filter).read_text())
+    tree = from_json(document)
+    carried = document_groups(document)
     source_path = Path(args.input)
     started = time.time()
     progress(0.0, f"Opening {source_path.name}")
@@ -158,7 +192,7 @@ def run(args: argparse.Namespace) -> dict:
     if trk_path is not None and source.kind != "store":
         writer = TrkWriter(trk_path, source.header if source.kind == "trk" else None)
     raw = np.memmap(source_path, dtype=np.uint8, mode="r") if source.kind == "trk" else None
-    groups = source.groups
+    groups = carried if carried is not None else source.groups if source.kind == "store" else []
 
     passing_rows: list[np.ndarray] = []
     kept: list[tuple[np.ndarray, np.ndarray]] = []
@@ -170,7 +204,7 @@ def run(args: argparse.Namespace) -> dict:
     try:
         for batch in source.batches():
             n = len(batch.offsets) - 1
-            mask = _evaluate(tree, batch, groups if source.kind == "store" else [])
+            mask = _evaluate(tree, batch, batch_groups(groups, batch.first, n))
             rows = np.flatnonzero(mask)
             total += n
             passed += len(rows)
