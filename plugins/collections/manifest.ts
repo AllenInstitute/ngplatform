@@ -30,8 +30,8 @@ With the plugin on, the scene bar has an **Add collection +** tab after the scen
 Each collection is a tab (a scene of its own) whose viewer shows only its images.
 
 ## A collection's tab
-- **Graph**: its images (left) and coordinate systems (right), each transform an arrow. Click a system to view the images in it: each is placed by the chain of transforms to it (walked backwards where needed, inverted); an image with no chain to it is hidden.
-- **Build it**: add or remove members (a dataset of the workspace or an address), coordinate systems, and relationships (identity, translation, scale, affine, displacement field) between a member or system and another. **From the view** writes a member's placement as you have moved it in the viewer (its layer's transform) as its transform into the system viewed.
+- **Graph**: its images (left) and coordinate systems (right), each transform an arrow. Click a system to view the images in it: each is placed by the chain of transforms to it (walked backwards where needed, inverted); an image with no chain to it is hidden, and its line under **Members** says why (a transform kind not read, such as \`byDimension\`). Label images are shown as segmentations.
+- **Build it**: add or remove members (a dataset of the workspace or an address), coordinate systems, and relationships (identity, translation, scale, an affine in a 3 × 4 grid or twelve numbers pasted, displacement field) between a member or system and another. **From the view** writes a member's placement as you have moved it in the viewer (its layer's transform) as its transform into the system viewed.
 - **Download** or **Copy** the collection's JSON. Edits are kept with the tab (in the link and the undo history); a collection read from an address is not written back there.
 
 The RFC is a draft; this follows its text of October 2026.`,

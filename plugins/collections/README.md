@@ -11,7 +11,8 @@ the workspace's images (a parent Zarr group whose `zarr.json` is an OME
 collection), by address, from a file, or the example. Each collection is a
 scene of the plugin's kind, as many as wanted, whose viewer shows only its
 images, each placed by the chain of transforms to the coordinate system
-chosen in the panel's graph. The panel builds the collection: members,
+chosen in the panel's graph; a label image (OME's `image-label` in its
+metadata, or an image in a `labels` group) is added as a segmentation. The panel builds the collection: members,
 systems and transforms added and removed (`editCollection`, on the top
 collection), a member's placement taken from its layer, the JSON
 downloaded. A tab keeps its document whole in its state once made or
@@ -20,15 +21,21 @@ edited here.
 | File | What |
 |---|---|
 | `manifest.ts` | The Collection panel, the collection scene kind with its Add collection tab, the `collections.add` command and the state slice (per scene: the collection's URL, its document once made or edited here, and the system it is viewed in) |
-| `plugin.ts` | The Add collection sheet, the panel (the systems graph, members, systems and transforms with their editing, which members are warped or hidden) and a collection tab's layers and placements |
+| `plugin.ts` | The Add collection sheet, the panel (drawn once and updated in place: the systems graph, members, systems and transforms with their editing and the affine's 3 × 4 grid, which members are warped or hidden and why) and a collection tab's layers and placements; every read of metadata has a deadline (`READ_TIMEOUT`, 15 s) |
 | `collection.ts` | The model: reading the tree, building one (from a scene's images, edits, a 4 × 4 written as the simplest transform), resolving paths, members, transforms as 4 × 4 on x, y, z, a member placed in any system by the chain of transforms (inverted where walked backwards), chains through a displacement field and the warp that shows them, the groups above an image to look in (pure, unit-tested) |
 | `examples/srb_gallery.json` | A small collection: the SRB 2026a template as is, moved and mirrored |
-| `tests/` | `npm test` runs them |
+| `tests/` | The model (`collection.test.ts`, each transform kind among it) and the class and panel against a fake context and fetch (`plugin.test.ts`); `npm test` runs them |
 
 The RFC is a draft and has no implementations yet; this follows its text of
-October 2026 and reads what it can: scale, translation, affine, identity,
-sequences of them, displacement fields and coordinate maps (below; a map
-is applied when written from the system to the image). Placements use the Registration
+October 2026 and reads what it can: identity, scale, translation,
+rotation, `mapAxis` (0.6's indices, or the draft's names), affine,
+sequences of them, a `bijection` (its forward side, or its stated inverse
+walked backwards), displacement fields and coordinate maps (below; a map
+is applied when written from the system to the image). A member whose
+chain needs any other kind (`byDimension`, or a transform on axes other
+than x, y and z) is hidden, and the panel names the kinds. A system's unit
+is read in millimetres from every unit OME-NGFF names; another unit is
+read as a millimetre, and the panel says so beside the system. Placements use the Registration
 plugin's conversion between millimetre matrices and Neuroglancer's layer
 transforms.
 
