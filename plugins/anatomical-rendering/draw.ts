@@ -190,8 +190,11 @@ export class PictureDrawer implements Drawer3d {
   private meshFor = "";
   private grid: { key: string; buffer: WebGLBuffer; count: number; cols: number; step: number } | undefined;
 
+  /** The picture to draw; one replaced before it was drawn lets its bitmap go. */
   set(picture: Picture | undefined): void {
+    const old = this.picture;
     this.picture = picture;
+    if (old !== undefined && old !== picture && old !== this.uploaded) old.bitmap.close?.();
   }
 
   /** The camera of the picture shown when it is placed in space (drawn moving with the view); else undefined. */
@@ -234,7 +237,10 @@ export class PictureDrawer implements Drawer3d {
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, pic.bitmap);
+      // The picture uploaded before is in a texture now (or not wanted): its bitmap is let go.
+      const before = this.uploaded;
       this.uploaded = pic;
+      if (before !== undefined && before !== this.picture) before.bitmap.close?.();
     }
     if (pic.depth !== undefined && this.uploadedDepth !== pic.depth) {
       gl.activeTexture(gl.TEXTURE1);
@@ -307,6 +313,8 @@ export class PictureDrawer implements Drawer3d {
     const key = JSON.stringify(frame.outputs);
     if (this.mesh === undefined || this.meshFor !== key) {
       try {
+        if (this.mesh) gl.deleteProgram(this.mesh);
+        this.mesh = undefined;
         this.mesh = this.link(gl, MESH_VS, MESH_FS(frame.outputs));
         this.meshFor = key;
       } catch {
@@ -377,10 +385,16 @@ export class PictureDrawer implements Drawer3d {
       return s;
     };
     const p = gl.createProgram()!;
-    gl.attachShader(p, sh(gl.VERTEX_SHADER, vs));
-    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs));
+    const shaders = [sh(gl.VERTEX_SHADER, vs), sh(gl.FRAGMENT_SHADER, fs)];
+    for (const s of shaders) gl.attachShader(p, s);
     gl.linkProgram(p);
-    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) ?? "link");
+    // The program keeps what it needs: its shaders go.
+    for (const s of shaders) gl.deleteShader(s);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+      const log = gl.getProgramInfoLog(p);
+      gl.deleteProgram(p);
+      throw new Error(log ?? "link");
+    }
     return p;
   }
 
@@ -417,30 +431,25 @@ export class PictureDrawer implements Drawer3d {
   private compile(gl: WebGL2RenderingContext, outputs: Frame3d["outputs"]): WebGLProgram | undefined {
     const key = JSON.stringify(outputs);
     if (this.program !== undefined && this.programFor === key) return this.program;
-    const sh = (type: number, src: string) => {
-      const s = gl.createShader(type)!;
-      gl.shaderSource(s, src);
-      gl.compileShader(s);
-      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) ?? "shader");
-      return s;
-    };
-    const p = gl.createProgram()!;
-    gl.attachShader(p, sh(gl.VERTEX_SHADER, VS));
-    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, FS(outputs)));
-    gl.linkProgram(p);
-    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) ?? "link");
-    this.program = p;
+    if (this.program !== undefined) gl.deleteProgram(this.program);
+    this.program = undefined;
+    this.program = this.link(gl, VS, FS(outputs));
     this.programFor = key;
-    return p;
+    return this.program;
   }
 
   dispose(): void {
+    for (const p of [this.picture, this.uploaded]) p?.bitmap.close?.();
+    this.picture = undefined;
+    this.uploaded = undefined;
     const gl = this.gl;
     if (gl === undefined) return;
     if (this.program) gl.deleteProgram(this.program);
     for (const t of [this.color, this.depth, this.alpha, this.dist, this.prevColor, this.prevAlpha]) if (t) gl.deleteTexture(t);
     if (this.mesh) gl.deleteProgram(this.mesh);
     if (this.vao) gl.deleteVertexArray(this.vao);
+    if (this.grid) gl.deleteBuffer(this.grid.buffer);
+    this.grid = undefined;
     this.gl = undefined;
   }
 }
