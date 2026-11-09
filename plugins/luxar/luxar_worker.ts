@@ -3,6 +3,10 @@
  * the app's local and virtual stores, which are HTTP too), its chunks
  * decoded by the Zarr Vectors reader and built for drawing (./chunk_build.ts).
  *
+ * A segmentation's precomputed meshes are read the same way, as a virtual
+ * store made in this worker from them (./precomputed_meshes.ts: its URL
+ * names the volume and the segments).
+ *
  * The main thread says which chunks it wants, most wanted first, as the
  * views change; a new list replaces the queue, and chunks already being
  * read finish (the reader caches what they fetched).
@@ -30,6 +34,8 @@ import {
   type ZarrVectorsStore,
   type ZarrVectorsStoreAccess,
 } from "neuroglancer-zarr-vectors/reader";
+import { decodeDracoPartitioned } from "neuroglancer/unstable/mesh/draco/index.js";
+import { openPrecomputedMeshes, parseMeshStoreUrl, storeAccess } from "./precomputed_meshes.js";
 import { type BuiltChunk, buildChunk, type ChunkInput, curvesInput, type ScalarSource, skeletonsInput, sortIntoPieces } from "./chunk_build.js";
 
 // Compressed cells decode in the platform's async-computation worker, with
@@ -105,15 +111,13 @@ function scalarSource(name: string): ScalarSource {
  * fraction of its parent's): coarse levels of a tractogram keep a sample of
  * the streamlines, which the panel says (a view at a coarse level is a sample).
  */
-async function objectShares(storeUrl: string, s: ZarrVectorsStore): Promise<{ shares: (number | undefined)[]; counts: (number | undefined)[] }> {
+async function objectShares(s: ZarrVectorsStore): Promise<{ shares: (number | undefined)[]; counts: (number | undefined)[] }> {
   // How many objects each level's object index lists.
   const counts = Promise.all(
     s.levels.map(async (level) => {
       if (!s.description.hasObjects) return undefined;
       try {
-        const response = await fetch(new URL(`${level.path}/object_index/zarr.json`, storeUrl));
-        if (!response.ok) return undefined;
-        const n = Number((await response.json())?.attributes?.num_objects);
+        const n = Number((await readJson(`${level.path}/object_index/zarr.json`))?.attributes?.num_objects);
         return Number.isFinite(n) && n > 0 ? n : undefined;
       } catch {
         return undefined;
@@ -123,9 +127,7 @@ async function objectShares(storeUrl: string, s: ZarrVectorsStore): Promise<{ sh
   const metas = await Promise.all(
     s.levels.map(async (level) => {
       try {
-        const response = await fetch(new URL(`${level.path}/zarr.json`, storeUrl));
-        if (!response.ok) return undefined;
-        const json = await response.json();
+        const json = await readJson(`${level.path}/zarr.json`);
         return json?.attributes?.zarr_vectors_level as { object_sparsity?: number; parent_level?: number | null } | undefined;
       } catch {
         return undefined;
@@ -145,12 +147,27 @@ async function objectShares(storeUrl: string, s: ZarrVectorsStore): Promise<{ sh
   return { shares: s.levels.map((_, i) => share(i)), counts: await counts };
 }
 
+/** A Draco mesh fragment, its positions left as stored (integers, not dequantized: Neuroglancer's decoder, unpartitioned). */
+async function dracoFragment(bytes: Uint8Array, bits: number): Promise<{ indices: Uint32Array | Uint16Array; vertexPositions: Uint32Array }> {
+  const mesh = await decodeDracoPartitioned(bytes, bits, false);
+  return { indices: mesh.indices, vertexPositions: mesh.vertexPositions as Uint32Array };
+}
+
+/** A JSON key of the store, through its access (over HTTP, or the virtual store here); undefined when it has none. */
+async function readJson(path: string): Promise<any | undefined> {
+  const bytes = await access!.read(path, {});
+  return bytes === undefined ? undefined : JSON.parse(new TextDecoder().decode(bytes));
+}
+
 async function open(storeUrl: string): Promise<StoreInfo> {
+  const meshes = parseMeshStoreUrl(storeUrl);
+  // A segmentation's precomputed meshes: the store is made here, its fragments read and decoded (Draco) as its cells are asked for.
+  if (meshes !== undefined) access = storeAccess(await openPrecomputedMeshes(meshes.volume, meshes.ids, { decode: dracoFragment }));
   // Listing where the server allows it: a mesh's faces that span chunks are found only so.
-  access = httpAccess(storeUrl, { listing: true });
+  else access = httpAccess(storeUrl, { listing: true });
   store = await openZarrVectorsStore(access, []);
   pipelines.clear();
-  const { shares, counts } = await objectShares(storeUrl, store);
+  const { shares, counts } = await objectShares(store);
   const kind = store.description.geometryKind;
   const primitive = kind === "point_cloud" ? "points" : kind === "mesh" ? "triangles" : "lines";
   const objectRead: ObjectRead = !store.description.hasObjects || primitive === "triangles" ? undefined : primitive === "lines" && store.description.linksConvention === "implicit_sequential" ? "curves" : "skeletons";

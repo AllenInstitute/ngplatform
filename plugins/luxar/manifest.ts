@@ -10,12 +10,13 @@ export const LUXAR_MANIFEST: Manifest = {
   version: "0.1.0",
   kind: "tool",
   enabledByDefault: false,
-  description: "Draws chosen Zarr Vectors layers the way the Luxar viewer does (glowing HDR lines with mitred joins, tone mapped), in Neuroglancer's own 2-D and 3-D views.",
+  description: "Draws chosen Zarr Vectors layers (and a segmentation's precomputed meshes) the way the Luxar viewer does (glowing HDR lines with mitred joins, tone mapped), in Neuroglancer's own 2-D and 3-D views.",
   guide: `Luxar renders lines and points as light: smooth thick lines with mitred joins, added up in HDR and tone mapped, or as emission and absorption. This plugin draws a Zarr Vectors layer (a tractogram, skeletons, a point cloud, or a \`.trk\`, \`.tck\`, \`.trx\` or SWC file opened in place) that way **in Neuroglancer's own views**: the 3-D view and the 2-D sections, in one viewer, with everything else drawn as before.
 
 ## Switching it on
 - In the **Luxar** tab, tick a layer. That layer is then drawn by this plugin instead of by Neuroglancer; other layers (the image under a tractogram, say) are untouched, so a Luxar tractogram can sit on a plain or volume-rendered image.
 - Or select the layer and run **Luxar rendering of the selected layer on or off** from the command palette.
+- A precomputed segmentation with meshes (an EM segmentation such as MICrONS') is listed as **EM meshes: <layer> (N cells)**: ticked, the meshes of the segments the layer shows are drawn, read from its precomputed meshes as a Zarr Vectors mesh store, coarse levels of detail first.
 - Hiding the layer hides its Luxar drawing too. Without this plugin, the same link shows the layer drawn by Neuroglancer as usual.
 
 ## Settings (per layer)

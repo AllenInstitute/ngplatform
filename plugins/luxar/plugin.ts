@@ -11,13 +11,22 @@
  * this plugin shows the layer as Neuroglancer draws it.  What the layer
  * shows (its chosen segments, or another plugin's temporary set, such as a
  * track-filtering group's) is still known (`visibleSegments`), and drawn.
+ *
+ * A precomputed segmentation whose segments have meshes (an EM
+ * segmentation, MICrONS') is drawn from its meshes: the segments it shows,
+ * read as a virtual Zarr Vectors mesh store (./precomputed_meshes.ts, made in
+ * the layer's reading worker), which takes the same mesh path as a Zarr
+ * Vectors mesh store.  A segment shown that the store does not hold makes a
+ * new store, handed over to as a track-filtering group's new store is.
  */
 import type { Disposer, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { type Child, el } from "@ngplatform/sdk/dom";
+import { precomputedUrl } from "@ngplatform/sdk/sources";
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
 import { Momentum } from "./camera.js";
 import { storeOf } from "../volume-view/sources.js";
 import { LayerView } from "./layer_view.js";
+import { MAX_SEGMENTS, meshIdsFor, meshStoreUrl, parseMeshStoreUrl, volumeHasMeshes } from "./mesh_layers.js";
 import { SplatView } from "./splat_view.js";
 import { drawnSources } from "./sources.js";
 import { LUXAR_PANEL } from "./manifest.js";
@@ -56,6 +65,11 @@ export function storeOfLayer(layer: LayerInfo, spec?: { source?: unknown }): str
   return undefined;
 }
 
+/** The precomputed volume a segmentation layer reads (its http(s) URL, ending in "/"), when it is one. */
+export function precomputedSegmentationOf(layer: LayerInfo): string | undefined {
+  return layer.type === "segmentation" ? precomputedUrl(layer.sources[0]) : undefined;
+}
+
 class Luxar {
   private saved: Saved;
   private readonly views = new Map<string, LayerView | SplatView>();
@@ -69,6 +83,10 @@ class Luxar {
   private editing: string | undefined;
   private readonly momentum: Momentum;
   private readonly offs: Disposer[] = [];
+  /** Precomputed volumes, by URL: whether their segments have meshes (undefined while asking). */
+  private readonly meshVolumes = new Map<string, boolean | undefined>();
+  /** Segmentation layers with meshes, watched for the segments they show. */
+  private readonly segmentWatch = new Map<string, Disposer>();
 
   constructor(private readonly ctx: PlatformContext) {
     this.saved = readSaved(ctx.state.get());
@@ -91,11 +109,44 @@ class Luxar {
   }
 
   candidates(): LayerInfo[] {
-    return this.ctx.viewer.layers().filter((l) => this.storeOf(l) !== undefined || imageOfLayer(l) !== undefined);
+    return this.ctx.viewer.layers().filter((l) => this.storeOf(l) !== undefined || imageOfLayer(l) !== undefined || this.meshVolumeOf(l) !== undefined);
   }
 
+  /**
+   * The store a layer draws: a Zarr Vectors store, or for a segmentation
+   * with precomputed meshes, the virtual store of the segments it shows
+   * (none while it shows none, or every one).
+   */
   private storeOf(layer: LayerInfo): string | undefined {
-    return storeOfLayer(layer, this.ctx.viewer.layerSpec(layer.name) as { source?: unknown } | undefined);
+    const store = storeOfLayer(layer, this.ctx.viewer.layerSpec(layer.name) as { source?: unknown } | undefined);
+    if (store !== undefined) return store;
+    const volume = this.meshVolumeOf(layer);
+    if (volume === undefined) return undefined;
+    const shown = this.ctx.viewer.visibleSegments(layer.name);
+    if (shown === undefined || shown.all || shown.size === 0) return undefined;
+    const view = this.views.get(layer.name);
+    const current = view === undefined ? undefined : parseMeshStoreUrl(view.storeUrl);
+    return meshStoreUrl(volume, meshIdsFor(shown.ids(), current?.volume === volume ? current.ids : undefined));
+  }
+
+  /**
+   * The precomputed volume of a segmentation layer whose segments have
+   * meshes; undefined for other layers, and while its `info` is being read
+   * (the panel and the layers are brought up to date when it is).
+   */
+  private meshVolumeOf(layer: LayerInfo): string | undefined {
+    const volume = precomputedSegmentationOf(layer);
+    if (volume === undefined) return undefined;
+    if (!this.meshVolumes.has(volume)) {
+      this.meshVolumes.set(volume, undefined);
+      void volumeHasMeshes(volume).then((has) => {
+        this.meshVolumes.set(volume, has);
+        if (!has) return;
+        this.sync();
+        this.panelUpdate?.();
+      });
+    }
+    return this.meshVolumes.get(volume) === true ? volume : undefined;
   }
 
   private write(saved: Saved): void {
@@ -114,6 +165,8 @@ class Luxar {
     // A layer whose segments have colours of their own (a track-filtering group's colour, colours chosen
     // for segments) is drawn in them.
     const spec = this.ctx.viewer.layerSpec(name) as { segmentDefaultColor?: unknown; segmentColors?: unknown } | undefined;
+    // A segmentation's meshes: each cell in its colour in the layer.
+    if (layer !== undefined && this.meshVolumeOf(layer) !== undefined) return { ...DEFAULT_STYLE, on: false, colourBy: "segment" };
     const coloured = spec?.segmentDefaultColor !== undefined || (typeof spec?.segmentColors === "object" && spec.segmentColors !== null && Object.keys(spec.segmentColors).length > 0);
     return { ...DEFAULT_STYLE, on: false, ...(coloured ? { colourBy: "segment" as const } : {}) };
   }
@@ -245,6 +298,26 @@ class Luxar {
       this.drawingHidden.add(name);
       this.ctx.viewer.hideLayerDrawing(name, true);
     }
+    // A segmentation drawn from its meshes reads the segments it shows: a segment shown that its
+    // store lacks makes a new store (one let go is hidden by the layer's table, nothing read).
+    for (const [name, off] of [...this.segmentWatch]) {
+      const layer = layers.get(name);
+      if (layer !== undefined && this.meshVolumeOf(layer) !== undefined) continue;
+      off();
+      this.segmentWatch.delete(name);
+    }
+    for (const layer of layers.values()) {
+      if (this.segmentWatch.has(layer.name) || this.meshVolumeOf(layer) === undefined) continue;
+      this.segmentWatch.set(
+        layer.name,
+        this.ctx.viewer.onSegmentsChanged(layer.name, () => {
+          const view = this.views.get(layer.name);
+          const now = this.ctx.viewer.layers().find((l) => l.name === layer.name);
+          if (now !== undefined && this.saved.layers[layer.name]?.on && (view === undefined || this.storeOf(now) !== view.storeUrl)) this.sync();
+          this.panelUpdate?.();
+        }),
+      );
+    }
     // Splats add light to the 2-D views: on black, as the image they stand for is drawn.
     const splats = [...this.views.values()].some((v) => v instanceof SplatView);
     this.ctx.viewer.setTemporaryBackground(splats ? [0, 0, 0] : undefined);
@@ -268,11 +341,12 @@ class Luxar {
           this.editing = layer.name;
           this.setStyle(layer.name, { on: on.checked });
         });
+        const meshes = this.meshesLabel(layer);
         const row = el(
           "div",
           { class: `lx-layer${layer.name === this.editing ? " lx-editing" : ""}` },
           on,
-          el("button", { class: "lx-name", type: "button", title: "Show this layer's settings", onclick: () => ((this.editing = layer.name), draw()) }, layer.name),
+          el("button", { class: "lx-name", type: "button", title: meshes?.title ?? "Show this layer's settings", onclick: () => ((this.editing = layer.name), draw()) }, meshes?.text ?? layer.name),
         );
         list.append(row);
       }
@@ -290,7 +364,7 @@ class Luxar {
           "div",
           { class: "lx-panel" },
           el("p", { class: "note", title: "Draws a layer the way Luxar does, in these views: light added up and tone mapped, smooth lines with mitred joins. The layers not ticked stay as they are." }, "Tick a layer to draw it as glowing light."),
-          candidates.length ? list : el("p", { class: "note" }, "Add a Zarr Vectors layer (a store, or a .trk, .tck, .trx or SWC file) or an image to draw it with Luxar."),
+          candidates.length ? list : el("p", { class: "note" }, "Nothing here Luxar can draw: add a Zarr Vectors layer (a store, or a .trk, .tck, .trx or SWC file), an image, or a segmentation with meshes."),
           this.editing ? this.settings(this.editing) : null,
           status,
           el(
@@ -307,6 +381,20 @@ class Luxar {
     return () => {
       if (this.panelUpdate === draw) this.panelUpdate = undefined;
       this.statusUpdate = undefined;
+    };
+  }
+
+  /** A segmentation drawn from its meshes, as the panel names it: "EM meshes: <layer> (N cells)". */
+  private meshesLabel(layer: LayerInfo): { text: string; title: string } | undefined {
+    if (this.meshVolumeOf(layer) === undefined) return undefined;
+    const shown = this.ctx.viewer.visibleSegments(layer.name);
+    const n = shown === undefined || shown.all ? 0 : shown.size;
+    return {
+      text: `EM meshes: ${layer.name} (${n.toLocaleString()} ${n === 1 ? "cell" : "cells"})`,
+      title:
+        n === 0
+          ? "This segmentation's segments have meshes. Choose segments in the layer to draw their meshes here."
+          : `Draws the meshes of the segments this layer shows${n > MAX_SEGMENTS ? ` (the first ${MAX_SEGMENTS.toLocaleString()})` : ""}, read from its precomputed meshes, coarse first. Neuroglancer's own drawing of the layer is set aside meanwhile.`,
     };
   }
 
@@ -426,7 +514,12 @@ class Luxar {
     }
     const points = info?.primitive === "points";
     const mesh = info?.primitive === "triangles";
-    if (mesh) parts.push(el("p", { class: "note", title: "Direction colours by the surface's normal" }, "A mesh: lit in 3-D, outlined in 2-D."));
+    if (layer !== undefined && this.meshVolumeOf(layer) !== undefined) {
+      // A segmentation drawn from its precomputed meshes.
+      const shown = this.ctx.viewer.visibleSegments(name);
+      if (shown === undefined || shown.all || shown.size === 0) parts.push(el("p", { class: "note" }, "Choose segments in the layer to draw their meshes."));
+      else parts.push(el("p", { class: "note", title: "Read from the segmentation's precomputed meshes as a Zarr Vectors mesh store: its levels of detail, coarse first, only the cells in view. Neuroglancer's own drawing of the layer (its meshes and its 2-D segmentation) is set aside while this is on." }, "The segments' meshes: lit in 3-D, outlined in 2-D."));
+    } else if (mesh) parts.push(el("p", { class: "note", title: "Direction colours by the surface's normal" }, "A mesh: lit in 3-D, outlined in 2-D."));
     parts.push(
       points
         ? this.slider(name, "Point size (pixels)", "width", 0.5, 12, 0.25, (v) => `${3 * v} px`)
@@ -449,6 +542,8 @@ class Luxar {
 
   dispose(): void {
     this.offs.forEach((off) => off());
+    this.segmentWatch.forEach((off) => off());
+    this.segmentWatch.clear();
     for (const name of [...this.outgoing.keys()]) this.finishHandOver(name);
     for (const view of this.views.values()) view.dispose();
     const splats = [...this.views.values()].some((v) => v instanceof SplatView);

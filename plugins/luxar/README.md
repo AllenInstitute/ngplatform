@@ -10,9 +10,10 @@ switched on per layer, and everything else in the scene (the image under a
 tractogram, plain or volume rendered, annotations, other layers) is drawn
 by Neuroglancer as before and composited with it.
 
-It reads the data in place: multiscale Zarr Vectors stores, and the files
+It reads the data in place: multiscale Zarr Vectors stores, the files
 the platform serves as Zarr Vectors stores (`.trk`, `.tck`, `.trx`, SWC,
-point tables). Nothing is converted and no files are written.
+point tables), and a precomputed segmentation's meshes, presented as a Zarr
+Vectors mesh store (below). Nothing is converted and no files are written.
 
 | File | What |
 |---|---|
@@ -30,6 +31,8 @@ point tables). Nothing is converted and no files are written.
 | `chunk_build.ts` | A decoded chunk made ready to draw: a vertex texture, (previous, start, end, next) segments, and each vertex's object as a slot in the chunk's list of objects; objects read whole built the same way, their segments sorted into pieces of space |
 | `segments.ts` | Which of a chunk's objects show, how strongly (the others at the layer's notSelectedAlpha) and their colours: the table the shaders look each vertex's object up in |
 | `sources.ts` | Which of a layer's sources it draws (a source with its parts off draws nothing) |
+| `mesh_layers.ts` | Segmentations with precomputed meshes: whether a volume has them, the virtual mesh store's URL for the segments a layer shows, and which segments it holds |
+| `precomputed_meshes.ts` | Reading a segmentation's precomputed meshes (manifests, sharded or not; fragments; Draco) as a virtual Zarr Vectors mesh store, in the worker; the store itself is `../zarr-vectors/src/virtual/precomputed_meshes.ts` |
 | `view_math.ts` | Matrices, frustum and slab tests, level choice |
 | `camera.ts` | Optional momentum on rotating the 3-D view |
 | `style.ts` | The per-layer style kept in the workspace |
@@ -132,6 +135,54 @@ gaps along chunk faces.
   the surface's outline, glowing.
 
 The layer's chosen segments and colours apply as for lines.
+
+### A segmentation's precomputed meshes
+
+A precomputed segmentation whose `info` names a `mesh` directory (an EM
+segmentation such as MICrONS') is listed in the panel as *EM meshes:
+&lt;layer&gt; (N cells)*, N the segments the layer shows. Ticked, the
+layer is drawn from the meshes of those segments, through the mesh path
+above, and Neuroglancer's own drawing of it (its meshes and its 2-D
+segmentation) is set aside as for any layer drawn here. Nothing is
+converted: the meshes are presented as a virtual Zarr Vectors mesh store
+(`../zarr-vectors/src/virtual/precomputed_meshes.ts`) made in the layer's
+reading worker from the precomputed files as they are read
+(`precomputed_meshes.ts`); its URL, `precomputed-meshes:<volume>#segments=…`,
+names the volume and the segments.
+
+- **Opening** reads the volume's `info` (the mesh directory, the finest
+  scale's resolution), the mesh `info`, and each segment's manifest:
+  `<id>.index`, or a sharded directory's entry for the id
+  (`neuroglancer_multilod_draco`, sharded or not), or `<id>:0` (legacy).
+  No geometry is read.
+- **Levels**: store level *i* is level of detail *first + i* of the
+  meshes (a segment with fewer levels gives its coarsest to the coarser
+  ones), so Luxar reads the coarsest first and finer ones as its Detail
+  allows. The finest kept is the finest whose fragments come to about
+  8 M vertices or fewer over the segments (`VERTEX_BUDGET`, estimated
+  from their encoded sizes at 0.4 vertices a byte, as MICrONS measures). A
+  legacy mesh is one level, read whole at opening (at most 256 MB).
+- **Cells**: each stored fragment (an octree node) goes whole to the cell
+  of its level holding its box's centre (cells a power of two at least a
+  node across), one vertex fragment and face group per segment per cell,
+  as the app's large-mesh store lays them out, with no cross-cell links. A
+  cell's fragments are read (a byte range of the data file or shard) and
+  decoded (Neuroglancer's Draco decoder) when the cell is first read.
+- **Place**: a fragment's positions are dequantized as `meshes.md` says,
+  taken through the mesh `info`'s transform to nanometres, then over the
+  finest scale's resolution: the volume's voxels, Neuroglancer's space for
+  the layer's source, so the layer's own transform places them.
+- **Segments**: the store holds the segments shown when it was made, with
+  the segmentation's ids; letting a segment go only hides it (the layer's
+  table), and showing one it lacks makes a new store, which takes over
+  from the old one once it has what it wants to draw (as below for a
+  track-filtering group's new store). At most 2 000 segments. With none
+  chosen, nothing is drawn: a segmentation's every mesh is not read.
+
+On MICrONS' v1300 (four cells, multi-resolution Draco, sharded) the four
+levels of detail estimate 18.7 M, 5.6 M, 1.1 M and 0.3 M vertices, so the
+store keeps levels of detail 1 to 3; opening reads the four manifests in
+about 1.5 s, and a cell of level of detail 3 about 0.3 s.
 
 ### How it sits in Neuroglancer's frame (3-D)
 
