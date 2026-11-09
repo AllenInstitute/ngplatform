@@ -55,7 +55,7 @@ export function renderRemotePanel(host: HTMLElement, wb: Workbench): () => void 
   const others = card(
     "compute.others",
     "Other computers",
-    { badge: " ", tooltip: "Runners on other computers, reached through an SSH tunnel" },
+    { badge: " ", info: "Runners on other computers, reached through an SSH tunnel" },
     computers,
     h("div", { class: "row-actions runner-add-host" }, h("button", { class: "btn small outline", type: "button", onclick: () => addHostDialog(wb) }, "Add a computer (SSH)…")),
   );

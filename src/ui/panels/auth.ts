@@ -74,7 +74,7 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
     card(
       "sign-in.google",
       "Google accounts",
-      { open: true, tooltip: "Kept in this browser, never in the link. Each account keeps its own sign-in. The default account reads every gs+google:// bucket that no rule gives another account." },
+      { open: true, info: "Kept in this browser, never in the link. Each account keeps its own sign-in. The default account reads every gs+google:// bucket that no rule gives another account." },
       accounts,
       addAccount,
     ),
@@ -82,7 +82,7 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
     card(
       "sign-in.rules",
       "Rules",
-      { tooltip: "A rule gives data under an address (gs://bucket/, https://host/path/) a sign-in. The longest address that covers a source wins; a layer gets its rule's sign-in when it is added or the workspace is opened." },
+      { info: "A rule gives data under an address (gs://bucket/, https://host/path/) a sign-in. The longest address that covers a source wins; a layer gets its rule's sign-in when it is added or the workspace is opened. Without a rule, a layer keeps the sign-in its source names, and gs+google:// buckets are read with the default account." },
       h("div", { class: "row-actions" }, h("button", { class: "btn outline small auth-new-rule", type: "button", onclick: () => editRule() }, "+ Rule")),
       ruleList,
       ruleEditor,
@@ -90,7 +90,7 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
     card(
       "sign-in.layers",
       "Layers in this scene",
-      { badge: sceneName, tooltip: "The sign-in is part of a layer's source (gs+google://bucket/… for gs://bucket/…), so the link keeps it. The Google account does not go in the link: choosing one sets the rule for the layer's bucket." },
+      { badge: sceneName, info: "The sign-in is part of a layer's source (gs+google://bucket/… for gs://bucket/…), so the link keeps it. The Google account does not go in the link: choosing one sets the rule for the layer's bucket." },
       layers,
     ),
     adding.element,
@@ -283,7 +283,7 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
     const signIns = auth.sourceSignIns(sources());
     clear(
       ruleList,
-      ...(all.length === 0 ? [h("p", { class: "empty", title: "Each layer keeps the sign-in its source names; gs+google:// buckets are read with the default account." }, "No rules.")] : []),
+      ...(all.length === 0 ? [h("p", { class: "empty" }, "No rules.")] : []),
       ...all.map((rule) => {
         const select = targetSelect(storageOf(rule.prefix) ?? "gs", google, signIns, ruleValue(rule));
         select.setAttribute("aria-label", `Sign-in for ${rule.prefix}`);
@@ -615,7 +615,7 @@ function addServerSection(wb: Workbench): { element: HTMLElement; dispose: () =>
   const element = card(
     "sign-in.add-server",
     "Add a sign-in server",
-    { tooltip: "To sign in before opening the data. Middleauth: a CAVE or CATMAID site's address (it names its sign-in server) or the sign-in server's own. ngauth: the server that hands out tokens for gs+ngauth+https:// buckets." },
+    { info: "To sign in before opening the data. Middleauth: a CAVE or CATMAID site's address (it names its sign-in server) or the sign-in server's own. ngauth: the server that hands out tokens for gs+ngauth+https:// buckets." },
     h("div", { class: "auth-add auth-add-server" }, input, kind, h("button", { class: "btn outline small", type: "button", onclick: add }, "Add")),
   );
   return { element, dispose: auth.onChanged(kinds) };
@@ -641,7 +641,7 @@ function googleSection(wb: Workbench, google: GoogleSignIn): HTMLElement {
   const details = card(
     "sign-in.google-setup",
     "Google sign-in setup",
-    { attention: google.clientId() === undefined, tooltip: `A layer reads a bucket with Google when its source is gs+google://. A token lasts about an hour; sign in again to renew it. It asks for: ${GOOGLE_SCOPES.map((s) => s.what).join("; ")}.` },
+    { attention: google.clientId() === undefined, info: `A layer reads a bucket with Google when its source is gs+google://. A token lasts about an hour; sign in again to renew it. It asks for: ${GOOGLE_SCOPES.map((s) => s.what).join("; ")}.` },
     h("label", { class: "auth-field" }, h("span", {}, "Google OAuth client ID"), h("span", { class: "auth-add" }, input, h("button", { class: "btn outline small", type: "button", onclick: save }, "Save"))),
     h(
       "p",

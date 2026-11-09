@@ -105,9 +105,10 @@ code { font-family: var(--mono); font-size: var(--fs-body); }
 :where(a:not(.btn)) { color: var(--muted); text-decoration-color: var(--faint); text-underline-offset: 2px; }
 :where(a:not(.btn)):hover { color: var(--text); text-decoration-color: currentColor; }
 
-/* On/off is a tick box, as in Neuroglancer (Sections and Volume in the 3-D
-   view included).  Only a plugin's on/off is a switch: a square knob in a
-   square track, grey when off and green when on. */
+/* A switch turns a feature on (a plugin, Render, a layer's drawing): a
+   square knob in a square track, grey when off and green when on (toggle()
+   in @ngplatform/sdk/dom).  A tick box picks items or options (checkbox()),
+   as in Neuroglancer. */
 input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
 input[type="checkbox"].switch {
   appearance: none; -webkit-appearance: none; flex: none; margin: 0;
@@ -418,9 +419,7 @@ kbd {
 .empty.error, .error { color: var(--err); }
 .empty.error svg { width: 13px; height: 13px; vertical-align: -2px; margin-right: var(--sp-2); }
 .note { color: var(--faint); font-size: var(--fs-body); margin: 10px 0 0; }
-.empty-state { display: grid; gap: 10px; padding: 14px; border: 1px dashed var(--line-strong); border-radius: var(--r); }
 .row-actions { display: flex; gap: var(--sp-3); flex-wrap: wrap; margin-top: var(--sp-4); }
-.empty-state .row-actions { margin-top: 0; }
 
 
 .list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-2); }
@@ -1108,3 +1107,59 @@ textarea.state-input.tall { min-height: 50vh; }
 .card > .card-body { display: grid; gap: var(--sp-4); padding: var(--sp-1) 10px 10px; }
 .card .section-title:first-child { margin-top: 0; }
 .card[data-card="compute.this"] .runner-section > .section-head > .section-title { display: none; }
+
+/* ------------------------------------------------------------------
+   Shared parts (@ngplatform/sdk/dom): what every panel is built from, so
+   a plugin keeps no private copies.  Layout: .row (a line of controls
+   that wraps), .stack (a column), .grid-2 (two columns), .spacer.  Text:
+   .muted (secondary), .faint (tertiary), .hint (a short note under a
+   control), .readout (a number or a path that changes).
+   ------------------------------------------------------------------ */
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
+.row > .field { flex: 1 1 120px; min-width: 0; }
+.stack { display: grid; gap: var(--sp-4); align-content: start; }
+.grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-4); }
+.muted { color: var(--muted); }
+.faint { color: var(--faint); }
+.hint { color: var(--faint); font-size: var(--fs-caption); line-height: 1.4; margin: 0; }
+.readout { font: var(--fs-caption)/1.4 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+/* toggle() and checkbox(): the control, then its label. */
+.choice { display: inline-flex; align-items: center; gap: var(--sp-3); color: var(--text); font-size: var(--fs-body); cursor: pointer; min-height: var(--ctl-h); }
+.choice:has(input:disabled) { color: var(--faint); cursor: default; }
+.choice-row { display: inline-flex; align-items: center; gap: var(--sp-2); }
+
+/* field() with an info control: the label, then the "i". */
+.field-label { display: inline-flex; align-items: center; gap: var(--sp-2); }
+
+/* info(): a quiet icon button, (i), and the explanation it shows, fixed
+   beside it.  The button keeps the control height but takes no more room
+   in a line of text than its icon. */
+.info { display: inline-flex; flex: none; }
+.btn.icon.info-btn { color: var(--muted); margin-block: calc((var(--ctl-h) - 16px) / -2); }
+.btn.icon.info-btn svg { width: 13px; height: 13px; }
+.btn.icon.info-btn:hover, .btn.icon.info-btn[aria-expanded="true"] { color: var(--text); }
+.info-tip {
+  position: fixed; z-index: 140; max-width: 260px; padding: var(--sp-3) var(--sp-4);
+  background: var(--ink-1); border: 1px solid var(--line-strong); box-shadow: var(--shadow-float);
+  color: var(--text); font: 400 var(--fs-body)/1.45 var(--ui); text-transform: none; letter-spacing: 0; white-space: normal; cursor: auto;
+}
+.info-tip[hidden] { display: none; }
+.card-head:has(> .info) > .card-title { flex: 0 1 auto; }
+.card-head > .info { margin-right: auto; }
+
+/* slider(): a range and its number box (and unit) on one line. */
+.slider { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
+.slider > input[type="range"] { flex: 1 1 80px; min-width: 60px; margin: 0; accent-color: var(--accent); }
+.slider > .num-input { flex: none; }
+.slider-unit { color: var(--muted); font-size: var(--fs-caption); flex: none; }
+
+/* emptyState(): one line and its action. */
+.empty-state { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-4); }
+.empty-state > .empty { flex: 1 1 160px; }
+
+/* statusLine(): progress and errors only, hidden otherwise. */
+.status-line { display: flex; align-items: center; gap: var(--sp-4); min-height: var(--ctl-h); color: var(--muted); font-size: var(--fs-body); }
+.status-line[hidden] { display: none; }
+.status-line .status-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.status-line.error { color: var(--err); }
