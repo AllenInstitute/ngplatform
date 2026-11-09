@@ -12,25 +12,25 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
 
 **Items:** 10
 
-- [ ] **Major** · M · Type scale: 9 font sizes in use; settle on 4 (11 caption, 12 body, 13 control text in sheets, 15 sheet title), as tokens  
+- [x] **Major** · M · Type scale: 9 font sizes in use; settle on 4 (11 caption, 12 body, 13 control text in sheets, 15 sheet title), as tokens (b5e0802)  
   `styles.css; measured across 34 panels`
-- [ ] **Major** · S · 63 form controls render in the browser's default sans-serif: make every select, input and button inherit the UI font  
+- [x] **Major** · S · 63 form controls render in the browser's default sans-serif: make every select, input and button inherit the UI font (b5e0802)  
   `styles.css (button, input, select, textarea)`
-- [ ] **Major** · M · Buttons: 22 distinct styles (heights 17 to 28 px). Converge on 3 kinds (primary, outline, quiet/icon) in 2 sizes (24 px in panels, 28 px in sheets)  
+- [x] **Major** · M · Buttons: 22 distinct styles (heights 17 to 28 px). Converge on 3 kinds (primary, outline, quiet/icon) in 2 sizes (24 px in panels, 28 px in sheets) (b5e0802)  
   `styles.css .btn; plugin STYLE blocks`
-- [ ] **Major** · S · Inputs and selects: 17 distinct styles, 24 px in panels but 32 px in sheets; one height per context and one select style  
+- [x] **Major** · S · Inputs and selects: 17 distinct styles, 24 px in panels but 32 px in sheets; one height per context and one select style (b5e0802)  
   `styles.css .text-input; sdk select()`
-- [ ] **Major** · S · Headings: 8 styles, uppercase labels at three letter-spacings. Keep two: the card title and one section label inside a card  
+- [x] **Major** · S · Headings: 8 styles, uppercase labels at three letter-spacings. Keep two: the card title and one section label inside a card (b5e0802)  
   `styles.css .section-title, .card-title, plugin h3/h4`
-- [ ] **Major** · S · Corners: the theme is square (--r: 0) but 8 radii are in use (cards 6 px, collections 6/4/3, splat window 8, Luxar 4, pills). Square everywhere, pills only for status chips  
+- [x] **Major** · S · Corners: the theme is square (--r: 0) but 8 radii are in use (cards 6 px, collections 6/4/3, splat window 8, Luxar 4, pills). Square everywhere, pills only for status chips (b5e0802)  
   `styles.css:974, collections/plugin.ts:119, luxar, splatview.ts`
-- [ ] **Major** · S · Raise --faint (#636363 on #121212 is about 3.1:1) to about #8a8a8a for 4.5:1 on small text  
+- [x] **Major** · S · Raise --faint (#636363 on #121212 is about 3.1:1) to about #8a8a8a for 4.5:1 on small text (b5e0802)  
   `styles.css:16`
-- [ ] **Major** · M · Tokens for type size, spacing, danger and hover; remove about 39 literal colours after :root  
+- [x] **Major** · M · Tokens for type size, spacing, danger and hover; remove about 39 literal colours after :root (b5e0802)  
   `styles.css`
-- [ ] **Minor** · S · 15 distinct text colours in panels, some from Neuroglancer's own palette; map them to tokens  
+- [x] **Minor** · S · 15 distinct text colours in panels, some from Neuroglancer's own palette; map them to tokens (b5e0802)  
   `measured`
-- [ ] **Plan** · S · Dark only (decision 4): remove the dead light-theme rule and say so in the docs  
+- [x] **Plan** · S · Dark only (decision 4): remove the dead light-theme rule and say so in the docs (bfc9cad)  
   `styles.css:527; docs/guide/interface.md`
 
 ## 2B · Shared parts
@@ -41,25 +41,25 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
 
 **Items:** 10
 
-- [ ] **Major** · S · Design system: On/off controls: switches in Plugins and Render, plain checkboxes elsewhere. Rule: a switch turns a feature on, a checkbox picks items or options  
+- [x] **Major** · S · Design system: On/off controls: switches in Plugins and Render, plain checkboxes elsewhere. Rule: a switch turns a feature on, a checkbox picks items or options (98d90ff)  
   `anatomical, luxar, orientations, track-filtering, Settings › View`
-- [ ] **Major** · M · Design system: Every panel built from the same parts: card() for groups, field() for labels, one slider+number, one empty-state and one status pattern  
+- [x] **Major** · M · Design system: Every panel built from the same parts: card() for groups, field() for labels, one slider+number, one empty-state and one status pattern (0e2992e)  
   `src/sdk/dom.ts`
-- [ ] **Major** · M · Core app: Explanations moved into title= are unreachable by keyboard and touch: an info control with aria-describedby  
+- [x] **Major** · M · Core app: Explanations moved into title= are unreachable by keyboard and touch: an info control with aria-describedby (0e2992e)  
   `src/sdk/dom.ts:117; auth.ts:286`
-- [ ] **Major** · M · All plugins: A shared slider+number control and an icon helper in the SDK (four slider variants in Anatomical, private ones in Registration and Orientations)  
+- [x] **Major** · M · All plugins: A shared slider+number control and an icon helper in the SDK (four slider variants in Anatomical, private ones in Registration and Orientations) (0e2992e)  
   `src/sdk/dom.ts`
-- [ ] **Major** · M · All plugins: An update-in-place pattern: Orientations, Time series, Registration and Luxar rebuild whole panels on state changes, closing selects and breaking drags  
+- [x] **Major** · M · All plugins: An update-in-place pattern: Orientations, Time series, Registration and Luxar rebuild whole panels on state changes, closing selects and breaking drags (0e2992e)  
   `see each plugin`
-- [ ] **Major** · S · All plugins: Manifest panels name their Tools group (now a table keyed by title); Python panels are not moved to Tools  
+- [x] **Major** · S · All plugins: Manifest panels name their Tools group (now a table keyed by title); Python panels are not moved to Tools (a5426a6)  
   `shell.ts:74, 316; panels/python.ts:335`
-- [ ] **Major** · S · All plugins: Promote shared classes (row, grid, hint, faint, status) so plugins stop keeping private copies (an-*, at-*, sg-*, lx-*)  
+- [x] **Major** · S · All plugins: Promote shared classes (row, grid, hint, faint, status) so plugins stop keeping private copies (an-*, at-*, sg-*, lx-*) (0e2992e)  
   `styles.css`
-- [ ] **Major** · S · Starter templates: starter_ts teaches the old way (createElement, old classes, no card, an announcing status, no empty-state action)  
+- [x] **Major** · S · Starter templates: starter_ts teaches the old way (createElement, old classes, no card, an announcing status, no empty-state action) (6d7fed7)  
   `starter_ts/plugin.ts:22, 39`
-- [ ] **Major** · S · Starter templates: starter_py's panel lands in the Layers dock  
+- [x] **Major** · S · Starter templates: starter_py's panel lands in the Layers dock (a5426a6)  
   `src/ui/panels/python.ts:190, 338`
-- [ ] **Minor** · S · Starter templates: No Tools group; no panel or disposal test to copy; docs say tab  
+- [x] **Minor** · S · Starter templates: No Tools group; no panel or disposal test to copy; docs say tab (6d7fed7)  
   `starter_ts/manifest.ts:27; README`
 
 ## 2C · Neuroglancer's controls
@@ -70,9 +70,9 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
 
 **Items:** 2
 
-- [ ] **Major** · M · Design system: Neuroglancer's chrome does not match: the 3-D view toggles (Glyphs, Render, Sections), the panel corner buttons, Settings › View (raw byte counts, right-aligned checkboxes) and chunk statistics (raw JSON rows)  
+- [x] **Major** · M · Design system: Neuroglancer's chrome does not match: the 3-D view toggles (Glyphs, Render, Sections), the panel corner buttons, Settings › View (raw byte counts, right-aligned checkboxes) and chunk statistics (raw JSON rows) (13e126b, 3c8d696)  
   `engine overlays, Settings › View/Developer`
-- [ ] **Major** · M–L · Core app: Duplicate control sets: the inspector's .ins-btn/.ins-number/.ins-select (148 rules) beside .btn/.text-input; button.link and .linkish  
+- [x] **Major** · M–L · Core app: Duplicate control sets: the inspector's .ins-btn/.ins-number/.ins-select (148 rules) beside .btn/.text-input; button.link and .linkish (b6673de)  
   `styles.css; src/engine/inspector`
 
 ## 2D1 · Panel: Anatomical rendering
