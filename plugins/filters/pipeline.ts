@@ -1,5 +1,5 @@
 /**
- * The Filters tab's steps as chunkmirage ops: each step a kind and its
+ * The Filters panel's steps as chunkmirage ops: each step a kind and its
  * settings, made into the op specs of a pipeline (`opsOf`).  Gaussian, mean
  * (chunkmirage's `uniform`), difference of Gaussians, threshold and
  * morphology are chunkmirage's own ops; median and Frangi's vesselness are
@@ -51,6 +51,34 @@ def apply(block):
     return block.astype(np.float32)
 `;
 
+/** Output chunks: 64 voxels a side. */
+export const CHUNK = [64, 64, 64];
+
+/**
+ * The largest settings, so that no step reads more than half a chunk
+ * (32 voxels) of context on each side of each 64-voxel chunk: a halo of 32
+ * already reads 8 times the chunk.  Gaussian reads ceil(3 sigma), difference
+ * of Gaussians ceil(4.8 sigma) (its wider blur is 1.6 sigma), mean and
+ * median the radius (and 1), morphology 2 radius + 1, Frangi 3 sigma + 1.
+ */
+export const LIMITS = { sigma: 10, dogSigma: 6, radius: 15, frangiSigma: 10 } as const;
+
+/** The smallest: a sigma of 0.1 (Frangi's 0.5, as its code has it), a radius of 1. */
+export const MINIMA = { sigma: 0.1, radius: 1, frangiSigma: 0.5 } as const;
+
+const within = (v: number, min: number, max: number) => (Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : v);
+
+/** A step with its sizes kept within LIMITS (an empty setting, NaN, stays empty). */
+export function bounded(s: Step): Step {
+  return {
+    ...s,
+    sigma: within(s.sigma, MINIMA.sigma, s.kind === "dog" ? LIMITS.dogSigma : LIMITS.sigma),
+    radius: within(Number.isFinite(s.radius) ? Math.round(s.radius) : s.radius, MINIMA.radius, LIMITS.radius),
+    sigmaLow: within(s.sigmaLow, MINIMA.frangiSigma, LIMITS.frangiSigma),
+    sigmaHigh: within(s.sigmaHigh, MINIMA.frangiSigma, LIMITS.frangiSigma),
+  };
+}
+
 export function newStep(kind: StepKind = "gaussian"): Step {
   return { kind, sigma: 1, radius: 1, sigmaLow: 1, sigmaHigh: 3, bright: true, low: 100, high: Number.NaN, operation: "open", code: PYTHON_START };
 }
@@ -83,8 +111,9 @@ def apply(block, sigma_low, sigma_high, bright):
 
 const withHalo = (code: string, halo: number) => code.replace(/^#halo[ \d]*$/m, `#halo ${Math.max(0, Math.ceil(halo))}`);
 
-/** A step as chunkmirage's op spec. */
-export function opOf(s: Step): Record<string, unknown> {
+/** A step as chunkmirage's op spec, its sizes within LIMITS. */
+export function opOf(step: Step): Record<string, unknown> {
+  const s = bounded(step);
   switch (s.kind) {
     case "gaussian":
       return { op: "gaussian", sigma: s.sigma };
@@ -207,10 +236,10 @@ export function stepsOf(ops: Record<string, unknown>[] | undefined): Step[] | un
         return undefined;
     }
   }
-  return steps;
+  return steps.map(bounded);
 }
 
-/** The Filters tab as kept in the workspace (and its link): the image chosen and the steps. */
+/** The Filters panel as kept in the workspace (and its link): the image chosen and the steps. */
 export interface SavedFilters {
   image?: string;
   steps?: Partial<Record<keyof Step, unknown>>[];
@@ -219,12 +248,12 @@ export interface SavedFilters {
 /** Steps kept in the workspace, read back (each setting checked, a missing one the default). */
 export function readSteps(saved: SavedFilters["steps"]): Step[] | undefined {
   if (!Array.isArray(saved) || saved.length === 0) return undefined;
-  return saved.map((s) => {
+  return saved.map((s): Step => {
     const kind = STEP_KINDS.some(([k]) => k === s.kind) ? (s.kind as StepKind) : "gaussian";
     const d = newStep(kind);
     // An emptied setting was kept as null: empty again (NaN); a missing one is the default.
     const num = (v: unknown, fallback: number) => (v === null ? Number.NaN : numberOr(v, fallback));
-    return {
+    return bounded({
       kind,
       sigma: num(s.sigma, d.sigma),
       radius: num(s.radius, d.radius),
@@ -235,6 +264,6 @@ export function readSteps(saved: SavedFilters["steps"]): Step[] | undefined {
       high: num(s.high, Number.NaN),
       operation: s.operation === "close" ? "close" : "open",
       code: typeof s.code === "string" ? s.code : d.code,
-    };
+    });
   });
 }
