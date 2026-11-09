@@ -20,7 +20,7 @@ import { LightTarget, Renderer } from "./render_gl.js";
 import { type GpuSplats, SplatRenderer } from "./splat_gl.js";
 import type { SplatView } from "./splat_view.js";
 import { CELL } from "./splat_worker.js";
-import { COLORMAP_INDEX, rgbOf, TONE_INDEX } from "./style.js";
+import { COLORMAP_INDEX, rgbOf, slabOf, TONE_INDEX } from "./style.js";
 import { apply, boxInFrustum, columnMajor, type Globals, invertAffine, measurePanel, multiply, rasToPanel, sectionPlane } from "./view_math.js";
 
 /** GPU memory for the 2-D views' splats. */
@@ -144,7 +144,8 @@ export class SplatView2d {
     const voxelToRas = columnMajor(info.levels[0].voxelToRas);
     const store = view.storeInfo(info);
     // The slab blocks are read for: wide enough for a cell's Gaussian either side.
-    const halfSlab = Math.max(style.slab / 2, 2 * CELL * info.levels[0].voxelSize);
+    const level0 = info.levels[0];
+    const halfSlab = Math.max(slabOf(style, level0.size.map((n) => n * level0.voxelSize)) / 2, 2 * CELL * level0.voxelSize);
     const target = this.target!;
     if (!target.bind(width, height, null)) {
       this.problem = "This GPU cannot add light up in a float target here.";

@@ -20,6 +20,7 @@ import { samplesFor } from "./objects.js";
 import type { LayerView } from "./layer_view.js";
 import { Bloom } from "./bloom.js";
 import { type GpuChunk, LightTarget, Renderer } from "./render_gl.js";
+import { extentMm, slabOf } from "./style.js";
 import { apply, boxInFrustum, coverage, invertAffine, measurePanel, modelToPanel, multiply, pixelsPerUnit, screenArea, shownShare } from "./view_math.js";
 
 const GPU_BYTES = 512 * 1024 * 1024;
@@ -148,7 +149,8 @@ export class View2d {
     const dims = state.dimensions ?? {};
     const names = Object.keys(dims);
     const globals = { names, scales: names.map((n) => dims[n][0]), units: names.map((n) => dims[n][1]), position: names.map((_, i) => state.position?.[i] ?? 0) };
-    const halfSlab = style.slab / 2;
+    // The slab in mm, as set or following the store's size (EM in nanometres, a brain in millimetres).
+    const halfSlab = info === undefined ? 0 : slabOf(style, extentMm(info)) / 2;
     const layouts = panels.flatMap((panel) => {
       const rect = panel.element.getBoundingClientRect();
       if (rect.width < 2 || rect.height < 2) return [];

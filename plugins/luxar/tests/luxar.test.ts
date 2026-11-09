@@ -9,7 +9,8 @@ import { LUXAR_MANIFEST } from "../manifest.js";
 import { BATCH, FIRST_BATCH, MAX_CURVES, MAX_SKELETONS, ObjectSets, objectPlan, planBatches, samplesFor } from "../objects.js";
 import { alphaByte, alphaOf, idOf, needsTable, objectTable } from "../segments.js";
 import { drawnSources } from "../sources.js";
-import { DEFAULT_STYLE, readSaved, readStyle, rgbOf, scalarOf } from "../style.js";
+import { autoSlab, DEFAULT_STYLE, extentMm, readSaved, readStyle, rgbOf, scalarOf, slabOf, slabScale } from "../style.js";
+import { MAX_SEGMENTS, segmentCapNote } from "../mesh_layers.js";
 import { apply, autoGain, boxInFrustum, chooseLevel, chunkRange, coverage, directionMatrix, invertAffine, MAX_SELECTION_BOOST, measurePanel, modelTo, modelToPanel, multiply, pixelsPerUnit, screenArea, shownShare, storeToGlobal, vertexBudget } from "../view_math.js";
 
 const identityTransform = (offset = [0, 0, 0], scale = 1): LayerTransform => {
@@ -50,7 +51,7 @@ describe("styles", () => {
     expect(saved.layers.a.on).toBe(false);
     expect(saved.layers.a.colourBy).toBe("object");
     expect(saved.momentum).toBe(true);
-    expect(readSaved(undefined)).toEqual({ layers: {}, momentum: false });
+    expect(readSaved(undefined)).toEqual({ version: 2, layers: {}, momentum: false });
   });
 
   it("says what each vertex's value holds", () => {
@@ -58,6 +59,46 @@ describe("styles", () => {
     expect(scalarOf({ ...DEFAULT_STYLE, colourBy: "object" })).toBe("object");
     expect(scalarOf({ ...DEFAULT_STYLE, colourBy: "attribute", attribute: "fa" })).toBe("attribute:fa");
     expect(rgbOf("#ff8000")).toEqual([1, 128 / 255, 0]);
+  });
+});
+
+describe("the 2-D slab", () => {
+  const nm = { axisUnits: ["m", "m", "m"], axisScales: [4e-9, 4e-9, 4e-8], bounds: { lower: [0, 0, 0], upper: [200_000, 200_000, 20_000] } };
+  const mm = { axisUnits: ["m", "m", "m"], axisScales: [0.001, 0.001, 0.001], bounds: { lower: [-70, -100, -60], upper: [80, 80, 80] } };
+
+  it("measures a store in millimetres, whatever its unit (none read as mm)", () => {
+    expect(extentMm(nm).map((v) => +v.toPrecision(6))).toEqual([0.8, 0.8, 0.8]);
+    expect(extentMm(mm).map((v) => +v.toPrecision(6))).toEqual([150, 180, 140]);
+    expect(extentMm({ axisUnits: ["", "", ""], axisScales: [1, 1, 1], bounds: { lower: [0, 0, 0], upper: [10, 20, 30] } })).toEqual([10, 20, 30]);
+  });
+
+  it("follows the data: 4 mm for a brain in mm, 20 µm for EM in nm, unless set", () => {
+    expect(autoSlab(extentMm(mm))).toBe(4);
+    expect(autoSlab(extentMm(nm))).toBeCloseTo(0.02);
+    expect(autoSlab([])).toBe(4);
+    expect(slabOf(readStyle({}), extentMm(nm))).toBeCloseTo(0.02);
+    expect(slabOf(readStyle({ slab: 0.005 }), extentMm(nm))).toBe(0.005);
+  });
+
+  it("reads its slider in the unit that suits the data, 0.5 to 40 mm for a brain as before", () => {
+    expect(slabScale(4)).toEqual({ unit: "mm", perUnit: 1, min: 0.5, max: 40, step: 0.5 });
+    expect(slabScale(0.02)).toMatchObject({ unit: "µm", min: 2, max: 200, step: 2 });
+    expect(slabScale(5e-5)).toMatchObject({ unit: "nm", min: 5, max: 500, step: 5 });
+  });
+
+  it("reads the 4 mm every style saved before as following the data, and any other slab as set", () => {
+    expect(readSaved({ layers: { a: { slab: 4 }, b: { slab: 10 } } }).layers.a.slab).toBeUndefined();
+    expect(readSaved({ layers: { a: { slab: 4 }, b: { slab: 10 } } }).layers.b.slab).toBe(10);
+    // Saved since: 4 mm is a slab set.
+    expect(readSaved({ version: 2, layers: { a: { slab: 4 } } }).layers.a.slab).toBe(4);
+    expect(readStyle({ slab: -1 }).slab).toBeGreaterThan(0);
+  });
+});
+
+describe("a segmentation's meshes", () => {
+  it("says when more segments are shown than one store holds", () => {
+    expect(segmentCapNote(MAX_SEGMENTS)).toBeUndefined();
+    expect(segmentCapNote(14_203)).toBe("Showing 2,000 of 14,203 segments");
   });
 });
 

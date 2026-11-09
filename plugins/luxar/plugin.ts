@@ -430,7 +430,7 @@ export class Luxar {
   private slider(name: string, label: string, key: "width" | "exposure" | "sharpness" | "absorption" | "slab" | "detail" | "bloom" | "glowDepth", min: number, max: number, step: number, format: (v: number) => string): HTMLElement {
     const style = this.styleOf(name);
     const input = el("input", { type: "range", min, max, step, value: style[key], "aria-label": label }) as HTMLInputElement;
-    const shown = el("span", { class: "lx-value" }, format(style[key]));
+    const shown = el("span", { class: "lx-value" }, format(style[key] ?? 4));
     input.addEventListener("input", () => {
       shown.textContent = format(Number(input.value));
       this.setStyle(name, { [key]: Number(input.value) }, false);

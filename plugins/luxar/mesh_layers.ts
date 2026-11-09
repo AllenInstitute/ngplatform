@@ -45,6 +45,12 @@ export function meshIdsFor(shown: ArrayLike<bigint>, current: readonly bigint[] 
   return ids;
 }
 
+/** What the panel says when a layer shows more segments than one store holds; undefined when it shows no more. */
+export function segmentCapNote(shown: number): string | undefined {
+  if (shown <= MAX_SEGMENTS) return undefined;
+  return `Showing ${MAX_SEGMENTS.toLocaleString("en-GB")} of ${shown.toLocaleString("en-GB")} segments`;
+}
+
 /**
  * Whether a precomputed volume (its http(s) URL, ending in "/") is a
  * segmentation with meshes: its `info` names a mesh directory.
