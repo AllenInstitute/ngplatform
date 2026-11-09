@@ -23,16 +23,19 @@ export const FILTERS_MANIFEST: Manifest = {
 - **Frangi vesselness** (sigma from, to): how much each voxel looks like part of a tube (a vessel, a fibre, an axon) brighter (or darker) than around it, 0 to 1.
 - **Threshold** (from, below): a mask, shown as a segmentation.
 - **Morphology** (open or close, radius): cleans a mask.
+- **Python (your own)**: code with \`apply(block)\`, run on each block (a NumPy array, z, y, x); its \`#halo\` and \`#output\` lines say the context it needs and what it returns.
+
+Sigma goes up to 10 voxels (6 for a difference of Gaussians) and a radius to 15, so no step reads more than half a chunk around each chunk.
 
 Median and Frangi run Python (SciPy, scikit-image) in the page, loaded the first time one is viewed.
 
 ## Using it
-Choose an image (any image layer: a file on this computer, or an OME-Zarr, N5 or precomputed volume at a URL), add steps, then **Add filtered view**: a new layer, whose link carries the whole pipeline.`,
+Choose an image (any 3-D image layer, with one channel and one time point: a file on this computer, or an OME-Zarr, N5 or precomputed volume at a URL), add steps, then **Add filtered view**: a new layer, whose link carries the whole pipeline. Select a filtered layer to tune it: the panel shows its steps, and **Update the view** changes that layer in place.`,
   license: "Apache-2.0",
   activation: ["onStartup"],
   contributes: {
     panels: [{ id: FILTERS_PANEL, title: "Filters", slot: "left", group: "Image", order: 80 }],
-    // The tab's image and steps, kept in the workspace and its link.
+    // The panel's image and steps, kept in the workspace and its link.
     appState: { key: "filters", version: 1 },
   },
 };
