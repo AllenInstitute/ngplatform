@@ -102,16 +102,16 @@ check(chrome.position === 1 && chrome.layoutButtons > 0, "position top left and 
 check((await page.locator(".datasets .ds-row").count()) >= 1, "Layers lists the scene's datasets");
 await click(page.locator(".datasets .ds-row", { hasText: TRACTOGRAM.layer }).first());
 await page.waitForTimeout(800);
-check((await page.locator(".ins-tab").count()) > 0 && (await page.locator(".ins-root .neuroglancer-tab-label").count()) === 0, "Layers shows the layer's controls in the platform's own tabs");
+check((await page.locator(".ins-tabs .tab").count()) > 0 && (await page.locator(".ins-root .neuroglancer-tab-label").count()) === 0, "Layers shows the layer's controls in the platform's own tabs");
 // The inspector's tabs, built by the platform from the layer's models.
-await click(page.locator(".ins-tab", { hasText: "Source" }));
+await click(page.locator(".ins-tabs .tab", { hasText: "Source" }));
 await page.waitForTimeout(800);
-check((await page.locator(".ins-url").first().inputValue()).includes(TRACTOGRAM.url), "Source shows the data source URL");
+check((await page.locator(".ins-url-field textarea").first().inputValue()).includes(TRACTOGRAM.url), "Source shows the data source URL");
 check((await page.locator(".ins-tx-grid input").count()) > 0, "Source shows the transform as an editable table");
-await click(page.locator(".ins-tab", { hasText: "Display" }));
+await click(page.locator(".ins-tabs .tab", { hasText: "Display" }));
 await page.waitForTimeout(800);
 check((await page.locator(".ins-content .ins-slider").count()) >= 4, "Display shows the layer's sliders");
-await click(page.locator(".ins-tab", { hasText: "Segments" }));
+await click(page.locator(".ins-tabs .tab", { hasText: "Segments" }));
 await page.waitForTimeout(800);
 // The segment properties (a row a streamline: 3.3 million) arrive after the views.
 await page.locator(".ins-status button").waitFor({ timeout: 240_000 }).catch(() => {});

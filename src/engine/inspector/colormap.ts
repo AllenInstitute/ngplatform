@@ -16,7 +16,7 @@ export function colormapControl(scope: Scope, layer: ImageUserLayer): HTMLSelect
   const options = () => ({ signed: dataType.value !== undefined && SIGNED.has(dataType.value) });
   const select = el(
     "select",
-    { class: "ins-select", "aria-label": "Colour map" },
+    { class: "text-input", "aria-label": "Colour map" },
     ...COLORMAPS.map((m) => el("option", { value: m.id }, m.label)),
     el("option", { value: "" }, "Custom"),
   ) as HTMLSelectElement;

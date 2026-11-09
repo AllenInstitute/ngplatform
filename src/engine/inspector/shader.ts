@@ -73,7 +73,7 @@ export function shaderSection(scope: Scope, layer: UserLayer, m: ShaderModels): 
     tall.setAttribute("aria-pressed", String(editor.classList.contains("tall")));
     refresh();
   }, "A taller editor");
-  tools.append(tall, el("a", { class: "ins-btn", href: m.help, target: "_blank", rel: "noopener", title: "Neuroglancer's documentation for this shader" }, "Docs"));
+  tools.append(tall, el("a", { class: "btn outline", href: m.help, target: "_blank", rel: "noopener", title: "Neuroglancer's documentation for this shader" }, "Docs"));
   head.append(tools);
 
   // What the shader can read.

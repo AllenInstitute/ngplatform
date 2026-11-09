@@ -99,7 +99,7 @@ function build(scope: Scope, l: SegmentationUserLayer, view: SurfaceView): HTMLE
   // Which surface: the hemisphere's siblings, by switching the source.
   const surfaces = Object.entries(view.surface?.surfaces ?? {}).sort((a, b) => rank(a[0]) - rank(b[0]));
   if (surfaces.length > 1) {
-    const group = el("div", { class: "ins-segmented" });
+    const group = el("div", { class: "segmented" });
     for (const [kind, relative] of surfaces) {
       const b = button(kind, () => {
         const source = (l as any).dataSources?.[0];
@@ -122,7 +122,7 @@ function build(scope: Scope, l: SegmentationUserLayer, view: SurfaceView): HTMLE
   // coords_inflated…): the vertices are drawn at those instead.
   const alternates = Object.entries(view.surface?.alternates ?? {}).filter(([id]) => view.attributes.some((a) => a.id === id && a.components === 3));
   if (surfaces.length <= 1 && alternates.length > 0) {
-    const group = el("div", { class: "ins-segmented" });
+    const group = el("div", { class: "segmented" });
     const choices: [string | undefined, string][] = [[undefined, view.surface?.geometry || "geometry"], ...alternates.sort((a, b) => rank(a[1]) - rank(b[1]))];
     const buttons = choices.map(([id, kind]) => {
       const b = button(kind, () => write({ ...look(), position: id }), `Draw the ${kind} surface (the same vertices, so the same values)`);

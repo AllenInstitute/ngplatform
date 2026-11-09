@@ -84,7 +84,7 @@ export function mountInspector(host: HTMLElement, layer: UserLayer): () => void 
           {
             type: "button",
             role: "tab",
-            class: "ins-tab",
+            class: "tab",
             "aria-selected": String(t.id === id),
             onclick: () => {
               override = undefined;

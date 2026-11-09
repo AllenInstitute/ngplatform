@@ -75,7 +75,7 @@ function summary(a: Annotation): string {
 export function annotationsTab(scope: Scope, layer: AnnotationUserLayer): HTMLElement[] {
   const states = layer.annotationStates as any;
   const tool = layer.tool as unknown as Watch<{ toJSON(): unknown } | undefined>;
-  const toolbox = el("div", { class: "ins-segmented ins-tools" });
+  const toolbox = el("div", { class: "segmented ins-tools" });
   const buttons = TOOLS.map((t) =>
     button(t.label, () => {
       const current = tool.value?.toJSON();
@@ -210,7 +210,7 @@ function annotationRow(layer: AnnotationUserLayer, state: any, a: Annotation, pr
         } finally {
           ref.dispose();
         }
-      }, "Delete this annotation", "ins-chip-x");
+      }, "Delete this annotation", "icon ins-remove");
   const values = properties.map((p, i) =>
     p.type === "rgb" || p.type === "rgba"
       ? el("span", { class: "ins-faint", title: p.identifier }, `${p.identifier} `, el("span", { class: "ins-swatch-inline", style: `background:${packedHex(a.properties[i])}` }))
@@ -251,7 +251,7 @@ export function schemaTab(scope: Scope, layer: AnnotationUserLayer): HTMLElement
         for (const s of sources()) s.updateProperty(spec, patch);
         changed();
       };
-      const type = el("select", { class: "ins-select", disabled: !editable || spec.type === "bool" }, ...PROPERTY_TYPES.map((t) => el("option", { value: t }, t))) as HTMLSelectElement;
+      const type = el("select", { class: "text-input", disabled: !editable || spec.type === "bool" }, ...PROPERTY_TYPES.map((t) => el("option", { value: t }, t))) as HTMLSelectElement;
       type.value = spec.type;
       type.addEventListener("change", () => update({ type: type.value }));
       return el(
@@ -264,18 +264,18 @@ export function schemaTab(scope: Scope, layer: AnnotationUserLayer): HTMLElement
           ? el("span", { class: "ins-faint" }, String(spec.default ?? ""))
           : spec.type === "rgb" || spec.type === "rgba"
             ? (() => {
-                const input = el("input", { type: "color", class: "ins-colour", value: packedHex(spec.default ?? 0), "aria-label": "Default colour" }) as HTMLInputElement;
+                const input = el("input", { type: "color", class: "colour-input", value: packedHex(spec.default ?? 0), "aria-label": "Default colour" }) as HTMLInputElement;
                 input.addEventListener("change", () => update({ default: (packHex(input.value) | (spec.type === "rgba" ? 0xff000000 : 0)) >>> 0 }));
                 return input;
               })()
             : textInput(String(spec.default ?? 0), (v) => {
                 const n = Number(v);
                 if (Number.isFinite(n)) update({ default: n });
-              }, { class: "ins-text num", "aria-label": "Default" }),
+              }, { class: "text-input mono num", "aria-label": "Default" }),
         editable ? button("×", () => {
           for (const s of sources()) s.removeProperty(spec.identifier);
           changed();
-        }, "Remove this property", "ins-chip-x") : el("span"),
+        }, "Remove this property", "icon ins-remove") : el("span"),
       );
     });
     const add = () => {

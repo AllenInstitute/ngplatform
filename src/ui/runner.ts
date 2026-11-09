@@ -418,11 +418,11 @@ export function choosePath(runner: RunnerService, options: Parameters<RunnerApi[
         picked = undefined;
         crumbs.textContent = folder === "" ? "The runner's folders" : folder;
         const rows: HTMLElement[] = [];
-        if (folder !== "") rows.push(h("li", { class: "runner-up" }, h("button", { class: "linkish", type: "button", onclick: () => void go(listing.parent ?? "") }, "↑ Up")));
+        if (folder !== "") rows.push(h("li", { class: "runner-up" }, h("button", { class: "link", type: "button", onclick: () => void go(listing.parent ?? "") }, "↑ Up")));
         for (const entry of listing.entries) {
           const label = `${entry.name}${entry.type === "dir" ? "/" : ""}`;
           const row = h("li", { class: `runner-entry ${entry.type}`, "data-path": entry.path });
-          const button = h("button", { class: "linkish", type: "button" }, label);
+          const button = h("button", { class: "link mono", type: "button" }, label);
           button.addEventListener("click", () => (entry.type === "dir" ? void go(entry.path) : pick(entry, row)));
           if (entry.type === "store") button.addEventListener("dblclick", () => void go(entry.path));
           row.append(button, entry.size !== undefined ? h("span", { class: "type" }, bytesText(entry.size)) : entry.type === "store" ? h("span", { class: "type" }, "store") : "");
@@ -449,7 +449,7 @@ export function choosePath(runner: RunnerService, options: Parameters<RunnerApi[
           clear(
             found,
             h("p", { class: "note first" }, matches.length === 1 ? "Found:" : "Found these:"),
-            h("ul", { class: "runner-files" }, ...matches.map((m) => h("li", { class: "runner-match" }, h("button", { class: "linkish mono", type: "button", onclick: () => answer(m.path) }, m.path)))),
+            h("ul", { class: "runner-files" }, ...matches.map((m) => h("li", { class: "runner-match" }, h("button", { class: "link mono", type: "button", onclick: () => answer(m.path) }, m.path)))),
           );
         })
         .catch((e) => {

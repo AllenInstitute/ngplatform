@@ -168,11 +168,12 @@ input[type="checkbox"].switch:disabled { opacity: 0.4; cursor: default; }
 .sep { width: 1px; height: 20px; background: var(--line); margin-inline: var(--sp-1); flex: none; }
 .spacer { flex: 1; }
 
-/* A button that reads as a link: Read more, and the like. */
+/* A button that reads as a link: Read more, a file in a list, and the like (.mono for a path). */
 button.link {
-  background: none; border: 0; padding: 0; margin: 0; font: inherit; color: var(--muted);
+  background: none; border: 0; padding: 0; margin: 0; font: inherit; color: var(--muted); text-align: left; overflow-wrap: anywhere;
   text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 2px; cursor: pointer;
 }
+button.link.mono { font-family: var(--mono); }
 button.link:hover { color: var(--text); text-decoration-color: currentColor; }
 button.link:disabled { color: var(--faint); cursor: default; text-decoration: none; }
 
@@ -649,8 +650,6 @@ kbd {
 .runner-serves { display: grid; gap: var(--sp-2); }
 .runner-serves .runner-entry { display: flex; align-items: center; gap: var(--sp-4); min-width: 0; }
 .runner-serves .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-caption); }
-.linkish { background: none; border: 0; padding: 0; color: var(--text); font: var(--fs-body)/1.6 var(--mono); cursor: pointer; text-align: left; overflow-wrap: anywhere; }
-.linkish:hover { color: var(--accent); }
 .mono { font-family: var(--mono); }
 .lead { margin: 0; }
 
@@ -700,6 +699,7 @@ textarea.py-in {
 /* Settings › View (src/engine/view_settings.ts): the viewer's settings in groups. */
 .view-settings { display: grid; gap: var(--sp-6); }
 .view-limits { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-5); margin-bottom: var(--sp-5); }
+.colour-input { width: 44px; height: var(--ctl-h); box-sizing: border-box; padding: 0 var(--sp-1); border: 1px solid var(--line); background: var(--ink-0); border-radius: 0; font-size: var(--ctl-fs); flex: none; }
 /* Settings › Developer: the chunk statistics, a row a source. */
 .stats-wrap { overflow: auto; max-height: 50vh; border: 1px solid var(--line); }
 .stats-table { width: 100%; border-collapse: collapse; font-size: var(--fs-body); }
@@ -716,14 +716,10 @@ textarea.py-in {
 .stats-detail { color: var(--faint); font: var(--fs-caption)/1.4 var(--mono); overflow: hidden; text-overflow: ellipsis; }
 
 /* ------------------------------------------------------ layer inspector */
+/* Its tabs are the docks' .tab, its buttons .btn and its fields .text-input
+   (src/engine/inspector/ui.ts); only what they need besides is here. */
 .ins-root { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.ins-tabs { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 1px solid var(--line); flex: none; }
-.ins-tab {
-  font: 500 var(--fs-body)/1 var(--ui); padding: var(--sp-4) 10px 7px; border: 0; background: transparent; color: var(--muted); cursor: pointer;
-  box-shadow: inset 0 -2px 0 transparent;
-}
-.ins-tab:hover { color: var(--text); }
-.ins-tab[aria-selected="true"] { color: var(--text); box-shadow: inset 0 -2px 0 var(--text); }
+.ins-tabs { display: flex; flex-wrap: wrap; gap: var(--sp-1); padding-bottom: var(--sp-2); border-bottom: 1px solid var(--line); flex: none; }
 .ins-content { flex: 1; min-height: 0; overflow: auto; padding: var(--sp-3) var(--sp-1) var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-2); }
 .ins-section { border-bottom: 1px solid var(--line); padding: var(--sp-4) var(--sp-1) 10px; display: flex; flex-direction: column; gap: var(--sp-2); }
 .ins-section:last-child { border-bottom: 0; }
@@ -744,34 +740,20 @@ textarea.py-in {
 .ins-inline { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
 .ins-note { margin: var(--sp-1) 0; color: var(--faint); font-size: var(--fs-body); }
 .ins-faint { color: var(--faint); font-size: var(--fs-caption); }
-.ins-slider { display: grid; grid-template-columns: minmax(0, 1fr) 62px; gap: var(--sp-3); align-items: center; width: 100%; }
+.ins-slider { display: grid; grid-template-columns: minmax(0, 1fr) 64px; gap: var(--sp-3); align-items: center; width: 100%; }
 .ins-range { width: 100%; accent-color: var(--accent); margin: 0; }
-.ins-number, .ins-text, .ins-select {
-  height: 24px; box-sizing: border-box; border: 1px solid var(--line); background: var(--ink-0); color: var(--text);
-  font: var(--fs-body)/1 var(--ui); padding: 0 var(--sp-3); border-radius: 0; min-width: 0;
-}
-.ins-number { width: 100%; font-family: var(--mono); }
-.ins-number.wide { width: 110px; }
-.ins-text { width: 100%; }
-.ins-text.num { font-family: var(--mono); text-align: right; }
-.ins-select { width: 100%; }
-.ins-number:focus, .ins-text:focus, .ins-select:focus { outline: none; border-color: var(--line-focus); }
+.ins-root .text-input.num { text-align: right; }
+.ins-root .num-input.wide { width: 110px; }
 .ins-check { margin: 0; accent-color: var(--accent); width: 14px; height: 14px; flex: none; }
-.ins-colour { width: 44px; height: 24px; padding: 0 var(--sp-1); border: 1px solid var(--line); background: var(--ink-0); border-radius: 0; }
-.ins-btn {
-  height: 24px; padding: 0 var(--sp-4); border: 1px solid var(--line-strong); background: var(--ink-2); color: var(--text);
-  font: var(--fs-body)/1 var(--ui); cursor: pointer; border-radius: 0; display: inline-flex; align-items: center; text-decoration: none; white-space: nowrap;
-}
-.ins-btn:hover:not(:disabled) { background: var(--ink-3); }
-.ins-btn:disabled { color: var(--faint); cursor: default; }
-.ins-btn[aria-pressed="true"] { border-color: var(--line-focus); background: var(--ink-4); }
-.ins-btn.ins-danger:hover { border-color: var(--err); color: var(--err); }
-.ins-chip-x { height: 20px; padding: 0 var(--sp-3); border-color: transparent; background: transparent; color: var(--muted); }
-.ins-chip-x:hover { color: var(--err); background: transparent !important; }
-.ins-segmented { display: flex; flex-wrap: wrap; }
-.ins-segmented .ins-btn + .ins-btn { border-left: 0; }
+/* A toggle (Code, Taller) pressed reads as the pressed part of a segmented row. */
+.ins-root .btn.outline[aria-pressed="true"] { background: var(--ink-3); }
+/* The small × that removes a link, a range or an annotation: red under the pointer. */
+.btn.icon.ins-remove { height: 20px; min-width: 20px; color: var(--muted); }
+.btn.ins-remove:hover:not(:disabled) { color: var(--err); }
+.btn.outline.ins-remove:hover:not(:disabled) { border-color: var(--err); }
 .ins-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-2); }
 .ins-chip { display: inline-flex; align-items: center; gap: var(--sp-1); border: 1px solid var(--line-strong); padding: 0 0 0 var(--sp-3); font-size: var(--fs-body); }
+.ins-chip .btn.icon.ins-remove:hover:not(:disabled) { background: transparent; }
 .ins-linked { display: flex; flex-wrap: wrap; gap: var(--sp-2); width: 100%; }
 .ins-messages { display: grid; gap: var(--sp-1); }
 .ins-messages[hidden] { display: none; }
@@ -779,14 +761,6 @@ textarea.py-in {
 .ins-message.sev-1 { color: var(--warn); }
 .ins-message.sev-2 { color: var(--err); }
 .ins-error { margin: 0; white-space: pre-wrap; font: var(--fs-caption)/1.4 var(--mono); color: var(--err); }
-/* The shader's syntax in the app's greys: CodeMirror's light-theme colours are too dark on black. */
-.ins-code .cm-s-default .cm-comment { color: var(--faint); }
-.ins-code .cm-s-default :is(.cm-keyword, .cm-builtin, .cm-def, .cm-type, .cm-variable-3) { color: var(--text-strong); }
-.ins-code .cm-s-default :is(.cm-number, .cm-atom, .cm-string, .cm-variable-2) { color: var(--text); }
-.ins-code .cm-s-default :is(.cm-bracket, .cm-meta, .cm-qualifier) { color: var(--muted); }
-/* Valid code has no mark; code that does not compile, a red border. */
-.ins-code .neuroglancer-shader-code-widget.valid-input { border-color: transparent; }
-.ins-code .neuroglancer-shader-code-widget.invalid-input { border-color: var(--err); }
 .ins-error[hidden] { display: none; }
 
 /* Neuroglancer components inside the inspector, in its colours. */
@@ -805,6 +779,14 @@ textarea.py-in {
 .ins-code.tall .CodeMirror { height: 60vh; }
 .ins-code .CodeMirror-gutters { background: var(--ink-1); border-right: 1px solid var(--line); }
 .ins-code .CodeMirror-cursor { border-left-color: var(--text); }
+/* The shader's syntax in the app's greys: CodeMirror's light-theme colours are too dark on black. */
+.ins-code .cm-s-default .cm-comment { color: var(--faint); }
+.ins-code .cm-s-default :is(.cm-keyword, .cm-builtin, .cm-def, .cm-type, .cm-variable-3) { color: var(--text-strong); }
+.ins-code .cm-s-default :is(.cm-number, .cm-atom, .cm-string, .cm-variable-2) { color: var(--text); }
+.ins-code .cm-s-default :is(.cm-bracket, .cm-meta, .cm-qualifier) { color: var(--muted); }
+/* Valid code has no mark; code that does not compile, a red border. */
+.ins-code .neuroglancer-shader-code-widget.valid-input { border-color: transparent; }
+.ins-code .neuroglancer-shader-code-widget.invalid-input { border-color: var(--err); }
 .ins-histogram { padding: var(--sp-1) 0; }
 .ins-ng-tab { padding: var(--sp-2); }
 .ins-props { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
@@ -835,8 +817,8 @@ textarea.py-in {
 /* Source */
 .ins-sources { display: flex; flex-direction: column; }
 .ins-url-field { position: relative; }
-.ins-url { font-family: var(--mono); font-size: var(--fs-caption); }
-textarea.ins-grow { display: block; width: 100%; box-sizing: border-box; resize: none; overflow: hidden; min-height: 28px; line-height: 16px; padding-top: 5px; padding-bottom: 5px; word-break: break-all; }
+/* A URL field one line high, as the fields beside it, growing to show all of a long one. */
+textarea.ins-grow { display: block; width: 100%; box-sizing: border-box; resize: none; overflow: hidden; min-height: var(--ctl-h); line-height: 16px; padding-block: 3px; word-break: break-all; }
 .ins-completions {
   position: absolute; z-index: 30; left: 0; right: 0; top: 100%; max-height: 240px; overflow: auto; margin: 0; padding: 0; list-style: none;
   background: var(--ink-2); border: 1px solid var(--line-strong); box-shadow: var(--shadow-float);
@@ -856,12 +838,11 @@ textarea.ins-grow { display: block; width: 100%; box-sizing: border-box; resize:
 .ins-tx-name { color: var(--text); font-weight: 500; }
 .ins-tx-bounds { font-family: var(--mono); font-size: var(--fs-caption); }
 .ins-tx-out { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-1); }
-.ins-tx-cell { height: 22px; font-size: var(--fs-caption); padding: 0 var(--sp-2); }
+.ins-root .ins-tx-cell { padding: 0 var(--sp-2); }
 
 /* Segments */
 .ins-query-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-2); }
-.ins-query { font-family: var(--mono); font-size: var(--fs-body); height: 28px; }
-.ins-query-row .ins-select { width: auto; max-width: 150px; height: 28px; }
+.ins-query-row select.text-input { width: auto; max-width: 150px; }
 .ins-status { margin: 0; }
 .ins-tags { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 .ins-tags[hidden], .ins-histograms[hidden] { display: none; }
@@ -872,7 +853,6 @@ textarea.ins-grow { display: block; width: 100%; box-sizing: border-box; resize:
 .ins-histograms { display: flex; flex-direction: column; gap: var(--sp-2); }
 .ins-histogram-row { display: grid; grid-template-columns: minmax(70px, 25%) minmax(60px, 1fr) minmax(0, 150px) 22px; gap: var(--sp-3); align-items: center; }
 .ins-histogram-row.on .ins-label { color: var(--text); }
-.ins-histogram-row .ins-number { width: 64px; }
 .ins-hist { width: 100%; height: 20px; display: block; }
 .ins-hist rect { fill: var(--plot); }
 .ins-histogram-row.on .ins-hist rect { fill: var(--plot-on); }
@@ -894,7 +874,7 @@ textarea.ins-grow { display: block; width: 100%; box-sizing: border-box; resize:
 .ins-hidden-colour { position: absolute; width: 0; height: 0; opacity: 0; pointer-events: none; }
 
 /* Annotations */
-.ins-tools .ins-btn { flex: 1; justify-content: center; }
+.ins-tools .btn { flex: 1; justify-content: center; }
 .ins-annotation-list { display: flex; flex-direction: column; max-height: 50vh; overflow: auto; }
 .ins-ann-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: var(--sp-3); align-items: start; padding: var(--sp-2) var(--sp-2); border-bottom: 1px solid var(--ink-2); cursor: pointer; }
 .ins-ann-row:hover { background: var(--ink-2); }
@@ -1050,6 +1030,26 @@ textarea.state-input.tall { min-height: 50vh; }
   .app:not(.right-collapsed) { --rw: min(var(--right, 360px), 34vw); }
 }
 @media (max-width: 520px) {
+  /* A phone: undo, redo and Open in Neuroglancer stay in the palette and the Share menu. */
+  .hide-phone { display: none !important; }
+  .topbar { gap: var(--sp-3); padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); }
+  .scene-tabs { min-width: 64px; }
+  .app { --lw: 34px; --rw: 34px; }
+  .resizer-left, .resizer-right { display: none; }
+  /* On a phone an open side dock floats over the views instead of squeezing them. */
+  .dock-left:not(.collapsed), .dock-right:not(.collapsed) {
+    position: absolute; top: 0; bottom: 0; z-index: 20;
+    width: min(340px, 88vw);
+    box-shadow: var(--shadow-dock);
+  }
+  .dock-left:not(.collapsed) { left: 0; }
+  .dock-right:not(.collapsed) { right: 0; }
+  .dock-bottom { height: min(var(--bh), 30vh); }
+}
+
+
+/* Neuroglancer's own bar inside the viewer: position, left; tool status. */
+.engine .neuroglancer-viewer-top-row { background: var(--ink-1); border-bottom: 1px solid var(--line); margin-bottom: 0; min-height: 26px; }
 /* The 3-D view's toggles (Sections, and those plugins add: Render, Glyphs):
    one group in the corner, each box before its label, as the app's checkboxes. */
 .engine div.perspective-panel-show-slice-views {
@@ -1074,26 +1074,6 @@ textarea.state-input.tall { min-height: 50vh; }
 :is(.engine, .dock, .sheet) .neuroglancer-icon { border-radius: 0; color: var(--muted); font-family: var(--ui); }
 :is(.engine, .dock, .sheet) .neuroglancer-icon:hover { background: var(--hover); color: var(--text); }
 :is(.engine, .dock, .sheet) .neuroglancer-icon svg { stroke: currentColor; }
-  /* A phone: undo, redo and Open in Neuroglancer stay in the palette and the Share menu. */
-  .hide-phone { display: none !important; }
-  .topbar { gap: var(--sp-3); padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); }
-  .scene-tabs { min-width: 64px; }
-  .app { --lw: 34px; --rw: 34px; }
-  .resizer-left, .resizer-right { display: none; }
-  /* On a phone an open side dock floats over the views instead of squeezing them. */
-  .dock-left:not(.collapsed), .dock-right:not(.collapsed) {
-    position: absolute; top: 0; bottom: 0; z-index: 20;
-    width: min(340px, 88vw);
-    box-shadow: var(--shadow-dock);
-  }
-  .dock-left:not(.collapsed) { left: 0; }
-  .dock-right:not(.collapsed) { right: 0; }
-  .dock-bottom { height: min(var(--bh), 30vh); }
-}
-
-
-/* Neuroglancer's own bar inside the viewer: position, left; tool status. */
-.engine .neuroglancer-viewer-top-row { background: var(--ink-1); border-bottom: 1px solid var(--line); margin-bottom: 0; min-height: 26px; }
 
 .ins-label-with-pickers { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; }
 .ins-pickers:empty { display: none; }
