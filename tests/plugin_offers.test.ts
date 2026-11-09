@@ -54,9 +54,8 @@ describe("when a plugin is offered", () => {
     expect(await applies(ids("segmentation"), scene([TRK]))).toBe(false);
   });
 
-  it("offers Filters and Volume rendering for an image, Registration for two", async () => {
+  it("offers Filters for an image, Registration for two", async () => {
     expect(await applies(ids("filters"), scene([IMAGE]))).toBe(true);
-    expect(await applies(ids("volume-view"), scene([IMAGE]))).toBe(true);
     expect(await applies(ids("registration"), scene([IMAGE]))).toBe(false);
     expect(await applies(ids("registration"), scene([IMAGE, { ...IMAGE, name: "T2" }]))).toBe(true);
     expect(await applies(ids("filters"), scene([TRK]))).toBe(false);

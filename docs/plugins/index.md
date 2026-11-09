@@ -30,7 +30,6 @@ it on in the Plugins tab.
 | [Annotations](annotations.md) | tool | an annotation layer | Labels on the views for figures, measurements, and statistics in a region. |
 | [Segmentation](segmentation.md) | tool | a segmentation (label volume) | Label volumes drawn by hand, as in WebKnossos: a new segmentation layer on an image's grid or a copy of a segmentation, a tool bar over the views, a segment list, saving as NIfTI or OME-Zarr. |
 | [Registration](registration.md) | tool | two images | Move a layer by hand (as Freeview) or by landmarks; save the transform or the moved image. |
-| [Volume rendering](volume-rendering.md) | tool | an image | An image drawn as a solid in the 3-D view, cut open at the position. |
 | [Anatomical rendering](anatomical-rendering.md) | tool | an image | Photorealistic, path-traced views of an image on a GPU: this computer, another over SSH, or WebGPU in the page. |
 | [Filters](filters.md) | tool | an image | An image filtered on the fly (mean, median, Gaussian, Frangi vesselness) as a layer of its own. |
 | [OME Collections](collections.md) | tool | an image inside an OME collection | OME-Zarr collections (RFC-8, draft): open one or make one of a scene's images, each in a tab; see and build how its images relate. |

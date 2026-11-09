@@ -20,7 +20,6 @@ import { SEGMENTATION_MANIFEST } from "./segmentation/manifest.js";
 import { LABEL_STORE_FORMAT } from "./segmentation/store_format.js";
 import { TIME_SERIES_MANIFEST } from "./time-series/manifest.js";
 import { TRACK_FILTERING_MANIFEST } from "./track-filtering/manifest.js";
-import { VOLUME_VIEW_MANIFEST } from "./volume-view/manifest.js";
 import { ZARR_VECTORS_MANIFEST } from "./zarr-vectors/manifest.js";
 import { type Offer, OFFERS } from "./offers.js";
 
@@ -79,13 +78,6 @@ export const CATALOGUE: CatalogueEntry[] = [
     summary: "Filters an image as it is viewed: smoothing, thresholds, vesselness, morphology.",
     group: "images",
     offer: offer(FILTERS_MANIFEST.id),
-  },
-  {
-    manifest: VOLUME_VIEW_MANIFEST,
-    load: async () => (await import("./volume-view/plugin.js")).plugin,
-    summary: "Draws an image as a solid in the 3-D view.",
-    group: "images",
-    offer: offer(VOLUME_VIEW_MANIFEST.id),
   },
   {
     manifest: ANATOMICAL_RENDERING_MANIFEST,

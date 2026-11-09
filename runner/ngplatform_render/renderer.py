@@ -507,6 +507,22 @@ class Renderer:
                 self.samples += 1
             return self.samples
 
+    def step_beside(self, n: int, cancelled=None) -> int:
+        """`step(n)` for work beside the interactive view (movies, stills, splats): a pass at a time, each
+        waited for before the next is queued, so the view's own passes (on the same GPU queue) wait for at
+        most one of these, not for all n. With `cancelled` (a function), stops between passes when true."""
+        cp = self.cp
+        for _ in range(n):
+            if cancelled is not None and cancelled():
+                break
+            self.step(1)
+            with self.device:
+                done = cp.cuda.Event(disable_timing=True)
+                done.record()
+            while not done.done:
+                time.sleep(0.001)
+        return self.samples
+
     def image(self, premultiplied: bool = True):
         """The mean so far, tone-mapped: (H, W, 4) uint8, premultiplied alpha; or (not premultiplied)
         the colour divided by the alpha, (H, W, 3) uint8, and the alpha, (H, W) uint8 (made on the GPU)."""

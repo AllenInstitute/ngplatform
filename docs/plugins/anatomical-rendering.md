@@ -2,11 +2,11 @@
 
 ![S-21-46 (HiP-CT, 100 µm) path-traced on a workstation's GPU and drawn in the 3-D view](../images/plugins/anatomical-rendering.png)
 
-**Kind:** tool · **Off by default** (offered when you open an image; or turn it on in the Plugins tab) · a
-**Render** switch beside **Sections** in the 3-D view, and a **Render** tab ·
+**Kind:** tool · **Off by default** (offered when you open an OME-Zarr or N5 image; or turn it on in the Plugins tab) · a
+**Render** switch beside **Sections** in the 3-D view, and **Anatomical** in the Tools panel ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/anatomical-rendering)
 
-Photorealistic views of an OME-Zarr image, path-traced on a GPU and drawn in
+Photorealistic views of an OME-Zarr or N5 image (not precomputed volumes such as EM), path-traced on a GPU and drawn in
 Neuroglancer's 3-D view. Light is followed through the tissue as it
 scatters, so surfaces get soft shadows and depth and translucent tissue
 glows, in the manner of "cinematic rendering". The image is read straight
@@ -39,14 +39,24 @@ Organ Atlas serves most of its scans; on a host).
    `python -m ngplatform_runner tunnel me@workstation` (it prints the pairing
    link). On a cluster, start the runner inside an interactive GPU job and
    tunnel through the login node (`--jump`).
-2. Pair the app with that runner: its link, or the **Remote (SSH)** tab at
-   the bottom (**This computer**, or **Add a computer (SSH)…**). Addresses
-   and tokens are kept there, for every function, not per image.
-3. Turn the plugin on, open the **Render** tab: **Computer** is
-   **Automatic** (the Remote tab's choice, else the first computer with the
-   render service ready) or one of the paired computers whose runner has
-   the render service. Choose the image, then switch on **Render** (also
-   beside **Sections** in the 3-D view).
+2. Pair the app with that runner: its link, or **Settings › Compute**
+   (**This computer**, or **Add a computer (SSH)…**; **Pair a computer…** in
+   the panel's **Remote** card opens it). Addresses and tokens are kept
+   there, for every function, not per image.
+3. Turn the plugin on and open **Anatomical** in the Tools panel. Switch on
+   **Render** at the top (also beside **Sections** in the 3-D view); the
+   line beside it says what it is doing. **Remote** picks the **Computer**:
+   **Automatic** (Compute's choice, else the first computer with the render
+   service ready) or one of the paired computers whose runner has the
+   render service.
+
+The panel's cards: **Remote** (where it renders), **Rendering** (image,
+preset, colours, density, exposure, regions, quality), **Lighting**,
+**Crops** (a clip facing the camera, clips across x, y and z, and boxes)
+and **Output** (stills, movies, rotations, splats). Each stays open or
+closed as you leave it. The row under the switch turns the view: **Centre**
+on the tissue, or from the left, right, anterior, posterior, superior or
+inferior.
 
 ## What you can set
 
@@ -99,20 +109,20 @@ Organ Atlas serves most of its scans; on a host).
   (studio, photo studio, sky; CC0 images from [Poly Haven](https://polyhaven.com),
   reduced to 256 × 128), turned about the view's vertical; or the preset's
   sky colours.
-- **View**: Left, Right, Anterior, Posterior, Superior and Inferior turn the
+- **View** (the row under the switch: L, R, A, P, S, I): turn the
   3-D view to those sides (for images in RAS: x right, y anterior, z up).
-- **Crops**: boxes, as many as eight, each with a name, on or off, keeping
+- **Boxes** (Crops): as many as eight, each with a name, on or off, keeping
   its inside or cutting it out (fractions of the volume along x, y and z,
   sliders): what shows is inside any crop that keeps and in none that cuts
   out (in this browser's renderer, only the first that keeps).
-- **Cut facing the view**: a plane across the view, an offset in mm past the
+- **Camera plane** (Crops): a clip across the view, an offset in mm past the
   position, keeping what lies beyond it; it turns with the camera, or
-  **Leave it here** keeps it at the angle it has now (an oblique cut), and
-  **Follow the view** lets it turn again. A cut turned on starts through the
+  **Pin** keeps it at the angle it has now (an oblique clip), and
+  **Follow** lets it turn again. A clip turned on starts through the
   point the cursor was last over in the 3-D view (on the rendered tissue),
-  and **At the cursor** moves the cuts that are on there.
-- **Cuts**: planes through the current position across x, y or z, keeping
-  either side, with an offset in mm (a slider or a number). Regions listed under **Kept through cuts**
+  and **Move to the cursor** moves the clips that are on there.
+- **Axis planes** (Crops): clips through the current position across x, y or z, keeping
+  either side, with an offset in mm (a slider or a number). Regions listed under **Kept through crops**
   stay whole (vessels through a cut brain, say).
 - **Regions**: colour by a co-registered OME-Zarr segmentation (its labels'
   FreeSurfer colours), how much of the region's colour to use, and regions
@@ -141,25 +151,30 @@ Organ Atlas serves most of its scans; on a host).
   that needs no finer level lets the detail go. Stills use the detail held
   for the view; movies use the whole volume's level.
 - **Samples per pixel**: when a still view stops refining.
-- **Load a preset file…**: a preset (or a list) as JSON, in the form of
+- **File…** (beside Preset): a preset (or a list) as JSON, in the form of
   `runner/ngplatform_render/presets/*.json`; it is kept with the scene.
-- **Save still (PNG)**: the view now, path-traced on the host at the movie's
-  size and twice its samples.
-- **Render rotation**: a turn about the position from the view now, about
-  the vertical or the horizontal, a full or half circle, by a step in degrees.
-- **Movie**: **Add keyframe from the view** as you move, set each one's
-  time, then **Render movie on the host**: every frame is path-traced to the
-  sample count and the frames are encoded as an MP4 (H.264) on the host,
-  then **Download**. Between keyframes the camera turns around the position;
-  cuts, density, exposure and the light change smoothly.
-- **Splat (for the web, phones and VR)**: **Make a splat on the host**
+- **Save still (PNG)** (Output): the view now, path-traced on the host at the
+  output's size and twice its samples.
+- **Movie** (Output): **Add keyframe** as you move, set each one's time,
+  then **Preview movie…**: a small, quick version (about 384 pixels, 8
+  samples, 12 frames a second) plays in a window. From there **Render the
+  movie** starts the movie itself as a job, its progress in the line at the
+  bottom and in Activity, cancellable there; the view stays live while it
+  renders (its passes go to the GPU one at a time beside the view's). Every
+  frame is path-traced to the sample count and encoded as an MP4 (H.264)
+  on the host, and downloads when done. Between keyframes the camera turns
+  around the position; clips, density, exposure and the light change smoothly.
+- **Rotation** (Output): a turn about the position from the view now, about
+  the vertical or the horizontal, a full or half turn, by a step in
+  degrees; **Preview rotation…** works as the movie's preview.
+- **Splat** (Output; for the web, phones and VR): **Make splat**
   path-traces the look now from all round the position (**views**, each
   **size** pixels along its longer side at **samples**; **from** every side,
   this half, or near this side; a quarter of them closer in), then fits
   3-D Gaussians to them (**fit steps**; 0 makes the views only). It shows
-  in the Jobs tab; **View splat** opens the result in a window (drag to
+  as a job; **View** opens the result in a window (drag to
   turn, right or shift drag to move, wheel to come closer) with downloads
-  of the `.splat` and `.ply`, and **Open a splat file…** opens one from
+  of the `.splat` and `.ply`, and **Open file…** opens one from
   this device. What would differ from view to view is held still: the
   light where it is now (in world space), no lens blur, no smoothing; cuts
   facing the view stay where they are. A splat is fitted to one scene: a
@@ -249,17 +264,24 @@ voxels), a collision takes its colour a voxel or two inwards along the
 gradient, on the more opaque side, so a surface shows the tissue beneath it
 rather than the values between it and the medium around it (which would
 otherwise colour a kidney's capsule as fat). Each pass adds one sample per pixel and the
-image is their mean, so it refines while the view is still. While the
-camera moves, frames are rendered at half size, and for the first 12
+image is their mean, so it refines while the view is still. Frames made
+while the camera moves (see below) are half size, and for the first 12
 samples after a change the host smooths the image with an edge-avoiding
 wavelet filter guided by the distance to the tissue (about half the error at
 4 samples; **Smooth the first frames** switches it off).
 
 Each frame comes with the distance along each pixel's ray to where it meets
-tissue, and the page draws it as points in space (a mesh of them) with the
-camera it has now, not as a flat picture: the render turns and zooms with
-the view at once, and the next frame fills what came into view (a gap for a
-moment at an edge, not a stretched one).
+tissue, and the page draws it as a surface in space (a vertex a pixel) with
+the camera it has now, not as a flat picture. While the camera moves
+(dragging, the wheel, or the turn that carries on after a drag) the picture
+stays where the tissue is and moves with the view, and nothing new is
+rendered; when the camera has been still for 200 ms, the view is rendered
+again at full size. Only a camera that goes far from the picture's (turned
+more than 20°, twice as near or far, or the position near the picture's
+edge) gets quick half-size pictures while it moves, each placed in space
+too. A frame is never drawn stuck to the screen in place of one placed in
+space. While the camera is away from the picture's, a fold's edge shows a
+brief gap rather than a stretched skin.
 
 While the camera moves, frames are made for speed, then the still view is
 refined, without the picture jumping:

@@ -64,8 +64,10 @@ void main() {
 
 // The frame as points in space: a grid of vertices, each at its pixel's distance along that pixel's ray in
 // the camera the frame was rendered from (uOldInv), drawn with the camera now (uNewVP), so the picture turns
-// and zooms with the view at once. A triangle touching a pixel that met nothing, or spanning a jump in
-// distance (an edge in front of something farther), is left out: a brief gap, not a stretched skin.
+// and zooms with the view at once. A triangle touching a pixel that met nothing is left out; one spanning
+// a jump in distance (an edge in front of something farther) too while the camera is away from the
+// picture's (uJump: a brief gap, not a long stretched skin), but kept with the picture's own camera, where
+// every triangle covers just its own pixels.
 const MESH_VS = `#version 300 es
 precision highp float;
 uniform highp sampler2D uDist;
@@ -74,6 +76,7 @@ uniform mat4 uNewVP;
 uniform ivec2 uSize;
 uniform int uStep;
 uniform int uCols;
+uniform float uJump;
 out vec2 vUv;
 out float vValid;
 float dist(ivec2 p) { return texelFetch(uDist, clamp(p, ivec2(0), uSize - 1), 0).r; }
@@ -89,7 +92,7 @@ void main() {
   vec3 dir = normalize(b.xyz / b.w - n);
   gl_Position = uNewVP * vec4(n + dir * max(d, 0.0), 1.0);
   float jump = max(abs(dr - d), abs(dd - d)) / max(d, 1e-6);
-  vValid = (d >= 0.0 && dr >= 0.0 && dd >= 0.0 && jump < 0.04) ? 1.0 : 0.0;
+  vValid = (d >= 0.0 && dr >= 0.0 && dd >= 0.0 && jump < uJump) ? 1.0 : 0.0;
   vUv = uv;
 }`;
 
@@ -143,15 +146,22 @@ export interface Picture {
   view?: { invViewProjection: number[]; distance: { width: number; height: number; data: Float32Array } };
 }
 
+/** The jump in distance (a fraction of it) a triangle may span while the camera is away from the picture's. */
+const JUMP = 0.08;
+
+/** Whether two cameras (inverse view-projections) are the same, to rounding. */
+export function sameCamera(p: ArrayLike<number>, q: ArrayLike<number>): boolean {
+  let scale = 0;
+  for (let i = 0; i < 16; ++i) scale = Math.max(scale, Math.abs(p[i]));
+  for (let i = 0; i < 16; ++i) if (Math.abs(p[i] - q[i]) > 1e-5 * Math.max(scale, 1e-12)) return false;
+  return true;
+}
+
 /** Whether two pictures were rendered from the same camera (so one can fade into the other in place). */
 export function sameView(a: Picture | undefined, b: Picture): boolean {
   if (a === undefined) return false;
   if (a.view === undefined || b.view === undefined) return a.view === b.view && a.bitmap.width === b.bitmap.width && a.bitmap.height === b.bitmap.height;
-  const p = a.view.invViewProjection, q = b.view.invViewProjection;
-  let scale = 0;
-  for (let i = 0; i < 16; ++i) scale = Math.max(scale, Math.abs(p[i]));
-  for (let i = 0; i < 16; ++i) if (Math.abs(p[i] - q[i]) > 1e-6 * Math.max(scale, 1e-12)) return false;
-  return true;
+  return sameCamera(a.view.invViewProjection, b.view.invViewProjection);
 }
 
 export class PictureDrawer implements Drawer3d {
@@ -183,6 +193,14 @@ export class PictureDrawer implements Drawer3d {
   set(picture: Picture | undefined): void {
     this.picture = picture;
   }
+
+  /** The camera of the picture shown when it is placed in space (drawn moving with the view); else undefined. */
+  placed(): number[] | undefined {
+    return this.picture?.view?.invViewProjection;
+  }
+
+  /** Draws as a surface in space and flat (stuck to the screen), and flat ones while the camera moved: what makes it lag. */
+  readonly stats = { placed: 0, flat: 0, flatMoving: 0 };
 
   isReady(): boolean {
     return this.picture !== undefined;
@@ -234,9 +252,12 @@ export class PictureDrawer implements Drawer3d {
       this.uploadedAlpha = pic.alpha;
     }
     if (pic.view !== undefined && this.drawMesh(gl, frame, pic)) {
+      this.stats.placed++;
       this.fadeOn();
       return;
     }
+    this.stats.flat++;
+    if (frame.moving) this.stats.flatMoving++;
     gl.useProgram(program);
     this.bindMix(gl, program);
     const vp = gl.getParameter(gl.VIEWPORT) as Int32Array;
@@ -328,6 +349,7 @@ export class PictureDrawer implements Drawer3d {
     gl.uniform2i(u("uSize"), W, H);
     gl.uniform1i(u("uStep"), step);
     gl.uniform1i(u("uCols"), cols);
+    gl.uniform1f(u("uJump"), sameCamera(v.invViewProjection, frame.invViewProjection) ? 1e9 : JUMP);
     gl.uniform1f(u("uHasAlpha"), pic.alpha !== undefined ? 1 : 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.color!);

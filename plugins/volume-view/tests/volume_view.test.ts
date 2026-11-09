@@ -8,7 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { apply, identity, invert, mergeLevels, multiply, parseOmeLevels, rasBounds } from "../ome.js";
 import { borderMean, displayOfRas, tissueWindow } from "../solid.js";
-import { omeZarrUrl, readSaved } from "../plugin.js";
+import { omeZarrUrl } from "../sources.js";
 
 const fixture = (name: string) => JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", name), "utf8"));
 const BB = "https://ftp.bigbrainproject.org/bigbrain-ftp/BigBrainRelease.2015/OME_Zarr/";
@@ -144,10 +144,5 @@ describe("drawing in Neuroglancer's 3-D view", () => {
     const swapped = displayOfRas({ names: ["z", "y", "x"], scales: [0.001, 0.001, 0.001], units: ["m", "m", "m"] })!;
     expect([swapped[2], swapped[5], swapped[8]]).toEqual([1, 1, 1]);
     expect(displayOfRas({ names: ["t", "y", "x"], scales: [1, 1, 1], units: ["s", "m", "m"] })).toBeUndefined();
-  });
-
-  it("starts off, with the cut on", () => {
-    expect(readSaved(undefined)).toMatchObject({ on: false, cut: true });
-    expect(readSaved({ on: true, threshold: 0.3 })).toMatchObject({ on: true, threshold: 0.3 });
   });
 });

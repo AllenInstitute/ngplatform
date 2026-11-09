@@ -8,8 +8,7 @@ import { describe, expect, it } from "vitest";
 import { encodeZIndexCompressed3d } from "neuroglancer/unstable/util/zorder.js";
 import { chunkId, decodeMinishardIndex, type RangeRead, PrecomputedScale, readInfo, type Scale, shardOf, type Sharding } from "@ngplatform/sdk/precomputed";
 import { apply, scaleLevel } from "../ome.js";
-import { precomputedUrl } from "../sources.js";
-import { storeOf } from "../plugin.js";
+import { precomputedUrl, storeOf } from "../sources.js";
 
 const u64 = (values: bigint[]) => {
   const out = new Uint8Array(8 * values.length);

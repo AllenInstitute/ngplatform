@@ -8,9 +8,9 @@
  * back as they refine (./draw.ts).
  */
 import type { Disposer, Frame3d, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
-import { button, clear, downloadBlob, el, field, numberInput, select } from "@ngplatform/sdk/dom";
+import { button, card, clear, downloadBlob, el, field, numberInput, select } from "@ngplatform/sdk/dom";
 import { type Distance, hostLink, type Link, type MovieInfo, type PresetInfo, RenderService, type ServiceInfo, type SessionInfo, type SplatInfo, type ViewSpec } from "./client.js";
-import { PictureDrawer } from "./draw.js";
+import { invert4, PictureDrawer } from "./draw.js";
 import { openSplatWindow, parsePly, parseSplat, type SplatCamera } from "./splatview.js";
 import { ColourmapEditor, type DataStop, histogramHandles, shifted, type Tuning, type WarpPoint, warpInverse } from "./editor.js";
 import { LocalRenderer, PRESETS as LOCAL_PRESETS } from "./local/local.js";
@@ -153,13 +153,76 @@ export function readSaved(raw: unknown): Saved {
   };
 }
 
-/** Which paired computer (the Remote tab's, ctx.hosts) renders, kept per browser: none named for the Remote tab's choice. */
+/** The platform's command that opens Settings at its computers (pairing, SSH). */
+const COMPUTE_SETTINGS = { command: "settings.open", args: { section: "compute" } };
+
+/** A text box of label ids (spaces or commas between). */
+function idsInput(ids: number[], on: (ids: number[]) => void): HTMLInputElement {
+  const t = el("input", { class: "text-input", type: "text", value: ids.join(", "), placeholder: "label ids" }) as HTMLInputElement;
+  t.onchange = () => on(t.value.split(/[\s,]+/).filter(Boolean).map(Number).filter((n) => Number.isInteger(n)));
+  return t;
+}
+
+const STYLE = `
+.ar { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 8px 10px; font-size: 12px; }
+.ar .card-body { min-width: 0; }
+.ar .card-body > * { max-width: 100%; }
+.ar-head { display: flex; gap: 10px; align-items: center; min-height: 26px; }
+.ar-on { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+.ar-status { flex: 1; min-width: 0; color: var(--muted); font: 11px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ar-status.error { color: var(--err, #e5484d); white-space: normal; }
+.ar-views { display: flex; gap: 3px; flex-wrap: wrap; }
+.ar .card-body > * + * { margin-top: 6px; }
+.ar .card-body h4 { margin: 10px 0 2px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+.ar-row { display: flex; gap: 6px; align-items: end; flex-wrap: wrap; }
+.ar-row > .field { flex: 1; min-width: 70px; }
+.ar-tick { display: flex; gap: 6px; align-items: center; }
+.ar-small { font-size: 11px; margin: 0; }
+.ar-preview { display: grid; gap: 6px; place-items: center; min-height: 200px; }
+.ar-video { width: 100%; max-height: 60vh; background: #000; border-radius: 4px; }
+`;
+
+/** How long the camera is still before the full-size view is rendered. */
+const SETTLE_MS = 200;
+/** Camera changes closer together than this are one motion (momentum, keys held), not jumps. */
+const TURNING_MS = 120;
+
+/** Where a camera is: its eye (display coordinates; none for an orthographic one) and the direction it looks. */
+function eyeOf(inv: ArrayLike<number>): { eye?: number[]; forward: number[] } {
+  const w = inv[11];
+  const forward = viewForward(inv);
+  return { eye: Math.abs(w) < 1e-12 ? undefined : [inv[8] / w, inv[9] / w, inv[10] / w], forward };
+}
+
+/**
+ * Whether the camera now has gone far from the one a picture was rendered
+ * from: turned more than 20° about the position, twice as near or far, or
+ * the position near the picture's edge.  Then the picture, kept in space,
+ * shows too little of the view (its back, its edge) and a new one is
+ * wanted even while the camera moves.
+ */
+export function farFrom(picture: ArrayLike<number>, frame: Pick<Frame3d, "invViewProjection" | "position">): boolean {
+  const a = eyeOf(picture), b = eyeOf(frame.invViewProjection);
+  const dot = a.forward[0] * b.forward[0] + a.forward[1] * b.forward[1] + a.forward[2] * b.forward[2];
+  if (dot < Math.cos((20 * Math.PI) / 180)) return true;
+  const p = frame.position;
+  if (a.eye && b.eye) {
+    const da = Math.hypot(a.eye[0] - p[0], a.eye[1] - p[1], a.eye[2] - p[2]), db = Math.hypot(b.eye[0] - p[0], b.eye[1] - p[1], b.eye[2] - p[2]);
+    if (db < da / 2 || db > da * 2) return true;
+  }
+  // The position as the picture's camera saw it.
+  const vp = invert4(picture);
+  const x = vp[0] * p[0] + vp[4] * p[1] + vp[8] * p[2] + vp[12], y = vp[1] * p[0] + vp[5] * p[1] + vp[9] * p[2] + vp[13], w = vp[3] * p[0] + vp[7] * p[1] + vp[11] * p[2] + vp[15];
+  return !(w > 0) || Math.abs(x / w) > 0.8 || Math.abs(y / w) > 0.8;
+}
+
+/** Which paired computer (Settings › Compute, ctx.hosts) renders, kept per browser: none named for Compute's choice. */
 interface HostSetting {
   name?: string;
 }
 
 const HOST_KEY = "host";
-const NO_HOST = "No paired computer has the render service: pair one in the Remote tab at the bottom (its runner started with --service render=…), or render in this browser";
+const NO_HOST = "No paired computer has the render service: pair one (Settings › Compute), or render in this browser";
 
 class AnatomicalRendering {
   private saved: Saved;
@@ -178,7 +241,15 @@ class AnatomicalRendering {
   private lastFrame: Frame3d | undefined;
   private lastSpec: ViewSpec | undefined;
   private sending = false;
+  /** The view being sent, until the host answers with its version. */
+  private pendingView: Promise<void> | undefined;
   private queued: ViewSpec | undefined;
+  /** The look (preset, light, cuts…) of the view last sent: a change to it renders at once, moving or not. */
+  private lastLook = "";
+  /** The camera of the last frame, when it last changed, and whether it was changing frame after frame. */
+  private lastCamera = "";
+  private cameraChanged = 0;
+  private turning = false;
   private settle: ReturnType<typeof setTimeout> | undefined;
   private depth: { version: number; width: number; height: number; data: Float32Array } | undefined;
   private distance: Distance | undefined;
@@ -227,13 +298,19 @@ class AnatomicalRendering {
       ctx.commands.register("anatomicalRendering.toggle", () => this.setOn(!this.saved.on)),
       ctx.ui.panel(RENDER_PANEL, (el) => this.panel(el)),
       ctx.hosts.onChanged(() => {
-        // A computer with the render service paired or come up, or another chosen in the Remote tab.
+        // A computer with the render service paired or come up, or another chosen in Compute.
         const label = this.link()?.label;
         if (!this.connecting && label !== undefined && (this.serviceInfo === undefined || label !== this.service?.link.label)) void this.connect();
         this.panelUpdate?.();
       }),
     );
     void this.connect();
+    // For measuring (the drawer's stats) from the console or a test.
+    try {
+      if (localStorage.getItem("ngplatform.debug")) (window as unknown as { anatomicalRendering: unknown }).anatomicalRendering = this;
+    } catch {
+      // No storage: no debugging handle.
+    }
   }
 
   // ------------------------------------------------------------------ state
@@ -244,6 +321,12 @@ class AnatomicalRendering {
   }
 
   private setOn(on: boolean): void {
+    if (on && this.images().length === 0) {
+      // Nothing it can read (precomputed EM, meshes, tractograms): say so rather than switch on to no effect.
+      this.toggle.set(false);
+      this.ctx.ui.toast("Anatomical rendering needs an OME-Zarr or N5 image in the scene.", "error");
+      return;
+    }
     this.save((s) => (s.on = on));
     this.toggle.set(on);
     if (on) this.ensure3d();
@@ -274,7 +357,7 @@ class AnatomicalRendering {
     return this.ctx.hosts.list().filter((h) => h.info?.services?.render !== undefined);
   }
 
-  /** The chosen computer, else the one the Remote tab picks with the render service ready; undefined when none is paired. */
+  /** The chosen computer, else the one Compute picks with the render service ready; undefined when none is paired. */
   private link(): Link | undefined {
     const h = (this.host.name ? this.ctx.hosts.get(this.host.name) : undefined) ?? this.ctx.hosts.pick({ service: "render" });
     return h === undefined ? undefined : hostLink(h.name, h.address, (path, init) => h.fetch(path, init));
@@ -350,15 +433,12 @@ class AnatomicalRendering {
     const info = this.presets.find((p) => p.name === this.saved.preset);
     const refs = Array.isArray(info?.reference) ? (info!.reference as { title?: string; page?: string; author?: string; licence?: string }[]) : [];
     if (this.saved.where === "browser" || refs.length === 0) return "";
+    // The credit, one line: the photographs' names, authors and licences in its tooltip.
     return el(
       "p",
-      { class: "muted", style: "font-size: 11px; margin: 2px 0 6px" },
-      "Colours measured on: ",
-      ...refs.flatMap((r, i) => [
-        i ? "; " : "",
-        el("a", { href: r.page ?? "#", target: "_blank", rel: "noopener" }, (r.title ?? "a photograph").replace(/^File:/, "")),
-        ` (${r.author ?? "unknown"}, ${r.licence ?? ""})`,
-      ]),
+      { class: "muted ar-small", title: refs.map((r) => `${(r.title ?? "a photograph").replace(/^File:/, "")} (${r.author ?? "unknown"}, ${r.licence ?? ""})`).join("\n") },
+      "Colours from ",
+      ...refs.flatMap((r, i) => [i ? ", " : "", el("a", { href: r.page ?? "#", target: "_blank", rel: "noopener" }, `photo ${i + 1}`)]),
     );
   }
 
@@ -478,7 +558,7 @@ class AnatomicalRendering {
     return el(
       "div",
       { style: "margin: 6px 0" },
-      el("div", { class: "muted", style: "font-size: 11px; margin-bottom: 3px" }, "Colourmap for this image, over its histogram: drag a point (left-right moves it, up-down its opacity), double-click to colour it, Ctrl-click to add one, right-click to remove one; drag the blue triangles under the histogram to slide and warp it under the colours"),
+      el("div", { class: "muted ar-small", style: "margin-bottom: 3px", title: "Drag a point: left-right moves it, up-down its opacity. Double-click colours it, Ctrl-click adds one, right-click removes one. The blue triangles under the histogram slide and warp it under the colours." }, "Colourmap ⓘ"),
       this.editor.element,
       el(
         "div",
@@ -551,7 +631,7 @@ class AnatomicalRendering {
   /** A "window" preset's control: the data values at its ends for this image, the host's guess until set. */
   private windowField(): HTMLElement | "" {
     if (this.presetDomain() !== "window") return "";
-    if (this.saved.where === "browser") return field("Window", el("span", { class: "muted" }, "Guessed in this browser (from just past the mounting medium; the commonest tissue value at its middle)"));
+    if (this.saved.where === "browser") return "";
     const target = this.target();
     const src = target ? omeZarrSource(target.sources[0]) : undefined;
     if (src === undefined) return "";
@@ -575,7 +655,6 @@ class AnatomicalRendering {
         this.sliderNum(w ? w[1] : 1, vol?.lo ?? 0, vol?.hi ?? 65535, Number(step), (v) => set(1, v), { title: "High end", width: "90px" }),
         button("Guess", () => this.save((x) => delete x.windows[src]), "Back to the host's guess: from just past the mounting medium, with the commonest tissue value at the middle"),
       ),
-      this.saved.windows[src] ? "The image's values the preset's colours are spread over" : "The host's guess: from just past the mounting medium, the commonest tissue value at the middle; change it to fit",
     );
   }
 
@@ -681,18 +760,28 @@ class AnatomicalRendering {
         if (f === undefined) continue;
         after = f.number;
         if (f.distance !== undefined) this.distance = f.distance;
-        const cam = this.views.get(f.version);
-        const meshed = cam !== undefined && this.distance?.version === f.version;
-        if (!meshed && (this.depth === undefined || this.depth.version !== f.version)) {
-          // Drawn flat (an older host, or a frame that came before its view's answer): its GL depth, and
-          // the distances if the frame did not bring them.
-          const [d, dist] = await Promise.all([service.depth(id), this.distance?.version === f.version ? undefined : service.distance(id).catch(() => undefined)]);
-          if (d !== undefined) this.depth = d;
+        // A frame may come before the answer to the view it was rendered from: wait for that answer.
+        let cam = this.views.get(f.version);
+        if (cam === undefined && this.pendingView !== undefined) {
+          await this.pendingView;
+          cam = this.views.get(f.version);
+        }
+        if (cam !== undefined && this.distance?.version !== f.version) {
+          const dist = await service.distance(id).catch(() => undefined);
           if (dist !== undefined) this.distance = dist;
         }
-        // With the camera it was rendered from and each pixel's distance, the frame is drawn as points in
-        // space: it turns and zooms with the view at once, not only when the next frame comes.
+        // With the camera it was rendered from and each pixel's distance, the frame is a surface in space:
+        // it turns and zooms with the view, not only when the next frame comes.
         const view = cam && this.distance && this.distance.version === f.version ? { invViewProjection: cam, distance: this.distance } : undefined;
+        if (view === undefined) {
+          // Not placed in space: never in place of a picture that is (it would stick to the screen as the
+          // camera moves); drawn flat only from a host that gives no distances.
+          if (this.drawer.placed() !== undefined) continue;
+          if (this.depth === undefined || this.depth.version !== f.version) {
+            const d = await service.depth(id);
+            if (d !== undefined) this.depth = d;
+          }
+        }
         this.drawer.set({ bitmap: f.bitmap, alpha: f.alpha ? { width: f.width, height: f.height, data: f.alpha } : undefined, depth: view ? undefined : this.depth, view });
         this.frameText = `${f.samples} samples, ${f.width}×${f.height}, ${f.msPerPass.toFixed(0)} ms a pass${f.detail ? `\nDetail: ${f.detail}` : ""}`;
         this.handle?.redraw();
@@ -750,15 +839,23 @@ class AnatomicalRendering {
     const sid = local ? "local" : this.session?.status === "ready" ? this.session.id : undefined;
     if (sid === undefined || (local && !this.localText.startsWith("level"))) return;
     const look = JSON.stringify([this.saved.boxes, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.lightStyle, this.saved.envScale, this.saved.lightKey, this.saved.viewCut, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
-    const key = viewKey(frame.invViewProjection, frame.width, frame.height) + look;
-    const scale = frame.moving ? 0.5 : 1;
-    if (key === this.lastKey && !(this.lastScale < 1 && !frame.moving)) return;
+    const camera = viewKey(frame.invViewProjection, frame.width, frame.height);
+    // Moving: Neuroglancer's drag or wheel, or the camera changing frame after frame without them (the
+    // 3-D view's momentum after a drag, keys held down); a single jump (a view button) is not.
+    const now = performance.now();
+    if (camera !== this.lastCamera) {
+      this.turning = now - this.cameraChanged < TURNING_MS;
+      this.lastCamera = camera;
+      this.cameraChanged = now;
+    }
+    const moving = frame.moving || (this.turning && now - this.cameraChanged < TURNING_MS);
+    const key = camera + look;
+    const scale = moving ? 0.5 : 1;
+    if (key === this.lastKey && !(this.lastScale < 1 && !moving)) return;
+    const sameLook = look === this.lastLook;
     this.lastKey = key;
+    this.lastLook = look;
     this.lastScale = scale;
-    const spec = this.viewSpec(frame, scale);
-    if (spec === undefined) return;
-    if (scale === 1) this.lastSpec = spec;
-    this.send(sid, spec);
     clearTimeout(this.settle);
     if (scale < 1) {
       // The camera stopped when no frame comes for a moment: the full-size view then.
@@ -770,8 +867,16 @@ class AnatomicalRendering {
         this.lastScale = 1;
         this.lastSpec = full;
         this.send(sid, full);
-      }, 250);
+      }, SETTLE_MS);
     }
+    // While the camera moves, the picture shown stays in space (a surface drawn with the camera now) and
+    // nothing is rendered until it stops; only a view gone far from the picture's gets a quick half-size one.
+    const placed = this.drawer.placed();
+    if (moving && sameLook && placed !== undefined && !farFrom(placed, frame)) return;
+    const spec = this.viewSpec(frame, scale);
+    if (spec === undefined) return;
+    if (scale === 1) this.lastSpec = spec;
+    this.send(sid, spec);
   }
 
   /** One request at a time; the latest view waits for it. */
@@ -785,7 +890,7 @@ class AnatomicalRendering {
       return;
     }
     this.sending = true;
-    void this.service!.setView(sid, spec)
+    this.pendingView = this.service!.setView(sid, spec)
       .then((r) => {
         this.views.set(r.version, spec.inv_view_projection);
         for (const k of this.views.keys()) if (k < r.version - 64) this.views.delete(k);
@@ -796,6 +901,7 @@ class AnatomicalRendering {
       })
       .finally(() => {
         this.sending = false;
+        this.pendingView = undefined;
         const q = this.queued;
         this.queued = undefined;
         if (q !== undefined) this.send(sid, q);
@@ -861,7 +967,7 @@ class AnatomicalRendering {
     const view = this.currentSpec();
     if (view === undefined) return;
     const r = this.saved.rotation;
-    await this.renderMovie({ keyframes: [{ time: 0, view: { ...view, scale: 1 } }], rotation: r, name: `rotation-${r.axis}-${r.degrees}` });
+    this.renderMovie({ keyframes: [{ time: 0, view: { ...view, scale: 1 } }], rotation: r, name: `rotation-${r.axis}-${r.degrees}` });
   }
 
   private loadPresetFile(): void {
@@ -886,21 +992,97 @@ class AnatomicalRendering {
     input.click();
   }
 
-  private async renderMovie(extra?: Record<string, unknown>): Promise<void> {
-    const sid = this.session?.id;
-    if (sid === undefined || (extra === undefined && this.saved.keyframes.length < 1)) return;
+  /** The movie's request: the keyframes (or `extra`'s, a rotation), at the movie's size and samples, or `small` for a preview. */
+  private movieSpec(extra: Record<string, unknown> | undefined, small: boolean): Record<string, unknown> {
     const m = this.saved.movie;
+    const spec: Record<string, unknown> = { keyframes: this.saved.keyframes, fps: m.fps, width: m.width, height: m.height, samples: m.samples, easing: m.easing, name: "anatomical-rendering", ...(extra ?? {}) };
+    if (!small) return spec;
+    // A quick look: about 384 pixels on the longer side, few samples, fewer frames.
+    const k = 384 / Math.max(m.width, m.height, 1);
+    const even = (v: number) => Math.max(16, 2 * Math.round((v * Math.min(1, k)) / 2));
+    const rotation = extra?.rotation as { step?: number } | undefined;
+    return {
+      ...spec,
+      width: even(m.width),
+      height: even(m.height),
+      samples: Math.min(8, m.samples),
+      fps: Math.min(12, m.fps),
+      crf: 30,
+      name: "preview",
+      ...(rotation ? { rotation: { ...rotation, step: Math.max(6, (rotation.step ?? 2) * 3) } } : {}),
+    };
+  }
+
+  /**
+   * A movie (the keyframes', or `extra`'s rotation): first a small, quick
+   * preview in a window, played over and over; from there, the movie itself
+   * as a job (its progress in the Jobs tab) while the view stays live.
+   */
+  private renderMovie(extra?: Record<string, unknown>): void {
+    const sid = this.session?.id;
+    const service = this.service;
+    if (sid === undefined || service === undefined) return this.ctx.ui.toast("Connect to a computer and switch Render on first.", "error");
+    if (extra === undefined && this.saved.keyframes.length < 2) return this.ctx.ui.toast("Add two keyframes or more first.", "error");
+    const m = this.saved.movie;
+    let preview: MovieInfo | undefined;
+    let url: string | undefined;
+    this.ctx.ui.sheet("Movie preview", (body, close) => {
+      const bar = el("progress", { max: "1", value: "0", style: "width: 100%" }) as HTMLProgressElement;
+      const note = el("span", { class: "muted ar-small" }, "Rendering a preview…");
+      const stage = el("div", { class: "ar-preview" }, bar, note);
+      const go = button(`Render the movie (${m.width}×${m.height}, ${m.samples} samples)`, () => {
+        close();
+        void this.movieJob(sid, this.movieSpec(extra, false));
+      }, "In the background: its progress is in Jobs; the view stays live", "btn primary");
+      body.append(stage, el("div", { class: "ar-row" }, go));
+      let open = true;
+      void (async () => {
+        try {
+          preview = await service.movie(sid, this.movieSpec(extra, true));
+          while (open && (preview.status === "queued" || preview.status === "running")) {
+            bar.value = preview.progress;
+            note.textContent = preview.message || "Rendering a preview…";
+            await new Promise((r) => setTimeout(r, 400));
+            preview = await service.movieInfo(preview.id);
+          }
+          if (!open) return;
+          if (preview.status !== "done") throw new Error(preview.error ?? preview.status);
+          url = URL.createObjectURL(await service.movieFile(preview.id));
+          if (!open) return;
+          stage.replaceChildren(el("video", { src: url, autoplay: true, loop: true, muted: true, playsinline: true, controls: true, class: "ar-video" }));
+        } catch (e) {
+          if (open) stage.replaceChildren(el("p", { class: "note error" }, `The preview failed: ${(e as Error).message}`));
+        }
+      })();
+      return () => {
+        open = false;
+        if (preview && (preview.status === "queued" || preview.status === "running")) void service.cancelMovie(preview.id).catch(() => undefined);
+        if (url) URL.revokeObjectURL(url);
+      };
+    }, { wide: true });
+  }
+
+  /** The movie as a job: progress and cancelling in the Jobs tab; saved as a download when done. */
+  private async movieJob(sid: string, spec: Record<string, unknown>): Promise<void> {
+    const service = this.service!;
+    const name = String(spec.name ?? "movie");
     try {
-      let info = await this.service!.movie(sid, { keyframes: this.saved.keyframes, fps: m.fps, width: m.width, height: m.height, samples: m.samples, easing: m.easing, name: "anatomical-rendering", ...(extra ?? {}) });
-      this.movie = info;
-      this.panelUpdate?.();
-      while (info.status === "queued" || info.status === "running") {
-        await new Promise((r) => setTimeout(r, 1000));
-        info = await this.service!.movieInfo(info.id);
+      await this.ctx.jobs.run(`Movie: ${name}`, async (job) => {
+        let info = await service.movie(sid, spec);
         this.movie = info;
-        this.statusUpdate?.();
-      }
-      this.panelUpdate?.();
+        this.panelUpdate?.();
+        while (info.status === "queued" || info.status === "running") {
+          if (job.cancelled) await service.cancelMovie(info.id).catch(() => undefined);
+          job.progress(info.progress, info.message);
+          await new Promise((r) => setTimeout(r, 1000));
+          info = await service.movieInfo(info.id);
+          this.movie = info;
+          this.statusUpdate?.();
+        }
+        this.panelUpdate?.();
+        if (info.status !== "done") throw new Error(info.error ?? info.status);
+        downloadBlob(await service.movieFile(info.id), `${name}.mp4`);
+      });
     } catch (e) {
       this.ctx.ui.toast(`Movie: ${(e as Error).message}`, "error");
     }
@@ -1006,8 +1188,13 @@ class AnatomicalRendering {
   }
 
   private panel(host: HTMLElement): Disposer {
-    const statusEl = el("pre", { class: "muted", style: "white-space: pre-wrap; font-size: 11px; margin: 6px 0" });
-    this.statusUpdate = () => void (statusEl.textContent = this.status());
+    const statusEl = el("span", { class: "ar-status" });
+    this.statusUpdate = () => {
+      const lines = this.status().split("\n").filter(Boolean);
+      statusEl.textContent = lines.at(-1) ?? (this.saved.on ? "" : "off");
+      statusEl.title = lines.join("\n");
+      statusEl.classList.toggle("error", this.problem !== "" && statusEl.textContent === this.problem);
+    };
     const render = () => {
       const s = this.saved;
       const imgs = this.images();
@@ -1031,7 +1218,7 @@ class AnatomicalRendering {
           "div",
           { style: "display: flex; gap: 6px; align-items: center" },
           on,
-          el("span", {}, `Cut across ${c.axis}`),
+          el("span", { style: "width: 1.2em" }, c.axis),
           select([["-1", "keep −"], ["1", "keep +"]], String(c.keep), (v) => this.save((x) => (x.cuts[i].keep = Number(v) as 1 | -1))),
           (() => {
             const r = el("input", { type: "range", min: "-100", max: "100", step: "0.5", value: String(c.offset), style: "width: 90px", title: "Offset from the position (mm)" }) as HTMLInputElement;
@@ -1041,10 +1228,6 @@ class AnatomicalRendering {
           numberInput(c.offset, (v) => this.save((x) => (x.cuts[i].offset = v)), { step: "1", style: "width: 56px", title: "Offset from the position (mm)" }),
         );
       };
-      const regions = el("input", { type: "checkbox" }) as HTMLInputElement;
-      regions.checked = s.regions;
-      regions.onchange = () => this.save((x) => (x.regions = regions.checked));
-      const ids = (text: string) => text.split(/[\s,]+/).filter(Boolean).map(Number).filter((n) => Number.isInteger(n));
       const keyframeRows = s.keyframes.map((k, i) =>
         el(
           "div",
@@ -1071,202 +1254,175 @@ class AnatomicalRendering {
           render();
         },
       );
-      const remoteTab = el("a", { href: "#", title: "Pairing, SSH computers and which one does the work" }, "Remote tab");
-      remoteTab.onclick = (e) => {
-        e.preventDefault();
-        void this.ctx.commands.invoke("panel.remote");
+      const check = (checked: boolean, on: (v: boolean) => void, attrs: Record<string, unknown> = {}) => {
+        const cb = el("input", { type: "checkbox", ...attrs }) as HTMLInputElement;
+        cb.checked = checked;
+        cb.onchange = () => on(cb.checked);
+        return cb;
       };
+      const tick = (label: string, checked: boolean, on: (v: boolean) => void, title?: string) => el("label", { class: "ar-tick", title }, check(checked, on), label);
+      const tip = (label: string, control: Node, title?: string) => {
+        const e = field(label, control);
+        if (title) e.title = title;
+        return e;
+      };
+      const host_ = s.where === "host";
+      const connected = host_ ? this.serviceInfo !== undefined : true;
+      const pair = button("Pair a computer…", () => void this.ctx.commands.invoke(COMPUTE_SETTINGS.command, COMPUTE_SETTINGS.args), "Pair this computer's runner, or another over SSH");
+      const g = host_ ? this.serviceInfo?.gpu : undefined;
+      const onSwitch = check(s.on, (v) => this.setOn(v), { class: "switch", disabled: imgs.length === 0, "aria-label": "Render" });
       clear(
         host,
-        el("h3", {}, "Anatomical rendering"),
-        el("p", { class: "muted" }, "Path-traced views of an OME-Zarr image, rendered on a GPU through a runner (this computer, or another over SSH)."),
-        field("Computer", hostChoice),
         el(
-          "p",
-          { class: "muted", style: "font-size: 11px; margin: 2px 0 6px" },
-          hosts.length ? "Computers whose runner has the render service; pair others, over SSH too, in the " : "No paired computer has the render service: pair one, here or over SSH, in the ",
-          remoteTab,
-          " at the bottom.",
-        ),
-        hosts.length ? button("Reconnect", () => void this.connect()) : "",
-        el("hr"),
-        field("Where", select([["host", "On the host (CUDA, through the runner)"], ["browser", "In this browser (WebGPU)"]], s.where, (v) => {
-          this.save((x) => (x.where = v as Saved["where"]));
-          this.update();
-          render();
-        })),
-        el("label", { style: "display: flex; gap: 6px; align-items: center" }, (() => {
-          const cb = el("input", { type: "checkbox" }) as HTMLInputElement;
-          cb.checked = s.on;
-          cb.onchange = () => this.setOn(cb.checked);
-          return cb;
-        })(), el("b", {}, "Render")),
-        field("Image", imgs.length ? select(imgs.map((l) => [l.name, l.name]), this.target()?.name ?? "", (v) => this.save((x) => (x.layer = v))) : el("span", { class: "muted" }, "No OME-Zarr image in the scene")),
-        field("Preset", presetOptions.length ? select(presetOptions, s.preset, (v) => this.save((x) => (x.preset = v))) : el("span", { class: "muted" }, "(connect first)")),
-        this.referenceNote(),
-        button("Load a preset file…", () => this.loadPresetFile(), "A JSON preset (or a list of them): name, domain, stops of value, colour and opacity, and material"),
-        this.windowField(),
-        this.editorField(),
-        s.where === "host"
-          ? el("label", { style: "display: flex; gap: 6px; align-items: center", title: "Render only a cylinder about the scan's axis, leaving out the jar's wall (HiP-CT organs in their jars)" }, (() => {
-              const cb = el("input", { type: "checkbox" }) as HTMLInputElement;
-              cb.checked = s.jar;
-              cb.onchange = () => {
-                this.save((x) => (x.jar = cb.checked));
-                this.update();
-              };
-              return cb;
-            })(), "Hide the jar")
-          : "",
-        field("Density (per mm)", this.sliderNum(s.density ?? Number(this.presets.find((p) => p.name === s.preset)?.density ?? 40), 0, 200, 1, (v) => this.save((x) => (x.density = v)), { title: "How opaque the tissue is: higher, crisper surfaces; lower, more translucent" })),
-        field("Exposure", this.sliderNum(s.exposure, 0, 5, 0.05, (v) => this.save((x) => (x.exposure = v)), { title: "Brightness" })),
-        s.where === "host"
-          ? field("Lighting", select([["", "As set below"], ...Object.entries(LIGHTING).map(([k, l]): [string, string] => [k, l.name])], s.lightStyle, (v) =>
+          "div",
+          { class: "ar" },
+          el("div", { class: "ar-head" }, el("label", { class: "ar-on" }, onSwitch, el("b", {}, "Render")), statusEl),
+          imgs.length === 0 ? el("p", { class: "muted" }, "Needs an OME-Zarr or N5 image in the scene.") : "",
+          el(
+            "div",
+            { class: "ar-views" },
+            button("Centre", () => this.centreOnTissue(), "Move the position to the middle of the tissue and zoom to show all of it"),
+            ...ANATOMICAL_VIEWS.map((v) => button(v.name[0], () => this.ctx.viewer.patchState((ng) => void ((ng as { projectionOrientation?: number[] }).projectionOrientation = orientationLooking(v.forward, v.up))), `Look from ${v.name.toLowerCase()}`)),
+          ),
+          this.section("remote", "Remote", !connected, false,
+            tip("Where", select([["host", "A computer's GPU (CUDA)"], ["browser", "This browser (WebGPU)"]], s.where, (v) => {
+              this.save((x) => (x.where = v as Saved["where"]));
+              this.update();
+              render();
+            })),
+            host_ ? tip("Computer", hostChoice) : "",
+            host_ && g ? el("p", { class: "muted ar-small" }, g.backend === "cuda" ? `${g.name}, ${Math.round((g.free_mb ?? 0) / 1024)} of ${Math.round((g.total_mb ?? 0) / 1024)} GB free` : `No GPU: ${g.error ?? ""}`) : "",
+            host_ ? el("div", { class: "ar-row" }, pair, hosts.length ? button("Reconnect", () => void this.connect()) : "") : "",
+          ),
+          this.section("rendering", "Rendering", false, true,
+            tip("Image", imgs.length ? select(imgs.map((l) => [l.name, l.name]), this.target()?.name ?? "", (v) => this.save((x) => (x.layer = v))) : el("span", { class: "muted" }, "none")),
+            el("div", { class: "ar-row" },
+              tip("Preset", presetOptions.length ? select(presetOptions, s.preset, (v) => this.save((x) => (x.preset = v))) : el("span", { class: "muted" }, "connect first")),
+              button("File…", () => this.loadPresetFile(), "Load a JSON preset (or a list of them): name, domain, stops of value, colour and opacity, and material")),
+            this.referenceNote(),
+            this.windowField(),
+            this.editorField(),
+            tip("Density (per mm)", this.sliderNum(s.density ?? Number(this.presets.find((p) => p.name === s.preset)?.density ?? 40), 0, 200, 1, (v) => this.save((x) => (x.density = v))), "How opaque the tissue is: higher, crisper surfaces; lower, more translucent"),
+            tip("Exposure", this.sliderNum(s.exposure, 0, 5, 0.05, (v) => this.save((x) => (x.exposure = v)))),
+            host_ ? tick("Hide the jar", s.jar, (v) => {
+              this.save((x) => (x.jar = v));
+              this.update();
+            }, "Render only a cylinder about the scan's axis, leaving out the jar's wall (HiP-CT organs in their jars)") : "",
+            el("h4", {}, "Regions"),
+            segs.length
+              ? el("div", {},
+                  el("div", { class: "ar-row" }, tick("Colour by", s.regions, (v) => this.save((x) => (x.regions = v))), select(segs.map((l) => [l.name, l.name]), segs.find((x) => x.name === s.labels)?.name ?? segs[0].name, (v) => this.save((x) => (x.labels = v)), "Segmentation")),
+                  tip("Region colour", this.sliderNum(s.labelMix, 0, 1, 0.05, (v) => this.save((x) => (x.labelMix = v))), "0: the preset's colours, 1: the regions'"),
+                  tip("Hidden regions", idsInput(s.hidden, (v) => this.save((x) => (x.hidden = v))), "Label ids left out"),
+                  tip("Kept through crops", idsInput(s.keep, (v) => this.save((x) => (x.keep = v))), "Label ids that stay whole where the crops cut"))
+              : el("p", { class: "muted ar-small" }, "No OME-Zarr segmentation in the scene."),
+            el("h4", {}, "Quality"),
+            tip("Whole volume (M voxels)", this.sliderNum(s.budget / 1e6, 10, 2000, 10, (v) => this.save((x) => (x.budget = Math.max(1, v) * 1e6)), { live: false }), "One level of the whole image on the GPU: the finest stored level within this, or one made from a finer level"),
+            host_ ? tick("Finer detail where you zoom", s.detail, (v) => {
+              this.save((x) => (x.detail = v));
+              this.update();
+            }, "The region in view is read at a finer level; shadows and light from outside it stay at the whole volume's") : "",
+            host_ && s.detail ? tip("Detail (M voxels)", this.sliderNum(s.detailBudget / 1e6, 10, 2000, 10, (v) => {
+              this.save((x) => (x.detailBudget = Math.max(1, v) * 1e6));
+              this.update();
+            }, { live: false })) : "",
+            tick("Denoise the first frames", s.denoise, (v) => this.save((x) => (x.denoise = v))),
+            tip("Samples per pixel", this.sliderNum(s.maxSamples, 16, 4096, 16, (v) => this.save((x) => (x.maxSamples = Math.max(1, Math.round(v))))), "Where a still view stops refining"),
+          ),
+          this.section("lighting", "Lighting", false, false,
+            host_ ? tip("Style", select([["", "Custom"], ...Object.entries(LIGHTING).map(([k, l]): [string, string] => [k, l.name])], s.lightStyle, (v) =>
               this.save((x) => {
                 x.lightStyle = v;
                 const l = LIGHTING[v];
                 if (l) [x.lightMap, x.envScale, x.lightKey] = [l.map, l.envScale, l.key];
-              })), "Studio: a photographer's studio; Soft: light from all round, faint shadows; Hard: one strong light, deep shadows; Sky: daylight")
-          : "",
-        field("Light direction", el("div", { style: "display: flex; gap: 10px; align-items: center; flex-wrap: wrap" },
-          el("label", {}, "around ", this.slider(s.lightAzimuth, -180, 180, 5, (v) => this.save((x) => (x.lightAzimuth = v)), "Around the view: 0 from the camera, 90 from the right, -90 from the left")),
-          el("label", {}, "up ", this.slider(s.lightElevation, -90, 90, 5, (v) => this.save((x) => (x.lightElevation = v)), "Up and down: 90 from above, -90 from below"))),
-          "The key light, relative to the camera (it turns with the view)"),
-        s.where === "host"
-          ? field("Strength (key light, surroundings)", el("div", { style: "display: flex; gap: 10px; align-items: center" },
-              this.slider(s.lightKey, 0, 4, 0.05, (v) => this.save((x) => ((x.lightKey = v), (x.lightStyle = ""))), "The key light: what makes shadows"),
-              this.slider(s.envScale, 0, 3, 0.05, (v) => this.save((x) => ((x.envScale = v), (x.lightStyle = ""))), "The light map (or sky colours): light from all round")))
-          : "",
-        s.where === "host" && (this.serviceInfo?.lightmaps?.length ?? 0) > 0
-          ? field("Light map", el("div", { style: "display: flex; gap: 6px" },
-              select([["", "sky colours (the preset's)"], ...this.serviceInfo!.lightmaps!.map((m): [string, string] => [m, m])], s.lightMap, (v) => this.save((x) => (x.lightMap = v))),
-              this.sliderNum(s.lightMapRotation, -180, 180, 5, (v) => this.save((x) => (x.lightMapRotation = v)), { title: "Turn the light map (degrees)", width: "90px" })), "Image-based light: HDR panoramas (CC0, Poly Haven)")
-          : "",
-        el("h4", {}, "View"),
-        el("div", { style: "display: flex; gap: 4px; flex-wrap: wrap" },
-          button("Centre on the tissue", () => this.centreOnTissue(), "Move the position to the middle of the tissue and zoom to show all of it"),
-          ...ANATOMICAL_VIEWS.map((v) => button(v.name, () => this.ctx.viewer.patchState((ng) => void ((ng as { projectionOrientation?: number[] }).projectionOrientation = orientationLooking(v.forward, v.up)))))),
-        el("h4", {}, "Cuts (through the position)"),
-        el("div", { style: "display: flex; gap: 6px; align-items: center" },
-          button("At the cursor", () => {
-            const o = this.cursorOffsets();
-            if (!o) return;
-            this.save((x) => {
-              const names = this.lastFrame!.dimensions.names;
-              for (const c of x.cuts) {
-                const k = names.indexOf(c.axis);
-                if (c.on && k >= 0 && k < 3) c.offset = o.axis[k];
-              }
-              if (x.viewCut.on) x.viewCut = { ...x.viewCut, offset: o.view, fixed: null };
-            });
-            render();
-          }, "Move the cuts that are on through the point the cursor was last over in the 3-D view (a cut turned on starts there too)"),
-          el("span", { class: "muted", style: "font-size: 11px" }, this.lastCursor ? "" : "point at the tissue in the 3-D view first")),
-        cutRow(0), cutRow(1), cutRow(2),
-        el("div", { style: "display: flex; gap: 6px; align-items: center; flex-wrap: wrap" },
-          (() => {
-            const cb = el("input", { type: "checkbox" }) as HTMLInputElement;
-            cb.checked = s.viewCut.on;
-            cb.onchange = () =>
-              this.save((x) => {
-                // Turned on, it starts through the point the cursor was last over.
-                const o = cb.checked ? this.cursorOffsets() : undefined;
-                x.viewCut = { ...x.viewCut, on: cb.checked, ...(o ? { offset: o.view, fixed: null } : {}) };
-              });
-            return cb;
-          })(),
-          el("span", { title: "A cut across the view, keeping what lies beyond it: it turns with the camera until left in place" }, "Cut facing the view"),
-          this.slider(s.viewCut.offset, -100, 100, 0.5, (v) => this.save((x) => (x.viewCut = { ...x.viewCut, offset: v, fixed: null })), "Past the position (mm): positive cuts deeper"),
-          numberInput(s.viewCut.offset, (v) => this.save((x) => (x.viewCut = { ...x.viewCut, offset: v, fixed: null })), { step: "1", style: "width: 56px", title: "Past the position (mm)" }),
-          s.viewCut.fixed
-            ? button("Follow the view", () => this.save((x) => (x.viewCut = { ...x.viewCut, fixed: null })), "The cut turns with the camera again")
-            : button("Leave it here", () => {
-                const f = this.lastFrame;
-                if (!f) return;
-                this.save((x) => (x.viewCut = { ...x.viewCut, on: true, fixed: viewCutPlane(f.invViewProjection, f.position, x.viewCut.offset, f.dimensions) }));
-              }, "Keep the cut where it is now, at this angle, as you turn the view"),
+              }))) : "",
+            tip("Around", this.slider(s.lightAzimuth, -180, 180, 5, (v) => this.save((x) => (x.lightAzimuth = v)), "0 from the camera, 90 from the right, -90 from the left"), "The key light turns with the camera"),
+            tip("Up", this.slider(s.lightElevation, -90, 90, 5, (v) => this.save((x) => (x.lightElevation = v)), "90 from above, -90 from below")),
+            host_ ? tip("Key light", this.slider(s.lightKey, 0, 4, 0.05, (v) => this.save((x) => ((x.lightKey = v), (x.lightStyle = ""))), "The light that makes shadows")) : "",
+            host_ ? tip("Surroundings", this.slider(s.envScale, 0, 3, 0.05, (v) => this.save((x) => ((x.envScale = v), (x.lightStyle = ""))), "Light from all round: the light map, or the sky colours")) : "",
+            host_ && (this.serviceInfo?.lightmaps?.length ?? 0) > 0
+              ? el("div", { class: "ar-row" },
+                  tip("Light map", select([["", "Sky colours"], ...this.serviceInfo!.lightmaps!.map((m): [string, string] => [m, m])], s.lightMap, (v) => this.save((x) => (x.lightMap = v))), "HDR panoramas (CC0, Poly Haven)"),
+                  this.sliderNum(s.lightMapRotation, -180, 180, 5, (v) => this.save((x) => (x.lightMapRotation = v)), { title: "Turn the light map (degrees)", width: "80px" }))
+              : "",
+          ),
+          this.section("crops", "Crops", false, false,
+            el("div", { class: "ar-row" },
+              button("Move to the cursor", () => {
+                const o = this.cursorOffsets();
+                if (!o) return;
+                this.save((x) => {
+                  const names = this.lastFrame!.dimensions.names;
+                  for (const c of x.cuts) {
+                    const k = names.indexOf(c.axis);
+                    if (c.on && k >= 0 && k < 3) c.offset = o.axis[k];
+                  }
+                  if (x.viewCut.on) x.viewCut = { ...x.viewCut, offset: o.view, fixed: null };
+                });
+                render();
+              }, this.lastCursor ? "Move the clips that are on through the point the cursor was last over in the 3-D view" : "Point at the tissue in the 3-D view first")),
+            el("h4", {}, "Camera plane"),
+            el("div", { class: "ar-row" },
+              check(s.viewCut.on, (v) =>
+                this.save((x) => {
+                  // Turned on, it starts through the point the cursor was last over.
+                  const o = v ? this.cursorOffsets() : undefined;
+                  x.viewCut = { ...x.viewCut, on: v, ...(o ? { offset: o.view, fixed: null } : {}) };
+                }), { title: "Clip across the view, keeping what lies beyond it" }),
+              this.slider(s.viewCut.offset, -100, 100, 0.5, (v) => this.save((x) => (x.viewCut = { ...x.viewCut, offset: v, fixed: null })), "Past the position (mm): positive clips deeper"),
+              numberInput(s.viewCut.offset, (v) => this.save((x) => (x.viewCut = { ...x.viewCut, offset: v, fixed: null })), { step: "1", style: "width: 56px", title: "Past the position (mm)" }),
+              s.viewCut.fixed
+                ? button("Follow", () => this.save((x) => (x.viewCut = { ...x.viewCut, fixed: null })), "The clip turns with the camera again")
+                : button("Pin", () => {
+                    const f = this.lastFrame;
+                    if (!f) return;
+                    this.save((x) => (x.viewCut = { ...x.viewCut, on: true, fixed: viewCutPlane(f.invViewProjection, f.position, x.viewCut.offset, f.dimensions) }));
+                  }, "Keep the clip where it is now as you turn the view")),
+            el("h4", {}, "Axis planes"),
+            cutRow(0), cutRow(1), cutRow(2),
+            el("h4", {}, "Boxes"),
+            ...s.boxes.map((b, i) => this.cropRow(b, i, render)),
+            button("Add a box", () => {
+              this.save((x) => x.boxes.push({ name: `Box ${x.boxes.length + 1}`, on: true, keep: true, lo: [0, 0, 0], hi: [1, 1, 1] }));
+              render();
+            }, "Fractions of the volume; each keeps its inside or cuts it out (up to 8)"),
+          ),
+          this.section("output", "Output", false, false,
+            el("div", { class: "ar-row" },
+              tip("Width", numberInput(s.movie.width, (v) => this.save((x) => (x.movie.width = v)), { style: "width: 70px" })),
+              tip("Height", numberInput(s.movie.height, (v) => this.save((x) => (x.movie.height = v)), { style: "width: 70px" })),
+              tip("Samples", numberInput(s.movie.samples, (v) => this.save((x) => (x.movie.samples = v)), { style: "width: 60px" }))),
+            el("div", { class: "ar-row" }, button("Save still (PNG)", () => void this.saveStill(), "The view now at this size, path-traced to twice the samples")),
+            el("h4", {}, "Movie"),
+            ...keyframeRows,
+            el("div", { class: "ar-row" },
+              button("Add keyframe", () => this.addKeyframe(), "The view now"),
+              tip("fps", numberInput(s.movie.fps, (v) => this.save((x) => (x.movie.fps = v)), { style: "width: 50px" })),
+              tip("Camera", select([["smooth", "slows at keyframes"], ["linear", "steady"]], s.movie.easing, (v) => this.save((x) => (x.movie.easing = v as "smooth" | "linear"))))),
+            el("div", { class: "ar-row" },
+              button("Preview movie…", () => this.renderMovie(), "A quick, small preview first; the movie itself renders from there, in the background"),
+              movie?.status === "running" ? button("Cancel", () => void this.service?.cancelMovie(movie.id)) : "",
+              movie?.status === "done" ? button("Download", () => void this.service!.movieFile(movie.id).then((b) => downloadBlob(b, "anatomical-rendering.mp4"))) : ""),
+            el("h4", {}, "Rotation"),
+            el("div", { class: "ar-row" },
+              select([["vertical", "about the vertical"], ["horizontal", "about the horizontal"]], s.rotation.axis, (v) => this.save((x) => (x.rotation.axis = v as "vertical" | "horizontal"))),
+              select([["360", "full turn"], ["180", "half turn"]], String(s.rotation.degrees), (v) => this.save((x) => (x.rotation.degrees = Number(v)))),
+              tip("Step °", numberInput(s.rotation.step, (v) => this.save((x) => (x.rotation.step = Math.max(0.25, v))), { step: "1", style: "width: 50px" })),
+              button("Preview rotation…", () => void this.renderRotation(), "A turn about the position from the view now: a quick preview first")),
+            el("h4", { title: "The look now, path-traced from all round and fitted with 3-D Gaussians that any browser, phone or headset draws at full speed" }, "Splat"),
+            host_ && this.serviceInfo?.splats && !this.serviceInfo.splats.ready ? el("p", { class: "muted ar-small" }, `Views only: this computer cannot fit (${this.serviceInfo.splats.error ?? "no splat Python"}).`) : "",
+            el("div", { class: "ar-row" },
+              tip("Views", numberInput(s.splat.views, (v) => this.save((x) => (x.splat.views = Math.max(8, Math.round(v)))), { style: "width: 60px" })),
+              tip("Size", numberInput(s.splat.size, (v) => this.save((x) => (x.splat.size = Math.max(64, Math.round(v)))), { style: "width: 60px", title: "Pixels along the longer side of each view" })),
+              tip("Samples", numberInput(s.splat.samples, (v) => this.save((x) => (x.splat.samples = Math.max(1, Math.round(v)))), { style: "width: 60px" })),
+              tip("From", select([["180", "every side"], ["90", "this half"], ["50", "near this side"]], String(s.splat.cover), (v) => this.save((x) => (x.splat.cover = Number(v))))),
+              tip("Fit steps", numberInput(s.splat.steps, (v) => this.save((x) => (x.splat.steps = Math.max(0, Math.round(v)))), { style: "width: 70px", title: "0: render the views only" }))),
+            el("div", { class: "ar-row" },
+              button("Make splat", () => void this.makeSplat(), "Runs on the computer that renders; it shows in Jobs"),
+              this.splat?.files.includes("scene.splat") ? button("View", () => void this.viewSplat()) : "",
+              button("Open file…", () => this.openSplatFile(), "A .splat or 3-D Gaussian splatting .ply from this device")),
+          ),
         ),
-        el("h4", {}, "Crops"),
-        el("p", { class: "muted", style: "font-size: 11px; margin: 0 0 4px" }, "Boxes (fractions of the volume): what shows is inside any crop that keeps, and in none that cuts out"),
-        ...s.boxes.map((b, i) => this.cropRow(b, i, render)),
-        button("Add a crop", () => {
-          this.save((x) => x.boxes.push({ name: `Crop ${x.boxes.length + 1}`, on: true, keep: true, lo: [0, 0, 0], hi: [1, 1, 1] }));
-          render();
-        }, "Up to 8 boxes, each keeping its inside or cutting it out"),
-        el("h4", {}, "Regions"),
-        el("label", { style: "display: flex; gap: 6px; align-items: center" }, regions, "Colour by a segmentation's regions"),
-        segs.length ? field("Segmentation", select(segs.map((l) => [l.name, l.name]), segs.find((x) => x.name === s.labels)?.name ?? segs[0].name, (v) => this.save((x) => (x.labels = v)))) : el("p", { class: "muted" }, "No OME-Zarr segmentation in the scene."),
-        field("Region colour", this.sliderNum(s.labelMix, 0, 1, 0.05, (v) => this.save((x) => (x.labelMix = v))), "0: the preset's colours, 1: the regions'"),
-        field("Hidden regions", (() => {
-          const t = el("input", { type: "text", value: s.hidden.join(", "), placeholder: "label ids" }) as HTMLInputElement;
-          t.onchange = () => this.save((x) => (x.hidden = ids(t.value)));
-          return t;
-        })()),
-        field("Kept through cuts", (() => {
-          const t = el("input", { type: "text", value: s.keep.join(", "), placeholder: "label ids" }) as HTMLInputElement;
-          t.onchange = () => this.save((x) => (x.keep = ids(t.value)));
-          return t;
-        })()),
-        el("h4", {}, "Quality"),
-        field("Whole volume (million voxels on the GPU)", this.sliderNum(s.budget / 1e6, 10, 2000, 10, (v) => this.save((x) => (x.budget = Math.max(1, v) * 1e6)), { live: false }), "One level of the whole image: the finest stored level within this, or one made from a finer level"),
-        s.where === "host"
-          ? el("label", { style: "display: flex; gap: 6px; align-items: center", title: "When the view comes close, the region in view is read at a finer level and rendered from it; the rest of the volume (shadows, light scattered from outside the view) stays at the whole volume's level" }, (() => {
-              const cb = el("input", { type: "checkbox" }) as HTMLInputElement;
-              cb.checked = s.detail;
-              cb.onchange = () => {
-                this.save((x) => (x.detail = cb.checked));
-                this.update();
-              };
-              return cb;
-            })(), "Finer detail where you zoom")
-          : "",
-        s.where === "host" && s.detail
-          ? field("Detail where you look (million voxels)", this.sliderNum(s.detailBudget / 1e6, 10, 2000, 10, (v) => {
-              this.save((x) => (x.detailBudget = Math.max(1, v) * 1e6));
-              this.update();
-            }, { live: false }), "The finest stored level whose region in view fits this, and no finer than a pixel there")
-          : "",
-        el("label", { style: "display: flex; gap: 6px; align-items: center" }, (() => {
-          const cb = el("input", { type: "checkbox" }) as HTMLInputElement;
-          cb.checked = s.denoise;
-          cb.onchange = () => this.save((x) => (x.denoise = cb.checked));
-          return cb;
-        })(), "Smooth the first frames after a change (host)"),
-        field("Samples per pixel", this.sliderNum(s.maxSamples, 16, 4096, 16, (v) => this.save((x) => (x.maxSamples = Math.max(1, Math.round(v)))), { title: "When a still view stops refining" })),
-        el("h4", {}, "Movie"),
-        ...keyframeRows,
-        button("Add keyframe from the view", () => this.addKeyframe()),
-        el("div", { style: "display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px" },
-          field("fps", numberInput(s.movie.fps, (v) => this.save((x) => (x.movie.fps = v)), { style: "width: 50px" })),
-          field("width", numberInput(s.movie.width, (v) => this.save((x) => (x.movie.width = v)), { style: "width: 70px" })),
-          field("height", numberInput(s.movie.height, (v) => this.save((x) => (x.movie.height = v)), { style: "width: 70px" })),
-          field("samples", numberInput(s.movie.samples, (v) => this.save((x) => (x.movie.samples = v)), { style: "width: 60px" })),
-          field("camera", select([["smooth", "slows at keyframes"], ["linear", "steady"]], s.movie.easing, (v) => this.save((x) => (x.movie.easing = v as "smooth" | "linear"))))),
-        el("div", { style: "display: flex; gap: 6px; flex-wrap: wrap" },
-          button("Save still (PNG)", () => void this.saveStill(), "The view now at the movie's size, path-traced to twice its samples"),
-          button("Render movie on the host", () => void this.renderMovie()),
-          movie?.status === "running" ? button("Cancel", () => void this.service?.cancelMovie(movie.id)) : "",
-          movie?.status === "done" ? button("Download", () => void this.service!.movieFile(movie.id).then((b) => downloadBlob(b, "anatomical-rendering.mp4"))) : ""),
-        el("div", { style: "display: flex; gap: 6px; flex-wrap: wrap; align-items: end; margin-top: 4px" },
-          field("rotate", select([["vertical", "about the vertical"], ["horizontal", "about the horizontal"]], s.rotation.axis, (v) => this.save((x) => (x.rotation.axis = v as "vertical" | "horizontal")))),
-          field("circle", select([["360", "full"], ["180", "half"]], String(s.rotation.degrees), (v) => this.save((x) => (x.rotation.degrees = Number(v))))),
-          field("step °", numberInput(s.rotation.step, (v) => this.save((x) => (x.rotation.step = Math.max(0.25, v))), { step: "1", style: "width: 50px" })),
-          button("Render rotation", () => void this.renderRotation(), "A turn about the position from the view now, at the movie's size and samples")),
-        el("h4", {}, "Splat (for the web, phones and VR)"),
-        el("p", { class: "muted", style: "font-size: 11px; margin: 2px 0" },
-          "The look now (preset, colours, cuts, crops; the light held where it is) path-traced from all round the position, then fitted with 3-D Gaussians that any browser draws at full speed. A change to the look needs a new splat.",
-          s.where === "host" && this.serviceInfo?.splats && !this.serviceInfo.splats.ready ? ` This computer cannot fit (${this.serviceInfo.splats.error ?? "no splat Python"}): only the views would be made.` : ""),
-        el("div", { style: "display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px" },
-          field("views", numberInput(s.splat.views, (v) => this.save((x) => (x.splat.views = Math.max(8, Math.round(v)))), { style: "width: 60px" })),
-          field("size", numberInput(s.splat.size, (v) => this.save((x) => (x.splat.size = Math.max(64, Math.round(v)))), { style: "width: 60px", title: "Pixels along the longer side of each view" })),
-          field("samples", numberInput(s.splat.samples, (v) => this.save((x) => (x.splat.samples = Math.max(1, Math.round(v)))), { style: "width: 60px" })),
-          field("from", select([["180", "every side"], ["90", "this half"], ["50", "near this side"]], String(s.splat.cover), (v) => this.save((x) => (x.splat.cover = Number(v))))),
-          field("fit steps", numberInput(s.splat.steps, (v) => this.save((x) => (x.splat.steps = Math.max(0, Math.round(v)))), { style: "width: 70px", title: "0: render the views only" }))),
-        el("div", { style: "display: flex; gap: 6px; flex-wrap: wrap" },
-          button("Make a splat on the host", () => void this.makeSplat(), "Runs on the computer that renders; it shows in the Jobs tab"),
-          this.splat?.files.includes("scene.splat") ? button("View splat", () => void this.viewSplat()) : "",
-          button("Open a splat file…", () => this.openSplatFile(), "A .splat or 3-D Gaussian splatting .ply from this device")),
-        statusEl,
       );
       this.statusUpdate?.();
     };
@@ -1289,6 +1445,11 @@ class AnatomicalRendering {
     };
   }
 
+  /** A section of the panel: a card whose open state is kept in this browser; `attention` opens it whatever was kept. */
+  private section(id: string, title: string, attention: boolean, open: boolean, ...children: (Node | string)[]): HTMLElement {
+    return card(`anatomical.${id}`, title, { open, attention }, ...children);
+  }
+
   dispose(): void {
     this.closeSession();
     this.handle?.dispose();
@@ -1300,6 +1461,10 @@ class AnatomicalRendering {
 
 export const plugin: PluginModule = {
   activate(ctx: PlatformContext) {
+    const style = document.createElement("style");
+    style.textContent = STYLE;
+    document.head.append(style);
+    ctx.subscriptions.push(() => style.remove());
     const r = new AnatomicalRendering(ctx);
     ctx.subscriptions.push(() => r.dispose());
   },

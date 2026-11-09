@@ -42,7 +42,7 @@ plugins/
 
 1. Copy a plugin folder close to what you need:
    [`track-filtering`](plugins/track-filtering/) or
-   [`volume-view`](plugins/volume-view/) for a tool, or
+   [`filters`](plugins/filters/) for a tool, or
    [`zarr-vectors`](plugins/zarr-vectors/) for a data format.
 2. Give it a manifest with a unique `id`, and import the platform only as
    `@ngplatform/sdk`.

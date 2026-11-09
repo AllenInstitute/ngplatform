@@ -643,7 +643,7 @@ class Movie:
                 view["width"], view["height"], view["scale"] = width, height, 1.0
                 st = S._state(view, R)
                 R.set_view(st)
-                R.step(samples)
+                R.step_beside(samples, lambda: self.cancelled)
                 img = R.image()
                 bg = np.asarray(sp.get("background", (0.08, 0.08, 0.09)), np.float32) * 255
                 a = img[..., 3:4].astype(np.float32) / 255
@@ -748,7 +748,7 @@ class Splat:
                     raise RuntimeError("cancelled")
                 v = V.capture_view(view, cam, width, height, near, far, light)
                 R.set_view(S._state(v, R))
-                R.step(samples)
+                R.step_beside(samples, lambda: self.cancelled)
                 rgb, alpha = R.image(premultiplied=False)
                 name = f"images/{i:05d}.png"
                 Image.fromarray(np.dstack([rgb, alpha]), "RGBA").save(self.out_dir / name)
@@ -1064,7 +1064,7 @@ class Handler(BaseHTTPRequestHandler):
                         # The still is of the view in the page: the finer detail held for it too.
                         R.set_detail(rmod.Detail(held.data, held.world_from_voxel.copy()))
                     R.set_view(s._state(view, R))
-                    R.step(max(1, min(4096, int(body.get("samples", 256)))))
+                    R.step_beside(max(1, min(4096, int(body.get("samples", 256)))))
                     img = R.image()
                     bg = body.get("background")
                     if bg is not None:

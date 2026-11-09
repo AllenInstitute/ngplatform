@@ -10,8 +10,8 @@ page with WebGPU (`local/`). The user page is
 
 | File | What |
 |---|---|
-| `manifest.ts` | The Render tab, the toggle command and the state slice |
-| `plugin.ts` | The tab; the session with the service for the chosen image (and segmentation); views sent from Neuroglancer's frames (half size while the camera moves, the full size a moment after it stops); the frame loop; keyframes and movies |
+| `manifest.ts` | The Anatomical tool's panel, the toggle command and the state slice |
+| `plugin.ts` | The panel (Render switch and status; Remote, Rendering, Lighting, Crops and Output sections); the session with the service for the chosen image (and segmentation); views sent from Neuroglancer's frames (none while the camera moves, unless it goes far from the picture's: then half size; the full size 200 ms after it stops); the frame loop; keyframes, movie previews and movies as jobs |
 | `client.ts` | The service's HTTP API: through a paired host (`ctx.hosts`, `/svc/render/…`) or at an address |
 | `view.ts` | Pure functions of a frame: physical mm to display coordinates, cut planes, the light's direction, a layer's OME-Zarr source |
 | `draw.ts` | The frame in the 3-D view (`draw3d`): colour, and depth where each ray first meets tissue, so other layers are hidden behind it |
@@ -35,10 +35,32 @@ The parameter block both renderers read is laid out once, in
 | `PUT /sessions/<id>/view` | A view: `inv_view_projection` (column-major), `width`, `height`, `scale`, `world_from_physical`, `unit_mm`, `preset`, `overrides`, `light`, `clips`, `labels`, `background`, `max_samples`, `aperture`, `focus`, `orbit_center` |
 | `GET /sessions/<id>/frame?after=N` | The next frame after N (long poll): WebP with alpha, `X-Frame`, `X-Samples`, `X-Version`, `X-Width`, `X-Height` |
 | `GET /sessions/<id>/depth` | The view's depth (GL 0..1, float16, zlib) |
-| `POST /sessions/<id>/movies` `{keyframes, fps, width, height, samples}` | A movie; `GET /movies/<id>` for progress, `/movies/<id>/file` for the MP4 |
+| `POST /sessions/<id>/movies` `{keyframes, fps, width, height, samples, crf?}` | A movie (a preview is one at about 384 px, 8 samples, 12 fps); `GET /movies/<id>` for progress, `/movies/<id>/file` for the MP4. Its passes go to the GPU one at a time (`Renderer.step_beside`), so the live view's wait behind it is one pass, not the frame's |
 
 ## Tests
 
 `npm test` runs `tests/view.test.ts`; the service's are
 `runner/tests/test_render.py` (levels, made levels, presets, keyframes, and,
 with a CUDA GPU, the renderer and the service).
+
+## While the camera moves
+
+A frame comes with the camera it was rendered from and each pixel's
+distance to the tissue, so it is drawn as a surface in space
+(`draw.ts`, a vertex a pixel) with the camera now: while the view turns,
+pans or zooms, the picture stays where the tissue is and moves with it,
+and nothing new is rendered. When the camera has been still for 200 ms
+the full-size view is rendered again. A camera that goes far from the
+picture's (`farFrom`: turned past 20°, twice as near or far, or the
+position near the picture's edge) gets quick half-size pictures while it
+moves, each placed in space too. "Moving" is Neuroglancer's drag or wheel,
+or the camera changing frame after frame (the 3-D view's momentum, keys
+held). A frame is never drawn flat (stuck to the screen) in place of one
+placed in space: one that comes before the answer to its view waits for
+it, and one without its distances fetches them; only a host that gives no
+distances is drawn flat. Triangles spanning a jump in distance of more
+than 8 % are left out while the camera is away from the picture's (a
+brief gap at a fold's edge rather than a stretched skin), and kept at the
+picture's own camera. With `localStorage["ngplatform.debug"]` set,
+`window.anatomicalRendering.drawer.stats` counts draws placed in space,
+flat, and flat while moving.
