@@ -218,7 +218,51 @@ def test_service_session(tmp_path, monkeypatch):
     assert h["Content-Type"] == "image/jpeg" and Image.open(_io.BytesIO(data[:off])).size == (32, 24)
     alpha = np.frombuffer(zlib.decompress(data[off:]), np.uint8).reshape(24, 32)
     assert alpha[12, 16] > 128 and alpha[0, 0] == 0
+    # A page that lacks this view's points gets them in the same answer: every second pixel's distance,
+    # as float16 over a scale; one that has them does not.
+    st, h, data = call("GET", f"/sessions/{s['id']}/frame?after=0&timeout=20&have=-1", raw=True)
+    doff = int(h["X-Distance-Offset"])
+    w, hh, scale = int(h["X-Distance-Width"]), int(h["X-Distance-Height"]), float(h["X-Distance-Scale"])
+    dist = np.frombuffer(zlib.decompress(data[doff:]), np.float16).astype(np.float32).reshape(hh, w)
+    assert (w, hh) == (16, 12) and dist[6, 8] > 0 and dist[0, 0] < 0
+    near = framing_radius(lo, hi, 30) - 0.35 * 48 * 0.5  # the camera to the ball's surface (mm), roughly
+    assert abs(dist[6, 8] * scale - near) < 0.25 * near, (dist[6, 8] * scale, near)
+    st, h, data = call("GET", f"/sessions/{s['id']}/frame?after=0&timeout=20&have={h['X-Version']}", raw=True)
+    assert "X-Distance-Offset" not in h
+    # The camera stops (the same camera, full size): no noisy first frames; the first one published has
+    # the samples a still view is held for.
+    v = call("PUT", f"/sessions/{s['id']}/view", {"inv_view_projection": np.linalg.inv(cam.view_projection(64, 48)).T.ravel().tolist(), "width": 64, "height": 48,
+                                                "max_samples": 64, "frame_format": "jpeg"})["version"]
+    for _ in range(50):
+        st, h, data = call("GET", f"/sessions/{s['id']}/frame?after={after}&timeout=20", raw=True)
+        after = int(h["X-Frame"])
+        if int(h["X-Version"]) == v:
+            break
+    assert int(h["X-Samples"]) >= server.HOLD_STILL[0], h["X-Samples"]
     srv.shutdown()
+
+
+@needs_gpu
+def test_a_session_no_page_watches_stops_rendering(tmp_path, monkeypatch):
+    from ngplatform_render import server
+
+    monkeypatch.setenv("NGP_RENDER_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setattr(server, "UNWATCHED_SECONDS", 0.3)
+    url = write_store(tmp_path / "s.ome.zarr", ball(48), levels=1)
+    sess = server.Session("s", {"volume": {"url": url}}, 0)
+    for _ in range(200):
+        if sess.status != "loading":
+            break
+        time.sleep(0.05)
+    lo, hi = bounds(sess.loaded.affine, sess.loaded.data.shape)
+    cam = orbit((lo + hi) / 2, framing_radius(lo, hi, 30), 0, 0)
+    sess.set_view({"inv_view_projection": np.linalg.inv(cam.view_projection(64, 48)).T.ravel().tolist(), "width": 64, "height": 48, "max_samples": 10**6})
+    time.sleep(1.0)
+    a = sess.frame_number
+    time.sleep(0.5)
+    assert sess.frame_number == a  # no page asked for 0.3 s: it waits
+    assert sess.wait_frame(a, 5.0) is not None  # a page asks: it goes on
+    sess.close()
 
 
 @needs_gpu
@@ -240,11 +284,18 @@ def test_fast_tracking_is_close_and_passes_stop_for_a_new_view():
     # Steps a voxel long, the collision found by bisection: within a few per cent of exact tracking
     # (measured: -0.3% at 20 per mm, -3% at 40, -7% at 80 on this ball of 0.5 mm voxels).
     assert abs(means[1] - means[0]) < 0.05 * means[0], means
-    # A pass in bands stops when asked, and does not count as a sample.
+    # A pass stops when asked, and does not count as a sample; the next one runs whole.
     R.set_view(renderer.RenderState(np.linalg.inv(cam.view_projection(96, 72)), 96, 72, p))
-    R._band_rows = 8
     assert R.step(1, stop=lambda: True) == 0
     assert R.step(1, stop=lambda: False) == 1
+    # Cut short while it runs: the blocks not yet started add nothing (a large frame, cut at once).
+    R.set_view(renderer.RenderState(np.linalg.inv(cam.view_projection(1600, 1200)), 1600, 1200, p, denoise=False))
+    R.step(1, stop=lambda: True)
+    R.synchronize()
+    cut = int((R._accum[..., 3] > 0).sum())
+    R.step(1)
+    R.synchronize()
+    assert cut < int((R._accum[..., 3] > 0).sum()), cut
 
 
 def test_movie_names_stay_in_their_folder():
@@ -424,6 +475,50 @@ def test_detail_plan_picks_the_level_the_view_needs():
     assert i2 == 1
     # Nothing in view: nothing to read.
     assert detail.plan(inv, W, H, np.full_like(dist, -1.0), levels, 1.0, 1e9) is None
+
+
+@needs_gpu
+def test_brick_bounds_reach_one_voxel_past_a_brick():
+    from ngplatform_render import renderer
+    import cupy as cp
+
+    data = np.zeros((16, 16, 16), np.uint16)
+    data[6, 6, 6] = 65535  # inside brick (1, 1, 1), two voxels from brick 2
+    _, mx, _ = renderer.brick_bounds(cp, data, brick=4)
+    mx = cp.asnumpy(mx)
+    assert mx[1, 1, 1] == 1.0 and (mx > 0).sum() == 1
+    data[6, 6, 6] = 0
+    data[7, 7, 7] = 65535  # on brick 2's border along each axis: bricks 1 and 2 (8 of them), no others
+    _, mx, _ = renderer.brick_bounds(cp, data, brick=4)
+    mx = cp.asnumpy(mx)
+    assert (mx > 0).sum() == 8 and mx[1:3, 1:3, 1:3].min() == 1.0
+    # Across the slabs the bounds are made in.
+    data[7, 7, 7] = 0
+    data[4, 9, 9] = 30000
+    mn, mx, _ = renderer.brick_bounds(cp, data, brick=2, slab_bricks=2)
+    mx = cp.asnumpy(mx)
+    assert mx[1, 4, 4] > 0 and mx[2, 4, 4] > 0 and mx[3, 4, 4] == 0
+
+
+def test_detail_loader_hands_over_a_coarser_region_first(tmp_path):
+    from ngplatform_render import detail
+
+    data = (np.arange(32 * 32 * 32) % 251).astype(np.uint8).reshape(32, 32, 32)
+    url = write_store(tmp_path / "r.ome.zarr", data, levels=2)
+    ms = volumes.open_multiscale(url)
+    got: list[tuple[int, tuple]] = []
+    done = threading.Event()
+
+    def ready(req, a):
+        got.append((req["level"], a.shape))
+        if req["level"] == 0:
+            done.set()
+
+    ld = detail.DetailLoader(url, ms, ready, lambda a: a)
+    ld.request([{"level": 1, "lo": (0, 0, 0), "hi": (8, 8, 8)}, {"level": 0, "lo": (0, 0, 0), "hi": (16, 16, 16)}])
+    assert done.wait(20)
+    assert got == [(1, (8, 8, 8)), (0, (16, 16, 16))]
+    ld.close()
 
 
 def test_detail_regions_read_through_the_chunk_cache(tmp_path):

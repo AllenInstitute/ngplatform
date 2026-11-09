@@ -9,7 +9,7 @@
  */
 import type { Disposer, Frame3d, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { button, clear, downloadBlob, el, field, numberInput, select } from "@ngplatform/sdk/dom";
-import { hostLink, type Link, type MovieInfo, type PresetInfo, RenderService, type ServiceInfo, type SessionInfo, type ViewSpec } from "./client.js";
+import { type Distance, hostLink, type Link, type MovieInfo, type PresetInfo, RenderService, type ServiceInfo, type SessionInfo, type ViewSpec } from "./client.js";
 import { PictureDrawer } from "./draw.js";
 import { ColourmapEditor, type DataStop, histogramHandles, shifted, type Tuning, type WarpPoint, warpInverse } from "./editor.js";
 import { LocalRenderer, PRESETS as LOCAL_PRESETS } from "./local/local.js";
@@ -177,7 +177,7 @@ class AnatomicalRendering {
   private queued: ViewSpec | undefined;
   private settle: ReturnType<typeof setTimeout> | undefined;
   private depth: { version: number; width: number; height: number; data: Float32Array } | undefined;
-  private distance: { version: number; width: number; height: number; data: Float32Array } | undefined;
+  private distance: Distance | undefined;
   /** The camera (inverse view-projection, column-major) of each view sent, by the version the host gave it. */
   private views = new Map<number, number[]>();
   private lastCursor: number[] | undefined;
@@ -206,6 +206,7 @@ class AnatomicalRendering {
     this.saved = readSaved(ctx.state.get());
     this.host = { name: ctx.settings.get<HostSetting>(HOST_KEY)?.name || undefined };
     this.drawer.onFrame = (frame) => this.onFrame(frame);
+    this.drawer.onFading = () => this.handle?.redraw();
     this.toggle = ctx.ui.viewToggle({ label: "Render", title: "Path-traced rendering (Anatomical rendering)", value: this.saved.on, onChange: (v) => this.setOn(v) });
     this.offs.push(
       ctx.viewer.onLayersChanged(() => this.update()),
@@ -671,19 +672,23 @@ class AnatomicalRendering {
     let after = 0;
     while (!signal.aborted) {
       try {
-        const f = await service.frame(id, after, signal);
+        const f = await service.frame(id, after, signal, this.distance?.version ?? -1);
         if (f === undefined) continue;
         after = f.number;
-        if (this.depth === undefined || this.depth.version !== f.version) {
-          const [d, dist] = await Promise.all([service.depth(id), service.distance(id).catch(() => undefined)]);
+        if (f.distance !== undefined) this.distance = f.distance;
+        const cam = this.views.get(f.version);
+        const meshed = cam !== undefined && this.distance?.version === f.version;
+        if (!meshed && (this.depth === undefined || this.depth.version !== f.version)) {
+          // Drawn flat (an older host, or a frame that came before its view's answer): its GL depth, and
+          // the distances if the frame did not bring them.
+          const [d, dist] = await Promise.all([service.depth(id), this.distance?.version === f.version ? undefined : service.distance(id).catch(() => undefined)]);
           if (d !== undefined) this.depth = d;
-          this.distance = dist;
+          if (dist !== undefined) this.distance = dist;
         }
         // With the camera it was rendered from and each pixel's distance, the frame is drawn as points in
         // space: it turns and zooms with the view at once, not only when the next frame comes.
-        const cam = this.views.get(f.version);
-        const view = cam && this.distance && this.distance.version === f.version && this.distance.width === f.width ? { invViewProjection: cam, distance: this.distance } : undefined;
-        this.drawer.set({ bitmap: f.bitmap, alpha: f.alpha ? { width: f.width, height: f.height, data: f.alpha } : undefined, depth: this.depth, view });
+        const view = cam && this.distance && this.distance.version === f.version ? { invViewProjection: cam, distance: this.distance } : undefined;
+        this.drawer.set({ bitmap: f.bitmap, alpha: f.alpha ? { width: f.width, height: f.height, data: f.alpha } : undefined, depth: view ? undefined : this.depth, view });
         this.frameText = `${f.samples} samples, ${f.width}×${f.height}, ${f.msPerPass.toFixed(0)} ms a pass${f.detail ? `\nDetail: ${f.detail}` : ""}`;
         this.handle?.redraw();
         this.statusUpdate?.();

@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import math
 import os
 import re
 import secrets
@@ -42,6 +43,23 @@ from .presets import Preset, builtin
 MAX_BODY = 8 << 20
 _LOCAL_ORIGIN = re.compile(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$")
 IDLE_SECONDS = 20 * 60
+# A session stops rendering when no page has waited for its frames for this long (a closed tab), and
+# goes on when one does.
+UNWATCHED_SECONDS = 5.0
+
+
+# Keeping a still view steady: when the camera stops (or the look changes) the frame shown stays until
+# the new image has HOLD_STILL[0] samples or HOLD_STILL[1] s have passed; when finer detail comes, until
+# it has as many samples as the frame shown (at most HOLD_SWAP[0]: past the denoiser's blur) or
+# HOLD_SWAP[1] s have passed. (The page fades each frame of the same camera in over the one before.)
+HOLD_STILL = (12, 0.4)  # 12: renderer.DENOISE_UNTIL, so the denoiser's blur is not shown and then lost
+HOLD_SWAP = (24, 2.0)
+# A still view's first samples are tracked fast (as the moving frames are), then exactly.
+FAST_FIRST = 32
+# While the camera moves, the detail is planned at most this often (s).
+PLAN_MOVING_S = 0.3
+# A detail region of more voxels than this is read at the next coarser level first.
+COARSER_FIRST = 24e6
 
 
 class BadRequest(Exception):
@@ -82,9 +100,18 @@ class Session:
         # number, samples, version, the encoded frame, w, h, its type, where its alpha plane starts (jpeg) or 0
         self.frame: tuple[int, int, int, bytes, int, int, str, int] | None = None
         self.frame_number = 0
-        self.depth: tuple[int, bytes, int, int, bytes] | None = None  # version, GL depth (float16), w, h, distance (float32)
+        # version, GL depth (H, W float32), w, h, distance (H, W float32); packed for the page only when asked (packed()).
+        self.depth: tuple[int, np.ndarray, int, int, np.ndarray] | None = None
+        self._packed: dict[tuple[int, str], tuple[bytes, dict[str, str]]] = {}
+        # A still view kept steady: the frame shown last (its version, camera, samples), and a hold on
+        # publishing until the new image has a few samples.
+        self._shown: tuple[int, Any, int] | None = None
+        self._hold: tuple[int, float] | None = None
+        self._last_plan = 0.0
         self.max_samples = 1024
         self.last_used = time.time()
+        self._watchers = 0
+        self._watched = time.time()
         self.closed = False
         self.passes_ms = 0.0
         # Finer detail where the view looks (detail.py): the levels finer than the loaded one, the loader,
@@ -202,8 +229,9 @@ class Session:
                             "voxel_mm": [round(x, 6) for x in lv.voxel_mm], "voxels": int(data.size)}
         return True
 
-    def _plan_detail(self, R, st, dist: np.ndarray) -> None:
-        """Ask for the detail this (still) view needs, or let go of the one held when it needs none."""
+    def _plan_detail(self, R, st, dist: np.ndarray, width: int, height: int) -> None:
+        """Ask for the detail this view needs (at its full size, `width` x `height`: a moving view is drawn
+        smaller, but asks for what it will need when it stops), or let go of the one held when it needs none."""
         from . import detail
 
         L = self.loaded
@@ -212,7 +240,7 @@ class Session:
             shape = tuple(lv.shape[a] for a in self.detail_loader.ms.spatial)  # x, y, z
             levels.append((shape, self._wfp @ lv.affine))
         held = next((k for k, (lvi, _) in enumerate(self.detail_levels) if self.detail_meta and lvi == self.detail_meta["level"]), None)
-        p = detail.plan(st.inv_view_projection, st.width, st.height, dist, levels, detail.voxel_size(self._wfp @ L.affine), self.detail_budget, held=held)
+        p = detail.plan(st.inv_view_projection, width, height, dist, levels, detail.voxel_size(self._wfp @ L.affine), self.detail_budget, held=held)
         if p is None:
             self.detail_loader.cancel()
             if R.detail is not None:
@@ -227,7 +255,28 @@ class Session:
         if cur is not None and cur["level"] == level and detail.contains((cur["lo"], cur["hi"]), (need_lo, need_hi)):
             self.detail_loader.cancel()  # what is held will do
             return
-        self.detail_loader.request({"level": level, "lo": lo, "hi": hi, "need_lo": need_lo, "need_hi": need_hi})
+        chain = [{"level": level, "lo": lo, "hi": hi, "need_lo": need_lo, "need_hi": need_hi}]
+        j = i + 1
+        if math.prod(h - l for l, h in zip(lo, hi)) > COARSER_FIRST and j < len(self.detail_levels) and (held is None or held > j):
+            # A large region: the same region at the next coarser level first (an eighth of the bytes), so
+            # the view sharpens in a second or two, then again when the finer one is read.
+            k = self.detail_levels[j][0]
+            if not (cur is not None and cur["level"] == k and detail.contains((cur["lo"], cur["hi"]), self._map_box(i, j, need_lo, need_hi))):
+                blo, bhi = self._map_box(i, j, lo, hi)
+                nlo, nhi = self._map_box(i, j, need_lo, need_hi)
+                chain.insert(0, {"level": k, "lo": blo, "hi": bhi, "need_lo": nlo, "need_hi": nhi})
+        self.detail_loader.request(chain)
+
+    def _map_box(self, i: int, j: int, lo, hi) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+        """A box (lo, hi exclusive; x, y, z) of detail level i as a box of level j that holds it."""
+        a, b = self.detail_levels[i][1], self.detail_levels[j][1]
+        m = np.linalg.inv(b.affine) @ a.affine
+        corners = np.array([[x, y, z, 1.0] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])])
+        v = (corners @ m.T)[:, :3]
+        n = np.array([b.shape[ax] for ax in self.detail_loader.ms.spatial], float)
+        blo = np.clip(np.floor(v.min(0)), 0, n - 1).astype(int)
+        bhi = np.clip(np.ceil(v.max(0)), 1, n).astype(int)
+        return tuple(int(x) for x in blo), tuple(int(x) for x in bhi)
 
     def detail_text(self) -> str:
         """What detail is held or being read, in a few words (the X-Detail header)."""
@@ -244,11 +293,40 @@ class Session:
             return "coarse level (no finer detail needed here)"
         return f"level {m['path']} ({min(m['voxel_mm']):.3g} mm) where you look, {m['voxels'] / 1e6:.0f} M voxels"
 
+    def packed(self, version: int, kind: str) -> tuple[bytes, dict[str, str]] | None:
+        """The view `version`'s depth for the page, deflated, with its headers (made once, when first asked):
+        "depth" (GL depth, float16), "distance" (float32), or "distance16" (every second pixel, as float16
+        of the distance over X-Distance-Scale: the frame's points, a quarter of the bytes)."""
+        with self.cond:
+            d = self.depth
+            if d is None or d[0] != version:
+                return None
+            key = (version, kind)
+            if key in self._packed:
+                return self._packed[key]
+            _, gl, w, h, dist = d
+        if kind == "depth":
+            out = (zlib.compress(gl.astype(np.float16).tobytes(), 1), {"X-Width": str(w), "X-Height": str(h), "X-Format": "float16-zlib"})
+        elif kind == "distance":
+            out = (zlib.compress(np.ascontiguousarray(dist, np.float32).tobytes(), 1), {"X-Width": str(w), "X-Height": str(h), "X-Format": "float32-zlib"})
+        else:
+            half = np.ascontiguousarray(dist[::2, ::2])
+            scale = float(half.max()) if (half > 0).any() else 1.0
+            q = np.where(half >= 0, half / scale, -1.0).astype(np.float16)
+            out = (zlib.compress(q.tobytes(), 1), {"X-Distance-Width": str(half.shape[1]), "X-Distance-Height": str(half.shape[0]),
+                                                   "X-Distance-Scale": repr(scale), "X-Distance-Format": "float16-zlib"})
+        with self.cond:
+            if self.depth is not None and self.depth[0] == version:
+                self._packed = {k: v for k, v in self._packed.items() if k[0] == version}
+                self._packed[(version, kind)] = out
+        return out
+
     # ---------------------------------------------------------------- views
     def set_view(self, view: dict[str, Any]) -> int:
         with self.cond:
             self.view = view
             self.view_version += 1
+            self._watched = time.time()
             self.max_samples = int(view.get("max_samples") or 1024)
             self.last_used = time.time()
             self.cond.notify_all()
@@ -342,8 +420,9 @@ class Session:
             boxes=self._boxes(view, L),
             label_colors=colors, keep_labels=keep, label_mix=mix,
             background=tuple(view.get("background", (0, 0, 0, 0))),
-            # While the camera moves (frames below full size): fast tracking and at most 2 bounces.
-            max_bounces=int(view.get("max_bounces", 4)) if scale >= 1 else min(2, int(view.get("max_bounces", 4))),
+            # While the camera moves (frames below full size): fast tracking, with as many bounces as a still
+            # view (at 2 the moving frames were 10-17 levels darker, a jump in colour each time the camera stopped).
+            max_bounces=int(view.get("max_bounces", 4)),
             fast=1.0 if scale < 1 else 0.0,
             denoise=bool(view.get("denoise", True)),
             aperture=float(view.get("aperture", 0.0)), focus=float(view.get("focus", 0.0)),
@@ -355,16 +434,18 @@ class Session:
         R = self.renderer
         last_publish = 0.0
         batch = 1
+        still_fast = False
         while not self.closed:
             with self.cond:
-                while not self.closed and self._detail_pending is None and (
-                        self.view is None or (self.applied_version == self.view_version and R.samples >= self.max_samples)):
+                while not self.closed and (self._unwatched() or (self._detail_pending is None and (
+                        self.view is None or (self.applied_version == self.view_version and R.samples >= self.max_samples)))):
                     self.cond.wait(timeout=1.0)
                 if self.closed:
                     return
                 version, view = self.view_version, self.view
             try:
-                if self._take_detail(R):
+                swapped = self._take_detail(R)
+                if swapped:
                     self.applied_version = -1  # the view starts again, with the detail
                 if view is None:
                     continue
@@ -372,38 +453,47 @@ class Session:
                     st = self._state(view)
                     R.set_view(st)
                     d = R.depth()
-                    if self.detail_loader is not None and not st.fast:
-                        self._plan_detail(R, st, d[..., 1])
-                    dz = zlib.compress(d[..., 0].astype(np.float16).tobytes(), 1)
-                    # The distance along each pixel's ray to where it first meets tissue (-1: none), float32:
-                    # what the page rebuilds the frame's points from, to draw it moving with the view.
-                    dd = zlib.compress(np.ascontiguousarray(d[..., 1], np.float32).tobytes(), 1)
                     with self.cond:
-                        self.depth = (version, dz, st.width, st.height, dd)
+                        self.depth = (version, d[..., 0], st.width, st.height, d[..., 1])
+                    # Planned for a still view, and while moving (now and then: the read starts before the
+                    # camera stops, from what the view is coming to).
+                    if self.detail_loader is not None and (not st.fast or time.time() - self._last_plan > PLAN_MOVING_S):
+                        self._plan_detail(R, st, d[..., 1], int(view["width"]), int(view["height"]))
+                        self._last_plan = time.time()
                     self.applied_version = version
                     batch = 1
                     last_publish = 0.0
-                    if not st.fast:
-                        # A still view: one fast pass first, published at once, then exact samples from the start.
+                    shown = self._shown
+                    same_camera = shown is not None and np.allclose(shown[1], view["inv_view_projection"])
+                    self._hold = None
+                    if not st.fast and same_camera:
+                        # The view the page shows already (the camera stopped, the look changed, finer detail
+                        # came): no noisy first frames; the frame shown stays until the new image has a few
+                        # samples (the page then fades it in).
+                        if swapped:
+                            self._hold = (max(1, min(shown[2], HOLD_SWAP[0])), time.time() + HOLD_SWAP[1])
+                        else:
+                            self._hold = (HOLD_STILL[0], time.time() + HOLD_STILL[1])
+                    # (A still view of something else: its first pass is published at once, below.)
+                    # A still view's first FAST_FIRST samples by fast tracking, then exact ones added to them:
+                    # the image comes several times sooner, looks as the moving frames did, and goes over
+                    # smoothly to exact tracking's (the fast samples' share of the mean shrinking).
+                    still_fast = not st.fast
+                    if still_fast:
                         R.set_fast(1.0)
-                        R.step(1, stop=lambda: self.view_version != version)
-                        R.synchronize()
-                        self._publish(version, R)
-                        R.set_fast(0.0)
-                        R.reset()
-                        if self.view_version != version:
-                            continue
                 t = time.time()
                 done = 0
                 changed = lambda: self.view_version != version  # noqa: E731
                 for _ in range(batch):
-                    # A pass at a time, in bands of rows, so a new view (the camera moving) is taken up
-                    # after the band under way, not after the pass or the batch.
+                    # A pass at a time, cut short when a new view comes (the camera moving).
                     R.step(1, stop=changed)
                     R.synchronize()
                     done += 1
                     if changed():
                         break
+                    if still_fast and R.samples >= FAST_FIRST:
+                        R.set_fast(0.0)
+                        still_fast = False
                 dt = (time.time() - t) / done
                 self.passes_ms = dt * 1000
                 # Batches of about 60 ms of work between frames published.
@@ -411,9 +501,14 @@ class Session:
                 if self.view_version != version:
                     continue
                 n = R.samples
+                if self._hold is not None:
+                    if n < self._hold[0] and n < self.max_samples and time.time() < self._hold[1]:
+                        continue
+                    self._hold = None
+                    last_publish = 0.0
                 pow2 = n & (n - 1) == 0
                 if pow2 or time.time() - last_publish > 0.25 or n >= self.max_samples:
-                    self._publish(version, R)
+                    self._publish(version, R, view)
                     last_publish = time.time()
             except BadRequest as e:
                 self.error = str(e)
@@ -425,7 +520,7 @@ class Session:
                 traceback.print_exc()
                 time.sleep(0.5)
 
-    def _publish(self, version: int, R=None) -> None:
+    def _publish(self, version: int, R=None, view: dict[str, Any] | None = None) -> None:
         from PIL import Image
 
         R = R if R is not None else self.renderer  # the loop's own (close() lets go of the session's)
@@ -444,21 +539,35 @@ class Session:
             img = R.image()
             Image.fromarray(img, "RGBA").save(b, "WEBP", quality=88, method=0)
             offset, kind, (h, w) = 0, "image/webp", img.shape[:2]
+        v = view if view is not None else self.view
+        if v is not None:
+            self._shown = (version, v["inv_view_projection"], R.samples)
         with self.cond:
             self.frame_number += 1
             self.frame = (self.frame_number, R.samples, version, b.getvalue(), w, h, kind, offset)
             self.cond.notify_all()
 
+    def _unwatched(self) -> bool:
+        """No page has waited for a frame for a while (called with the lock held)."""
+        return self._watchers == 0 and time.time() - self._watched > UNWATCHED_SECONDS
+
     def wait_frame(self, after: int, timeout: float):
         end = time.time() + timeout
         with self.cond:
-            while not self.closed and (self.frame is None or self.frame[0] <= after):
-                left = end - time.time()
-                if left <= 0:
-                    return None
-                self.cond.wait(timeout=left)
-            self.last_used = time.time()
-            return self.frame
+            self._watchers += 1
+            self._watched = time.time()
+            self.cond.notify_all()  # a session that had stopped for want of a page goes on
+            try:
+                while not self.closed and (self.frame is None or self.frame[0] <= after):
+                    left = end - time.time()
+                    if left <= 0:
+                        return None
+                    self.cond.wait(timeout=left)
+                self.last_used = time.time()
+                return self.frame
+            finally:
+                self._watchers -= 1
+                self._watched = time.time()
 
     def close(self) -> None:
         with self.cond:
@@ -727,6 +836,14 @@ class Handler(BaseHTTPRequestHandler):
                     extra = {"X-Alpha-Offset": str(offset)} if offset else {}
                     if s.detail_loader is not None:
                         extra["X-Detail"] = s.detail_text()
+                    if q.get("have") is not None and int(q["have"]) != version:
+                        # The frame's points (each pixel's distance), for a page that has none for this view yet:
+                        # in the same answer, so a moving view is one request a frame, not three.
+                        pk = s.packed(version, "distance16")
+                        if pk is not None:
+                            extra["X-Distance-Offset"] = str(len(data))
+                            extra.update(pk[1])
+                            data = data + pk[0]
                     self._send(200, data, kind, {"X-Frame": str(n), "X-Samples": str(samples), "X-Version": str(version),
                                                  "X-Width": str(w), "X-Height": str(h), "X-Ms-Per-Pass": f"{s.passes_ms:.1f}", **extra})
                 elif method == "POST" and rest == ["resolve"]:
@@ -750,16 +867,11 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(200, presets_mod.resolved(p, vol).to_dict())
                 elif method == "GET" and rest == ["depth"]:
                     d = s.depth
-                    if d is None:
+                    pk = s.packed(d[0], "distance" if q.get("channel") == "distance" else "depth") if d is not None else None
+                    if pk is None:
                         self._send(204, b"")
                         return
-                    version, dz, w, h, dd = d
-                    if q.get("channel") == "distance":
-                        self._send(200, dd, "application/octet-stream", {"X-Version": str(version), "X-Width": str(w), "X-Height": str(h),
-                                                                         "X-Format": "float32-zlib"})
-                    else:
-                        self._send(200, dz, "application/octet-stream", {"X-Version": str(version), "X-Width": str(w), "X-Height": str(h),
-                                                                         "X-Format": "float16-zlib"})
+                    self._send(200, pk[0], "application/octet-stream", {"X-Version": str(d[0]), **pk[1]})
                 elif method == "POST" and rest == ["still"]:
                     # One view, path-traced to a sample count at a size, as a PNG (a renderer of its own).
                     from PIL import Image

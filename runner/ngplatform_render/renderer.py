@@ -9,6 +9,7 @@ sample count starts the mean again.
 
 from __future__ import annotations
 
+import ctypes
 import threading
 import time
 from dataclasses import dataclass, field
@@ -19,7 +20,6 @@ import numpy as np
 from . import kernels
 from .presets import Preset, material_table, transfer_table
 
-BAND_MS = 15.0  # how long a band of a pass takes (step with stop): a new view waits at most about this
 BRICK = 4  # majorant bricks: 4 voxels a side (8 took about 60% longer a pass, its majorants looser at surfaces)
 DENOISE_UNTIL = 12
 
@@ -127,10 +127,16 @@ def _tex_for(cp, data: np.ndarray):
 
 
 def brick_bounds(cp, data, brick: int = BRICK, slab_bricks: int = 16):
-    """The least and greatest value (0..1) in each brick of `brick` voxels a side, with one
-    voxel of overlap (trilinear samples near a face read the neighbour). `data` is a host (numpy)
-    or GPU array; it goes to the GPU a slab of bricks at a time, so the memory this takes beyond the
-    volume's texture is a slab's, not the volume's again."""
+    """The least and greatest value (0..1) in each brick of `brick` voxels a side and the one voxel
+    around it (a trilinear sample in the brick reads no further). `data` is a host (numpy) or GPU
+    array; it goes to the GPU a slab of bricks at a time, so the memory this takes beyond the
+    volume's texture is a slab's, not the volume's again.
+
+    (Bricks once took their whole neighbours' extremes: one bright voxel of noise in a mounting
+    medium then set the majorant of 27 bricks, 12 voxels a side, and a view through the medium
+    took tens of times as long.)"""
+    from cupyx.scipy import ndimage
+
     nz, ny, nx = data.shape
     scale = 255.0 if data.dtype == np.uint8 else 65535.0
     gz, gy, gx = (-(-n // brick) for n in (nz, ny, nx))
@@ -138,19 +144,20 @@ def brick_bounds(cp, data, brick: int = BRICK, slab_bricks: int = 16):
     mx = cp.empty((gz, gy, gx), cp.float32)
     for z0 in range(0, gz, slab_bricks):
         z1 = min(gz, z0 + slab_bricks)
-        v = cp.asarray(data[z0 * brick:min(nz, z1 * brick)])
-        pad = [(0, (z1 - z0) * brick - v.shape[0]), (0, gy * brick - ny), (0, gx * brick - nx)]
+        # The slab's voxels and one more on each side (z), so the filters see across slabs.
+        a0, a1 = z0 * brick, min(nz, z1 * brick)
+        h0, h1 = max(0, a0 - 1), min(nz, a1 + 1)
+        v = cp.asarray(data[h0:h1])
+        lo = ndimage.minimum_filter(v, size=3, mode="nearest")[a0 - h0:a0 - h0 + (a1 - a0)]
+        hi = ndimage.maximum_filter(v, size=3, mode="nearest")[a0 - h0:a0 - h0 + (a1 - a0)]
+        del v
+        pad = [(0, (z1 - z0) * brick - (a1 - a0)), (0, gy * brick - ny), (0, gx * brick - nx)]
         if any(p[1] for p in pad):
-            v = cp.pad(v, pad, mode="edge")
-        b = v.reshape(z1 - z0, brick, gy, brick, gx, brick)
-        mn[z0:z1] = b.min(axis=(1, 3, 5)).astype(cp.float32)
-        mx[z0:z1] = b.max(axis=(1, 3, 5)).astype(cp.float32)
-        del v, b
-    # Overlap: a brick also takes its neighbours' extremes (conservative for interpolation).
-    for ax in range(3):
-        for s in (1, -1):
-            mn = cp.minimum(mn, cp.roll(mn, s, axis=ax))
-            mx = cp.maximum(mx, cp.roll(mx, s, axis=ax))
+            lo = cp.pad(lo, pad, mode="edge")
+            hi = cp.pad(hi, pad, mode="edge")
+        mn[z0:z1] = lo.reshape(z1 - z0, brick, gy, brick, gx, brick).min(axis=(1, 3, 5)).astype(cp.float32)
+        mx[z0:z1] = hi.reshape(z1 - z0, brick, gy, brick, gx, brick).max(axis=(1, 3, 5)).astype(cp.float32)
+        del lo, hi
     return mn / scale, mx / scale, (gx, gy, gz)
 
 
@@ -213,8 +220,17 @@ class Renderer:
         self._world_from_vox_label = None
         self.samples = 0
         self._frame = 0
-        self._band_rows: int | None = None  # rows a band of a pass takes (step with stop)
+        # A pass is cut short by writing its number here: an int in host memory the GPU reads (step with stop).
+        # Mapped and portable; with unified addressing (64-bit Linux and Windows) the GPU uses the same address.
+        self._cut_host = cp.cuda.runtime.hostAlloc(4, 3)  # cudaHostAllocPortable | cudaHostAllocMapped
+        ctypes.c_int32.from_address(self._cut_host).value = 0
+        self._cut = cp.ndarray((1,), cp.int32, cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(self._cut_host, 4, self, device_id=device), 0))
+        self._pass = 0
         self._tf_key: Any = None
+        # What the majorant grids were last made from (the transfer function and density): a new camera alone
+        # leaves them as they are.
+        self._maj_key: Any = None
+        self._dmaj_key: Any = None
         self._label_ids = np.zeros(0, np.int64)
         self._env_tex = None
         self._env_arr = None
@@ -231,6 +247,7 @@ class Renderer:
             self._maj = cp.zeros(bmin.size, cp.float32)
             self.volume = volume
             self._tf_key = None
+            self._maj_key = None
             self.reset()
 
     def set_detail(self, detail: Detail | None) -> None:
@@ -239,6 +256,7 @@ class Renderer:
         with self.lock, self.device:
             self.detail = None
             self._dtex = self._darr = None
+            self._dmaj_key = None
             if detail is None:
                 return
             tex, arr = _tex_for(cp, detail.data)
@@ -267,8 +285,6 @@ class Renderer:
         """Fast tracking (steps of `step` voxels through dense bricks), or exact tracking (0), for the passes to come."""
         with self.lock, self.device:
             self._params[kernels.OFFSETS["FAST"]] = float(step)
-            if step == 0 and self._band_rows:
-                self._band_rows = max(8, self._band_rows // 6)  # exact passes take several times as long
 
     def reset(self) -> None:
         self.samples = 0
@@ -285,7 +301,8 @@ class Renderer:
             if self._accum is None or self._accum.shape[:2] != (H, W):
                 self._accum = cp.zeros((H, W, 4), cp.float32)
             self._state = state
-            self._params = cp.asarray(self._pack(state))
+            packed = self._pack(state)
+            self._params = cp.asarray(packed)
             key = (state.preset.key(), self.volume.lo, self.volume.hi)
             if key != self._tf_key:
                 # Colour and opacity, then (after TF_SIZE of them) the surface's specular and roughness.
@@ -295,11 +312,15 @@ class Renderer:
             self._set_env(state.preset.environment.get("map") or None)
             # The first opaque point of each pixel: the denoiser's guide, and the depth the page draws with.
             self._depth_gpu = cp.zeros((H, W, 2), cp.float32)
-            n = self._bmin.size
-            _kernels().get_function("majorant")((-(-n // 256),), (256,), (self._params, self._tf, self._bmin, self._bmax, self._maj, np.int32(n)))
-            if self.detail is not None:
+            mkey = (self._tf_key, float(packed[kernels.OFFSETS["DENSITY"]]))
+            if mkey != self._maj_key:
+                n = self._bmin.size
+                _kernels().get_function("majorant")((-(-n // 256),), (256,), (self._params, self._tf, self._bmin, self._bmax, self._maj, np.int32(n)))
+                self._maj_key = mkey
+            if self.detail is not None and mkey != self._dmaj_key:
                 n = self._dbmin.size
                 _kernels().get_function("majorant")((-(-n // 256),), (256,), (self._params, self._tf, self._dbmin, self._dbmax, self._dmaj, np.int32(n)))
+                self._dmaj_key = mkey
             _kernels().get_function("firsthit")((-(-W // 16), -(-H // 8)), (16, 8), self._args() + (self._depth_gpu, np.int32(W), np.int32(H)))
             self.reset()
 
@@ -455,35 +476,34 @@ class Renderer:
         self._env_tex, self._env_arr, self._env_name = texture.TextureObject(res, tdesc), arr, name
 
     def step(self, n: int = 1, stop=None) -> int:
-        """Adds n samples per pixel; returns the samples so far. With `stop` (a function), each pass
-        is rendered in bands of rows of about BAND_MS of work, and `stop()` is asked after each band:
-        when it is true the pass is left unfinished (the view has changed; set_view starts again)."""
+        """Adds n samples per pixel; returns the samples so far. With `stop` (a function), `stop()` is
+        asked while each pass runs: when it is true the pass is cut short and not counted (the view has
+        changed; set_view starts again). Each pass is one launch over the whole frame (passes in bands of
+        rows left the GPU idle at the end of every band, waiting for its slowest paths)."""
         s = self._state
         if s is None:
             raise RuntimeError("no view")
+        cp = self.cp
         with self.lock, self.device:
             W, H = s.width, s.height
-            block = (16, 8)
             f = _kernels().get_function("trace")
             O = kernels.OFFSETS["FRAME"]
             for _ in range(n):
                 self._frame += 1
+                self._pass += 1
                 self._params[O] = float(self._frame % 16777216)
-                if stop is None:
-                    f((-(-W // 16), -(-H // 8)), block, self._args() + (self._accum, np.int32(W), np.int32(H), np.int32(0), np.int32(H)))
-                else:
-                    y0 = 0
-                    while y0 < H:
-                        rows = max(8, min(H, self._band_rows or -(-H // 8)))
-                        t = time.perf_counter()
-                        f((-(-W // 16), -(-rows // 8)), block, self._args() + (self._accum, np.int32(W), np.int32(H), np.int32(y0), np.int32(y0 + rows)))
-                        self.cp.cuda.Stream.null.synchronize()
-                        ms = (time.perf_counter() - t) * 1000
-                        y0 += rows
-                        # Bands of about BAND_MS: rows scaled by how long this band took.
-                        self._band_rows = int(max(8, min(H, rows * BAND_MS / max(ms, 0.5))))
-                        if y0 < H and stop():
+                f((-(-W // 16), -(-H // 8)), (16, 8), self._args() + (self._accum, np.int32(W), np.int32(H), self._cut, np.int32(self._pass)))
+                if stop is not None:
+                    done = cp.cuda.Event(disable_timing=True)
+                    done.record()
+                    while True:
+                        if stop():
+                            ctypes.c_int32.from_address(self._cut_host).value = self._pass
+                            done.synchronize()
                             return self.samples
+                        if done.done:
+                            break
+                        time.sleep(0.0005)
                 self.samples += 1
             return self.samples
 

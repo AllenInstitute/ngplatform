@@ -12,8 +12,8 @@ volume (kernels.track).
   and is no finer than a pixel there; or None, when the coarse level is as fine as that.
 * read_region: a box of a level, read chunk by chunk through a ChunkCache, so a view moved a
   little reads only the chunks it had not.
-* DetailLoader: reads the region asked for last, in a thread, and hands it over when done; a
-  newer request cuts an older read short.
+* DetailLoader: reads the regions asked for last (one, or a coarser one first), in a thread, and
+  hands each over when it is read; a newer request cuts an older read short.
 """
 
 from __future__ import annotations
@@ -173,7 +173,7 @@ def _array(url: str, path: str, ms: volumes.Multiscale | None = None):
 
 def read_region(url: str, ms: volumes.Multiscale, level: volumes.Level, lo: tuple[int, int, int], hi: tuple[int, int, int],
                 cache: ChunkCache | None = None, cancelled: Callable[[], bool] = lambda: False,
-                progress: Callable[[float], None] | None = None, workers: int = 16) -> np.ndarray | None:
+                progress: Callable[[float], None] | None = None, workers: int = 32) -> np.ndarray | None:
     """Voxels lo .. hi - 1 (x, y, z) of a level as a (z, y, x) array, chunk by chunk through the
     cache; None when cancelled."""
     cache = cache if cache is not None else CACHE
@@ -234,14 +234,17 @@ class DetailLoader:
         self.closed = False
         threading.Thread(target=self._run, daemon=True).start()
 
-    def request(self, req: dict) -> None:
-        """Read `req` (level: index into ms.levels, lo, hi), unless it is what is being read already."""
+    def request(self, req: dict | list[dict]) -> None:
+        """Read `req` (level: index into ms.levels, lo, hi), or each of a list in turn (each handed over as
+        it is read), unless the last of them is what is being read already."""
+        chain = list(req) if isinstance(req, list) else [req]
+        last = chain[-1]
         with self._cond:
             cur = self._want
-            if cur is not None and (cur["level"], cur["lo"], cur["hi"]) == (req["level"], req["lo"], req["hi"]):
+            if cur is not None and (cur["chain"][-1]["level"], cur["chain"][-1]["lo"], cur["chain"][-1]["hi"]) == (last["level"], last["lo"], last["hi"]):
                 return
             self._gen += 1
-            self._want = dict(req, gen=self._gen)
+            self._want = {"chain": chain, "gen": self._gen, "taken": False}
             self._cond.notify_all()
 
     def cancel(self) -> None:
@@ -260,33 +263,37 @@ class DetailLoader:
     def _run(self) -> None:
         while not self.closed:
             with self._cond:
-                while not self.closed and (self._want is None or self._want.get("taken")):
+                while not self.closed and (self._want is None or self._want["taken"]):
                     self._cond.wait(timeout=1.0)
                 if self.closed:
                     return
-                req = self._want
-                req["taken"] = True
-                gen = req["gen"]
-            level = self.ms.levels[req["level"]]
-            vox = math.prod(h - l for l, h in zip(req["lo"], req["hi"]))
-            self.status = {"state": "loading", "level": level.path, "voxel_mm": list(level.voxel_mm), "voxels": vox, "progress": 0.0}
+                want = self._want
+                want["taken"] = True
+                gen = want["gen"]
+            for req in want["chain"]:
+                if self._gen != gen or self.closed:
+                    break
+                level = self.ms.levels[req["level"]]
+                vox = math.prod(h - l for l, h in zip(req["lo"], req["hi"]))
+                self.status = {"state": "loading", "level": level.path, "voxel_mm": list(level.voxel_mm), "voxels": vox, "progress": 0.0}
 
-            def progress(f, gen=gen):
-                if self._gen == gen:
-                    self.status = {**self.status, "progress": round(f, 3)}
+                def progress(f, gen=gen):
+                    if self._gen == gen:
+                        self.status = {**self.status, "progress": round(f, 3)}
 
-            try:
-                data = read_region(self.url, self.ms, level, req["lo"], req["hi"], cancelled=lambda gen=gen: self._gen != gen or self.closed,
-                                   progress=progress)
-                if data is None or self._gen != gen:
-                    continue
-                data = self.quantize(data)
-            except Exception as e:  # noqa: BLE001 - reported in the session's status
-                self.status = {"state": "failed", "error": f"{type(e).__name__}: {e}"}
-                continue
-            with self._cond:
+                try:
+                    data = read_region(self.url, self.ms, level, req["lo"], req["hi"], cancelled=lambda gen=gen: self._gen != gen or self.closed,
+                                       progress=progress)
+                    if data is None or self._gen != gen:
+                        break
+                    data = self.quantize(data)
+                except Exception as e:  # noqa: BLE001 - reported in the session's status
+                    self.status = {"state": "failed", "error": f"{type(e).__name__}: {e}"}
+                    break
                 if self._gen != gen:
-                    continue
-                self._want = None
-            self.status = {"state": "ready", "level": level.path, "voxel_mm": list(level.voxel_mm), "voxels": vox}
-            self.on_ready(req, data)
+                    break
+                self.status = {"state": "ready", "level": level.path, "voxel_mm": list(level.voxel_mm), "voxels": vox}
+                self.on_ready(req, data)
+            with self._cond:
+                if self._gen == gen:
+                    self._want = None

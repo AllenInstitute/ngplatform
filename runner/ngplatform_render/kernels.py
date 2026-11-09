@@ -483,10 +483,16 @@ __device__ __forceinline__ void ray(const float* P, int x, int y, int W, int H, 
 
 extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const float* tf, const float* maj,
                                  const unsigned short* lab, const float* lut, const float* lutflags, cudaTextureObject_t env,
-                                 cudaTextureObject_t det, const float* dmaj, float4* accum, int W, int H, int y0, int y1) {
-  // Rows y0 .. y1 - 1 of the image (a band of it, so a long pass can be cut short by a new view).
-  int x = blockIdx.x * blockDim.x + threadIdx.x, y = y0 + blockIdx.y * blockDim.y + threadIdx.y;
-  if (x >= W || y >= min(H, y1)) return;
+                                 cudaTextureObject_t det, const float* dmaj, float4* accum, int W, int H,
+                                 const volatile int* cut, int pass) {
+  // A pass is cut short (a new view came) when the host writes its number to `cut` (host memory the GPU
+  // reads): blocks that have not started then return at once. Read once a block, not once a thread.
+  __shared__ int stop;
+  if (threadIdx.x == 0 && threadIdx.y == 0) stop = *cut >= pass;
+  __syncthreads();
+  if (stop) return;
+  int x = blockIdx.x * blockDim.x + threadIdx.x, y = blockIdx.y * blockDim.y + threadIdx.y;
+  if (x >= W || y >= H) return;
   Scene S; S.P = P; S.vol = vol; S.tf = tf; S.maj = maj; S.lab = lab; S.lut = lut; S.lutflags = lutflags; S.env = env;
   S.det = det; S.dmaj = dmaj;
   Rng rng; rng.s = pcg((u32)(y * W + x) ^ pcg((u32)P[P_FRAME] * 9781u + 1u));

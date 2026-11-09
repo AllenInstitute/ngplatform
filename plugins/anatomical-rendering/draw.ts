@@ -4,8 +4,35 @@
  * Neuroglancer's own layers (tracts, meshes, annotations, sections) are
  * hidden behind tissue and show in front of it.  Pixels where the ray
  * met nothing are left to the view.
+ *
+ * A new frame of the same camera as the one shown (the image refining,
+ * finer detail come, the camera just stopped) fades in over FADE_MS rather
+ * than replacing it at once.
  */
 import type { Drawer3d, Frame3d } from "@ngplatform/sdk";
+
+/** How long a frame of the same view takes to fade in over the one before it. */
+export const FADE_MS = 250;
+
+// The picture's colour, premultiplied (a JPEG frame's alpha comes apart, its colour not premultiplied),
+// mixed with the one before it while it fades in.
+const MIX = `
+uniform sampler2D uColor;
+uniform sampler2D uAlpha;
+uniform float uHasAlpha;
+uniform sampler2D uPrevColor;
+uniform sampler2D uPrevAlpha;
+uniform float uPrevHasAlpha;
+uniform float uMix;
+vec4 premul(sampler2D col, sampler2D al, float hasAlpha, vec2 uv) {
+  vec4 c = texture(col, uv);
+  if (hasAlpha > 0.5) { float a = texture(al, uv).r; c = vec4(c.rgb * a, a); }
+  return c;
+}
+vec4 picture(vec2 uv) {
+  vec4 c = premul(uColor, uAlpha, uHasAlpha, uv);
+  return uMix < 1.0 ? mix(premul(uPrevColor, uPrevAlpha, uPrevHasAlpha, uv), c, uMix) : c;
+}`;
 
 const VS = `#version 300 es
 void main() {
@@ -15,21 +42,17 @@ void main() {
 
 const FS = (o: Frame3d["outputs"]) => `#version 300 es
 precision highp float;
-uniform sampler2D uColor;
 uniform highp sampler2D uDepth;
-uniform sampler2D uAlpha;
 uniform vec4 uViewport;
 uniform float uHasDepth;
-uniform float uHasAlpha;
+${MIX}
 layout(location = ${o.color}) out vec4 out_color;
 layout(location = ${o.z}) out highp vec4 out_z;
 layout(location = ${o.pick}) out highp vec4 out_pickId;
 void main() {
   vec2 uv = (gl_FragCoord.xy - uViewport.xy) / uViewport.zw;
   uv.y = 1.0 - uv.y;
-  vec4 c = texture(uColor, uv);
-  // A JPEG frame's alpha comes apart, and its colour is not premultiplied.
-  if (uHasAlpha > 0.5) c = vec4(c.rgb * texture(uAlpha, uv).r, texture(uAlpha, uv).r);
+  vec4 c = picture(uv);
   if (c.a < 0.5) discard;
   float d = uHasDepth > 0.5 ? texture(uDepth, uv).r : 0.5;
   d = clamp(d, 0.0, 0.99999);
@@ -72,9 +95,7 @@ void main() {
 
 const MESH_FS = (o: Frame3d["outputs"]) => `#version 300 es
 precision highp float;
-uniform sampler2D uColor;
-uniform sampler2D uAlpha;
-uniform float uHasAlpha;
+${MIX}
 in vec2 vUv;
 in float vValid;
 layout(location = ${o.color}) out vec4 out_color;
@@ -82,8 +103,7 @@ layout(location = ${o.z}) out highp vec4 out_z;
 layout(location = ${o.pick}) out highp vec4 out_pickId;
 void main() {
   if (vValid < 0.999) discard;
-  vec4 c = texture(uColor, vUv);
-  if (uHasAlpha > 0.5) c = vec4(c.rgb * texture(uAlpha, vUv).r, texture(uAlpha, vUv).r);
+  vec4 c = picture(vUv);
   if (c.a < 0.5) discard;
   out_color = vec4(c.rgb / max(c.a, 1e-3), 1.0);
   out_z = vec4(1.0 - gl_FragCoord.z);
@@ -123,9 +143,26 @@ export interface Picture {
   view?: { invViewProjection: number[]; distance: { width: number; height: number; data: Float32Array } };
 }
 
+/** Whether two pictures were rendered from the same camera (so one can fade into the other in place). */
+export function sameView(a: Picture | undefined, b: Picture): boolean {
+  if (a === undefined) return false;
+  if (a.view === undefined || b.view === undefined) return a.view === b.view && a.bitmap.width === b.bitmap.width && a.bitmap.height === b.bitmap.height;
+  const p = a.view.invViewProjection, q = b.view.invViewProjection;
+  let scale = 0;
+  for (let i = 0; i < 16; ++i) scale = Math.max(scale, Math.abs(p[i]));
+  for (let i = 0; i < 16; ++i) if (Math.abs(p[i] - q[i]) > 1e-6 * Math.max(scale, 1e-12)) return false;
+  return true;
+}
+
 export class PictureDrawer implements Drawer3d {
   /** Called at each frame, before drawing, with the frame: the plugin sends the view from it. */
   onFrame: ((frame: Frame3d) => void) | undefined;
+  /** Called while a frame fades in, after each draw: the view should be drawn again. */
+  onFading: (() => void) | undefined;
+  private prevColor: WebGLTexture | undefined;
+  private prevAlpha: WebGLTexture | undefined;
+  private prevHasAlpha = false;
+  private fadeStart: number | undefined;
   private picture: Picture | undefined;
   private uploaded: Picture | undefined;
   private uploadedDepth: Picture["depth"] | undefined;
@@ -160,6 +197,20 @@ export class PictureDrawer implements Drawer3d {
     const program = this.compile(gl, frame.outputs);
     if (program === undefined) return;
     if (this.uploaded !== pic) {
+      // The same camera as the picture shown: it stays (its textures kept aside) while the new one fades in.
+      // A frame that comes while one is fading in takes its place in that fade (the picture faded from
+      // stays), so what is shown does not jump back to the picture before.
+      if (sameView(this.uploaded, pic)) {
+        if (this.fadeStart === undefined || performance.now() - this.fadeStart >= FADE_MS) {
+          [this.prevColor, this.color] = [this.color, this.prevColor];
+          [this.prevAlpha, this.alpha] = [this.alpha, this.prevAlpha];
+          this.prevHasAlpha = this.uploaded!.alpha !== undefined;
+          this.fadeStart = performance.now();
+        }
+        this.uploadedAlpha = undefined;
+      } else {
+        this.fadeStart = undefined;
+      }
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this.color!);
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
@@ -182,8 +233,12 @@ export class PictureDrawer implements Drawer3d {
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
       this.uploadedAlpha = pic.alpha;
     }
-    if (pic.view !== undefined && this.drawMesh(gl, frame, pic)) return;
+    if (pic.view !== undefined && this.drawMesh(gl, frame, pic)) {
+      this.fadeOn();
+      return;
+    }
     gl.useProgram(program);
+    this.bindMix(gl, program);
     const vp = gl.getParameter(gl.VIEWPORT) as Int32Array;
     gl.uniform4f(gl.getUniformLocation(program, "uViewport"), vp[0], vp[1], vp[2], vp[3]);
     gl.uniform1f(gl.getUniformLocation(program, "uHasDepth"), pic.depth !== undefined ? 1 : 0);
@@ -201,6 +256,27 @@ export class PictureDrawer implements Drawer3d {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindVertexArray(null);
     gl.activeTexture(gl.TEXTURE0);
+    this.fadeOn();
+  }
+
+  /** The picture before (units 4 and 5) and how far the new one has faded in over it. */
+  private bindMix(gl: WebGL2RenderingContext, program: WebGLProgram): void {
+    const t = this.fadeStart === undefined ? 1 : Math.min(1, (performance.now() - this.fadeStart) / FADE_MS);
+    gl.uniform1f(gl.getUniformLocation(program, "uMix"), t * t * (3 - 2 * t));
+    gl.uniform1f(gl.getUniformLocation(program, "uPrevHasAlpha"), this.prevHasAlpha ? 1 : 0);
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this.prevColor!);
+    gl.uniform1i(gl.getUniformLocation(program, "uPrevColor"), 4);
+    gl.activeTexture(gl.TEXTURE5);
+    gl.bindTexture(gl.TEXTURE_2D, this.prevAlpha!);
+    gl.uniform1i(gl.getUniformLocation(program, "uPrevAlpha"), 5);
+  }
+
+  /** While a frame fades in, asks for the view to be drawn again. */
+  private fadeOn(): void {
+    if (this.fadeStart === undefined) return;
+    if (performance.now() - this.fadeStart >= FADE_MS) this.fadeStart = undefined;
+    else requestAnimationFrame(() => this.onFading?.());
   }
 
   /** The picture as a mesh in space, drawn with the camera now; false when it cannot be (then flat). */
@@ -245,6 +321,7 @@ export class PictureDrawer implements Drawer3d {
     }
     const p = this.mesh!;
     gl.useProgram(p);
+    this.bindMix(gl, p);
     const u = (n: string) => gl.getUniformLocation(p, n);
     gl.uniformMatrix4fv(u("uOldInv"), false, Float32Array.from(v.invViewProjection));
     gl.uniformMatrix4fv(u("uNewVP"), false, invert4(frame.invViewProjection));
@@ -309,6 +386,9 @@ export class PictureDrawer implements Drawer3d {
     this.color = tex(gl.LINEAR);
     this.depth = tex(gl.NEAREST);
     this.alpha = tex(gl.LINEAR);
+    this.prevColor = tex(gl.LINEAR);
+    this.prevAlpha = tex(gl.LINEAR);
+    this.fadeStart = undefined;
     this.dist = tex(gl.NEAREST);
   }
 
@@ -336,8 +416,8 @@ export class PictureDrawer implements Drawer3d {
     const gl = this.gl;
     if (gl === undefined) return;
     if (this.program) gl.deleteProgram(this.program);
-    if (this.color) gl.deleteTexture(this.color);
-    if (this.depth) gl.deleteTexture(this.depth);
+    for (const t of [this.color, this.depth, this.alpha, this.dist, this.prevColor, this.prevAlpha]) if (t) gl.deleteTexture(t);
+    if (this.mesh) gl.deleteProgram(this.mesh);
     if (this.vao) gl.deleteVertexArray(this.vao);
     this.gl = undefined;
   }

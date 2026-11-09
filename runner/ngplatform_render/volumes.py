@@ -129,9 +129,14 @@ class N5Array:
         sl = [s if isinstance(s, slice) else slice(s, s + 1) for s in sel]
         lo = [s.start or 0 for s in sl]
         hi = [s.stop if s.stop is not None else n for s, n in zip(sl, self.shape)]
-        out = np.zeros([h - l for l, h in zip(lo, hi)], self.dtype)
         rng = [range(lo[k] // self.chunks[k], (hi[k] - 1) // self.chunks[k] + 1) for k in range(3)]
         keys = [(z, y, x) for z in rng[0] for y in rng[1] for x in rng[2]]
+        if len(keys) == 1 and all(lo[k] == keys[0][k] * self.chunks[k] for k in range(3)):
+            # One whole block (as detail.read_region asks for them): no copy, no threads.
+            a = self._block(*keys[0])
+            if tuple(h - l for l, h in zip(lo, hi)) == a.shape:
+                return a
+        out = np.zeros([h - l for l, h in zip(lo, hi)], self.dtype)
 
         def one(b):
             a = self._block(*b)
@@ -145,18 +150,48 @@ class N5Array:
         return out
 
 
+_connections = threading.local()
+
+
+def _http_get(url: str) -> bytes | None:
+    """GET over a connection kept open per thread and host (a new TLS handshake for every block of a
+    region costs more than the block): the body, or None for a 403 or 404."""
+    import http.client
+    from urllib.parse import urlsplit
+
+    u = urlsplit(url)
+    conns = getattr(_connections, "d", None)
+    if conns is None:
+        conns = _connections.d = {}
+    key = (u.scheme, u.netloc)
+    path = u.path + (f"?{u.query}" if u.query else "")
+    for attempt in range(3):
+        c = conns.get(key)
+        if c is None:
+            c = (http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection)(u.netloc, timeout=120)
+            conns[key] = c
+        try:
+            c.request("GET", path, headers={"User-Agent": "ngplatform-render"})
+            r = c.getresponse()
+            body = r.read()
+        except (http.client.HTTPException, OSError):
+            # A connection the server closed while idle: open another.
+            c.close()
+            conns.pop(key, None)
+            if attempt == 2:
+                raise
+            continue
+        if r.status in (403, 404):
+            return None
+        if r.status >= 400:
+            raise OSError(f"HTTP {r.status} for {url}")
+        return body
+    return None
+
+
 def _n5_bytes(url: str) -> bytes | None:
     if url.startswith(("http://", "https://")):
-        import urllib.error
-        import urllib.request
-
-        try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "ngplatform-render"}), timeout=120) as f:
-                return f.read()
-        except urllib.error.HTTPError as e:
-            if e.code in (403, 404):
-                return None
-            raise
+        return _http_get(url)
     p = Path(url)
     return p.read_bytes() if p.is_file() else None
 

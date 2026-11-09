@@ -153,6 +153,16 @@ export interface Frame {
   width: number;
   height: number;
   msPerPass: number;
+  /** Each pixel's distance to tissue for the frame's view (every second pixel), when the page asked with one it lacked. */
+  distance?: Distance;
+}
+
+/** The distance along each pixel's ray (from the near plane) to where it first meets tissue, -1 where nothing: the frame's points. */
+export interface Distance {
+  version: number;
+  width: number;
+  height: number;
+  data: Float32Array;
 }
 
 export interface MovieInfo {
@@ -211,20 +221,34 @@ export class RenderService {
     return r.blob();
   }
 
-  /** The next frame after `after`, or undefined when none came within the wait. */
-  async frame(id: string, after: number, signal?: AbortSignal): Promise<Frame | undefined> {
-    const r = await go(this.link, `/sessions/${id}/frame?after=${after}&timeout=20`, { signal });
+  /**
+   * The next frame after `after`, or undefined when none came within the wait.  `have`: the view whose
+   * distances the page has; a frame of another view comes with its own (a host that sends them).
+   */
+  async frame(id: string, after: number, signal?: AbortSignal, have = -1): Promise<Frame | undefined> {
+    const r = await go(this.link, `/sessions/${id}/frame?after=${after}&timeout=20&have=${have}`, { signal });
     if (r.status === 204) return undefined;
     if (!r.ok) throw new ServiceError(`frame: ${r.status}`);
-    const blob = await r.blob();
+    let blob = await r.blob();
     const n = (k: string) => Number(r.headers.get(k) ?? 0);
+    const version = n("X-Version");
+    // After the picture: its points (every second pixel's distance, as float16 over a scale), deflated.
+    const dOffset = n("X-Distance-Offset");
+    let distance: Promise<Distance> | undefined;
+    if (dOffset && r.headers.get("X-Distance-Format") === "float16-zlib") {
+      const tail = blob.slice(dOffset);
+      blob = blob.slice(0, dOffset);
+      const width = n("X-Distance-Width"), height = n("X-Distance-Height"), scale = n("X-Distance-Scale");
+      distance = new Response(tail.stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer().then((b) => ({ version, width, height, data: scaledDistance(new Uint16Array(b), scale) }));
+    }
     const offset = n("X-Alpha-Offset");
     // A JPEG then its alpha plane deflated, or a WebP with its alpha.
-    const [bitmap, alpha] = await Promise.all([
+    const [bitmap, alpha, dist] = await Promise.all([
       createImageBitmap(offset ? blob.slice(0, offset, "image/jpeg") : blob, { premultiplyAlpha: "none" }),
       offset ? new Response(blob.slice(offset).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer().then((b) => new Uint8Array(b)) : undefined,
+      distance,
     ]);
-    return { bitmap, alpha, detail: r.headers.get("X-Detail") ?? undefined, number: n("X-Frame"), samples: n("X-Samples"), version: n("X-Version"), width: n("X-Width"), height: n("X-Height"), msPerPass: n("X-Ms-Per-Pass") };
+    return { bitmap, alpha, detail: r.headers.get("X-Detail") ?? undefined, number: n("X-Frame"), samples: n("X-Samples"), version, width: n("X-Width"), height: n("X-Height"), msPerPass: n("X-Ms-Per-Pass"), distance: dist };
   }
 
   /** The distance along each pixel's ray (from the near plane) to where it first meets tissue, -1 where nothing: the frame's points, to draw it moving with the view. */
@@ -245,6 +269,13 @@ export class RenderService {
     const buf = new Uint8Array(await new Response(stream).arrayBuffer());
     return { version, width, height, data: halfToFloat(new Uint16Array(buf.buffer, buf.byteOffset, buf.byteLength >> 1)) };
   }
+}
+
+/** Distances sent as half floats over a scale: times the scale, with -1 (nothing there) kept. */
+export function scaledDistance(h: Uint16Array, scale: number): Float32Array {
+  const out = halfToFloat(h);
+  for (let i = 0; i < out.length; ++i) out[i] = out[i] < 0 ? -1 : out[i] * scale;
+  return out;
 }
 
 /** IEEE half floats to float32. */

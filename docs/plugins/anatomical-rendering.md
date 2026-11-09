@@ -132,9 +132,14 @@ Organ Atlas serves most of its scans; on a host).
   the surface and a margin; it is read in the background (the status line
   says so) while the whole volume's level is shown, chunk by chunk through
   a cache in the host's memory (8 GB; `NGP_RENDER_CHUNK_CACHE_GB`), so a
-  view moved a little reads only the chunks it had not. A view that needs
-  no finer level lets the detail go. Stills use the detail held for the
-  view; movies use the whole volume's level.
+  view moved a little reads only the chunks it had not. Reading starts while
+  the camera is still moving (from what the view is coming to, planned at
+  its full size), and a large region is read at the next coarser level
+  first, so the view sharpens in a second or two and again when the finer
+  level comes. When a level comes, the picture shown stays until the new
+  one has as many samples (up to 24, or 2 s), then fades into it. A view
+  that needs no finer level lets the detail go. Stills use the detail held
+  for the view; movies use the whole volume's level.
 - **Samples per pixel**: when a still view stops refining.
 - **Load a preset file…**: a preset (or a list) as JSON, in the form of
   `runner/ngplatform_render/presets/*.json`; it is kept with the scene.
@@ -237,26 +242,43 @@ the view at once, and the next frame fills what came into view (a gap for a
 moment at an edge, not a stretched one).
 
 While the camera moves, frames are made for speed, then the still view is
-refined exactly:
+refined, without the picture jumping:
 
 - **Moving** (half size): tracking through dense tissue steps a voxel at a
   time, summing optical depth, and finds the collision by bisection, so a
   pass costs what the voxels crossed cost, not what the density does (a
-  little darker than exact tracking: 2–3% at the presets' densities); at
-  most 2 bounces.
-- **Still**: one fast pass at full size first, shown at once, then exact
-  delta and ratio tracking from the start, refining.
-- Passes run in bands of about 15 ms, so a new view is taken up after the
-  band under way, not after the pass. Frames come as a JPEG and a deflated
-  alpha plane (the colour divided by the alpha on the GPU), several times
-  quicker to make than a WebP with alpha. Empty space is skipped by bricks
-  of 4 voxels.
+  little darker than exact tracking: 2–3% at the presets' densities), with
+  as many bounces as a still view (fewer made the moving frames darker, a
+  change of colour each time the camera stopped).
+- **Still**: the first 32 samples are tracked as the moving frames are, then
+  exact delta and ratio tracking adds to them, so the image comes several
+  times sooner and goes over smoothly to the exact one.
+- When the camera stops (or the look changes), the picture shown stays
+  until the still view has 12 samples (or 0.4 s), past the smoothing of the
+  first frames; then each new frame of the same camera fades in over the one
+  before, in the page, over a quarter of a second.
+- A pass is one launch over the whole frame, cut short when a new view comes
+  (the blocks not yet started return at once). Passes in bands of rows,
+  as before, left the GPU idle at the end of every band and took up to
+  three times as long.
+- Each brick of 4 voxels that empty space is skipped by is bounded by its
+  values and the one voxel around it (not its neighbours' whole bricks), so
+  a speck of noise in the mounting medium does not slow every ray through
+  it.
+- Frames come as a JPEG and a deflated alpha plane (the colour divided by
+  the alpha on the GPU); the first frame of each view also carries its
+  points (every second pixel's distance, as half floats), so a moving view
+  costs one request a frame.
+- A session no page is waiting on (a closed tab) stops rendering after 5 s,
+  and goes on when one asks.
 
-On an RTX A6000, for a HiP-CT brain of 102 million voxels in a 1200 × 900
-view, from the page sending the view to the frame arriving through the
-runner: about 25 ms while moving (half size, about 7 ms of it the pass) and
-90 ms for the first full-size still frame. Exact passes then take 30–150 ms
-each, by the preset's density and bounces.
+On an RTX A6000, zooming into S-21-46 (HiP-CT, 19.6 µm, its 400-million-voxel
+level held whole, finer detail where the view looks) in a 1200 × 800 view:
+moving frames about 25–30 ms from the view sent to the frame; still passes
+15–50 ms (whole brain to the cut face up close) where they were 15–400 ms;
+and the picture shown changes by at most about one grey level in 255 from
+one screen refresh to the next while the camera is still (it was 9–17,
+from noisy first frames and detail coming in at once).
 
 ## Limits
 
@@ -266,6 +288,5 @@ each, by the preset's density and bounces.
 - One image (and one segmentation) at a time; images with t or c axes are
   not rendered.
 - Rendering is for looking, teaching and figures, not for reading values.
-- Finer detail comes from one stored level at a time, for the view at
-  rest (not while the camera moves), and only on a host: the browser's
-  renderer holds one level.
+- Finer detail comes from one stored level at a time, and only on a host:
+  the browser's renderer holds one level.
