@@ -3,7 +3,7 @@
  * user: the scene's local annotation layers, each with fields (values from
  * a list, a number, text, or an ontology's terms), groups, and comments,
  * listed in the annotation table (./table_panel.ts) and set up in the
- * Annotate section (./annotate_panel.ts).
+ * Annotate card (./annotate_panel.ts).
  *
  * Annotations stay in Neuroglancer's state; what Neuroglancer can hold is
  * kept there (see ./values.ts and ./groups.ts), the rest in this plugin's
@@ -24,7 +24,7 @@ import { withShaderKept } from "./groups.js";
 import { physical } from "./ui.js";
 import { type Comment, type Field, fieldsOf, type LayerMeta, type LayerSpec, metaOf, prune, readValue } from "./values.js";
 
-/** Neuroglancer's annotation tools, by the names the Annotate section gives them. */
+/** Neuroglancer's annotation tools, by the names the Annotate card gives them. */
 export const TOOLS: [string, string, string][] = [
   ["annotatePoint", "Point", "Ctrl+click a point"],
   ["annotateLine", "Line", "Ctrl+click its two ends"],
@@ -88,7 +88,7 @@ export class Annotate {
   }
 
   dispose(): void {
-    if (this.waiting !== undefined) clearInterval(this.waiting);
+    this.waiting?.();
     this.offs.forEach((off) => off());
     this.overlay.dispose();
   }
@@ -224,27 +224,47 @@ export class Annotate {
 
   /** Edits waiting for an annotation being drawn, by layer (the latest of each). */
   private readonly pending = new Map<string, { spec: LayerSpec; meta: LayerMeta; before: Set<string | undefined>; scene: string | undefined }>();
-  private waiting: ReturnType<typeof setInterval> | undefined;
+  /** Stops listening for the end of drawing (set while edits wait for it). */
+  private waiting: Disposer | undefined;
 
+  /**
+   * Applies the waiting edits once drawing ends: when the annotation is
+   * added (the state changes), or dropped (Escape: a key, no change of
+   * state), or after a click that may have ended it; nothing is polled.
+   */
   private waitForDrawing(): void {
     if (this.waiting !== undefined) return;
-    this.waiting = setInterval(() => {
-      if (this.ctx.viewer.annotationInProgress()) return;
-      clearInterval(this.waiting);
+    const check = () => {
+      if (this.waiting === undefined || this.ctx.viewer.annotationInProgress()) return;
+      this.waiting();
+      this.applyWaiting();
+    };
+    // After Neuroglancer has handled the key or the click.
+    const soon = () => void setTimeout(check, 0);
+    const offState = this.ctx.viewer.onStateChanged(check);
+    window.addEventListener("keyup", soon, true);
+    window.addEventListener("pointerup", soon, true);
+    this.waiting = () => {
+      offState();
+      window.removeEventListener("keyup", soon, true);
+      window.removeEventListener("pointerup", soon, true);
       this.waiting = undefined;
-      const edits = [...this.pending];
-      this.pending.clear();
-      // The annotation drawn meanwhile is in the layer now: each edit is applied to the layer as it is.
-      for (const [name, { spec, meta, before, scene }] of edits) {
-        // An edit made in another scene is not applied to a layer of the same name here.
-        if (scene !== activeScene(this.ctx)) continue;
-        const now = this.layer(name)?.spec;
-        const known = new Set(spec.annotations.map((a) => a.id));
-        // Drawn: new since the edit was queued (not ones the edit deleted).
-        const drawn = (now?.annotations ?? []).filter((a) => !known.has(a.id) && !before.has(a.id));
-        this.write(name, { ...spec, annotations: [...spec.annotations, ...drawn] }, meta);
-      }
-    }, 250);
+    };
+  }
+
+  private applyWaiting(): void {
+    const edits = [...this.pending];
+    this.pending.clear();
+    // The annotation drawn meanwhile is in the layer now: each edit is applied to the layer as it is.
+    for (const [name, { spec, meta, before, scene }] of edits) {
+      // An edit made in another scene is not applied to a layer of the same name here.
+      if (scene !== activeScene(this.ctx)) continue;
+      const now = this.layer(name)?.spec;
+      const known = new Set(spec.annotations.map((a) => a.id));
+      // Drawn: new since the edit was queued (not ones the edit deleted).
+      const drawn = (now?.annotations ?? []).filter((a) => !known.has(a.id) && !before.has(a.id));
+      this.write(name, { ...spec, annotations: [...spec.annotations, ...drawn] }, meta);
+    }
   }
 
   /** Writes only a layer's record (comments, text and terms). */
@@ -443,7 +463,7 @@ export class Annotate {
         if (drawn.length === 1) {
           this.selected = { layer: l.spec.name, id: drawn[0].id };
           this.lastSelection = `${l.spec.name}|${drawn[0].id}`;
-          // The table opens for the layer drawn in from the Annotate section (not Measure's, say).
+          // The table opens for the layer drawn in from the Annotate card (not Measure's, say).
           if (l.spec.name === this.chosen()) this.ctx.ui.showPanel(TABLE_PANEL);
         }
       }
@@ -489,11 +509,11 @@ export class Annotate {
     const facts = fields.map((f) => [f.title, row.values[f.title]] as const).filter(([, v]) => v);
     this.tip.replaceChildren(
       el("strong", {}, rowName(row)),
-      row.groupPath ? el("div", { class: "an-faint" }, row.groupPath) : "",
-      row.size ? el("div", { class: "an-faint" }, physical(row.size.value, row.size.quantity === "length" ? 1 : row.size.quantity === "area" ? 2 : 3)) : "",
-      ...facts.map(([k, v]) => el("div", {}, el("span", { class: "an-faint" }, `${k}: `), v)),
-      ...row.comments.slice(-3).map((c) => el("div", { class: "an-tip-comment" }, `“${c.text}”`, el("span", { class: "an-faint" }, ` ${c.time.slice(0, 16).replace("T", " ")}`))),
-      row.comments.length > 3 ? el("div", { class: "an-faint" }, `and ${row.comments.length - 3} more`) : "",
+      row.groupPath ? el("div", { class: "faint" }, row.groupPath) : "",
+      row.size ? el("div", { class: "faint" }, physical(row.size.value, row.size.quantity === "length" ? 1 : row.size.quantity === "area" ? 2 : 3)) : "",
+      ...facts.map(([k, v]) => el("div", {}, el("span", { class: "faint" }, `${k}: `), v)),
+      ...row.comments.slice(-3).map((c) => el("div", { class: "an-tip-comment" }, `“${c.text}”`, el("span", { class: "faint" }, ` ${c.time.slice(0, 16).replace("T", " ")}`))),
+      row.comments.length > 3 ? el("div", { class: "faint" }, `and ${row.comments.length - 3} more`) : "",
     );
     const box = this.overlay.element.getBoundingClientRect();
     this.tip.style.left = `${this.pointer[0] - box.left + 14}px`;
