@@ -37,7 +37,7 @@ import { storeOf } from "../volume-view/sources.js";
 import { CowVolume, type Original } from "./cow_volume.js";
 import { chooseUndo, Stroke } from "./history.js";
 import { ballReach, ballShape, dabsBetween, fillOutline, floodFill, type ImageBlock, inRange, interpolate, type Paint, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "./kernels.js";
-import { discard, type KeptInfo, kept, restore, restoreInto } from "./keep.js";
+import { discard, type KeptInfo, kept, restore, restoreInto, storageUse } from "./keep.js";
 import { CHUNK, LABEL_ARRAYS, LABEL_MAX, type LabelType, LabelVolume } from "./label_volume.js";
 import { BRUSHING, DRAWING, EDITING, PREVIEWING, SEGMENTATION_PANEL, SELECTING } from "./manifest.js";
 import { Painter, type ViewPoint } from "./painter.js";
@@ -158,10 +158,18 @@ export class Editor implements LabelVolumes {
   saveCrop = false;
   /** Edited in place: save the edits only, or the whole volume (a job). */
   saveInPlace: "edits" | "whole" = "edits";
-  /** What the last save (or the one under way) said. */
-  note = "";
+  /**
+   * A save under way (how far), or the last one failed (why), for the
+   * panel's status line; undefined when there is nothing to report.  A save
+   * done is said in a toast and in Activity.
+   */
+  saveStatus: { kind: "progress" | "error"; text: string } | undefined;
+  /** Counts failed saves: the panel opens its Save card once for each. */
+  saveFailures = 0;
   /** Label volumes kept in this browser and not open now. */
   keptHere: KeptInfo[] = [];
+  /** This browser's storage for the site: what it holds and allows, and whether it is kept for good. */
+  storage: { usage?: number; quota?: number; persisted?: boolean } = {};
 
   /** Work on the volume in order (a stroke's dabs may wait for image values). */
   private queue: Promise<void> = Promise.resolve();
@@ -292,7 +300,7 @@ export class Editor implements LabelVolumes {
 
   setTool(tool: Tool): void {
     if (draws(tool) && this.current === undefined) {
-      this.ctx.ui.toast("Make a segmentation layer first (Segmentation tab).");
+      this.ctx.ui.toast("Make a segmentation layer first (Segmentation panel).");
       this.ctx.ui.showPanel(SEGMENTATION_PANEL);
       return;
     }
@@ -706,7 +714,9 @@ export class Editor implements LabelVolumes {
 
   async refreshKept(): Promise<void> {
     const open = new Set(this.sessions.map((s) => s.id));
-    this.keptHere = (await kept()).filter((k) => !open.has(k.id));
+    const [all, storage] = await Promise.all([kept(), storageUse()]);
+    this.keptHere = all.filter((k) => !open.has(k.id));
+    this.storage = storage;
     this.changed();
   }
 
@@ -825,7 +835,7 @@ export class Editor implements LabelVolumes {
     this.sessions.push(session);
     this.current = session;
     // What the last save said was of another volume.
-    this.note = "";
+    this.saveStatus = undefined;
     session.counts = session.volume.counts();
     this.value = [...session.counts.keys()].sort((a, b) => a - b)[0] ?? 1;
     session.applyColours([...session.counts.keys(), this.value]);
@@ -1645,7 +1655,7 @@ export class Editor implements LabelVolumes {
       await this.saveSession(session);
     } catch (e) {
       // A file picker that failed (not one closed), or a folder that could not be made.
-      this.setNote(`Could not save: ${(e as Error).message}`);
+      this.saveFailed(`Could not save: ${(e as Error).message}`);
     } finally {
       this.saving = false;
     }
@@ -1686,11 +1696,11 @@ export class Editor implements LabelVolumes {
     }
     const description = `${session.layer}, labels drawn in ngplatform`;
     const before = session.unsaved;
-    this.setNote("Writing…");
+    this.saveProgress("Writing…");
     try {
       let where: string;
       if (zarr) {
-        const files = await omeZarr(out, description, (done, total) => this.setNote(`Writing: ${Math.round((100 * done) / total)}%`), this.savedLabels(session));
+        const files = await omeZarr(out, description, (done, total) => this.saveProgress(`Writing: ${Math.round((100 * done) / total)}%`), this.savedLabels(session));
         where = await writeFolder(files, folder, base + suffix);
       } else {
         const bytes = await niftiGz(out, description);
@@ -1705,10 +1715,9 @@ export class Editor implements LabelVolumes {
         }
       }
       this.markSaved(session, before);
-      this.setNote(`Saved ${where}: ${out.size.join(" × ")}${box ? `, the painted box from voxel ${box.lo.join(", ")}` : ""}.`);
-      this.ctx.log.info(`Saved ${session.layer} as ${where}.`);
+      this.saved(`Saved ${session.layer} as ${where}${box ? `: the painted box, ${out.size.join(" × ")} from voxel ${box.lo.join(", ")}` : ""}.`);
     } catch (e) {
-      this.setNote(`Could not save: ${(e as Error).message}`);
+      this.saveFailed(`Could not save: ${(e as Error).message}`);
     }
   }
 
@@ -1747,21 +1756,20 @@ export class Editor implements LabelVolumes {
     const labels = this.savedLabels(session);
     const before = session.unsaved;
     if (!whole) {
-      this.setNote("Writing the edits…");
+      this.saveProgress("Writing the edits…");
       try {
-        const files = await editsZarr(volume, description, (done, total) => this.setNote(`Writing the edits: ${Math.round((100 * done) / total)}%`), labels);
+        const files = await editsZarr(volume, description, (done, total) => this.saveProgress(`Writing the edits: ${Math.round((100 * done) / total)}%`), labels);
         const where = await writeFolder(files, folder, name);
         this.markSaved(session, before);
-        this.setNote(`Saved the edits as ${where}: ${volume.chunkCount} chunks of 64³; the rest is ${original.layer} (${original.store}), which they name. Open edits… opens them over it again.`);
-        this.ctx.log.info(`Saved the edits of ${session.layer} as ${where}.`);
+        this.saved(`Saved the edits of ${session.layer} as ${where}: ${volume.chunkCount} chunks of 64³ over ${original.layer} (${original.store}).`);
       } catch (e) {
-        this.setNote(`Could not save: ${(e as Error).message}`);
+        this.saveFailed(`Could not save: ${(e as Error).message}`);
       }
       return;
     }
     const root = await folder!.getDirectoryHandle(name, { create: true });
     const where = `${folder!.name}/${name}`;
-    this.setNote(`Writing the whole volume into ${where}, a job (see Jobs); edits made meanwhile may or may not be in it.`);
+    this.saveProgress(`Writing the whole volume into ${where} (in Activity)…`);
     try {
       const n = await this.ctx.jobs.run(`Saving ${session.layer}`, async (job) => {
         const written: string[] = [];
@@ -1783,10 +1791,9 @@ export class Editor implements LabelVolumes {
         return n;
       });
       this.markSaved(session, before);
-      this.setNote(`Saved the whole volume as ${where}: ${n.toLocaleString()} chunks.`);
-      this.ctx.log.info(`Saved ${session.layer} (the whole volume) as ${where}.`);
+      this.saved(`Saved ${session.layer} (the whole volume) as ${where}: ${n.toLocaleString()} chunks.`);
     } catch (e) {
-      this.setNote(`Could not save the whole volume: ${(e as Error).message}`);
+      this.saveFailed(`Could not save the whole volume: ${(e as Error).message}`);
     }
   }
 
@@ -1832,8 +1839,29 @@ export class Editor implements LabelVolumes {
     }
   }
 
-  private setNote(text: string): void {
-    this.note = text;
+  private saveProgress(text: string): void {
+    this.saveStatus = { kind: "progress", text };
+    this.changed();
+  }
+
+  /** A save done: said in a toast and in Activity; the status line clears. */
+  private saved(text: string): void {
+    this.saveStatus = undefined;
+    this.ctx.ui.toast(text);
+    this.ctx.log.info(text);
+    this.changed();
+  }
+
+  /**
+   * A save failed: said in the panel's status line (its Save card opened),
+   * in a toast (the tool bar and the command save with the panel hidden) and in
+   * Activity.
+   */
+  private saveFailed(text: string): void {
+    this.saveStatus = { kind: "error", text };
+    ++this.saveFailures;
+    this.ctx.ui.toast(text, "error");
+    this.ctx.log.error(text);
     this.changed();
   }
 }

@@ -159,7 +159,7 @@ export class Toolbar {
     // The active segment: its colour, id and name, the others to choose from, and New segment.
     const rows = e.rows();
     const active = rows.find((r) => r.value === e.value);
-    const choose = el("select", { class: "sg-segment-select", title: "The active segment: tools paint it", "aria-label": "Active segment" }) as HTMLSelectElement;
+    const choose = el("select", { class: "text-input sg-segment-select", title: "The active segment: tools paint it", "aria-label": "Active segment" }) as HTMLSelectElement;
     for (const r of rows) choose.append(el("option", { value: String(r.value) }, `${r.value} · ${segmentName(r)}`));
     choose.value = String(e.value);
     choose.addEventListener("change", () => {
@@ -175,7 +175,7 @@ export class Toolbar {
     const undo = (this.undoButton = iconButton("undo", "Undo (Ctrl+Z)", () => e.undo(false)));
     const redo = (this.redoButton = iconButton("redo", "Redo (Ctrl+Y)", () => e.undo(true)));
     this.drawUndo();
-    const save = iconButton("save", `Save ${session.layer} (${e.saveFormat === "zarr" ? "OME-Zarr" : "NIfTI"}; the format is in the Segmentation tab)${session.unsaved ? `: ${session.unsaved} change${session.unsaved === 1 ? "" : "s"} not saved` : ""}`, () => void e.save());
+    const save = iconButton("save", `Save ${session.layer} (${e.saveFormat === "zarr" ? "OME-Zarr" : "NIfTI"}; the format is in the Segmentation panel)${session.unsaved ? `: ${session.unsaved} change${session.unsaved === 1 ? "" : "s"} not saved` : ""}`, () => void e.save());
     save.classList.toggle("sg-unsaved", session.unsaved > 0);
     const actions = group(
       undo,
@@ -186,7 +186,7 @@ export class Toolbar {
 
     this.bar.replaceChildren(
       ...[tools, option, segment, actions].filter((x): x is HTMLElement => x !== null),
-      group(iconButton("close", "Stop editing: hide the tool bar (the Segmentation tab shows it again)", () => e.setEditing(false))),
+      group(iconButton("close", "Stop editing: hide the tool bar (the Segmentation panel shows it again)", () => e.setEditing(false))),
     );
     this.placed = "";
     this.place();
