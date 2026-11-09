@@ -46,7 +46,7 @@ self.onmessage = (event: MessageEvent) => {
       postMessage({ type: "counted", id: msg.id, level, size, voxelToRas: Array.from(voxelToRas), ...r }, { transfer: [r.labels.buffer, r.counts.buffer, r.sums.buffer, r.bounds.buffer] });
     } else if (msg.type === "nearest") {
       const nearest = new NearestVoxel(new Set(msg.labels as number[]), msg.point);
-      await reader.eachRawChunk(msg.level, signal, (values, box) => nearest.add(values, box), undefined, { lo: msg.lo, hi: msg.hi });
+      await reader.eachRawChunk(msg.level, signal, (values, box) => nearest.add(values, box), progress, { lo: msg.lo, hi: msg.hi });
       postMessage({ type: "nearest", id: msg.id, voxel: nearest.best ?? null });
     } else {
       throw new Error(`unknown request ${msg.type}`);

@@ -65,7 +65,7 @@ export class LabelClient {
    * A voxel of `values` (a region's labels) nearest their centre: inside
    * the region, where the centre may not be (a region on both sides).
    */
-  async centre(counted: Counted, values: bigint[], signal?: AbortSignal): Promise<[number, number, number] | undefined> {
+  async centre(counted: Counted, values: bigint[], signal?: AbortSignal, progress?: (done: number, total: number) => void): Promise<[number, number, number] | undefined> {
     let n = 0;
     const sum = [0, 0, 0];
     const lo = [Infinity, Infinity, Infinity];
@@ -84,7 +84,7 @@ export class LabelClient {
     }
     if (n === 0) return undefined;
     const point = sum.map((s) => s / n);
-    const r = await this.request<{ voxel: [number, number, number] | null }>({ type: "nearest", store: counted.store, level: counted.level, labels: present, point, lo, hi }, { signal });
+    const r = await this.request<{ voxel: [number, number, number] | null }>({ type: "nearest", store: counted.store, level: counted.level, labels: present, point, lo, hi }, { signal, progress });
     return r.voxel ?? undefined;
   }
 

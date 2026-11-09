@@ -1,0 +1,375 @@
+/**
+ * The Atlas panel against a context that holds only what it uses (a viewer
+ * with segmentation layers, their tables, the cursor and a global space;
+ * the plugin's state; jobs) and a label counter whose answers the test
+ * gives, when it chooses: the empty state, the tree set in place, counting
+ * with its cancel and its restart, the counts kept, and Go to with its
+ * progress, Cancel and a new Go to stopping the last.
+ */
+import { readFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Json, LayerTransform, LookupTableInfo, PlatformContext } from "@ngplatform/sdk";
+import { parseLookupTable } from "@ngplatform/sdk/lookup";
+import { type FakeDom, fakeDocument } from "@ngplatform/sdk/testing";
+import type { Counted } from "../label_client.js";
+import { AtlasPanel, type Counter, labelOf, physicalText } from "../plugin.js";
+
+const ALLEN = "lut://AllenCCF2017";
+const allen = parseLookupTable(readFileSync(new URL("./fixtures/allen_structure_graph.json", import.meta.url), "utf8"));
+const MM = 1e-3;
+const identity = () => Float64Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+
+/** A promise and what settles it. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((a, b) => {
+    resolve = a;
+    reject = b;
+  });
+  return { promise, resolve, reject };
+}
+
+const abortError = () => new DOMException("Aborted", "AbortError");
+
+/** A count of a store: MOp1 (320) 10 voxels, MOp2/3 (943) 5, CA1 (382) 7, at 1 mm. */
+function countedOf(store: string): Counted {
+  const stats = (count: number) => ({ count, sum: [0, 0, 0] as [number, number, number], lo: [0, 0, 0] as [number, number, number], hi: [9, 9, 9] as [number, number, number] });
+  return {
+    store,
+    level: 0,
+    size: [10, 10, 10],
+    voxelToRas: identity(),
+    voxelVolume: 1,
+    labels: new Map([
+      [320n, stats(10)],
+      [943n, stats(5)],
+      [382n, stats(7)],
+    ]),
+  };
+}
+
+/** The label counter: each request waits until the test answers it, and is rejected when its signal aborts. */
+class FakeCounter implements Counter {
+  counts: { store: string; progress?: (done: number, total: number) => void; answer: ReturnType<typeof deferred<Counted>> }[] = [];
+  centres: { values: bigint[]; signal?: AbortSignal; progress?: (done: number, total: number) => void; answer: ReturnType<typeof deferred<[number, number, number] | undefined>> }[] = [];
+  count(store: string, progress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Counted> {
+    const answer = deferred<Counted>();
+    signal?.addEventListener("abort", () => answer.reject(abortError()));
+    this.counts.push({ store, progress, answer });
+    return answer.promise;
+  }
+  centre(_counted: Counted, values: bigint[], signal?: AbortSignal, progress?: (done: number, total: number) => void): Promise<[number, number, number] | undefined> {
+    const answer = deferred<[number, number, number] | undefined>();
+    signal?.addEventListener("abort", () => answer.reject(abortError()));
+    this.centres.push({ values, signal, progress, answer });
+    return answer.promise;
+  }
+  dispose = vi.fn();
+}
+
+function fakeContext() {
+  const layers: { name: string; type: string; source: string; table?: string }[] = [];
+  const ng: { dimensions: Record<string, [number, string]>; position: number[]; layers: Json[] } = { dimensions: { x: [MM, "m"], y: [MM, "m"], z: [MM, "m"] }, position: [0, 0, 0], layers: [] };
+  let state: unknown;
+  const listeners = { state: new Set<() => void>(), layers: new Set<() => void>(), ng: new Set<() => void>(), cursor: new Set<() => void>() };
+  const fire = (set: Set<() => void>) => [...set].forEach((f) => f());
+  let cursorValue: unknown;
+  const jobs: { title: string; cancelled: boolean }[] = [];
+  const subscriptions: (() => void)[] = [];
+  const names = ["x", "y", "z"];
+  const transform = {
+    rank: 3,
+    input: { names, scales: [MM, MM, MM], units: ["m", "m", "m"] },
+    output: { names, scales: [MM, MM, MM], units: ["m", "m", "m"] },
+    matrix: identity(),
+    defaultMatrix: identity(),
+  } as unknown as LayerTransform;
+  const catalogue: LookupTableInfo[] = [{ url: ALLEN, title: "Allen Mouse CCFv3", group: "Mouse", fetched: true }];
+  const ctx = {
+    viewer: {
+      layers: () => layers.map((l) => ({ name: l.name, type: l.type, visible: true })),
+      layerSpec: (name: string) => {
+        const l = layers.find((x) => x.name === name);
+        return l && { type: l.type, source: l.source };
+      },
+      layerTransform: (name: string) => (layers.some((l) => l.name === name) ? transform : undefined),
+      getState: () => ng,
+      patchState: vi.fn((edit: (s: Json) => void) => {
+        edit(ng as unknown as Json);
+        fire(listeners.ng);
+      }),
+      onStateChanged: (f: () => void) => (listeners.ng.add(f), () => listeners.ng.delete(f)),
+      onLayersChanged: (f: () => void) => (listeners.layers.add(f), () => listeners.layers.delete(f)),
+      onCursorChanged: (f: () => void) => (listeners.cursor.add(f), () => listeners.cursor.delete(f)),
+      cursor: () => ({ active: true, position: [], names, units: ["m", "m", "m"], values: cursorValue === undefined ? {} : { seg: cursorValue } }),
+      setPosition: vi.fn((p: number[]) => void (ng.position = [...p])),
+      lookupTables: {
+        catalogue: () => catalogue,
+        title: (url: string) => (url === ALLEN ? "Allen Mouse CCFv3" : "my table"),
+        of: (name: string) => layers.find((l) => l.name === name)?.table,
+        load: vi.fn(async () => allen),
+        apply: vi.fn(async (name: string, url: string | undefined) => {
+          layers.find((l) => l.name === name)!.table = url;
+          fire(listeners.layers);
+        }),
+      },
+    },
+    state: {
+      get: () => state,
+      set: vi.fn((v: unknown) => ((state = JSON.parse(JSON.stringify(v))), fire(listeners.state))),
+      onChanged: (f: () => void) => (listeners.state.add(f), () => listeners.state.delete(f)),
+    },
+    jobs: {
+      run: <T>(title: string, work: (control: { progress(): void; readonly cancelled: boolean }) => Promise<T>) => {
+        const job = { title, cancelled: false };
+        jobs.push(job);
+        return work({ progress: () => undefined, get cancelled() { return job.cancelled; } });
+      },
+    },
+    commands: { invoke: vi.fn(async () => undefined) },
+    ui: { toast: vi.fn() },
+    subscriptions,
+  };
+  return {
+    ctx: ctx as unknown as PlatformContext,
+    raw: ctx,
+    ng,
+    jobs,
+    add(name: string, o: { type?: string; source?: string; table?: string } = {}) {
+      layers.push({ name, type: "segmentation", source: `zarr://https://example.org/${name}.ome.zarr`, ...o });
+      fire(listeners.layers);
+    },
+    remove(name: string) {
+      layers.splice(layers.findIndex((l) => l.name === name), 1);
+      fire(listeners.layers);
+    },
+    hover(value: unknown) {
+      cursorValue = value;
+      fire(listeners.cursor);
+    },
+    dispose: () => subscriptions.forEach((d) => d()),
+  };
+}
+
+/** Lets promises settle. */
+const settle = async () => {
+  for (let i = 0; i < 10; ++i) await Promise.resolve();
+};
+
+describe("physical text", () => {
+  it("names lengths and volumes in the unit that suits them", () => {
+    expect(physicalText(1)).toBe("1 mm");
+    expect(physicalText(0.025)).toBe("25 µm");
+    expect(physicalText(8e-6)).toBe("8 nm");
+    expect(physicalText(1500, 3)).toBe("1500 mm³");
+    expect(physicalText(2e6 * 1e3, 3)).toBe("2 m³");
+    expect(physicalText(0.0005, 3)).toBe("500000 µm³");
+    expect(physicalText(0, 3)).toBe("0 mm³");
+  });
+
+  it("reads the segment id from Neuroglancer's selected value", () => {
+    expect(labelOf({ value: "320" })).toBe(320n);
+    expect(labelOf({ value: { value: 5 } })).toBe(5n);
+    expect(labelOf({ value: "x" })).toBeUndefined();
+  });
+});
+
+describe("the Atlas panel", () => {
+  let dom: FakeDom;
+  let world: ReturnType<typeof fakeContext>;
+  let counter: FakeCounter;
+  let host: HTMLElement;
+
+  beforeEach(() => {
+    dom = fakeDocument();
+    world = fakeContext();
+    counter = new FakeCounter();
+    host = dom.host();
+  });
+  afterEach(() => {
+    world.dispose();
+    dom.restore();
+  });
+
+  const open = async () => {
+    new AtlasPanel(world.ctx, counter).render(host);
+    await settle();
+  };
+  const card = (id: string) => host.querySelector(`[data-card=${id}]`) as HTMLDetailsElement;
+  const rows = () => [...host.querySelectorAll(".at-node")] as HTMLElement[];
+  const row = (name: string) => rows().find((r) => dom.text(r.querySelector(".at-name")!) === name)!;
+
+  it("says only what is missing, with its action, when there is no segmentation", async () => {
+    await open();
+    expect(dom.text(host)).toBe("No segmentation in this scene. Open data…");
+    dom.find(host, "button", "Open data…").click();
+    expect(world.raw.commands.invoke).toHaveBeenCalledWith("dataset.add");
+    world.add("seg");
+    expect(card("atlas.atlas").hidden).toBe(false);
+    expect(dom.text(card("atlas.regions"))).toContain("This layer has no lookup table. Choose an atlas");
+    // No narration: no status shows.
+    for (const s of host.querySelectorAll<HTMLElement>(".status-line")) expect(s.hidden).toBe(true);
+    expect(world.raw.state.set).not.toHaveBeenCalled();
+  });
+
+  it("reads the table chosen, lists its tree, and counts the image once", async () => {
+    world.add("seg");
+    await open();
+    const table = host.querySelector("select[aria-label=Atlas]") as HTMLSelectElement;
+    table.value = ALLEN;
+    dom.fire(table, "change");
+    await settle();
+    expect(world.raw.viewer.lookupTables.apply).toHaveBeenCalledWith("seg", ALLEN);
+    expect(dom.text(card("atlas.regions"))).toContain("22");
+    // The single root is opened.
+    expect(rows().map((r) => dom.text(r.querySelector(".at-name")!))).toEqual(["root", "Basic cell groups and regions", "fiber tracts", "ventricular systems"]);
+    expect(counter.counts).toHaveLength(1);
+    expect(dom.text(card("atlas.volumes"))).toContain("Counting the voxels…");
+    counter.counts[0].progress!(1, 4);
+    expect(dom.text(card("atlas.volumes"))).toContain("Counting the voxels… 25%");
+    counter.counts[0].answer.resolve(countedOf(counter.counts[0].store));
+    await settle();
+    expect(card("atlas.volumes").querySelector<HTMLElement>(".status-line")!.hidden).toBe(true);
+    expect(dom.text(card("atlas.volumes"))).toContain("10 × 10 × 10 voxels of 1 mm");
+    // Only regions with voxels: grey matter's 22 voxels, not the ventricles.
+    expect(rows().map((r) => dom.text(r.querySelector(".at-name")!))).toEqual(["root", "Basic cell groups and regions"]);
+    expect(dom.text(row("root"))).toContain("22 mm³");
+    // Moving the view counts nothing again.
+    world.raw.viewer.patchState(() => undefined);
+    await settle();
+    expect(counter.counts).toHaveLength(1);
+  });
+
+  it("marks the region chosen in place, without drawing the tree again", async () => {
+    world.add("seg", { table: ALLEN });
+    await open();
+    const before = rows();
+    row("fiber tracts").click();
+    // The same row elements, not new ones.
+    expect(rows().every((r, i) => r === before[i])).toBe(true);
+    expect(row("fiber tracts").getAttribute("aria-selected")).toBe("true");
+    expect(row("root").getAttribute("aria-selected")).toBe("false");
+    expect(dom.text(card("atlas.region"))).toContain("fiber tracts");
+    expect(dom.text(card("atlas.region"))).not.toContain("No region chosen.");
+    // Opening a region lists its children.
+    dom.fire(row("Basic cell groups and regions").querySelector(".at-caret")!, "click");
+    expect(rows().length).toBeGreaterThan(before.length);
+    // Show only makes its values the layer's segments, as one patch.
+    dom.find(host, "button", "Show only").click();
+    expect(world.raw.viewer.patchState).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the SDK's checkbox and no inline styles outside the tree's rows", async () => {
+    world.add("seg", { table: ALLEN });
+    await open();
+    const only = dom.find(host, "label", "Only regions in the image");
+    expect(only.className).toBe("choice");
+    const styled = (e: Element): Element[] => [...(e.getAttribute("style") ? [e] : []), ...[...e.children].flatMap(styled)];
+    expect(styled(host).every((e) => e.className.startsWith("at-node") || e.className.startsWith("at-swatch"))).toBe(true);
+  });
+
+  it("starts a cancelled count again when asked, or when Go to needs it", async () => {
+    world.add("seg", { table: ALLEN });
+    await open();
+    expect(counter.counts).toHaveLength(1);
+    world.jobs[0].cancelled = true;
+    counter.counts[0].progress!(1, 4);
+    await settle();
+    expect(dom.text(card("atlas.volumes"))).toContain("Counting cancelled.");
+    // Nothing starts it by itself.
+    world.raw.viewer.patchState(() => undefined);
+    await settle();
+    expect(counter.counts).toHaveLength(1);
+    dom.find(card("atlas.volumes"), "button", "Count again").click();
+    await settle();
+    expect(counter.counts).toHaveLength(2);
+    counter.counts[1].answer.reject(new Error("no array"));
+    await settle();
+    expect(dom.text(card("atlas.volumes"))).toContain("Could not count the voxels: no array Retry");
+    // Go to needs the counts: it counts again.
+    row("root").click();
+    dom.find(card("atlas.region"), "button", "Go to").click();
+    await settle();
+    expect(counter.counts).toHaveLength(3);
+    expect(dom.text(card("atlas.region"))).toContain("Going to root…");
+  });
+
+  it("goes to a region with progress; Cancel, or a new Go to, stops the one under way", async () => {
+    world.add("seg", { table: ALLEN });
+    await open();
+    counter.counts[0].answer.resolve(countedOf(counter.counts[0].store));
+    await settle();
+    row("root").click();
+    const region = card("atlas.region");
+    // Hidden until a Go to is under way.
+    const cancel = [...region.querySelectorAll("button")].find((b) => b.textContent === "Cancel")!;
+    expect(cancel.hidden).toBe(true);
+    dom.find(region, "button", "Go to").click();
+    await settle();
+    expect(counter.centres).toHaveLength(1);
+    expect(cancel.hidden).toBe(false);
+    counter.centres[0].progress!(1, 2);
+    expect(dom.text(region)).toContain("Going to root… 50%");
+    // A second click stops the first.
+    dom.find(region, "button", "Go to").click();
+    await settle();
+    expect(counter.centres[0].signal!.aborted).toBe(true);
+    expect(counter.centres).toHaveLength(2);
+    expect(dom.text(region)).toContain("Going to root…");
+    cancel.click();
+    await settle();
+    expect(counter.centres[1].signal!.aborted).toBe(true);
+    expect(cancel.hidden).toBe(true);
+    expect(region.querySelector<HTMLElement>(".status-line")!.hidden).toBe(true);
+    expect(world.raw.viewer.setPosition).not.toHaveBeenCalled();
+    // One that finishes moves the views to the voxel (1 mm voxels at the origin: voxel 3, 4, 5 is at 3, 4, 5).
+    dom.find(region, "button", "Go to").click();
+    await settle();
+    counter.centres[2].answer.resolve([3, 4, 5]);
+    await settle();
+    expect(world.raw.viewer.setPosition).toHaveBeenCalledWith([3, 4, 5]);
+    expect(region.querySelector<HTMLElement>(".status-line")!.hidden).toBe(true);
+    // A region with no voxels says so in the panel.
+    dom.find(region, "button", "Go to").click();
+    await settle();
+    counter.centres[3].answer.resolve(undefined);
+    await settle();
+    expect(dom.text(region)).toContain("root has no voxels in seg.");
+  });
+
+  it("keeps the last few images' counts, not every one", async () => {
+    for (let i = 0; i < 6; ++i) world.add(`seg${i}`, { table: ALLEN });
+    await open();
+    const layer = host.querySelector('select[aria-label="Segmentation layer"]') as HTMLSelectElement;
+    const pick = async (name: string) => {
+      layer.value = name;
+      dom.fire(layer, "change");
+      await settle();
+      const last = counter.counts[counter.counts.length - 1];
+      last.answer.resolve(countedOf(last.store));
+      await settle();
+    };
+    await pick("seg0");
+    for (let i = 1; i < 6; ++i) await pick(`seg${i}`);
+    const counted = counter.counts.length;
+    // seg5 is kept; seg0 has been let go, and is counted again.
+    layer.value = "seg5";
+    dom.fire(layer, "change");
+    await settle();
+    expect(counter.counts).toHaveLength(counted);
+    await pick("seg0");
+    expect(counter.counts).toHaveLength(counted + 1);
+    expect(world.raw.state.set).toHaveBeenLastCalledWith({ layer: "seg0" });
+  });
+
+  it("names the region under the cursor with its path", async () => {
+    world.add("seg", { table: ALLEN });
+    await open();
+    world.hover({ value: "320" });
+    expect(dom.text(host.querySelector(".at-cursor")!)).toContain("Layer 1 MOp1 · 320");
+    expect(dom.text(host.querySelector(".at-cursor")!)).toContain("Somatomotor areas › Primary motor area");
+    world.hover({ value: "123456" });
+    expect(dom.text(host.querySelector(".at-cursor")!)).toBe("123456 (not in the table)");
+  });
+});
