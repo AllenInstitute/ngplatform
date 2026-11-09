@@ -16,7 +16,7 @@ it on in the Plugins tab.
   Neuroglancer's workers and add a source prefix (for example
   `|zarr-vectors:`). They can also declare files they read in place from
   your computer, as virtual stores.
-- **Tools** add tabs, commands, overlays and views around Neuroglancer: track
+- **Tools** add panels, commands, overlays and views around Neuroglancer: track
   filtering, annotations, segmentation, registration, volume rendering. They work through the
   platform's SDK (`@ngplatform/sdk`): the workspace, the viewer, the docks,
   jobs, storage and sign-in.

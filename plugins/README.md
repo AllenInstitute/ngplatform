@@ -18,7 +18,7 @@ plugins/
 
 ## Starting from the starter plugins
 
-Three empty plugins to copy, each with a tab that lists the scene's layers
+Three empty plugins to copy, each with a panel that lists the scene's layers
 and a command (the TypeScript and JavaScript ones also keep a counter in the
 scene's state):
 
@@ -26,7 +26,7 @@ scene's state):
 |---|---|---|
 | [`starter_ts/`](starter_ts/) | A TypeScript plugin built into the app | Copy the folder, rename it and its ids, list it in `index.ts` (below) |
 | [`starter_ts/starter.mjs`](starter_ts/starter.mjs) | The same as one JavaScript file, no build | Plugins → **Add**, then **Reload** after each edit |
-| [`starter_py/`](starter_py/) | Python, in the page's Python (Pyodide): only `.py` files and a README | Plugins → **Add** its `starter.py`; `@ngp.command` adds a command (its id `python.<plugin>.<function>`), `@ngp.panel` a tab; what it prints goes to the Python tab, or the Activity tab when that is closed |
+| [`starter_py/`](starter_py/) | Python, in the page's Python (Pyodide): only `.py` files and a README | Plugins → **Add** its `starter.py`; `@ngp.command` adds a command (its id `python.<plugin>.<function>`), `@ngp.panel` a panel in the Tools dock; what it prints goes to the Python tab, or the Activity tab when that is closed |
 
 ## Adding a plugin
 
@@ -40,8 +40,9 @@ scene's state):
 2. **Import the platform only through the SDK**, `@ngplatform/sdk` (types,
    `checkManifest`), `@ngplatform/sdk/workers` (for a worker of your own
    that reads chunks through Neuroglancer's codecs), `@ngplatform/sdk/dom`
-   (`el`, `button`, `select`, `numberInput`, `field`, `svgEl`,
-   `downloadBlob`, `safeFileName`), `@ngplatform/sdk/format` (`csv`,
+   (the parts a panel is built from: see [Building a panel](#building-a-panel);
+   and `el`, `svgEl`, `downloadBlob`, `safeFileName`),
+   `@ngplatform/sdk/testing` (a stand-in document for panel tests), `@ngplatform/sdk/format` (`csv`,
    `csvField`, `ticks`, `mmText`, `bytesText`, `parseBytes`) and
    `@ngplatform/sdk/worker_rpc` (`WorkerRpc`: requests to a worker of your
    own, with progress, cancel and a worker that fails). Everything a plugin may
@@ -78,9 +79,10 @@ The Plugins tab's **Add** loads a plugin from this computer: a JavaScript
 module (one file, bundled) exporting `manifest` (a tool) and `plugin`, or a
 folder with `manifest.json` and the module it names as `main`; or a Python
 file, run in the Python tab's interpreter, where `@ngp.command("Title")`
-adds a function to the command palette and `@ngp.panel("Title")` a tab
-(drawn by a function given the tab's element, when shown and whenever the
-workspace changes; the page's DOM is reachable through Pyodide's `js`). **Reload** reads it again after an
+adds a function to the command palette and `@ngp.panel("Title")` a panel
+in the Tools dock, under *Python* or `group="…"` (drawn by a function given
+the panel's element, when shown and whenever the workspace changes; the
+page's DOM is reachable through Pyodide's `js`). **Reload** reads it again after an
 edit. In Chrome and Edge the file is remembered between visits.
 
 **Add → From a URL…** loads a tool plugin someone has published: the URL of
@@ -102,7 +104,7 @@ is off until someone turns it on, from the Plugins tab or from an offer.
 The choice is kept in this browser.
 
 - A tool plugin turns on at once, without a reload (`PluginHost.switchOn`):
-  its tabs, commands and keys appear, and it activates as its manifest says.
+  its panels, commands and keys appear, and it activates as its manifest says.
   A data type plugin turns on with a reload, as its Neuroglancer modules
   load only with the page. Turning any plugin off reloads the page. A reload
   keeps the link, so the workspace comes back as it was.
@@ -136,7 +138,7 @@ built with the app.
 | Kind | What it does | Its code | Example |
 |---|---|---|---|
 | **Data type** (`kind: "datatype"`) | Teaches Neuroglancer a format: a data source, with code in Neuroglancer's workers | A Neuroglancer plugin package: a main-thread module (registers the data source) and worker modules | [`zarr-vectors/`](zarr-vectors/) |
-| **Tool** (`kind: "tool"`) | Adds to the workspace around the viewer: a tab in the left dock, commands, a view beside Neuroglancer's, analyses | A platform module with `activate(ctx)`, using only the `PlatformContext` | [`track-filtering/`](track-filtering/) (requires Zarr Vectors), [`filters/`](filters/) |
+| **Tool** (`kind: "tool"`) | Adds to the workspace around the viewer: a panel in the Tools dock, commands, a view beside Neuroglancer's, analyses | A platform module with `activate(ctx)`, using only the `PlatformContext` | [`track-filtering/`](track-filtering/) (requires Zarr Vectors), [`filters/`](filters/) |
 
 A data type plugin has no platform code and contributes no commands or
 panels; tools that work on its data are separate tool plugins that declare
@@ -213,7 +215,7 @@ shows its result that way.
 ### The manifest
 
 Read without running any code: enough to list the plugin, show its commands
-in the palette and its tab in the dock, and decide when to load the code.
+in the palette and its panel in a dock, and decide when to load the code.
 
 ```ts
 export const MANIFEST: Manifest = {
@@ -225,7 +227,7 @@ export const MANIFEST: Manifest = {
   license: "Apache-2.0",
   requires: { plugins: ["org.ngplatform.zarr-vectors"] },
   contributes: {
-    panels: [{ id: "layerStats.panel", title: "Statistics", slot: "left", order: 50 }],
+    panels: [{ id: "layerStats.panel", title: "Statistics", slot: "left", group: "Vectors", order: 50 }],
     commands: [
       {
         id: "layerStats.show",
@@ -243,8 +245,10 @@ export const MANIFEST: Manifest = {
 - **Activation**: using a declared contribution loads the plugin. Activation
   events (`onStartup`, `onCommand:<id>`, `onView:<panel>`,
   `onDatasetKind:<kind>`, `onOpen:<regex>`) load it earlier.
-- **Panels** (`contributes.panels`): a tab in a dock (`left`, `right` or
-  `bottom`), in `order`; `minSize` (pixels) grows the dock to at least that
+- **Panels** (`contributes.panels`): a panel in a dock, in `order`. A tool's
+  panel (`left`) goes to the Tools dock, listed under its `group`: `Image`,
+  `Labels`, `Space`, `Vectors`, or `Other` when it names none; `bottom`
+  keeps it in the bottom dock; `minSize` (pixels) grows the dock to at least that
   while the panel is shown (the annotation table asks for 300), without
   changing the size the person set.
 - **Scene kinds** (`contributes.sceneKinds: [{kind, title, panel}]`): a
@@ -289,7 +293,7 @@ it is deactivated. Subscriptions a plugin makes itself go in
 | Part | For |
 |---|---|
 | `commands.register / invoke` | Supply declared commands; call any command with arguments (validated against the declared schema, defaults filled in). |
-| `ui.panel / showPanel` | Render declared panels; return a disposer for cleanup. A panel declared in the `left` slot is a tool: it shows in the Tools dock on the right, chosen from its menu (`bottom` panels stay in the bottom dock). Break a long panel up with `card(id, title, {open, badge, attention, tooltip}, …children)` from `@ngplatform/sdk/dom`: a collapsible section whose open state is kept per browser under `id` ("myplugin.section"). |
+| `ui.panel / showPanel` | Render declared panels; return a disposer for cleanup. A panel declared in the `left` slot is a tool: it shows in the Tools dock on the right, chosen from its menu under its `group` (`bottom` panels stay in the bottom dock). Build it from the SDK's parts: see [Building a panel](#building-a-panel). |
 | `ui.view` | Show a view beside Neuroglancer's, where its 3-D panel would be; one at a time, with a draggable divider. |
 | `ui.viewToggle` | A switch beside "Sections" in the 3-D panel (volume rendering's "Volume"). |
 | `ui.overlay / screenshotOverlay` | An element over the views, and painting into Neuroglancer's screenshots (labels use both). |
@@ -305,6 +309,71 @@ it is deactivated. Subscriptions a plugin makes itself go in
 | `open.handler` | Handle pasted text matching a declared pattern. |
 | `log` | Lines in the Activity tab, tagged with the plugin. |
 | `auth.register` | Add a sign-in method to Settings → Sign-in (see below). |
+
+### Building a panel
+
+Every panel is built from the same parts, from `@ngplatform/sdk/dom`, so
+plugins keep no private copies of controls or styles. Each part returns an
+element to append; the controls also have `set(value)`.
+
+| Part | For |
+|---|---|
+| `card(id, title, {open, badge, attention, info}, …children)` | A group of controls: a collapsible card whose open state is kept per browser under `id` ("myplugin.output"). The first card of a panel is `open`. |
+| `field(label, control, hint \| {hint, info})` | A label above a control. |
+| `toggle(label, on, onchange, {disabled, hideLabel, info})` | A switch: turns a feature on (Render, a plugin, a layer's drawing). |
+| `checkbox(label, checked, onchange, {disabled, hideLabel, info})` | A checkbox: picks items or options. |
+| `slider(value, {min, max, step, unit, label, oninput, onchange, unbounded, disabled})` | The one slider, its number box beside it, kept in step. `oninput` follows the drag (a preview); `onchange` gets the settled value (let go, a key, a typed number). |
+| `select(options, value, onchange, label)`, `numberInput(value, onchange, attrs)` | A select and a number box. |
+| `button(label, onclick, title, cls)`, `iconButton(name, label, onclick)`, `icon(name)` | Buttons (`btn` with `primary`, `outline` or none, and `small`), and the app's icons by name. |
+| `info(text, label)` | An explanation behind a small (i): shown on click, Enter or Space and on hover, read by screen readers. Use it rather than `title`, which keyboard and touch cannot reach. |
+| `emptyState(text, {label, run})` | What a panel shows with nothing to work on: one line and the action that supplies it ("Open data…"). |
+| `statusLine()` | `progress(text)`, `error(text, {label, run})` and `clear()`: progress and errors only, hidden otherwise. |
+| `region(render, attrs)` | A part drawn again only when its key changes: `update(key)`. |
+
+Shared classes, in the app's stylesheet: `row` (controls on a line),
+`stack`, `grid-2`, `spacer`, `muted`, `faint`, `hint` (a short note),
+`readout` (a changing number or path), `list`, `empty`.
+
+The rules the parts keep:
+- A switch turns a feature on; a checkbox picks items or options.
+- A control has a label (`field()`, or the label of `toggle()` and `checkbox()`).
+- Explanations go behind an `info()`, not in the panel or in `title`.
+- An empty state is one line plus its action.
+- A status line reports progress and errors only: no "Ready", nothing the panel already shows.
+- At most one primary button per panel.
+
+**Update in place.** Draw the panel once, and on a change of state bring
+it up to date rather than drawing it again: drawing again closes an open
+select, ends a drag and loses what is being typed. Keep the controls, call
+their `set()` (it waits while the person types in or drags one), and put
+what changes shape (a list, a section for one kind of data) in a `region()`:
+
+```ts
+ctx.ui.panel("myplugin.panel", (host) => {
+  const status = statusLine();
+  const empty = emptyState("No image in this scene.", { label: "Open data…", run: () => void ctx.commands.invoke("dataset.add") });
+  const exposure = slider(1, { min: 0, max: 5, step: 0.05, label: "Exposure", onchange: (v) => save({ exposure: v }) });
+  const layers = region((names: string[]) => names.map((n) => el("li", {}, n)), { class: "list" });
+  host.append(empty, card("myplugin.look", "Look", { open: true }, field("Exposure", exposure), layers), status);
+  const sync = () => {
+    const images = ctx.viewer.layers().filter((l) => l.type === "image");
+    empty.hidden = images.length > 0;
+    exposure.set(saved().exposure);
+    layers.update(images.map((l) => l.name));
+  };
+  sync();
+  const offLayers = ctx.viewer.onLayersChanged(sync);
+  const offState = ctx.state.onChanged(sync);
+  return () => (offLayers(), offState());
+});
+```
+
+**Tests.** `@ngplatform/sdk/testing`'s `fakeDocument()` is a stand-in
+document for Node: draw the panel into `dom.host()`, act as a person would
+(`dom.type`, `dom.check`, `dom.find(host, "button", "Add one").click()`)
+and read `dom.text(host)`. The starter's
+[tests](starter_ts/tests/starter.test.ts) have a panel test and a disposal
+test to copy.
 
 ### Sign-in
 
