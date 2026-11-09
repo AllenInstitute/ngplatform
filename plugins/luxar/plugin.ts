@@ -70,8 +70,13 @@ export function precomputedSegmentationOf(layer: LayerInfo): string | undefined 
   return layer.type === "segmentation" ? precomputedUrl(layer.sources[0]) : undefined;
 }
 
-class Luxar {
+export class Luxar {
   private saved: Saved;
+  /**
+   * Switched off: an answer that comes after (a volume's `info`, a timer, a
+   * deferred setting) makes no view, hides no layer and writes no state.
+   */
+  private disposed = false;
   private readonly views = new Map<string, LayerView | SplatView>();
   /** A layer's view of the store it drew before, drawing until its new store's view is ready (see sync). */
   private readonly outgoing = new Map<string, { view: LayerView; timer: ReturnType<typeof setTimeout> }>();
@@ -141,7 +146,7 @@ class Luxar {
       this.meshVolumes.set(volume, undefined);
       void volumeHasMeshes(volume).then((has) => {
         this.meshVolumes.set(volume, has);
-        if (!has) return;
+        if (!has || this.disposed) return;
         this.sync();
         this.panelUpdate?.();
       });
@@ -150,6 +155,7 @@ class Luxar {
   }
 
   private write(saved: Saved): void {
+    if (this.disposed) return;
     this.saved = saved;
     this.ctx.state.set(saved);
     this.sync();
@@ -209,10 +215,16 @@ class Luxar {
     const after = view instanceof LayerView ? view.client.info?.levels[0]?.objects : undefined;
     if (view instanceof LayerView && view.held && before !== undefined && (!view.ready || (after !== undefined && after < before))) {
       clearTimeout(out.timer);
-      out.timer = setTimeout(() => this.handOver(name), OUTGOING_MS);
+      out.timer = this.handOverLater(name);
       return;
     }
     this.finishHandOver(name);
+  }
+
+  private handOverLater(name: string): ReturnType<typeof setTimeout> {
+    return setTimeout(() => {
+      if (!this.disposed) this.handOver(name);
+    }, OUTGOING_MS);
   }
 
   private finishHandOver(name: string): void {
@@ -230,6 +242,7 @@ class Luxar {
 
   /** Makes the layer views match the state and the scene's layers. */
   private sync(): void {
+    if (this.disposed) return;
     const layers = new Map(this.ctx.viewer.layers().map((l) => [l.name, l]));
     for (const [name, view] of this.views) {
       const layer = layers.get(name);
@@ -245,7 +258,7 @@ class Luxar {
           view.freeze();
           // While Neuroglancer made the layer afresh it may have seemed hidden for a moment.
           view.setVisible(true);
-          this.outgoing.set(name, { view, timer: setTimeout(() => this.handOver(name), OUTGOING_MS) });
+          this.outgoing.set(name, { view, timer: this.handOverLater(name) });
         } else view.dispose();
       }
     }
@@ -540,7 +553,10 @@ class Luxar {
     return el("div", { class: "lx-settings" }, ...parts);
   }
 
+  /** Releases every view (its worker and WebGL context) and shows the layers' own drawing again. */
   dispose(): void {
+    this.disposed = true;
+    this.panelUpdate = this.statusUpdate = undefined;
     this.offs.forEach((off) => off());
     this.segmentWatch.forEach((off) => off());
     this.segmentWatch.clear();

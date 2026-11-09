@@ -58,6 +58,8 @@ export class LayerView {
   held = false;
   /** Draws what it drew when frozen, whatever the layer shows now (the view of a store the layer has left). */
   private frozen = false;
+  /** Disposed: a store that opens afterwards draws nothing. */
+  private disposed = false;
   /** The last drawing of chosen segments, and when it was last current (see freeze). */
   private chosen: { drawing: LayerDrawing & { key: string }; ids: BigUint64Array | undefined; at: number } | undefined;
 
@@ -93,10 +95,13 @@ export class LayerView {
     };
     void this.client.ready.then(
       () => {
+        if (this.disposed) return;
         this.redraw();
         this.onStatus?.();
       },
-      () => this.onStatus?.(),
+      () => {
+        if (!this.disposed) this.onStatus?.();
+      },
     );
   }
 
@@ -321,6 +326,7 @@ export class LayerView {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.offs.forEach((off) => off());
     this.handle.dispose();
     this.view2d.dispose();

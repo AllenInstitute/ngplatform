@@ -154,7 +154,8 @@ export function planMultilod(
   decode: DracoDecode,
   budget = VERTEX_BUDGET,
 ): { levels: PlannedLevel[]; lo: number[]; hi: number[] } {
-  const lods = Math.max(0, ...segments.map((s) => s.manifest.lods.length));
+  let lods = 0;
+  for (const s of segments) lods = Math.max(lods, s.manifest.lods.length);
   const lodOf = (s: SegmentMesh, level: number) => Math.min(level, s.manifest.lods.length - 1);
   const bytesAt = (level: number) => segments.reduce((n, s) => n + s.manifest.lods[lodOf(s, level)].sizes.reduce((a, b) => a + b, 0), 0);
   let first = 0;
