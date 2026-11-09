@@ -28,16 +28,29 @@ export function isStoredSlice(value: unknown): value is StoredSlice {
   return typeof value === "object" && value !== null && typeof (value as StoredSlice).version === "number" && "data" in value;
 }
 
-export function readSlice<T>(app: Record<string, unknown>, spec: SliceSpec<T>): T {
+/**
+ * Why a slice stored at `stored` cannot be read by a release that reads
+ * `version`, or undefined when it can.
+ */
+export function newerSlice(key: string, stored: number, version: number): string | undefined {
+  if (stored <= version) return undefined;
+  return `The workspace's "${key}" state is version ${stored}, newer than this release reads (${version}).`;
+}
+
+/**
+ * The slice's value.  An older version without a `migrate` starts afresh,
+ * and `report` (when given) is told so: a link must not lose state silently.
+ */
+export function readSlice<T>(app: Record<string, unknown>, spec: SliceSpec<T>, report?: (message: string) => void): T {
   const stored = app[spec.key];
   if (!isStoredSlice(stored)) return spec.initial();
   if (stored.version === spec.version) return stored.data as T;
-  if (stored.version > spec.version) {
-    throw new SliceError(
-      `The workspace's "${spec.key}" state is version ${stored.version}, newer than this release reads (${spec.version}).`,
-    );
+  const newer = newerSlice(spec.key, stored.version, spec.version);
+  if (newer !== undefined) throw new SliceError(newer);
+  if (spec.migrate === undefined) {
+    report?.(`The workspace's "${spec.key}" state is version ${stored.version}; this release reads version ${spec.version} and cannot upgrade it, so it starts afresh.`);
+    return spec.initial();
   }
-  if (spec.migrate === undefined) return spec.initial();
   return spec.migrate(stored.data, stored.version);
 }
 

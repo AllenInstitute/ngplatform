@@ -146,4 +146,10 @@ describe("app-state slices", () => {
     expect(readSlice({ tracto: { version: 1, data: { names: ["x"] } } }, v2)).toEqual({ groups: ["x"], colour: "red" });
     expect(() => readSlice({ tracto: { version: 3, data: {} } }, v2)).toThrow(SliceError);
   });
+  it("says when an older version without an upgrade starts afresh", () => {
+    const told: string[] = [];
+    const { migrate: _, ...noMigrate } = v2;
+    expect(readSlice({ tracto: { version: 1, data: { names: ["x"] } } }, noMigrate, (m) => told.push(m))).toEqual({ groups: [], colour: "red" });
+    expect(told).toEqual([expect.stringContaining("cannot upgrade it, so it starts afresh")]);
+  });
 });

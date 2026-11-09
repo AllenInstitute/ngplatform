@@ -57,6 +57,19 @@ export interface PlatformState {
 }
 
 export const PLATFORM_KEY = "platform";
+/** The version of `app.platform` this release writes and reads. */
+export const PLATFORM_VERSION = 1;
+
+/**
+ * Why `app.platform` may not open as it was made, or undefined: a link made
+ * by a newer release is read as far as this release understands it.
+ */
+export function platformProblem(app: Json): string | undefined {
+  const raw = app[PLATFORM_KEY];
+  const version = typeof raw === "object" && raw !== null ? (raw as Json).version : undefined;
+  if (typeof version !== "number" || version <= PLATFORM_VERSION) return undefined;
+  return `This link was made by a newer release (workspace version ${version}; this release reads ${PLATFORM_VERSION}). Its scenes and datasets are read as far as this release understands them.`;
+}
 
 export type IdMaker = (prefix: string) => string;
 

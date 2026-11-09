@@ -723,7 +723,13 @@ export interface PlatformContext {
   };
   workspace: WorkspaceApi;
   viewer: ViewerApi;
-  /** This plugin's slice of the workspace state: undoable, in the link, migrated. */
+  /**
+   * This plugin's slice of the workspace state: undoable, in the link.
+   * State saved by an older version of the plugin (its manifest's
+   * `appState.version`) is returned as it was saved, for the plugin to read
+   * by its shape; state saved by a newer version is not read (`get` returns
+   * undefined) and the user is told.
+   */
   state: {
     get<T>(): T | undefined;
     set<T>(value: T): void;

@@ -337,7 +337,7 @@ export class Shell {
       workspace: apis.workspace,
       viewer: apis.viewer,
       slices: {
-        get: (key) => store.rawSlice(key),
+        get: (key, version) => store.rawSlice(key, version),
         set: (key, version, value) => store.setRawSlice(key, version, value),
         onChanged: (callback) => store.onSliceChanged(callback),
       },

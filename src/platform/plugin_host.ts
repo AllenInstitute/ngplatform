@@ -109,7 +109,8 @@ export interface HostServices {
   workspace: WorkspaceApi;
   viewer: ViewerApi;
   slices: {
-    get(key: string): unknown;
+    /** The data stored under `key`; undefined when none, or when stored by a version newer than `version`. */
+    get(key: string, version: number): unknown;
     set(key: string, version: number, value: unknown): void;
     onChanged(callback: () => void): Disposer;
   };
@@ -489,7 +490,7 @@ export class PluginHost {
       state: {
         get: <T>() => {
           if (slice === undefined) throw new PluginError(`${owner} declares no appState`);
-          return s.slices.get(slice.key) as T | undefined;
+          return s.slices.get(slice.key, slice.version) as T | undefined;
         },
         set: (value) => {
           if (slice === undefined) throw new PluginError(`${owner} declares no appState`);
