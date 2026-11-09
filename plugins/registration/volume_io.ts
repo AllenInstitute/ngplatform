@@ -165,6 +165,25 @@ export function resample(source: Volume, grid: Grid, move: Mat4, method: Method,
   return out;
 }
 
+// ------------------------------------------------------------ memory
+
+/**
+ * The memory (bytes) a save made in memory needs: the source, the resampled
+ * output and the file made from it, and for cubic the B-spline
+ * coefficients (a 64-bit float a source voxel: eight times a uint8
+ * source).  With the voxels kept (`header`), the source and its file.
+ */
+export function saveBytes(sourceVoxels: number, outputVoxels: number, bytesPerVoxel: number, method: Method, header: boolean): number {
+  if (header) return 2 * sourceVoxels * bytesPerVoxel;
+  return sourceVoxels * bytesPerVoxel + 2 * outputVoxels * bytesPerVoxel + (method === "cubic" ? 8 * sourceVoxels : 0);
+}
+
+/** The first (finest) of `needs` (bytes, finest first) of at most `max`; else the last (the coarsest). */
+export function finestThatFits(needs: number[], max: number): number {
+  const i = needs.findIndex((n) => n <= max);
+  return i === -1 ? needs.length - 1 : i;
+}
+
 // ------------------------------------------------------------ NIfTI-1
 
 /** `SaveRequest.grid` asking for the layer's own voxels on a grid grown to hold all of the moved image. */

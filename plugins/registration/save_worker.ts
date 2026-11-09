@@ -16,7 +16,8 @@ import { asyncComputationWorker } from "@ngplatform/sdk/workers";
 import { VolumeReader } from "../volume-view/volume_reader.js";
 import { saveInBlocks, saveInSlabs } from "./blocks.js";
 import { identity4, multiply4 } from "./fit.js";
-import { ARRAYS, displayWindow, ENLARGE, enlargedGrid, gzip, type Method, mghFile, niftiFile, omeZarrFiles, resample, typed, type Volume, type VoxelType } from "./volume_io.js";
+import { bytesText } from "@ngplatform/sdk/format";
+import { ARRAYS, displayWindow, ENLARGE, enlargedGrid, finestThatFits, gzip, type Method, mghFile, niftiFile, omeZarrFiles, resample, saveBytes, typed, type Volume, type VoxelType } from "./volume_io.js";
 
 // zstd and the other codecs decode in the platform's async-computation worker.
 setAsyncComputationWorkerFactory(() => asyncComputationWorker(["org.ngplatform.zarr-vectors"]));
@@ -38,7 +39,11 @@ export interface SaveRequest {
   format: "nii" | "nii.gz" | "mgz" | "mgh" | "zarr";
   name: string;
   label: boolean;
-  /** The finest level of at most this many bytes is read (and, resampled, written as many again). */
+  /**
+   * A save in memory takes the finest level whose work (source, output,
+   * file, and cubic's coefficients: `saveBytes`) needs at most this many
+   * bytes; one that needs more than LIMIT times it is refused.
+   */
   maxBytes: number;
   /**
    * OME-Zarr: the folder to write it into (as `name`), here, as it is
@@ -52,7 +57,8 @@ export interface SaveRequest {
 
 const controllers = new Map<number, AbortController>();
 
-
+/** A save in memory needing more than this many times `maxBytes`, even from the coarsest level, is refused rather than run out of memory. */
+const LIMIT = 4;
 
 const levelBytes = (l: { size: number[]; type?: string }) => l.size[0] * l.size[1] * l.size[2] * (ARRAYS[(l.type ?? "uint8") as VoxelType]?.BYTES_PER_ELEMENT ?? 8);
 
@@ -102,17 +108,25 @@ async function saveLarge(msg: SaveRequest & { id: number }, reader: VolumeReader
     const g = (await new VolumeReader().open([msg.grid], undefined, signal)).levels[0];
     grid = { size: g.size, voxelToRas: g.voxelToRas };
   }
+  // A store of that name already there (an earlier save) is not removed if this one stops.
+  const fresh = !(await msg.folder!.getDirectoryHandle(msg.folderName!).then(() => true, () => false));
   const root = await msg.folder!.getDirectoryHandle(msg.folderName!, { create: true });
-  await saveInBlocks(
-    { size: level.size, voxelToRas: level.voxelToRas, type, read: (lo, hi) => readExact(reader, type, lo, hi, signal) },
-    grid,
-    // Voxels kept: the image onto its own grid unmoved, the new placement written.
-    msg.header ? identity4() : move,
-    { method: msg.method, label: msg.label, name: msg.name, description: `${msg.name}, moved by ngplatform registration`, placement: msg.header ? multiply4(move, level.voxelToRas) : undefined },
-    folderWriter(root),
-    (done, total) => postMessage({ type: "progress", id: msg.id, what: "Saving in blocks", done, total }),
-    signal,
-  );
+  try {
+    await saveInBlocks(
+      { size: level.size, voxelToRas: level.voxelToRas, type, read: (lo, hi) => readExact(reader, type, lo, hi, signal) },
+      grid,
+      // Voxels kept: the image onto its own grid unmoved, the new placement written.
+      msg.header ? identity4() : move,
+      { method: msg.method, label: msg.label, name: msg.name, description: `${msg.name}, moved by ngplatform registration`, placement: msg.header ? multiply4(move, level.voxelToRas) : undefined },
+      folderWriter(root),
+      (done, total) => postMessage({ type: "progress", id: msg.id, what: "Saving in blocks", done, total }),
+      signal,
+    );
+  } catch (e) {
+    // Cancelled or failed: the partial store goes.
+    if (fresh) await msg.folder!.removeEntry(msg.folderName!, { recursive: true }).catch(() => {});
+    throw e;
+  }
   postMessage({ type: "saved", id: msg.id, files: [], level: 0, voxelSize: level.voxelSize, size: grid.size, written: true });
 }
 
@@ -165,30 +179,46 @@ async function saveLargeFile(msg: SaveRequest & { id: number }, reader: VolumeRe
 }
 
 async function save(msg: SaveRequest & { id: number }, signal: AbortSignal): Promise<void> {
-  const progress = (what: string) => (done: number, total: number) => postMessage({ type: "progress", id: msg.id, what, done, total });
+  // Progress is where a long step (resampling) stops when cancelled.
+  const progress = (what: string) => (done: number, total: number) => {
+    signal.throwIfAborted();
+    postMessage({ type: "progress", id: msg.id, what, done, total });
+  };
   const reader = new VolumeReader();
   const { levels } = await reader.open([msg.store], undefined, signal);
-  const index = levelFor(levels, msg.maxBytes);
-  if (levelBytes(levels[0]) > msg.maxBytes && msg.format === "zarr" && msg.folder !== undefined) return saveLarge(msg, reader, levels, signal);
-  if (levelBytes(levels[0]) > msg.maxBytes && msg.format !== "zarr" && msg.file !== undefined) return saveLargeFile(msg, reader, levels, signal);
+  const move = Float64Array.from(msg.move);
+  const method = msg.label ? "nearest" : msg.method;
+  // Another image's grid: its finest level that leaves half the memory for the source.
+  let onto: { size: number[]; voxelToRas: Float64Array } | undefined;
+  if (!msg.header && msg.grid !== undefined && msg.grid !== ENLARGE) {
+    const other = await new VolumeReader().open([msg.grid], undefined, signal);
+    const g = other.levels[levelFor(other.levels, msg.maxBytes / 2)];
+    onto = { size: g.size, voxelToRas: g.voxelToRas };
+  }
+  const voxels = (s: number[]) => s[0] * s[1] * s[2];
+  const output = (l: (typeof levels)[number]) => (msg.header ? l.size : msg.grid === ENLARGE ? enlargedGrid(l, move).size : (onto?.size ?? l.size));
+  const needs = levels.map((l) => saveBytes(voxels(l.size), voxels(output(l)), ARRAYS[(l.type ?? "uint8") as VoxelType]?.BYTES_PER_ELEMENT ?? 8, method, msg.header));
+  // More than fits, into a file or folder chosen here: the full resolution, in parts.
+  if (needs[0] > msg.maxBytes && msg.format === "zarr" && msg.folder !== undefined) return saveLarge(msg, reader, levels, signal);
+  if (needs[0] > msg.maxBytes && msg.format !== "zarr" && msg.file !== undefined) return saveLargeFile(msg, reader, levels, signal);
+  const index = finestThatFits(needs, msg.maxBytes);
+  if (needs[index] > LIMIT * msg.maxBytes) {
+    throw new Error(
+      `it needs about ${bytesText(needs[index])} of memory, more than the ${bytesText(LIMIT * msg.maxBytes)} a download may use. Save it into a file or folder you choose (Chrome, Edge), which writes it in parts${method === "cubic" ? ", or resample it trilinear, which needs less" : ""}`,
+    );
+  }
   const level = levels[index];
   const raw = await reader.rawVolume(index, signal, progress("Reading"));
   const source: Volume = { data: typed(raw.type as VoxelType, raw.data), size: raw.size, type: raw.type as VoxelType, voxelToRas: level.voxelToRas };
-  const move = Float64Array.from(msg.move);
   let out: Volume;
   if (msg.header) {
     out = { ...source, voxelToRas: multiply4(move, source.voxelToRas) };
   } else {
     let grid = { size: source.size, voxelToRas: source.voxelToRas };
-    if (msg.grid === ENLARGE) {
-      grid = enlargedGrid(source, move);
-    } else if (msg.grid !== undefined) {
-      const other = await new VolumeReader().open([msg.grid], undefined, signal);
-      const g = other.levels[levelFor(other.levels, msg.maxBytes)];
-      grid = { size: g.size, voxelToRas: g.voxelToRas };
-    }
+    if (msg.grid === ENLARGE) grid = enlargedGrid(source, move);
+    else if (onto !== undefined) grid = { size: onto.size as [number, number, number], voxelToRas: onto.voxelToRas };
     signal.throwIfAborted();
-    const data = resample(source, grid, move, msg.label ? "nearest" : msg.method, progress("Resampling"));
+    const data = resample(source, grid, move, method, progress("Resampling"));
     out = { data, size: grid.size, type: source.type, voxelToRas: grid.voxelToRas };
   }
   signal.throwIfAborted();
