@@ -6,6 +6,7 @@
  * show as layers (ngp.show).  numpy, scipy and the other Pyodide packages
  * load when imported.
  */
+import { asTool } from "../docks.js";
 import { clear, h } from "../dom.js";
 import type { Workbench } from "../workbench.js";
 
@@ -187,14 +188,15 @@ class _Workspace:
     def viewer(self):
         return _bridge.viewer()
 
-    def panel(self, title, id=None, slot="left"):
-        """Adds a tab (slot "left", "right" or "bottom") drawn by a function given the
-        tab's element, when shown and again whenever the workspace changes:
-        @ngp.panel("My tab")
+    def panel(self, title, id=None, slot="left", group="Python"):
+        """Adds a panel drawn by a function given the panel's element, when shown and
+        again whenever the workspace changes.  A tool (slot "left") goes to the Tools
+        dock, listed under group; slot "bottom" puts it in the bottom dock:
+        @ngp.panel("My panel")
         def draw(host): host.textContent = f"{len(ngp.layers())} layers"
         """
         def register(function):
-            _bridge.registerPanel(id or function.__name__, title, slot, function)
+            _bridge.registerPanel(id or function.__name__, title, slot, function, group)
             return function
         return register
 
@@ -325,17 +327,19 @@ export function loadPython(wb: Workbench): Promise<Pyodide> {
           kept.destroy?.();
         });
       },
-      registerPanel: (id: string, title: string, slot: string, fn: { (host: HTMLElement): unknown; destroy?(): void; copy?(): typeof fn }) => {
+      registerPanel: (id: string, title: string, slot: string, fn: { (host: HTMLElement): unknown; destroy?(): void; copy?(): typeof fn }, group?: string | null) => {
         const owner = pythonOwner;
         const own = pythonCommands.get(owner) ?? new Map<string, () => void>();
         pythonCommands.set(owner, own);
         const tab = `python.${owner}.${id}`.replace(/[^A-Za-z0-9_.-]/g, "_");
         own.get(tab)?.();
         const kept = fn.copy?.() ?? fn;
-        const off = wb.docks.addTab({
+        // Where a plugin's panel goes: a tool in the Tools dock, under its group.
+        const off = wb.docks.addTab(asTool({
           id: tab,
           title,
           slot: (["left", "right", "bottom"].includes(slot) ? slot : "left") as "left" | "right" | "bottom",
+          group: group || "Python",
           order: 95,
           owner: owner === "console" ? "python" : `python:${owner}`,
           // Drawn when shown, and again (a moment later) whenever the workspace changes.
@@ -359,7 +363,7 @@ export function loadPython(wb: Workbench): Promise<Pyodide> {
               offChange();
             };
           },
-        });
+        }));
         own.set(tab, () => {
           off();
           kept.destroy?.();

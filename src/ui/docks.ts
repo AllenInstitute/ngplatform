@@ -34,8 +34,15 @@ export const prefs = {
 export interface DockTab extends DockTabSpec {
   /** Disposed when hidden, rendered again when shown (e.g. polling views). */
   transient?: boolean;
-  /** The heading it is listed under in a dock with a menu (the Tools dock). */
-  group?: string;
+}
+
+/**
+ * Where a plugin's panel goes, TypeScript or Python: one in the left slot
+ * is a tool, so it goes to the Tools dock under its group (`fallback` when
+ * it names none); the bottom slot keeps its own.
+ */
+export function asTool<T extends DockTab>(tab: T, fallback = "Other"): T {
+  return tab.slot === "left" || tab.slot === "right" ? { ...tab, slot: "right", group: tab.group ?? fallback } : tab;
 }
 
 interface Mounted {

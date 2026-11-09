@@ -43,7 +43,7 @@ import { PluginOffers } from "./plugin_offers.js";
 import type { CatalogueEntry } from "../../plugins/index.js";
 import { registerBuiltins } from "../builtins/index.js";
 import { contextKeyFor } from "./context.js";
-import { type DockTab, DockManager, prefs } from "./docks.js";
+import { asTool, type DockTab, DockManager, prefs } from "./docks.js";
 import { h, icon, iconButton, isMac, keyLabel, mark } from "./dom.js";
 import { closeSheet, confirmDialog, copyText, formDialog, offer, promptDialog, sheet, sheetIsOpen, showMenu, showPalette, showSheet, toast } from "./overlays.js";
 import { ActivityLog } from "./panels/activity.js";
@@ -69,22 +69,6 @@ const historyView = () => import("./history_view.js");
 /** The code and the guide, linked from Help. */
 const REPOSITORY = "https://github.com/AllenInstitute/ngplatform";
 const GUIDE = "https://ngplatform.readthedocs.io/en/latest/";
-
-/** The headings tools are listed under in the Tools dock, by panel title. */
-const TOOL_GROUPS: Record<string, string> = {
-  Filters: "Image",
-  Anatomical: "Image",
-  Render: "Image",
-  Orientations: "Image",
-  "Time series": "Image",
-  Annotations: "Labels",
-  Segmentation: "Labels",
-  Atlas: "Labels",
-  Registration: "Space",
-  Collection: "Space",
-  Filtering: "Vectors",
-  Luxar: "Vectors",
-};
 
 /** Inside a frame (such as an artifact viewer), a link cannot carry the state. */
 const framed = (() => {
@@ -323,9 +307,9 @@ export class Shell {
       commands,
       keybindings,
       context: this.context,
-      // A plugin's panel in the left slot is a tool: it goes to the Tools dock, under its group.
+      // A plugin's panel in the left slot is a tool: it goes to the Tools dock, under the group its manifest names.
       docks: {
-        addTab: (tab) => this.docks.addTab(tab.slot === "left" ? { ...tab, slot: "right", group: TOOL_GROUPS[tab.title] ?? "Other" } : tab),
+        addTab: (tab) => this.docks.addTab(asTool(tab)),
         show: (id) => this.docks.show(id),
       },
       views: { mount: (render, owner) => this.mountView(render, owner) },

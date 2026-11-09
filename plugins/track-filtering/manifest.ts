@@ -37,7 +37,7 @@ Regions read only the chunks they overlap, at level 0, cached as they are read, 
   requires: { plugins: ["org.ngplatform.zarr-vectors"] },
   activation: ["onView:trackFiltering.panel", "onCommand:trackFiltering.sphereAtMouse", "onCommand:trackFiltering.boxAtMouse"],
   contributes: {
-    panels: [{ id: FILTERING_PANEL, title: "Filtering", slot: "left", order: 40 }],
+    panels: [{ id: FILTERING_PANEL, title: "Filtering", slot: "left", group: "Vectors", order: 40 }],
     commands: [
       { id: "trackFiltering.show", title: "Show the track groups", group: "Filtering" },
       { id: "trackFiltering.newGroup", title: "New track group", group: "Filtering" },

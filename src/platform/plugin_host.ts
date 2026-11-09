@@ -35,6 +35,8 @@ export interface DockTabSpec {
   id: string;
   title: string;
   slot: DockSlot;
+  /** The heading it is listed under in a dock with a menu (the Tools dock). */
+  group?: string;
   order?: number;
   when?: string;
   /** Pixels the dock is grown to (at least) when the panel is shown: a table needs some height. */

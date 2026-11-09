@@ -39,7 +39,7 @@ The RFC is a draft; this follows its text of October 2026.`,
   activation: ["onStartup"],
   contributes: {
     commands: [{ id: ADD_COLLECTION, title: "Add a collection…", group: "Collections" }],
-    panels: [{ id: COLLECTIONS_PANEL, title: "Collection", slot: "left", order: 75 }],
+    panels: [{ id: COLLECTIONS_PANEL, title: "Collection", slot: "left", group: "Space", order: 75 }],
     sceneKinds: [{ kind: COLLECTION_KIND, title: "Collection", panel: COLLECTIONS_PANEL, add: { title: "Add collection", command: ADD_COLLECTION } }],
     appState: { key: "collections", version: 1 },
   },

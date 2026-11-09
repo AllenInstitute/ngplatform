@@ -50,7 +50,7 @@ NIfTI (.nii.gz) or an OME-Zarr folder (only painted chunks written), the whole g
   activation: ["onStartup"],
   provides: { services: ["segmentation.quickSelect", "segmentation.labelVolumes"] },
   contributes: {
-    panels: [{ id: SEGMENTATION_PANEL, title: "Segmentation", slot: "left", order: 61 }],
+    panels: [{ id: SEGMENTATION_PANEL, title: "Segmentation", slot: "left", group: "Labels", order: 61 }],
     contextKeys: [EDITING, DRAWING, BRUSHING, PREVIEWING, SELECTING],
     // Segment groups, by label volume (./segment_groups.ts).
     appState: { key: "segmentation", version: 1 },

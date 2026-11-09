@@ -35,7 +35,7 @@ Nothing is converted and no files are written: the store (or the file read in pl
   requires: { plugins: ["org.ngplatform.zarr-vectors"] },
   activation: ["onStartup"],
   contributes: {
-    panels: [{ id: LUXAR_PANEL, title: "Luxar", slot: "left", order: 55 }],
+    panels: [{ id: LUXAR_PANEL, title: "Luxar", slot: "left", group: "Vectors", order: 55 }],
     commands: [
       { id: "luxar.toggle", title: "Toggle Luxar for the selected layer", group: "View", when: "sourceFormat == zarr-vectors" },
       { id: "luxar.show", title: "Show the Luxar rendering settings", group: "View" },

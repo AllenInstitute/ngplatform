@@ -51,7 +51,7 @@ The glyphs of the 2-D views' sections are drawn on those sections in the 3-D vie
   ],
   provides: { services: ["orientations.status"] },
   contributes: {
-    panels: [{ id: ORIENTATIONS_PANEL, title: "Orientations", slot: "left", order: 55 }],
+    panels: [{ id: ORIENTATIONS_PANEL, title: "Orientations", slot: "left", group: "Image", order: 55 }],
     commands: [{ id: "orientations.toggle", title: "Toggle orientation glyphs", group: "View" }],
     appState: { key: ORIENTATIONS_STATE_KEY, version: 1 },
   },

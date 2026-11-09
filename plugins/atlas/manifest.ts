@@ -42,7 +42,7 @@ The label image is counted once (in the background, at its finest level of at mo
   permissions: { network: ["https://api.brain-map.org"] },
   activation: ["onStartup"],
   contributes: {
-    panels: [{ id: ATLAS_PANEL, title: "Atlas", slot: "left", order: 85 }],
+    panels: [{ id: ATLAS_PANEL, title: "Atlas", slot: "left", group: "Labels", order: 85 }],
     appState: { key: "atlas", version: 1 },
   },
 };

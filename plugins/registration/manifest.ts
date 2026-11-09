@@ -41,7 +41,7 @@ After Freeview's Transform Volume tool (FreeSurfer), the landmark registration o
   license: "Apache-2.0",
   activation: [`onView:${REGISTRATION_PANEL}`, "onCommand:registration.fixedHere", "onCommand:registration.movingHere"],
   contributes: {
-    panels: [{ id: REGISTRATION_PANEL, title: "Registration", slot: "left", order: 70 }],
+    panels: [{ id: REGISTRATION_PANEL, title: "Registration", slot: "left", group: "Space", order: 70 }],
     commands: [
       { id: "registration.fixedHere", title: "Registration: a fixed landmark at the mouse", group: "Registration" },
       { id: "registration.movingHere", title: "Registration: a moving landmark at the mouse", group: "Registration" },

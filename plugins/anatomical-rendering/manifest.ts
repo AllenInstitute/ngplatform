@@ -34,7 +34,7 @@ Rendering is for looking, teaching and figures, not for reading values.`,
   license: "Apache-2.0",
   activation: ["onStartup"],
   contributes: {
-    panels: [{ id: RENDER_PANEL, title: "Anatomical", slot: "left", order: 52 }],
+    panels: [{ id: RENDER_PANEL, title: "Anatomical", slot: "left", group: "Image", order: 52 }],
     commands: [{ id: "anatomicalRendering.toggle", title: "Toggle anatomical rendering", group: "View" }],
     appState: { key: RENDER_STATE_KEY, version: 1 },
   },
