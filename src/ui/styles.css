@@ -779,6 +779,14 @@ textarea.py-in {
 .ins-message.sev-1 { color: var(--warn); }
 .ins-message.sev-2 { color: var(--err); }
 .ins-error { margin: 0; white-space: pre-wrap; font: var(--fs-caption)/1.4 var(--mono); color: var(--err); }
+/* The shader's syntax in the app's greys: CodeMirror's light-theme colours are too dark on black. */
+.ins-code .cm-s-default .cm-comment { color: var(--faint); }
+.ins-code .cm-s-default :is(.cm-keyword, .cm-builtin, .cm-def, .cm-type, .cm-variable-3) { color: var(--text-strong); }
+.ins-code .cm-s-default :is(.cm-number, .cm-atom, .cm-string, .cm-variable-2) { color: var(--text); }
+.ins-code .cm-s-default :is(.cm-bracket, .cm-meta, .cm-qualifier) { color: var(--muted); }
+/* Valid code has no mark; code that does not compile, a red border. */
+.ins-code .neuroglancer-shader-code-widget.valid-input { border-color: transparent; }
+.ins-code .neuroglancer-shader-code-widget.invalid-input { border-color: var(--err); }
 .ins-error[hidden] { display: none; }
 
 /* Neuroglancer components inside the inspector, in its colours. */
@@ -808,7 +816,21 @@ textarea.py-in {
 .ins-control-list { display: flex; flex-direction: column; gap: var(--sp-2); }
 /* Until the histogram and the colour bar first draw, their canvases have the default 300 × 150 size and cover the range buttons below them. */
 .ins-controls .neuroglancer-invlerp-cdfpanel,
-.ins-controls .neuroglancer-invlerp-legend-panel { overflow: hidden; }
+.ins-controls .neuroglancer-invlerp-legend-panel { overflow: hidden; border-color: var(--line); }
+/* The contrast editor's bounds as the app's number fields, and its range buttons (Min-Max, 1-99%) as outline buttons. */
+/* (Neuroglancer sizes each bound to its digits, in ch, and places the range bounds by percentages: no gaps.) */
+.ins-root .neuroglancer-invlerp-widget-bounds { align-items: center; margin: var(--sp-1) 0; }
+.ins-root input.neuroglancer-invlerp-widget-bound {
+  height: calc(var(--ctl-h) - 2px); box-sizing: content-box; padding: 0 var(--sp-2); border: 1px solid var(--line);
+  background: var(--ink-0); color: var(--text); font: var(--fs-body) var(--mono);
+}
+.ins-root input.neuroglancer-invlerp-widget-window-bound { color: var(--muted); }
+.ins-root .neuroglancer-invlerp-range-finder-button-container { gap: var(--sp-2); margin-top: var(--sp-2); }
+.ins-root .neuroglancer-invlerp-range-finder-button {
+  height: var(--ctl-h); box-sizing: border-box; margin: 0; padding: 0 var(--sp-4); border: 1px solid var(--line); border-radius: 0;
+  background: transparent; color: var(--text); font: var(--ctl-fs) var(--ui); cursor: pointer;
+}
+.ins-root .neuroglancer-invlerp-range-finder-button:hover { background: var(--hover); }
 
 /* Source */
 .ins-sources { display: flex; flex-direction: column; }
@@ -1028,6 +1050,30 @@ textarea.state-input.tall { min-height: 50vh; }
   .app:not(.right-collapsed) { --rw: min(var(--right, 360px), 34vw); }
 }
 @media (max-width: 520px) {
+/* The 3-D view's toggles (Sections, and those plugins add: Render, Glyphs):
+   one group in the corner, each box before its label, as the app's checkboxes. */
+.engine div.perspective-panel-show-slice-views {
+  right: var(--sp-2); bottom: var(--sp-2); gap: 0; background: var(--ink-1); border: 1px solid var(--line);
+  font: var(--fs-caption)/1 var(--ui); color: var(--text);
+}
+.engine .perspective-panel-toggle {
+  display: inline-flex; flex-direction: row-reverse; align-items: center; gap: var(--sp-3);
+  height: 22px; padding: 0 var(--sp-4); pointer-events: auto; cursor: pointer;
+}
+.engine .perspective-panel-toggle + .perspective-panel-toggle { border-left: 1px solid var(--line); }
+.engine .perspective-panel-toggle:hover { background: var(--hover); }
+.engine input.perspective-panel-show-slice-views { margin: 0; cursor: pointer; }
+/* Each panel's layout buttons (top right): square icon buttons in the app's greys. */
+.engine .neuroglancer-data-panel-layout-controls { top: var(--sp-2); right: var(--sp-2); gap: var(--sp-1); }
+.engine .neuroglancer-data-panel-layout-controls > button {
+  width: 20px; height: 20px; margin: 0; padding: 0; box-sizing: border-box;
+  border: 1px solid var(--line-strong); background: var(--ink-1); color: var(--muted); font: 13px/1 var(--ui); cursor: pointer;
+}
+.engine .neuroglancer-data-panel-layout-controls > button:hover { color: var(--text); background: var(--hover); border-color: var(--line-focus); }
+/* Neuroglancer's icons (a panel's close, the contrast range's arrow): square, grey, no red under the pointer. */
+:is(.engine, .dock, .sheet) .neuroglancer-icon { border-radius: 0; color: var(--muted); font-family: var(--ui); }
+:is(.engine, .dock, .sheet) .neuroglancer-icon:hover { background: var(--hover); color: var(--text); }
+:is(.engine, .dock, .sheet) .neuroglancer-icon svg { stroke: currentColor; }
   /* A phone: undo, redo and Open in Neuroglancer stay in the palette and the Share menu. */
   .hide-phone { display: none !important; }
   .topbar { gap: var(--sp-3); padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); }
