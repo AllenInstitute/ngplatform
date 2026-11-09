@@ -10,6 +10,10 @@ the running job or the last message (click it to open the dock). Docks can
 be resized by dragging their edges and collapsed with the icon in their tab
 bar; sizes, open tabs and collapsed docks are remembered by your browser.
 
+The app has one theme, a dark one, in Neuroglancer's black and greys with
+square corners; there is no light theme. Its green marks only what is
+selected and what is on.
+
 An empty scene shows a card over the views: the two examples (one click
 each), **Open a file…** and **Paste a link…**; you can also drop files on
 the window.
