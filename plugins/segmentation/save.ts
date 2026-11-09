@@ -230,3 +230,64 @@ export async function readEdits(files: Map<string, Blob | Uint8Array>): Promise<
   }
   return { note, labels, chunks };
 }
+
+// ------------------------------------------------------------ into a folder
+
+/** Writes a file by its path under a folder, making the folders on the way. */
+export async function writeFile(root: FileSystemDirectoryHandle, path: string, bytes: Uint8Array): Promise<void> {
+  const parts = path.split("/");
+  let dir = root;
+  for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part, { create: true });
+  const w = await (await dir.getFileHandle(parts[parts.length - 1], { create: true })).createWritable();
+  await w.write(bytes as unknown as BufferSource);
+  await w.close();
+}
+
+/** A folder's listing (in the File System Access API, not yet in TypeScript's DOM types). */
+interface Listed {
+  entries(): AsyncIterable<[string, FileSystemHandle]>;
+}
+
+/**
+ * Removes from a store's folder what an earlier save left there and this
+ * one did not write (`written`, paths within the folder).  In Zarr a chunk
+ * with no file is the fill value, so a chunk now all 0 is left out of a
+ * save, and its old file would bring the erased labels back; a level the
+ * new pyramid does not have goes too.  Only the store's levels (folders
+ * named by number) are looked in: other files in the folder are kept.
+ * Resolves the files and folders removed.
+ */
+export async function pruneStore(root: FileSystemDirectoryHandle, written: Iterable<string>): Promise<number> {
+  const files = new Set(written);
+  const folders = new Set<string>();
+  for (const path of files) {
+    const parts = path.split("/");
+    for (let k = 1; k < parts.length; ++k) folders.add(parts.slice(0, k).join("/"));
+  }
+  let removed = 0;
+  const prune = async (dir: FileSystemDirectoryHandle, at: string): Promise<void> => {
+    const entries: [string, FileSystemHandle][] = [];
+    for await (const entry of (dir as unknown as Listed).entries()) entries.push(entry);
+    for (const [name, handle] of entries) {
+      const path = at ? `${at}/${name}` : name;
+      if (at === "" && !/^\d+$/.test(name)) continue;
+      const keep = handle.kind === "directory" ? folders.has(path) : files.has(path);
+      if (!keep) {
+        await dir.removeEntry(name, { recursive: handle.kind === "directory" });
+        ++removed;
+      } else if (handle.kind === "directory") await prune(handle as FileSystemDirectoryHandle, path);
+    }
+  };
+  await prune(root, "");
+  return removed;
+}
+
+/**
+ * Writes a store's files by path into its folder, then removes what an
+ * earlier save into the same folder left there (`pruneStore`): read back,
+ * the folder holds this save and nothing older.
+ */
+export async function writeStore(root: FileSystemDirectoryHandle, files: Map<string, Uint8Array>): Promise<void> {
+  for (const [path, bytes] of files) await writeFile(root, path, bytes);
+  await pruneStore(root, files.keys());
+}

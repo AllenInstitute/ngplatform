@@ -13,7 +13,7 @@ import { LabelVolume } from "../label_volume.js";
 import { SEGMENTATION_MANIFEST } from "../manifest.js";
 import { isVisible, nextSegment, segmentName, segmentRows, withVisibility } from "../segments.js";
 import { addGroup, assign, editGroup, groupOf, grouped, members, noGroups, readGroups, removeGroup } from "../segment_groups.js";
-import { barSpan } from "../toolbar.js";
+import { barSpan, rowsMax } from "../toolbar.js";
 import { brushes, cycle, draws, stepRadius, TOOLS } from "../tools.js";
 import { checkManifest } from "../../../src/sdk/manifest.js";
 
@@ -74,6 +74,14 @@ describe("the tool bar's place", () => {
   it("takes the widest 2-D view when a 3-D view sits between them, and every view with no 2-D view", () => {
     expect(barSpan([panel("2d", 0, 40, 300, 750), panel("3d", 300, 40, 700, 750), panel("2d", 700, 40, 1100, 750)])).toEqual({ left: 700, right: 1100, top: 40 });
     expect(barSpan([panel("3d", 0, 40, 1100, 750)])).toEqual({ left: 0, right: 1100, top: 40 });
+  });
+
+
+  it("names New segment's id with half a million segments (no Math.max over a spread)", () => {
+    const values = Array.from({ length: 500_000 }, (_, k) => k + 1);
+    expect(rowsMax(values, 2 ** 32 - 1)).toBe("segment 500001");
+    expect(rowsMax(values, 500_000)).toBe("the smallest unused id");
+    expect(rowsMax([], 255)).toBe("segment 1");
   });
 });
 

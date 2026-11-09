@@ -14,7 +14,7 @@ import { LabelVolume } from "../label_volume.js";
 import { omeZarrMetadata } from "../../registration/volume_io.js";
 import { maskCount, maskSection } from "../preview.js";
 import { component, otsu, THRESHOLD_SELECT } from "../quick_select.js";
-import { cropped, niftiGz, omeZarr } from "../save.js";
+import { cropped, niftiGz, omeZarr, pruneStore, writeStore } from "../save.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -35,6 +35,51 @@ function serve(get: (key: string) => Uint8Array | undefined | Promise<Uint8Array
     const range = /bytes=(\d+)-(\d+)/.exec(init?.headers?.Range ?? "");
     return new Response((range ? data.slice(Number(range[1]), Number(range[2]) + 1) : data.slice()) as BlobPart, { status: range ? 206 : 200 });
   });
+}
+
+/** A folder in memory, as much of the File System Access API's as a save uses. */
+class MemoryFolder {
+  readonly entries = new Map<string, MemoryFolder | Uint8Array>();
+  readonly handle = {
+    kind: "directory",
+    getDirectoryHandle: async (name: string, options?: { create?: boolean }) => {
+      let d = this.entries.get(name);
+      if (d === undefined && options?.create) this.entries.set(name, (d = new MemoryFolder()));
+      if (!(d instanceof MemoryFolder)) throw new DOMException(name, "NotFoundError");
+      return d.handle;
+    },
+    getFileHandle: async (name: string) => ({
+      createWritable: async () => ({ write: async (b: Uint8Array) => void this.entries.set(name, b.slice()), close: async () => {} }),
+    }),
+    removeEntry: async (name: string) => void this.entries.delete(name),
+    entries: () => this.list(),
+  } as unknown as FileSystemDirectoryHandle;
+
+  private async *list(): AsyncGenerator<[string, { kind: string }]> {
+    for (const [name, e] of [...this.entries]) yield [name, e instanceof MemoryFolder ? e.handle : { kind: "file" }];
+  }
+
+  async file(path: string, bytes: Uint8Array): Promise<void> {
+    const parts = path.split("/");
+    let d: MemoryFolder = this;
+    for (const p of parts.slice(0, -1)) {
+      await d.handle.getDirectoryHandle(p, { create: true });
+      d = d.entries.get(p) as MemoryFolder;
+    }
+    d.entries.set(parts[parts.length - 1], bytes);
+  }
+
+  get(path: string): Uint8Array | undefined {
+    const parts = path.split("/");
+    let d: MemoryFolder | Uint8Array | undefined = this;
+    for (const p of parts) d = d instanceof MemoryFolder ? d.entries.get(p) : undefined;
+    return d instanceof Uint8Array ? d : undefined;
+  }
+
+  /** Every file's path. */
+  paths(at = ""): string[] {
+    return [...this.entries].flatMap(([name, e]) => (e instanceof MemoryFolder ? e.paths(`${at}${name}/`) : [`${at}${name}`]));
+  }
 }
 
 describe("a label volume in chunks", () => {
@@ -601,5 +646,41 @@ describe("saving", () => {
     const values = await reader.rawPoints(0, Float64Array.from([250, 150, 90, 249, 150, 90]), "nearest", new AbortController().signal);
     expect(Array.from(values)).toEqual([4, 0]);
     expect(levels.length).toBe(4);
+  });
+
+  it("saves again into the same folder without bringing erased labels back", async () => {
+    const v = vol([300, 200, 100]);
+    let s = new Stroke(v);
+    s.set(250, 150, 90, 4);
+    s.set(10, 10, 10, 5);
+    s.finish();
+    const root = new MemoryFolder();
+    await root.file("notes.txt", new Uint8Array([1]));
+    await writeStore(root.handle, await omeZarr(v));
+    expect(root.paths()).toContain("0/c/0/0/0");
+    // Label 5 erased: its chunk is now empty, so the second save does not write it.
+    s = new Stroke(v);
+    s.set(10, 10, 10, 0);
+    s.finish();
+    const files = await omeZarr(v);
+    expect(files.has("0/c/0/0/0")).toBe(false);
+    await writeStore(root.handle, files);
+    // The folder holds exactly this save, and the file that is not the store's.
+    expect(root.paths().sort()).toEqual([...files.keys(), "notes.txt"].sort());
+    const saved = new Map(root.paths().map((p) => [p, root.get(p)!]));
+    serve((key) => saved.get(key), "http://again.test/");
+    const reader = new VolumeReader();
+    await reader.open(["http://again.test/"], undefined);
+    const values = await reader.rawPoints(0, Float64Array.from([250, 150, 90, 10, 10, 10]), "nearest", new AbortController().signal);
+    expect(Array.from(values)).toEqual([4, 0]);
+  });
+
+  it("removes a store's old chunks and levels, and keeps other files", async () => {
+    const root = new MemoryFolder();
+    for (const p of ["zarr.json", "0/zarr.json", "0/c/0/0/0", "0/c/0/0/1", "0/c/1/0/0", "4/zarr.json", "4/c/0/0/0", "notes/a.txt", "readme.md"]) await root.file(p, new Uint8Array([1]));
+    const removed = await pruneStore(root.handle, ["zarr.json", "0/zarr.json", "0/c/0/0/1"]);
+    expect(root.paths().sort()).toEqual(["0/c/0/0/1", "0/zarr.json", "notes/a.txt", "readme.md", "zarr.json"]);
+    // 0/c/0/0/0, the folder 0/c/1 and the level 4.
+    expect(removed).toBe(3);
   });
 });

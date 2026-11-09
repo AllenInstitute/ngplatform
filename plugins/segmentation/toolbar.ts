@@ -193,9 +193,14 @@ export class Toolbar {
   }
 }
 
-/** What New segment will give, for its tooltip. */
-function rowsMax(values: number[], max: number): string {
-  const top = Math.max(0, ...values);
+/**
+ * What New segment will give, for its tooltip.  A loop, not Math.max over a
+ * spread: a copied segmentation can have more segments than a call takes
+ * arguments.
+ */
+export function rowsMax(values: number[], max: number): string {
+  let top = 0;
+  for (const v of values) if (v > top) top = v;
   return top < max ? `segment ${top + 1}` : "the smallest unused id";
 }
 

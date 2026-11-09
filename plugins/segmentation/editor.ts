@@ -45,7 +45,7 @@ import { maskCount, PreviewOverlay } from "./preview.js";
 import { type Mask, type Prompt, type QuickSelectMethod, type QuickSelectRequest, QuickSelectRegistry } from "./quick_select.js";
 import { layerWindow, sectionAxes, sectionBounds, stackMasks } from "./sam.js";
 import { SamModel, samMethod } from "./sam_model.js";
-import { cropped, editsZarr, niftiBytes, niftiGz, omeZarr, readEdits, type SavedLabel, writeWhole } from "./save.js";
+import { cropped, editsZarr, niftiBytes, niftiGz, omeZarr, pruneStore, readEdits, type SavedLabel, writeFile, writeStore, writeWhole } from "./save.js";
 import { addGroup, assign, editGroup, groupOf, members, readGroups, removeGroup, type SegmentationSaved, type VolumeGroups } from "./segment_groups.js";
 import { isVisible, nextSegment, type SegmentRow, segmentRows, type SegmentsState, withVisibility } from "./segments.js";
 import { type Reference, Session } from "./session.js";
@@ -1175,10 +1175,18 @@ export class Editor implements LabelVolumes {
     const hi: Vec3 = [0, 0, 0];
     lo[axis] = index;
     hi[axis] = index + 1;
-    lo[u] = Math.floor(Math.min(...points.map((p) => p[0])));
-    hi[u] = Math.ceil(Math.max(...points.map((p) => p[0]))) + 1;
-    lo[w] = Math.floor(Math.min(...points.map((p) => p[1])));
-    hi[w] = Math.ceil(Math.max(...points.map((p) => p[1]))) + 1;
+    // A loop, not Math.min over a spread: a long outline has many points.
+    let [u0, u1, w0, w1] = [Infinity, -Infinity, Infinity, -Infinity];
+    for (const [pu, pw] of points) {
+      u0 = Math.min(u0, pu);
+      u1 = Math.max(u1, pu);
+      w0 = Math.min(w0, pw);
+      w1 = Math.max(w1, pw);
+    }
+    lo[u] = Math.floor(u0);
+    hi[u] = Math.ceil(u1) + 1;
+    lo[w] = Math.floor(w0);
+    hi[w] = Math.ceil(w1) + 1;
     if (this.limit) {
       const block = await session.imageBox(lo, hi);
       if (block === undefined) return this.noRange();
@@ -1755,14 +1763,25 @@ export class Editor implements LabelVolumes {
     const where = `${folder!.name}/${name}`;
     this.setNote(`Writing the whole volume into ${where}, a job (see Jobs); edits made meanwhile may or may not be in it.`);
     try {
-      const n = await this.ctx.jobs.run(`Saving ${session.layer}`, (job) =>
-        writeWhole(volume, (path, bytes) => writeFile(root, path, bytes), {
-          description,
-          labels,
-          progress: (done, total) => job.progress(done / total, `Block ${done} of ${total}`),
-          cancelled: () => job.cancelled,
-        }),
-      );
+      const n = await this.ctx.jobs.run(`Saving ${session.layer}`, async (job) => {
+        const written: string[] = [];
+        const n = await writeWhole(
+          volume,
+          (path, bytes) => {
+            written.push(path);
+            return writeFile(root, path, bytes);
+          },
+          {
+            description,
+            labels,
+            progress: (done, total) => job.progress(done / total, `Block ${done} of ${total}`),
+            cancelled: () => job.cancelled,
+          },
+        );
+        // Chunks all 0 are not written: remove what an earlier save left in their place.
+        await pruneStore(root, written);
+        return n;
+      });
       this.markSaved(session, before);
       this.setNote(`Saved the whole volume as ${where}: ${n.toLocaleString()} chunks.`);
       this.ctx.log.info(`Saved ${session.layer} (the whole volume) as ${where}.`);
@@ -1829,21 +1848,13 @@ interface Brushing {
   disc: boolean;
 }
 
-/** Writes a file by its path under a folder, making the folders on the way. */
-async function writeFile(root: FileSystemDirectoryHandle, path: string, bytes: Uint8Array): Promise<void> {
-  const parts = path.split("/");
-  let dir = root;
-  for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part, { create: true });
-  const w = await (await dir.getFileHandle(parts[parts.length - 1], { create: true })).createWritable();
-  await w.write(bytes as unknown as BufferSource);
-  await w.close();
-}
-
-/** Files by path written into `name` in a folder, or (no folder) downloaded as `name`.zip; resolves where. */
+/**
+ * Files by path written into `name` in a folder (what an earlier save left
+ * there removed), or (no folder) downloaded as `name`.zip; resolves where.
+ */
 async function writeFolder(files: Map<string, Uint8Array>, folder: FileSystemDirectoryHandle | undefined, name: string): Promise<string> {
   if (folder) {
-    const root = await folder.getDirectoryHandle(name, { create: true });
-    for (const [path, bytes] of files) await writeFile(root, path, bytes);
+    await writeStore(await folder.getDirectoryHandle(name, { create: true }), files);
     return `${folder.name}/${name}`;
   }
   downloadBlob(zipFiles(new Map([...files].map(([p, b]) => [`${name}/${p}`, b]))), `${name}.zip`);
