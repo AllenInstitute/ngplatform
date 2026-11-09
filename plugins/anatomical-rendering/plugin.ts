@@ -7,20 +7,42 @@
  * (at half size while the camera moves), and draws the frames it sends
  * back as they refine (./draw.ts).
  */
-import type { Disposer, Frame3d, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
-import { button, card, clear, downloadBlob, el, field, numberInput, select, toggle } from "@ngplatform/sdk/dom";
-import { type Distance, hostLink, type Link, type MovieInfo, type PresetInfo, RenderService, ServiceError, type ServiceInfo, type SessionInfo, type SplatInfo, type ViewSpec } from "./client.js";
+import type { Disposer, Frame3d, JobControl, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
+import { button, card, checkbox, downloadBlob, el, emptyState, field, iconButton, info, numberInput, region, select, type Settable, type Slider, slider, statusLine, toggle } from "@ngplatform/sdk/dom";
+import { type Distance, hostLink, type Link, type MovieInfo, type PresetInfo, RenderService, ServiceError, type ServiceInfo, type SessionInfo, type ViewSpec } from "./client.js";
 import { invert4, PictureDrawer } from "./draw.js";
+import { dropJob, finished, type JobKind, type JobRecord, jobText, putJob, readJobs } from "./jobs.js";
 import { clampInt, evenSide, LIMITS, movieSettings, retryDelay, stillProblem, windowStep } from "./limits.js";
-import { openSplatWindow, parsePly, parseSplat, type SplatCamera } from "./splatview.js";
+import { parsePly, parseSplat, showSplats, type SplatCamera } from "./splatview.js";
 import { ColourmapEditor, type DataStop, histogramHandles, shifted, type Tuning, type WarpPoint, warpInverse } from "./editor.js";
 import { LocalRenderer, PRESETS as LOCAL_PRESETS } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
-import { ANATOMICAL_VIEWS, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, omeZarrSource, orientationLooking, unitMm, viewCutPlane, viewForward, viewKey } from "./view.js";
+import { anatomicalSides, type AxisSides, axesCheck, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, metadataBase, omeZarrSource, orientationLooking, safeHref, unitMm, type ViewButton, viewButtons, viewCutPlane, viewForward, viewKey } from "./view.js";
+
+/** Where Neuroglancer's 3-D camera was when a keyframe was added: to go back to it. */
+export interface KeyframeCamera {
+  position: number[];
+  orientation: number[];
+  scale: number;
+}
 
 export interface Keyframe {
   time: number;
   view: ViewSpec;
+  camera?: KeyframeCamera;
+}
+
+/**
+ * The keyframes with the one at `i` moved one place earlier (`by` -1) or
+ * later (1): the two swap places and keep the times of the places, so the
+ * movie passes them in the new order.
+ */
+export function moveKeyframe(list: readonly Keyframe[], i: number, by: -1 | 1): Keyframe[] {
+  const j = i + by;
+  if (i < 0 || j < 0 || i >= list.length || j >= list.length) return list.slice();
+  const out = list.slice();
+  [out[i], out[j]] = [{ ...list[j], time: list[i].time }, { ...list[i], time: list[j].time }];
+  return out;
 }
 
 export interface Crop {
@@ -141,7 +163,7 @@ export function readSaved(raw: unknown): Saved {
     jar: s.jar === true,
     maxSamples: num(s.maxSamples, 512),
     denoise: s.denoise !== false,
-    keyframes: Array.isArray(s.keyframes) ? s.keyframes : [],
+    keyframes: Array.isArray(s.keyframes) ? s.keyframes.filter((k) => k && typeof k.time === "number" && k.view && typeof k.view === "object") : [],
     boxes: Array.isArray(s.boxes)
       ? s.boxes.filter((b) => b && Array.isArray(b.lo) && Array.isArray(b.hi)).map((b, i) => ({ name: String(b.name ?? `Crop ${i + 1}`), on: b.on !== false, keep: b.keep !== false, lo: b.lo, hi: b.hi }))
       : (s as { box?: { on?: boolean; lo?: [number, number, number]; hi?: [number, number, number] } }).box?.on
@@ -157,30 +179,65 @@ export function readSaved(raw: unknown): Saved {
 /** The platform's command that opens Settings at its computers (pairing, SSH). */
 const COMPUTE_SETTINGS = { command: "settings.open", args: { section: "compute" } };
 
-/** A text box of label ids (spaces or commas between). */
-function idsInput(ids: number[], on: (ids: number[]) => void): HTMLInputElement {
-  const t = el("input", { class: "text-input", type: "text", value: ids.join(", "), placeholder: "label ids" }) as HTMLInputElement;
-  t.onchange = () => on(t.value.split(/[\s,]+/).filter(Boolean).map(Number).filter((n) => Number.isInteger(n)));
+/** Label ids as typed (spaces or commas between): the whole numbers among them. */
+export function parseIds(text: string): number[] {
+  return text.split(/[\s,]+/).filter(Boolean).map(Number).filter((n) => Number.isInteger(n));
+}
+
+/** A text box of label ids; `set` shows ids from the state, unless it is being typed in. */
+function idsInput(ids: number[], on: (ids: number[]) => void, label: string): Settable<HTMLInputElement, number[]> {
+  const t = el("input", { class: "text-input", type: "text", value: ids.join(", "), placeholder: "label ids", "aria-label": label }) as Settable<HTMLInputElement, number[]>;
+  t.onchange = () => on(parseIds(t.value));
+  t.set = (v) => {
+    if (t.ownerDocument.activeElement !== t && parseIds(t.value).join() !== v.join()) t.value = v.join(", ");
+  };
   return t;
 }
 
+/** A select whose options follow the scene (images, presets, computers): `update` puts in new options only when they differ, then shows `value`. */
+type Choices = Settable<HTMLSelectElement, string> & { update(options: [string, string][], value: string): void };
+function choices(onchange: (value: string) => void, label: string): Choices {
+  const s = select([], "", onchange, label) as Choices;
+  let last = "";
+  s.update = (options, value) => {
+    const key = JSON.stringify(options);
+    if (key !== last) {
+      last = key;
+      s.replaceChildren(...options.map(([v, text]) => el("option", { value: v }, text)));
+      s.value = value;
+    }
+    s.set(value);
+  };
+  return s;
+}
+
+/** A number box kept within bounds (`fix`): it shows the value as kept. */
+function bounded(value: number, fix: (v: number) => number, on: (v: number) => void, attrs: Record<string, string>): Settable<HTMLInputElement, number> {
+  const input = numberInput(fix(value), (v) => {
+    const kept = fix(v);
+    input.value = String(kept);
+    on(kept);
+  }, attrs);
+  return input;
+}
+
+/** The plugin's own layout: the colourmap canvas, crop boxes, the movie preview and the splat viewer. */
 const STYLE = `
-.ar { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 8px 10px; font-size: 12px; }
-.ar .card-body { min-width: 0; }
-.ar .card-body > * { max-width: 100%; }
-.ar-head { display: flex; gap: 10px; align-items: center; min-height: 26px; }
-.ar-head > .choice { font-weight: 600; }
-.ar-status { flex: 1; min-width: 0; color: var(--muted); font: 11px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ar-status.error { color: var(--err, #e5484d); white-space: normal; }
-.ar-views { display: flex; gap: 3px; flex-wrap: wrap; }
-.ar .card-body > * + * { margin-top: 6px; }
-.ar .card-body h4 { margin: 10px 0 2px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: var(--label-spacing); font-weight: 600; }
-.ar-row { display: flex; gap: 6px; align-items: end; flex-wrap: wrap; }
-.ar-row > .field { flex: 1; min-width: 70px; }
-.ar-tick { display: flex; gap: 6px; align-items: center; }
-.ar-small { font-size: 11px; margin: 0; }
-.ar-preview { display: grid; gap: 6px; place-items: center; min-height: 200px; }
-.ar-video { width: 100%; max-height: 60vh; background: var(--ink-0); border-radius: var(--r); }
+.ar-grow { flex: 1 1 140px; min-width: 0; }
+.ar-cut { display: grid; grid-template-columns: 5.5em auto minmax(0, 1fr); align-items: center; gap: var(--sp-3); }
+.ar-cut > select { width: auto; }
+.ar-editor { display: block; width: 100%; cursor: crosshair; border: 1px solid var(--line-strong); }
+.ar-box { display: grid; gap: var(--sp-3); padding-left: var(--sp-4); border-left: 2px solid var(--line-strong); }
+.ar-box-axes { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: var(--sp-2) var(--sp-3); }
+.ar-box-axes > span { color: var(--muted); font-size: var(--fs-caption); }
+.ar-preview { display: grid; gap: var(--sp-3); place-items: center; min-height: 200px; }
+.ar-preview > progress { width: 100%; }
+.ar-video { width: 100%; max-height: 60vh; background: var(--ink-0); }
+.ar-splat { height: min(64vh, 640px); background: var(--ink-0); }
+.ar-splat-canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.ar-splat-canvas.grabbing { cursor: grabbing; }
+.ar-job { display: flex; align-items: center; gap: var(--sp-3); }
+.ar-job > .readout { flex: 1; min-width: 0; }
 `;
 
 /** A wait that ends early when `signal` aborts. */
@@ -231,8 +288,10 @@ interface HostSetting {
 }
 
 const HOST_KEY = "host";
+/** The stills, movies and splats asked for, kept in this browser (jobs.ts). */
+const JOBS_KEY = "jobs";
 const NO_FFMPEG = "Movies need ffmpeg on the render computer.";
-const NO_HOST = "No paired computer has the render service: pair one (Settings › Compute), or render in this browser";
+const NO_HOST = "No paired computer has the render service: pair one (Settings › Compute), or render in this browser.";
 
 class AnatomicalRendering {
   private saved: Saved;
@@ -249,6 +308,11 @@ class AnatomicalRendering {
   /** Sessions opened again since the last frame, after the host forgot one (it closes those left idle). */
   private reopened = 0;
   private stillRunning = false;
+  /** The jobs asked for (kept in this browser), and those this page is following now. */
+  private jobs: JobRecord[];
+  private readonly following = new Set<string>();
+  /** Each image's anatomical orientation from its metadata (null: none given, or not readable), by store. */
+  private readonly sides = new Map<string, AxisSides | null>();
   private sessionKey = "";
   private abort: AbortController | undefined;
   private lastKey = "";
@@ -283,12 +347,11 @@ class AnatomicalRendering {
   }
   private frameText = "";
   private problem = "";
-  private movie: MovieInfo | undefined;
-  private splat: SplatInfo | undefined;
   private local: LocalRenderer | undefined;
   private localKey = "";
   private localText = "";
   private readonly toggle: { set(value: boolean): void; dispose(): void };
+  /** Brings the panel up to date (in place); `statusUpdate` only its status line and readouts, as each frame comes. */
   private panelUpdate: (() => void) | undefined;
   private statusUpdate: (() => void) | undefined;
   private readonly offs: Disposer[] = [];
@@ -296,6 +359,7 @@ class AnatomicalRendering {
   constructor(private readonly ctx: PlatformContext) {
     this.saved = readSaved(ctx.state.get());
     this.host = { name: ctx.settings.get<HostSetting>(HOST_KEY)?.name || undefined };
+    this.jobs = readJobs(ctx.settings.get(JOBS_KEY));
     this.drawer.onFrame = (frame) => this.onFrame(frame);
     this.drawer.onFading = () => this.handle?.redraw();
     this.toggle = ctx.ui.viewToggle({ label: "Render", title: "Path-traced rendering (Anatomical rendering)", value: this.saved.on, onChange: (v) => this.setOn(v) });
@@ -317,9 +381,10 @@ class AnatomicalRendering {
       ctx.hosts.onChanged(() => {
         // A computer with the render service paired or come up, or another chosen in Compute.
         const label = this.link()?.label;
-        if (!this.connecting && label !== undefined && (this.serviceInfo === undefined || label !== this.service?.link.label)) void this.connect();
+        if (this.connecting === undefined && label !== undefined && (this.serviceInfo === undefined || label !== this.service?.link.label)) void this.connect();
         this.panelUpdate?.();
       }),
+      () => clearTimeout(this.settle),
     );
     void this.connect();
     // For measuring (the drawer's stats) from the console or a test.
@@ -343,10 +408,13 @@ class AnatomicalRendering {
   }
 
   private setOn(on: boolean): void {
-    if (on && this.images().length === 0) {
-      // Nothing it can read (precomputed EM, meshes, tractograms): say so rather than switch on to no effect.
+    const target = this.target();
+    const problem = target === undefined ? "Anatomical rendering needs an OME-Zarr or N5 image in the scene." : this.axesOf(target).problem;
+    if (on && problem !== undefined) {
+      // Nothing it can read (precomputed EM, meshes, tractograms, a 2-D image): say so rather than switch on to no effect.
       this.toggle.set(false);
-      this.ctx.ui.toast("Anatomical rendering needs an OME-Zarr or N5 image in the scene.", "error");
+      this.panelUpdate?.();
+      this.ctx.ui.toast(problem, "error");
       return;
     }
     this.save((s) => (s.on = on));
@@ -373,6 +441,43 @@ class AnatomicalRendering {
     return imgs.find((l) => l.name === this.saved.layer) ?? imgs[0];
   }
 
+  /** What the image's axes allow where it renders (view.ts, axesCheck): a problem that stops it, or a note. */
+  private axesOf(layer: LayerInfo): { problem?: string; note?: string } {
+    return axesCheck(this.ctx.viewer.layerTransform?.(layer.name)?.input, this.saved.where === "browser");
+  }
+
+  /** The buttons that turn the view, by the image's anatomical sides when its metadata gives them, else by axis. */
+  private viewButtons(): ViewButton[] {
+    const target = this.target();
+    const src = target ? omeZarrSource(target.sources[0]) : undefined;
+    if (src !== undefined && !this.sides.has(src)) void this.readSides(src);
+    return viewButtons(this.lastFrame?.dimensions.names ?? ["x", "y", "z"], src === undefined ? undefined : (this.sides.get(src) ?? undefined));
+  }
+
+  /** Reads an image's anatomical orientation from its OME-Zarr metadata (zarr.json, else .zattrs), once per store. */
+  private async readSides(src: string): Promise<void> {
+    this.sides.set(src, null);
+    const base = metadataBase(src);
+    if (base === undefined || typeof fetch !== "function") return;
+    for (const [file, attrs] of [["zarr.json", (j: { attributes?: unknown }) => j.attributes], [".zattrs", (j: unknown) => j]] as const) {
+      try {
+        const r = await fetch(`${base}/${file}`, { signal: AbortSignal.timeout(8000) });
+        if (!r.ok) continue;
+        const sides = anatomicalSides(attrs(await r.json()));
+        if (sides === undefined) return;
+        this.sides.set(src, sides);
+        this.panelUpdate?.();
+        return;
+      } catch {
+        // Not readable from the page: the buttons stay by axis.
+      }
+    }
+  }
+
+  private lookFrom(v: ViewButton): void {
+    this.ctx.viewer.patchState((ng) => void ((ng as { projectionOrientation?: number[] }).projectionOrientation = orientationLooking(v.forward, v.up)));
+  }
+
   // ------------------------------------------------------------------ service
   /** Paired hosts whose runner runs the render service. */
   private renderHosts() {
@@ -385,39 +490,59 @@ class AnatomicalRendering {
     return h === undefined ? undefined : hostLink(h.name, h.address, (path, init) => h.fetch(path, init));
   }
 
-  private connecting = false;
+  /** Connects so far; the one under way (an answer to an earlier one, another computer chosen meanwhile, is dropped). */
+  private connects = 0;
+  private connecting: number | undefined;
+  /** Why the chosen computer cannot render ("" when it can), shown while rendering on a computer. */
+  private connectProblem = "";
 
   private async connect(): Promise<void> {
-    this.connecting = true;
+    const n = ++this.connects;
+    this.connecting = n;
     // The session on the computer used until now goes first (with its GPU memory), through the service it was opened on.
     this.closeSession();
     const link = this.link();
-    this.service = link === undefined ? undefined : new RenderService(link);
+    const service = link === undefined ? undefined : new RenderService(link);
+    this.service = service;
     this.serviceInfo = undefined;
     this.problem = "";
+    this.connectProblem = "";
+    this.statusUpdate?.();
+    let info: ServiceInfo | undefined;
+    let presets: PresetInfo[] | undefined;
+    let problem = "";
     try {
-      if (this.service === undefined) throw new Error(NO_HOST);
-      this.serviceInfo = await this.service.info(AbortSignal.timeout(8000));
-      this.presets = await this.service.presets();
-      if (!this.saved.preset && this.presets.length > 0) this.saved.preset = this.presets[0].name;
+      if (service === undefined) throw new Error(NO_HOST);
+      info = await service.info(AbortSignal.timeout(8000));
+      presets = await service.presets();
     } catch (e) {
-      this.problem = this.service === undefined ? NO_HOST : `No render service on ${this.service.link.label}: ${(e as Error).message}`;
+      problem = service === undefined ? NO_HOST : `No render service on ${service.link.label}: ${(e as Error).message}`;
     }
-    this.connecting = false;
+    if (n !== this.connects || this.disposed) return;
+    this.connecting = undefined;
+    this.serviceInfo = info;
+    this.connectProblem = problem;
+    if (presets !== undefined) {
+      this.presets = presets;
+      if (!this.saved.preset && presets.length > 0) this.saved.preset = presets[0].name;
+    }
     this.sessionKey = "";
     this.update();
     this.panelUpdate?.();
+    if (service !== undefined && info !== undefined) this.resumeJobs(service);
   }
 
   private update(): void {
-    const target = this.target();
+    const found = this.target();
     const browser = this.saved.where === "browser";
+    // An image whose axes it cannot render (2-D; time or channels in this browser) is not opened.
+    const target = found !== undefined && this.axesOf(found).problem === undefined ? found : undefined;
     if (!this.saved.on || target === undefined || (!browser && this.serviceInfo === undefined)) {
       this.handle?.dispose();
       this.handle = undefined;
       this.handleLayer = undefined;
       this.drawer.set(undefined);
-      if (!this.saved.on) {
+      if (!this.saved.on || target === undefined) {
         this.closeSession();
         this.closeLocal();
       }
@@ -452,18 +577,12 @@ class AnatomicalRendering {
     return typeof d === "string" ? d : undefined;
   }
 
-  /** Where a preset's colours came from: the photographs it lists (with their authors and licences). */
-  private referenceNote(): HTMLElement | "" {
+  /** Where a preset's colours came from: the photographs it lists (with their authors and licences); none in this browser. */
+  private references(): { title: string; page?: string; author: string; licence: string }[] {
+    if (this.saved.where === "browser") return [];
     const info = this.presets.find((p) => p.name === this.saved.preset);
     const refs = Array.isArray(info?.reference) ? (info!.reference as { title?: string; page?: string; author?: string; licence?: string }[]) : [];
-    if (this.saved.where === "browser" || refs.length === 0) return "";
-    // The credit, one line: the photographs' names, authors and licences in its tooltip.
-    return el(
-      "p",
-      { class: "muted ar-small", title: refs.map((r) => `${(r.title ?? "a photograph").replace(/^File:/, "")} (${r.author ?? "unknown"}, ${r.licence ?? ""})`).join("\n") },
-      "Colours from ",
-      ...refs.flatMap((r, i) => [i ? ", " : "", el("a", { href: r.page ?? "#", target: "_blank", rel: "noopener" }, `photo ${i + 1}`)]),
-    );
+    return refs.map((r) => ({ title: (r.title ?? "a photograph").replace(/^File:/, ""), page: safeHref(r.page), author: r.author ?? "unknown", licence: r.licence ?? "" }));
   }
 
   /** The chosen preset at this image's data values, as the host resolves it (its window, histogram matching): what the editor shows. */
@@ -486,7 +605,7 @@ class AnatomicalRendering {
     try {
       const preset = await this.service.resolve(this.session!.id, r.preset, r.overrides);
       this.resolved = { key: r.key, preset };
-      this.editorUpdate?.();
+      this.panelUpdate?.();
       this.lastKey = "";
       this.handle?.redraw();
     } catch {
@@ -531,155 +650,77 @@ class AnatomicalRendering {
     return { ...rest, stops: e.data, domain: "data", window: null, histogram: null };
   }
 
+  /** The editor's canvas and its histogram: shown again from the state (not while a point is dragged). */
   private editorUpdate: (() => void) | undefined;
 
-  /** The colourmap over the image's histogram, with its control points; shift and compression; per image. */
-  private editorField(): HTMLElement | "" {
-    if (this.saved.where !== "host") return "";
+  /** The colourmap editor for the image now (made once, kept). */
+  private colourmapEditor(): ColourmapEditor {
+    this.editor ??= new ColourmapEditor((stops) => {
+      // Edits are kept unshifted, so shift and compression stay apart from them.
+      const c = this.currentTuning();
+      if (!c) return;
+      const e = this.editedStops();
+      const scale = c.tuning.scale || 1;
+      const unshifted = stops.map((x) => ({ ...x, value: (e ? e.centre : 0) + (x.value - c.tuning.shift - (e ? e.centre : 0)) / scale }));
+      this.save((x) => (x.tunings[c.src] = { ...c.tuning, stops: unshifted }));
+    }, (warp) => {
+      // The histogram slid or warped under the map.
+      const c = this.currentTuning();
+      if (c) this.save((x) => (x.tunings[c.src] = { ...c.tuning, warp }));
+    });
+    return this.editor;
+  }
+
+  /** The width of the colourmap's visible range (data values): what Shift moves it by, as a fraction. */
+  private mapWidth(): number {
+    const vis = this.editedStops()?.base.filter((x) => x.opacity > 0.01) ?? [];
+    return vis.length ? vis[vis.length - 1].value - vis[0].value || 1 : 1;
+  }
+
+  /** Changes the tuning of the image now; `preview`: shown and rendered while a slider is dragged, not yet saved. */
+  private tune(f: (t: Tuning) => void, preview = false): void {
     const cur = this.currentTuning();
-    if (!cur) return "";
-    if (!this.editor) {
-      this.editor = new ColourmapEditor((stops) => {
-        // Edits are kept unshifted, so shift and compression stay apart from them.
-        const c = this.currentTuning();
-        if (!c) return;
-        const e = this.editedStops();
-        const scale = c.tuning.scale || 1;
-        const unshifted = stops.map((x) => ({ ...x, value: (e ? e.centre : 0) + (x.value - c.tuning.shift - (e ? e.centre : 0)) / scale }));
-        this.save((x) => (x.tunings[c.src] = { ...c.tuning, stops: unshifted }));
-      }, (warp) => {
-        // The histogram slid or warped under the map.
-        const c = this.currentTuning();
-        if (c) this.save((x) => (x.tunings[c.src] = { ...c.tuning, warp }));
-      });
-    }
-    const hist = (this.session?.volume as { histogram?: { lo: number; hi: number; counts: number[] } } | undefined)?.histogram;
-    this.editorUpdate = () => {
-      const e = this.editedStops();
-      if (e && !this.editor!.dragging) this.editor!.set(hist, e.stops, e.warp);
+    if (!cur) return;
+    const edit = (x: Saved) => {
+      const n = { ...(x.tunings[cur.src] ?? { shift: 0, scale: 1 }) };
+      f(n);
+      x.tunings[cur.src] = n;
     };
-    this.editorUpdate();
-    void this.resolvePreset();
-    const t = cur.tuning;
-    const width = (() => {
-      const e = this.editedStops();
-      const vis = e?.base.filter((x) => x.opacity > 0.01) ?? [];
-      return vis.length ? vis[vis.length - 1].value - vis[0].value : 1;
-    })();
-    const set = (f: (t: Tuning) => void) => {
-      this.save((x) => {
-        const n = { ...(x.tunings[cur.src] ?? { shift: 0, scale: 1 }) };
-        f(n);
-        x.tunings[cur.src] = n;
-      });
-      this.editorUpdate?.();
-    };
-    const slider = (value: number, min: number, max: number, step: number, on: (v: number) => void, title: string) => {
-      const r = el("input", { type: "range", min: String(min), max: String(max), step: String(step), value: String(value), style: "width: 130px", title }) as HTMLInputElement;
-      r.oninput = () => on(Number(r.value));
-      return r;
-    };
-    return el(
-      "div",
-      { style: "margin: 6px 0" },
-      el("div", { class: "muted ar-small", style: "margin-bottom: 3px", title: "Drag a point: left-right moves it, up-down its opacity. Double-click colours it, Ctrl-click adds one, right-click removes one. The blue triangles under the histogram slide and warp it under the colours." }, "Colourmap ⓘ"),
-      this.editor.element,
-      el(
-        "div",
-        { style: "display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 4px" },
-        el("label", {}, "Shift ", slider(width ? t.shift / width : 0, -1, 1, 0.01, (v) => set((n) => (n.shift = v * width)), "Move the whole map along the values (a fraction of its width)")),
-        el("label", {}, "Compress ", slider(t.scale, 0.4, 2.5, 0.01, (v) => set((n) => (n.scale = v)), "Narrow (below 1) or widen (above 1) the map about its middle")),
-        button("Reset", () => {
-          this.save((x) => delete x.tunings[cur.src]);
-          this.editorUpdate?.();
-        }, "Back to the preset as it falls on this image"),
-        button("Save as a preset file", () => {
-          const p = this.tunedPreset() ?? this.resolved?.preset;
-          if (!p) return;
-          const name = `${String(p.name ?? "preset")} (tuned)`;
-          downloadBlob(new Blob([JSON.stringify([{ ...p, name }], null, 1)], { type: "application/json" }), "preset.json");
-        }, "The map as tuned, at this image's values (load it with Load a preset file…)"),
-      ),
-    );
+    if (preview) this.preview(edit);
+    else this.save(edit);
+    this.editorUpdate?.();
   }
 
-  /** A crop: on, its name, keep or cut out, remove; its box's low and high along x, y and z (fractions of the volume). */
-  private cropRow(b: Crop, i: number, render: () => void): HTMLElement {
-    const on = el("input", { type: "checkbox" }) as HTMLInputElement;
-    on.checked = b.on;
-    on.onchange = () => this.save((x) => (x.boxes[i].on = on.checked));
-    const name = el("input", { type: "text", value: b.name, style: "width: 90px" }) as HTMLInputElement;
-    name.onchange = () => this.save((x) => (x.boxes[i].name = name.value));
-    const axis = (k: number, label: string) =>
-      el("div", { style: "display: flex; gap: 4px; align-items: center" },
-        el("span", { style: "width: 12px" }, label),
-        this.slider(b.lo[k], 0, 1, 0.005, (v) => this.save((x) => (x.boxes[i].lo[k] = Math.min(v, x.boxes[i].hi[k] - 0.005))), `Low ${label}`),
-        this.slider(b.hi[k], 0, 1, 0.005, (v) => this.save((x) => (x.boxes[i].hi[k] = Math.max(v, x.boxes[i].lo[k] + 0.005))), `High ${label}`));
-    return el("div", { style: "border-left: 3px solid #4a7; padding-left: 6px; margin: 4px 0" },
-      el("div", { style: "display: flex; gap: 6px; align-items: center" },
-        on, name,
-        select([["keep", "keep inside"], ["cut", "cut out"]], b.keep ? "keep" : "cut", (v) => this.save((x) => (x.boxes[i].keep = v === "keep"))),
-        button("Remove", () => {
-          this.save((x) => x.boxes.splice(i, 1));
-          render();
-        })),
-      axis(0, "x"), axis(1, "y"), axis(2, "z"));
+  /** A change previewed while a slider is dragged: the view renders it, nothing is saved (no undo step) until it is let go. */
+  private preview(edit: (s: Saved) => void): void {
+    edit(this.saved);
+    this.handle?.redraw();
   }
 
-  /** A slider and its number, kept together; `live` false: the slider applies when let go (a change that reopens the session). */
-  private sliderNum(value: number, min: number, max: number, step: number, on: (v: number) => void, opts: { live?: boolean; title?: string; width?: string } = {}): HTMLElement {
-    const r = el("input", { type: "range", min: String(min), max: String(max), step: String(step), value: String(value), style: `width: ${opts.width ?? "120px"}`, title: opts.title ?? "" }) as HTMLInputElement;
-    const n = numberInput(value, (v) => {
-      r.value = String(v);
-      on(v);
-    }, { step: String(step), style: "width: 64px", title: opts.title ?? "" });
-    const apply = () => {
-      n.value = r.value;
-      on(Number(r.value));
-    };
-    if (opts.live === false) {
-      r.oninput = () => (n.value = r.value);
-      r.onchange = apply;
-    } else {
-      r.oninput = apply;
-    }
-    return el("div", { style: "display: flex; gap: 6px; align-items: center" }, r, n);
-  }
-
-  private slider(value: number, min: number, max: number, step: number, on: (v: number) => void, title: string): HTMLInputElement {
-    const r = el("input", { type: "range", min: String(min), max: String(max), step: String(step), value: String(value), style: "width: 110px", title }) as HTMLInputElement;
-    r.oninput = () => on(Number(r.value));
-    return r;
-  }
-
-  /** A "window" preset's control: the data values at its ends for this image, the host's guess until set. */
-  private windowField(): HTMLElement | "" {
-    if (this.presetDomain() !== "window") return "";
-    if (this.saved.where === "browser") return "";
+  /** A "window" preset's range for this image, on a computer: the store, the image's values and the step; undefined otherwise. */
+  private windowRange(): { src: string; lo: number; hi: number; step: number; guess?: [number, number] } | undefined {
+    if (this.presetDomain() !== "window" || this.saved.where === "browser") return undefined;
     const target = this.target();
     const src = target ? omeZarrSource(target.sources[0]) : undefined;
-    if (src === undefined) return "";
+    if (src === undefined) return undefined;
     const vol = this.session?.volume as { window?: [number, number] | null; lo?: number; hi?: number; dtype?: string } | undefined;
-    const guess = vol?.window ?? undefined;
-    const w = this.saved.windows[src] ?? guess;
-    const set = (i: 0 | 1, v: number) =>
-      this.save((x) => {
-        const cur = x.windows[src] ?? guess ?? [v, v + 1];
-        const next: [number, number] = [cur[0], cur[1]];
-        next[i] = v;
-        if (next[1] > next[0]) x.windows[src] = next;
-      });
-    const step = vol && vol.hi !== undefined && vol.lo !== undefined ? String(windowStep(vol.lo, vol.hi, vol.dtype)) : "1";
-    return field(
-      "Window (low, high)",
-      el(
-        "div",
-        { style: "display: flex; gap: 6px; align-items: center" },
-        this.sliderNum(w ? w[0] : 0, vol?.lo ?? 0, vol?.hi ?? 65535, Number(step), (v) => set(0, v), { title: "Low end", width: "90px" }),
-        this.sliderNum(w ? w[1] : 1, vol?.lo ?? 0, vol?.hi ?? 65535, Number(step), (v) => set(1, v), { title: "High end", width: "90px" }),
-        button("Guess", () => this.save((x) => delete x.windows[src]), "Back to the host's guess: from just past the mounting medium, with the commonest tissue value at the middle"),
-      ),
-    );
+    const known = vol?.lo !== undefined && vol.hi !== undefined && vol.hi > vol.lo;
+    return {
+      src,
+      lo: known ? vol!.lo! : 0,
+      hi: known ? vol!.hi! : 65535,
+      step: known ? windowStep(vol!.lo!, vol!.hi!, vol!.dtype) : 1,
+      guess: vol?.window ?? undefined,
+    };
+  }
+
+  private setWindow(src: string, i: 0 | 1, v: number, guess: [number, number] | undefined): void {
+    this.save((x) => {
+      const cur = x.windows[src] ?? guess ?? [v, v + 1];
+      const next: [number, number] = [cur[0], cur[1]];
+      next[i] = v;
+      if (next[1] > next[0]) x.windows[src] = next;
+    });
   }
 
   private labelsSource(): string | undefined {
@@ -716,7 +757,8 @@ class AnatomicalRendering {
         if (abort.signal.aborted) break;
         this.session = info;
       }
-      this.statusUpdate?.();
+      // Loaded (or failed): the window and the colourmap editor follow the image's values.
+      this.panelUpdate?.();
       if (info.status !== "ready" || abort.signal.aborted) return;
       await this.resolvePreset();
       this.lastKey = "";
@@ -861,8 +903,11 @@ class AnatomicalRendering {
         const view = cam && this.distance && this.distance.version === f.version ? { invViewProjection: cam, distance: this.distance } : undefined;
         if (view === undefined) {
           // Not placed in space: never in place of a picture that is (it would stick to the screen as the
-          // camera moves); drawn flat only from a host that gives no distances.
-          if (this.drawer.placed() !== undefined) continue;
+          // camera moves); drawn flat only from a host that gives no distances.  A frame not drawn lets its bitmap go.
+          if (this.drawer.placed() !== undefined) {
+            f.bitmap.close?.();
+            continue;
+          }
           if (this.depth === undefined || this.depth.version !== f.version) {
             const d = await service.depth(id);
             if (d !== undefined) this.depth = d;
@@ -931,7 +976,7 @@ class AnatomicalRendering {
     this.lastFrame = frame;
     const local = this.saved.where === "browser" ? this.local : undefined;
     const sid = local ? "local" : this.session?.status === "ready" ? this.session.id : undefined;
-    if (sid === undefined || (local && !this.localText.startsWith("level"))) return;
+    if (sid === undefined || (local && !local.ready)) return;
     const look = JSON.stringify([this.saved.boxes, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.lightStyle, this.saved.envScale, this.saved.lightKey, this.saved.viewCut, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
     const camera = viewKey(frame.invViewProjection, frame.width, frame.height);
     // Moving: Neuroglancer's drag or wheel, or the camera changing frame after frame without them (the
@@ -1007,15 +1052,44 @@ class AnatomicalRendering {
   }
 
   // ------------------------------------------------------------------ movies
-  private addKeyframe(): void {
+  /** Neuroglancer's 3-D camera now: its position, orientation and zoom. */
+  private camera(): KeyframeCamera | undefined {
+    const ng = this.ctx.viewer.getState() as { position?: unknown; projectionOrientation?: unknown; projectionScale?: unknown } | undefined;
+    if (!Array.isArray(ng?.position)) return undefined;
+    return {
+      position: ng.position.slice() as number[],
+      orientation: Array.isArray(ng.projectionOrientation) ? (ng.projectionOrientation.slice() as number[]) : [0, 0, 0, 1],
+      scale: typeof ng.projectionScale === "number" ? ng.projectionScale : 256,
+    };
+  }
+
+  /** A keyframe of the view now (and the look), `at` an index to replace, else added two seconds after the last. */
+  private addKeyframe(at?: number): void {
     const spec = this.lastSpec;
     if (spec === undefined) {
       this.ctx.ui.toast("Render a view first: switch Render on and look at the image in 3-D.", "error");
       return;
     }
+    const camera = this.camera();
+    const frame = { view: { ...spec, scale: 1 }, ...(camera ? { camera } : {}) };
+    if (at !== undefined) return this.save((s) => (s.keyframes[at] = { time: s.keyframes[at].time, ...frame }));
     const last = this.saved.keyframes.at(-1)?.time ?? -2;
-    this.save((s) => s.keyframes.push({ time: last + 2, view: { ...spec, scale: 1 } }));
-    this.panelUpdate?.();
+    this.save((s) => s.keyframes.push({ time: last + 2, ...frame }));
+  }
+
+  /** Moves the 3-D view back to where a keyframe was taken. */
+  private goToKeyframe(i: number): void {
+    const c = this.saved.keyframes[i]?.camera;
+    if (c === undefined) {
+      this.ctx.ui.toast("This keyframe was made before keyframes kept their camera: replace it to go back to it.", "error");
+      return;
+    }
+    this.ctx.viewer.patchState((ng) => {
+      const s = ng as { position?: number[]; projectionOrientation?: number[]; projectionScale?: number };
+      s.position = c.position.slice();
+      s.projectionOrientation = c.orientation.slice();
+      s.projectionScale = c.scale;
+    });
   }
 
   /** The view now, full size, for a still, a rotation or a keyframe. */
@@ -1047,29 +1121,25 @@ class AnatomicalRendering {
     });
   }
 
-  /** The view now at the output's size and twice its samples, as a job on the host (progress and cancelling in Activity); saved as a download. */
+  /** The view now at the output's size and twice its samples, as a job on the host (progress and cancel in the panel and in Activity); saved as a download. */
   private async saveStill(): Promise<void> {
     const sid = this.session?.status === "ready" ? this.session.id : undefined;
     const service = this.opened?.service;
     const view = this.currentSpec();
     if (sid === undefined || service === undefined || view === undefined) return this.ctx.ui.toast("Render a view on a computer first.", "error");
-    if (this.stillRunning) return this.ctx.ui.toast("A still is already rendering: see Activity.", "error");
+    if (this.stillRunning) return this.ctx.ui.toast("A still is already rendering.", "error");
     const m = movieSettings(this.saved.movie);
     const samples = Math.min(LIMITS.maxSamples, m.samples * 2);
     const tooLarge = stillProblem(m.width, m.height, samples);
     if (tooLarge) return this.ctx.ui.toast(tooLarge, "error");
     this.stillRunning = true;
     this.panelUpdate?.();
+    const name = `Still ${m.width} × ${m.height}, ${samples} samples`;
     try {
-      await this.ctx.jobs.run(`Still: ${m.width} × ${m.height}, ${samples} samples`, async (job) => {
-        let info = await service.still(sid, { view, width: m.width, height: m.height, samples, name: "anatomical-rendering" });
-        while (info.status === "queued" || info.status === "running") {
-          if (job.cancelled) await service.cancelStill(info.id).catch(() => undefined);
-          job.progress(info.progress, info.message);
-          await sleep(500);
-          info = await service.stillInfo(info.id);
-        }
-        if (info.status !== "done") throw new Error(info.error ?? info.status);
+      await this.ctx.jobs.run(name, async (job) => {
+        const info = await service.still(sid, { view, width: m.width, height: m.height, samples, name: "anatomical-rendering" });
+        const done = await this.follow("still", service, info, name, job);
+        if (done.status !== "done") throw new Error(done.error ?? done.status);
         downloadBlob(await service.stillFile(info.id), "anatomical-rendering.png");
       });
     } catch (e) {
@@ -1077,6 +1147,98 @@ class AnatomicalRendering {
     } finally {
       this.stillRunning = false;
       this.panelUpdate?.();
+    }
+  }
+
+  // ------------------------------------------------------------------ jobs
+  /** Records a job in the list kept in this browser, and shows it. */
+  private recordJob(job: JobRecord): void {
+    this.jobs = putJob(this.jobs, job);
+    this.ctx.settings.set(JOBS_KEY, this.jobs);
+    this.jobsUpdate?.();
+  }
+
+  private jobsUpdate: (() => void) | undefined;
+
+  /**
+   * Follows a job on its computer until it stops: its progress in the list
+   * (kept in this browser) and in Activity's `job`, whose Cancel cancels it
+   * on the computer.  A job the computer no longer knows is "gone".
+   */
+  private async follow(kind: JobKind, service: RenderService, first: { id: string; status: string; progress: number; message: string; error: string | null; files?: string[] }, name: string, job?: JobControl): Promise<JobRecord> {
+    const host = service.link.label ?? "";
+    const key = `${kind}:${host}:${first.id}`;
+    const record = (i: typeof first): JobRecord => ({
+      kind,
+      id: first.id,
+      host,
+      name,
+      status: i.status as JobRecord["status"],
+      progress: i.progress,
+      message: i.message,
+      ...(i.error ? { error: i.error } : {}),
+      ...(i.files ? { files: i.files } : {}),
+      started: this.jobs.find((j) => j.kind === kind && j.id === first.id && j.host === host)?.started ?? Date.now(),
+    });
+    let rec = record(first);
+    this.recordJob(rec);
+    this.following.add(key);
+    let asked = false;
+    try {
+      while (!finished(rec.status) && !this.disposed) {
+        if (job?.cancelled && !asked) {
+          asked = true;
+          await this.cancelJob(service, rec);
+        }
+        job?.progress(rec.progress, rec.message);
+        await sleep(kind === "splat" ? 2000 : kind === "movie" ? 1000 : 500);
+        try {
+          rec = record(kind === "still" ? await service.stillInfo(first.id) : kind === "movie" ? await service.movieInfo(first.id) : await service.splatInfo(first.id));
+        } catch (e) {
+          if (!(e instanceof ServiceError && e.status === 404)) throw e;
+          rec = { ...rec, status: "gone" };
+        }
+        this.recordJob(rec);
+      }
+    } finally {
+      this.following.delete(key);
+    }
+    return rec;
+  }
+
+  private cancelJob(service: RenderService, j: Pick<JobRecord, "kind" | "id">): Promise<unknown> {
+    const cancel = j.kind === "still" ? service.cancelStill(j.id) : j.kind === "movie" ? service.cancelMovie(j.id) : service.cancelSplat(j.id);
+    return cancel.catch(() => undefined);
+  }
+
+  /** After a reload (or connecting again): follows the jobs still running on this computer, in Activity too. */
+  private resumeJobs(service: RenderService): void {
+    const host = service.link.label ?? "";
+    for (const j of this.jobs) {
+      if (finished(j.status) || j.host !== host || this.following.has(`${j.kind}:${host}:${j.id}`)) continue;
+      const title = `${j.kind === "still" ? "Still" : j.kind === "movie" ? "Movie" : "Splat"}: ${j.name}`;
+      void this.ctx.jobs
+        .run(title, (job) => this.follow(j.kind, service, { ...j, error: j.error ?? null }, j.name, job))
+        .catch((e) => this.ctx.log.error(`${title}: ${(e as Error).message}`));
+    }
+  }
+
+  /** The service a job runs on, when this page is connected to its computer. */
+  private serviceFor(j: JobRecord): RenderService | undefined {
+    return this.service !== undefined && this.serviceInfo !== undefined && (this.service.link.label ?? "") === j.host ? this.service : undefined;
+  }
+
+  /** Saves a finished job's file: the still's PNG, the movie's MP4, the splat. */
+  private async download(j: JobRecord): Promise<void> {
+    const service = this.serviceFor(j);
+    if (service === undefined) return this.ctx.ui.toast(`Connect to ${j.host} first.`, "error");
+    try {
+      if (j.kind === "still") downloadBlob(await service.stillFile(j.id), "anatomical-rendering.png");
+      else if (j.kind === "movie") downloadBlob(await service.movieFile(j.id), `${j.name}.mp4`);
+      else downloadBlob(new Blob([await service.splatFile(j.id, "scene.splat")]), "anatomical-rendering.splat");
+    } catch (e) {
+      if (e instanceof ServiceError && e.status === 404) this.recordJob({ ...j, status: "gone" });
+      this.ctx.ui.toast(`${j.name}: ${(e as Error).message}`, "error");
     }
   }
 
@@ -1133,7 +1295,7 @@ class AnatomicalRendering {
   /**
    * A movie (the keyframes', or `extra`'s rotation): first a small, quick
    * preview in a window, played over and over; from there, the movie itself
-   * as a job (its progress in the Jobs tab) while the view stays live.
+   * as a job (its progress in the panel and in Activity) while the view stays live.
    */
   private renderMovie(extra?: Record<string, unknown>): void {
     const sid = this.session?.id;
@@ -1145,14 +1307,14 @@ class AnatomicalRendering {
     let preview: MovieInfo | undefined;
     let url: string | undefined;
     this.ctx.ui.sheet("Movie preview", (body, close) => {
-      const bar = el("progress", { max: "1", value: "0", style: "width: 100%" }) as HTMLProgressElement;
-      const note = el("span", { class: "muted ar-small" }, "Rendering a preview…");
+      const bar = el("progress", { max: "1", value: "0", "aria-label": "Preview" }) as HTMLProgressElement;
+      const note = el("span", { class: "muted" }, "Rendering a preview…");
       const stage = el("div", { class: "ar-preview" }, bar, note);
       const go = button(`Render the movie (${m.width}×${m.height}, ${m.samples} samples)`, () => {
         close();
         void this.movieJob(sid, this.movieSpec(extra, false));
-      }, "In the background: its progress is in Jobs; the view stays live", "btn primary");
-      body.append(stage, el("div", { class: "ar-row" }, go));
+      }, undefined, "btn primary");
+      body.append(stage, el("div", { class: "row" }, go, info("It renders in the background, its progress in the Movie card and in Activity; the view stays live.", "About rendering the movie")));
       let open = true;
       void (async () => {
         try {
@@ -1169,7 +1331,7 @@ class AnatomicalRendering {
           if (!open) return;
           stage.replaceChildren(el("video", { src: url, autoplay: true, loop: true, muted: true, playsinline: true, controls: true, class: "ar-video" }));
         } catch (e) {
-          if (open) stage.replaceChildren(el("p", { class: "note error" }, `The preview failed: ${(e as Error).message}`));
+          if (open) stage.replaceChildren(el("p", { class: "empty error" }, `The preview failed: ${(e as Error).message}`));
         }
       })();
       return () => {
@@ -1180,25 +1342,15 @@ class AnatomicalRendering {
     }, { wide: true });
   }
 
-  /** The movie as a job: progress and cancelling in the Jobs tab; saved as a download when done. */
+  /** The movie as a job: progress and cancel in the panel and in Activity; saved as a download when done. */
   private async movieJob(sid: string, spec: Record<string, unknown>): Promise<void> {
     const service = this.service!;
     const name = String(spec.name ?? "movie");
     try {
       await this.ctx.jobs.run(`Movie: ${name}`, async (job) => {
-        let info = await service.movie(sid, spec);
-        this.movie = info;
-        this.panelUpdate?.();
-        while (info.status === "queued" || info.status === "running") {
-          if (job.cancelled) await service.cancelMovie(info.id).catch(() => undefined);
-          job.progress(info.progress, info.message);
-          await new Promise((r) => setTimeout(r, 1000));
-          info = await service.movieInfo(info.id);
-          this.movie = info;
-          this.statusUpdate?.();
-        }
-        this.panelUpdate?.();
-        if (info.status !== "done") throw new Error(info.error ?? info.status);
+        const info = await service.movie(sid, spec);
+        const done = await this.follow("movie", service, info, name, job);
+        if (done.status !== "done") throw new Error(done.error ?? done.status);
         downloadBlob(await service.movieFile(info.id), `${name}.mp4`);
       });
     } catch (e) {
@@ -1209,7 +1361,7 @@ class AnatomicalRendering {
   // ------------------------------------------------------------------ splats
   /**
    * Gaussian splats of the view on the host: the view's look (preset, colours, light held where it is,
-   * cuts, crops) path-traced from all round it, then fitted; a job in the Jobs tab while it runs.
+   * cuts, crops) path-traced from all round it, then fitted; a job in the panel and in Activity while it runs.
    */
   private async makeSplat(): Promise<void> {
     const sid = this.session?.id;
@@ -1225,42 +1377,32 @@ class AnatomicalRendering {
       if (!ok) return;
     }
     const service = this.service;
-    const name = this.saved.layer ?? "view";
+    const name = `Splat of ${this.saved.layer ?? "the view"}`;
     try {
-      await this.ctx.jobs.run(`Splat of ${name}`, async (job) => {
-        let info = await service.splat(sid, { view: { ...view, scale: 1 }, views: sp.views, size: sp.size, samples: sp.samples, cover: sp.cover, steps: sp.steps, name });
-        this.splat = info;
-        this.panelUpdate?.();
-        while (info.status === "queued" || info.status === "running") {
-          await new Promise((r) => setTimeout(r, 2000));
-          if (job.cancelled) await service.cancelSplat(info.id).catch(() => undefined);
-          info = await service.splatInfo(info.id);
-          this.splat = info;
-          job.progress(info.progress, info.message);
-          this.statusUpdate?.();
-        }
-        this.panelUpdate?.();
-        if (info.status !== "done") throw new Error(info.error ?? info.status);
+      const done = await this.ctx.jobs.run(name, async (job) => {
+        const info = await service.splat(sid, { view: { ...view, scale: 1 }, views: sp.views, size: sp.size, samples: sp.samples, cover: sp.cover, steps: sp.steps, name: this.saved.layer ?? "view" });
+        const rec = await this.follow("splat", service, info, name, job);
+        if (rec.status !== "done") throw new Error(rec.error ?? rec.status);
+        return rec;
       });
-      if (this.splat?.files.includes("scene.splat")) this.ctx.ui.toast(`Splat made: ${this.splat.message}`);
+      if (done.files?.includes("scene.splat")) this.ctx.ui.toast(`Splat made: ${done.message}`);
     } catch (e) {
       this.ctx.ui.toast(`Splat: ${(e as Error).message}`, "error");
     }
   }
 
-  /** The splat made last, in a window over the page. */
-  private async viewSplat(): Promise<void> {
-    const info = this.splat;
-    const service = this.service;
-    if (!info || !service || !info.files.includes("scene.splat")) return;
+  /** A finished splat, in a sheet over the page. */
+  private async viewSplat(j: JobRecord): Promise<void> {
+    const service = this.serviceFor(j);
+    if (service === undefined) return this.ctx.ui.toast(`Connect to ${j.host} first.`, "error");
     try {
-      const [data, cams] = await Promise.all([service.splatFile(info.id, "scene.splat"), service.splatFile(info.id, "cameras.json")]);
+      const [data, cams] = await Promise.all([service.splatFile(j.id, "scene.splat"), service.splatFile(j.id, "cameras.json")]);
       const meta = JSON.parse(new TextDecoder().decode(cams)) as { centre: number[]; frames: { c2w: number[][]; fovy: number }[] };
       const camera: SplatCamera | undefined = meta.frames[0] ? { c2w: meta.frames[0].c2w, fovy: meta.frames[0].fovy, centre: meta.centre } : undefined;
-      const save = (file: string, as: string) => () => void service.splatFile(info.id, file).then((b) => downloadBlob(new Blob([b]), as));
-      openSplatWindow(`Splat of ${this.saved.layer ?? "the view"}`, parseSplat(data), camera, [
+      const save = (file: string, as: string) => () => void service.splatFile(j.id, file).then((b) => downloadBlob(new Blob([b]), as));
+      showSplats(this.ctx.ui.sheet, j.name, parseSplat(data), camera, [
         ["Download .splat", save("scene.splat", "anatomical-rendering.splat")],
-        ...(info.files.includes("splat.ply") ? [["Download .ply", save("splat.ply", "anatomical-rendering.ply")] as [string, () => void]] : []),
+        ...(j.files?.includes("splat.ply") ? [["Download .ply", save("splat.ply", "anatomical-rendering.ply")] as [string, () => void]] : []),
       ]);
     } catch (e) {
       this.ctx.ui.toast(`Splat: ${(e as Error).message}`, "error");
@@ -1275,7 +1417,7 @@ class AnatomicalRendering {
       if (!file) return;
       try {
         const data = await file.arrayBuffer();
-        openSplatWindow(file.name, file.name.toLowerCase().endsWith(".ply") ? parsePly(data) : parseSplat(data), undefined);
+        showSplats(this.ctx.ui.sheet, file.name, file.name.toLowerCase().endsWith(".ply") ? parsePly(data) : parseSplat(data), undefined);
       } catch (e) {
         this.ctx.ui.toast(`Splat file: ${(e as Error).message}`, "error");
       }
@@ -1284,316 +1426,569 @@ class AnatomicalRendering {
   }
 
   // ------------------------------------------------------------------ panel
-  /** The status lines (all in the tooltip), and the error to show in place of the last line when there is one. */
-  private status(): { lines: string[]; error?: string } {
-    const parts: string[] = [];
-    const g = this.saved.where === "host" ? this.serviceInfo?.gpu : undefined;
-    if (g) parts.push(g.backend === "cuda" ? `GPU: ${g.name} (${Math.round((g.free_mb ?? 0) / 1024)} of ${Math.round((g.total_mb ?? 0) / 1024)} GB free)` : `No GPU: ${g.error ?? ""}`);
+  /**
+   * What the status line says: an error (with what mends it), else work
+   * under way (the image loading); nothing otherwise.  What the panel shows
+   * already (the GPU, Render off, the level, samples) is not repeated.
+   */
+  private status(): { error?: string; action?: "retry" | "pair"; progress?: string } {
+    const host = this.saved.where === "host";
+    if (host && this.connectProblem && this.connecting === undefined) return { error: this.connectProblem, action: this.service === undefined ? "pair" : "retry" };
+    const s = host ? this.session : undefined;
+    if (this.problem) return { error: this.problem, action: "retry" };
+    if (s?.status === "failed") return { error: `Failed: ${s.error ?? "unknown error"}`, action: "retry" };
+    if (!this.saved.on) return {};
+    if (host && this.connecting !== undefined) return { progress: `Connecting to ${this.link()?.label ?? "the render computer"}…` };
+    if (s?.status === "loading") return { progress: `Loading: ${s.message} (${Math.round(s.progress * 100)}%)` };
+    if (!host && this.local && !this.local.ready && this.localText) return { progress: this.localText };
+    return {};
+  }
+
+  /** What is rendered now, for the Quality card: the level held, and the frame's samples, size and speed. */
+  private readout(): string {
+    const lines: string[] = [];
     const s = this.session;
-    if (s) {
-      if (s.status === "loading") parts.push(`Loading: ${s.message} (${Math.round(s.progress * 100)}%)`);
-      else if (s.status === "failed") parts.push(`Failed: ${s.error}`);
-      else {
-        const v = s.volume as SessionInfo["volume"] & { level?: string; made?: boolean; from_cache?: boolean };
-        parts.push(`${s.message}${v.made ? (v.from_cache ? " (made here, from the cache)" : " (made here by downsampling)") : ""}`);
-      }
+    if (this.saved.where === "host" && s?.status === "ready") {
+      const v = s.volume as SessionInfo["volume"] & { made?: boolean; from_cache?: boolean };
+      lines.push(`${s.message}${v.made ? (v.from_cache ? " (made here, from the cache)" : " (made here by downsampling)") : ""}`);
     }
-    if (this.saved.where === "browser" && this.localText) parts.push(this.localText);
-    if (this.frameText) parts.push(this.frameText);
-    if (this.movie) parts.push(`Movie: ${this.movie.status} ${Math.round(this.movie.progress * 100)}% ${this.movie.message}${this.movie.error ? ` (${this.movie.error})` : ""}`);
-    if (this.splat) parts.push(`Splat: ${this.splat.status} ${Math.round(this.splat.progress * 100)}% ${this.splat.message}${this.splat.error ? ` (${this.splat.error})` : ""}`);
-    if (this.problem) parts.push(this.problem);
-    const failed = this.saved.where === "host" && s?.status === "failed" ? `Failed: ${s.error ?? "unknown error"}` : "";
-    return { lines: parts, error: this.problem || failed || undefined };
+    if (this.saved.where === "browser" && this.local?.ready) lines.push(this.localText);
+    if (this.frameText) lines.push(this.frameText);
+    return lines.join("\n");
   }
 
   private panel(host: HTMLElement): Disposer {
-    const statusEl = el("span", { class: "ar-status" });
-    const retry = button("Retry", () => this.retry(), "Connect again and reopen the image");
-    this.statusUpdate = () => {
-      const { lines, error } = this.status();
-      const shown = lines.flatMap((l) => l.split("\n")).filter(Boolean);
-      statusEl.textContent = error ?? shown.at(-1) ?? (this.saved.on ? "" : "off");
-      statusEl.title = shown.join("\n");
-      statusEl.classList.toggle("error", error !== undefined);
-      retry.hidden = error === undefined || !this.saved.on;
+    const ctx = this.ctx;
+    const saved = () => this.saved;
+    const openData = { label: "Open data…", run: () => void ctx.commands.invoke("dataset.add") };
+    const hostOnly: HTMLElement[] = [];
+    const onHost = <E extends HTMLElement>(e: E): E => (hostOnly.push(e), e);
+
+    // ---------------------------------------------------------------- head
+    const onSwitch = toggle("Render", saved().on, (v) => this.setOn(v));
+    const status = statusLine();
+    const empty = emptyState("No OME-Zarr or N5 image in this scene.", openData);
+    const views = region((buttons: ViewButton[]) => [
+      button("Centre", () => this.centreOnTissue()),
+      ...buttons.map((v) => el("button", { class: "btn outline small", type: "button", title: `Look from ${v.name}`, "aria-label": `Look from ${v.name}`, onclick: () => this.lookFrom(v) }, v.label)),
+      info(
+        buttons[0]?.label.startsWith("+")
+          ? "Centre moves to the middle of the tissue and zooms to show all of it. The others look from each end of x, y and z: the image's metadata does not give its anatomical orientation (in RAS, +x is right, +y anterior and +z superior)."
+          : "Centre moves to the middle of the tissue and zooms to show all of it. The others look from each side of the image, as its metadata names them.",
+        "About the view buttons",
+      ),
+    ], { class: "row" });
+
+    // -------------------------------------------------------------- Remote
+    const where = select([["host", "A computer's GPU (CUDA)"], ["browser", "This browser (WebGPU)"]], saved().where, (v) => {
+      this.save((x) => (x.where = v as Saved["where"]));
+      this.update();
+    }, "Where");
+    const computer = choices((v) => {
+      this.host = { name: v || undefined };
+      ctx.settings.set(HOST_KEY, this.host);
+      void this.connect();
+    }, "Computer");
+    const gpu = onHost(el("p", { class: "readout" }));
+    const reconnect = button("Reconnect", () => void this.connect());
+    const remote = card("anatomical.remote", "Remote", { open: true },
+      field("Where", where),
+      onHost(field("Computer", computer)),
+      gpu,
+      onHost(el("div", { class: "row" }, button("Pair a computer…", () => void ctx.commands.invoke(COMPUTE_SETTINGS.command, COMPUTE_SETTINGS.args)), reconnect)),
+    );
+
+    // ----------------------------------------------------------- Rendering
+    const image = choices((v) => this.save((x) => (x.layer = v)), "Image");
+    const imageNote = el("p", { class: "hint" });
+    const preset = choices((v) => this.save((x) => (x.preset = v)), "Preset");
+    const references = region((refs: ReturnType<AnatomicalRendering["references"]>) =>
+      refs.length === 0
+        ? null
+        : el("p", { class: "hint" },
+            "Colours from ",
+            ...refs.flatMap((r, i) => [i ? ", " : "", r.page ? el("a", { href: r.page, target: "_blank", rel: "noopener" }, `photo ${i + 1}`) : `photo ${i + 1}`]),
+            " ",
+            info(refs.map((r) => `${r.title} (${r.author}${r.licence ? `, ${r.licence}` : ""})`).join("; "), "About the photographs")),
+    );
+    let windowSliders: [Slider, Slider] | undefined;
+    const windowPart = region((w: ReturnType<AnatomicalRendering["windowRange"]>) => {
+      windowSliders = undefined;
+      if (w === undefined) return null;
+      const now = this.saved.windows[w.src] ?? w.guess;
+      const end = (i: 0 | 1, label: string) => slider(now ? now[i] : i, { min: w.lo, max: w.hi, step: w.step, label, onchange: (v) => this.setWindow(w.src, i, v, w.guess) });
+      windowSliders = [end(0, "Window low"), end(1, "Window high")];
+      return field("Window", el("div", { class: "stack" },
+        windowSliders[0], windowSliders[1],
+        el("div", { class: "row" }, button("Guess", () => this.save((x) => delete x.windows[w.src])))),
+        { info: "The image values the preset's colours are spread over, low and high. Guess goes back to the computer's guess: from just past the mounting medium, with the commonest tissue value at the middle." });
+    });
+    const shift = slider(0, { min: -1, max: 1, step: 0.01, label: "Shift", oninput: (v) => this.tune((n) => (n.shift = v * this.mapWidth()), true), onchange: (v) => this.tune((n) => (n.shift = v * this.mapWidth())) });
+    const compress = slider(1, { min: 0.4, max: 2.5, step: 0.01, label: "Compress", oninput: (v) => this.tune((n) => (n.scale = v), true), onchange: (v) => this.tune((n) => (n.scale = v)) });
+    const editorPart = region((on: boolean) =>
+      on
+        ? [
+            field("Colourmap", this.colourmapEditor().element, { info: "The image's histogram (grey) under the preset's colours and opacity. Drag a point: left and right moves it, up and down its opacity. Double-click to colour it, Ctrl-click to add one, right-click to remove one. The blue triangles under the histogram slide and warp it under the colours." }),
+            field("Shift", shift, { info: "Moves the whole map along the values (a fraction of its width)." }),
+            field("Compress", compress, { info: "Narrows (below 1) or widens (above 1) the map about its middle." }),
+            el("div", { class: "row" },
+              button("Reset", () => {
+                const cur = this.currentTuning();
+                if (cur) this.save((x) => delete x.tunings[cur.src]);
+                this.editorUpdate?.();
+              }),
+              button("Save as a preset file", () => {
+                const p = this.tunedPreset() ?? this.resolved?.preset;
+                if (!p) return;
+                const name = `${String(p.name ?? "preset")} (tuned)`;
+                downloadBlob(new Blob([JSON.stringify([{ ...p, name }], null, 1)], { type: "application/json" }), "preset.json");
+              }),
+              info("Reset goes back to the preset as it falls on this image. Save as a preset file writes the map as tuned, at this image's values, to load again with Load…", "About the colourmap's buttons")),
+          ]
+        : null,
+    { class: "stack" });
+    const density = slider(40, { min: 0, max: 200, label: "Density", unit: "/mm", oninput: (v) => this.preview((x) => (x.density = v)), onchange: (v) => this.save((x) => (x.density = v)) });
+    const exposure = slider(1, { min: 0, max: 5, step: 0.05, label: "Exposure", oninput: (v) => this.preview((x) => (x.exposure = v)), onchange: (v) => this.save((x) => (x.exposure = v)) });
+    const jar = onHost(checkbox("Hide the jar", false, (v) => {
+      this.save((x) => (x.jar = v));
+      this.update();
+    }, { info: "Renders only a cylinder about the scan's axis, leaving out the jar's wall (HiP-CT organs in their jars)." }));
+    const rendering = card("anatomical.rendering", "Rendering", { open: true },
+      field("Image", image),
+      imageNote,
+      el("div", { class: "row" },
+        field("Preset", preset, { info: "A look per modality or organ. Load… reads a preset (or a list of them) from a JSON file: a name, a domain, stops of value, colour and opacity, and the material." }),
+        button("Load…", () => this.loadPresetFile())),
+      references,
+      windowPart,
+      editorPart,
+      field("Density", density, { info: "How opaque the tissue is: higher gives crisper surfaces, lower more translucent ones." }),
+      field("Exposure", exposure),
+      jar,
+    );
+
+    // ------------------------------------------------------------- Regions
+    const regionsEmpty = emptyState("No OME-Zarr segmentation in this scene.", openData);
+    const colourBy = checkbox("Colour by region", false, (v) => this.save((x) => (x.regions = v)));
+    const segmentation = choices((v) => this.save((x) => (x.labels = v)), "Segmentation");
+    const labelMix = slider(0.85, { min: 0, max: 1, step: 0.05, label: "Region colour", oninput: (v) => this.preview((x) => (x.labelMix = v)), onchange: (v) => this.save((x) => (x.labelMix = v)) });
+    const hidden = idsInput([], (v) => this.save((x) => (x.hidden = v)), "Hidden regions");
+    const keep = idsInput([], (v) => this.save((x) => (x.keep = v)), "Kept whole");
+    const regionsBody = el("div", { class: "stack" },
+      field("Segmentation", segmentation),
+      colourBy,
+      field("Region colour", labelMix, { info: "0 keeps the preset's colours; 1 gives each region its own." }),
+      field("Hidden regions", hidden, { info: "Label ids left out, with spaces or commas between." }),
+      field("Kept whole", keep, { info: "Label ids that stay whole where the crops cut (vessels through a cut brain)." }),
+    );
+    const regions = card("anatomical.regions", "Regions", {}, regionsEmpty, regionsBody);
+
+    // ------------------------------------------------------------- Quality
+    const budget = slider(400, { min: 10, max: 2000, step: 10, unit: "M voxels", label: "Whole volume", onchange: (v) => this.save((x) => (x.budget = Math.max(1, v) * 1e6)) });
+    const detail = onHost(checkbox("Finer detail", true, (v) => {
+      this.save((x) => (x.detail = v));
+      this.update();
+    }, { info: "Where the view comes close, the region in view is read at a finer level; shadows and light from outside it stay at the whole volume's." }));
+    const detailBudget = slider(200, { min: 10, max: 2000, step: 10, unit: "M voxels", label: "Detail", onchange: (v) => {
+      this.save((x) => (x.detailBudget = Math.max(1, v) * 1e6));
+      this.update();
+    } });
+    const detailField = field("Detail", detailBudget, { info: "The voxels the finer region may hold." });
+    const denoise = checkbox("Denoise", true, (v) => this.save((x) => (x.denoise = v)), { info: "Smooths the first frames after the view changes (the computer's denoiser)." });
+    const samples = slider(512, { min: 16, max: 4096, step: 16, label: "Samples per pixel", onchange: (v) => this.save((x) => (x.maxSamples = Math.max(1, Math.round(v)))) });
+    const frameReadout = el("p", { class: "readout" });
+    const quality = card("anatomical.quality", "Quality", {},
+      field("Whole volume", budget, { info: "One level of the whole image on the GPU: the finest stored level within this, or one made from a finer level." }),
+      detail,
+      detailField,
+      denoise,
+      field("Samples per pixel", samples, { info: "Where a still view stops refining." }),
+      frameReadout,
+    );
+
+    // ------------------------------------------------------------ Lighting
+    const lightStyle = choices((v) =>
+      this.save((x) => {
+        x.lightStyle = v;
+        const l = LIGHTING[v];
+        if (l) [x.lightMap, x.envScale, x.lightKey] = [l.map, l.envScale, l.key];
+      }), "Style");
+    lightStyle.update([["", "Custom"], ...Object.entries(LIGHTING).map(([k, l]): [string, string] => [k, l.name])], saved().lightStyle);
+    const around = slider(30, { min: -180, max: 180, step: 5, unit: "°", label: "Around", oninput: (v) => this.preview((x) => (x.lightAzimuth = v)), onchange: (v) => this.save((x) => (x.lightAzimuth = v)) });
+    const up = slider(40, { min: -90, max: 90, step: 5, unit: "°", label: "Up", oninput: (v) => this.preview((x) => (x.lightElevation = v)), onchange: (v) => this.save((x) => (x.lightElevation = v)) });
+    const key = slider(1, { min: 0, max: 4, step: 0.05, label: "Key light", oninput: (v) => this.preview((x) => (x.lightKey = v)), onchange: (v) => this.save((x) => ((x.lightKey = v), (x.lightStyle = ""))) });
+    const surroundings = slider(1, { min: 0, max: 3, step: 0.05, label: "Surroundings", oninput: (v) => this.preview((x) => (x.envScale = v)), onchange: (v) => this.save((x) => ((x.envScale = v), (x.lightStyle = ""))) });
+    const lightMap = choices((v) => this.save((x) => (x.lightMap = v)), "Light map");
+    const mapTurn = slider(0, { min: -180, max: 180, step: 5, unit: "°", label: "Turn the light map", oninput: (v) => this.preview((x) => (x.lightMapRotation = v)), onchange: (v) => this.save((x) => (x.lightMapRotation = v)) });
+    const mapPart = el("div", { class: "stack" }, field("Light map", lightMap, { info: "HDR panoramas (CC0, Poly Haven), or the preset's sky colours." }), field("Turn", mapTurn));
+    const lighting = card("anatomical.lighting", "Lighting", {},
+      onHost(field("Style", lightStyle)),
+      field("Around", around, { info: "The key light turns with the camera: 0 lights from the camera, 90 from the right, -90 from the left." }),
+      field("Up", up, { info: "90 lights from above, -90 from below." }),
+      onHost(field("Key light", key, { info: "The light that makes shadows." })),
+      onHost(field("Surroundings", surroundings, { info: "Light from all round: the light map, or the sky colours." })),
+      mapPart,
+    );
+
+    // --------------------------------------------------------------- Crops
+    const toCursor = button("Move to the cursor", () => {
+      const o = this.cursorOffsets();
+      if (!o) return ctx.ui.toast("Point at the tissue in the 3-D view first.", "error");
+      this.save((x) => {
+        const names = this.lastFrame!.dimensions.names;
+        for (const c of x.cuts) {
+          const k = names.indexOf(c.axis);
+          if (c.on && k >= 0 && k < 3) c.offset = o.axis[k];
+        }
+        if (x.viewCut.on) x.viewCut = { ...x.viewCut, offset: o.view, fixed: null };
+      });
+    });
+    const viewCutOn = checkbox("Camera plane", false, (v) =>
+      this.save((x) => {
+        // Turned on, it starts through the point the cursor was last over.
+        const o = v ? this.cursorOffsets() : undefined;
+        x.viewCut = { ...x.viewCut, on: v, ...(o ? { offset: o.view, fixed: null } : {}) };
+      }), { info: "A clip across the view, keeping what lies beyond it. It turns with the camera; Pin keeps it where it is now (an oblique clip), Follow lets it turn again." });
+    const viewOffset = slider(0, { min: -100, max: 100, step: 0.5, unit: "mm", label: "Camera plane offset", unbounded: true, onchange: (v) => this.save((x) => (x.viewCut = { ...x.viewCut, offset: v, fixed: null })) });
+    const pin = button("Pin", () => {
+      if (this.saved.viewCut.fixed) return this.save((x) => (x.viewCut = { ...x.viewCut, fixed: null }));
+      const f = this.lastFrame;
+      if (!f) return ctx.ui.toast("Render a view first.", "error");
+      this.save((x) => (x.viewCut = { ...x.viewCut, on: true, fixed: viewCutPlane(f.invViewProjection, f.position, x.viewCut.offset, f.dimensions) }));
+    });
+    const cutControls = saved().cuts.map((c, i) => {
+      const on = checkbox(`Across ${c.axis}`, c.on, (v) =>
+        this.save((x) => {
+          x.cuts[i].on = v;
+          // A cut turned on starts through the point the cursor was last over (the axis's display index).
+          const o = v ? this.cursorOffsets() : undefined;
+          const k = this.lastFrame?.dimensions.names.indexOf(x.cuts[i].axis) ?? -1;
+          if (o && k >= 0 && k < 3) x.cuts[i].offset = o.axis[k];
+        }));
+      const side = select([["-1", "keep −"], ["1", "keep +"]], String(c.keep), (v) => this.save((x) => (x.cuts[i].keep = Number(v) as 1 | -1)), `Side kept across ${c.axis}`);
+      const offset = slider(c.offset, { min: -100, max: 100, step: 0.5, unit: "mm", label: `Offset across ${c.axis}`, unbounded: true, onchange: (v) => this.save((x) => (x.cuts[i].offset = v)) });
+      return { on, side, offset, row: el("div", { class: "ar-cut" }, on, side, offset) };
+    });
+    let boxControls: { on: ReturnType<typeof toggle>; name: Settable<HTMLInputElement, string>; keep: Settable<HTMLSelectElement, string>; ends: [Slider, Slider][] }[] = [];
+    const boxes = region((count: number) => {
+      boxControls = [];
+      return Array.from({ length: count }, (_, i) => {
+        const b = this.saved.boxes[i];
+        const on = toggle(`Box ${i + 1}`, b.on, (v) => this.save((x) => (x.boxes[i].on = v)), { hideLabel: true });
+        const name = el("input", { class: "text-input ar-grow", type: "text", value: b.name, "aria-label": `Name of box ${i + 1}` }) as Settable<HTMLInputElement, string>;
+        name.onchange = () => this.save((x) => (x.boxes[i].name = name.value));
+        name.set = (v) => {
+          if (name.ownerDocument.activeElement !== name && name.value !== v) name.value = v;
+        };
+        const keepIt = select([["keep", "keep inside"], ["cut", "cut out"]], b.keep ? "keep" : "cut", (v) => this.save((x) => (x.boxes[i].keep = v === "keep")), `Box ${i + 1} keeps`);
+        const ends = (["x", "y", "z"] as const).map((axis, k): [Slider, Slider] => [
+          slider(b.lo[k], { min: 0, max: 1, step: 0.005, label: `Box ${i + 1} low ${axis}`, onchange: (v) => this.save((x) => (x.boxes[i].lo[k] = Math.min(v, x.boxes[i].hi[k] - 0.005))) }),
+          slider(b.hi[k], { min: 0, max: 1, step: 0.005, label: `Box ${i + 1} high ${axis}`, onchange: (v) => this.save((x) => (x.boxes[i].hi[k] = Math.max(v, x.boxes[i].lo[k] + 0.005))) }),
+        ]);
+        boxControls.push({ on, name, keep: keepIt, ends });
+        return el("div", { class: "ar-box" },
+          el("div", { class: "row" }, on, name, keepIt, iconButton("trash", `Remove box ${i + 1}`, () => this.save((x) => x.boxes.splice(i, 1)))),
+          el("div", { class: "ar-box-axes" }, ...ends.flatMap(([lo, hi], k) => [el("span", {}, "xyz"[k]), lo, hi])));
+      });
+    }, { class: "stack" });
+    const addBox = button("Add a box", () => {
+      if (this.saved.boxes.length >= LIMITS.maxBoxes) return;
+      this.save((x) => x.boxes.push({ name: `Box ${x.boxes.length + 1}`, on: true, keep: true, lo: [0, 0, 0], hi: [1, 1, 1] }));
+    });
+    const crops = card("anatomical.crops", "Crops", { info: `Clips and boxes. A clip turned on starts through the point the cursor was last over in the 3-D view; Move to the cursor moves the clips that are on there. Boxes (up to ${LIMITS.maxBoxes}) are fractions of the volume along x, y and z; what shows is inside any box that keeps and in none that cuts out.` },
+      el("div", { class: "row" }, toCursor),
+      viewCutOn,
+      el("div", { class: "row" }, el("div", { class: "ar-grow" }, viewOffset), pin),
+      el("h4", { class: "section-title" }, "Axis planes"),
+      ...cutControls.map((c) => c.row),
+      el("h4", { class: "section-title" }, "Boxes"),
+      boxes,
+      el("div", { class: "row" }, addBox),
+    );
+
+    // -------------------------------------------------------------- Output
+    const sizeField = (label: string, get: (m: Saved["movie"]) => number, fix: (v: number) => number, set: (m: Saved["movie"], v: number) => void, attrs: Record<string, string>) => {
+      const input = bounded(get(saved().movie), fix, (v) => this.save((x) => set(x.movie, v)), { "aria-label": label, ...attrs });
+      return { input, field: field(label, input) };
     };
-    const render = () => {
+    const width = sizeField("Width", (m) => m.width, evenSide, (m, v) => (m.width = v), { min: "8", max: "8192", step: "2" });
+    const height = sizeField("Height", (m) => m.height, evenSide, (m, v) => (m.height = v), { min: "8", max: "8192", step: "2" });
+    const outSamples = sizeField("Samples", (m) => m.samples, (v) => clampInt(v, 1, LIMITS.maxSamples), (m, v) => (m.samples = v), { min: "1", max: String(LIMITS.maxSamples) });
+    const still = button("Save still (PNG)", () => void this.saveStill());
+    const noFfmpeg = el("p", { class: "hint" }, NO_FFMPEG);
+    const jobList = (kind: JobKind) =>
+      region((jobs: JobRecord[]) =>
+        jobs.map((j) => {
+          const service = this.serviceFor(j);
+          const actions: HTMLElement[] = [];
+          if (!finished(j.status) && service) actions.push(button("Cancel", () => void this.cancelJob(service, j)));
+          if (j.status === "done" && j.kind === "splat" && j.files?.includes("scene.splat")) actions.push(button("View", () => void this.viewSplat(j)));
+          if (j.status === "done" && (j.kind !== "splat" || j.files?.includes("scene.splat"))) actions.push(button("Download", () => void this.download(j)));
+          if (finished(j.status)) actions.push(iconButton("close", `Remove ${j.name} from the list`, () => ((this.jobs = dropJob(this.jobs, j)), ctx.settings.set(JOBS_KEY, this.jobs), this.jobsUpdate?.())));
+          return el("li", { class: "ar-job" }, el("span", { class: "readout" }, jobText(j)), ...actions);
+        }),
+      { class: "list" });
+    const stills = jobList("still");
+    const output = card("anatomical.output", "Output", { info: "The size and samples of stills and movies. A still is path-traced on the computer to twice the samples, as a job: its progress here and in Activity, and it downloads when done." },
+      el("div", { class: "row" }, width.field, height.field, outSamples.field),
+      el("div", { class: "row" }, still),
+      onHost(noFfmpeg),
+      stills,
+    );
+
+    // --------------------------------------------------------------- Movie
+    let keyframeTimes: Settable<HTMLInputElement, number>[] = [];
+    const keyframes = region((count: number) => {
+      keyframeTimes = [];
+      return Array.from({ length: count }, (_, i) => {
+        const time = numberInput(this.saved.keyframes[i].time, (v) => this.save((x) => (x.keyframes[i].time = v)), { step: "0.5", "aria-label": `Time of keyframe ${i + 1}` });
+        keyframeTimes.push(time);
+        const moveBy = (by: -1 | 1) => () => this.save((x) => (x.keyframes = moveKeyframe(x.keyframes, i, by)));
+        return el("li", { class: "row" },
+          el("span", { class: "muted" }, `#${i + 1} at`), time, el("span", { class: "muted" }, "s"),
+          button("Go to", () => this.goToKeyframe(i)),
+          button("Replace", () => this.addKeyframe(i)),
+          iconButton("arrow-up", `Move keyframe ${i + 1} earlier`, moveBy(-1), { disabled: i === 0 }),
+          iconButton("arrow-down", `Move keyframe ${i + 1} later`, moveBy(1), { disabled: i === count - 1 }),
+          iconButton("trash", `Remove keyframe ${i + 1}`, () => this.save((x) => x.keyframes.splice(i, 1))));
+      });
+    }, { class: "list" });
+    const fps = bounded(saved().movie.fps, (v) => clampInt(v, 1, LIMITS.maxFps), (v) => this.save((x) => (x.movie.fps = v)), { min: "1", max: String(LIMITS.maxFps), "aria-label": "Frames a second" });
+    const easing = select([["smooth", "slows at keyframes"], ["linear", "steady"]], saved().movie.easing, (v) => this.save((x) => (x.movie.easing = v as "smooth" | "linear")), "Camera");
+    const rotAxis = select([["vertical", "the vertical"], ["horizontal", "the horizontal"]], saved().rotation.axis, (v) => this.save((x) => (x.rotation.axis = v as "vertical" | "horizontal")), "About");
+    const rotTurn = select([["360", "full turn"], ["180", "half turn"]], String(saved().rotation.degrees), (v) => this.save((x) => (x.rotation.degrees = Number(v))), "Turn");
+    const rotStep = bounded(saved().rotation.step, (v) => Math.min(90, Math.max(0.25, v)), (v) => this.save((x) => (x.rotation.step = v)), { step: "1", min: "0.25", max: "90", "aria-label": "Step (degrees)" });
+    const movies = jobList("movie");
+    const movie = card("anatomical.movie", "Movie", { info: "Add keyframes as you move, set each one's time, then preview: a small, quick version plays in a window, and from there the movie renders in the background at the Output card's size and samples. Go to moves the view back to a keyframe; Replace puts the view now in its place." },
+      keyframes,
+      el("div", { class: "row" },
+        button("Add keyframe", () => this.addKeyframe()),
+        field("fps", fps),
+        field("Camera", easing)),
+      el("div", { class: "row" }, button("Preview movie…", () => this.renderMovie())),
+      el("h4", { class: "section-title" }, "Rotation"),
+      el("div", { class: "row" }, field("About", rotAxis), field("Turn", rotTurn), field("Step °", rotStep)),
+      el("div", { class: "row" }, button("Preview rotation…", () => void this.renderRotation())),
+      movies,
+    );
+
+    // --------------------------------------------------------------- Splat
+    const cannotFit = onHost(el("p", { class: "hint" }));
+    const splatField = (label: string, get: (s: Saved["splat"]) => number, lo: number, hi: number, set: (s: Saved["splat"], v: number) => void, help?: string) => {
+      const input = bounded(get(saved().splat), (v) => clampInt(v, lo, hi), (v) => this.save((x) => set(x.splat, v)), { min: String(lo), max: String(hi), "aria-label": label });
+      return { input, field: field(label, input, help ? { info: help } : undefined) };
+    };
+    const splatViews = splatField("Views", (p) => p.views, 8, 4096, (p, v) => (p.views = v));
+    const splatSize = splatField("Size", (p) => p.size, 64, 4096, (p, v) => (p.size = v), "Pixels along the longer side of each view.");
+    const splatSamples = splatField("Samples", (p) => p.samples, 1, 8192, (p, v) => (p.samples = v));
+    const splatSteps = splatField("Fit steps", (p) => p.steps, 0, 200000, (p, v) => (p.steps = v), "0 renders the views only.");
+    const splatCover = select([["180", "every side"], ["90", "this half"], ["50", "near this side"]], String(saved().splat.cover), (v) => this.save((x) => (x.splat.cover = Number(v))), "From");
+    const splats = jobList("splat");
+    const splat = card("anatomical.splat", "Splat", { badge: el("span", { class: "chip" }, "In progress"), info: "The look now, path-traced from all round and fitted with 3-D Gaussians that any browser, phone or headset draws at full speed. In progress: a fit has not yet run end to end." },
+      cannotFit,
+      el("div", { class: "row" }, splatViews.field, splatSize.field, splatSamples.field, field("From", splatCover), splatSteps.field),
+      el("div", { class: "row" },
+        button("Make splat", () => void this.makeSplat()),
+        button("Open file…", () => this.openSplatFile()),
+        info("Make splat runs on the computer that renders. Open file… views a .splat or a 3-D Gaussian splatting .ply from this device.", "About splats")),
+      splats,
+    );
+
+    host.append(
+      el("div", { class: "row" }, onSwitch),
+      empty,
+      status,
+      views,
+      remote, rendering, regions, quality, lighting, crops, output, movie, splat,
+    );
+
+    // --------------------------------------------------------------- sync
+    let lastStatus = "";
+    this.statusUpdate = () => {
+      const st = this.status();
+      const key = JSON.stringify(st);
+      if (key !== lastStatus) {
+        lastStatus = key;
+        if (st.error !== undefined) {
+          status.error(st.error, st.action === "pair"
+            ? { label: "Pair a computer…", run: () => void ctx.commands.invoke(COMPUTE_SETTINGS.command, COMPUTE_SETTINGS.args) }
+            : { label: "Retry", run: () => this.retry() });
+        } else if (st.progress !== undefined) status.progress(st.progress);
+        else status.clear();
+      }
+      const text = this.readout();
+      if (frameReadout.textContent !== text) frameReadout.textContent = text;
+      frameReadout.hidden = text === "";
+    };
+    this.jobsUpdate = () => {
+      for (const [kind, list] of [["still", stills], ["movie", movies], ["splat", splats]] as const) list.update(this.jobs.filter((j) => j.kind === kind));
+    };
+    this.editorUpdate = () => {
+      const e = this.editedStops();
+      const hist = (this.session?.volume as { histogram?: { lo: number; hi: number; counts: number[] } } | undefined)?.histogram;
+      if (e && this.editor && !this.editor.dragging) this.editor.set(hist, e.stops, e.warp);
+    };
+    let wasConnected = true;
+    const sync = () => {
       const s = this.saved;
       const imgs = this.images();
-      const segs = this.segmentations();
-      const presetList = s.where === "browser" ? LOCAL_PRESETS.map((p) => ({ name: p.name, modality: p.modality ?? "", density: p.density })) : this.presets;
-      const allPresets = [...presetList, ...s.customPresets.map((p) => ({ name: String(p.name), modality: "from a file", density: Number(p.density ?? 40) }))];
-      const presetOptions: [string, string][] = allPresets.map((p) => [p.name, p.modality ? `${p.name} (${p.modality})` : p.name]);
-      const cutRow = (i: number) => {
-        const c = s.cuts[i];
-        const on = el("input", { type: "checkbox" }) as HTMLInputElement;
-        on.checked = c.on;
-        on.onchange = () =>
-          this.save((x) => {
-            x.cuts[i].on = on.checked;
-            // A cut turned on starts through the point the cursor was last over (the axis's display index i).
-            const o = on.checked ? this.cursorOffsets() : undefined;
-            const k = this.lastFrame?.dimensions.names.indexOf(x.cuts[i].axis) ?? -1;
-            if (o && k >= 0 && k < 3) x.cuts[i].offset = o.axis[k];
-          });
-        return el(
-          "div",
-          { style: "display: flex; gap: 6px; align-items: center" },
-          on,
-          el("span", { style: "width: 1.2em" }, c.axis),
-          select([["-1", "keep −"], ["1", "keep +"]], String(c.keep), (v) => this.save((x) => (x.cuts[i].keep = Number(v) as 1 | -1))),
-          (() => {
-            const r = el("input", { type: "range", min: "-100", max: "100", step: "0.5", value: String(c.offset), style: "width: 90px", title: "Offset from the position (mm)" }) as HTMLInputElement;
-            r.onchange = () => this.save((x) => (x.cuts[i].offset = Number(r.value)));
-            return r;
-          })(),
-          numberInput(c.offset, (v) => this.save((x) => (x.cuts[i].offset = v)), { step: "1", style: "width: 56px", title: "Offset from the position (mm)" }),
-        );
-      };
-      const keyframeRows = s.keyframes.map((k, i) =>
-        el(
-          "div",
-          { style: "display: flex; gap: 6px; align-items: center" },
-          el("span", {}, `#${i + 1} at`),
-          numberInput(k.time, (v) => this.save((x) => (x.keyframes[i].time = v)), { step: "0.5", style: "width: 60px" }),
-          el("span", {}, "s"),
-          button("Remove", () => {
-            this.save((x) => x.keyframes.splice(i, 1));
-            render();
-          }),
-        ),
-      );
-      const movie = this.movie;
+      const target = this.target();
+      const onHost_ = s.where === "host";
+      const axes = target ? this.axesOf(target) : {};
+      for (const e of hostOnly) e.hidden = !onHost_;
+
+      // The head: the switch, an empty scene's action, the view buttons.
+      onSwitch.set(s.on);
+      onSwitch.input.disabled = imgs.length === 0;
+      empty.hidden = imgs.length > 0;
+      views.update(imgs.length ? this.viewButtons() : []);
+      views.hidden = imgs.length === 0;
+
+      // Remote: opened when it needs doing (no computer answers).
+      const connected = !onHost_ || this.serviceInfo !== undefined;
+      if (!connected && wasConnected && this.connecting === undefined) remote.open = true;
+      wasConnected = connected || this.connecting !== undefined;
+      where.set(s.where);
       const hosts = this.renderHosts();
       const using = this.link()?.label;
-      const hostChoice = select(
+      computer.update(
         [["", `Automatic${!this.host.name && using ? `: ${using}` : ""}`], ...hosts.map((h): [string, string] => [h.name, `${h.name}${h.info?.hostname && h.info.hostname !== h.name ? ` (${h.info.hostname})` : ""}${h.available ? "" : ": not answering"}`])],
         hosts.some((h) => h.name === this.host.name) ? this.host.name! : "",
-        (v) => {
-          this.host = { name: v || undefined };
-          this.ctx.settings.set(HOST_KEY, this.host);
-          void this.connect();
-          render();
-        },
       );
-      const check = (checked: boolean, on: (v: boolean) => void, attrs: Record<string, unknown> = {}) => {
-        const cb = el("input", { type: "checkbox", ...attrs }) as HTMLInputElement;
-        cb.checked = checked;
-        cb.onchange = () => on(cb.checked);
-        return cb;
-      };
-      const tick = (label: string, checked: boolean, on: (v: boolean) => void, title?: string) => el("label", { class: "ar-tick", title }, check(checked, on), label);
-      /** A number field that keeps its value within bounds (`fix`), and shows the value as kept. */
-      const bounded = (value: number, fix: (v: number) => number, on: (v: number) => void, attrs: Record<string, string>) => {
-        const input: HTMLInputElement = numberInput(fix(value), (v) => {
-          const kept = fix(v);
-          input.value = String(kept);
-          on(kept);
-        }, attrs);
-        return input;
-      };
-      const tip = (label: string, control: Node, title?: string) => {
-        const e = field(label, control);
-        if (title) e.title = title;
-        return e;
-      };
-      const host_ = s.where === "host";
-      const connected = host_ ? this.serviceInfo !== undefined : true;
-      const pair = button("Pair a computer…", () => void this.ctx.commands.invoke(COMPUTE_SETTINGS.command, COMPUTE_SETTINGS.args), "Pair this computer's runner, or another over SSH");
-      const g = host_ ? this.serviceInfo?.gpu : undefined;
-      const onSwitch = toggle("Render", s.on, (v) => this.setOn(v), { disabled: imgs.length === 0 });
-      clear(
-        host,
-        el(
-          "div",
-          { class: "ar" },
-          el("div", { class: "ar-head" }, onSwitch, statusEl, retry),
-          imgs.length === 0 ? el("p", { class: "muted" }, "Needs an OME-Zarr or N5 image in the scene.") : "",
-          el(
-            "div",
-            { class: "ar-views" },
-            button("Centre", () => this.centreOnTissue(), "Move the position to the middle of the tissue and zoom to show all of it"),
-            ...ANATOMICAL_VIEWS.map((v) => button(v.name[0], () => this.ctx.viewer.patchState((ng) => void ((ng as { projectionOrientation?: number[] }).projectionOrientation = orientationLooking(v.forward, v.up))), `Look from ${v.name.toLowerCase()}`)),
-          ),
-          this.section("remote", "Remote", !connected, false,
-            tip("Where", select([["host", "A computer's GPU (CUDA)"], ["browser", "This browser (WebGPU)"]], s.where, (v) => {
-              this.save((x) => (x.where = v as Saved["where"]));
-              this.update();
-              render();
-            })),
-            host_ ? tip("Computer", hostChoice) : "",
-            host_ && g ? el("p", { class: "muted ar-small" }, g.backend === "cuda" ? `${g.name}, ${Math.round((g.free_mb ?? 0) / 1024)} of ${Math.round((g.total_mb ?? 0) / 1024)} GB free` : `No GPU: ${g.error ?? ""}`) : "",
-            host_ ? el("div", { class: "ar-row" }, pair, hosts.length ? button("Reconnect", () => void this.connect()) : "") : "",
-          ),
-          this.section("rendering", "Rendering", false, true,
-            tip("Image", imgs.length ? select(imgs.map((l) => [l.name, l.name]), this.target()?.name ?? "", (v) => this.save((x) => (x.layer = v))) : el("span", { class: "muted" }, "none")),
-            el("div", { class: "ar-row" },
-              tip("Preset", presetOptions.length ? select(presetOptions, s.preset, (v) => this.save((x) => (x.preset = v))) : el("span", { class: "muted" }, "connect first")),
-              button("File…", () => this.loadPresetFile(), "Load a JSON preset (or a list of them): name, domain, stops of value, colour and opacity, and material")),
-            this.referenceNote(),
-            this.windowField(),
-            this.editorField(),
-            tip("Density (per mm)", this.sliderNum(s.density ?? Number(this.presets.find((p) => p.name === s.preset)?.density ?? 40), 0, 200, 1, (v) => this.save((x) => (x.density = v))), "How opaque the tissue is: higher, crisper surfaces; lower, more translucent"),
-            tip("Exposure", this.sliderNum(s.exposure, 0, 5, 0.05, (v) => this.save((x) => (x.exposure = v)))),
-            host_ ? tick("Hide the jar", s.jar, (v) => {
-              this.save((x) => (x.jar = v));
-              this.update();
-            }, "Render only a cylinder about the scan's axis, leaving out the jar's wall (HiP-CT organs in their jars)") : "",
-            el("h4", {}, "Regions"),
-            segs.length
-              ? el("div", {},
-                  el("div", { class: "ar-row" }, tick("Colour by", s.regions, (v) => this.save((x) => (x.regions = v))), select(segs.map((l) => [l.name, l.name]), segs.find((x) => x.name === s.labels)?.name ?? segs[0].name, (v) => this.save((x) => (x.labels = v)), "Segmentation")),
-                  tip("Region colour", this.sliderNum(s.labelMix, 0, 1, 0.05, (v) => this.save((x) => (x.labelMix = v))), "0: the preset's colours, 1: the regions'"),
-                  tip("Hidden regions", idsInput(s.hidden, (v) => this.save((x) => (x.hidden = v))), "Label ids left out"),
-                  tip("Kept through crops", idsInput(s.keep, (v) => this.save((x) => (x.keep = v))), "Label ids that stay whole where the crops cut"))
-              : el("p", { class: "muted ar-small" }, "No OME-Zarr segmentation in the scene."),
-            el("h4", {}, "Quality"),
-            tip("Whole volume (M voxels)", this.sliderNum(s.budget / 1e6, 10, 2000, 10, (v) => this.save((x) => (x.budget = Math.max(1, v) * 1e6)), { live: false }), "One level of the whole image on the GPU: the finest stored level within this, or one made from a finer level"),
-            host_ ? tick("Finer detail where you zoom", s.detail, (v) => {
-              this.save((x) => (x.detail = v));
-              this.update();
-            }, "The region in view is read at a finer level; shadows and light from outside it stay at the whole volume's") : "",
-            host_ && s.detail ? tip("Detail (M voxels)", this.sliderNum(s.detailBudget / 1e6, 10, 2000, 10, (v) => {
-              this.save((x) => (x.detailBudget = Math.max(1, v) * 1e6));
-              this.update();
-            }, { live: false })) : "",
-            tick("Denoise the first frames", s.denoise, (v) => this.save((x) => (x.denoise = v))),
-            tip("Samples per pixel", this.sliderNum(s.maxSamples, 16, 4096, 16, (v) => this.save((x) => (x.maxSamples = Math.max(1, Math.round(v))))), "Where a still view stops refining"),
-          ),
-          this.section("lighting", "Lighting", false, false,
-            host_ ? tip("Style", select([["", "Custom"], ...Object.entries(LIGHTING).map(([k, l]): [string, string] => [k, l.name])], s.lightStyle, (v) =>
-              this.save((x) => {
-                x.lightStyle = v;
-                const l = LIGHTING[v];
-                if (l) [x.lightMap, x.envScale, x.lightKey] = [l.map, l.envScale, l.key];
-              }))) : "",
-            tip("Around", this.slider(s.lightAzimuth, -180, 180, 5, (v) => this.save((x) => (x.lightAzimuth = v)), "0 from the camera, 90 from the right, -90 from the left"), "The key light turns with the camera"),
-            tip("Up", this.slider(s.lightElevation, -90, 90, 5, (v) => this.save((x) => (x.lightElevation = v)), "90 from above, -90 from below")),
-            host_ ? tip("Key light", this.slider(s.lightKey, 0, 4, 0.05, (v) => this.save((x) => ((x.lightKey = v), (x.lightStyle = ""))), "The light that makes shadows")) : "",
-            host_ ? tip("Surroundings", this.slider(s.envScale, 0, 3, 0.05, (v) => this.save((x) => ((x.envScale = v), (x.lightStyle = ""))), "Light from all round: the light map, or the sky colours")) : "",
-            host_ && (this.serviceInfo?.lightmaps?.length ?? 0) > 0
-              ? el("div", { class: "ar-row" },
-                  tip("Light map", select([["", "Sky colours"], ...this.serviceInfo!.lightmaps!.map((m): [string, string] => [m, m])], s.lightMap, (v) => this.save((x) => (x.lightMap = v))), "HDR panoramas (CC0, Poly Haven)"),
-                  this.sliderNum(s.lightMapRotation, -180, 180, 5, (v) => this.save((x) => (x.lightMapRotation = v)), { title: "Turn the light map (degrees)", width: "80px" }))
-              : "",
-          ),
-          this.section("crops", "Crops", false, false,
-            el("div", { class: "ar-row" },
-              button("Move to the cursor", () => {
-                const o = this.cursorOffsets();
-                if (!o) return;
-                this.save((x) => {
-                  const names = this.lastFrame!.dimensions.names;
-                  for (const c of x.cuts) {
-                    const k = names.indexOf(c.axis);
-                    if (c.on && k >= 0 && k < 3) c.offset = o.axis[k];
-                  }
-                  if (x.viewCut.on) x.viewCut = { ...x.viewCut, offset: o.view, fixed: null };
-                });
-                render();
-              }, this.lastCursor ? "Move the clips that are on through the point the cursor was last over in the 3-D view" : "Point at the tissue in the 3-D view first")),
-            el("h4", {}, "Camera plane"),
-            el("div", { class: "ar-row" },
-              check(s.viewCut.on, (v) =>
-                this.save((x) => {
-                  // Turned on, it starts through the point the cursor was last over.
-                  const o = v ? this.cursorOffsets() : undefined;
-                  x.viewCut = { ...x.viewCut, on: v, ...(o ? { offset: o.view, fixed: null } : {}) };
-                }), { title: "Clip across the view, keeping what lies beyond it" }),
-              this.slider(s.viewCut.offset, -100, 100, 0.5, (v) => this.save((x) => (x.viewCut = { ...x.viewCut, offset: v, fixed: null })), "Past the position (mm): positive clips deeper"),
-              numberInput(s.viewCut.offset, (v) => this.save((x) => (x.viewCut = { ...x.viewCut, offset: v, fixed: null })), { step: "1", style: "width: 56px", title: "Past the position (mm)" }),
-              s.viewCut.fixed
-                ? button("Follow", () => this.save((x) => (x.viewCut = { ...x.viewCut, fixed: null })), "The clip turns with the camera again")
-                : button("Pin", () => {
-                    const f = this.lastFrame;
-                    if (!f) return;
-                    this.save((x) => (x.viewCut = { ...x.viewCut, on: true, fixed: viewCutPlane(f.invViewProjection, f.position, x.viewCut.offset, f.dimensions) }));
-                  }, "Keep the clip where it is now as you turn the view")),
-            el("h4", {}, "Axis planes"),
-            cutRow(0), cutRow(1), cutRow(2),
-            el("h4", {}, "Boxes"),
-            ...s.boxes.map((b, i) => this.cropRow(b, i, render)),
-            (() => {
-              const add = button("Add a box", () => {
-                if (this.saved.boxes.length >= LIMITS.maxBoxes) return;
-                this.save((x) => x.boxes.push({ name: `Box ${x.boxes.length + 1}`, on: true, keep: true, lo: [0, 0, 0], hi: [1, 1, 1] }));
-                render();
-              }, s.boxes.length >= LIMITS.maxBoxes ? `Up to ${LIMITS.maxBoxes} boxes` : `Fractions of the volume; each keeps its inside or cuts it out (up to ${LIMITS.maxBoxes})`);
-              add.disabled = s.boxes.length >= LIMITS.maxBoxes;
-              return add;
-            })(),
-          ),
-          this.section("output", "Output", false, false,
-            el("div", { class: "ar-row" },
-              tip("Width", bounded(s.movie.width, evenSide, (v) => this.save((x) => (x.movie.width = v)), { style: "width: 70px", min: "8", max: "8192", step: "2" })),
-              tip("Height", bounded(s.movie.height, evenSide, (v) => this.save((x) => (x.movie.height = v)), { style: "width: 70px", min: "8", max: "8192", step: "2" })),
-              tip("Samples", bounded(s.movie.samples, (v) => clampInt(v, 1, LIMITS.maxSamples), (v) => this.save((x) => (x.movie.samples = v)), { style: "width: 60px", min: "1", max: String(LIMITS.maxSamples) }))),
-            el("div", { class: "ar-row" }, (() => {
-              const b = button(this.stillRunning ? "Rendering still…" : "Save still (PNG)", () => void this.saveStill(), "The view now at this size, path-traced to twice the samples; its progress is in Activity");
-              b.disabled = this.stillRunning;
-              return b;
-            })()),
-            host_ && this.serviceInfo?.ffmpeg === false ? el("p", { class: "note ar-small" }, NO_FFMPEG) : "",
-            el("h4", {}, "Movie"),
-            ...keyframeRows,
-            el("div", { class: "ar-row" },
-              button("Add keyframe", () => this.addKeyframe(), "The view now"),
-              tip("fps", bounded(s.movie.fps, (v) => clampInt(v, 1, LIMITS.maxFps), (v) => this.save((x) => (x.movie.fps = v)), { style: "width: 50px", min: "1", max: String(LIMITS.maxFps) })),
-              tip("Camera", select([["smooth", "slows at keyframes"], ["linear", "steady"]], s.movie.easing, (v) => this.save((x) => (x.movie.easing = v as "smooth" | "linear"))))),
-            el("div", { class: "ar-row" },
-              button("Preview movie…", () => this.renderMovie(), "A quick, small preview first; the movie itself renders from there, in the background"),
-              movie?.status === "running" ? button("Cancel", () => void this.service?.cancelMovie(movie.id)) : "",
-              movie?.status === "done" ? button("Download", () => void this.service!.movieFile(movie.id).then((b) => downloadBlob(b, "anatomical-rendering.mp4"))) : ""),
-            el("h4", {}, "Rotation"),
-            el("div", { class: "ar-row" },
-              select([["vertical", "about the vertical"], ["horizontal", "about the horizontal"]], s.rotation.axis, (v) => this.save((x) => (x.rotation.axis = v as "vertical" | "horizontal"))),
-              select([["360", "full turn"], ["180", "half turn"]], String(s.rotation.degrees), (v) => this.save((x) => (x.rotation.degrees = Number(v)))),
-              tip("Step °", bounded(s.rotation.step, (v) => Math.min(90, Math.max(0.25, v)), (v) => this.save((x) => (x.rotation.step = v)), { step: "1", min: "0.25", max: "90", style: "width: 50px" })),
-              button("Preview rotation…", () => void this.renderRotation(), "A turn about the position from the view now: a quick preview first")),
-            el("h4", { title: "The look now, path-traced from all round and fitted with 3-D Gaussians that any browser, phone or headset draws at full speed" }, "Splat"),
-            host_ && this.serviceInfo?.splats && !this.serviceInfo.splats.ready ? el("p", { class: "muted ar-small" }, `Views only: this computer cannot fit (${this.serviceInfo.splats.error ?? "no splat Python"}).`) : "",
-            el("div", { class: "ar-row" },
-              tip("Views", bounded(s.splat.views, (v) => clampInt(v, 8, 4096), (v) => this.save((x) => (x.splat.views = v)), { style: "width: 60px", min: "8", max: "4096" })),
-              tip("Size", bounded(s.splat.size, (v) => clampInt(v, 64, 4096), (v) => this.save((x) => (x.splat.size = v)), { style: "width: 60px", min: "64", max: "4096", title: "Pixels along the longer side of each view" })),
-              tip("Samples", bounded(s.splat.samples, (v) => clampInt(v, 1, 8192), (v) => this.save((x) => (x.splat.samples = v)), { style: "width: 60px", min: "1", max: "8192" })),
-              tip("From", select([["180", "every side"], ["90", "this half"], ["50", "near this side"]], String(s.splat.cover), (v) => this.save((x) => (x.splat.cover = Number(v))))),
-              tip("Fit steps", bounded(s.splat.steps, (v) => clampInt(v, 0, 200000), (v) => this.save((x) => (x.splat.steps = v)), { style: "width: 70px", min: "0", max: "200000", title: "0: render the views only" }))),
-            el("div", { class: "ar-row" },
-              button("Make splat", () => void this.makeSplat(), "Runs on the computer that renders; it shows in Jobs"),
-              this.splat?.files.includes("scene.splat") ? button("View", () => void this.viewSplat()) : "",
-              button("Open file…", () => this.openSplatFile(), "A .splat or 3-D Gaussian splatting .ply from this device")),
-          ),
-        ),
-      );
+      const g = this.serviceInfo?.gpu;
+      gpu.textContent = g === undefined ? "" : g.backend === "cuda" ? `${g.name}, ${Math.round((g.free_mb ?? 0) / 1024)} of ${Math.round((g.total_mb ?? 0) / 1024)} GB free` : `No GPU: ${g.error ?? ""}`;
+      gpu.hidden = !onHost_ || g === undefined;
+      reconnect.hidden = hosts.length === 0;
+
+      // Rendering.
+      rendering.hidden = imgs.length === 0;
+      image.update(imgs.map((l) => [l.name, l.name]), target?.name ?? "");
+      imageNote.textContent = axes.problem ?? axes.note ?? "";
+      imageNote.hidden = imageNote.textContent === "";
+      imageNote.className = axes.problem !== undefined ? "hint error" : "hint";
+      const presetList = s.where === "browser" ? LOCAL_PRESETS.map((p) => ({ name: p.name, modality: p.modality ?? "" })) : this.presets;
+      const allPresets = [...presetList, ...s.customPresets.map((p) => ({ name: String(p.name), modality: "from a file" }))];
+      preset.update(allPresets.map((p): [string, string] => [p.name, p.modality ? `${p.name} (${p.modality})` : p.name]), s.preset);
+      preset.disabled = allPresets.length === 0;
+      references.update(this.references());
+      const w = this.windowRange();
+      windowPart.update(w);
+      if (w && windowSliders) {
+        const now = s.windows[w.src] ?? w.guess;
+        if (now) windowSliders.forEach((sl, i) => sl.set(now[i]));
+      }
+      // The colourmap editor once the computer has placed the preset on this image's values.
+      const tuning = onHost_ && this.session?.status === "ready" ? this.currentTuning() : undefined;
+      editorPart.update(tuning !== undefined);
+      if (tuning) {
+        const width = this.mapWidth();
+        shift.set(width ? tuning.tuning.shift / width : 0);
+        compress.set(tuning.tuning.scale);
+        this.editorUpdate?.();
+        void this.resolvePreset();
+      }
+      density.set(s.density ?? Number(this.presets.find((p) => p.name === s.preset)?.density ?? 40));
+      exposure.set(s.exposure);
+      jar.set(s.jar);
+
+      // Regions (a computer's renderer only: this browser's has no region colours).
+      const segs = this.segmentations();
+      regions.hidden = !onHost_ || imgs.length === 0;
+      regionsEmpty.hidden = segs.length > 0;
+      regionsBody.hidden = segs.length === 0;
+      segmentation.update(segs.map((l) => [l.name, l.name]), segs.find((x) => x.name === s.labels)?.name ?? segs[0]?.name ?? "");
+      colourBy.set(s.regions);
+      labelMix.set(s.labelMix);
+      hidden.set(s.hidden);
+      keep.set(s.keep);
+
+      // Quality.
+      quality.hidden = imgs.length === 0;
+      budget.set(s.budget / 1e6);
+      detail.set(s.detail);
+      detailField.hidden = !onHost_ || !s.detail;
+      detailBudget.set(s.detailBudget / 1e6);
+      denoise.set(s.denoise);
+      samples.set(s.maxSamples);
+
+      // Lighting.
+      lighting.hidden = imgs.length === 0;
+      lightStyle.set(s.lightStyle);
+      around.set(s.lightAzimuth);
+      up.set(s.lightElevation);
+      key.set(s.lightKey);
+      surroundings.set(s.envScale);
+      const maps = this.serviceInfo?.lightmaps ?? [];
+      mapPart.hidden = !onHost_ || maps.length === 0;
+      lightMap.update([["", "Sky colours"], ...maps.map((m): [string, string] => [m, m])], s.lightMap);
+      mapTurn.set(s.lightMapRotation);
+
+      // Crops.
+      crops.hidden = imgs.length === 0;
+      viewCutOn.set(s.viewCut.on);
+      viewOffset.set(s.viewCut.offset);
+      pin.textContent = s.viewCut.fixed ? "Follow" : "Pin";
+      cutControls.forEach((c, i) => {
+        c.on.set(s.cuts[i].on);
+        c.side.set(String(s.cuts[i].keep));
+        c.offset.set(s.cuts[i].offset);
+      });
+      boxes.update(s.boxes.length);
+      boxControls.forEach((c, i) => {
+        const b = s.boxes[i];
+        c.on.set(b.on);
+        c.name.set(b.name);
+        c.keep.set(b.keep ? "keep" : "cut");
+        c.ends.forEach(([lo, hi], k) => (lo.set(b.lo[k]), hi.set(b.hi[k])));
+      });
+      addBox.disabled = s.boxes.length >= LIMITS.maxBoxes;
+
+      // Output, Movie and Splat.
+      output.hidden = movie.hidden = splat.hidden = imgs.length === 0;
+      width.input.set(evenSide(s.movie.width));
+      height.input.set(evenSide(s.movie.height));
+      outSamples.input.set(clampInt(s.movie.samples, 1, LIMITS.maxSamples));
+      still.disabled = this.stillRunning;
+      still.textContent = this.stillRunning ? "Rendering still…" : "Save still (PNG)";
+      noFfmpeg.hidden = !onHost_ || this.serviceInfo?.ffmpeg !== false;
+      keyframes.update(s.keyframes.length);
+      keyframeTimes.forEach((t, i) => t.set(s.keyframes[i].time));
+      fps.set(clampInt(s.movie.fps, 1, LIMITS.maxFps));
+      easing.set(s.movie.easing);
+      rotAxis.set(s.rotation.axis);
+      rotTurn.set(String(s.rotation.degrees));
+      rotStep.set(s.rotation.step);
+      const fit = this.serviceInfo?.splats;
+      cannotFit.textContent = fit && !fit.ready ? `Views only: this computer cannot fit (${fit.error ?? "no splat Python"}).` : "";
+      cannotFit.hidden = !onHost_ || cannotFit.textContent === "";
+      splatViews.input.set(s.splat.views);
+      splatSize.input.set(s.splat.size);
+      splatSamples.input.set(s.splat.samples);
+      splatSteps.input.set(s.splat.steps);
+      splatCover.set(String(s.splat.cover));
+
+      this.jobsUpdate?.();
       this.statusUpdate?.();
     };
-    // Rebuilt after the event that changed the state has finished (a field's change comes with its blur).
-    let pending = false;
-    let alive = true;
-    this.panelUpdate = () => {
-      if (pending) return;
-      pending = true;
-      setTimeout(() => {
-        pending = false;
-        if (alive) render();
-      }, 0);
-    };
-    render();
+    this.panelUpdate = sync;
+    sync();
     return () => {
-      alive = false;
       this.panelUpdate = undefined;
       this.statusUpdate = undefined;
+      this.jobsUpdate = undefined;
+      this.editorUpdate = undefined;
     };
   }
 
-  /** A section of the panel: a card whose open state is kept in this browser; `attention` opens it whatever was kept. */
-  private section(id: string, title: string, attention: boolean, open: boolean, ...children: (Node | string)[]): HTMLElement {
-    return card(`anatomical.${id}`, title, { open, attention }, ...children);
-  }
+  /** Switched off: jobs are no longer followed (they go on on their computer, and are followed again next time). */
+  private disposed = false;
 
   dispose(): void {
+    this.disposed = true;
+    this.panelUpdate = this.statusUpdate = this.jobsUpdate = this.editorUpdate = undefined;
     this.closeSession();
+    this.closeLocal();
+    clearTimeout(this.settle);
     this.handle?.dispose();
     this.drawer.dispose();
     this.toggle.dispose();
@@ -1605,7 +2000,7 @@ export const plugin: PluginModule = {
   activate(ctx: PlatformContext) {
     const style = document.createElement("style");
     style.textContent = STYLE;
-    document.head.append(style);
+    (document.head ?? document.body).append(style);
     ctx.subscriptions.push(() => style.remove());
     const r = new AnatomicalRendering(ctx);
     ctx.subscriptions.push(() => r.dispose());

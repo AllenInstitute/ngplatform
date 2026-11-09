@@ -1,6 +1,6 @@
 /**
  * A viewer of Gaussian splats (`.splat`, or a 3-D Gaussian splatting `.ply`)
- * in a window over the page: WebGL 2, each Gaussian a quad its projected
+ * in one of the platform's sheets: WebGL 2, each Gaussian a quad its projected
  * covariance shapes, sorted front to back by depth (a counting sort, again
  * whenever the camera has moved) and blended under what is drawn before it.
  * The camera turns about a centre (drag), moves (right or shift drag) and
@@ -8,6 +8,8 @@
  * rendered from.  Cameras are in OpenCV's axes, as the host writes them:
  * x right, y down, z forward.
  */
+
+import { button, el, info } from "@ngplatform/sdk/dom";
 
 /** Gaussians as the viewer draws them: positions (3 a Gaussian), covariances (6: xx xy xz yy yz zz), colours (RGBA bytes). */
 export interface Splats {
@@ -216,7 +218,7 @@ export class SplatCanvas {
 
   constructor(private readonly splats: Splats, camera?: SplatCamera) {
     this.canvas = document.createElement("canvas");
-    this.canvas.style.cssText = "width: 100%; height: 100%; display: block; touch-action: none; cursor: grab";
+    this.canvas.className = "ar-splat-canvas";
     const gl = this.canvas.getContext("webgl2", { antialias: false, premultipliedAlpha: true });
     if (!gl) throw new Error("this browser has no WebGL 2");
     this.gl = gl;
@@ -307,7 +309,7 @@ export class SplatCanvas {
     const down = (e: PointerEvent) => {
       last = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey };
       c.setPointerCapture(e.pointerId);
-      c.style.cursor = "grabbing";
+      c.classList.add("grabbing");
     };
     const move = (e: PointerEvent) => {
       if (!last) return;
@@ -334,7 +336,7 @@ export class SplatCanvas {
     const up = (e: PointerEvent) => {
       last = undefined;
       c.releasePointerCapture(e.pointerId);
-      c.style.cursor = "grab";
+      c.classList.remove("grabbing");
     };
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -415,55 +417,36 @@ function program(gl: WebGL2RenderingContext, vs: string, fs: string): WebGLProgr
   return p;
 }
 
+/** The platform's sheet (ctx.ui.sheet): a title, a body the caller draws, and what closes it. */
+export type SheetFn = (title: string, render: (body: HTMLElement, close: () => void) => (() => void) | void, options?: { wide?: boolean }) => () => void;
+
 /**
- * The splats in a window over the page, with the buttons to download them; `downloads` maps a label to
- * what it saves.  Closing it (the button, Escape) disposes of it.
+ * The splats in one of the platform's sheets (wide), with the buttons to
+ * download them; `downloads` maps a label to what it saves.  Closing the
+ * sheet (Close, Escape, a click outside) disposes of the viewer.
  */
-export function openSplatWindow(title: string, splats: Splats, camera: SplatCamera | undefined, downloads: [string, () => void][] = []): () => void {
-  const shade = document.createElement("div");
-  shade.style.cssText = "position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center";
-  const box = document.createElement("div");
-  box.className = "splat-window";
-  box.style.cssText = "width: min(92vw, 1400px); height: min(88vh, 1000px); display: flex; flex-direction: column; background: #101012; color: #ddd; border-radius: 8px; box-shadow: 0 8px 40px rgba(0,0,0,0.6); overflow: hidden";
-  const bar = document.createElement("div");
-  bar.style.cssText = "display: flex; gap: 8px; align-items: center; padding: 6px 10px; font-size: 12px; border-bottom: 1px solid #2a2a2e";
-  const name = document.createElement("strong");
-  name.textContent = title;
-  const note = document.createElement("span");
-  note.style.cssText = "opacity: 0.7; flex: 1";
-  note.textContent = `${splats.count.toLocaleString()} Gaussians · drag to turn, right or shift drag to move, wheel to come closer`;
-  const area = document.createElement("div");
-  area.style.cssText = "flex: 1; min-height: 0; background: radial-gradient(#202024, #08080a)";
-  let view: SplatCanvas | undefined;
-  const btn = (label: string, run: () => void) => {
-    const b = document.createElement("button");
-    b.className = "btn outline small";
-    b.type = "button";
-    b.textContent = label;
-    b.onclick = run;
-    return b;
-  };
-  const close = () => {
-    view?.dispose();
-    shade.remove();
-    document.removeEventListener("keydown", key);
-  };
-  const key = (e: KeyboardEvent) => {
-    if (e.key === "Escape") close();
-  };
-  bar.append(name, note, btn("Reset view", () => view?.reset()), ...downloads.map(([label, run]) => btn(label, run)), btn("Close", close));
-  box.append(bar, area);
-  shade.append(box);
-  shade.addEventListener("pointerdown", (e) => {
-    if (e.target === shade) close();
-  });
-  document.addEventListener("keydown", key);
-  document.body.append(shade);
-  try {
-    view = new SplatCanvas(splats, camera);
-    area.append(view.canvas);
-  } catch (e) {
-    area.textContent = (e as Error).message;
-  }
-  return close;
+export function showSplats(sheet: SheetFn, title: string, splats: Splats, camera: SplatCamera | undefined, downloads: [string, () => void][] = []): () => void {
+  return sheet(
+    title,
+    (body) => {
+      let view: SplatCanvas | undefined;
+      const area = el("div", { class: "ar-splat" });
+      body.append(
+        el("div", { class: "row" },
+          el("span", { class: "readout spacer" }, `${splats.count.toLocaleString()} Gaussians`),
+          info("Drag to turn, right or Shift drag to move, the wheel to come closer.", "About moving the view"),
+          button("Reset view", () => view?.reset()),
+          ...downloads.map(([label, run]) => button(label, run))),
+        area,
+      );
+      try {
+        view = new SplatCanvas(splats, camera);
+        area.append(view.canvas);
+      } catch (e) {
+        area.append(el("p", { class: "empty error" }, (e as Error).message));
+      }
+      return () => view?.dispose();
+    },
+    { wide: true },
+  );
 }
