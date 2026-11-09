@@ -37,7 +37,7 @@ const STYLE = `
 .ts-side select { min-width: 0; width: 100%; }
 .ts-side .row select { width: auto; flex: none; }
 .ts-side .row.ts-fill select { flex: 1; width: auto; }
-.ts-of { color: var(--faint); }
+.ts-of { color: var(--faint); margin-left: var(--sp-3); }
 .ts-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: var(--sp-3) var(--sp-5) var(--sp-2); }
 .ts-head { display: flex; align-items: flex-start; gap: var(--sp-5); flex: none; }
 .ts-legend { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-5); align-items: center; flex: 1; min-width: 0; min-height: 24px; }
@@ -1167,7 +1167,7 @@ export class TimeSeries {
         readout.replaceChildren();
         return;
       }
-      readout.replaceChildren(formatTime(timeOf(axis, this.current), axis.unit.label), el("span", { class: "ts-of" }, `  time point ${this.current} of 0–${axis.count - 1}`));
+      readout.replaceChildren(formatTime(timeOf(axis, this.current), axis.unit.label), " ", el("span", { class: "ts-of" }, `time point ${this.current} of 0–${axis.count - 1}`));
       time?.set(this.current);
       plot.setCurrent(this.current);
     };
