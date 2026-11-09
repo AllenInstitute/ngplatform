@@ -1,17 +1,17 @@
 /**
  * The Annotations plugin's manifest: everything added to annotate a
- * dataset, in one tab with four sections: annotations with groups, values
+ * dataset, in one panel with four cards: annotations with groups, values
  * and comments (./annotate.ts, listed in the annotation table in the bottom
  * dock), labels on the views for figures (./labels.ts), measurements
  * (./measure.ts) and statistics of an image in a region (./statistics.ts).
  * Label volumes drawn by hand are the Segmentation plugin (../segmentation/).
  *
- * It was the Labels plugin: its id, its tab's id and its state's key are
- * unchanged, so links and docked tabs from then still open.
+ * It was the Labels plugin: its id, its panel's id and its state's key are
+ * unchanged, so links and docked panels from then still open.
  */
 import type { Manifest } from "@ngplatform/sdk";
 
-/** The tab (its id from when it held only labels). */
+/** The panel (its id from when it held only labels). */
 export const ANNOTATIONS_PANEL = "annotations.labels";
 
 /** The annotation table, in the bottom dock. */
@@ -24,7 +24,7 @@ export const ANNOTATIONS_MANIFEST: Manifest = {
   kind: "tool",
   enabledByDefault: false,
   description: "Annotations with groups, values and comments in a table; labels on the views for figures, measurements, and statistics in a region.",
-  guide: `Everything you add to annotate a dataset, in the **Annotations** tab (four sections), and the **Annotation table** in the bottom dock. Label volumes drawn by hand are in the **Segmentation** tab (the Segmentation plugin).
+  guide: `Everything you add to annotate a dataset, in the **Annotations** panel (four cards; the (i) beside a heading or a control explains it), and the **Annotation table** in the bottom dock. Label volumes drawn by hand are in the **Segmentation** panel (the Segmentation plugin).
 
 ## Annotate
 Points, lines, boxes, ellipsoids and polylines in a local annotation layer, organised as in WebKnossos and Neuroglass.
@@ -40,17 +40,17 @@ Every annotation of the scene's local annotation layers: type, name, group, valu
 
 ## Labels
 Names on the views, as an anatomy atlas draws them: a pin on the structure, a thin leader line, and its name beside it or lined up at the edge of the view.
-- **+ At the position**, **+ Track groups** (one per group in the Filtering tab) or **+ Annotations** (each annotation with a description).
+- **+ At the position**, **+ Track groups** (one per group in Track filtering; off while there are none) or **+ Annotations** (each annotation with a description).
 - **Where**: beside the pin, or **At the side**; **Views**: 2-D, 3-D or both. Drag a label in a view to move it, by its corner to resize it; double-click puts it back.
 - Labels are kept in the link and drawn into screenshots.
 
 ## Measure
-Draw with Neuroglancer's annotation tools (**Line**, **Polyline**, **Box**, **Ellipsoid**): each button picks the tool in a *measurements* layer; click in a view to draw.
+Draw with Neuroglancer's annotation tools (**Line**, **Polyline**, **Box**, **Ellipsoid**): each button picks the tool in a *measurements* layer; Ctrl+click in a view to draw.
 - Lines and polylines show their **length**, boxes and ellipsoids their **volume** (an area when flat), in physical units.
-- **Line profile**: an image's values along a line, as a plot; **CSV** saves it.
+- **Line profile**: an image's values along a line, as a plot; **Save profile as CSV** saves it; **Cancel** stops reading.
 
 ## Statistics
-For an image and a region (a box or ellipsoid annotation, a label of a label volume drawn in the Segmentation tab, or a label of a segmentation layer such as an atlas): voxel count, volume, mean, standard deviation, minimum, maximum and median of the image inside. The finest level that fits the memory budget is read. Each result is a row of a table you can save as CSV.
+For an image and a region (a box or ellipsoid annotation, a label of a label volume drawn in the Segmentation panel, or a label of a segmentation layer such as an atlas): voxel count, volume, mean, standard deviation, minimum, maximum and median of the image inside. The finest level that fits the memory budget is read. **Cancel** stops it; **Compute** again while one runs starts afresh. Each result is a card; **Save as CSV** writes them.
 `,
   links: [
     { title: "WebKnossos skeleton annotation: trees, groups, comments", url: "https://docs.webknossos.org/webknossos/skeleton_annotation/index.html" },
