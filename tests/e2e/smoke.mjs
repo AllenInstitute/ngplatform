@@ -64,11 +64,11 @@ async function waitReady(label, timeout = 90_000) {
 const click = (locator) => locator.click({ force: true });
 const check = (ok, what) => { console.log(`${ok ? "ok  " : "FAIL"} ${what}`); if (!ok) process.exitCode = 1; };
 const layers = () => page.evaluate(() => window.engine.layers());
-/** The default example's tractogram: its layer, and a part of its store's URL. */
+/** The S-21-46 example's tractogram: its layer, and a part of its store's URL. */
 const TRACTOGRAM = { layer: "S-21-46", url: "bridgeanatomical" };
 
-await page.goto(base);
-await waitReady("default example");
+await page.goto(`${base}#example=s2146-mni`);
+await waitReady("S-21-46 example");
 // The whole-brain tractogram is slow to draw on a software GPU (a frame a
 // second or more); the checks are about the platform, so it is hidden here.
 if (process.env.SWIFTSHADER) {

@@ -477,7 +477,9 @@ export class Shell {
         if (resume !== undefined) log.add("The history of changes kept in this browser for this link is back (the ⋯ beside undo and redo).");
       })();
     } else {
-      const example = examples.get(defaultExample) ?? examples.list()[0];
+      // An empty viewer, unless the link names an example (`#example=<id>`) or the build a default one.
+      const named = /^#example=([\w.-]+)$/.exec(location.hash)?.[1];
+      const example = examples.get(named ?? defaultExample);
       if (example !== undefined) this.openExample(example.id);
       else store.settle();
     }
@@ -947,6 +949,7 @@ export class Shell {
   private registerExampleCommands(): void {
     this.exampleCommands.splice(0).forEach((d) => d());
     for (const example of this.wb.examples.list()) {
+      if (example.listed === false) continue;
       this.exampleCommands.push(
         this.wb.commands.register({
           id: `workspace.example.${example.id}`,

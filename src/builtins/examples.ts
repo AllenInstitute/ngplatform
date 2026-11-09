@@ -1,6 +1,8 @@
 /**
- * Example workspaces offered in the Open dialog and the palette.  Every one
- * streams public data.
+ * Example workspaces: the two offered in the Open dialog and the palette
+ * (the SRB 2026a template and MICrONS), and tractograms on the template
+ * opened by links (`#example=s2146-mni`) and the end-to-end tests.  Every
+ * one streams public data.
  */
 import type { ExampleSpec } from "../platform/plugin_host.js";
 
@@ -102,11 +104,30 @@ const TRACK_FILTERING = "org.ngplatform.track-filtering";
 
 export const EXAMPLES: ExampleSpec[] = [
   {
+    id: "srb-2026a",
+    title: "SRB 2026a, the synchrotron reference brain template",
+    description: "An average of ten whole human brains imaged by HiP-CT (synchrotron X-ray), in MNI 2009b space at 100 µm.",
+    remote: true,
+    state: () => ({
+      ng: {
+        dimensions: { x: [0.001, "m"], y: [0.001, "m"], z: [0.001, "m"] },
+        position: [0, -15, 10],
+        crossSectionScale: 0.6,
+        projectionScale: 260,
+        layers: [{ type: "image", source: SRB2026A, name: "SRB 2026a", shader: SRB_SHADER }],
+        selectedLayer: { layer: "SRB 2026a" },
+        layout: "4panel",
+      },
+      app: {},
+    }),
+  },
+  {
     id: "s2146-mni",
     title: "S-21-46 HiP-CT tractogram on the SRB 2026a template",
     description:
       "3.3 million streamlines (zarr-vectors) from a whole brain imaged at 50 µm by HiP-CT, anatomically constrained (BRIDGE) and registered to MNI space, on SRB 2026a, with three track groups set up in Filtering.",
     remote: true,
+    listed: false,
     plugins: [TRACK_FILTERING],
     state: onTemplate(S2146, "S-21-46"),
   },
@@ -115,6 +136,7 @@ export const EXAMPLES: ExampleSpec[] = [
     title: "HCP-1065 tractogram on the SRB 2026a template",
     description: "503,085 streamlines (zarr-vectors) of the HCP-1065 population tractogram on SRB 2026a, with three track groups set up in Filtering.",
     remote: true,
+    listed: false,
     plugins: [TRACK_FILTERING],
     state: onTemplate(HCP1065, "HCP-1065"),
   },

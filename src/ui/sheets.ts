@@ -162,7 +162,7 @@ export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
       void submit();
     }
   });
-  const examples = wb.examples.list();
+  const examples = wb.examples.list().filter((e) => e.listed !== false);
   const fromDevice = (folder: boolean) => async () => {
     try {
       if (await openFromDevice(wb, folder)) closeSheet();

@@ -11,10 +11,10 @@
 //         3-D panel: frame intervals, main-thread script and task time per
 //         frame, memory afterwards.
 //   draw  as pan, but with every layer except images removed first (the
-//         default example's template alone).
+//         S-21-46 example's template alone).
 //
-// URL "…/#!%7B%7D" is an empty workspace; the app's own URL opens the
-// default example.  As tests/e2e/smoke.mjs: CHROME=/path/to/chrome to use an
+// URL "…/#!%7B%7D" (or the app's own URL) is an empty workspace; "…/#example=s2146-mni"
+// opens the S-21-46 tractogram on the template.  As tests/e2e/smoke.mjs: CHROME=/path/to/chrome to use an
 // installed Chrome with the machine's GPU, otherwise SwiftShader.
 // THROTTLE=latency_ms,mbit_per_s slows the connection.
 import { execSync } from "node:child_process";

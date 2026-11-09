@@ -51,6 +51,8 @@ export interface ExampleSpec {
   owner?: string;
   /** Tool plugins it is shown with: opening it switches them on for the tab, unless this browser chose them off. */
   plugins?: string[];
+  /** False: not offered in the Open sheet or the palette, but opened by a link (`#example=<id>`) or as the default. */
+  listed?: boolean;
   state: () => { ng: Json; app: Json };
 }
 

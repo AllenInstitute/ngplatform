@@ -59,4 +59,4 @@ const engine = new Engine(shell.engineHost);
 (window as unknown as { viewer: unknown; engine: unknown }).viewer = engine.viewer;
 (window as unknown as { engine: unknown }).engine = engine;
 
-shell.attach(engine, urlSafeParse, import.meta.env.VITE_DEFAULT_EXAMPLE ?? "s2146-mni", { catalogue: CATALOGUE, choices, resolution, thisTab, returning }, google, rules);
+shell.attach(engine, urlSafeParse, import.meta.env.VITE_DEFAULT_EXAMPLE ?? "", { catalogue: CATALOGUE, choices, resolution, thisTab, returning }, google, rules);

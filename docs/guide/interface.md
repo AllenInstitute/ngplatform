@@ -14,7 +14,7 @@ all, and the keyboard icon lists the keyboard and mouse bindings.
 
 | Control | What it does |
 |---|---|
-| **Open** | Open from device (files or a folder on your computer), a link or a Neuroglancer state, or an example or template. Opening replaces the workspace. |
+| **Open** | Open from device (files or a folder on your computer), a link or a Neuroglancer state, datasets of the other scenes, or an example: the SRB 2026a template or MICrONS. Opening replaces the workspace. The app starts as an empty viewer; a link ending `#example=<id>` opens an example (`srb-2026a`, `microns`, and the tractograms `s2146-mni` and `mni-hcp1065`). |
 | **Add** | Add a dataset to the current scene: a URL, data on this computer, or a new annotation layer. |
 | **Share** | Copy a link to the whole workspace, copy this scene as a Neuroglancer link or JSON state, or open it in this site's plain Neuroglancer page. |
 | **Neuroglancer** | Open this scene in Google's Neuroglancer in a new tab. It says so when the scene holds data plain Neuroglancer cannot read (Zarr Vectors, files on this computer). |
