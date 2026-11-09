@@ -2,44 +2,63 @@
 import { type Command, matchCommands } from "../core/commands.js";
 import type { Schema } from "../core/schema.js";
 import { validate, withDefaults } from "../core/schema.js";
+import { SheetStack, type StackedSheet } from "../core/sheet_stack.js";
 import { h, keyLabel } from "./dom.js";
 
-let openScrim: HTMLElement | null = null;
-
-/** Shows a modal sheet; Escape or a click outside closes it. */
-export function showSheet(sheet: HTMLElement, onClose?: () => void): () => void {
-  closeSheet();
-  const scrim = h("div", { class: "scrim" }, sheet);
-  const close = () => {
-    if (openScrim !== scrim) return;
-    scrim.remove();
-    openScrim = null;
-    document.removeEventListener("keydown", onKey, true);
-    onClose?.();
-  };
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      e.stopPropagation();
-      close();
-    }
-  };
-  scrim.addEventListener("mousedown", (e) => {
-    if (e.target === scrim) close();
-  });
-  document.addEventListener("keydown", onKey, true);
-  (scrim as any).close = close;
-  document.body.append(scrim);
-  openScrim = scrim;
-  return close;
+interface OpenSheet extends StackedSheet {
+  scrim: HTMLElement;
 }
 
+const sheets = new SheetStack<OpenSheet>();
+
+/** Escape closes the top sheet only; one listener while any sheet is open. */
+const onSheetKey = (e: KeyboardEvent) => {
+  if (e.key !== "Escape" || sheets.size === 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+  sheets.closeTop();
+};
+
+/**
+ * Shows a modal sheet above any sheet already open, which waits below it
+ * (inert) until it closes.  Escape or a click outside closes the top sheet
+ * only.  Returns the sheet's own close, which closes it wherever it is.
+ */
+export function showSheet(sheet: HTMLElement, onClose?: () => void): () => void {
+  const scrim = h("div", { class: "scrim" }, sheet);
+  // Focus goes back where it was (a button in the sheet below, say) when this one closes.
+  const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const entry: OpenSheet = {
+    scrim,
+    close: () => {
+      const wasTop = sheets.top() === entry;
+      if (!sheets.remove(entry)) return;
+      scrim.remove();
+      const top = sheets.top();
+      if (top !== undefined) top.scrim.inert = false;
+      else document.removeEventListener("keydown", onSheetKey, true);
+      sheets.closingWhile(() => onClose?.());
+      if (wasTop && opener?.isConnected) opener.focus({ preventScroll: true });
+    },
+  };
+  scrim.addEventListener("mousedown", (e) => {
+    if (e.target === scrim && sheets.top() === entry) sheets.closeTop();
+  });
+  const below = sheets.top();
+  if (below !== undefined) below.scrim.inert = true;
+  sheets.push(entry);
+  document.addEventListener("keydown", onSheetKey, true);
+  document.body.append(scrim);
+  return entry.close;
+}
+
+/** Closes the top sheet. */
 export function closeSheet(): void {
-  (openScrim as any)?.close?.();
+  sheets.closeTop();
 }
 
 export function sheetIsOpen(): boolean {
-  return openScrim !== null;
+  return sheets.size > 0;
 }
 
 /** A sheet with a title, a body and footer buttons. */
@@ -136,14 +155,15 @@ export function showPalette(
 export function confirmDialog(message: string, action = "Continue", danger = false, detail?: string): Promise<boolean> {
   return new Promise((resolve) => {
     let answered = false;
+    let close = () => {};
     const answer = (value: boolean) => {
       if (answered) return;
       answered = true;
-      closeSheet();
+      close();
       resolve(value);
     };
     const ok = h("button", { class: danger ? "btn danger" : "btn primary", type: "button", onclick: () => answer(true) }, action);
-    showSheet(
+    close = showSheet(
       sheet("Confirm", [h("p", { class: "empty" }, message), ...(detail === undefined ? [] : [h("pre", { class: "confirm-detail" }, detail)])], [
         h("button", { class: "btn", type: "button", onclick: () => answer(false) }, "Cancel"),
         ok,
@@ -159,16 +179,17 @@ export function promptDialog(title: string, label: string, value: string, action
     let answered = false;
     const input = h("input", { class: "text-input", type: "text", "aria-label": label, spellcheck: "false" });
     input.value = value;
+    let close = () => {};
     const answer = (result: string | undefined) => {
       if (answered) return;
       answered = true;
-      closeSheet();
+      close();
       resolve(result);
     };
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") answer(input.value);
     });
-    showSheet(
+    close = showSheet(
       sheet(title, [h("label", { class: "field" }, h("span", {}, label), input)], [
         h("button", { class: "btn", type: "button", onclick: () => answer(undefined) }, "Cancel"),
         h("button", { class: "btn primary", type: "button", onclick: () => answer(input.value) }, action),
@@ -226,10 +247,11 @@ export function formDialog<T>(title: string, schema: Schema, initial: Partial<T>
     const required = new Set(schema.required ?? []);
     const fields = Object.entries(schema.properties ?? {}).map(([key, sub]) => ({ key, ...fieldFor(key, sub, filled[key], required.has(key)) }));
     const errors = h("p", { class: "form-errors", role: "alert" });
+    let close = () => {};
     const answer = (result: T | undefined) => {
       if (answered) return;
       answered = true;
-      closeSheet();
+      close();
       resolve(result);
     };
     const submit = () => {
@@ -245,7 +267,7 @@ export function formDialog<T>(title: string, schema: Schema, initial: Partial<T>
       }
       answer(value as T);
     };
-    showSheet(
+    close = showSheet(
       sheet(title, [...fields.map((f) => f.el), errors], [
         h("button", { class: "btn", type: "button", onclick: () => answer(undefined) }, "Cancel"),
         h("button", { class: "btn primary", type: "button", onclick: submit }, action),

@@ -329,12 +329,14 @@ export function addHostDialog(wb: Workbench): void {
   const token = h("input", { class: "text-input mono host-token", type: "password", placeholder: "Token", "aria-label": "Token", autocomplete: "off", spellcheck: "false" }) as HTMLInputElement;
   const message = h("p", { class: "note error host-error", hidden: true });
   const pair = h("button", { class: "btn primary host-pair", type: "button" }, "Pair") as HTMLButtonElement;
+  // Its own close: after the wait, the top sheet may be another (or Settings, below it).
+  let close = () => {};
   const submit = async () => {
     message.hidden = true;
     pair.disabled = true;
     try {
       const info = await wb.hosts.add(name.value, address.value, token.value);
-      closeSheet();
+      close();
       toast(`Paired with ${name.value.trim()}, the runner at ${info.address}`);
     } catch (e) {
       message.textContent = (e as Error).message;
@@ -346,7 +348,7 @@ export function addHostDialog(wb: Workbench): void {
   token.addEventListener("keydown", (e) => {
     if (e.key === "Enter") void submit();
   });
-  showSheet(
+  close = showSheet(
     sheet(
       "Add a computer",
       [

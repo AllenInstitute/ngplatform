@@ -115,13 +115,20 @@ function addFromUrl(local: LocalPlugins): void {
   }) as HTMLInputElement;
   const note = h("p", { class: "note" }, "A tool plugin's manifest.json (its code beside it) or module, served with CORS. Nothing runs until you agree.");
   const next = h("button", { class: "btn primary", type: "button" }, "Continue") as HTMLButtonElement;
+  const intro = note.textContent;
+  let close = () => {};
   const submit = async () => {
     if (input.value.trim() === "") return;
     next.disabled = true;
     note.className = "note";
     note.textContent = "Reading…";
     try {
-      await local.addUrl(input.value, confirmPlugin);
+      // The consent opens above this sheet: once agreed, both close; declined, this one is back.
+      let agreed = false;
+      await local.addUrl(input.value, async (offer) => (agreed = await confirmPlugin(offer)));
+      if (agreed) return close();
+      note.textContent = intro;
+      next.disabled = false;
     } catch (e) {
       note.className = "note error";
       note.textContent = (e as Error).message;
@@ -132,7 +139,7 @@ function addFromUrl(local: LocalPlugins): void {
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") void submit();
   });
-  showSheet(
+  close = showSheet(
     sheet("Add a plugin from a URL", [h("label", { class: "field" }, h("span", {}, "URL"), input), note], [
       h("button", { class: "btn", type: "button", onclick: () => closeSheet() }, "Cancel"),
       next,
@@ -145,15 +152,16 @@ function addFromUrl(local: LocalPlugins): void {
 function confirmPlugin(offer: UrlPluginOffer): Promise<boolean> {
   return new Promise((resolve) => {
     let answered = false;
+    let close = () => {};
     const answer = (yes: boolean) => {
       answered = true;
-      closeSheet();
+      close();
       resolve(yes);
     };
     const m = offer.manifest;
     const facts: [string, string][] = [["From", offer.url]];
     if (m !== undefined) facts.push(["Id", m.id], ["Version", m.version]);
-    showSheet(
+    close = showSheet(
       sheet(
         m !== undefined ? `Run “${m.name}”?` : "Run this plugin?",
         [

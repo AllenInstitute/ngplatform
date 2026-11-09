@@ -211,6 +211,8 @@ export function showCaptureSheet(wb: Workbench, initialMode: Mode = "picture"): 
     start.disabled = n === 0;
   };
   const start = h("button", { class: "btn primary", type: "button" }, "Capture") as HTMLButtonElement;
+  // Its own close: the folder picker is awaited first.
+  let close = () => {};
   for (const input of [mode, dimension, from, to, step, frames, degrees, fps, format]) input.addEventListener("input", update);
   mode.addEventListener("change", update);
 
@@ -230,13 +232,13 @@ export function showCaptureSheet(wb: Workbench, initialMode: Mode = "picture"): 
         return;
       }
     }
-    closeSheet();
+    close();
     void runCapture(wb, s, folder).catch((e) => {
       if ((e as Error).message !== "cancelled") toast(`Capture failed: ${(e as Error).message}`, "error");
     });
   });
 
-  showSheet(
+  close = showSheet(
     sheet(
       "Capture",
       [

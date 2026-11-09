@@ -152,9 +152,11 @@ export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
   };
   input.addEventListener("input", describe);
   asScene.addEventListener("change", describe);
+  // Closed by its own handle after the wait: a confirm may have come and gone above it meanwhile.
+  let close = () => {};
   const submit = async () => {
     if (openButton.disabled) return;
-    if (await actions.openText(input.value, "pasted text", asScene.checked)) closeSheet();
+    if (await actions.openText(input.value, "pasted text", asScene.checked)) close();
   };
   openButton.addEventListener("click", submit);
   input.addEventListener("keydown", (e) => {
@@ -166,12 +168,12 @@ export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
   const examples = wb.examples.list().filter((e) => e.listed !== false);
   const fromDevice = (folder: boolean) => async () => {
     try {
-      if (await openFromDevice(wb, folder)) closeSheet();
+      if (await openFromDevice(wb, folder)) close();
     } catch (e) {
       toast((e as Error).message, "error");
     }
   };
-  showSheet(
+  close = showSheet(
     sheet(
       "Open",
       [
@@ -539,6 +541,7 @@ export function showEditStateSheet(wb: Workbench, apply: (text: string) => Promi
   area.value = JSON.stringify(wb.store.workspace(), null, 2);
   const status = h("span", { class: "detected", title: "{ng: this scene's Neuroglancer state, app: scenes, datasets and plugin state}" });
   const applyButton = h("button", { class: "btn primary", type: "button" }, "Apply");
+  let close = () => {};
   applyButton.addEventListener("click", async () => {
     try {
       JSON.parse(area.value);
@@ -547,9 +550,9 @@ export function showEditStateSheet(wb: Workbench, apply: (text: string) => Promi
       status.classList.add("bad");
       return;
     }
-    if (await apply(area.value)) closeSheet();
+    if (await apply(area.value)) close();
   });
-  showSheet(
+  close = showSheet(
     sheet("Edit state", [area], [status, h("button", { class: "btn", type: "button", onclick: () => closeSheet() }, "Cancel"), applyButton], { wide: true }),
   );
   area.focus();
