@@ -4,6 +4,11 @@
  * with a depth buffer so a glyph's near side hides its far side.  Redrawn
  * after each frame Neuroglancer draws, from each view's projection then, so
  * glyphs stay on their voxels while the view moves.
+ *
+ * The browser may take the context back (it keeps only so many, and
+ * Neuroglancer, Luxar and Anatomical rendering hold some): the overlay then
+ * says so in `problem`, and draws again when the context is given back;
+ * a new overlay (a new canvas) asks for a context afresh.
  */
 import type { GlyphSet } from "./glyphs.js";
 import { GlyphRenderer } from "./render.js";
@@ -40,19 +45,38 @@ export function sectionClip(section: Section, depthRange: number): Float32Array 
   return out;
 }
 
+/** What the overlay says when its context is taken back. */
+export const CONTEXT_LOST = "The 2-D glyphs stopped: the browser took back their drawing context.";
+
 export class GlyphOverlay {
   readonly canvas = document.createElement("canvas");
   private readonly gl: WebGL2RenderingContext | null;
-  private readonly renderer: GlyphRenderer | undefined;
+  private renderer: GlyphRenderer | undefined;
   problem: string | undefined;
 
-  constructor(host: HTMLElement) {
+  /** `changed` is called when the context is lost or given back: say so, and draw again. */
+  constructor(host: HTMLElement, changed?: () => void) {
     this.canvas.className = "orientations-canvas";
     this.canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;";
     host.append(this.canvas);
     this.gl = this.canvas.getContext("webgl2", { alpha: true, depth: true, premultipliedAlpha: true, antialias: true, preserveDrawingBuffer: false });
-    if (this.gl === null) this.problem = "This browser has no WebGL2 for the 2-D glyphs.";
-    else this.renderer = new GlyphRenderer(this.gl, { color: 0 });
+    if (this.gl === null) {
+      this.problem = "This browser has no WebGL2 for the 2-D glyphs.";
+      return;
+    }
+    this.renderer = new GlyphRenderer(this.gl, { color: 0 });
+    // Asking for the context back (by preventing the default); its programs and buffers are gone, so a new renderer.
+    this.canvas.addEventListener("webglcontextlost", (e) => {
+      e.preventDefault();
+      this.renderer = undefined;
+      this.problem = CONTEXT_LOST;
+      changed?.();
+    });
+    this.canvas.addEventListener("webglcontextrestored", () => {
+      this.renderer = new GlyphRenderer(this.gl!, { color: 0 });
+      this.problem = undefined;
+      changed?.();
+    });
   }
 
   /** Draws each view's glyph sets; nothing for an empty list. */
@@ -102,7 +126,7 @@ export class GlyphOverlay {
   }
 
   dispose(): void {
-    this.renderer?.dispose();
+    if (this.gl?.isContextLost() === false) this.renderer?.dispose();
     this.canvas.remove();
   }
 }
