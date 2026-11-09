@@ -17,8 +17,8 @@ Vectors mesh store (below). Nothing is converted and no files are written.
 
 | File | What |
 |---|---|
-| `manifest.ts` | The Luxar tab, its commands and state slice |
-| `plugin.ts` | The tab; which layers are drawn; setting Neuroglancer's own drawing of them aside |
+| `manifest.ts` | The Luxar panel, its commands, context key and state slice |
+| `plugin.ts` | The panel (cards from the SDK's parts, updated in place); which layers are drawn; setting Neuroglancer's own drawing of them aside |
 | `layer_view.ts` | One layer drawn Luxar-style: its worker, its 3-D and 2-D drawing, the uniforms from its style |
 | `view3d.ts` | The 3-D view, through `viewer.draw3d`: the float target, tone mapping, depth |
 | `view2d.ts` | The 2-D views, on a canvas over them (the platform's overlay), with each panel's camera |
@@ -78,7 +78,14 @@ data formats directly:
 - **2-D views**: Luxar slices the dimensions it does not show by
   proximity. Here a 2-D view shows the lines within half the slab's
   thickness of its section, fading with distance (the same 1% Gaussian
-  window), the thickness being a per-layer control.
+  window), the thickness being a per-layer control. It follows the
+  data's size unless set (`style.autoSlab`: a fortieth of the store's
+  mean extent in millimetres, from its bounds, scales and units, to one
+  significant figure: 4 mm for a human brain's tractogram, tens of µm
+  for EM in nanometres), and its slider reads in the unit that suits
+  (`style.slabScale`: mm, µm or nm). The state keeps a slab set, in mm;
+  a style saved before (`readSaved` without `version: 2`) with the old
+  default of 4 mm follows the data.
 
 `@luxar/viewer` is not a dependency: nothing of three.js is bundled.
 
@@ -139,8 +146,8 @@ The layer's chosen segments and colours apply as for lines.
 ### A segmentation's precomputed meshes
 
 A precomputed segmentation whose `info` names a `mesh` directory (an EM
-segmentation such as MICrONS') is listed in the panel as *EM meshes:
-&lt;layer&gt; (N cells)*, N the segments the layer shows. Ticked, the
+segmentation such as MICrONS') is listed in the panel by its name.
+Switched on, the
 layer is drawn from the meshes of those segments, through the mesh path
 above, and Neuroglancer's own drawing of it (its meshes and its 2-D
 segmentation) is set aside as for any layer drawn here. Nothing is
@@ -176,7 +183,9 @@ names the volume and the segments.
   the segmentation's ids; letting a segment go only hides it (the layer's
   table), and showing one it lacks makes a new store, which takes over
   from the old one once it has what it wants to draw (as below for a
-  track-filtering group's new store). At most 2 000 segments. With none
+  track-filtering group's new store). At most 2,000 segments: with more
+  shown, the panel says so under the layer (*Showing 2,000 of 14,203
+  segments*). With none
   chosen, nothing is drawn: a segmentation's every mesh is not read.
 
 On MICrONS' v1300 (four cells, multi-resolution Draco, sharded) the four
@@ -372,17 +381,15 @@ skeleton):
   first k samples of every piece are the same k eighths of the objects,
   whole; a view whose pieces in view hold more segments than its Detail
   (the 3-D view zoomed out on a big group) draws that share of them, at
-  least an eighth, and the panel says so (*3-D view 2 in 8 of them
-  (Detail)*). Raising the Detail draws more without reading again. A 2-D
+  least an eighth. Raising the Detail draws more without reading again. A 2-D
   view counts the segments of its pieces in the slab times the slab's
   share of a piece's depth, so it rarely samples.
 - **Brightness**: automatic brightness dims the sets by their own cover
   (for a 2-D view, the slab's share of the set's depth), so the chosen
   objects are not dimmed by faint others drawn with them.
 
-The panel says how far it has got (*781 segments shown, reading them
-whole: 256 of 781*, then *read whole (level 0)*, with how many of them
-the store does not have).
+The panel's status line says how far it has got (*Reading the chosen
+objects: 256 of 781…*) and is hidden once they are read.
 
 #### Many chosen objects: the chunks, and their tables
 
@@ -421,7 +428,7 @@ others are left out there.
 ### Track filtering's groups
 
 A group is a segmentation layer of its own, in the group's colour (its
-`segmentDefaultColor`). Ticked here, it is drawn in that colour (a layer
+`segmentDefaultColor`). Switched on here, it is drawn in that colour (a layer
 whose segments have colours of their own starts with *Colour: the layer's
 segment colours*), and:
 
