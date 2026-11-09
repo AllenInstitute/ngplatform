@@ -295,7 +295,7 @@ const STYLE = `
 .tf-save { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .tf-save select { height: 24px; border-radius: 0; border: 1px solid var(--line); background: var(--ink-0); color: var(--text); font: 12px/1 var(--ui); max-width: 210px; }
 .tf-save-status { font: 11px/1.3 var(--mono); color: var(--faint); flex-basis: 100%; }
-.tf-status strong { color: var(--text); font: 600 16px/1 var(--mono); margin-right: 4px; }
+.tf-status strong { color: var(--text); font: 600 var(--fs-title)/1 var(--mono); margin-right: 4px; }
 .tf-roi { border: 1px solid var(--line); border-radius: var(--r); padding: 6px 8px; display: grid; gap: 5px; }
 .tf-roi-head { display: flex; align-items: center; gap: 6px; }
 .tf-roi-head .label { font-weight: 500; flex: 1; }
@@ -303,14 +303,14 @@ const STYLE = `
 .tf-stats .tf-row { margin: 6px 0; gap: 6px; }
 .tf-stats select { flex: 1; min-width: 0; height: 24px; border-radius: 0; border: 1px solid var(--line); background: var(--ink-0); color: var(--text); font: 12px/1 var(--ui); }
 .tf-stats-table { width: 100%; border-collapse: collapse; font: 11px/1.4 var(--mono); }
-.tf-stats-table th { text-align: left; font: 500 10px/1.4 var(--ui); color: var(--muted); padding: 2px 4px 2px 0; }
+.tf-stats-table th { text-align: left; font: 500 var(--fs-caption)/1.4 var(--ui); color: var(--muted); padding: 2px 4px 2px 0; }
 .tf-stats-table td { padding: 2px 4px 2px 0; color: var(--text); white-space: nowrap; }
 .tf-stats-table td:first-child { white-space: normal; font-family: var(--ui); }
 .tf-roi .tf-ends select { height: 24px; border-radius: 0; border: 1px solid var(--line); background: var(--ink-0); color: var(--text); font: 12px/1 var(--ui); width: 100%; }
 .tf-roi select { height: 24px; border-radius: 0; border: 1px solid var(--line); background: var(--ink-0); color: var(--text); font: 600 11px/1 var(--mono); }
 .tf-xyz { display: grid; gap: 2px; }
 .tf-field { display: grid; grid-template-columns: 44px minmax(0, 1fr) 72px; align-items: center; gap: 6px; }
-.tf-field > span { font-size: 10px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; }
+.tf-field > span { font-size: var(--fs-caption); color: var(--faint); text-transform: uppercase; letter-spacing: var(--label-spacing); }
 .tf-field input[type="range"] { width: 100%; margin: 0; accent-color: var(--accent); }
 .tf-field input[type="number"] { width: 100%; box-sizing: border-box; height: 22px; border: 1px solid var(--line); border-radius: 0; background: var(--ink-0); color: var(--text); font: 12px/1 var(--mono); padding: 0 4px; }
 .tf-roi-status { font: 11px/1.3 var(--mono); color: var(--faint); }

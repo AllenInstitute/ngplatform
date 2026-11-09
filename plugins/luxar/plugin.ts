@@ -574,8 +574,8 @@ export class Luxar {
 const STYLE = `
 .lx-panel { display: grid; gap: 10px; }
 .lx-layers { display: grid; gap: 2px; }
-.lx-layer { display: flex; align-items: center; gap: 8px; padding: 2px 4px; border-radius: 4px; }
-.lx-layer.lx-editing { background: var(--hover, rgba(255,255,255,0.06)); }
+.lx-layer { display: flex; align-items: center; gap: 8px; padding: 2px 4px; border-radius: var(--r); }
+.lx-layer.lx-editing { background: var(--hover); }
 .lx-name { all: unset; cursor: pointer; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .lx-settings { display: grid; gap: 10px; }
 .lx-heading { font-size: 12px; font-weight: 600; margin: 6px 0 0; }

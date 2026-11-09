@@ -26,7 +26,7 @@ const STYLE = `
 .fl { display: grid; gap: 10px; padding: 10px 12px; font-size: 12px; }
 .fl label { display: grid; gap: 3px; }
 .fl-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.fl-step { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--border, #3334); border-radius: 6px; }
+.fl-step { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: var(--r); }
 .fl-step-head { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: end; }
 .fl-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .fl-code { grid-column: 1 / -1; }

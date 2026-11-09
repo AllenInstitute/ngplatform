@@ -174,13 +174,13 @@ const STYLE = `
 .ar-status.error { color: var(--err, #e5484d); white-space: normal; }
 .ar-views { display: flex; gap: 3px; flex-wrap: wrap; }
 .ar .card-body > * + * { margin-top: 6px; }
-.ar .card-body h4 { margin: 10px 0 2px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+.ar .card-body h4 { margin: 10px 0 2px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: var(--label-spacing); font-weight: 600; }
 .ar-row { display: flex; gap: 6px; align-items: end; flex-wrap: wrap; }
 .ar-row > .field { flex: 1; min-width: 70px; }
 .ar-tick { display: flex; gap: 6px; align-items: center; }
 .ar-small { font-size: 11px; margin: 0; }
 .ar-preview { display: grid; gap: 6px; place-items: center; min-height: 200px; }
-.ar-video { width: 100%; max-height: 60vh; background: #000; border-radius: 4px; }
+.ar-video { width: 100%; max-height: 60vh; background: var(--ink-0); border-radius: var(--r); }
 `;
 
 /** A wait that ends early when `signal` aborts. */

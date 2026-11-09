@@ -116,7 +116,7 @@ const STYLE = `
 .cl-kind { font: 11px var(--mono); color: var(--muted); }
 .cl-where { color: var(--faint); font: 11px var(--mono); }
 .cl-value { font: 11px var(--mono); overflow-wrap: anywhere; }
-.cl-found { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; }
+.cl-found { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: var(--r); }
 .cl-graph { width: 100%; height: auto; display: block; }
 .cl-graph .cl-sys { cursor: pointer; }
 .cl-graph .cl-sys rect { fill: var(--ink-3); stroke: var(--line-strong); }
@@ -125,19 +125,19 @@ const STYLE = `
 .cl-graph .cl-mem rect { fill: var(--ink-2); stroke: var(--line); }
 .cl-graph .cl-mem.warped rect { stroke: var(--select); stroke-dasharray: 4 2; }
 .cl-graph .cl-mem.hidden text { fill: var(--faint); }
-.cl-tag { margin-left: 6px; padding: 0 5px; border: 1px dashed var(--select); border-radius: 3px; font: 10px var(--mono); color: var(--muted); }
+.cl-tag { margin-left: 6px; padding: 0 5px; border: 1px dashed var(--select); border-radius: var(--r); font: 10px var(--mono); color: var(--muted); }
 .cl-tag.off { border-color: var(--line); color: var(--faint); }
 .cl-graph text { fill: var(--text); font: 11px var(--ui); }
 .cl-graph .cl-edge { stroke: var(--muted); fill: none; }
 .cl-graph .cl-edge-label { fill: var(--faint); font: 10px var(--mono); }
-.cl-name { font: 600 13px var(--ui); background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 2px 4px; color: var(--text); min-width: 0; flex: 1; }
+.cl-name { font: 600 13px var(--ui); background: transparent; border: 1px solid transparent; border-radius: var(--r); padding: 2px 4px; color: var(--text); min-width: 0; flex: 1; }
 .cl-name:hover, .cl-name:focus { border-color: var(--line); }
 .cl-list { display: grid; gap: 2px; }
 .cl-item { display: flex; gap: 6px; align-items: center; min-height: 24px; }
 .cl-item > :first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .cl-x { border: 0; background: transparent; color: var(--faint); cursor: pointer; padding: 0 4px; font-size: 14px; line-height: 1; }
 .cl-x:hover { color: var(--text); }
-.cl-add { display: grid; gap: 6px; padding: 8px; border: 1px dashed var(--line); border-radius: 6px; }
+.cl-add { display: grid; gap: 6px; padding: 8px; border: 1px dashed var(--line); border-radius: var(--r); }
 .cl-add select, .cl-add input { min-width: 0; }
 .cl-add .cl-row > * { flex: 1; }
 .cl-add .cl-row > button { flex: none; }
