@@ -65,6 +65,8 @@ export interface ServiceInfo {
   gpu: { backend: string; name?: string; free_mb?: number; total_mb?: number; error?: string };
   presets: string[];
   lightmaps?: string[];
+  /** Whether the host can fit splats (a Python with torch and gsplat); hosts before splats say nothing. */
+  splats?: { python: string | null; ready: boolean; gsplat?: string; error?: string };
 }
 
 export interface PresetInfo {
@@ -174,6 +176,20 @@ export interface MovieInfo {
   file: string | null;
 }
 
+/** Gaussian splats being made on the host: views path-traced from all round, then fitted to them. */
+export interface SplatInfo {
+  id: string;
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
+  progress: number;
+  message: string;
+  error: string | null;
+  /** The folder on the host with the views, the cameras and the fitted splat. */
+  folder: string;
+  /** The files of a finished splat the page can fetch ("scene.splat", "splat.ply", "cameras.json", "fit.json"). */
+  files: string[];
+  result: { gaussians: number; views: number; psnr_held_out: number | null; seconds: number } | null;
+}
+
 export class RenderService {
   constructor(readonly link: Link) {}
 
@@ -214,6 +230,21 @@ export class RenderService {
   }
   cancelMovie(id: string): Promise<MovieInfo> {
     return call(this.link, "DELETE", `/movies/${id}`);
+  }
+  /** Splats of the view: `views` path-traced at `size` (the longer side) and `samples`, over a cap of `cover` degrees (180: all round), then fitted for `steps` (0: views only). */
+  splat(id: string, spec: Record<string, unknown>): Promise<SplatInfo> {
+    return call(this.link, "POST", `/sessions/${id}/splats`, spec);
+  }
+  splatInfo(id: string): Promise<SplatInfo> {
+    return call(this.link, "GET", `/splats/${id}`);
+  }
+  cancelSplat(id: string): Promise<SplatInfo> {
+    return call(this.link, "DELETE", `/splats/${id}`);
+  }
+  async splatFile(id: string, name: string): Promise<ArrayBuffer> {
+    const r = await go(this.link, `/splats/${id}/file/${name}`);
+    if (!r.ok) throw new ServiceError(`splat file: ${r.status}`);
+    return r.arrayBuffer();
   }
   async movieFile(id: string): Promise<Blob> {
     const r = await go(this.link, `/movies/${id}/file`);

@@ -676,11 +676,166 @@ class Movie:
                 "error": self.error, "file": str(self.file) if self.file else None}
 
 
+PROGRESS = re.compile(r"^\[progress\]\s+([0-9.]+)\s*(.*)$")
+#: The files of a finished splat the page may fetch, and their types.
+SPLAT_FILES = {"scene.splat": "application/octet-stream", "splat.ply": "application/octet-stream", "cameras.json": "application/json", "fit.json": "application/json"}
+
+
+class Splat:
+    """Gaussian splats of the view: path-traced views from all round it (splat/views.py), then fitted to them
+    (splat/fit.py) by the splat Python, a process of its own; with `steps` 0, or no splat Python, only the views."""
+
+    def __init__(self, sid: str, session: Session, spec: dict[str, Any], out_dir: Path, python: str | None):
+        self.id = sid
+        self.session = session
+        self.spec = spec
+        self.out_dir = out_dir
+        self.python = python
+        self.status = "queued"
+        self.progress = 0.0
+        self.message = ""
+        self.error: str | None = None
+        self.result: dict[str, Any] | None = None
+        self.cancelled = False
+        self.proc: subprocess.Popen | None = None
+        self.started = time.time()
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self) -> None:
+        from PIL import Image
+
+        from . import renderer as rmod
+        from .splat import views as V
+
+        try:
+            self.status = "running"
+            S = self.session
+            if S.status != "ready":
+                raise RuntimeError("the session's volume is not loaded")
+            sp = self.spec
+            view = dict(sp.get("view") or {})
+            if "inv_view_projection" not in view:
+                raise BadRequest("view.inv_view_projection is needed")
+            n = int(sp.get("views", 256))
+            size = int(sp.get("size", 1024))
+            samples = int(sp.get("samples", 512))
+            steps = int(sp.get("steps", 30000))
+            if not (8 <= n <= 4096 and 64 <= size <= 4096 and 1 <= samples <= 8192 and 0 <= steps <= 200000):
+                raise BadRequest("views 8-4096, size 64-4096, samples 1-8192, steps 0-200000")
+            fitting = steps > 0 and self.python is not None
+            share = 0.5 if fitting else 1.0
+            # The images: the view's shape, `size` pixels along the longer side.
+            aspect = float(view.get("width", 1)) / max(float(view.get("height", 1)), 1.0)
+            width, height = (size, max(8, round(size / aspect))) if aspect >= 1 else (max(8, round(size * aspect)), size)
+            cams, near, far, centre = V.capture_cameras(view, n, float(sp.get("cover", 180)), float(sp.get("closer", 0.25)))
+            light = V.world_light(view)
+            # A renderer of its own, so the interactive view goes on; the finer detail held for the view too.
+            R = rmod.Renderer(S.device)
+            L = S.loaded
+            R.set_volume(rmod.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles))
+            held = S.renderer.detail if S.renderer is not None else None
+            if held is not None:
+                R.set_detail(rmod.Detail(held.data, held.world_from_voxel.copy()))
+            images = self.out_dir / "images"
+            images.mkdir(parents=True, exist_ok=True)
+            for old in images.glob("[0-9][0-9][0-9][0-9][0-9].png"):
+                old.unlink()
+            rng = np.random.default_rng(0)
+            per_view = max(1, int(sp.get("points", 300_000)) // n)
+            records, xyz, rgbs = [], [], []
+            for i, cam in enumerate(cams):
+                if self.cancelled:
+                    raise RuntimeError("cancelled")
+                v = V.capture_view(view, cam, width, height, near, far, light)
+                R.set_view(S._state(v, R))
+                R.step(samples)
+                rgb, alpha = R.image(premultiplied=False)
+                name = f"images/{i:05d}.png"
+                Image.fromarray(np.dstack([rgb, alpha]), "RGBA").save(self.out_dir / name)
+                p, c = V.seed_points(v["inv_view_projection"], R.depth()[..., 1], rgb, alpha, per_view, rng)
+                xyz.append(p)
+                rgbs.append(c)
+                records.append(V.camera_record(name, cam, width, height))
+                self.progress = share * (i + 1) / len(cams)
+                left = (time.time() - self.started) / (i + 1) * (len(cams) - i - 1)
+                self.message = f"view {i + 1} of {len(cams)} (about {left / 60:.0f} min more)"
+            del R
+            V.write_points(self.out_dir / "points.ply", np.concatenate(xyz), np.concatenate(rgbs))
+            V.write_cameras(self.out_dir, records, centre, {"view": {k: view[k] for k in ("preset", "overrides", "environment", "clips", "boxes", "crop_fraction") if k in view}, "light": light, "samples": samples})
+            if fitting:
+                self._fit(steps, int(sp.get("sh", 3)), share)
+            self.progress = 1.0
+            self.status = "done"
+            took = f"{(time.time() - self.started) / 60:.0f} min"
+            if fitting:
+                r = self.result or {}
+                self.message = f"{r.get('gaussians', '?')} Gaussians from {len(cams)} views in {took}" + (f", held-out PSNR {r['psnr_held_out']} dB" if r.get("psnr_held_out") else "")
+            else:
+                why = "no splat Python on this computer (start the render service with --splat-python)" if steps > 0 else "fitting not asked for"
+                self.message = f"{len(cams)} views in {took}; not fitted: {why}. Fit later: python -m ngplatform_render.splat.fit {self.out_dir}"
+        except Exception as e:  # noqa: BLE001
+            self.status = "cancelled" if self.cancelled else "failed"
+            self.error = f"{type(e).__name__}: {e}"
+            traceback.print_exc()
+        finally:
+            self.session = None
+
+    def _fit(self, steps: int, sh: int, share: float) -> None:
+        env = dict(os.environ)
+        here = str(Path(__file__).resolve().parent.parent)
+        env["PYTHONPATH"] = here + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+        cmd = [self.python, "-m", "ngplatform_render.splat.fit", str(self.out_dir), "--steps", str(steps), "--sh", str(max(0, min(3, sh)))]
+        self.message = "fitting"
+        tail: list[str] = []
+        with open(self.out_dir / "fit.log", "w") as log:
+            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env, bufsize=1)
+            assert self.proc.stdout is not None
+            for line in self.proc.stdout:
+                log.write(line)
+                tail = (tail + [line.rstrip()])[-20:]
+                found = PROGRESS.match(line.strip())
+                if found is not None:
+                    self.progress = share + (1 - share) * min(1.0, max(0.0, float(found.group(1))))
+                    self.message = f"fitting: {found.group(2).strip()}"
+                if self.cancelled:
+                    self.proc.terminate()
+            code = self.proc.wait()
+        if self.cancelled:
+            raise RuntimeError("cancelled")
+        if code != 0:
+            raise RuntimeError(f"the fit ended with {code}: " + " / ".join(tail[-4:]))
+        self.result = json.loads((self.out_dir / "fit.json").read_text())
+
+    def cancel(self) -> None:
+        self.cancelled = True
+        if self.proc is not None and self.proc.poll() is None:
+            self.proc.terminate()
+
+    def info(self) -> dict[str, Any]:
+        files = [f for f in SPLAT_FILES if (self.out_dir / f).is_file()] if self.status == "done" else []
+        return {"id": self.id, "status": self.status, "progress": round(self.progress, 3), "message": self.message,
+                "error": self.error, "folder": str(self.out_dir), "files": files, "result": self.result}
+
+
+def splat_python_check(python: str | None) -> dict[str, Any]:
+    """Whether `python` can fit splats (torch with CUDA, and gsplat)."""
+    if not python:
+        return {"python": None, "ready": False, "error": "no splat Python (start the render service with --splat-python, or set NGP_SPLAT_PYTHON)"}
+    try:
+        r = subprocess.run([python, "-c", "import torch, gsplat; assert torch.cuda.is_available(), 'torch sees no GPU'; print(gsplat.__version__)"],
+                           capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return {"python": python, "ready": False, "error": f"{type(e).__name__}: {e}"}
+    if r.returncode != 0:
+        return {"python": python, "ready": False, "error": (r.stderr.strip().splitlines() or ["failed"])[-1]}
+    return {"python": python, "ready": True, "gsplat": r.stdout.strip()}
+
+
 class RenderServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, port: int, token: str | None, roots: list[Path], device: int, out_root: Path):
+    def __init__(self, port: int, token: str | None, roots: list[Path], device: int, out_root: Path, splat_python: str | None = None):
         super().__init__(("127.0.0.1", port), Handler)
         self.token = token
         self.roots = roots
@@ -688,7 +843,15 @@ class RenderServer(ThreadingHTTPServer):
         self.out_root = out_root
         self.sessions: dict[str, Session] = {}
         self.movies: dict[str, Movie] = {}
+        self.splats: dict[str, Splat] = {}
+        self.splat_python = splat_python
+        self.splat_check: dict[str, Any] = {"python": splat_python, "ready": False, "error": "checking"}
         self.lock = threading.Lock()
+
+        def check() -> None:
+            self.splat_check = splat_python_check(splat_python)
+
+        threading.Thread(target=check, daemon=True).start()
         threading.Thread(target=self._reaper, daemon=True).start()
 
     def _reaper(self) -> None:
@@ -790,7 +953,7 @@ class Handler(BaseHTTPRequestHandler):
         S = self.server
         try:
             if method == "GET" and parts in ([], ["info"]):
-                self._json(200, {"service": "render", "version": __version__, "gpu": S.gpu(), "presets": list(builtin()), "lightmaps": lightmap_names()})
+                self._json(200, {"service": "render", "version": __version__, "gpu": S.gpu(), "presets": list(builtin()), "lightmaps": lightmap_names(), "splats": S.splat_check})
             elif method == "GET" and parts == ["presets"]:
                 self._json(200, [p.to_dict() for p in builtin().values()])
             elif method == "POST" and parts == ["sessions"]:
@@ -926,6 +1089,37 @@ class Handler(BaseHTTPRequestHandler):
                     for k in done[:-20]:
                         del S.movies[k]
                     self._json(200, m.info())
+                elif method == "POST" and rest == ["splats"]:
+                    if s.status != "ready":
+                        raise BadRequest("the session's volume is not loaded")
+                    spec = self._body()
+                    if "inv_view_projection" not in (spec.get("view") or {}):
+                        raise BadRequest("view.inv_view_projection is needed")
+                    pid = uuid.uuid4().hex[:12]
+                    out = S.output_dir(spec.get("output"), f"splat-{pid}")
+                    python = S.splat_python if S.splat_check.get("ready") else None
+                    j = Splat(pid, s, spec, out, python)
+                    S.splats[pid] = j
+                    done = [k for k, v in S.splats.items() if v.status in ("done", "failed", "cancelled")]
+                    for k in done[:-20]:
+                        del S.splats[k]
+                    self._json(200, j.info())
+                else:
+                    self._json(404, {"error": "not found"})
+            elif len(parts) >= 2 and parts[0] == "splats":
+                j = S.splats.get(parts[1])
+                if j is None:
+                    self._json(404, {"error": "no such splat"})
+                elif method == "GET" and parts[2:] == []:
+                    if j.session is not None:
+                        j.session.last_used = time.time()  # a session making a splat is not idle
+                    self._json(200, j.info())
+                elif method == "DELETE" and parts[2:] == []:
+                    j.cancel()
+                    self._json(200, j.info())
+                elif method == "GET" and len(parts) == 4 and parts[2] == "file" and parts[3] in SPLAT_FILES and j.status == "done" and (j.out_dir / parts[3]).is_file():
+                    data = (j.out_dir / parts[3]).read_bytes()
+                    self._send(200, data, SPLAT_FILES[parts[3]], {"Content-Disposition": f'attachment; filename="{parts[3]}"'})
                 else:
                     self._json(404, {"error": "not found"})
             elif len(parts) >= 2 and parts[0] == "movies":
@@ -987,7 +1181,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--port", type=int, default=int(os.environ.get("NGP_SERVICE_PORT", "0") or 0))
     p.add_argument("--token", default=os.environ.get("NGP_SERVICE_TOKEN"))
     p.add_argument("--device", type=int, default=0, help="the CUDA device (after CUDA_VISIBLE_DEVICES)")
-    p.add_argument("--out", default=None, help="where movies go by default (default <state-dir>/renders)")
+    p.add_argument("--out", default=None, help="where movies and splats go by default (default <state-dir>/renders)")
+    p.add_argument("--splat-python", default=os.environ.get("NGP_SPLAT_PYTHON"), help="a Python with torch and gsplat, which fits splats (default $NGP_SPLAT_PYTHON; none: splats are captured, not fitted)")
     args = p.parse_args(argv)
     if not args.token:
         # Never open: any web page can send a simple POST to 127.0.0.1.
@@ -997,7 +1192,7 @@ def main(argv: list[str] | None = None) -> int:
     state = Path(os.environ.get("NGP_STATE_DIR", "~/.ngplatform-runner")).expanduser()
     out_root = Path(args.out).expanduser().resolve() if args.out else state / "renders"
     roots.append(out_root)
-    srv = RenderServer(args.port, args.token, roots, args.device, out_root)
+    srv = RenderServer(args.port, args.token, roots, args.device, out_root, args.splat_python)
     print(f"ngplatform render {__version__}: GPU {srv.gpu()}", flush=True)
     if os.environ.get("NGP_SERVICE_TOKEN"):
         # Started by a runner: end with it, however it ends (a dropped ssh session, kill -9).

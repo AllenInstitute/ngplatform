@@ -425,8 +425,11 @@ box and axis lines in the 3-D view.
 - History is rejected where the distance changes.
 - The view sharpens during slow orbits instead of starting again.
 
-**9.3 Splats for viewing without a GPU (XL).**
-- A runner job:
+**9.3 Splats for viewing without a GPU (XL).** Started: capture, fit
+(`runner/ngplatform_render/splat/`) and the plugin's viewer are written;
+not yet run end to end. Not a learned model: the Gaussians are fitted to
+one scene's renders, with nothing trained beforehand.
+- A render-service job (in the Jobs tab):
   - renders N views (a sphere of cameras, final quality) with depth;
   - trains 3-D Gaussian splats on them with `gsplat`, on the host's GPU;
   - writes a `.splat` file.

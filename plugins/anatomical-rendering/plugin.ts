@@ -9,8 +9,9 @@
  */
 import type { Disposer, Frame3d, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { button, clear, downloadBlob, el, field, numberInput, select } from "@ngplatform/sdk/dom";
-import { type Distance, hostLink, type Link, type MovieInfo, type PresetInfo, RenderService, type ServiceInfo, type SessionInfo, type ViewSpec } from "./client.js";
+import { type Distance, hostLink, type Link, type MovieInfo, type PresetInfo, RenderService, type ServiceInfo, type SessionInfo, type SplatInfo, type ViewSpec } from "./client.js";
 import { PictureDrawer } from "./draw.js";
+import { openSplatWindow, parsePly, parseSplat, type SplatCamera } from "./splatview.js";
 import { ColourmapEditor, type DataStop, histogramHandles, shifted, type Tuning, type WarpPoint, warpInverse } from "./editor.js";
 import { LocalRenderer, PRESETS as LOCAL_PRESETS } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
@@ -76,6 +77,8 @@ export interface Saved {
   customPresets: Record<string, unknown>[];
   rotation: { axis: "vertical" | "horizontal"; degrees: number; step: number };
   movie: { fps: number; width: number; height: number; samples: number; easing: "smooth" | "linear" };
+  /** Gaussian splats: views path-traced from all round (`cover` degrees about the view's direction; 180: every side), their size (the longer side) and samples, and the fit's steps (0: the views only). */
+  splat: { views: number; size: number; samples: number; cover: number; steps: number };
 }
 
 /** What "Hide the jar" keeps: a cylinder of this fraction of the scan's half width (a HiP-CT jar's wall is at about 0.95). */
@@ -146,6 +149,7 @@ export function readSaved(raw: unknown): Saved {
     customPresets: Array.isArray(s.customPresets) ? s.customPresets.filter((p) => p && typeof (p as { name?: unknown }).name === "string") : [],
     rotation: { axis: "vertical", degrees: 360, step: 2, ...(s.rotation ?? {}) },
     movie: { fps: 25, width: 1280, height: 720, samples: 128, easing: "smooth", ...(s.movie ?? {}) },
+    splat: { views: 256, size: 1024, samples: 512, cover: 180, steps: 30000, ...(s.splat ?? {}) },
   };
 }
 
@@ -194,6 +198,7 @@ class AnatomicalRendering {
   private frameText = "";
   private problem = "";
   private movie: MovieInfo | undefined;
+  private splat: SplatInfo | undefined;
   private local: LocalRenderer | undefined;
   private localKey = "";
   private localText = "";
@@ -901,6 +906,83 @@ class AnatomicalRendering {
     }
   }
 
+  // ------------------------------------------------------------------ splats
+  /**
+   * Gaussian splats of the view on the host: the view's look (preset, colours, light held where it is,
+   * cuts, crops) path-traced from all round it, then fitted; a job in the Jobs tab while it runs.
+   */
+  private async makeSplat(): Promise<void> {
+    const sid = this.session?.id;
+    const view = this.currentSpec();
+    if (sid === undefined || view === undefined || this.service === undefined) {
+      this.ctx.ui.toast("Render a view on a computer first: the splat is made from it.", "error");
+      return;
+    }
+    const sp = this.saved.splat;
+    const fit = this.serviceInfo?.splats;
+    if (sp.steps > 0 && fit && !fit.ready) {
+      const ok = await this.ctx.ui.confirm(`This computer cannot fit splats (${fit.error ?? "no splat Python"}). Render the ${sp.views} views only? They can be fitted later on a computer that can.`);
+      if (!ok) return;
+    }
+    const service = this.service;
+    const name = this.saved.layer ?? "view";
+    try {
+      await this.ctx.jobs.run(`Splat of ${name}`, async (job) => {
+        let info = await service.splat(sid, { view: { ...view, scale: 1 }, views: sp.views, size: sp.size, samples: sp.samples, cover: sp.cover, steps: sp.steps, name });
+        this.splat = info;
+        this.panelUpdate?.();
+        while (info.status === "queued" || info.status === "running") {
+          await new Promise((r) => setTimeout(r, 2000));
+          if (job.cancelled) await service.cancelSplat(info.id).catch(() => undefined);
+          info = await service.splatInfo(info.id);
+          this.splat = info;
+          job.progress(info.progress, info.message);
+          this.statusUpdate?.();
+        }
+        this.panelUpdate?.();
+        if (info.status !== "done") throw new Error(info.error ?? info.status);
+      });
+      if (this.splat?.files.includes("scene.splat")) this.ctx.ui.toast(`Splat made: ${this.splat.message}`);
+    } catch (e) {
+      this.ctx.ui.toast(`Splat: ${(e as Error).message}`, "error");
+    }
+  }
+
+  /** The splat made last, in a window over the page. */
+  private async viewSplat(): Promise<void> {
+    const info = this.splat;
+    const service = this.service;
+    if (!info || !service || !info.files.includes("scene.splat")) return;
+    try {
+      const [data, cams] = await Promise.all([service.splatFile(info.id, "scene.splat"), service.splatFile(info.id, "cameras.json")]);
+      const meta = JSON.parse(new TextDecoder().decode(cams)) as { centre: number[]; frames: { c2w: number[][]; fovy: number }[] };
+      const camera: SplatCamera | undefined = meta.frames[0] ? { c2w: meta.frames[0].c2w, fovy: meta.frames[0].fovy, centre: meta.centre } : undefined;
+      const save = (file: string, as: string) => () => void service.splatFile(info.id, file).then((b) => downloadBlob(new Blob([b]), as));
+      openSplatWindow(`Splat of ${this.saved.layer ?? "the view"}`, parseSplat(data), camera, [
+        ["Download .splat", save("scene.splat", "anatomical-rendering.splat")],
+        ...(info.files.includes("splat.ply") ? [["Download .ply", save("splat.ply", "anatomical-rendering.ply")] as [string, () => void]] : []),
+      ]);
+    } catch (e) {
+      this.ctx.ui.toast(`Splat: ${(e as Error).message}`, "error");
+    }
+  }
+
+  /** A `.splat` or `.ply` splat file from this device, in the viewer. */
+  private openSplatFile(): void {
+    const input = el("input", { type: "file", accept: ".splat,.ply" }) as HTMLInputElement;
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const data = await file.arrayBuffer();
+        openSplatWindow(file.name, file.name.toLowerCase().endsWith(".ply") ? parsePly(data) : parseSplat(data), undefined);
+      } catch (e) {
+        this.ctx.ui.toast(`Splat file: ${(e as Error).message}`, "error");
+      }
+    };
+    input.click();
+  }
+
   // ------------------------------------------------------------------ panel
   private status(): string {
     const parts: string[] = [];
@@ -918,6 +1000,7 @@ class AnatomicalRendering {
     if (this.saved.where === "browser" && this.localText) parts.push(this.localText);
     if (this.frameText) parts.push(this.frameText);
     if (this.movie) parts.push(`Movie: ${this.movie.status} ${Math.round(this.movie.progress * 100)}% ${this.movie.message}${this.movie.error ? ` (${this.movie.error})` : ""}`);
+    if (this.splat) parts.push(`Splat: ${this.splat.status} ${Math.round(this.splat.progress * 100)}% ${this.splat.message}${this.splat.error ? ` (${this.splat.error})` : ""}`);
     if (this.problem) parts.push(this.problem);
     return parts.join("\n");
   }
@@ -1169,6 +1252,20 @@ class AnatomicalRendering {
           field("circle", select([["360", "full"], ["180", "half"]], String(s.rotation.degrees), (v) => this.save((x) => (x.rotation.degrees = Number(v))))),
           field("step °", numberInput(s.rotation.step, (v) => this.save((x) => (x.rotation.step = Math.max(0.25, v))), { step: "1", style: "width: 50px" })),
           button("Render rotation", () => void this.renderRotation(), "A turn about the position from the view now, at the movie's size and samples")),
+        el("h4", {}, "Splat (for the web, phones and VR)"),
+        el("p", { class: "muted", style: "font-size: 11px; margin: 2px 0" },
+          "The look now (preset, colours, cuts, crops; the light held where it is) path-traced from all round the position, then fitted with 3-D Gaussians that any browser draws at full speed. A change to the look needs a new splat.",
+          s.where === "host" && this.serviceInfo?.splats && !this.serviceInfo.splats.ready ? ` This computer cannot fit (${this.serviceInfo.splats.error ?? "no splat Python"}): only the views would be made.` : ""),
+        el("div", { style: "display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px" },
+          field("views", numberInput(s.splat.views, (v) => this.save((x) => (x.splat.views = Math.max(8, Math.round(v)))), { style: "width: 60px" })),
+          field("size", numberInput(s.splat.size, (v) => this.save((x) => (x.splat.size = Math.max(64, Math.round(v)))), { style: "width: 60px", title: "Pixels along the longer side of each view" })),
+          field("samples", numberInput(s.splat.samples, (v) => this.save((x) => (x.splat.samples = Math.max(1, Math.round(v)))), { style: "width: 60px" })),
+          field("from", select([["180", "every side"], ["90", "this half"], ["50", "near this side"]], String(s.splat.cover), (v) => this.save((x) => (x.splat.cover = Number(v))))),
+          field("fit steps", numberInput(s.splat.steps, (v) => this.save((x) => (x.splat.steps = Math.max(0, Math.round(v)))), { style: "width: 70px", title: "0: render the views only" }))),
+        el("div", { style: "display: flex; gap: 6px; flex-wrap: wrap" },
+          button("Make a splat on the host", () => void this.makeSplat(), "Runs on the computer that renders; it shows in the Jobs tab"),
+          this.splat?.files.includes("scene.splat") ? button("View splat", () => void this.viewSplat()) : "",
+          button("Open a splat file…", () => this.openSplatFile(), "A .splat or 3-D Gaussian splatting .ply from this device")),
         statusEl,
       );
       this.statusUpdate?.();

@@ -152,6 +152,26 @@ Organ Atlas serves most of its scans; on a host).
   sample count and the frames are encoded as an MP4 (H.264) on the host,
   then **Download**. Between keyframes the camera turns around the position;
   cuts, density, exposure and the light change smoothly.
+- **Splat (for the web, phones and VR)**: **Make a splat on the host**
+  path-traces the look now from all round the position (**views**, each
+  **size** pixels along its longer side at **samples**; **from** every side,
+  this half, or near this side; a quarter of them closer in), then fits
+  3-D Gaussians to them (**fit steps**; 0 makes the views only). It shows
+  in the Jobs tab; **View splat** opens the result in a window (drag to
+  turn, right or shift drag to move, wheel to come closer) with downloads
+  of the `.splat` and `.ply`, and **Open a splat file…** opens one from
+  this device. What would differ from view to view is held still: the
+  light where it is now (in world space), no lens blur, no smoothing; cuts
+  facing the view stay where they are. A splat is fitted to one scene: a
+  change to the preset, colours, light or cuts needs a new one. 256 views
+  at 1024 pixels and 512 samples take roughly 50 minutes on an RTX A6000
+  for a whole brain, and the fit 15 to 30 minutes more.
+
+  The fit needs torch and gsplat in a Python of their own: start the render
+  service with `--splat-python PATH` (or set `NGP_SPLAT_PYTHON`). Without
+  one, the views are still made, and the folder (images, `cameras.json`,
+  nerfstudio's `transforms.json`, `points.ply`) can be fitted later with
+  `python -m ngplatform_render.splat.fit FOLDER` or another splat trainer.
 
 ## The HiP-CT organ presets
 
