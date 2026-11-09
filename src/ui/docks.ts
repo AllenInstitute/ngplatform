@@ -11,6 +11,7 @@
 import type { ContextKeys } from "../core/when.js";
 import type { DockTabSpec } from "../platform/plugin_host.js";
 import type { Disposer, DockSlot } from "../sdk/types.js";
+import { emptyState } from "../sdk/dom.js";
 import { h, icon } from "./dom.js";
 import { showMenu } from "./overlays.js";
 
@@ -51,6 +52,14 @@ interface Mounted {
   host: HTMLElement;
   rendered: boolean;
   dispose?: Disposer;
+}
+
+/** What a panel that failed shows: what went wrong, and Retry. */
+export function failedPanel(message: string, retry: () => void): HTMLElement {
+  const shown = emptyState(message, { label: "Retry", run: retry });
+  const text = shown.querySelector(".empty");
+  if (text !== null) text.className = "empty error";
+  return shown;
 }
 
 const TITLES: Record<DockSlot, string> = { left: "Layers", right: "Tools", bottom: "Activity" };
@@ -223,6 +232,16 @@ export class DockManager {
     mounted.host.replaceChildren();
   }
 
+  /** Shows that a panel failed, with Retry, which makes it again. */
+  private failed(mounted: Mounted, message: string): void {
+    mounted.host.replaceChildren(
+      failedPanel(message, () => {
+        this.unrender(mounted);
+        this.render(mounted);
+      }),
+    );
+  }
+
   private render(mounted: Mounted): void {
     if (mounted.rendered) return;
     mounted.rendered = true;
@@ -237,14 +256,14 @@ export class DockManager {
             }
           },
           (e) => {
-            mounted.host.replaceChildren(h("p", { class: "empty error" }, `This panel failed to load: ${(e as Error).message}`));
+            if (mounted.rendered) this.failed(mounted, `This panel failed to load: ${(e as Error).message}`);
           },
         );
       } else if (typeof result === "function") {
         mounted.dispose = result;
       }
     } catch (e) {
-      mounted.host.replaceChildren(h("p", { class: "empty error" }, `This panel failed: ${(e as Error).message}`));
+      this.failed(mounted, `This panel failed: ${(e as Error).message}`);
     }
   }
 

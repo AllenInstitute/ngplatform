@@ -4,16 +4,16 @@
  * runner, and others reached through an SSH tunnel, each with its pairing,
  * its GPUs and services and the files it serves; which of them takes work
  * that can run on any (`ctx.hosts.pick`); and adding another.  The jobs
- * on them are in the Activity tab.
+ * on them are in Activity.
  */
 import { LOCAL_HOST } from "../../platform/hosts.js";
-import { card } from "../../sdk/dom.js";
+import { card, field } from "../../sdk/dom.js";
 import { clear, h } from "../dom.js";
 import { addHostDialog, renderRunnerSection } from "../runner.js";
 import type { Workbench } from "../workbench.js";
 
 export function renderRemotePanel(host: HTMLElement, wb: Workbench): () => void {
-  const choice = h("select", { class: "select remote-preferred", "aria-label": "Run work on", style: "max-width: 420px" }) as HTMLSelectElement;
+  const choice = h("select", { class: "select remote-preferred", "aria-label": "Run work on" }) as HTMLSelectElement;
   choice.addEventListener("change", () => wb.hosts.prefer(choice.value || undefined));
   const choiceNote = h("p", { class: "note remote-preferred-note" });
   const renderChoice = () => {
@@ -62,7 +62,7 @@ export function renderRemotePanel(host: HTMLElement, wb: Workbench): () => void 
   const head: HTMLElement = h(
     "div",
     { class: "section remote-head" },
-    h("label", { class: "field", title: "Work that can run on any computer goes here; a function that needs a service (rendering) uses the first computer that has it ready." }, h("span", {}, "Run work on"), choice),
+    field("Run work on", choice, { info: "Work that can run on any computer goes here; a function that needs a service (rendering) uses the first computer that has it ready." }),
     choiceNote,
   );
   host.append(

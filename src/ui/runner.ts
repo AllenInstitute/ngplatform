@@ -1,7 +1,7 @@
 /**
  * The runner in the interface: a section for This computer and for each
- * other computer paired through an SSH tunnel, in the Remote tab (pairing,
- * status, served files, "Add a computer…") and in the Jobs tab (the jobs on
+ * other computer paired through an SSH tunnel, in Settings › Compute (pairing,
+ * status, served files, "Add a computer…") and in Activity (the jobs on
  * it with their PID, progress, log, Cancel and Open), the chooser for paths under the
  * runner's folders, opening a path as a layer (served by the runner), and,
  * for a tractogram past the browser's storage limit, the choice of a
@@ -11,6 +11,7 @@ import { type HostList, hostStatusLine, LOCAL_HOST } from "../platform/hosts.js"
 import { isActive, normaliseAddress, pairingFromHash, type RunnerEntry, RunnerError, type RunnerService } from "../platform/runner.js";
 import { bytesText } from "../sdk/format.js";
 import type { RunnerApi, RunnerJob, RunnerOutput } from "../sdk/types.js";
+import { emptyState, field, info } from "../sdk/dom.js";
 import { clear, h, iconButton } from "./dom.js";
 import { diskBudget, type SpillPlan, spillPlan, storageEstimate } from "../virtual/vectors/spill.js";
 import { tractogramDiskGigabytes } from "../virtual/vectors/formats.js";
@@ -115,11 +116,12 @@ function pairForm(runner: RunnerService, note?: string, where = "this computer")
     message,
     h(
       "p",
-      { class: "note", title: "The runner runs long jobs (converting, filtering, density maps) as Python on this computer." },
+      { class: "note runner-start" },
       "Start it with ",
-      h("code", { title: "In the Python that has zarr-vectors-tools" }, START_COMMAND),
+      h("code", {}, START_COMMAND),
       ", then open the link it prints or enter its address and token. ",
       h("a", { href: LOCAL_JOBS_GUIDE, target: "_blank", rel: "noopener" }, "Guide ↗"),
+      info("The runner runs long jobs (converting, filtering, density maps) as Python on this computer: start it in the Python that has zarr-vectors-tools.", "About the runner"),
     ),
   );
 }
@@ -189,8 +191,8 @@ const runnerRefresh = new WeakMap<RunnerService, () => void>();
 
 /**
  * A computer's runner ("This computer", or another by its name, `host`):
- * in the Remote tab (`part` "host") its pairing, status and served files;
- * in the Jobs tab ("jobs") the jobs on it.
+ * in Settings › Compute (`part` "host") its pairing, status and served files;
+ * in Activity ("jobs") the jobs on it.
  */
 export function renderRunnerSection(wb: Workbench, runner: RunnerService, host = LOCAL_HOST, part: "host" | "jobs" = "host"): { element: HTMLElement; dispose: () => void } {
   const local = host === LOCAL_HOST;
@@ -233,7 +235,7 @@ export function renderRunnerSection(wb: Workbench, runner: RunnerService, host =
   const render = () => {
     const state = runner.connection();
     connection.textContent = state === "connected" ? "connected" : state === "unpaired" ? "not paired" : state;
-    connection.dataset.state = state;
+    connection.setAttribute("data-state", state);
     if ((state === "unpaired" || state === "refused") && part === "jobs") {
       form = undefined;
       formFor = "";
@@ -280,7 +282,7 @@ export function renderRunnerSection(wb: Workbench, runner: RunnerService, host =
             "div",
             { class: "row-actions" },
             state !== "connected" ? h("button", { class: "btn small", type: "button", onclick: () => void runner.refresh() }, "Try again") : null,
-            state === "connected" ? h("button", { class: "btn small runner-served", type: "button", title: "Files and folders the runner serves to the viewer", onclick: () => void servedDialog(runner) }, "Served…") : null,
+            state === "connected" ? h("button", { class: "btn small runner-served", type: "button", title: "Files and folders the runner serves to the viewer", onclick: () => void servedDialog(wb, runner, where) }, "Served…") : null,
             h("button", { class: "btn small runner-unpair", type: "button", title: local ? "Forget this computer's runner in this browser" : `Forget ${host} in this browser`, onclick: () => runner.unpair() }, local ? "Unpair" : "Remove"),
           )
         : h(
@@ -297,11 +299,15 @@ export function renderRunnerSection(wb: Workbench, runner: RunnerService, host =
     }
     const jobs = runner.jobs().filter((j) => j.kind !== "serve" || isActive(j));
     for (const id of [...openLogs.keys()]) if (!jobs.some((j) => j.id === id)) openLogs.delete(id);
+    // With no jobs, the empty line's button starts one.
+    const none = jobs.length === 0 && state === "connected";
+    const convert = head.querySelector<HTMLElement>(".runner-convert");
+    if (convert !== null) convert.hidden = none;
     clear(
       body,
       head,
-      jobs.length === 0 && state === "connected"
-        ? h("p", { class: "empty runner-empty" }, `No jobs on ${where} yet.`)
+      none
+        ? emptyState(`No jobs on ${where}.`, { label: "Convert a tractogram…", run: () => void convertDialog(runner) })
         : h("div", { class: "jobs runner-jobs" }, ...jobs.map((job) => jobRow(wb, runner, job, openLogs))),
     );
     if (openLogs.size > 0) void fillLogs();
@@ -352,14 +358,10 @@ export function addHostDialog(wb: Workbench): void {
     sheet(
       "Add a computer",
       [
-        h(
-          "p",
-          { class: "note first" },
-          "A runner on another computer (a workstation, a cluster node), reached through an SSH tunnel. On this computer run ",
-          h("code", {}, TUNNEL_COMMAND),
-          ": it opens the tunnel and prints a link that pairs this browser. Or enter what it prints here. ",
-          h("a", { href: `${LOCAL_JOBS_GUIDE}#a-gpu-on-another-computer`, target: "_blank", rel: "noopener" }, "Guide ↗"),
-        ),
+        field("On this computer, run", h("code", { class: "readout host-command" }, TUNNEL_COMMAND), {
+          info: "A runner on another computer (a workstation, a cluster node), reached through an SSH tunnel. The command opens the tunnel and prints a link that pairs this browser; or enter what it prints below.",
+        }),
+        h("a", { class: "guide-link", href: `${LOCAL_JOBS_GUIDE}#a-gpu-on-another-computer`, target: "_blank", rel: "noopener" }, "Guide ↗"),
         h("label", { class: "field" }, h("span", {}, "Name"), name),
         h("label", { class: "field" }, h("span", {}, "Address"), address),
         h("label", { class: "field" }, h("span", {}, "Token"), token),
@@ -485,7 +487,7 @@ async function openDialog(wb: Workbench, runner: RunnerService, where = "this co
 }
 
 /** What the runner serves to the viewer, each with Stop (its address then answers nothing, now and after a restart). */
-async function servedDialog(runner: RunnerService): Promise<void> {
+async function servedDialog(wb: Workbench, runner: RunnerService, where: string): Promise<void> {
   const list = h("div", { class: "list runner-serves" });
   const fill = async () => {
     try {
@@ -493,7 +495,7 @@ async function servedDialog(runner: RunnerService): Promise<void> {
       clear(
         list,
         ...(serves.length === 0
-          ? [h("p", { class: "empty" }, "Nothing is served.")]
+          ? [emptyState("Nothing is served.", { label: "Open a file…", run: () => void openDialog(wb, runner, where).then(() => fill()) })]
           : serves.map((s) =>
               h(
                 "div",
@@ -533,7 +535,7 @@ async function convertDialog(runner: RunnerService): Promise<void> {
     const job = await runner.start("convert", { input, output, levels: 3 });
     toast(`Started ${job.title} (PID ${job.pid ?? "queued"})`);
     void runner.wait(job.id).catch((e: Error) => ({ state: "failed", title: job.title, message: e.message }) as unknown as RunnerJob).then((done) => {
-      if (done.state === "done") toast(`${done.title}: done. Open it from the Activity tab.`);
+      if (done.state === "done") toast(`${done.title}: done. Open it from Activity.`);
       else if (done.state === "failed") toast(`${done.title} failed: ${done.message}`, "error");
     });
   } catch (e) {

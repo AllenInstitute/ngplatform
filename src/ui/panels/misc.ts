@@ -4,7 +4,7 @@ import type { Manifest } from "../../sdk/types.js";
 import { bytesText } from "../../sdk/format.js";
 import type { ChunkSourceStatistics } from "../../engine/engine.js";
 import { clear, h, icon, iconButton } from "../dom.js";
-import { info, toggle } from "../../sdk/dom.js";
+import { field, info, statusLine, toggle } from "../../sdk/dom.js";
 import { renderMarkdown } from "../markdown.js";
 import { closeSheet, sheet, showMenu, showSheet } from "../overlays.js";
 import { LOCAL_HOST } from "../../platform/hosts.js";
@@ -168,25 +168,22 @@ function addFromUrl(local: LocalPlugins): void {
     "aria-label": "Plugin URL",
     spellcheck: "false",
   }) as HTMLInputElement;
-  const note = h("p", { class: "note" }, "A tool plugin's manifest.json (its code beside it) or module, served with CORS. Nothing runs until you agree.");
+  const status = statusLine();
   const next = h("button", { class: "btn primary", type: "button" }, "Continue") as HTMLButtonElement;
-  const intro = note.textContent;
   let close = () => {};
   const submit = async () => {
     if (input.value.trim() === "") return;
     next.disabled = true;
-    note.className = "note";
-    note.textContent = "Reading…";
+    status.progress("Reading…");
     try {
       // The consent opens above this sheet: once agreed, both close; declined, this one is back.
       let agreed = false;
       await local.addUrl(input.value, async (offer) => (agreed = await confirmPlugin(offer)));
       if (agreed) return close();
-      note.textContent = intro;
+      status.clear();
       next.disabled = false;
     } catch (e) {
-      note.className = "note error";
-      note.textContent = (e as Error).message;
+      status.error((e as Error).message);
       next.disabled = false;
     }
   };
@@ -195,7 +192,7 @@ function addFromUrl(local: LocalPlugins): void {
     if (e.key === "Enter") void submit();
   });
   close = showSheet(
-    sheet("Add a plugin from a URL", [h("label", { class: "field" }, h("span", {}, "URL"), input), note], [
+    sheet("Add a plugin from a URL", [field("URL", input, { info: "A tool plugin's manifest.json (its code beside it) or module, served with CORS. Nothing runs until you agree." }), status], [
       h("button", { class: "btn", type: "button", onclick: () => closeSheet() }, "Cancel"),
       next,
     ]),
