@@ -9,13 +9,13 @@
  * the coarser stay until they arrive.
  */
 import type { Disposer, Frame3d, LayerInfo, PlatformContext, PluginModule, ViewPanelInfo } from "@ngplatform/sdk";
-import { el } from "@ngplatform/sdk/dom";
+import { button, card, checkbox, el, emptyState, field, info, region, select, type Settable, slider, statusLine, toggle } from "@ngplatform/sdk/dom";
 import { mmText } from "@ngplatform/sdk/format";
 import { omeZarrUrl } from "../volume-view/sources.js";
 import { OrientationClient } from "./client.js";
 import { type GlyphOptions, type GlyphSet, type Normalise, type OrientationKind, voxelFrame, withFlips } from "./glyphs.js";
 import { ORIENTATIONS_PANEL } from "./manifest.js";
-import { GlyphOverlay, type PanelDraw } from "./overlay.js";
+import { CONTEXT_LOST, GlyphOverlay, type PanelDraw } from "./overlay.js";
 import type { Opened, OrientationLevel } from "./reader.js";
 import { GlyphRenderer } from "./render.js";
 import { lmaxOf, SH_BASES, type ShBasis } from "./sh.js";
@@ -129,9 +129,18 @@ interface Shown {
 interface Slot {
   shown?: Shown;
   pending?: { key: string; box: Box; level: number; controller: AbortController };
-  /** Why nothing is shown, when nothing is. */
+  /** Why nothing is shown, when nothing is (zoom in). */
   note?: string;
+  /** The last read failed: why, and what it was for (not read again for that until Retry). */
+  error?: { message: string; key: string };
 }
+
+/** The reading the plugin does, in a worker (./client.ts); a test gives its own. */
+export type Client = Pick<OrientationClient, "open" | "glyphs" | "values" | "dispose">;
+
+/** Opening an image is tried this many times, waiting twice as long each time from the first wait, before Retry is offered. */
+export const OPEN_ATTEMPTS = 3;
+export const OPEN_WAIT_MS = 2000;
 
 type Want = SectionPlan;
 
@@ -144,14 +153,15 @@ interface Space {
   projectionScale: number | undefined;
 }
 
-class Orientations {
+export class Orientations {
   private saved: Saved;
-  private client: OrientationClient | undefined;
+  private client: Client | undefined;
   private store: string | undefined;
   private opened: Opened | undefined;
   private openError: string | undefined;
-  /** An image that failed to open, not asked for again until then. */
-  private failed: { url: string; until: number } | undefined;
+  /** An image that failed to open, not asked for again until then (for ever once the attempts are spent: Retry); and how often it failed. */
+  private failed: { url: string; until: number; attempts: number } | undefined;
+  private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
   private overlay: { element: HTMLElement; dispose(): void } | undefined;
   private glyphOverlay: GlyphOverlay | undefined;
@@ -163,16 +173,21 @@ class Orientations {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private queued = false;
   private panelUpdate: (() => void) | undefined;
+  /** The panel's line for the voxel under the cursor: its text alone changes. */
+  private cursorText: HTMLElement | undefined;
   private readonly toggle: { set(value: boolean): void; dispose(): void };
   private readonly offs: Disposer[] = [];
   /** Image layers looked at for a component axis, by URL: whether they have one. */
   private readonly probed = new Map<string, Promise<boolean>>();
 
-  constructor(private readonly ctx: PlatformContext) {
+  constructor(
+    private readonly ctx: PlatformContext,
+    private readonly makeClient: () => Client = () => new OrientationClient(),
+  ) {
     this.saved = readSaved(ctx.state.get());
     this.toggle = ctx.ui.viewToggle({
       label: "Glyphs",
-      title: "Orientation glyphs (ODFs, tensors, peaks) over the image; the Orientations tab has their settings",
+      title: "Orientation glyphs (ODFs, tensors, peaks) over the image; the Orientations panel has their settings",
       value: this.saved.on,
       onChange: (on) => this.set({ on }),
     });
@@ -197,6 +212,7 @@ class Orientations {
       () => clearTimeout(this.cursorTimer),
       ctx.ui.screenshotOverlay((context, canvas) => this.paintScreenshot(context, canvas)),
       () => clearTimeout(this.timer),
+      () => clearTimeout(this.retryTimer),
     );
     this.readSpace();
     this.update();
@@ -354,14 +370,16 @@ class Orientations {
     }
     if (this.overlay === undefined) {
       this.overlay = this.ctx.ui.overlay();
-      this.glyphOverlay = new GlyphOverlay(this.overlay.element);
+      this.newGlyphOverlay();
     }
     const url = omeZarrUrl(target.sources[0])!;
     if (url !== this.store && !(url === this.failed?.url && Date.now() < this.failed.until)) {
       this.store = url;
-      this.failed = undefined;
+      if (this.failed?.url !== url) {
+        this.failed = undefined;
+        this.openError = undefined;
+      }
       this.opened = undefined;
-      this.openError = undefined;
       this.clearSlots();
       void this.open(url);
     }
@@ -380,13 +398,27 @@ class Orientations {
     this.panelUpdate?.();
   }
 
+  /** The 2-D views' glyph canvas (anew: a new canvas asks for a new context); drawn again when its context is lost or given back. */
+  private newGlyphOverlay(): void {
+    if (this.overlay === undefined) return;
+    this.glyphOverlay?.dispose();
+    this.glyphOverlay = new GlyphOverlay(this.overlay.element, () => {
+      this.drawn = "";
+      this.schedule();
+      this.panelUpdate?.();
+    });
+    this.drawn = "";
+    this.schedule();
+    this.panelUpdate?.();
+  }
+
   private clearSlots(): void {
     for (const slot of this.slots.values()) slot.pending?.controller.abort();
     this.slots.clear();
   }
 
   private async open(url: string): Promise<void> {
-    this.client ??= new OrientationClient();
+    this.client ??= this.makeClient();
     try {
       let opened = await this.client.open(url);
       if (this.store !== url) return;
@@ -398,20 +430,45 @@ class Orientations {
         if (this.store !== url) return;
       }
       this.opened = opened;
+      this.failed = undefined;
+      this.openError = undefined;
       this.schedule();
     } catch (e) {
       if (this.store === url && !this.disposed) {
-        this.openError = `Could not read the image: ${(e as Error).message}. Trying again in a few seconds.`;
-        // Not kept as open (a network blip need not stick): opened afresh by a later update, at most every few seconds.
+        // Not kept as open (a network blip need not stick): opened afresh a few
+        // times, waiting longer each time, then left until Retry.
+        const attempts = (this.failed?.url === url ? this.failed.attempts : 0) + 1;
+        const wait = attempts < OPEN_ATTEMPTS ? OPEN_WAIT_MS * 2 ** (attempts - 1) : Infinity;
+        this.openError = `Could not read the image: ${(e as Error).message}`;
         this.store = undefined;
         this.probed.delete(url);
-        this.failed = { url, until: Date.now() + 5000 };
-        setTimeout(() => {
-          if (!this.disposed) this.update();
-        }, 5100);
+        this.failed = { url, until: Date.now() + wait, attempts };
+        clearTimeout(this.retryTimer);
+        if (Number.isFinite(wait))
+          this.retryTimer = setTimeout(() => {
+            if (this.disposed || this.failed?.url !== url) return;
+            this.failed.until = 0;
+            this.update();
+          }, wait);
       }
     }
     this.panelUpdate?.();
+  }
+
+  /** Opens the image again now, its attempts counted afresh. */
+  retryOpen(): void {
+    clearTimeout(this.retryTimer);
+    this.failed = undefined;
+    this.openError = undefined;
+    this.store = undefined;
+    this.update();
+  }
+
+  /** Whether the image is being read again after failing, or has been given up on until Retry. */
+  private openState(): "reading" | "retrying" | "failed" | undefined {
+    if (this.failed !== undefined) return Number.isFinite(this.failed.until) ? "retrying" : "failed";
+    if (this.saved.on && this.store !== undefined && this.opened === undefined) return "reading";
+    return undefined;
   }
 
   /**
@@ -612,17 +669,22 @@ class Orientations {
     if ("note" in want) {
       slot.pending?.controller.abort();
       slot.pending = undefined;
-      if (want.note !== slot.note) {
-        slot.note = want.note;
+      if ((want.note || undefined) !== slot.note) {
+        slot.note = want.note || undefined;
         this.panelUpdate?.();
       }
       // Too many to draw: nothing rather than the wrong level.
       if (want.note) slot.shown = undefined;
       return;
     }
-    slot.note = undefined;
+    if (slot.note !== undefined) {
+      slot.note = undefined;
+      this.panelUpdate?.();
+    }
     const covered = (s: { key: string; box: Box } | undefined) => s !== undefined && s.key === want.key && contains(s.box, want.visible);
     if (covered(slot.shown) || covered(slot.pending)) return;
+    // What failed is not read again until Retry (or the view wants something else).
+    if (slot.error?.key === want.key) return;
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.schedule(), 120);
     if (slot.pending !== undefined && slot.pending.key === want.key) return;
@@ -652,7 +714,6 @@ class Orientations {
     slot.pending?.controller.abort();
     const controller = new AbortController();
     slot.pending = { key: want.key, box: want.box, level: want.level, controller };
-    this.panelUpdate?.();
     const started = performance.now();
     client.glyphs(want.level, { lo: want.box.lo, hi: want.box.hi, slabs: want.slabs }, options, controller.signal).then(
       ({ set }) => {
@@ -663,12 +724,15 @@ class Orientations {
         this.stats.readMs += performance.now() - started;
         this.schedule();
         this.handle?.redraw();
-        this.panelUpdate?.();
+        if (slot.error !== undefined) {
+          slot.error = undefined;
+          this.panelUpdate?.();
+        }
       },
       (e: Error) => {
         if (controller.signal.aborted || slot.pending?.controller !== controller) return;
         slot.pending = undefined;
-        slot.note = `Could not read glyphs: ${e.message}`;
+        slot.error = { message: e.message, key: want.key };
         this.panelUpdate?.();
       },
     );
@@ -716,9 +780,18 @@ class Orientations {
     );
   }
 
+  /** Only the voxel line's text changes: the panel is not brought up to date for it. */
   private setCursorLine(line: string | undefined): void {
     if (line === this.cursorLine) return;
     this.cursorLine = line;
+    if (this.cursorText !== undefined) this.cursorText.textContent = line ?? NO_VOXEL;
+  }
+
+  /** Reads again what failed for each view. */
+  retryGlyphs(): void {
+    for (const slot of this.slots.values()) slot.error = undefined;
+    this.drawn = "";
+    this.schedule();
     this.panelUpdate?.();
   }
 
@@ -890,26 +963,37 @@ class Orientations {
 
   // ------------------------------------------------------------- panel
 
-  /** What the image is and what each view shows, in lines for the panel. */
-  describe(): string[] {
-    const lines: string[] = [];
+  /** What the open image holds and how its levels were made, in words: the panel's quiet line under the image. */
+  summary(): string | undefined {
     const opened = this.opened;
-    if (opened === undefined) return lines;
+    if (opened === undefined) return undefined;
     const level0 = opened.levels[0];
     const options = this.options(2)!;
     const what =
       options.kind === "sh"
-        ? `spherical harmonics, order ${lmaxOf(level0.components)} (${level0.components} coefficients), ${SH_BASES.find(([b]) => b === options.basis)?.[1]}`
+        ? `Spherical harmonics, order ${lmaxOf(level0.components)}, ${options.basis.replace("-", " ")}`
         : options.kind === "tensor"
-          ? `tensors, ${TENSOR_ORDERS.find(([o]) => o === options.tensorOrder)?.[1]}`
+          ? `Tensors in ${{ fsl: "FSL", dipy: "DIPY", mrtrix: "MRtrix" }[options.tensorOrder]} order`
           : options.kind === "vector"
-            ? "vectors"
-            : `peaks (${Math.floor(level0.components / 3)} per voxel)`;
-    lines.push(`${opened.name}: ${what}; ${opened.levels.length} level${opened.levels.length === 1 ? "" : "s"}, ${opened.levels.map((l) => mmText(l.voxelSize)).join(", ")}.`);
+            ? "Vectors"
+            : `Peaks, ${Math.floor(level0.components / 3)} per voxel`;
+    const levels = `${opened.levels.length} level${opened.levels.length === 1 ? "" : "s"}, ${opened.levels.map((l) => mmText(l.voxelSize)).join(", ")}`;
     const coarsened = this.coarsened;
-    if (opened.nifti !== undefined && opened.levels.length > 1 && coarsened !== undefined && coarsened.url === this.store) {
-      lines.push(coarsened.tensor !== null ? "Coarser levels: log-Euclidean means of the tensors (made by the app)." : "Coarser levels: means of each component (made by the app).");
-    }
+    const made =
+      opened.nifti !== undefined && opened.levels.length > 1 && coarsened !== undefined && coarsened.url === this.store
+        ? coarsened.tensor !== null
+          ? "; coarser levels: log-Euclidean means"
+          : "; coarser levels: means"
+        : "";
+    return `${what} · ${levels}${made}`;
+  }
+
+  /** What the image is and what each view shows, in lines: for the `orientations.status` service, not the panel. */
+  describe(): string[] {
+    const lines: string[] = [];
+    const opened = this.opened;
+    if (opened === undefined) return lines;
+    lines.push(`${opened.name}: ${this.summary()}.`);
     let index = 0;
     for (const [key, slot] of this.slots) {
       index++;
@@ -919,168 +1003,227 @@ class Orientations {
       if (shown) parts.push(`${shown.set.count} glyphs at ${mmText(opened.levels[shown.level].voxelSize)}`);
       if (slot.pending) parts.push(`reading ${mmText(opened.levels[slot.pending.level].voxelSize)}…`);
       if (slot.note) parts.push(slot.note);
+      if (slot.error) parts.push(`could not read glyphs: ${slot.error.message}`);
       if (parts.length > 0) lines.push(`${name}: ${parts.join("; ")}`);
     }
     return lines;
   }
 
+  /**
+   * Draws the panel once into `host` and keeps it up to date in place
+   * (plugins/README.md, "Building a panel"): the controls are set from the
+   * state with `set()`, the fields for one kind of data hidden or shown,
+   * and the voxel under the cursor changes one line's text only; so a
+   * cursor move or a glyph read never closes a select or ends a drag.
+   */
   render(host: HTMLElement): Disposer {
-    const draw = () => {
-      const { saved } = this;
-      const candidates = this.candidates();
-      const target = saved.on ? this.target() : (candidates.find((l) => l.name === saved.layer) ?? candidates.find((l) => l.name === this.chosen) ?? candidates[0]);
-      const select = (label: string, value: string, options: [string, string][], onChange: (v: string) => void, disabled = false) => {
-        const s = el("select", { class: "text-input", "aria-label": label }) as HTMLSelectElement;
-        for (const [v, text] of options) s.append(el("option", { value: v }, text));
-        s.value = value;
-        s.disabled = disabled;
-        s.addEventListener("change", () => onChange(s.value));
-        return el("label", { class: "field" }, el("span", {}, label), s);
-      };
-      const check = (label: string, value: boolean, onChange: (v: boolean) => void, title?: string) => {
-        const c = el("input", { type: "checkbox" }) as HTMLInputElement;
-        c.checked = value;
-        c.addEventListener("change", () => onChange(c.checked));
-        return el("label", { class: "field check", title }, c, el("span", {}, label));
-      };
-      const range = (label: string, value: number, min: number, max: number, step: number, show: (v: number) => string, onChange: (v: number) => void) => {
-        const r = el("input", { type: "range", min: String(min), max: String(max), step: String(step), value: String(value), "aria-label": label }) as HTMLInputElement;
-        const out = el("span", { class: "type" }, show(value));
-        r.addEventListener("input", () => (out.textContent = show(Number(r.value))));
-        r.addEventListener("change", () => onChange(Number(r.value)));
-        return el("label", { class: "field" }, el("span", {}, label), el("div", { class: "or-row" }, r, out));
-      };
-      const on = el("input", { type: "checkbox", "aria-label": "Orientation glyphs" }) as HTMLInputElement;
-      on.checked = saved.on;
-      on.addEventListener("change", () => this.set({ on: on.checked }));
-      const components = this.opened?.levels[0].components;
-      const kind = this.opened ? resolveKind(saved, this.opened, components!) : undefined;
-      const flips = el(
-        "div",
-        { class: "or-flips" },
-        ...[0, 1, 2].map((k) =>
-          check(`Flip ${"xyz"[k]}`, saved.flips[k], (v) => {
-            const f = [...saved.flips] as [boolean, boolean, boolean];
-            f[k] = v;
-            this.set({ flips: f });
-          }),
-        ),
-      );
-      const noTarget = saved.on && candidates.length > 0 && this.target() === undefined ? "None of these images has a component axis (c) to draw as glyphs." : undefined;
-      const status = [this.openError, noTarget, this.glyphOverlay?.problem, ...this.describe(), this.cursorLine].filter((s): s is string => !!s);
-      if (candidates.length === 0) {
-        host.replaceChildren(
-          el(
-            "div",
-            { class: "or-panel" },
-            el("label", { class: "or-row" }, el("span", { class: "or-label" }, "Orientation glyphs"), on),
-            el("p", { class: "note" }, "Add an image of orientations (ODFs, tensors or peaks): an OME-Zarr or 4-D NIfTI with a component axis."),
-          ),
-        );
-        return;
-      }
-      host.replaceChildren(
+    const ctx = this.ctx;
+    const empty = emptyState("No image in this scene.", { label: "Open data…", run: () => void ctx.commands.invoke("dataset.add") });
+    const status = statusLine();
+    const s = this.saved;
+
+    const on = toggle("Orientation glyphs", s.on, (v) => this.set({ on: v }), {
+      info: "ODFs, tensors and peaks over an image with an axis of components (c). Also Glyphs beside Sections in the 3-D view.",
+    });
+
+    // ---- Image: which image, what its voxels hold and how to read them.
+    const image = select([], "", (v) => this.set({ layer: v }), "Image");
+    const noComponents = el("p", { class: "hint" }, "None of these images has an axis of components (c).");
+    const kind = select(
+      [
+        ["auto", "Automatic"],
+        ["sh", "Spherical harmonics (ODFs)"],
+        ["tensor", "Diffusion tensors"],
+        ["vector", "Vectors"],
+        ["peaks", "Peaks"],
+      ],
+      s.kind,
+      (v) => this.set({ kind: v as Saved["kind"] }),
+      "Voxels hold",
+    );
+    const basis = select([["auto", "Automatic"], ...SH_BASES], s.basis, (v) => this.set({ basis: v as Saved["basis"] }), "SH basis");
+    const basisField = field("SH basis", basis, { info: "Automatic: the store's own word, else DIPY's legacy descoteaux07. MRtrix3 writes tournier07. A wrong basis scrambles the glyphs." });
+    const order = select([["auto", "Automatic"], ...TENSOR_ORDERS], s.tensorOrder, (v) => this.set({ tensorOrder: v as Saved["tensorOrder"] }), "Tensor order");
+    const orderField = field("Tensor order", order, { info: "Automatic: the store's own word, DIPY's for a NIfTI whose header says symmetric matrix, else FSL's." });
+    const frame = select(
+      [
+        ["auto", "Automatic"],
+        ["voxel", "Voxel axes (DIPY, FSL)"],
+        ["world", "World x, y, z (MRtrix)"],
+      ],
+      s.frame,
+      (v) => this.set({ frame: v as Saved["frame"] }),
+      "Frame",
+    );
+    const flips = [0, 1, 2].map((k) =>
+      checkbox(`Flip ${"xyz"[k]}`, s.flips[k], (v) => {
+        const f = [...this.saved.flips] as [boolean, boolean, boolean];
+        f[k] = v;
+        this.set({ flips: f });
+      }),
+    );
+    const about = el("p", { class: "hint" });
+
+    // ---- Glyphs: their shape and size, and which are drawn.
+    const shGlyph = select(
+      [
+        ["odf", "ODF shape"],
+        ["peaks", "Peaks (up to 3)"],
+      ],
+      s.shGlyph,
+      (v) => this.set({ shGlyph: v as Saved["shGlyph"] }),
+      "ODF glyph",
+    );
+    const shGlyphField = field("ODF glyph", shGlyph);
+    const tensorGlyph = select(
+      [
+        ["ellipsoid", "Ellipsoid"],
+        ["line", "Principal direction"],
+      ],
+      s.tensorGlyph,
+      (v) => this.set({ tensorGlyph: v as Saved["tensorGlyph"] }),
+      "Tensor glyph",
+    );
+    const tensorGlyphField = field("Tensor glyph", tensorGlyph);
+    const normalise = select(
+      [
+        ["minmax", "Each voxel's range"],
+        ["max", "Each voxel's maximum"],
+        ["none", "The view's largest"],
+      ],
+      s.normalise,
+      (v) => this.set({ normalise: v as Normalise }),
+      "Scale glyphs to",
+    );
+    const size = slider(s.size, { min: 0.2, max: 3, step: 0.05, unit: "voxel", label: "Size", onchange: (v) => this.set({ size: v }) });
+    const spacing = slider(s.spacing, { min: 4, max: 80, step: 1, unit: "px", label: "Spacing", onchange: (v) => this.set({ spacing: v }) });
+    const anisotropy = slider(s.minAnisotropy, { min: 0, max: 0.9, step: 0.01, label: "Hide below anisotropy", onchange: (v) => this.set({ minAnisotropy: v }) });
+    const anisotropyField = field("Hide below anisotropy", anisotropy, { info: "Leaves out glyphs whose GFA (spherical harmonics) or FA (tensors) is lower: outside the white matter, say. 0 hides none." });
+    const limit = slider(s.maxGlyphs, { min: 500, max: 30000, step: 500, label: "Glyph limit per view", onchange: (v) => this.set({ maxGlyphs: v }) });
+
+    // ---- Views: where glyphs are drawn, and the image's colours.
+    const show2d = checkbox("2-D views", s.show2d, (v) => this.set({ show2d: v }));
+    const show3d = checkbox("3-D view", s.show3d, (v) => this.set({ show3d: v }), { info: "On the 2-D views' sections; with only a 3-D view, on three planes through the position." });
+    const notes = region((lines: string[]) => lines.map((l) => el("p", { class: "hint" }, l)), { class: "stack" });
+    const colour = button("Colour image by direction", () => this.applyDirectionColour());
+
+    // ---- Voxel: what the voxel under the cursor holds (its text set alone, by setCursorLine).
+    const cursorText = el("p", { class: "readout" }, this.cursorLine ?? NO_VOXEL);
+    this.cursorText = cursorText;
+
+    const main = el(
+      "div",
+      { class: "stack" },
+      on,
+      card(
+        "orientations.image",
+        "Image",
+        { open: true },
+        field("Image", image),
+        noComponents,
+        field("Voxels hold", kind, { info: "Automatic reads the store's orientations attributes, else goes by the number of components: 3 a vector, 6 a tensor, 15, 28, 45… spherical harmonics, other multiples of 3 peaks. Six can also be order-2 harmonics: choose them here." }),
+        basisField,
+        orderField,
+        field("Frame", frame, { info: "Directions along the voxel axes (DIPY, FSL) or along the world's x, y, z (MRtrix). Automatic: the store's word, else world for tournier07 and voxel otherwise." }),
+        el("div", { class: "row" }, ...flips, info("Flip an axis when glyphs point the wrong way (a common bvec problem), as in mrview or DSI Studio.", "About Flip")),
+        about,
+      ),
+      card(
+        "orientations.glyphs",
+        "Glyphs",
+        {},
+        shGlyphField,
+        tensorGlyphField,
+        field("Scale glyphs to", normalise, { info: "Each voxel's range (min to max, as FURY), each voxel's maximum, or the largest in the view, so that sizes compare." }),
+        field("Size", size, { info: "1 fills a voxel." }),
+        field("Spacing", spacing, { info: "Glyphs at least this many pixels apart: each view shows the finest level that keeps them so." }),
+        anisotropyField,
+        field("Glyph limit per view", limit, { info: "At most this many glyphs in a view: beyond it a coarser level, and beyond the coarsest none until you zoom in." }),
+      ),
+      card(
+        "orientations.views",
+        "Views",
+        {},
+        el("div", { class: "row" }, show2d, show3d),
+        notes,
         el(
           "div",
-          { class: "or-panel" },
-          el("label", { class: "or-row", title: "ODFs, tensors and peaks over an image with a component axis. Also Glyphs beside Sections in the 3-D view." }, el("span", { class: "or-label" }, "Orientation glyphs"), on),
-          select(
-            "Image",
-            target?.name ?? "",
-            candidates.map((c) => [c.name, c.name]),
-            (v) => this.set({ layer: v }),
-            candidates.length < 2,
-          ),
-          select(
-            "Data",
-            saved.kind,
-            [
-              ["auto", `Automatic${kind && saved.kind === "auto" ? ` (${kind === "sh" ? "spherical harmonics" : kind})` : ""}`],
-              ["sh", "Spherical harmonics (ODF)"],
-              ["tensor", "Diffusion tensor (6)"],
-              ["vector", "Vector (3)"],
-              ["peaks", "Peaks (3 per peak)"],
-            ],
-            (v) => this.set({ kind: v as Saved["kind"] }),
-          ),
-          kind === "sh" || saved.kind === "auto"
-            ? select("SH basis", saved.basis, [["auto", "Automatic (the store's, else DIPY's)"], ...SH_BASES], (v) => this.set({ basis: v as Saved["basis"] }))
-            : null,
-          kind === "sh"
-            ? select(
-                "SH glyph",
-                saved.shGlyph,
-                [
-                  ["odf", "ODF shape"],
-                  ["peaks", "Peaks (up to 3)"],
-                ],
-                (v) => this.set({ shGlyph: v as Saved["shGlyph"] }),
-              )
-            : null,
-          kind === "tensor" ? select("Tensor order", saved.tensorOrder, [["auto", "Automatic (the store's, else FSL's)"], ...TENSOR_ORDERS], (v) => this.set({ tensorOrder: v as Saved["tensorOrder"] })) : null,
-          kind === "tensor"
-            ? select(
-                "Tensor glyph",
-                saved.tensorGlyph,
-                [
-                  ["ellipsoid", "Ellipsoid"],
-                  ["line", "Principal direction"],
-                ],
-                (v) => this.set({ tensorGlyph: v as Saved["tensorGlyph"] }),
-              )
-            : null,
-          select(
-            "Frame",
-            saved.frame,
-            [
-              ["auto", "Automatic"],
-              ["voxel", "Voxel axes (DIPY, FSL)"],
-              ["world", "World x, y, z (MRtrix)"],
-            ],
-            (v) => this.set({ frame: v as Saved["frame"] }),
-          ),
-          flips,
-          select(
-            "Normalise",
-            saved.normalise,
-            [
-              ["minmax", "Min–max per voxel (FURY)"],
-              ["max", "Maximum per voxel"],
-              ["none", "Across the view (sizes compare)"],
-            ],
-            (v) => this.set({ normalise: v as Normalise }),
-          ),
-          range("Size", saved.size, 0.2, 3, 0.05, (v) => `${v.toFixed(2)} voxel`, (v) => this.set({ size: v })),
-          range("Spacing", saved.spacing, 4, 80, 1, (v) => `${v} px`, (v) => this.set({ spacing: v })),
-          kind === "sh" || kind === "tensor"
-            ? range("Hide below anisotropy", saved.minAnisotropy, 0, 0.9, 0.01, (v) => (v > 0 ? `${kind === "sh" ? "GFA" : "FA"} ${v.toFixed(2)}` : "off"), (v) => this.set({ minAnisotropy: v }))
-            : null,
-          range("Most glyphs per view", saved.maxGlyphs, 500, 30000, 500, (v) => String(v), (v) => this.set({ maxGlyphs: v })),
-          el("div", { class: "or-flips" }, check("2-D views", saved.show2d, (v) => this.set({ show2d: v })), check("3-D view", saved.show3d, (v) => this.set({ show3d: v }))),
-          el(
-            "button",
-            {
-              class: "btn outline small",
-              type: "button",
-              title: "Set the image layer's shader to show the principal direction as colour, weighted by anisotropy",
-              onclick: () => this.applyDirectionColour(),
-            },
-            "Colour image by direction",
-          ),
-          status.length ? el("div", { class: "note or-status" }, ...status.map((s) => el("div", {}, s))) : null,
+          { class: "row" },
+          colour,
+          info("Sets the image layer's colours to the principal direction (red left-right, green front-back, blue up-down), weighted by the anisotropy, as Freeview's -dti display. Its Display tab has a brightness slider.", "About Colour image by direction"),
         ),
+      ),
+      card("orientations.voxel", "Voxel", { info: "What the voxel under the mouse holds: a tensor's FA, MD, eigenvalues and principal direction; an ODF's GFA and peaks; a vector's direction and length." }, cursorText),
+    );
+    host.append(el("div", { class: "stack" }, empty, main, status));
+
+    /** Brings the panel up to date with the state, the layers and what was read. */
+    const sync = () => {
+      const saved = this.saved;
+      const candidates = this.candidates();
+      empty.hidden = candidates.length > 0;
+      main.hidden = candidates.length === 0;
+      on.set(saved.on);
+      const target = saved.on ? this.target() : (candidates.find((l) => l.name === saved.layer) ?? candidates.find((l) => l.name === this.chosen) ?? candidates[0]);
+      setOptions(
+        image,
+        candidates.map((c): [string, string] => [c.name, c.name]),
+        target?.name ?? "",
       );
+      image.disabled = candidates.length < 2;
+      noComponents.hidden = !(saved.on && candidates.length > 0 && target === undefined);
+      const resolved = this.opened ? resolveKind(saved, this.opened, this.opened.levels[0].components) : undefined;
+      kind.set(saved.kind);
+      basis.set(saved.basis);
+      basisField.hidden = resolved !== "sh";
+      order.set(saved.tensorOrder);
+      orderField.hidden = resolved !== "tensor";
+      frame.set(saved.frame);
+      flips.forEach((f, k) => f.set(saved.flips[k]));
+      const summary = this.summary();
+      about.textContent = summary ?? "";
+      about.hidden = summary === undefined;
+
+      shGlyph.set(saved.shGlyph);
+      shGlyphField.hidden = resolved !== "sh";
+      tensorGlyph.set(saved.tensorGlyph);
+      tensorGlyphField.hidden = resolved !== "tensor";
+      normalise.set(saved.normalise);
+      size.set(saved.size);
+      spacing.set(saved.spacing);
+      anisotropy.set(saved.minAnisotropy);
+      anisotropyField.hidden = resolved !== "sh" && resolved !== "tensor";
+      limit.set(saved.maxGlyphs);
+
+      show2d.set(saved.show2d);
+      show3d.set(saved.show3d);
+      notes.update([...new Set([...this.slots.values()].flatMap((slot) => (slot.note ? [slot.note] : [])))]);
+      colour.disabled = this.opened === undefined;
+
+      // Errors first, then what is being read.
+      const slotError = [...this.slots.values()].find((slot) => slot.error !== undefined)?.error;
+      const problem = this.glyphOverlay?.problem;
+      const open = this.openState();
+      if (problem !== undefined) status.error(problem, problem === CONTEXT_LOST ? { label: "Retry", run: () => this.newGlyphOverlay() } : undefined);
+      else if (open === "failed") status.error(this.openError ?? "Could not read the image.", { label: "Retry", run: () => this.retryOpen() });
+      else if (open === "retrying") status.progress(`${this.openError ?? "Could not read the image"}. Trying again…`);
+      else if (this.openError !== undefined && saved.on) status.error(this.openError);
+      else if (slotError !== undefined) status.error(`Could not read glyphs: ${slotError.message}`, { label: "Retry", run: () => this.retryGlyphs() });
+      else if (open === "reading") status.progress("Reading the image…");
+      else status.clear();
     };
-    this.panelUpdate = draw;
-    draw();
+    this.panelUpdate = sync;
+    sync();
     return () => {
-      if (this.panelUpdate === draw) this.panelUpdate = undefined;
+      if (this.panelUpdate === sync) this.panelUpdate = undefined;
+      if (this.cursorText === cursorText) this.cursorText = undefined;
     };
   }
 
   dispose(): void {
     this.disposed = true;
     this.cursorRead?.abort();
+    clearTimeout(this.retryTimer);
     this.offs.forEach((off) => off());
     this.clearSlots();
     this.handle?.dispose();
@@ -1107,24 +1250,26 @@ function displayOfRasMatrix(dimensions: Frame3d["dimensions"]): Float32Array | u
   return m;
 }
 
-const STYLE = `
-.or-panel { display: grid; gap: 10px; }
-.or-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
-.or-row input[type="range"] { flex: 1; }
-.or-label { font-weight: 600; }
-.or-flips { display: flex; flex-wrap: wrap; gap: 4px 14px; }
-.or-status { display: grid; gap: 2px; }
-`;
+/** The Voxel card's line with nothing under the mouse. */
+const NO_VOXEL = "No voxel under the mouse.";
+
+/** A select's options set anew only when they change (so an open select stays open); its value shown. */
+function setOptions(s: Settable<HTMLSelectElement, string>, options: [string, string][], value: string): void {
+  const key = JSON.stringify(options);
+  if (s.getAttribute("data-options") !== key) {
+    s.setAttribute("data-options", key);
+    s.replaceChildren(...options.map(([v, text]) => el("option", { value: v }, text)));
+    s.value = value;
+  }
+  s.set(value);
+}
 
 let instance: Orientations | undefined;
 
 export const plugin: PluginModule = {
   activate(ctx: PlatformContext) {
-    const style = el("style", {}, STYLE);
-    document.head.append(style);
     instance = new Orientations(ctx);
     const own = instance;
-    ctx.subscriptions.push(() => style.remove());
     ctx.subscriptions.push(() => {
       own.dispose();
       if (instance === own) instance = undefined;
