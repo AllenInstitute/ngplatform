@@ -178,7 +178,7 @@ function spatialBlock(bytes: Uint8Array, shape: number[], kept: number[], width:
 }
 
 /** What steps along a non-spatial axis are, in an error. */
-function stepsOf(axis: string, n: number): string {
+export function stepsOf(axis: string, n: number): string {
   return axis === "t" ? `${n} time points` : axis === "c" ? `${n} channels` : `${n} steps along ${axis}`;
 }
 

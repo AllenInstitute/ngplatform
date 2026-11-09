@@ -2,6 +2,10 @@
  * Reading orientation images: an OME-Zarr pyramid whose arrays have one
  * axis of components per voxel (a `channel` axis, as OME-Zarr writes it, or
  * a NIfTI's fourth axis, which the app reads as `t`) beside z, y and x.
+ * Other axes are read at index 0 when they are size 1, as the volume
+ * view's reader reads them (bioformats2raw's tczyx with one time point);
+ * and when the channel axis is size 1 and one other axis is not, the
+ * components are along that one (a time axis holding them).
  * Each level is read as it is; the plugin does not coarsen anything, so a
  * store's coarse levels give the coarse glyphs (and a NIfTI read in place,
  * whose coarse levels are means of the finer voxels, gives the mean of
@@ -15,7 +19,7 @@
 import { httpJson } from "@ngplatform/sdk/precomputed";
 import { httpAccess, openZarrArray, ShardIndexCache, ZarrArrayReader } from "neuroglancer-zarr-vectors/reader";
 import { mergeLevels, parseOmeLevels, type VolumeLevel } from "../volume-view/ome.js";
-import { storedOrder } from "../volume-view/volume_reader.js";
+import { stepsOf, storedOrder } from "../volume-view/volume_reader.js";
 import { spatialGroup } from "./ome4.js";
 import { withZarr2 } from "../volume-view/zarr2.js";
 
@@ -79,6 +83,8 @@ interface OpenLevel {
   /** For x, y, z, and the components: the array dimension. */
   dimOf: [number, number, number];
   componentDim: number;
+  /** The array's number of dimensions: 4, or more with size-1 axes (read at index 0). */
+  rank: number;
   grid: number[];
   fill: number;
 }
@@ -106,6 +112,19 @@ function toFloat(bytes: Uint8Array, type: keyof typeof NUMERIC, bigEndian: boole
   }
   const typed = new Type(copy.buffer);
   return typed instanceof Float32Array ? typed : Float32Array.from(typed as ArrayLike<number>);
+}
+
+/**
+ * The array dimension holding the components: the one named for them,
+ * unless it is size 1 and exactly one other non-spatial dimension is not
+ * (components along t, beside a size-1 c).
+ */
+export function componentDimOf(axes: string[], shape: number[], named: number): number {
+  if (named !== -1 && shape[named] !== 1) return named;
+  const others = axes.flatMap((a, d) => (!["x", "y", "z"].includes(a) && d !== named && shape[d] !== 1 ? [d] : []));
+  if (others.length === 1) return others[0];
+  if (named === -1) throw new Error(`axes ${axes.join(", ")} have no axis of components`);
+  return named;
 }
 
 export class OrientationReader {
@@ -138,13 +157,19 @@ export class OrientationReader {
         const stored = await storedOrder(plainRead, level.path, axes, signal);
         const read = stored?.read ?? plainRead;
         if (stored !== undefined) axes = stored.axes;
+        const where = `${base}${level.path}`;
         const array = await openZarrArray(read, level.path, signal);
-        if (array === undefined) throw new Error(`${base}${level.path}: no array`);
-        if (!(array.elementType in NUMERIC)) throw new Error(`${base}${level.path}: ${array.elementType} values are not read`);
-        if (array.shape.length !== 4) throw new Error(`${base}${level.path}: a ${array.shape.length}-D array; orientations need 4-D (components, z, y, x)`);
+        if (array === undefined) throw new Error(`${where}: no array`);
+        if (!(array.elementType in NUMERIC)) throw new Error(`${where}: ${array.elementType} values are not read`);
+        const rank = array.shape.length;
+        if (rank !== axes.length) throw new Error(`${where}: a ${rank}-D array, but the image names ${axes.length} axes (${axes.join(", ")})`);
         const dimOf = [0, 1, 2].map((k) => axes.indexOf("xyz"[k])) as [number, number, number];
-        const componentDim = axes.indexOf(name);
-        if (dimOf.includes(-1) || componentDim === -1) throw new Error(`${base}${level.path}: axes ${axes.join(", ")} are not x, y, z and ${name}`);
+        if (dimOf.includes(-1)) throw new Error(`${where}: axes ${axes.join(", ")} are not x, y, z and ${name}`);
+        const componentDim = componentDimOf(axes, array.shape, axes.indexOf(name));
+        // Any other axis is read at index 0: only when it is size 1.
+        const other = axes.findIndex((_, d) => !dimOf.includes(d) && d !== componentDim && array.shape[d] !== 1);
+        if (other !== -1) throw new Error(`${where} has ${stepsOf(axes[other], array.shape[other])} beside its components; one is needed`);
+        if (array.shape[componentDim] < 2) throw new Error(`${where}: one value per voxel; orientations need 3 components or more`);
         const chunk = array.readChunkShape;
         const fill = Number(array.fillValue ?? 0);
         return {
@@ -160,6 +185,7 @@ export class OrientationReader {
           reader: new ZarrArrayReader(array, read, shardIndexes),
           dimOf,
           componentDim,
+          rank,
           grid: array.shape.map((s, d) => Math.ceil(s / chunk[d])),
           fill: Number.isFinite(fill) ? fill : 0,
         };
@@ -171,10 +197,11 @@ export class OrientationReader {
     const attributes = group.attributes ?? group;
     const metadata = attributes?.orientations as OrientationMetadata | undefined;
     const nifti = attributes?.nifti as { intent_code?: unknown; tensor_order?: unknown } | undefined;
+    const first = this.levels[0];
     return {
       levels: this.levels.map((l) => l.info),
       name: pyramid.name,
-      componentAxis: name,
+      componentAxis: first === undefined ? name : first.info.axes[first.componentDim],
       metadata: typeof metadata === "object" && metadata !== null ? metadata : undefined,
       ...(typeof nifti === "object" && nifti !== null
         ? { nifti: { intent: Number(nifti.intent_code ?? 0), ...(typeof nifti.tensor_order === "string" ? { tensorOrder: nifti.tensor_order } : {}) } }
@@ -217,7 +244,7 @@ export class OrientationReader {
   async voxels(index: number, request: VoxelRequest, signal: AbortSignal): Promise<Voxels> {
     const level = this.levels[index];
     if (level === undefined) throw new Error(`no level ${index}`);
-    const { dimOf, componentDim, grid } = level;
+    const { dimOf, componentDim, rank, grid } = level;
     const { chunk: cs, size, components } = level.info;
     const lo = [0, 1, 2].map((k) => Math.max(0, Math.floor(request.lo[k])));
     const hi = [0, 1, 2].map((k) => Math.min(size[k], Math.ceil(request.hi[k])));
@@ -246,14 +273,15 @@ export class OrientationReader {
       if (list === undefined) byChunk.set(key, (list = []));
       list.push(i);
     }
-    const strides = [0, 0, 0, 0];
-    strides[3] = 1;
-    for (let d = 2; d >= 0; --d) strides[d] = strides[d + 1] * cs[d + 1];
+    // Within a chunk (C order); size-1 axes are at index 0, so a chunk thicker along one adds nothing.
+    const strides = new Array<number>(rank).fill(0);
+    strides[rank - 1] = 1;
+    for (let d = rank - 2; d >= 0; --d) strides[d] = strides[d + 1] * cs[d + 1];
     const work: (() => Promise<void>)[] = [];
     for (const [key, list] of byChunk) {
       const sc = key.split(",").map(Number);
       for (let cc = 0; cc < grid[componentDim]; ++cc) {
-        const chunkIndex = [0, 0, 0, 0];
+        const chunkIndex = new Array<number>(rank).fill(0);
         for (let k = 0; k < 3; ++k) chunkIndex[dimOf[k]] = sc[k];
         chunkIndex[componentDim] = cc;
         work.push(async () => {

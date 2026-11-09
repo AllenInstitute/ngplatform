@@ -342,3 +342,49 @@ export function storeFetch(stores: Record<string, Store>): (url: string | URL) =
     return new Response(null, { status: 404 });
   };
 }
+
+/**
+ * The same v3 image with a size-1 axis put in front, as bioformats2raw
+ * writes tczyx with one time point: `axis` named and typed as given, its
+ * chunks `thick` along it (2, the second half fill) when asked; with
+ * `rename`, the components' own axis is renamed and retyped (a time axis
+ * holding the components beside a size-1 channel axis).
+ */
+export function withAxis(v3: Store, axis: { name: string; type: string }, o: { thick?: boolean; rename?: { name: string; type: string } } = {}): Store {
+  const out: Store = new Map();
+  const decode = (bytes: Uint8Array) => JSON.parse(new TextDecoder().decode(bytes));
+  const t = o.thick ? 2 : 1;
+  for (const [key, bytes] of v3) {
+    if (key === "zarr.json") {
+      const group = decode(bytes);
+      const ms = group.attributes.ome.multiscales[0];
+      const axes = [axis, ...ms.axes.map((a: { name: string }, i: number) => (i === 0 && o.rename ? { ...a, ...o.rename } : a))];
+      const datasets = ms.datasets.map((d: { coordinateTransformations: { type: string; scale?: number[]; translation?: number[] }[] }) => ({
+        ...d,
+        coordinateTransformations: d.coordinateTransformations.map((c) => (c.scale ? { ...c, scale: [1, ...c.scale] } : { ...c, translation: [0, ...c.translation!] })),
+      }));
+      out.set(key, json({ ...group, attributes: { ...group.attributes, ome: { ...group.attributes.ome, multiscales: [{ ...ms, axes, datasets }] } } }));
+      continue;
+    }
+    if (key.endsWith("zarr.json")) {
+      const array = decode(bytes);
+      const names = array.dimension_names as string[];
+      out.set(
+        key,
+        json({
+          ...array,
+          shape: [1, ...array.shape],
+          chunk_grid: { ...array.chunk_grid, configuration: { chunk_shape: [t, ...array.chunk_grid.configuration.chunk_shape] } },
+          dimension_names: [axis.name, ...names.map((n, i) => (i === 0 && o.rename ? o.rename.name : n))],
+        }),
+      );
+      continue;
+    }
+    const chunk = /^(\d+)\/c\/(.*)$/.exec(key);
+    if (chunk === null) continue;
+    const padded = new Uint8Array(bytes.length * t);
+    padded.set(bytes);
+    out.set(`${chunk[1]}/c/0/${chunk[2]}`, padded);
+  }
+  return out;
+}
