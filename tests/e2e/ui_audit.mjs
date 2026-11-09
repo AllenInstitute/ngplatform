@@ -96,6 +96,8 @@ const measure = (sel) =>
       buttons: tally(buttons, ["fontSize", "height", "borderRadius", "backgroundColor", "borderTopColor"]),
       inputs: tally(inputs, ["fontSize", "height", "borderRadius", "backgroundColor"]),
       checkboxes: checks.reduce((m, c) => ((m[c.className || "plain"] = (m[c.className || "plain"] || 0) + 1), m), {}),
+      // On/off controls the SDK's toggle() or checkbox() did not make (Neuroglancer's own widgets aside).
+      handMadeOnOff: checks.filter((c) => !c.closest("label.choice") && !c.closest(".ng-host, .ins-embed, [class*='neuroglancer-']")).length,
       headings: tally(heads, ["fontSize", "fontWeight", "textTransform", "color", "letterSpacing"]),
       radii: tally(all.filter((e) => getComputedStyle(e).borderRadius !== "0px"), ["borderRadius"]),
       inlineStyled: all.filter((e) => e.getAttribute("style")).length,
@@ -200,7 +202,9 @@ const summary = {
   // Text in the browser's own font, not the app's (mostly controls).
   "Text in the browser's default font": measured.reduce((n, p) => n + (p.fonts["sans-serif"] ?? 0), 0),
   "Elements with inline styles": measured.reduce((n, p) => n + p.inlineStyled, 0),
-  "Panels mixing switches and checkboxes": measured.filter((p) => p.checkboxes.switch && p.checkboxes.plain).length,
+  // A switch turns a feature on and a checkbox picks an option, both from the SDK, so the
+  // two may sit side by side; what is counted is an on/off control made by hand.
+  "On/off controls not made with toggle or checkbox": measured.reduce((n, p) => n + (p.handMadeOnOff ?? 0), 0),
 };
 
 if (process.env.UI_AUDIT_BASELINE) writeFileSync(baselineFile, JSON.stringify({ summary, panels }, null, 1) + "\n");

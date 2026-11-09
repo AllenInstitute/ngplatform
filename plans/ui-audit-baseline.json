@@ -1,13 +1,13 @@
 {
  "summary": {
   "Font sizes": 5,
-  "Button styles": 19,
-  "Input and select styles": 12,
+  "Button styles": 15,
+  "Input and select styles": 8,
   "Heading styles": 4,
-  "Corner radii": 4,
+  "Corner radii": 3,
   "Text in the browser's default font": 0,
   "Elements with inline styles": 90,
-  "Panels mixing switches and checkboxes": 1
+  "On/off controls not made with toggle or checkbox": 60
  },
  "panels": {
   "Start card": {
@@ -31,6 +31,7 @@
    },
    "inputs": {},
    "checkboxes": {},
+   "handMadeOnOff": 0,
    "headings": {},
    "radii": {},
    "inlineStyled": 0,
@@ -48,39 +49,33 @@
     "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 21
    },
    "colors": {
-    "rgb(148, 148, 148)": 16,
-    "rgb(222, 222, 222)": 15,
-    "rgb(138, 138, 138)": 1,
-    "rgb(170, 85, 0)": 1,
-    "rgb(153, 153, 119)": 9,
-    "rgb(17, 102, 68)": 2,
-    "rgb(119, 0, 136)": 1
+    "rgb(148, 148, 148)": 25,
+    "rgb(222, 222, 222)": 17,
+    "rgb(138, 138, 138)": 2,
+    "rgb(255, 255, 255)": 1
    },
    "buttons": {
-    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 2,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 4,
     "13px | 16.25px | 0px | rgba(0, 0, 0, 0) | rgb(222, 222, 222)": 1,
-    "12px | 27px | 0px | rgba(0, 0, 0, 0) | rgb(222, 222, 222)": 1,
-    "12px | 27px | 0px | rgba(0, 0, 0, 0) | rgb(148, 148, 148)": 2,
-    "12px | 24px | 0px | rgb(38, 38, 38) | rgb(138, 138, 138)": 1,
-    "12px | 24px | 0px | rgb(18, 18, 18) | rgb(61, 61, 61)": 1,
-    "12px | 21.5938px | 0px | rgb(107, 107, 107) | rgb(255, 255, 255)": 3
+    "12px | 24px | 0px | rgb(28, 28, 28) | rgba(0, 0, 0, 0)": 1,
+    "12px | 24px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 1,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 4
    },
    "inputs": {
     "12px | 24px | 0px | rgb(0, 0, 0)": 4,
-    "12px | 16.5938px | 0px | rgb(0, 0, 0)": 2,
-    "12px | 15.5938px | 0px | rgb(0, 0, 0)": 2,
+    "12px | 22px | 0px | rgb(0, 0, 0)": 4,
     "12px | 12px | 0px | rgb(59, 59, 59)": 1
    },
    "checkboxes": {
     "vis": 1,
     "ins-check": 1
    },
+   "handMadeOnOff": 1,
    "headings": {
     "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 3
    },
    "radii": {
-    "50%": 1,
-    "20%": 1
+    "50%": 1
    },
    "inlineStyled": 21,
    "words": 84,
@@ -99,6 +94,7 @@
     "rgb(148, 148, 148)": 29
    },
    "buttons": {
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 1,
     "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 1,
     "12px | 17.3906px | 0px | rgba(0, 0, 0, 0) | rgb(148, 148, 148)": 12
    },
@@ -106,13 +102,14 @@
    "checkboxes": {
     "switch": 12
    },
+   "handMadeOnOff": 0,
    "headings": {
     "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 5
    },
    "radii": {},
    "inlineStyled": 0,
    "words": 178,
-   "controls": 25
+   "controls": 26
   },
   "Track filtering (SRB)": {
    "fontSizes": {
@@ -127,6 +124,7 @@
    "buttons": {},
    "inputs": {},
    "checkboxes": {},
+   "handMadeOnOff": 0,
    "headings": {},
    "radii": {},
    "inlineStyled": 0,
@@ -156,6 +154,7 @@
    "checkboxes": {
     "plain": 2
    },
+   "handMadeOnOff": 2,
    "headings": {
     "12px | 600 | none | rgb(222, 222, 222) | normal": 1
    },
@@ -184,6 +183,7 @@
     "12px | 24px | 0px | rgb(0, 0, 0)": 3
    },
    "checkboxes": {},
+   "handMadeOnOff": 0,
    "headings": {},
    "radii": {},
    "inlineStyled": 0,
@@ -200,8 +200,8 @@
     "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 1
    },
    "colors": {
-    "rgb(222, 222, 222)": 39,
-    "rgb(148, 148, 148)": 35
+    "rgb(222, 222, 222)": 35,
+    "rgb(148, 148, 148)": 39
    },
    "buttons": {
     "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 21
@@ -213,6 +213,7 @@
     "switch": 1,
     "plain": 7
    },
+   "handMadeOnOff": 7,
    "headings": {
     "12px | 600 | none | rgb(222, 222, 222) | normal": 10,
     "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 8
@@ -247,6 +248,7 @@
    "checkboxes": {
     "plain": 2
    },
+   "handMadeOnOff": 2,
    "headings": {
     "12px | 600 | none | rgb(222, 222, 222) | normal": 10
    },
@@ -268,6 +270,7 @@
    "buttons": {},
    "inputs": {},
    "checkboxes": {},
+   "handMadeOnOff": 0,
    "headings": {},
    "radii": {},
    "inlineStyled": 0,
@@ -296,6 +299,7 @@
    "checkboxes": {
     "plain": 6
    },
+   "handMadeOnOff": 6,
    "headings": {},
    "radii": {},
    "inlineStyled": 0,
@@ -318,6 +322,7 @@
    },
    "inputs": {},
    "checkboxes": {},
+   "handMadeOnOff": 0,
    "headings": {},
    "radii": {},
    "inlineStyled": 0,
@@ -345,6 +350,7 @@
     "12px | 24px | 0px | rgb(0, 0, 0)": 4
    },
    "checkboxes": {},
+   "handMadeOnOff": 0,
    "headings": {
     "11px | 600 | none | rgb(148, 148, 148) | normal": 1
    },
@@ -366,6 +372,7 @@
    "buttons": {},
    "inputs": {},
    "checkboxes": {},
+   "handMadeOnOff": 0,
    "headings": {},
    "radii": {},
    "inlineStyled": 1,
@@ -393,6 +400,7 @@
     "12px | 24px | 0px | rgb(0, 0, 0)": 2
    },
    "checkboxes": {},
+   "handMadeOnOff": 0,
    "headings": {},
    "radii": {},
    "inlineStyled": 0,
@@ -420,6 +428,7 @@
    },
    "inputs": {},
    "checkboxes": {},
+   "handMadeOnOff": 0,
    "headings": {
     "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 1
    },
@@ -453,6 +462,7 @@
     "12px | 120px | 0px | rgb(0, 0, 0)": 1
    },
    "checkboxes": {},
+   "handMadeOnOff": 0,
    "headings": {
     "15px | 600 | none | rgb(222, 222, 222) | normal": 1,
     "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 1
@@ -466,14 +476,15 @@
    "fontSizes": {
     "15px": 1,
     "13px": 7,
-    "12px": 16
+    "12px": 16,
+    "11px": 4
    },
    "fonts": {
-    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 24
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 28
    },
    "colors": {
-    "rgb(222, 222, 222)": 18,
-    "rgb(148, 148, 148)": 4,
+    "rgb(222, 222, 222)": 14,
+    "rgb(148, 148, 148)": 12,
     "rgb(138, 138, 138)": 1,
     "rgb(0, 0, 0)": 1
    },
@@ -483,19 +494,20 @@
     "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
    },
    "inputs": {
-    "12px | 17.3906px | 0px | rgb(51, 51, 51)": 4,
-    "12px | 27px | 0px | rgb(107, 107, 107)": 2
+    "13px | 28px | 0px | rgb(0, 0, 0)": 6
    },
    "checkboxes": {
-    "plain": 10
+    "plain": 9
    },
+   "handMadeOnOff": 9,
    "headings": {
-    "15px | 600 | none | rgb(222, 222, 222) | normal": 1
+    "15px | 600 | none | rgb(222, 222, 222) | normal": 1,
+    "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 4
    },
    "radii": {},
    "inlineStyled": 0,
-   "words": 67,
-   "controls": 23
+   "words": 76,
+   "controls": 22
   },
   "Sheet: Settings sign-in": {
    "fontSizes": {
@@ -520,6 +532,7 @@
    "buttons": {
     "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 8,
     "13px | 28px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 1,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 5,
     "14px | 40px | 20px | rgb(19, 19, 20) | rgb(142, 145, 143)": 1,
     "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
    },
@@ -527,6 +540,7 @@
     "13px | 28px | 0px | rgb(0, 0, 0)": 4
    },
    "checkboxes": {},
+   "handMadeOnOff": 0,
    "headings": {
     "15px | 600 | none | rgb(222, 222, 222) | normal": 1,
     "12px | 600 | none | rgb(222, 222, 222) | normal": 12
@@ -536,7 +550,7 @@
    },
    "inlineStyled": 0,
    "words": 48,
-   "controls": 15
+   "controls": 20
   },
   "Sheet: Settings compute": {
    "fontSizes": {
@@ -560,13 +574,14 @@
    "buttons": {
     "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 5,
     "13px | 28px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 1,
-    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 2,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 3,
     "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
    },
    "inputs": {
     "13px | 28px | 0px | rgb(0, 0, 0)": 1
    },
    "checkboxes": {},
+   "handMadeOnOff": 0,
    "headings": {
     "15px | 600 | none | rgb(222, 222, 222) | normal": 1,
     "12px | 600 | none | rgb(222, 222, 222) | normal": 4
@@ -574,7 +589,7 @@
    "radii": {},
    "inlineStyled": 1,
    "words": 56,
-   "controls": 10
+   "controls": 11
   },
   "Sheet: Settings storage": {
    "fontSizes": {
@@ -601,6 +616,7 @@
     "13px | 28px | 0px | rgb(0, 0, 0)": 5
    },
    "checkboxes": {},
+   "handMadeOnOff": 0,
    "headings": {
     "15px | 600 | none | rgb(222, 222, 222) | normal": 1,
     "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 2
@@ -614,15 +630,17 @@
    "fontSizes": {
     "15px": 1,
     "13px": 10,
-    "11px": 1,
-    "12px": 49
+    "11px": 14,
+    "12px": 40
    },
    "fonts": {
-    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 61
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 25,
+    "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 40
    },
    "colors": {
-    "rgb(222, 222, 222)": 55,
-    "rgb(148, 148, 148)": 5,
+    "rgb(222, 222, 222)": 46,
+    "rgb(148, 148, 148)": 13,
+    "rgb(138, 138, 138)": 5,
     "rgb(0, 0, 0)": 1
    },
    "buttons": {
@@ -632,13 +650,14 @@
    },
    "inputs": {},
    "checkboxes": {},
+   "handMadeOnOff": 0,
    "headings": {
     "15px | 600 | none | rgb(222, 222, 222) | normal": 1,
     "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 1
    },
    "radii": {},
    "inlineStyled": 0,
-   "words": 185,
+   "words": 95,
    "controls": 10
   },
   "Sheet: Keyboard": {
@@ -662,6 +681,7 @@
    },
    "inputs": {},
    "checkboxes": {},
+   "handMadeOnOff": 0,
    "headings": {
     "15px | 600 | none | rgb(222, 222, 222) | normal": 1,
     "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 2
@@ -696,6 +716,7 @@
    "checkboxes": {
     "plain": 1
    },
+   "handMadeOnOff": 1,
    "headings": {
     "15px | 600 | none | rgb(222, 222, 222) | normal": 1,
     "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 1
@@ -727,6 +748,7 @@
     "13px | 28px | 0px | rgb(0, 0, 0)": 3
    },
    "checkboxes": {},
+   "handMadeOnOff": 0,
    "headings": {
     "15px | 600 | none | rgb(222, 222, 222) | normal": 1
    },
@@ -763,6 +785,7 @@
    "checkboxes": {
     "plain": 1
    },
+   "handMadeOnOff": 1,
    "headings": {
     "15px | 600 | none | rgb(222, 222, 222) | normal": 1,
     "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 3
@@ -783,22 +806,17 @@
     "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 19
    },
    "colors": {
-    "rgb(148, 148, 148)": 45,
-    "rgb(222, 222, 222)": 21,
+    "rgb(148, 148, 148)": 53,
+    "rgb(222, 222, 222)": 19,
     "rgb(138, 138, 138)": 3,
-    "rgb(119, 0, 136)": 1,
-    "rgb(153, 153, 119)": 6,
-    "rgb(51, 0, 170)": 1
+    "rgb(255, 255, 255)": 2
    },
    "buttons": {
-    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 4,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 7,
     "13px | 16.25px | 0px | rgba(0, 0, 0, 0) | rgb(222, 222, 222)": 1,
-    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 3,
-    "12px | 24px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 1,
-    "12px | 27px | 0px | rgba(0, 0, 0, 0) | rgb(222, 222, 222)": 1,
-    "12px | 27px | 0px | rgba(0, 0, 0, 0) | rgb(148, 148, 148)": 3,
-    "12px | 24px | 0px | rgb(18, 18, 18) | rgb(61, 61, 61)": 4,
-    "12px | 24px | 0px | rgb(38, 38, 38) | rgb(138, 138, 138)": 3
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 7,
+    "12px | 24px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 4,
+    "12px | 24px | 0px | rgb(28, 28, 28) | rgba(0, 0, 0, 0)": 1
    },
    "inputs": {
     "12px | 24px | 0px | rgb(0, 0, 0)": 13,
@@ -808,6 +826,7 @@
     "vis": 7,
     "ins-check": 4
    },
+   "handMadeOnOff": 7,
    "headings": {
     "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 8
    },
@@ -849,6 +868,7 @@
    "checkboxes": {
     "plain": 4
    },
+   "handMadeOnOff": 4,
    "headings": {
     "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 3
    },
@@ -880,6 +900,7 @@
    "checkboxes": {
     "plain": 7
    },
+   "handMadeOnOff": 7,
    "headings": {
     "12px | 600 | none | rgb(222, 222, 222) | normal": 1
    },
@@ -910,6 +931,7 @@
    "checkboxes": {
     "plain": 6
    },
+   "handMadeOnOff": 6,
    "headings": {},
    "radii": {},
    "inlineStyled": 0,
@@ -927,17 +949,16 @@
     "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 3
    },
    "colors": {
-    "rgb(148, 148, 148)": 33,
-    "rgb(222, 222, 222)": 10,
+    "rgb(148, 148, 148)": 35,
+    "rgb(222, 222, 222)": 8,
     "rgb(138, 138, 138)": 2
    },
    "buttons": {
-    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 3,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 6,
     "13px | 16.25px | 0px | rgba(0, 0, 0, 0) | rgb(222, 222, 222)": 1,
-    "12px | 27px | 0px | rgba(0, 0, 0, 0) | rgb(222, 222, 222)": 1,
-    "12px | 27px | 0px | rgba(0, 0, 0, 0) | rgb(148, 148, 148)": 3,
-    "12px | 24px | 0px | rgb(18, 18, 18) | rgb(61, 61, 61)": 4,
-    "12px | 24px | 0px | rgb(38, 38, 38) | rgb(138, 138, 138)": 2
+    "12px | 24px | 0px | rgb(28, 28, 28) | rgba(0, 0, 0, 0)": 1,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 4,
+    "12px | 24px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 2
    },
    "inputs": {
     "12px | 24px | 0px | rgb(0, 0, 0)": 9
@@ -946,6 +967,7 @@
     "vis": 2,
     "ins-check": 4
    },
+   "handMadeOnOff": 2,
    "headings": {
     "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 6
    },
@@ -979,6 +1001,7 @@
    "checkboxes": {
     "plain": 4
    },
+   "handMadeOnOff": 4,
    "headings": {
     "12px | 600 | none | rgb(222, 222, 222) | normal": 1
    },
@@ -1008,6 +1031,7 @@
     "12px | 24px | 0px | rgb(0, 0, 0)": 4
    },
    "checkboxes": {},
+   "handMadeOnOff": 0,
    "headings": {
     "11px | 600 | none | rgb(148, 148, 148) | normal": 1
    },
@@ -1035,6 +1059,7 @@
    "checkboxes": {
     "plain": 1
    },
+   "handMadeOnOff": 1,
    "headings": {},
    "radii": {},
    "inlineStyled": 3,
@@ -1062,6 +1087,7 @@
     "12px | 24px | 0px | rgb(0, 0, 0)": 2
    },
    "checkboxes": {},
+   "handMadeOnOff": 0,
    "headings": {},
    "radii": {},
    "inlineStyled": 0,

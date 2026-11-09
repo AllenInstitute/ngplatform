@@ -70,7 +70,7 @@ Item line numbers are from that commit and move as the code changes.
 | Corner radii on a square theme | 8 | 0 (pills for status chips only) |
 | Text in the browser's default font (elements) | 63 | 0 |
 | Elements with inline styles | 90 | Only computed geometry |
-| Panels mixing switches and checkboxes for on/off | 1 | 0 |
+| On/off controls not made with the SDK's toggle or checkbox (was: panels mixing switches and checkboxes, 1) | 60 (at 2B) | 0 |
 
 ## Batches
 
