@@ -42,7 +42,7 @@ scene's state):
    that reads chunks through Neuroglancer's codecs), `@ngplatform/sdk/dom`
    (`el`, `button`, `select`, `numberInput`, `field`, `svgEl`,
    `downloadBlob`, `safeFileName`), `@ngplatform/sdk/format` (`csv`,
-   `csvField`, `ticks`, `mmText`, `bytesText`) and
+   `csvField`, `ticks`, `mmText`, `bytesText`, `parseBytes`) and
    `@ngplatform/sdk/worker_rpc` (`WorkerRpc`: requests to a worker of your
    own, with progress, cancel and a worker that fails). Everything a plugin may
    do goes through the `ctx` it is given; nothing in `src/` is imported

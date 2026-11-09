@@ -421,23 +421,32 @@ export function showSettingsSheet(wb: Workbench, section: SettingsSection = "vie
 
 const SECTION_RENDER: Record<SettingsSection, (host: HTMLElement, wb: Workbench) => (() => void) | undefined> = {
   view: (host, wb) => {
-    const panel = h("div", { class: "ng-host settings-host" });
+    const settings = h("div", { class: "view-settings" });
+    const dispose = wb.engine.mountSettings(settings);
     // Kept in this browser: offers of the plugins that are off (src/ui/plugin_offers.ts).
     const offers = h("input", { type: "checkbox", id: "show-offers" }) as HTMLInputElement;
     offers.checked = wb.offers.enabled;
     offers.addEventListener("change", () => wb.offers.setEnabled(offers.checked));
-    host.append(
-      h("p", { class: "note" }, "Saved with the workspace."),
-      panel,
-      h("div", { class: "row-actions" }, h("button", { class: "btn outline small", type: "button", onclick: () => wb.run("view.panelConvention") }, "Orientation of the views…")),
+    settings.append(
       h(
-        "label",
-        { class: "field check", title: "Kept in this browser. Ticking it again brings back the offers you said “Not now” to." },
-        offers,
-        h("span", {}, "Offer tools that are off when the data suits them"),
+        "section",
+        {},
+        h("h3", { class: "section-title" }, "In this browser"),
+        h(
+          "div",
+          { class: "options" },
+          h(
+            "label",
+            { class: "field check", title: "Ticking it again brings back the offers you said “Not now” to." },
+            offers,
+            h("span", {}, "Offer tools that are off when the data suits them"),
+          ),
+          h("div", { class: "row-actions" }, h("button", { class: "btn outline", type: "button", onclick: () => wb.run("view.panelConvention") }, "Orientation of the views…")),
+        ),
       ),
     );
-    return wb.engine.mountSettings(panel);
+    host.append(h("p", { class: "note first" }, "Saved with the workspace, except the last group."), settings);
+    return dispose;
   },
   "sign-in": (host, wb) => renderAuthPanel(host, wb),
   compute: (host, wb) => renderRemotePanel(host, wb),

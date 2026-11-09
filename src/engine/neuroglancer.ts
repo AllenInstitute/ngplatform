@@ -26,8 +26,8 @@ export { TabView } from "neuroglancer/unstable/widget/tab_view.js";
 export { setNamedPanelOrientation } from "neuroglancer/unstable/data_panel_layout.js";
 export { SegmentationUserLayer } from "neuroglancer/unstable/layer/segmentation/index.js";
 export { WatchableValue } from "neuroglancer/unstable/trackable_value.js";
-export { ViewerSettingsPanel } from "neuroglancer/unstable/ui/viewer_settings.js";
-export { StatisticsPanel } from "neuroglancer/unstable/ui/statistics.js";
+// Settings › View and the chunk statistics, as the app's own fields and table (./view_settings.ts).
+export { columnSpecifications, getChunkSourceIdentifier, getFormattedNames } from "neuroglancer/unstable/ui/statistics.js";
 export { InputEventBindingHelpDialog } from "neuroglancer/unstable/help/input_event_bindings.js";
 export { getStatusMessageContainers, StatusMessage } from "neuroglancer/unstable/status.js";
 export { setAsyncComputationWorkerFactory, setChunkWorkerFactory } from "neuroglancer/unstable/worker_factories.js";

@@ -1,6 +1,8 @@
 /** The smaller panels: Statistics, Jobs and Plugins (the computers are in remote.ts). */
 import type { LocalPlugins, UrlPluginOffer } from "../../platform/local_plugins.js";
 import type { Manifest } from "../../sdk/types.js";
+import { bytesText } from "../../sdk/format.js";
+import type { ChunkSourceStatistics } from "../../engine/engine.js";
 import { clear, h, icon, iconButton } from "../dom.js";
 import { renderMarkdown } from "../markdown.js";
 import { closeSheet, sheet, showMenu, showSheet } from "../overlays.js";
@@ -11,10 +13,62 @@ import { type CatalogueEntry, GROUP_TITLES, type PluginGroup } from "../../../pl
 
 // -------------------------------------------------------------- statistics
 
+/** The table's columns after the source: heading, tooltip, and the cell. */
+const STATISTICS: [string, string, (s: ChunkSourceStatistics) => string][] = [
+  ["Visible", "Chunks the views need", (s) => count(s.visible)],
+  ["Loading", "Of those, being downloaded", (s) => count(s.downloading)],
+  ["In memory", "Of those, in system memory", (s) => count(s.memory)],
+  ["On GPU", "Of those, in GPU memory", (s) => count(s.gpu)],
+  ["Failed", "Of those, failed to load", (s) => count(s.failed)],
+  ["GPU memory", "GPU memory of the chunks the views need", (s) => (s.gpuBytes > 0 ? bytesText(s.gpuBytes) : "–")],
+  ["Latency", "Mean download time", (s) => (Number.isFinite(s.latency) ? `${Math.round(s.latency).toLocaleString()} ms` : "–")],
+];
+const count = (n: number) => (Number.isFinite(n) ? n.toLocaleString() : "–");
+
+/** Chunk statistics (Settings › Developer): what each source has loaded for the views, as a table read again each second. */
 export function renderStatisticsPanel(host: HTMLElement, wb: Workbench): () => void {
-  const panel = h("div", { class: "ng-host statistics-host" });
-  host.append(panel);
-  return wb.engine.mountStatistics(panel);
+  const body = h("tbody");
+  const table = h(
+    "div",
+    { class: "stats-wrap" },
+    h(
+      "table",
+      { class: "stats-table" },
+      h("thead", {}, h("tr", {}, h("th", { scope: "col" }, "Source"), ...STATISTICS.map(([label, title]) => h("th", { scope: "col", title }, label)))),
+      body,
+    ),
+  );
+  const empty = h("p", { class: "empty" }, "Nothing loaded yet.");
+  host.append(table, empty);
+  const render = (rows: ChunkSourceStatistics[]) => {
+    rows.sort((a, b) => b.gpuBytes - a.gpuBytes || b.visible - a.visible || a.kind.localeCompare(b.kind));
+    table.hidden = rows.length === 0;
+    empty.hidden = rows.length > 0;
+    clear(
+      body,
+      ...rows.map((s) =>
+        h(
+          "tr",
+          {},
+          h("td", { title: s.id }, h("div", { class: "stats-kind" }, s.kind), s.details.length ? h("div", { class: "stats-detail" }, s.details.join(" · ")) : null),
+          ...STATISTICS.map(([, , cell]) => h("td", {}, cell(s))),
+        ),
+      ),
+    );
+  };
+  let timer = 0;
+  let stopped = false;
+  const read = async () => {
+    const rows = await wb.engine.chunkStatistics().catch(() => undefined);
+    if (stopped) return;
+    if (rows !== undefined) render(rows);
+    timer = window.setTimeout(() => void read(), 1000);
+  };
+  void read();
+  return () => {
+    stopped = true;
+    window.clearTimeout(timer);
+  };
 }
 
 // -------------------------------------------------------------------- jobs

@@ -28,16 +28,15 @@ import {
   SegmentationUserLayer,
   setScreenshotOverlay,
   type SidePanelManager,
-  StatisticsPanel,
   TrackableBoolean,
   type Viewer,
   setNamedPanelOrientation,
-  ViewerSettingsPanel,
 } from "./neuroglancer.js";
 import { looksAnatomical, type PanelConvention, panelRotations } from "./anatomical.js";
 import { applyLookupTable, layerLookupSource } from "./lookup_tables.js";
 import { addMomentum } from "./momentum.js";
 import { mountInspector } from "./inspector/index.js";
+import { type ChunkSourceStatistics, chunkStatistics, mountViewSettings } from "./view_settings.js";
 import { guardSelectedValues, type SelectedValues } from "./selected_values.js";
 import { watchOutlines } from "./outlines.js";
 import { type CaptureOptions, type CapturePanel, captureDimensions, capturePanels, CaptureSession } from "./capture.js";
@@ -80,6 +79,7 @@ export interface ViewPanel {
   project(global: ArrayLike<number>): { x: number; y: number; depth: number } | undefined;
 }
 export type Disposer = () => void;
+export type { ChunkSourceStatistics } from "./view_settings.js";
 
 export interface LayerInfo {
   name: string;
@@ -264,8 +264,6 @@ function readPanelPreference(): PanelConvention | "auto" {
 export class Engine {
   readonly viewer: Viewer;
   private readonly disposers: Disposer[] = [];
-  /** How many docked copies of each location-driven panel are mounted. */
-  private readonly docked = { statistics: 0 };
 
   constructor(readonly host: HTMLElement) {
     this.viewer = makeMinimalViewer({
@@ -494,9 +492,6 @@ export class Engine {
       this.hiddenDrawing.delete(name);
       if (opacity !== undefined) this.hideDrawing(name, true);
     }
-    // Docked panels draw only while their location is visible; a restored
-    // state without them would hide them.
-    if (this.docked.statistics > 0) this.viewer.statisticsDisplayState.location.visible = true;
   }
 
   onStateChanged(callback: () => void): Disposer {
@@ -1358,20 +1353,14 @@ export class Engine {
     };
   }
 
+  /** Settings › View: the viewer's settings, as the app's fields. */
   mountSettings(host: HTMLElement): Disposer {
-    return dockPanel(host, new ViewerSettingsPanel(DOCKED_PANEL_MANAGER, this.viewer.settingsPanelState, this.viewer));
+    return mountViewSettings(host, this.viewer);
   }
 
-  mountStatistics(host: HTMLElement): Disposer {
-    const v = this.viewer;
-    const location = v.statisticsDisplayState.location;
-    location.visible = true;
-    this.docked.statistics++;
-    const undock = dockPanel(host, new StatisticsPanel(DOCKED_PANEL_MANAGER, v.chunkQueueManager, v.statisticsDisplayState));
-    return () => {
-      undock();
-      if (--this.docked.statistics === 0) location.visible = false;
-    };
+  /** What each chunk source has loaded for the views (Settings › Developer). */
+  chunkStatistics(): Promise<ChunkSourceStatistics[]> {
+    return chunkStatistics(this.viewer);
   }
 
   /** Neuroglancer's key and mouse binding reference, for the views. */

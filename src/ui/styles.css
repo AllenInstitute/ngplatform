@@ -681,8 +681,7 @@ textarea.py-in {
 /* ------------------------------------------- Neuroglancer widgets, docked */
 .ng-host { font-size: var(--fs-body); color: var(--text); }
 /* Neuroglancer's panels set their own 10pt sans-serif; docked here, they take the app's type. */
-.ng-host :is(.neuroglancer-settings-body, .neuroglancer-statistics-panel-body, .neuroglancer-help-body,
-  .neuroglancer-layer-side-panel-tab-view, .neuroglancer-tab-label, .neuroglancer-selection-details-layer-title) {
+.ng-host :is(.neuroglancer-help-body, .neuroglancer-layer-side-panel-tab-view, .neuroglancer-tab-label, .neuroglancer-selection-details-layer-title) {
   font-family: var(--ui); font-size: var(--fs-body);
 }
 .ng-host .neuroglancer-side-panel { flex: 1; min-height: 0; width: auto !important; }
@@ -693,13 +692,28 @@ textarea.py-in {
 }
 /* A docked panel closes with its dock, not its own button. */
 .ngp-docked-panel > .neuroglancer-side-panel-titlebar > .neuroglancer-icon:last-child { display: none; }
-.dock-pane[data-tab="selection"], .dock-pane[data-tab="statistics"] { display: flex; flex-direction: column; }
-.statistics-host, .settings-host, .bindings-host { display: flex; flex-direction: column; min-height: 0; flex: 1; }
-/* In a sheet, Neuroglancer's panels need a height: their bodies scroll inside it. */
-.settings-host { height: min(400px, 45vh); flex: none; }
-.bindings-host { height: 50vh; flex: none; }
-.bindings-host .neuroglancer-side-panel-titlebar, .settings-host .neuroglancer-side-panel-titlebar,
-.statistics-host .neuroglancer-side-panel-titlebar { display: none; }
+.dock-pane[data-tab="selection"] { display: flex; flex-direction: column; }
+/* In a sheet, Neuroglancer's key reference needs a height: its body scrolls inside it. */
+.bindings-host { display: flex; flex-direction: column; min-height: 0; height: 50vh; flex: none; }
+.bindings-host .neuroglancer-side-panel-titlebar { display: none; }
+
+/* Settings › View (src/engine/view_settings.ts): the viewer's settings in groups. */
+.view-settings { display: grid; gap: var(--sp-6); }
+.view-limits { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-5); margin-bottom: var(--sp-5); }
+/* Settings › Developer: the chunk statistics, a row a source. */
+.stats-wrap { overflow: auto; max-height: 50vh; border: 1px solid var(--line); }
+.stats-table { width: 100%; border-collapse: collapse; font-size: var(--fs-body); }
+.stats-table th {
+  position: sticky; top: 0; background: var(--ink-2); padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--line);
+  font: 600 var(--fs-caption)/1.2 var(--ui); text-transform: uppercase; letter-spacing: var(--label-spacing); color: var(--muted);
+  text-align: right; white-space: nowrap;
+}
+.stats-table td { padding: var(--sp-2) var(--sp-4); border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; font: var(--fs-body)/1.4 var(--mono); font-variant-numeric: tabular-nums; }
+.stats-table tr:last-child td { border-bottom: 0; }
+.stats-table :is(th, td):first-child { text-align: left; }
+.stats-table td:first-child { font-family: var(--ui); width: 40%; max-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.stats-kind { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
+.stats-detail { color: var(--faint); font: var(--fs-caption)/1.4 var(--mono); overflow: hidden; text-overflow: ellipsis; }
 
 /* ------------------------------------------------------ layer inspector */
 .ins-root { flex: 1; min-height: 0; display: flex; flex-direction: column; }
