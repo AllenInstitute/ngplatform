@@ -4,9 +4,9 @@
  * a NIfTI-1 image in RAS+ millimetres, which loads onto the store's space
  * (and into MRtrix, FSL, DSI Studio or nibabel).
  *
- * The grid covers the store's bounds, at 1 mm for brain-sized stores and a
- * round size giving at most 256 voxels across for others (voxelSize).
- * Segments are walked in steps of half a voxel.
+ * The grid covers the store's bounds, at the voxel size asked for, else 1 mm
+ * for brain-sized stores and a round size giving at most 256 voxels across
+ * for others (voxelSize).  Segments are walked in steps of half a voxel.
  */
 import type { StoreInfo } from "./roi_worker.js";
 import { millimetres } from "./trk.js";
@@ -35,14 +35,38 @@ export function voxelSize(extent: number): number {
   return [1, 2, 2.5, 5, 10].map((m) => m * power).find((v) => v >= want * (1 - 1e-9)) ?? 10 * power;
 }
 
-export function densityGrid(info: StoreInfo): DensityGrid {
+/** The most voxels a density grid may have: a count and a stamp each, 8 bytes a voxel (256 MB). */
+export const MAX_DENSITY_VOXELS = 2 ** 25;
+
+/** The store's bounds in mm (RAS+): low and high corners. */
+function boundsMm(info: StoreInfo): { lo: number[]; hi: number[]; scale: [number, number, number]; offset: [number, number, number] } {
   const scale = millimetres(info);
   const offset = [0, 1, 2].map((k) => info.coordinateOffset?.[k] ?? 0) as [number, number, number];
   const lo = [0, 1, 2].map((k) => Math.min(info.bounds.lower[k], info.bounds.upper[k]) * scale[k] + offset[k] * scale[k]);
   const hi = [0, 1, 2].map((k) => Math.max(info.bounds.lower[k], info.bounds.upper[k]) * scale[k] + offset[k] * scale[k]);
-  const voxel = voxelSize(Math.max(...hi.map((h, k) => h - lo[k])));
+  return { lo, hi, scale, offset };
+}
+
+/** The voxel size a store's density map has unless another is asked for, mm. */
+export function defaultVoxel(info: StoreInfo): number {
+  const { lo, hi } = boundsMm(info);
+  return voxelSize(Math.max(...hi.map((h, k) => h - lo[k])));
+}
+
+/**
+ * The grid over the store's bounds, of `voxel` mm voxels (else
+ * defaultVoxel).  Throws when that is more than MAX_DENSITY_VOXELS voxels,
+ * saying the smallest voxel that fits.
+ */
+export function densityGrid(info: StoreInfo, voxel = defaultVoxel(info)): DensityGrid {
+  if (!(voxel > 0) || !Number.isFinite(voxel)) throw new Error(`a voxel size must be more than 0 mm, not ${voxel}`);
+  const { lo, hi, scale, offset } = boundsMm(info);
   const origin = lo.map((v) => Math.floor(v / voxel) * voxel) as [number, number, number];
   const dims = hi.map((v, k) => Math.max(1, Math.floor((v - origin[k]) / voxel + 0.5) + 1)) as [number, number, number];
+  if (dims[0] * dims[1] * dims[2] > MAX_DENSITY_VOXELS) {
+    const smallest = Math.cbrt(((hi[0] - lo[0] + voxel) * (hi[1] - lo[1] + voxel) * (hi[2] - lo[2] + voxel)) / MAX_DENSITY_VOXELS);
+    throw new Error(`${voxel} mm voxels make a ${dims.join(" × ")} grid, too many to count in the page: use ${Number((smallest * 1.05).toPrecision(2))} mm or more`);
+  }
   return { origin, dims, voxel, scale, offset };
 }
 

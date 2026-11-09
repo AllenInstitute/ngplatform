@@ -1,7 +1,7 @@
 /** Track density maps: the grid, each streamline counted once a voxel, and the NIfTI file placed in RAS+ mm. */
 import { describe, expect, it } from "vitest";
 import { niftiAffine, openNifti } from "../../../src/virtual/images/nifti.js";
-import { addDensity, densityGrid, displayMax, niftiFile, voxelSize } from "../density.js";
+import { addDensity, defaultVoxel, densityGrid, displayMax, MAX_DENSITY_VOXELS, niftiFile, voxelSize } from "../density.js";
 import type { StoreInfo } from "../roi_worker.js";
 
 const info = (lower: number[], upper: number[], unit = "m", scale = 1e-3, offset?: number[]): StoreInfo => ({
@@ -22,6 +22,21 @@ describe("track density", () => {
     expect(voxelSize(10)).toBe(0.05);
     expect(voxelSize(0.5)).toBe(0.002);
     expect(voxelSize(0)).toBe(1);
+  });
+
+  it("takes the voxel size asked for, within what the page can count", () => {
+    const brain = info([-80, -110, -50], [80, 80, 90]);
+    expect(defaultVoxel(brain)).toBe(1);
+    const g = densityGrid(brain, 2.5);
+    expect(g.voxel).toBe(2.5);
+    expect(g.origin).toEqual([-80, -110, -50]);
+    expect(g.dims).toEqual([65, 77, 57]);
+    expect(() => densityGrid(brain, 0.2)).toThrow(/too many to count in the page: use 0\.\d+ mm or more/);
+    // The size it suggests fits.
+    const suggested = Number(/use ([\d.]+) mm/.exec((() => { try { densityGrid(brain, 0.2); } catch (e) { return (e as Error).message; } return ""; })())![1]);
+    const fits = densityGrid(brain, suggested);
+    expect(fits.dims[0] * fits.dims[1] * fits.dims[2]).toBeLessThanOrEqual(MAX_DENSITY_VOXELS);
+    expect(() => densityGrid(brain, 0)).toThrow(/more than 0/);
   });
 
   it("covers the store's bounds, in mm, with its offset", () => {
