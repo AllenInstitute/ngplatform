@@ -1,16 +1,17 @@
 /**
- * The Statistics section, as Freeview's label statistics: for an image and
+ * The Statistics card, as Freeview's label statistics: for an image and
  * a region (a box or ellipsoid annotation, a label of a label volume drawn
- * in the Segmentation tab, or a label of a segmentation layer), the voxel
+ * in the Segmentation panel, or a label of a segmentation layer), the voxel
  * count, volume, mean, SD, minimum, maximum and median of the image inside.  The image is read at its finest level whose
  * box around the region fits the memory chosen (as Registration's save
  * chooses a level); each result is a row of a table, saved as CSV.
  */
 import type { Disposer, PlatformContext } from "@ngplatform/sdk";
-import { button, downloadBlob, el, field, numberInput, select } from "@ngplatform/sdk/dom";
+import { button, downloadBlob, el, emptyState, field, numberInput, region, select, statusLine } from "@ngplatform/sdk/dom";
 import { csv } from "@ngplatform/sdk/format";
 import { apply, between, invertOr, multiply, voxelVolume } from "./geometry.js";
 import type { AnnotationJson } from "./measure.js";
+import { useMeasureTool } from "./measure_panel.js";
 import { annotationFromGlobal, annotationLayers, imagePlacement, rankOf } from "./scene.js";
 import type { LabelVolumes } from "../segmentation/editor.js";
 import { corners, levelWithin, type Region, type Summary, voxelBox } from "./statistics.js";
@@ -38,7 +39,8 @@ export class Statistics {
   /** The label asked for in a segmentation layer (not one drawn here). */
   private segValue = 1;
   private budget = "256";
-  private note = "";
+  /** A computation under way (how far), or why the last one failed; undefined when there is nothing to report. */
+  private report: { kind: "progress" | "error"; text: string } | undefined;
   private running: AbortController | undefined;
   private update: (() => void) | undefined;
   /** Label volumes drawn in the Segmentation plugin (none while it is off). */
@@ -56,6 +58,14 @@ export class Statistics {
 
   dispose(): void {
     this.running?.abort();
+  }
+
+  /** Stops the computation under way at once (nothing is added; what it was reading is let go). */
+  cancel(): void {
+    this.running?.abort();
+    this.running = undefined;
+    this.report = undefined;
+    this.update?.();
   }
 
   /** Regions to choose from: [key, title]. */
@@ -85,12 +95,13 @@ export class Statistics {
     const store = layerStore(this.ctx, image);
     const [kind, owner, id] = this.region.split("|");
     if (store === undefined || !owner) return;
+    // A new request replaces the one under way.
     this.running?.abort();
     const controller = (this.running = new AbortController());
     // Bytes the worker holds a voxel: the image (float32) and the values inside (float32); an atlas label adds its labels read exactly (float64) and the segmentation read.
     const perVoxel = kind === "s" ? 20 : 8;
     const maxVoxels = (Number(this.budget) * 2 ** 20) / perVoxel;
-    this.setNote("Reading…");
+    this.setReport("progress", "Reading…");
     try {
       const levels = await this.voxels.levels(store);
       const placements = levels.map((l) => imagePlacement(this.ctx, image, l));
@@ -164,20 +175,28 @@ export class Statistics {
       const { region, box } = regionAt(level);
       if (box === undefined) throw new Error(`the region is outside ${image}`);
       if (voxelsOf(box) > maxVoxels) throw new Error(`even the coarsest level needs ${Math.round((voxelsOf(box) * perVoxel) / 2 ** 20)} MB: allow more memory, or draw a smaller region`);
-      const summary = await this.voxels.stats(store, level, box, region, (done, total) => this.setNote(`Reading: ${Math.round((100 * done) / total)}%`), controller.signal);
+      const summary = await this.voxels.stats(store, level, box, region, (done, total) => this.setReport("progress", `Reading: ${Math.round((100 * done) / total)}%`), controller.signal);
       const volume = summary.count * voxelVolume(placements[level]!.voxelToMm);
+      if (controller.signal.aborted) {
+        if (this.running === controller) this.report = undefined;
+        return;
+      }
       this.rows.push({ image, region: title, level, voxelSize: levels[level].voxelSize, volume, ...summary });
-      this.setNote(level > 0 ? `Read level ${level} (${physical(levels[level].voxelSize)} voxels), the finest that fits ${this.budget} MB.` : "");
+      this.report = undefined;
     } catch (e) {
-      if ((e as DOMException).name !== "AbortError") this.setNote(`Could not compute: ${(e as Error).message}`);
+      // Cancelled, or replaced by a newer request (which reports for itself).
+      if (this.running !== controller) return;
+      this.report = controller.signal.aborted || (e as DOMException).name === "AbortError" ? undefined : { kind: "error", text: `Could not compute: ${(e as Error).message}` };
     } finally {
-      if (this.running === controller) this.running = undefined;
-      this.update?.();
+      if (this.running === controller) {
+        this.running = undefined;
+        this.update?.();
+      }
     }
   }
 
-  private setNote(text: string): void {
-    this.note = text;
+  private setReport(kind: "progress" | "error", text: string): void {
+    this.report = { kind, text };
     this.update?.();
   }
 
@@ -187,83 +206,95 @@ export class Statistics {
     downloadBlob(new Blob([csv([head, ...rows])], { type: "text/csv" }), "label_statistics.csv");
   }
 
+  /**
+   * Drawn once: the choices (or what is missing for them), the results and
+   * the status line, the first two regions drawn again only when what they
+   * show changes (moving about changes the state too).
+   */
   render(host: HTMLElement): Disposer {
-    let shown = "";
-    const draw = (force = false) => {
+    const status = statusLine();
+    const choices = region(() => this.choices(), { class: "stack" });
+    const results = region(() => this.results(), { class: "stack" });
+    host.append(el("div", { class: "stack" }, choices, status, results));
+    const draw = () => {
       const images = readableImages(this.ctx);
       const regions = this.regions();
-      const key = JSON.stringify([images, regions, this.rows.length, this.note, this.running !== undefined]);
-      if (key === shown && !force) return;
-      shown = key;
       if (!images.includes(this.image)) this.image = images[0] ?? "";
       if (!regions.some(([k]) => k === this.region)) this.region = regions[0]?.[0] ?? "";
-      const go = button(this.running ? "Reading…" : "Compute", () => void this.compute(), "Statistics of the image in the region", "btn primary small");
-      go.disabled = !this.image || !this.region || this.running !== undefined;
-      // One card a result: the dock is narrow for eight columns.
-      const table = this.rows.length
-        ? el(
-            "div",
-            { class: "an-results" },
-            ...this.rows.map((r) =>
-              el(
-                "div",
-                { class: "an-result" },
-                el("div", { class: "an-result-head" }, el("span", {}, r.region), el("span", { class: "an-faint" }, `${r.image} · level ${r.level}, ${physical(r.voxelSize)}`)),
-                el(
-                  "dl",
-                  { class: "an-facts" },
-                  ...([
-                    ["Voxels", r.count.toLocaleString()],
-                    ["Volume", physical(r.volume, 3)],
-                    ["Median", fmt(r.median)],
-                    ["Mean", fmt(r.mean)],
-                    ["SD", fmt(r.sd)],
-                    ["Range", `${fmt(r.min)} – ${fmt(r.max)}`],
-                  ] as [string, string][]).flatMap(([k, v]) => [el("dt", {}, k), el("dd", {}, v)]),
-                ),
-              ),
-            ),
-          )
-        : null;
-      host.replaceChildren(
-        images.length === 0
-          ? el("p", { class: "empty" }, "Add an image whose voxels can be read (OME-Zarr, NIfTI or precomputed).")
-          : regions.length === 0
-            ? el("p", { class: "empty" }, "Draw a box or an ellipsoid (Measure), or paint a label (Segmentation tab), for a region.")
-            : el(
-                "div",
-                { class: "an-grid2" },
-                field("Image", select(images.map((n) => [n, n]), this.image, (v) => (this.image = v), "Image")),
-                field("Region", select(regions, this.region, (v) => {
-                  this.region = v;
-                  draw(true);
-                }, "Region")),
-                this.region.startsWith("s|") ? field("Label", numberInput(this.segValue, (v) => (this.segValue = Math.round(v)), { step: 1, "aria-label": "Label value" }), "Its number in the segmentation") : "",
-                field("Memory", select(BUDGETS, this.budget, (v) => (this.budget = v), "Memory"), "The finest level that fits is read"),
-                el("div", { class: "an-end" }, go),
-              ),
-        table ?? "",
-        this.note ? el("p", { class: "an-hint" }, this.note) : "",
-        this.rows.length
-          ? el(
-              "div",
-              { class: "an-row" },
-              button("Save as CSV", () => this.exportCsv()),
-              button("Clear", () => {
-                this.rows = [];
-                draw(true);
-              }),
-            )
-          : "",
-      );
+      choices.update([images, regions, this.image, this.region, this.running !== undefined]);
+      results.update(this.rows.length);
+      const r = this.report;
+      if (r === undefined) status.clear();
+      else if (r.kind === "progress") status.progress(r.text);
+      else status.error(r.text, { label: "Retry", run: () => void this.compute() });
     };
-    this.update = () => draw(true);
+    this.update = draw;
     draw();
-    const offs = [this.ctx.viewer.onStateChanged(() => draw()), this.ctx.viewer.onLayersChanged(() => draw())];
+    const offs = [this.ctx.viewer.onStateChanged(draw), this.ctx.viewer.onLayersChanged(draw)];
     return () => {
       offs.forEach((off) => off());
       this.update = undefined;
     };
+  }
+
+  /** The image, the region and the memory, and Compute (Cancel beside it while one runs); or what is missing, with the action that supplies it. */
+  private choices(): HTMLElement {
+    const images = readableImages(this.ctx);
+    const regions = this.regions();
+    if (images.length === 0) return emptyState("No image whose voxels can be read (OME-Zarr, NIfTI or precomputed).", { label: "Open data…", run: () => void this.ctx.commands.invoke("dataset.add") });
+    if (regions.length === 0) return emptyState("No region: draw a box or an ellipsoid, or paint a label in Segmentation.", { label: "Draw a box", run: () => useMeasureTool(this.ctx, "annotateBoundingBox") });
+    const compute = button("Compute", () => void this.compute(), this.running ? "Start again with these choices (the one under way stops)" : "Statistics of the image in the region", "btn primary small");
+    return el(
+      "div",
+      { class: "grid-2" },
+      field("Image", select(images.map((n) => [n, n]), this.image, (v) => (this.image = v), "Image")),
+      field("Region", select(regions, this.region, (v) => {
+        this.region = v;
+        this.update?.();
+      }, "Region")),
+      this.region.startsWith("s|") ? field("Label", numberInput(this.segValue, (v) => (this.segValue = Math.round(v)), { step: 1, "aria-label": "Label value" }), "Its number in the segmentation") : null,
+      field("Memory", select(BUDGETS, this.budget, (v) => (this.budget = v), "Memory"), { info: "The finest level of the image whose box round the region fits is read; each result says which level it read." }),
+      el("div", { class: "row an-end" }, this.running ? button("Cancel", () => this.cancel(), "Stop the computation under way") : null, compute),
+    );
+  }
+
+  /** One card a result (the dock is narrow for eight columns), Save as CSV and Clear. */
+  private results(): HTMLElement[] {
+    if (this.rows.length === 0) return [];
+    return [
+      el(
+        "div",
+        { class: "an-results" },
+        ...this.rows.map((r) =>
+          el(
+            "div",
+            { class: "an-result" },
+            el("div", { class: "an-result-head" }, el("span", {}, r.region), el("span", { class: "faint" }, `${r.image} · level ${r.level}, ${physical(r.voxelSize)}`)),
+            el(
+              "dl",
+              { class: "an-facts" },
+              ...([
+                ["Voxels", r.count.toLocaleString()],
+                ["Volume", physical(r.volume, 3)],
+                ["Median", fmt(r.median)],
+                ["Mean", fmt(r.mean)],
+                ["SD", fmt(r.sd)],
+                ["Range", `${fmt(r.min)} – ${fmt(r.max)}`],
+              ] as [string, string][]).flatMap(([k, v]) => [el("dt", {}, k), el("dd", {}, v)]),
+            ),
+          ),
+        ),
+      ),
+      el(
+        "div",
+        { class: "row" },
+        button("Save as CSV", () => this.exportCsv()),
+        button("Clear", () => {
+          this.rows = [];
+          this.update?.();
+        }),
+      ),
+    ];
   }
 }
 

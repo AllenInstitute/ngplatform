@@ -7,7 +7,7 @@
  * the workspace (this plugin's state).
  */
 import type { Disposer, PlatformContext, ViewPanelInfo } from "@ngplatform/sdk";
-import { el } from "@ngplatform/sdk/dom";
+import { button, checkbox, el, emptyState, field, iconButton, info, region, select, slider } from "@ngplatform/sdk/dom";
 import type { AnnotationJson } from "./measure.js";
 import { rankOf, toGlobalOf } from "./scene.js";
 
@@ -110,7 +110,7 @@ export class Labels {
 
   constructor(private readonly ctx: PlatformContext) {
     this.overlay = ctx.ui.overlay();
-    this.lines.classList.add("labels-lines");
+    this.lines.setAttribute("class", "labels-lines");
     this.overlay.element.append(this.lines);
     this.read();
     this.offs.push(
@@ -397,7 +397,7 @@ export class Labels {
       context.beginPath();
       context.arc(px, py, 3 * scale, 0, 2 * Math.PI);
       context.fill();
-      context.fillStyle = "rgba(0, 0, 0, 0.55)";
+      context.fillStyle = "rgba(0, 0, 0, 0.5)";
       context.fillRect(left, top, boxW, boxH);
       context.fillStyle = label.colour;
       context.textBaseline = "top";
@@ -407,8 +407,11 @@ export class Labels {
 
   // ------------------------------------------------------------- panel
 
+  /**
+   * Drawn once: the buttons that add labels, and the list, a region drawn
+   * again only when the labels change.
+   */
   render(host: HTMLElement): Disposer {
-    const list = el("div", { class: "labels-list" });
     const atPosition = () => {
       const position = (this.ctx.viewer.getState() as { position?: number[] }).position;
       if (position) this.add({ kind: "point", position: [...position] }, "Label");
@@ -430,67 +433,68 @@ export class Labels {
       }
       if (added === 0) this.ctx.ui.toast("No annotations with a description to label: give one a description in its layer's Annotations tab.");
     };
-    const groupsButton = el("button", { class: "btn outline small", type: "button", onclick: forGroups }, "+ Track groups") as HTMLButtonElement;
+    const groupsButton = button("+ Track groups", forGroups, "A label for each track group of Track filtering");
+    // Why it is off, beside it while it is.
+    const noGroups = el("span", { class: "hint" }, "No track groups yet");
+    const list = region((labels: Label[]) => (labels.length === 0 ? emptyState("No labels yet.", { label: "+ At the position", run: atPosition }) : labels.map((l) => this.row(l))), { class: "labels-list" });
     host.append(
       el(
         "div",
-        { class: "labels-actions" },
-        el("button", { class: "btn outline small", type: "button", onclick: atPosition }, "+ At the position"),
-        groupsButton,
-        el("button", { class: "btn outline small", type: "button", onclick: fromAnnotations }, "+ Annotations"),
+        { class: "stack" },
+        el(
+          "div",
+          { class: "row" },
+          button("+ At the position", atPosition, "A label pinned at the views' position"),
+          groupsButton,
+          noGroups,
+          button("+ Annotations", fromAnnotations, "A label for each annotation with a description"),
+          info("Drag a label in a view to move it, or by its corner to resize it; double-click puts it back. Labels are kept in the link and drawn into screenshots.", "About labels"),
+        ),
+        list,
       ),
-      list,
     );
     const draw = () => {
-      groupsButton.disabled = (this.groups?.list().length ?? 0) === 0;
-      if (this.labels.length === 0) {
-        list.replaceChildren(el("p", { class: "empty", title: "Drag a label in a view to move it, or by its corner to resize it." }, "No labels yet."));
-        return;
-      }
-      list.replaceChildren(
-        ...this.labels.map((label) => {
-          const visible = el("input", { type: "checkbox", "aria-label": "Show" }) as HTMLInputElement;
-          visible.checked = label.visible;
-          visible.addEventListener("change", () => this.update(label.id, { visible: visible.checked }));
-          const text = el("input", { class: "text-input", type: "text", value: label.text, "aria-label": "Text" }) as HTMLInputElement;
-          text.addEventListener("change", () => this.update(label.id, { text: text.value }));
-          const colour = el("input", { type: "color", value: label.colour, "aria-label": "Colour" }) as HTMLInputElement;
-          colour.addEventListener("change", () => this.update(label.id, { colour: colour.value }));
-          const placement = el("select", { class: "text-input", "aria-label": "Where" }) as HTMLSelectElement;
-          for (const [value, name] of PLACEMENTS) placement.append(el("option", { value }, name));
-          placement.value = label.placement;
-          placement.addEventListener("change", () => this.update(label.id, { placement: placement.value as Placement, offset2d: [0, 0], offset3d: [0, 0] }));
-          const views = el("select", { class: "text-input", "aria-label": "Views" }) as HTMLSelectElement;
-          for (const [value, name] of [
-            ["both", "2-D and 3-D"],
-            ["2d", "2-D only"],
-            ["3d", "3-D only"],
-          ])
-            views.append(el("option", { value }, name));
-          views.value = label.views;
-          views.addEventListener("change", () => this.update(label.id, { views: views.value as Label["views"] }));
-          const size = el("input", { type: "range", min: "8", max: "64", step: "1", value: String(Math.round(label.size)), "aria-label": "Size" }) as HTMLInputElement;
-          size.addEventListener("change", () => this.update(label.id, { size: Number(size.value) }));
-          const near = el("input", { type: "checkbox", "aria-label": "Only near the section in 2-D" }) as HTMLInputElement;
-          near.checked = label.nearSection;
-          near.addEventListener("change", () => this.update(label.id, { nearSection: near.checked }));
-          const what = label.anchor.kind === "group" ? "track group" : label.anchor.kind === "annotation" ? `annotation in ${label.anchor.layer}` : "point";
-          const remove = el("button", { class: "btn icon", type: "button", title: "Remove", "aria-label": "Remove", onclick: () => this.write(this.labels.filter((l) => l.id !== label.id)) }, "×");
-          return el(
-            "div",
-            { class: "label-row" },
-            el("div", { class: "label-head" }, visible, text, colour, remove),
-            el("div", { class: "label-opts" }, placement, views, el("label", { class: "field check" }, near, el("span", {}, "2-D: only near its section"))),
-            el("label", { class: "label-size" }, el("span", {}, "Size"), size, el("span", { class: "type" }, what)),
-          );
-        }),
-      );
+      const none = (this.groups?.list().length ?? 0) === 0;
+      groupsButton.disabled = none;
+      noGroups.hidden = !none;
+      list.update(this.labels);
     };
     this.panelUpdate = draw;
     draw();
     return () => {
       if (this.panelUpdate === draw) this.panelUpdate = undefined;
     };
+  }
+
+  /** A label's row: shown or not, its text and colour, where and in which views, its size, near its section. */
+  private row(label: Label): HTMLElement {
+    const visible = checkbox(`Show ${label.text}`, label.visible, (on) => this.update(label.id, { visible: on }), { hideLabel: true });
+    const text = el("input", { class: "text-input", type: "text", value: label.text, "aria-label": "Text" }) as HTMLInputElement;
+    text.addEventListener("change", () => this.update(label.id, { text: text.value }));
+    const colour = el("input", { type: "color", class: "colour-input", value: label.colour, "aria-label": "Colour" }) as HTMLInputElement;
+    colour.addEventListener("change", () => this.update(label.id, { colour: colour.value }));
+    const placement = select(PLACEMENTS, label.placement, (v) => this.update(label.id, { placement: v as Placement, offset2d: [0, 0], offset3d: [0, 0] }), "Where");
+    const views = select(
+      [
+        ["both", "2-D and 3-D"],
+        ["2d", "2-D only"],
+        ["3d", "3-D only"],
+      ],
+      label.views,
+      (v) => this.update(label.id, { views: v as Label["views"] }),
+      "Views",
+    );
+    const size = slider(Math.round(label.size), { min: 8, max: 64, step: 1, unit: "px", label: "Size", onchange: (v) => this.update(label.id, { size: v }) });
+    const near = checkbox("2-D: only near its section", label.nearSection, (on) => this.update(label.id, { nearSection: on }));
+    const what = label.anchor.kind === "group" ? "track group" : label.anchor.kind === "annotation" ? `annotation in ${label.anchor.layer}` : "point";
+    return el(
+      "div",
+      { class: "label-row" },
+      el("div", { class: "label-head" }, visible, text, colour, iconButton("close", `Remove ${label.text}`, () => this.write(this.labels.filter((l) => l.id !== label.id)))),
+      el("div", { class: "grid-2" }, placement, views),
+      near,
+      el("div", { class: "row" }, field("Size", size), el("span", { class: "type" }, what)),
+    );
   }
 }
 
@@ -511,16 +515,12 @@ export const STYLE = `
 .labels-lines line { stroke-width: 1; opacity: 0.85; }
 .view-label {
   position: absolute; pointer-events: auto; cursor: move; white-space: nowrap; user-select: none;
-  padding: 2px 4px; background: rgba(0, 0, 0, 0.55); text-shadow: 0 0 2px #000;
+  padding: 2px 4px; background: var(--scrim); text-shadow: 0 0 2px var(--ink-0);
 }
 .label-grip { position: absolute; right: -3px; bottom: -3px; width: 8px; height: 8px; cursor: nwse-resize; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; opacity: 0; }
 .view-label:hover .label-grip { opacity: 0.8; }
-.labels-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-.labels-list { display: grid; gap: 6px; }
-.label-row { border: 1px solid var(--line); padding: 6px; display: grid; gap: 4px; }
-.label-head { display: grid; grid-template-columns: auto minmax(0, 1fr) 28px auto; gap: 6px; align-items: center; }
-.label-head input[type="color"] { width: 28px; height: 22px; padding: 0; border: 1px solid var(--line); background: none; }
-.label-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; align-items: center; }
-.label-opts .field.check { grid-column: 1 / -1; }
-.label-size { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
+.labels-list { display: grid; gap: var(--sp-3); }
+.label-row { border: 1px solid var(--line); padding: var(--sp-3); display: grid; gap: var(--sp-2); }
+.label-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: var(--sp-3); align-items: center; }
+.label-row .row > .field { flex: 1 1 160px; }
 `;

@@ -1,5 +1,5 @@
 /**
- * The Annotations plugin: one tab, four sections, and the annotation table.
+ * The Annotations plugin: one panel, four cards, and the annotation table.
  *
  *  - Annotate (./annotate_panel.ts): the layer, tools, groups and fields of
  *    annotations; the annotation table (./table_panel.ts, in the bottom
@@ -10,7 +10,7 @@
  *  - Statistics (./statistics_panel.ts): an image's values in a region
  *    (a label of a volume drawn in the Segmentation plugin among them).
  *
- * Each section is folded or open as the user left it (kept in this browser).
+ * Each card is folded or open as the user left it (kept in this browser).
  */
 import type { Disposer, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { card, el } from "@ngplatform/sdk/dom";
