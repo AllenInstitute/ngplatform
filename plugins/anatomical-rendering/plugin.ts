@@ -8,7 +8,7 @@
  * back as they refine (./draw.ts).
  */
 import type { Disposer, Frame3d, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
-import { button, card, clear, downloadBlob, el, field, numberInput, select } from "@ngplatform/sdk/dom";
+import { button, card, clear, downloadBlob, el, field, numberInput, select, toggle } from "@ngplatform/sdk/dom";
 import { type Distance, hostLink, type Link, type MovieInfo, type PresetInfo, RenderService, ServiceError, type ServiceInfo, type SessionInfo, type SplatInfo, type ViewSpec } from "./client.js";
 import { invert4, PictureDrawer } from "./draw.js";
 import { clampInt, evenSide, LIMITS, movieSettings, retryDelay, stillProblem, windowStep } from "./limits.js";
@@ -169,7 +169,7 @@ const STYLE = `
 .ar .card-body { min-width: 0; }
 .ar .card-body > * { max-width: 100%; }
 .ar-head { display: flex; gap: 10px; align-items: center; min-height: 26px; }
-.ar-on { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+.ar-head > .choice { font-weight: 600; }
 .ar-status { flex: 1; min-width: 0; color: var(--muted); font: 11px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ar-status.error { color: var(--err, #e5484d); white-space: normal; }
 .ar-views { display: flex; gap: 3px; flex-wrap: wrap; }
@@ -1402,13 +1402,13 @@ class AnatomicalRendering {
       const connected = host_ ? this.serviceInfo !== undefined : true;
       const pair = button("Pair a computer…", () => void this.ctx.commands.invoke(COMPUTE_SETTINGS.command, COMPUTE_SETTINGS.args), "Pair this computer's runner, or another over SSH");
       const g = host_ ? this.serviceInfo?.gpu : undefined;
-      const onSwitch = check(s.on, (v) => this.setOn(v), { class: "switch", disabled: imgs.length === 0, "aria-label": "Render" });
+      const onSwitch = toggle("Render", s.on, (v) => this.setOn(v), { disabled: imgs.length === 0 });
       clear(
         host,
         el(
           "div",
           { class: "ar" },
-          el("div", { class: "ar-head" }, el("label", { class: "ar-on" }, onSwitch, el("b", {}, "Render")), statusEl, retry),
+          el("div", { class: "ar-head" }, onSwitch, statusEl, retry),
           imgs.length === 0 ? el("p", { class: "muted" }, "Needs an OME-Zarr or N5 image in the scene.") : "",
           el(
             "div",

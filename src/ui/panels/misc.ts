@@ -4,6 +4,7 @@ import type { Manifest } from "../../sdk/types.js";
 import { bytesText } from "../../sdk/format.js";
 import type { ChunkSourceStatistics } from "../../engine/engine.js";
 import { clear, h, icon, iconButton } from "../dom.js";
+import { info, toggle } from "../../sdk/dom.js";
 import { renderMarkdown } from "../markdown.js";
 import { closeSheet, sheet, showMenu, showSheet } from "../overlays.js";
 import { LOCAL_HOST } from "../../platform/hosts.js";
@@ -253,7 +254,7 @@ export function renderPluginsPanel(host: HTMLElement, wb: Workbench, local: Loca
     h(
       "div",
       { class: "panel-intro" },
-      h("span", { class: "note", title: "Tools turn on at once; turning one off reloads the page." }),
+      info("Tools turn on at once; turning one off reloads the page.", "About turning plugins on and off"),
       addButton,
     ),
     list,
@@ -268,17 +269,10 @@ export function renderPluginsPanel(host: HTMLElement, wb: Workbench, local: Loca
       const on = enabled.has(manifest.id);
       const record = records.get(manifest.id);
       const missing = blocked.get(manifest.id);
-      const toggle = h("input", {
-        type: "checkbox",
-        class: "switch",
-        role: "switch",
-        "aria-label": `${on ? "Turn off" : "Turn on"} ${manifest.name}`,
-      });
-      toggle.checked = on;
-      toggle.addEventListener("change", () => {
-        toggle.checked = on; // shown as it is until the switch takes effect
+      const onOff = toggle(manifest.name, on, () => {
+        onOff.set(on); // shown as it is until the switch takes effect
         void wb.pluginSwitches.toggle(manifest.id, !on);
-      });
+      }, { hideLabel: true });
       const problem =
         record?.status === "failed" || record?.status === "disabled"
           ? `Failed: ${record.error ?? "unknown error"}`
@@ -294,7 +288,7 @@ export function renderPluginsPanel(host: HTMLElement, wb: Workbench, local: Loca
           { class: "plugin-head" },
           h("span", { class: "plugin-name" }, manifest.name),
           h("button", { class: "link", type: "button", title: `About ${manifest.name}`, onclick: () => showPluginInfo(manifest) }, "About"),
-          h("label", { class: "switch-label", title: on ? "On" : "Off" }, toggle),
+          h("span", { class: "switch-label" }, onOff),
         ),
         h("p", { class: "plugin-desc" }, entry.summary),
         forTab
