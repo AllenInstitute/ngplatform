@@ -45,7 +45,8 @@ Organ Atlas serves most of its scans; on a host).
    there, for every function, not per image.
 3. Turn the plugin on and open **Anatomical** in the Tools panel. Switch on
    **Render** at the top (also beside **Sections** in the 3-D view); the
-   line beside it says what it is doing. **Remote** picks the **Computer**:
+   line beside it says what it is doing (all of it in its tooltip), or the
+   error when something has gone wrong, with **Retry**. **Remote** picks the **Computer**:
    **Automatic** (Compute's choice, else the first computer with the render
    service ready) or one of the paired computers whose runner has the
    render service.
@@ -154,7 +155,9 @@ inferior.
 - **File…** (beside Preset): a preset (or a list) as JSON, in the form of
   `runner/ngplatform_render/presets/*.json`; it is kept with the scene.
 - **Save still (PNG)** (Output): the view now, path-traced on the host at the
-  output's size and twice its samples.
+  output's size and twice its samples, as a job (its progress in Activity,
+  cancellable there); it downloads when done. Width × height × samples is
+  kept within 8192² × 256.
 - **Movie** (Output): **Add keyframe** as you move, set each one's time,
   then **Preview movie…**: a small, quick version (about 384 pixels, 8
   samples, 12 frames a second) plays in a window. From there **Render the
@@ -312,7 +315,18 @@ refined, without the picture jumping:
   points (every second pixel's distance, as half floats), so a moving view
   costs one request a frame.
 - A session no page is waiting on (a closed tab) stops rendering after 5 s,
-  and goes on when one asks.
+  and goes on when one asks. The page closes its session when it closes,
+  and when another computer is chosen or **Reconnect** is pressed; one
+  nothing has asked about for 3 minutes is closed on the host all the same,
+  and the page opens a new one if it is still there.
+- A session that runs the GPU out of memory stops and lets its memory go;
+  the line says so, and **Retry** opens it again (with a smaller **Whole
+  volume**, say). A computer that stops answering is asked again less and
+  less often for about a minute, then the line says so.
+- One request is kept within limits: sides of 8–8192 pixels, up to 4096
+  samples, movies at 1–120 frames a second with even sides (H.264), and a
+  movie's frames and pixels within what the host allows. Movies need
+  `ffmpeg` on the render computer; the panel says so when it has none.
 
 On an RTX A6000, zooming into S-21-46 (HiP-CT, 19.6 µm, its 400-million-voxel
 level held whole, finer detail where the view looks) in a 1200 × 800 view:

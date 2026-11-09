@@ -9,8 +9,9 @@
  */
 import type { Disposer, Frame3d, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { button, card, clear, downloadBlob, el, field, numberInput, select } from "@ngplatform/sdk/dom";
-import { type Distance, hostLink, type Link, type MovieInfo, type PresetInfo, RenderService, type ServiceInfo, type SessionInfo, type SplatInfo, type ViewSpec } from "./client.js";
+import { type Distance, hostLink, type Link, type MovieInfo, type PresetInfo, RenderService, ServiceError, type ServiceInfo, type SessionInfo, type SplatInfo, type ViewSpec } from "./client.js";
 import { invert4, PictureDrawer } from "./draw.js";
+import { clampInt, evenSide, LIMITS, movieSettings, retryDelay, stillProblem, windowStep } from "./limits.js";
 import { openSplatWindow, parsePly, parseSplat, type SplatCamera } from "./splatview.js";
 import { ColourmapEditor, type DataStop, histogramHandles, shifted, type Tuning, type WarpPoint, warpInverse } from "./editor.js";
 import { LocalRenderer, PRESETS as LOCAL_PRESETS } from "./local/local.js";
@@ -182,6 +183,14 @@ const STYLE = `
 .ar-video { width: 100%; max-height: 60vh; background: #000; border-radius: 4px; }
 `;
 
+/** A wait that ends early when `signal` aborts. */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((done) => {
+    const t = setTimeout(done, ms);
+    signal?.addEventListener("abort", () => (clearTimeout(t), done()), { once: true });
+  });
+}
+
 /** How long the camera is still before the full-size view is rendered. */
 const SETTLE_MS = 200;
 /** Camera changes closer together than this are one motion (momentum, keys held), not jumps. */
@@ -222,6 +231,7 @@ interface HostSetting {
 }
 
 const HOST_KEY = "host";
+const NO_FFMPEG = "Movies need ffmpeg on the render computer.";
 const NO_HOST = "No paired computer has the render service: pair one (Settings › Compute), or render in this browser";
 
 class AnatomicalRendering {
@@ -234,6 +244,11 @@ class AnatomicalRendering {
   private serviceInfo: ServiceInfo | undefined;
   private presets: PresetInfo[] = [];
   private session: SessionInfo | undefined;
+  /** The session open on a host, and the service it was opened through (closed through it, whatever computer is chosen next). */
+  private opened: { service: RenderService; id: string } | undefined;
+  /** Sessions opened again since the last frame, after the host forgot one (it closes those left idle). */
+  private reopened = 0;
+  private stillRunning = false;
   private sessionKey = "";
   private abort: AbortController | undefined;
   private lastKey = "";
@@ -297,6 +312,8 @@ class AnatomicalRendering {
       }),
       ctx.commands.register("anatomicalRendering.toggle", () => this.setOn(!this.saved.on)),
       ctx.ui.panel(RENDER_PANEL, (el) => this.panel(el)),
+      this.listen("pagehide", () => this.closeSession(true)),
+      this.listen("pageshow", (e) => (e as PageTransitionEvent).persisted && this.update()),
       ctx.hosts.onChanged(() => {
         // A computer with the render service paired or come up, or another chosen in Compute.
         const label = this.link()?.label;
@@ -311,6 +328,11 @@ class AnatomicalRendering {
     } catch {
       // No storage: no debugging handle.
     }
+  }
+
+  private listen(type: string, on: (e: Event) => void): Disposer {
+    window.addEventListener(type, on);
+    return () => window.removeEventListener(type, on);
   }
 
   // ------------------------------------------------------------------ state
@@ -367,6 +389,8 @@ class AnatomicalRendering {
 
   private async connect(): Promise<void> {
     this.connecting = true;
+    // The session on the computer used until now goes first (with its GPU memory), through the service it was opened on.
+    this.closeSession();
     const link = this.link();
     this.service = link === undefined ? undefined : new RenderService(link);
     this.serviceInfo = undefined;
@@ -635,7 +659,7 @@ class AnatomicalRendering {
     const target = this.target();
     const src = target ? omeZarrSource(target.sources[0]) : undefined;
     if (src === undefined) return "";
-    const vol = this.session?.volume as { window?: [number, number] | null; lo?: number; hi?: number } | undefined;
+    const vol = this.session?.volume as { window?: [number, number] | null; lo?: number; hi?: number; dtype?: string } | undefined;
     const guess = vol?.window ?? undefined;
     const w = this.saved.windows[src] ?? guess;
     const set = (i: 0 | 1, v: number) =>
@@ -645,7 +669,7 @@ class AnatomicalRendering {
         next[i] = v;
         if (next[1] > next[0]) x.windows[src] = next;
       });
-    const step = vol && vol.hi !== undefined && vol.lo !== undefined ? String(Math.max(1, Math.round((vol.hi - vol.lo) / 1000))) : "1";
+    const step = vol && vol.hi !== undefined && vol.lo !== undefined ? String(windowStep(vol.lo, vol.hi, vol.dtype)) : "1";
     return field(
       "Window (low, high)",
       el(
@@ -683,6 +707,7 @@ class AnatomicalRendering {
         void service.close(info.id).catch(() => undefined);
         return;
       }
+      this.opened = { service, id: info.id };
       this.session = info;
       while (info.status === "loading" && !abort.signal.aborted) {
         this.statusUpdate?.();
@@ -696,8 +721,9 @@ class AnatomicalRendering {
       await this.resolvePreset();
       this.lastKey = "";
       this.handle?.redraw();
-      void this.frameLoop(info.id, abort.signal);
+      void this.frameLoop(service, info.id, abort.signal);
     } catch (e) {
+      if (abort.signal.aborted) return;
       this.problem = (e as Error).message;
       this.statusUpdate?.();
     }
@@ -728,7 +754,8 @@ class AnatomicalRendering {
       this.lastKey = "";
       this.handle?.redraw();
     } catch (e) {
-      this.localText = `This browser cannot render it: ${(e as Error).message}`;
+      this.localText = "";
+      this.problem = `This browser cannot render it: ${(e as Error).message}`;
     }
     this.statusUpdate?.();
   }
@@ -740,24 +767,83 @@ class AnatomicalRendering {
     this.localText = "";
   }
 
-  private closeSession(): void {
+  /** Closes the session on its host (`keepalive`: as the page closes) and forgets what belonged to it. */
+  private closeSession(keepalive = false): void {
     this.abort?.abort();
     this.abort = undefined;
-    const s = this.session;
-    if (s && this.service) void this.service.close(s.id).catch(() => undefined);
+    const o = this.opened;
+    if (o) void o.service.close(o.id, keepalive).catch(() => undefined);
+    this.opened = undefined;
     this.session = undefined;
     this.sessionKey = "";
+    // A new session numbers its views from 0 again: no camera, distances or view of this one may place its frames.
+    this.views.clear();
+    this.distance = undefined;
     this.depth = undefined;
+    this.queued = undefined;
+    this.lastKey = "";
+    this.lastLook = "";
+    this.lastScale = 1;
+    this.frameText = "";
+    clearTimeout(this.settle);
     this.drawer.set(undefined);
   }
 
-  private async frameLoop(id: string, signal: AbortSignal): Promise<void> {
-    const service = this.service!;
+  /** After an error: connect again when the computer did not answer, else open the session (or the browser's renderer) again. */
+  private retry(): void {
+    this.problem = "";
+    this.reopened = 0;
+    if (this.saved.where === "browser") {
+      this.closeLocal();
+      this.update();
+    } else if (this.serviceInfo === undefined) {
+      void this.connect();
+    } else {
+      this.closeSession();
+      this.update();
+    }
+    this.statusUpdate?.();
+  }
+
+  /** The host no longer knows the session (closed when idle, or the service started again): opened again once, then left to Retry. */
+  private sessionLost(): void {
+    if (this.reopened >= 1) {
+      this.problem = "The render computer closed the session.";
+      this.statusUpdate?.();
+      return;
+    }
+    this.reopened += 1;
+    this.opened = undefined;
+    this.closeSession();
+    this.update();
+  }
+
+  /** The session failed on the host (out of GPU memory): its error shown, and nothing more asked of it. */
+  private async sessionFailed(service: RenderService, id: string, message: string): Promise<void> {
+    const info = await service.session(id).catch(() => undefined);
+    if (this.opened?.id !== id) return;
+    if (info?.status === "failed") this.session = info;
+    else this.problem = message;
+    this.drawer.set(undefined);
+    this.handle?.redraw();
+    this.statusUpdate?.();
+  }
+
+  private async frameLoop(service: RenderService, id: string, signal: AbortSignal): Promise<void> {
     let after = 0;
+    let failures = 0;
     while (!signal.aborted) {
       try {
         const f = await service.frame(id, after, signal, this.distance?.version ?? -1);
+        if (failures > 0) {
+          failures = 0;
+          this.problem = "";
+          this.statusUpdate?.();
+        }
         if (f === undefined) continue;
+        this.reopened = 0;
+        // A frame came: an error from before (a view not sent, a poll that failed) is over.
+        this.problem = "";
         after = f.number;
         if (f.distance !== undefined) this.distance = f.distance;
         // A frame may come before the answer to the view it was rendered from: wait for that answer.
@@ -788,9 +874,17 @@ class AnatomicalRendering {
         this.statusUpdate?.();
       } catch (e) {
         if (signal.aborted) return;
-        this.problem = (e as Error).message;
+        const status = e instanceof ServiceError ? e.status : 0;
+        if (status === 404) return this.sessionLost();
+        if (status === 410) return void this.sessionFailed(service, id, (e as Error).message);
+        // Anything else (the computer not answering): asked again less and less often, then given up and said so.
+        const wait = retryDelay(++failures);
+        this.problem = wait === undefined
+          ? `Lost touch with ${service.link.label ?? "the render computer"}: ${(e as Error).message}`
+          : `${(e as Error).message} (trying again in ${Math.round(wait / 1000)} s)`;
         this.statusUpdate?.();
-        await new Promise((r) => setTimeout(r, 1000));
+        if (wait === undefined) return;
+        await sleep(wait, signal);
       }
     }
   }
@@ -890,12 +984,14 @@ class AnatomicalRendering {
       return;
     }
     this.sending = true;
-    this.pendingView = this.service!.setView(sid, spec)
+    this.pendingView = this.opened!.service.setView(sid, spec)
       .then((r) => {
+        if (this.opened?.id !== sid) return;
         this.views.set(r.version, spec.inv_view_projection);
         for (const k of this.views.keys()) if (k < r.version - 64) this.views.delete(k);
       })
       .catch((e) => {
+        if (this.opened?.id !== sid) return;
         this.problem = (e as Error).message;
         this.statusUpdate?.();
       })
@@ -904,7 +1000,9 @@ class AnatomicalRendering {
         this.pendingView = undefined;
         const q = this.queued;
         this.queued = undefined;
-        if (q !== undefined) this.send(sid, q);
+        // A view queued since is for the session open now (closing one drops what was queued for it).
+        const now = this.session?.status === "ready" ? this.session.id : undefined;
+        if (q !== undefined && now !== undefined) this.send(now, q);
       });
   }
 
@@ -949,17 +1047,36 @@ class AnatomicalRendering {
     });
   }
 
+  /** The view now at the output's size and twice its samples, as a job on the host (progress and cancelling in Activity); saved as a download. */
   private async saveStill(): Promise<void> {
-    const sid = this.session?.id;
+    const sid = this.session?.status === "ready" ? this.session.id : undefined;
+    const service = this.opened?.service;
     const view = this.currentSpec();
-    if (sid === undefined || view === undefined) return;
-    const m = this.saved.movie;
-    this.ctx.ui.toast(`Rendering a ${m.width} × ${m.height} still at ${m.samples * 2} samples on the host…`);
+    if (sid === undefined || service === undefined || view === undefined) return this.ctx.ui.toast("Render a view on a computer first.", "error");
+    if (this.stillRunning) return this.ctx.ui.toast("A still is already rendering: see Activity.", "error");
+    const m = movieSettings(this.saved.movie);
+    const samples = Math.min(LIMITS.maxSamples, m.samples * 2);
+    const tooLarge = stillProblem(m.width, m.height, samples);
+    if (tooLarge) return this.ctx.ui.toast(tooLarge, "error");
+    this.stillRunning = true;
+    this.panelUpdate?.();
     try {
-      const blob = await this.service!.still(sid, { view, width: m.width, height: m.height, samples: m.samples * 2, name: "anatomical-rendering" });
-      downloadBlob(blob, "anatomical-rendering.png");
+      await this.ctx.jobs.run(`Still: ${m.width} × ${m.height}, ${samples} samples`, async (job) => {
+        let info = await service.still(sid, { view, width: m.width, height: m.height, samples, name: "anatomical-rendering" });
+        while (info.status === "queued" || info.status === "running") {
+          if (job.cancelled) await service.cancelStill(info.id).catch(() => undefined);
+          job.progress(info.progress, info.message);
+          await sleep(500);
+          info = await service.stillInfo(info.id);
+        }
+        if (info.status !== "done") throw new Error(info.error ?? info.status);
+        downloadBlob(await service.stillFile(info.id), "anatomical-rendering.png");
+      });
     } catch (e) {
       this.ctx.ui.toast(`Still: ${(e as Error).message}`, "error");
+    } finally {
+      this.stillRunning = false;
+      this.panelUpdate?.();
     }
   }
 
@@ -994,7 +1111,7 @@ class AnatomicalRendering {
 
   /** The movie's request: the keyframes (or `extra`'s, a rotation), at the movie's size and samples, or `small` for a preview. */
   private movieSpec(extra: Record<string, unknown> | undefined, small: boolean): Record<string, unknown> {
-    const m = this.saved.movie;
+    const m = movieSettings(this.saved.movie);
     const spec: Record<string, unknown> = { keyframes: this.saved.keyframes, fps: m.fps, width: m.width, height: m.height, samples: m.samples, easing: m.easing, name: "anatomical-rendering", ...(extra ?? {}) };
     if (!small) return spec;
     // A quick look: about 384 pixels on the longer side, few samples, fewer frames.
@@ -1023,7 +1140,8 @@ class AnatomicalRendering {
     const service = this.service;
     if (sid === undefined || service === undefined) return this.ctx.ui.toast("Connect to a computer and switch Render on first.", "error");
     if (extra === undefined && this.saved.keyframes.length < 2) return this.ctx.ui.toast("Add two keyframes or more first.", "error");
-    const m = this.saved.movie;
+    if (this.serviceInfo?.ffmpeg === false) return this.ctx.ui.toast(NO_FFMPEG, "error");
+    const m = movieSettings(this.saved.movie);
     let preview: MovieInfo | undefined;
     let url: string | undefined;
     this.ctx.ui.sheet("Movie preview", (body, close) => {
@@ -1166,7 +1284,8 @@ class AnatomicalRendering {
   }
 
   // ------------------------------------------------------------------ panel
-  private status(): string {
+  /** The status lines (all in the tooltip), and the error to show in place of the last line when there is one. */
+  private status(): { lines: string[]; error?: string } {
     const parts: string[] = [];
     const g = this.saved.where === "host" ? this.serviceInfo?.gpu : undefined;
     if (g) parts.push(g.backend === "cuda" ? `GPU: ${g.name} (${Math.round((g.free_mb ?? 0) / 1024)} of ${Math.round((g.total_mb ?? 0) / 1024)} GB free)` : `No GPU: ${g.error ?? ""}`);
@@ -1184,16 +1303,20 @@ class AnatomicalRendering {
     if (this.movie) parts.push(`Movie: ${this.movie.status} ${Math.round(this.movie.progress * 100)}% ${this.movie.message}${this.movie.error ? ` (${this.movie.error})` : ""}`);
     if (this.splat) parts.push(`Splat: ${this.splat.status} ${Math.round(this.splat.progress * 100)}% ${this.splat.message}${this.splat.error ? ` (${this.splat.error})` : ""}`);
     if (this.problem) parts.push(this.problem);
-    return parts.join("\n");
+    const failed = this.saved.where === "host" && s?.status === "failed" ? `Failed: ${s.error ?? "unknown error"}` : "";
+    return { lines: parts, error: this.problem || failed || undefined };
   }
 
   private panel(host: HTMLElement): Disposer {
     const statusEl = el("span", { class: "ar-status" });
+    const retry = button("Retry", () => this.retry(), "Connect again and reopen the image");
     this.statusUpdate = () => {
-      const lines = this.status().split("\n").filter(Boolean);
-      statusEl.textContent = lines.at(-1) ?? (this.saved.on ? "" : "off");
-      statusEl.title = lines.join("\n");
-      statusEl.classList.toggle("error", this.problem !== "" && statusEl.textContent === this.problem);
+      const { lines, error } = this.status();
+      const shown = lines.flatMap((l) => l.split("\n")).filter(Boolean);
+      statusEl.textContent = error ?? shown.at(-1) ?? (this.saved.on ? "" : "off");
+      statusEl.title = shown.join("\n");
+      statusEl.classList.toggle("error", error !== undefined);
+      retry.hidden = error === undefined || !this.saved.on;
     };
     const render = () => {
       const s = this.saved;
@@ -1261,6 +1384,15 @@ class AnatomicalRendering {
         return cb;
       };
       const tick = (label: string, checked: boolean, on: (v: boolean) => void, title?: string) => el("label", { class: "ar-tick", title }, check(checked, on), label);
+      /** A number field that keeps its value within bounds (`fix`), and shows the value as kept. */
+      const bounded = (value: number, fix: (v: number) => number, on: (v: number) => void, attrs: Record<string, string>) => {
+        const input: HTMLInputElement = numberInput(fix(value), (v) => {
+          const kept = fix(v);
+          input.value = String(kept);
+          on(kept);
+        }, attrs);
+        return input;
+      };
       const tip = (label: string, control: Node, title?: string) => {
         const e = field(label, control);
         if (title) e.title = title;
@@ -1276,7 +1408,7 @@ class AnatomicalRendering {
         el(
           "div",
           { class: "ar" },
-          el("div", { class: "ar-head" }, el("label", { class: "ar-on" }, onSwitch, el("b", {}, "Render")), statusEl),
+          el("div", { class: "ar-head" }, el("label", { class: "ar-on" }, onSwitch, el("b", {}, "Render")), statusEl, retry),
           imgs.length === 0 ? el("p", { class: "muted" }, "Needs an OME-Zarr or N5 image in the scene.") : "",
           el(
             "div",
@@ -1382,22 +1514,32 @@ class AnatomicalRendering {
             cutRow(0), cutRow(1), cutRow(2),
             el("h4", {}, "Boxes"),
             ...s.boxes.map((b, i) => this.cropRow(b, i, render)),
-            button("Add a box", () => {
-              this.save((x) => x.boxes.push({ name: `Box ${x.boxes.length + 1}`, on: true, keep: true, lo: [0, 0, 0], hi: [1, 1, 1] }));
-              render();
-            }, "Fractions of the volume; each keeps its inside or cuts it out (up to 8)"),
+            (() => {
+              const add = button("Add a box", () => {
+                if (this.saved.boxes.length >= LIMITS.maxBoxes) return;
+                this.save((x) => x.boxes.push({ name: `Box ${x.boxes.length + 1}`, on: true, keep: true, lo: [0, 0, 0], hi: [1, 1, 1] }));
+                render();
+              }, s.boxes.length >= LIMITS.maxBoxes ? `Up to ${LIMITS.maxBoxes} boxes` : `Fractions of the volume; each keeps its inside or cuts it out (up to ${LIMITS.maxBoxes})`);
+              add.disabled = s.boxes.length >= LIMITS.maxBoxes;
+              return add;
+            })(),
           ),
           this.section("output", "Output", false, false,
             el("div", { class: "ar-row" },
-              tip("Width", numberInput(s.movie.width, (v) => this.save((x) => (x.movie.width = v)), { style: "width: 70px" })),
-              tip("Height", numberInput(s.movie.height, (v) => this.save((x) => (x.movie.height = v)), { style: "width: 70px" })),
-              tip("Samples", numberInput(s.movie.samples, (v) => this.save((x) => (x.movie.samples = v)), { style: "width: 60px" }))),
-            el("div", { class: "ar-row" }, button("Save still (PNG)", () => void this.saveStill(), "The view now at this size, path-traced to twice the samples")),
+              tip("Width", bounded(s.movie.width, evenSide, (v) => this.save((x) => (x.movie.width = v)), { style: "width: 70px", min: "8", max: "8192", step: "2" })),
+              tip("Height", bounded(s.movie.height, evenSide, (v) => this.save((x) => (x.movie.height = v)), { style: "width: 70px", min: "8", max: "8192", step: "2" })),
+              tip("Samples", bounded(s.movie.samples, (v) => clampInt(v, 1, LIMITS.maxSamples), (v) => this.save((x) => (x.movie.samples = v)), { style: "width: 60px", min: "1", max: String(LIMITS.maxSamples) }))),
+            el("div", { class: "ar-row" }, (() => {
+              const b = button(this.stillRunning ? "Rendering still…" : "Save still (PNG)", () => void this.saveStill(), "The view now at this size, path-traced to twice the samples; its progress is in Activity");
+              b.disabled = this.stillRunning;
+              return b;
+            })()),
+            host_ && this.serviceInfo?.ffmpeg === false ? el("p", { class: "note ar-small" }, NO_FFMPEG) : "",
             el("h4", {}, "Movie"),
             ...keyframeRows,
             el("div", { class: "ar-row" },
               button("Add keyframe", () => this.addKeyframe(), "The view now"),
-              tip("fps", numberInput(s.movie.fps, (v) => this.save((x) => (x.movie.fps = v)), { style: "width: 50px" })),
+              tip("fps", bounded(s.movie.fps, (v) => clampInt(v, 1, LIMITS.maxFps), (v) => this.save((x) => (x.movie.fps = v)), { style: "width: 50px", min: "1", max: String(LIMITS.maxFps) })),
               tip("Camera", select([["smooth", "slows at keyframes"], ["linear", "steady"]], s.movie.easing, (v) => this.save((x) => (x.movie.easing = v as "smooth" | "linear"))))),
             el("div", { class: "ar-row" },
               button("Preview movie…", () => this.renderMovie(), "A quick, small preview first; the movie itself renders from there, in the background"),
@@ -1407,16 +1549,16 @@ class AnatomicalRendering {
             el("div", { class: "ar-row" },
               select([["vertical", "about the vertical"], ["horizontal", "about the horizontal"]], s.rotation.axis, (v) => this.save((x) => (x.rotation.axis = v as "vertical" | "horizontal"))),
               select([["360", "full turn"], ["180", "half turn"]], String(s.rotation.degrees), (v) => this.save((x) => (x.rotation.degrees = Number(v)))),
-              tip("Step °", numberInput(s.rotation.step, (v) => this.save((x) => (x.rotation.step = Math.max(0.25, v))), { step: "1", style: "width: 50px" })),
+              tip("Step °", bounded(s.rotation.step, (v) => Math.min(90, Math.max(0.25, v)), (v) => this.save((x) => (x.rotation.step = v)), { step: "1", min: "0.25", max: "90", style: "width: 50px" })),
               button("Preview rotation…", () => void this.renderRotation(), "A turn about the position from the view now: a quick preview first")),
             el("h4", { title: "The look now, path-traced from all round and fitted with 3-D Gaussians that any browser, phone or headset draws at full speed" }, "Splat"),
             host_ && this.serviceInfo?.splats && !this.serviceInfo.splats.ready ? el("p", { class: "muted ar-small" }, `Views only: this computer cannot fit (${this.serviceInfo.splats.error ?? "no splat Python"}).`) : "",
             el("div", { class: "ar-row" },
-              tip("Views", numberInput(s.splat.views, (v) => this.save((x) => (x.splat.views = Math.max(8, Math.round(v)))), { style: "width: 60px" })),
-              tip("Size", numberInput(s.splat.size, (v) => this.save((x) => (x.splat.size = Math.max(64, Math.round(v)))), { style: "width: 60px", title: "Pixels along the longer side of each view" })),
-              tip("Samples", numberInput(s.splat.samples, (v) => this.save((x) => (x.splat.samples = Math.max(1, Math.round(v)))), { style: "width: 60px" })),
+              tip("Views", bounded(s.splat.views, (v) => clampInt(v, 8, 4096), (v) => this.save((x) => (x.splat.views = v)), { style: "width: 60px", min: "8", max: "4096" })),
+              tip("Size", bounded(s.splat.size, (v) => clampInt(v, 64, 4096), (v) => this.save((x) => (x.splat.size = v)), { style: "width: 60px", min: "64", max: "4096", title: "Pixels along the longer side of each view" })),
+              tip("Samples", bounded(s.splat.samples, (v) => clampInt(v, 1, 8192), (v) => this.save((x) => (x.splat.samples = v)), { style: "width: 60px", min: "1", max: "8192" })),
               tip("From", select([["180", "every side"], ["90", "this half"], ["50", "near this side"]], String(s.splat.cover), (v) => this.save((x) => (x.splat.cover = Number(v))))),
-              tip("Fit steps", numberInput(s.splat.steps, (v) => this.save((x) => (x.splat.steps = Math.max(0, Math.round(v)))), { style: "width: 70px", title: "0: render the views only" }))),
+              tip("Fit steps", bounded(s.splat.steps, (v) => clampInt(v, 0, 200000), (v) => this.save((x) => (x.splat.steps = v)), { style: "width: 70px", min: "0", max: "200000", title: "0: render the views only" }))),
             el("div", { class: "ar-row" },
               button("Make splat", () => void this.makeSplat(), "Runs on the computer that renders; it shows in Jobs"),
               this.splat?.files.includes("scene.splat") ? button("View", () => void this.viewSplat()) : "",

@@ -13,6 +13,7 @@ page with WebGPU (`local/`). The user page is
 | `manifest.ts` | The Anatomical tool's panel, the toggle command and the state slice |
 | `plugin.ts` | The panel (Render switch and status; Remote, Rendering, Lighting, Crops and Output sections); the session with the service for the chosen image (and segmentation); views sent from Neuroglancer's frames (none while the camera moves, unless it goes far from the picture's: then half size; the full size 200 ms after it stops); the frame loop; keyframes, movie previews and movies as jobs |
 | `client.ts` | The service's HTTP API: through a paired host (`ctx.hosts`, `/svc/render/…`) or at an address |
+| `limits.ts` | What one request may ask of the service (sides, samples, fps, boxes, a still's size), and the frame loop's waits after errors |
 | `view.ts` | Pure functions of a frame: physical mm to display coordinates, cut planes, the light's direction, a layer's OME-Zarr source |
 | `draw.ts` | The frame in the 3-D view (`draw3d`): colour, and depth where each ray first meets tissue, so other layers are hidden behind it |
 | `local/pathtrace.wgsl` | The path tracer in WGSL: the same method and parameters as the CUDA kernels |

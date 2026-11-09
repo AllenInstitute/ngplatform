@@ -41,10 +41,15 @@ function headers(link: Link, json: boolean): Record<string, string> {
   return h;
 }
 
-export class ServiceError extends Error {}
+/** An answer from the service that is not a success: its HTTP status (404: it no longer knows the session; 410: the session failed). */
+export class ServiceError extends Error {
+  constructor(message: string, readonly status = 0) {
+    super(message);
+  }
+}
 
-async function call<T>(link: Link, method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-  const r = await go(link, path, { method, body: body === undefined ? undefined : JSON.stringify(body), signal }, body !== undefined);
+async function call<T>(link: Link, method: string, path: string, body?: unknown, signal?: AbortSignal, init: RequestInit = {}): Promise<T> {
+  const r = await go(link, path, { ...init, method, body: body === undefined ? undefined : JSON.stringify(body), signal }, body !== undefined);
   const text = await r.text();
   let data: unknown;
   try {
@@ -54,7 +59,7 @@ async function call<T>(link: Link, method: string, path: string, body?: unknown,
   }
   if (!r.ok) {
     const msg = (data as { error?: string } | undefined)?.error ?? `${r.status} ${r.statusText}`;
-    throw new ServiceError(`${method} ${path}: ${msg}`);
+    throw new ServiceError(`${method} ${path}: ${msg}`, r.status);
   }
   return data as T;
 }
@@ -67,6 +72,8 @@ export interface ServiceInfo {
   lightmaps?: string[];
   /** Whether the host can fit splats (a Python with torch and gsplat); hosts before splats say nothing. */
   splats?: { python: string | null; ready: boolean; gsplat?: string; error?: string };
+  /** Whether the host has ffmpeg, which movies need; hosts before this say nothing. */
+  ffmpeg?: boolean;
 }
 
 export interface PresetInfo {
@@ -81,6 +88,8 @@ export interface VolumeMeta {
   url: string;
   level: string;
   shape: number[];
+  /** The loaded level's numpy type ("uint16", "float32"…). */
+  dtype?: string;
   voxel_mm: number[];
   /** Voxel (x, y, z) to physical mm, column-major. */
   affine: number[];
@@ -174,7 +183,14 @@ export interface MovieInfo {
   message: string;
   error: string | null;
   file: string | null;
+  /** The movie's size and frames, as the host makes it (its sides even for H.264). */
+  width?: number;
+  height?: number;
+  frames?: number;
 }
+
+/** A still being path-traced on the host, as a job. */
+export type StillInfo = Omit<MovieInfo, "width" | "height" | "frames">;
 
 /** Gaussian splats being made on the host: views path-traced from all round, then fitted to them. */
 export interface SplatInfo {
@@ -210,16 +226,26 @@ export class RenderService {
   session(id: string): Promise<SessionInfo> {
     return call(this.link, "GET", `/sessions/${id}`);
   }
-  close(id: string): Promise<unknown> {
-    return call(this.link, "DELETE", `/sessions/${id}`);
+  /** Closes a session; `keepalive` lets the request finish as the page closes. */
+  close(id: string, keepalive = false): Promise<unknown> {
+    return call(this.link, "DELETE", `/sessions/${id}`, undefined, undefined, keepalive ? { keepalive: true } : {});
   }
   setView(id: string, view: ViewSpec): Promise<{ version: number }> {
     return call(this.link, "PUT", `/sessions/${id}/view`, view);
   }
-  /** One view path-traced to a sample count at a size, as a PNG. */
-  async still(id: string, spec: Record<string, unknown>): Promise<Blob> {
-    const r = await go(this.link, `/sessions/${id}/still`, { method: "POST", body: JSON.stringify(spec) }, true);
-    if (!r.ok) throw new ServiceError(`still: ${((await r.json().catch(() => ({}))) as { error?: string }).error ?? r.status}`);
+  /** One view path-traced to a sample count at a size, as a job: its progress with stillInfo, its PNG with stillFile. */
+  still(id: string, spec: Record<string, unknown>): Promise<StillInfo> {
+    return call(this.link, "POST", `/sessions/${id}/stills`, spec);
+  }
+  stillInfo(id: string): Promise<StillInfo> {
+    return call(this.link, "GET", `/stills/${id}`);
+  }
+  cancelStill(id: string): Promise<StillInfo> {
+    return call(this.link, "DELETE", `/stills/${id}`);
+  }
+  async stillFile(id: string): Promise<Blob> {
+    const r = await go(this.link, `/stills/${id}/file`);
+    if (!r.ok) throw new ServiceError(`still file: ${r.status}`, r.status);
     return r.blob();
   }
   movie(id: string, spec: Record<string, unknown>): Promise<MovieInfo> {
@@ -259,7 +285,10 @@ export class RenderService {
   async frame(id: string, after: number, signal?: AbortSignal, have = -1): Promise<Frame | undefined> {
     const r = await go(this.link, `/sessions/${id}/frame?after=${after}&timeout=20&have=${have}`, { signal });
     if (r.status === 204) return undefined;
-    if (!r.ok) throw new ServiceError(`frame: ${r.status}`);
+    if (!r.ok) {
+      const error = ((await r.json().catch(() => ({}))) as { error?: string }).error;
+      throw new ServiceError(`frame: ${error ?? r.status}`, r.status);
+    }
     let blob = await r.blob();
     const n = (k: string) => Number(r.headers.get(k) ?? 0);
     const version = n("X-Version");
