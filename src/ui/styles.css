@@ -176,6 +176,9 @@ a.btn { text-decoration: none; }
 }
 .scene-kind-new { border-style: dashed; border-color: var(--line); padding-right: 12px; }
 .scene-kind-new .scene-tab-name { font-style: italic; }
+.scene-kind-add { gap: 4px; color: var(--muted); }
+.scene-kind-add svg { width: 11px; height: 11px; }
+.plugin-sheet { display: grid; gap: 12px; }
 
 .palette-trigger {
   display: flex; align-items: center; gap: 10px; flex: none;

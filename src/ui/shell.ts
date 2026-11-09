@@ -45,7 +45,7 @@ import { registerBuiltins } from "../builtins/index.js";
 import { contextKeyFor } from "./context.js";
 import { type DockTab, DockManager, prefs } from "./docks.js";
 import { h, icon, iconButton, isMac, keyLabel, mark } from "./dom.js";
-import { closeSheet, confirmDialog, copyText, formDialog, offer, promptDialog, sheetIsOpen, showMenu, showPalette, toast } from "./overlays.js";
+import { closeSheet, confirmDialog, copyText, formDialog, offer, promptDialog, sheet, sheetIsOpen, showMenu, showPalette, showSheet, toast } from "./overlays.js";
 import { ActivityLog } from "./panels/activity.js";
 import { renderAuthPanel } from "./panels/auth.js";
 import { renderRemotePanel } from "./panels/remote.js";
@@ -319,6 +319,13 @@ export class Shell {
         overlay: () => engine.addOverlay(),
         screenshotOverlay: (paint) => engine.addScreenshotOverlay(paint),
         form: (title, schema, initial) => formDialog(title, schema, initial),
+        sheet: (title, render, options) => {
+          const body = h("div", { class: "plugin-sheet" });
+          let dispose: (() => void) | void;
+          const close = showSheet(sheet(title, [body], [h("button", { class: "btn", type: "button", onclick: () => close() }, "Close")], options), () => dispose?.());
+          dispose = render(body, close);
+          return close;
+        },
       },
       workspace: apis.workspace,
       viewer: apis.viewer,
@@ -1401,29 +1408,32 @@ export class Shell {
         );
       }),
       iconButton("plus", "New scene", () => this.wb.run("scene.new"), { class: "btn icon scene-add" }),
-      // Kinds of scene the plugins that are on add, not made yet: a tab that makes one.
+      // Kinds of scene the plugins that are on add: a tab that runs the plugin's add command
+      // (always there), or, not made yet, a tab that makes one.
       ...this.sceneKinds()
-        .filter((k) => !p.scenes.some((s) => s.kind === k.kind))
-        .map((k) =>
-          h(
+        .filter((k) => k.add !== undefined || !p.scenes.some((s) => s.kind === k.kind))
+        .map((k) => {
+          const open = () => (k.add !== undefined ? this.wb.run(k.add.command) : store.newScene({ name: k.title, kind: k.kind }));
+          return h(
             "div",
             {
-              class: `scene-tab scene-kind scene-kind-${k.kind} scene-kind-new`,
+              class: `scene-tab scene-kind scene-kind-${k.kind} scene-kind-new${k.add ? " scene-kind-add" : ""}`,
               role: "button",
               tabindex: 0,
-              title: `Open ${k.title}`,
-              onclick: () => store.newScene({ name: k.title, kind: k.kind }),
+              title: k.add ? k.add.title : `Open ${k.title}`,
+              onclick: open,
               onkeydown: (e: Event) => {
                 if ((e as KeyboardEvent).key === "Enter" || (e as KeyboardEvent).key === " ") {
                   e.preventDefault();
-                  store.newScene({ name: k.title, kind: k.kind });
+                  open();
                 }
               },
             },
             h("span", { class: "scene-kind-mark", "aria-hidden": "true" }),
-            h("span", { class: "scene-tab-name" }, k.title),
-          ),
-        ),
+            h("span", { class: "scene-tab-name" }, k.add ? k.add.title : k.title),
+            k.add ? icon("plus") : null,
+          );
+        }),
     );
   }
 
@@ -1442,7 +1452,7 @@ export class Shell {
   }
 
   /** The kinds of scene the plugins that are on contribute. */
-  private sceneKinds(): { kind: string; title: string; panel?: string }[] {
+  private sceneKinds(): { kind: string; title: string; panel?: string; add?: { title: string; command: string } }[] {
     const s = this.wb.pluginSwitches;
     return s.manifests.filter((m) => s.enabled.has(m.id)).flatMap((m) => m.contributes?.sceneKinds ?? []);
   }

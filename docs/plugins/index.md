@@ -33,7 +33,7 @@ it on in the Plugins tab.
 | [Volume rendering](volume-rendering.md) | tool | an image | An image drawn as a solid in the 3-D view, cut open at the position. |
 | [Anatomical rendering](anatomical-rendering.md) | tool | an image | Photorealistic, path-traced views of an image on a GPU: this computer, another over SSH, or WebGPU in the page. |
 | [Filters](filters.md) | tool | an image | An image filtered on the fly (mean, median, Gaussian, Frangi vesselness) as a layer of its own. |
-| [Collections](collections.md) | tool | an image inside an OME collection | OME-Zarr collections (RFC-8, draft): members, coordinate systems, transforms, and a scene of them. |
+| [OME Collections](collections.md) | tool | an image inside an OME collection | OME-Zarr collections (RFC-8, draft): open one or make one of a scene's images, each in a tab; see and build how its images relate. |
 | [Luxar rendering](luxar.md) | tool | a tractogram or Zarr Vectors store | Chosen Zarr Vectors layers drawn as Luxar draws lines (HDR glow, mitred joins), in the 2-D and 3-D views. |
 | [Orientations](orientations.md) | tool | a tensor, SH or peaks image | ODF glyphs from spherical harmonics, tensor ellipsoids and peak lines over an image, finer as you zoom in; direction colour. |
 | [Atlas](atlas.md) | tool | a segmentation with a lookup table | A segmentation's regions as a tree (Allen CCF hierarchy, FreeSurfer grouped): search, show a region with its parts, go to it, the region under the cursor, volumes. |

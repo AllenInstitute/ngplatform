@@ -126,9 +126,12 @@ export interface Manifest {
     /**
      * Kinds of scene the plugin adds: each a tab in the scene bar (`title`)
      * while the plugin is on, which makes the scene the first time it is
-     * clicked; switching to one shows `panel`.
+     * clicked; switching to one shows `panel`.  With `add`, the scene bar
+     * instead always has a tab `add.title` (with a +) that runs
+     * `add.command`: the plugin makes the scenes of its kind itself, as many
+     * as it likes.
      */
-    sceneKinds?: { kind: string; title: string; panel?: string }[];
+    sceneKinds?: { kind: string; title: string; panel?: string; add?: { title: string; command: string } }[];
   };
 }
 
@@ -180,6 +183,7 @@ export interface WorkspaceApi {
   switchScene(id: string): void;
   /** A new scene (blank, or a copy of the active one); `kind` makes it a scene of a kind the plugin contributes. */
   newScene(options?: { copy?: boolean; name?: string; kind?: string }): string;
+  renameScene(id: string, name: string): void;
 
   /** Every dataset the workspace knows, shown in any scene or none. */
   datasets(): DatasetInfo[];
@@ -710,6 +714,12 @@ export interface PlatformContext {
     confirm(message: string): Promise<boolean>;
     /** A dialog generated from a schema; resolves undefined on cancel. */
     form<T>(title: string, schema: Schema, initial?: Partial<T>): Promise<T | undefined>;
+    /**
+     * A sheet (as the platform's Open is) whose body the plugin draws, with
+     * a Close button; Escape or a click outside closes it too.  Returns what
+     * closes it.
+     */
+    sheet(title: string, render: (body: HTMLElement, close: () => void) => Disposer | void, options?: { wide?: boolean }): () => void;
   };
   workspace: WorkspaceApi;
   viewer: ViewerApi;

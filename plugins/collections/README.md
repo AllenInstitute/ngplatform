@@ -1,20 +1,27 @@
-# Collections
+# OME Collections
 
 OME-Zarr collections as RFC-8 of OME-NGFF drafts them ("Collections and
 Extensibility", under review): a tree of nodes (collections, multiscale
 images, other kinds) with coordinate systems and the transforms between
-them. The plugin adds a **Collections** tab to the scene bar (a scene kind,
-`contributes.sceneKinds`): a scene whose viewer shows only a collection's
-images, each placed by the chain of transforms to the coordinate system
-chosen in the panel's graph. The panel also offers collections found above
+them. The plugin adds an **Add collection +** tab to the scene bar (a scene
+kind with `add`, `contributes.sceneKinds`), which runs `collections.add`: a
+sheet (`ctx.ui.sheet`) that makes a collection of the active scene's
+OME-Zarr images (placed as the scene shows them), or opens one found above
 the workspace's images (a parent Zarr group whose `zarr.json` is an OME
-collection).
+collection), by address, from a file, or the example. Each collection is a
+scene of the plugin's kind, as many as wanted, whose viewer shows only its
+images, each placed by the chain of transforms to the coordinate system
+chosen in the panel's graph. The panel builds the collection: members,
+systems and transforms added and removed (`editCollection`, on the top
+collection), a member's placement taken from its layer, the JSON
+downloaded. A tab keeps its document whole in its state once made or
+edited here.
 
 | File | What |
 |---|---|
-| `manifest.ts` | The Collections panel, the Collections scene kind and the state slice (per scene: the collection's URL and the system it is viewed in) |
-| `plugin.ts` | The panel (found collections, the systems graph, members, transforms, which members are warped or hidden) and the Collections tab's layers and placements |
-| `collection.ts` | The model: reading the tree, resolving paths, members, transforms as 4 × 4 on x, y, z, a member placed in any system by the chain of transforms (inverted where walked backwards), chains through a displacement field and the warp that shows them, the groups above an image to look in (pure, unit-tested) |
+| `manifest.ts` | The Collection panel, the collection scene kind with its Add collection tab, the `collections.add` command and the state slice (per scene: the collection's URL, its document once made or edited here, and the system it is viewed in) |
+| `plugin.ts` | The Add collection sheet, the panel (the systems graph, members, systems and transforms with their editing, which members are warped or hidden) and a collection tab's layers and placements |
+| `collection.ts` | The model: reading the tree, building one (from a scene's images, edits, a 4 × 4 written as the simplest transform), resolving paths, members, transforms as 4 × 4 on x, y, z, a member placed in any system by the chain of transforms (inverted where walked backwards), chains through a displacement field and the warp that shows them, the groups above an image to look in (pure, unit-tested) |
 | `examples/srb_gallery.json` | A small collection: the SRB 2026a template as is, moved and mirrored |
 | `tests/` | `npm test` runs them |
 

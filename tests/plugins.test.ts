@@ -32,7 +32,7 @@ function services() {
     views: { mount: () => () => {} },
     examples: new ExampleRegistry(),
     open: new OpenHandlerRegistry(),
-    ui: { toast: (m) => logs.push(`toast: ${m}`), confirm: async () => true, form: async () => undefined, viewToggle: () => ({ set: () => {}, dispose: () => {} }), overlay: () => ({ element: {} as HTMLElement, dispose: () => {} }), screenshotOverlay: () => () => {} },
+    ui: { toast: (m) => logs.push(`toast: ${m}`), confirm: async () => true, form: async () => undefined, viewToggle: () => ({ set: () => {}, dispose: () => {} }), overlay: () => ({ element: {} as HTMLElement, dispose: () => {} }), screenshotOverlay: () => () => {}, sheet: () => () => {} },
     workspace: {} as WorkspaceApi,
     viewer: {} as ViewerApi,
     slices: {

@@ -86,7 +86,16 @@ export const MANIFEST_SCHEMA: Schema = {
         contextKeys: { type: "array", items: { type: "string" } },
         sceneKinds: {
           type: "array",
-          items: { type: "object", required: ["kind", "title"], properties: { kind: id, title: { type: "string" }, panel: id } },
+          items: {
+            type: "object",
+            required: ["kind", "title"],
+            properties: {
+              kind: id,
+              title: { type: "string" },
+              panel: id,
+              add: { type: "object", required: ["title", "command"], properties: { title: { type: "string" }, command: id } },
+            },
+          },
         },
       },
     },

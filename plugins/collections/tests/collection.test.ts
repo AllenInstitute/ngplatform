@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { chainInto, displayRangeOf, fieldWarp, firstLevel, graph, invert, isCollection, members, parentGroups, placeInto, readCollection, resolvePath, sceneSystems, transformMatrix, transformSteps } from "../collection.js";
+import { chainInto, collectionFromScene, displayRangeOf, editCollection, fieldWarp, firstLevel, freshId, graph, invert, isCollection, members, parentGroups, placeInto, placementOf, readCollection, resolvePath, sceneSystems, transformJson, transformMatrix, transformSteps, zarrGroupUrl } from "../collection.js";
 
 const example = JSON.parse(readFileSync(new URL("../examples/srb_gallery.json", import.meta.url), "utf8"));
 
@@ -202,5 +202,85 @@ describe("transforms walked backwards", () => {
     const plain = transformSteps(inverseOf(field("only.zarr")), ["z", "y", "x"], doc)!;
     expect(plain[0].kind === "field" && plain[0].inverse).toBe(true);
     expect(inverseOf(inverseOf(seq))).toEqual(seq);
+  });
+});
+
+describe("building a collection", () => {
+  it("reads the Zarr group a layer's source is", () => {
+    expect(zarrGroupUrl("zarr://gs://bucket/a/b.ome.zarr/|zarr3:")).toBe("https://storage.googleapis.com/bucket/a/b.ome.zarr");
+    expect(zarrGroupUrl({ url: "zarr://https://host/x.zarr/" })).toBe("https://host/x.zarr");
+    expect(zarrGroupUrl("https://host/y.ome.zarr")).toBe("https://host/y.ome.zarr");
+    expect(zarrGroupUrl("precomputed://gs://bucket/seg")).toBeUndefined();
+    expect(zarrGroupUrl("local://annotations")).toBeUndefined();
+    const taken = new Set<string>();
+    expect([freshId("SRB 2026a", taken), freshId("SRB 2026a", taken), freshId("!!", taken)]).toEqual(["srb-2026a", "srb-2026a-2", "item"]);
+  });
+
+  it("writes a 4 × 4 as the simplest transform, in the system's axis order, and reads it back", () => {
+    const I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    expect(transformJson(I)).toEqual({ type: "identity" });
+    expect(transformJson([1, 0, 0, 5, 0, 1, 0, 0, 0, 0, 1, -2, 0, 0, 0, 1])).toEqual({ type: "translation", translation: [-2, 0, 5] });
+    expect(transformJson([2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 4, 0, 0, 0, 0, 1])).toEqual({ type: "scale", scale: [4, 3, 2] });
+    const rotated = [0, -1, 0, 1, 1, 0, 0, 2, 0, 0, 1, 3, 0, 0, 0, 1];
+    const t = transformJson(rotated);
+    expect(t.type).toBe("affine");
+    expect(transformMatrix(t, ["z", "y", "x"])).toEqual(rotated);
+    const s = transformJson([-1, 0, 0, 7, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    expect(transformMatrix(s, ["z", "y", "x"])).toEqual([-1, 0, 0, 7, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  });
+
+  it("finds where a layer is placed relative to its own placement", () => {
+    // Output order z, y, x; the image's own: 0.1 mm voxels; shown moved 5 mm along x.
+    const own = [0.1, 0, 0, 0, 0, 0.1, 0, 0, 0, 0, 0.1, 0, 0, 0, 0, 1];
+    const now = [0.1, 0, 0, 0, 0, 0.1, 0, 0, 0, 0, 0.1, 5, 0, 0, 0, 1];
+    expect(placementOf(now, own, ["z", "y", "x"])).toEqual([1, 0, 0, 5, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    expect(placementOf(now, own, ["c", "y", "x"])).toBeUndefined();
+  });
+
+  it("makes a collection of a scene's images, placed as the scene shows them", () => {
+    const doc = collectionFromScene("My scene", { name: "Scene", unit: "micrometer" }, [
+      { name: "A", url: "https://host/a.zarr" },
+      { name: "B", url: "https://host/b.zarr", placement: [1, 0, 0, 5, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] },
+    ]);
+    const root = readCollection(doc, "https://example.org/");
+    expect(root.name).toBe("My scene");
+    expect(sceneSystems(root).map((s) => s.id)).toEqual(["scene"]);
+    const m = members(root);
+    expect(m.map((x) => x.node.location?.url)).toEqual(["https://host/a.zarr", "https://host/b.zarr"]);
+    // 5 mm along x is 5000 µm.
+    expect(placeInto(root, m[1].node, "scene")).toEqual([1, 0, 0, 5000, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    expect(placeInto(root, m[0].node, "scene")).toEqual([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  });
+
+  it("edits members, systems and transforms, leaving the document given as it was", () => {
+    const doc = collectionFromScene("c", { name: "Scene", unit: "micrometer" }, [{ name: "A", url: "https://host/a.zarr" }]);
+    let next = editCollection(doc, { op: "addSystem", name: "Atlas", unit: "millimeter" });
+    next = editCollection(next, { op: "addMember", name: "A", url: "https://host/a2.zarr" });
+    next = editCollection(next, { op: "addTransform", transform: { type: "scale", scale: [1000, 1000, 1000], input: { id: "atlas" }, output: { id: "scene" } } });
+    next = editCollection(next, { op: "rename", name: "renamed" });
+    let root = readCollection(next, "https://example.org/");
+    expect(root.name).toBe("renamed");
+    expect(root.nodes.map((n) => n.id)).toEqual(["a", "a-2"]);
+    expect(sceneSystems(root).map((s) => `${s.id} ${s.units[0]}`)).toEqual(["scene micrometer", "atlas millimeter"]);
+    // A placed in the atlas through the scene: × 1/1000.
+    expect(placeInto(root, root.nodes[0], "atlas")?.[0]).toBeCloseTo(0.001);
+    expect(readCollection(doc, "https://example.org/").nodes).toHaveLength(1);
+    next = editCollection(next, { op: "removeMember", id: "a" });
+    root = readCollection(next, "https://example.org/");
+    expect(root.nodes.map((n) => n.id)).toEqual(["a-2"]);
+    expect(root.transforms.map((t) => `${t.input}→${t.output}`)).toEqual(["atlas→scene"]);
+    next = editCollection(next, { op: "removeSystem", id: "atlas" });
+    expect(readCollection(next, "https://example.org/").transforms).toEqual([]);
+    next = editCollection(next, { op: "addTransform", transform: { type: "identity", input: { id: "a-2" }, output: { id: "scene" } } });
+    next = editCollection(next, { op: "setTransform", index: 0, transform: { type: "translation", translation: [0, 0, 1], input: { id: "a-2" }, output: { id: "scene" } } });
+    expect(readCollection(next, "https://example.org/").transforms[0].type).toBe("translation");
+    next = editCollection(next, { op: "removeTransform", index: 0 });
+    expect(readCollection(next, "https://example.org/").transforms).toEqual([]);
+  });
+
+  it("edits the example where it keeps its transforms", () => {
+    const next = editCollection(example, { op: "removeTransform", index: 1 });
+    expect(readCollection(next, "https://example.org/").transforms.map((t) => t.input)).toEqual(["srb-left", "srb-right"]);
+    expect(example.ome.attributes.scene.coordinateTransformations).toHaveLength(3);
   });
 });

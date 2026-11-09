@@ -34,6 +34,7 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
     },
     switchScene: (id) => store.switchScene(id),
     newScene: (options) => store.newScene(options),
+    renameScene: (id, name) => store.renameScene(id, name),
     datasets: () => store.datasets().map(info),
     sceneDatasets: (): SceneDatasetInfo[] => {
       const layers = new Map(layerInfos().map((l) => [l.name, l]));

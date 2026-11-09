@@ -104,6 +104,7 @@ export interface HostServices {
     overlay(): { element: HTMLElement; dispose(): void };
     screenshotOverlay(paint: (context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void): Disposer;
     form<T>(title: string, schema: Schema, initial?: Partial<T>): Promise<T | undefined>;
+    sheet(title: string, render: (body: HTMLElement, close: () => void) => Disposer | void, options?: { wide?: boolean }): () => void;
   };
   workspace: WorkspaceApi;
   viewer: ViewerApi;
@@ -476,6 +477,7 @@ export class PluginHost {
         screenshotOverlay: (paint) => own(s.ui.screenshotOverlay(paint)),
         confirm: (message) => s.ui.confirm(message),
         form: (title, schema, initial) => s.ui.form(title, schema, initial),
+        sheet: (title, render, options) => s.ui.sheet(title, render, options),
       },
       workspace: s.workspace,
       viewer: {
