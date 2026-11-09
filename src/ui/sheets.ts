@@ -60,6 +60,43 @@ async function addLocalEntry(wb: Workbench, entry: LocalEntry, name: (name: stri
 /** What Open from device reads, for messages. */
 const LOCAL_FORMATS = "NIfTI, FreeSurfer .mgz/.mgh, NumPy .npy, TIFF stacks, tractograms (.trk, .tck, .trx), meshes and surfaces (.obj, .stl, .ply, .gii, FreeSurfer), SWC neurons, point tables (.csv, .xyz) and LAS point clouds, OME-Zarr, zarr-vectors and precomputed";
 
+/** The datasets other scenes of the workspace show and this one does not, each added to this scene with a click. */
+function otherScenes(wb: Workbench): HTMLElement {
+  const { store } = wb;
+  const datasets = store.datasetsNotInScene();
+  if (datasets.length === 0) return h("span");
+  return h(
+    "div",
+    { class: "section open-other-scenes" },
+    h("h3", { class: "section-title" }, "In other scenes"),
+    h(
+      "div",
+      { class: "list" },
+      ...datasets.map((d) => {
+        const scenes = store.scenesShowing(d.id);
+        return h(
+          "button",
+          {
+            class: "ds-row other pick",
+            type: "button",
+            title: `Add “${d.name}” to this scene`,
+            onclick: () => {
+              store.showDataset(d.id);
+              closeSheet();
+              wb.docks.show("layer");
+            },
+          },
+          h("span", { class: "ds-icon" }, icon("database")),
+          h("span", { class: "ds-name" }, d.name),
+          h("span", { class: "type" }, kindLabel(d.kind)),
+          h("span", { class: "ds-icon" }, icon("plus")),
+          h("span", { class: "sub" }, scenes.length ? `in ${scenes.join(", ")}` : "in no scene"),
+        );
+      }),
+    ),
+  );
+}
+
 export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
   const input = h("textarea", {
     class: "state-input",
@@ -156,6 +193,7 @@ export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
           : []),
         input,
         asSceneLabel,
+        otherScenes(wb),
         h("h3", { class: "section-title" }, "Examples and templates"),
         h(
           "div",

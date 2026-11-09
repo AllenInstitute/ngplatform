@@ -4,7 +4,7 @@
  * One row per dataset, with its visibility, load state and type; a dataset
  * shown through several layers lists them beneath it.  Selecting a row
  * brings its controls up in the Layer tab.  Datasets that other scenes show
- * are listed below, ready to add to this one.
+ * are offered in the Open sheet and the Add a dataset sheet, not here.
  */
 import type { LayerInfo } from "../../engine/engine.js";
 import { clear, h, icon, iconButton } from "../dom.js";
@@ -52,7 +52,6 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
   /** "Local" for data on this computer; nothing for data from the web. */
   const where = (url: string) => (wb.localData.parse(url.replace(/^[a-z0-9+]+:\/\/(?=https?:)/, "")) !== undefined ? "Local" : "");
   const list = h("div", { class: "datasets" });
-  const others = h("div", { class: "section ds-others" });
   const addButton = h("button", { class: "btn outline small", type: "button", "aria-haspopup": "menu" }, icon("plus"), "Add");
   addButton.addEventListener("click", () => showAddMenu(addButton, wb));
   const permission = h(
@@ -65,7 +64,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
   // Tools that are off but would serve this scene's data (src/ui/plugin_offers.ts).
   const tools = h("div", { class: "ds-offers", hidden: true });
   const actions = h("div", { class: "panel-actions" }, addButton);
-  host.append(actions, permission, gone, list, tools, others);
+  host.append(actions, permission, gone, list, tools);
 
   const renderOffers = () => {
     const items = wb.offers.list();
@@ -256,36 +255,6 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
           );
           return h("div", { class: "ds-group" }, row, views);
         }),
-      );
-    }
-
-    const notShown = store.datasetsNotInScene();
-    if (notShown.length === 0) {
-      clear(others);
-    } else {
-      clear(
-        others,
-        h("h3", { class: "section-title" }, "In other scenes"),
-        h(
-          "div",
-          { class: "list" },
-          ...notShown.map((dataset) => {
-            const scenes = store.scenesShowing(dataset.id);
-            const source = shortSource(sourceText(dataset.source));
-            return h(
-              "div",
-              { class: "ds-row other", title: `Add “${dataset.name}” to this scene`, onclick: () => store.showDataset(dataset.id) },
-              h("span", { class: "ds-icon" }, icon("database")),
-              h("span", { class: "ds-name" }, dataset.name),
-              h("span", { class: "type" }, where(sourceText(dataset.source))),
-              iconButton("plus", `Add “${dataset.name}” to this scene`, (e) => {
-                e.stopPropagation();
-                store.showDataset(dataset.id);
-              }),
-              h("span", { class: "sub" }, [scenes.length ? `in ${scenes.join(", ")}` : "in no scene", source].filter(Boolean).join(" · ")),
-            );
-          }),
-        ),
       );
     }
   };

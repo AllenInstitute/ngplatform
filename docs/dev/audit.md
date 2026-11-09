@@ -89,7 +89,7 @@ confirm, not only the tooltip (0.5 h).
 ### Datasets tab
 
 **What it does.** The scene's datasets with visibility, load state and
-source, their layers beneath; the other scenes' datasets to add.
+source, their layers beneath; the other scenes' datasets are offered in Open.
 
 **Bugs fixed.**
 
