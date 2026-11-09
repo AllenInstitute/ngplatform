@@ -100,7 +100,8 @@ const measure = (sel) =>
       handMadeOnOff: checks.filter((c) => !c.closest("label.choice") && !c.closest(".ng-host, .ins-embed, [class*='neuroglancer-']")).length,
       headings: tally(heads, ["fontSize", "fontWeight", "textTransform", "color", "letterSpacing"]),
       radii: tally(all.filter((e) => getComputedStyle(e).borderRadius !== "0px"), ["borderRadius"]),
-      inlineStyled: all.filter((e) => e.getAttribute("style")).length,
+      // Neuroglancer's widgets aside, as above: they and their code editor set their own geometry as they draw.
+      inlineStyled: all.filter((e) => e.getAttribute("style") && !e.closest(".ins-embed, [class*='neuroglancer-']")).length,
       words: (root.innerText.match(/[A-Za-z][A-Za-z'’-]*/g) || []).length,
       controls: buttons.length + inputs.length + checks.length,
     };
