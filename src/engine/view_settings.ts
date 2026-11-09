@@ -8,7 +8,7 @@
  * before their labels, each bound two ways to the viewer, so a change made
  * by undo or by a link shows here at once.
  */
-import { type Child, el } from "../sdk/dom.js";
+import { type Child, checkbox, el } from "../sdk/dom.js";
 import { bytesText, parseBytes } from "../sdk/format.js";
 import { colour, Scope, type Watch } from "./inspector/ui.js";
 import { columnSpecifications, getChunkSourceIdentifier, getFormattedNames, type Viewer } from "./neuroglancer.js";
@@ -18,10 +18,9 @@ export function mountViewSettings(host: HTMLElement, viewer: Viewer): () => void
   const scope = new Scope();
 
   const check = (label: string, w: Watch<boolean>) => {
-    const box = el("input", { type: "checkbox" });
-    box.addEventListener("change", () => (w.value = box.checked));
-    scope.watch(w, () => (box.checked = w.value));
-    return el("label", { class: "field check" }, box, el("span", {}, label));
+    const box = checkbox(label, w.value, (v) => (w.value = v));
+    scope.watch(w, () => box.set(w.value));
+    return box;
   };
   const swatch = (label: string, w: Watch<ArrayLike<number> | undefined>) => el("label", { class: "field check" }, colour(scope, w), el("span", {}, label));
   // A size in bytes, as "954 MB"; typed with a unit, or a bare number of MB.

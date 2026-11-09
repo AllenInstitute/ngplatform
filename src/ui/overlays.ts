@@ -3,6 +3,7 @@ import { type Command, matchCommands } from "../core/commands.js";
 import type { Schema } from "../core/schema.js";
 import { validate, withDefaults } from "../core/schema.js";
 import { SheetStack, type StackedSheet } from "../core/sheet_stack.js";
+import { checkbox } from "../sdk/dom.js";
 import { h, keyLabel } from "./dom.js";
 
 interface OpenSheet extends StackedSheet {
@@ -212,9 +213,8 @@ function fieldFor(key: string, schema: Schema, value: unknown, required: boolean
     return { el: h("label", { class: "field" }, h("span", {}, label), select, hint), read: () => JSON.parse(select.value) };
   }
   if (schema.type === "boolean") {
-    const box = h("input", { type: "checkbox", "aria-label": label });
-    box.checked = value === true;
-    return { el: h("label", { class: "field check" }, box, h("span", {}, label), hint), read: () => box.checked };
+    const box = checkbox(label, value === true, () => {});
+    return { el: h("div", { class: "field" }, box, hint), read: () => box.input.checked };
   }
   const numeric = schema.type === "number" || schema.type === "integer";
   const structured = schema.type === "object" || schema.type === "array";

@@ -13,7 +13,7 @@ import { captureName, evenBox, frameName, sweepFrames, trimBox, turntableFrames,
 import { GifEncoder } from "../core/gif.js";
 import { muxMp4, type Mp4Sample } from "../core/mp4.js";
 import { zipStore } from "../core/zip.js";
-import { downloadBlob } from "../sdk/dom.js";
+import { checkbox, downloadBlob } from "../sdk/dom.js";
 import type { JobControl } from "../sdk/types.js";
 import { formatScaleWithUnitAsString } from "../engine/neuroglancer.js";
 import { h } from "./dom.js";
@@ -124,8 +124,8 @@ export function showCaptureSheet(wb: Workbench, initialMode: Mode = "picture"): 
   );
   const panel = select([["-1", "All the views"], ...panels.map((p): [string, string] => [String(p.index), p.label])], String(saved.panel !== undefined && saved.panel < panels.length ? saved.panel : -1));
   const scale = number(saved.scale ?? 1, { min: 0.5, max: 8, step: 0.5 });
-  const trim = h("input", { type: "checkbox" }) as HTMLInputElement;
-  trim.checked = saved.trim ?? false;
+  const trimBorders = checkbox("Trim empty borders", saved.trim ?? false, () => {});
+  const trim = trimBorders.input;
   const margin = number(saved.margin ?? 4, { min: 0, max: 200, step: 1 });
   const timeout = number(saved.timeout ?? 20, { min: 1, max: 600, step: 1 });
   const fps = number(saved.fps ?? 10, { min: 1, max: 60, step: 1 });
@@ -161,7 +161,7 @@ export function showCaptureSheet(wb: Workbench, initialMode: Mode = "picture"): 
   const count = h("span", { class: "detected" });
 
   const pictureRows = h("div", { class: "field-row" }, field("View", panel), field("Magnification (×)", scale, "2 doubles the width and height"));
-  const trimRow = h("div", { class: "field-row" }, h("label", { class: "field check" }, trim, h("span", {}, "Trim empty borders")), h("span"));
+  const trimRow = h("div", { class: "field-row" }, trimBorders, h("span"));
   const sweepRows = h(
     "div",
     { class: "capture-sweep" },
@@ -270,7 +270,7 @@ interface Kept {
 let capturing = false;
 
 export async function runCapture(wb: Workbench, s: CaptureSettings, folder?: FileSystemDirectoryHandle): Promise<void> {
-  if (capturing) throw new Error("another capture is under way: wait for it, or cancel it in the Activity tab");
+  if (capturing) throw new Error("another capture is under way: wait for it, or cancel it in Activity");
   capturing = true;
   try {
     await capture(wb, s, folder);

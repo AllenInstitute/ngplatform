@@ -9,7 +9,7 @@ import { InputError, layerCount, parseInput } from "../core/state_io.js";
 import { layerNameFor } from "../core/state_io.js";
 import { closeSheet, sheet, showSheet, toast } from "./overlays.js";
 import { type DroppedItem, LocalData, type FoundDataset, type LocalEntry } from "../virtual/local_data.js";
-import { downloadBlob } from "../sdk/dom.js";
+import { checkbox, downloadBlob, info } from "../sdk/dom.js";
 import { clear, h, icon, keyLabel } from "./dom.js";
 import { kindLabel } from "./panels/format.js";
 import { renderOverviewSettings } from "./overview.js";
@@ -108,8 +108,9 @@ export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
     "aria-label": "Link, state or data URL",
     spellcheck: "false",
   });
-  const asScene = h("input", { type: "checkbox", id: "open-as-scene" });
-  const asSceneLabel = h("label", { class: "field check" }, asScene, h("span", {}, "As a new scene"));
+  const asSceneLabel = checkbox("As a new scene", false, () => describe());
+  const asScene = asSceneLabel.input;
+  asScene.id = "open-as-scene";
   const detected = h("span", { class: "detected" });
   const openButton = h("button", { class: "btn primary", type: "button", disabled: true }, "Open");
   const describe = () => {
@@ -153,7 +154,6 @@ export function showOpenSheet(wb: Workbench, actions: OpenActions): void {
     }
   };
   input.addEventListener("input", describe);
-  asScene.addEventListener("change", describe);
   // Closed by its own handle after the wait: a confirm may have come and gone above it meanwhile.
   let close = () => {};
   const submit = async () => {
@@ -319,7 +319,7 @@ export function showAddDatasetSheet(wb: Workbench): void {
 /** Opens data on this computer: pick a folder or a file, then choose what in it to add. */
 export function showLocalSheet(wb: Workbench, local: LocalData): void {
   const found = h("div", { class: "list" });
-  const status = h("span", { class: "detected" }, "Nothing is uploaded: the viewer reads the files from here.");
+  const status = h("span", { class: "detected" });
   const add = h("button", { class: "btn primary", type: "button", disabled: true }, "Add");
   let choices: { dataset: FoundDataset; box: HTMLInputElement }[] = [];
   const pick = async (folder: boolean) => {
@@ -327,23 +327,19 @@ export function showLocalSheet(wb: Workbench, local: LocalData): void {
     try {
       const entry = await local.pick(folder);
       if (entry === undefined) {
-        status.textContent = "Nothing picked.";
+        status.textContent = "";
         return;
       }
       const datasets = await local.detect(entry.id);
-      choices = datasets.map((dataset) => {
-        const box = h("input", { type: "checkbox" });
-        box.checked = true;
-        return { dataset, box };
-      });
+      const rows = datasets.map((dataset) => ({ dataset, pick: checkbox(dataset.name, true, () => {}) }));
+      choices = rows.map(({ dataset, pick }) => ({ dataset, box: pick.input }));
       clear(
         found,
-        ...choices.map(({ dataset, box }) =>
+        ...rows.map(({ dataset, pick }) =>
           h(
-            "label",
-            { class: "ds-row other pick" },
-            box,
-            h("span", { class: "ds-name" }, dataset.name),
+            "div",
+            { class: "ds-row local-pick" },
+            pick,
             h("span", { class: "type" }, dataset.format),
             h("span", { class: "sub" }, dataset.path ? `${entry.name}/${dataset.path}` : entry.name),
           ),
@@ -352,7 +348,7 @@ export function showLocalSheet(wb: Workbench, local: LocalData): void {
       add.disabled = choices.length === 0;
       status.classList.toggle("bad", choices.length === 0);
       status.textContent = choices.length
-        ? `${choices.length} dataset${choices.length === 1 ? "" : "s"} in ${entry.name}.`
+        ? ""
         : `Nothing readable in ${entry.name}. Choose a file or folder of: ${LOCAL_FORMATS}.`;
     } catch (e) {
       status.textContent = (e as Error).message;
@@ -375,13 +371,10 @@ export function showLocalSheet(wb: Workbench, local: LocalData): void {
           { class: "row-actions" },
           h("button", { class: "btn outline", type: "button", onclick: () => void pick(true) }, icon("open"), "Folder…"),
           h("button", { class: "btn outline", type: "button", onclick: () => void pick(false) }, icon("open"), "File…"),
-        ),
-        h(
-          "p",
-          { class: "note" },
-          "Read in place, not uploaded. ",
-          "Links to it work only in this browser, while this tab is open.",
-          LocalData.canWrite ? "" : " This browser cannot remember folders or write into them: use Chrome or Edge for that.",
+          info(
+            `Read in place, not uploaded. Links to it work only in this browser, while this tab is open.${LocalData.canWrite ? "" : " This browser cannot remember folders or write into them: use Chrome or Edge for that."}`,
+            "About local data",
+          ),
         ),
         found,
       ],
@@ -424,28 +417,29 @@ const SECTION_RENDER: Record<SettingsSection, (host: HTMLElement, wb: Workbench)
     const settings = h("div", { class: "view-settings" });
     const dispose = wb.engine.mountSettings(settings);
     // Kept in this browser: offers of the plugins that are off (src/ui/plugin_offers.ts).
-    const offers = h("input", { type: "checkbox", id: "show-offers" }) as HTMLInputElement;
-    offers.checked = wb.offers.enabled;
-    offers.addEventListener("change", () => wb.offers.setEnabled(offers.checked));
+    const offers = checkbox("Offer tools that are off when the data suits them", wb.offers.enabled, (v) => wb.offers.setEnabled(v), {
+      info: "Ticking it again brings back the offers you said “Not now” to.",
+    });
+    offers.input.id = "show-offers";
     settings.append(
       h(
         "section",
         {},
-        h("h3", { class: "section-title" }, "In this browser"),
+        h(
+          "h3",
+          { class: "section-title" },
+          "In this browser",
+          info("Kept in this browser. The groups above are saved with the workspace.", "About In this browser"),
+        ),
         h(
           "div",
           { class: "options" },
-          h(
-            "label",
-            { class: "field check", title: "Ticking it again brings back the offers you said “Not now” to." },
-            offers,
-            h("span", {}, "Offer tools that are off when the data suits them"),
-          ),
+          offers,
           h("div", { class: "row-actions" }, h("button", { class: "btn outline", type: "button", onclick: () => wb.run("view.panelConvention") }, "Orientation of the views…")),
         ),
       ),
     );
-    host.append(h("p", { class: "note first" }, "Saved with the workspace, except the last group."), settings);
+    host.append(settings);
     return dispose;
   },
   "sign-in": (host, wb) => renderAuthPanel(host, wb),
