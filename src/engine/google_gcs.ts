@@ -1,5 +1,5 @@
 /**
- * Google Cloud Storage read with a Google account of the Auth tab:
+ * Google Cloud Storage read with a Google account of Settings › Sign-in:
  * `gs+google://bucket/path`, as Neuroglancer reads `gs://bucket/path` but
  * with an account's token in each request.  The scheme is registered here,
  * on the main thread and in Neuroglancer's chunk workers
@@ -81,7 +81,7 @@ export function folderOf(path: string): string {
 function googleGcsProvider(context: SharedKvStoreContextBase): BaseKvStoreProvider {
   return {
     scheme: GOOGLE_SCHEME,
-    description: "Google Cloud Storage (a Google account of the Auth tab)",
+    description: "Google Cloud Storage (a Google account of Settings › Sign-in)",
     getKvStore(url) {
       const m = (url.suffix ?? "").match(/^\/\/([^/]+)(\/.*)?$/);
       if (m === null) throw new Error(`Invalid URL, expected \`${GOOGLE_SCHEME}://<bucket>/<path>\``);

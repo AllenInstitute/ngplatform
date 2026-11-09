@@ -270,7 +270,7 @@ It prints a link with `&name=<its hostname>`. On the browser's computer:
 ssh -N -L 7000:127.0.0.1:8765 me@workstation
 ```
 
-then open the link (or the app's Jobs tab, **Add a computer…**, with the
+then open the link (or the app's Settings › Compute, **Add a computer (SSH)…**, with the
 address `http://localhost:7000` and the token).
 
 ### On a cluster

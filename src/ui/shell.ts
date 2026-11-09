@@ -431,7 +431,7 @@ export class Shell {
     }
     if (plugins.failed !== undefined && plugins.failed.size > 0) {
       const names = plugins.catalogue.filter((e) => plugins.failed!.has(e.manifest.id)).map((e) => e.manifest.name);
-      offer(`${listNames(names)} could not load.`, [{ label: "Plugins tab", primary: true, run: () => this.docks.show("plugins") }], 60000);
+      offer(`${listNames(names)} could not load.`, [{ label: "Show Plugins", primary: true, run: () => this.docks.show("plugins") }], 60000);
     }
 
     // Neuroglancer's own status messages (loading, errors) go below the views.
@@ -1240,7 +1240,7 @@ export class Shell {
     offer(
       `${names} ${one ? "is" : "are"} now off until you turn ${one ? "it" : "them"} on.`,
       [
-        { label: "Plugins tab", run: () => this.docks.show("plugins") },
+        { label: "Show Plugins", run: () => this.docks.show("plugins") },
         { label: "Turn back on", primary: true, run: () => void this.turnOnPlugins(ids) },
       ],
       60000,
@@ -1265,7 +1265,7 @@ export class Shell {
     const formats = new Set(this.wb.engine.layers().flatMap((l) => l.sources.map((s) => contextKeyFor(s))));
     const zv = this.wb.pluginSwitches.manifests.find((m) => m.id === "org.ngplatform.zarr-vectors");
     if (zv !== undefined && formats.has("zarr-vectors") && !this.wb.pluginSwitches.enabled.has(zv.id)) {
-      const message = "This workspace has Zarr Vectors data: turn on Zarr Vectors in the Plugins tab.";
+      const message = "This workspace has Zarr Vectors data: turn on Zarr Vectors in Plugins.";
       this.wb.log.add(message, "error");
       toast(message, "error");
       this.docks.show("plugins");

@@ -138,7 +138,7 @@ async function local(request: Request, url: URL): Promise<Response> {
   const range = parseRange(request.headers.get("range"));
   const answer = await read(id, file, range, method === "HEAD");
   const headers: Record<string, string> = { "access-control-allow-origin": "*", "cache-control": "no-store" };
-  if (answer.status === 410) return new Response("This local data is not open in any tab. Open it again (Add → Local file or folder).", { status: 410, headers });
+  if (answer.status === 410) return new Response("This local data is not open in any tab. Open it again (Layers › Add data › Local file or folder…).", { status: 410, headers });
   if (answer.status !== 200) return new Response(answer.message ?? null, { status: answer.status, headers });
   const { body, size, start = 0 } = answer;
   headers["accept-ranges"] = "bytes";
