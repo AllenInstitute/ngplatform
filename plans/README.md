@@ -74,7 +74,7 @@ Item line numbers are from that commit and move as the code changes.
 
 ## Batches
 
-188 items (133 done). Phases run in order; within a phase, batches as each file says.
+188 items (170 done). Phases run in order; within a phase, batches as each file says.
 
 | Phase | Batch | Items | Blockers |
 |---|---|---|---|
