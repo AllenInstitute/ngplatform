@@ -201,14 +201,15 @@ python -m ngplatform_runner --root ~/data \
   --service render="/path/to/env/bin/python -m ngplatform_render.server"
 ```
 
-It uses the first GPU CUDA sees (set `CUDA_VISIBLE_DEVICES` to choose), keeps
-levels it makes in `<its state dir>/render-cache` and stills, movies and
-splats in `<its state dir>/renders` (or a folder under the roots the app
-names), each in a new folder of its own. Movies need `ffmpeg` on the `PATH`;
-`/info` says whether it was found. To read remote stores only from certain
-places, add `--allow-source <url>` (more than once for several, or
-`NGP_RENDER_SOURCES`, space-separated) to the service's command: a store
-must then be under one of them. Its API is in
+It uses the first GPU CUDA sees (set `CUDA_VISIBLE_DEVICES` to choose),
+keeps levels it makes or reads from a server in `<its state
+dir>/render-cache` and stills, movies and splats in `<its state
+dir>/renders` (or a folder under the roots the app names), each in a new
+folder of its own. Movies need `ffmpeg` on the `PATH`; `/info` says whether
+it was found. To read remote stores only from certain places, add
+`--allow-source <url>` (more than once for several, or `NGP_RENDER_SOURCES`,
+space-separated) to the service's command: a store must then be under one of
+them. Its API is in
 [plugins/anatomical-rendering/README.md](../plugins/anatomical-rendering/README.md).
 
 **GPU memory.** Every session and job draws on one budget: by default 0.8
@@ -234,13 +235,17 @@ ten minutes) for the GPU memory its frame needs, saying so in `message`.
 
 **Disk.** A job is refused (507, with the space free and needed) when it
 would leave less than 1 GB free where it writes. A movie's frames are
-deleted once its MP4 is made. Levels the service makes are cached by the
-store, the level, the channel and time point and a stamp of the level's
-metadata (its file's time, or the server's ETag or Last-Modified), so a
-store written again is read again; the cache keeps within
-`NGP_RENDER_CACHE_GB` (20 by default), least recently used out first.
-Downloads (`/stills/<id>/file`, `/movies/<id>/file`,
-`/splats/<id>/file/<name>`) are streamed and take a `Range`.
+deleted once its MP4 is made. Levels the service makes, and stored levels
+read from a server, are cached by the store, the level, the channel and
+time point and a stamp of the level's metadata (its file's time, or the
+server's ETag or Last-Modified), so a store written again is read again;
+the cache keeps within `NGP_RENDER_CACHE_GB` (20 by default), least
+recently used out first. A second session on the same image downloads
+nothing. A sharded level on a server is read a whole shard at a time, a
+large shard as 4 MB ranges at once (one connection to GCS carries about 20
+MB/s; many, several times that). Downloads (`/stills/<id>/file`,
+`/movies/<id>/file`, `/splats/<id>/file/<name>`) are streamed and take a
+`Range`.
 
 **Channels and time points.** An image with channel or time axes is shown
 at channel 0 and time point 0 unless the session asks for others:

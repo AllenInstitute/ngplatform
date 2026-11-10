@@ -9,7 +9,8 @@ from the finest stored level that is larger, as it is read: by the mean
 of each 2x2x2 block for images, by majority vote for labels, 2x at a
 time, so they are levels the store could have held.  Levels made this
 way are kept in a cache on disk, since they cost a read of the level
-under them; the store itself is never written.  The cache is keyed by the
+under them, and so are stored levels read from a server, which cost a
+download; the store itself is never written.  The cache is keyed by the
 store, the level's metadata and a stamp of it (its file's time, or the
 server's ETag or Last-Modified), so a store written again is read again,
 and it is kept within a size (least recently used out first).
@@ -17,6 +18,10 @@ and it is kept within a size (least recently used out first).
 An image with channels or time points (OME axes of type "channel" and
 "time", or named c and t) is read at one of each: `channel` and `time`,
 0 unless asked.
+
+A sharded level on a server is read a whole shard at a time, a large
+shard as ranges read at once (one connection carries a fraction of what
+several do), then decoded here.
 """
 
 from __future__ import annotations
@@ -208,6 +213,43 @@ _connections = threading.local()
 def _http_get(url: str) -> bytes | None:
     """GET over a connection kept open per thread and host (a new TLS handshake for every block of a
     region costs more than the block): the body, or None for a 403 or 404."""
+    got = _http_request(url)
+    return None if got is None else got[0]
+
+
+#: A whole object larger than this is read as ranges of this size at once: one connection to GCS carries
+#: about 20 MB/s, eight about 50, sixteen to thirty-two about 70.
+PART_BYTES = 4 << 20
+_parts_pool = None
+
+
+def _http_get_whole(url: str) -> bytes | None:
+    """A whole object (None for a 403 or 404), its first PART_BYTES asked for first and, when it is larger,
+    the rest as ranges of that size read at once on connections of their own."""
+    global _parts_pool
+    from concurrent.futures import ThreadPoolExecutor
+
+    got = _http_request(url, {"Range": f"bytes=0-{PART_BYTES - 1}"})
+    if got is None:
+        return None
+    first, total = got
+    if total is None or total <= len(first):
+        return first  # the whole object (a server that ignores ranges sends it all)
+    if _parts_pool is None:
+        _parts_pool = ThreadPoolExecutor(max_workers=32, thread_name_prefix="ngp-parts")
+    starts = range(len(first), total, PART_BYTES)
+
+    def part(a: int) -> bytes:
+        got = _http_request(url, {"Range": f"bytes={a}-{min(total, a + PART_BYTES) - 1}"})
+        if got is None or len(got[0]) != min(total, a + PART_BYTES) - a:
+            raise OSError(f"{url}: a part of it could not be read")
+        return got[0]
+
+    return first + b"".join(_parts_pool.map(part, starts))
+
+
+def _http_request(url: str, headers: dict[str, str] | None = None) -> tuple[bytes, int | None] | None:
+    """A GET (with `headers`): the body and, for a range, the object's whole size; None for a 403 or 404."""
     import http.client
     from urllib.parse import urlsplit
 
@@ -223,9 +265,10 @@ def _http_get(url: str) -> bytes | None:
             c = (http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection)(u.netloc, timeout=120)
             conns[key] = c
         try:
-            c.request("GET", path, headers={"User-Agent": "ngplatform-render"})
+            c.request("GET", path, headers={"User-Agent": "ngplatform-render", **(headers or {})})
             r = c.getresponse()
             body = r.read()
+            span = r.getheader("Content-Range")
         except (http.client.HTTPException, OSError):
             # A connection the server closed while idle: open another.
             c.close()
@@ -237,7 +280,8 @@ def _http_get(url: str) -> bytes | None:
             return None
         if r.status >= 400:
             raise OSError(f"HTTP {r.status} for {url}")
-        return body
+        total = int(span.rpartition("/")[2]) if (r.status == 206 and span and not span.endswith("*")) else None
+        return body, total
     return None
 
 
@@ -477,7 +521,7 @@ class Loaded:
     source_shape: tuple[int, int, int]
     seconds: float = 0.0
     made: bool = False  # made by downsampling here (from the cache, or now)
-    from_cache: bool = False
+    from_cache: bool = False  # from the disk cache: a made level, or a stored level of a store on a server
     window: tuple[float, float] | None = None  # a guess at the tissue's values (data units), for "window" presets
     quantiles: list[float] | None = None  # the tissue's values at QUANTILES (data units), for matching histograms
     channel: int = 0  # the channel and time point read (0 for an image without those axes)
@@ -496,6 +540,46 @@ def _order_zyx(a: np.ndarray, ms: Multiscale) -> np.ndarray:
 READ_BLOCK_BYTES = 64 << 20
 
 
+def _remote(url: str) -> bool:
+    return http_url(url).startswith(("http://", "https://"))
+
+
+class _WholeShards:
+    """Reads a sharded zarr v3 level over HTTP a whole shard at a time, a large shard as ranges read at once
+    (_http_get_whole), its chunks decoded here. zarr's own reader reads a whole shard on one connection, which
+    carries about 20 MB/s from GCS (a 100 MB shard of the 20 µm deep-brain store took 5-6 s).
+    `read(sel)` reads a box (slices of every axis), fetching the shards it touches."""
+
+    def __init__(self, url: str, path: str, arr):
+        from zarr.core.buffer import default_buffer_prototype
+
+        self.base = f"{http_url(url)}/{path}"
+        self.arr = arr
+        self.meta = arr.metadata.to_buffer_dict(default_buffer_prototype())
+        self.shards = tuple(int(s) for s in arr.shards)
+
+    def keys(self, sel: tuple) -> list[str]:
+        """The keys of the shards a box touches (slices of every axis, or an index)."""
+        import itertools
+
+        rng = []
+        for s, n, sh in zip(sel, self.arr.shape, self.shards):
+            lo, hi = (s.start or 0, n if s.stop is None else s.stop) if isinstance(s, slice) else (s, s + 1)
+            rng.append(range(lo // sh, (hi - 1) // sh + 1))
+        return [self.arr.metadata.encode_chunk_key(c) for c in itertools.product(*rng)]
+
+    def read(self, sel: tuple) -> np.ndarray:
+        import zarr
+        from zarr.core.buffer.cpu import Buffer
+
+        d = dict(self.meta)
+        for k in self.keys(sel):
+            body = _http_get_whole(f"{self.base}/{k}")
+            if body is not None:  # no shard: the fill value, as zarr reads it
+                d[k] = Buffer.from_bytes(body)
+        return np.asarray(zarr.open_array(store=zarr.storage.MemoryStore(d), mode="r")[sel])
+
+
 def _read(url: str, level: Level, ms: Multiscale, progress: Callable[[float, str], None] | None,
           factor: int = 1, labels: bool = False, fixed: dict[int, int] | None = None,
           cancelled: Callable[[], bool] | None = None) -> np.ndarray:
@@ -510,6 +594,8 @@ def _read(url: str, level: Level, ms: Multiscale, progress: Callable[[float, str
     zarr.config.set({"async.concurrency": 64})
     arr = level_array(url, ms, level.path)
     shard = getattr(arr, "shards", None) or arr.chunks
+    # A sharded level on a server: whole shards, one GET each (blocks are whole shards, so each is read once).
+    whole = _WholeShards(url, level.path, arr) if (not ms.n5 and getattr(arr, "shards", None) and _remote(url)) else None
     zi, yi, xi = ms.spatial[2], ms.spatial[1], ms.spatial[0]
     n = (arr.shape[zi], arr.shape[yi], arr.shape[xi])
     # Blocks: the chunk (or shard) shape, grown to at least 64 MB and to a multiple of the factor.
@@ -536,7 +622,7 @@ def _read(url: str, level: Level, ms: Multiscale, progress: Callable[[float, str
                 sel[i] = fixed.get(i, 0)
         stops = (min(n[0], z + blk[0]), min(n[1], y + blk[1]), min(n[2], x + blk[2]))
         sel[zi], sel[yi], sel[xi] = slice(z, stops[0]), slice(y, stops[1]), slice(x, stops[2])
-        a = _order_zyx(np.asarray(arr[tuple(sel)]), ms)
+        a = _order_zyx(whole.read(tuple(sel)) if whole is not None else np.asarray(arr[tuple(sel)]), ms)
         f = factor
         while f > 1:
             a = _reduce2(a, labels)
@@ -777,7 +863,8 @@ def load(url: str, budget: int = 400_000_000, labels: bool | None = None, level:
     made = factor > 1
     from_cache = False
     cache = None
-    if made:
+    if made or _remote(url):
+        # Levels made here, and stored levels of a store on a server (read again for every session otherwise).
         # The store, the level, how it was made, the channel and time point, and a stamp of the level's metadata:
         # a store written again (a new stamp) is read again, not served from the cache.
         stamp = content_stamp(url, ms, chosen)
@@ -791,14 +878,14 @@ def load(url: str, budget: int = 400_000_000, labels: bool | None = None, level:
         except OSError:
             pass
         if progress:
-            progress(1.0, f"level {chosen.path}/{factor}x from the cache")
+            progress(1.0, f"level {chosen.path}" + (f"/{factor}x" if made else "") + " from the cache")
     else:
         data = _read(url, chosen, ms, progress, factor, is_labels, fixed, cancelled)
-        if made:
-            if not is_labels:
-                src_dtype = np.dtype(chosen.dtype)
-                if src_dtype.kind in "ui":
-                    data = np.clip(np.rint(data), np.iinfo(src_dtype).min, np.iinfo(src_dtype).max).astype(src_dtype)
+        if made and not is_labels:
+            src_dtype = np.dtype(chosen.dtype)
+            if src_dtype.kind in "ui":
+                data = np.clip(np.rint(data), np.iinfo(src_dtype).min, np.iinfo(src_dtype).max).astype(src_dtype)
+        if cache is not None:
             _cache_put(cache, data)
     A = chosen.affine.copy()
     if factor > 1:
