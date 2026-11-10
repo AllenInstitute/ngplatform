@@ -180,6 +180,13 @@ histograms show the level drawn and its chunks, loaded and not. A level without 
 neighbours; a coarse level known to be empty is not used; a flat store (one
 plane) is measured as one stored unit thick.
 
+A curve crossing into a neighbouring chunk is bridged with the neighbour's
+first vertex. A chunk that only cross-sections draw takes those vertices
+only from neighbours already at hand (read, being read, or drawn by a view)
+and leaves the other bridges out: they lie off the plane, and reading them
+cost about 70% of a 2-D session's vertex bytes. Should a 3-D view then draw
+that chunk, it is read again with every bridge.
+
 Additive pyramids. A level whose metadata says `refinement: "add"` holds
 only what the coarser levels do not: its complete content is its own data
 and the next coarser level's complete content (zarr-vectors-tools builds

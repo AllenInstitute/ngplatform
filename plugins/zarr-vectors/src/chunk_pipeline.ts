@@ -26,9 +26,10 @@
  *
  * Ghost positions come from the neighbour's vertex cell. Cells are shared
  * through one cache, so a neighbour the view also draws is fetched once,
- * whichever needs it first. A neighbour the view does not draw (a slice
- * view's chunks above and below the plane) is read by row range instead,
- * when its cell is uncompressed.
+ * whichever needs it first. A neighbour the view does not draw is read by
+ * row range instead, when its cell is uncompressed; but for a chunk only
+ * slice views draw, such a neighbour lies off the plane (above or below
+ * it), and its bridges are left out rather than read.
  */
 
 import type { ZarrVectorsGeometryDescription } from "./base.js";
@@ -94,6 +95,11 @@ export interface DenseChunkData {
   faces: Uint32Array;
   /** Per exposed attribute (`components` floats per vertex), then the tangent. */
   attributes: Float32Array[];
+  /**
+   * Bridges and face corners left out because their neighbour was not at
+   * hand (`sliceOnly`); a 3-D view needs them.
+   */
+  ghostsLeftOut?: number;
 }
 
 /** Raw vertex cells, by pipeline and cell, shared by chunks and ghosts. */
@@ -382,11 +388,16 @@ export class LevelPipeline {
    * chunks, and so every read of a neighbour's vertices: a tool testing a
    * region against the chunks it touches reads those chunks alone.  Linked
    * skeletons keep their links, which define their segments.
+   *
+   * `sliceOnly: true` (only cross-sections draw the chunk) keeps the bridges
+   * and face corners into neighbours whose vertex cell is cached, being
+   * read, or drawn by the view, and leaves out the rest, which lie off the
+   * plane: reading them would cost more than the chunk itself.
    */
   async download(
     chunk: number[],
     signal: AbortSignal,
-    options: { bridges?: boolean } = {},
+    options: { bridges?: boolean; sliceOnly?: boolean } = {},
   ): Promise<DenseChunkData | undefined> {
     const { description } = this;
     const chunkKey = chunk.join(".");
@@ -526,9 +537,18 @@ export class LevelPipeline {
         hostIsPredecessor: aLocal,
       });
     }
+    // Decided once per neighbour, before any of their reads start.
+    const atHand = new Map<string, boolean>();
+    const include = options.sliceOnly
+      ? (key: string) => {
+          let ok = atHand.get(key);
+          if (ok === undefined) atHand.set(key, (ok = this.atHand(key)));
+          return ok;
+        }
+      : () => true;
     const [ghostPositions, cornerValues] = await Promise.all([
-      this.ghostPositions(ghosts, signal),
-      this.cornerValues(ghosts),
+      this.ghostPositions(ghosts, signal, include),
+      this.cornerValues(ghosts, include),
     ]);
     await fillObjectValues(
       this.access,
@@ -537,7 +557,7 @@ export class LevelPipeline {
       segmentIds,
       decoded.numVertices,
     );
-    return assembleChunk(
+    const out = assembleChunk(
       decoded,
       segmentIds,
       ghosts,
@@ -545,6 +565,9 @@ export class LevelPipeline {
       crossFaces,
       cornerValues,
     );
+    const leftOut = ghosts.filter((g) => !include(g.chunkKey)).length;
+    if (leftOut > 0) out.ghostsLeftOut = leftOut;
+    return out;
   }
 
   /**
@@ -555,11 +578,14 @@ export class LevelPipeline {
    */
   private async cornerValues(
     ghosts: readonly Ghost[],
+    include: (chunkKey: string) => boolean,
   ): Promise<(Float32Array | undefined)[][]> {
     const out: (Float32Array | undefined)[][] = ghosts.map(() => []);
     const attributes = this.description.attributes;
     if (attributes.length === 0) return out;
-    const keys = [...new Set(ghosts.filter((g) => g.corner).map((g) => g.chunkKey))];
+    const keys = [
+      ...new Set(ghosts.filter((g) => g.corner).map((g) => g.chunkKey)),
+    ].filter(include);
     await mapConcurrent(keys, 8, async (key) => {
       await Promise.all(
         attributes.map(async (a, i) => {
@@ -591,14 +617,30 @@ export class LevelPipeline {
     return out;
   }
 
-  /** Positions of the requested neighbour vertices (NaN where unreadable). */
+  /**
+   * Whether the vertex cell at `chunkKey` is at hand: cached, being read, or
+   * in a chunk the view draws (so read anyway).
+   */
+  private atHand(chunkKey: string): boolean {
+    return (
+      vertexCells.peek(`${this.id}|${chunkKey}`) !== undefined ||
+      this.isRequested(chunkKey.split(".").map(Number))
+    );
+  }
+
+  /**
+   * Positions of the requested neighbour vertices (NaN where unreadable, or
+   * in a chunk not to `include`).
+   */
   private async ghostPositions(
     ghosts: readonly Ghost[],
     signal: AbortSignal,
+    include: (chunkKey: string) => boolean,
   ): Promise<Float32Array> {
     const out = new Float32Array(ghosts.length * 3).fill(Number.NaN);
     const byChunk = new Map<string, number[]>();
     ghosts.forEach((g, i) => {
+      if (!include(g.chunkKey)) return;
       let list = byChunk.get(g.chunkKey);
       if (list === undefined) byChunk.set(g.chunkKey, (list = []));
       list.push(i);

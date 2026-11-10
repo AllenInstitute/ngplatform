@@ -158,6 +158,13 @@ function storeAccess(
 
 export class ZarrVectorsDenseChunk extends SliceViewChunk {
   data: DenseChunkData | undefined;
+  /**
+   * The chunk manager's priority round in which a 3-D view last asked for
+   * the chunk: a chunk no 3-D view asks for is drawn in cross-sections only.
+   */
+  wanted3d = -1;
+  /** Loaded for cross-sections only, without its bridges off the plane. */
+  partialBridges = false;
 
   serialize(msg: any, transfers: any[]) {
     super.serialize(msg, transfers);
@@ -228,10 +235,18 @@ export class ZarrVectorsGeometryChunkSourceBackend extends WithParameters(
   }
 
   async download(chunk: ZarrVectorsDenseChunk, signal: AbortSignal) {
+    const round = () => this.chunkManager.recomputeChunkPriorities.count;
+    const sliceOnly = chunk.wanted3d !== round();
     chunk.data = await this.pipeline.download(
       Array.from(chunk.chunkGridPosition, Math.round),
       signal,
+      { sliceOnly },
     );
+    chunk.partialBridges = (chunk.data?.ghostsLeftOut ?? 0) > 0;
+    // A 3-D view asked for it meanwhile: the next round reads it again.
+    if (chunk.partialBridges && chunk.wanted3d === round()) {
+      this.chunkManager.scheduleUpdateChunkPriorities();
+    }
   }
 }
 ZarrVectorsGeometryChunkSourceBackend.prototype.chunkConstructor =
@@ -532,6 +547,24 @@ export class ZarrVectorsDenseRenderLayerBackend extends withChunkManager(
     };
   }
 
+  /**
+   * Lets a loaded chunk go so that it is read again, as the chunk queue
+   * does when it evicts one for room.
+   */
+  private reloadChunk(chunk: ZarrVectorsDenseChunk) {
+    // A chunk no view held last round would be dropped from its source by
+    // this; it is let go in the next round instead, once it is held.
+    if (chunk.priorityTier === ChunkPriorityTier.RECENT) {
+      this.chunkManager.scheduleUpdateChunkPriorities();
+      return;
+    }
+    const queue = this.chunkManager.queueManager;
+    if (chunk.state === ChunkState.GPU_MEMORY) queue.freeChunkGPUMemory(chunk);
+    queue.freeChunkSystemMemory(chunk);
+    chunk.partialBridges = false;
+    queue.updateChunkState(chunk, ChunkState.QUEUED);
+  }
+
   private recomputeChunkPriorities() {
     this.chunkManager.registerLayer(this);
     for (const attachment of this.attachments.values()) {
@@ -572,6 +605,14 @@ export class ZarrVectorsDenseRenderLayerBackend extends withChunkManager(
           const chunk = (
             tsource.source as ZarrVectorsGeometryChunkSourceBackend
           ).getChunk(tsource.curPositionInChunks);
+          if (!isSliceView) {
+            chunk.wanted3d = this.chunkManager.recomputeChunkPriorities.count;
+            if (chunk.partialBridges && chunk.state <= ChunkState.SYSTEM_MEMORY) {
+              // Loaded for cross-sections without its bridges off the
+              // plane, which a 3-D view shows: read it again, whole.
+              this.reloadChunk(chunk);
+            }
+          }
           if (isTarget) {
             ++this.numVisibleChunksNeeded;
             if (chunk.state === ChunkState.GPU_MEMORY) {
