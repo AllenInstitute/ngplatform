@@ -82,7 +82,7 @@ pytest on a CPU, where the GPU tests skip. The browser smoke test
 
 ## Batches
 
-188 items (170 done). Phases run in order; within a phase, batches as each file says.
+188 items (188 done). Phases run in order; within a phase, batches as each file says.
 
 | Phase | Batch | Items | Blockers |
 |---|---|---|---|

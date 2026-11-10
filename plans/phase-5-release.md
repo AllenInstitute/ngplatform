@@ -12,13 +12,13 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
 
 **Items:** 4
 
-- [ ] **Major** · S–M · CI runs by hand only: typecheck, vitest and the runner's pytest on every pull request; npm ci; a bundle-size budget  
+- [x] **Major** · S–M · CI runs by hand only: typecheck, vitest and the runner's pytest on every pull request; npm ci; a bundle-size budget (d84eff8)  
   `.github/workflows/ci.yml`
-- [ ] **Major** · M · The browser smoke test waits on fixed timeouts and live servers; make it wait on state, use local fixtures, cover Settings, the start card, pairing, Share and keyboard use  
+- [x] **Major** · M · The browser smoke test waits on fixed timeouts and live servers; make it wait on state, use local fixtures, cover Settings, the start card, pairing, Share and keyboard use (6f899df, e6c8ad2)  
   `tests/e2e/smoke.mjs`
-- [ ] **Major** · M · No unit tests for any UI module (shell, docks, sheets, panels): add a DOM test environment  
+- [x] **Major** · M · No unit tests for any UI module (shell, docks, sheets, panels): add a DOM test environment (e92bd3c, 01459a7)  
   `vitest config`
-- [ ] **Plan** · S · Few CI runs (decision 2): on pull requests and by hand only, `[skip ci]` on work-in-progress pushes; the zarr-vectors and runner suites included  
+- [x] **Plan** · S · Few CI runs (decision 2): on pull requests and by hand only, `[skip ci]` on work-in-progress pushes; the zarr-vectors and runner suites included (25c0e1b)  
   `.github/workflows/ci.yml`
 
 ## 5B · Security and release
@@ -29,13 +29,13 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
 
 **Items:** 5
 
-- [ ] **Major** · M · Security: no CSP while sign-in and runner tokens sit in localStorage and URL plugins share the origin; debug globals in production  
+- [x] **Major** · M · Security: no CSP while sign-in and runner tokens sit in localStorage and URL plugins share the origin; debug globals in production (8e853c2)  
   `index.html; google_auth.ts:212; runner.ts:289; main.ts:57`
-- [ ] **Major** · M · Release process: a deploy workflow, changelog, tags, an About with versions; the app should check the runner's version  
+- [x] **Major** · M · Release process: a deploy workflow, changelog, tags, an About with versions; the app should check the runner's version (8e853c2, 72e9358, a921029)  
   `shell.ts:171; platform/runner.ts:20`
-- [ ] **Major** · M · Reproducible build: Neuroglancer from a sibling checkout, caret ranges, a beta geotiff, no linter; 111 casts into Neuroglancer internals  
+- [x] **Major** · M · Reproducible build: Neuroglancer from a sibling checkout, caret ranges, a beta geotiff, no linter; 111 casts into Neuroglancer internals (94f58a5, 8140fe3)  
   `package.json; src/engine/inspector`
-- [ ] **Minor** · S · Fonts from Google and Pyodide from jsDelivr; no app shell offline  
+- [x] **Minor** · S · Fonts from Google and Pyodide from jsDelivr; no app shell offline (8e853c2)  
   `index.html:8; python.ts:13; sw.ts`
-- [ ] **Minor** · S · Boot: no loading state while 2.25 MB of startup code loads (a 954 KB chunk)  
+- [x] **Minor** · S · Boot: no loading state while 2.25 MB of startup code loads (a 954 KB chunk) (8e853c2)  
   `index.html; dist/assets`
