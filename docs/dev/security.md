@@ -58,7 +58,7 @@ the same run gave 70, from the plugins' `<style>` elements, which is why
 | What | Where | Why there |
 |---|---|---|
 | Google accounts (emails, the default) | localStorage | So the accounts and the sign-in rules naming them survive a reload. |
-| Google access tokens | sessionStorage (this tab) | They are bearer tokens for your buckets: kept only while the tab is open, so a script that reads the browser's storage later finds none. Another tab, or this one reopened, signs in again with one click (Google remembers the consent). A token lasts an hour at most. |
+| Google access tokens | localStorage (this browser), with the accounts | Every tab of the app is signed in at once, and a reload keeps it. They are bearer tokens for your buckets, lasting an hour at most; the Content Security Policy keeps other sites' scripts off the page, and Settings › Sign-in signs out. An environment can keep them in the tab instead (`tokenStorage`, sessionStorage). |
 | The Google OAuth client ID | localStorage | Not a secret. |
 | A runner's address and pairing token | localStorage (`ngplatform.runner`, `ngplatform.hosts`) | A pairing is meant to outlast the tab, as the runner does: pairing again on every visit would mean copying the token each time. |
 | middleauth and ngauth tokens | Neuroglancer's own handling | |

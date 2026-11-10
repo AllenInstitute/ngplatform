@@ -83,8 +83,6 @@ The production polish: the work of an audit of every panel and plugin
 - A Content Security Policy in the built page: no inline script, no
   `<object>`, no `<base>`; what it allows and why is in
   [docs/dev/security.md](docs/dev/security.md).
-- Google sign-in's access tokens kept in the tab (sessionStorage), not the
-  browser: another tab or a reopened one signs in again with one click.
 - The console's `window.viewer`, `window.engine` and `window.workbench`
   only from the dev server or with `?debug` in the address.
 - A plugin from a URL says plainly what it can reach before it runs.

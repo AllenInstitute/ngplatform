@@ -8,12 +8,12 @@
  * for this site's address, built in (VITE_GOOGLE_CLIENT_ID) or set in the
  * Settings › Sign-in; docs/guide/signing-in.md says how to make one.
  *
- * The accounts (their emails, and which is the default) are kept in this
- * browser (localStorage); their access tokens only in this tab
- * (sessionStorage), so a token is gone when the tab closes and a script
- * that reads the browser's storage later finds none.  Another tab, or the
- * same one reopened, signs in again with one click (Google remembers the
- * consent).  Tokens last an hour at most.
+ * The accounts (their emails, and which is the default) and their access
+ * tokens are kept in this browser (localStorage), so every tab of the app
+ * is signed in at once and stays so after a reload; a token lasts an hour
+ * at most, and the Content Security Policy keeps other sites' scripts off
+ * the page (docs/dev/security.md).  An environment can keep the tokens in
+ * the tab instead (`tokenStorage`: sessionStorage), gone when it closes.
  *
  * Adding an account opens Google's account chooser; signing in again for
  * one passes its email as the hint, so Google goes straight to it.  A popup
@@ -99,7 +99,7 @@ export interface GoogleOAuth2 {
 export interface GoogleEnvironment {
   /** Where the accounts are kept: the browser's localStorage. */
   storage: Pick<Storage, "getItem" | "setItem" | "removeItem">;
-  /** Where their access tokens are kept: the tab's sessionStorage.  None: with the accounts, in `storage`. */
+  /** Where their access tokens are kept apart from the accounts (a tab's sessionStorage).  None, the browser's default: with the accounts, in `storage`. */
   tokenStorage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
   fetch: typeof fetch;
   now(): number;
@@ -114,7 +114,6 @@ export function browserGoogleEnvironment(): GoogleEnvironment {
   type WithGoogle = { google?: { accounts?: { oauth2?: GoogleOAuth2 } } };
   return {
     storage: localStorage,
-    tokenStorage: tabStorage(),
     fetch: (input, init) => fetch(input, init),
     now: () => Date.now(),
     loadClient: () =>
@@ -142,8 +141,12 @@ export function browserGoogleEnvironment(): GoogleEnvironment {
   };
 }
 
-/** This tab's sessionStorage; none (a browser that refuses it) keeps the tokens in memory, for this page only. */
-function tabStorage(): Pick<Storage, "getItem" | "setItem" | "removeItem"> {
+/**
+ * This tab's sessionStorage, for an environment that keeps the tokens in the
+ * tab (`tokenStorage`); a browser that refuses it keeps them in memory, for
+ * this page only.
+ */
+export function tabStorage(): Pick<Storage, "getItem" | "setItem" | "removeItem"> {
   try {
     sessionStorage.getItem(TOKENS_KEY);
     return sessionStorage;

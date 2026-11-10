@@ -77,17 +77,18 @@ describe("the debugging objects on window", () => {
   });
 });
 
-describe("Google tokens kept in the tab", () => {
+describe("Google tokens: in the browser by default, in the tab when an environment asks", () => {
   const HOUR = 3600_000;
   function storage() {
     const map = new Map<string, string>();
     return { map, getItem: (k: string) => map.get(k) ?? null, setItem: (k: string, v: string) => void map.set(k, v), removeItem: (k: string) => void map.delete(k) };
   }
-  function environment(browser = storage(), tab = storage()) {
+  /** `tab`: the tab's storage for the tokens; null, none (the browser's default: with the accounts). */
+  function environment(browser = storage(), tab: ReturnType<typeof storage> | null = storage()) {
     let answer: ((r: { access_token?: string; expires_in?: number; scope?: string }) => void) | undefined;
     const env: GoogleEnvironment = {
       storage: browser,
-      tokenStorage: tab,
+      tokenStorage: tab ?? undefined,
       now: () => 1_000_000,
       fetch: (async () => new Response(JSON.stringify({ email: "one@example.org" }))) as unknown as typeof fetch,
       loadClient: async () => ({
@@ -99,8 +100,21 @@ describe("Google tokens kept in the tab", () => {
       }),
       onStorage: () => () => {},
     };
-    return { env, browser, tab, answer: (r: Parameters<NonNullable<typeof answer>>[0]) => answer!(r) };
+    return { env, browser, tab: tab as ReturnType<typeof storage>, answer: (r: Parameters<NonNullable<typeof answer>>[0]) => answer!(r) };
   }
+
+  it("keeps the token with the account in the browser by default, so another tab is signed in too", async () => {
+    const { env, browser, answer } = environment(storage(), null);
+    const google = new GoogleSignIn(env, "client");
+    await google.prepare();
+    const signing = google.signIn();
+    answer({ access_token: "t1-secret", expires_in: 3600, scope: "openid" });
+    await signing;
+    expect(browser.map.get(ACCOUNTS_KEY)).toContain("t1-secret");
+    const other = new GoogleSignIn(environment(browser, null).env, "client");
+    expect(other.token()?.accessToken).toBe("t1-secret");
+    expect(other.state()).toBe("signed-in");
+  });
 
   it("keeps the account in the browser and its token only in the tab", async () => {
     const { env, browser, tab, answer } = environment();
