@@ -555,6 +555,7 @@ describe("quick select", () => {
 });
 
 describe("copying labels above 2^24", () => {
+  let stores = 0;
   /** A one-level label store of `type` (raw chunks, 4 a side), its first voxels `values` (x fastest). */
   async function store(type: "uint32" | "uint64", values: bigint[]) {
     const files = omeZarrMetadata([{ size: [4, 4, 4], voxelToRas: PLACE }], "uint32", "labels", { label: true, chunk: 4, codecs: [{ name: "bytes", configuration: { endian: "little" } }] });
@@ -564,7 +565,8 @@ describe("copying labels above 2^24", () => {
     const chunk = type === "uint64" ? new BigUint64Array(64) : new Uint32Array(64);
     values.forEach((v, i) => (chunk[i] = (type === "uint64" ? v : Number(v)) as never));
     files.set("0/c/0/0/0", new Uint8Array(chunk.buffer));
-    const base = `https://example.org/${type}.ome.zarr/`;
+    // A store at an address of its own: readers of an image on a server share its chunks.
+    const base = `https://example.org/${type}-${++stores}.ome.zarr/`;
     serve((key) => files.get(key), base);
     const reader = new VolumeReader();
     const { levels } = await reader.open([base], undefined);

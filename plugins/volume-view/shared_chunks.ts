@@ -100,9 +100,16 @@ export class ChunkCache {
   }
 }
 
-/** A level's key: its store and array (or scale). */
+/** A level's key: its store and array (or scale), and a hash of its metadata. */
 export function levelKey(ref: LevelRef): string {
-  return ref.kind === "ome" ? `${ref.level.url}${ref.level.path}|` : `${ref.url}${ref.scale.key}|`;
+  return `${ref.kind === "ome" ? `${ref.level.url}${ref.level.path}` : `${ref.url}${ref.scale.key}`}|${hash(ref.stamp)}|`;
+}
+
+/** A short hash of text (FNV-1a, 32 bits), as hex. */
+function hash(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; ++i) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(16);
 }
 
 /** Where the readers of a worker get chunks from. */

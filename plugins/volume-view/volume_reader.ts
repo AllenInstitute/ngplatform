@@ -23,7 +23,7 @@ import { openZarrArray, ShardIndexCache, type ZarrArrayRead, ZarrArrayReader } f
 import { coalesceRangeReads } from "../zarr-vectors/src/zarr_array.js";
 import { httpJson, PrecomputedScale, readInfo, type Scale } from "@ngplatform/sdk/precomputed";
 import { mergeLevels, parseOmeLevels, scaleLevel, type VolumeLevel } from "./ome.js";
-import { chunkSource } from "./shared_chunks.js";
+import { chunkSource, levelKey } from "./shared_chunks.js";
 import { PRECOMPUTED } from "./sources.js";
 import { withZarr2 } from "./zarr2.js";
 
@@ -39,9 +39,11 @@ export interface LevelInfo extends VolumeLevel {
 
 /**
  * What a level is opened from: enough for the image chunk worker to open
- * it again and read its chunks (./shared_chunks.ts).
+ * it again and read its chunks (./shared_chunks.ts).  `stamp` is its
+ * metadata, so a store written again with other metadata is not answered
+ * with the chunks kept of it before.
  */
-export type LevelRef = { kind: "ome"; level: VolumeLevel } | { kind: "precomputed"; url: string; scale: Scale; stored: string; labels: boolean };
+export type LevelRef = ({ kind: "ome"; level: VolumeLevel } | { kind: "precomputed"; url: string; scale: Scale; stored: string; labels: boolean }) & { stamp: string };
 
 /** A level as opened: what it is, and its chunks' own values read from the store (kept by no one). */
 export interface RawLevel {
@@ -346,6 +348,13 @@ export function storeRead(storeUrl: string): ZarrArrayRead {
   });
 }
 
+/** Whether a store is on a server (http or https, not this page's own local and virtual stores). */
+function onServer(url: string): boolean {
+  if (!/^https?:\/\//i.test(url)) return false;
+  const here = (globalThis as { location?: { origin?: string } }).location?.origin;
+  return here === undefined || new URL(url).origin !== here;
+}
+
 /** A store's reads and shard indexes, shared by its levels (the shard-index cache is keyed by path in the store). */
 export type StoreAccess = { read: ZarrArrayRead; shardIndexes: ShardIndexCache };
 
@@ -402,7 +411,11 @@ export async function openOmeLevel(level: VolumeLevel, accesses: Map<string, Sto
   };
   return {
     info,
-    ref: { kind: "ome", level },
+    ref: {
+      kind: "ome",
+      level,
+      stamp: JSON.stringify([array.shape, array.storedChunkShape, array.readChunkShape, array.elementType, array.bigEndian, array.fillValue, array.codecs, stored === undefined]),
+    },
     raw,
     type,
     fill,
@@ -438,7 +451,7 @@ export function openPrecomputedScale(url: string, scale: Scale, stored: string, 
       };
   return {
     info,
-    ref: { kind: "precomputed", url, scale, stored, labels },
+    ref: { kind: "precomputed", url, scale, stored, labels, stamp: JSON.stringify([scale, stored, labels]) },
     raw,
     type,
     fill: 0,
@@ -484,14 +497,22 @@ export class VolumeReader {
     throw new Error(`${what} is ${sizeText(bytes)}, past the ${sizeText(this.maxReadBytes)} one read may take: ${advice}`);
   }
 
+  /** The levels this reader has opened (their keys in the shared cache). */
+  private readonly opened = new Set<string>();
+
   /**
    * An opened level as this reader reads it: its chunks through the shared
-   * cache (a level opened again forgets what was kept of it, in case it was
-   * written again), drawn through this reader's window.
+   * cache, drawn through this reader's window.  Another reader of the same
+   * image on a server shares what is kept of it.  What is kept is forgotten
+   * when the same reader opens it again, and whenever a store on this
+   * computer is opened (files and virtual stores, which tools here write
+   * in place: a label image saved, then measured).
    */
   private adopt(level: RawLevel): OpenLevel {
     const source = chunkSource();
-    source.forget(level.ref);
+    const key = levelKey(level.ref);
+    if (this.opened.has(key) || !onServer(level.ref.kind === "ome" ? level.ref.level.url : level.ref.url)) source.forget(level.ref);
+    this.opened.add(key);
     const { ref, raw, type } = level;
     const rawChunk = (index: number[], keep = true) => source.chunk(ref, index, keep, raw);
     return namingChunks({

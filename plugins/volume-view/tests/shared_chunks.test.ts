@@ -12,6 +12,9 @@ import { VolumeReader } from "../volume_reader.js";
 afterEach(() => {
   useChunkPort(undefined);
   vi.unstubAllGlobals();
+  // Each test from empty caches (they are the page's, and live as long as it).
+  (chunkSource() as LocalChunks).cache.forget("");
+  workerCache.forget("");
 });
 
 const BASE = "http://shared.test/";
@@ -132,6 +135,45 @@ describe("tools reading one image", () => {
     expect(seen.chunks).toBe(64);
     expect(workerCache.size).toBe(27);
     port1.close();
+  });
+
+  it("a tool opening the image after another read it reads nothing again; opening it again in the same tool, or a store written again, reads afresh", async () => {
+    const seen = serve(files);
+    const { port1, port2 } = new MessageChannel();
+    serveChunks(port1);
+    useChunkPort(port2);
+    const box = { lo: [0, 0, 0] as [number, number, number], hi: [128, 128, 64] as [number, number, number] };
+    const first = new VolumeReader();
+    await first.open([BASE], undefined);
+    await first.volume(0, signal(), undefined, box);
+    expect(seen.chunks).toBe(4);
+    const later = new VolumeReader();
+    await later.open([BASE], undefined);
+    await later.volume(0, signal(), undefined, box);
+    expect(seen.chunks).toBe(4);
+    // The same tool opening it again: it may have been written again.
+    await later.open([BASE], undefined);
+    await later.volume(0, signal(), undefined, box);
+    expect(seen.chunks).toBe(8);
+    // Written again with other metadata (here 32³ chunks): a new reader does not get the old chunks.
+    serve(store(256, 32));
+    const other = new VolumeReader();
+    await other.open([BASE], undefined);
+    const { data } = await other.volume(0, signal(), undefined, { lo: [40, 0, 0], hi: [41, 1, 1] });
+    expect(data[0]).toBe(40);
+    port1.close();
+  });
+
+  it("a store on this computer (this page's own address) is read afresh by every reader that opens it: tools write them in place", async () => {
+    const seen = serve(files);
+    vi.stubGlobal("location", { origin: new URL(BASE).origin });
+    const box = { lo: [0, 0, 0] as [number, number, number], hi: [64, 64, 64] as [number, number, number] };
+    for (let i = 0; i < 2; ++i) {
+      const reader = new VolumeReader();
+      await reader.open([BASE], undefined);
+      await reader.volume(0, signal(), undefined, box);
+    }
+    expect(seen.chunks).toBe(2);
   });
 
   it("when the chunk worker stops, reads waiting on it fail and later ones are read here", async () => {
