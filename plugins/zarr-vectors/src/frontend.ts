@@ -43,6 +43,7 @@ import {
   ZarrVectorsMeshSourceParameters,
   ZarrVectorsObjectSkeletonSourceParameters,
   ZARR_VECTORS_SEED_OBJECT_TABLE_RPC_ID,
+  ZARR_VECTORS_SHADER_VALUES_RPC_ID,
   ZARR_VECTORS_WARNING_RPC_ID,
 } from "./base.js";
 import {
@@ -63,6 +64,7 @@ import {
   chooseShaderObjectValues,
   readObjectTable,
   readSegmentProperties,
+  readShaderObjectValueColumns,
 } from "./objects.js";
 import type {
   ZarrVectorsStore,
@@ -80,8 +82,8 @@ import {
   parseAttributesFragment,
   readJson,
 } from "./store.js";
-import { type StoreWarning, warnOnce } from "./util.js";
-import { registerRPC } from "neuroglancer/unstable/worker_rpc.js";
+import { retryable, type StoreWarning, warnOnce } from "./util.js";
+import { registerPromiseRPC, registerRPC } from "neuroglancer/unstable/worker_rpc.js";
 import { WithSharedKvStoreContext } from "neuroglancer/unstable/kvstore/chunk_source_frontend.js";
 import type { SharedKvStoreContext } from "neuroglancer/unstable/kvstore/frontend.js";
 import {
@@ -102,6 +104,43 @@ import * as matrix from "neuroglancer/unstable/util/matrix.js";
 registerRPC(ZARR_VECTORS_WARNING_RPC_ID, function (x) {
   const { store, message } = x as StoreWarning;
   warnOnce(message, store);
+});
+
+/**
+ * Each open store's access on this thread, by URL: the worker asks for the
+ * object values its shaders read here, where the Segments tab reads the same
+ * columns, so that each column is downloaded once.
+ */
+const openStores = new Map<string, ZarrVectorsStoreAccess>();
+
+interface ShaderValuesAnswer {
+  values?: Float32Array[];
+  missing?: boolean;
+  error?: string;
+  retry?: boolean;
+}
+
+registerPromiseRPC<ShaderValuesAnswer>(ZARR_VECTORS_SHADER_VALUES_RPC_ID, async function (x) {
+  const { storeUrl, levelPath, wanted } = x as {
+    storeUrl: string;
+    levelPath: string;
+    wanted: ShaderObjectValue[];
+  };
+  const access = openStores.get(storeUrl);
+  if (access === undefined) return { value: { missing: true } };
+  try {
+    const values = await readShaderObjectValueColumns(access, levelPath, wanted);
+    if (values === undefined) return { value: { values: undefined } };
+    // Handed over: the worker keeps them, this thread does not.
+    return { value: { values }, transfers: values.map((v) => v.buffer) };
+  } catch (e) {
+    return {
+      value: {
+        error: e instanceof Error ? e.message : String(e),
+        retry: retryable(e),
+      },
+    };
+  }
 });
 
 export class ZarrVectorsObjectSkeletonSource extends WithParameters(
@@ -243,6 +282,7 @@ async function buildDataSource(
   signal: AbortSignal | undefined,
 ): Promise<DataSource> {
   const access = kvStoreAccess(context.kvStoreContext, storeUrl);
+  openStores.set(storeUrl, access);
   const warnings: string[] = [];
   const reportWarnings = () => {
     for (const w of warnings.splice(0)) warnOnce(w, storeUrl);

@@ -132,3 +132,11 @@ export const ZARR_VECTORS_SEED_OBJECT_TABLE_RPC_ID =
  * (`{ store?, message }`, as util.ts's `StoreWarning`).
  */
 export const ZARR_VECTORS_WARNING_RPC_ID = "zarr-vectors/warning";
+/**
+ * Worker -> frontend: the object values a shader reads, per object row
+ * (`{ storeUrl, levelPath, wanted }`), read on the frontend with the
+ * Segments tab's columns so each is downloaded once. Answers
+ * `{ values }`, `{ missing: true }` (not a store the frontend has open),
+ * or `{ error, retry }`.
+ */
+export const ZARR_VECTORS_SHADER_VALUES_RPC_ID = "zarr-vectors/shaderValues";

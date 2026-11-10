@@ -7,7 +7,14 @@
 
 import { describe, expect, it } from "vitest";
 import { fillObjectValues } from "./chunk_pipeline.js";
-import { readObjectTable, shaderObjectValues } from "./objects.js";
+import {
+  readObjectTable,
+  readSegmentProperties,
+  readShaderObjectValueColumns,
+  readShaderObjectValues,
+  setShaderValueSource,
+  shaderObjectValues,
+} from "./objects.js";
 import type { ZarrVectorsStoreAccess } from "./store.js";
 import { fixtureRead } from "./test_fixtures.js";
 import { ShardIndexCache } from "./zarr_array.js";
@@ -101,5 +108,45 @@ describe("object values a shader reads", () => {
     await fillObjectValues(counted, description, values, await vertices(), 2, new Set(["obj_length"]));
     expect(reads.some((p) => p.includes("object_attributes/length"))).toBe(true);
     expect(Number.isFinite(values[0][0])).toBe(true);
+  });
+});
+
+describe("object columns read for the Segments tab and for shaders", () => {
+  it("are downloaded once on the thread that reads both", async () => {
+    const reads: string[] = [];
+    const counted: ZarrVectorsStoreAccess = {
+      read: async (path, options) => {
+        reads.push(path);
+        return read(path, options);
+      },
+      listDirectories: async (path) => (path.endsWith("object_attributes") ? ["length"] : []),
+      shardIndexes: new ShardIndexCache(),
+    };
+    const table = (await readObjectTable(counted, "0"))!;
+    const properties = readSegmentProperties(counted, "0", table, []);
+    const values = readShaderObjectValueColumns(counted, "0", [{ column: "length" }]);
+    const [map, columns] = await Promise.all([properties, values]);
+    expect(map?.properties.some((p) => p.id === "length")).toBe(true);
+    expect(Number.isFinite(columns![0][0])).toBe(true);
+    const chunkReads = reads.filter((p) => p.startsWith("0/object_attributes/length/c"));
+    expect(chunkReads.length).toBeGreaterThan(0);
+    expect(new Set(chunkReads).size).toBe(chunkReads.length);
+  });
+
+  it("reach a chunk worker from the main thread, not from the store again", async () => {
+    const reads: string[] = [];
+    const worker = access((p) => {
+      reads.push(p);
+      return false;
+    });
+    const sent = new Float32Array(10_000).fill(42);
+    setShaderValueSource(async () => [sent]);
+    try {
+      const values = await readShaderObjectValues(worker, "0", [{ column: "length" }]);
+      expect(values!.values[0]).toBe(sent);
+      expect(reads.some((p) => p.includes("object_attributes/length"))).toBe(false);
+    } finally {
+      setShaderValueSource(undefined);
+    }
   });
 });

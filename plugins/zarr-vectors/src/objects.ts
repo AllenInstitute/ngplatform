@@ -42,7 +42,7 @@ import {
   checkObjectIndexLayout,
   readJson,
 } from "./store.js";
-import { mapConcurrent, retryable, warnOnce } from "./util.js";
+import { AsyncLru, mapConcurrent, retryable, warnOnce } from "./util.js";
 import {
   decodeUtf32,
   fillBytes,
@@ -138,6 +138,43 @@ function openReader(
     },
     signal,
   );
+}
+
+/**
+ * A column's rows as read, per store, for a while: the Segments tab's
+ * properties and the object values shaders read are often the same column,
+ * read moments apart, and are downloaded once. Bounded by bytes; a read in
+ * flight is shared.
+ */
+const columnRowsCache = new WeakMap<ZarrVectorsStoreAccess, AsyncLru<Uint8Array>>();
+const COLUMN_ROWS_BYTES = 64 * 1024 * 1024;
+
+function readColumnRows(
+  access: ZarrVectorsStoreAccess,
+  reader: ZarrArrayReader,
+  path: string,
+  rows: number,
+  signal?: AbortSignal,
+  concurrency?: number,
+): Promise<Uint8Array> {
+  let cache = columnRowsCache.get(access);
+  if (cache === undefined) {
+    cache = new AsyncLru<Uint8Array>(Infinity, COLUMN_ROWS_BYTES, (b) => b.byteLength);
+    columnRowsCache.set(access, cache);
+  }
+  // Read without any one caller's signal, so the other can still use it.
+  const promise = cache.get(`${path}|${rows}`, () =>
+    reader.readRows(0, rows, undefined, concurrency),
+  );
+  if (signal === undefined) return promise;
+  signal.throwIfAborted();
+  return new Promise<Uint8Array>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
 }
 
 /** Reads the object table of a level, or `undefined` if it has no objects. */
@@ -889,7 +926,10 @@ async function decodeAttribute(
   const type = array.elementType;
   const width = ELEMENT_BYTES[type];
   const channels = array.shape.slice(1).reduce((a, b) => a * b, 1);
-  const bytes = await reader.readRows(0, n, signal, PROPERTY_CHUNK_CONCURRENCY);
+  // A copy: the decoders below may keep views of it.
+  const bytes = (
+    await readColumnRows(access, reader, path, n, signal, PROPERTY_CHUNK_CONCURRENCY)
+  ).slice();
 
   let missing: Uint8Array | undefined;
   if (attrs.fill_sentinel_meaning === "absent") {
@@ -1416,6 +1456,23 @@ export function readShaderObjectValues(
   return promise;
 }
 
+/**
+ * Where a chunk worker gets shader values from: the main thread, which reads
+ * the same columns for the Segments tab (so they are downloaded once).
+ * `undefined` from it: read them here.
+ */
+export type ShaderValueSource = (
+  access: ZarrVectorsStoreAccess,
+  levelPath: string,
+  wanted: readonly ShaderObjectValue[],
+) => Promise<Float32Array[] | undefined> | undefined;
+
+let shaderValueSource: ShaderValueSource | undefined;
+
+export function setShaderValueSource(source: ShaderValueSource | undefined) {
+  shaderValueSource = source;
+}
+
 async function loadShaderObjectValues(
   access: ZarrVectorsStoreAccess,
   levelPath: string,
@@ -1423,9 +1480,28 @@ async function loadShaderObjectValues(
 ): Promise<ShaderObjectValues | undefined> {
   const table = await readObjectTable(access, levelPath);
   if (table === undefined) return undefined;
-  const n = table.numObjects;
+  const values =
+    (await shaderValueSource?.(access, levelPath, wanted)) ??
+    (await readShaderObjectValueColumns(access, levelPath, wanted));
+  if (values === undefined) return undefined;
   const index = new SegmentIdIndex(table.segmentIds);
-  const values = await Promise.all(
+  return { rowOf: (id) => index.rowOf(id), values };
+}
+
+/**
+ * The object values `wanted`, one float per row of `levelPath`'s object
+ * table, read afresh (not kept): as {@link readShaderObjectValues} reads
+ * them, for whoever keeps them.
+ */
+export async function readShaderObjectValueColumns(
+  access: ZarrVectorsStoreAccess,
+  levelPath: string,
+  wanted: readonly ShaderObjectValue[],
+): Promise<Float32Array[] | undefined> {
+  const table = await readObjectTable(access, levelPath);
+  if (table === undefined) return undefined;
+  const n = table.numObjects;
+  return Promise.all(
     wanted.map(async ({ column }) => {
       const out = new Float32Array(n).fill(NaN);
       try {
@@ -1438,15 +1514,13 @@ async function loadShaderObjectValues(
           }
           return out;
         }
-        const reader = await openReader(
-          access,
-          `${levelPath}/object_attributes/${column}`,
-        );
+        const path = `${levelPath}/object_attributes/${column}`;
+        const reader = await openReader(access, path);
         if (reader === undefined) return out;
         const { array } = reader;
         const rows = Math.min(n, array.shape[0]);
         const type = array.elementType as ElementType;
-        const bytes = await reader.readRows(0, rows);
+        const bytes = (await readColumnRows(access, reader, path, rows)).slice();
         const numbers = decodeNumbers(bytes, type, rows);
         const attrs = array.attributes ?? {};
         const absent =
@@ -1471,5 +1545,4 @@ async function loadShaderObjectValues(
       return out;
     }),
   );
-  return { rowOf: (id) => index.rowOf(id), values };
 }

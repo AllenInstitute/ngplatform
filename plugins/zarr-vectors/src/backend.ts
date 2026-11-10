@@ -33,6 +33,7 @@ import {
   ZarrVectorsMeshSourceParameters,
   ZarrVectorsObjectSkeletonSourceParameters,
   ZARR_VECTORS_SEED_OBJECT_TABLE_RPC_ID,
+  ZARR_VECTORS_SHADER_VALUES_RPC_ID,
   ZARR_VECTORS_WARNING_RPC_ID,
 } from "./base.js";
 import { LevelPipeline } from "./chunk_pipeline.js";
@@ -54,7 +55,7 @@ import {
   ObjectReader,
 } from "./object_reader.js";
 import type { ZarrVectorsObjectTable } from "./objects.js";
-import { seedObjectTable } from "./objects.js";
+import { seedObjectTable, setShaderValueSource } from "./objects.js";
 import type { ZarrVectorsStoreAccess } from "./store.js";
 import { kvStoreAccess } from "./store.js";
 import type { SharedKvStoreContextCounterpart } from "neuroglancer/unstable/kvstore/backend.js";
@@ -108,6 +109,31 @@ const seededTables = new Map<string, Map<string, ZarrVectorsObjectTable>>();
 setWarningSink((warning) =>
   (globalThis as { rpc?: RPC }).rpc?.invoke(ZARR_VECTORS_WARNING_RPC_ID, warning),
 );
+
+// The object values shaders read come from the main thread, which reads
+// the same columns for the Segments tab: each is downloaded once.
+setShaderValueSource((access, levelPath, wanted) => {
+  const rpc = (globalThis as { rpc?: RPC }).rpc;
+  if (rpc === undefined || access.url === undefined) return undefined;
+  return rpc
+    .promiseInvoke<{
+      values?: Float32Array[];
+      missing?: boolean;
+      error?: string;
+      retry?: boolean;
+    }>(ZARR_VECTORS_SHADER_VALUES_RPC_ID, {
+      storeUrl: access.url,
+      levelPath,
+      wanted,
+    })
+    .then((answer) => {
+      if (answer.error !== undefined) {
+        // A network failure stays one, so the chunk is read again later.
+        throw answer.retry ? new TypeError(answer.error) : new Error(answer.error);
+      }
+      return answer.missing ? undefined : answer.values;
+    });
+});
 
 registerRPC(ZARR_VECTORS_SEED_OBJECT_TABLE_RPC_ID, function (x) {
   const { storeUrl, levelPath, table } = x as {
