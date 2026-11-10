@@ -60,6 +60,8 @@ import {
   DRAWS_3D,
   selectDenseLevel,
 } from "./dense_lod.js";
+import type { DrawAttribute, DrawChunkData } from "./dense_pack.js";
+import { drawLayout, JOINS_PREVIOUS, OBJECT_SLOT_MASK } from "./dense_pack.js";
 import { KIND_CAPABILITIES, positionAttribute } from "./geometry_kind.js";
 import { shaderObjectValues } from "./objects.js";
 import type { HashMapUint64 } from "neuroglancer/unstable/gpu_hash/hash_table.js";
@@ -161,32 +163,58 @@ const POSITION_FORMAT = computeTextureFormat(
   DataType.FLOAT32,
   3,
 );
-// Segment ids are uploaded as two uint32 words per vertex, low word first,
+// Segment ids are uploaded as two uint32 words per object, low word first,
 // which is the layout of a UINT64 texel.
 const SEGMENT_FORMAT = computeTextureFormat(
   new TextureFormat(),
   DataType.UINT64,
   1,
 );
+// One word per vertex: its object's slot, and whether it joins the last.
+const VERTEX_WORD_FORMAT = computeTextureFormat(
+  new TextureFormat(),
+  DataType.UINT32,
+  1,
+);
+
+/** `uChunkFlags`: edges between runs of rows follow from the vertex words. */
+const SEQUENTIAL_FLAG = 1;
+/** `uChunkFlags`: each vertex is its own object; there are no vertex words. */
+const OBJECT_PER_VERTEX_FLAG = 2;
 
 export class ZarrVectorsDenseChunk extends SliceViewChunk {
   numVertices = 0;
   numOwnVertices = 0;
+  /** Edges listed (with `sequential`, the bridges only). */
   numEdges = 0;
   numFaces = 0;
-  /** Kept on the CPU for picking (two uint32 per vertex). */
-  segmentIds: Uint32Array | undefined;
-  private uploads:
-    | {
-        positions: Float32Array;
-        attributes: Float32Array[];
-        edges: Uint32Array;
-        faces: Uint32Array;
-      }
-    | undefined;
+  sequential = false;
+  objectPerVertex = false;
+  /** Kept on the CPU for picking: the vertex words and the objects' ids. */
+  private vertexObjects: Uint32Array | undefined;
+  private objectIds: Uint32Array | undefined;
+  /**
+   * Kept on the CPU per layout entry: object values (per object), and for
+   * a mesh its per-vertex values; the rest goes once uploaded.
+   */
+  private kept: (Float32Array | undefined)[] = [];
+  /** A mesh's faces, kept for other surfaces' normals. */
+  private keptFaces: Uint32Array | undefined;
+  /** What to upload, dropped once it is on the GPU. */
+  private uploads: DrawChunkData | undefined;
+  /**
+   * Whether the GPU holds the chunk's data: not once let go of, if put back
+   * without being sent again (the worker reads it afresh). An empty chunk
+   * has nothing to hold.
+   */
+  hasGPUData = false;
+  private empty = true;
   positionTexture: WebGLTexture | null = null;
-  segmentTexture: WebGLTexture | null = null;
+  vertexObjectTexture: WebGLTexture | null = null;
+  objectIdTexture: WebGLTexture | null = null;
   attributeTextures: (WebGLTexture | null)[] = [];
+  /** Layout entries (bits) that have a per-object texture. */
+  objectValueMask = 0;
   edgeBuffer: GLBuffer | undefined;
   faceBuffer: GLBuffer | undefined;
   /** A mesh's vertex normals, for shading its faces in 3-d. */
@@ -194,20 +222,27 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
   /** Normals of other surfaces of the same vertices, by attribute index, made when first drawn. */
   private alternateNormals = new Map<number, WebGLTexture | null>();
 
+  get flags(): number {
+    return (
+      (this.sequential ? SEQUENTIAL_FLAG : 0) |
+      (this.objectPerVertex ? OBJECT_PER_VERTEX_FLAG : 0)
+    );
+  }
+
   /** The normals for vertices placed by attribute `position` (-1: their positions). */
   normalTextureFor(gl: GL, position: number): WebGLTexture | null {
     if (position === -1) return this.normalTexture;
     let texture = this.alternateNormals.get(position);
     if (texture === undefined) {
-      const coords = this.uploads?.attributes[position];
+      const coords = this.kept[position];
       texture = null;
-      if (coords !== undefined && this.uploads !== undefined) {
+      if (coords !== undefined && this.keptFaces !== undefined) {
         texture = gl.createTexture();
         gl.bindTexture(WebGL2RenderingContext.TEXTURE_2D, texture);
         setOneDimensionalTextureData(
           gl,
           POSITION_FORMAT,
-          vertexNormals(coords, this.uploads.faces, this.numVertices),
+          vertexNormals(coords, this.keptFaces, this.numVertices),
         );
         gl.bindTexture(WebGL2RenderingContext.TEXTURE_2D, null);
       }
@@ -216,49 +251,95 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
     return texture;
   }
 
-  /** The chunk's attribute values on the CPU, for what is under the mouse. */
-  get attributeValues(): Float32Array[] | undefined {
-    return this.uploads?.attributes;
+  /** The object slot of vertex `v`. */
+  private slotOf(v: number): number | undefined {
+    if (this.objectPerVertex) return v;
+    const word = this.vertexObjects?.[v];
+    return word === undefined ? undefined : word & OBJECT_SLOT_MASK;
+  }
+
+  /** The segment id of vertex `v`, for picking. */
+  segmentIdOf(v: number): bigint | undefined {
+    const slot = this.slotOf(v);
+    const ids = this.objectIds;
+    if (slot === undefined || ids === undefined || 2 * slot + 1 >= ids.length) {
+      return undefined;
+    }
+    return BigInt(ids[2 * slot]) | (BigInt(ids[2 * slot + 1]) << 32n);
+  }
+
+  /**
+   * Layout entry `i`'s value (its first component) at vertex `v`, where the
+   * CPU keeps it: object values, and a mesh's per-vertex values.
+   */
+  valueOf(i: number, v: number): number | undefined {
+    const values = this.kept[i];
+    if (values === undefined) return undefined;
+    const layout = (this.source as ZarrVectorsGeometryChunkSource).layout[i];
+    if (layout?.kind === "object") {
+      const slot = this.slotOf(v);
+      return slot === undefined ? undefined : values[slot];
+    }
+    return values[v * (layout?.components ?? 1)];
   }
 
   constructor(source: SliceViewChunkSource, x: any) {
     super(source, x);
-    const data = x.data;
+    const data = x.data as DrawChunkData | undefined;
     if (data !== undefined) {
       this.numVertices = data.numVertices;
       this.numOwnVertices = data.numOwnVertices;
       this.numEdges = data.edges.length / 2;
-      this.numFaces = (data.faces?.length ?? 0) / 3;
-      this.segmentIds = data.segmentIds;
-      this.uploads = {
-        positions: data.positions,
-        attributes: data.attributes,
-        edges: data.edges,
-        faces: data.faces ?? new Uint32Array(0),
-      };
+      this.numFaces = data.faces.length / 3;
+      this.sequential = data.sequential;
+      this.objectPerVertex = data.objectPerVertex;
+      this.vertexObjects = data.vertexObjects;
+      this.objectIds = data.objectIds;
+      const { layout, isMesh } = source as ZarrVectorsGeometryChunkSource;
+      this.kept = data.attributes.map((a, i) =>
+        layout[i]?.kind === "object" || (isMesh && layout[i]?.kind === "vertex")
+          ? a
+          : undefined,
+      );
+      if (isMesh) this.keptFaces = data.faces;
+      this.uploads = data;
+      this.empty = false;
     }
   }
 
   copyToGPU(gl: GL) {
     super.copyToGPU(gl);
     const uploads = this.uploads;
-    if (uploads === undefined) return;
+    // Let go of the GPU and not sent again: the worker reads it afresh.
+    if (uploads === undefined) {
+      this.hasGPUData = this.empty;
+      return;
+    }
+    this.uploads = undefined;
     const texture = (
       format: TextureFormat,
-      data: Float32Array | Uint32Array,
+      data: Float32Array | Uint32Array | undefined,
     ) => {
+      if (data === undefined || data.length === 0) return null;
       const t = gl.createTexture();
       gl.bindTexture(WebGL2RenderingContext.TEXTURE_2D, t);
       setOneDimensionalTextureData(gl, format, data);
       return t;
     };
     this.positionTexture = texture(POSITION_FORMAT, uploads.positions);
-    this.segmentTexture = texture(SEGMENT_FORMAT, this.segmentIds!);
-    const formats = (this.source as ZarrVectorsGeometryChunkSource)
-      .attributeFormats;
+    this.vertexObjectTexture = texture(VERTEX_WORD_FORMAT, uploads.vertexObjects);
+    this.objectIdTexture = texture(SEGMENT_FORMAT, uploads.objectIds);
+    const source = this.source as ZarrVectorsGeometryChunkSource;
+    const formats = source.attributeFormats;
     this.attributeTextures = uploads.attributes.map((a, i) =>
       texture(formats[i], a),
     );
+    this.objectValueMask = 0;
+    source.layout.forEach((a, i) => {
+      if (a.kind === "object" && uploads.attributes[i] !== undefined) {
+        this.objectValueMask |= 1 << i;
+      }
+    });
     gl.bindTexture(WebGL2RenderingContext.TEXTURE_2D, null);
     if (this.numEdges > 0) {
       this.edgeBuffer = GLBuffer.fromData(
@@ -281,19 +362,22 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
       );
       gl.bindTexture(WebGL2RenderingContext.TEXTURE_2D, null);
     }
+    this.hasGPUData = true;
   }
 
   freeGPUMemory(gl: GL) {
     super.freeGPUMemory(gl);
     for (const t of [
       this.positionTexture,
-      this.segmentTexture,
+      this.vertexObjectTexture,
+      this.objectIdTexture,
       this.normalTexture,
       ...this.attributeTextures,
     ]) {
       gl.deleteTexture(t);
     }
-    this.positionTexture = this.segmentTexture = this.normalTexture = null;
+    this.positionTexture = this.vertexObjectTexture = null;
+    this.objectIdTexture = this.normalTexture = null;
     for (const t of this.alternateNormals.values()) gl.deleteTexture(t);
     this.alternateNormals.clear();
     this.attributeTextures = [];
@@ -301,6 +385,7 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
     this.edgeBuffer = undefined;
     this.faceBuffer?.dispose();
     this.faceBuffer = undefined;
+    this.hasGPUData = this.empty;
   }
 }
 
@@ -357,10 +442,23 @@ export class ZarrVectorsGeometryChunkSource extends WithParameters(
   ZarrVectorsGeometryChunkSourceParameters,
 ) {
   private attributeFormats_: TextureFormat[] | undefined;
+  private layout_: DrawAttribute[] | undefined;
+
+  /** The values the shader reads per vertex, as chunks carry them. */
+  get layout(): DrawAttribute[] {
+    return (this.layout_ ??= drawLayout(this.parameters.description));
+  }
+
+  get isMesh(): boolean {
+    return (
+      KIND_CAPABILITIES[this.parameters.description.geometryKind].primitive ===
+      "triangles"
+    );
+  }
 
   get attributeFormats(): TextureFormat[] {
     if (this.attributeFormats_ === undefined) {
-      this.attributeFormats_ = attributeLayout(this.parameters.description).map(
+      this.attributeFormats_ = this.layout.map(
         (a) =>
           computeTextureFormat(
             new TextureFormat(),
@@ -373,18 +471,11 @@ export class ZarrVectorsGeometryChunkSource extends WithParameters(
   }
 }
 
-/** The per-vertex attributes a chunk carries, in upload order. */
+/** The per-vertex attributes a chunk's shader reads, in order. */
 export function attributeLayout(
   description: ZarrVectorsGeometryDescription,
-): { id: string; components: number }[] {
-  const layout = description.attributes.map((a) => ({
-    id: a.id,
-    components: a.components,
-  }));
-  if (KIND_CAPABILITIES[description.geometryKind].tangent !== undefined) {
-    layout.push({ id: "tangent", components: 3 });
-  }
-  return layout;
+): DrawAttribute[] {
+  return drawLayout(description);
 }
 
 /** All levels of a store, as one multiscale slice-view source. */
@@ -498,7 +589,7 @@ class DenseRenderHelper extends RefCounted {
   private visibleSegments = new HashSetShaderManager("visibleSegments");
   private segmentColor = new SegmentColorShaderManager("segmentColorHash");
   private statedColors = new SegmentStatedColorShaderManager("statedColor");
-  readonly attributes: { id: string; components: number }[];
+  readonly attributes: DrawAttribute[];
   readonly primitive: "lines" | "points";
   edgeShaderGetter;
   nodeShaderGetter;
@@ -631,7 +722,11 @@ class DenseRenderHelper extends RefCounted {
     builder.addUniform("highp uint", "uHasDefaultColor");
     builder.addUniform("highp uint", "uHasStatedColors");
     this.textureAccess.defineShader(builder);
+    builder.addUniform("highp uint", "uNumOwnVertices");
+    builder.addUniform("highp uint", "uChunkFlags");
+    builder.addUniform("highp uint", "uObjectValueMask");
     builder.addTextureSampler("sampler2D", "uPositions", positionSampler);
+    builder.addTextureSampler("usampler2D", "uVertexObjects", vertexObjectSampler);
     builder.addTextureSampler("usampler2D", "uSegments", segmentSampler);
     builder.addVertexCode(
       this.textureAccess.getAccessor(
@@ -644,26 +739,76 @@ class DenseRenderHelper extends RefCounted {
     builder.addVertexCode(glsl_uint64);
     builder.addVertexCode(
       this.textureAccess.getAccessor(
-        "readSegment",
+        "readObjectId",
         "uSegments",
         DataType.UINT64,
         1,
       ),
     );
+    builder.addVertexCode(
+      this.textureAccess.getAccessor(
+        "readVertexWord",
+        "uVertexObjects",
+        DataType.UINT32,
+        1,
+      ),
+    );
+    // A vertex's object is a slot in the chunk's list of objects (or the
+    // vertex itself), and its word says whether an edge joins it to the
+    // vertex before (`dense_pack.ts`).
+    builder.addVertexCode(`
+highp uint zvObjectSlot(highp uint i) {
+  return (uChunkFlags & ${OBJECT_PER_VERTEX_FLAG}u) != 0u
+      ? i : (readVertexWord(i).value & ${OBJECT_SLOT_MASK}u);
+}
+bool zvJoinsPrevious(highp uint i) {
+  return (uChunkFlags & ${SEQUENTIAL_FLAG | OBJECT_PER_VERTEX_FLAG}u) == ${SEQUENTIAL_FLAG}u &&
+      i > 0u && i < uNumOwnVertices &&
+      (readVertexWord(i).value & ${JOINS_PREVIOUS}u) != 0u;
+}
+uint64_t readSegment(highp uint i) {
+  return readObjectId(zvObjectSlot(i));
+}
+`);
     this.attributes.forEach((a, i) => {
       builder.addTextureSampler(
         "sampler2D",
         `uAttribute${i}`,
         attributeSampler(i),
       );
+      const raw = a.kind === "vertex" ? `readAttribute${i}` : `readStored${i}`;
       builder.addVertexCode(
         this.textureAccess.getAccessor(
-          `readAttribute${i}`,
+          raw,
           `uAttribute${i}`,
           DataType.FLOAT32,
           a.components,
         ),
       );
+      if (a.kind === "object") {
+        // Once per object; no value where the chunk carries none.
+        builder.addVertexCode(`
+highp float readAttribute${i}(highp uint i) {
+  if ((uObjectValueMask & ${(1 << i) >>> 0}u) == 0u) return uintBitsToFloat(0x7fc00000u);
+  return readStored${i}(zvObjectSlot(i));
+}
+`);
+      } else if (a.kind === "tangent") {
+        // Along a run of rows, from the neighbours' positions as the
+        // worker's walk tangents are; stored for the far ends of bridges,
+        // and for every vertex of other chunks.
+        builder.addVertexCode(`
+highp vec3 readAttribute${i}(highp uint i) {
+  if ((uChunkFlags & ${SEQUENTIAL_FLAG}u) == 0u) return readStored${i}(i);
+  if (i >= uNumOwnVertices) return readStored${i}(i - uNumOwnVertices);
+  highp uint previous = zvJoinsPrevious(i) ? i - 1u : i;
+  highp uint next = zvJoinsPrevious(i + 1u) ? i + 1u : i;
+  highp vec3 d = readPosition(next) - readPosition(previous);
+  highp float n = length(d);
+  return n > 0.0 ? d / n : vec3(0.0);
+}
+`);
+      }
     });
     // Where vertices are drawn: their positions, or another surface of the
     // same vertices kept as a vec3 attribute (`coords_inflated`), as the
@@ -775,14 +920,21 @@ vPickID = uPickID + vertexIndex;
       defineLineShader(builder);
       builder.addAttribute("highp uvec2", "aVertexIndex");
       builder.addUniform("highp float", "uLineWidth");
+      // Runs of rows are drawn without an index buffer: instance i is the
+      // edge from vertex i to i + 1, put outside the view unless they join.
+      builder.addUniform("highp uint", "uSequentialDraw");
       vertexMain = `
-highp vec3 vertexA = zvPosition(aVertexIndex.x);
-highp vec3 vertexB = zvPosition(aVertexIndex.y);
+highp uvec2 edge = uSequentialDraw != 0u
+    ? uvec2(uint(gl_InstanceID), uint(gl_InstanceID) + 1u)
+    : aVertexIndex;
+highp vec3 vertexA = zvPosition(edge.x);
+highp vec3 vertexB = zvPosition(edge.y);
 emitLine(uProjection, vertexA, vertexB, uLineWidth);
+if (uSequentialDraw != 0u && !zvJoinsPrevious(edge.y)) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 highp uint endpoint = getLineEndpointIndex();
-highp uint vertexIndex = aVertexIndex.x * (1u - endpoint) + aVertexIndex.y * endpoint;
-vSegment = readSegment(aVertexIndex.x).value;
-vPickID = uPickID + aVertexIndex.x;
+highp uint vertexIndex = edge.x * (1u - endpoint) + edge.y * endpoint;
+vSegment = readSegment(edge.x).value;
+vPickID = uPickID + edge.x;
 `;
     } else {
       defineCircleShader(builder, this.targetIsSliceView);
@@ -1008,7 +1160,11 @@ zvUserMain();
       gl.bindTexture(WebGL2RenderingContext.TEXTURE_2D, texture);
     };
     bind(positionSampler, chunk.positionTexture);
-    bind(segmentSampler, chunk.segmentTexture);
+    bind(vertexObjectSampler, chunk.vertexObjectTexture);
+    bind(segmentSampler, chunk.objectIdTexture);
+    gl.uniform1ui(shader.uniform("uNumOwnVertices"), chunk.numOwnVertices);
+    gl.uniform1ui(shader.uniform("uChunkFlags"), chunk.flags);
+    gl.uniform1ui(shader.uniform("uObjectValueMask"), chunk.objectValueMask);
     if (shader.textureUnit(normalSampler) !== undefined) {
       bind(normalSampler, chunk.normalTextureFor(gl, position));
     }
@@ -1044,13 +1200,11 @@ export function pickedVertexValues(
   ) {
     return undefined;
   }
-  const values = pick.chunk.attributeValues;
-  if (values === undefined) return undefined;
   const layout: { id: string; components: number }[] =
     pick.renderLayer.helper.attributes;
   const out: Record<string, number> = {};
   layout.forEach((a, i) => {
-    const v = values[i]?.[pick.vertex * a.components];
+    const v = pick.chunk.valueOf(i, pick.vertex);
     if (v !== undefined) out[a.id] = v;
   });
   return out;
@@ -1104,6 +1258,7 @@ export function labelColourFunction(
 `;
 }
 const segmentSampler = Symbol("zarr-vectors.segments");
+const vertexObjectSampler = Symbol("zarr-vectors.vertexObjects");
 const attributeSamplers: symbol[] = [];
 function attributeSampler(i: number) {
   while (attributeSamplers.length <= i) {
@@ -1438,7 +1593,11 @@ function DenseRenderLayer<
             const chunk = (
               tsource.source as unknown as ZarrVectorsGeometryChunkSource
             ).chunks.get(key) as ZarrVectorsDenseChunk | undefined;
-            if (chunk !== undefined && chunk.state === ChunkState.GPU_MEMORY) {
+            if (
+              chunk !== undefined &&
+              chunk.state === ChunkState.GPU_MEMORY &&
+              chunk.hasGPUData
+            ) {
               chunks.push(chunk);
               ++view.present;
             } else {
@@ -1477,7 +1636,11 @@ function DenseRenderLayer<
           const chunk = coarseSource.chunks.get(key) as
             | ZarrVectorsDenseChunk
             | undefined;
-          if (chunk !== undefined && chunk.state === ChunkState.GPU_MEMORY) {
+          if (
+            chunk !== undefined &&
+            chunk.state === ChunkState.GPU_MEMORY &&
+            chunk.hasGPUData
+          ) {
             chunks.push(chunk);
             ++standIn.present;
           }
@@ -1705,8 +1868,17 @@ function DenseRenderLayer<
             gl.vertexAttribDivisor(aTriangle, 0);
             gl.disableVertexAttribArray(aTriangle);
           } else if (edges) {
-            if (chunk.edgeBuffer === undefined) continue;
             const aVertexIndex = shader.attribute("aVertexIndex");
+            if (chunk.sequential && chunk.numOwnVertices > 1) {
+              // Runs of rows: no index buffer (the attribute is a constant
+              // the shader does not read, of the type it declares).
+              gl.uniform1ui(shader.uniform("uSequentialDraw"), 1);
+              gl.disableVertexAttribArray(aVertexIndex);
+              gl.vertexAttribI4ui(aVertexIndex, 0, 0, 0, 0);
+              drawLines(gl, 1, chunk.numOwnVertices - 1);
+            }
+            if (chunk.edgeBuffer === undefined) continue;
+            gl.uniform1ui(shader.uniform("uSequentialDraw"), 0);
             chunk.edgeBuffer.bindToVertexAttribI(
               aVertexIndex,
               2,
@@ -1745,11 +1917,9 @@ function DenseRenderLayer<
       data: any,
     ) {
       const chunk = data as ZarrVectorsDenseChunk;
-      const ids = chunk.segmentIds;
-      if (ids === undefined || pickedOffset * 2 + 1 >= ids.length) return;
-      mouseState.pickedValue =
-        BigInt(ids[pickedOffset * 2]) |
-        (BigInt(ids[pickedOffset * 2 + 1]) << 32n);
+      const id = chunk.segmentIdOf(pickedOffset);
+      if (id === undefined) return;
+      mouseState.pickedValue = id;
       // The vertex itself, for its values (`pickedVertexValues`).
       (mouseState as any)[PICKED_VERTEX] = {
         renderLayer: this,

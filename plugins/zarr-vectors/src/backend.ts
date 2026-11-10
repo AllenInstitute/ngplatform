@@ -35,8 +35,10 @@ import {
   ZARR_VECTORS_SEED_OBJECT_TABLE_RPC_ID,
   ZARR_VECTORS_WARNING_RPC_ID,
 } from "./base.js";
-import type { DenseChunkData } from "./chunk_pipeline.js";
 import { LevelPipeline } from "./chunk_pipeline.js";
+import type { DrawAttribute, DrawChunkData } from "./dense_pack.js";
+import { drawChunkBytes, drawLayout } from "./dense_pack.js";
+import { KIND_CAPABILITIES } from "./geometry_kind.js";
 import {
   DRAWS_2D,
   DRAWS_3D,
@@ -157,7 +159,7 @@ function storeAccess(
 // ------------------------------------------------------------ dense chunks
 
 export class ZarrVectorsDenseChunk extends SliceViewChunk {
-  data: DenseChunkData | undefined;
+  data: DrawChunkData | undefined;
   /**
    * The chunk manager's priority round in which a 3-D view last asked for
    * the chunk: a chunk no 3-D view asks for is drawn in cross-sections only.
@@ -165,36 +167,44 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
   wanted3d = -1;
   /** Loaded for cross-sections only, without its bridges off the plane. */
   partialBridges = false;
+  /** Bytes the frontend keeps once the chunk is on the GPU (for picking). */
+  keptBytes = 0;
 
   serialize(msg: any, transfers: any[]) {
     super.serialize(msg, transfers);
     const { data } = this;
     if (data !== undefined) {
       msg.data = data;
-      transfers.push(
+      const buffers = new Set<ArrayBufferLike>([
         data.positions.buffer,
-        data.segmentIds.buffer,
+        data.vertexObjects.buffer,
+        data.objectIds.buffer,
         data.edges.buffer,
-        ...(data.faces.byteLength > 0 ? [data.faces.buffer] : []),
-        ...data.attributes.map((a) => a.buffer),
-      );
+        data.faces.buffer,
+      ]);
+      for (const a of data.attributes) if (a !== undefined) buffers.add(a.buffer);
+      for (const b of buffers) if (b.byteLength > 0) transfers.push(b);
     }
     this.data = undefined;
+    // The frontend keeps only what picking needs once it has uploaded the
+    // rest; the system memory charged is that.
+    if (this.systemMemoryBytes !== this.keptBytes) {
+      this.systemMemoryBytes = this.keptBytes;
+    }
   }
 
   downloadSucceeded() {
     const { data } = this;
-    let bytes = 0;
+    let gpu = 0;
     if (data !== undefined) {
-      bytes =
-        data.positions.byteLength +
-        data.segmentIds.byteLength +
-        data.edges.byteLength +
-        data.faces.byteLength;
-      for (const a of data.attributes) bytes += a.byteLength;
+      const source = this.source as ZarrVectorsGeometryChunkSourceBackend;
+      const bytes = drawChunkBytes(data, source.layout, source.isMesh);
+      gpu = bytes.gpu;
+      this.keptBytes = bytes.cpu;
     }
-    this.systemMemoryBytes = bytes;
-    this.gpuMemoryBytes = bytes;
+    // Until it moves to the frontend, the worker holds all of it.
+    this.systemMemoryBytes = gpu;
+    this.gpuMemoryBytes = gpu;
     super.downloadSucceeded();
   }
 
@@ -214,6 +224,42 @@ export class ZarrVectorsGeometryChunkSourceBackend extends WithParameters(
   ZarrVectorsGeometryChunkSourceParameters,
 ) {
   private pipeline_: LevelPipeline | undefined;
+  private layout_: DrawAttribute[] | undefined;
+
+  /** The values the shader reads per vertex, as chunks carry them. */
+  get layout(): DrawAttribute[] {
+    return (this.layout_ ??= drawLayout(this.parameters.description));
+  }
+
+  get isMesh(): boolean {
+    return (
+      KIND_CAPABILITIES[this.parameters.description.geometryKind].primitive ===
+      "triangles"
+    );
+  }
+
+  /**
+   * A chunk the GPU lets go of is read again when next wanted: the frontend
+   * kept only what picking needs, not what it would take to upload it again.
+   */
+  chunkStateChanged(chunk: ZarrVectorsDenseChunk, oldState: ChunkState) {
+    super.chunkStateChanged(chunk, oldState);
+    if (
+      oldState === ChunkState.GPU_MEMORY &&
+      chunk.state === ChunkState.SYSTEM_MEMORY
+    ) {
+      // Not while the queue is moving chunks about.
+      queueMicrotask(() => {
+        if (chunk.source !== this || chunk.state !== ChunkState.SYSTEM_MEMORY) {
+          return;
+        }
+        const queue = this.chunkManager.queueManager;
+        queue.freeChunkSystemMemory(chunk);
+        chunk.partialBridges = false;
+        queue.updateChunkState(chunk, ChunkState.QUEUED);
+      });
+    }
+  }
 
   private get pipeline() {
     if (this.pipeline_ === undefined) {
@@ -238,7 +284,7 @@ export class ZarrVectorsGeometryChunkSourceBackend extends WithParameters(
   async download(chunk: ZarrVectorsDenseChunk, signal: AbortSignal) {
     const round = () => this.chunkManager.recomputeChunkPriorities.count;
     const sliceOnly = chunk.wanted3d !== round();
-    chunk.data = await this.pipeline.download(
+    chunk.data = await this.pipeline.downloadForDrawing(
       Array.from(chunk.chunkGridPosition, Math.round),
       signal,
       { sliceOnly },

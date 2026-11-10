@@ -34,7 +34,7 @@
 
 import type { ZarrVectorsGeometryDescription } from "./base.js";
 import type { DecodedChunk } from "./chunk_decode.js";
-import { decodeChunk } from "./chunk_decode.js";
+import { decodeChunk, joinedTangentInto } from "./chunk_decode.js";
 import type { ElementType } from "./dtype.js";
 import {
   attributeDtype,
@@ -42,6 +42,8 @@ import {
   ELEMENT_BYTES,
   isElementType,
 } from "./dtype.js";
+import type { DrawChunkData, PackObjectValues } from "./dense_pack.js";
+import { packForDrawing } from "./dense_pack.js";
 import { KIND_CAPABILITIES } from "./geometry_kind.js";
 import { LevelCells } from "./level_cells.js";
 import { CrossChunkLinks } from "./links.js";
@@ -100,6 +102,15 @@ export interface DenseChunkData {
    * hand (`sliceOnly`); a 3-D view needs them.
    */
   ghostsLeftOut?: number;
+  /**
+   * For drawing (`forDrawing`), where the chunk's curves are runs of rows:
+   * per own vertex, 1 where an edge joins it to the vertex before. `edges`
+   * then holds only the bridges, and `attributes` no tangent; the ghosts'
+   * tangents are in `ghostTangents`.
+   */
+  joinsPrevious?: Uint8Array;
+  /** With `joinsPrevious`: three floats per ghost (vertex `numOwnVertices` on). */
+  ghostTangents?: Float32Array;
 }
 
 /** Raw vertex cells, by pipeline and cell, shared by chunks and ghosts. */
@@ -402,11 +413,15 @@ export class LevelPipeline {
    * and face corners into neighbours whose vertex cell is cached, being
    * read, or drawn by the view, and leaves out the rest, which lie off the
    * plane: reading them would cost more than the chunk itself.
+   *
+   * `forDrawing: true` puts no object values on vertices (they go per
+   * object, {@link packForDrawing}) and, where the curves are runs of rows,
+   * gives `joinsPrevious` in place of their edges and tangents.
    */
   async download(
     chunk: number[],
     signal: AbortSignal,
-    options: { bridges?: boolean; sliceOnly?: boolean } = {},
+    options: { bridges?: boolean; sliceOnly?: boolean; forDrawing?: boolean } = {},
   ): Promise<DenseChunkData | undefined> {
     const { description } = this;
     const chunkKey = chunk.join(".");
@@ -447,6 +462,8 @@ export class LevelPipeline {
         vertices: this.vertexCell(chunkKey),
         skipSegmentIds: mode === "manifests",
         fragmentIdColumn: mode === "object_id" ? "object_id" : "segment_id",
+        walkFlags: options.forDrawing,
+        skipObjectValues: options.forDrawing,
       }),
       linksPromise,
     ]);
@@ -559,14 +576,16 @@ export class LevelPipeline {
       this.ghostPositions(ghosts, signal, include),
       this.cornerValues(ghosts, include),
     ]);
-    await fillObjectValues(
-      this.access,
-      description,
-      decoded.attributes,
-      segmentIds,
-      decoded.numVertices,
-      this.objectValues,
-    );
+    if (!options.forDrawing) {
+      await fillObjectValues(
+        this.access,
+        description,
+        decoded.attributes,
+        segmentIds,
+        decoded.numVertices,
+        this.objectValues,
+      );
+    }
     const out = assembleChunk(
       decoded,
       segmentIds,
@@ -578,6 +597,52 @@ export class LevelPipeline {
     const leftOut = ghosts.filter((g) => !include(g.chunkKey)).length;
     if (leftOut > 0) out.ghostsLeftOut = leftOut;
     return out;
+  }
+
+  /**
+   * The chunk at spatial cell `chunk` as the dense layer draws it
+   * ({@link packForDrawing}), or `undefined` if it is empty: positions and
+   * a word per vertex, its objects' ids and the object values the shader
+   * reads once per object.
+   */
+  async downloadForDrawing(
+    chunk: number[],
+    signal: AbortSignal,
+    options: { sliceOnly?: boolean } = {},
+  ): Promise<DrawChunkData | undefined> {
+    const data = await this.download(chunk, signal, {
+      ...options,
+      forDrawing: true,
+    });
+    if (data === undefined) return undefined;
+    return packForDrawing(data, this.description, await this.drawnObjectValues());
+  }
+
+  /** The object values the shader reads, per object row, as read once per store. */
+  private async drawnObjectValues(): Promise<PackObjectValues | undefined> {
+    const { description } = this;
+    const wanted = description.attributes.filter(
+      (a) =>
+        a.objectValue !== undefined &&
+        (this.objectValues === undefined || this.objectValues.has(a.id)),
+    );
+    if (wanted.length === 0 || description.objectValuesPath === undefined) {
+      return undefined;
+    }
+    const values = await readShaderObjectValues(
+      this.access,
+      description.objectValuesPath,
+      wanted.map((a) => a.objectValue!),
+    ).catch((e) => {
+      if (retryable(e)) throw e;
+      warnOnce(
+        "object values could not be read " +
+          `(${e instanceof Error ? e.message : e}); shown as no value (NaN)`,
+        this.access.url,
+      );
+      return undefined;
+    });
+    return { ids: wanted.map((a) => a.id), values };
   }
 
   /**
@@ -720,6 +785,7 @@ export function assembleChunk(
   const kept = ghosts
     .map((g, i) => ({ ...g, i }))
     .filter((g) => !Number.isNaN(ghostPositions[3 * g.i]));
+  const { joinsPrevious } = decoded;
   if (kept.length === 0) {
     const attributes = [...decoded.attributes];
     if (decoded.tangents !== undefined) attributes.push(decoded.tangents);
@@ -732,6 +798,9 @@ export function assembleChunk(
       edges: decoded.edges,
       faces: withCrossFaces(decoded.faces, crossFaces, new Int32Array(ghosts.length).fill(-1)),
       attributes,
+      ...(joinsPrevious === undefined
+        ? {}
+        : { joinsPrevious, ghostTangents: new Float32Array(0) }),
     };
   }
   const total = own + kept.length;
@@ -754,6 +823,8 @@ export function assembleChunk(
     return out;
   });
   const tangentIndex = decoded.tangents === undefined ? -1 : sources.length - 1;
+  const ghostTangents =
+    joinsPrevious === undefined ? undefined : new Float32Array(kept.length * 3);
   kept.forEach((g, k) => {
     const v = own + k;
     positions.set(ghostPositions.subarray(3 * g.i, 3 * g.i + 3), 3 * v);
@@ -762,6 +833,19 @@ export function assembleChunk(
     if (!g.corner) {
       edges[edgeAt++] = g.host;
       edges[edgeAt++] = v;
+    }
+    if (ghostTangents !== undefined) {
+      // As below, the host's own derived from the flags.
+      const sign = g.hostIsPredecessor ? 1 : -1;
+      const d = [0, 1, 2].map(
+        (j) => sign * (positions[3 * v + j] - positions[3 * g.host + j]),
+      );
+      const norm = Math.hypot(d[0], d[1], d[2]);
+      if (norm > 0) {
+        for (let j = 0; j < 3; ++j) ghostTangents[3 * k + j] = d[j] / norm;
+      } else {
+        joinedTangentInto(ghostTangents, k, positions, joinsPrevious!, g.host);
+      }
     }
     attributes.forEach((out, i) => {
       const width = widths[i];
@@ -791,6 +875,7 @@ export function assembleChunk(
     edges,
     faces: withCrossFaces(decoded.faces, crossFaces, row),
     attributes,
+    ...(joinsPrevious === undefined ? {} : { joinsPrevious, ghostTangents }),
   };
 }
 
