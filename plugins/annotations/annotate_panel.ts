@@ -100,7 +100,7 @@ export class AnnotatePanel {
       );
       this.ctx.ui.showPanel("layers");
     };
-    const openTable = button("Open table", () => this.ctx.ui.showPanel(TABLE_PANEL), "The table of every annotation, in the bottom dock");
+    const openTable = button("Open table", () => this.ctx.ui.showPanel(TABLE_PANEL), "The table of every annotation, in the Activity dock");
     if (editable.length === 0) return el("div", { class: "stack" }, emptyState("No annotation layer yet.", { label: "+ New layer", run: newLayer }), el("div", { class: "row" }, openTable));
     return el(
       "div",

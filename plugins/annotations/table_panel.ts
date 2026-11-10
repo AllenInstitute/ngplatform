@@ -1,5 +1,5 @@
 /**
- * The annotation table, in the bottom dock: every annotation of the
+ * The annotation table, in the Activity dock: every annotation of the
  * scene's local annotation layers, found by a query, sorted by a column;
  * a click goes to one and selects it, and the editor beside the table sets
  * its name, group, values and comments, or deletes it.  The table is saved
