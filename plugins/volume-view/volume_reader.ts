@@ -1,16 +1,14 @@
 /**
- * Reading an OME-Zarr pyramid for the volume view:
+ * Reading an OME-Zarr pyramid, a precomputed image or segmentation, or a
+ * NIfTI read as virtual Zarr, for the tools that measure, save or render
+ * it: a level or a box of it, windowed to 0..255 (x fastest, as a 3-D
+ * texture wants it) or as its own values; values at points; and a pass
+ * over every stored chunk.  A whole-level read larger than a cap is
+ * refused, naming its size, rather than crashing the tab.
  *
- * - a whole coarse level, for the solid brain (x fastest, as a 3-D texture
- *   wants it);
- * - sections: a level resampled onto a plane along one RAS axis, filled
- *   chunk by chunk as chunks arrive (each texel nearest its voxel), so
- *   memory stays at a few chunks however large the level, and partial
- *   images can be shown while the rest loads.
- *
- * Chunks are kept in a byte-bounded cache, so moving a section a little, or
- * drawing another through the same chunks, reads nothing again.  The volume
- * worker runs this; it is plain code, so it is tested without one.
+ * Chunks are kept in a byte-bounded cache, so reading the same box again
+ * reads nothing.  The volume worker runs this; it is plain code, so it is
+ * tested without one.
  *
  * OME-Zarr is read in Zarr v3 or v2 (0.4, through ./zarr2.ts), and as one
  * 3-D image: size-1 t and c axes (bioformats2raw's tczyx) are read at index
@@ -18,7 +16,7 @@
  */
 import { httpAccess, openZarrArray, ShardIndexCache, type ZarrArrayRead, ZarrArrayReader } from "neuroglancer-zarr-vectors/reader";
 import { httpJson, PrecomputedScale, readInfo } from "@ngplatform/sdk/precomputed";
-import { invert, mergeLevels, parseOmeLevels, scaleLevel, type VolumeLevel } from "./ome.js";
+import { mergeLevels, parseOmeLevels, scaleLevel, type VolumeLevel } from "./ome.js";
 import { PRECOMPUTED } from "./sources.js";
 import { withZarr2 } from "./zarr2.js";
 
@@ -28,7 +26,7 @@ export interface LevelInfo extends VolumeLevel {
   chunk: number[];
   /** Voxels along x, y and z. */
   size: [number, number, number];
-  /** The element type (precomputed images are read as uint8). */
+  /** The element type the values are read as (64-bit integers narrowed to 32 bits). */
   type?: string;
 }
 
@@ -55,6 +53,17 @@ export interface Region {
 export type Progress = (done: number, total: number) => void;
 
 const CONCURRENCY = 8;
+
+/** The most bytes one read of a whole level or a box may make, by default: 1 GiB. */
+export const MAX_READ_BYTES = 2 ** 30;
+
+/** Bytes as people read them: "640 MB", "4.0 GB". */
+function sizeText(bytes: number): string {
+  if (bytes >= 2 ** 30) return `${(bytes / 2 ** 30).toFixed(1)} GB`;
+  if (bytes >= 2 ** 20) return `${Math.round(bytes / 2 ** 20)} MB`;
+  if (bytes >= 2 ** 10) return `${Math.round(bytes / 2 ** 10)} KB`;
+  return `${bytes} bytes`;
+}
 
 /**
  * Runs `work` on items, a few at a time, until done or `signal` aborts.  The
@@ -249,8 +258,31 @@ export class VolumeReader {
   private sizes = new Map<string, number>();
   private cached = 0;
 
-  /** `cacheBytes`: decoded chunks kept, a few hundred megabytes at most. */
-  constructor(private readonly cacheBytes = 256 * 1024 * 1024) {}
+  /**
+   * `cacheBytes`: decoded chunks kept, a few hundred megabytes at most.
+   * `maxReadBytes`: the most one read of a level or a box may allocate;
+   * a larger one is refused with a message naming its size and the
+   * coarser levels that fit, rather than crashing the tab.
+   */
+  constructor(
+    private readonly cacheBytes = 256 * 1024 * 1024,
+    readonly maxReadBytes = MAX_READ_BYTES,
+  ) {}
+
+  /** Refuses a read of `size` voxels of `width` bytes each from level `index`, when it is past the cap. */
+  private checkSize(index: number, size: readonly number[], width: number, region: boolean): void {
+    const bytes = size[0] * size[1] * size[2] * width;
+    if (bytes <= this.maxReadBytes) return;
+    const scale = (i: number) => this.levels[i].info.size.map((v, k) => v / this.levels[index].info.size[k]);
+    const fits = this.levels.flatMap((_, i) => {
+      if (i <= index) return [];
+      const f = scale(i);
+      return size[0] * f[0] * size[1] * f[1] * size[2] * f[2] * width <= this.maxReadBytes ? [i] : [];
+    });
+    const what = region ? `A box of ${size.join(" × ")} voxels of level ${index}` : `Level ${index} (${size.join(" × ")} voxels)`;
+    const advice = fits.length > 0 ? `read a coarser level (${fits.length > 1 ? `levels ${fits.join(", ")}` : `level ${fits[0]}`} fit)${region ? " or a smaller box" : ""}` : region ? "read a smaller box" : "read a box of it";
+    throw new Error(`${what} is ${sizeText(bytes)}, past the ${sizeText(this.maxReadBytes)} one read may take: ${advice}`);
+  }
 
   private remember(key: string, bytes: number): void {
     this.sizes.set(key, bytes);
@@ -395,39 +427,52 @@ export class VolumeReader {
 
   /**
    * A Neuroglancer precomputed image or segmentation: its scales, finest
-   * first, as arrays in z, y, x order.  A segmentation's labels are read as
-   * 32-bit ones, as 64-bit labels in OME-Zarr are.
+   * first, as arrays in z, y, x order.  An image's values are read as its
+   * data type (64-bit ones narrowed to 32 bits, as in OME-Zarr) and drawn
+   * through the window of its coarsest scale; a segmentation's labels are
+   * read as 32-bit ones, as 64-bit labels in OME-Zarr are.
    */
   private async openPrecomputed(url: string, signal?: AbortSignal): Promise<{ levels: LevelInfo[]; name: string }> {
     const info = await readInfo(url, undefined, signal);
     if (info.type !== "image" && info.type !== "segmentation") throw new Error(`${url}: a precomputed ${info.type ?? "source"}, not an image or segmentation`);
     const labels = info.type === "segmentation";
+    const stored = info.data_type;
+    const wide = stored in NARROWED ? (stored as keyof typeof NARROWED) : undefined;
+    if (!labels && !(stored in NUMERIC) && wide === undefined) throw new Error(`${url}: ${stored} values cannot be read`);
+    const type: keyof typeof NUMERIC = labels ? "uint32" : wide !== undefined ? NARROWED[wide] : (stored as keyof typeof NUMERIC);
     this.levels = info.scales
       .map((scale): OpenLevel => {
-        const reader = new PrecomputedScale(url, scale, info.data_type);
+        const reader = new PrecomputedScale(url, scale, stored);
         const [cx, cy, cz] = reader.chunk;
         const [sx, sy, sz] = scale.size;
-        const level: LevelInfo = { ...scaleLevel(url, scale), shape: [sz, sy, sx], chunk: [cz, cy, cx], size: [sx, sy, sz] };
+        const level: LevelInfo = { ...scaleLevel(url, scale), shape: [sz, sy, sx], chunk: [cz, cy, cx], size: [sx, sy, sz], type };
         const common = { fill: 0, dimOf: [2, 1, 0] as [number, number, number], grid: [reader.grid[2], reader.grid[1], reader.grid[0]] };
-        if (!labels) return namingChunks({ info: level, readChunk: ([z, y, x]) => reader.readChunk([x, y, z]), type: "uint8", ...common });
-        const raw = async ([z, y, x]: number[]) => {
-          const ids = await reader.readLabels([x, y, z]);
-          return ids && narrow(new Uint8Array(ids.buffer, ids.byteOffset, ids.byteLength), "uint64");
-        };
+        const raw = labels
+          ? async ([z, y, x]: number[]) => {
+              const ids = await reader.readLabels([x, y, z]);
+              return ids && narrow(new Uint8Array(ids.buffer, ids.byteOffset, ids.byteLength), "uint64");
+            }
+          : async ([z, y, x]: number[]) => {
+              const bytes = await reader.readValues([x, y, z]);
+              return bytes && wide !== undefined ? narrow(bytes, wide) : bytes;
+            };
         return namingChunks({
-          info: { ...level, type: "uint32" },
+          info: level,
           readChunk: async (index) => {
             const bytes = await raw(index);
-            return bytes && toUint8(values(bytes, "uint32"), this.window);
+            // Other types than uint8: through the image's window, to 0..255.
+            return bytes === undefined || type === "uint8" ? bytes : toUint8(values(bytes, type), this.window);
           },
           rawChunk: raw,
-          type: "uint32",
+          type,
           ...common,
         });
       })
       .sort((a, b) => a.info.voxelSize - b.info.voxelSize);
     this.reset();
     this.window = [0, 255];
+    const coarsest = this.levels[this.levels.length - 1];
+    if (!labels && coarsest !== undefined && type !== "uint8") this.window = await this.windowOf(coarsest, signal);
     return { levels: this.levels.map((l) => l.info), name: url.replace(/\/$/, "").split("/").pop() ?? "" };
   }
 
@@ -450,6 +495,7 @@ export class VolumeReader {
     const lo = region?.lo ?? [0, 0, 0];
     const hi = region?.hi ?? level.info.size;
     const size = [0, 1, 2].map((k) => Math.max(0, hi[k] - lo[k])) as [number, number, number];
+    this.checkSize(index, size, 1, region !== undefined);
     const out = new Uint8Array(size[0] * size[1] * size[2]).fill(this.shownFill(level));
     // The box and the output's strides, per array dimension.
     const aLo = [0, 0, 0];
@@ -501,6 +547,7 @@ export class VolumeReader {
     const { chunk: cs, shape, size } = level.info;
     const { dimOf, type } = level;
     const bytes = NUMERIC[type].BYTES_PER_ELEMENT;
+    this.checkSize(index, size, bytes, false);
     const out = new Uint8Array(size[0] * size[1] * size[2] * bytes);
     if (level.fill !== 0) new NUMERIC[type](out.buffer).fill(level.fill);
     const stride = [0, 0, 0];
@@ -593,7 +640,7 @@ export class VolumeReader {
    * statistics, a brush limited to an intensity range.
    */
   rawRegion(index: number, region: Region, signal: AbortSignal, progress?: Progress): Promise<{ data: Float32Array; size: [number, number, number] }> {
-    return this.region(index, region, signal, progress, (n) => new Float32Array(n));
+    return this.region(index, region, signal, progress, 4, (n) => new Float32Array(n));
   }
 
   /**
@@ -603,14 +650,15 @@ export class VolumeReader {
    * above 2^24.  Voxels outside the level are NaN.
    */
   exactRegion(index: number, region: Region, signal: AbortSignal, progress?: Progress): Promise<{ data: Float64Array; size: [number, number, number] }> {
-    return this.region(index, region, signal, progress, (n) => new Float64Array(n));
+    return this.region(index, region, signal, progress, 8, (n) => new Float64Array(n));
   }
 
-  private async region<T extends Float32Array | Float64Array>(index: number, region: Region, signal: AbortSignal, progress: Progress | undefined, make: (n: number) => T): Promise<{ data: T; size: [number, number, number] }> {
+  private async region<T extends Float32Array | Float64Array>(index: number, region: Region, signal: AbortSignal, progress: Progress | undefined, width: number, make: (n: number) => T): Promise<{ data: T; size: [number, number, number] }> {
     const level = this.levels[index];
     const { chunk: cs, shape } = level.info;
     const { dimOf, type } = level;
     const size = [0, 1, 2].map((k) => Math.max(0, region.hi[k] - region.lo[k])) as [number, number, number];
+    this.checkSize(index, size, width, true);
     const out = make(size[0] * size[1] * size[2]);
     out.fill(NaN);
     const aLo = [0, 0, 0];
@@ -735,108 +783,6 @@ export class VolumeReader {
       out[i] = w > 0 ? v / w : NaN;
     }
     return out;
-  }
-
-  /**
-   * A section: the plane `axis` (0 = R, 1 = A, 2 = S) = `value` mm, over
-   * `rect` = [u0, u1, v0, v1] mm along the other two axes in order, with
-   * texels of about `texel` mm (at most 4096 a side), from a level.
-   * `partial` gets copies of the image while it fills.
-   */
-  async plane(
-    index: number,
-    request: { axis: number; value: number; rect: number[]; texel: number },
-    signal: AbortSignal,
-    progress?: Progress,
-    partial?: (image: { data: Uint8Array; width: number; height: number }) => void,
-  ): Promise<{ data: Uint8Array; width: number; height: number }> {
-    const level = this.levels[index];
-    const { dimOf, grid } = level;
-    const { chunk: cs, shape } = level.info;
-    const { axis, value, rect, texel } = request;
-    const [uAxis, vAxis] = [0, 1, 2].filter((k) => k !== axis);
-    const width = Math.max(1, Math.min(4096, Math.round((rect[1] - rect[0]) / texel)));
-    const height = Math.max(1, Math.min(4096, Math.round((rect[3] - rect[2]) / texel)));
-    const du = (rect[1] - rect[0]) / width;
-    const dv = (rect[3] - rect[2]) / height;
-    const toVoxel = invert(level.info.voxelToRas);
-    const voxelAt = (u: number, v: number) => {
-      const p = [0, 0, 0];
-      p[axis] = value;
-      p[uAxis] = u;
-      p[vAxis] = v;
-      return [0, 1, 2].map((r) => toVoxel[4 * r] * p[0] + toVoxel[4 * r + 1] * p[1] + toVoxel[4 * r + 2] * p[2] + toVoxel[4 * r + 3]);
-    };
-    // Texel (a, b)'s voxel: origin + a * stepU + b * stepV.
-    const origin = voxelAt(rect[0] + du / 2, rect[2] + dv / 2);
-    const atU = voxelAt(rect[0] + du / 2 + du, rect[2] + dv / 2);
-    const atV = voxelAt(rect[0] + du / 2, rect[2] + dv / 2 + dv);
-    const stepU = [0, 1, 2].map((k) => atU[k] - origin[k]);
-    const stepV = [0, 1, 2].map((k) => atV[k] - origin[k]);
-    const out = new Uint8Array(width * height).fill(this.shownFill(level));
-
-    // Each texel's chunk (flat index in the grid, -1 outside) and its offset there.
-    const chunkOf = new Int32Array(width * height).fill(-1);
-    const offsetOf = new Uint32Array(width * height);
-    const counts = new Map<number, number>();
-    const stride = [cs[1] * cs[2], cs[2], 1];
-    const e = [0, 0, 0];
-    for (let b = 0; b < height; ++b) {
-      for (let a = 0; a < width; ++a) {
-        let inside = true;
-        for (let k = 0; k < 3; ++k) {
-          const x = Math.round(origin[k] + a * stepU[k] + b * stepV[k]);
-          const d = dimOf[k];
-          if (x < 0 || x >= shape[d]) {
-            inside = false;
-            break;
-          }
-          e[d] = x;
-        }
-        if (!inside) continue;
-        const c0 = Math.floor(e[0] / cs[0]);
-        const c1 = Math.floor(e[1] / cs[1]);
-        const c2 = Math.floor(e[2] / cs[2]);
-        const flat = (c0 * grid[1] + c1) * grid[2] + c2;
-        const t = b * width + a;
-        chunkOf[t] = flat;
-        offsetOf[t] = (e[0] - c0 * cs[0]) * stride[0] + (e[1] - c1 * cs[1]) * stride[1] + (e[2] - c2 * cs[2]) * stride[2];
-        counts.set(flat, (counts.get(flat) ?? 0) + 1);
-      }
-    }
-    // Each chunk's texels, grouped.
-    const lists = new Map<number, Uint32Array>();
-    const filled = new Map<number, number>();
-    for (const [flat, n] of counts) lists.set(flat, new Uint32Array(n));
-    for (let t = 0; t < chunkOf.length; ++t) {
-      const flat = chunkOf[t];
-      if (flat < 0) continue;
-      const at = filled.get(flat) ?? 0;
-      lists.get(flat)![at] = t;
-      filled.set(flat, at + 1);
-    }
-    // Nearest the plane's middle first.
-    const coords = (flat: number) => [Math.floor(flat / (grid[1] * grid[2])), Math.floor(flat / grid[2]) % grid[1], flat % grid[2]];
-    const order = [...lists.keys()];
-    const middle = chunkOf[(height >> 1) * width + (width >> 1)];
-    if (middle >= 0) {
-      const m = coords(middle);
-      const distance = (flat: number) => coords(flat).reduce((s, v, k) => s + (v - m[k]) ** 2, 0);
-      order.sort((x, y) => distance(x) - distance(y));
-    }
-    let done = 0;
-    let lastPartial = performance.now();
-    await each(order, signal, async (flat) => {
-      const data = await this.chunk(level, coords(flat));
-      if (signal.aborted) return;
-      if (data !== undefined) for (const t of lists.get(flat)!) out[t] = data[offsetOf[t]];
-      progress?.(++done, order.length);
-      if (partial !== undefined && done < order.length && performance.now() - lastPartial > 400) {
-        lastPartial = performance.now();
-        partial({ data: out.slice(), width, height });
-      }
-    });
-    return { data: out, width, height };
   }
 }
 
