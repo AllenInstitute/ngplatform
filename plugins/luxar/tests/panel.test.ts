@@ -17,6 +17,7 @@ vi.hoisted(() => {
 import type { StoreInfo } from "../client.js";
 import { LUXAR_CAN_DRAW } from "../manifest.js";
 import { Luxar } from "../plugin.js";
+import cave from "./fixtures/cave_minnie65_public.json";
 
 const STORE = "https://data.test/tracts.zarrvectors/|zarr-vectors:";
 
@@ -301,6 +302,25 @@ describe("the Luxar panel", () => {
     dom.find(status, "button", "Sign in…").click();
     expect(f.invoked).toEqual(["settings.signIn"]);
     // No worker for a layer that cannot be read.
+    expect(workers.length).toBe(0);
+    luxar.dispose();
+  });
+
+  it("lists a CAVE layer added by its URL (type auto while refused) with Sign in, as recorded from minnie65_public", async () => {
+    // CAVE's recorded 401 for the info (cave_minnie65_public.json), and its auth_info.
+    vi.stubGlobal("fetch", async (url: string) => {
+      const r = cave.responses.find((x) => x.url === String(url));
+      return r === undefined ? new Response("", { status: 404 }) : new Response(r.body, { status: r.status, headers: r.headers as Record<string, string> });
+    });
+    const added: LayerInfo = { name: "minnie65_public", type: "auto", visible: true, ready: false, sources: ["graphene://middleauth+https://minnie.microns-daf.com/segmentation/table/minnie65_public"] };
+    // A precomputed source of unknown type is not taken for a segmentation.
+    const unknown: LayerInfo = { name: "maybe", type: "auto", visible: true, ready: false, sources: ["precomputed://https://em.test/x"] };
+    const f = fakeContext([added, unknown]);
+    const host = dom.host();
+    const luxar = new Luxar(f.ctx);
+    luxar.render(host);
+    await vi.waitFor(() => expect(dom.text(host.querySelector(".list")!)).toBe("minnie65_public"));
+    expect(dom.text(host.querySelector<HTMLElement>(".status-line")!)).toBe("Sign in to read this layer's meshes. Sign in…");
     expect(workers.length).toBe(0);
     luxar.dispose();
   });

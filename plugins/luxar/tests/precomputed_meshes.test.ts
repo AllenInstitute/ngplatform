@@ -15,6 +15,7 @@ import { meshSourceOf } from "@ngplatform/sdk/sources";
 import { meshIdsFor, meshStatus, meshStoreUrl, parseMeshStoreUrl } from "../mesh_layers.js";
 import { type DracoDecode, MeshVolume, openPrecomputedMeshes, SignInNeeded, storeAccess } from "../precomputed_meshes.js";
 import { signInHeaders } from "../sign_in.js";
+import cave from "./fixtures/cave_minnie65_public.json";
 
 const signal = new AbortController().signal;
 
@@ -476,5 +477,42 @@ describe("meshes read with the layer's sign-in", () => {
     // Without the token, the meshing server's refusal is a sign-in.
     const unsigned = await MeshVolume.open(`graphene+${volumeUrl}`, { decode: fakeDraco, decodeWhole, fetch: fetchImpl, headers: [] }).catch((e) => e);
     expect(unsigned).toBeInstanceOf(SignInNeeded);
+  });
+
+  /** CAVE's answers as recorded (cave_minnie65_public.json: MICrONS minnie65_public, read without a sign-in); anything else not found. */
+  const recorded = (asked: { url: string; auth?: string }[] = []) =>
+    (async (input: string, init?: RequestInit) => {
+      const url = String(input);
+      asked.push({ url, auth: ((init?.headers ?? {}) as Record<string, string>).Authorization });
+      const r = cave.responses.find((x) => x.url === url);
+      return r === undefined ? new Response("", { status: 404 }) : new Response(r.body, { status: r.status, headers: r.headers as Record<string, string> });
+    }) as unknown as typeof fetch;
+  const minnie = "graphene://middleauth+https://minnie.microns-daf.com/segmentation/table/minnie65_public";
+
+  it("against CAVE's recorded answers: minnie65_public's info refused (401, no token) is a sign-in, not 'no meshes'", async () => {
+    const source = meshSourceOf(minnie, "https://app.test/")!;
+    expect(source).toEqual({ volume: "graphene+https://minnie.microns-daf.com/segmentation/table/minnie65_public/", signIn: { kind: "middleauth", app: "https://minnie.microns-daf.com" } });
+    // Not signed in: the sign-in server named by auth_info has no token kept, so no header.
+    const asked: { url: string; auth?: string }[] = [];
+    const headers = await signInHeaders(source.signIn, { fetch: recorded(asked), storage: { getItem: () => null } });
+    expect(headers).toEqual([]);
+    expect(await meshStatus(source.volume, headers, recorded(asked))).toBe("sign-in");
+    const opened = await MeshVolume.open(source.volume, { decode: fakeDraco, decodeWhole: async () => ({ vertexPositions: new Float32Array(0), indices: new Uint32Array(0) }), fetch: recorded(asked) }).catch((e) => e);
+    expect(opened).toBeInstanceOf(SignInNeeded);
+    expect((opened as Error).message).toBe("minnie.microns-daf.com needs a sign-in to read meshes");
+    // Only reads, and no token sent.
+    expect(asked.map((a) => [a.url, a.auth])).toEqual([
+      ["https://minnie.microns-daf.com/auth_info", undefined],
+      ["https://minnie.microns-daf.com/segmentation/table/minnie65_public/info", undefined],
+      ["https://minnie.microns-daf.com/segmentation/table/minnie65_public/info", undefined],
+    ]);
+  });
+
+  it("against CAVE's recorded answers: the token is the one kept for the sign-in server auth_info names", async () => {
+    const source = meshSourceOf(minnie, "https://app.test/")!;
+    // The key Settings › Sign-in (and Neuroglancer) keep the token under, for the recorded login_url.
+    const kept = new Map([["auth_token_v2_https://global.daf-apis.com/sticky_auth", JSON.stringify({ tokenType: "Bearer", accessToken: "not-a-real-token" })]]);
+    const headers = await signInHeaders(source.signIn, { fetch: recorded(), storage: { getItem: (k) => kept.get(k) ?? null } });
+    expect(headers).toEqual([{ prefix: "https://minnie.microns-daf.com/", value: "Bearer not-a-real-token" }]);
   });
 });

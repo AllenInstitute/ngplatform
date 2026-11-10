@@ -1,0 +1,38 @@
+{
+ "recorded": "2026-11-10",
+ "note": "MICrONS minnie65_public on CAVE, read without a sign-in (GET, Origin set as a browser sends it). No token.",
+ "responses": [
+  {
+   "url": "https://minnie.microns-daf.com/auth_info",
+   "status": 200,
+   "headers": {
+    "content-type": "application/json",
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "Content-Length,Content-Range"
+   },
+   "body": "{\"login_url\":\"https://global.daf-apis.com/sticky_auth\", \"supported_datastacks\":[\"minnie65_phase3_v1\",\"pinky_sandbox\",\"zheng_ca3\",\"minnie65_public\"]}"
+  },
+  {
+   "url": "https://minnie.microns-daf.com/segmentation/table/minnie65_public/info",
+   "status": 401,
+   "headers": {
+    "content-type": "application/json",
+    "www-authenticate": "Bearer realm=\"https://global.daf-apis.com/sticky_auth/api/v1/authorize\"",
+    "access-control-allow-origin": "http://127.0.0.1:4241",
+    "access-control-expose-headers": "WWW-Authenticate"
+   },
+   "body": "{\n  \"error\": \"no_token\",\n  \"message\": \"Unauthorized - No Token Provided\"\n}\n"
+  },
+  {
+   "url": "https://minnie.microns-daf.com/meshing/api/v1/table/minnie65_public/manifest/864691135610744327:0?verify=1&prepend_seg_ids=1",
+   "status": 401,
+   "headers": {
+    "content-type": "application/json",
+    "www-authenticate": "Bearer realm=\"https://global.daf-apis.com/sticky_auth/api/v1/authorize\"",
+    "access-control-allow-origin": "http://127.0.0.1:4241",
+    "access-control-expose-headers": "WWW-Authenticate"
+   },
+   "body": "{\n  \"error\": \"no_token\",\n  \"message\": \"Unauthorized - No Token Provided\"\n}\n"
+  }
+ ]
+}

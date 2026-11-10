@@ -99,10 +99,16 @@ export function storeOfLayer(layer: LayerInfo, spec?: { source?: unknown }): str
 /**
  * The precomputed (or graphene) volume a segmentation layer reads (its
  * http(s) URL, ending in "/"; `graphene+` before a graphene one), and the
- * sign-in it reads with, when it is one.
+ * sign-in it reads with, when it is one.  A graphene source is a
+ * segmentation whatever the layer's type: one added by its URL stays
+ * "auto" while its server refuses it (CAVE's, until signed in), and is
+ * listed so the panel can say to sign in.
  */
 export function precomputedSegmentationOf(layer: LayerInfo): { volume: string; signIn?: SourceSignInNeed } | undefined {
-  return layer.type === "segmentation" ? meshSourceOf(layer.sources[0]) : undefined;
+  const source = layer.sources[0];
+  if (layer.type === "segmentation") return meshSourceOf(source);
+  if ((layer.type === "auto" || layer.type === "new") && /^graphene:\/\//i.test(source?.trim() ?? "")) return meshSourceOf(source);
+  return undefined;
 }
 
 export class Luxar {
