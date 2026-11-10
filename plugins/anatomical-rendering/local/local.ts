@@ -551,7 +551,7 @@ export class LocalRenderer {
           device.queue.writeBuffer(this.uni!, 0, new Uint32Array([W, H, 0, 0]));
           const enc = device.createCommandEncoder();
           enc.clearBuffer(this.accum!);
-          let pass = enc.beginComputePass();
+          const pass = enc.beginComputePass();
           pass.setBindGroup(0, this.bind!);
           pass.setPipeline(this.pipelines.majorant);
           pass.dispatchWorkgroups(Math.ceil(this.nbricks / 64));

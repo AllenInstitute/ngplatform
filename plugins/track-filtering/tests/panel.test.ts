@@ -113,7 +113,7 @@ describe("the Filtering panel", () => {
   });
 
   it("keeps or leaves out a stored group's objects", async () => {
-    const { w, host, card, groups } = await shown({ groups: [sphereGroup()], editing: "g1" }, { tags: true });
+    const { w, card, groups } = await shown({ groups: [sphereGroup()], editing: "g1" }, { tags: true });
     const tags = card("Stored groups");
     expect(tags.hidden).toBe(false);
     tags.open = true;

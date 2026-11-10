@@ -1863,7 +1863,7 @@ class AnatomicalRendering {
     const outSamples = sizeField("Samples", (m) => m.samples, (v) => clampInt(v, 1, LIMITS.maxSamples), (m, v) => (m.samples = v), { min: "1", max: String(LIMITS.maxSamples) });
     const still = button("Save still (PNG)", () => void this.saveStill());
     const noFfmpeg = el("p", { class: "hint" }, NO_FFMPEG);
-    const jobList = (kind: JobKind) =>
+    const jobList = (_kind: JobKind) =>
       region((jobs: JobRecord[]) =>
         jobs.map((j) => {
           const service = this.serviceFor(j);

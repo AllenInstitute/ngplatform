@@ -402,7 +402,7 @@ export function importCsv(
     for (const title of titles) {
       const values = records.filter((_, i) => where[i] === name).map((r) => r[title.toLowerCase()].trim()).filter((v) => v !== "");
       if (values.length === 0) continue;
-      let field = fieldsOf(l.spec, l.meta).find((f) => f.title.toLowerCase() === title.toLowerCase());
+      const field = fieldsOf(l.spec, l.meta).find((f) => f.title.toLowerCase() === title.toLowerCase());
       if (field === undefined) {
         const numeric = values.every((v) => Number.isFinite(Number(v)));
         const [spec, meta] = addField(l.spec, l.meta, numeric ? { id: "", title, kind: "number" } : { id: "", title, kind: "list", options: [...new Set(values)] });

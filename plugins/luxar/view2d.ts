@@ -160,7 +160,6 @@ export class View2d {
       this.clear();
       return;
     }
-    const { gl } = c;
     const base = this.overlay.element.getBoundingClientRect();
     const dpr = globalThis.devicePixelRatio || 1;
     const width = Math.max(1, Math.round(base.width * dpr));

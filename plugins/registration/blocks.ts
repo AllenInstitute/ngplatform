@@ -35,7 +35,7 @@ export function sourceBox(toSource: Mat4, lo: number[], hi: number[], margin: nu
       max[r] = Math.max(max[r], v);
     }
   }
-  const from = min.map((v, k) => Math.max(0, Math.floor(v) - margin)) as [number, number, number];
+  const from = min.map((v) => Math.max(0, Math.floor(v) - margin)) as [number, number, number];
   const to = max.map((v, k) => Math.min(size[k], Math.ceil(v) + 1 + margin)) as [number, number, number];
   return from.some((v, k) => v >= to[k]) ? undefined : { lo: from, hi: to };
 }

@@ -13,7 +13,10 @@
     "test": "vitest --run && vitest --run --root plugins/zarr-vectors",
     "e2e": "node tests/e2e/smoke.mjs",
     "ui:audit": "node tests/e2e/ui_audit.mjs",
-    "typecheck": "tsc -p . && tsc -p plugins/zarr-vectors"
+    "typecheck": "tsc -p . && tsc -p plugins/zarr-vectors",
+    "lint": "node node_modules/eslint/bin/eslint.js .",
+    "check:neuroglancer": "node scripts/neuroglancer_pin.mjs",
+    "casts": "node scripts/neuroglancer_casts.mjs"
   },
   "dependencies": {
     "geotiff": "3.1.0-beta.0",
@@ -31,5 +34,9 @@
     "typescript": "~5.8.3",
     "vite": "^6.4.1",
     "vitest": "^3.2.4"
+  },
+  "neuroglancer": {
+    "//": "The Neuroglancer commit the app is built against (file:../neuroglancer): scripts/neuroglancer_pin.mjs checks the sibling checkout against it; CI's FORK_SHA names the same commit.",
+    "commit": "435cdcb012eceb70eb1e5200bdd919af3eb7a5c5"
   }
 }

@@ -116,7 +116,7 @@ describe("surfaces", () => {
 
   it("starts a surface with curvature, outlines in the layer's colour", () => {
     expect(curvatureShader("curv")).toMatch(/prop_curv\(\) > 0\.0/);
-    expect(curvatureShader("curv")).toMatch(/#ifdef ZV_SECTION\n  \/\/.*\n  emitDefault\(\);/);
+    expect(curvatureShader("curv")).toMatch(/#ifdef ZV_SECTION\n {2}\/\/.*\n {2}emitDefault\(\);/);
   });
 
   it("shows a surface store's most wanted maps first, never the join key", () => {
