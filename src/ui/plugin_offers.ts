@@ -2,7 +2,7 @@
  * Offers of tool plugins that are off, from the data in the active scene
  * (rules: src/platform/plugin_offers.ts; each plugin's: plugins/offers.ts).
  *
- * - The Datasets tab lists the plugins that would serve this scene's data,
+ * - The Layers panel lists the plugins that would serve this scene's data,
  *   each a button that turns it on, with "Not now".
  * - A plugin worth a toast is offered once in one: several at once share
  *   one toast.
@@ -84,7 +84,7 @@ export class PluginOffers {
     for (const listener of this.listeners) listener();
   }
 
-  /** For the Datasets tab: the plugins this scene's data or the workspace's state calls for. */
+  /** For the Layers panel: the plugins this scene's data or the workspace's state calls for. */
   list(): OfferItem[] {
     const ids = [...new Set([...this.uses, ...this.applicable])];
     return ids

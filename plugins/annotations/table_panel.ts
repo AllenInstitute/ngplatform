@@ -1,17 +1,18 @@
 /**
- * The annotation table, in the bottom dock: every annotation of the
+ * The annotation table, in the Activity dock: every annotation of the
  * scene's local annotation layers, found by a query, sorted by a column;
  * a click goes to one and selects it, and the editor beside the table sets
  * its name, group, values and comments, or deletes it.  The table is saved
  * as CSV, and CSV read into the layers.
  */
 import type { Disposer, PlatformContext } from "@ngplatform/sdk";
-import { button, downloadBlob, el, select } from "@ngplatform/sdk/dom";
+import { button, downloadBlob, el, emptyState, iconButton, select } from "@ngplatform/sdk/dom";
 import { csv } from "@ngplatform/sdk/format";
 import type { Annotate, Selected } from "./annotate.js";
 import { groupOf, groupsOf, groupTree, setGroup, addGroup, writeGroups } from "./groups.js";
 import { findTerm, searchTerms, termLabel } from "./ontology.js";
 import { BUILTIN_COLUMNS, type Column, fieldColumns, importCsv, matches, parseQuery, type Row, rowName, sortRows, tableCsv, type TableLayer } from "./table.js";
+import { ANNOTATIONS_PANEL } from "./manifest.js";
 import { fileName, physical } from "./ui.js";
 import { type Field, fieldsOf, readValue, setValue, valueText } from "./values.js";
 
@@ -60,7 +61,7 @@ export class TablePanel {
       draw(true);
     });
     const layerSlot = el("span", {});
-    const count = el("span", { class: "an-faint an-count" });
+    const count = el("span", { class: "faint an-count" });
     const file = el("input", { type: "file", accept: ".csv,text/csv", hidden: true }) as HTMLInputElement;
     file.addEventListener("change", () => {
       const f = file.files?.[0];
@@ -69,11 +70,11 @@ export class TablePanel {
     });
     const toolbar = el(
       "div",
-      { class: "an-row an-toolbar" },
+      { class: "row an-toolbar" },
       search,
       layerSlot,
       count,
-      el("span", { class: "an-spacer" }),
+      el("span", { class: "spacer" }),
       button("Save CSV", () => this.exportCsv(), "The rows found, as CSV: values, sizes, comments and coordinates"),
       button("Open CSV…", () => file.click(), "Add or update annotations from a CSV table (as saved here, or a spreadsheet's)"),
       button("Delete found…", () => void this.deleteFound(), "Delete every annotation the query finds"),
@@ -147,7 +148,8 @@ export class TablePanel {
     );
     count.textContent = v.rows.length === v.all ? `${v.all} annotation${v.all === 1 ? "" : "s"}` : `${v.rows.length} of ${v.all}`;
     if (v.all === 0) {
-      host.replaceChildren(el("p", { class: "empty" }, names.length ? "No annotations yet: pick a tool in Annotations → Annotate, then Ctrl+click in a view." : "No annotation layer in this scene: make one in Annotations → Annotate."));
+      // The Annotations panel's Annotate card makes a layer and opens its tools.
+      host.replaceChildren(emptyState(names.length ? "No annotations yet." : "No annotation layer in this scene.", { label: "Annotate…", run: () => this.ctx.ui.showPanel(ANNOTATIONS_PANEL) }));
       return;
     }
     const head = el(
@@ -176,7 +178,7 @@ export class TablePanel {
       const cells = v.columns.map((c) => {
         if (c.key === "size") return el("td", { class: "num" }, r.size ? physical(r.size.value, POWER[r.size.quantity]) : "");
         if (c.key === "comments") return el("td", { class: "num", title: r.comments.map((x) => x.text).join("\n") }, r.comments.length ? String(r.comments.length) : "");
-        if (c.key === "type") return el("td", { class: "an-faint" }, c.text(r));
+        if (c.key === "type") return el("td", { class: "faint" }, c.text(r));
         if (c.number) return el("td", { class: "num" }, c.text(r));
         return el("td", {}, c.text(r));
       });
@@ -184,7 +186,7 @@ export class TablePanel {
     }
     host.replaceChildren(
       el("table", { class: "an-table" }, el("thead", {}, head), body),
-      v.rows.length > MAX_ROWS ? el("p", { class: "an-hint" }, `The first ${MAX_ROWS} of ${v.rows.length}: a query finds the others.`) : "",
+      v.rows.length > MAX_ROWS ? el("p", { class: "hint" }, `The first ${MAX_ROWS} of ${v.rows.length}: a query finds the others.`) : "",
       v.rows.length === 0 ? el("p", { class: "empty" }, "No annotation matches.") : "",
     );
   }
@@ -199,7 +201,7 @@ export class TablePanel {
     if (host.dataset.key !== key) host.scrollTop = 0;
     host.dataset.key = key;
     if (!selected || l === undefined || a === undefined) {
-      host.replaceChildren(el("p", { class: "an-hint" }, "Select a row to edit it here."));
+      host.replaceChildren(el("p", { class: "hint" }, "Select a row to edit it here."));
       return;
     }
     const name = selected.layer;
@@ -217,17 +219,17 @@ export class TablePanel {
         "div",
         { class: "an-editor-head" },
         el("strong", {}, rowName(row)),
-        el("span", { class: "an-faint" }, `${row.size ? physical(row.size.value, POWER[row.size.quantity]) + " · " : ""}${name}`),
+        el("span", { class: "faint" }, `${row.size ? physical(row.size.value, POWER[row.size.quantity]) + " · " : ""}${name}`),
       ),
       el(
         "div",
-        { class: "an-row" },
+        { class: "row" },
         button("Go to", () => this.model.select(selected), "Move the views to it"),
         button("Delete", () => this.model.delete([selected]), "Delete the annotation (Undo brings it back)"),
       ),
     );
     if (l.managed) {
-      parts.push(el("p", { class: "an-hint" }, "A region of track filtering: its name and shape are set in the Filtering tab. Comments are kept here."));
+      parts.push(el("p", { class: "hint" }, "A region of track filtering: its name and shape are set in the Filtering tab. Comments are kept here."));
     } else {
       const description = el("input", { class: "text-input", value: a.description ?? "", placeholder: "Name or description", "aria-label": "Description" }) as HTMLInputElement;
       description.addEventListener("change", () =>
@@ -278,17 +280,17 @@ export class TablePanel {
       }
     });
     parts.push(
-      el("h4", { class: "an-sub" }, "Comments"),
+      el("h4", { class: "section-title" }, "Comments"),
       ...comments.map((c, i) =>
         el(
           "div",
           { class: "an-comment" },
-          el("div", { class: "an-faint", title: c.time }, localTime(c.time), button("×", () => this.model.removeComment(selected, i), "Remove the comment", "btn small icon an-comment-x")),
+          el("div", { class: "faint", title: c.time }, localTime(c.time), iconButton("close", "Remove the comment", () => this.model.removeComment(selected, i))),
           el("div", {}, c.text),
         ),
       ),
       text,
-      el("div", { class: "an-row" }, button("Add comment", add)),
+      el("div", { class: "row" }, button("Add comment", add)),
     );
     host.replaceChildren(...parts);
   }
@@ -334,7 +336,9 @@ export class TablePanel {
       });
       control = el("span", { class: "an-inline-wide" }, input, options);
     } else {
-      control = el("span", { class: "an-inline" }, el("span", { class: "an-swatch big", style: `background: ${String(value)}` }), String(value ?? ""));
+      // The colour, shown (it is set in the layer's own controls).
+      const colour = /^#[0-9a-f]{6}/i.exec(String(value ?? ""))?.[0];
+      control = el("span", { class: "an-inline" }, colour ? el("input", { type: "color", class: "colour-input", value: colour, disabled: true, "aria-label": f.title }) : null, String(value ?? ""));
     }
     return el("label", { class: "field", title: where }, el("span", {}, f.title), control);
   }

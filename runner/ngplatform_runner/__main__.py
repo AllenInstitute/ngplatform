@@ -116,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print("Pair the app with it: open this link (it pairs this browser once)")
     print(f"  {link}")
-    print("or in the app's Jobs tab, under 'Add a computer…', enter" if server.public_url else "or in the app's Jobs tab, under 'This computer', enter")
+    print("or in the app's Settings › Compute, under 'Add a computer (SSH)…', enter" if server.public_url else "or in the app's Settings › Compute, under 'This computer', enter")
     print(f"  address: {address}")
     print(f"  token:   {token}")
     print()

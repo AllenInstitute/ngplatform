@@ -38,3 +38,15 @@ export function bytesText(bytes: number): string {
   if (bytes >= 2 ** 20) return `${(bytes / 2 ** 20).toFixed(0)} MB`;
   return `${Math.ceil(bytes / 2 ** 10)} KB`;
 }
+
+/**
+ * A size as typed, in bytes (powers of 1024, as bytesText writes it):
+ * "512 MB", "2 GB", "1.5g", "64 KiB"; a bare number is in MB.  Undefined
+ * when the text is not a size.
+ */
+export function parseBytes(text: string): number | undefined {
+  const m = /^\s*(\d+(?:\.\d*)?|\.\d+)\s*(?:([kmgt])(?:i?b)?|(b))?\s*$/i.exec(text);
+  if (m === null) return undefined;
+  const power = m[3] !== undefined ? 0 : "kmgt".indexOf((m[2] ?? "m").toLowerCase()) + 1;
+  return Math.round(Number(m[1]) * 1024 ** power);
+}

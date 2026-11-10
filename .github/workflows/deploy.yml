@@ -1,0 +1,115 @@
+name: Deploy
+
+# Builds the app and publishes it to GitHub Pages (the gh-pages branch, at
+# the site root).  By hand only, from the Actions tab: choose the tag (a
+# release, vX.Y.Z) or branch to deploy.  docs/contributing.md § Releases
+# says when and how.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag or branch to deploy (a release tag, vX.Y.Z, or main)"
+        required: true
+        default: main
+
+# One deploy at a time; a second waits rather than cancelling the first
+# half-way through its push.
+concurrency:
+  group: deploy-pages
+  cancel-in-progress: false
+
+permissions:
+  # To push the built app to the gh-pages branch.
+  contents: write
+
+env:
+  # The fork's install fetches Playwright browsers, which this job does not use.
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          path: ngplatform
+          # chunkmirage's browser engine (vendor/chunkmirage).
+          submodules: true
+      # The Neuroglancer commit package.json pins (neuroglancer.commit), the
+      # same one CI's FORK_SHA names.
+      - id: pin
+        working-directory: ngplatform
+        run: |
+          echo "commit=$(node -p 'require("./package.json").neuroglancer.commit')" >> "$GITHUB_OUTPUT"
+          echo "version=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
+      # package.json depends on file:../neuroglancer, so the fork sits beside it.
+      - uses: actions/checkout@v5
+        with:
+          repository: Andrew-Keenlyside/neuroglancer
+          ref: ${{ steps.pin.outputs.commit }}
+          path: neuroglancer
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+        working-directory: neuroglancer
+      - run: npm install --no-audit --no-fund
+        working-directory: ngplatform
+      # As in CI: Neuroglancer built from its TypeScript, not a lib/.
+      - run: node build_tools/postpack.ts && rm -rf lib
+        working-directory: neuroglancer
+      # A tag must carry its own version: v0.3.0 builds package.json 0.3.0.
+      - name: Tag and version agree
+        if: startsWith(inputs.ref, 'v')
+        env:
+          REF: ${{ inputs.ref }}
+          VERSION: ${{ steps.pin.outputs.version }}
+        run: test "$REF" = "v$VERSION" || { echo "::error::$REF is not v$VERSION (package.json)"; exit 1; }
+      - run: node scripts/neuroglancer_pin.mjs --strict
+        working-directory: ngplatform
+      - run: npm test
+        working-directory: ngplatform
+      - run: npm run typecheck
+        working-directory: ngplatform
+      - run: npm run lint
+        working-directory: ngplatform
+      - run: npm run build
+        working-directory: ngplatform
+        env:
+          # Google sign-in built in for everyone (docs/guide/signing-in.md);
+          # a repository variable, empty when it is not set.
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
+          VITE_DEFAULT_EXAMPLE: ${{ vars.VITE_DEFAULT_EXAMPLE }}
+      # The built app replaces the branch's contents (.git aside).  Tabs left
+      # open on the old build reload once when they next ask for a file it
+      # replaced (src/main.ts).
+      - uses: actions/checkout@v5
+        with:
+          ref: gh-pages
+          path: site
+      - name: Publish to gh-pages
+        working-directory: site
+        # The input reaches the shell as a variable, never as text in the script.
+        env:
+          REF: ${{ inputs.ref }}
+          VERSION: ${{ steps.pin.outputs.version }}
+        run: |
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a ../ngplatform/dist/. .
+          # Source maps stay out of the site (they are kept in the run's artifact below).
+          find . -name '*.map' -delete
+          touch .nojekyll
+          git add -A
+          if git diff --cached --quiet; then echo "Nothing changed."; exit 0; fi
+          sha=$(git -C ../ngplatform rev-parse --short HEAD)
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "Deploy ${REF} (${sha}, version ${VERSION}) at the site root"
+          git push origin gh-pages
+      # The build's source maps, to read a stack saved from Activity against.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-maps-${{ steps.pin.outputs.version }}-${{ github.run_number }}
+          path: ngplatform/dist/**/*.map
+          retention-days: 90

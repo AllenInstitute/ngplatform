@@ -3,10 +3,19 @@
  * its views want, merged and sent on; the chunks that came back, kept (up
  * to a byte budget) until each view has put them on its GPU.  The layer's
  * chosen objects read whole, by id, are kept apart (`objects`).
+ *
+ * A client may take over the worker of the layer's client before it
+ * (`adopt`: a segmentation's next mesh store), which keeps what it has read
+ * of the volume; the one before keeps its chunks to draw, and asks for
+ * no more.
  */
 import type { BuiltChunk } from "./chunk_build.js";
 import type { StoreInfo } from "./luxar_worker.js";
 import { ObjectSets } from "./objects.js";
+import type { AuthHeader } from "./precomputed_meshes.js";
+
+/** Each open of a store, in any worker: answers for another are ignored. */
+let epochs = 0;
 
 export type { StoreInfo };
 
@@ -17,6 +26,13 @@ const bytesOf = (c: BuiltChunk) => c.vertices.byteLength + c.segments.byteLength
 
 export class StoreClient {
   private worker: Worker;
+  private readonly epoch = ++epochs;
+  /** The worker went on to the layer's next store: nothing more is asked for or comes. */
+  private detached = false;
+  /** The store's server wants a sign-in. */
+  signIn = false;
+  /** What the store says of itself, once each: the reader's notes, segments with no mesh, fragments that failed. */
+  readonly warnings: string[] = [];
   readonly ready: Promise<StoreInfo>;
   info: StoreInfo | undefined;
   error: string | undefined;
@@ -40,8 +56,11 @@ export class StoreClient {
   /** Counts the chunks that have come back, so a view can tell when it has something new to draw. */
   arrivals = 0;
 
-  constructor(readonly storeUrl: string) {
-    this.worker = new Worker(new URL("./luxar_worker.ts", import.meta.url), { type: "module", name: "luxar" });
+  constructor(
+    readonly storeUrl: string,
+    options: { adopt?: StoreClient; headers?: readonly AuthHeader[] } = {},
+  ) {
+    this.worker = options.adopt?.handOff() ?? new Worker(new URL("./luxar_worker.ts", import.meta.url), { type: "module", name: "luxar" });
     let opened!: (info: StoreInfo) => void;
     let failed!: (e: Error) => void;
     this.ready = new Promise((resolve, reject) => {
@@ -51,14 +70,23 @@ export class StoreClient {
     this.ready.catch(() => {});
     this.worker.onmessage = (event: MessageEvent) => {
       const msg = event.data;
+      // An answer for the store this worker read before.
+      if (msg.epoch !== this.epoch) return;
       if (msg.type === "opened") {
         this.info = msg.info;
+        for (const w of (msg.info as StoreInfo).warnings ?? []) this.warn(w);
         opened(msg.info);
         this.send();
         return;
       }
+      if (msg.type === "warning") {
+        this.warn(msg.message);
+        this.onChunk?.();
+        return;
+      }
       if (msg.type === "error" && msg.key === undefined) {
         this.error = msg.message;
+        this.signIn = msg.signIn === true;
         failed(new Error(msg.message));
         this.onChunk?.();
         return;
@@ -85,6 +113,7 @@ export class StoreClient {
       } else if (msg.type === "error") {
         this.failed.set(msg.key, performance.now() + 15_000);
         this.error = msg.message;
+        this.signIn = msg.signIn === true;
       }
       ++this.arrivals;
       this.onChunk?.();
@@ -99,8 +128,14 @@ export class StoreClient {
       this.requested.clear();
       this.onChunk?.();
     };
-    this.worker.postMessage({ type: "open", storeUrl });
-    this.objects = new ObjectSets((key, plan, ids) => this.worker.postMessage({ type: "objects", key, level: plan.level, mode: plan.mode, ids, scalar: this.scalar }, [ids.buffer]));
+    this.worker.postMessage({ type: "open", storeUrl, epoch: this.epoch, headers: options.headers ?? [] });
+    this.objects = new ObjectSets((key, plan, ids) => {
+      if (!this.detached) this.worker.postMessage({ type: "objects", key, level: plan.level, mode: plan.mode, ids, scalar: this.scalar }, [ids.buffer]);
+    });
+  }
+
+  private warn(warning: string): void {
+    if (typeof warning === "string" && warning !== "" && !this.warnings.includes(warning)) this.warnings.push(warning);
   }
 
   /** The layer's chosen objects read whole, by id (./objects.ts). */
@@ -129,6 +164,19 @@ export class StoreClient {
     }
   }
 
+  /**
+   * Gives the worker to the layer's next client: this one keeps what it has
+   * (its view still draws it during the hand-over) and asks for no more.
+   */
+  private handOff(): Worker | undefined {
+    if (this.detached || this.stopped) return undefined;
+    this.detached = true;
+    this.worker.onmessage = null;
+    this.worker.onerror = null;
+    this.requested.clear();
+    return this.worker;
+  }
+
   /** What each vertex's value holds (styles.scalarOf); a change drops every chunk. */
   setScalar(scalar: string): void {
     if (scalar === this.scalar) return;
@@ -140,6 +188,8 @@ export class StoreClient {
     this.valueRange = undefined;
     ++this.generation;
     this.objects.clear();
+    // The objects being read for the scalar before are not wanted.
+    if (!this.detached) this.worker.postMessage({ type: "cancelObjects" });
     this.send();
   }
 
@@ -177,7 +227,7 @@ export class StoreClient {
 
   /** Every view's wants, taken in turn, so each gets its first chunks soon. */
   private send(): void {
-    if (this.info === undefined || this.stopped) return;
+    if (this.info === undefined || this.stopped || this.detached) return;
     const lists = [...this.wants.values()];
     const merged: string[] = [];
     const seen = new Set<string>();
@@ -201,7 +251,8 @@ export class StoreClient {
   }
 
   dispose(): void {
-    this.worker.terminate();
+    // A worker handed on is the next client's.
+    if (!this.detached) this.worker.terminate();
     this.chunks.clear();
     this.objects.clear();
     this.onChunk = undefined;

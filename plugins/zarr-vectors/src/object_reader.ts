@@ -84,6 +84,7 @@ import type {
 } from "./store.js";
 import {
   AsyncLru,
+  DECODED_BUDGET,
   mapConcurrent,
   SHARED_SIGNAL,
   warnOnce,
@@ -338,10 +339,11 @@ const caches = new WeakMap<ZarrVectorsStoreAccess, StoreCaches>();
  * Decoded chunks are large (tens of MB at a whole-brain store's finest
  * level) and not charged to the chunk manager, so the caches are bounded by
  * bytes -- and shared by every reader of a store (one per level of detail,
- * per kind of source), so the bound is per store, not per reader. Objects
- * drawn together mostly share chunks.
+ * per kind of source). Objects drawn together mostly share chunks. Each
+ * store's caches are also charged to the worker's one budget over every
+ * store (`DECODED_BUDGET`), so several stores open together stay within it.
  */
-function storeCaches(access: ZarrVectorsStoreAccess): StoreCaches {
+export function storeCaches(access: ZarrVectorsStoreAccess): StoreCaches {
   let out = caches.get(access);
   if (out === undefined) {
     out = {
@@ -349,11 +351,13 @@ function storeCaches(access: ZarrVectorsStoreAccess): StoreCaches {
         Infinity,
         384 * 1024 * 1024,
         decodedBytes,
+        DECODED_BUDGET,
       ),
       vertexCells: new AsyncLru<Uint8Array | undefined>(
         Infinity,
         128 * 1024 * 1024,
         (b) => b?.byteLength ?? 0,
+        DECODED_BUDGET,
       ),
     };
     caches.set(access, out);
@@ -407,7 +411,7 @@ export class ObjectReader {
         cells: this.cells,
         listDirectories: (path) =>
           access.listDirectories(`${level.path}/${path}`),
-        warn: warnOnce,
+        warn: (message: string) => warnOnce(message, access.url),
       });
     }
     // Needed by the first object, so fetched now rather than in turn: the
@@ -859,6 +863,7 @@ export class ObjectReader {
             warnOnce(
               `${cells.levelPath} has no vertex attribute ${a.name}; it reads ` +
                 "as NaN there",
+              cells.storeUrl,
             );
             return { components };
           }
@@ -878,6 +883,7 @@ export class ObjectReader {
             warnOnce(
               `${cells.levelPath}/${path} stores ${type} x${width} per vertex, ` +
                 `not x${components}; it reads as NaN there`,
+              cells.storeUrl,
             );
             return { components };
           }
@@ -947,6 +953,7 @@ export class ObjectReader {
       warnOnce(
         `${cells.levelPath}: measuring the attribute arrays failed; objects ` +
           "are read from whole chunks",
+        cells.storeUrl,
       );
       console.debug(e);
       return undefined;
@@ -994,6 +1001,7 @@ export class ObjectReader {
       warnOnce(
         `${cells.levelPath}: reading an object's own rows failed; its ` +
           "chunks are read whole",
+        cells.storeUrl,
       );
       console.debug(e);
       return undefined;
@@ -1229,6 +1237,7 @@ export class ObjectReader {
     warnOnce(
       `${this.cells.levelPath}: is stamped fragment_link_groups, ` +
         `but ${why}; those chunks are read whole`,
+      this.cells.storeUrl,
     );
   }
 

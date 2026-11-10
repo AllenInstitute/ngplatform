@@ -64,8 +64,10 @@ void main() {
 
 // The frame as points in space: a grid of vertices, each at its pixel's distance along that pixel's ray in
 // the camera the frame was rendered from (uOldInv), drawn with the camera now (uNewVP), so the picture turns
-// and zooms with the view at once. A triangle touching a pixel that met nothing, or spanning a jump in
-// distance (an edge in front of something farther), is left out: a brief gap, not a stretched skin.
+// and zooms with the view at once. A triangle touching a pixel that met nothing is left out; one spanning
+// a jump in distance (an edge in front of something farther) too while the camera is away from the
+// picture's (uJump: a brief gap, not a long stretched skin), but kept with the picture's own camera, where
+// every triangle covers just its own pixels.
 const MESH_VS = `#version 300 es
 precision highp float;
 uniform highp sampler2D uDist;
@@ -74,6 +76,7 @@ uniform mat4 uNewVP;
 uniform ivec2 uSize;
 uniform int uStep;
 uniform int uCols;
+uniform float uJump;
 out vec2 vUv;
 out float vValid;
 float dist(ivec2 p) { return texelFetch(uDist, clamp(p, ivec2(0), uSize - 1), 0).r; }
@@ -89,7 +92,7 @@ void main() {
   vec3 dir = normalize(b.xyz / b.w - n);
   gl_Position = uNewVP * vec4(n + dir * max(d, 0.0), 1.0);
   float jump = max(abs(dr - d), abs(dd - d)) / max(d, 1e-6);
-  vValid = (d >= 0.0 && dr >= 0.0 && dd >= 0.0 && jump < 0.04) ? 1.0 : 0.0;
+  vValid = (d >= 0.0 && dr >= 0.0 && dd >= 0.0 && jump < uJump) ? 1.0 : 0.0;
   vUv = uv;
 }`;
 
@@ -143,15 +146,22 @@ export interface Picture {
   view?: { invViewProjection: number[]; distance: { width: number; height: number; data: Float32Array } };
 }
 
+/** The jump in distance (a fraction of it) a triangle may span while the camera is away from the picture's. */
+const JUMP = 0.08;
+
+/** Whether two cameras (inverse view-projections) are the same, to rounding. */
+export function sameCamera(p: ArrayLike<number>, q: ArrayLike<number>): boolean {
+  let scale = 0;
+  for (let i = 0; i < 16; ++i) scale = Math.max(scale, Math.abs(p[i]));
+  for (let i = 0; i < 16; ++i) if (Math.abs(p[i] - q[i]) > 1e-5 * Math.max(scale, 1e-12)) return false;
+  return true;
+}
+
 /** Whether two pictures were rendered from the same camera (so one can fade into the other in place). */
 export function sameView(a: Picture | undefined, b: Picture): boolean {
   if (a === undefined) return false;
   if (a.view === undefined || b.view === undefined) return a.view === b.view && a.bitmap.width === b.bitmap.width && a.bitmap.height === b.bitmap.height;
-  const p = a.view.invViewProjection, q = b.view.invViewProjection;
-  let scale = 0;
-  for (let i = 0; i < 16; ++i) scale = Math.max(scale, Math.abs(p[i]));
-  for (let i = 0; i < 16; ++i) if (Math.abs(p[i] - q[i]) > 1e-6 * Math.max(scale, 1e-12)) return false;
-  return true;
+  return sameCamera(a.view.invViewProjection, b.view.invViewProjection);
 }
 
 export class PictureDrawer implements Drawer3d {
@@ -180,9 +190,20 @@ export class PictureDrawer implements Drawer3d {
   private meshFor = "";
   private grid: { key: string; buffer: WebGLBuffer; count: number; cols: number; step: number } | undefined;
 
+  /** The picture to draw; one replaced before it was drawn lets its bitmap go. */
   set(picture: Picture | undefined): void {
+    const old = this.picture;
     this.picture = picture;
+    if (old !== undefined && old !== picture && old !== this.uploaded) old.bitmap.close?.();
   }
+
+  /** The camera of the picture shown when it is placed in space (drawn moving with the view); else undefined. */
+  placed(): number[] | undefined {
+    return this.picture?.view?.invViewProjection;
+  }
+
+  /** Draws as a surface in space and flat (stuck to the screen), and flat ones while the camera moved: what makes it lag. */
+  readonly stats = { placed: 0, flat: 0, flatMoving: 0 };
 
   isReady(): boolean {
     return this.picture !== undefined;
@@ -216,7 +237,10 @@ export class PictureDrawer implements Drawer3d {
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, pic.bitmap);
+      // The picture uploaded before is in a texture now (or not wanted): its bitmap is let go.
+      const before = this.uploaded;
       this.uploaded = pic;
+      if (before !== undefined && before !== this.picture) before.bitmap.close?.();
     }
     if (pic.depth !== undefined && this.uploadedDepth !== pic.depth) {
       gl.activeTexture(gl.TEXTURE1);
@@ -234,9 +258,12 @@ export class PictureDrawer implements Drawer3d {
       this.uploadedAlpha = pic.alpha;
     }
     if (pic.view !== undefined && this.drawMesh(gl, frame, pic)) {
+      this.stats.placed++;
       this.fadeOn();
       return;
     }
+    this.stats.flat++;
+    if (frame.moving) this.stats.flatMoving++;
     gl.useProgram(program);
     this.bindMix(gl, program);
     const vp = gl.getParameter(gl.VIEWPORT) as Int32Array;
@@ -286,6 +313,8 @@ export class PictureDrawer implements Drawer3d {
     const key = JSON.stringify(frame.outputs);
     if (this.mesh === undefined || this.meshFor !== key) {
       try {
+        if (this.mesh) gl.deleteProgram(this.mesh);
+        this.mesh = undefined;
         this.mesh = this.link(gl, MESH_VS, MESH_FS(frame.outputs));
         this.meshFor = key;
       } catch {
@@ -328,6 +357,7 @@ export class PictureDrawer implements Drawer3d {
     gl.uniform2i(u("uSize"), W, H);
     gl.uniform1i(u("uStep"), step);
     gl.uniform1i(u("uCols"), cols);
+    gl.uniform1f(u("uJump"), sameCamera(v.invViewProjection, frame.invViewProjection) ? 1e9 : JUMP);
     gl.uniform1f(u("uHasAlpha"), pic.alpha !== undefined ? 1 : 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.color!);
@@ -355,10 +385,16 @@ export class PictureDrawer implements Drawer3d {
       return s;
     };
     const p = gl.createProgram()!;
-    gl.attachShader(p, sh(gl.VERTEX_SHADER, vs));
-    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs));
+    const shaders = [sh(gl.VERTEX_SHADER, vs), sh(gl.FRAGMENT_SHADER, fs)];
+    for (const s of shaders) gl.attachShader(p, s);
     gl.linkProgram(p);
-    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) ?? "link");
+    // The program keeps what it needs: its shaders go.
+    for (const s of shaders) gl.deleteShader(s);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+      const log = gl.getProgramInfoLog(p);
+      gl.deleteProgram(p);
+      throw new Error(log ?? "link");
+    }
     return p;
   }
 
@@ -395,30 +431,25 @@ export class PictureDrawer implements Drawer3d {
   private compile(gl: WebGL2RenderingContext, outputs: Frame3d["outputs"]): WebGLProgram | undefined {
     const key = JSON.stringify(outputs);
     if (this.program !== undefined && this.programFor === key) return this.program;
-    const sh = (type: number, src: string) => {
-      const s = gl.createShader(type)!;
-      gl.shaderSource(s, src);
-      gl.compileShader(s);
-      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) ?? "shader");
-      return s;
-    };
-    const p = gl.createProgram()!;
-    gl.attachShader(p, sh(gl.VERTEX_SHADER, VS));
-    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, FS(outputs)));
-    gl.linkProgram(p);
-    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) ?? "link");
-    this.program = p;
+    if (this.program !== undefined) gl.deleteProgram(this.program);
+    this.program = undefined;
+    this.program = this.link(gl, VS, FS(outputs));
     this.programFor = key;
-    return p;
+    return this.program;
   }
 
   dispose(): void {
+    for (const p of [this.picture, this.uploaded]) p?.bitmap.close?.();
+    this.picture = undefined;
+    this.uploaded = undefined;
     const gl = this.gl;
     if (gl === undefined) return;
     if (this.program) gl.deleteProgram(this.program);
     for (const t of [this.color, this.depth, this.alpha, this.dist, this.prevColor, this.prevAlpha]) if (t) gl.deleteTexture(t);
     if (this.mesh) gl.deleteProgram(this.mesh);
     if (this.vao) gl.deleteVertexArray(this.vao);
+    if (this.grid) gl.deleteBuffer(this.grid.buffer);
+    this.grid = undefined;
     this.gl = undefined;
   }
 }

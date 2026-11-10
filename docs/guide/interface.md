@@ -1,29 +1,48 @@
-# The window, tab by tab
+# The window, part by part
 
 ![The window, numbered as the sections below](../images/interface-numbered.png)
 
-The window has a top bar (1), three docks around Neuroglancer's views: left
-(2), right (4) and bottom (5), and the views themselves (3). Docks can be
-resized by dragging their edges and collapsed with the icon in their tab
-bar; sizes and open tabs are remembered by your browser.
+The window has a top bar (1), the left dock with the **Layers** and
+**Plugins** panels (2), Neuroglancer's views (3), the **Tools** dock on the
+right (4), there only while a tool is on, and the **Activity** dock at the
+bottom (5). The Tools and Activity docks start collapsed: the Activity dock
+is then a single line with the running job or the last message (click it to
+open the dock). Docks can be resized by dragging their edges and collapsed
+with the icon in their head; their sizes, the panel each shows and which
+are collapsed are remembered by your browser.
+
+Open, Settings, Keyboard and mouse, and Capture open as **sheets**: a
+window over the app, closed with **Done**, **Cancel** or ++escape++.
+
+The app has one theme, a dark one, in Neuroglancer's black and greys with
+square corners; there is no light theme. Its green marks only what is
+selected and what is on.
+
+An empty scene shows a card over the views: the two examples (one click
+each), **Open a file…** and **Paste a link…**; you can also drop files on
+the window.
 
 Almost everything is also a command: **Commands** (++ctrl+k++) searches them
-all, and the keyboard icon lists the keyboard and mouse bindings.
+all, and **Help → Keyboard and mouse** lists the keys and clicks most used
+(with all of them under *All keys*).
+
+The app works fully in Chrome and Edge. Firefox and Safari work too, but
+do not remember local files between visits, cannot write into a folder,
+and cannot export MP4: see
+[Supported browsers](../index.md#supported-browsers).
 
 ## 1. Top bar
 
 | Control | What it does |
 |---|---|
-| **Open** | Open from device (files or a folder on your computer), a link or a Neuroglancer state, datasets of the other scenes, or one of two examples: the SRB 2026a template or MICrONS (a new empty scene: **New empty scene** in the palette). Opening replaces the workspace. The app starts as an empty viewer; a link ending `#example=<id>` opens an example (`srb-2026a`, `microns`, and the tractograms `s2146-mni` and `mni-hcp1065`). |
-| **Add** | Add a dataset to the current scene: a URL, data on this computer, or a new annotation layer. |
-| **Share** | Copy a link to the whole workspace, copy this scene as a Neuroglancer link or JSON state, or open it in this site's plain Neuroglancer page. |
-| **Neuroglancer** | Open this scene in Google's Neuroglancer in a new tab. It says so when the scene holds data plain Neuroglancer cannot read (Zarr Vectors, files on this computer). |
+| **Open** | Open a file or a folder on your computer, a link or a Neuroglancer state, datasets of the other scenes, or one of two examples: the SRB 2026a template or MICrONS (a new empty scene: **New empty scene** in the palette). Opening replaces the workspace. The app starts as an empty viewer; a link ending `#example=<id>` opens an example (`srb-2026a`, `microns`, and the tractograms `s2146-mni` and `mni-hcp1065`). |
+| **Share** | Copy a link to the whole workspace, copy this scene as a Neuroglancer link or JSON state, or open it in Neuroglancer (Google's, or this site's with Zarr Vectors). It says so when the scene holds data plain Neuroglancer cannot read (Zarr Vectors, files on this computer). |
 | **Undo / Redo** | Undo any change to the workspace: layers, positions, settings, plugin state. |
 | **⋯** (beside redo) | The history of changes, as a tree: go to any earlier state, including ones on branches left by going back and changing something else. See [History of changes](#history-of-changes). |
-| **Scene tabs** | One tab per scene. **+** adds a scene; each tab has a close button (closing the last leaves a blank scene). Rename, duplicate and delete scenes from the command palette. Each scene works as a viewer of its own: the plugin tabs (Filtering's groups, Annotations, Luxar, Volume and the rest) show that scene's own; a new scene starts with none, a duplicated one with a copy. |
+| **Scene tabs** | One tab per scene. **+** adds a scene; each tab has a close button (closing the last leaves a blank scene). Rename, duplicate and delete scenes from the command palette. Each scene works as a viewer of its own: the tools (Filtering's groups, Annotations, Luxar and the rest) show that scene's own; a new scene starts with none, a duplicated one with a copy. |
 | Camera icon | **Capture**: a picture of the views (magnified, borders trimmed), or a movie (a sweep through slices or time, or a turn of the 3-D view) as GIF, WebM, MP4 or PNG frames; and Neuroglancer's own screenshot dialog. Labels from the Annotations plugin are painted in. See [Capture](#capture). |
-| Gear icon | View settings (with *Show offers for tools that are off*), reload the scene's layers, or a hard reset that reloads everything fresh. |
-| Keyboard icon | The keyboard and mouse reference. |
+| Gear icon | **Settings**, in five sections: *View* (the views' options, saved with the workspace, their orientation, and whether tools that are off are offered), *Sign-in* (see [Signing in](signing-in.md)), *Compute* (the computers that run jobs and rendering; see [Jobs on this computer](local-jobs.md)), *Storage* (overviews and tractograms kept in this browser) and *Developer* (Neuroglancer's chunk statistics, reloading the layers or the whole page, the state as JSON). |
+| **?** icon | Help: the keyboard and mouse reference, the guide, the code on GitHub. |
 | **Commands** | The command palette (++ctrl+k++). |
 
 ### Capture
@@ -39,16 +58,18 @@ movie*, open one dialog:
 - **Magnification**: pixels per screen pixel. 2 doubles the width and
   height, with the same field of view (as Freeview's `-ss` magnification).
 - **Trim empty borders**: crops to what differs from the background colour
-  (the corners'), keeping a margin; a movie is cropped alike in every frame.
+  (the corners'), keeping a margin (under **More**); a movie is cropped
+  alike in every frame.
 - **Format** for a movie: an animated **GIF**, **WebM** video, **MP4**
   (H.264, where the browser has an encoder: Chrome and Edge), or **PNG
   frames** in a zip or written into a folder you choose (Chrome and Edge).
   **Frames a second** sets the speed.
-- **Wait for data**: each frame is taken once everything in view has loaded,
-  or after this many seconds (the activity log says how many frames were
-  taken early), so a movie's frames are complete and consistent.
+- **Max wait per frame** (under **More**): each frame is taken once
+  everything in view has loaded, or after this many seconds (the activity
+  log says how many frames were taken early), so a movie's frames are
+  complete and consistent.
 
-The job runs in **Jobs** (bottom dock), where it can be cancelled. The view
+The job runs in the **Activity** dock, where it can be cancelled. The view
 is put back as it was afterwards, and a capture adds nothing to undo.
 Labels from the Annotations plugin are painted into every frame.
 
@@ -102,15 +123,11 @@ path goes first (a branch's end, or the very first step). Steps store what
 they share with other steps once, so 400 steps of the default workspace
 take about 0.1 MB rather than 2.3 MB.
 
-## 2. Left dock
+## 2. Left dock: Layers and Plugins
 
-| Tab | What it holds |
+| Panel | What it holds |
 |---|---|
-| **Datasets** | What the scene shows: one row per dataset with its visibility, load state and source. A dataset shown through several layers (a tractogram and its track groups, say) lists them beneath it. Selecting a row shows its controls in the Layer tab. Datasets that other scenes show are offered in **Open…** (and in **Add a dataset**), ready to add to this scene. *Tools for this data* lists the plugins that are off but work with this data: click one to turn it on (its tab opens), × for "Not now". Pasting a data URL on the window (++ctrl+v++) adds it here; see [Data from a URL](data.md#data-from-a-url). |
-| **Filtering** | The Track filtering plugin: TrackVis-style track groups. See [Track filtering](../plugins/track-filtering.md). |
-| **Annotations** | The Annotations plugin: labels (named pins and callouts for figures), measurements, statistics in a region, and label volumes drawn by hand. See [Annotations](../plugins/annotations.md). |
-| **Registration** | When the Registration plugin is on: move a layer by hand or by landmarks, and save the transform or the moved image. See [Registration](../plugins/registration.md). |
-| **Auth** | The sign-ins available (one or more Google accounts for this browser, and CAVE, CATMAID and ngauth servers), with who is signed in; rules saying which sign-in and which Google account reads which bucket or server; and for each layer of the scene the sign-in it reads its data with. See [Signing in](signing-in.md). |
+| **Layers** | Above, what the scene shows: one row per dataset with its visibility, load state and where it is (the bucket or host and the file's name; the whole address in its tooltip). A dataset shown through several layers (a tractogram and its track groups, say) lists them beneath it. **+** adds data: a URL, a file or folder on this computer, or a new annotation layer. Datasets that other scenes show are offered in **Open** (and in **Add a dataset**). *Tools for this data* lists up to three plugins that are off but work with this data (the rest under **More…**): click one to turn it on (it opens in the Tools dock), × for "Not now". Pasting a data URL on the window (++ctrl+v++) adds it here; see [Data from a URL](data.md#data-from-a-url). Below, the selected layer's controls (see [Layer controls](#layer-controls)). |
 | **Plugins** | Every plugin, grouped by what it does, with a one-line description, a switch and an *About* guide. Only Zarr Vectors is on by default; a tool turns on at once, and turning one off reloads the page with the same link. **Add** loads a plugin from your computer or a URL. See [Plugins](../plugins/index.md). |
 
 ## 3. The views
@@ -119,31 +136,43 @@ Neuroglancer's own views, unchanged: cross-sections and the 3-D view, in
 whichever layout the scene uses. The position (in the scene's units) is at
 the top left; click it to type a position. Each panel has buttons to make
 it fill the view or to open it in a new window, and the 3-D panel has
-switches along its bottom: **Sections**, and **Volume** when the Volume
-rendering plugin is on.
+switches along its bottom: **Sections**, and those of tools that draw there.
 
 Neuroglancer's mouse controls apply: drag to pan, scroll to move through
 sections, ++ctrl++ + scroll to zoom, drag in 3-D to rotate, and
 ++shift++ + drag to rotate a cross-section to any angle.
 
-## 4. Right dock: Layer
+## 4. Right dock: Tools
 
-The selected dataset's controls, as Neuroglancer's own layer tabs at full
-height. A header names the dataset and, when it is shown through several
-layers, lets you pick which one. Picking another view there (the next channel, say)
-keeps the tab you are on.
+The panel of a tool that is on (a plugin): one at a time, chosen from the
+menu at the top of the dock, where they are listed by what they work on:
+*Image* (Filters, Anatomical rendering, Orientations), *Labels*
+(Annotations, Segmentation, Atlas), *Space* (Registration, a collection's
+panel) and *Vectors* (Track filtering, Luxar). Turning a tool on opens it
+here; with no tool on, the dock is not there. Long panels are in cards
+that fold away (Registration's Transform, Landmarks…; Settings' sign-ins),
+each kept open or closed as you left it.
+
+## Layer controls
+
+Below the list in the Layers panel, the selected dataset's controls, as
+Neuroglancer's own layer tabs. A header names the dataset and, when it is
+shown through several layers, lets you pick which one. Picking another view
+there (the next channel, say) keeps the tab you are on. A layer opens on
+**Display**. Its sign-in shows only when its data is not public (or did not
+load); otherwise it is in Settings › Sign-in.
 
 | Tab | What it holds |
 |---|---|
-| **Source** | Where the data comes from, its parts (subsources), and its **transform**: the matrix that places it in the scene, editable. |
-| **Render** | How it is drawn: resolution, opacity, blending; for images the **Colour map**, then the shader's controls (contrast, with a histogram and Min-Max, 1-99% and 5-95% buttons) above its code; for segmentations the **Lookup table**; for surfaces the **Surface** controls. |
+| **Display** | How it is drawn: resolution, opacity, blending; for images the **Colour map**, then the shader's controls (contrast, with a histogram and Min-Max, 1-99% and 5-95% buttons) above its code; for segmentations the **Lookup table**; for surfaces the **Surface** controls. |
+| **Source** | Where the data comes from; under **Details**, its parts (subsources), its **transform** (the matrix that places it in the scene, editable), and an OME-Zarr image's coordinate systems and levels. |
 | **Segments** | For segmentations: search segments by id, label or property, show and hide them, colours. |
-| **Annotations** | For annotation layers: the tools that draw points, lines, boxes, ellipsoids and polylines, and the list of annotations. |
+| **Annotations** | The tools that draw points, lines, boxes, ellipsoids and polylines (the one place to draw: the Annotations plugin's **Draw…** opens it), and the list of annotations. |
 | **Schema** | For annotation layers: the properties each annotation carries. |
 
 ### Colour maps
 
-An image layer's **Render → Shader → Colour map** writes the shader for a
+An image layer's **Display → Shader → Colour map** writes the shader for a
 colour map, keeping the contrast (the `normalized` range and its histogram):
 grayscale, heat, jet, GE colour, NIH, PET, binary colour, hot, cool, viridis,
 magma, inferno, plasma, cividis, turbo, cubehelix and a diverging red-blue.
@@ -162,7 +191,7 @@ magma, inferno, plasma, cividis, turbo, cubehelix and a diverging red-blue.
 
 ### Lookup tables
 
-A segmentation layer's **Render → Colour → Lookup table** names and colours
+A segmentation layer's **Display → Colour → Lookup table** names and colours
 its labels from an atlas's table: FreeSurfer (all labels, Desikan-Killiany,
 Destrieux, Yeo networks), Harvard-Oxford, Schaefer 2018 (100 to 1000
 parcels, 7 or 17 networks), and the Allen Mouse CCFv3 (2017) structures,
@@ -178,14 +207,14 @@ Where each table comes from, and its licence:
 
 ### Outlines
 
-A segmentation layer's **Render → 2-D views → Draw** shows its segments
+A segmentation layer's **Display → 2-D views → Draw** shows its segments
 **Filled** or as **Outlines** in the 2-D views, each in its own colour
 (its lookup table's, or the colour from its id), at any angle and zoom.
 Outlines are drawn by an image layer added just above the segmentation,
 "*name* outlines", which reads the same labels; the segmentation's own 2-D
 opacity is set to 0 meanwhile (its meshes are untouched), and **Filled**
 removes the outline layer and gives the opacity back. The outline layer's
-**Render** tab sets the line width in screen pixels (`outline_width`), the
+**Display** tab sets the line width in screen pixels (`outline_width`), the
 lines' opacity, and an optional faint fill (`fill_opacity`). It follows the
 segmentation's colours and its shown segments by itself.
 
@@ -214,7 +243,7 @@ subject or GIFTI files) works the same, its parcellations' names and colours
 coming from the store.
 
 A surface with curvature opens showing it in two greys, Freeview's binary
-curvature (sulci dark, gyri light). Its layer's **Render → Surface** section
+curvature (sulci dark, gyri light). Its layer's **Display → Surface** section
 holds Freeview's surface controls:
 
 | Control | What it does |
@@ -238,11 +267,15 @@ Limits: Freeview's overlay settings beyond threshold and top (mid point,
 truncate, inverse, custom colour scales), label outlines, and several
 overlays at once are not there.
 
-## 5. Bottom dock
+## 5. Activity dock
 
-| Tab | What it holds |
+Collapsed to one line at first: the running job and its progress, else the
+last message. Click the line (or the icon at its end) to open the dock.
+
+| Panel | What it holds |
 |---|---|
-| **Activity** | A log of what the workspace did, newest first: datasets added, plugins started, errors. |
-| **Jobs** | Long tasks from plugins (filters, statistics, saving), with progress and a cancel button. Under **This computer**: jobs run as Python processes on your own computer through the runner, with their process id, progress, log, Cancel and Open (see [Jobs on this computer](local-jobs.md)). |
-| **Chunk statistics** | Neuroglancer's chunk statistics: what is being downloaded, from where, and how fast. |
+| **Activity** | Jobs, while there are any: long tasks from plugins (filters, statistics, saving), with progress and a cancel button, and, for a paired computer, the jobs run as Python processes on it through the runner, with their process id, progress, log, Cancel and Open (see [Jobs on this computer](local-jobs.md)). Below them, a log of what the workspace did, newest first: datasets added, errors. |
 | **Python** | A Python console running in the page (Pyodide). `ngp` drives the workspace; `await ngp.show(array, voxel_size=…)` shows a numpy array as a layer; `ngp.show_points(xyz, values=…)`, `ngp.show_lines(lines)` and `ngp.show_mesh(vertices, faces)` show points, streamlines and meshes made in Python (as Zarr Vectors, so Track filtering works on them), and `ngp.annotate(points=…, lines=…, boxes=…, ellipsoids=…)` adds an annotation layer. |
+
+Tools put what they make here too when it is used: the Annotations plugin's
+table, the Time series plot.

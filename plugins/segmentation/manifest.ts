@@ -1,7 +1,7 @@
 /**
  * The Segmentation plugin's manifest: label volumes drawn by hand, as
- * WebKnossos's volume annotation, in a tab of their own with a tool bar
- * over the views.  It was the last section of the Annotations tab.
+ * WebKnossos's volume annotation, in a panel of their own with a tool bar
+ * over the views.
  */
 import type { Manifest } from "@ngplatform/sdk";
 
@@ -27,7 +27,7 @@ export const SEGMENTATION_MANIFEST: Manifest = {
   kind: "tool",
   enabledByDefault: false,
   description: "Label volumes drawn by hand, as in WebKnossos: a new segmentation layer on an image's grid or a copy of a segmentation, a tool bar over the views (brush, erase, lasso, fill, pick, quick select by threshold or by a Segment Anything model), a segment list, undo, saving as NIfTI or OME-Zarr.",
-  guide: `Label volumes drawn by hand, in the **Segmentation** tab, shown as a segmentation layer that updates as you draw.
+  guide: `Label volumes drawn by hand, in the **Segmentation** panel (Tools dock), shown as a segmentation layer that updates as you draw.
 
 ## A new segmentation layer
 - **On the grid of** an image, at one of its levels (the same voxels and placement), empty; 8, 16 or 32 bits.
@@ -36,7 +36,7 @@ export const SEGMENTATION_MANIFEST: Manifest = {
 
 ## The tool bar
 While a label volume is edited, a tool bar shows at the top of the views:
-- **Move** (\`M\`): the views as usual. **Brush** (\`B\`) and **Erase** (\`E\`): the left button paints the active segment, or 0; a ring shows the brush; **Alt+wheel** or \`[\` \`]\` change its size. **Lasso** (\`L\`): draw a closed outline in a 2-D view; inside it is painted (or erased) in that section. **Fill** (\`F\`): the region clicked, in its section (2-D) or in a box round it (3-D, \`Shift+F\`). **Pick segment** (\`I\`). **Quick select** (\`Q\`): drag a box round a structure, or click it; its mask shows first, \`Enter\` paints it and \`Escape\` drops it (or paint at once, in the tab). Its method is **Threshold** or **AI (MobileSAM)**, a Segment Anything model run in the page (44.7 MB, Apache-2.0, downloaded on first use and kept in the browser): click what you want, \`Shift+click\` or \`Alt+click\` what you do not, each click refining the mask; **Spread** proposes it in the next sections too, painted as one stroke.
+- **Move** (\`M\`): the views as usual. **Brush** (\`B\`) and **Erase** (\`E\`): the left button paints the active segment, or 0; a ring shows the brush; **Alt+wheel** or \`[\` \`]\` change its size. **Lasso** (\`L\`): draw a closed outline in a 2-D view; inside it is painted (or erased) in that section. **Fill** (\`F\`): the region clicked, in its section (2-D) or in a box round it (3-D, \`Shift+F\`). **Pick segment** (\`I\`). **Quick select** (\`Q\`): drag a box round a structure, or click it; its mask shows first, \`Enter\` paints it and \`Escape\` drops it (or paint at once, in the panel). Its method is **Threshold** or **AI (MobileSAM)**, a Segment Anything model run in the page (44.7 MB, Apache-2.0, downloaded on first use and kept in the browser): click what you want, \`Shift+click\` or \`Alt+click\` what you do not, each click refining the mask; **Spread** proposes it in the next sections too, painted as one stroke.
 - \`W\` and \`Shift+W\` step through the tools; hold **Space** to move the view with the left button while a drawing tool is on; \`Escape\` goes back to Move.
 - **New segment** (\`C\`), the active segment's colour and name; **Undo** and **Redo** (\`Ctrl+Z\`, \`Ctrl+Y\`: strokes and workspace changes as one history); **Interpolate** (\`V\`) fills the sections between two where the segment is drawn; **Save**.
 
@@ -44,13 +44,16 @@ While a label volume is edited, a tool bar shows at the top of the views:
 Each segment's colour, name, voxels and volume; the active one is marked. **+ New group** makes a named group: drag segments onto it (or choose the active segment's **Group**); a group's eye shows or hides all its segments, its colour square colours them all, and its name can be typed. Click one to paint with it; the eye shows or hides it; **Go to** moves the views to it; **Merge** gives its voxels to the active segment; **Delete** erases it. All undoable.
 
 ## Saving
-NIfTI (.nii.gz) or an OME-Zarr folder (only painted chunks written), the whole grid or only the painted box. A label volume lives in this page until saved; it is also kept in this browser while you draw, so a reload brings it back.`,
+The panel's **Save** card, or the tool bar's save button: NIfTI (.nii.gz) or an OME-Zarr folder (only painted chunks written), the whole grid or only the painted box. Progress and failures show in the panel's status line; a save done or failed is also a message and a line in Activity.
+
+## Kept in this browser
+A label volume lives in this page until saved; it is also kept in this browser while you draw (and at once when the page is hidden), so a reload brings it back. Copies not open are listed with their size and age: **Open** or **Remove…**. The browser may clear them when short of space (you are told if it will not promise to keep them): save to keep them.`,
   links: [{ title: "WebKnossos volume annotation (what this follows)", url: "https://docs.webknossos.org/webknossos/volume_annotation/index.html" }],
   license: "Apache-2.0",
   activation: ["onStartup"],
   provides: { services: ["segmentation.quickSelect", "segmentation.labelVolumes"] },
   contributes: {
-    panels: [{ id: SEGMENTATION_PANEL, title: "Segmentation", slot: "left", order: 61 }],
+    panels: [{ id: SEGMENTATION_PANEL, title: "Segmentation", slot: "left", group: "Labels", order: 61 }],
     contextKeys: [EDITING, DRAWING, BRUSHING, PREVIEWING, SELECTING],
     // Segment groups, by label volume (./segment_groups.ts).
     appState: { key: "segmentation", version: 1 },

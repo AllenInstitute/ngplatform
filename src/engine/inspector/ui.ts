@@ -1,6 +1,7 @@
 /**
- * The inspector's own controls: platform-styled rows, sliders, checkboxes,
- * selects and colour inputs, each bound two ways to one of Neuroglancer's
+ * The inspector's own controls: rows, sliders, checkboxes, selects and
+ * colour inputs in the app's shared classes (.btn, .text-input), each
+ * bound two ways to one of Neuroglancer's
  * watchable values (so a change made anywhere, in the views, by undo or
  * by a link, shows here at once, and a change here applies at once).
  */
@@ -101,8 +102,9 @@ export function note(text: string, className = ""): HTMLElement {
   return el("p", { class: `ins-note ${className}`.trim() }, text);
 }
 
-export function button(label: string, onclick: (e: MouseEvent) => void, title?: string, className = ""): HTMLButtonElement {
-  return el("button", { type: "button", class: `ins-btn ${className}`.trim(), title, onclick }, label);
+/** An outline button; with `className` "icon ins-remove", the small × that removes something. */
+export function button(label: string, onclick: (e: MouseEvent) => void, title?: string, className = "outline"): HTMLButtonElement {
+  return el("button", { type: "button", class: `btn ${className}`.trim(), title, onclick }, label);
 }
 
 // --------------------------------------------------------------- controls
@@ -115,7 +117,7 @@ function decimals(step: number): number {
 /** A slider with a number box, bound to `w`. */
 export function slider(scope: Scope, w: Watch<number>, { min = 0, max = 1, step = 0.01 } = {}): HTMLElement {
   const range = el("input", { type: "range", min, max, step, class: "ins-range" }) as HTMLInputElement;
-  const box = el("input", { type: "number", min, max, step, class: "ins-number" }) as HTMLInputElement;
+  const box = el("input", { type: "number", min, max, step, class: "text-input num-input" }) as HTMLInputElement;
   const set = (v: number) => {
     if (Number.isFinite(v) && v !== w.value) w.value = v;
   };
@@ -146,7 +148,7 @@ export interface Option<T> {
 }
 
 export function select<T>(scope: Scope, options: Option<T>[] | (() => Option<T>[]), get: () => T, set: (v: T) => void, changed: Watch<unknown>[]): HTMLSelectElement {
-  const sel = el("select", { class: "ins-select" }) as HTMLSelectElement;
+  const sel = el("select", { class: "text-input" }) as HTMLSelectElement;
   let current: Option<T>[] = [];
   const render = () => {
     const list = typeof options === "function" ? options() : options;
@@ -190,7 +192,7 @@ export function fromHex(hex: string): Float32Array {
 
 /** A colour input bound to an RGB value (0..1); `undefined` shows as white. */
 export function colour(scope: Scope, w: Watch<ArrayLike<number> | undefined>): HTMLInputElement {
-  const input = el("input", { type: "color", class: "ins-colour" }) as HTMLInputElement;
+  const input = el("input", { type: "color", class: "colour-input" }) as HTMLInputElement;
   const set = () => (w.value = fromHex(input.value));
   input.addEventListener("input", set);
   input.addEventListener("change", set);
@@ -200,7 +202,7 @@ export function colour(scope: Scope, w: Watch<ArrayLike<number> | undefined>): H
 
 /** A text box that commits on Enter or when it loses focus. */
 export function textInput(value: string, commit: (v: string) => void, attrs: Attrs = {}): HTMLInputElement {
-  const input = el("input", { type: "text", class: "ins-text", spellcheck: "false", ...attrs }) as HTMLInputElement;
+  const input = el("input", { type: "text", class: "text-input", spellcheck: "false", ...attrs }) as HTMLInputElement;
   input.value = value;
   let committed = value;
   const done = () => {
@@ -227,7 +229,7 @@ export function textInput(value: string, commit: (v: string) => void, attrs: Att
  * scrolling within itself.  Enter commits; Escape reverts.
  */
 export function growingInput(value: string, commit: (v: string) => void, attrs: Attrs = {}): HTMLTextAreaElement {
-  const input = el("textarea", { class: "ins-text ins-grow", rows: 1, spellcheck: "false", wrap: "soft", ...attrs }) as HTMLTextAreaElement;
+  const input = el("textarea", { class: "text-input ins-grow", rows: 1, spellcheck: "false", wrap: "soft", ...attrs }) as HTMLTextAreaElement;
   let committed = value;
   const fit = () => {
     input.style.height = "auto";

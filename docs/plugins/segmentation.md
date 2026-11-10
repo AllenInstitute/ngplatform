@@ -2,20 +2,20 @@
 
 ![Three segments drawn on SRB 2026a, the tool bar over the views and the segment list](../images/plugins/segmentation.png)
 
-**Kind:** tool · **Off by default** (offered when you open a segmentation, and listed under *Tools for this data* for an image; or turn it on in the Plugins tab) · the **Segmentation** tab and a tool
-bar over the views ·
+**Kind:** tool · **Off by default** (offered when you open a segmentation, and listed under *Tools for this data* for an image; or turn it on in the Plugins panel) · the **Segmentation** panel in the
+Tools dock and a tool bar over the views ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/segmentation)
 
 Label volumes drawn by hand, as in WebKnossos's volume annotation: a new
 segmentation layer on an image's grid (or a copy of a segmentation to
 edit, or a segmentation of any size edited in place), painted with a brush, fills and quick select, its segments named,
-coloured, hidden, merged and deleted, and saved as NIfTI or OME-Zarr. (It
-was the last section of the Annotations tab.) See
+coloured, hidden, merged and deleted, and saved as NIfTI or OME-Zarr. See
 [the survey](segmentation-survey.md) for how it compares with WebKnossos.
 
 ## A new segmentation layer
 
-In the Segmentation tab, under **New segmentation layer**:
+In the Segmentation panel, under **New segmentation layer** (shown when no
+layer is being edited, or after **New…**):
 
 - **On the grid of**: an image or a segmentation in the scene, and a
   **Level** of it. The new layer has the same voxels and placement.
@@ -37,7 +37,10 @@ In the Segmentation tab, under **New segmentation layer**:
   Edits only**) over the segmentation they were made on.
 
 The new layer opens with the tool bar shown and the brush chosen. Each
-scene has its own segmentation layers; the tab shows the scene you are in.
+scene has its own segmentation layers; the panel shows the scene you are in.
+
+With no image or segmentation in the scene, the card says so, with
+**Open data…** beside it.
 
 ## The tool bar
 
@@ -57,15 +60,17 @@ While a segmentation layer is edited, a tool bar shows at the top of the
 
 - **Brush size**: ++alt++ + wheel over a 2-D view, ++bracket-left++ and
   ++bracket-right++, or **−** and **+** on the tool bar. The size is in
-  voxels by default (in mm or µm in the tab).
+  voxels by default (in mm or µm in the panel).
 - ++w++ and ++shift+w++ step through the tools.
 - Hold ++space++ to move the view with the left button while a drawing
   tool is on.
 - The tools draw in the 2-D views only; the 3-D view rotates as usual.
-- On the right of the bar: the **active segment** (its colour, a list of
-  the others) and **New segment** (++c++); **Undo** (++ctrl+z++) and
+- On the right of the bar: the **active segment** (its colour, and a
+  search box: type an id or part of a name to list the segments found,
+  at most 50 at a time; ++enter++ takes the first, or the id typed) and
+  **New segment** (++c++); **Undo** (++ctrl+z++) and
   **Redo** (++ctrl+y++); **Interpolate** (++v++); **Save**; and **×**,
-  which hides the bar. **Edit** in the tab shows it again.
+  which hides the bar. **Edit** in the panel shows it again.
 
 **Undo and redo** while the tool bar shows: ++ctrl+z++ undoes whichever
 came last, the last stroke or the last change to the workspace (a layer
@@ -81,19 +86,19 @@ the workspace's state and leaves the painted voxels as they are.
 check it, then ++enter++ paints it and ++escape++ drops it; a new box or
 click replaces it, and the active segment can be changed (++c++, or the
 list) before ++enter++. **Preview** / **At once** on the bar (or
-**Result** in the tab) switches to painting at once, as before; undo
+**Result** in the panel) switches to painting at once, as before; undo
 takes a mask painted at once back.
 
 ### AI quick select
 
-**AI (MobileSAM)**, chosen on the bar or under **Method** in the tab,
+**AI (MobileSAM)**, chosen on the bar or under **Method** in the panel,
 segments with [MobileSAM](https://github.com/ChaoningZhang/MobileSAM), a
 small Segment Anything model (Apache-2.0), run in this page with ONNX
 Runtime Web.
 
 - **First use**: the model (44.7 MB: an image encoder and a prompt
   decoder, from [Hugging Face](https://huggingface.co/Acly/MobileSAM)) is
-  downloaded with a progress bar and kept in this browser; the tab shows
+  downloaded with a progress bar and kept in this browser; the panel shows
   the size kept and **Forget**, or **Download now** before the first
   prompt. The runtime (ONNX Runtime Web 1.30.0, MIT, 14 MB, or 27 MB with
   WebGPU) comes from jsDelivr.
@@ -103,15 +108,18 @@ Runtime Web.
 - The first prompt in a region computes the image's embedding ("Computing
   the image's embedding…" on the bar): a few seconds on the CPU, much less
   on a GPU. Further clicks near it take a fraction of a second.
+- Half a minute after you leave Quick select (another tool, or editing
+  stopped), the model is let go from memory with its embeddings; the next
+  prompt loads it again from this browser.
 - The model sees the section round the prompt, at least **Context**
-  voxels across (256; in the tab), with the image's values as its layer
+  voxels across (256; in the panel), with the image's values as its layer
   shows them (the layer's window).
-- **Run on** (in the tab): WebGPU when there is a GPU, else WASM (the
-  CPU); the tab shows which, and the last timings.
+- **Run on** (in the panel): WebGPU when there is a GPU, else WASM (the
+  CPU); the panel shows which, and the last timings.
 - ++escape++ drops the clicks and the mask; ++enter++ paints it.
 
 **Spread** (on the bar while a mask shows, or **Spread to sections** in
-the tab): the mask is proposed in the next sections each way too, each
+the panel): the mask is proposed in the next sections each way too, each
 section prompted with the box round the mask in the one before; it stops
 where nothing is found or the size jumps. ++enter++ paints all the
 sections as one stroke, which one undo takes back. It works with
@@ -141,7 +149,7 @@ first:
   it) and the copy is changed. Only changed chunks are kept: in the page
   (up to 512 MB), and in this browser's storage a moment after each stroke;
   past 512 MB the oldest are read back from the browser's storage when
-  needed. The tab says how many chunks are changed and where they are.
+  needed. The **Save** card says how many chunks are changed and where they are.
 - The original layer is hidden and never written.
 - Every tool works. Before a tool paints, it reads the chunks it can reach,
   which can take a moment on a slow connection. A tool reads at most
@@ -171,6 +179,14 @@ in its row.
 - **Go to** moves the views to the segment (its voxel nearest its centre).
 - **Merge** gives a segment's voxels to the active segment; **Delete**
   erases them. Both can be undone.
+- A long list (a copied segmentation can have 100,000 segments) draws only
+  the rows in view as it scrolls. A layer opened with more than 1,000
+  segments keeps Neuroglancer's own colours for them, not one each in the
+  link; past 1,000 segments, those hidden are kept by the plugin (in the
+  link, as a short list) rather than the layer listing every other one.
+  Neuroglancer's own Segments tab then does not show which are hidden.
+  Hiding or recolouring a row leaves the list where it is scrolled; it
+  moves to the active segment only when another one is made active.
 
 **Groups**, as in WebKnossos's segment list:
 
@@ -201,12 +217,29 @@ lasso keep to it. **Range from the cursor** sets it round the value under the po
 
 ## Saving
 
-**Save** is at the top of the tab (and on the tool bar): NIfTI (.nii.gz,
-marked as labels) or an OME-Zarr folder (in a zip where the browser cannot
-write folders). **Only the painted box** saves the box round what is
-painted, placed where it was. OME-Zarr writes only the painted chunks, so
-it suits large grids, and carries the segments' names and colours; NIfTI
-holds every voxel.
+The **Save** card, near the end of the panel, saves to your computer; so do
+the tool bar's save button and the command *Save the label volume*. Its title shows how many
+changes are not saved yet. Choose the **Format**: NIfTI (.nii.gz, marked
+as labels) or an OME-Zarr folder (in a zip where the browser cannot write
+folders). **Only the painted box** saves the box round what is painted,
+placed where it was. OME-Zarr writes only the painted chunks, so it suits
+large grids, and carries the segments' names and colours (past 1,000
+segments, or edited in place, only the colours given by hand: Neuroglancer
+gives the rest again, and 100,000 of them would make its metadata
+megabytes); NIfTI holds every voxel.
+
+Saves are compressed off the page's main thread and written as they are
+made: a NIfTI a few sections at a time straight into its file, an
+OME-Zarr folder a chunk at a time, so a large volume is never held whole
+twice and the page stays responsive. (A zip, where the browser cannot
+write folders, and a NIfTI downloaded rather than written into a file
+chosen, are built in memory, compressed.)
+
+While it saves, the panel's status line shows how far it has got. A save
+done is said in a message and in Activity. A save that fails says why in
+the status line, with **Save again**, opens the Save card, and is also
+said in a message and in Activity (so a save from the tool bar with
+the panel hidden is not missed).
 
 A segmentation edited in place saves as OME-Zarr in one of two ways:
 
@@ -218,18 +251,38 @@ A segmentation edited in place saves as OME-Zarr in one of two ways:
   else.
 - **The whole volume**: every chunk, the segmentation's copied a block at
   a time and the changed ones as changed, written into a folder you
-  choose, as a job (see **Jobs**; it can be cancelled). It can take long
+  choose, as a job (in Activity, where it can be cancelled). Edits made
+while it runs may or may not be in it. It can take long
   for a large segmentation, and needs a browser that can write folders
   (Chrome, Edge).
 
+## Kept in this browser
+
+While you draw, a segmentation layer is also kept in this browser, a
+moment after each stroke and at once when the page is hidden or closed
+(another tab, the window minimised), so a reload brings it back into its
+layer. The first time something is kept, the app asks the browser to keep
+it for good rather than clear it when short of space; if the browser
+refuses, a message says so.
+
+Removing a segmentation layer in Neuroglancer's layer list closes its
+volume once it is kept, to free the memory it held (a large volume and its
+undo history can take a gigabyte); Activity says so. Undo brings the layer
+back from the copy kept here. If the browser could not keep it (its
+storage full), the volume stays open and Activity says that instead.
+
+One whose page was closed, or whose layer was removed, is listed in the
+**Kept in this browser** card,
+with its size and how long ago it was kept; its title shows the total.
+**Open** opens it again as a new layer; **Remove…** (or **Remove all…**)
+deletes it from the browser, after asking. Under the list: how much this
+site holds in the browser's storage and how much it may.
+
 !!! warning "Save before you leave"
-    A segmentation layer drawn here lives in the page until saved. While you
-    draw it is also kept in this browser, so a reload brings it back into
-    its layer, and one whose page was closed is offered again under **New…**
-    (*Kept in this browser*: Open or Discard). That copy is not a save: the
-    browser may clear it, and the link does not carry it to another
-    computer. **Close** forgets it. A segmentation edited in place is kept
-    the same way (its changed chunks, and where the segmentation is).
+    A copy kept in this browser is not a save: the browser may clear it,
+    and the link does not carry it to another computer. **Close** forgets
+    it. A segmentation edited in place is kept the same way (its changed
+    chunks, and where the segmentation is).
 
 ## Notes from users
 

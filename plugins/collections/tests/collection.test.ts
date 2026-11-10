@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { chainInto, displayRangeOf, fieldWarp, firstLevel, graph, invert, isCollection, members, parentGroups, placeInto, readCollection, resolvePath, sceneSystems, transformMatrix, transformSteps } from "../collection.js";
+import { chainInto, collectionFromScene, isLabelImage, stepsMatrix, unappliedKinds, unitOf, displayRangeOf, editCollection, fieldWarp, firstLevel, freshId, graph, invert, isCollection, members, parentGroups, placeInto, placementOf, readCollection, resolvePath, sceneSystems, transformJson, transformMatrix, transformSteps, zarrGroupUrl } from "../collection.js";
 
 const example = JSON.parse(readFileSync(new URL("../examples/srb_gallery.json", import.meta.url), "utf8"));
 
@@ -202,5 +202,205 @@ describe("transforms walked backwards", () => {
     const plain = transformSteps(inverseOf(field("only.zarr")), ["z", "y", "x"], doc)!;
     expect(plain[0].kind === "field" && plain[0].inverse).toBe(true);
     expect(inverseOf(inverseOf(seq))).toEqual(seq);
+  });
+});
+
+describe("building a collection", () => {
+  it("reads the Zarr group a layer's source is", () => {
+    expect(zarrGroupUrl("zarr://gs://bucket/a/b.ome.zarr/|zarr3:")).toBe("https://storage.googleapis.com/bucket/a/b.ome.zarr");
+    expect(zarrGroupUrl({ url: "zarr://https://host/x.zarr/" })).toBe("https://host/x.zarr");
+    expect(zarrGroupUrl("https://host/y.ome.zarr")).toBe("https://host/y.ome.zarr");
+    expect(zarrGroupUrl("precomputed://gs://bucket/seg")).toBeUndefined();
+    expect(zarrGroupUrl("local://annotations")).toBeUndefined();
+    const taken = new Set<string>();
+    expect([freshId("SRB 2026a", taken), freshId("SRB 2026a", taken), freshId("!!", taken)]).toEqual(["srb-2026a", "srb-2026a-2", "item"]);
+  });
+
+  it("writes a 4 × 4 as the simplest transform, in the system's axis order, and reads it back", () => {
+    const I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    expect(transformJson(I)).toEqual({ type: "identity" });
+    expect(transformJson([1, 0, 0, 5, 0, 1, 0, 0, 0, 0, 1, -2, 0, 0, 0, 1])).toEqual({ type: "translation", translation: [-2, 0, 5] });
+    expect(transformJson([2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 4, 0, 0, 0, 0, 1])).toEqual({ type: "scale", scale: [4, 3, 2] });
+    const rotated = [0, -1, 0, 1, 1, 0, 0, 2, 0, 0, 1, 3, 0, 0, 0, 1];
+    const t = transformJson(rotated);
+    expect(t.type).toBe("affine");
+    expect(transformMatrix(t, ["z", "y", "x"])).toEqual(rotated);
+    const s = transformJson([-1, 0, 0, 7, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    expect(transformMatrix(s, ["z", "y", "x"])).toEqual([-1, 0, 0, 7, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  });
+
+  it("finds where a layer is placed relative to its own placement", () => {
+    // Output order z, y, x; the image's own: 0.1 mm voxels; shown moved 5 mm along x.
+    const own = [0.1, 0, 0, 0, 0, 0.1, 0, 0, 0, 0, 0.1, 0, 0, 0, 0, 1];
+    const now = [0.1, 0, 0, 0, 0, 0.1, 0, 0, 0, 0, 0.1, 5, 0, 0, 0, 1];
+    expect(placementOf(now, own, ["z", "y", "x"])).toEqual([1, 0, 0, 5, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    expect(placementOf(now, own, ["c", "y", "x"])).toBeUndefined();
+  });
+
+  it("makes a collection of a scene's images, placed as the scene shows them", () => {
+    const doc = collectionFromScene("My scene", { name: "Scene", unit: "micrometer" }, [
+      { name: "A", url: "https://host/a.zarr" },
+      { name: "B", url: "https://host/b.zarr", placement: [1, 0, 0, 5, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] },
+    ]);
+    const root = readCollection(doc, "https://example.org/");
+    expect(root.name).toBe("My scene");
+    expect(sceneSystems(root).map((s) => s.id)).toEqual(["scene"]);
+    const m = members(root);
+    expect(m.map((x) => x.node.location?.url)).toEqual(["https://host/a.zarr", "https://host/b.zarr"]);
+    // 5 mm along x is 5000 µm.
+    expect(placeInto(root, m[1].node, "scene")).toEqual([1, 0, 0, 5000, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    expect(placeInto(root, m[0].node, "scene")).toEqual([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  });
+
+  it("edits members, systems and transforms, leaving the document given as it was", () => {
+    const doc = collectionFromScene("c", { name: "Scene", unit: "micrometer" }, [{ name: "A", url: "https://host/a.zarr" }]);
+    let next = editCollection(doc, { op: "addSystem", name: "Atlas", unit: "millimeter" });
+    next = editCollection(next, { op: "addMember", name: "A", url: "https://host/a2.zarr" });
+    next = editCollection(next, { op: "addTransform", transform: { type: "scale", scale: [1000, 1000, 1000], input: { id: "atlas" }, output: { id: "scene" } } });
+    next = editCollection(next, { op: "rename", name: "renamed" });
+    let root = readCollection(next, "https://example.org/");
+    expect(root.name).toBe("renamed");
+    expect(root.nodes.map((n) => n.id)).toEqual(["a", "a-2"]);
+    expect(sceneSystems(root).map((s) => `${s.id} ${s.units[0]}`)).toEqual(["scene micrometer", "atlas millimeter"]);
+    // A placed in the atlas through the scene: × 1/1000.
+    expect(placeInto(root, root.nodes[0], "atlas")?.[0]).toBeCloseTo(0.001);
+    expect(readCollection(doc, "https://example.org/").nodes).toHaveLength(1);
+    next = editCollection(next, { op: "removeMember", id: "a" });
+    root = readCollection(next, "https://example.org/");
+    expect(root.nodes.map((n) => n.id)).toEqual(["a-2"]);
+    expect(root.transforms.map((t) => `${t.input}→${t.output}`)).toEqual(["atlas→scene"]);
+    next = editCollection(next, { op: "removeSystem", id: "atlas" });
+    expect(readCollection(next, "https://example.org/").transforms).toEqual([]);
+    next = editCollection(next, { op: "addTransform", transform: { type: "identity", input: { id: "a-2" }, output: { id: "scene" } } });
+    next = editCollection(next, { op: "setTransform", index: 0, transform: { type: "translation", translation: [0, 0, 1], input: { id: "a-2" }, output: { id: "scene" } } });
+    expect(readCollection(next, "https://example.org/").transforms[0].type).toBe("translation");
+    next = editCollection(next, { op: "removeTransform", index: 0 });
+    expect(readCollection(next, "https://example.org/").transforms).toEqual([]);
+  });
+
+  it("edits the example where it keeps its transforms", () => {
+    const next = editCollection(example, { op: "removeTransform", index: 1 });
+    expect(readCollection(next, "https://example.org/").transforms.map((t) => t.input)).toEqual(["srb-left", "srb-right"]);
+    expect(example.ome.attributes.scene.coordinateTransformations).toHaveLength(3);
+  });
+});
+
+describe("each kind of transform (OME-NGFF 0.6), on axes z, y, x", () => {
+  const zyx = ["z", "y", "x"];
+  const I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  it("identity, scale and translation", () => {
+    expect(transformMatrix({ type: "identity" }, zyx)).toEqual(I);
+    expect(transformMatrix({ type: "scale", scale: [4, 3, 2] }, zyx)).toEqual([2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 4, 0, 0, 0, 0, 1]);
+    expect(transformMatrix({ type: "translation", translation: [7, 8, 9] }, zyx)).toEqual([1, 0, 0, 9, 0, 1, 0, 8, 0, 0, 1, 7, 0, 0, 0, 1]);
+  });
+
+  it("rotation, nested or flat, rows and columns in the system's order", () => {
+    // A quarter turn in the x–y plane, written on z, y, x: y' = x, x' = −y.
+    const nested = transformMatrix({ type: "rotation", rotation: [[1, 0, 0], [0, 0, 1], [0, -1, 0]] }, zyx);
+    expect(nested).toEqual([0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    expect(transformMatrix({ type: "rotation", rotation: [1, 0, 0, 0, 0, 1, 0, -1, 0] }, zyx)).toEqual(nested);
+    expect(transformMatrix({ type: "rotation", rotation: [1, 0] }, zyx)).toBeUndefined();
+  });
+
+  it("mapAxis, as 0.6's indices and as the draft's names", () => {
+    // Output z, y, x take input x, y, z: z and x swapped.
+    const swap = [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1];
+    expect(transformMatrix({ type: "mapAxis", mapAxis: [2, 1, 0] }, zyx)).toEqual(swap);
+    expect(transformMatrix({ type: "mapAxis", mapAxis: { z: "x", y: "y", x: "z" } }, zyx)).toEqual(swap);
+    // Not a permutation: x and y both take y (a projection, which still composes).
+    expect(transformMatrix({ type: "mapAxis", mapAxis: [0, 1, 1] }, zyx)).toEqual([0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    expect(transformMatrix({ type: "mapAxis", mapAxis: { z: "c", y: "y", x: "x" } }, zyx)).toBeUndefined();
+  });
+
+  it("affine, sequence and bijection (its forward side)", () => {
+    const affine = { type: "affine", affine: [[1, 0, 0, 1], [0, 1, 0, 2], [0, 0, 1, 3]] };
+    expect(transformMatrix(affine, zyx)).toEqual([1, 0, 0, 3, 0, 1, 0, 2, 0, 0, 1, 1, 0, 0, 0, 1]);
+    expect(transformMatrix({ type: "sequence", transformations: [{ type: "scale", scale: [1, 1, 2] }, { type: "translation", translation: [0, 0, 5] }] }, zyx)).toEqual([2, 0, 0, 5, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    expect(transformMatrix({ type: "bijection", forward: { type: "scale", scale: [2, 2, 2] }, inverse: { type: "scale", scale: [0.5, 0.5, 0.5] } }, zyx)).toEqual([2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1]);
+  });
+
+  it("places a member through a rotation and a mapAxis composed with the others", () => {
+    const doc = {
+      ome: {
+        type: "collection",
+        name: "turned",
+        attributes: {
+          scene: {
+            coordinateSystems: [{ id: "world", axes: ["z", "y", "x"].map((name) => ({ name, unit: "micrometer" })) }],
+            coordinateTransformations: [
+              {
+                type: "sequence",
+                input: { id: "a" },
+                output: { id: "world" },
+                transformations: [
+                  { type: "mapAxis", mapAxis: [2, 1, 0] },
+                  { type: "rotation", rotation: [[1, 0, 0], [0, 0, 1], [0, -1, 0]] },
+                  { type: "translation", translation: [0, 0, 10] },
+                ],
+              },
+            ],
+          },
+        },
+        nodes: [{ type: "multiscale", name: "A", id: "a", path: "a.zarr" }],
+      },
+    };
+    const root = readCollection(doc, "https://example.org/c.json");
+    // z and x swapped, then the quarter turn (x' = −y, y' = x), then 10 along x: x' = −y + 10, y' = z, z' = x.
+    expect(placeInto(root, root.nodes[0], "world")).toEqual([0, -1, 0, 10, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1]);
+    expect(unappliedKinds(root, root.nodes[0])).toEqual([]);
+  });
+
+  it("names the kinds it cannot apply on a member's way, and composes affine chains found through bijections", () => {
+    const doc = {
+      ome: {
+        type: "collection",
+        name: "mixed",
+        attributes: {
+          scene: {
+            coordinateSystems: [
+              { id: "world", axes: ["z", "y", "x"] },
+              { id: "other", axes: ["z", "y", "x"] },
+            ],
+            coordinateTransformations: [
+              { type: "byDimension", input: { id: "a" }, output: { id: "world" }, transformations: [] },
+              { type: "sequence", input: { id: "b" }, output: { id: "world" }, transformations: [{ type: "scale", scale: [1, 1, 1] }, { type: "byDimension" }] },
+              { type: "bijection", input: { id: "c" }, output: { id: "other" }, forward: { type: "scale", scale: [2, 2, 2] }, inverse: { type: "scale", scale: [0.5, 0.5, 0.5] } },
+            ],
+          },
+        },
+        nodes: ["a", "b", "c", "d"].map((id) => ({ type: "multiscale", name: id.toUpperCase(), id, path: `${id}.zarr` })),
+      },
+    };
+    const root = readCollection(doc, "https://example.org/c.json");
+    const [a, b, c, d] = root.nodes;
+    expect(placeInto(root, a, "world")).toBeUndefined();
+    expect(unappliedKinds(root, a)).toEqual(["byDimension"]);
+    expect(unappliedKinds(root, b)).toEqual(["byDimension"]);
+    expect(unappliedKinds(root, d)).toEqual([]);
+    // A chain of affines alone, as chainInto finds it, is one matrix.
+    const steps = chainInto(root, c, "other")!;
+    expect(stepsMatrix(steps)).toEqual([2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1]);
+    expect(stepsMatrix([{ kind: "field", url: "f", inverse: false }])).toBeUndefined();
+  });
+});
+
+describe("units and label images", () => {
+  it("reads every unit OME-NGFF names, and says which it does not know (read as mm)", () => {
+    expect(unitOf({ units: ["micrometer"] })).toEqual({ mm: 1e-3 });
+    expect(unitOf({ units: ["", "centimeter"] })).toEqual({ mm: 10 });
+    expect(unitOf({ units: ["parsec"] }).unknown).toBeUndefined();
+    expect(unitOf({ units: ["pixel"] })).toEqual({ mm: 1, unknown: "pixel" });
+    expect(unitOf({ units: [""] })).toEqual({ mm: 1 });
+    expect(unitOf(undefined)).toEqual({ mm: 1 });
+  });
+
+  it("knows a label image by its metadata (0.4 and 0.5+) or its labels group", () => {
+    expect(isLabelImage({ attributes: { ome: { "image-label": { version: "0.5" }, multiscales: [] } } })).toBe(true);
+    expect(isLabelImage({ "image-label": {}, multiscales: [] })).toBe(true);
+    expect(isLabelImage({ attributes: { ome: { multiscales: [] } } })).toBe(false);
+    expect(isLabelImage(undefined, "https://x/image.ome.zarr/labels/cells")).toBe(true);
+    expect(isLabelImage(undefined, "https://x/labels.ome.zarr")).toBe(false);
+    const root = readCollection({ ome: { type: "collection", nodes: [{ type: "multiscale", name: "L", attributes: { "image-label": {} }, path: "l.zarr" }] } }, "https://x/c.json");
+    expect(root.nodes[0].label).toBe(true);
   });
 });

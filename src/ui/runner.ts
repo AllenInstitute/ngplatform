@@ -1,16 +1,17 @@
 /**
  * The runner in the interface: a section for This computer and for each
- * other computer paired through an SSH tunnel, in the Remote tab (pairing,
- * status, served files, "Add a computer…") and in the Jobs tab (the jobs on
+ * other computer paired through an SSH tunnel, in Settings › Compute (pairing,
+ * status, served files, "Add a computer…") and in Activity (the jobs on
  * it with their PID, progress, log, Cancel and Open), the chooser for paths under the
  * runner's folders, opening a path as a layer (served by the runner), and,
  * for a tractogram past the browser's storage limit, the choice of a
  * sample in the browser or the runner's conversion.
  */
-import { type HostList, hostStatusLine, LOCAL_HOST } from "../platform/hosts.js";
-import { isActive, normaliseAddress, pairingFromHash, type RunnerEntry, RunnerError, type RunnerService } from "../platform/runner.js";
+import { hostStatusLine, LOCAL_HOST } from "../platform/hosts.js";
+import { isActive, normaliseAddress, pairingFromHash, type RunnerEntry, RunnerError, type RunnerService, runnerVersionWarning } from "../platform/runner.js";
 import { bytesText } from "../sdk/format.js";
 import type { RunnerApi, RunnerJob, RunnerOutput } from "../sdk/types.js";
+import { emptyState, field, info } from "../sdk/dom.js";
 import { clear, h, iconButton } from "./dom.js";
 import { diskBudget, type SpillPlan, spillPlan, storageEstimate } from "../virtual/vectors/spill.js";
 import { tractogramDiskGigabytes } from "../virtual/vectors/formats.js";
@@ -115,11 +116,12 @@ function pairForm(runner: RunnerService, note?: string, where = "this computer")
     message,
     h(
       "p",
-      { class: "note" },
-      "Runs long jobs (converting, filtering, density maps) as Python on this computer. Start it with ",
-      h("code", { title: "In the Python that has zarr-vectors-tools" }, START_COMMAND),
+      { class: "note runner-start" },
+      "Start it with ",
+      h("code", {}, START_COMMAND),
       ", then open the link it prints or enter its address and token. ",
       h("a", { href: LOCAL_JOBS_GUIDE, target: "_blank", rel: "noopener" }, "Guide ↗"),
+      info("The runner runs long jobs (converting, filtering, density maps) as Python on this computer: start it in the Python that has zarr-vectors-tools.", "About the runner"),
     ),
   );
 }
@@ -189,8 +191,8 @@ const runnerRefresh = new WeakMap<RunnerService, () => void>();
 
 /**
  * A computer's runner ("This computer", or another by its name, `host`):
- * in the Remote tab (`part` "host") its pairing, status and served files;
- * in the Jobs tab ("jobs") the jobs on it.
+ * in Settings › Compute (`part` "host") its pairing, status and served files;
+ * in Activity ("jobs") the jobs on it.
  */
 export function renderRunnerSection(wb: Workbench, runner: RunnerService, host = LOCAL_HOST, part: "host" | "jobs" = "host"): { element: HTMLElement; dispose: () => void } {
   const local = host === LOCAL_HOST;
@@ -233,7 +235,7 @@ export function renderRunnerSection(wb: Workbench, runner: RunnerService, host =
   const render = () => {
     const state = runner.connection();
     connection.textContent = state === "connected" ? "connected" : state === "unpaired" ? "not paired" : state;
-    connection.dataset.state = state;
+    connection.setAttribute("data-state", state);
     if ((state === "unpaired" || state === "refused") && part === "jobs") {
       form = undefined;
       formFor = "";
@@ -242,8 +244,8 @@ export function renderRunnerSection(wb: Workbench, runner: RunnerService, host =
         h(
           "p",
           { class: "note first runner-unpaired" },
-          state === "refused" ? `${host} refused this browser's pairing: pair it again in the ` : `To run jobs on ${where}, pair its runner in the `,
-          h("a", { href: "#", class: "runner-remote-link", onclick: (e: Event) => (e.preventDefault(), wb.docks.show("remote")) }, "Remote tab"),
+          state === "refused" ? `${host} refused this browser's pairing: ` : `${where[0].toUpperCase()}${where.slice(1)} is not paired: `,
+          h("a", { href: "#", class: "runner-remote-link", onclick: (e: Event) => (e.preventDefault(), wb.docks.show("remote")) }, "pair it"),
           ".",
         ),
       );
@@ -273,6 +275,7 @@ export function renderRunnerSection(wb: Workbench, runner: RunnerService, host =
             ...info.roots.flatMap((r, i) => [i > 0 ? ", " : "", h("code", {}, r)]),
             ". ",
             info.tools ? `zarr-vectors-tools ${info.tools}.` : h("strong", { class: "error" }, "zarr-vectors-tools is missing from the runner's Python: jobs will fail."),
+            runnerVersionWarning(info.version) === undefined ? null : h("strong", { class: "error runner-outdated" }, ` ${runnerVersionWarning(info.version)}`),
           )
         : h("p", { class: "note first error runner-error" }, state === "connecting" ? `Connecting to ${pairing.address}…` : (runner.error() ?? `The runner at ${pairing.address} does not answer.`)),
       part === "host"
@@ -280,7 +283,7 @@ export function renderRunnerSection(wb: Workbench, runner: RunnerService, host =
             "div",
             { class: "row-actions" },
             state !== "connected" ? h("button", { class: "btn small", type: "button", onclick: () => void runner.refresh() }, "Try again") : null,
-            state === "connected" ? h("button", { class: "btn small runner-served", type: "button", title: "Files and folders the runner serves to the viewer", onclick: () => void servedDialog(runner) }, "Served…") : null,
+            state === "connected" ? h("button", { class: "btn small runner-served", type: "button", title: "Files and folders the runner serves to the viewer", onclick: () => void servedDialog(wb, runner, where) }, "Served…") : null,
             h("button", { class: "btn small runner-unpair", type: "button", title: local ? "Forget this computer's runner in this browser" : `Forget ${host} in this browser`, onclick: () => runner.unpair() }, local ? "Unpair" : "Remove"),
           )
         : h(
@@ -297,11 +300,15 @@ export function renderRunnerSection(wb: Workbench, runner: RunnerService, host =
     }
     const jobs = runner.jobs().filter((j) => j.kind !== "serve" || isActive(j));
     for (const id of [...openLogs.keys()]) if (!jobs.some((j) => j.id === id)) openLogs.delete(id);
+    // With no jobs, the empty line's button starts one.
+    const none = jobs.length === 0 && state === "connected";
+    const convert = head.querySelector<HTMLElement>(".runner-convert");
+    if (convert !== null) convert.hidden = none;
     clear(
       body,
       head,
-      jobs.length === 0 && state === "connected"
-        ? h("p", { class: "empty runner-empty" }, `No jobs on ${where} yet.`)
+      none
+        ? emptyState(`No jobs on ${where}.`, { label: "Convert a tractogram…", run: () => void convertDialog(runner) })
         : h("div", { class: "jobs runner-jobs" }, ...jobs.map((job) => jobRow(wb, runner, job, openLogs))),
     );
     if (openLogs.size > 0) void fillLogs();
@@ -329,12 +336,14 @@ export function addHostDialog(wb: Workbench): void {
   const token = h("input", { class: "text-input mono host-token", type: "password", placeholder: "Token", "aria-label": "Token", autocomplete: "off", spellcheck: "false" }) as HTMLInputElement;
   const message = h("p", { class: "note error host-error", hidden: true });
   const pair = h("button", { class: "btn primary host-pair", type: "button" }, "Pair") as HTMLButtonElement;
+  // Its own close: after the wait, the top sheet may be another (or Settings, below it).
+  let close = () => {};
   const submit = async () => {
     message.hidden = true;
     pair.disabled = true;
     try {
       const info = await wb.hosts.add(name.value, address.value, token.value);
-      closeSheet();
+      close();
       toast(`Paired with ${name.value.trim()}, the runner at ${info.address}`);
     } catch (e) {
       message.textContent = (e as Error).message;
@@ -346,18 +355,14 @@ export function addHostDialog(wb: Workbench): void {
   token.addEventListener("keydown", (e) => {
     if (e.key === "Enter") void submit();
   });
-  showSheet(
+  close = showSheet(
     sheet(
       "Add a computer",
       [
-        h(
-          "p",
-          { class: "note first" },
-          "A runner on another computer (a workstation, a cluster node), reached through an SSH tunnel. On this computer run ",
-          h("code", {}, TUNNEL_COMMAND),
-          ": it opens the tunnel and prints a link that pairs this browser. Or enter what it prints here. ",
-          h("a", { href: `${LOCAL_JOBS_GUIDE}#a-gpu-on-another-computer`, target: "_blank", rel: "noopener" }, "Guide ↗"),
-        ),
+        field("On this computer, run", h("code", { class: "readout host-command" }, TUNNEL_COMMAND), {
+          info: "A runner on another computer (a workstation, a cluster node), reached through an SSH tunnel. The command opens the tunnel and prints a link that pairs this browser; or enter what it prints below.",
+        }),
+        h("a", { class: "guide-link", href: `${LOCAL_JOBS_GUIDE}#a-gpu-on-another-computer`, target: "_blank", rel: "noopener" }, "Guide ↗"),
         h("label", { class: "field" }, h("span", {}, "Name"), name),
         h("label", { class: "field" }, h("span", {}, "Address"), address),
         h("label", { class: "field" }, h("span", {}, "Token"), token),
@@ -377,7 +382,7 @@ export function addHostDialog(wb: Workbench): void {
  */
 export function choosePath(runner: RunnerService, options: Parameters<RunnerApi["choose"]>[0]): Promise<string | undefined> {
   const client = runner.client();
-  if (client === undefined || !runner.available()) return Promise.reject(new RunnerError("Pair with the runner first (Remote tab, This computer)", 0));
+  if (client === undefined || !runner.available()) return Promise.reject(new RunnerError("Pair with the runner first (Settings → Compute)", 0));
   return new Promise((resolve) => {
     let answered = false;
     let folder = "";
@@ -416,11 +421,11 @@ export function choosePath(runner: RunnerService, options: Parameters<RunnerApi[
         picked = undefined;
         crumbs.textContent = folder === "" ? "The runner's folders" : folder;
         const rows: HTMLElement[] = [];
-        if (folder !== "") rows.push(h("li", { class: "runner-up" }, h("button", { class: "linkish", type: "button", onclick: () => void go(listing.parent ?? "") }, "↑ Up")));
+        if (folder !== "") rows.push(h("li", { class: "runner-up" }, h("button", { class: "link", type: "button", onclick: () => void go(listing.parent ?? "") }, "↑ Up")));
         for (const entry of listing.entries) {
           const label = `${entry.name}${entry.type === "dir" ? "/" : ""}`;
           const row = h("li", { class: `runner-entry ${entry.type}`, "data-path": entry.path });
-          const button = h("button", { class: "linkish", type: "button" }, label);
+          const button = h("button", { class: "link mono", type: "button" }, label);
           button.addEventListener("click", () => (entry.type === "dir" ? void go(entry.path) : pick(entry, row)));
           if (entry.type === "store") button.addEventListener("dblclick", () => void go(entry.path));
           row.append(button, entry.size !== undefined ? h("span", { class: "type" }, bytesText(entry.size)) : entry.type === "store" ? h("span", { class: "type" }, "store") : "");
@@ -447,7 +452,7 @@ export function choosePath(runner: RunnerService, options: Parameters<RunnerApi[
           clear(
             found,
             h("p", { class: "note first" }, matches.length === 1 ? "Found:" : "Found these:"),
-            h("ul", { class: "runner-files" }, ...matches.map((m) => h("li", { class: "runner-match" }, h("button", { class: "linkish mono", type: "button", onclick: () => answer(m.path) }, m.path)))),
+            h("ul", { class: "runner-files" }, ...matches.map((m) => h("li", { class: "runner-match" }, h("button", { class: "link mono", type: "button", onclick: () => answer(m.path) }, m.path)))),
           );
         })
         .catch((e) => {
@@ -483,7 +488,7 @@ async function openDialog(wb: Workbench, runner: RunnerService, where = "this co
 }
 
 /** What the runner serves to the viewer, each with Stop (its address then answers nothing, now and after a restart). */
-async function servedDialog(runner: RunnerService): Promise<void> {
+async function servedDialog(wb: Workbench, runner: RunnerService, where: string): Promise<void> {
   const list = h("div", { class: "list runner-serves" });
   const fill = async () => {
     try {
@@ -491,7 +496,7 @@ async function servedDialog(runner: RunnerService): Promise<void> {
       clear(
         list,
         ...(serves.length === 0
-          ? [h("p", { class: "empty" }, "Nothing is served.")]
+          ? [emptyState("Nothing is served.", { label: "Open a file…", run: () => void openDialog(wb, runner, where).then(() => fill()) })]
           : serves.map((s) =>
               h(
                 "div",
@@ -531,7 +536,7 @@ async function convertDialog(runner: RunnerService): Promise<void> {
     const job = await runner.start("convert", { input, output, levels: 3 });
     toast(`Started ${job.title} (PID ${job.pid ?? "queued"})`);
     void runner.wait(job.id).catch((e: Error) => ({ state: "failed", title: job.title, message: e.message }) as unknown as RunnerJob).then((done) => {
-      if (done.state === "done") toast(`${done.title}: done. Open it from the Jobs tab.`);
+      if (done.state === "done") toast(`${done.title}: done. Open it from Activity.`);
       else if (done.state === "failed") toast(`${done.title} failed: ${done.message}`, "error");
     });
   } catch (e) {
@@ -544,7 +549,7 @@ async function convertDialog(runner: RunnerService): Promise<void> {
 /**
  * What the browser will copy of a tractogram of `bytes` bytes (the vectors
  * worker decides the same way, `spillPlan` in src/virtual/vectors/spill.ts):
- * every streamline, or past the storage limit (View settings) a sample.
+ * every streamline, or past the storage limit (Settings › Storage) a sample.
  */
 export async function tractogramPlan(bytes: number): Promise<SpillPlan> {
   const setting = tractogramDiskGigabytes();
@@ -558,7 +563,7 @@ const askedKey = (file: { name: string; size: number }) => `${file.name}|${file.
 /** Why a tractogram is past the limit, in plain words. */
 function limitText(file: { name: string; size: number }, plan: SpillPlan): string {
   const limit = plan.budget > 0 ? `past the ${bytesText(plan.budget)} limit` : "and none is allowed";
-  return `${file.name} is ${bytesText(file.size)}. Reading all of it here would copy about ${bytesText(plan.wholeBytes)} into this browser's storage, ${limit} (View settings → Local tractograms).`;
+  return `${file.name} is ${bytesText(file.size)}. Reading all of it here would copy about ${bytesText(plan.wholeBytes)} into this browser's storage, ${limit} (Settings › Storage → Local tractograms).`;
 }
 
 /** What a sample keeps, in plain words. */
@@ -567,8 +572,8 @@ const sampleText = (plan: SpillPlan) => `about ${bytesText(plan.bytes)} copied${
 /** Converts (or serves) a tractogram through the runner, after finding where it is under the runner's folders. */
 async function throughRunner(wb: Workbench, runner: RunnerService, file: { name: string; size: number }, choice: "serve" | "convert"): Promise<void> {
   if (!runner.available()) {
-    toast(`Start the runner on this computer (${START_COMMAND}) and pair it in Jobs → This computer, then open ${file.name} again.`, "error");
-    wb.docks.show("jobs");
+    toast(`Start the runner on this computer (${START_COMMAND}) and pair it in Settings → Compute, then open ${file.name} again.`, "error");
+    wb.docks.show("remote");
     return;
   }
   const path = await choosePath(runner, { title: `Where is ${file.name}?`, mode: "open", find: { name: file.name, size: file.size }, note: "The browser does not tell the page where a dropped file is: choose it under the runner's folders." }).catch((e) => {
@@ -631,7 +636,7 @@ export async function offerRunnerForLarge(wb: Workbench, runner: RunnerService, 
             item("Convert it", "the runner on this computer writes a Zarr Vectors store next to the file (about the file's size, on your disk). The viewer reads it a chunk at a time, every streamline."),
             item("Serve it", "the runner reads the whole file into memory and serves it."),
           ),
-          ...(paired ? [] : [h("p", { class: "note" }, `The runner is not paired: start it (${START_COMMAND}) and pair it in Jobs → This computer.`)]),
+          ...(paired ? [] : [h("p", { class: "note" }, `The runner is not paired: start it (${START_COMMAND}) and pair it in Settings → Compute.`)]),
         ],
         [
           h("button", { class: "btn", type: "button", onclick: () => answer(undefined) }, "Cancel"),
@@ -649,7 +654,7 @@ export async function offerRunnerForLarge(wb: Workbench, runner: RunnerService, 
 }
 
 /**
- * Says so when a tractogram opened another way (Open from device, a
+ * Says so when a tractogram opened another way (Open a file…, a
  * folder, a reload) is read as a sample, with the runner's conversion
  * offered.  A drop asks first instead (`offerRunnerForLarge`).
  */

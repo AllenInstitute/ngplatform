@@ -12,6 +12,8 @@ from __future__ import annotations
 import ctypes
 import threading
 import time
+import weakref
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -126,6 +128,76 @@ def _tex_for(cp, data: np.ndarray):
     return texture.TextureObject(res, tdesc), arr
 
 
+@dataclass
+class OnGpu:
+    """A volume's texture and its bricks' bounds on the GPU: uploaded once (`upload`), and shared by every
+    renderer of the same image and level (see gpu.Textures), which each keep only their own majorants."""
+
+    tex: Any
+    arr: Any
+    bmin: Any
+    bmax: Any
+    grid: tuple[int, int, int]
+    nbytes: int
+
+
+@dataclass
+class LabelsOnGpu:
+    """A label volume on the GPU (each voxel's index among the distinct labels), shared as OnGpu is."""
+
+    index: Any
+    ids: np.ndarray
+    nbytes: int
+
+
+def bricks(shape) -> int:
+    """How many majorant bricks a volume of `shape` (z, y, x) has."""
+    return math.prod(-(-int(n) // BRICK) for n in shape)
+
+
+def volume_bytes(shape, itemsize: int) -> int:
+    """The GPU memory a volume's upload holds (its texture and its bricks' bounds), and what making the
+    bounds takes for a while (a slab at a time)."""
+    nz, ny, nx = (int(n) for n in shape)
+    slab = (16 * BRICK + 2) * ny * nx * itemsize * 5
+    return nz * ny * nx * itemsize + 8 * bricks(shape) + slab
+
+
+def labels_bytes(shape) -> int:
+    """The GPU memory a label volume's upload holds (an index of 2 bytes a voxel)."""
+    return 2 * math.prod(int(n) for n in shape)
+
+
+#: GPU memory a renderer takes for each pixel of its frame: the running mean, the depth, the image and
+#: the denoiser's buffers while it filters.
+BYTES_PER_PIXEL = 112
+#: A renderer's own memory beyond its frame: its parameters, transfer table, light map and kernels' scratch.
+RENDERER_OVERHEAD = 64 << 20
+
+
+def renderer_bytes(width: int, height: int, shape=None) -> int:
+    """The GPU memory one renderer takes of its own (the volume's upload is shared): its frame at
+    `width` x `height`, the majorants of a volume of `shape` (z, y, x), and the rest."""
+    return int(width) * int(height) * BYTES_PER_PIXEL + RENDERER_OVERHEAD + (4 * bricks(shape) if shape is not None else 0)
+
+
+def upload(data: np.ndarray, device: int = 0) -> OnGpu:
+    """`data` (z, y, x; uint8 or uint16) as a texture on the GPU, with its bricks' bounds."""
+    cp = _cupy()
+    with cp.cuda.Device(device):
+        tex, arr = _tex_for(cp, data)
+        bmin, bmax, grid = brick_bounds(cp, data)
+        return OnGpu(tex, arr, bmin.ravel(), bmax.ravel(), grid, data.nbytes + 8 * bricks(data.shape))
+
+
+def upload_labels(data: np.ndarray, device: int = 0) -> LabelsOnGpu:
+    """A label volume on the GPU: its distinct labels and each voxel's index among them."""
+    cp = _cupy()
+    with cp.cuda.Device(device):
+        ids, index = label_index(data)
+        return LabelsOnGpu(cp.asarray(np.ascontiguousarray(index)), ids, labels_bytes(data.shape))
+
+
 def brick_bounds(cp, data, brick: int = BRICK, slab_bricks: int = 16):
     """The least and greatest value (0..1) in each brick of `brick` voxels a side and the one voxel
     around it (a trilinear sample in the brick reads no further). `data` is a host (numpy) or GPU
@@ -222,9 +294,13 @@ class Renderer:
         self._frame = 0
         # A pass is cut short by writing its number here: an int in host memory the GPU reads (step with stop).
         # Mapped and portable; with unified addressing (64-bit Linux and Windows) the GPU uses the same address.
+        # Freed by close(), or when the renderer goes (the array over it names no owner, so nothing keeps the
+        # renderer alive in a cycle).
         self._cut_host = cp.cuda.runtime.hostAlloc(4, 3)  # cudaHostAllocPortable | cudaHostAllocMapped
+        self._free_host = weakref.finalize(self, cp.cuda.runtime.freeHost, self._cut_host)
         ctypes.c_int32.from_address(self._cut_host).value = 0
-        self._cut = cp.ndarray((1,), cp.int32, cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(self._cut_host, 4, self, device_id=device), 0))
+        self._cut = cp.ndarray((1,), cp.int32, cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(self._cut_host, 4, None, device_id=device), 0))
+        self.closed = False
         self._pass = 0
         self._tf_key: Any = None
         # What the majorant grids were last made from (the transfer function and density): a new camera alone
@@ -237,14 +313,14 @@ class Renderer:
         self._env_name: str | None = None
 
     # ------------------------------------------------------------ data
-    def set_volume(self, volume: Volume) -> None:
+    def set_volume(self, volume: Volume, on_gpu: OnGpu | None = None) -> None:
+        """The volume to render; uploaded here, or `on_gpu`: its upload, shared with other renderers."""
         cp = self.cp
         with self.lock, self.device:
-            tex, arr = _tex_for(cp, volume.data)
-            bmin, bmax, grid = brick_bounds(cp, volume.data)
-            self._tex, self._arr = tex, arr
-            self._bmin, self._bmax, self._grid = bmin.ravel(), bmax.ravel(), grid
-            self._maj = cp.zeros(bmin.size, cp.float32)
+            g = on_gpu if on_gpu is not None else upload(volume.data, self.device.id)
+            self._tex, self._arr = g.tex, g.arr
+            self._bmin, self._bmax, self._grid = g.bmin, g.bmax, g.grid
+            self._maj = cp.zeros(g.bmin.size, cp.float32)
             self.volume = volume
             self._tf_key = None
             self._maj_key = None
@@ -255,7 +331,7 @@ class Renderer:
         cp = self.cp
         with self.lock, self.device:
             self.detail = None
-            self._dtex = self._darr = None
+            self._dtex = self._darr = self._dmaj = self._dbmin = self._dbmax = None
             self._dmaj_key = None
             if detail is None:
                 return
@@ -266,17 +342,17 @@ class Renderer:
             self._dmaj = cp.zeros(bmin.size, cp.float32)
             self.detail = detail
 
-    def set_labels(self, labels: Labels | None) -> None:
-        cp = self.cp
+    def set_labels(self, labels: Labels | None, on_gpu: LabelsOnGpu | None = None) -> None:
+        """The labels to colour by (or none); uploaded here, or `on_gpu`: their upload, shared."""
         with self.lock, self.device:
             if labels is None:
                 self.labels, self._lab = None, None
                 self._label_ids = np.zeros(0, np.int64)
             else:
                 self.labels = labels
-                ids, index = label_index(labels.data)
-                self._label_ids = ids
-                self._lab = cp.asarray(np.ascontiguousarray(index))
+                g = on_gpu if on_gpu is not None else upload_labels(labels.data, self.device.id)
+                self._label_ids = g.ids
+                self._lab = g.index
             self._lut_key = None
             self.reset()
 
@@ -507,6 +583,22 @@ class Renderer:
                 self.samples += 1
             return self.samples
 
+    def step_beside(self, n: int, cancelled=None) -> int:
+        """`step(n)` for work beside the interactive view (movies, stills, splats): a pass at a time, each
+        waited for before the next is queued, so the view's own passes (on the same GPU queue) wait for at
+        most one of these, not for all n. With `cancelled` (a function), stops between passes when true."""
+        cp = self.cp
+        for _ in range(n):
+            if cancelled is not None and cancelled():
+                break
+            self.step(1)
+            with self.device:
+                done = cp.cuda.Event(disable_timing=True)
+                done.record()
+            while not done.done:
+                time.sleep(0.001)
+        return self.samples
+
     def image(self, premultiplied: bool = True):
         """The mean so far, tone-mapped: (H, W, 4) uint8, premultiplied alpha; or (not premultiplied)
         the colour divided by the alpha, (H, W, 3) uint8, and the alpha, (H, W) uint8 (made on the GPU)."""
@@ -549,6 +641,21 @@ class Renderer:
     def synchronize(self) -> None:
         with self.device:
             self.cp.cuda.Stream.null.synchronize()
+
+    def close(self) -> None:
+        """Lets go of everything this renderer holds on the GPU and its pinned host memory (an upload shared with
+        other renderers stays theirs). Once the work queued is done; the renderer cannot be used after."""
+        if self.closed:
+            return
+        with self.lock, self.device:
+            self.cp.cuda.Stream.null.synchronize()
+            self.closed = True
+            for k in ("_tex", "_arr", "_bmin", "_bmax", "_maj", "_lab", "_lut", "_lutflags", "_tf", "_accum", "_params",
+                      "_dtex", "_darr", "_dmaj", "_dbmin", "_dbmax", "_env_tex", "_env_arr", "_depth_gpu", "_cut"):
+                setattr(self, k, None)
+            self.volume = self.detail = self.labels = None
+            self._state = None
+        self._free_host()
 
 
 def _camera_axes(inv: np.ndarray):

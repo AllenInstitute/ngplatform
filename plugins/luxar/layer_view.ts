@@ -10,10 +10,10 @@
 let shadingVersions = 0;
 import type { Disposer, LayerTransform, PlatformContext } from "@ngplatform/sdk";
 import type { Selection } from "./chunks.js";
-import { SAMPLES } from "./chunk_build.js";
 import { StoreClient } from "./client.js";
 import { type ObjectPlan, objectPlan } from "./objects.js";
 import type { DrawUniforms } from "./render_gl.js";
+import type { AuthHeader } from "./precomputed_meshes.js";
 import { needsTable, type ObjectShading } from "./segments.js";
 import { COLORMAP_INDEX, COLOUR_INDEX, type LayerStyle, rgbOf, scalarOf, TONE_INDEX } from "./style.js";
 import { View2d } from "./view2d.js";
@@ -58,6 +58,10 @@ export class LayerView {
   held = false;
   /** Draws what it drew when frozen, whatever the layer shows now (the view of a store the layer has left). */
   private frozen = false;
+  /** Disposed: a store that opens afterwards draws nothing. */
+  private disposed = false;
+  /** The sign-in's headers its reads carry. */
+  readonly headers: readonly AuthHeader[];
   /** The last drawing of chosen segments, and when it was last current (see freeze). */
   private chosen: { drawing: LayerDrawing & { key: string }; ids: BigUint64Array | undefined; at: number } | undefined;
 
@@ -66,9 +70,12 @@ export class LayerView {
     readonly name: string,
     readonly storeUrl: string,
     public style: LayerStyle,
+    /** `adopt`: the view of the layer's store before, whose reading worker (and what it keeps) this one takes on; `headers`, the sign-in's. */
+    options: { adopt?: LayerView; headers?: readonly AuthHeader[] } = {},
   ) {
-    this.client = new StoreClient(storeUrl);
-    this.client.setScalar(scalarOf(style));
+    this.headers = options.headers ?? [];
+    this.client = new StoreClient(storeUrl, { adopt: options.adopt?.client, headers: this.headers });
+    this.client.setScalar(scalarOf(this.drawnStyle(style)));
     this.view3d = new View3d(this);
     this.view2d = new View2d(this);
     this.handle = ctx.viewer.draw3d(name, {
@@ -93,17 +100,32 @@ export class LayerView {
     };
     void this.client.ready.then(
       () => {
+        if (this.disposed) return;
+        this.client.setScalar(scalarOf(this.drawnStyle(this.style)));
         this.redraw();
         this.onStatus?.();
       },
-      () => this.onStatus?.(),
+      () => {
+        if (!this.disposed) this.onStatus?.();
+      },
     );
   }
 
   setStyle(style: LayerStyle): void {
     this.style = style;
-    this.client.setScalar(scalarOf(style));
+    this.client.setScalar(scalarOf(this.drawnStyle(style)));
     this.redraw();
+  }
+
+  /**
+   * The style as drawn: colouring by an attribute chosen before the store
+   * was open (none named) draws its first attribute, as the panel shows,
+   * without writing it to the state (which would make an undo step).
+   */
+  private drawnStyle(style: LayerStyle): LayerStyle {
+    if (style.colourBy !== "attribute" || style.attribute !== undefined) return style;
+    const first = this.client.info?.attributes[0]?.id;
+    return first === undefined ? style : { ...style, attribute: first };
   }
 
   /** The layer's transform, read once per frame. */
@@ -277,37 +299,30 @@ export class LayerView {
     if (old === undefined || old.level !== selection.level || old.complete !== selection.complete) this.onStatus?.();
   }
 
-  /** A line for the panel: the levels drawn and what is loading. */
-  status(): string {
+  /**
+   * For the panel's status line: what is being read, or what went wrong;
+   * neither once all it wants is drawn (the line is then hidden).
+   */
+  report(): { progress?: string; error?: string; signIn?: boolean; warning?: string } {
     const { client } = this;
-    if (client.error !== undefined && client.info === undefined) return `Could not open the store: ${client.error}`;
-    if (client.info === undefined) return "Opening the store…";
-    const problems = [this.view3d.problem, this.view2d.problem].filter((p) => p !== undefined);
-    // A coarse level of a tractogram is often a sample of its streamlines: say how much of one.
-    const share = (level: number) => {
-      const s = client.info?.levels[level]?.objectShare;
-      return s !== undefined && s < 1 ? `, ${+(s * 100).toPrecision(2)}% of the objects` : "";
-    };
-    const levels = [...this.levels.entries()].map(([view, s]) => `${view === "3d" ? "3-D" : "2-D"} level ${s.level}${share(s.level)}${s.complete ? "" : " (loading)"}`);
-    const parts = [...new Set(levels)];
+    // Refused for want of a sign-in: said so, not "no meshes" (the panel offers Sign in).
+    if (client.error !== undefined && client.signIn) return { error: "Sign in to read this layer's meshes.", signIn: true };
+    if (client.error !== undefined && client.info === undefined) return { error: `Could not open the store: ${client.error}` };
+    if (client.info === undefined) return { progress: "Opening the store…" };
+    const problem = this.view3d.problem ?? this.view2d.problem;
+    if (problem !== undefined) return { error: problem };
+    if (client.objects.error !== undefined) return { error: `Could not read the chosen objects: ${client.objects.error}` };
+    if (client.error !== undefined) return { error: `Could not read a chunk: ${client.error}` };
+    // The GPU budget shared by the layers is full: what is drawn is part of the layer.
+    if (this.view3d.full || this.view2d.full) return { warning: "GPU memory is full: part of this layer is not drawn. Lower its Detail, or switch off another layer." };
     const drawing = this.drawing();
-    if (drawing.size > 0) {
-      const shown = drawing.size === 1 ? "1 segment shown" : `${drawing.size.toLocaleString()} segments shown`;
-      if (drawing.plan === undefined) parts.unshift(shown);
-      else {
-        // Read whole, by id: how far it has got.
-        const p = client.objects.progress();
-        const whole = p.pending > 0 ? `reading them whole: ${p.read.toLocaleString()} of ${(p.wanted - p.absent).toLocaleString()}` : `read whole (level ${drawing.plan.level})`;
-        // A view with more of their lines than its Detail draws a sample of them.
-        const sampled = [...this.samples.entries()].filter(([, k]) => k < SAMPLES).map(([v, k]) => `${v === "3d" ? "3-D" : "2-D"} view ${k} in ${SAMPLES} of them (Detail)`);
-        parts.unshift(`${shown}, ${whole}${p.absent > 0 ? ` (${p.absent.toLocaleString()} not in the store)` : ""}`, ...sampled);
-        if (drawing.chunks !== undefined) parts.splice(1, 0, `the others at ${+(drawing.others * 100).toPrecision(2)}%`);
-      }
+    if (drawing.plan !== undefined) {
+      // Read whole, by id: how far it has got.
+      const p = client.objects.progress();
+      if (p.pending > 0) return { progress: `Reading the chosen objects: ${p.read.toLocaleString("en-GB")} of ${(p.wanted - p.absent).toLocaleString("en-GB")}…` };
     }
-    if (client.pending > 0) parts.push(`${client.pending} chunks to read`);
-    if (client.error !== undefined) parts.push(`a chunk failed: ${client.error}`);
-    if (client.objects.error !== undefined) parts.push(`reading objects whole failed: ${client.objects.error}`);
-    return [...problems, parts.join(" · ")].filter((p) => p).join(" ");
+    if (client.pending > 0 || [...this.levels.values()].some((s) => !s.complete)) return { progress: "Reading…" };
+    return {};
   }
 
   /** Whether the chosen objects read whole are all here. */
@@ -321,6 +336,7 @@ export class LayerView {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.offs.forEach((off) => off());
     this.handle.dispose();
     this.view2d.dispose();

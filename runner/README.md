@@ -8,6 +8,11 @@ them, and opens their results as layers. It also serves files under its
 folders to the viewer, so a tractogram too large for the browser can be
 opened through it.
 
+In the app, **Settings › Compute** pairs it and shows what each computer
+has (**This computer**, and others reached over SSH); the **Activity** dock
+at the bottom lists each computer's jobs, with **Convert a tractogram…** and
+**Open a file…**.
+
 The user guide's page is [docs/guide/local-jobs.md](../docs/guide/local-jobs.md).
 
 ## Starting it
@@ -74,7 +79,7 @@ again when it starts.
 - Files it serves to the viewer (`/stores/<id>/…`) do not need the token,
   since Neuroglancer cannot send one. Each served path gets a random id of
   128 bits, which only the app that asked for it learns. Stop serving one
-  with `DELETE /serve/<id>` (in the app: Stop, in the Jobs tab).
+  with `DELETE /serve/<id>` (in the app: **Stop**, in the Activity dock).
 
 ## Jobs
 
@@ -196,10 +201,84 @@ python -m ngplatform_runner --root ~/data \
   --service render="/path/to/env/bin/python -m ngplatform_render.server"
 ```
 
-It uses the first GPU CUDA sees (set `CUDA_VISIBLE_DEVICES` to choose), keeps
-levels it makes in `<its state dir>/render-cache` and movies in
-`<its state dir>/renders` (or a folder under the roots the app names). Its
-API is in [plugins/anatomical-rendering/README.md](../plugins/anatomical-rendering/README.md).
+It uses the first GPU CUDA sees (set `CUDA_VISIBLE_DEVICES` to choose),
+keeps levels it makes or reads from a server in `<its state
+dir>/render-cache` and stills, movies and splats in `<its state
+dir>/renders` (or a folder under the roots the app names), each in a new
+folder of its own. Movies need `ffmpeg` on the `PATH`; `/info` says whether
+it was found. To read remote stores only from certain places, add
+`--allow-source <url>` (more than once for several, or `NGP_RENDER_SOURCES`,
+space-separated) to the service's command: a store must then be under one of
+them. Its API is in
+[plugins/anatomical-rendering/README.md](../plugins/anatomical-rendering/README.md).
+
+**GPU memory.** Every session and job draws on one budget: by default 0.8
+of the GPU memory free when the service starts, or `--gpu-budget` (`24G`,
+`12000M`, or a part of the free memory such as `0.6`; also
+`NGP_RENDER_GPU_BUDGET`). A new session is let in only when what it will
+hold fits beside the others (its volume, labels, finer detail and its
+frame), else `POST /sessions` answers 503 with `Retry-After` and says why;
+a view larger than the session's frame so far asks for more the same way
+(`PUT /sessions/<id>/view`, 503). Sessions and jobs on the same image, level,
+channel and time point share one upload of it (and one read), counted once,
+which goes when the last of them closes. `/info` lists the budget
+(`budget`: `total_mb`, `used_mb`, `free_mb`, what holds it, the uploads and
+how many use each).
+
+**Jobs.** Stills, movies and splats run one at a time, in the order asked
+for. While one waits its answer has `status: "queued"`, `queue_position`
+(1: next to start) and `jobs_ahead` (those before it, the one running
+included); a 429 with `Retry-After` refuses one when 8 wait already. A job
+that could never fit the budget is a 400. At its turn a job waits (up to
+ten minutes) for the GPU memory its frame needs, saying so in `message`.
+`/info` has the queue (`queue`: `running`, `waiting`, `max_waiting`).
+
+**Disk.** A job is refused (507, with the space free and needed) when it
+would leave less than 1 GB free where it writes. A movie's frames are
+deleted once its MP4 is made. Levels the service makes, and stored levels
+read from a server, are cached by the store, the level, the channel and
+time point and a stamp of the level's metadata (its file's time, or the
+server's ETag or Last-Modified), so a store written again is read again;
+the cache keeps within `NGP_RENDER_CACHE_GB` (20 by default), least
+recently used out first. A second session on the same image downloads
+nothing. A sharded level on a server is read a whole shard at a time, a
+large shard as 4 MB ranges at once (one connection to GCS carries about 20
+MB/s; many, several times that). Downloads (`/stills/<id>/file`,
+`/movies/<id>/file`, `/splats/<id>/file/<name>`) are streamed and take a
+`Range`.
+
+**Channels and time points.** An image with channel or time axes is shown
+at channel 0 and time point 0 unless the session asks for others:
+`POST /sessions {volume: {url, channel, time}}` (whole numbers from 0, else
+a 400; out of the image's range, the session fails saying how many it
+has). A loaded session's `volume` says which it shows and how many there
+are: `channel`, `time`, `channels`, `times`, `axes`. Images need x, y and z
+axes; 2-D images are not rendered.
+
+**Splats.** Fitting needs a Python of its own with torch (with CUDA) and
+gsplat 1.4.0 (`pip install "./runner[splat]"`), given with `--splat-python`;
+`/info` says whether it is ready and warns of another gsplat. The fit runs on
+the service's GPU (`--device`), keeps the views on the CPU (reading them from
+their files as needed) and ends with the service.
+
+A venv beside a Python that already has torch keeps torch and numpy as they
+are (gsplat 1.4.0 works with torch 2.12 and CUDA 12.6):
+
+```sh
+/path/to/torch-env/bin/python -m venv --system-site-packages /path/to/splat-venv
+/path/to/splat-venv/bin/pip install gsplat==1.4.0
+```
+
+gsplat builds its CUDA kernels the first time it fits (about 4 minutes on 32
+cores; they are kept in `~/.cache/torch_extensions` after that). The build
+needs nvcc of the CUDA torch was built for and ninja: the service puts the
+splat Python's own folder (where pip put ninja) first on the fit's PATH, and
+nvcc is found from `CUDA_HOME` or the PATH, so start the service with, for
+example, `CUDA_HOME=/usr/local/cuda-12.6 PATH=/usr/local/cuda-12.6/bin:$PATH`.
+A splat of the 100 um SRB template (64 views of 384 px at 64 samples, 3000
+steps, about 100 000 Gaussians) takes 1.5 minutes for the views and a
+minute for the fit on an RTX A6000, with 1.6 GB of GPU memory for the fit
+(`gpu_peak_mb` in its `fit.json`).
 
 ## Using a GPU on another machine over SSH
 
@@ -265,7 +344,7 @@ It prints a link with `&name=<its hostname>`. On the browser's computer:
 ssh -N -L 7000:127.0.0.1:8765 me@workstation
 ```
 
-then open the link (or the app's Jobs tab, **Add a computer…**, with the
+then open the link (or the app's Settings › Compute, **Add a computer (SSH)…**, with the
 address `http://localhost:7000` and the token).
 
 ### On a cluster
@@ -305,3 +384,11 @@ forwarder on this computer (`tests/forwarder.py`), since they cannot log in
 anywhere. The tests of real jobs (filtering, converting, serving a `.trk`)
 run when zarr-vectors-tools can be imported, and use the tractograms in
 `plugins/zarr-vectors/testdata/tractograms`.
+
+The render service's tests that render need CuPy and a CUDA GPU, and are
+skipped without them; the movie's encoding needs `ffmpeg`. The splat fit's
+tests run when `NGP_TEST_TORCH_PYTHON` names a Python with torch (gsplat is
+stood in for), for example
+`NGP_TEST_TORCH_PYTHON=/path/to/torch-env/bin/python python -m pytest runner/tests -q`;
+the real fit's test runs when `NGP_TEST_SPLAT_PYTHON` names a splat Python
+(torch with CUDA and gsplat, as above) and a GPU is there.

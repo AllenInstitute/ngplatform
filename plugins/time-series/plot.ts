@@ -103,6 +103,16 @@ export interface PlotData {
   valueUnit?: string;
 }
 
+/**
+ * A series' key: a short line in its colour, drawn as SVG so the colour is
+ * an attribute (`currentColor` takes the text colour of the place it is in).
+ */
+export function swatch(colour: string): SVGSVGElement {
+  const s = svgEl("svg", { class: "ts-swatch", viewBox: "0 0 12 2", "aria-hidden": "true" });
+  s.append(svgEl("rect", { width: 12, height: 2, fill: colour }));
+  return s;
+}
+
 export class Plot {
   readonly element = document.createElement("div");
   private readonly root = svgEl("svg", { class: "ts-plot", role: "img" });
@@ -246,11 +256,8 @@ export class Plot {
       this.readout.replaceChildren(
         time,
         ...series.flatMap((s) => {
-          const swatch = document.createElement("span");
-          swatch.className = "ts-swatch";
-          swatch.style.background = s.colour;
           const spread = s.sd !== undefined && Number.isFinite(s.sd[i]) ? ` ± ${fmt(s.sd[i])}` : "";
-          return ["  ", swatch, ` ${s.label} ${fmt(s.values[i])}${spread}${valueUnit}`];
+          return ["  ", swatch(s.colour), ` ${s.label} ${fmt(s.values[i])}${spread}${valueUnit}`];
         }),
       );
     });

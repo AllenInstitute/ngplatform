@@ -2,11 +2,11 @@
 
 ![S-21-46 (HiP-CT, 100 µm) path-traced on a workstation's GPU and drawn in the 3-D view](../images/plugins/anatomical-rendering.png)
 
-**Kind:** tool · **Off by default** (offered when you open an image; or turn it on in the Plugins tab) · a
-**Render** switch beside **Sections** in the 3-D view, and a **Render** tab ·
+**Kind:** tool · **Off by default** (offered when you open an OME-Zarr or N5 image; or turn it on in the Plugins panel) · a
+**Render** switch beside **Sections** in the 3-D view, and the **Anatomical** panel in the Tools dock ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/anatomical-rendering)
 
-Photorealistic views of an OME-Zarr image, path-traced on a GPU and drawn in
+Photorealistic views of an OME-Zarr or N5 image (not precomputed volumes such as EM), path-traced on a GPU and drawn in
 Neuroglancer's 3-D view. Light is followed through the tissue as it
 scatters, so surfaces get soft shadows and depth and translucent tissue
 glows, in the manner of "cinematic rendering". The image is read straight
@@ -39,14 +39,35 @@ Organ Atlas serves most of its scans; on a host).
    `python -m ngplatform_runner tunnel me@workstation` (it prints the pairing
    link). On a cluster, start the runner inside an interactive GPU job and
    tunnel through the login node (`--jump`).
-2. Pair the app with that runner: its link, or the **Remote (SSH)** tab at
-   the bottom (**This computer**, or **Add a computer (SSH)…**). Addresses
-   and tokens are kept there, for every function, not per image.
-3. Turn the plugin on, open the **Render** tab: **Computer** is
-   **Automatic** (the Remote tab's choice, else the first computer with the
-   render service ready) or one of the paired computers whose runner has
-   the render service. Choose the image, then switch on **Render** (also
-   beside **Sections** in the 3-D view).
+2. Pair the app with that runner: its link, or **Settings › Compute**
+   (**This computer**, or **Add a computer (SSH)…**; **Pair a computer…** in
+   the panel's **Remote** card opens it). Addresses and tokens are kept
+   there, for every function, not per image.
+3. Turn the plugin on and open the **Anatomical** panel in the Tools dock. Switch on
+   **Render** at the top (also beside **Sections** in the 3-D view); the
+   line under it shows work under way (the image loading), or the
+   error when something has gone wrong, with **Retry**. **Remote** picks the **Computer**:
+   **Automatic** (Compute's choice, else the first computer with the render
+   service ready) or one of the paired computers whose runner has the
+   render service.
+
+The panel's cards: **Remote** (where it renders), **Rendering** (image,
+preset, colours, density, exposure), **Regions** (on a computer), **Quality**
+(how much of the image the GPU holds, detail, samples, and what is rendered
+now), **Lighting**, **Crops** (a clip facing the camera, clips across x, y
+and z, and boxes), **Output** (the size of stills and movies, and stills),
+**Movie** (keyframes and rotations) and **Splat**. Each
+stays open or closed as you leave it. The row under the switch turns the
+view: **Centre** on the tissue, or from each side of the image (see
+**View** below).
+
+Before it opens an image, the panel checks its axes. A 2-D image is not
+rendered (it says so under **Image**). On a computer, an image with several
+channels or time points renders one of each: **Rendering** then has a
+**Channel** choice and a **Time point** slider (numbered from 0, as
+Neuroglancer numbers them). Choosing another opens a new session on the
+computer, kept with the scene as one undo step. This browser's renderer
+takes images with one of each only.
 
 ## What you can set
 
@@ -73,7 +94,7 @@ Organ Atlas serves most of its scans; on a host).
   histogram keeps its shape (a brain's two peaks, grey and white matter).
   A window set by hand is used as it is. **Hide the jar** renders only a cylinder about the scan's axis, which
   leaves out the jar's wall (as dense as tissue).
-- **Colourmap for this image** (on a host): the image's histogram (grey,
+- **Colourmap** (on a host, once the image is open): the image's histogram (grey,
   log counts) with the preset's colourmap and opacity curve over it, at
   the image's own values. Drag a control point left or right to move it
   (the stops between its neighbours follow) and up or down to change its
@@ -99,38 +120,43 @@ Organ Atlas serves most of its scans; on a host).
   (studio, photo studio, sky; CC0 images from [Poly Haven](https://polyhaven.com),
   reduced to 256 × 128), turned about the view's vertical; or the preset's
   sky colours.
-- **View**: Left, Right, Anterior, Posterior, Superior and Inferior turn the
-  3-D view to those sides (for images in RAS: x right, y anterior, z up).
-- **Crops**: boxes, as many as eight, each with a name, on or off, keeping
+- **View** (the row under the switch): turn the 3-D view to look from
+  each side of the image. When its OME-Zarr metadata gives each axis an
+  anatomical orientation (`"orientation": {"type": "anatomical", "value":
+  "left-to-right"}`), the buttons are named by side (L, R, A, P, S, I, and
+  D, V and the like for other anatomy) and keep superior up; otherwise they
+  are named by axis (**+x**, **−x**, …: from +x looks towards −x; in RAS,
+  +x is right, +y anterior and +z superior).
+- **Boxes** (Crops): as many as eight, each with a name, a switch, keeping
   its inside or cutting it out (fractions of the volume along x, y and z,
   sliders): what shows is inside any crop that keeps and in none that cuts
   out (in this browser's renderer, only the first that keeps).
-- **Cut facing the view**: a plane across the view, an offset in mm past the
+- **Camera plane** (Crops): a clip across the view, an offset in mm past the
   position, keeping what lies beyond it; it turns with the camera, or
-  **Leave it here** keeps it at the angle it has now (an oblique cut), and
-  **Follow the view** lets it turn again. A cut turned on starts through the
+  **Pin** keeps it at the angle it has now (an oblique clip), and
+  **Follow** lets it turn again. A clip turned on starts through the
   point the cursor was last over in the 3-D view (on the rendered tissue),
-  and **At the cursor** moves the cuts that are on there.
-- **Cuts**: planes through the current position across x, y or z, keeping
-  either side, with an offset in mm (a slider or a number). Regions listed under **Kept through cuts**
+  and **Move to the cursor** moves the clips that are on there.
+- **Axis planes** (Crops): clips through the current position across x, y or z, keeping
+  either side, with an offset in mm (a slider or a number). Regions listed under **Kept whole** (Regions)
   stay whole (vessels through a cut brain, say).
-- **Regions**: colour by a co-registered OME-Zarr segmentation (its labels'
-  FreeSurfer colours), how much of the region's colour to use, and regions
-  to hide.
+- **Regions** (on a host): **Colour by region** with a co-registered OME-Zarr segmentation (its labels'
+  FreeSurfer colours), how much of the region's colour to use, regions
+  to hide, and regions kept whole through crops. This browser's renderer has no region colours, so the card is hidden there.
 - **Whole volume**: how many voxels of the whole image the host holds (400
   million by default: the finest stored level within it). When a store has
   no level near the budget, a level is made by downsampling a finer one as
   it is read (means for images, majority vote for labels) and kept in a
   cache on the host.
-- **Finer detail where you zoom** (on a host; on by default): when the view
+- **Finer detail** (on a host; on by default): when the view
   comes close, the region in view is read at a finer stored level and
   rendered from it, while the rest of the volume stays at the whole
   volume's level, so shadows and light scattered from outside the view
-  still come from it. The level is the finest whose region fits **Detail
-  where you look** (200 million voxels by default) and is no finer than a
+  still come from it. The level is the finest whose region fits **Detail**
+  (200 million voxels by default) and is no finer than a
   pixel there. The region is what the view meets, with some depth behind
-  the surface and a margin; it is read in the background (the status line
-  says so) while the whole volume's level is shown, chunk by chunk through
+  the surface and a margin; it is read in the background (the line under
+  **Samples per pixel** says so) while the whole volume's level is shown, chunk by chunk through
   a cache in the host's memory (8 GB; `NGP_RENDER_CHUNK_CACHE_GB`), so a
   view moved a little reads only the chunks it had not. Reading starts while
   the camera is still moving (from what the view is coming to, planned at
@@ -140,26 +166,39 @@ Organ Atlas serves most of its scans; on a host).
   one has as many samples (up to 24, or 2 s), then fades into it. A view
   that needs no finer level lets the detail go. Stills use the detail held
   for the view; movies use the whole volume's level.
-- **Samples per pixel**: when a still view stops refining.
-- **Load a preset file…**: a preset (or a list) as JSON, in the form of
+- **Samples per pixel**: when a still view stops refining. Under it, the
+  level held and the last frame's samples, size and time a pass.
+- **Load…** (beside Preset): a preset (or a list) as JSON, in the form of
   `runner/ngplatform_render/presets/*.json`; it is kept with the scene.
-- **Save still (PNG)**: the view now, path-traced on the host at the movie's
-  size and twice its samples.
-- **Render rotation**: a turn about the position from the view now, about
-  the vertical or the horizontal, a full or half circle, by a step in degrees.
-- **Movie**: **Add keyframe from the view** as you move, set each one's
-  time, then **Render movie on the host**: every frame is path-traced to the
-  sample count and the frames are encoded as an MP4 (H.264) on the host,
-  then **Download**. Between keyframes the camera turns around the position;
-  cuts, density, exposure and the light change smoothly.
-- **Splat (for the web, phones and VR)**: **Make a splat on the host**
+- **Save still (PNG)** (Output): the view now, path-traced on the host at the
+  output's size and twice its samples, as a job: its progress in the Output
+  card (with **Cancel**) and in Activity; it downloads when done. Width × height × samples is
+  kept within 8192² × 256.
+- **Movie**: **Add keyframe** as you move, set each one's time (**Go to**
+  moves the view back to a keyframe, **Replace** puts the view now in its
+  place, the arrows move it earlier or later), then **Preview movie…**: a small, quick version (about 384 pixels, 8
+  samples, 12 frames a second) plays in a window. From there **Render the
+  movie** starts the movie itself as a job, its progress in the Movie card (with
+  **Cancel**) and in Activity; the view stays live while it
+  renders (its passes go to the GPU one at a time beside the view's). Every
+  frame is path-traced to the sample count and encoded as an MP4 (H.264)
+  on the host, and downloads when done. Between keyframes the camera turns
+  around the position; clips, density, exposure and the light change smoothly.
+- **Rotation** (Movie): a turn about the position from the view now, about
+  the vertical or the horizontal, a full or half turn, by a step in
+  degrees; **Preview rotation…** works as the movie's preview.
+- **Jobs**: stills, movies and splats are listed in their cards and kept
+  in this browser: after a reload the list comes back, those still running
+  on the computer are followed again (in Activity too), and finished ones
+  can be downloaded while the computer keeps them.
+- **Splat** (for the web, phones and VR): **Make splat**
   path-traces the look now from all round the position (**views**, each
   **size** pixels along its longer side at **samples**; **from** every side,
   this half, or near this side; a quarter of them closer in), then fits
   3-D Gaussians to them (**fit steps**; 0 makes the views only). It shows
-  in the Jobs tab; **View splat** opens the result in a window (drag to
+  as a job in the Splat card; **View** opens the result in a sheet (drag to
   turn, right or shift drag to move, wheel to come closer) with downloads
-  of the `.splat` and `.ply`, and **Open a splat file…** opens one from
+  of the `.splat` and `.ply`, and **Open file…** opens one from
   this device. What would differ from view to view is held still: the
   light where it is now (in world space), no lens blur, no smoothing; cuts
   facing the view stay where they are. A splat is fitted to one scene: a
@@ -168,7 +207,9 @@ Organ Atlas serves most of its scans; on a host).
   for a whole brain, and the fit 15 to 30 minutes more.
 
   The fit needs torch and gsplat in a Python of their own: start the render
-  service with `--splat-python PATH` (or set `NGP_SPLAT_PYTHON`). Without
+  service with `--splat-python PATH` (or set `NGP_SPLAT_PYTHON`); see
+  `runner/README.md` for making that Python (gsplat 1.4.0, which builds its
+  CUDA kernels with nvcc the first time, in about 4 minutes). Without
   one, the views are still made, and the folder (images, `cameras.json`,
   nerfstudio's `transforms.json`, `points.ply`) can be fitted later with
   `python -m ngplatform_render.splat.fit FOLDER` or another splat trainer.
@@ -249,17 +290,24 @@ voxels), a collision takes its colour a voxel or two inwards along the
 gradient, on the more opaque side, so a surface shows the tissue beneath it
 rather than the values between it and the medium around it (which would
 otherwise colour a kidney's capsule as fat). Each pass adds one sample per pixel and the
-image is their mean, so it refines while the view is still. While the
-camera moves, frames are rendered at half size, and for the first 12
+image is their mean, so it refines while the view is still. Frames made
+while the camera moves (see below) are half size, and for the first 12
 samples after a change the host smooths the image with an edge-avoiding
 wavelet filter guided by the distance to the tissue (about half the error at
-4 samples; **Smooth the first frames** switches it off).
+4 samples; **Denoise** switches it off).
 
 Each frame comes with the distance along each pixel's ray to where it meets
-tissue, and the page draws it as points in space (a mesh of them) with the
-camera it has now, not as a flat picture: the render turns and zooms with
-the view at once, and the next frame fills what came into view (a gap for a
-moment at an edge, not a stretched one).
+tissue, and the page draws it as a surface in space (a vertex a pixel) with
+the camera it has now, not as a flat picture. While the camera moves
+(dragging, the wheel, or the turn that carries on after a drag) the picture
+stays where the tissue is and moves with the view, and nothing new is
+rendered; when the camera has been still for 200 ms, the view is rendered
+again at full size. Only a camera that goes far from the picture's (turned
+more than 20°, twice as near or far, or the position near the picture's
+edge) gets quick half-size pictures while it moves, each placed in space
+too. A frame is never drawn stuck to the screen in place of one placed in
+space. While the camera is away from the picture's, a fold's edge shows a
+brief gap rather than a stretched skin.
 
 While the camera moves, frames are made for speed, then the still view is
 refined, without the picture jumping:
@@ -290,7 +338,36 @@ refined, without the picture jumping:
   points (every second pixel's distance, as half floats), so a moving view
   costs one request a frame.
 - A session no page is waiting on (a closed tab) stops rendering after 5 s,
-  and goes on when one asks.
+  and goes on when one asks. The page closes its session when it closes,
+  and when another computer is chosen or **Reconnect** is pressed; one
+  nothing has asked about for 3 minutes is closed on the host all the same,
+  and the page opens a new one if it is still there.
+- The render computer shares one GPU budget between every session and job
+  (all its tabs and users). **Remote** shows it, with the queue, as
+  "GPU: 12.3 of 38 GB in use · 1 job running". When a new session (or a
+  larger view) would not fit, the line says "The render computer's GPU is
+  busy (needs 900 MB, 300 MB free). Retry, or close another view."; close
+  another tab's view or wait for a job, then **Retry**. Nothing is retried
+  by itself.
+- Stills, movies and splats run one at a time on the render computer. One
+  waiting its turn is listed with its place ("Still: waiting, 2 jobs
+  ahead"), and at its turn it may wait for GPU memory ("waiting for GPU
+  memory (…)"), also in Activity. With 8 waiting already, a new one is
+  refused ("Too many jobs waiting on the render computer"); when the
+  computer's disk is nearly full it is refused too ("The render computer's
+  disk is nearly full (needs 2.0 GB, 900 MB free)"); the line says which,
+  with **Retry**. A job too large ever to fit the budget is refused with
+  the computer's reason: make it smaller.
+- **Splat** shows the computer's warning when its gsplat is not the version
+  the fit is written for.
+- A session that runs the GPU out of memory stops and lets its memory go;
+  the line says so, and **Retry** opens it again (with a smaller **Whole
+  volume**, say). A computer that stops answering is asked again less and
+  less often for about a minute, then the line says so.
+- One request is kept within limits: sides of 8–8192 pixels, up to 4096
+  samples, movies at 1–120 frames a second with even sides (H.264), and a
+  movie's frames and pixels within what the host allows. Movies need
+  `ffmpeg` on the render computer; the panel says so when it has none.
 
 On an RTX A6000, zooming into S-21-46 (HiP-CT, 19.6 µm, its 400-million-voxel
 level held whole, finer detail where the view looks) in a 1200 × 800 view:
@@ -305,8 +382,8 @@ from noisy first frames and detail coming in at once).
 - The image is placed by its OME-Zarr transforms in Neuroglancer's x, y, z
   (as the volume view does); a layer's own transform in the viewer is not
   applied yet.
-- One image (and one segmentation) at a time; images with t or c axes are
-  not rendered.
+- One image (and one segmentation) at a time, and one channel and time
+  point of it (chosen in **Rendering**, on a computer).
 - Rendering is for looking, teaching and figures, not for reading values.
 - Finer detail comes from one stored level at a time, and only on a host:
   the browser's renderer holds one level.

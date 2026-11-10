@@ -10,6 +10,7 @@ import { WorkerRpc } from "@ngplatform/sdk/worker_rpc";
 import { storeOf } from "../volume-view/sources.js";
 import type { Mat4 } from "./geometry.js";
 import type { Region, Summary } from "./statistics.js";
+import { withSharedChunks } from "../volume-view/chunk_host.js";
 
 export interface ImageLevel {
   size: [number, number, number];
@@ -35,7 +36,7 @@ export function readableImages(ctx: PlatformContext, types = ["image"]): string[
 export class Voxels {
   private readonly levelsCache = new Map<string, Promise<ImageLevel[]>>();
   // A worker that fails to start or dies (out of memory, say) answers nothing: every request fails, and the next starts a new one.
-  private readonly rpc = new WorkerRpc(() => new Worker(new URL("./voxel_worker.ts", import.meta.url), { type: "module", name: "annotations" }), {
+  private readonly rpc = new WorkerRpc(() => withSharedChunks(new Worker(new URL("./voxel_worker.ts", import.meta.url), { type: "module", name: "annotations" })), {
     stopped: (why) => `The reader stopped (${why}): try a smaller region or a coarser level.`,
     restart: true,
     onStopped: () => this.levelsCache.clear(),

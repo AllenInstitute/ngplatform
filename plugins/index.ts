@@ -2,7 +2,7 @@
  * Every plugin the app ships, one folder each beside this file. This list is
  * how plugins are installed: a plugin is a manifest plus its code, added
  * here (and, for a data type, its worker modules in ./workers.ts), and built
- * with the app. The Plugins tab switches each on or off (a tool plugin
+ * with the app. The Plugins panel switches each on or off (a tool plugin
  * switches on at once; a data type, or switching off, reloads the page with
  * the same link). Only Zarr Vectors is on by default; the others are
  * offered when data they serve is opened (./offers.ts). See ./README.md.
@@ -20,11 +20,10 @@ import { SEGMENTATION_MANIFEST } from "./segmentation/manifest.js";
 import { LABEL_STORE_FORMAT } from "./segmentation/store_format.js";
 import { TIME_SERIES_MANIFEST } from "./time-series/manifest.js";
 import { TRACK_FILTERING_MANIFEST } from "./track-filtering/manifest.js";
-import { VOLUME_VIEW_MANIFEST } from "./volume-view/manifest.js";
 import { ZARR_VECTORS_MANIFEST } from "./zarr-vectors/manifest.js";
 import { type Offer, OFFERS } from "./offers.js";
 
-/** What a plugin does, for grouping the Plugins tab. */
+/** What a plugin does, for grouping the Plugins panel. */
 export type PluginGroup = "data" | "vectors" | "images" | "labels" | "annotation";
 
 export const GROUP_TITLES: Record<PluginGroup, string> = {
@@ -43,7 +42,7 @@ export interface CatalogueEntry {
   neuroglancer?: () => Promise<unknown>;
   /** Files a data type plugin reads in place as virtual stores, when it is on. */
   virtualFormats?: () => VirtualFormat[];
-  /** One line in the Plugins tab. */
+  /** One line in the Plugins panel. */
   summary: string;
   group: PluginGroup;
   /** When to offer it while it is off. */
@@ -79,13 +78,6 @@ export const CATALOGUE: CatalogueEntry[] = [
     summary: "Filters an image as it is viewed: smoothing, thresholds, vesselness, morphology.",
     group: "images",
     offer: offer(FILTERS_MANIFEST.id),
-  },
-  {
-    manifest: VOLUME_VIEW_MANIFEST,
-    load: async () => (await import("./volume-view/plugin.js")).plugin,
-    summary: "Draws an image as a solid in the 3-D view.",
-    group: "images",
-    offer: offer(VOLUME_VIEW_MANIFEST.id),
   },
   {
     manifest: ANATOMICAL_RENDERING_MANIFEST,

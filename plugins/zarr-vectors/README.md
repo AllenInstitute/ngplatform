@@ -149,8 +149,13 @@ layers, so one shader colours the overview and the selected objects alike:
   dictionary-encoded column gives its code, and the codes are listed in the
   browser console when the layer opens. A value the store marks absent is
   NaN (test with `isnan`), and so is every value when the object table or
-  the column cannot be read (warned in the console); a network error is
-  not kept, so the next chunk reads them again.
+  the column cannot be read (a warning). A network error is not taken
+  as no value: the chunk fails and is read again later.
+
+The overview reads only the object values its shader reads (by name or
+through `prop_`); the others stay NaN on its vertices and cost no reads, so
+a shader that colours by direction opens without downloading any object
+column. A shader edited to read another value loads the chunks again with it.
 
 By default the group index and, when the store has at most 8 eligible
 columns (single-channel, numeric or dictionary, not 64-bit), all of them are
@@ -173,12 +178,19 @@ void main() {
 
 One pyramid level is drawn per view: the finest whose vertices, for what the
 view would load, fit one vertex per `renderScale`² pixels (`dense_lod.ts`).
-The coarsest level stands in while it loads. The Render tab's "Resolution
+The coarsest level stands in while it loads. The Display tab's "Resolution
 (slice)" and "Resolution (mesh)" sliders set the target, and their
 histograms show the level drawn and its chunks, loaded and not. A level without a vertex count
 (or with 0, which writers also use as a placeholder) is estimated from its
 neighbours; a coarse level known to be empty is not used; a flat store (one
 plane) is measured as one stored unit thick.
+
+A curve crossing into a neighbouring chunk is bridged with the neighbour's
+first vertex. A chunk that only cross-sections draw takes those vertices
+only from neighbours already at hand (read, being read, or drawn by a view)
+and leaves the other bridges out: they lie off the plane, and reading them
+cost about 70% of a 2-D session's vertex bytes. Should a 3-D view then draw
+that chunk, it is read again with every bridge.
 
 Additive pyramids. A level whose metadata says `refinement: "add"` holds
 only what the coarser levels do not: its complete content is its own data
@@ -217,10 +229,16 @@ cost; an object index and directory listing also change what can be shown.
 | zarr-vectors-tools `skeleton_layout`                      | skeleton layout known                                                                                         | inferred                                                                                                              |
 | `fragment_attributes/object_id`, or ids that are rows     | each fragment's object read directly                                                                          | taken from the level's manifests (a `segment_id` column may hold ids or rows, so it is used only where the two agree) |
 
+A read that fails on the network (Neuroglancer reports it as status 0,
+like a missing key) is not taken as an empty cell: it is tried four times
+over about two seconds, then fails the chunk, with a warning, and Neuroglancer
+asks for the chunk again when the view comes back to it. Nothing read from it
+is kept. Only a key the server says is not there (404, or 403 as S3 says it)
+reads as empty.
+
 A feature is trusted only where the data bears it out: a stamped face group
 whose rows index another fragment, or whose count does not match the
-fragments, sends that chunk back to the whole-cell read with a console
-warning.
+fragments, sends that chunk back to the whole-cell read with a warning.
 
 ## Format support
 
@@ -297,7 +315,12 @@ and those under the mouse) for the platform's Surface controls.
 Caches: decoded chunks (384 MB), raw vertex cells (128 MB) and the bytes of
 byte-range reads (256 MB; objects requested in later waves find their rows in
 an earlier wave's merged read) are shared by every reader of a store and
-bounded by bytes, as are cross-chunk links. The
+bounded by bytes, as are cross-chunk links. Decoded chunks, vertex cells and
+cross-chunk links are also charged to one budget over every store in the
+worker (`DECODED_BUDGET`, 768 MB; `setDecodedCacheBytes`), which lets go of
+the least recently used of any store first, so three stores open together
+hold no more than one. Precomputed mesh stores share a 192 MB budget of
+decoded cells the same way (`MESH_CELL_BUDGET`). The
 worker drops a store's caches, including its shard indexes, when the last
 layer using it is removed, so a store rewritten in place is read afresh once
 its layer is removed and added again; within one layer there is no live
@@ -307,7 +330,14 @@ Editing: the viewer does not edit zarr-vectors stores. Edits made elsewhere
 (zarr-vectors-py's `EditSession`) show after the layer is reloaded, at level
 0; coarser levels show what they held until the pyramid is rebuilt.
 
-Not read yet (reported once in the console):
+Warnings (a store written by a newer version, columns that cannot be read,
+groups past what Neuroglancer can tag, levels skipped) are given once per
+store: in the console, and to the application as a `ngplatform:warning`
+event on `window` (`{ source, store, message }`; ngplatform puts them in the
+Activity log). The worker's own reach the main thread through Neuroglancer's
+RPC (`zarr-vectors/warning`).
+
+Not read yet (a warning):
 
 - Draco-encoded vertices (the level is skipped). zarr-vectors-py also reorders
   vertices when it writes Draco, so its cross-chunk faces would be wrong.
@@ -334,11 +364,11 @@ here in `src/virtual/*.spec.ts`). For large files:
   file itself, which Track filtering uses instead of reading every chunk
   their manifests name. While its first pass runs, its keys are answered
   `503`, which `httpAccess` (`reader.ts`) asks again, as Neuroglancer's
-  reads do. Past the storage limit (View settings → Local tractograms,
+  reads do. Past the storage limit (Settings › Storage → Local tractograms,
   4 GB by default) only a sample is kept: level 0 is then about 1 in 10ᵏ
   streamlines, whole (`coarsening_method: "subsample"`), and the page
   offers the runner's conversion. Past even 1 in 10 000, it fails naming
-  the local runner ("Open through the local runner (Jobs → This
+  the local runner ("Open it through the runner on this computer (Settings › Compute → This
   computer)").
 - **Meshes** of more than a million triangles: one face group per vertex
   fragment in every cell and no cross-cell faces (border vertices are
@@ -346,8 +376,10 @@ here in `src/virtual/*.spec.ts`). For large files:
   mesh_vertex_clustering`, `bin_shape`), so each level is a level of detail
   of the multiscale mesh.
 - An object table whose rows are its ids (no `object_ids` or
-  `object_attributes/segment_id`) makes its segment ids only when something
-  reads them, and does not send them to the chunk worker (`identityTable`
+  `object_attributes/segment_id`, or `object_ids` the writer marks
+  `object_ids_sorted` that start at 0 and end at one less than their count,
+  told from two reads rather than the whole column) makes its segment ids
+  only when something reads them, and does not send them to the chunk worker (`identityTable`
   in `objects.ts`), so tens of millions of streamlines do not cost 8 bytes
   each per level.
 
@@ -355,7 +387,7 @@ here in `src/virtual/*.spec.ts`). For large files:
 
 `properties` is built from level 0's `object_attributes/` (found by listing
 the directory) and its `groups` (`objects.ts`). Its columns are the largest
-download of an open, so the layer does not wait for them: the Seg tab fills
+download of an open, so the layer does not wait for them: the Segments tab fills
 in when they arrive.
 
 - Numbers keep a Neuroglancer type that holds them exactly: 8-32-bit
@@ -384,7 +416,7 @@ in when they arrive.
   Only tags that hold an object are coded; with more than 65,535 there are no
   tags (a warning). There is no `label` property: Neuroglancer already shows
   a segment's tags as its label.
-- Property ids can be filtered in the Seg tab (`[a-zA-Z][a-zA-Z0-9_]*`), are
+- Property ids can be filtered in the Segments tab (`[a-zA-Z][a-zA-Z0-9_]*`), are
   unique ignoring case, and are never `id`, `label` or `group` (the tags); a
   changed name keeps the original as its description. Tag names are unique
   ignoring case too, and a name stored exactly wins over a changed one.

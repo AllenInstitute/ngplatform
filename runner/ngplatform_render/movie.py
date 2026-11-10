@@ -60,11 +60,23 @@ def reshaped(inv_cm: list[float], aspect: float, center=None) -> list[float]:
     return np.linalg.inv(vp).T.ravel().tolist()
 
 
+def rotation_count(degrees: float, step: float) -> int:
+    """How many frames a turn of `degrees` by `step` has (a full circle leaves out its last, the first again)."""
+    if step <= 0 or degrees <= 0:
+        raise ValueError("step and degrees must be positive")
+    return int(np.floor(degrees / step + 1e-9)) + (0 if abs(degrees - 360) < 1e-9 else 1)
+
+
+def keyframe_count(keyframes: list[dict[str, Any]], fps: int) -> int:
+    """How many frames the keyframes make at `fps` (frames_for's count)."""
+    times = [float(k.get("time", 0)) for k in keyframes]
+    return 1 if len(times) < 2 else max(1, int(round((max(times) - min(times)) * fps)) + 1)
+
+
 def rotation_frames(view: dict[str, Any], axis: str, degrees: float, step: float, aspect: float | None = None) -> list[dict[str, Any]]:
     """Views turning about the view's orbit centre, by `step` degrees up to `degrees` (360: a full
     circle, 180: half): about the camera's up axis ("vertical") or its right axis ("horizontal")."""
-    if step <= 0 or degrees <= 0:
-        raise ValueError("step and degrees must be positive")
+    n = rotation_count(degrees, step)
     cam, asp, near, far = camera_from_inverse(view["inv_view_projection"], view.get("orbit_center"))
     centre = np.asarray(view.get("orbit_center") or cam.target, np.float64)
     off = cam.eye - centre
@@ -73,7 +85,6 @@ def rotation_frames(view: dict[str, Any], axis: str, degrees: float, step: float
     right = np.cross(fwd, cam.up)
     right /= np.linalg.norm(right)
     k = cam.up / np.linalg.norm(cam.up) if axis == "vertical" else right
-    n = int(np.floor(degrees / step + 1e-9)) + (0 if abs(degrees - 360) < 1e-9 else 1)
     out = []
     for i in range(n):
         t = np.radians(i * step)
@@ -103,8 +114,8 @@ def frames_for(keyframes: list[dict[str, Any]], fps: int, easing: str = "smooth"
     kf = sorted(keyframes, key=lambda k: float(k.get("time", 0)))
     if len(kf) == 1:
         return [kf[0]["view"]]
-    t0, t1 = float(kf[0].get("time", 0)), float(kf[-1].get("time", 0))
-    n = max(1, int(round((t1 - t0) * fps)) + 1)
+    t0 = float(kf[0].get("time", 0))
+    n = keyframe_count(kf, fps)
     cams = [camera_from_inverse(k["view"]["inv_view_projection"], k["view"].get("orbit_center")) for k in kf]
     out = []
     for i in range(n):

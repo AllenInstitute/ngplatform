@@ -32,7 +32,7 @@ function services() {
     views: { mount: () => () => {} },
     examples: new ExampleRegistry(),
     open: new OpenHandlerRegistry(),
-    ui: { toast: (m) => logs.push(`toast: ${m}`), confirm: async () => true, form: async () => undefined, viewToggle: () => ({ set: () => {}, dispose: () => {} }), overlay: () => ({ element: {} as HTMLElement, dispose: () => {} }), screenshotOverlay: () => () => {} },
+    ui: { toast: (m) => logs.push(`toast: ${m}`), confirm: async () => true, form: async () => undefined, viewToggle: () => ({ set: () => {}, dispose: () => {} }), overlay: () => ({ element: {} as HTMLElement, dispose: () => {} }), screenshotOverlay: () => () => {}, sheet: () => () => {} },
     workspace: {} as WorkspaceApi,
     viewer: {} as ViewerApi,
     slices: {
@@ -125,6 +125,31 @@ describe("manifest checks", () => {
       "activation onView:nowhere names undeclared panel",
       'when clause "undeclaredKey" reads undeclared context key undeclaredKey',
     ]);
+  });
+});
+
+describe("tool panels", () => {
+  it("name their Tools group in the manifest, which the host passes on to the docks", async () => {
+    const manifest: Manifest = {
+      id: "org.test.grouped",
+      name: "Grouped",
+      version: "0.1.0",
+      kind: "tool",
+      contributes: { panels: [{ id: "grouped.panel", title: "Grouped", slot: "left", group: "Space" }] },
+    };
+    expect(checkManifest(manifest)).toEqual([]);
+    const { s, tabs } = services();
+    const host = new PluginHost(s);
+    host.register(manifest, async () => ({ activate() {} }));
+    expect(tabs.map((t) => [t.slot, t.group])).toEqual([["left", "Space"]]);
+    // A left panel goes to the Tools dock under its group, or Other (Python's under Python); bottom panels stay.
+    const { asTool } = await import("../src/ui/docks.js");
+    const render = () => {};
+    expect(asTool({ id: "a", title: "A", slot: "left", group: "Space", render })).toMatchObject({ slot: "right", group: "Space" });
+    expect(asTool({ id: "b", title: "B", slot: "left", render })).toMatchObject({ slot: "right", group: "Other" });
+    expect(asTool({ id: "c", title: "C", slot: "left", render }, "Python")).toMatchObject({ slot: "right", group: "Python" });
+    const bottom: DockTabSpec = asTool({ id: "d", title: "D", slot: "bottom", render });
+    expect([bottom.slot, bottom.group]).toEqual(["bottom", undefined]);
   });
 });
 

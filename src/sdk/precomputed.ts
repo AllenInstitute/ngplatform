@@ -1,8 +1,9 @@
 /**
  * Neuroglancer precomputed volumes, for plugins that read them in their own
  * workers: the `info` file's scales, and their chunks (sharded or not) read
- * and decoded, x fastest, padded to the full chunk shape.  Images: uint8,
- * raw or JPEG.  Segmentations: uint32 or uint64, raw or
+ * and decoded, x fastest, padded to the full chunk shape.  Images: any
+ * integer or float type raw, uint8 as JPEG too, and uint32 or uint64 as
+ * compressed_segmentation.  Segmentations: uint32 or uint64, raw or
  * compressed_segmentation, as 64-bit ids.
  *
  * Sharding is `neuroglancer_uint64_sharded_v1`, as Neuroglancer reads it
@@ -99,7 +100,8 @@ export type RangeRead = (url: string, range?: { offset: number; length: number }
 export const httpRead: RangeRead = async (url, range, signal) => {
   const headers: Record<string, string> = {};
   if (range !== undefined) headers.Range = `bytes=${range.offset}-${range.offset + range.length - 1}`;
-  const response = await fetch(url, { headers, signal });
+  // Ranges skip the browser's HTTP cache: Chromium answers cached range reads of one URL (a shard) one at a time.
+  const response = await fetch(url, range === undefined ? { headers, signal } : { headers, signal, cache: "no-store" });
   if (response.status === 404 || response.status === 403) return undefined;
   if (!response.ok) throw new Error(`${url}: ${response.status} ${response.statusText}`);
   const bytes = new Uint8Array(await response.arrayBuffer());
@@ -132,25 +134,44 @@ export class PrecomputedScale {
 
   /** Chunk (x, y, z) of a uint8 image, or undefined where it has none. */
   async readChunk(position: [number, number, number], signal?: AbortSignal): Promise<Uint8Array | undefined> {
-    const { chunk, scale } = this;
-    if (this.dataType !== "uint8") throw new Error(`${this.dataType} precomputed images are not drawn yet (uint8 only)`);
-    if (scale.encoding !== "raw" && scale.encoding !== "jpeg") throw new Error(`the ${scale.encoding} encoding is not read yet (raw and jpeg only)`);
+    if (this.dataType !== "uint8") throw new Error(`a ${this.dataType} image: its chunks are read with readValues`);
+    return this.readValues(position, signal);
+  }
+
+  /**
+   * Chunk (x, y, z) of an image, as its values' little-endian bytes (the
+   * scale's data type, padded to the full chunk shape), or undefined where
+   * it has none.
+   */
+  async readValues(position: [number, number, number], signal?: AbortSignal): Promise<Uint8Array | undefined> {
+    const { chunk, scale, dataType } = this;
+    const width = ELEMENT_BYTES[dataType];
+    if (width === undefined) throw new Error(`${dataType} values are not read (${Object.keys(ELEMENT_BYTES).join(", ")} only)`);
+    const encoding = scale.encoding;
+    if (encoding === "jpeg" && dataType !== "uint8") throw new Error(`a JPEG chunk of ${dataType} values (JPEG holds uint8 only)`);
+    if (encoding === "compressed_segmentation" && dataType !== "uint32" && dataType !== "uint64") throw new Error(`compressed_segmentation of ${dataType} values (uint32 and uint64 only)`);
+    if (encoding !== "raw" && encoding !== "jpeg" && encoding !== "compressed_segmentation") throw new Error(`the ${encoding} encoding is not read yet (raw, jpeg and compressed_segmentation only)`);
     const extent = this.extent(position);
     const bytes = await this.readBytes(position, signal);
     if (bytes === undefined) return undefined;
     const voxels = extent[0] * extent[1] * extent[2];
     let data: Uint8Array;
-    if (scale.encoding === "jpeg") {
+    if (encoding === "jpeg") {
       const decoder = new JpegDecoder();
       decoder.parse(bytes);
       if (decoder.width * decoder.height !== voxels) throw new Error(`a JPEG chunk of ${decoder.width} × ${decoder.height}, for ${extent.join(" × ")} voxels`);
       data = decoder.getData(decoder.width, decoder.height, false) as Uint8Array;
       if (decoder.numComponents !== 1) data = data.filter((_, i) => i % decoder.numComponents === 0);
+    } else if (encoding === "compressed_segmentation") {
+      const words = new Uint32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + (bytes.byteLength & ~3)));
+      const out = dataType === "uint64" ? new BigUint64Array(voxels) : new Uint32Array(voxels);
+      decodeChannels(out as never, words, 0, [...extent, 1], scale.compressed_segmentation_block_size ?? [8, 8, 8]);
+      data = new Uint8Array(out.buffer);
     } else {
       data = bytes;
-      if (data.byteLength < voxels) throw new Error(`a raw chunk of ${data.byteLength} bytes, for ${voxels} voxels`);
+      if (data.byteLength < voxels * width) throw new Error(`a raw chunk of ${data.byteLength} bytes, for ${voxels} ${dataType} voxels`);
     }
-    return pad(data.subarray(0, voxels), extent, chunk, new Uint8Array(chunk[0] * chunk[1] * chunk[2]));
+    return padBytes(data.subarray(0, voxels * width), extent, chunk, width);
   }
 
   /** Chunk (x, y, z) of a segmentation, as 64-bit ids, or undefined where it has none. */
@@ -261,6 +282,23 @@ export async function readInfo(url: string, read: RangeRead = httpRead, signal?:
   if (type !== undefined && info.type !== type) throw new Error(`${url}: a precomputed ${info.type ?? "source"}, not ${/^[aeiou]/.test(type) ? "an" : "a"} ${type}`);
   if (info.num_channels !== 1) throw new Error(`${url}: ${info.num_channels} channels (one only)`);
   return info;
+}
+
+/** Bytes a voxel of each image data type read takes. */
+export const ELEMENT_BYTES: Record<string, number> = { uint8: 1, int8: 1, uint16: 2, int16: 2, uint32: 4, int32: 4, uint64: 8, int64: 8, float32: 4, float64: 8 };
+
+/** Copies a chunk's `extent` of `width`-byte voxels into the full `chunk` shape, x fastest. */
+function padBytes(data: Uint8Array, extent: number[], chunk: number[], width: number): Uint8Array {
+  if (extent[0] === chunk[0] && extent[1] === chunk[1] && extent[2] === chunk[2]) return data;
+  const out = new Uint8Array(chunk[0] * chunk[1] * chunk[2] * width);
+  const row = extent[0] * width;
+  for (let z = 0; z < extent[2]; ++z) {
+    for (let y = 0; y < extent[1]; ++y) {
+      const from = (z * extent[1] + y) * row;
+      out.set(data.subarray(from, from + row), (z * chunk[1] + y) * chunk[0] * width);
+    }
+  }
+  return out;
 }
 
 /** Copies a chunk's `extent` of voxels into the full `chunk` shape, x fastest. */

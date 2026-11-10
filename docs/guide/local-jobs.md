@@ -1,13 +1,13 @@
 # Jobs on this computer
 
-Some work is too large for a browser tab: filtering a 20 GB tractogram into
+Some work is too large for a browser page: filtering a 20 GB tractogram into
 a new `.trk`, converting it to Zarr Vectors, a density map of millions of
 streamlines. The **runner** does that work as Python processes on your own
-computer. The app starts the jobs and shows them in the **Jobs** tab, under
-**This computer**: each one's process id (PID), progress, log, a Cancel
+computer. The app starts the jobs and shows them in the **Activity** dock at
+the bottom, under **This computer**: each one's process id (PID), progress, log, a Cancel
 button, and its output files with **Open**, which adds them as layers. The
 computers themselves (pairing, what each has, which one takes work) are in
-the **Remote (SSH)** tab at the bottom, for every function that runs on a
+**Settings › Compute** (the gear icon), for every function that runs on a
 runner: jobs, rendering and plugins' services.
 
 The runner is in this repository's `runner/` folder (a Python package,
@@ -35,26 +35,27 @@ Do one of these, once per browser:
 
 - Open the link the runner printed. The app asks whether to pair with the
   runner at that address; choose **Pair**.
-- Or, in the **Remote (SSH)** tab under **This computer**, enter the
+- Or, in **Settings › Compute** under **This computer**, enter the
   address and the token, then **Pair**.
 
 The address and token are kept in this browser (not in links you share).
 The section then shows the runner's version, its folders and the
-zarr-vectors-tools version jobs run with. **Unpair** forgets the pairing.
-If the runner is stopped, the section says it does not answer; start it
-again and choose **Try again**. Its jobs are in the **Jobs** tab, with
-**Convert a tractogram…** and **Open a file…**.
+zarr-vectors-tools version jobs run with, and **Served…** lists the files
+it serves to the viewer. **Unpair** forgets the pairing. If the runner is
+stopped, the section says it does not answer; start it again and choose
+**Try again**. Its jobs are in the **Activity** dock, under **This
+computer**, with **Convert a tractogram…** and **Open a file…**.
 
 ## What it does
 
 | From | What |
 |---|---|
 | Track filtering: **Run on this computer** (by each group's Save .trk) | Sends the group's regions (spheres, boxes, disks, masks, with "either end" and "both ends") and attribute ranges as a filter job over the whole tractogram. You choose the folder and name, and which outputs: a `.trk`, a Zarr Vectors store with coarser levels, a density map. The group shows the job's progress; when it is done, the outputs are added as layers. |
-| Jobs tab: **Convert a tractogram…** | A `.trk`, `.tck` or `.trx` becomes a Zarr Vectors store with three coarser levels, which the viewer and Track filtering read a chunk at a time however large the file. |
-| Jobs tab: **Open a file…** | Adds a store, tractogram, mesh, SWC, point table or NIfTI image under the runner's folders as a layer. |
-| Dropping a tractogram past the browser's storage limit | Reading a tractogram in the browser copies its points into the browser's storage (about 1.5 times the file). When that is past the limit (**View settings → Local tractograms**, 4 GB by default), the app asks: **Open 1 in 10** (or 1 in 100 …: only a sample is copied, within the limit), **Convert it** (a job writes a Zarr Vectors store next to the file, then opens it; every streamline, read a chunk at a time) or **Serve it** (a process reads the file once and serves it to the viewer as a store; it needs memory for the whole file). The browser does not tell the page where a dropped file is, so the app looks for a file of that name and size under the runner's folders, or asks you to choose it. |
+| Activity dock, under This computer: **Convert a tractogram…** | A `.trk`, `.tck` or `.trx` becomes a Zarr Vectors store with three coarser levels, which the viewer and Track filtering read a chunk at a time however large the file. |
+| Activity dock, under This computer: **Open a file…** | Adds a store, tractogram, mesh, SWC, point table or NIfTI image under the runner's folders as a layer. |
+| Dropping a tractogram past the browser's storage limit | Reading a tractogram in the browser copies its points into the browser's storage (about 1.5 times the file). When that is past the limit (**Settings › Storage → Local tractograms**, 4 GB by default), the app asks: **Open 1 in 10** (or 1 in 100 …: only a sample is copied, within the limit), **Convert it** (a job writes a Zarr Vectors store next to the file, then opens it; every streamline, read a chunk at a time) or **Serve it** (a process reads the file once and serves it to the viewer as a store; it needs memory for the whole file). The browser does not tell the page where a dropped file is, so the app looks for a file of that name and size under the runner's folders, or asks you to choose it. |
 
-Each job in the Jobs tab shows its title, state (queued, running, done,
+Each job in the Activity dock shows its title, state (queued, running, done,
 failed, cancelled), PID, time, progress and last message. **Log** shows
 the end of its output. **Cancel** ends its process and any it started; a
 cancelled filter job deletes the `.trk` it was writing. **Open** adds an
@@ -62,7 +63,7 @@ output as a layer. Files the runner serves to the viewer appear as
 "Serve …" jobs while they are served; **Stop** ends one. Two jobs run at
 once (`--max-jobs`); more wait in a queue.
 
-Jobs carry on if you close the tab or stop the runner. When the runner
+Jobs carry on if you close the page or stop the runner. When the runner
 starts again it lists them, still running or finished, with their logs.
 
 ### Where results are
@@ -86,7 +87,7 @@ conversion of the streamlines that pass.
 The runner can also be on another computer: a workstation with a GPU, or a
 node of a cluster in an interactive job. The browser reaches it through an
 SSH tunnel, at an address of its own computer (`http://localhost:7000`).
-The Remote (SSH) tab then has a section for that computer, under its name,
+Settings › Compute then has a section for that computer, under its name,
 beside **This computer**, with a line saying what it has, such as
 
 ```
@@ -96,11 +97,11 @@ workstation (czi001): RTX A6000, 47 GB free — render ready
 (the computer's name, its GPUs with their free memory, and the services
 its runner runs, such as a renderer). The app checks every computer every
 5 seconds and says when one does not answer (the tunnel closed, the runner
-stopped). The Jobs tab has a section for it too: its jobs, **Convert a
+stopped). The Activity dock has a section for it too: its jobs, **Convert a
 tractogram…** and **Open a file…** (files under its folders, served to the
 viewer through the tunnel).
 
-**Run work on**, at the top of the Remote (SSH) tab, says which computer
+**Run work on**, at the top of Settings › Compute, says which computer
 takes work that can run on any: **Automatic** (a computer with a GPU
 first), or one by name. Plugins choose among the computers with
 `ctx.hosts`, which tries that one first.
@@ -146,7 +147,7 @@ ssh -N -L 7000:127.0.0.1:8765 me@workstation
 ssh -N -J me@login.cluster -L 7000:127.0.0.1:8765 node123     (a cluster node)
 ```
 
-Then open the link the runner printed, or in the Remote (SSH) tab choose
+Then open the link the runner printed, or in Settings › Compute choose
 **Add a computer (SSH)…** and enter a name, the address `http://localhost:7000` and the
 token it printed. For a second computer use another local port (`-L
 7001:127.0.0.1:8765`, address `http://localhost:7001`).
@@ -188,9 +189,10 @@ once per browser, like This computer, and kept in this browser.
   bits). They need no token, because the viewer cannot send one, but a web
   page can read them only from the origins the runner allows (this app's),
   so a shared link does not let another site read them. A file served by a
-  process has a **Stop** in the Jobs tab, which also keeps it from being
+  process has a **Stop** in the Activity dock (and in **Served…**), which also keeps it from being
   served again when the runner restarts. Folders and NIfTI files served as
   they are have no row; they stop being served when the runner stops.
 - Chrome asks before a site may reach your computer's own network
-  addresses: allow it for this app. The runner answers the checks Chrome
+  addresses: allow it for this app. The runner works from any browser
+  the app supports; see [Supported browsers](../index.md#supported-browsers). The runner answers the checks Chrome
   makes (Private Network Access).

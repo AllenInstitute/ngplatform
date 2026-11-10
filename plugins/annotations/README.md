@@ -2,8 +2,8 @@
 
 ![Labels pinned to structures, in 2-D and 3-D](../../docs/images/plugins/labels.png)
 
-Everything added to annotate a dataset, in the **Annotations** tab (four
-folding sections), and the **Annotation table** in the bottom dock. Label
+Everything added to annotate a dataset, in the **Annotations** panel in
+the Tools dock (four folding cards), and the **Annotation table** in the Activity dock. Label
 volumes drawn by hand are the [Segmentation plugin](../segmentation/README.md).
 
 - **Annotate**: points, lines, boxes, ellipsoids and polylines in local
@@ -25,35 +25,46 @@ volumes drawn by hand are the [Segmentation plugin](../segmentation/README.md).
   of boxes and ellipsoids, in physical units
   through each layer's transform; an image's profile along a line, plotted
   and saved as CSV. Drawing is Neuroglancer's own annotation tools, in a
-  `measurements` layer this section makes.
+  `measurements` layer this card makes.
 - **Statistics**: an image's voxel count, volume, mean, SD, min, max and
   median inside a box, an ellipsoid, a label of a label volume drawn in the
-  Segmentation tab, or a label of any readable segmentation layer (an atlas), read at the finest level
-  that fits a memory budget (as Registration's save picks a level). Label
-  volumes drawn in the Segmentation tab come from that plugin's
+  Segmentation panel, or a label of any readable segmentation layer (an atlas), read at the finest level
+  that fits a memory budget (as Registration's save picks a level); Cancel
+  stops it, and a new Compute replaces the one under way. Label volumes
+  drawn in the Segmentation panel come from that plugin's
   `segmentation.labelVolumes` service.
 
-It was the Labels plugin: the id (`org.ngplatform.annotations`), the tab's
+Each card is built from the SDK's parts (`@ngplatform/sdk/dom`) and drawn
+once, its parts that change (a list, the choices, the results) regions drawn
+again only when what they show changes: moving about changes the viewer's
+state, which would otherwise redraw them. Explanations are behind (i)
+controls, empty states carry their action, and the status lines report
+progress and errors only. An edit to a layer made while an annotation is
+being drawn waits for drawing to end, which the plugin hears from the
+state's changes and from the key or click that ends it (it does not poll).
+
+It was the Labels plugin: the id (`org.ngplatform.annotations`), the panel's
 id (`annotations.labels`) and the state's key (`labels`, version 1) are
-unchanged, so links and docked tabs from then still open. The slice holds
-the labels (`labels`) and the Annotate section's record (`annotate`).
+unchanged, so links and docked panels from then still open. The slice holds
+the labels (`labels`) and the Annotate card's record (`annotate`).
 
 | File | What |
 |---|---|
-| `manifest.ts` | The tab and the annotation table, commands, the state slice |
-| `plugin.ts` | Activation; the tab's folding sections |
+| `manifest.ts` | The panel and the annotation table, commands, the state slice |
+| `plugin.ts` | Activation; the panel's cards, each drawn once opened |
 | `values.ts` | Fields and their values: which are annotation properties, which the plugin keeps (pure) |
 | `groups.ts` | Groups: the tree, the `group` property, the shader that hides and colours (pure) |
 | `ontology.ts` | Term lists: plain, OBO, JSON, a lookup table; finding a term (pure) |
 | `table.ts` | The table's rows, queries, sorting, CSV out and in (pure) |
 | `annotate.ts` | The scene's annotation layers and the plugin's record of them: writing both, tools, selection, new annotations, the tooltip |
-| `annotate_panel.ts`, `table_panel.ts` | The Annotate section; the annotation table and its editor |
-| `labels.ts` | Labels: layout (beside the pin, or callouts at the sides), the overlay, screenshots, the section |
+| `annotate_panel.ts`, `table_panel.ts` | The Annotate card; the annotation table and its editor |
+| `labels.ts` | Labels: layout (beside the pin, or callouts at the sides), the overlay, screenshots, the card |
 | `geometry.ts` | Placing a grid of voxels or an annotation layer in the global space through its layer's transform; lengths in mm; a 2-D view's pixel back to a position |
-| `measure.ts`, `measure_panel.ts`, `plot.ts` | Measurements and profiles (pure), the section, the profile plot |
-| `statistics.ts`, `statistics_panel.ts` | Regions and summaries (pure, run in the worker), the section |
+| `measure.ts`, `measure_panel.ts`, `plot.ts` | Measurements and profiles (pure), the card (it also picks Statistics' box tool), the profile plot |
+| `statistics.ts`, `statistics_panel.ts` | Regions and summaries (pure, run in the worker), the card |
 | `voxel_worker.ts`, `voxels.ts` | A worker reading images (through the volume view's reader): levels, values at points, blocks on another grid, statistics in a region |
-| `scene.ts`, `ui.ts`, `style.ts` | Shared helpers (also used by the Segmentation plugin) |
+| `scene.ts`, `ui.ts` | Shared helpers (also used by the Segmentation plugin) |
+| `style.ts` | The panel's and the table's own styles (the rest are the app's shared classes) |
 | `tests/` | `npm test` runs them |
 
 ![The annotation table, groups and fields, coloured by cell type](../../docs/images/plugins/annotations-table.png)

@@ -34,6 +34,7 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
     },
     switchScene: (id) => store.switchScene(id),
     newScene: (options) => store.newScene(options),
+    renameScene: (id, name) => store.renameScene(id, name),
     datasets: () => store.datasets().map(info),
     sceneDatasets: (): SceneDatasetInfo[] => {
       const layers = new Map(layerInfos().map((l) => [l.name, l]));
@@ -98,6 +99,8 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
     getState: () => store.ng(),
     patchState: (edit, options) => store.patchState(edit, options),
     onStateChanged: (callback) => engine.onStateChanged(callback),
+    layersGeneration: () => engine.layersGeneration(),
+    statePart: (key) => engine.statePart(key),
     layers: layerInfos,
     layerSpec: (name) => engine.layerSpec(name),
     setLayerVisible: (name, visible) => store.setLayerVisible(name, visible),

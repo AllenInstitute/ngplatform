@@ -1,6 +1,6 @@
-/** The Filters tab's steps as chunkmirage ops. */
+/** The Filters panel's steps as chunkmirage ops. */
 import { describe, expect, it } from "vitest";
-import { blankSetting, FRANGI, makesLabels, MEDIAN, newStep, opOf, opsOf, readSteps, type Step, stepsOf } from "../pipeline.js";
+import { blankSetting, bounded, CHUNK, FRANGI, LIMITS, makesLabels, MEDIAN, newStep, opOf, opsOf, readSteps, type Step, stepsOf } from "../pipeline.js";
 
 const halo = (code: unknown) => Number(/^#halo (\d+)$/m.exec(String(code))?.[1]);
 
@@ -85,5 +85,48 @@ describe("steps read back", () => {
     expect(blankSetting(emptied[0])).toBe(true);
     expect(emptied[1].kind).toBe("gaussian");
     expect(readSteps(undefined)).toBeUndefined();
+  });
+});
+
+describe("the sizes", () => {
+  /** The context each op reads on each side, as chunkmirage works it out. */
+  const reads = (op: Record<string, unknown>): number => {
+    switch (op.op) {
+      case "gaussian":
+        return Math.ceil(3 * Number(op.sigma));
+      case "dog":
+        return Math.ceil(3 * 1.6 * Number(op.sigma));
+      case "uniform":
+        return Math.floor(Number(op.size) / 2) + 1;
+      case "morphology":
+        return 2 * Number(op.radius) + 1;
+      default:
+        return halo(op.code);
+    }
+  };
+
+  it("read at most half a chunk around each chunk, at their largest", () => {
+    const largest: Step[] = [
+      { ...newStep("gaussian"), sigma: LIMITS.sigma },
+      { ...newStep("dog"), sigma: LIMITS.dogSigma },
+      { ...newStep("mean"), radius: LIMITS.radius },
+      { ...newStep("median"), radius: LIMITS.radius },
+      { ...newStep("morphology"), radius: LIMITS.radius },
+      { ...newStep("frangi"), sigmaLow: LIMITS.frangiSigma, sigmaHigh: LIMITS.frangiSigma },
+    ];
+    for (const op of opsOf(largest)) expect(reads(op)).toBeLessThanOrEqual(CHUNK[0] / 2);
+  });
+
+  it("are kept within their limits, whether typed, kept in the workspace or read from a link", () => {
+    expect(opOf({ ...newStep("gaussian"), sigma: 400 })).toEqual({ op: "gaussian", sigma: LIMITS.sigma });
+    expect(opOf({ ...newStep("dog"), sigma: 400 })).toEqual({ op: "dog", sigma: LIMITS.dogSigma });
+    expect(halo(opOf({ ...newStep("frangi"), sigmaLow: 1, sigmaHigh: 1e6 }).code)).toBe(3 * LIMITS.frangiSigma + 1);
+    expect(halo(opOf({ ...newStep("median"), radius: 1e6 }).code)).toBe(LIMITS.radius);
+    expect(readSteps([{ kind: "morphology", radius: 99 }])![0].radius).toBe(LIMITS.radius);
+    expect(stepsOf([{ op: "gaussian", sigma: 1e4 }])![0].sigma).toBe(LIMITS.sigma);
+    expect(stepsOf([{ op: "uniform", size: 401 }])![0].radius).toBe(LIMITS.radius);
+    expect(bounded({ ...newStep("gaussian"), sigma: 0 }).sigma).toBe(0.1);
+    // An emptied setting stays empty, for the panel to ask for.
+    expect(Number.isNaN(bounded({ ...newStep("gaussian"), sigma: Number.NaN }).sigma)).toBe(true);
   });
 });

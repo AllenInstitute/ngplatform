@@ -17,7 +17,7 @@
 /**
  * Segment properties from object attributes and groups, read from
  * `props_types` (see generate.py's `props_fixture`) and from fixtures with
- * arrays laid over them, and queried through Neuroglancer's own Seg-tab
+ * arrays laid over them, and queried through Neuroglancer's own Segments-tab
  * query code.
  */
 
@@ -337,8 +337,10 @@ describe("groups as tags", () => {
 describe("segment ids", () => {
   it("sorts ids and keeps the first of duplicates", async () => {
     const store = access("props_types");
-    const table = (await readObjectTable(store, "0"))!;
-    table.segmentIds = BigUint64Array.from([9n, 3n, 7n, 3n, 1n, 12n]);
+    const table = {
+      ...(await readObjectTable(store, "0"))!,
+      segmentIds: BigUint64Array.from([9n, 3n, 7n, 3n, 1n, 12n]),
+    };
     const warnings: string[] = [];
     const map = (await readSegmentProperties(store, "0", table, warnings))!;
     expect(Array.from(map.ids, Number)).toEqual([1, 3, 7, 9, 12]);

@@ -1,5 +1,5 @@
 /**
- * The time series plugin: the Time series tab, with the time course of the
+ * The time series plugin: the Time series panel, with the time course of the
  * voxel under the mouse in an image with a time axis, pinned voxels and
  * region means beside it, playing through time, and the series saved as
  * CSV.
@@ -17,67 +17,37 @@
  * are read again when the link is opened.
  */
 import type { Disposer, PlatformContext, PluginModule } from "@ngplatform/sdk";
-import { downloadBlob, el, safeFileName } from "@ngplatform/sdk/dom";
+import { button, checkbox, downloadBlob, el, emptyState, field, icon, iconButton, region, safeFileName, type Settable, type Slider, select, slider, statusLine } from "@ngplatform/sdk/dom";
 import { omeZarrUrl } from "../volume-view/sources.js";
 import { type ReadPlan, SeriesClient, type SeriesInfo } from "./client.js";
 import { TIME_SERIES_PANEL } from "./manifest.js";
-import { Plot, type PlotSeries } from "./plot.js";
+import { Plot, type PlotSeries, swatch } from "./plot.js";
 import { describePlan, movingPlan } from "./reader.js";
 import { type AnnotationJson, regionVoxels, shapeOf } from "./region.js";
 import { COLOURS, coordinateOf, formatTime, freeColour, indexAt, nextIndex, percentChange, percentChangeSpread, RATES, seriesCsv, stepIndex, type TimeAxis, timeAxis, timeOf, timesOf, voxelAt, voxelLabel } from "./series.js";
 import { LayerMap, type Place, placeOf } from "./space.js";
 import { nearestOf, type Parcellation, parcelAt, parcelCourseOf, parcelLabel, parcellationsOf, storePoint, type SurfaceSeries, surfaceAxis, surfaceSeriesOf, vertexLabel, vertexReach, zarrVectorsStore } from "./surface.js";
 
-const NS = "http://www.w3.org/2000/svg";
-/** Transport icons, 16 × 16. */
-const ICONS: Record<string, string> = {
-  first: "M3 3h2v10H3zM13 3v10L6 8z",
-  previous: "M12 3v10L5 8zM3 3h2v10H3z",
-  play: "M4 2.5v11L13 8z",
-  pause: "M4 3h3v10H4zM9 3h3v10H9z",
-  next: "M4 3v10l7-5zM11 3h2v10h-2z",
-  last: "M3 3v10l7-5zM11 3h2v10h-2z",
-};
-function icon(name: string): SVGSVGElement {
-  const s = document.createElementNS(NS, "svg");
-  s.setAttribute("viewBox", "0 0 16 16");
-  s.setAttribute("aria-hidden", "true");
-  const p = document.createElementNS(NS, "path");
-  p.setAttribute("d", ICONS[name]);
-  p.setAttribute("fill", "currentColor");
-  s.append(p);
-  return s;
-}
-
 const STYLE = `
 .dock-pane.ts-host { padding: 0; height: 100%; }
-.ts { display: grid; grid-template-columns: 264px minmax(0, 1fr); height: 100%; min-height: 0; font-size: 12px; }
+.ts { display: grid; grid-template-columns: 264px minmax(0, 1fr); height: 100%; min-height: 0; font-size: var(--fs-body); }
 .ts[hidden] { display: none; }
-.ts-empty { padding: 12px; }
-.ts-side { display: flex; flex-direction: column; gap: 7px; padding: 8px 10px; border-right: 1px solid var(--line); overflow: auto; min-height: 0; }
+.ts-empty { padding: var(--sp-5); }
+.ts-side { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4) var(--sp-5); border-right: 1px solid var(--line); overflow: auto; min-height: 0; }
 .ts-side select { min-width: 0; width: 100%; }
-.ts-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-.ts-row select { width: auto; flex: none; min-width: 0; padding-right: 2px; }
-.ts-region select { flex: 1; }
-.ts-time { font: 12px/1.4 var(--mono); color: var(--text); }
-.ts-time .ts-of { color: var(--faint); }
-.ts-status { color: var(--faint); min-height: 1.4em; overflow-wrap: anywhere; }
-.ts-status.error { color: var(--err); }
-.ts-spread { justify-content: space-between; flex-wrap: nowrap; }
-.ts-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 6px 10px 4px; }
-.ts-head { display: flex; align-items: flex-start; gap: 12px; flex: none; }
-.ts-actions { display: flex; align-items: center; gap: 4px 8px; flex: none; }
-.ts-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; flex: 1; min-width: 0; min-height: 24px; }
-.ts-key { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); white-space: nowrap; }
-.ts-key.ts-note { white-space: normal; }
-.ts-key button { border: 0; background: transparent; color: var(--faint); cursor: pointer; padding: 0 2px; font-size: 14px; line-height: 1; }
-.ts-key button:hover { color: var(--text); }
-.ts-swatch { display: inline-block; width: 12px; height: 2px; vertical-align: middle; }
+.ts-side .row select { width: auto; flex: none; }
+.ts-side .row.ts-fill select { flex: 1; width: auto; }
+.ts-of { color: var(--faint); margin-left: var(--sp-3); }
+.ts-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: var(--sp-3) var(--sp-5) var(--sp-2); }
+.ts-head { display: flex; align-items: flex-start; gap: var(--sp-5); flex: none; }
+.ts-legend { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-5); align-items: center; flex: 1; min-width: 0; min-height: 24px; }
+.ts-key { display: inline-flex; align-items: center; gap: var(--sp-3); color: var(--muted); white-space: nowrap; }
+.ts-swatch { display: inline-block; width: 12px; height: 2px; vertical-align: middle; color: var(--text); flex: none; }
 .ts-plot-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.ts-plot { flex: 1; min-height: 0; width: 100%; display: block; }
+.ts-plot { flex: 1; min-height: 0; width: 100%; display: block; color: var(--text); }
 .ts-plot .ts-grid { stroke: var(--line); stroke-width: 1; }
 .ts-plot .ts-axis { stroke: var(--line-strong); stroke-width: 1; }
-.ts-plot .ts-tick { fill: var(--faint); font: 10px var(--mono); }
+.ts-plot .ts-tick { fill: var(--faint); font: var(--fs-caption) var(--mono); }
 .ts-plot .ts-line { fill: none; stroke-width: 2; stroke-linejoin: round; }
 .ts-plot .ts-band { stroke: none; opacity: 0.18; }
 .ts-plot .ts-coarse { stroke-dasharray: 5 3; }
@@ -86,7 +56,7 @@ const STYLE = `
 .ts-plot .ts-cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 2; }
 .ts-plot .ts-dot { stroke: var(--ink-2); stroke-width: 2; }
 .ts-plot .ts-hit { cursor: crosshair; }
-.ts-readout { flex: none; color: var(--muted); font: 11px/1.5 var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ts-readout { flex: none; color: var(--muted); font: var(--fs-caption)/1.5 var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 `;
 
 /** A pinned series: a voxel, the mean over a region drawn in an annotation layer, a surface's vertex, or the mean over a surface's parcel. */
@@ -183,12 +153,34 @@ interface SurfaceStep {
   series: SurfaceSeries;
 }
 
-/** The colour of the series under the mouse: the docks' text colour, apart from the pins'. */
-const CURSOR_COLOUR = "#dedede";
+/** The colour of the series under the mouse: the text colour (--text, set on the plot and the swatches), apart from the pins'. */
+const CURSOR_COLOUR = "currentColor";
 
-class TimeSeries {
+/** What the panel asks of the time series worker (a stand-in in the tests). */
+export type SeriesSource = Pick<SeriesClient, "open" | "mean" | "meanIfCached" | "dispose">;
+
+/** An image layer as the Image menu sees it: whether it shows a time axis (undefined while it loads) and whether its source can be read. */
+export interface ImageLayer {
+  name: string;
+  time: boolean | undefined;
+  readable: boolean;
+}
+
+/**
+ * Why image layers are not in the Image menu, in a line: those with a
+ * time axis in a format the panel cannot read (precomputed, N5, a remote
+ * NIfTI), then, with `noTime`, those with no time axis.  Layers still
+ * loading are left out.
+ */
+export function notRead(images: ImageLayer[], noTime = true): string {
+  const parts = images.filter((i) => i.time === true && !i.readable).map((i) => `“${i.name}”: its format isn't readable here`);
+  const none = noTime ? images.filter((i) => i.time === false).map((i) => `“${i.name}”`) : [];
+  if (none.length > 0) parts.push(`${none.join(", ")} ${none.length === 1 ? "has" : "have"} no time axis`);
+  return parts.join("; ");
+}
+
+export class TimeSeries {
   private saved: Saved;
-  private readonly client = new SeriesClient();
   /** Image layers with a time dimension, and time series on surface layers. */
   private candidates: Candidate[] = [];
   /** Each local surface store's time series, from its header, once read. */
@@ -222,6 +214,8 @@ class TimeSeries {
   private readonly pinned = new Map<number, Read>();
   private status = "";
   private statusError = false;
+  /** What Retry does after the error in the status, if anything. */
+  private statusRetry: (() => void) | undefined;
   private playing: ReturnType<typeof setTimeout> | undefined;
   private rate: number;
   private loop: boolean;
@@ -233,7 +227,10 @@ class TimeSeries {
   private updateTime: (() => void) | undefined;
   private readonly offs: Disposer[] = [];
 
-  constructor(private readonly ctx: PlatformContext) {
+  constructor(
+    private readonly ctx: PlatformContext,
+    private readonly client: SeriesSource = new SeriesClient(),
+  ) {
     this.saved = readSaved(ctx.state.get());
     this.rate = ctx.settings.get<number>("rate") ?? 2;
     this.loop = ctx.settings.get<boolean>("loop") ?? true;
@@ -283,9 +280,11 @@ class TimeSeries {
     this.ctx.state.set(this.saved);
   }
 
-  private setStatus(text: string, error = false): void {
+  /** Progress, or an error (with what Retry does), in the status line; "" clears it. */
+  private setStatus(text: string, error = false, retry?: () => void): void {
     this.status = text;
     this.statusError = error;
+    this.statusRetry = error ? retry : undefined;
     this.update?.();
   }
 
@@ -306,14 +305,9 @@ class TimeSeries {
    */
   private findCandidates(): Candidate[] {
     const layers = this.ctx.viewer.layers();
-    const images: Candidate[] = layers
-      .filter((l) => l.type === "image")
-      .map((l) => l.name)
-      .filter((name) => {
-        const t = this.ctx.viewer.layerTransform(name);
-        return t !== undefined && t.input.names.some((n, i) => t.input.units[i] === "s" || n.replace(/['^]$/, "") === "t") && this.sourceOf(name) !== undefined;
-      })
-      .map((name) => ({ id: name, label: name, layer: name }));
+    const images: Candidate[] = this.imageLayers()
+      .filter((i) => i.time === true && i.readable)
+      .map(({ name }) => ({ id: name, label: name, layer: name }));
     const surfaces: Candidate[] = [];
     for (const l of layers) {
       if (l.type === "image") continue;
@@ -326,6 +320,18 @@ class TimeSeries {
       for (const series of known) surfaces.push({ id: `${l.name} · ${series.name}`, label: `${l.name}: ${series.name} (${series.source.split("/").pop()})`, layer: l.name, surface: { store, series } });
     }
     return [...images, ...surfaces];
+  }
+
+  /** The image layers: whether each shows a time dimension (one in seconds, or named t) and whether the panel can read it. */
+  private imageLayers(): ImageLayer[] {
+    return this.ctx.viewer
+      .layers()
+      .filter((l) => l.type === "image")
+      .map(({ name }) => {
+        const t = this.ctx.viewer.layerTransform(name);
+        const time = t === undefined ? undefined : t.input.names.some((n, i) => t.input.units[i] === "s" || n.replace(/['^]$/, "") === "t");
+        return { name, time, readable: this.sourceOf(name) !== undefined };
+      });
   }
 
   /** A surface store's time series, from its header; the candidates again once read. */
@@ -381,6 +387,23 @@ class TimeSeries {
   /** The image layer chosen (its name), or a surface's series (the candidate's id). */
   private layer(): string | undefined {
     return this.chosen()?.id;
+  }
+
+  /** Opens the chosen image again (Retry after it could not be read). */
+  private reopen(): void {
+    this.infoUrl = undefined;
+    this.setStatus("");
+    void this.refresh();
+  }
+
+  /** Reads again the series that could not be read: the pins and the voxel or vertex under the mouse. */
+  private retryReads(): void {
+    for (const [id, read] of this.pinned) if (read.error !== undefined) this.pinned.delete(id);
+    if (this.cursor?.read.error !== undefined) this.cursor = undefined;
+    if (this.vertexCursor?.read.error !== undefined) this.vertexCursor = undefined;
+    this.setStatus("");
+    this.readPins();
+    this.readCursor();
   }
 
   private choose(layer: string): void {
@@ -469,7 +492,7 @@ class TimeSeries {
           }
           read.controller = undefined;
           read.error = e.message;
-          this.setStatus(`Could not read ${what}: ${e.message}`, true);
+          this.setStatus(`Could not read ${what}: ${e.message}`, true, () => this.retryReads());
         },
       );
   }
@@ -515,7 +538,7 @@ class TimeSeries {
     try {
       found = nearestOf(await this.ctx.workspace.local.send(surface.store, { series: surface.series.name, nearest: point, within: vertexReach(this.spacings.get(surface.store), t) }));
     } catch (e) {
-      if (lookup === this.vertexLookups && this.surface === surface) this.setStatus(`Could not find the vertex under the mouse: ${(e as Error).message}`, true);
+      if (lookup === this.vertexLookups && this.surface === surface) this.setStatus(`Could not find the vertex under the mouse: ${(e as Error).message}`, true, () => this.retryReads());
       return;
     }
     if (lookup !== this.vertexLookups || this.surface !== surface || found === undefined) return;
@@ -538,7 +561,7 @@ class TimeSeries {
       this.drawPlot();
     } catch (e) {
       read.error = (e as Error).message;
-      this.setStatus(`Could not read ${what}: ${read.error}`, true);
+      this.setStatus(`Could not read ${what}: ${read.error}`, true, () => this.retryReads());
     }
   }
 
@@ -596,7 +619,7 @@ class TimeSeries {
       if (signal.aborted) return;
       read.controller = undefined;
       read.error = (e as Error).message;
-      this.setStatus(`Could not read the voxel under the mouse: ${read.error}`, true);
+      this.setStatus(`Could not read the voxel under the mouse: ${read.error}`, true, () => this.retryReads());
     }
   }
 
@@ -720,7 +743,7 @@ class TimeSeries {
     }
     const { map, info } = this;
     if (map === undefined || info === undefined) {
-      this.ctx.ui.toast("Choose an image with a time axis in the Time series tab first.");
+      this.ctx.ui.toast("Choose an image with a time axis in the Time series panel first.");
       return;
     }
     // The voxel under the mouse now (the plotted one is read a moment after the mouse moves).
@@ -797,7 +820,7 @@ class TimeSeries {
       const kept = this.saved.surfaceTimes?.[surfaceKey(surface)];
       if (kept !== undefined && kept !== answer.time) void this.showOnSurface(kept);
     } catch (e) {
-      if (this.surface === surface) this.setStatus(`Could not reach ${surface.series.name}: ${(e as Error).message}`, true);
+      if (this.surface === surface) this.setStatus(`Could not reach ${surface.series.name}: ${(e as Error).message}`, true, () => (this.setStatus(""), void this.surfaceTime(surface)));
     }
   }
 
@@ -881,7 +904,7 @@ class TimeSeries {
       this.drawPlot();
     } catch (e) {
       read.error = (e as Error).message;
-      this.setStatus(`Could not read ${what}: ${read.error}`, true);
+      this.setStatus(`Could not read ${what}: ${read.error}`, true, () => this.retryReads());
     }
   }
 
@@ -910,7 +933,7 @@ class TimeSeries {
         if (this.playing === undefined) this.keepSurfaceTime();
       }
     } catch (e) {
-      this.setStatus(`Could not show time point ${i}: ${(e as Error).message}`, true);
+      this.setStatus(`Could not show time point ${i}: ${(e as Error).message}`, true, () => (this.setStatus(""), void this.showOnSurface(i)));
     } finally {
       this.surfaceSending = false;
     }
@@ -1010,191 +1033,255 @@ class TimeSeries {
 
   // ------------------------------------------------------------- panel
 
-  /** The surface's parcels: a parcellation, a parcel, and pins of their mean (and SD). */
-  private parcelRow(): Node | string {
-    const list = this.surfaceParcellations();
-    const parcellation = this.chosenParcellation();
-    if (parcellation === undefined) return "";
-    const labels = [...parcellation.labels].sort((a, b) => a.name.localeCompare(b.name));
-    if (!labels.some((l) => l.code === this.parcel)) this.parcel = labels[0]?.code;
-    const which =
-      list.length > 1
-        ? el(
-            "select",
-            { class: "text-input", "aria-label": "Parcellation", title: "The parcellation", onchange: (e: Event) => ((this.parcellation = (e.target as HTMLSelectElement).value), (this.parcel = undefined), this.update?.()) },
-            ...list.map((p) => el("option", { value: p.name, selected: p === parcellation }, p.name)),
-          )
-        : "";
-    const parcel = el(
-      "select",
-      { class: "text-input", "aria-label": "Parcel", title: `A label of ${parcellation.name} (how many vertices have it)`, onchange: (e: Event) => (this.parcel = Number((e.target as HTMLSelectElement).value)) },
-      ...labels.map((l) => el("option", { value: l.code, selected: l.code === this.parcel }, `${l.name} (${l.vertices})`)),
-    );
-    return el(
-      "div",
-      { class: "ts-row ts-region" },
-      which,
-      parcel,
-      el("button", { class: "btn outline small", type: "button", title: "Pin the mean (and SD) over the parcel's vertices", onclick: () => this.parcel !== undefined && this.pinParcel(parcellation, this.parcel) }, "Pin mean"),
-      el("button", { class: "btn outline small", type: "button", title: "Pin the mean over the parcel of the vertex under the mouse (Alt+Shift+M)", onclick: () => this.pinItsParcel() }, "Its parcel"),
-    );
-  }
-
+  /**
+   * Draws the panel once into `host` and keeps it up to date in place
+   * (plugins/README.md, "Building a panel"): the controls are set from the
+   * state with `set()`, and the legend and the empty state are `region()`s,
+   * so a read, a step or playing never closes an open select.  While a
+   * series plays only the time readout, the slider and the plot's marker
+   * change (`updateTime`).
+   */
   render(host: HTMLElement): Disposer {
-    host.classList.add("ts-host");
+    const ctx = this.ctx;
+    const hostClass = host.className;
+    host.className = `${hostClass} ts-host`.trim();
     const plot = (this.plot = new Plot((i) => this.show(i)));
-    const side = el("div", { class: "ts-side" });
-    const legend = el("div", { class: "ts-legend" });
-    const actions = el("div", { class: "ts-actions" });
-    const time = el("div", { class: "ts-time", "aria-live": "off" });
-    const main = el("div", { class: "ts-main" }, el("div", { class: "ts-head" }, legend, actions), plot.element);
-    const empty = el("p", { class: "empty ts-empty", title: "A 4-D NIfTI, an OME-Zarr image with a t axis, or a GIFTI surface with a CIFTI time series (.dtseries.nii) beside it" }, "No image with a time axis in this scene. Open a 4-D image or a surface with a CIFTI time series.");
-    host.replaceChildren(el("div", { class: "ts" }, side, main), empty);
+    const status = statusLine();
 
-    const button = (name: string, title: string, onclick: () => void, disabled: boolean) =>
-      el("button", { class: "btn outline small icon", type: "button", title, "aria-label": title, onclick, disabled }, icon(name));
+    // Nothing to plot: the empty state alone, and why the images there are not offered.
+    const empty = region((key: { why: string }) => [
+      emptyState("No image with a time axis.", { label: "Open data…", run: () => void ctx.commands.invoke("dataset.add") }),
+      key.why ? el("p", { class: "hint" }, key.why) : null,
+    ], { class: "ts-empty" });
 
+    // ---- the image, its time, and playing
+    const image = select([], "", (v) => this.choose(v), "Image");
+    const skipped = region((why: string) => (why ? el("p", { class: "hint" }, why) : null));
+    const overlay = button("", () => {
+      const layer = this.chosen()?.layer;
+      if (layer !== undefined && this.surface !== undefined) ctx.viewer.setSurfaceOverlay(layer, this.surface.series.name);
+    });
+    const first = iconButton("first", "First time point", () => this.show(0));
+    const previous = iconButton("previous", "Previous time point", () => this.step(-1));
+    const play = iconButton("play", "Play (Alt+Shift+P)", () => this.toggle());
+    const next = iconButton("next", "Next time point", () => this.step(1));
+    const last = iconButton("last", "Last time point", () => this.axis && this.show(this.axis.count - 1));
+    const rate = select(
+      RATES.map((r): [string, string] => [String(r), `${r}/s`]),
+      String(this.rate),
+      (v) => {
+        this.rate = Number(v);
+        ctx.settings.set("rate", this.rate);
+      },
+      "Rate",
+    );
+    // The slider shows a time point as it is dragged (no undo step) and makes the one let go on a step;
+    // drawn again only when the number of time points changes.
+    let time: Slider | undefined;
+    const timeBox = region((count: number) => {
+      time = slider(this.current, { min: 0, max: Math.max(0, count - 1), label: "Time point", disabled: count === 0, oninput: (i) => this.show(i, true), onchange: (i) => this.show(i) });
+      return time;
+    });
+    const readout = el("span", { class: "readout", "aria-live": "off" });
+    const loop = checkbox("Loop", this.loop, (on) => {
+      this.loop = on;
+      ctx.settings.set("loop", on);
+    });
+
+    // ---- regions of an image, parcels of a surface
+    const regionChoice = select([], "", (v) => (this.region = v), "Region");
+    const pinRegion = button("Pin mean", () => this.pinRegion());
+    const regions = el("div", { class: "row ts-fill" }, regionChoice, pinRegion);
+    const parcellationChoice = select([], "", (v) => {
+      this.parcellation = v;
+      this.parcel = undefined;
+      sync();
+    }, "Parcellation");
+    const parcelChoice = select([], "", (v) => (this.parcel = Number(v)), "Parcel");
+    const pinParcel = button("Pin mean", () => {
+      const parcellation = this.chosenParcellation();
+      if (parcellation !== undefined && this.parcel !== undefined) this.pinParcel(parcellation, this.parcel);
+    });
+    const itsParcel = button("Its parcel", () => this.pinItsParcel(), "Alt+Shift+M");
+    const parcels = el("div", { class: "stack" }, parcellationChoice, el("div", { class: "row ts-fill" }, parcelChoice, pinParcel, itsParcel));
+
+    const side = el(
+      "div",
+      { class: "ts-side" },
+      field("Image", image, { info: "Move the mouse over the image, or onto a surface, to plot the time course under it. Images with time: a 4-D NIfTI, an OME-Zarr image with a t axis; surfaces: a GIFTI surface opened from this computer with a CIFTI time series (.dtseries.nii) beside it." }),
+      skipped,
+      overlay,
+      el("div", { class: "row" }, first, previous, play, next, last, rate),
+      timeBox,
+      el("div", { class: "row" }, readout, el("span", { class: "spacer" }), loop),
+      regions,
+      parcels,
+      status,
+    );
+
+    // ---- the legend, and what to do with the series plotted
+    const legend = region((keys: { colour: string; text: string; pin?: number }[]) =>
+      keys.map((k) =>
+        el(
+          "span",
+          { class: "ts-key" },
+          swatch(k.colour),
+          k.text,
+          k.pin === undefined ? null : iconButton("close", `Remove ${k.text}`, () => this.removePin(k.pin!)),
+        ),
+      ),
+      { class: "ts-legend" },
+    );
+    const change = checkbox(
+      "% change",
+      this.change,
+      (on) => {
+        this.change = on;
+        ctx.settings.set("change", on);
+        this.drawPlot();
+      },
+      { info: "Each series as its change from its own mean, in percent. Save CSV keeps the values as read." },
+    );
+    const pin = button("Pin", () => this.pinCursor(), "Alt+P");
+    const csv = button("Save CSV", () => this.saveCsv());
+    const main = el("div", { class: "ts-main" }, el("div", { class: "ts-head" }, legend, el("div", { class: "row" }, change, pin, csv)), plot.element);
+    const body = el("div", { class: "ts" }, side, main);
+    host.replaceChildren(body, empty);
+
+    let playing: boolean | undefined;
+    /** The play button as play or pause: changed only when playing starts or stops. */
+    const showPlaying = () => {
+      const now = this.playing !== undefined;
+      if (now === playing) return;
+      playing = now;
+      const label = now ? "Pause (Alt+Shift+P)" : "Play (Alt+Shift+P)";
+      play.replaceChildren(icon(now ? "pause" : "play"));
+      play.setAttribute("title", label);
+      play.setAttribute("aria-label", label);
+    };
+
+    // The time shown: the readout, the slider and the plot's marker, nothing else.
     this.updateTime = () => {
       const axis = this.axis;
       if (axis === undefined) {
-        time.replaceChildren();
+        readout.replaceChildren();
         return;
       }
-      time.replaceChildren(formatTime(timeOf(axis, this.current), axis.unit.label), el("span", { class: "ts-of" }, `  time point ${this.current} of 0–${axis.count - 1}`));
+      readout.replaceChildren(formatTime(timeOf(axis, this.current), axis.unit.label), " ", el("span", { class: "ts-of" }, `time point ${this.current} of 0–${axis.count - 1}`));
+      time?.set(this.current);
       plot.setCurrent(this.current);
     };
 
-    const draw = () => {
+    let shownStatus = "";
+    /** Brings the panel up to date with the state, the image and the series read. */
+    const sync = () => {
       const layer = this.layer();
       const axis = this.axis;
       const ready = axis !== undefined;
       const surface = this.surface;
       // An image's voxels or a surface's vertices are plotted and pinned; regions are the images'.
       const plots = ready && (surface !== undefined || this.info !== undefined);
-      const regionsToo = plots && surface === undefined;
-      const image = el(
-        "select",
-        { class: "text-input", "aria-label": "Image", title: "The image plotted", onchange: (e: Event) => this.choose((e.target as HTMLSelectElement).value) },
-        ...this.candidates.map((c) => el("option", { value: c.id, selected: c.id === layer }, c.label)),
-      );
-      const rate = el(
-        "select",
-        { class: "text-input", title: "Time points a second", "aria-label": "Rate", onchange: (e: Event) => ((this.rate = Number((e.target as HTMLSelectElement).value)), this.ctx.settings.set("rate", this.rate)) },
-        ...RATES.map((r) => el("option", { value: r, selected: r === this.rate }, `${r}/s`)),
-      );
-      const loop = el("label", { class: "field check" }, el("input", { type: "checkbox", checked: this.loop, onchange: (e: Event) => ((this.loop = (e.target as HTMLInputElement).checked), this.ctx.settings.set("loop", this.loop)) }), "Loop");
-      const regions = this.regions();
-      if (!regions.some((r) => JSON.stringify([r.layer, r.id]) === this.region)) this.region = regions.length > 0 ? JSON.stringify([regions[0].layer, regions[0].id]) : "";
-      const region = el(
-        "select",
-        { class: "text-input", "aria-label": "Region", onchange: (e: Event) => (this.region = (e.target as HTMLSelectElement).value) },
-        ...regions.map((r) => {
-          const value = JSON.stringify([r.layer, r.id]);
-          return el("option", { value, selected: value === this.region }, r.label);
-        }),
-      );
-      // Nothing to plot: the empty state alone, not an empty plot with its controls.
       const none = this.candidates.length === 0;
-      (host.firstElementChild as HTMLElement).hidden = none;
+      const images = this.imageLayers();
+      body.hidden = none;
       empty.hidden = !none;
-      const note =
-        none
-          ? ""
-          : this.openError !== undefined
-            ? `Could not read ${layer}: ${this.openError}`
-            : this.axisNote !== undefined
-              ? `Time is not shown: ${this.axisNote}.`
-              : this.info === undefined && surface === undefined
-                ? "Opening…"
-                : "";
-      side.replaceChildren(
-        this.candidates.length > 0 ? image : "",
-        el(
-          "div",
-          { class: "ts-row" },
-          button("first", "First time point", () => this.show(0), !ready),
-          button("previous", "Previous time point", () => this.step(-1), !ready),
-          button(this.playing ? "pause" : "play", this.playing ? "Pause (Alt+Shift+P)" : "Play (Alt+Shift+P)", () => this.toggle(), !ready),
-          button("next", "Next time point", () => this.step(1), !ready),
-          button("last", "Last time point", () => this.axis && this.show(this.axis.count - 1), !ready),
-          rate,
-        ),
-        el("div", { class: "ts-row ts-spread" }, time, loop),
-        regions.length > 0 && regionsToo ? el("div", { class: "ts-row ts-region" }, region, el("button", { class: "btn outline small", type: "button", title: "Pin the mean over the region's voxels", onclick: () => this.pinRegion() }, "Pin mean")) : "",
-        surface !== undefined ? this.parcelRow() : "",
-        el("div", { class: `ts-status${this.statusError ? " error" : ""}` }, note || this.status),
-      );
-      // The legend: every series plotted or pinned, pins removable.
-      const keys: Node[] = [];
-      if (surface !== undefined) {
-        const layer = this.chosen()?.layer;
-        keys.push(
-          el(
-            "span",
-            { class: "ts-key ts-note" },
-            `${layer} shows the time point chosen here as its values ${surface.series.name}. `,
-            layer === undefined
-              ? null
-              : el("button", { class: "btn small", type: "button", onclick: () => this.ctx.viewer.setSurfaceOverlay(layer, surface.series.name) }, `Show ${surface.series.name} as the overlay`),
-          ),
-        );
-        const under = this.vertexCursor;
-        if (under === undefined) keys.push(el("span", { class: "ts-key" }, "Move the mouse onto the surface to plot a vertex's time course."));
-        else {
-          const parcellation = this.chosenParcellation();
-          const label = parcellation === undefined ? undefined : parcelAt(parcellation, under.vertex);
-          const inParcel = label === undefined ? "" : `, in ${label.name}`;
-          keys.push(el("span", { class: "ts-key", title: under.read.error ?? "" }, swatch(CURSOR_COLOUR), `Mouse: ${vertexLabel(under.vertex)}${inParcel}${under.read.error ? ` (${under.read.error})` : under.read.values === undefined ? " …" : ""}`));
-        }
-      } else if (this.cursor !== undefined && this.info !== undefined) {
-        const coarse = this.cursor.read.coarse;
-        keys.push(el("span", { class: "ts-key", title: coarse === undefined ? "" : "Read coarsely while the mouse moves; the finest values are read when it rests" }, swatch(CURSOR_COLOUR), `Mouse: ${voxelLabel(this.info, this.cursor.voxel)}${coarse !== undefined ? ` (coarse: ${coarse})` : ""}`));
-      } else if (ready) {
-        keys.push(el("span", { class: "ts-key" }, "Move the mouse over the image to plot its time course."));
+      empty.update({ why: none ? notRead(images) : "" });
+      if (none) return;
+
+      setOptions(image, this.candidates.map((c): [string, string] => [c.id, c.label]), layer ?? "");
+      skipped.update(notRead(images, false));
+      overlay.hidden = surface === undefined;
+      if (surface !== undefined) overlay.textContent = `Show ${surface.series.name} as the overlay`;
+
+      for (const b of [first, previous, play, next, last]) b.disabled = !ready;
+      rate.set(String(this.rate));
+      timeBox.update(axis?.count ?? 0);
+      loop.set(this.loop);
+
+      const regionList = surface === undefined && plots ? this.regions() : [];
+      if (!regionList.some((r) => JSON.stringify([r.layer, r.id]) === this.region)) this.region = regionList.length > 0 ? JSON.stringify([regionList[0].layer, regionList[0].id]) : "";
+      regions.hidden = regionList.length === 0;
+      setOptions(regionChoice, regionList.map((r): [string, string] => [JSON.stringify([r.layer, r.id]), r.label]), this.region);
+
+      const parcellation = surface === undefined ? undefined : this.chosenParcellation();
+      parcels.hidden = parcellation === undefined;
+      if (parcellation !== undefined) {
+        const list = this.surfaceParcellations();
+        parcellationChoice.hidden = list.length < 2;
+        setOptions(parcellationChoice, list.map((p): [string, string] => [p.name, p.name]), parcellation.name);
+        const labels = [...parcellation.labels].sort((a, b) => a.name.localeCompare(b.name));
+        if (!labels.some((l) => l.code === this.parcel)) this.parcel = labels[0]?.code;
+        setOptions(parcelChoice, labels.map((l): [string, string] => [String(l.code), `${l.name} (${l.vertices})`]), String(this.parcel ?? ""));
       }
-      for (const pin of this.saved.pins) {
-        if (pin.layer !== layer) continue;
-        const read = this.pinned.get(pin.id);
-        keys.push(
-          el(
-            "span",
-            { class: "ts-key", title: read?.error ?? "" },
-            swatch(COLOURS[pin.colour]),
-            `${pin.label}${read?.error ? ` (${read.error})` : read?.values === undefined ? " …" : ""}`,
-            el("button", { type: "button", title: "Remove", "aria-label": `Remove ${pin.label}`, onclick: () => this.removePin(pin.id) }, "×"),
-          ),
-        );
+
+      // The status: why the image cannot be plotted, else progress and errors from reading.
+      const [text, kind, retry] =
+        this.openError !== undefined
+          ? [`Could not read ${layer}: ${this.openError}`, "error", () => this.reopen()]
+          : this.axisNote !== undefined
+            ? [`Time is not shown: ${this.axisNote}.`, "error", undefined]
+            : this.info === undefined && surface === undefined
+              ? ["Opening…", "progress", undefined]
+              : [this.status, this.statusError ? "error" : "progress", this.statusRetry];
+      // Set only when it changes, so its Retry button is not made again under the pointer.
+      const key = `${kind}|${text}|${retry !== undefined}`;
+      if (key !== shownStatus) {
+        shownStatus = key;
+        if (!text) status.clear();
+        else if (kind === "error") status.error(text, retry && { label: "Retry", run: retry });
+        else status.progress(text);
       }
-      legend.replaceChildren(...keys);
-      actions.replaceChildren(
-        el(
-          "label",
-          { class: "field check", title: "Plot each series as its change from its own mean, in percent (CSV keeps the values)" },
-          el("input", { type: "checkbox", checked: this.change, onchange: (e: Event) => ((this.change = (e.target as HTMLInputElement).checked), this.ctx.settings.set("change", this.change), this.drawPlot()) }),
-          "% change",
-        ),
-        el("button", { class: "btn outline small", type: "button", title: `Pin the ${surface !== undefined ? "vertex" : "voxel"} under the mouse (Alt+P)`, onclick: () => this.pinCursor(), disabled: !plots }, "Pin"),
-        el("button", { class: "btn outline small", type: "button", title: "Save the plotted series as CSV", onclick: () => this.saveCsv(), disabled: !plots }, "Save CSV"),
-      );
+
+      legend.update(this.legendKeys());
+      change.set(this.change);
+      pin.disabled = csv.disabled = !plots;
+      showPlaying();
       this.updateTime?.();
     };
-    this.update = draw;
-    draw();
+    this.update = sync;
+    sync();
     this.drawPlot();
     return () => {
-      this.update = undefined;
+      if (this.update === sync) this.update = undefined;
       this.updateTime = undefined;
       plot.dispose();
       this.plot = undefined;
-      host.classList.remove("ts-host");
+      host.className = hostClass;
     };
+  }
+
+  /** The legend's keys: the series under the mouse, then the pins (removable). */
+  private legendKeys(): { colour: string; text: string; pin?: number }[] {
+    const keys: { colour: string; text: string; pin?: number }[] = [];
+    const under = this.surface === undefined ? undefined : this.vertexCursor;
+    if (under !== undefined) {
+      const parcellation = this.chosenParcellation();
+      const label = parcellation === undefined ? undefined : parcelAt(parcellation, under.vertex);
+      const inParcel = label === undefined ? "" : `, in ${label.name}`;
+      keys.push({ colour: CURSOR_COLOUR, text: `Mouse: ${vertexLabel(under.vertex)}${inParcel}${under.read.error ? ` (${under.read.error})` : under.read.values === undefined ? " …" : ""}` });
+    } else if (this.surface === undefined && this.cursor !== undefined && this.info !== undefined) {
+      const coarse = this.cursor.read.coarse;
+      keys.push({ colour: CURSOR_COLOUR, text: `Mouse: ${voxelLabel(this.info, this.cursor.voxel)}${coarse !== undefined ? ` (coarse: ${coarse})` : ""}` });
+    }
+    const layer = this.layer();
+    for (const pin of this.saved.pins) {
+      if (pin.layer !== layer) continue;
+      const read = this.pinned.get(pin.id);
+      keys.push({ colour: COLOURS[pin.colour], text: `${pin.label}${read?.error ? ` (${read.error})` : read?.values === undefined ? " …" : ""}`, pin: pin.id });
+    }
+    return keys;
   }
 }
 
-function swatch(colour: string): HTMLElement {
-  const s = el("span", { class: "ts-swatch" });
-  s.style.background = colour;
-  return s;
+/** A select's options, replaced only when they change (so an open select stays open), and its value. */
+function setOptions(s: Settable<HTMLSelectElement, string>, options: [string, string][], value: string): void {
+  const key = JSON.stringify(options);
+  if (s.getAttribute("data-options") !== key) {
+    s.setAttribute("data-options", key);
+    s.replaceChildren(...options.map(([v, text]) => el("option", { value: v }, text)));
+    s.value = value;
+  }
+  s.set(value);
 }
 
 export const plugin: PluginModule = {

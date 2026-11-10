@@ -1,9 +1,13 @@
 """Fits 3-D Gaussians to a captured folder (cameras.json, RGBA images, points.ply) with gsplat.
 
-    python -m ngplatform_render.splat.fit FOLDER [--steps 30000] [--sh 3] [--scale 1]
+    python -m ngplatform_render.splat.fit FOLDER [--steps 30000] [--sh 3] [--scale 1] [--device cuda:0]
 
 It needs torch and gsplat (a Python of its own; the render service's
-`--splat-python`).  The images have no background: each step draws the
+`--splat-python`), gsplat at GSPLAT_VERSION, whose API it is written
+against (`pip install ./runner[splat]`).  It runs on `--device`, which
+the render service sets to its own GPU.  The views stay on the CPU, read
+from their files as they are needed (as many held in memory as fit in
+`--views-gb`), and go to the GPU one at a time.  The images have no background: each step draws the
 Gaussians over a random colour and compares them with the image over the
 same colour, so what is empty stays empty.  Gaussians start at the points
 where the views first meet tissue and are grown, split and pruned by
@@ -26,6 +30,9 @@ import numpy as np
 
 from .export import write_ply, write_splat
 from .views import read_points
+
+#: The gsplat whose API the fit is written against (rasterization, DefaultStrategy).
+GSPLAT_VERSION = "1.4.0"
 
 
 def say(f: float, message: str) -> None:
@@ -55,37 +62,84 @@ def _knn_spacing(points, torch, k: int = 3, chunk: int = 2048):
     return out
 
 
-def load(folder: Path, scale: int, device):
+class Views:
+    """The captured views (RGBA, H x W x 4 uint8), read from their files as the fit asks for them: the most recently
+    used held in host memory up to `max_bytes`, and one at a time on the GPU (256 views of 1024 px were a GB of
+    GPU memory held for the whole fit; 4096 of 4096 px would not have fitted at all)."""
+
+    def __init__(self, folder: Path, frames: list[dict], scale: int, max_bytes: int):
+        from collections import OrderedDict
+
+        self.folder, self.frames, self.scale, self.max_bytes = folder, frames, scale, max_bytes
+        self._held: OrderedDict[int, np.ndarray] = OrderedDict()
+        self.bytes = 0
+        self.reads = 0
+
+    def __len__(self) -> int:
+        return len(self.frames)
+
+    def host(self, i: int) -> np.ndarray:
+        a = self._held.get(i)
+        if a is not None:
+            self._held.move_to_end(i)
+            return a
+        from PIL import Image
+
+        im = Image.open(self.folder / self.frames[i]["file"]).convert("RGBA")
+        if self.scale > 1:
+            im = im.resize((im.width // self.scale, im.height // self.scale), Image.LANCZOS)
+        a = np.array(im)  # a copy torch may write to (PIL's own is read-only)
+        self.reads += 1
+        if a.nbytes <= self.max_bytes:
+            self._held[i] = a
+            self.bytes += a.nbytes
+            while self.bytes > self.max_bytes:
+                _, old = self._held.popitem(last=False)
+                self.bytes -= old.nbytes
+        return a
+
+    def get(self, i: int, device):
+        """View i on `device` (a torch tensor)."""
+        import torch
+
+        return torch.from_numpy(self.host(i)).to(device, non_blocking=True)
+
+
+def load(folder: Path, scale: int, device, views_bytes: int = 4 << 30):
+    """The capture's cameras (on `device`: small) and its views (on the CPU, read as needed)."""
     import torch
-    from PIL import Image
 
     meta = json.loads((folder / "cameras.json").read_text())
-    images, viewmats, Ks = [], [], []
+    viewmats, Ks = [], []
     for fr in meta["frames"]:
-        im = Image.open(folder / fr["file"]).convert("RGBA")
         K = np.asarray(fr["K"], np.float64).copy()
         if scale > 1:
-            im = im.resize((im.width // scale, im.height // scale), Image.LANCZOS)
             K[:2] /= scale
-        images.append(torch.from_numpy(np.asarray(im)).to(device))
         viewmats.append(np.linalg.inv(np.asarray(fr["c2w"], np.float64)))
         Ks.append(K)
     viewmats = torch.tensor(np.stack(viewmats), dtype=torch.float32, device=device)
     Ks = torch.tensor(np.stack(Ks), dtype=torch.float32, device=device)
-    return meta, images, viewmats, Ks
+    return meta, Views(folder, meta["frames"], scale, views_bytes), viewmats, Ks
 
 
-def fit(folder: Path, steps: int = 30000, sh_degree: int = 3, scale: int = 1, max_points: int = 300_000, seed: int = 0) -> dict:
+def fit(folder: Path, steps: int = 30000, sh_degree: int = 3, scale: int = 1, max_points: int = 300_000, seed: int = 0,
+        device: str = "cuda", views_gb: float = 4.0) -> dict:
+    import gsplat
     import torch
     from gsplat import rasterization
     from gsplat.strategy import DefaultStrategy
 
     started = time.time()
     torch.manual_seed(seed)
-    device = torch.device("cuda")
+    device = torch.device(device)
+    if device.type == "cuda":
+        torch.cuda.set_device(device)
     folder = Path(folder)
+    version = str(getattr(gsplat, "__version__", "?"))
+    if version != GSPLAT_VERSION:
+        print(f"gsplat {version}: the fit is written for {GSPLAT_VERSION}", file=sys.stderr, flush=True)
     say(0.0, "reading the views")
-    meta, images, viewmats, Ks = load(folder, scale, device)
+    meta, images, viewmats, Ks = load(folder, scale, device, int(views_gb * (1 << 30)))
     n = len(images)
     held = list(range(7, n, 8)) if n >= 16 else []
     train = [i for i in range(n) if i not in set(held)]
@@ -118,8 +172,8 @@ def fit(folder: Path, steps: int = 30000, sh_degree: int = 3, scale: int = 1, ma
     strategy.check_sanity(params, optimizers)
     state = strategy.initialize_state(scene_scale=scene_scale)
 
-    def draw(i: int, sh_use: int, bg):
-        H, W = images[i].shape[:2]
+    def draw(i: int, sh_use: int, bg, im):
+        H, W = im.shape[:2]
         colors = torch.cat([params["sh0"], params["shN"]], 1)
         out, alpha, info = rasterization(
             means=params["means"], quats=params["quats"], scales=torch.exp(params["scales"]),
@@ -129,8 +183,8 @@ def fit(folder: Path, steps: int = 30000, sh_degree: int = 3, scale: int = 1, ma
         )
         return out[0], alpha[0], info
 
-    def target(i: int, bg):
-        im = images[i].float() / 255
+    def target(im, bg):
+        im = im.float() / 255
         a = im[..., 3:4]
         return im[..., :3] * a + bg * (1 - a)  # the images' colours are not premultiplied
 
@@ -139,8 +193,9 @@ def fit(folder: Path, steps: int = 30000, sh_degree: int = 3, scale: int = 1, ma
         i = train[int(torch.randint(len(train), ()).item())]
         bg = torch.rand(3, device=device)
         sh_use = min(step // 1000, sh_degree)
-        out, _, info = draw(i, sh_use, bg)
-        gt = target(i, bg)
+        im = images.get(i, device)
+        out, _, info = draw(i, sh_use, bg, im)
+        gt = target(im, bg)
         l1 = (out - gt).abs().mean()
         ss = _ssim(out.permute(2, 0, 1)[None], gt.permute(2, 0, 1)[None], torch)
         loss = 0.8 * l1 + 0.2 * (1 - ss)
@@ -160,8 +215,9 @@ def fit(folder: Path, steps: int = 30000, sh_degree: int = 3, scale: int = 1, ma
     with torch.no_grad():
         for i in held:
             bg = torch.zeros(3, device=device)
-            out, _, _ = draw(i, sh_degree, bg)
-            mse = float(((out.clamp(0, 1) - target(i, bg)) ** 2).mean())
+            im = images.get(i, device)
+            out, _, _ = draw(i, sh_degree, bg, im)
+            mse = float(((out.clamp(0, 1) - target(im, bg)) ** 2).mean())
             psnr.append(10 * math.log10(1 / max(mse, 1e-10)))
     say(0.98, "writing the splat")
     g = {k: v.detach().cpu().numpy() for k, v in params.items()}
@@ -171,7 +227,9 @@ def fit(folder: Path, steps: int = 30000, sh_degree: int = 3, scale: int = 1, ma
     result = {
         "gaussians": int(len(g["means"])), "steps": steps, "sh_degree": sh_degree, "scale": scale,
         "views": n, "held_out": len(held), "psnr_held_out": round(float(np.mean(psnr)), 2) if psnr else None,
-        "seconds": round(time.time() - started, 1),
+        "seconds": round(time.time() - started, 1), "gsplat": version, "device": str(device),
+        # The most GPU memory torch held for the fit (MB): what the render service counts as SPLAT_FIT_BYTES.
+        "gpu_peak_mb": round(torch.cuda.max_memory_reserved(device) / (1 << 20)) if device.type == "cuda" else None,
         "files": {"ply": "splat.ply", "splat": "scene.splat"},
     }
     (folder / "fit.json").write_text(json.dumps(result, indent=1))
@@ -186,11 +244,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--sh", type=int, default=3, help="spherical harmonics degree of the colours (0-3)")
     p.add_argument("--scale", type=int, default=1, help="fit to the images made this many times smaller")
     p.add_argument("--max-points", type=int, default=300_000, help="starting Gaussians at most")
+    p.add_argument("--device", default="cuda", help="the torch device to fit on (the render service gives its own GPU, cuda:N)")
+    p.add_argument("--views-gb", type=float, default=4.0, help="host memory for views held between steps (the rest are read again from their files)")
     a = p.parse_args(argv)
     if not (a.folder / "cameras.json").is_file():
         print(f"{a.folder} has no cameras.json", file=sys.stderr)
         return 2
-    fit(a.folder, a.steps, max(0, min(3, a.sh)), max(1, a.scale), a.max_points)
+    fit(a.folder, a.steps, max(0, min(3, a.sh)), max(1, a.scale), a.max_points, device=a.device, views_gb=a.views_gb)
     return 0
 
 

@@ -15,15 +15,24 @@ export const manifest = {
   name: "Starter (JavaScript)",
   version: "0.1.0",
   kind: "tool",
-  description: "An empty tool plugin to copy: a tab listing the scene's layers, a counter kept in the scene, and a command.",
+  description: "An empty tool plugin to copy: a panel listing the scene's layers, a counter kept in the scene, and a command.",
   activation: ["onStartup"],
   contributes: {
-    panels: [{ id: "starterJs.panel", title: "Starter", slot: "left", order: 99 }],
+    // A tool's panel (slot "left") is listed in the Tools dock under its group.
+    panels: [{ id: "starterJs.panel", title: "Starter", slot: "left", group: "Other", order: 99 }],
     commands: [{ id: "starterJs.hello", title: "Starter: say hello", group: "Starter" }],
     // The plugin's slice of the workspace state, under this key; raise the version when its shape changes.
     appState: { key: "starterJs", version: 1 },
   },
 };
+
+/** An element with a class and children (a file loaded this way cannot import @ngplatform/sdk/dom). */
+function el(tag, className, ...children) {
+  const e = document.createElement(tag);
+  if (className) e.className = className;
+  e.append(...children);
+  return e;
+}
 
 export const plugin = {
   activate(ctx) {
@@ -39,24 +48,32 @@ export const plugin = {
     });
 
     ctx.ui.panel("starterJs.panel", (host) => {
-      const draw = () => {
+      // Drawn once, with the app's classes; then only what changed is updated.
+      const open = el("button", "btn outline", "Open data…");
+      open.type = "button";
+      open.onclick = () => void ctx.commands.invoke("dataset.add");
+      const empty = el("div", "empty-state", el("p", "empty", "No layers in this scene."), open);
+      const list = el("ul", "list");
+      const add = el("button", "btn outline small");
+      add.type = "button";
+      add.onclick = () => ctx.state.set({ count: count() + 1 });
+      host.append(empty, list, el("div", "row", add));
+      let names = "";
+      const sync = () => {
         const layers = ctx.viewer.layers();
-        const list = document.createElement("ul");
-        for (const l of layers) {
-          const item = document.createElement("li");
-          item.textContent = `${l.name} (${l.type})`;
-          list.append(item);
+        empty.hidden = layers.length > 0;
+        // The list is drawn again only when the layers it shows change.
+        const now = JSON.stringify(layers.map((l) => [l.name, l.type]));
+        if (now !== names) {
+          names = now;
+          list.replaceChildren(...layers.map((l) => el("li", "", `${l.name} (${l.type})`)));
         }
-        const button = document.createElement("button");
-        button.className = "btn small";
-        button.textContent = `Counted ${count()}: add one`;
-        button.onclick = () => ctx.state.set({ count: count() + 1 });
-        host.replaceChildren(list, button);
+        add.textContent = `Counted ${count()}: add one`;
       };
-      draw();
-      // Drawn again when the layers change, and when the state does (an undo, another scene).
-      const offLayers = ctx.viewer.onLayersChanged(draw);
-      const offState = ctx.state.onChanged(draw);
+      sync();
+      // Kept up to date when the layers change, and when the state does (an undo, another scene).
+      const offLayers = ctx.viewer.onLayersChanged(sync);
+      const offState = ctx.state.onChanged(sync);
       return () => {
         offLayers();
         offState();

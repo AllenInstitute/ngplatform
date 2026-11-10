@@ -28,16 +28,16 @@ import {
   SegmentationUserLayer,
   setScreenshotOverlay,
   type SidePanelManager,
-  StatisticsPanel,
   TrackableBoolean,
   type Viewer,
   setNamedPanelOrientation,
-  ViewerSettingsPanel,
 } from "./neuroglancer.js";
 import { looksAnatomical, type PanelConvention, panelRotations } from "./anatomical.js";
 import { applyLookupTable, layerLookupSource } from "./lookup_tables.js";
 import { addMomentum } from "./momentum.js";
 import { mountInspector } from "./inspector/index.js";
+import { sizeMemoryLimits } from "./memory.js";
+import { type ChunkSourceStatistics, chunkStatistics, mountViewSettings } from "./view_settings.js";
 import { guardSelectedValues, type SelectedValues } from "./selected_values.js";
 import { watchOutlines } from "./outlines.js";
 import { type CaptureOptions, type CapturePanel, captureDimensions, capturePanels, CaptureSession } from "./capture.js";
@@ -80,6 +80,7 @@ export interface ViewPanel {
   project(global: ArrayLike<number>): { x: number; y: number; depth: number } | undefined;
 }
 export type Disposer = () => void;
+export type { ChunkSourceStatistics } from "./view_settings.js";
 
 export interface LayerInfo {
   name: string;
@@ -264,8 +265,6 @@ function readPanelPreference(): PanelConvention | "auto" {
 export class Engine {
   readonly viewer: Viewer;
   private readonly disposers: Disposer[] = [];
-  /** How many docked copies of each location-driven panel are mounted. */
-  private readonly docked = { statistics: 0 };
 
   constructor(readonly host: HTMLElement) {
     this.viewer = makeMinimalViewer({
@@ -293,6 +292,8 @@ export class Engine {
       externalSidePanels: true,
       showPanelBorders: true,
     });
+    // GPU and system memory by the computer's memory, not Neuroglancer's 1 GB and 2 GB everywhere.
+    sizeMemoryLimits(this.viewer);
     guardSelectedValues(this.viewer.layerSelectedValues as unknown as SelectedValues);
     this.viewer.coordinateSpace.changed.add(() => {
       this.preferXyz();
@@ -396,7 +397,7 @@ export class Engine {
     });
   }
 
-  /** Shows a surface map as a surface layer's overlay (Render → Surface's Overlay); false when the layer is not a surface. */
+  /** Shows a surface map as a surface layer's overlay (Display → Surface's Overlay); false when the layer is not a surface. */
   setSurfaceOverlay(name: string, map: string): boolean {
     const layer = this.segmentationLayer(name);
     return layer !== undefined && setSurfaceOverlay(layer, map);
@@ -494,9 +495,6 @@ export class Engine {
       this.hiddenDrawing.delete(name);
       if (opacity !== undefined) this.hideDrawing(name, true);
     }
-    // Docked panels draw only while their location is visible; a restored
-    // state without them would hide them.
-    if (this.docked.statistics > 0) this.viewer.statisticsDisplayState.location.visible = true;
   }
 
   onStateChanged(callback: () => void): Disposer {
@@ -565,6 +563,19 @@ export class Engine {
    */
   layerToken(name: string): object | undefined {
     return this.managed(name)?.layer ?? undefined;
+  }
+
+  /** Changes whenever a layer, or the list of layers, changes; not when the view moves (see ViewerApi.layersGeneration). */
+  layersGeneration(): number {
+    const lm = this.viewer.layerManager;
+    return lm.layersChanged.count + lm.specificationChanged.count + lm.readyStateChanged.count;
+  }
+
+  /** One top-level key of the state, without writing out the layers (see ViewerApi.statePart). */
+  statePart(key: string): unknown {
+    if (key === "layers" || key === "crossSectionBackgroundColor") return (this.getState() as Json)[key];
+    const child = this.viewer.state.children.get(key) as { toJSON?(): unknown } | undefined;
+    return child?.toJSON?.();
   }
 
   /** A layer's specification, as it would appear in the state's layer list. */
@@ -1008,7 +1019,7 @@ export class Engine {
     return layer && layerLookupSource(layer);
   }
 
-  /** Gives a segmentation layer a lookup table, as its Render tab does (see lookup_tables.ts). */
+  /** Gives a segmentation layer a lookup table, as its Display tab does (see lookup_tables.ts). */
   async setLookupTable(name: string, url: string | undefined): Promise<void> {
     const layer = this.segmentationLayer(name);
     if (layer === undefined) throw new Error(`${name} is not a segmentation layer`);
@@ -1358,20 +1369,14 @@ export class Engine {
     };
   }
 
+  /** Settings › View: the viewer's settings, as the app's fields. */
   mountSettings(host: HTMLElement): Disposer {
-    return dockPanel(host, new ViewerSettingsPanel(DOCKED_PANEL_MANAGER, this.viewer.settingsPanelState, this.viewer));
+    return mountViewSettings(host, this.viewer);
   }
 
-  mountStatistics(host: HTMLElement): Disposer {
-    const v = this.viewer;
-    const location = v.statisticsDisplayState.location;
-    location.visible = true;
-    this.docked.statistics++;
-    const undock = dockPanel(host, new StatisticsPanel(DOCKED_PANEL_MANAGER, v.chunkQueueManager, v.statisticsDisplayState));
-    return () => {
-      undock();
-      if (--this.docked.statistics === 0) location.visible = false;
-    };
+  /** What each chunk source has loaded for the views (Settings › Developer). */
+  chunkStatistics(): Promise<ChunkSourceStatistics[]> {
+    return chunkStatistics(this.viewer);
   }
 
   /** Neuroglancer's key and mouse binding reference, for the views. */

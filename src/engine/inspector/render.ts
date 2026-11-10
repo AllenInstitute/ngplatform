@@ -1,5 +1,5 @@
 /**
- * The Render tab: how a layer is drawn, for each layer type the same
+ * The Display tab: how a layer is drawn, for each layer type the same
  * controls as Neuroglancer's own tab (its `LAYER_CONTROLS` and shader), in
  * the platform's rows. Resolution controls keep Neuroglancer's histogram of
  * the resolutions being drawn; they are components, not panels.
@@ -123,7 +123,7 @@ function linkedGroup(scope: Scope, group: any): HTMLElement {
     if (group.linkedLayers.size > 0) {
       host.replaceChildren(
         ...[...group.linkedLayers].map((other: any) =>
-          el("span", { class: "ins-chip" }, other.managedLayer.name, button("×", () => group.getGroup(other).isolate(), "Unlink this layer", "ins-chip-x")),
+          el("span", { class: "ins-chip" }, other.managedLayer.name, button("×", () => group.getGroup(other).isolate(), "Unlink this layer", "icon ins-remove")),
         ),
         button("Unlink all", () => group.isolate()),
       );
@@ -135,7 +135,7 @@ function linkedGroup(scope: Scope, group: any): HTMLElement {
       if (user == null || user === group.layer || !group.predicate(user)) continue;
       names.push(managed.name);
     }
-    const sel = el("select", { class: "ins-select" }, el("option", { value: "" }, "Not linked"), ...names.map((n) => el("option", { value: n }, n))) as HTMLSelectElement;
+    const sel = el("select", { class: "text-input" }, el("option", { value: "" }, "Not linked"), ...names.map((n) => el("option", { value: n }, n))) as HTMLSelectElement;
     sel.value = group.toJSON() ?? "";
     sel.disabled = names.length === 0;
     sel.addEventListener("change", () => {
@@ -161,7 +161,7 @@ function outlineToggle(scope: Scope, l: SegmentationUserLayer): HTMLElement {
   };
   const group = el(
     "div",
-    { class: "ins-segmented" },
+    { class: "segmented" },
     button("Filled", () => set(false), "Fill each segment with its colour"),
     button("Outlines", () => set(true), "Draw each segment's outline in its colour; the outline layer's shader sets the width, and can fill faintly too"),
   );
@@ -180,7 +180,7 @@ function segmentationRender(scope: Scope, l: SegmentationUserLayer): HTMLElement
   const byFixed = derived([fixed], () => fixed.value !== undefined);
   const byHash = derived([fixed], () => fixed.value === undefined);
   const seed = ds.segmentColorHash as Watch<number>;
-  const seedBox = el("input", { type: "number", class: "ins-number wide", step: 1, min: 0 }) as HTMLInputElement;
+  const seedBox = el("input", { type: "number", class: "text-input num-input wide", step: 1, min: 0 }) as HTMLInputElement;
   seedBox.addEventListener("change", () => {
     const v = Number(seedBox.value);
     if (Number.isInteger(v) && v >= 0) seed.value = v >>> 0;
@@ -188,7 +188,7 @@ function segmentationRender(scope: Scope, l: SegmentationUserLayer): HTMLElement
   scope.watch(seed, () => (seedBox.value = String(seed.value)));
   const mode = el(
     "div",
-    { class: "ins-segmented" },
+    { class: "segmented" },
     button("By id", () => (fixed.value = undefined), "Colour each segment from a hash of its id"),
     button("Fixed", () => (fixed.value = Float32Array.of(1, 0, 0)), "One colour for every segment without its own"),
   );

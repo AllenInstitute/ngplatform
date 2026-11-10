@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { apply4, identity4, invert4, multiply4 } from "../src/core/mat4.js";
 import { crc32, zipStore } from "../src/core/zip.js";
 import { button, downloadBlob, el, safeFileName, select, svgEl } from "../src/sdk/dom.js";
-import { bytesText, csv, csvField, mmText, ticks } from "../src/sdk/format.js";
+import { bytesText, csv, csvField, mmText, parseBytes, ticks } from "../src/sdk/format.js";
 import { layerSourceUrl, precomputedUrl } from "../src/sdk/sources.js";
 import { fmt, kindLabel, length, physical, shortSource } from "../src/ui/panels/format.js";
 import { exportKind } from "../src/virtual/out/kinds.js";
@@ -41,6 +41,18 @@ describe("text", () => {
     expect(bytesText(350 * 2 ** 20)).toBe("350 MB");
     expect(bytesText(2 * 2 ** 30)).toBe("2.0 GB");
     expect(bytesText(1.5 * 2 ** 40)).toBe("1.5 TB");
+  });
+
+  it("reads sizes as typed, with or without their unit", () => {
+    expect(parseBytes("512 MB")).toBe(512 * 2 ** 20);
+    expect(parseBytes("2GB")).toBe(2 * 2 ** 30);
+    expect(parseBytes(" 1.5 g ")).toBe(1.5 * 2 ** 30);
+    expect(parseBytes("64 KiB")).toBe(64 * 1024);
+    expect(parseBytes("100 B")).toBe(100);
+    expect(parseBytes("954")).toBe(954 * 2 ** 20);
+    expect(parseBytes(bytesText(3 * 2 ** 30))).toBe(3 * 2 ** 30);
+    expect(parseBytes("lots")).toBeUndefined();
+    expect(parseBytes("-1 GB")).toBeUndefined();
   });
 
   it("makes file names of layer names", () => {

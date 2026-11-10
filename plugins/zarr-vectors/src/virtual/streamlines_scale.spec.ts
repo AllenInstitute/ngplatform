@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ObjectReader, openZarrVectorsStore, ShardIndexCache, LevelPipeline } from "../reader.js";
-import { cacheBudget, diskBudget, MemorySpill, setSpillSettings, type Spill, spillPlan } from "../../../../src/virtual/vectors/spill.js";
+import { cacheBudget, diskBudget, MemorySpill, NeedsRunner, setSpillSettings, type Spill, spillPlan } from "../../../../src/virtual/vectors/spill.js";
 import { CHECKPOINT, cellSize, sampleDepth, sampleLevels, StreamlineStore } from "../../../../src/virtual/vectors/streamlines.js";
 import { parseTckHeader, readTck, readTckStreamlines } from "../../../../src/virtual/vectors/tck.js";
 import { openTractogram } from "../../../../src/virtual/vectors/tractograms.js";
@@ -106,6 +106,14 @@ class CountingSpill extends MemorySpill {
     return super.read(offset, length);
   }
 }
+
+describe("a file past what the browser can do", () => {
+  it("names the runner where Settings puts it", () => {
+    const e = new NeedsRunner("the tractogram is past the storage this browser allows");
+    expect(e.message).toBe("the tractogram is past the storage this browser allows. Open it through the runner on this computer (Settings › Compute → This computer).");
+    expect(e.message).not.toContain("Jobs");
+  });
+});
 
 describe("sample levels chosen while streaming", () => {
   it("keeps about one id in 10, 100, 1000 …, each level a subset of the one before", () => {

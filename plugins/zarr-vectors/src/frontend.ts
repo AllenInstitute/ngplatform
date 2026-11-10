@@ -43,6 +43,8 @@ import {
   ZarrVectorsMeshSourceParameters,
   ZarrVectorsObjectSkeletonSourceParameters,
   ZARR_VECTORS_SEED_OBJECT_TABLE_RPC_ID,
+  ZARR_VECTORS_SHADER_VALUES_RPC_ID,
+  ZARR_VECTORS_WARNING_RPC_ID,
 } from "./base.js";
 import {
   attributeLayout,
@@ -62,6 +64,7 @@ import {
   chooseShaderObjectValues,
   readObjectTable,
   readSegmentProperties,
+  readShaderObjectValueColumns,
 } from "./objects.js";
 import type {
   ZarrVectorsStore,
@@ -79,7 +82,8 @@ import {
   parseAttributesFragment,
   readJson,
 } from "./store.js";
-import { warnOnce } from "./util.js";
+import { retryable, type StoreWarning, warnOnce } from "./util.js";
+import { registerPromiseRPC, registerRPC } from "neuroglancer/unstable/worker_rpc.js";
 import { WithSharedKvStoreContext } from "neuroglancer/unstable/kvstore/chunk_source_frontend.js";
 import type { SharedKvStoreContext } from "neuroglancer/unstable/kvstore/frontend.js";
 import {
@@ -95,6 +99,49 @@ import type { VertexAttributeInfo } from "neuroglancer/unstable/skeleton/base.js
 import { SkeletonSource } from "neuroglancer/unstable/skeleton/frontend.js";
 import { DataType } from "neuroglancer/unstable/util/data_type.js";
 import * as matrix from "neuroglancer/unstable/util/matrix.js";
+
+// The worker's warnings, passed on as the frontend's own are (once per store).
+registerRPC(ZARR_VECTORS_WARNING_RPC_ID, function (x) {
+  const { store, message } = x as StoreWarning;
+  warnOnce(message, store);
+});
+
+/**
+ * Each open store's access on this thread, by URL: the worker asks for the
+ * object values its shaders read here, where the Segments tab reads the same
+ * columns, so that each column is downloaded once.
+ */
+const openStores = new Map<string, ZarrVectorsStoreAccess>();
+
+interface ShaderValuesAnswer {
+  values?: Float32Array[];
+  missing?: boolean;
+  error?: string;
+  retry?: boolean;
+}
+
+registerPromiseRPC<ShaderValuesAnswer>(ZARR_VECTORS_SHADER_VALUES_RPC_ID, async function (x) {
+  const { storeUrl, levelPath, wanted } = x as {
+    storeUrl: string;
+    levelPath: string;
+    wanted: ShaderObjectValue[];
+  };
+  const access = openStores.get(storeUrl);
+  if (access === undefined) return { value: { missing: true } };
+  try {
+    const values = await readShaderObjectValueColumns(access, levelPath, wanted);
+    if (values === undefined) return { value: { values: undefined } };
+    // Handed over: the worker keeps them, this thread does not.
+    return { value: { values }, transfers: values.map((v) => v.buffer) };
+  } catch (e) {
+    return {
+      value: {
+        error: e instanceof Error ? e.message : String(e),
+        retry: retryable(e),
+      },
+    };
+  }
+});
 
 export class ZarrVectorsObjectSkeletonSource extends WithParameters(
   WithSharedKvStoreContext(SkeletonSource),
@@ -213,7 +260,7 @@ function meshSubsourceEntry(
  * Segment properties that arrive after the layer does. Their columns are the
  * largest download of an open and nothing drawn needs them, so the layer is
  * not kept waiting: it rebuilds its property map when `ready` resolves
- * (`layer.ts`), and the Seg tab fills in then.
+ * (`layer.ts`), and the Segments tab fills in then.
  */
 export class ZarrVectorsLazyPropertyMap extends SegmentPropertyMap {
   constructor(readonly ready: Promise<InlineSegmentPropertyMap | undefined>) {
@@ -235,9 +282,10 @@ async function buildDataSource(
   signal: AbortSignal | undefined,
 ): Promise<DataSource> {
   const access = kvStoreAccess(context.kvStoreContext, storeUrl);
+  openStores.set(storeUrl, access);
   const warnings: string[] = [];
   const reportWarnings = () => {
-    for (const w of warnings.splice(0)) warnOnce(`${storeUrl}: ${w}`);
+    for (const w of warnings.splice(0)) warnOnce(w, storeUrl);
   };
   const propertiesOf = (
     levelPath: string,
@@ -339,7 +387,7 @@ async function buildDataSource(
         `zarr-vectors: ${storeUrl}: object values in shaders: ${lines.join("; ")}` +
           (chosen.some((c) => c.column === undefined)
             ? " (obj_group is the index of the object's first group; " +
-              "group names are the Seg tab's tags, in store order)"
+              "group names are the Segments tab's tags, in store order)"
             : ""),
       );
     }

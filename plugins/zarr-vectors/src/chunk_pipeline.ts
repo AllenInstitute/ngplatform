@@ -26,17 +26,15 @@
  *
  * Ghost positions come from the neighbour's vertex cell. Cells are shared
  * through one cache, so a neighbour the view also draws is fetched once,
- * whichever needs it first. A neighbour the view does not draw (a slice
- * view's chunks above and below the plane) is read by row range instead,
- * when its cell is uncompressed.
+ * whichever needs it first. A neighbour the view does not draw is read by
+ * row range instead, when its cell is uncompressed; but for a chunk only
+ * slice views draw, such a neighbour lies off the plane (above or below
+ * it), and its bridges are left out rather than read.
  */
 
 import type { ZarrVectorsGeometryDescription } from "./base.js";
 import type { DecodedChunk } from "./chunk_decode.js";
-import {
-  decodeChunk,
-  forEachFragmentVertex,
-} from "./chunk_decode.js";
+import { decodeChunk, joinedTangentInto } from "./chunk_decode.js";
 import type { ElementType } from "./dtype.js";
 import {
   attributeDtype,
@@ -44,6 +42,8 @@ import {
   ELEMENT_BYTES,
   isElementType,
 } from "./dtype.js";
+import type { DrawChunkData, PackObjectValues } from "./dense_pack.js";
+import { packForDrawing } from "./dense_pack.js";
 import { KIND_CAPABILITIES } from "./geometry_kind.js";
 import { LevelCells } from "./level_cells.js";
 import { CrossChunkLinks } from "./links.js";
@@ -65,9 +65,23 @@ import type {
 import {
   AsyncLru,
   mapConcurrent,
+  DECODED_BUDGET,
+  retryable,
   SHARED_SIGNAL,
   warnOnce,
 } from "./util.js";
+
+/**
+ * For a catch that stands in a value for data that is unreadable: a read
+ * that may work later (the network) is passed on, so the chunk fails and is
+ * read again, instead of being kept without that data.
+ */
+function unlessRetryable<T>(value: T) {
+  return (e: unknown): T => {
+    if (retryable(e)) throw e;
+    return value;
+  };
+}
 
 /** One decoded chunk, ready to post to the frontend. */
 export interface DenseChunkData {
@@ -84,30 +98,50 @@ export interface DenseChunkData {
   faces: Uint32Array;
   /** Per exposed attribute (`components` floats per vertex), then the tangent. */
   attributes: Float32Array[];
+  /**
+   * Bridges and face corners left out because their neighbour was not at
+   * hand (`sliceOnly`); a 3-D view needs them.
+   */
+  ghostsLeftOut?: number;
+  /**
+   * For drawing (`forDrawing`), where the chunk's curves are runs of rows:
+   * per own vertex, 1 where an edge joins it to the vertex before. `edges`
+   * then holds only the bridges, and `attributes` no tangent; the ghosts'
+   * tangents are in `ghostTangents`.
+   */
+  joinsPrevious?: Uint8Array;
+  /** With `joinsPrevious`: three floats per ghost (vertex `numOwnVertices` on). */
+  ghostTangents?: Float32Array;
 }
 
-/** Raw vertex cells, by pipeline and cell, shared by chunks and ghosts. */
+/**
+ * Raw vertex cells, by pipeline and cell, shared by chunks and ghosts;
+ * charged to the worker's one budget for the data it keeps.
+ */
 const vertexCells = new AsyncLru<Uint8Array | undefined>(
   Infinity,
-  256 * 1024 * 1024,
+  Infinity,
   (b) => b?.byteLength ?? 0,
+  DECODED_BUDGET,
 );
 let nextPipelineId = 0;
 
 /**
  * A neighbour's attribute cells, decoded, for the corners of faces reaching
- * into it (read again when that chunk is drawn too, so kept a while).
+ * into it (read again when that chunk is drawn too, so kept a while);
+ * charged to the same budget.
  */
 const neighbourAttributes = new AsyncLru<Float32Array | undefined>(
   Infinity,
-  64 * 1024 * 1024,
+  Infinity,
   (a) => a?.byteLength ?? 0,
+  DECODED_BUDGET,
 );
 
 /**
- * Caps the raw vertex cells kept between reads (256 MiB by default).  A
- * worker that keeps its own decoded copy of what it needs can make this
- * small.
+ * Caps the raw vertex cells kept between reads, within the worker's
+ * budget (`setDecodedCacheBytes`). A worker that keeps its own decoded copy
+ * of what it needs can make this small.
  */
 export function setVertexCellCacheBytes(bytes: number): void {
   vertexCells.setMaxSize(bytes);
@@ -165,10 +199,6 @@ async function fragmentOwners(
 }
 
 /**
- * Sets each vertex's object values (`obj_<name>`, `obj_group`) from the
- * object it belongs to: `segmentIds` holds two uint32 per vertex.
- */
-/**
  * Starts reading the object values {@link fillObjectValues} will put on
  * vertices, so they are at hand when the first object's geometry is.
  */
@@ -185,15 +215,25 @@ export function prefetchObjectValues(
   );
 }
 
+/**
+ * Sets each vertex's object values (`obj_<name>`, `obj_group`) from the
+ * object it belongs to: `segmentIds` holds two uint32 per vertex. Only those
+ * in `used` (attribute ids), when given; the others stay as they are (NaN).
+ */
 export async function fillObjectValues(
   access: ZarrVectorsStoreAccess,
   description: ZarrVectorsGeometryDescription,
   attributes: Float32Array[],
   segmentIds: Uint32Array,
   numVertices: number,
+  used?: ReadonlySet<string>,
 ) {
   const slots = description.attributes.flatMap((a, i) =>
-    a.objectValue !== undefined && i < attributes.length ? [i] : [],
+    a.objectValue !== undefined &&
+    i < attributes.length &&
+    (used === undefined || used.has(a.id))
+      ? [i]
+      : [],
   );
   if (slots.length === 0 || description.objectValuesPath === undefined) return;
   const objects = await readShaderObjectValues(
@@ -201,9 +241,11 @@ export async function fillObjectValues(
     description.objectValuesPath,
     slots.map((i) => description.attributes[i].objectValue!),
   ).catch((e) => {
+    if (retryable(e)) throw e;
     warnOnce(
       "object values could not be read " +
         `(${e instanceof Error ? e.message : e}); shown as no value (NaN)`,
+      access.url,
     );
     return undefined;
   });
@@ -232,7 +274,7 @@ export async function fillObjectValues(
 /** The id of a fragment no object claims. */
 const NO_OBJECT = 0xffffffffffffffffn;
 
-interface Ghost {
+export interface Ghost {
   /** The local vertex the bridge starts from. */
   host: number;
   chunkKey: string;
@@ -258,12 +300,15 @@ export class LevelPipeline {
   /**
    * `isRequested` says whether the view also wants the chunk at a cell, so a
    * ghost read of it can fetch the whole cell for that chunk to reuse.
+   * `objectValues` are the object values (attribute ids) to read and put on
+   * vertices, when not all of them: those a shader reads.
    */
   constructor(
     private access: ZarrVectorsStoreAccess,
     private description: ZarrVectorsGeometryDescription,
     private level: ZarrVectorsLevel,
     private isRequested: (chunk: readonly number[]) => boolean = () => false,
+    private objectValues?: ReadonlySet<string>,
   ) {
     this.cells = LevelCells.forLevel(access, level, description);
     // Lines bridge to their neighbours' vertices; a mesh's faces reach them.
@@ -272,15 +317,18 @@ export class LevelPipeline {
         cells: this.cells,
         listDirectories: (path) =>
           access.listDirectories(`${level.path}/${path}`),
-        warn: warnOnce,
+        warn: (message: string) => warnOnce(message, access.url),
       });
     }
   }
 
-  /** The raw vertex cell at `chunkKey`, fetched once for every reader. */
-  private vertexCell(chunkKey: string) {
-    return vertexCells.get(`${this.id}|${chunkKey}`, () =>
-      this.cells.readCell("vertices", chunkKey, SHARED_SIGNAL),
+  /**
+   * The raw vertex cell at `chunkKey`, fetched once for every reader, and
+   * not at all once every reader waiting for it has given up (`signal`).
+   */
+  private vertexCell(chunkKey: string, signal: AbortSignal | undefined) {
+    return vertexCells.getShared(`${this.id}|${chunkKey}`, signal, (shared) =>
+      this.cells.readCell("vertices", chunkKey, shared),
     );
   }
 
@@ -300,9 +348,10 @@ export class LevelPipeline {
    *   manifests, which are never ambiguous, say.
    */
   private idMode() {
-    this.mode ??= (async () => {
+    if (this.mode !== undefined) return this.mode;
+    const promise = (async () => {
       const table = await readObjectTable(this.access, this.level.path).catch(
-        () => undefined,
+        unlessRetryable(undefined),
       );
       if (table === undefined || table.idSource === "row") {
         return { mode: "direct" as const };
@@ -320,7 +369,12 @@ export class LevelPipeline {
       }
       return { mode: "manifests" as const };
     })();
-    return this.mode;
+    // Decided again by the next chunk when the network failed it.
+    this.mode = promise;
+    promise.catch(() => {
+      if (this.mode === promise) this.mode = undefined;
+    });
+    return promise;
   }
 
   private fragmentOwners() {
@@ -329,9 +383,12 @@ export class LevelPipeline {
       this.owners = promise;
       promise.catch((e) => {
         if (this.owners === promise) this.owners = undefined;
+        // A network failure fails the chunk instead (read again later).
+        if (retryable(e)) return;
         warnOnce(
           "could not map fragments to objects " +
             `(${e instanceof Error ? e.message : e}); objects are coloured per chunk`,
+          this.access.url,
         );
       });
     }
@@ -361,11 +418,30 @@ export class LevelPipeline {
    * chunks, and so every read of a neighbour's vertices: a tool testing a
    * region against the chunks it touches reads those chunks alone.  Linked
    * skeletons keep their links, which define their segments.
+   *
+   * `sliceOnly: true` (only cross-sections draw the chunk) keeps the bridges
+   * and face corners into neighbours whose vertex cell is cached, being
+   * read, or drawn by the view, and leaves out the rest, which lie off the
+   * plane: reading them would cost more than the chunk itself.
+   *
+   * `neighboursAtHand: true` does the same for a chunk a 3-D view draws:
+   * there a neighbour no one draws at this level is drawn at a coarser one
+   * (or is out of view), and reading the rows its bridges end on can cost
+   * most of a big cell, for one segment each.
+   *
+   * `forDrawing: true` puts no object values on vertices (they go per
+   * object, {@link packForDrawing}) and, where the curves are runs of rows,
+   * gives `joinsPrevious` in place of their edges and tangents.
    */
   async download(
     chunk: number[],
     signal: AbortSignal,
-    options: { bridges?: boolean } = {},
+    options: {
+      bridges?: boolean;
+      sliceOnly?: boolean;
+      neighboursAtHand?: boolean;
+      forDrawing?: boolean;
+    } = {},
   ): Promise<DenseChunkData | undefined> {
     const { description } = this;
     const chunkKey = chunk.join(".");
@@ -403,9 +479,11 @@ export class LevelPipeline {
         relinkedChildren,
         // A mesh's faces draw its outline on cross-sections.
         skipFaces: false,
-        vertices: this.vertexCell(chunkKey),
+        vertices: this.vertexCell(chunkKey, signal),
         skipSegmentIds: mode === "manifests",
         fragmentIdColumn: mode === "object_id" ? "object_id" : "segment_id",
+        walkFlags: options.forDrawing,
+        skipObjectValues: options.forDrawing,
       }),
       linksPromise,
     ]);
@@ -424,7 +502,9 @@ export class LevelPipeline {
             ? table[Number(stored[f])]
             : NO_OBJECT;
       } else {
-        const owners = await this.fragmentOwners().catch(() => undefined);
+        const owners = await this.fragmentOwners().catch(
+          unlessRetryable(undefined),
+        );
         const chunkOwners = owners?.get(chunkKey);
         // Without the manifests (warned), colour per fragment in the chunk;
         // a fragment no object claims is no object.
@@ -433,14 +513,23 @@ export class LevelPipeline {
             ? (f) => BigInt(f)
             : (f) => chunkOwners?.[f] ?? NO_OBJECT;
       }
-      for (let f = 0; f < decoded.fragments.numFragments; ++f) {
+      const { fragments } = decoded;
+      for (let f = 0; f < fragments.numFragments; ++f) {
         const id = idOf(f);
         const lo = Number(id & 0xffffffffn);
         const hi = Number(id >> 32n);
-        forEachFragmentVertex(decoded.fragments, f, (v) => {
-          ids[2 * v] = lo;
-          ids[2 * v + 1] = hi;
-        });
+        if (fragments.isRange(f)) {
+          const { start, count } = fragments.range(f);
+          for (let v = start; v < start + count; ++v) {
+            ids[2 * v] = lo;
+            ids[2 * v + 1] = hi;
+          }
+        } else {
+          for (const v of fragments.indices(f)) {
+            ids[2 * v] = lo;
+            ids[2 * v + 1] = hi;
+          }
+        }
       }
       segmentIds = ids;
     }
@@ -494,18 +583,30 @@ export class LevelPipeline {
         hostIsPredecessor: aLocal,
       });
     }
+    // Decided once per neighbour, before any of their reads start.
+    const atHand = new Map<string, boolean>();
+    const include = options.sliceOnly || options.neighboursAtHand
+      ? (key: string) => {
+          let ok = atHand.get(key);
+          if (ok === undefined) atHand.set(key, (ok = this.atHand(key)));
+          return ok;
+        }
+      : () => true;
     const [ghostPositions, cornerValues] = await Promise.all([
-      this.ghostPositions(ghosts, signal),
-      this.cornerValues(ghosts),
+      this.ghostPositions(ghosts, signal, include),
+      this.cornerValues(ghosts, include),
     ]);
-    await fillObjectValues(
-      this.access,
-      description,
-      decoded.attributes,
-      segmentIds,
-      decoded.numVertices,
-    );
-    return assembleChunk(
+    if (!options.forDrawing) {
+      await fillObjectValues(
+        this.access,
+        description,
+        decoded.attributes,
+        segmentIds,
+        decoded.numVertices,
+        this.objectValues,
+      );
+    }
+    const out = assembleChunk(
       decoded,
       segmentIds,
       ghosts,
@@ -513,6 +614,55 @@ export class LevelPipeline {
       crossFaces,
       cornerValues,
     );
+    const leftOut = ghosts.filter((g) => !include(g.chunkKey)).length;
+    if (leftOut > 0) out.ghostsLeftOut = leftOut;
+    return out;
+  }
+
+  /**
+   * The chunk at spatial cell `chunk` as the dense layer draws it
+   * ({@link packForDrawing}), or `undefined` if it is empty: positions and
+   * a word per vertex, its objects' ids and the object values the shader
+   * reads once per object.
+   */
+  async downloadForDrawing(
+    chunk: number[],
+    signal: AbortSignal,
+    options: { sliceOnly?: boolean; neighboursAtHand?: boolean } = {},
+  ): Promise<DrawChunkData | undefined> {
+    const data = await this.download(chunk, signal, {
+      ...options,
+      forDrawing: true,
+    });
+    if (data === undefined) return undefined;
+    return packForDrawing(data, this.description, await this.drawnObjectValues());
+  }
+
+  /** The object values the shader reads, per object row, as read once per store. */
+  private async drawnObjectValues(): Promise<PackObjectValues | undefined> {
+    const { description } = this;
+    const wanted = description.attributes.filter(
+      (a) =>
+        a.objectValue !== undefined &&
+        (this.objectValues === undefined || this.objectValues.has(a.id)),
+    );
+    if (wanted.length === 0 || description.objectValuesPath === undefined) {
+      return undefined;
+    }
+    const values = await readShaderObjectValues(
+      this.access,
+      description.objectValuesPath,
+      wanted.map((a) => a.objectValue!),
+    ).catch((e) => {
+      if (retryable(e)) throw e;
+      warnOnce(
+        "object values could not be read " +
+          `(${e instanceof Error ? e.message : e}); shown as no value (NaN)`,
+        this.access.url,
+      );
+      return undefined;
+    });
+    return { ids: wanted.map((a) => a.id), values };
   }
 
   /**
@@ -523,11 +673,14 @@ export class LevelPipeline {
    */
   private async cornerValues(
     ghosts: readonly Ghost[],
+    include: (chunkKey: string) => boolean,
   ): Promise<(Float32Array | undefined)[][]> {
     const out: (Float32Array | undefined)[][] = ghosts.map(() => []);
     const attributes = this.description.attributes;
     if (attributes.length === 0) return out;
-    const keys = [...new Set(ghosts.filter((g) => g.corner).map((g) => g.chunkKey))];
+    const keys = [
+      ...new Set(ghosts.filter((g) => g.corner).map((g) => g.chunkKey)),
+    ].filter(include);
     await mapConcurrent(keys, 8, async (key) => {
       await Promise.all(
         attributes.map(async (a, i) => {
@@ -544,7 +697,7 @@ export class LevelPipeline {
               const count = Math.floor(bytes.byteLength / ELEMENT_BYTES[type]);
               return decodeFloat32(bytes, type, count);
             })
-            .catch(() => undefined);
+            .catch(unlessRetryable(undefined));
           if (values === undefined) return;
           ghosts.forEach((g, gi) => {
             if (!g.corner || g.chunkKey !== key) return;
@@ -559,14 +712,30 @@ export class LevelPipeline {
     return out;
   }
 
-  /** Positions of the requested neighbour vertices (NaN where unreadable). */
+  /**
+   * Whether the vertex cell at `chunkKey` is at hand: cached, being read, or
+   * in a chunk the view draws (so read anyway).
+   */
+  private atHand(chunkKey: string): boolean {
+    return (
+      vertexCells.peek(`${this.id}|${chunkKey}`) !== undefined ||
+      this.isRequested(chunkKey.split(".").map(Number))
+    );
+  }
+
+  /**
+   * Positions of the requested neighbour vertices (NaN where unreadable, or
+   * in a chunk not to `include`).
+   */
   private async ghostPositions(
     ghosts: readonly Ghost[],
     signal: AbortSignal,
+    include: (chunkKey: string) => boolean,
   ): Promise<Float32Array> {
     const out = new Float32Array(ghosts.length * 3).fill(Number.NaN);
     const byChunk = new Map<string, number[]>();
     ghosts.forEach((g, i) => {
+      if (!include(g.chunkKey)) return;
       let list = byChunk.get(g.chunkKey);
       if (list === undefined) byChunk.set(g.chunkKey, (list = []));
       list.push(i);
@@ -580,17 +749,19 @@ export class LevelPipeline {
       // draw that chunk anyway; otherwise only the rows needed, if possible.
       let whole = vertexCells.peek(`${this.id}|${key}`);
       if (whole === undefined && this.isRequested(key.split(".").map(Number))) {
-        whole = this.vertexCell(key);
+        whole = this.vertexCell(key, signal);
+      } else if (whole !== undefined) {
+        whole = this.vertexCell(key, signal);
       }
       const found = await this.cells.vertexRows(
         key,
         type,
         whole === undefined ? wanted : [],
         signal,
-        () => this.vertexCell(key),
+        () => this.vertexCell(key, signal),
       );
       if (whole !== undefined) {
-        const bytes = await whole.catch(() => undefined);
+        const bytes = await whole.catch(unlessRetryable(undefined));
         if (bytes !== undefined) {
           const all = decodeFloat32(
             bytes,
@@ -619,8 +790,12 @@ export class LevelPipeline {
  * carrying its host's segment id and attributes, with a tangent along the
  * bridge in the curve's walk direction; the faces, then those reaching
  * across (`crossFaces`, ghosts as -1 - index), where every corner was found.
+ *
+ * With no ghosts to append, the decoded arrays are used as they are; only
+ * the positions are copied, as they view the vertex cell kept for
+ * neighbours, and the chunk's arrays are handed over to the frontend.
  */
-function assembleChunk(
+export function assembleChunk(
   decoded: DecodedChunk,
   segmentIds: Uint32Array,
   ghosts: readonly Ghost[],
@@ -632,6 +807,24 @@ function assembleChunk(
   const kept = ghosts
     .map((g, i) => ({ ...g, i }))
     .filter((g) => !Number.isNaN(ghostPositions[3 * g.i]));
+  const { joinsPrevious } = decoded;
+  if (kept.length === 0) {
+    const attributes = [...decoded.attributes];
+    if (decoded.tangents !== undefined) attributes.push(decoded.tangents);
+    return {
+      numVertices: own,
+      numOwnVertices: own,
+      positions: decoded.positions.slice(0, own * 3),
+      segmentIds:
+        segmentIds.length === own * 2 ? segmentIds : segmentIds.slice(0, own * 2),
+      edges: decoded.edges,
+      faces: withCrossFaces(decoded.faces, crossFaces, new Int32Array(ghosts.length).fill(-1)),
+      attributes,
+      ...(joinsPrevious === undefined
+        ? {}
+        : { joinsPrevious, ghostTangents: new Float32Array(0) }),
+    };
+  }
   const total = own + kept.length;
   const row = new Int32Array(ghosts.length).fill(-1);
   kept.forEach((g, k) => (row[g.i] = own + k));
@@ -652,6 +845,8 @@ function assembleChunk(
     return out;
   });
   const tangentIndex = decoded.tangents === undefined ? -1 : sources.length - 1;
+  const ghostTangents =
+    joinsPrevious === undefined ? undefined : new Float32Array(kept.length * 3);
   kept.forEach((g, k) => {
     const v = own + k;
     positions.set(ghostPositions.subarray(3 * g.i, 3 * g.i + 3), 3 * v);
@@ -660,6 +855,19 @@ function assembleChunk(
     if (!g.corner) {
       edges[edgeAt++] = g.host;
       edges[edgeAt++] = v;
+    }
+    if (ghostTangents !== undefined) {
+      // As below, the host's own derived from the flags.
+      const sign = g.hostIsPredecessor ? 1 : -1;
+      const d = [0, 1, 2].map(
+        (j) => sign * (positions[3 * v + j] - positions[3 * g.host + j]),
+      );
+      const norm = Math.hypot(d[0], d[1], d[2]);
+      if (norm > 0) {
+        for (let j = 0; j < 3; ++j) ghostTangents[3 * k + j] = d[j] / norm;
+      } else {
+        joinedTangentInto(ghostTangents, k, positions, joinsPrevious!, g.host);
+      }
     }
     attributes.forEach((out, i) => {
       const width = widths[i];
@@ -681,27 +889,39 @@ function assembleChunk(
       }
     });
   });
-  let faces = decoded.faces;
-  if (crossFaces.length > 0) {
-    const across: number[] = [];
-    for (let f = 0; f + 3 <= crossFaces.length; f += 3) {
-      const corners = [0, 1, 2].map((k) => {
-        const c = crossFaces[f + k];
-        return c >= 0 ? c : row[-1 - c];
-      });
-      if (corners.every((c) => c >= 0)) across.push(...corners);
-    }
-    faces = new Uint32Array(decoded.faces.length + across.length);
-    faces.set(decoded.faces);
-    faces.set(across, decoded.faces.length);
-  }
   return {
     numVertices: total,
     numOwnVertices: own,
     positions,
     segmentIds: ids,
     edges,
-    faces,
+    faces: withCrossFaces(decoded.faces, crossFaces, row),
     attributes,
+    ...(joinsPrevious === undefined ? {} : { joinsPrevious, ghostTangents }),
   };
+}
+
+/**
+ * The chunk's faces, then those reaching across (`crossFaces`, ghosts as
+ * -1 - index, `row` the vertex each ghost became, -1 if dropped) whose
+ * every corner was found.
+ */
+function withCrossFaces(
+  faces: Uint32Array,
+  crossFaces: readonly number[],
+  row: Int32Array,
+): Uint32Array {
+  if (crossFaces.length === 0) return faces;
+  const across: number[] = [];
+  for (let f = 0; f + 3 <= crossFaces.length; f += 3) {
+    const corners = [0, 1, 2].map((k) => {
+      const c = crossFaces[f + k];
+      return c >= 0 ? c : row[-1 - c];
+    });
+    if (corners.every((c) => c >= 0)) across.push(...corners);
+  }
+  const out = new Uint32Array(faces.length + across.length);
+  out.set(faces);
+  out.set(across, faces.length);
+  return out;
 }

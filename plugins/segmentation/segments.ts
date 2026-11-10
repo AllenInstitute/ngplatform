@@ -9,7 +9,13 @@
  * layer shows every segment (`ignoreNullVisibleSet`, true by default) or
  * none (false).  A label volume with nothing hidden keeps the list empty,
  * so whatever is painted shows; hiding one lists every other one known.
+ * Past LIST_MAX segments that list would fill the state (and each undo
+ * step) with every id: the segments hidden are kept in the plugin's state
+ * instead, and the layer shown the others as a temporary set.
  */
+
+/** Segments a layer's own list may name (each shown or hidden); past this the segments hidden are kept by the plugin. */
+export const LIST_MAX = 1000;
 
 export interface SegmentRow {
   value: number;
@@ -44,11 +50,24 @@ export function nextSegment(used: Iterable<number>, max: number): number {
 
 /** Whether a layer in this state shows a segment. */
 export function isVisible(state: SegmentsState, value: number): boolean {
+  return visibility(state)(value);
+}
+
+/** Whether a layer in this state shows each segment: the list read once, each question answered at once. */
+export function visibility(state: SegmentsState): (value: number) => boolean {
   const list = state.segments ?? [];
-  const id = String(value);
-  if (list.includes(id)) return true;
-  if (list.includes(`!${id}`)) return false;
-  return !list.some((s) => !s.startsWith("!")) && state.ignoreNullVisibleSet !== false;
+  if (list.length === 0) return () => state.ignoreNullVisibleSet !== false;
+  const shown = new Set<string>();
+  const hidden = new Set<string>();
+  for (const s of list) {
+    if (s.startsWith("!")) hidden.add(s.slice(1));
+    else shown.add(s);
+  }
+  const rest = shown.size === 0 && state.ignoreNullVisibleSet !== false;
+  return (value) => {
+    const id = String(value);
+    return shown.has(id) || (!hidden.has(id) && rest);
+  };
 }
 
 /**
@@ -57,9 +76,11 @@ export function isVisible(state: SegmentsState, value: number): boolean {
  */
 export function withVisibility(state: SegmentsState, known: number[], value: number, visible: boolean): Required<SegmentsState> {
   const all = [...new Set([...known, value])].sort((a, b) => a - b);
-  const shown = all.filter((v) => (v === value ? visible : isVisible(state, v)));
+  const now = visibility(state);
+  const shown = all.filter((v) => (v === value ? visible : now(v)));
   if (shown.length === all.length) return { segments: [], ignoreNullVisibleSet: true };
-  const hidden = all.filter((v) => !shown.includes(v));
+  const showing = new Set(shown);
+  const hidden = all.filter((v) => !showing.has(v));
   return { segments: [...shown.map(String), ...hidden.map((v) => `!${v}`)], ignoreNullVisibleSet: false };
 }
 

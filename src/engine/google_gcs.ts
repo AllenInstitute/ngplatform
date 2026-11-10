@@ -1,5 +1,5 @@
 /**
- * Google Cloud Storage read with a Google account of the Auth tab:
+ * Google Cloud Storage read with a Google account of Settings › Sign-in:
  * `gs+google://bucket/path`, as Neuroglancer reads `gs://bucket/path` but
  * with an account's token in each request.  The scheme is registered here,
  * on the main thread and in Neuroglancer's chunk workers
@@ -62,7 +62,7 @@ export function fetchWithGoogle(provider: CredentialsProvider<GoogleCredentials>
         return await fetchOk(input, { ...init, headers });
       } catch (error) {
         if (!(error instanceof HttpError) || (error.status !== 401 && error.status !== 403)) throw error;
-        if (error.status === 403) error.message += `  (The Google account ${JSON.stringify(email ?? "")} may not read this: choose another for its bucket in the Auth tab.)`;
+        if (error.status === 403) error.message += `  (The Google account ${JSON.stringify(email ?? "")} may not read this: choose another for its bucket in Settings → Sign-in.)`;
         // A 403 for the same token again is final: the account may not read it.
         const again = error.status === 403 && invalid?.credentials.refused === 403 && invalid.credentials.accessToken === accessToken;
         if (again || ++attempt === MAX_ATTEMPTS) throw error;
@@ -81,7 +81,7 @@ export function folderOf(path: string): string {
 function googleGcsProvider(context: SharedKvStoreContextBase): BaseKvStoreProvider {
   return {
     scheme: GOOGLE_SCHEME,
-    description: "Google Cloud Storage (a Google account of the Auth tab)",
+    description: "Google Cloud Storage (a Google account of Settings › Sign-in)",
     getKvStore(url) {
       const m = (url.suffix ?? "").match(/^\/\/([^/]+)(\/.*)?$/);
       if (m === null) throw new Error(`Invalid URL, expected \`${GOOGLE_SCHEME}://<bucket>/<path>\``);

@@ -158,24 +158,45 @@ def contains(outer, inner) -> bool:
     return all(a <= b for a, b in zip(outer[0], inner[0])) and all(a >= b for a, b in zip(outer[1], inner[1]))
 
 
-_arrays: dict[tuple[str, str], object] = {}
+# The levels' arrays opened (each holds its store and its connections), the most recently used kept.
+_arrays: OrderedDict[tuple[str, str], object] = OrderedDict()
+_arrays_lock = threading.Lock()
+MAX_ARRAYS = 16
 
 
 def _array(url: str, path: str, ms: volumes.Multiscale | None = None):
     import zarr
 
     key = (url, path)
-    if key not in _arrays:
-        zarr.config.set({"async.concurrency": 64})
-        _arrays[key] = volumes.level_array(url, ms, path) if ms is not None else zarr.open_group(store=volumes._store(url), mode="r")[path]
-    return _arrays[key]
+    with _arrays_lock:
+        a = _arrays.get(key)
+        if a is not None:
+            _arrays.move_to_end(key)
+            return a
+    zarr.config.set({"async.concurrency": 64})
+    a = volumes.level_array(url, ms, path) if ms is not None else zarr.open_group(store=volumes._store(url), mode="r")[path]
+    with _arrays_lock:
+        _arrays[key] = a
+        while len(_arrays) > MAX_ARRAYS:
+            _arrays.popitem(last=False)
+    return a
+
+
+def forget(url: str) -> None:
+    """Lets go of the arrays opened for a store (when no session shows it any more)."""
+    with _arrays_lock:
+        for key in [k for k in _arrays if k[0] == url]:
+            del _arrays[key]
 
 
 def read_region(url: str, ms: volumes.Multiscale, level: volumes.Level, lo: tuple[int, int, int], hi: tuple[int, int, int],
                 cache: ChunkCache | None = None, cancelled: Callable[[], bool] = lambda: False,
-                progress: Callable[[float], None] | None = None, workers: int = 32) -> np.ndarray | None:
+                progress: Callable[[float], None] | None = None, workers: int = 32,
+                fixed: dict[int, int] | None = None) -> np.ndarray | None:
     """Voxels lo .. hi - 1 (x, y, z) of a level as a (z, y, x) array, chunk by chunk through the
-    cache; None when cancelled."""
+    cache, its non-spatial axes at `fixed` (axis: index; 0 otherwise); None when cancelled."""
+    fixed = fixed or {}
+    at = tuple(sorted(fixed.items()))
     cache = cache if cache is not None else CACHE
     arr = _array(url, level.path, ms)
     chunks = getattr(arr, "chunks")
@@ -191,10 +212,10 @@ def read_region(url: str, ms: volumes.Multiscale, level: volumes.Level, lo: tupl
     def one(c):
         if cancelled():
             return False
-        key = (url, level.path, c)
+        key = (url, level.path, at, c)
         a = cache.get(key)
         if a is None:
-            sel = [0] * len(ms.axes)
+            sel: list = [fixed.get(i, 0) for i in range(len(ms.axes))]
             for k in range(3):
                 sel[axes[k]] = slice(c[k] * ch[k], min(n[k], (c[k] + 1) * ch[k]))
             a = volumes._order_zyx(np.asarray(arr[tuple(sel)]), ms)
@@ -225,8 +246,9 @@ class DetailLoader:
     """Reads the region last asked for, in a thread; `on_ready(request, data)` when one is read."""
 
     def __init__(self, url: str, ms: volumes.Multiscale, on_ready: Callable[[dict, np.ndarray], None],
-                 quantize: Callable[[np.ndarray], np.ndarray]):
+                 quantize: Callable[[np.ndarray], np.ndarray], fixed: dict[int, int] | None = None):
         self.url, self.ms, self.on_ready, self.quantize = url, ms, on_ready, quantize
+        self.fixed = fixed or {}  # the channel and time point read
         self._cond = threading.Condition()
         self._gen = 0
         self._want: dict | None = None
@@ -283,7 +305,7 @@ class DetailLoader:
 
                 try:
                     data = read_region(self.url, self.ms, level, req["lo"], req["hi"], cancelled=lambda gen=gen: self._gen != gen or self.closed,
-                                       progress=progress)
+                                       progress=progress, fixed=self.fixed)
                     if data is None or self._gen != gen:
                         break
                     data = self.quantize(data)

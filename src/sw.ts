@@ -23,14 +23,35 @@
  *   this worker's memory only: when the browser has stopped it and started
  *   it again (it does so with an idle worker), or Google answers 401, it
  *   asks the open tabs for them again (`google-tokens-ask`).
+ *
+ * - The app itself, so it opens offline once it has been opened online:
+ *   its page and startup code are kept when the worker is installed (the
+ *   list the build writes in, `__SW_PRECACHE__`), the other files of the
+ *   build as they are first used.  The page comes from the network when it
+ *   can, so a new build is seen at once; the files the build named by their
+ *   contents come from the cache first.  Data is never kept here.
+ *
+ * Each of these is answered only under the app's own folder (the worker's
+ * scope).  The worker carries its build's version: a new one takes over at
+ * once (skipWaiting), drops the caches of older versions when active, and
+ * tells the pages its version (`sw-version`).
  */
 import { relay } from "chunkmirage-web/relay";
 import { type GoogleTokenTable, tokenFromTable } from "./core/sign_in_rules.js";
+import { ask, cacheName, prefixesOf, parseRange, type Range, routeOf, shellPageKey, shellRequest, staleCaches } from "./sw_parts.js";
 
 declare const self: ServiceWorkerGlobalScope;
+/** This build's version (vite.config.ts): the package's version and when it was built. */
+declare const __SW_VERSION__: string;
+const VERSION = typeof __SW_VERSION__ === "string" ? __SW_VERSION__ : "dev";
+/** The app's page and startup files, relative to the scope (none from the dev server). */
+declare const __SW_PRECACHE__: string[];
+const PRECACHE = typeof __SW_PRECACHE__ === "object" ? __SW_PRECACHE__ : [];
+const SHELL = cacheName(VERSION);
 
-const PREFIX = new URL("./local/", self.registration.scope).pathname;
-const GOOGLE_PREFIX = new URL("./gcs-google/", self.registration.scope).pathname;
+const PREFIXES = prefixesOf(self.registration.scope);
+const PREFIX = PREFIXES.local;
+const GOOGLE_PREFIX = PREFIXES.google;
 /** The Google accounts' access tokens, from the page (none: signed out). */
 let googleTokens: GoogleTokenTable = { default: null, rules: [] };
 /** Whether a page has given this worker its tokens since it started. */
@@ -42,8 +63,26 @@ const owners = new Map<string, string>();
 /** The tab last in use, which computed images are asked of first: every tab can compute them, and one should. */
 let active: string | undefined;
 
-self.addEventListener("install", () => void self.skipWaiting());
-self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+self.addEventListener("install", (event) => {
+  void self.skipWaiting();
+  // Each file on its own: one that fails (a flaky network) leaves the rest kept and the worker installed.
+  event.waitUntil(
+    (async () => {
+      const cache = await caches.open(SHELL);
+      await Promise.allSettled(PRECACHE.map((path) => cache.add(new URL(path, self.registration.scope).href)));
+    })(),
+  );
+});
+self.addEventListener("activate", (event) =>
+  event.waitUntil(
+    (async () => {
+      // The caches of older versions of this worker go; others' are left alone.
+      for (const name of staleCaches(await caches.keys(), VERSION)) await caches.delete(name);
+      await self.clients.claim();
+      for (const client of await self.clients.matchAll({ type: "window" })) client.postMessage({ type: "sw-version", version: VERSION });
+    })(),
+  ),
+);
 
 self.addEventListener("message", (event) => {
   const data = event.data as { type?: string; id?: string } | undefined;
@@ -51,6 +90,7 @@ self.addEventListener("message", (event) => {
   if (data?.type === "local-register" && source && data.id !== undefined) owners.set(data.id, source.id);
   if (data?.type === "local-claim") event.waitUntil(self.clients.claim());
   if (data?.type === "ngp-active" && source) active = source.id;
+  if (data?.type === "sw-version") (event.ports[0] ?? source)?.postMessage({ type: "sw-version", version: VERSION });
   if (data?.type === "google-tokens") {
     googleTokens = (data as { tokens?: GoogleTokenTable }).tokens ?? { default: null, rules: [] };
     tokensGiven = true;
@@ -59,12 +99,6 @@ self.addEventListener("message", (event) => {
 
 /** How long a page may take over one read: a large .nii.gz is decompressed on its first. */
 const READ_TIMEOUT = 10 * 60 * 1000;
-
-interface Range {
-  start?: number;
-  end?: number;
-  suffix?: number;
-}
 
 interface Answer {
   status: number;
@@ -75,20 +109,11 @@ interface Answer {
   contentType?: string;
 }
 
-/**
- * Asks a page.  A local request names its file `file`, not `path`:
- * chunkmirage's page end (routes.ts) takes any message with a `path` for
- * one of its own and declines it.
+/*
+ * Pages are asked with `ask` (./sw_parts.ts).  A local request names its
+ * file `file`, not `path`: chunkmirage's page end (routes.ts) takes any
+ * message with a `path` for one of its own and declines it.
  */
-function ask<T>(client: Client, request: Record<string, unknown>, timeout: number): Promise<T | undefined> {
-  const channel = new MessageChannel();
-  const answer = new Promise<T | undefined>((resolve) => {
-    channel.port1.onmessage = (e) => resolve(e.data as T);
-    setTimeout(() => resolve(undefined), timeout);
-  });
-  client.postMessage(request, [channel.port2]);
-  return answer;
-}
 
 /** The page holding `id`: the one that registered it, or (after this worker restarted) the one that says so. */
 async function owner(id: string): Promise<Client | undefined> {
@@ -115,14 +140,6 @@ async function read(id: string, file: string, range: Range | undefined, head: bo
   return answer ?? { status: 504, message: "The page holding this data did not answer in time." };
 }
 
-function parseRange(header: string | null): Range | undefined {
-  if (!header) return undefined;
-  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
-  if (!m) return undefined;
-  if (m[1] === "") return { suffix: Number(m[2]) };
-  return { start: Number(m[1]), end: m[2] === "" ? undefined : Number(m[2]) + 1 };
-}
-
 async function local(request: Request, url: URL): Promise<Response> {
   const method = request.method;
   const rest = url.pathname.slice(PREFIX.length);
@@ -138,7 +155,7 @@ async function local(request: Request, url: URL): Promise<Response> {
   const range = parseRange(request.headers.get("range"));
   const answer = await read(id, file, range, method === "HEAD");
   const headers: Record<string, string> = { "access-control-allow-origin": "*", "cache-control": "no-store" };
-  if (answer.status === 410) return new Response("This local data is not open in any tab. Open it again (Add → Local file or folder).", { status: 410, headers });
+  if (answer.status === 410) return new Response("This local data is not open in any tab. Open it again (Layers › Add data › Local file or folder…).", { status: 410, headers });
   if (answer.status !== 200) return new Response(answer.message ?? null, { status: answer.status, headers });
   const { body, size, start = 0 } = answer;
   headers["accept-ranges"] = "bytes";
@@ -158,16 +175,46 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith(GOOGLE_PREFIX)) {
-    if (request.method === "GET" || request.method === "HEAD") event.respondWith(google(request, url));
-    return;
+  const route = routeOf(url.pathname, PREFIXES);
+  const reads = request.method === "GET" || request.method === "HEAD";
+  if (route === "google" && reads) event.respondWith(google(request, url));
+  else if (route === "local" && reads) event.respondWith(local(request, url));
+  else if (route === "virtual") event.respondWith(computed(request, url));
+  else if (request.method === "GET" && !request.headers.has("range")) {
+    const shell = shellRequest(url, self.registration.scope, request.mode);
+    if (shell === "page") event.respondWith(page(request, url));
+    else if (shell === "asset") event.respondWith(asset(request));
   }
-  if (url.pathname.startsWith(PREFIX)) {
-    if (request.method === "GET" || request.method === "HEAD") event.respondWith(local(request, url));
-    return;
-  }
-  if (url.pathname.includes("/virtual/")) event.respondWith(computed(request, url));
 });
+
+/** The app's page: from the network, kept; the kept copy when the network fails. */
+async function page(request: Request, url: URL): Promise<Response> {
+  const key = shellPageKey(url, self.registration.scope);
+  try {
+    const response = await fetch(request);
+    if (response.ok) {
+      const copy = response.clone();
+      void caches.open(SHELL).then((cache) => cache.put(key, copy)).catch(() => {});
+    }
+    return response;
+  } catch (error) {
+    const kept = await caches.match(key);
+    if (kept !== undefined) return kept;
+    throw error;
+  }
+}
+
+/** A file of the build: the kept copy, else from the network and kept. */
+async function asset(request: Request): Promise<Response> {
+  const kept = await caches.match(request, { ignoreSearch: true });
+  if (kept !== undefined) return kept;
+  const response = await fetch(request);
+  if (response.ok && response.type === "basic") {
+    const copy = response.clone();
+    void caches.open(SHELL).then((cache) => cache.put(request, copy)).catch(() => {});
+  }
+  return response;
+}
 
 /**
  * The tokens of the open tabs (the one in use first; the first that has
@@ -205,7 +252,7 @@ async function google(request: Request, url: URL): Promise<Response> {
     return fetch(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(object)}?alt=media`, { method: request.method, headers });
   };
   const googleToken = tokenFromTable(googleTokens, bucket, object);
-  if (googleToken === null) return new Response("Sign in with Google in the Auth tab to read this bucket (with the account its sign-in rule names).", { status: 401 });
+  if (googleToken === null) return new Response("Sign in with Google (Settings → Sign-in) to read this bucket (with the account its sign-in rule names).", { status: 401 });
   const response = await fetchWith(googleToken);
   if (response.status !== 401) return response;
   // An expired token: the page may have a newer one.
@@ -220,7 +267,7 @@ async function google(request: Request, url: URL): Promise<Response> {
  * tab in use closed).
  */
 async function computed(request: Request, url: URL): Promise<Response> {
-  if (url.pathname.includes("/virtual/ngp/") && active !== undefined) {
+  if (url.pathname.startsWith(`${PREFIXES.virtual}ngp/`) && active !== undefined) {
     const first = await relay(request.clone(), { pick: (pages) => pages.filter((p) => p.id === active) });
     if (first.status !== 503) return first;
   }

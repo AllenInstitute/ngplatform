@@ -39,7 +39,10 @@ function without(t: Transform, drop: number, n: number): Transform {
 
 /**
  * The group's metadata without its component axis, so it reads as a 3-D
- * image (../volume-view/ome.ts); and that axis's position and name.
+ * image (../volume-view/ome.ts); and that axis's position and name.  Other
+ * axes that are not space (a size-1 t beside c, as bioformats2raw writes
+ * tczyx) stay: the volume view's levels keep them, and the reader reads
+ * them at index 0 when they are size 1, which only the arrays can say.
  */
 export function spatialGroup(group: any): { group: any; component: number; name: string } {
   const attributes = group?.attributes ?? group ?? {};
@@ -51,7 +54,8 @@ export function spatialGroup(group: any): { group: any; component: number; name:
   const outName = typeof firstOutput === "string" ? firstOutput : firstOutput?.name;
   const baseAxes = (systems.find((s) => s.name === outName) ?? systems[0])?.axes ?? multiscale.axes ?? [];
   const component = componentIndex(baseAxes);
-  if (component === -1 || baseAxes.length !== 4) {
+  const spatial = baseAxes.filter((a) => a.name === "x" || a.name === "y" || a.name === "z");
+  if (component === -1 || spatial.length !== 3 || baseAxes.length < 4) {
     throw new Error(`the image's axes are ${baseAxes.map((a: { name: string }) => a.name).join(", ")}; orientations need one axis of components (c) beside x, y and z`);
   }
   const n = baseAxes.length;

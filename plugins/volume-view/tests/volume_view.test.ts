@@ -1,14 +1,14 @@
 /**
  * The volume view's OME-Zarr reading, against BigBrain's published metadata
  * (OME-Zarr 0.6, a physical system and an affine to MNI) and hand-made 0.4
- * and 0.5 groups; and how it tells tissue from background.
+ * and 0.5 groups; and how it finds the background.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { apply, identity, invert, mergeLevels, multiply, parseOmeLevels, rasBounds } from "../ome.js";
-import { borderMean, displayOfRas, tissueWindow } from "../solid.js";
-import { omeZarrUrl, readSaved } from "../plugin.js";
+import { borderMean, displayOfRas } from "../solid.js";
+import { omeZarrUrl } from "../sources.js";
 
 const fixture = (name: string) => JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", name), "utf8"));
 const BB = "https://ftp.bigbrainproject.org/bigbrain-ftp/BigBrainRelease.2015/OME_Zarr/";
@@ -112,19 +112,6 @@ describe("tissue and background", () => {
     expect(borderMean(volume(0, () => 200), size)).toBe(0);
     expect(borderMean(volume(255, () => 40), size)).toBe(255);
   });
-
-  it("stretches the tissue's values, not the background's", () => {
-    // An MRI: dark background, tissue 100..123.
-    const [lo, hi] = tissueWindow(volume(0, (i) => 100 + i), true);
-    expect(lo * 255).toBeCloseTo(100, 6);
-    expect(hi * 255).toBeCloseTo(123, 6);
-    // A stain: pale background, tissue 40..63.
-    const [lo2, hi2] = tissueWindow(volume(255, (i) => 40 + i), false);
-    expect(lo2 * 255).toBeCloseTo(40, 6);
-    expect(hi2 * 255).toBeCloseTo(63, 6);
-    // Nothing but background: the full range.
-    expect(tissueWindow(new Uint8Array(8), true)).toEqual([0, 1]);
-  });
 });
 
 describe("drawing in Neuroglancer's 3-D view", () => {
@@ -144,10 +131,5 @@ describe("drawing in Neuroglancer's 3-D view", () => {
     const swapped = displayOfRas({ names: ["z", "y", "x"], scales: [0.001, 0.001, 0.001], units: ["m", "m", "m"] })!;
     expect([swapped[2], swapped[5], swapped[8]]).toEqual([1, 1, 1]);
     expect(displayOfRas({ names: ["t", "y", "x"], scales: [1, 1, 1], units: ["s", "m", "m"] })).toBeUndefined();
-  });
-
-  it("starts off, with the cut on", () => {
-    expect(readSaved(undefined)).toMatchObject({ on: false, cut: true });
-    expect(readSaved({ on: true, threshold: 0.3 })).toMatchObject({ on: true, threshold: 0.3 });
   });
 });

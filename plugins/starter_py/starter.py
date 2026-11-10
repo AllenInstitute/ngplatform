@@ -6,9 +6,11 @@ layers, position and commands, numpy arrays and points shown as layers
 Packages it imports (numpy, scipy, scikit-image ...) load when it runs.
 
     @ngp.command("Title")   adds a function to the command palette
-    @ngp.panel("Title")     adds a tab, drawn by a function given the tab's
-                            element, when shown and whenever the workspace
-                            changes (the page's DOM is reachable through `js`)
+    @ngp.panel("Title")     adds a panel to the Tools dock (under "Python", or
+                            group="..."), drawn by a function given the
+                            panel's element, when shown and whenever the
+                            workspace changes (the page's DOM is reachable
+                            through `js`)
 """
 from js import document
 
@@ -25,15 +27,19 @@ async def points():
     await ngp.show_points(xyz, name="random points", values={"distance": np.linalg.norm(xyz, axis=1)})
 
 
-@ngp.panel("Starter (Python)")
+@ngp.panel("Starter (Python)", group="Python")
 def draw(host):
-    title = document.createElement("p")
-    title.className = "note"
     layers = ngp.layers()
-    title.textContent = f"{len(layers)} layers in this scene" if layers else "This scene has no layers."
+    if not layers:
+        empty = document.createElement("p")
+        empty.className = "empty"
+        empty.textContent = "No layers in this scene."
+        host.append(empty)
+        return
     items = document.createElement("ul")
+    items.className = "list"
     for name in layers:
         item = document.createElement("li")
         item.textContent = name
         items.append(item)
-    host.append(title, items)
+    host.append(items)

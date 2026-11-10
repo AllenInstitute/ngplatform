@@ -271,6 +271,47 @@ export async function webgpuAdapter(): Promise<GPUAdapter | undefined> {
   return (await gpu.requestAdapter({ powerPreference: "high-performance" })) ?? undefined;
 }
 
+/**
+ * Each brick's least and greatest value (0..1), with a voxel of overlap
+ * (a brick of `brick`³ voxels and the voxel around it), as pairs in brick
+ * order.  It works through the volume a slab of z at a time and lets the
+ * page answer between slabs (about 4 M voxels each); `stop` ends it early.
+ */
+export async function brickBounds(data: Uint8Array, size: readonly number[], brick: number, stop: () => boolean = () => false): Promise<Float32Array> {
+  const [nx, ny, nz] = size;
+  const g = [Math.ceil(nx / brick), Math.ceil(ny / brick), Math.ceil(nz / brick)];
+  const n = g[0] * g[1] * g[2];
+  const b = new Float32Array(n * 2);
+  for (let i = 0; i < n; ++i) {
+    b[2 * i] = 1;
+    b[2 * i + 1] = 0;
+  }
+  const slab = Math.max(1, Math.floor(4e6 / Math.max(1, nx * ny)));
+  for (let z0 = 0; z0 < nz; z0 += slab) {
+    if (z0 > 0) await new Promise((r) => setTimeout(r, 0));
+    if (stop()) return b;
+    for (let z = z0; z < Math.min(nz, z0 + slab); ++z) {
+      const bz0 = Math.floor(Math.max(0, z - 1) / brick), bz1 = Math.floor(Math.min(nz - 1, z + 1) / brick);
+      for (let y = 0; y < ny; ++y) {
+        const by0 = Math.floor(Math.max(0, y - 1) / brick), by1 = Math.floor(Math.min(ny - 1, y + 1) / brick);
+        const base = (z * ny + y) * nx;
+        for (let x = 0; x < nx; ++x) {
+          const v = data[base + x] / 255;
+          const bx0 = Math.floor(Math.max(0, x - 1) / brick), bx1 = Math.floor(Math.min(nx - 1, x + 1) / brick);
+          for (let bz = bz0; bz <= bz1; ++bz)
+            for (let by = by0; by <= by1; ++by)
+              for (let bx = bx0; bx <= bx1; ++bx) {
+                const i = (bz * g[1] + by) * g[0] + bx;
+                if (v < b[2 * i]) b[2 * i] = v;
+                if (v > b[2 * i + 1]) b[2 * i + 1] = v;
+              }
+        }
+      }
+    }
+  }
+  return b;
+}
+
 export class LocalRenderer {
   onFrame: ((f: LocalFrame) => void) | undefined;
   status = "";
@@ -305,6 +346,8 @@ export class LocalRenderer {
   private maxSamples = 256;
   private running = false;
   private disposed = false;
+  /** The image is on the GPU and views can be rendered. */
+  ready = false;
   private client: VolumeClient | undefined;
   adapterName = "";
 
@@ -342,33 +385,13 @@ export class LocalRenderer {
       device.queue.writeTexture({ texture: this.tex }, padded, { bytesPerRow: row, rowsPerImage: ny }, [nx, ny, nz]);
     }
     this.sampler = device.createSampler({ magFilter: "linear", minFilter: "linear", addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge", addressModeW: "clamp-to-edge" });
-    // Bricks' least and greatest values, with a voxel of overlap.
+    // Bricks' least and greatest values, with a voxel of overlap: in slabs, so the page goes on answering.
     const g: [number, number, number] = [Math.ceil(nx / BRICK), Math.ceil(ny / BRICK), Math.ceil(nz / BRICK)];
     this.grid = g;
     this.nbricks = g[0] * g[1] * g[2];
-    const b = new Float32Array(this.nbricks * 2);
-    for (let i = 0; i < this.nbricks; ++i) {
-      b[2 * i] = 1;
-      b[2 * i + 1] = 0;
-    }
-    for (let z = 0; z < nz; ++z) {
-      const bz0 = Math.floor(Math.max(0, z - 1) / BRICK), bz1 = Math.floor(Math.min(nz - 1, z + 1) / BRICK);
-      for (let y = 0; y < ny; ++y) {
-        const by0 = Math.floor(Math.max(0, y - 1) / BRICK), by1 = Math.floor(Math.min(ny - 1, y + 1) / BRICK);
-        const base = (z * ny + y) * nx;
-        for (let x = 0; x < nx; ++x) {
-          const v = data[base + x] / 255;
-          const bx0 = Math.floor(Math.max(0, x - 1) / BRICK), bx1 = Math.floor(Math.min(nx - 1, x + 1) / BRICK);
-          for (let bz = bz0; bz <= bz1; ++bz)
-            for (let by = by0; by <= by1; ++by)
-              for (let bx = bx0; bx <= bx1; ++bx) {
-                const i = (bz * g[1] + by) * g[0] + bx;
-                if (v < b[2 * i]) b[2 * i] = v;
-                if (v > b[2 * i + 1]) b[2 * i + 1] = v;
-              }
-        }
-      }
-    }
+    progress?.("finding empty space");
+    const b = await brickBounds(data, size, BRICK, () => this.disposed);
+    if (this.disposed) throw new Error("closed");
     this.bounds = device.createBuffer({ size: b.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(this.bounds, 0, b);
     this.maj = device.createBuffer({ size: this.nbricks * 4, usage: GPUBufferUsage.STORAGE });
@@ -377,6 +400,7 @@ export class LocalRenderer {
     this.uni = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.compile(device);
     this.applied = -1;
+    this.ready = true;
     return `level ${level.path} (${size.join(" × ")}) on ${this.adapterName}`;
   }
 
@@ -527,7 +551,7 @@ export class LocalRenderer {
           device.queue.writeBuffer(this.uni!, 0, new Uint32Array([W, H, 0, 0]));
           const enc = device.createCommandEncoder();
           enc.clearBuffer(this.accum!);
-          let pass = enc.beginComputePass();
+          const pass = enc.beginComputePass();
           pass.setBindGroup(0, this.bind!);
           pass.setPipeline(this.pipelines.majorant);
           pass.dispatchWorkgroups(Math.ceil(this.nbricks / 64));

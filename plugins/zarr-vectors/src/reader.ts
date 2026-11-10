@@ -30,6 +30,8 @@ import { listHttpDirectories } from "./http_listing.js";
 
 export type { DenseChunkData, ZarrVectorsLevel, ZarrVectorsStore, ZarrVectorsStoreAccess };
 export { LevelPipeline, ObjectReader, openZarrVectorsStore, setVertexCellCacheBytes };
+// The bytes of decoded data a worker keeps over every store it reads.
+export { setDecodedCacheBytes } from "./util.js";
 export { storeUrlOfSource } from "./source_url.js";
 // A level's object table (object id and segment id per row), for tools that
 // relate Neuroglancer's segment ids to the store's object ids.

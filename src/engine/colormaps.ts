@@ -1,5 +1,5 @@
 /**
- * Colour maps for image layers: the Render tab's Colour map menu writes a
+ * Colour maps for image layers: the Display tab's Colour map menu writes a
  * layer's shader as a contrast control (`#uicontrol invlerp`) and one small
  * GLSL function per map.  Choosing "Custom" leaves the shader alone, and a
  * shader edited by hand shows as Custom.

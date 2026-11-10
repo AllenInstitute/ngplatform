@@ -4,12 +4,14 @@
  * The app looks at the active scene (layers, their types and sources, and
  * where needed a store's metadata, read once) and, for a plugin that is
  * off, asks its offer whether it applies. One that applies is listed in
- * the Datasets tab with a button that turns it on; a `toast` offer is also
+ * the Layers panel with a button that turns it on; a `toast` offer is also
  * shown once in a toast. See src/ui/plugin_offers.ts.
  *
  * Kept apart from the plugins' code, which loads only when a plugin is on.
  */
 import { isCollection, parentGroups } from "./collections/collection.js";
+import { omeZarrSource } from "./anatomical-rendering/view.js";
+import { precomputedUrl } from "@ngplatform/sdk/sources";
 import { omeZarrUrl } from "./volume-view/sources.js";
 
 /** What an offer may look at in the active scene. */
@@ -26,13 +28,13 @@ export interface OfferScene {
   isLocal(url: string): boolean;
 }
 
-/** Whether an offer applies; "list": in the Datasets tab only, never in a toast (a use worth offering, not pressing). */
+/** Whether an offer applies; "list": in the Layers panel only, never in a toast (a use worth offering, not pressing). */
 export type Applies = boolean | "list";
 
 export interface Offer {
   /** What it does for this data, in a few words after its name: "Track filtering: select streamlines through regions". */
   pitch: string;
-  /** Also offered once in a toast (else only in the Datasets tab). */
+  /** Also offered once in a toast (else only in the Layers panel). */
   toast: boolean;
   applies(scene: OfferScene): Applies | Promise<Applies>;
 }
@@ -73,6 +75,17 @@ async function hasOrientationAxis(scene: OfferScene, url: string): Promise<boole
   return COMPONENTS.has(array?.shape?.[component] ?? 0);
 }
 
+/** Whether a precomputed segmentation layer's segments have meshes (its info names a mesh directory). */
+async function hasPrecomputedMeshes(scene: OfferScene): Promise<boolean> {
+  for (const l of labelVolumes(scene)) {
+    const volume = precomputedUrl(l.sources[0]);
+    if (volume === undefined) continue;
+    const info = (await scene.json(`${volume}info`)) as { mesh?: unknown } | undefined;
+    if (typeof info?.mesh === "string" && info.mesh !== "") return true;
+  }
+  return false;
+}
+
 /** By plugin id. */
 export const OFFERS: Record<string, Offer> = {
   "org.ngplatform.track-filtering": {
@@ -81,9 +94,9 @@ export const OFFERS: Record<string, Offer> = {
     applies: (scene) => vectorLayers(scene).length > 0,
   },
   "org.ngplatform.luxar": {
-    pitch: "draw lines glowing, as Luxar does",
+    pitch: "draw lines and segment meshes glowing, as Luxar does",
     toast: false,
-    applies: (scene) => vectorLayers(scene).length > 0,
+    applies: async (scene) => vectorLayers(scene).length > 0 || (await hasPrecomputedMeshes(scene)),
   },
   "org.ngplatform.annotations": {
     pitch: "a table of annotations, with groups, values and comments",
@@ -107,15 +120,11 @@ export const OFFERS: Record<string, Offer> = {
     toast: false,
     applies: (scene) => images(scene).length > 0,
   },
-  "org.ngplatform.volume-view": {
-    pitch: "draw an image as a solid in 3-D",
-    toast: false,
-    applies: (scene) => images(scene).length > 0,
-  },
   "org.ngplatform.anatomical-rendering": {
     pitch: "photorealistic, path-traced views on a GPU",
     toast: false,
-    applies: (scene) => images(scene).length > 0,
+    // What it reads: OME-Zarr and N5 images (not precomputed EM).
+    applies: (scene) => images(scene).some((l) => omeZarrSource(l.sources[0]) !== undefined),
   },
   "org.ngplatform.registration": {
     pitch: "move one image onto another",

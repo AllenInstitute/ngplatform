@@ -100,7 +100,7 @@ bridge directions; per 16 384 streamlines where their manifests are; per
 streamlines that is about 25 MB. Cells are decoded from the spill when a
 key asks for them, and the decoded cells last used are kept up to a budget:
 1/32 of the device's memory (`navigator.deviceMemory`), between 64 and
-512 MB, or what View settings sets (the vectors worker gets it as a
+512 MB, or what Settings › Storage sets (the vectors worker gets it as a
 `settings` message, `setVectorCacheMegabytes` in `vectors/formats.ts`).
 
 The sample levels keep streamline `id` while a hash of the id is below
@@ -128,7 +128,7 @@ budget, else only the streamlines of a sample depth: about 1 in 10, 100,
 1 000 or 10 000 (`sampleDepth`, the same hash as the sample levels), the
 first whose spill fits, plus a few bytes per streamline of every one (the
 columns and manifests, about 3 % of the file). The budget is the page's
-setting (View settings → Local tractograms, `tractogramDiskGigabytes` in
+setting (Settings › Storage → Local tractograms, `tractogramDiskGigabytes` in
 `vectors/formats.ts`, sent as `diskBytes`), 4 GB by default, at most 10 %
 of the origin's quota and 80 % of what is free. A spill of 256 MB or less
 is kept in memory, so a budget of 0 still gives a sample. A sample's store
@@ -145,8 +145,8 @@ memory: every streamline, 73 s and a 7.3 GB spill (binning 57 s of it);
 
 When even 1 in 10 000 does not fit, or the storage refuses to grow (a
 private window keeps OPFS in memory, with less room), opening fails with
-a message naming the local runner ("Open through the local runner (Jobs →
-This computer)"). `NeedsRunner` (`kind: "runner"`) in `vectors/spill.ts`
+a message naming the local runner ("Open it through the runner on this
+computer (Settings › Compute → This computer)"). `NeedsRunner` (`kind: "runner"`) in `vectors/spill.ts`
 is the hook for the page to offer the hand-off.
 
 ## Large meshes
@@ -195,7 +195,7 @@ level 2 a sixty-fourth. Coarse chunks are kept in the origin's private
 file system (OPFS), keyed by the file's name, size and date and by the
 level and chunk, within a budget:
 
-- the budget is set in **View settings → Overviews**: by default 2 % of the
+- the budget is set in **Settings › Storage → Overviews of local images**: by default 2 % of the
   file, at most 2 GB an image, at most 10 GB for all images, and never more
   than half of what the browser's storage has free. A 1 TB TIFF keeps 2 GB,
   a 16 GB one 330 MB. Files under 64 MB keep nothing (their levels are made
@@ -215,7 +215,7 @@ In-memory caches are sized from `navigator.deviceMemory`: chunks 32 MB per
 GB of device memory and rows 16 MB per GB, within bounds (256 MB and 128 MB
 on an 8 GB machine; Chrome reports 8 at most).
 
-**Building the overview** (`{ overview: "build" }`, a job in the Jobs tab
+**Building the overview** (`{ overview: "build" }`, a job in the Activity dock
 with progress, which can be cancelled). One pass over level 0, slab by slab.
 Each coarser level is made from the slabs of the one below as they pass,
 and the levels the budget keeps are written into the cache. Memory stays at
@@ -297,7 +297,7 @@ Writers for saving data on this computer live beside the readers: NIfTI
 (`.nii`, `.nii.gz`), FreeSurfer (`.mgh`, `.mgz`) and OME-Zarr for images
 (`out/volume.ts`, written by `out/export_worker.ts`), TrackVis `.trk` and
 MRtrix `.tck` for tractograms, OBJ, PLY and STL for meshes, CSV and GraphML
-(`out/vectors.ts`). Datasets → a row's ⋯ → **Export as…** reaches them
+(`out/vectors.ts`). Layers → a dataset's ⋯ → **Export as…** reaches them
 (`src/ui/export.ts`). An image's every level is written into a folder
 chunk by chunk (above).
 

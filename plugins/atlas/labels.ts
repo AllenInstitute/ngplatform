@@ -121,3 +121,23 @@ export function countingLevel(sizes: [number, number, number][], budget = 2 ** 2
   const i = sizes.findIndex((s) => s[0] * s[1] * s[2] <= budget);
   return i < 0 ? sizes.length - 1 : i;
 }
+
+/** How long a finer count may take, about, before it is left for the user to ask for. */
+export const REFINE_SECONDS = 60;
+
+/**
+ * The level to count again at, after a count at `from` took `seconds`: the
+ * finest level whose voxels the same rate reads within `budget` seconds,
+ * or undefined when no level finer than `from` fits (levels finest first).
+ * A region smaller than a voxel of `from` may be missing from its count; a
+ * finer level finds it, and level 0 finds every region.
+ */
+export function refineLevel(sizes: [number, number, number][], from: number, seconds: number, budget = REFINE_SECONDS): number | undefined {
+  if (from <= 0 || from >= sizes.length) return undefined;
+  const voxels = (s: [number, number, number]) => s[0] * s[1] * s[2];
+  // Reading at least a second's worth, however quick the first count was.
+  const rate = voxels(sizes[from]) / Math.max(seconds, 1e-3);
+  const affordable = Math.max(rate * budget, voxels(sizes[from]));
+  for (let i = 0; i < from; ++i) if (voxels(sizes[i]) <= affordable) return i;
+  return undefined;
+}

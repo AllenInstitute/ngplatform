@@ -1,17 +1,24 @@
 /**
  * Google sign-in for the whole browser, with several accounts at once: an
  * OAuth access token per account from Google Identity Services' token
- * flow, kept in this browser with its expiry, that reads Google Cloud
+ * flow, kept with its expiry, that reads Google Cloud
  * Storage buckets as `gs+google://bucket/path` (see src/engine/google_gcs.ts).
  * One account is the default; sign-in rules (./sign_in_rules.ts) choose
  * another for a bucket or a folder.  It needs an OAuth client ID registered
  * for this site's address, built in (VITE_GOOGLE_CLIENT_ID) or set in the
- * Auth tab; docs/guide/signing-in.md says how to make one.
+ * Settings › Sign-in; docs/guide/signing-in.md says how to make one.
+ *
+ * The accounts (their emails, and which is the default) and their access
+ * tokens are kept in this browser (localStorage), so every tab of the app
+ * is signed in at once and stays so after a reload; a token lasts an hour
+ * at most, and the Content Security Policy keeps other sites' scripts off
+ * the page (docs/dev/security.md).  An environment can keep the tokens in
+ * the tab instead (`tokenStorage`: sessionStorage), gone when it closes.
  *
  * Adding an account opens Google's account chooser; signing in again for
  * one passes its email as the hint, so Google goes straight to it.  A popup
  * opens only from a click: data waiting for an account that is signed out
- * or expired waits for the next one (the Auth tab's buttons, or the button
+ * or expired waits for the next one (the buttons in Settings › Sign-in, or the button
  * in Neuroglancer's status line).
  */
 import { googleAccountFor, type SignInRule } from "../core/sign_in_rules.js";
@@ -32,6 +39,8 @@ export const ACCOUNTS_KEY = "ngplatform.google.accounts";
 /** Where the one token of the first version was kept (moved into ACCOUNTS_KEY on first read). */
 export const OLD_TOKEN_KEY = "ngplatform.google.token";
 const CLIENT_KEY = "ngplatform.google.clientId";
+/** Where the access tokens are kept, by email, in the tab's storage (GoogleEnvironment.tokenStorage). */
+export const TOKENS_KEY = "ngplatform.google.tokens";
 /** A token this close to its expiry is taken as expired, so a request never starts with one about to lapse. */
 const MARGIN_MS = 60_000;
 
@@ -88,7 +97,10 @@ export interface GoogleOAuth2 {
 
 /** What the Google sign-in needs from the browser; tests give fakes. */
 export interface GoogleEnvironment {
+  /** Where the accounts are kept: the browser's localStorage. */
   storage: Pick<Storage, "getItem" | "setItem" | "removeItem">;
+  /** Where their access tokens are kept apart from the accounts (a tab's sessionStorage).  None, the browser's default: with the accounts, in `storage`. */
+  tokenStorage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
   fetch: typeof fetch;
   now(): number;
   /** Loads Google Identity Services (its script, once). */
@@ -129,9 +141,24 @@ export function browserGoogleEnvironment(): GoogleEnvironment {
   };
 }
 
+/**
+ * This tab's sessionStorage, for an environment that keeps the tokens in the
+ * tab (`tokenStorage`); a browser that refuses it keeps them in memory, for
+ * this page only.
+ */
+export function tabStorage(): Pick<Storage, "getItem" | "setItem" | "removeItem"> {
+  try {
+    sessionStorage.getItem(TOKENS_KEY);
+    return sessionStorage;
+  } catch {
+    const memory = new Map<string, string>();
+    return { getItem: (k) => memory.get(k) ?? null, setItem: (k, v) => void memory.set(k, v), removeItem: (k) => void memory.delete(k) };
+  }
+}
+
 export type GoogleState = "unconfigured" | "signed-out" | "expired" | "signed-in";
 
-/** An account's name in the tab: its email, or a stand-in when Google did not say. */
+/** An account's name in Settings › Sign-in: its email, or a stand-in when Google did not say. */
 export function accountLabel(email: string | undefined): string {
   return email === undefined ? "the default account" : email === "" ? "the account signed in before" : email;
 }
@@ -178,20 +205,42 @@ export class GoogleSignIn {
 
   // ------------------------------------------------------------ accounts
 
-  /** What is kept, the first version's single token moved in. */
+  /** What is kept, the first version's single token moved in, and tokens kept with the accounts by earlier versions moved to the tab. */
   private kept(): Kept {
     const raw = this.env.storage.getItem(ACCOUNTS_KEY);
     if (raw === null) return this.migrate();
+    let kept: Kept;
     try {
-      const kept = JSON.parse(raw);
-      const accounts = Array.isArray(kept?.accounts)
-        ? (kept.accounts as GoogleAccount[]).filter((a) => typeof a?.email === "string").map((a) => ({ email: a.email, token: validToken(a.token) }))
+      const parsed = JSON.parse(raw);
+      const accounts = Array.isArray(parsed?.accounts)
+        ? (parsed.accounts as GoogleAccount[]).filter((a) => typeof a?.email === "string").map((a) => ({ email: a.email, token: validToken(a.token) }))
         : [];
       const fallback = accounts[0]?.email;
-      return { default: accounts.some((a) => a.email === kept.default) ? kept.default : fallback, accounts };
+      kept = { default: accounts.some((a) => a.email === parsed.default) ? parsed.default : fallback, accounts };
     } catch {
       return { accounts: [] };
     }
+    const tabs = this.env.tokenStorage;
+    if (tabs === undefined) return kept;
+    const inBrowser = kept.accounts.some((a) => a.token !== undefined);
+    const tokens = readTokens(tabs.getItem(TOKENS_KEY));
+    for (const account of kept.accounts) account.token = tokens[account.email] ?? account.token;
+    // Tokens an earlier version kept in the browser's storage: into this tab's, and out of the browser's.
+    if (inBrowser) this.write(kept);
+    return kept;
+  }
+
+  /** Writes the accounts to the browser's storage, and their tokens to the tab's (or with them, when there is none). */
+  private write(kept: Kept): void {
+    const tabs = this.env.tokenStorage;
+    if (tabs === undefined) {
+      this.env.storage.setItem(ACCOUNTS_KEY, JSON.stringify(kept));
+      return;
+    }
+    this.env.storage.setItem(ACCOUNTS_KEY, JSON.stringify({ default: kept.default, accounts: kept.accounts.map((a) => ({ email: a.email })) }));
+    const tokens = Object.fromEntries(kept.accounts.flatMap((a) => (a.token === undefined ? [] : [[a.email, a.token]])));
+    if (Object.keys(tokens).length === 0) tabs.removeItem(TOKENS_KEY);
+    else tabs.setItem(TOKENS_KEY, JSON.stringify(tokens));
   }
 
   /** The first version kept one token under OLD_TOKEN_KEY: it becomes the default account. */
@@ -209,13 +258,13 @@ export class GoogleSignIn {
     if (token === undefined) return { accounts: [] };
     const email = typeof old?.email === "string" ? old.email : "";
     const kept: Kept = { default: email, accounts: [{ email, token }] };
-    this.env.storage.setItem(ACCOUNTS_KEY, JSON.stringify(kept));
+    this.write(kept);
     return kept;
   }
 
   private keep(kept: Kept): void {
     if (kept.default === undefined || !kept.accounts.some((a) => a.email === kept.default)) kept.default = kept.accounts[0]?.email;
-    this.env.storage.setItem(ACCOUNTS_KEY, JSON.stringify(kept));
+    this.write(kept);
     this.changed();
   }
 
@@ -349,7 +398,7 @@ export class GoogleSignIn {
    * with the email of the account that signed in.
    */
   signIn(account?: string): Promise<string> {
-    if (this.clientId() === undefined) return Promise.reject(new Error("Set a Google OAuth client ID first (in the Auth tab, or see Signing in in the guide)."));
+    if (this.clientId() === undefined) return Promise.reject(new Error("Set a Google OAuth client ID first (Settings → Sign-in, or see Signing in in the guide)."));
     if (!this.ready() || this.client === undefined) {
       void this.prepare().catch(() => {});
       return Promise.reject(new Error("Google sign-in is still loading: click again in a moment."));
@@ -443,7 +492,7 @@ export class GoogleSignIn {
     for (const listener of [...this.listeners]) listener();
   }
 
-  /** Tells listeners when a token lapses, so the Auth tab shows it expired. */
+  /** Tells listeners when a token lapses, so Settings › Sign-in shows it expired. */
   private scheduleExpiry(): void {
     if (this.expiryTimer !== undefined) clearTimeout(this.expiryTimer);
     this.expiryTimer = undefined;
@@ -459,6 +508,20 @@ export class GoogleSignIn {
   }
 }
 
+/** The tab's tokens by email; those that cannot be read are none. */
+function readTokens(raw: string | null): Record<string, GoogleAccount["token"]> {
+  if (raw === null) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(parsed ?? {}).flatMap(([email, token]) => {
+      const valid = validToken(token);
+      return valid === undefined ? [] : [[email, valid]];
+    }));
+  } catch {
+    return {};
+  }
+}
+
 function validToken(token: unknown): GoogleAccount["token"] {
   const t = token as { accessToken?: unknown; expiresAt?: unknown; scope?: unknown } | undefined;
   return t && typeof t.accessToken === "string" && typeof t.expiresAt === "number"
@@ -466,7 +529,7 @@ function validToken(token: unknown): GoogleAccount["token"] {
     : undefined;
 }
 
-/** An account's status as the Auth tab shows it. */
+/** An account's status as Settings › Sign-in shows it. */
 export function accountStatus(google: GoogleSignIn, account: string): AuthStatus {
   const token = google.stored(account);
   const user = accountLabel(account);
@@ -486,7 +549,7 @@ export function accountStatus(google: GoogleSignIn, account: string): AuthStatus
 }
 
 /**
- * The Google sign-in as a provider: a service per account (the Auth tab
+ * The Google sign-in as a provider: a service per account (Settings › Sign-in
  * shows them in its Google accounts section), or one to add the first.
  */
 export function googleProvider(google: GoogleSignIn): AuthProvider {

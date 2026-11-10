@@ -12,28 +12,27 @@ coarser glyphs: zoomed out, a view shows the coarse level's; zoom in and the
 finer level's load in and replace them.
 
 User guide: [docs/plugins/orientations.md](../../docs/plugins/orientations.md)
-(and the manifest's `guide`, shown in the Plugins tab).
+(and the manifest's `guide`, shown behind **About** in the Plugins panel).
 
 ## Files
 
 | File | What it does |
 |---|---|
 | `manifest.ts` | Id, panel, command, the user guide. |
-| `plugin.ts` | The panel and settings; which level and voxels each view wants; the 3-D drawing. |
+| `plugin.ts` | The panel (drawn once, updated in place) and settings; opening the image, retried; which level and voxels each view wants; the 3-D drawing. |
 | `view.ts` | A 2-D view's section in RAS mm (from `panel.project`), the level for its zoom, the voxel box and slab to read. |
-| `overlay.ts` | The WebGL2 canvas over the 2-D views (one context, a viewport per view). |
+| `overlay.ts` | The WebGL2 canvas over the 2-D views (one context, a viewport per view; a lost context reported and restored). |
 | `render.ts` | Drawing glyph sets, in that canvas and in Neuroglancer's 3-D view (`draw3d`): ODFs and tensor ellipsoids ray-cast, lines as quads. |
 | `glyphs.ts` | Voxels to glyphs: SH as polynomials (normalised, with a radius each stays within), tensor ellipsoids (their semi-axes), lines. |
 | `sh.ts` | Real symmetric spherical harmonics in four bases; least-squares fit; the order-2 quadratic forms; the same functions as one polynomial in x, y, z (what the shader sums). |
 | `tensor.ts` | Tensor component orders, closed-form eigen-decomposition, FA, MD. (Log-Euclidean means, for coarser levels, are the app's: `src/virtual/images/tensors.ts`.) |
 | `sphere.ts` | Icospheres with each vertex's ring of neighbours (for an ODF's range and its peaks). |
-| `reader.ts`, `ome4.ts` | The 4-D pyramid: levels, and the voxels of a box within slabs, as float32. |
+| `reader.ts`, `ome4.ts` | The pyramid (x, y, z and the components, other axes size 1): levels, and the voxels of a box within slabs, as float32. |
 | `worker.ts`, `client.ts` | The reader and glyph computation in a worker. |
 | `shader.ts` | The direction-colour shader for the image layer. |
 | `readout.ts` | What the voxel under the cursor holds, in words. |
-| `zarr2.ts` | Zarr v2 arrays (OME-Zarr 0.4) read as v3. |
 | `tools/make_dipy_example.py` | A real example from DIPY's sample data (below). |
-| `tests/` | The maths against DIPY, synthetic multiscale stores read end to end. |
+| `tests/` | The maths against DIPY, synthetic multiscale stores read end to end, the panel against a fake context (`panel.test.ts`), and the GL code against a stand-in WebGL2 context (`render.test.ts`, `fake_gl.ts`). |
 
 ## Design notes
 
@@ -276,11 +275,13 @@ the finest whose voxels are at least **Spacing** pixels apart (the coarsest
 when none is); the voxels read are those of a box around what the view
 shows (with a quarter's margin, so panning does not read again at once)
 that lie in the section's slab (the plane's voxels: one per line across
-it). Where that level would give more than **Most glyphs per view**, the
+it). Where that level would give more than **Glyph limit per view**, the
 next coarser that does not is used, and none when even the coarsest would
 ("zoom in"); nor are glyphs drawn under 4 pixels apart. A read starts once the view has settled for 100 ms; the
 glyphs shown stay until the new ones arrive, so zooming in shows the coarse
-glyphs until the finer load in below. Chunks are cached in the worker.
+glyphs until the finer load in below. Chunks are cached in the worker. A
+read that fails is said in the panel's status line and not tried again for
+that view until **Retry** (or the view wants something else).
 
 Ellipsoids and ODFs are ray-cast (above), so the cap limits reading and the
 worker's work more than drawing.
@@ -341,7 +342,7 @@ axes through the position, within a box that keeps under the cap.
 
 ### Direction colour
 
-"Direction colour on the image" writes the image layer's shader, after
+**Colour image by direction** writes the image layer's shader, after
 renaming its component axis to a channel dimension (`c^`) so the shader
 sees all components: |x|, |y|, |z| of the principal direction (vectors: the
 vector; tensors: the principal eigenvector by power iteration, weighted by
@@ -358,7 +359,7 @@ when the plugin opens it, so the views do not step through components.
 
 ### Under the cursor
 
-The panel names what the finest level's voxel under the cursor holds: a
+The panel's Voxel card names what the finest level's voxel under the cursor holds: a
 tensor's FA, MD, eigenvalues and principal direction (as Freeview and
 mrview report them), an ODF's GFA and peaks, a vector's direction and
 length, all in RAS after the frame and flips.
@@ -366,10 +367,21 @@ length, all in RAS after the frame and flips.
 ### Stores
 
 OME-Zarr 0.5 (Zarr v3) and 0.4 (Zarr v2, `.zarray`, C or Fortran order:
-`zarr2.ts` presents each array's metadata as v3's), 0.6 coordinate systems
-(through the volume view's `ome.ts`), and 4-D NIfTI read in place by the
+the shared readers' `zarr2.ts` presents each array's metadata as v3's),
+0.6 coordinate systems (through the shared readers' `ome.ts`), and 4-D NIfTI read in place by the
 app. Axes: one component axis (`type: "channel"`, or named `c`, or a
-NIfTI's `t`) beside x, y and z.
+NIfTI's `t`) beside x, y and z. Any other axis is read at index 0 when it
+is size 1, as the shared readers read one (bioformats2raw's tczyx with one
+time point); when the channel axis is size 1 and one other axis is not,
+the components are taken along that one. A time axis of more than one
+point beside the components is refused, with what it has.
+
+An image that cannot be opened is tried three times (after 2 s, then 4 s),
+then its error is shown with **Retry**. The 2-D glyphs' canvas holds a
+WebGL2 context of its own; when the browser takes it back (it keeps only so
+many, and Neuroglancer, Luxar and Anatomical rendering hold some), the
+panel says so, the glyphs return when the context is given back, and
+**Retry** asks for a new one on a new canvas.
 
 ## A real example
 

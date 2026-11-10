@@ -4,10 +4,42 @@
  *
  * The runner listens on 127.0.0.1 only and answers requests that carry its
  * pairing token.  The address and token are kept in localStorage, never in
- * the link.  While something watches (the Jobs or Remote tab) or a job is running,
+ * the link: a pairing outlasts the tab, as a runner left running is meant
+ * to (docs/dev/security.md weighs this).  A runner older than this app
+ * needs (MIN_RUNNER_VERSION) is reported in Settings › Compute and About.  While something watches (the Activity dock or Settings › Compute) or a job is running,
  * the job list is fetched every 1.5 s.
  */
+import { RUNNER_TIMEOUT, seconds, timedOut, withDeadline } from "./deadline.js";
 import type { HostGpu, HostServiceState, RunnerJob } from "../sdk/types.js";
+
+/**
+ * The oldest runner this app works with: 0.1.0 brought what it asks of
+ * every runner (its computer and GPUs in /info, jobs that report progress,
+ * --public-url for a tunnel).  Raise it when the app starts to need
+ * something newer, with the runner's own version (runner/pyproject.toml
+ * and ngplatform_runner/__init__.py).
+ */
+export const MIN_RUNNER_VERSION = "0.1.0";
+
+/** Compares two versions (1.2.3, with any pre-release part after the numbers ignored): negative when a is older. */
+export function compareVersions(a: string, b: string): number {
+  const parts = (v: string) => v.trim().replace(/^v/i, "").split(/[-+]/)[0].split(".").map((n) => Number.parseInt(n, 10) || 0);
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/** What to tell the user of a runner too old for this app (undefined when it is new enough). */
+export function runnerVersionWarning(version: string | undefined, minimum = MIN_RUNNER_VERSION): string | undefined {
+  if (version !== undefined && version !== "" && compareVersions(version, minimum) >= 0) return undefined;
+  return (
+    `This runner (${version || "of an unknown version"}) is older than this app needs (${minimum} or later): some jobs may fail or not appear. ` +
+    "Update it from the same copy of ngplatform as this app (git pull; if it was installed, pip install ./runner again), then stop it and start it again."
+  );
+}
 
 export interface RunnerKind {
   kind: string;
@@ -129,23 +161,40 @@ export class RunnerClient {
     readonly address: string,
     readonly token: string,
     private readonly fetchImpl: typeof fetch = (input, init) => fetch(input, init),
+    /** The computer's name, for errors (a host's); none for This computer's runner. */
+    readonly name?: string,
+    /** How long a request may take (ms) before it is given up. */
+    private readonly timeout = RUNNER_TIMEOUT,
   ) {}
+
+  /** The runner as errors name it. */
+  private who(): string {
+    return this.name === undefined ? `The runner at ${this.address}` : `${this.name} (${this.address})`;
+  }
 
   async request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
     let response: Response;
+    let text: string;
     try {
       response = await this.fetchImpl(`${this.address}${path}`, {
         method,
         headers: { Authorization: `Bearer ${this.token}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal,
+        // A tunnel that is half open never answers: the request is given up after a while.
+        signal: withDeadline(this.timeout, signal),
         cache: "no-store",
       });
+      text = await response.text();
     } catch (e) {
+      if (timedOut(e)) throw new RunnerError(`${this.who()} did not answer in ${seconds(this.timeout)}: is the runner running${this.name === undefined ? "" : " and the tunnel open"}?`, 0);
       if ((e as Error).name === "AbortError") throw e;
-      throw new RunnerError(`The runner at ${this.address} does not answer: is it running? (python -m ngplatform_runner --root <folder>)`, 0);
+      throw new RunnerError(
+        this.name === undefined
+          ? `${this.who()} does not answer: is it running? (python -m ngplatform_runner --root <folder>)`
+          : `${this.who()} does not answer: is the tunnel open and the runner running?`,
+        0,
+      );
     }
-    const text = await response.text();
     let value: unknown;
     try {
       value = text === "" ? undefined : JSON.parse(text);
@@ -227,6 +276,8 @@ export class RunnerService {
     private readonly fetchImpl?: typeof fetch,
     /** ms between fetches while watched or while a job runs. */
     private readonly interval = 1500,
+    /** The computer's name, for errors (a host's); none for This computer's runner. */
+    private readonly name?: string,
   ) {
     try {
       const raw = storage.getItem(STORAGE_KEY);
@@ -239,7 +290,7 @@ export class RunnerService {
 
   private use(pairing: Pairing | undefined): void {
     this.pairingValue = pairing;
-    this.clientValue = pairing === undefined ? undefined : new RunnerClient(pairing.address, pairing.token, this.fetchImpl);
+    this.clientValue = pairing === undefined ? undefined : new RunnerClient(pairing.address, pairing.token, this.fetchImpl, this.name);
     this.state = pairing === undefined ? "unpaired" : "connecting";
     this.infoValue = undefined;
     this.errorValue = undefined;
@@ -283,7 +334,7 @@ export class RunnerService {
   async pair(address: string, token: string): Promise<RunnerInfo> {
     const pairing = { address: normaliseAddress(address), token: token.trim() };
     if (pairing.token === "") throw new RunnerError("Enter the token the runner printed", 0);
-    const client = new RunnerClient(pairing.address, pairing.token, this.fetchImpl);
+    const client = new RunnerClient(pairing.address, pairing.token, this.fetchImpl, this.name);
     const info = await client.status();
     if (info.name !== "ngplatform-runner") throw new RunnerError(`${pairing.address} is not an ngplatform runner`, 0);
     this.storage.setItem(STORAGE_KEY, JSON.stringify(pairing));
@@ -325,9 +376,9 @@ export class RunnerService {
       this.state = (e as RunnerError).status === 401 || (e as RunnerError).status === 403 ? "refused" : "unreachable";
       this.errorValue = (e as Error).message;
     }
-    // Listeners (the Jobs tab redraws) hear of a change, or of a job still
+    // Listeners (the Activity dock's job list redraws) hear of a change, or of a job still
     // running (its elapsed time), not of every poll: a redraw every 1.5 s
-    // would drop focus and clicks in the tab.
+    // would drop focus and clicks in the list.
     const seen = JSON.stringify([this.state, this.errorValue, this.jobList]);
     if (seen !== this.lastSeen || this.jobList.some(isActive)) this.notify();
     this.lastSeen = seen;
@@ -349,7 +400,7 @@ export class RunnerService {
     this.timer = setTimeout(() => void this.refresh(), delay);
   }
 
-  /** Keeps the job list fresh while the returned function has not been called (the Jobs tab, while shown). */
+  /** Keeps the job list fresh while the returned function has not been called (the Activity dock's job list, while shown). */
   watch(): () => void {
     this.watchers++;
     void this.refresh();
@@ -363,7 +414,7 @@ export class RunnerService {
   }
 
   private need(): RunnerClient {
-    if (this.clientValue === undefined) throw new RunnerError("This browser is not paired with a runner: pair This computer in the Remote tab", 0);
+    if (this.clientValue === undefined) throw new RunnerError("This browser is not paired with a runner: pair This computer in Settings → Compute", 0);
     return this.clientValue;
   }
 

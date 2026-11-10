@@ -10,13 +10,19 @@ import { InputError, layerNameFor, neuroglancerLink, parseInput, pasteAction, ty
 import { ContextKeys } from "../core/when.js";
 import { activeScene, layersOf, sourceUrls } from "../core/workspace.js";
 import { type Engine, LAYOUTS } from "../engine/engine.js";
+import { prefersReducedMotion } from "../engine/momentum.js";
 import { AuthRegistry, browserAuthEnvironment, middleauthProvider, ngauthProvider } from "../platform/auth.js";
+import { exposeForDebugging } from "../platform/debug.js";
+import { watchRunnerVersions } from "./about.js";
 import { accountLabel, type GoogleSignIn, googleProvider } from "../platform/google_auth.js";
 import { googleTokenTable, sourceWithRules } from "../core/sign_in_rules.js";
 import { applyRulesToNewLayers, type SignInRules } from "../platform/sign_in_rules.js";
 import { JobService } from "../platform/jobs.js";
 import { HostList } from "../platform/hosts.js";
 import { RunnerService } from "../platform/runner.js";
+import { fetchRemoteState } from "../platform/deadline.js";
+import { downloadBlob } from "../sdk/dom.js";
+import { linkTooLong, workspaceFile } from "./export.js";
 import { ComputedImages } from "../virtual/computed.js";
 import { collectDropped, LocalData } from "../virtual/local_data.js";
 import { LocalPlugins } from "../platform/local_plugins.js";
@@ -43,36 +49,31 @@ import { PluginOffers } from "./plugin_offers.js";
 import type { CatalogueEntry } from "../../plugins/index.js";
 import { registerBuiltins } from "../builtins/index.js";
 import { contextKeyFor } from "./context.js";
-import { type DockTab, DockManager, prefs } from "./docks.js";
+import { asTool, describeSize, followDrag, type DockTab, DockManager, prefs } from "./docks.js";
 import { h, icon, iconButton, isMac, keyLabel, mark } from "./dom.js";
-import { closeSheet, confirmDialog, copyText, formDialog, offer, promptDialog, sheetIsOpen, showMenu, showPalette, toast } from "./overlays.js";
-import { ActivityLog } from "./panels/activity.js";
-import { renderAuthPanel } from "./panels/auth.js";
-import { renderRemotePanel } from "./panels/remote.js";
-import { renderDatasetsPanel, showAddMenu } from "./panels/datasets.js";
-import { layerTarget, renderLayerPanel } from "./panels/layer.js";
-import {
-  renderJobsPanel,
-  renderPluginsPanel,
-  renderStatisticsPanel,
-} from "./panels/misc.js";
+import { closeSheet, confirmDialog, copyText, formDialog, offer, promptDialog, sheet, sheetIsOpen, showMenu, showPalette, showSheet, toast } from "./overlays.js";
+import { ActivityLog, WARNING_EVENT, warningLine } from "./panels/activity.js";
+import { layerTarget } from "./panels/layer.js";
+import { renderLayersPanel } from "./panels/layers.js";
+import { renderJobsPanel, renderPluginsPanel } from "./panels/misc.js";
 import { CONVENTION_LABELS, type PanelConvention } from "../engine/anatomical.js";
 import { offerOverviews } from "./overview.js";
 import { offerRunnerForLarge, offerSampledTractograms, pairFromLink, runnerApi } from "./runner.js";
-import { openDroppedItems, showAddDatasetSheet, showEditStateSheet, showLocalSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
+import { openDroppedItems, SETTINGS_SECTIONS, type SettingsSection, showAddDatasetSheet, showEditStateSheet, showLocalSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
 import type { Workbench } from "./workbench.js";
 import { createPlatformApis } from "./apis.js";
 
 /**
  * Code that only some sessions use, loaded the first time it is: the Python
- * tab (and Python plugins), the capture sheet, the history menu.
+ * panel (and Python plugins), the capture sheet, the history menu.
  */
 const pythonPanel = () => import("./panels/python.js");
 const captureSheet = () => import("./capture.js");
 const historyView = () => import("./history_view.js");
 
-/** The code, linked from the top bar. */
+/** The code and the guide, linked from Help. */
 const REPOSITORY = "https://github.com/AllenInstitute/ngplatform";
+const GUIDE = "https://ngplatform.readthedocs.io/en/latest/";
 
 /** Inside a frame (such as an artifact viewer), a link cannot carry the state. */
 const framed = (() => {
@@ -94,13 +95,29 @@ export class Shell {
   private readonly statusText = h("span", {}, "Starting");
   private readonly statusStrip = h("div", { class: "ng-status", "aria-live": "polite" });
   private readonly sceneTabs = h("div", { class: "scene-tabs", role: "tablist", "aria-label": "Scenes" });
+  /** Over an empty scene's views: the examples, opening a file, pasting a link. */
+  private readonly startCard = h("div", { class: "start-card", hidden: true });
+  /** In the Activity dock's head, also while it is collapsed: the running job, else the last message. */
+  private readonly activityLine = h("button", { class: "dock-status", type: "button", title: "Show the activity" });
   private readonly undoButton = iconButton("undo", "Undo", () => this.wb.run("edit.undo"));
   private readonly redoButton = iconButton("redo", "Redo", () => this.wb.run("edit.redo"));
   private readonly historyButton: HTMLButtonElement = iconButton("more", "History of changes", () => this.showHistory());
   private wb!: Workbench;
+  /** The Activity log (once attached). */
+  get activity(): ActivityLog {
+    return this.wb.log;
+  }
   /** A plugin's view beside Neuroglancer's, and the divider between them. */
   private readonly viewArea = h("div", { class: "engine-view", hidden: true });
-  private readonly viewSplit = h("div", { class: "engine-split", hidden: true, role: "separator", "aria-orientation": "vertical", title: "Drag to resize" });
+  private readonly viewSplit = h("div", {
+    class: "engine-split",
+    hidden: true,
+    role: "separator",
+    tabindex: 0,
+    "aria-orientation": "vertical",
+    "aria-label": "Resize the view beside the viewer",
+    title: "Drag to resize",
+  });
   private view: { owner: string; dispose: () => void } | undefined;
   private google: GoogleSignIn | undefined;
   private localPlugins: LocalPlugins | undefined;
@@ -129,21 +146,10 @@ export class Shell {
         h("button", { class: "btn outline", type: "button", onclick: () => this.wb.run("workspace.open") }, icon("open"), "Open"),
         h(
           "button",
-          { class: "btn outline", type: "button", "aria-haspopup": "menu", onclick: (e: Event) => showAddMenu(e.currentTarget as HTMLElement, this.wb) },
-          icon("plus"),
-          h("span", { class: "hide-narrow" }, "Add"),
-        ),
-        h(
-          "button",
-          { class: "btn", type: "button", "aria-haspopup": "menu", onclick: (e: Event) => this.showShareMenu(e.currentTarget as HTMLElement) },
+          // Named for a screen reader also where a narrow window hides its label.
+          { class: "btn", type: "button", "aria-haspopup": "menu", "aria-label": "Share", onclick: (e: Event) => this.showShareMenu(e.currentTarget as HTMLElement) },
           icon("link"),
           h("span", { class: "hide-narrow" }, "Share"),
-        ),
-        h(
-          "button",
-          { class: "btn hide-phone", type: "button", title: "Open this scene in Neuroglancer, in a new tab", onclick: () => this.wb.run("workspace.openInNeuroglancer") },
-          icon("external"),
-          h("span", { class: "hide-narrow" }, "Neuroglancer"),
         ),
       ),
       h("span", { class: "sep hide-narrow" }),
@@ -155,8 +161,7 @@ export class Shell {
       h(
         "div",
         { class: "group" },
-        h("a", { class: "btn icon", href: REPOSITORY, target: "_blank", rel: "noopener noreferrer", title: "ngplatform on GitHub", "aria-label": "ngplatform on GitHub" }, icon("github")),
-        iconButton("camera", "Capture: pictures and movies", (e) =>
+        iconButton("camera", "Capture", (e) =>
           showMenu(e.currentTarget as HTMLElement, [
             { label: "Picture…", run: () => this.wb.run("view.capture") },
             { label: "Movie: sweep slices or time…", run: () => this.wb.run("view.captureSweep") },
@@ -165,16 +170,14 @@ export class Shell {
             { label: "Screenshot (Neuroglancer)…", run: () => this.wb.run("view.screenshot") },
           ]),
         ),
-        iconButton("settings", "Settings and reloading", (e) =>
+        iconButton("settings", "Settings", () => this.wb.run("settings.open")),
+        iconButton("help", "Help", (e) =>
           showMenu(e.currentTarget as HTMLElement, [
-            { label: "View settings…", run: () => this.wb.run("view.settings") },
-            { label: "View orientation…", run: () => this.wb.run("view.panelConvention") },
-            "-",
-            { label: "Reload the scene's layers", run: () => this.wb.run("view.reloadLayers") },
-            { label: "Reload page and all data", run: () => this.wb.run("view.hardReset") },
+            { label: "Keyboard and mouse", run: () => this.wb.run("help.shortcuts") },
+            { label: "Guide ↗", run: () => window.open(GUIDE, "_blank", "noopener") },
+            { label: "ngplatform on GitHub ↗", run: () => window.open(REPOSITORY, "_blank", "noopener") },
           ]),
         ),
-        iconButton("keyboard", "Keyboard and mouse", () => this.wb.run("help.shortcuts"), { class: "btn icon hide-narrow" }),
       ),
       h(
         "button",
@@ -184,8 +187,9 @@ export class Shell {
         h("kbd", {}, keyLabel("Mod+K")),
       ),
     );
-    const engine = h("section", { class: "engine", "aria-label": "Viewer" }, this.engineHost, this.viewSplit, this.viewArea);
+    const engine = h("section", { class: "engine", "aria-label": "Viewer" }, this.engineHost, this.viewSplit, this.viewArea, this.startCard);
     this.viewSplit.addEventListener("pointerdown", (e) => this.dragViewSplit(e, engine));
+    this.viewSplit.addEventListener("keydown", (e) => this.stepViewSplit(e));
     const centre = h("div", { class: "centre" }, engine, this.statusStrip);
     const workspace = h(
       "div",
@@ -197,6 +201,8 @@ export class Shell {
       this.docks.element("right"),
     );
     this.root.append(topbar, workspace, this.docks.resizer("bottom"), this.docks.element("bottom"));
+    this.activityLine.addEventListener("click", () => this.docks.show("activity"));
+    this.docks.addToHead("bottom", this.activityLine);
     const narrow = window.matchMedia("(max-width: 520px)");
     this.docks.restore(narrow.matches);
     narrow.addEventListener("change", () => {
@@ -213,7 +219,15 @@ export class Shell {
     engine: Engine,
     parseFragment: FragmentParser,
     defaultExample: string,
-    plugins: { catalogue: CatalogueEntry[]; choices: Choices; resolution: Resolution; thisTab: Set<string>; returning: boolean },
+    plugins: {
+      catalogue: CatalogueEntry[];
+      choices: Choices;
+      resolution: Resolution;
+      thisTab: Set<string>;
+      returning: boolean;
+      /** Data type plugins whose Neuroglancer module failed to load (src/main.ts), by id. */
+      failed?: Map<string, Error>;
+    },
     google: GoogleSignIn,
     rules: SignInRules,
   ): void {
@@ -246,8 +260,8 @@ export class Shell {
       told.add(account ?? "");
       toast(
         account === undefined
-          ? "Sign in with Google in the Auth tab: data from Google Cloud Storage (gs+google://) waits for it."
-          : `Sign in as ${accountLabel(account)} in the Auth tab: data from Google Cloud Storage (gs+google://) waits for it.`,
+          ? "Data from Google Cloud Storage waits for a Google sign-in (Settings → Sign-in)."
+          : `Data from Google Cloud Storage waits for ${accountLabel(account)} to sign in (Settings → Sign-in).`,
       );
     });
     const store = new WorkspaceStore(engine, {
@@ -301,14 +315,18 @@ export class Shell {
     this.wb = wb;
     this.switches = { catalogue: plugins.catalogue, choices: plugins.choices, thisTab: plugins.thisTab, resolution: plugins.resolution };
     wb.offers = new PluginOffers(wb, plugins.catalogue, (ids) => this.turnOnPlugins(ids));
-    // For debugging from the console, beside window.viewer.
-    (window as unknown as { workbench: Workbench }).workbench = wb;
+    // For debugging from the console, beside window.viewer (in production only with ?debug).
+    exposeForDebugging("workbench", wb);
     const apis = createPlatformApis(wb);
     wb.plugins = new PluginHost({
       commands,
       keybindings,
       context: this.context,
-      docks: { addTab: (tab) => this.docks.addTab(tab), show: (id) => this.docks.show(id) },
+      // A plugin's panel in the left slot is a tool: it goes to the Tools dock, under the group its manifest names.
+      docks: {
+        addTab: (tab) => this.docks.addTab(asTool(tab)),
+        show: (id) => this.docks.show(id),
+      },
       views: { mount: (render, owner) => this.mountView(render, owner) },
       examples,
       open: openHandlers,
@@ -319,11 +337,20 @@ export class Shell {
         overlay: () => engine.addOverlay(),
         screenshotOverlay: (paint) => engine.addScreenshotOverlay(paint),
         form: (title, schema, initial) => formDialog(title, schema, initial),
+        sheet: (title, render, options) => {
+          const body = h("div", { class: "plugin-sheet" });
+          // Assigned once, after close exists: render may close the sheet at once.
+          // eslint-disable-next-line prefer-const
+          let dispose: (() => void) | void;
+          const close = showSheet(sheet(title, [body], [h("button", { class: "btn", type: "button", onclick: () => close() }, "Close")], options), () => dispose?.());
+          dispose = render(body, close);
+          return close;
+        },
       },
       workspace: apis.workspace,
       viewer: apis.viewer,
       slices: {
-        get: (key) => store.rawSlice(key),
+        get: (key, version) => store.rawSlice(key, version),
         set: (key, version, value) => store.setRawSlice(key, version, value),
         onChanged: (callback) => store.onSliceChanged(callback),
       },
@@ -347,16 +374,18 @@ export class Shell {
       log: (message, level, source) => log.add(message, level, source),
     });
 
-    this.registerPanels();
-    this.registerCommands();
-    this.registerKeys();
-    registerBuiltins(wb);
+    // Made before the panels: the Plugins panel, when it is the tab a dock
+    // opens on, draws at once and lists these.
     this.localPlugins = new LocalPlugins({
       host: wb.plugins,
       runPython: async (owner, source) => (await pythonPanel()).runPythonPlugin(wb, owner, source),
       forgetPython: (owner) => void pythonPanel().then((m) => m.forgetPython(owner)),
       log: (message, level) => log.add(message, level ?? "info"),
     });
+    this.registerPanels();
+    this.registerCommands();
+    this.registerKeys();
+    registerBuiltins(wb);
     void this.localPlugins.restore();
     // Local data opened on earlier visits: the workspace's links to it work
     // once reading is allowed again.
@@ -394,6 +423,8 @@ export class Shell {
     // A large image first viewed: offer to build its overview in the background.
     offerOverviews(wb);
     offerSampledTractograms(wb, wb.runner);
+    // A runner older than this app needs: said once, in Activity (src/ui/about.ts).
+    watchRunnerVersions(wb);
     // Local data opened again (dropped files go with a reload): the layers
     // that read it before read it again, under its new id.
     const relink = async () => {
@@ -407,10 +438,21 @@ export class Shell {
     wb.localData.onChange(() => void relink());
     for (const entry of plugins.catalogue) {
       const enabled = plugins.resolution.enabled.has(entry.manifest.id);
-      // A data type plugin has no platform code: it was loaded with the viewer.
-      const load = entry.load ?? (async () => ({ activate() {} }));
+      // A data type plugin has no platform code: it was loaded with the viewer,
+      // unless that failed; then its activation fails, and the Plugins panel says why.
+      const failure = plugins.failed?.get(entry.manifest.id);
+      const load =
+        failure !== undefined
+          ? async () => {
+              throw new Error(`could not load: ${failure.message}`);
+            }
+          : (entry.load ?? (async () => ({ activate() {} })));
       wb.plugins.register(entry.manifest, load, { builtin: true, enabled });
       if (enabled && entry.manifest.kind === "datatype") void wb.plugins.activate(entry.manifest.id).catch(() => {});
+    }
+    if (plugins.failed !== undefined && plugins.failed.size > 0) {
+      const names = plugins.catalogue.filter((e) => plugins.failed!.has(e.manifest.id)).map((e) => e.manifest.name);
+      offer(`${listNames(names)} could not load.`, [{ label: "Show Plugins", primary: true, run: () => this.docks.show("plugins") }], 60000);
     }
 
     // Neuroglancer's own status messages (loading, errors) go below the views.
@@ -424,11 +466,33 @@ export class Shell {
       this.renderSceneTabs();
       this.showKindPanel();
       this.updateControls();
+      this.updateStartCard();
     };
+    // The activity line: a running job and its progress, else the last message.
+    let last: { message: string; level: string } | undefined;
+    const line = () => {
+      const running = jobs.list().filter((j) => j.state === "running");
+      const job = running[0];
+      this.activityLine.classList.toggle("err", job === undefined && last?.level === "error");
+      this.activityLine.textContent =
+        job !== undefined
+          ? `${job.title}${job.progress !== undefined ? ` ${Math.round(job.progress * 100)}%` : "…"}${running.length > 1 ? ` (+${running.length - 1})` : ""}`
+          : (last?.message ?? "");
+    };
+    log.onAdd((message, level) => {
+      last = { message, level };
+      line();
+    });
+    // Data type plugins' warnings about what they read (a newer format, columns left out), each once per store.
+    window.addEventListener(WARNING_EVENT, (e) => {
+      const warning = warningLine((e as CustomEvent).detail);
+      if (warning !== undefined) log.add(warning.message, "info", warning.source);
+    });
+    jobs.onChange(line);
     store.onChange(refresh);
     // A plugin with state in the workspace (a filter in a shared link, say)
     // is loaded as the workspace opens, so its effect shows without opening
-    // its tab.
+    // its panel.
     const withState = () => {
       for (const entry of plugins.catalogue) {
         const key = entry.manifest.contributes?.appState?.key;
@@ -488,33 +552,35 @@ export class Shell {
     // Offers of the plugins that are off, from the data opened (and the workspace's state).
     wb.offers.start();
     this.tellNewDefaults(plugins.returning);
-    log.add(
-      framed
-        ? "Running inside a frame: Share copies the workspace as JSON, since links here cannot carry it."
-        : "Ready. The address bar always holds a link to the current workspace.",
-    );
+    if (framed) log.add("In a frame, links cannot carry the workspace: Share copies it as JSON.");
   }
 
   private registerPanels(): void {
     const wb = this.wb;
     const add = (tab: DockTab) => this.docks.addTab(tab);
-    add({ id: "datasets", title: "Datasets", slot: "left", order: 10, render: (host) => renderDatasetsPanel(host, wb) });
-    add({ id: "auth", title: "Auth", slot: "left", order: 80, render: (host) => renderAuthPanel(host, wb) });
+    add({ id: "layers", title: "Layers", slot: "left", order: 10, render: (host) => renderLayersPanel(host, wb) });
     add({ id: "plugins", title: "Plugins", slot: "left", order: 90, render: (host) => renderPluginsPanel(host, wb, this.localPlugins!) });
-    add({ id: "layer", title: "Layer", slot: "right", order: 10, render: (host) => renderLayerPanel(host, wb) });
     add({
       id: "activity",
       title: "Activity",
       slot: "bottom",
       order: 10,
       render: (host) => {
-        host.append(wb.log.element);
+        // The jobs (when there are any) above the log.
+        const jobs = h("div", { class: "activity-jobs" });
+        host.append(jobs, wb.log.element);
+        return renderJobsPanel(jobs, wb);
       },
     });
-    add({ id: "jobs", title: "Jobs", slot: "bottom", order: 20, render: (host) => renderJobsPanel(host, wb) });
-    add({ id: "statistics", title: "Chunk statistics", slot: "bottom", order: 30, transient: true, render: (host) => renderStatisticsPanel(host, wb) });
     add({ id: "python", title: "Python", slot: "bottom", order: 40, render: async (host) => (await pythonPanel()).renderPythonPanel(host, wb) });
-    add({ id: "remote", title: "Remote (SSH)", slot: "bottom", order: 50, minSize: 320, render: (host) => renderRemotePanel(host, wb) });
+    // Tabs that were merged or moved into Settings: showing one shows where it went.
+    this.docks.redirect("datasets", "layers");
+    this.docks.redirect("layer", "layers");
+    this.docks.redirect("jobs", "activity");
+    const settings = (section: SettingsSection) => () => showSettingsSheet(wb, section);
+    this.docks.redirect("auth", settings("sign-in"));
+    this.docks.redirect("remote", settings("compute"));
+    this.docks.redirect("statistics", settings("developer"));
   }
 
   // ---------------------------------------------------------- commands
@@ -562,8 +628,50 @@ export class Shell {
           return;
         }
         const link = workspaceLink(location.href, store.workspace());
+        if (linkTooLong(link)) {
+          // A link this long is cut or refused by chat tools and mail: shared as a file, or as JSON.
+          const FILE = "Save the workspace as a file";
+          const JSON_TEXT = "Copy the workspace as JSON";
+          const LINK = "Copy the long link anyway";
+          const answer = await formDialog<{ how: string }>(
+            "Share this workspace",
+            {
+              type: "object",
+              properties: {
+                how: {
+                  type: "string",
+                  title: "How",
+                  enum: [FILE, JSON_TEXT, LINK],
+                  default: FILE,
+                  description: `Its link would be ${(link.length / 1024).toFixed(0)} KB, longer than chat tools and mail keep whole. A file or JSON opens with Open (paste it); a file put on the web opens from a link to it: ${location.href.replace(/#.*$/, "")}#!<its URL>.`,
+                },
+              },
+              required: ["how"],
+            },
+            {},
+            "Share",
+          );
+          if (answer?.how === FILE) await wb.run("workspace.saveFile");
+          else if (answer?.how === JSON_TEXT) {
+            if (await copyText(store.serialize(), "the workspace")) toast("Copied the workspace as JSON. Paste it into Open to restore it.");
+          } else if (answer?.how === LINK && (await copyText(link, "the link"))) toast(`Link copied (${(link.length / 1024).toFixed(1)} KB). Some chat tools and mail may cut it short.`);
+          return;
+        }
         if (await copyText(link, "the link")) toast(`Link copied (${(link.length / 1024).toFixed(1)} KB).`);
         wb.log.add("Copied a link to the workspace.");
+      },
+    });
+    add({
+      id: "workspace.saveFile",
+      title: "Save this workspace as a file",
+      group: "Workspace",
+      hint: "A JSON file to send or put on the web; it opens with Open",
+      run: () => {
+        store.settle();
+        const file = workspaceFile(store.serialize(), activeScene(store.state()).name);
+        downloadBlob(file.blob, file.name);
+        toast(`Saved the workspace as ${file.name}. Paste it into Open, or link to it on the web with #!<its URL>, to open it.`);
+        wb.log.add(`Saved the workspace as ${file.name}.`);
       },
     });
     add({
@@ -624,7 +732,11 @@ export class Shell {
       args: { type: "object", required: ["id"], properties: { id: { type: "string" } } },
       run: ({ id }: { id: string }) => this.openExample(id),
     });
-    wb.examples.onChange(() => this.registerExampleCommands());
+    wb.examples.onChange(() => {
+      this.registerExampleCommands();
+      this.startCardFor = undefined;
+      this.updateStartCard();
+    });
     this.registerExampleCommands();
 
     // Edit
@@ -878,7 +990,13 @@ export class Shell {
       group: "View",
       run: () => {
         engine.momentum = !engine.momentum;
-        toast(engine.momentum ? "The 3-D view keeps turning after a drag." : "The 3-D view stops when you let go.");
+        toast(
+          !engine.momentum
+            ? "The 3-D view stops when you let go."
+            : prefersReducedMotion()
+              ? "The 3-D view keeps turning after a drag, though not while your system asks for less motion."
+              : "The 3-D view keeps turning after a drag.",
+        );
       },
     });
     add({
@@ -888,7 +1006,7 @@ export class Shell {
       run: () => {
         const { preference } = engine.panelConvention();
         showMenu(
-          this.root.querySelector<HTMLElement>('button[title="Settings and reloading"]') ?? { x: window.innerWidth - 320, y: 48 },
+          this.root.querySelector<HTMLElement>('.topbar button[title="Settings"]') ?? { x: window.innerWidth - 320, y: 48 },
           conventions.map(([id, title]) => ({ label: `${preference === id ? "✓ " : ""}${title}`, current: preference === id, run: () => engine.setPanelConvention(id) })),
         );
       },
@@ -900,7 +1018,29 @@ export class Shell {
       args: { type: "object", required: ["position"], properties: { position: { type: "array", items: { type: "number" } } } },
       run: ({ position }: { position: number[] }) => engine.setPosition(position),
     });
-    add({ id: "view.settings", title: "View settings…", group: "View", run: () => showSettingsSheet(wb) });
+    add({
+      id: "settings.open",
+      title: "Settings…",
+      group: "View",
+      args: { type: "object", properties: { section: { type: "string", enum: Object.keys(SETTINGS_SECTIONS) } } },
+      run: (args?: { section?: SettingsSection }) => showSettingsSheet(wb, args?.section),
+    });
+    add({ id: "view.settings", title: "View settings…", group: "View", run: () => showSettingsSheet(wb, "view") });
+    add({
+      id: "settings.signIn",
+      title: "Sign-in settings…",
+      group: "View",
+      // `card`: a card of Settings › Sign-in to open and show ("sign-in.other": the CAVE servers' sign-ins).
+      args: { type: "object", properties: { card: { type: "string" } } },
+      run: (args?: { card?: string }) => {
+        showSettingsSheet(wb, "sign-in");
+        const card = args?.card === undefined ? null : document.querySelector<HTMLDetailsElement>(`.sheet details[data-card="${CSS.escape(args.card)}"]`);
+        if (card === null) return;
+        card.open = true;
+        card.scrollIntoView({ block: "nearest" });
+      },
+    });
+    add({ id: "settings.compute", title: "Compute: pair a computer…", group: "View", run: () => showSettingsSheet(wb, "compute") });
     add({ id: "view.screenshot", title: "Screenshot (Neuroglancer)…", group: "View", run: () => engine.showScreenshotDialog() });
     add({ id: "view.capture", title: "Capture a picture (magnified, trimmed)…", group: "View", run: async () => (await captureSheet()).showCaptureSheet(wb, "picture") });
     add({ id: "view.captureSweep", title: "Capture a movie: sweep slices or time…", group: "View", run: async () => (await captureSheet()).showCaptureSheet(wb, "sweep") });
@@ -923,24 +1063,51 @@ export class Shell {
       add({ id: `view.toggle.${key}`, title: `Show or hide ${label}`, group: "View", run: () => c.invoke("view.toggleOption", { option: key }) });
     }
     for (const [slot, title] of [
-      ["left", "workspace"],
-      ["right", "layer"],
+      ["left", "layers"],
+      ["right", "tools"],
       ["bottom", "activity"],
     ] as const) {
       add({ id: `view.dock.${slot}`, title: `Show or hide the ${title} dock`, group: "View", run: () => this.docks.toggle(slot) });
     }
     for (const [tab, title] of [
-      ["datasets", "Datasets"],
-      ["layer", "Layer"],
+      ["layers", "Layers"],
       ["activity", "Activity"],
-      ["jobs", "Jobs"],
-      ["statistics", "Chunk statistics"],
       ["python", "Python"],
-      ["remote", "Remote (SSH)"],
       ["plugins", "Plugins"],
     ]) {
       add({ id: `panel.${tab}`, title: `Show the ${title} panel`, group: "Panels", run: () => this.docks.show(tab) });
     }
+  }
+
+  /** Which examples the start card was made with (undefined: make it again). */
+  private startCardFor: string | undefined;
+
+  /** The start card: shown over a scene with no layers (not a plugin's kind of scene), made again when the examples change. */
+  private updateStartCard(): void {
+    const wb = this.wb;
+    const scene = activeScene(wb.store.state());
+    this.startCard.hidden = wb.engine.layers().length > 0 || scene.kind !== undefined;
+    if (this.startCard.hidden) return;
+    const examples = wb.examples.list().filter((e) => e.listed !== false && !(e.remote && wb.framed));
+    const key = examples.map((e) => e.id).join(",");
+    if (key === this.startCardFor) return;
+    this.startCardFor = key;
+    this.startCard.replaceChildren(
+      h(
+        "div",
+        { class: "start-examples" },
+        ...examples.map((e) =>
+          h("button", { class: "start-example", type: "button", title: e.description, onclick: () => this.openExample(e.id) }, h("span", { class: "title" }, e.title), h("span", { class: "desc" }, e.description)),
+        ),
+      ),
+      h(
+        "div",
+        { class: "row-actions" },
+        h("button", { class: "btn primary", type: "button", disabled: !wb.commands.available("dataset.addLocal"), onclick: () => wb.run("dataset.addLocal") }, icon("open"), "Open a file…"),
+        h("button", { class: "btn outline", type: "button", onclick: () => wb.run("workspace.open") }, icon("link"), "Paste a link…"),
+      ),
+      h("p", { class: "note" }, "Or drop files here."),
+    );
   }
 
   private exampleCommands: (() => void)[] = [];
@@ -1017,8 +1184,13 @@ export class Shell {
     // The modifier no binding uses here (Ctrl on macOS, the Windows key elsewhere): not "1" pressed alone.
     if (isMac() ? e.ctrlKey : e.metaKey) return;
     const target = e.target as HTMLElement | null;
+    // In a menu, a letter moves to the item starting with it, as typing does: not a shortcut.
     const typing =
-      target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable === true;
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement ||
+      target?.isContentEditable === true ||
+      target?.closest?.('[role="menu"]') != null;
     // A digit typed with Shift arrives as "!", "@"…; use the physical key for digits.
     const key = /^Digit\d$/.test(e.code) ? keyFromCode(e) : keyFromEvent(e);
     const binding = this.wb.keybindings.resolve(key, this.context.all(), typing);
@@ -1057,8 +1229,8 @@ export class Shell {
 
   /**
    * Turns plugins on (with what they require) and keeps the choice.  Tool
-   * plugins come on at once, without a reload: their tabs and commands
-   * appear, and the first one's tab is shown.  A data type plugin needs the
+   * plugins come on at once, without a reload: their panels and commands
+   * appear, and the first one's panel is shown.  A data type plugin needs the
    * page reloaded (with the same link, so the workspace is kept).
    */
   private async turnOnPlugins(ids: string[]): Promise<void> {
@@ -1085,8 +1257,8 @@ export class Shell {
     const shown = ids.filter((id) => this.wb.pluginSwitches.enabled.has(id));
     if (shown.length === 0) return;
     const panel = manifests.find((m) => m.id === shown[0])?.contributes?.panels?.[0]?.id;
+    // Its panel opening says it is on.
     if (panel !== undefined) this.docks.show(panel);
-    toast(`${listNames(shown.map(nameOf))} ${shown.length === 1 ? "is" : "are"} on.`);
   }
 
   /** A plugin on for this tab only (an example's), kept on in this browser. */
@@ -1157,11 +1329,10 @@ export class Shell {
     if (ids.length === 0) return;
     const names = listNames(ids.map((id) => manifests.find((m) => m.id === id)?.name ?? id));
     const one = ids.length === 1;
-    this.wb.log.add(`${names} ${one ? "is" : "are"} now off by default: offered when your data calls for ${one ? "it" : "them"}, or turned on in the Plugins tab.`);
     offer(
       `${names} ${one ? "is" : "are"} now off until you turn ${one ? "it" : "them"} on.`,
       [
-        { label: "Plugins tab", run: () => this.docks.show("plugins") },
+        { label: "Show Plugins", run: () => this.docks.show("plugins") },
         { label: "Turn back on", primary: true, run: () => void this.turnOnPlugins(ids) },
       ],
       60000,
@@ -1186,7 +1357,7 @@ export class Shell {
     const formats = new Set(this.wb.engine.layers().flatMap((l) => l.sources.map((s) => contextKeyFor(s))));
     const zv = this.wb.pluginSwitches.manifests.find((m) => m.id === "org.ngplatform.zarr-vectors");
     if (zv !== undefined && formats.has("zarr-vectors") && !this.wb.pluginSwitches.enabled.has(zv.id)) {
-      const message = "This workspace has Zarr Vectors data, but the Zarr Vectors plugin is off. Switch it on in the Plugins tab.";
+      const message = "This workspace has Zarr Vectors data: turn on Zarr Vectors in Plugins.";
       this.wb.log.add(message, "error");
       toast(message, "error");
       this.docks.show("plugins");
@@ -1201,7 +1372,7 @@ export class Shell {
     this.viewArea.replaceChildren(host);
     this.viewArea.hidden = false;
     this.viewSplit.hidden = false;
-    this.viewArea.style.flexBasis = `${prefs.get("viewShare") ?? "50"}%`;
+    this.setViewShare(Number(prefs.get("viewShare") ?? "50"));
     let cleanup: (() => void) | void;
     const mounted = {
       owner,
@@ -1227,20 +1398,36 @@ export class Shell {
     return mounted.dispose;
   }
 
+  /** The view beside the viewer takes `share` per cent of the width (15 to 85); returns what it took. */
+  private setViewShare(share: number): number {
+    const kept = Math.min(85, Math.max(15, Number.isFinite(share) ? share : 50));
+    this.viewArea.style.flexBasis = `${kept}%`;
+    describeSize(this.viewSplit, kept, 15, 85);
+    return kept;
+  }
+
+  /** Dragging the split between the viewer and a view beside it: kept once let go, not at every move. */
   private dragViewSplit(event: PointerEvent, engine: HTMLElement): void {
     event.preventDefault();
     const box = engine.getBoundingClientRect();
-    const move = (e: PointerEvent) => {
-      const share = Math.min(85, Math.max(15, (100 * (box.right - e.clientX)) / box.width));
-      this.viewArea.style.flexBasis = `${share}%`;
-      prefs.set("viewShare", share.toFixed(1));
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    let share: number | undefined;
+    followDrag(
+      window,
+      (e) => (share = this.setViewShare((100 * (box.right - e.clientX)) / box.width)),
+      () => {
+        if (share !== undefined) prefs.set("viewShare", share.toFixed(1));
+      },
+    );
+  }
+
+  /** The split with the keyboard: Left widens the view beside the viewer, Right narrows it (Shift for more). */
+  private stepViewSplit(e: KeyboardEvent): void {
+    const now = Number(this.viewSplit.getAttribute("aria-valuenow") ?? "50");
+    const step = e.shiftKey ? 10 : 2;
+    const share = e.key === "ArrowLeft" ? now + step : e.key === "ArrowRight" ? now - step : e.key === "Home" ? 15 : e.key === "End" ? 85 : undefined;
+    if (share === undefined) return;
+    e.preventDefault();
+    prefs.set("viewShare", this.setViewShare(share).toFixed(1));
   }
 
   // -------------------------------------------------------------- open
@@ -1268,9 +1455,12 @@ export class Shell {
         else store.open(parsed.state, from, { resume });
       } else if (parsed.kind === "remote") {
         this.setStatus("busy", "Fetching state");
-        const response = await fetch(parsed.url);
-        if (!response.ok) throw new InputError(`${parsed.url} answered ${response.status} ${response.statusText}.`);
-        const json = await response.json();
+        let json: unknown;
+        try {
+          json = await fetchRemoteState(parsed.url);
+        } catch (e) {
+          throw new InputError(`Could not read the state at ${parsed.url}: ${(e as Error).message}`);
+        }
         const again = parseInput(JSON.stringify(json), this.wb.parseFragment);
         if (again.kind !== "state") throw new InputError("That URL did not hold a state.");
         if (asScene) store.openAsScene(again.state.ng, layerNameFor(parsed.url), parsed.url);
@@ -1314,6 +1504,7 @@ export class Shell {
     const run = (id: string) => () => void this.wb.run(id);
     showMenu(anchor, [
       { label: "Copy workspace link", run: run("workspace.share") },
+      { label: "Save workspace as a file", run: run("workspace.saveFile") },
       { label: "Copy scene as Neuroglancer link", run: run("workspace.copyPlainLink") },
       { label: "Copy scene as Neuroglancer JSON", run: run("workspace.copyState") },
       "-",
@@ -1401,29 +1592,32 @@ export class Shell {
         );
       }),
       iconButton("plus", "New scene", () => this.wb.run("scene.new"), { class: "btn icon scene-add" }),
-      // Kinds of scene the plugins that are on add, not made yet: a tab that makes one.
+      // Kinds of scene the plugins that are on add: a tab that runs the plugin's add command
+      // (always there), or, not made yet, a tab that makes one.
       ...this.sceneKinds()
-        .filter((k) => !p.scenes.some((s) => s.kind === k.kind))
-        .map((k) =>
-          h(
+        .filter((k) => k.add !== undefined || !p.scenes.some((s) => s.kind === k.kind))
+        .map((k) => {
+          const open = () => (k.add !== undefined ? this.wb.run(k.add.command) : store.newScene({ name: k.title, kind: k.kind }));
+          return h(
             "div",
             {
-              class: `scene-tab scene-kind scene-kind-${k.kind} scene-kind-new`,
+              class: `scene-tab scene-kind scene-kind-${k.kind} scene-kind-new${k.add ? " scene-kind-add" : ""}`,
               role: "button",
               tabindex: 0,
-              title: `Open ${k.title}`,
-              onclick: () => store.newScene({ name: k.title, kind: k.kind }),
+              title: k.add ? k.add.title : `Open ${k.title}`,
+              onclick: open,
               onkeydown: (e: Event) => {
                 if ((e as KeyboardEvent).key === "Enter" || (e as KeyboardEvent).key === " ") {
                   e.preventDefault();
-                  store.newScene({ name: k.title, kind: k.kind });
+                  open();
                 }
               },
             },
             h("span", { class: "scene-kind-mark", "aria-hidden": "true" }),
-            h("span", { class: "scene-tab-name" }, k.title),
-          ),
-        ),
+            h("span", { class: "scene-tab-name" }, k.add ? k.add.title : k.title),
+            k.add ? icon("plus") : null,
+          );
+        }),
     );
   }
 
@@ -1442,7 +1636,7 @@ export class Shell {
   }
 
   /** The kinds of scene the plugins that are on contribute. */
-  private sceneKinds(): { kind: string; title: string; panel?: string }[] {
+  private sceneKinds(): { kind: string; title: string; panel?: string; add?: { title: string; command: string } }[] {
     const s = this.wb.pluginSwitches;
     return s.manifests.filter((m) => s.enabled.has(m.id)).flatMap((m) => m.contributes?.sceneKinds ?? []);
   }

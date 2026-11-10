@@ -1,5 +1,5 @@
 /**
- * An image layer's colour map, in its Render tab: a menu that writes the
+ * An image layer's colour map, in its Display tab: a menu that writes the
  * shader for the chosen map (../colormaps.ts), keeping the contrast range.
  * "Custom" is whatever else the shader says, and choosing it changes
  * nothing.
@@ -16,7 +16,7 @@ export function colormapControl(scope: Scope, layer: ImageUserLayer): HTMLSelect
   const options = () => ({ signed: dataType.value !== undefined && SIGNED.has(dataType.value) });
   const select = el(
     "select",
-    { class: "ins-select", "aria-label": "Colour map" },
+    { class: "text-input", "aria-label": "Colour map" },
     ...COLORMAPS.map((m) => el("option", { value: m.id }, m.label)),
     el("option", { value: "" }, "Custom"),
   ) as HTMLSelectElement;

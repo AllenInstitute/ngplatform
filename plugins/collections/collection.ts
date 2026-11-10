@@ -22,6 +22,8 @@ export interface CollectionNode {
   /** Where it is, resolved against the document's URL ("zarr": a Zarr group; "json": another document). */
   location?: { type: string; url: string };
   nodes: CollectionNode[];
+  /** A label image by its node's own metadata (`image-label` in its attributes). */
+  label?: boolean;
   /** Coordinate systems, with each axis's name and unit ("" when none). */
   systems: { id: string; name?: string; axes: string[]; units: string[] }[];
   transforms: Transform[];
@@ -80,6 +82,7 @@ function readNode(n: any, documentUrl: string): CollectionNode {
     name: String(n.name ?? n.id ?? "(unnamed)"),
     id: n.id,
     location: path === undefined ? undefined : { type: String(path.type ?? "zarr"), url: resolvePath(String(path.path ?? path), documentUrl) },
+    ...(attributes["image-label"] !== undefined || attributes.ome?.["image-label"] !== undefined ? { label: true } : {}),
     nodes: Array.isArray(n.nodes) ? n.nodes.map((c: any) => readNode(c, documentUrl)) : [],
     systems,
     transforms,
@@ -94,8 +97,9 @@ const multiply = (a: Mat4, b: Mat4): Mat4 => {
 
 /**
  * A transform as a 4 × 4 on x, y, z (the axes in `axes` order, as the
- * output system names them); undefined for kinds this cannot compose
- * (displacement fields, by-coordinate maps).
+ * output system names them): identity, scale, translation, rotation,
+ * mapAxis, affine and sequences of them; undefined for kinds this cannot
+ * compose (displacement fields, by-coordinate maps, by-dimension ones).
  */
 export function transformMatrix(t: any, axes: string[] = ["x", "y", "z"]): Mat4 | undefined {
   const at = ["x", "y", "z"].map((n) => axes.indexOf(n));
@@ -113,6 +117,29 @@ export function transformMatrix(t: any, axes: string[] = ["x", "y", "z"]): Mat4 
       if (!Array.isArray(t.translation)) return undefined;
       const m = [...IDENTITY];
       at.forEach((i, k) => (m[4 * k + 3] = t.translation[i]));
+      return m;
+    }
+    case "rotation": {
+      // An N × N matrix on the axes (nested rows, or flat row by row), no translation.
+      const n = axes.length;
+      const r = Array.isArray(t.rotation) && Array.isArray(t.rotation[0]) ? t.rotation : Array.isArray(t.rotation) && t.rotation.length === n * n ? Array.from({ length: n }, (_, i) => t.rotation.slice(n * i, n * i + n)) : undefined;
+      if (r === undefined) return undefined;
+      const m = [...IDENTITY];
+      at.forEach((row, i) => at.forEach((col, j) => (m[4 * i + j] = r[row]?.[col])));
+      return m.every(Number.isFinite) ? m : undefined;
+    }
+    case "mapAxis": {
+      // Output axis k is input axis mapAxis[k] (0.6: indices, the input taken to be ordered as the output;
+      // the RFC-5 draft: output name to input name).  Only x, y and z can be composed.
+      const map = t.mapAxis;
+      const m = new Array(16).fill(0);
+      m[15] = 1;
+      for (let k = 0; k < 3; ++k) {
+        const from = Array.isArray(map) ? axes[map[at[k]]] : map && typeof map === "object" ? map[axes[at[k]]] : undefined;
+        const col = ["x", "y", "z"].indexOf(String(from));
+        if (col === -1) return undefined;
+        m[4 * k + col] = 1;
+      }
       return m;
     }
     case "affine": {
@@ -135,6 +162,9 @@ export function transformMatrix(t: any, axes: string[] = ["x", "y", "z"]): Mat4 
       }
       return m;
     }
+    case "bijection":
+      // Its forward side; walked backwards, that inverted (an affine's stated inverse is its inverse).
+      return transformMatrix(t.forward, axes);
     default:
       return undefined;
   }
@@ -352,6 +382,45 @@ export function chainInto(root: CollectionNode, member: CollectionNode, system: 
   return undefined;
 }
 
+/** Steps that are affines alone, composed (first step first); undefined when one is a field. */
+export function stepsMatrix(steps: Step[]): Mat4 | undefined {
+  if (steps.some((s) => s.kind !== "affine")) return undefined;
+  return steps.reduce((m, s) => multiply((s as Extract<Step, { kind: "affine" }>).m, m), [...IDENTITY]);
+}
+
+/** The kinds inside a transform that cannot be applied here (a sequence's parts, a bijection's forward side). */
+function kindsNotApplied(t: any, axes: string[] | undefined): string[] {
+  if (t?.type === "sequence") return (t.transformations ?? []).flatMap((x: any) => kindsNotApplied(x, axes));
+  if (t?.type === "bijection") return kindsNotApplied(t.forward, axes);
+  return transformSteps(t, axes, "") === undefined ? [String(t?.type ?? "untyped")] : [];
+}
+
+/**
+ * The kinds of transform (by-dimension maps, those on axes other than x, y
+ * and z…) on the paths leading from `member` that cannot be applied, so a
+ * member hidden for want of them can say which; none when it is hidden only
+ * because nothing joins it to the system.
+ */
+export function unappliedKinds(root: CollectionNode, member: CollectionNode): string[] {
+  const g = graph(root);
+  const known = (id: string) => g.systems.find((s) => s.id === id)?.axes;
+  const reached = new Set([member.id, member.name, ...member.systems.map((s) => s.id)].filter((k): k is string => !!k));
+  const out = new Set<string>();
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const t of g.transforms) {
+      if (!reached.has(t.input) && !reached.has(t.output)) continue;
+      for (const k of kindsNotApplied(t.raw, known(t.output) ?? known(t.input))) out.add(k);
+      for (const end of [t.input, t.output])
+        if (!reached.has(end)) {
+          reached.add(end);
+          grew = true;
+        }
+    }
+  }
+  return [...out];
+}
+
 /** A matrix in system units (its translation) as millimetres, `unit` mm a unit (no −0s, for a tidy link). */
 const inMm = (m: Mat4, unit: number): Mat4 => m.map((v, i) => (i % 4 === 3 && i < 12 ? v * unit : v) + 0);
 
@@ -468,4 +537,250 @@ export function parentGroups(url: string, depth = 6): string[] {
 export function isCollection(document: any): boolean {
   const ome = document?.attributes?.ome ?? document?.ome;
   return ome !== undefined && ome !== null && (ome.type === "collection" || Array.isArray(ome.nodes));
+}
+
+// ------------------------------------------------------------------ building
+
+/**
+ * The Zarr group a layer's source reads (an https URL; gs:// and s3://
+ * buckets as their https addresses), or undefined for a source that is not
+ * an OME-Zarr image (precomputed, annotations, local data…).
+ */
+export function zarrGroupUrl(source: unknown): string | undefined {
+  const text = typeof source === "string" ? source : typeof (source as { url?: unknown })?.url === "string" ? (source as { url: string }).url : "";
+  const zarr = /^(zarr3?|zarr2|ome-zarr):\/\//.test(text) || /\|zarr[23]?:?$/.test(text) || /\.zarr\/?(\|.*)?$/.test(text);
+  if (!zarr) return undefined;
+  const clean = text
+    .replace(/\|.*$/, "")
+    .replace(/^(zarr3?|zarr2|ome-zarr):\/\//, "")
+    .replace(/\/+$/, "")
+    .replace(/^gs:\/\/([^/]+)/, "https://storage.googleapis.com/$1")
+    .replace(/^s3:\/\/([^/]+)/, "https://$1.s3.amazonaws.com");
+  return /^https?:\/\//.test(clean) ? clean : undefined;
+}
+
+/** An id from `text` (letters, digits and dashes) that `taken` does not hold, added to it. */
+export function freshId(text: string, taken: Set<string>): string {
+  const base = text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "item";
+  let id = base;
+  for (let n = 2; taken.has(id); ++n) id = `${base}-${n}`;
+  taken.add(id);
+  return id;
+}
+
+/** Rounding noise off (1e-9 of a unit), and no −0s. */
+const tidy = (v: number): number => Math.round(v * 1e9) / 1e9 + 0;
+
+/**
+ * A 4 × 4 on x, y, z as an OME transform on `axes` (the output system's,
+ * in its order): identity, translation, scale, a scale then a translation,
+ * or an affine, whichever is the simplest that says it.
+ */
+export function transformJson(m: Mat4, axes: string[] = ["z", "y", "x"]): any {
+  const at = axes.map((n) => ["x", "y", "z"].indexOf(n));
+  if (at.some((i) => i === -1)) throw new Error(`a transform on x, y and z cannot be written for axes ${axes.join(", ")}`);
+  const v = m.map(tidy);
+  const diagonal = [0, 1, 2].every((r) => [0, 1, 2].every((c) => r === c || v[4 * r + c] === 0));
+  const scale = at.map((i) => v[5 * i]);
+  const translation = at.map((i) => v[4 * i + 3]);
+  const moved = translation.some((t) => t !== 0);
+  if (diagonal && scale.every((s) => s === 1)) return moved ? { type: "translation", translation } : { type: "identity" };
+  if (diagonal) return moved ? { type: "sequence", transformations: [{ type: "scale", scale }, { type: "translation", translation }] } : { type: "scale", scale };
+  return { type: "affine", affine: at.map((r) => [...at.map((c) => v[4 * r + c]), v[4 * r + 3]]) };
+}
+
+/**
+ * Where a layer is placed relative to where its image places itself: `now`
+ * and `own` are its physical matrices (rows and columns in the order of
+ * `names`, translations in mm) as shown and as its metadata gives; the
+ * result is `now` · `own`⁻¹ on x, y, z (mm), or undefined when the layer
+ * has no x, y and z or `own` is singular.
+ */
+export function placementOf(now: Mat4, own: Mat4, names: string[]): Mat4 | undefined {
+  const back = invert(own);
+  const order = ["x", "y", "z"].map((n) => names.indexOf(n));
+  if (back === undefined || order.some((k) => k === -1)) return undefined;
+  const p = multiply(now, back);
+  const out = [...IDENTITY];
+  order.forEach((r, i) => {
+    order.forEach((c, j) => (out[4 * i + j] = p[4 * r + c]));
+    out[4 * i + 3] = p[4 * r + 3];
+  });
+  return out;
+}
+
+/** Units the panel offers for a new coordinate system, with their size in millimetres. */
+export const UNITS: Record<string, number> = { meter: 1000, millimeter: 1, micrometer: 1e-3, nanometer: 1e-6 };
+
+/** Every space unit OME-NGFF names (UDUNITS-2), in millimetres. */
+const SPACE_UNITS: Record<string, number> = {
+  ...UNITS,
+  angstrom: 1e-7,
+  attometer: 1e-15,
+  centimeter: 10,
+  decimeter: 100,
+  exameter: 1e21,
+  femtometer: 1e-12,
+  foot: 304.8,
+  gigameter: 1e12,
+  hectometer: 1e5,
+  inch: 25.4,
+  kilometer: 1e6,
+  megameter: 1e9,
+  mile: 1609344,
+  parsec: 30856775814913670000,
+  petameter: 1e18,
+  picometer: 1e-9,
+  terameter: 1e15,
+  yard: 914.4,
+  yoctometer: 1e-21,
+  yottameter: 1e27,
+  zeptometer: 1e-18,
+  zettameter: 1e24,
+};
+
+/**
+ * A coordinate system's unit (the first of its axes that has one) in
+ * millimetres, and the unit when it is not one OME-NGFF names, which is
+ * then read as a millimetre.  No unit at all is a millimetre too.
+ */
+export function unitOf(system: { units: string[] } | undefined): { mm: number; unknown?: string } {
+  const unit = system?.units.find((u) => u !== "");
+  if (unit === undefined) return { mm: 1 };
+  const mm = SPACE_UNITS[unit.toLowerCase()];
+  return mm === undefined ? { mm: 1, unknown: unit } : { mm };
+}
+
+/**
+ * Whether an image is a label image: its metadata (a group's zarr.json or
+ * .zattrs) has OME's `image-label`, or it sits in an image's `labels`
+ * group (…/image.zarr/labels/cells).
+ */
+export function isLabelImage(group: any, url = ""): boolean {
+  const ome = group?.attributes?.ome ?? group?.ome ?? group?.attributes ?? group;
+  return (ome !== null && typeof ome === "object" && ome["image-label"] !== undefined) || /\/labels\/[^/]+\/?$/.test(url);
+}
+
+/**
+ * A collection document of images as a scene shows them: each image a
+ * member, placed into one coordinate system (`system`, axes z, y, x in
+ * `unit`) by where the scene puts it (`placement`, x, y, z in mm, relative
+ * to where the image places itself; none: as it places itself).
+ */
+export function collectionFromScene(name: string, system: { name: string; unit: string }, images: { name: string; url: string; placement?: Mat4 }[]): any {
+  const taken = new Set<string>();
+  const systemId = freshId(system.name, taken);
+  const mm = SPACE_UNITS[system.unit] ?? 1;
+  const nodes = images.map((image) => ({ type: "multiscale", name: image.name, id: freshId(image.name, taken), path: { type: "zarr", path: image.url } }));
+  const transforms = images.map((image, i) => ({
+    ...transformJson(inUnits(image.placement ?? IDENTITY, mm)),
+    input: { id: nodes[i].id },
+    output: { id: systemId },
+  }));
+  return {
+    ome: {
+      version: "0.x",
+      type: "collection",
+      name,
+      attributes: { scene: { coordinateSystems: [systemOf(systemId, system.name, system.unit)], coordinateTransformations: transforms } },
+      nodes,
+    },
+  };
+}
+
+/** A matrix in mm (its translation) as one in units of `mm` millimetres. */
+const inUnits = (m: Mat4, mm: number): Mat4 => m.map((v, i) => (i % 4 === 3 && i < 12 ? v / mm : v));
+
+/** A matrix's translation from units of `mm` millimetres to units of the system (as `inUnits`), for a placement read off a layer. */
+export const toSystemUnits = inUnits;
+
+const systemOf = (id: string, name: string, unit: string) => ({
+  id,
+  name,
+  axes: ["z", "y", "x"].map((n) => ({ name: n, type: "space", unit })),
+});
+
+/** A change to a collection document: to its top collection (its members, systems and transforms). */
+export type Edit =
+  | { op: "rename"; name: string }
+  | { op: "addSystem"; name: string; unit: string }
+  | { op: "removeSystem"; id: string }
+  | { op: "addMember"; name: string; url: string }
+  | { op: "removeMember"; id: string }
+  | { op: "addTransform"; transform: any }
+  | { op: "setTransform"; index: number; transform: any }
+  | { op: "removeTransform"; index: number };
+
+/**
+ * The top collection's array `key` (coordinateSystems or
+ * coordinateTransformations) where `readCollection` reads it: in its
+ * scene, or its attributes; made in the scene when there is none.
+ */
+function listOf(ome: any, key: string): any[] {
+  ome.attributes ??= {};
+  const a = ome.attributes;
+  if (Array.isArray(a.scene?.[key])) return a.scene[key];
+  if (Array.isArray(a[key])) return a[key];
+  a.scene ??= {};
+  a.scene[key] = [];
+  return a.scene[key];
+}
+
+/** Every id and name in a document's tree (members, systems), so a new one is not a twin. */
+function idsIn(ome: any): Set<string> {
+  const out = new Set<string>();
+  const visit = (n: any) => {
+    for (const k of [n?.id, n?.name]) if (typeof k === "string") out.add(k.toLowerCase());
+    const scene = n?.attributes?.scene ?? n?.attributes ?? {};
+    for (const s of [...(scene.coordinateSystems ?? []), ...(n?.attributes?.coordinateSystems ?? [])]) for (const k of [s?.id, s?.name]) if (typeof k === "string") out.add(k.toLowerCase());
+    (n?.nodes ?? []).forEach(visit);
+  };
+  visit(ome);
+  return out;
+}
+
+/** The document after `edit`, a copy (the one given is left as it was). */
+export function editCollection(document: any, edit: Edit): any {
+  const doc = structuredClone(document);
+  const ome = doc?.ome ?? doc?.attributes?.ome ?? doc;
+  const key = (r: unknown) => refId(r);
+  switch (edit.op) {
+    case "rename":
+      ome.name = edit.name;
+      break;
+    case "addSystem":
+      listOf(ome, "coordinateSystems").push(systemOf(freshId(edit.name, idsIn(ome)), edit.name, edit.unit));
+      break;
+    case "removeSystem": {
+      const systems = listOf(ome, "coordinateSystems");
+      systems.splice(0, systems.length, ...systems.filter((s) => String(s.id ?? s.name) !== edit.id));
+      const ts = listOf(ome, "coordinateTransformations");
+      ts.splice(0, ts.length, ...ts.filter((t) => key(t.input) !== edit.id && key(t.output) !== edit.id));
+      break;
+    }
+    case "addMember":
+      ome.nodes ??= [];
+      ome.nodes.push({ type: "multiscale", name: edit.name, id: freshId(edit.name, idsIn(ome)), path: { type: "zarr", path: edit.url } });
+      break;
+    case "removeMember": {
+      const gone = (ome.nodes ?? []).find((n: any) => String(n.id ?? n.name) === edit.id);
+      if (gone === undefined) break;
+      ome.nodes = ome.nodes.filter((n: any) => n !== gone);
+      // Its transforms go with it: those from or to it, or to its own systems.
+      const its = new Set([gone.id, gone.name, ...(gone.coordinateSystems ?? gone.attributes?.coordinateSystems ?? []).map((s: any) => s.id ?? s.name)].filter(Boolean).map(String));
+      const ts = listOf(ome, "coordinateTransformations");
+      ts.splice(0, ts.length, ...ts.filter((t) => !its.has(key(t.input)) && !its.has(key(t.output))));
+      break;
+    }
+    case "addTransform":
+      listOf(ome, "coordinateTransformations").push(edit.transform);
+      break;
+    case "setTransform":
+      listOf(ome, "coordinateTransformations")[edit.index] = edit.transform;
+      break;
+    case "removeTransform":
+      listOf(ome, "coordinateTransformations").splice(edit.index, 1);
+      break;
+  }
+  return doc;
 }

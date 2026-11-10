@@ -1,0 +1,94 @@
+{
+ "ng": {
+  "dimensions": {
+   "x": [
+    0.001,
+    "m"
+   ],
+   "y": [
+    0.001,
+    "m"
+   ],
+   "z": [
+    0.001,
+    "m"
+   ]
+  },
+  "layers": [
+   {
+    "type": "image",
+    "source": "middleauth+https://h.example.org/b/brain.ome.zarr/|zarr3:",
+    "name": "brain"
+   },
+   {
+    "type": "segmentation",
+    "source": "https://h.example.org/b/tracts.zarrvectors/|zarr-vectors:",
+    "name": "tracts"
+   }
+  ]
+ },
+ "app": {
+  "platform": {
+   "version": 1,
+   "activeScene": "s-a",
+   "scenes": [
+    {
+     "id": "s-a",
+     "name": "Whole brain"
+    },
+    {
+     "id": "s-b",
+     "name": "Detail",
+     "ng": {
+      "layers": [
+       {
+        "type": "image",
+        "source": "middleauth+https://h.example.org/b/brain.ome.zarr/|zarr3:",
+        "name": "brain"
+       }
+      ]
+     },
+     "app": {
+      "labels": {
+       "version": 1,
+       "data": {}
+      }
+     }
+    }
+   ],
+   "datasets": [
+    {
+     "id": "d-1",
+     "key": "middleauth+https://h.example.org/b/brain.ome.zarr|zarr3:",
+     "name": "brain",
+     "source": "middleauth+https://h.example.org/b/brain.ome.zarr/|zarr3:",
+     "kind": "image"
+    },
+    {
+     "id": "d-2",
+     "key": "https://h.example.org/b/tracts.zarrvectors|zarr-vectors:",
+     "name": "tracts",
+     "source": "https://h.example.org/b/tracts.zarrvectors/|zarr-vectors:",
+     "kind": "segmentation"
+    }
+   ]
+  },
+  "trackFiltering": {
+   "version": 1,
+   "data": {
+    "dataset": "tracts",
+    "active": true,
+    "filter": {
+     "ranges": {
+      "length": [
+       20,
+       200
+      ]
+     },
+     "includeTags": [],
+     "excludeTags": []
+    }
+   }
+  }
+ }
+}

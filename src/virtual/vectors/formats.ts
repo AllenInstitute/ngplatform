@@ -21,7 +21,7 @@ const worker = () => {
   return shared;
 };
 
-/** The settings the worker is told (Settings → View settings). */
+/** The settings the worker is told (Settings › Storage). */
 function workerSettings(): { cacheBytes?: number; diskBytes?: number } {
   const megabytes = vectorCacheMegabytes();
   const disk = tractogramDiskGigabytes();

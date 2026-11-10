@@ -13,11 +13,13 @@
  *                 roi.ends: test the lines' ends (either, or both) instead;
  *                 roi.maskSource: a volume's voxels, read here once
  *               { type: "curves", id, level, ids }   whole streamlines of objects
- *               { type: "cancel", id }
+ *               { type: "trk", id, level, ids, space }   the same, as a .trk file
+ *               { type: "cancel", id }   stops a request between chunks
  * Messages out: { type: "opened", info } | { type: "error", id?, message }
  *               { type: "progress", id, done, total }
  *               { type: "result", id, ids, chunks, bytes, ms }
  *               { type: "curves", id, ids, offsets, positions, ms }
+ *               { type: "trk", id, bytes }
  */
 import {
   httpAccess,
@@ -36,7 +38,8 @@ import { setAsyncComputationWorkerFactory } from "neuroglancer/unstable/worker_f
 import { asyncComputationWorker } from "@ngplatform/sdk/workers";
 import { ARRAYS, type VoxelType } from "@ngplatform/sdk/volume_out";
 import { VolumeReader } from "../volume-view/volume_reader.js";
-import { type ChunkEnds, chunkEnds, type ChunkGeometry, compactChunk, IdSet, type MaskSource, type MaskVolume, maskBits, maskBounds, maskKey, type RoiGeometry, roiBounds, testChunk, testChunkMask, testEnds } from "./roi.js";
+import { type ChunkEnds, chunkEnds, type ChunkGeometry, compactChunk, IdSet, type MaskSource, type MaskVolume, maskBits, maskBounds, maskKey, type RoiGeometry, roiBounds, scanChunks, testChunk, testChunkMask, testEnds } from "./roi.js";
+import { type TrkSpace, writeTrk } from "./trk.js";
 
 // Compressed arrays (the object manifests, zstd) decode in the platform's
 // async-computation worker, with Zarr Vectors' decoders loaded, as the
@@ -69,6 +72,8 @@ let access: ZarrVectorsStoreAccess | undefined;
 const pipelines = new Map<number, LevelPipeline>();
 const objectReaders = new Map<number, ObjectReader>();
 const controllers = new Map<number, AbortController>();
+/** Bumped each time a store is opened: tests begun on the one before stop. */
+let generation = 0;
 
 /** Decoded chunks (and their line ends), least recently used first; pending reads are shared. */
 const cache = new Map<string, Promise<ChunkGeometry | ChunkEnds | undefined>>();
@@ -152,6 +157,7 @@ function chunk(level: number, coords: number[], bridges = false): Promise<ChunkG
 }
 
 async function open(storeUrl: string): Promise<StoreInfo> {
+  ++generation;
   access = httpAccess(storeUrl);
   store = await openZarrVectorsStore(access, []);
   pipelines.clear();
@@ -227,26 +233,26 @@ async function evaluate(id: number, level: number, roi: RoiGeometry): Promise<vo
     const hits = new IdSet();
     // Ends: each object's line ends inside the region, counted.
     const endCounts = new Map<number | bigint, number>();
-    let done = 0;
     let bytes = 0;
-    let next = 0;
-    const work = async () => {
-      while (next < coords.length) {
-        const c = coords[next++];
-        // Thin regions (a disk, a mask's voxels) can lie on a chunk boundary, crossed only by the segments joining chunks.
-        const data = roi.ends === undefined ? await chunk(level, c, roi.shape === "disk" || mask !== undefined) : await ends(level, c);
-        if (controller.signal.aborted) return;
-        if (data !== undefined) {
-          if (mask !== undefined) testChunkMask(data as ChunkGeometry, mask, hits);
-          else if (roi.ends === undefined) testChunk(data as ChunkGeometry, roi, hits);
-          else testEnds(data as ChunkEnds, roi, endCounts);
-          bytes += data.bytes;
-        }
-        postMessage({ type: "progress", id, done: ++done, total: coords.length });
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, coords.length) }, work));
-    if (controller.signal.aborted) return;
+    // Between chunks: stopped when cancelled, or when the store was opened again since.
+    const opened = generation;
+    const stale = () => controller.signal.aborted || generation !== opened;
+    const finished = await scanChunks(
+      coords,
+      CONCURRENCY,
+      // Thin regions (a disk, a mask's voxels) can lie on a chunk boundary, crossed only by the segments joining chunks.
+      (c) => (roi.ends === undefined ? chunk(level, c, roi.shape === "disk" || mask !== undefined) : ends(level, c)),
+      (data) => {
+        if (data === undefined) return;
+        if (mask !== undefined) testChunkMask(data as ChunkGeometry, mask, hits);
+        else if (roi.ends === undefined) testChunk(data as ChunkGeometry, roi, hits);
+        else testEnds(data as ChunkEnds, roi, endCounts);
+        bytes += data.bytes;
+      },
+      stale,
+      (done, total) => postMessage({ type: "progress", id, done, total }),
+    );
+    if (!finished) return;
     for (const [key, count] of endCounts) if (roi.ends === "either" || count >= 2) hits.addKey(key);
     const ids = hits.toArray();
     postMessage({ type: "result", id, ids, chunks: coords.length, bytes, ms: performance.now() - started }, { transfer: [ids.buffer] });
@@ -256,18 +262,22 @@ async function evaluate(id: number, level: number, roi: RoiGeometry): Promise<vo
 }
 
 /** Objects' whole streamlines at a level, each chunk read once for all of them. */
-async function curves(id: number, level: number, ids: BigUint64Array): Promise<void> {
+async function readCurves(id: number, level: number, ids: BigUint64Array, signal: AbortSignal) {
   if (store === undefined || access === undefined) throw new Error("no store is open");
+  let reader = objectReaders.get(level);
+  if (reader === undefined) {
+    reader = new ObjectReader(access, store.description, store.levels[level]);
+    objectReaders.set(level, reader);
+  }
+  return reader.readCurves(Array.from(ids), signal, (done, total) => postMessage({ type: "progress", id, done, total }));
+}
+
+async function curves(id: number, level: number, ids: BigUint64Array): Promise<void> {
   const controller = new AbortController();
   controllers.set(id, controller);
   const started = performance.now();
   try {
-    let reader = objectReaders.get(level);
-    if (reader === undefined) {
-      reader = new ObjectReader(access, store.description, store.levels[level]);
-      objectReaders.set(level, reader);
-    }
-    const out = await reader.readCurves(Array.from(ids), controller.signal, (done, total) => postMessage({ type: "progress", id, done, total }));
+    const out = await readCurves(id, level, ids, controller.signal);
     const found = BigUint64Array.from(out.ids);
     postMessage(
       { type: "curves", id, ids: found, offsets: out.offsets, positions: out.positions, ms: performance.now() - started },
@@ -278,8 +288,27 @@ async function curves(id: number, level: number, ids: BigUint64Array): Promise<v
   }
 }
 
+/** Objects' whole streamlines as a .trk file, read and written here: a group's own store, made off the page's thread. */
+async function trk(id: number, level: number, ids: BigUint64Array, space: TrkSpace): Promise<void> {
+  const controller = new AbortController();
+  controllers.set(id, controller);
+  try {
+    const out = await readCurves(id, level, ids, controller.signal);
+    if (controller.signal.aborted) return;
+    const bytes = writeTrk(out, space);
+    postMessage({ type: "trk", id, bytes }, { transfer: [bytes] });
+  } finally {
+    controllers.delete(id);
+  }
+}
+
 /** Small questions about the store, answered with `{type: "answer", id, value}`. */
 const calls: Record<string, (msg: any) => Promise<{ value: unknown; transfer?: Transferable[] }>> = {
+  /** Streamlines read in the page (from a file on this computer) written as a .trk file here. */
+  async trk({ offsets, positions, space }: { offsets: Uint32Array; positions: Float32Array; space: TrkSpace }) {
+    const bytes = writeTrk({ offsets, positions }, space);
+    return { value: bytes, transfer: [bytes] };
+  },
   /** A mask's voxels as the region tests read them (for a job on this computer); a copy, sent whole. */
   async maskVolume({ source }: { source: MaskSource }) {
     const mask = await maskVolume(source);
@@ -357,6 +386,8 @@ self.onmessage = (event: MessageEvent) => {
     );
   } else if (msg.type === "evaluate") {
     evaluate(msg.id, msg.level, msg.roi).catch((e) => postMessage({ type: "error", id: msg.id, message: (e as Error).message }));
+  } else if (msg.type === "trk") {
+    trk(msg.id, msg.level, msg.ids, msg.space).catch((e) => postMessage({ type: "error", id: msg.id, message: (e as Error).message }));
   } else if (msg.type === "curves") {
     curves(msg.id, msg.level, msg.ids).catch((e) => postMessage({ type: "error", id: msg.id, message: (e as Error).message }));
   } else if (msg.type === "cancel") {

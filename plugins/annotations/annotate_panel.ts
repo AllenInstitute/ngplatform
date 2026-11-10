@@ -1,12 +1,13 @@
 /**
- * The Annotate section: the layer new annotations go to, the tools that
- * draw them, its groups (shown or hidden, coloured, nested) and its fields
- * (a list of values, a number, text, or an ontology's terms).  The
+ * The Annotate card: the layer new annotations go to, its groups (shown
+ * or hidden, coloured, nested) and its fields (a list of values, a number,
+ * text, or an ontology's terms).  They are drawn with the layer's own tools
+ * (Layers → the layer's Annotations tab), which "Draw" opens; the
  * annotations themselves are in the annotation table (./table_panel.ts).
  */
 import type { Disposer, PlatformContext } from "@ngplatform/sdk";
-import { button, el, select } from "@ngplatform/sdk/dom";
-import { type Annotate, toolHint, TOOLS } from "./annotate.js";
+import { button, checkbox, el, emptyState, field, iconButton, info, region, select } from "@ngplatform/sdk/dom";
+import type { Annotate } from "./annotate.js";
 import { addGroup, groupOf, groupPath, groupsOf, groupTree, hiddenValues, moveGroup, removeGroup, withinGroup, writeGroups } from "./groups.js";
 import { TABLE_PANEL } from "./manifest.js";
 import { parseTerms } from "./ontology.js";
@@ -33,53 +34,46 @@ export class AnnotatePanel {
     private readonly model: Annotate,
   ) {}
 
+  /**
+   * Drawn once: the layer's row, its groups and its fields are each a
+   * region drawn again only when what it shows changes (moving about
+   * changes the state too), so editing a field is not lost when a group
+   * changes.
+   */
   render(host: HTMLElement): Disposer {
-    let shown = "";
-    const draw = (force = false) => {
+    // Each region's key is the layer and what it shows; its drawing reads the layer chosen.
+    const shown = () => {
+      const name = this.model.chosen();
+      return name !== undefined && this.model.layer(name) !== undefined ? name : undefined;
+    };
+    const top = region(() => this.layerRow());
+    const groups = region(() => {
+      const name = shown();
+      return name ? this.groups(name) : [];
+    });
+    const fields = region(() => {
+      const name = shown();
+      return name ? this.fields(name) : [];
+    });
+    // The field being added or edited: its own region, so what is typed in it stays while the layer changes.
+    const form = region(() => {
+      const name = shown();
+      const l = name === undefined ? undefined : this.model.layer(name);
+      return name === undefined || l === undefined || this.editing === undefined ? [] : this.form(name, fieldsOf(l.spec, l.meta).find((f) => f.id === this.editing));
+    });
+    host.append(el("div", { class: "stack" }, top, groups, el("div", { class: "stack" }, fields, form)));
+    const draw = () => {
       const name = this.model.chosen();
       const layers = this.model.layers();
       const l = layers.find((x) => x.spec.name === name);
-      const tool = this.model.currentTool();
-      const counts = l ? l.spec.annotations.map((a) => groupOf(l.spec, a)) : [];
-      // Moving about changes the state too: redraw only when what is shown changes.
-      const key = JSON.stringify([name, layers.map((x) => [x.spec.name, x.managed]), l?.spec.annotationProperties, l?.meta.groups, l?.meta.fields, l?.meta.colourBy, l?.meta.activeGroup, tool, counts, this.editing]);
-      if (key === shown && !force) return;
-      shown = key;
-      const editable = layers.filter((x) => !x.managed);
-      const layerRow = el(
-        "div",
-        { class: "an-row" },
-        editable.length
-          ? select(
-              editable.map((x) => [x.spec.name, `${x.spec.name} (${x.spec.annotations.length})`]),
-              name ?? "",
-              (v) => this.model.choose(v),
-              "Layer",
-            )
-          : el("span", { class: "an-hint" }, "No annotation layer yet."),
-        button("+ New layer", () => this.model.newLayer(), "A local annotation layer, kept in the link"),
-      );
-      const tools = el("div", { class: "segmented an-tools" });
-      for (const [id, label, title] of TOOLS) {
-        tools.append(el("button", { type: "button", title, "aria-pressed": String(tool === id), onclick: () => this.model.useTool(id) }, label));
-      }
-      host.replaceChildren(
-        layerRow,
-        tools,
-        el(
-          "p",
-          { class: "an-hint", title: "Each new annotation is selected in the annotation table, ready for its values. Pick the tool again to stop." },
-          // Say which tool is on (a new layer starts with Point on), so picking it does not turn it off unawares.
-          toolHint(tool),
-        ),
-        el("div", { class: "an-row" }, button("Open table", () => this.ctx.ui.showPanel(TABLE_PANEL), "The table of every annotation, in the bottom dock")),
-        l ? this.groups(l.spec.name) : "",
-        l ? this.fields(l.spec.name) : "",
-      );
+      top.update([name, layers.map((x) => [x.spec.name, x.managed, x.spec.annotations.length])]);
+      groups.update(l && [name, l.spec.annotations.map((a) => groupOf(l.spec, a)), l.spec.annotationProperties, l.meta.groups, l.meta.fields, l.meta.colourBy, l.meta.activeGroup]);
+      fields.update(l && [name, l.spec.annotationProperties, l.meta.fields, this.editing !== undefined]);
+      form.update(l && [name, this.editing]);
     };
     draw();
-    const off = this.model.onChange(() => draw());
-    this.redraw = () => draw(true);
+    const off = this.model.onChange(draw);
+    this.redraw = draw;
     return () => {
       off();
       this.redraw = undefined;
@@ -87,6 +81,45 @@ export class AnnotatePanel {
   }
 
   private redraw: (() => void) | undefined;
+
+  /** The layer new annotations go to (or the action that makes one), Draw… and the table. */
+  private layerRow(): HTMLElement {
+    const name = this.model.chosen();
+    const editable = this.model.layers().filter((x) => !x.managed);
+    const newLayer = () => this.model.newLayer();
+    // Drawing is in one place, the layer's own Annotations tab; each new annotation is selected in the table.
+    const drawIn = () => {
+      if (name === undefined) return;
+      this.ctx.workspace.selectLayer(name);
+      this.ctx.viewer.patchState(
+        (ng) => {
+          const spec = ((ng as { layers?: Record<string, unknown>[] }).layers ?? []).find((x) => x.name === name);
+          if (spec !== undefined) spec.tab = "annotations";
+        },
+        { quiet: true },
+      );
+      this.ctx.ui.showPanel("layers");
+    };
+    const openTable = button("Open table", () => this.ctx.ui.showPanel(TABLE_PANEL), "The table of every annotation, in the Activity dock");
+    if (editable.length === 0) return el("div", { class: "stack" }, emptyState("No annotation layer yet.", { label: "+ New layer", run: newLayer }), el("div", { class: "row" }, openTable));
+    return el(
+      "div",
+      { class: "stack" },
+      el(
+        "div",
+        { class: "row an-layer" },
+        field("Layer", select(editable.map((x) => [x.spec.name, `${x.spec.name} (${x.spec.annotations.length})`]), name ?? "", (v) => this.model.choose(v), "Layer")),
+        button("+ New layer", newLayer, "A local annotation layer, kept in the link"),
+      ),
+      el(
+        "div",
+        { class: "row" },
+        button("Draw…", drawIn, "Draw with the layer's tools (Layers → Annotations)"),
+        info("Draw… opens the layer's Annotations tab in Layers, with its tools: Ctrl+click in a view to draw. Each new annotation is selected in the annotation table, ready for its values.", "About drawing"),
+        openTable,
+      ),
+    );
+  }
 
   // -------------------------------------------------------------- groups
 
@@ -105,13 +138,16 @@ export class AnnotatePanel {
       const [s, m] = writeGroups(now.spec, "colourBy" in c ? { ...now.meta, colourBy: c.colourBy } : now.meta, c.groups, "active" in c ? c.active : now.meta.activeGroup, c.moved);
       this.model.write(name, s, m);
     };
+    const addTop = () =>
+      write((gs, m) => {
+        const { groups: next, value } = addGroup(gs, "");
+        return { groups: next, active: m.activeGroup ?? value };
+      });
     // Groups hidden with a group they are in.
     const hidden = new Set(hiddenValues(groups));
     const rows = groupTree(groups).map(({ group: g, depth }) => {
-      const shown = el("input", { type: "checkbox", title: "Shown in the views" }) as HTMLInputElement;
-      shown.checked = !g.hidden;
-      shown.addEventListener("change", () => write((gs) => ({ groups: gs.map((x) => (x.value === g.value ? { ...x, hidden: !shown.checked } : x)) })));
-      const colour = el("input", { type: "color", value: g.colour, title: "Its colour, when the layer is coloured by group" }) as HTMLInputElement;
+      const shown = checkbox(`Show ${g.name || "the group"}`, !g.hidden, (on) => write((gs) => ({ groups: gs.map((x) => (x.value === g.value ? { ...x, hidden: !on } : x)) })), { hideLabel: true });
+      const colour = el("input", { type: "color", class: "colour-input", value: g.colour, "aria-label": `Colour of ${g.name || "the group"}` }) as HTMLInputElement;
       colour.addEventListener("change", () => write((gs, m) => ({ groups: gs.map((x) => (x.value === g.value ? { ...x, colour: colour.value } : x)), colourBy: m.colourBy ?? GROUP })));
       const title = el("input", { class: "text-input", value: g.name, "aria-label": "Group name" }) as HTMLInputElement;
       title.addEventListener("change", () => {
@@ -123,26 +159,21 @@ export class AnnotatePanel {
       const within = withinGroup(groups, g.value);
       const parents: [string, string][] = [["", "Move to the top"], ...groups.filter((x) => !within.has(x.value)).map((x) => [String(x.value), `Move into ${groupPath(groups, x.value)}`] as [string, string])];
       const parent = select(parents, g.parent === undefined ? "" : String(g.parent), (v) => write((gs) => ({ groups: moveGroup(gs, g.value, v === "" ? undefined : Number(v)) })), "Move");
-      parent.className = "an-group-parent";
-      parent.title = "Move it to the top, or into another group";
+      parent.className = "text-input an-group-parent";
       return el(
         "div",
-        { class: `an-group${meta.activeGroup === g.value ? " an-active" : ""}${hidden.has(g.value) && !g.hidden ? " an-dim" : ""}`, style: `padding-left: ${depth * 14}px` },
+        { class: `an-group${meta.activeGroup === g.value ? " an-active" : ""}${hidden.has(g.value) && !g.hidden ? " an-dim" : ""}`, "data-depth": String(Math.min(depth, 6)) },
         shown,
         colour,
         title,
-        el("span", { class: "an-faint an-count", title: "Annotations in it" }, String(counts.get(g.value) ?? 0)),
+        el("span", { class: "faint an-count", "aria-label": "Annotations in it" }, String(counts.get(g.value) ?? 0)),
         parent,
-        button("+", () => write((gs) => ({ groups: addGroup(gs, "", g.value).groups })), "A group within this one", "btn outline small icon"),
-        button(
-          "×",
-          () =>
-            write((gs, m) => {
-              const { groups: rest, moveTo } = removeGroup(gs, g.value);
-              return { groups: rest, active: m.activeGroup === g.value ? moveTo : m.activeGroup, moved: { from: g.value, to: moveTo } };
-            }),
-          "Remove the group (its annotations go to the group it is in)",
-          "btn outline small icon",
+        iconButton("plus", "A group within this one", () => write((gs) => ({ groups: addGroup(gs, "", g.value).groups }))),
+        iconButton("close", "Remove the group (its annotations go to the group it is in)", () =>
+          write((gs, m) => {
+            const { groups: rest, moveTo } = removeGroup(gs, g.value);
+            return { groups: rest, active: m.activeGroup === g.value ? moveTo : m.activeGroup, moved: { from: g.value, to: moveTo } };
+          }),
         ),
       );
     });
@@ -152,14 +183,11 @@ export class AnnotatePanel {
     const active = select([["0", "No group"], ...groupTree(groups).map(({ group: g }) => [String(g.value), groupPath(groups, g.value)] as [string, string])], String(meta.activeGroup ?? 0), (v) => write((gs) => ({ groups: gs, active: Number(v) || 0 })), "New annotations go to");
     return el(
       "div",
-      { class: "an-block" },
-      el("h4", { class: "an-sub" }, "Groups"),
-      groups.length ? el("div", { class: "an-groups" }, ...rows) : el("p", { class: "an-hint", title: "Groups are shown or hidden together and coloured; they can be nested." }, "No groups."),
-      el("div", { class: "an-row" }, button("+ Group", () => write((gs, m) => {
-        const { groups: next, value } = addGroup(gs, "");
-        return { groups: next, active: m.activeGroup ?? value };
-      }), "A new group; new annotations go to it if none is chosen")),
-      groups.length ? el("div", { class: "an-grid2" }, el("label", { class: "field" }, el("span", {}, "New annotations go to"), active), el("label", { class: "field" }, el("span", {}, "Colour by"), colourBy)) : el("label", { class: "field" }, el("span", {}, "Colour by"), colourBy),
+      { class: "stack" },
+      el("h4", { class: "section-title" }, "Groups", info("Groups are shown or hidden together and coloured, and can be nested: tick to show one (and the groups in it), pick its colour, and move it into another.", "About groups")),
+      groups.length ? el("div", { class: "an-groups" }, ...rows) : emptyState("No groups.", { label: "+ Group", run: addTop }),
+      groups.length ? el("div", { class: "row" }, button("+ Group", addTop, "A new group; new annotations go to it if none is chosen")) : null,
+      groups.length ? el("div", { class: "grid-2" }, field("New annotations go to", active), field("Colour by", colourBy)) : field("Colour by", colourBy),
     );
   }
 
@@ -172,27 +200,23 @@ export class AnnotatePanel {
       el(
         "div",
         { class: "an-field-row" },
-        el(
-          "div",
-          {},
-          el("div", {}, f.title),
-          el("div", { class: "an-faint", title: f.storage === "property" ? "Kept as a Neuroglancer annotation property" : "Kept in this plugin's state, in the link" }, `${KIND_NAMES[f.kind]}${f.ontology ? ` (${f.ontology.title})` : ""} · ${f.storage === "property" ? "Neuroglancer property" : "plugin state"}`),
-        ),
-        f.kind === "colour" ? "" : button("Edit", () => this.edit(f.id), "Its name, and its values or terms", "btn outline small"),
-        button("×", async () => {
+        el("div", {}, el("div", {}, f.title), el("div", { class: "faint" }, `${KIND_NAMES[f.kind]}${f.ontology ? ` (${f.ontology.title})` : ""} · ${f.storage === "property" ? "Neuroglancer property" : "plugin state"}`)),
+        f.kind === "colour" ? "" : button("Edit", () => this.edit(f.id), "Its name, and its values or terms"),
+        iconButton("close", `Remove the field ${f.title} and its values`, async () => {
           if (!(await this.ctx.ui.confirm(`Remove the field “${f.title}” and its values?`))) return;
           const now = this.model.layer(name)!;
           const [s, m] = removeField(now.spec, now.meta, f.id);
           this.model.write(name, s, m);
-        }, "Remove the field and its values", "btn outline small icon"),
+        }),
       ),
     );
+    const add = () => this.edit("");
     return el(
       "div",
-      { class: "an-block" },
-      el("h4", { class: "an-sub" }, "Fields"),
-      fields.length ? el("div", { class: "an-fields" }, ...rows) : el("p", { class: "an-hint", title: "Values each annotation of the layer has: a cell type from a list, a number, a note, a structure from an ontology." }, "No fields."),
-      this.editing !== undefined ? this.form(name, fields.find((f) => f.id === this.editing)) : el("div", { class: "an-row" }, button("+ Field", () => this.edit(""), "A value the layer's annotations have")),
+      { class: "stack" },
+      el("h4", { class: "section-title" }, "Fields", info("Values each annotation of the layer has: a cell type from a list, a number, a note, a structure from an ontology. Lists and numbers are kept as Neuroglancer annotation properties; text and terms in this plugin's state, in the link.", "About fields")),
+      fields.length ? el("div", { class: "an-fields" }, ...rows) : this.editing === undefined ? emptyState("No fields.", { label: "+ Field", run: add }) : null,
+      this.editing === undefined && fields.length ? el("div", { class: "row" }, button("+ Field", add, "A value the layer's annotations have")) : null,
     );
   }
 
@@ -202,13 +226,14 @@ export class AnnotatePanel {
   }
 
   /** Adding a field, or editing one. */
-  private form(layer: string, field: Field | undefined): HTMLElement {
-    let kind: FieldKind = field?.kind ?? "list";
-    let ontology: OntologyRef | undefined = field?.ontology;
-    const title = el("input", { class: "text-input", value: field?.title ?? "", placeholder: "Cell type", "aria-label": "Name" }) as HTMLInputElement;
+  private form(layer: string, existing: Field | undefined): HTMLElement {
+    let kind: FieldKind = existing?.kind ?? "list";
+    let ontology: OntologyRef | undefined = existing?.ontology;
+    const title = el("input", { class: "text-input", value: existing?.title ?? "", placeholder: "Cell type", "aria-label": "Name" }) as HTMLInputElement;
     const values = el("textarea", { class: "text-input an-textarea", rows: 4, placeholder: "One value a line" }) as HTMLTextAreaElement;
-    values.value = (field?.options ?? []).join("\n");
-    const note = el("p", { class: "an-hint" });
+    values.value = (existing?.options ?? []).join("\n");
+    // What was read for the terms, or why not.
+    const note = el("p", { class: "hint" });
     const tables = this.ctx.viewer.lookupTables.catalogue();
     const source = select(
       [["", ontology ? `${ontology.title}${ontology.terms ? ` (${ontology.terms.length} terms)` : ""}` : "Choose…"], ...tables.map((t) => [t.url, `${t.group}: ${t.title}`] as [string, string]), ["file", "A file on this computer…"]],
@@ -232,10 +257,12 @@ export class AnnotatePanel {
         if (o.terms.length === 0) throw new Error("no terms in it");
         if (o.terms.length > MAX_TERMS) throw new Error(`${o.terms.length} terms; up to ${MAX_TERMS} are kept with a field`);
         ontology = o;
+        note.className = "hint";
         note.textContent = `${o.terms.length} terms from ${f.name}.`;
         source.options[0].textContent = `${o.title} (${o.terms.length} terms)`;
         source.value = "";
       } catch (e) {
+        note.className = "hint error";
         note.textContent = `Could not read ${f.name}: ${(e as Error).message}.`;
       }
     });
@@ -243,15 +270,12 @@ export class AnnotatePanel {
       kind = v as FieldKind;
       show();
     }, "Kind");
-    kindSelect.disabled = field !== undefined;
-    const listPart = el("label", { class: "field" }, el("span", {}, "Values"), values, el("span", { class: "field-hint" }, "Kept as a Neuroglancer annotation property (an enum)."));
-    const ontologyPart = el("label", { class: "field" }, el("span", {}, "Terms from"), source, file, el("span", { class: "field-hint" }, "A lookup table (the Allen structures among them), or a list, OBO or JSON file. The term is kept in this plugin's state."));
-    const otherHint = el("p", { class: "an-hint" });
+    kindSelect.disabled = existing !== undefined;
+    const listPart = field("Values", values, { info: "One value a line, kept as a Neuroglancer annotation property (an enum)." });
+    const ontologyPart = field("Terms from", el("div", {}, source, file), { info: "A lookup table (the Allen structures among them), or a list, OBO or JSON file. The term is kept in this plugin's state." });
     const show = () => {
       listPart.hidden = kind !== "list";
       ontologyPart.hidden = kind !== "ontology";
-      otherHint.textContent = kind === "number" ? "Kept as a Neuroglancer annotation property (float32); 0 when not set." : kind === "text" ? "Kept in this plugin's state, in the link." : "";
-      otherHint.hidden = otherHint.textContent === "";
     };
     show();
     const save = () => {
@@ -261,23 +285,31 @@ export class AnnotatePanel {
       const options = [...new Set(values.value.split(/\r?\n/).map((v) => v.trim()).filter((v) => v !== ""))];
       if (!text) return this.ctx.ui.toast("Give the field a name.", "error");
       if (kind === "ontology" && ontology === undefined) return this.ctx.ui.toast("Choose where its terms come from.", "error");
-      if (fieldsOf(now.spec, now.meta).some((f) => f.id !== field?.id && f.title.toLowerCase() === text.toLowerCase())) return this.ctx.ui.toast(`The layer has a field “${text}” already.`, "error");
+      if (fieldsOf(now.spec, now.meta).some((f) => f.id !== existing?.id && f.title.toLowerCase() === text.toLowerCase())) return this.ctx.ui.toast(`The layer has a field “${text}” already.`, "error");
       const [s, m] =
-        field === undefined
+        existing === undefined
           ? addField(now.spec, now.meta, { id: "", title: text, kind, ...(kind === "list" ? { options } : {}), ...(kind === "ontology" ? { ontology } : {}) })
-          : updateField(now.spec, now.meta, field.id, { title: text, ...(kind === "list" ? { options } : {}), ...(kind === "ontology" ? { ontology } : {}) });
+          : updateField(now.spec, now.meta, existing.id, { title: text, ...(kind === "list" ? { options } : {}), ...(kind === "ontology" ? { ontology } : {}) });
       this.editing = undefined;
       this.model.write(layer, s, m);
     };
     return el(
       "div",
-      { class: "an-form" },
-      el("div", { class: "an-grid2" }, el("label", { class: "field" }, el("span", {}, "Name"), title), el("label", { class: "field" }, el("span", {}, "Kind"), kindSelect)),
+      { class: "an-form stack" },
+      el(
+        "div",
+        { class: "grid-2" },
+        field("Name", title),
+        field("Kind", kindSelect, {
+          info: existing
+            ? "A field's kind cannot be changed: remove it and add another."
+            : "A list of values or a number is kept as a Neuroglancer annotation property (a number is 0 when not set); text and an ontology's term in this plugin's state, in the link.",
+        }),
+      ),
       listPart,
       ontologyPart,
-      otherHint,
       note,
-      el("div", { class: "an-row" }, button(field ? "Save" : "Add field", save, undefined, "btn primary small"), button("Cancel", () => this.edit(undefined))),
+      el("div", { class: "row" }, button(existing ? "Save" : "Add field", save, undefined, "btn primary small"), button("Cancel", () => this.edit(undefined))),
     );
   }
 }

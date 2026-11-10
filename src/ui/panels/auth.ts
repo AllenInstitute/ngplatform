@@ -1,5 +1,5 @@
 /**
- * The Auth tab: the Google accounts of this browser (each with its state,
+ * Settings → Sign-in: the Google accounts of this browser (each with its state,
  * one the default, and Google's "Sign in with Google" button to add one);
  * the other sign-ins (the middleauth and ngauth servers and plugins'
  * services this workspace's data needs or that were added by hand); the
@@ -14,11 +14,12 @@ import { layerName, layersOf, sourceUrls } from "../../core/workspace.js";
 import { statusLabel } from "../../platform/auth.js";
 import { accountLabel, accountStatus, GOOGLE_SCOPES, type GoogleSignIn } from "../../platform/google_auth.js";
 import type { AuthService, AuthStatus, SourceSignIn } from "../../sdk/types.js";
+import { card, emptyState, field } from "../../sdk/dom.js";
 import { clear, h } from "../dom.js";
-import { toast } from "../overlays.js";
+import { closeSheet, toast } from "../overlays.js";
 import type { Workbench } from "../workbench.js";
 
-/** An error from a click here: shown at once (a toast) and kept in the Activity tab. */
+/** An error from a click here: shown at once (a toast) and kept in Activity. */
 function authError(wb: Workbench, message: string): void {
   wb.log.add(message, "error", "Auth");
   toast(message, "error");
@@ -69,46 +70,38 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
   const layers = h("div", { class: "list auth-layers" });
   const sceneName = h("span", { class: "type" });
   const adding = addServerSection(wb);
+  const setup = googleSection(wb, google);
+  /** Opens a card below and puts the keyboard in its field. */
+  const openCard = (target: HTMLDetailsElement) => () => {
+    target.open = true;
+    target.querySelector("input")?.focus();
+  };
+  const newRule = h("div", { class: "row-actions" }, h("button", { class: "btn outline small auth-new-rule", type: "button", onclick: () => editRule() }, "+ Rule"));
   host.append(
-    h(
-      "div",
-      { class: "section" },
-      h("p", { class: "note first" }, "Kept in this browser, never in the link."),
-      h("h3", { class: "section-title", title: "Each account keeps its own sign-in. The default account reads every gs+google:// bucket that no rule gives another account." }, "Google accounts"),
+    card(
+      "sign-in.google",
+      "Google accounts",
+      { open: true, info: "Kept in this browser, never in the link. Each account keeps its own sign-in. The default account reads every gs+google:// bucket that no rule gives another account." },
       accounts,
       addAccount,
     ),
-    h("div", { class: "section" }, h("h3", { class: "section-title" }, "Other sign-ins"), list, reload),
-    h(
-      "div",
-      { class: "section" },
-      h(
-        "div",
-        { class: "section-head" },
-        h("h3", { class: "section-title" }, "Rules"),
-        h("button", { class: "btn outline small auth-new-rule", type: "button", onclick: () => editRule() }, "+ Rule"),
-      ),
+    card("sign-in.other", "Other sign-ins", {}, list, reload),
+    card(
+      "sign-in.rules",
+      "Rules",
+      { info: "A rule gives data under an address (gs://bucket/, https://host/path/) a sign-in. The longest address that covers a source wins; a layer gets its rule's sign-in when it is added or the workspace is opened. Without a rule, a layer keeps the sign-in its source names, and gs+google:// buckets are read with the default account." },
+      newRule,
       ruleList,
       ruleEditor,
-      h(
-        "p",
-        { class: "note", title: "The longest address that covers a source wins. A layer gets its rule's sign-in when it is added or the workspace is opened." },
-        "A rule gives data under an address (gs://bucket/, https://host/path/) a sign-in.",
-      ),
+    ),
+    card(
+      "sign-in.layers",
+      "Layers in this scene",
+      { badge: sceneName, info: "The sign-in is part of a layer's source (gs+google://bucket/… for gs://bucket/…), so the link keeps it. The Google account does not go in the link: choosing one sets the rule for the layer's bucket." },
+      layers,
     ),
     adding.element,
-    h(
-      "div",
-      { class: "section" },
-      h("h3", { class: "section-title auth-layers-title" }, "Layers in this scene ", sceneName),
-      layers,
-      h(
-        "p",
-        { class: "note", title: "The sign-in is part of a layer's source (gs+google://bucket/… for gs://bucket/…), so the link keeps it. The Google account does not go in the link: choosing one sets the rule for the layer's bucket." },
-        "The link keeps each layer's kind of sign-in, not the account.",
-      ),
-    ),
-    googleSection(wb, google),
+    setup,
   );
 
   const statuses = new Map<string, AuthStatus | undefined>();
@@ -149,7 +142,18 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
   const draw = () => {
     const providers = auth.list().filter((p) => p.id !== "google");
     if (services.length === 0) {
-      clear(list, h("p", { class: "empty" }, providers.length === 0 ? "No other sign-in methods are installed." : "None needed by this workspace: add a server below to sign in ahead."));
+      clear(
+        list,
+        providers.length === 0
+          ? emptyState("No other sign-in methods are installed.", {
+              label: "Plugins",
+              run: () => {
+                closeSheet();
+                wb.docks.show("plugins");
+              },
+            })
+          : emptyState("None needed.", { label: "Add a server…", run: openCard(adding.element) }),
+      );
       return;
     }
     clear(
@@ -205,7 +209,9 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
     const configured = google.clientId() !== undefined;
     clear(
       accounts,
-      ...(all.length === 0 ? [h("p", { class: "empty" }, configured ? "No Google account signed in." : "Google sign-in is not set up: set an OAuth client ID under Google sign-in setup, below.")] : []),
+      ...(all.length === 0
+        ? [configured ? h("p", { class: "empty" }, "No Google account signed in.") : emptyState("Google sign-in is not set up.", { label: "Set up…", run: openCard(setup) })]
+        : []),
       ...all.map(({ email }) => {
         const status = accountStatus(google, email);
         const label = accountLabel(email);
@@ -295,9 +301,11 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
   const drawRules = () => {
     const all = rules.list();
     const signIns = auth.sourceSignIns(sources());
+    // With no rules, the empty line's button adds one.
+    newRule.hidden = all.length === 0;
     clear(
       ruleList,
-      ...(all.length === 0 ? [h("p", { class: "empty", title: "Each layer keeps the sign-in its source names; gs+google:// buckets are read with the default account." }, "No rules.")] : []),
+      ...(all.length === 0 ? [emptyState("No rules.", { label: "Add a rule…", run: () => editRule() })] : []),
       ...all.map((rule) => {
         const select = targetSelect(storageOf(rule.prefix) ?? "gs", google, signIns, ruleValue(rule));
         select.setAttribute("aria-label", `Sign-in for ${rule.prefix}`);
@@ -397,7 +405,7 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
       .map((spec) => ({ name: layerName(spec), control: signInControl(wb, layerName(spec)) }))
       .filter((row) => row.control !== null);
     if (rows.length === 0) {
-      clear(layers, h("p", { class: "empty" }, "No layer in this scene reads from a bucket or a web server."));
+      clear(layers, h("p", { class: "empty" }, "None reads from a bucket or a server."));
       return;
     }
     clear(layers, ...rows.map(({ name, control }) => h("div", { class: "auth-layer" }, h("span", { class: "auth-layer-name", title: name }, name), control)));
@@ -497,7 +505,8 @@ function targetSelect(storage: "gs" | "http", google: GoogleSignIn, signIns: Sou
  * a Google account sets the rule for the layer's bucket (the account is
  * not in the link).
  */
-export function signInControl(wb: Workbench, name: string): HTMLElement | null {
+/** `onlyIfNeeded`: none for public data whose rule (if any) agrees, which most layers are. */
+export function signInControl(wb: Workbench, name: string, onlyIfNeeded = false): HTMLElement | null {
   const { auth, google, rules } = wb;
   const spec = layersOf(wb.store.ng()).find((l) => layerName(l) === name);
   const url = spec === undefined ? undefined : sourceUrls(spec.source)[0];
@@ -586,6 +595,7 @@ export function signInControl(wb: Workbench, name: string): HTMLElement | null {
         );
 
   const differs = rule !== undefined && ruleSignIn(rule, signIns)?.id !== current.signIn.id;
+  if (onlyIfNeeded && current.signIn.id === "public" && !differs) return null;
   return h(
     "div",
     { class: "auth-layer-control" },
@@ -597,7 +607,7 @@ export function signInControl(wb: Workbench, name: string): HTMLElement | null {
   );
 }
 
-function addServerSection(wb: Workbench): { element: HTMLElement; dispose: () => void } {
+function addServerSection(wb: Workbench): { element: HTMLDetailsElement; dispose: () => void } {
   const { auth } = wb;
   const input = h("input", { class: "text-input", placeholder: "https://… (a CAVE, CATMAID or ngauth server)", "aria-label": "Server address", spellcheck: "false" });
   const kind = h("select", { class: "text-input auth-kind", "aria-label": "Kind of sign-in" }) as HTMLSelectElement;
@@ -624,21 +634,16 @@ function addServerSection(wb: Workbench): { element: HTMLElement; dispose: () =>
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") add();
   });
-  const element = h(
-    "div",
-    { class: "section" },
-    h("h3", { class: "section-title" }, "Add a sign-in server"),
+  const element = card(
+    "sign-in.add-server",
+    "Add a sign-in server",
+    { info: "To sign in before opening the data. Middleauth: a CAVE or CATMAID site's address (it names its sign-in server) or the sign-in server's own. ngauth: the server that hands out tokens for gs+ngauth+https:// buckets." },
     h("div", { class: "auth-add auth-add-server" }, input, kind, h("button", { class: "btn outline small", type: "button", onclick: add }, "Add")),
-    h(
-      "p",
-      { class: "note", title: "Middleauth: a CAVE or CATMAID site's address (it names its sign-in server) or the sign-in server's own. ngauth: the server that hands out tokens for gs+ngauth+https:// buckets." },
-      "To sign in before opening the data.",
-    ),
   );
   return { element, dispose: auth.onChanged(kinds) };
 }
 
-function googleSection(wb: Workbench, google: GoogleSignIn): HTMLElement {
+function googleSection(wb: Workbench, google: GoogleSignIn): HTMLDetailsElement {
   const input = h("input", {
     class: "text-input mono",
     placeholder: google.builtInClientId ? google.builtInClientId : "…apps.googleusercontent.com",
@@ -654,29 +659,15 @@ function googleSection(wb: Workbench, google: GoogleSignIn): HTMLElement {
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") save();
   });
-  // Setting up: folded away once the site has a client ID, open while it has none.
-  const details = h(
-    "details",
-    { class: "section auth-google" },
-    h("summary", { class: "section-title" }, "Google sign-in setup"),
-    h(
-      "p",
-      { class: "note first", title: "A layer reads a bucket with Google when its source is gs+google://. A token lasts about an hour; sign in again to renew it." },
-      "For Google Cloud Storage buckets your accounts can read. It asks to:",
-    ),
-    h("ul", { class: "note auth-scopes" }, ...GOOGLE_SCOPES.map((s) => h("li", {}, h("code", {}, s.scope), `: ${s.what}`))),
-    h("label", { class: "auth-field" }, h("span", {}, "Google OAuth client ID"), h("span", { class: "auth-add" }, input, h("button", { class: "btn outline small", type: "button", onclick: save }, "Save"))),
-    h(
-      "p",
-      { class: "note" },
-      google.builtInClientId ? "This site has one built in; one set here replaces it in this browser (empty goes back to it). " : "This site has none built in. ",
-      "To make one, see ",
-      h("a", { href: SIGNING_IN_GUIDE, target: "_blank", rel: "noopener noreferrer" }, "Signing in"),
-      " (its origin is ",
-      h("code", {}, location.origin),
-      ").",
-    ),
-  ) as HTMLDetailsElement;
-  details.open = google.clientId() === undefined;
+  // Setting up: closed, unless the site has no client ID (then it needs doing).
+  const details = card(
+    "sign-in.google-setup",
+    "Google sign-in setup",
+    { attention: google.clientId() === undefined, info: `A layer reads a bucket with Google when its source is gs+google://. A token lasts about an hour; sign in again to renew it. It asks for: ${GOOGLE_SCOPES.map((s) => s.what).join("; ")}.` },
+    field("Google OAuth client ID", h("span", { class: "auth-add" }, input, h("button", { class: "btn outline small", type: "button", onclick: save }, "Save")), {
+      info: `${google.builtInClientId ? "One is built in; one set here replaces it (empty goes back)." : "None is built in."} Its authorised JavaScript origin is ${location.origin}.`,
+    }),
+    h("a", { class: "guide-link", href: SIGNING_IN_GUIDE, target: "_blank", rel: "noopener noreferrer" }, "Signing in guide ↗"),
+  );
   return details;
 }

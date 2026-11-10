@@ -6,6 +6,11 @@ environment and forwards ``/svc/render/...`` to it; or on its own with
 ``--port`` (and ``--token``) for tests.  It listens on 127.0.0.1 only.
 
 A session holds one volume (and optionally a label volume) on the GPU.
+Every session and job draws on one GPU budget (gpu.py): a session is let
+in only when what it will hold fits (else a 503 that says why), sessions
+and jobs on the same image and level share one upload of it, and stills,
+movies and splats run one at a time from a queue (a 429 when too many
+wait), each refused up front when the disk has too little room (507).
 The page sends the view (camera, preset, cuts, lights, region colours)
 whenever it changes; the session adds samples to the image in the
 background and publishes it, refined, as it goes; the page long-polls
@@ -32,17 +37,22 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, unquote
 
 import numpy as np
 
 from . import __version__
+from .gpu import Gpu, Refused, gb
 from .lightmaps import names as lightmap_names
 from . import presets as presets_mod
 from .presets import Preset, builtin
 
 MAX_BODY = 8 << 20
 _LOCAL_ORIGIN = re.compile(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$")
-IDLE_SECONDS = 20 * 60
+# A session nothing has asked about for this long is closed: a page polls its frames every 20 s, so this is a
+# tab closed without its close reaching the service, or a computer gone to sleep (the page opens a new one).
+IDLE_SECONDS = 3 * 60
+REAP_EVERY = 30.0
 # A session stops rendering when no page has waited for its frames for this long (a closed tab), and
 # goes on when one does.
 UNWATCHED_SECONDS = 5.0
@@ -62,8 +72,116 @@ PLAN_MOVING_S = 0.3
 COARSER_FIRST = 24e6
 
 
+# What one request may ask of the GPU (beside the service's budget, gpu.py): a frame's side in pixels, samples
+# per pixel, frames a second, and a still's or a movie's size (pixels, and pixels x samples).
+MIN_SIDE, MAX_SIDE = 8, 8192
+MAX_SAMPLES = 4096
+MAX_FPS = 120
+MAX_STILL_WORK = 8192 * 8192 * 256
+MAX_MOVIE_FRAMES = 18_000
+MAX_MOVIE_PIXELS = 3e10  # its frames' PNGs on disk, about a byte a pixel
+MAX_MOVIE_WORK = 4e12
+#: How many finished movies, stills and splats are listed.
+KEEP_FINISHED = 20
+FINISHED = ("done", "failed", "cancelled")
+#: How many stills, movies and splats may wait for the one running (more: a 429).
+MAX_WAITING_JOBS = 8
+#: How long a job at the head of the queue waits for the GPU memory it needs (sessions hold it) before it fails (s).
+JOB_GPU_WAIT = 600.0
+#: The disk a job leaves free beyond what it is reckoned to write.
+DISK_MARGIN = 1 << 30
+#: The live view's frame a session's admission counts on; a larger view asks for more when it comes (PUT /view).
+SESSION_FRAME = (1920, 1080)
+#: How long a page is told to wait before asking again after a 503 or 429 (s).
+RETRY_AFTER = 30
+#: Downloads are sent this many bytes at a time.
+FILE_CHUNK = 1 << 20
+
+
 class BadRequest(Exception):
     pass
+
+
+def number(v: Any, name: str) -> float:
+    """`v` as a finite number, else a 400 that names it."""
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        raise BadRequest(f"{name}: a number") from None
+    if not math.isfinite(x):
+        raise BadRequest(f"{name}: a number")
+    return x
+
+
+def side(v: Any, name: str) -> int:
+    """A frame's width or height, within MIN_SIDE..MAX_SIDE."""
+    return max(MIN_SIDE, min(MAX_SIDE, int(round(number(v, name)))))
+
+
+def samples_of(v: Any, default: int) -> int:
+    """Samples per pixel, within 1..MAX_SAMPLES."""
+    return max(1, min(MAX_SAMPLES, int(number(v if v is not None else default, "samples"))))
+
+
+def gpu_failure(e: BaseException) -> str | None:
+    """What to tell the page when `e` is the GPU failing (out of memory, a CUDA error); None for anything else."""
+    name, text = type(e).__name__, str(e)
+    if name == "OutOfMemoryError" or "out of memory" in text.lower() or "MemoryAllocation" in text:
+        return f"The GPU ran out of memory: {text}"
+    if (type(e).__module__ or "").startswith(("cupy", "cupy_backends")):
+        return f"GPU error: {name}: {text}"
+    return None
+
+
+def free_gpu_pool() -> None:
+    """Gives the GPU memory CuPy keeps for reuse back to the device (after a job, or a session that failed)."""
+    try:
+        import cupy
+
+        cupy.get_default_memory_pool().free_all_blocks()
+    except Exception:  # noqa: BLE001 - no CuPy: nothing held
+        pass
+
+
+def index_of(v: Any, name: str) -> int | None:
+    """A channel or time point as asked for: a whole number from 0, or None when not given; else a 400."""
+    if v is None:
+        return None
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or v != int(v) or v < 0:
+        raise BadRequest(f"volume.{name}: a whole number from 0")
+    return int(v)
+
+
+def _cube(voxels: float) -> tuple[int, int, int]:
+    n = max(1, round(float(voxels) ** (1 / 3)))
+    return (n, n, n)
+
+
+def spec_key(part: dict[str, Any], labels: bool = False) -> tuple:
+    """What a volume (or labels) is asked for by: sessions asked for alike share what one of them read and uploaded."""
+    from .volumes import http_url
+
+    return ("labels" if labels else "volume", http_url(part["url"]), int(part.get("budget") or 400_000_000), part.get("level"),
+            None if labels else part.get("cylinder"), part.get("channel"), part.get("time"))
+
+
+def session_need(spec: dict[str, Any], gpu: Gpu) -> dict[str, int]:
+    """What a session will hold on the GPU (bytes), reckoned before anything is read: its volume's upload (none when
+    one asked for alike is already there, to share), its labels', the finer detail's and the live view's frame."""
+    from . import renderer as rmod
+
+    v = spec["volume"]
+    budget = int(v.get("budget") or 400_000_000)
+    shared = gpu.textures.find(spec_key(v)) is not None
+    out = {"volume": 0 if shared else rmod.volume_bytes(_cube(budget), 2)}
+    lab = spec.get("labels") or {}
+    if lab.get("url"):
+        lab = {**lab, "budget": lab.get("budget") or budget}
+        out["labels"] = 0 if gpu.textures.find(spec_key(lab, True)) is not None else rmod.labels_bytes(_cube(int(lab["budget"])))
+    detail = float(v.get("detail_budget", 256e6))
+    out["detail"] = rmod.volume_bytes(_cube(detail), 2) if detail > 0 else 0
+    out["frame"] = rmod.renderer_bytes(*SESSION_FRAME, _cube(budget))
+    return out
 
 
 def safe_name(name: Any, fallback: str = "movie") -> str:
@@ -80,10 +198,21 @@ def _mat(v, name: str) -> np.ndarray:
 
 
 class Session:
-    def __init__(self, sid: str, spec: dict[str, Any], device: int):
+    def __init__(self, sid: str, spec: dict[str, Any], device: int, gpu: Gpu | None = None, reservation=None,
+                 need: dict[str, int] | None = None):
         self.id = sid
         self.spec = spec
         self.device = device
+        # The service's GPU (none given: a budget of no limit), what this session was let in with (its reservation,
+        # and the bytes of each part), and the uploads it shares.
+        self.gpu = gpu if gpu is not None else Gpu(device, total=1 << 62)
+        self.reservation = reservation
+        self.need = dict(need or {})
+        self.vol_share = None
+        self.lab_share = None
+        self._R = None  # the renderer, until torn down (self.renderer is let go of at close)
+        self._torn = False
+        self._teardown_lock = threading.Lock()
         self.status = "loading"
         self.progress = 0.0
         self.message = "starting"
@@ -122,7 +251,9 @@ class Session:
         self.detail_meta: dict[str, Any] | None = None
         self._detail_affine: np.ndarray | None = None
         self._wfp = np.eye(4)
-        threading.Thread(target=self._load, daemon=True).start()
+        # The thread that holds the GPU for the session: the load, then the loop; the last to run tears down.
+        self._worker = threading.Thread(target=self._load, daemon=True)
+        self._worker.start()
 
     # ---------------------------------------------------------------- loading
     def _set_progress(self, p: float, msg: str) -> None:
@@ -131,14 +262,23 @@ class Session:
     def _load(self) -> None:
         from . import renderer, volumes
 
+        handed_on = False
         try:
             v = self.spec["volume"]
             url = v["url"]
             budget = int(v.get("budget") or 400_000_000)
-            L = volumes.load(url, budget=budget, level=v.get("level"), progress=self._set_progress)
-            if v.get("cylinder"):
-                # Only a cylinder about the scan's axis (the specimen inside its jar).
-                volumes.hide_outside_cylinder(L.data, float(v["cylinder"]))
+            closed = lambda: self.closed  # noqa: E731 - a session closed while it loads stops reading
+            shared = self.gpu.textures.find(spec_key(v))
+            if shared is not None and shared.loaded is not None:
+                # Another session shows the same image, asked for alike: its volume, not read again.
+                L = shared.loaded
+                self._set_progress(1.0, "shared with another view of this image")
+            else:
+                L = volumes.load(url, budget=budget, level=v.get("level"), progress=self._set_progress,
+                                 channel=v.get("channel"), time=v.get("time"), cancelled=closed)
+                if v.get("cylinder"):
+                    # Only a cylinder about the scan's axis (the specimen inside its jar).
+                    volumes.hide_outside_cylinder(L.data, float(v["cylinder"]))
             self.loaded = L
             self.meta = {
                 "url": url, "level": L.level, "shape": list(L.data.shape), "dtype": str(L.data.dtype),
@@ -149,11 +289,20 @@ class Session:
                 "histogram_matched": L.quantiles is not None,
                 "histogram": presets_mod.histogram(L.data, L.lo, L.hi),
                 "tissue_mm": volumes.tissue_box(L.data, L.affine, L.percentiles.get(0.0, L.lo), L.lo, L.hi),
+                # The channel and time point shown, and how many the image has (volume.channel, volume.time).
+                "channel": L.channel, "time": L.time, "channels": L.counts.get("channels", 1), "times": L.counts.get("times", 1),
+                "axes": L.counts.get("axes", []),
             }
             lab = self.spec.get("labels")
+            LB = None
             if lab and lab.get("url"):
-                self._set_progress(0.0, "reading labels")
-                LB = volumes.load(lab["url"], budget=int(lab.get("budget") or budget), labels=True, progress=self._set_progress)
+                lab = {**lab, "budget": int(lab.get("budget") or budget)}
+                lshared = self.gpu.textures.find(spec_key(lab, True))
+                if lshared is not None and lshared.loaded is not None:
+                    LB = lshared.loaded
+                else:
+                    self._set_progress(0.0, "reading labels")
+                    LB = volumes.load(lab["url"], budget=lab["budget"], labels=True, progress=self._set_progress, cancelled=closed)
                 self.loaded_labels = LB
                 vals = np.unique(LB.data)
                 self.label_meta = {"url": lab["url"], "level": LB.level, "shape": list(LB.data.shape), "values": [int(x) for x in vals[:4096]],
@@ -161,24 +310,56 @@ class Session:
             if self.closed:
                 self.status, self.message = "failed", "closed while loading"
                 return
-            self._start_detail(url, L, float(v.get("detail_budget", 256e6)))
+            self._start_detail(url, L, float(v.get("detail_budget", 256e6)), v.get("channel"), v.get("time"))
+            if self.detail_loader is None and self.need.get("detail") and self.reservation is not None:
+                # No finer levels (or no detail asked for): the memory counted for them is given back.
+                self.reservation.resize(max(0, self.reservation.bytes - self.need["detail"]))
+                self.need["detail"] = 0
             self._set_progress(1.0, "uploading to the GPU")
+            # The volume (and labels) on the GPU once, shared by every session and job showing the same image and
+            # level: counted against the budget once, in place of what this session's admission reckoned for it.
+            name = (v["url"].rstrip("/").split("/")[-1] or "the image")[:60]
+            vkey = ("volume", volumes.http_url(url), L.level, v.get("cylinder"), L.channel, L.time, self.device)
+            self.vol_share = self.gpu.textures.acquire(
+                vkey, "volume", renderer.volume_bytes(L.data.shape, L.data.dtype.itemsize),
+                lambda: renderer.upload(L.data, self.device), f"the image {name}", loaded=L, spec_key=spec_key(v),
+                instead_of=(self.reservation, self.need.get("volume", 0)) if self.reservation is not None else None)
+            if LB is not None:
+                lkey = ("labels", volumes.http_url(lab["url"]), LB.level, None, 0, 0, self.device)
+                self.lab_share = self.gpu.textures.acquire(
+                    lkey, "labels", renderer.labels_bytes(LB.data.shape), lambda: renderer.upload_labels(LB.data, self.device),
+                    f"the labels of {name}", loaded=LB, spec_key=spec_key(lab, True),
+                    instead_of=(self.reservation, self.need.get("labels", 0)) if self.reservation is not None else None)
             R = renderer.Renderer(self.device)
-            R.set_volume(renderer.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles))
+            self._R = R
+            R.set_volume(renderer.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles), self.vol_share.upload)
             if self.closed:
                 return
             self.renderer = R
             self.status = "ready"
             self.message = f"level {L.level} {tuple(L.data.shape[::-1])} voxels of {', '.join(f'{x:.3g}' for x in L.voxel_mm)} mm"
-            threading.Thread(target=self._loop, daemon=True).start()
+            with self._teardown_lock:
+                if not self._torn:
+                    self._worker = threading.Thread(target=self._loop, daemon=True)
+                    self._worker.start()
+                    handed_on = True
+        except volumes.Cancelled:
+            self.status, self.message = "failed", "closed while loading"
+        except Refused as e:
+            # The budget filled while this one loaded: said as plainly as a refusal at the door.
+            self.status, self.error = "failed", str(e)
         except Exception as e:  # noqa: BLE001 - reported to the page
             self.status = "failed"
-            self.error = f"{type(e).__name__}: {e}"
+            self.error = gpu_failure(e) or f"{type(e).__name__}: {e}"
             traceback.print_exc()
+        finally:
+            if not handed_on:
+                self._teardown()
 
     # ---------------------------------------------------------------- detail
-    def _start_detail(self, url: str, L, budget: float) -> None:
-        """A loader for regions of the levels finer than L, when the store has any (and budget > 0)."""
+    def _start_detail(self, url: str, L, budget: float, channel: int | None = None, time_point: int | None = None) -> None:
+        """A loader for regions of the levels finer than L, when the store has any (and budget > 0), at the channel
+        and time point shown."""
         from . import detail, volumes
 
         self.detail_budget = budget
@@ -203,7 +384,7 @@ class Session:
                 self._detail_pending = (req, data)
                 self.cond.notify_all()
 
-        self.detail_loader = detail.DetailLoader(url, ms, arrived, quantize)
+        self.detail_loader = detail.DetailLoader(url, ms, arrived, quantize, ms.fixed(channel, time_point))
 
     def _take_detail(self, R) -> bool:
         """Hold the region read last, if one is waiting; True when the view should start again with it."""
@@ -323,11 +504,12 @@ class Session:
 
     # ---------------------------------------------------------------- views
     def set_view(self, view: dict[str, Any]) -> int:
+        most = samples_of(view.get("max_samples") or None, 1024)
         with self.cond:
             self.view = view
             self.view_version += 1
             self._watched = time.time()
-            self.max_samples = int(view.get("max_samples") or 1024)
+            self.max_samples = most
             self.last_used = time.time()
             self.cond.notify_all()
             return self.view_version
@@ -344,21 +526,24 @@ class Session:
             out.append((lo, hi, bool(b.get("keep", True))))
         return out
 
-    def _state(self, view: dict[str, Any], R=None):
-        """The view as the renderer takes it, placing the volume and labels on `R` (the session's own by default)."""
+    def _state(self, view: dict[str, Any], R=None, detail_affine: np.ndarray | None = None):
+        """The view as the renderer takes it, placing the volume and labels on `R` (the session's own by default;
+        another's finer detail placed by its own `detail_affine`, region voxel to physical mm)."""
         from . import renderer
         from .luts import freesurfer
 
         L = self.loaded
         R = R if R is not None else self.renderer
         wfp = _mat(view["world_from_physical"], "world_from_physical") if view.get("world_from_physical") else np.eye(4)
-        if R is self.renderer:
+        own = R is self.renderer
+        if own:
             self._wfp = wfp
-        if R.detail is not None and self._detail_affine is not None:
-            R.detail.world_from_voxel = wfp @ self._detail_affine
-        scale = float(view.get("scale") or 1.0)
-        W = max(8, int(round(int(view["width"]) * scale)))
-        H = max(8, int(round(int(view["height"]) * scale)))
+        affine = self._detail_affine if own else detail_affine
+        if R.detail is not None and affine is not None:
+            R.detail.world_from_voxel = wfp @ affine
+        scale = min(1.0, max(0.05, number(view.get("scale") or 1.0, "scale")))
+        W = side(number(view["width"], "width") * scale, "width")
+        H = side(number(view["height"], "height") * scale, "height")
         inv = _mat(view["inv_view_projection"], "inv_view_projection")
         pr = view.get("preset") or "HiP-CT brain"
         if isinstance(pr, str):
@@ -390,7 +575,7 @@ class Session:
             LB = self.loaded_labels
             lw = wfp @ LB.affine
             if R.labels is None:
-                R.set_labels(renderer.Labels(LB.data, lw))
+                R.set_labels(renderer.Labels(LB.data, lw), self.lab_share.upload if self.lab_share is not None else None)
             else:
                 R.labels.world_from_voxel = lw
             if lab_spec.get("colors"):
@@ -431,6 +616,22 @@ class Session:
 
     # ---------------------------------------------------------------- the loop
     def _loop(self) -> None:
+        try:
+            failed = self._render()
+        except Exception as e:  # noqa: BLE001 - never leaves the GPU held
+            traceback.print_exc()
+            failed = gpu_failure(e) or f"{type(e).__name__}: {e}"
+        if failed is not None:
+            # Out of memory, or the GPU in trouble: the page learns why from the session and its frame polls.
+            self.status, self.error = "failed", failed
+            with self.cond:
+                self.closed = True
+                self.cond.notify_all()
+            self.renderer = None
+        self._teardown()
+
+    def _render(self) -> str | None:
+        """Renders the views as they come until the session closes; on the GPU failing, what to tell the page."""
         R = self.renderer
         last_publish = 0.0
         batch = 1
@@ -452,6 +653,7 @@ class Session:
                 if version != self.applied_version:
                     st = self._state(view)
                     R.set_view(st)
+                    self.error = None
                     d = R.depth()
                     with self.cond:
                         self.depth = (version, d[..., 0], st.width, st.height, d[..., 1])
@@ -510,15 +712,19 @@ class Session:
                 if pow2 or time.time() - last_publish > 0.25 or n >= self.max_samples:
                     self._publish(version, R, view)
                     last_publish = time.time()
-            except BadRequest as e:
-                self.error = str(e)
+            except Exception as e:  # noqa: BLE001
+                if not isinstance(e, BadRequest):
+                    traceback.print_exc()
+                    failed = gpu_failure(e)
+                    if failed is not None:
+                        # Out of memory, or the GPU in trouble: not tried again pass after pass.
+                        return failed
+                # A view it cannot render: said to the page, and nothing more until the next view comes.
+                self.error = str(e) if isinstance(e, BadRequest) else f"{type(e).__name__}: {e}"
                 with self.cond:
                     self.applied_version = version
                     self.max_samples = 0
-            except Exception as e:  # noqa: BLE001
-                self.error = f"{type(e).__name__}: {e}"
-                traceback.print_exc()
-                time.sleep(0.5)
+        return None
 
     def _publish(self, version: int, R=None, view: dict[str, Any] | None = None) -> None:
         from PIL import Image
@@ -558,7 +764,7 @@ class Session:
             self._watched = time.time()
             self.cond.notify_all()  # a session that had stopped for want of a page goes on
             try:
-                while not self.closed and (self.frame is None or self.frame[0] <= after):
+                while not self.closed and self.status != "failed" and (self.frame is None or self.frame[0] <= after):
                     left = end - time.time()
                     if left <= 0:
                         return None
@@ -570,12 +776,56 @@ class Session:
                 self._watched = time.time()
 
     def close(self) -> None:
+        """Stops the session: a load stops reading (between blocks), the loop after its pass; whichever holds the
+        GPU lets go of all of it as it ends (at once when neither runs)."""
         with self.cond:
             self.closed = True
             self.cond.notify_all()
         if self.detail_loader is not None:
             self.detail_loader.close()
         self.renderer = None
+        w = self._worker
+        if w is None or not w.is_alive() or w is threading.current_thread():
+            self._teardown()
+
+    def _teardown(self) -> None:
+        """Lets go of everything the session holds on the GPU (its renderer, its share of the uploads, its part
+        of the budget) and the finer detail it holds; once."""
+        with self._teardown_lock:
+            if self._torn:
+                return
+            self._torn = True
+        if self.detail_loader is not None:
+            self.detail_loader.close()
+        R, self._R = self._R, None
+        if R is not None and hasattr(R, "close"):
+            R.close()
+        with self.cond:
+            self._detail_pending = None
+            self.depth = None
+            self._packed = {}
+        self.detail_meta = None
+        self._detail_affine = None
+        self.gpu.textures.release(self.vol_share)
+        self.gpu.textures.release(self.lab_share)
+        self.vol_share = self.lab_share = None
+        if self.reservation is not None:
+            self.reservation.release()
+        free_gpu_pool()
+
+    def frame_bytes(self, width: int, height: int) -> None:
+        """Counts a live view of `width` x `height` against the budget, when it is larger than what is counted
+        (a 503 when it does not fit)."""
+        from . import renderer as rmod
+
+        if self.reservation is None:
+            return
+        shape = self.loaded.data.shape if self.loaded is not None else _cube(int(self.spec["volume"].get("budget") or 400_000_000))
+        want = rmod.renderer_bytes(width, height, shape)
+        have = self.need.get("frame", 0)
+        if want > have:
+            self.reservation.resize(self.reservation.bytes + want - have)
+            self.need["frame"] = want
 
     def info(self) -> dict[str, Any]:
         R = self.renderer
@@ -588,92 +838,463 @@ class Session:
         }
 
 
-class Movie:
-    """A movie made from keyframes: frames path-traced to a sample count, then encoded with ffmpeg."""
+def flatten(img: np.ndarray, background: Any) -> np.ndarray:
+    """An RGBA image (premultiplied) over a background colour (0..1): RGB."""
+    bg = np.asarray(background, np.float32)[:3] * 255
+    a = img[..., 3:4].astype(np.float32) / 255
+    return np.clip(img[..., :3].astype(np.float32) + bg * (1 - a), 0, 255).astype(np.uint8)
 
-    def __init__(self, mid: str, session: Session, spec: dict[str, Any], out_dir: Path):
-        self.id = mid
+
+def still_plan(body: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    """A still's view at its size, and its samples, checked before anything is rendered (a 400 for what cannot be made)."""
+    view = dict(body.get("view") or {})
+    if "inv_view_projection" not in view:
+        raise BadRequest("view.inv_view_projection is needed")
+    w, h = (number(body.get(k, view.get(k, d)), k) for k, d in (("width", 1920), ("height", 1080)))
+    if not (MIN_SIDE <= w <= MAX_SIDE and MIN_SIDE <= h <= MAX_SIDE):
+        raise BadRequest(f"width and height must be {MIN_SIDE} to {MAX_SIDE}")
+    w, h = int(w), int(h)
+    samples = samples_of(body.get("samples"), 256)
+    if w * h * samples > MAX_STILL_WORK:
+        raise BadRequest(f"{w} x {h} at {samples} samples is more than one still may be: width x height x samples at most {MAX_STILL_WORK:.3g}")
+    if (view.get("width"), view.get("height")) != (w, h) and view.get("width"):
+        # The same camera at another shape: widen or narrow the view, not stretch it.
+        from .movie import reshaped
+
+        view["inv_view_projection"] = reshaped(view["inv_view_projection"], w / h, view.get("orbit_center"))
+    view.update(width=w, height=h, scale=1.0)
+    return view, samples
+
+
+def movie_plan(spec: dict[str, Any], ffmpeg: str | None) -> dict[str, Any]:
+    """A movie's settings checked before anything is rendered: its format, fps, samples, size (even for H.264),
+    frames and quality, within the limits; a 400 for what cannot be made."""
+    from .movie import keyframe_count, rotation_count
+
+    fmt = str(spec.get("format", "mp4"))
+    if fmt not in ("mp4", "png"):
+        raise BadRequest("format: mp4 or png")
+    if fmt == "mp4" and not ffmpeg:
+        raise BadRequest("movies need ffmpeg on the render computer")
+    fps = int(round(number(spec.get("fps", 25), "fps")))
+    if not 1 <= fps <= MAX_FPS:
+        raise BadRequest(f"fps must be 1 to {MAX_FPS}")
+    samples = samples_of(spec.get("samples"), 256)
+    w, h = (number(spec.get(k, d), k) for k, d in (("width", 1280), ("height", 720)))
+    if not (MIN_SIDE <= w <= MAX_SIDE and MIN_SIDE <= h <= MAX_SIDE):
+        raise BadRequest(f"width and height must be {MIN_SIDE} to {MAX_SIDE}")
+    w, h = int(w), int(h)
+    if fmt == "mp4":
+        # H.264 (4:2:0) needs even sides: a pixel less here, not a failure once every frame is rendered.
+        w, h = w - w % 2, h - h % 2
+    keyframes = spec.get("keyframes")
+    if not isinstance(keyframes, list) or not keyframes or not all(isinstance(k, dict) and isinstance(k.get("view"), dict) for k in keyframes):
+        raise BadRequest("keyframes are needed: a list of {time, view}")
+    r = spec.get("rotation")
+    if r:
+        if not isinstance(r, dict):
+            raise BadRequest("rotation: {axis, degrees, step}")
+        degrees, step = number(r.get("degrees", 360), "rotation.degrees"), number(r.get("step", 2), "rotation.step")
+        if not (0 < degrees <= 360 and 0 < step <= 360):
+            raise BadRequest("rotation: degrees and step must be above 0 and at most 360")
+        frames = rotation_count(degrees, step)
+    else:
+        for k in keyframes:
+            number(k.get("time", 0), "a keyframe's time")
+        frames = keyframe_count(keyframes, fps)
+    pixels = frames * w * h
+    if frames > MAX_MOVIE_FRAMES or pixels > MAX_MOVIE_PIXELS or pixels * samples > MAX_MOVIE_WORK:
+        raise BadRequest(f"{frames} frames of {w} x {h} at {samples} samples is more than one movie may be: at most {MAX_MOVIE_FRAMES} frames, "
+                         f"{MAX_MOVIE_PIXELS:.3g} pixels and {MAX_MOVIE_WORK:.3g} pixel samples in all")
+    crf = int(max(0, min(51, number(spec.get("crf", 18), "crf"))))
+    return {"format": fmt, "fps": fps, "samples": samples, "width": w, "height": h, "frames": frames, "crf": crf}
+
+
+def splat_plan(spec: dict[str, Any]) -> dict[str, Any]:
+    """A splat's settings checked before anything is rendered: its views, their size and samples, and the fit's
+    steps; a 400 for what cannot be made."""
+    view = dict(spec.get("view") or {})
+    if "inv_view_projection" not in view:
+        raise BadRequest("view.inv_view_projection is needed")
+    n = int(number(spec.get("views", 256), "views"))
+    size = int(number(spec.get("size", 1024), "size"))
+    samples = int(number(spec.get("samples", 512), "samples"))
+    steps = int(number(spec.get("steps", 30000), "steps"))
+    if not (8 <= n <= 4096 and 64 <= size <= 4096 and 1 <= samples <= 8192 and 0 <= steps <= 200000):
+        raise BadRequest("views 8-4096, size 64-4096, samples 1-8192, steps 0-200000")
+    # The images: the view's shape, `size` pixels along the longer side.
+    aspect = float(view.get("width", 1)) / max(float(view.get("height", 1)), 1.0)
+    width, height = (size, max(8, round(size / aspect))) if aspect >= 1 else (max(8, round(size * aspect)), size)
+    return {"view": view, "views": n, "size": size, "samples": samples, "steps": steps, "width": width, "height": height,
+            "points": int(number(spec.get("points", 300_000), "points"))}
+
+
+# What a job is reckoned to write (bytes): a PNG of RGBA at most 4 bytes a pixel; a movie's frames (RGB PNGs of
+# smooth renders) about a byte and a fifth a pixel, until the MP4 is made and they go; a splat's views, its points,
+# and what the fit writes.
+def still_disk(width: int, height: int) -> int:
+    return width * height * 4 + (1 << 20)
+
+
+def movie_disk(plan: dict[str, Any]) -> int:
+    return int(plan["frames"] * plan["width"] * plan["height"] * 1.2) + (1 << 20)
+
+
+def splat_disk(plan: dict[str, Any], fitting: bool) -> int:
+    return plan["views"] * plan["width"] * plan["height"] * 2 + plan["points"] * 16 + ((1 << 30) if fitting else 0)
+
+
+#: The GPU memory counted for a splat's fit (torch and gsplat, a process of its own): the Gaussians, their
+#: optimiser's state and one view at a time.
+SPLAT_FIT_BYTES = 4 << 30
+
+
+class Job:
+    """A still, movie or splat. It waits its turn in the service's queue (one runs at a time), then path-traces with
+    a renderer of its own beside the live view. It draws on the session's upload of the volume through a share of
+    its own, so the volume stays on the GPU for as long as the job needs it, whatever the session does; its own
+    memory (its frame, and a copy of the finer detail the view held) is counted against the budget when it starts."""
+
+    kind = "job"
+
+    def __init__(self, jid: str, session: Session, out_dir: Path, width: int, height: int, detail: bool = False):
+        from . import renderer as rmod
+
+        self.id = jid
         self.session = session
-        self.spec = spec
         self.out_dir = out_dir
         self.status = "queued"
         self.progress = 0.0
-        self.message = ""
+        self.message = "waiting"
         self.error: str | None = None
-        self.file: Path | None = None
         self.cancelled = False
         self.started = time.time()
-        threading.Thread(target=self._run, daemon=True).start()
+        self.queue: JobQueue | None = None
+        self.reservation = None
+        self._R = None
+        self._done = False
+        self.gpu = session.gpu
+        # The finer detail the view holds as the job is asked for: a still or splat is of the view in the page.
+        held = session.renderer.detail if detail and session.renderer is not None else None
+        self.detail = (held.data, session._detail_affine.copy()) if held is not None and session._detail_affine is not None else None
+        shape = session.loaded.data.shape if session.loaded is not None else None
+        self.gpu_need = rmod.renderer_bytes(width, height, shape)
+        if self.detail is not None:
+            self.gpu_need += rmod.volume_bytes(self.detail[0].shape, self.detail[0].dtype.itemsize)
+        if not self.gpu.budget.fits_ever(self.gpu_need):
+            raise BadRequest(f"This {self.kind} needs about {gb(self.gpu_need)} of GPU memory, more than the render computer's "
+                             f"budget of {gb(self.gpu.budget.total)}: make it smaller")
+        self.vol_share = self.gpu.textures.ref(session.vol_share) if session.vol_share is not None else None
+        self.lab_share = self.gpu.textures.ref(session.lab_share) if session.lab_share is not None else None
+
+    # ------------------------------------------------------------ the GPU
+    def renderer(self):
+        """A renderer of the session's volume, beside the live view: the volume's upload shared, with the labels and
+        the finer detail the view held."""
+        from . import renderer as rmod
+
+        S = self.session
+        L = S.loaded
+        R = rmod.Renderer(S.device)
+        self._R = R
+        R.set_volume(rmod.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles), self.vol_share.upload if self.vol_share else None)
+        LB = S.loaded_labels
+        if LB is not None:
+            R.set_labels(rmod.Labels(LB.data, LB.affine), self.lab_share.upload if self.lab_share else None)
+        if self.detail is not None:
+            R.set_detail(rmod.Detail(self.detail[0], self.detail[1].copy()))
+        return R
+
+    def state(self, view: dict[str, Any], R):
+        return self.session._state(view, R, self.detail[1] if self.detail is not None else None)
+
+    def close_renderer(self) -> None:
+        R, self._R = self._R, None
+        if R is not None:
+            R.close()
+        free_gpu_pool()
+
+    def reserve(self, nbytes: int, what: str) -> None:
+        """Counts `nbytes` against the budget for the job (in place of what it held), waiting while sessions hold it,
+        up to JOB_GPU_WAIT s."""
+        end = time.time() + JOB_GPU_WAIT
+        while True:
+            try:
+                if self.reservation is None:
+                    self.reservation = self.gpu.budget.reserve(nbytes, what)
+                else:
+                    self.reservation.resize(nbytes)
+                return
+            except Refused as e:
+                if self.cancelled:
+                    raise RuntimeError("cancelled") from None
+                if time.time() > end:
+                    raise RuntimeError(str(e)) from None
+                self.message = f"waiting for GPU memory ({e.detail['need_mb']} MB; {e.detail['free_mb']} MB of the budget free)"
+                time.sleep(0.5)
+
+    # ------------------------------------------------------------ the run
+    def run(self) -> None:
+        """Runs the job (the queue calls this when its turn comes), and lets go of all it holds however it ends."""
+        try:
+            if self.cancelled:
+                raise RuntimeError("cancelled")
+            self.status = "running"
+            self.message = "starting"
+            self.started = time.time()
+            self.reserve(self.gpu_need, f"a {self.kind}")
+            self._run()
+        except Exception as e:  # noqa: BLE001 - reported in the job's status
+            self.status = "cancelled" if self.cancelled else "failed"
+            self.error = gpu_failure(e) or f"{type(e).__name__}: {e}"
+            if not self.cancelled:
+                traceback.print_exc()
+        finally:
+            self.finish()
+
+    def _run(self) -> None:
+        raise NotImplementedError
+
+    def finish(self) -> None:
+        """Lets go of the renderer, the budget and the shares; once."""
+        if self._done:
+            return
+        self._done = True
+        try:
+            self.close_renderer()
+        except Exception:  # noqa: BLE001 - a GPU in trouble: what can be let go of still is
+            traceback.print_exc()
+        if self.reservation is not None:
+            self.reservation.release()
+        self.gpu.textures.release(self.vol_share)
+        self.gpu.textures.release(self.lab_share)
+        self.vol_share = self.lab_share = None
+        self.detail = None
+        self.session = None  # a finished job does not keep the session (and its volume) alive
+        free_gpu_pool()
+
+    def cancel(self) -> None:
+        """Stops the job: at once when it waits its turn, else between passes."""
+        self.cancelled = True
+        if self.queue is not None and self.queue.remove(self):
+            self.status, self.message, self.error = "cancelled", "cancelled before it started", "cancelled"
+            self.finish()
+
+    def info(self) -> dict[str, Any]:
+        """Its state; while it waits, where it is in the queue: `queue_position` (1: next to start) and `jobs_ahead`
+        (those waiting before it and the one running)."""
+        pos, ahead = self.queue.place(self) if self.queue is not None and self.status == "queued" else (0, 0)
+        message = self.message
+        if pos:
+            message = f"waiting for {ahead} job{'' if ahead == 1 else 's'} ahead" if ahead else "starting soon"
+        return {"id": self.id, "kind": self.kind, "status": self.status, "progress": round(self.progress, 3), "message": message,
+                "error": self.error, "queue_position": pos, "jobs_ahead": ahead}
+
+
+class JobQueue:
+    """The service's stills, movies and splats, run one at a time in the order they were asked for."""
+
+    def __init__(self, max_waiting: int = MAX_WAITING_JOBS):
+        self.max_waiting = max_waiting
+        self._waiting: list[Job] = []
+        self.running: Job | None = None
+        self._cond = threading.Condition()
+        threading.Thread(target=self._work, daemon=True).start()
+
+    def submit(self, job: Job) -> None:
+        """Queues a job, or refuses (429) when MAX_WAITING_JOBS wait already."""
+        with self._cond:
+            n = len(self._waiting)
+            if n >= self.max_waiting:
+                raise Refused(f"The render computer has {n} stills, movies or splats waiting already: try again when one has finished.",
+                              429, RETRY_AFTER, reason="queue-full", waiting=n)
+            job.queue = self
+            self._waiting.append(job)
+            self._cond.notify_all()
+
+    def place(self, job: Job) -> tuple[int, int]:
+        """(its position, 1 for next; the jobs ahead of it, the one running included), or (0, 0) when not waiting."""
+        with self._cond:
+            if job not in self._waiting:
+                return 0, 0
+            i = self._waiting.index(job)
+            return i + 1, i + (1 if self.running is not None else 0)
+
+    def remove(self, job: Job) -> bool:
+        """Takes a job out of the queue before it starts: whether it was waiting."""
+        with self._cond:
+            if job in self._waiting:
+                self._waiting.remove(job)
+                return True
+            return False
+
+    def _work(self) -> None:
+        while True:
+            with self._cond:
+                while not self._waiting:
+                    self._cond.wait()
+                job = self._waiting.pop(0)
+                self.running = job
+            try:
+                job.run()
+            except Exception:  # noqa: BLE001 - run() reports its own; the queue goes on
+                traceback.print_exc()
+            finally:
+                with self._cond:
+                    self.running = None
+
+    def info(self) -> dict[str, Any]:
+        with self._cond:
+            r = self.running
+            return {"running": {"kind": r.kind, "id": r.id} if r is not None else None,
+                    "waiting": [{"kind": j.kind, "id": j.id} for j in self._waiting], "max_waiting": self.max_waiting}
+
+
+class Still(Job):
+    """One view path-traced to a sample count at a size, saved as a PNG: a job beside the live view, as movies
+    are (inside its request it held the connection for as long as it rendered, with no way to stop it)."""
+
+    kind = "still"
+
+    def __init__(self, jid: str, session: Session, view: dict[str, Any], samples: int, spec: dict[str, Any], out_dir: Path):
+        self.view = view
+        self.samples = samples
+        self.spec = spec
+        self.file: Path | None = None
+        super().__init__(jid, session, out_dir, view["width"], view["height"], detail=True)
 
     def _run(self) -> None:
         from PIL import Image
 
-        from . import renderer as rmod
-        from .movie import frames_for, rotation_frames
-
-        try:
-            self.status = "running"
-            S = self.session
-            if S.status != "ready":
-                raise RuntimeError("the session's volume is not loaded")
-            # A renderer of its own, so the interactive view goes on.
-            R = rmod.Renderer(S.device)
-            L = S.loaded
-            R.set_volume(rmod.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles))
-            sp = self.spec
-            fps = int(sp.get("fps", 25))
-            samples = int(sp.get("samples", 256))
-            width, height = int(sp.get("width", 1280)), int(sp.get("height", 720))
-            if not (8 <= width <= 8192 and 8 <= height <= 8192):
-                raise BadRequest("width and height must be 8 to 8192")
-            if sp.get("rotation"):
-                r = sp["rotation"]
-                views = rotation_frames(sp["keyframes"][0]["view"], r.get("axis", "vertical"), float(r.get("degrees", 360)), float(r.get("step", 2)), aspect=width / height)
-            else:
-                views = frames_for(sp["keyframes"], fps, sp.get("easing", "smooth"), aspect=width / height)
-            self.out_dir.mkdir(parents=True, exist_ok=True)
-            frames = self.out_dir / "frames"
-            frames.mkdir(exist_ok=True)
-            for old in frames.glob("[0-9][0-9][0-9][0-9][0-9].png"):
-                old.unlink()  # a shorter movie in the same folder must not pick up an earlier one's frames
-            for i, view in enumerate(views):
-                if self.cancelled:
-                    raise RuntimeError("cancelled")
-                view = dict(view)
-                view["width"], view["height"], view["scale"] = width, height, 1.0
-                st = S._state(view, R)
-                R.set_view(st)
-                R.step(samples)
-                img = R.image()
-                bg = np.asarray(sp.get("background", (0.08, 0.08, 0.09)), np.float32) * 255
-                a = img[..., 3:4].astype(np.float32) / 255
-                rgb = np.clip(img[..., :3].astype(np.float32) + bg * (1 - a), 0, 255).astype(np.uint8)
-                Image.fromarray(rgb).save(frames / f"{i:05d}.png")
-                self.progress = (i + 1) / len(views) * (0.97 if sp.get("format", "mp4") == "mp4" else 1.0)
-                self.message = f"frame {i + 1} of {len(views)}"
-            if sp.get("format", "mp4") == "mp4":
-                self.message = "encoding"
-                ff = shutil.which("ffmpeg") or "ffmpeg"
-                out = self.out_dir / f"{safe_name(sp.get('name'))}.mp4"
-                cmd = [ff, "-y", "-loglevel", "error", "-framerate", str(fps), "-i", str(frames / "%05d.png"),
-                       "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", str(sp.get("crf", 18)), str(out)]
-                subprocess.run(cmd, check=True, capture_output=True, timeout=3600)
-                self.file = out
-            else:
-                self.file = frames
-            self.progress = 1.0
-            self.status = "done"
-            self.message = f"{len(views)} frames in {time.time() - self.started:.0f} s"
-        except Exception as e:  # noqa: BLE001
-            self.status = "cancelled" if self.cancelled else "failed"
-            self.error = f"{type(e).__name__}: {e}"
-            traceback.print_exc()
-        finally:
-            self.session = None  # a finished movie does not keep the session (and its volume) alive
+        if self.session.loaded is None:
+            raise RuntimeError("the session's volume is not loaded")
+        # The still is of the view in the page: the finer detail held for it too.
+        R = self.renderer()
+        R.set_view(self.state(self.view, R))
+        n = self.samples
+        while R.samples < n:
+            if self.cancelled:
+                raise RuntimeError("cancelled")
+            R.step_beside(min(8, n - R.samples), lambda: self.cancelled)
+            self.progress = 0.95 * R.samples / n
+            self.message = f"{R.samples} of {n} samples"
+        img = R.image()
+        self.close_renderer()
+        bg = self.spec.get("background")
+        pic = Image.fromarray(flatten(img, bg)) if bg is not None else Image.fromarray(img, "RGBA")
+        self.out_dir.mkdir(parents=True)
+        out = self.out_dir / f"{safe_name(self.spec.get('name'), 'still')}.png"
+        pic.save(out, "PNG")
+        self.file = out
+        self.progress = 1.0
+        self.status = "done"
+        self.message = f"{self.view['width']} x {self.view['height']} at {n} samples in {time.time() - self.started:.0f} s"
 
     def info(self) -> dict[str, Any]:
-        return {"id": self.id, "status": self.status, "progress": round(self.progress, 3), "message": self.message,
-                "error": self.error, "file": str(self.file) if self.file else None}
+        return {**super().info(), "file": str(self.file) if self.file else None}
+
+
+class Movie(Job):
+    """A movie made from keyframes: frames path-traced to a sample count, then encoded with ffmpeg (the frames
+    deleted once the MP4 is made)."""
+
+    kind = "movie"
+
+    def __init__(self, mid: str, session: Session, spec: dict[str, Any], plan: dict[str, Any], out_dir: Path, ffmpeg: str | None = None):
+        self.spec = spec
+        self.plan = plan
+        self.ffmpeg = ffmpeg
+        self.file: Path | None = None
+        self.proc: subprocess.Popen | None = None
+        super().__init__(mid, session, out_dir, plan["width"], plan["height"])
+
+    def _run(self) -> None:
+        from PIL import Image
+
+        from .movie import frames_for, rotation_frames
+
+        S = self.session
+        if S.loaded is None:
+            raise RuntimeError("the session's volume is not loaded")
+        sp, pl = self.spec, self.plan
+        width, height, samples = pl["width"], pl["height"], pl["samples"]
+        mp4 = pl["format"] == "mp4"
+        if sp.get("rotation"):
+            r = sp["rotation"]
+            views = rotation_frames(sp["keyframes"][0]["view"], r.get("axis", "vertical"), float(r.get("degrees", 360)), float(r.get("step", 2)), aspect=width / height)
+        else:
+            views = frames_for(sp["keyframes"], pl["fps"], sp.get("easing", "smooth"), aspect=width / height)
+        # A renderer of its own, so the interactive view goes on.
+        R = self.renderer()
+        frames = self.out_dir / "frames"
+        frames.mkdir(parents=True)  # the job's own folder: nothing of another's is overwritten
+        background = sp.get("background", (0.08, 0.08, 0.09))
+        for i, view in enumerate(views):
+            if self.cancelled:
+                raise RuntimeError("cancelled")
+            view = dict(view)
+            view["width"], view["height"], view["scale"] = width, height, 1.0
+            R.set_view(self.state(view, R))
+            R.step_beside(samples, lambda: self.cancelled)
+            Image.fromarray(flatten(R.image(), background)).save(frames / f"{i:05d}.png")
+            self.progress = (i + 1) / len(views) * (0.97 if mp4 else 1.0)
+            self.message = f"frame {i + 1} of {len(views)}"
+        self.close_renderer()
+        if mp4:
+            self.message = "encoding"
+            self.file = self._encode(frames)
+            # The MP4 is the movie: its frames would take many times its room.
+            shutil.rmtree(frames, ignore_errors=True)
+        else:
+            self.file = frames
+        self.progress = 1.0
+        self.status = "done"
+        self.message = f"{len(views)} frames of {width} x {height} in {time.time() - self.started:.0f} s"
+
+    def _encode(self, frames: Path) -> Path:
+        """The frames as an MP4 (H.264); ffmpeg's own words when it fails."""
+        pl = self.plan
+        out = self.out_dir / f"{safe_name(self.spec.get('name'))}.mp4"
+        cmd = [self.ffmpeg or "ffmpeg", "-y", "-loglevel", "error", "-framerate", str(pl["fps"]), "-i", str(frames / "%05d.png"),
+               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", str(pl["crf"]), str(out)]
+        if self.cancelled:
+            raise RuntimeError("cancelled")
+        self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                                     preexec_fn=_die_with_parent)
+        try:
+            _, err = self.proc.communicate(timeout=3600)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+            self.proc.communicate()
+            raise RuntimeError("ffmpeg took more than an hour") from None
+        if self.cancelled:
+            raise RuntimeError("cancelled")
+        if self.proc.returncode != 0:
+            raise RuntimeError(f"ffmpeg ended with {self.proc.returncode}: {err.strip()[-800:] or 'no message'}")
+        return out
+
+    def cancel(self) -> None:
+        """Stops between frames, or stops ffmpeg when it is encoding (at once when it waits its turn)."""
+        self.cancelled = True
+        if getattr(self, "proc", None) is not None and self.proc.poll() is None:
+            self.proc.terminate()
+        if getattr(self, "queue", None) is not None:
+            super().cancel()
+
+    def info(self) -> dict[str, Any]:
+        return {**super().info(), "file": str(self.file) if self.file else None,
+                "width": self.plan["width"], "height": self.plan["height"], "frames": self.plan["frames"]}
+
+
+def _die_with_parent() -> None:
+    """In a child process (ffmpeg, the splat fit): ends when the render service ends, however it ends (Linux)."""
+    try:
+        import ctypes
+        import signal
+
+        ctypes.CDLL("libc.so.6", use_errno=True).prctl(1, signal.SIGTERM)  # PR_SET_PDEATHSIG
+    except Exception:  # noqa: BLE001 - elsewhere: the child is left to finish on its own
+        pass
 
 
 PROGRESS = re.compile(r"^\[progress\]\s+([0-9.]+)\s*(.*)$")
@@ -681,114 +1302,89 @@ PROGRESS = re.compile(r"^\[progress\]\s+([0-9.]+)\s*(.*)$")
 SPLAT_FILES = {"scene.splat": "application/octet-stream", "splat.ply": "application/octet-stream", "cameras.json": "application/json", "fit.json": "application/json"}
 
 
-class Splat:
+class Splat(Job):
     """Gaussian splats of the view: path-traced views from all round it (splat/views.py), then fitted to them
-    (splat/fit.py) by the splat Python, a process of its own; with `steps` 0, or no splat Python, only the views."""
+    (splat/fit.py) by the splat Python, a process of its own on the service's GPU; with `steps` 0, or no splat
+    Python, only the views."""
 
-    def __init__(self, sid: str, session: Session, spec: dict[str, Any], out_dir: Path, python: str | None):
-        self.id = sid
-        self.session = session
+    kind = "splat"
+
+    def __init__(self, sid: str, session: Session, spec: dict[str, Any], out_dir: Path, python: str | None, plan: dict[str, Any] | None = None):
         self.spec = spec
-        self.out_dir = out_dir
+        self.plan = plan if plan is not None else splat_plan(spec)
         self.python = python
-        self.status = "queued"
-        self.progress = 0.0
-        self.message = ""
-        self.error: str | None = None
         self.result: dict[str, Any] | None = None
-        self.cancelled = False
         self.proc: subprocess.Popen | None = None
-        self.started = time.time()
-        threading.Thread(target=self._run, daemon=True).start()
+        super().__init__(sid, session, out_dir, self.plan["width"], self.plan["height"], detail=True)
 
     def _run(self) -> None:
         from PIL import Image
 
-        from . import renderer as rmod
         from .splat import views as V
 
-        try:
-            self.status = "running"
-            S = self.session
-            if S.status != "ready":
-                raise RuntimeError("the session's volume is not loaded")
-            sp = self.spec
-            view = dict(sp.get("view") or {})
-            if "inv_view_projection" not in view:
-                raise BadRequest("view.inv_view_projection is needed")
-            n = int(sp.get("views", 256))
-            size = int(sp.get("size", 1024))
-            samples = int(sp.get("samples", 512))
-            steps = int(sp.get("steps", 30000))
-            if not (8 <= n <= 4096 and 64 <= size <= 4096 and 1 <= samples <= 8192 and 0 <= steps <= 200000):
-                raise BadRequest("views 8-4096, size 64-4096, samples 1-8192, steps 0-200000")
-            fitting = steps > 0 and self.python is not None
-            share = 0.5 if fitting else 1.0
-            # The images: the view's shape, `size` pixels along the longer side.
-            aspect = float(view.get("width", 1)) / max(float(view.get("height", 1)), 1.0)
-            width, height = (size, max(8, round(size / aspect))) if aspect >= 1 else (max(8, round(size * aspect)), size)
-            cams, near, far, centre = V.capture_cameras(view, n, float(sp.get("cover", 180)), float(sp.get("closer", 0.25)))
-            light = V.world_light(view)
-            # A renderer of its own, so the interactive view goes on; the finer detail held for the view too.
-            R = rmod.Renderer(S.device)
-            L = S.loaded
-            R.set_volume(rmod.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles))
-            held = S.renderer.detail if S.renderer is not None else None
-            if held is not None:
-                R.set_detail(rmod.Detail(held.data, held.world_from_voxel.copy()))
-            images = self.out_dir / "images"
-            images.mkdir(parents=True, exist_ok=True)
-            for old in images.glob("[0-9][0-9][0-9][0-9][0-9].png"):
-                old.unlink()
-            rng = np.random.default_rng(0)
-            per_view = max(1, int(sp.get("points", 300_000)) // n)
-            records, xyz, rgbs = [], [], []
-            for i, cam in enumerate(cams):
-                if self.cancelled:
-                    raise RuntimeError("cancelled")
-                v = V.capture_view(view, cam, width, height, near, far, light)
-                R.set_view(S._state(v, R))
-                R.step(samples)
-                rgb, alpha = R.image(premultiplied=False)
-                name = f"images/{i:05d}.png"
-                Image.fromarray(np.dstack([rgb, alpha]), "RGBA").save(self.out_dir / name)
-                p, c = V.seed_points(v["inv_view_projection"], R.depth()[..., 1], rgb, alpha, per_view, rng)
-                xyz.append(p)
-                rgbs.append(c)
-                records.append(V.camera_record(name, cam, width, height))
-                self.progress = share * (i + 1) / len(cams)
-                left = (time.time() - self.started) / (i + 1) * (len(cams) - i - 1)
-                self.message = f"view {i + 1} of {len(cams)} (about {left / 60:.0f} min more)"
-            del R
-            V.write_points(self.out_dir / "points.ply", np.concatenate(xyz), np.concatenate(rgbs))
-            V.write_cameras(self.out_dir, records, centre, {"view": {k: view[k] for k in ("preset", "overrides", "environment", "clips", "boxes", "crop_fraction") if k in view}, "light": light, "samples": samples})
-            if fitting:
-                self._fit(steps, int(sp.get("sh", 3)), share)
-            self.progress = 1.0
-            self.status = "done"
-            took = f"{(time.time() - self.started) / 60:.0f} min"
-            if fitting:
-                r = self.result or {}
-                self.message = f"{r.get('gaussians', '?')} Gaussians from {len(cams)} views in {took}" + (f", held-out PSNR {r['psnr_held_out']} dB" if r.get("psnr_held_out") else "")
-            else:
-                why = "no splat Python on this computer (start the render service with --splat-python)" if steps > 0 else "fitting not asked for"
-                self.message = f"{len(cams)} views in {took}; not fitted: {why}. Fit later: python -m ngplatform_render.splat.fit {self.out_dir}"
-        except Exception as e:  # noqa: BLE001
-            self.status = "cancelled" if self.cancelled else "failed"
-            self.error = f"{type(e).__name__}: {e}"
-            traceback.print_exc()
-        finally:
-            self.session = None
+        S = self.session
+        if S.loaded is None:
+            raise RuntimeError("the session's volume is not loaded")
+        sp, pl = self.spec, self.plan
+        view = pl["view"]
+        n, samples, steps, width, height = pl["views"], pl["samples"], pl["steps"], pl["width"], pl["height"]
+        fitting = steps > 0 and self.python is not None
+        share = 0.5 if fitting else 1.0
+        cams, near, far, centre = V.capture_cameras(view, n, float(sp.get("cover", 180)), float(sp.get("closer", 0.25)))
+        light = V.world_light(view)
+        # A renderer of its own, so the interactive view goes on; the finer detail held for the view too.
+        R = self.renderer()
+        images = self.out_dir / "images"
+        images.mkdir(parents=True)  # the job's own folder: nothing of another's is overwritten
+        rng = np.random.default_rng(0)
+        per_view = max(1, pl["points"] // n)
+        records, xyz, rgbs = [], [], []
+        for i, cam in enumerate(cams):
+            if self.cancelled:
+                raise RuntimeError("cancelled")
+            v = V.capture_view(view, cam, width, height, near, far, light)
+            R.set_view(self.state(v, R))
+            R.step_beside(samples, lambda: self.cancelled)
+            rgb, alpha = R.image(premultiplied=False)
+            name = f"images/{i:05d}.png"
+            Image.fromarray(np.dstack([rgb, alpha]), "RGBA").save(self.out_dir / name)
+            p, c = V.seed_points(v["inv_view_projection"], R.depth()[..., 1], rgb, alpha, per_view, rng)
+            xyz.append(p)
+            rgbs.append(c)
+            records.append(V.camera_record(name, cam, width, height))
+            self.progress = share * (i + 1) / len(cams)
+            left = (time.time() - self.started) / (i + 1) * (len(cams) - i - 1)
+            self.message = f"view {i + 1} of {len(cams)} (about {left / 60:.0f} min more)"
+        self.close_renderer()
+        V.write_points(self.out_dir / "points.ply", np.concatenate(xyz), np.concatenate(rgbs))
+        V.write_cameras(self.out_dir, records, centre, {"view": {k: view[k] for k in ("preset", "overrides", "environment", "clips", "boxes", "crop_fraction") if k in view}, "light": light, "samples": samples})
+        if fitting:
+            # The fit runs on the same GPU in a process of its own: counted in place of the views' renderer.
+            self.reserve(SPLAT_FIT_BYTES, "a splat's fit")
+            self._fit(steps, int(sp.get("sh", 3)), share)
+        self.progress = 1.0
+        self.status = "done"
+        took = f"{(time.time() - self.started) / 60:.0f} min"
+        if fitting:
+            r = self.result or {}
+            self.message = f"{r.get('gaussians', '?')} Gaussians from {len(cams)} views in {took}" + (f", held-out PSNR {r['psnr_held_out']} dB" if r.get("psnr_held_out") else "")
+        else:
+            why = "no splat Python on this computer (start the render service with --splat-python)" if steps > 0 else "fitting not asked for"
+            self.message = f"{len(cams)} views in {took}; not fitted: {why}. Fit later: python -m ngplatform_render.splat.fit {self.out_dir}"
 
     def _fit(self, steps: int, sh: int, share: float) -> None:
         env = dict(os.environ)
         here = str(Path(__file__).resolve().parent.parent)
         env["PYTHONPATH"] = here + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-        cmd = [self.python, "-m", "ngplatform_render.splat.fit", str(self.out_dir), "--steps", str(steps), "--sh", str(max(0, min(3, sh)))]
+        env["PATH"] = splat_path(self.python, env.get("PATH", ""))
+        device = self.session.device if self.session is not None else 0
+        cmd = [self.python, "-m", "ngplatform_render.splat.fit", str(self.out_dir), "--steps", str(steps), "--sh", str(max(0, min(3, sh))),
+               "--device", f"cuda:{device}"]
         self.message = "fitting"
         tail: list[str] = []
         with open(self.out_dir / "fit.log", "w") as log:
-            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env, bufsize=1)
+            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env, bufsize=1,
+                                         preexec_fn=_die_with_parent)
             assert self.proc.stdout is not None
             for line in self.proc.stdout:
                 log.write(line)
@@ -810,17 +1406,29 @@ class Splat:
         self.cancelled = True
         if self.proc is not None and self.proc.poll() is None:
             self.proc.terminate()
+        super().cancel()
 
     def info(self) -> dict[str, Any]:
         files = [f for f in SPLAT_FILES if (self.out_dir / f).is_file()] if self.status == "done" else []
-        return {"id": self.id, "status": self.status, "progress": round(self.progress, 3), "message": self.message,
-                "error": self.error, "folder": str(self.out_dir), "files": files, "result": self.result}
+        return {**super().info(), "folder": str(self.out_dir), "files": files, "result": self.result}
+
+
+def splat_path(python: str, path: str) -> str:
+    """The PATH for the splat Python: its own folder first. gsplat builds its CUDA kernels the first time it runs,
+    with the ninja installed beside that Python (in a venv, not on the service's PATH) and nvcc (CUDA_HOME, or the
+    PATH)."""
+    own = str(Path(python).parent)
+    return path if own in path.split(os.pathsep) else own + (os.pathsep + path if path else "")
 
 
 def splat_python_check(python: str | None) -> dict[str, Any]:
-    """Whether `python` can fit splats (torch with CUDA, and gsplat)."""
+    """Whether `python` can fit splats (torch with CUDA, and gsplat), and whether its gsplat is the version the fit
+    is written for (splat.fit.GSPLAT_VERSION; another may work, and is said)."""
+    from .splat.fit import GSPLAT_VERSION
+
     if not python:
-        return {"python": None, "ready": False, "error": "no splat Python (start the render service with --splat-python, or set NGP_SPLAT_PYTHON)"}
+        return {"python": None, "ready": False, "pinned": GSPLAT_VERSION,
+                "error": "no splat Python (start the render service with --splat-python, or set NGP_SPLAT_PYTHON)"}
     try:
         r = subprocess.run([python, "-c", "import torch, gsplat; assert torch.cuda.is_available(), 'torch sees no GPU'; print(gsplat.__version__)"],
                            capture_output=True, text=True, timeout=120)
@@ -828,21 +1436,38 @@ def splat_python_check(python: str | None) -> dict[str, Any]:
         return {"python": python, "ready": False, "error": f"{type(e).__name__}: {e}"}
     if r.returncode != 0:
         return {"python": python, "ready": False, "error": (r.stderr.strip().splitlines() or ["failed"])[-1]}
-    return {"python": python, "ready": True, "gsplat": r.stdout.strip()}
+    version = r.stdout.strip()
+    out = {"python": python, "ready": True, "gsplat": version, "pinned": GSPLAT_VERSION}
+    if version != GSPLAT_VERSION:
+        out["warning"] = f"gsplat {version}: the fit is written for {GSPLAT_VERSION} (pip install gsplat=={GSPLAT_VERSION})"
+    return out
 
 
 class RenderServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, port: int, token: str | None, roots: list[Path], device: int, out_root: Path, splat_python: str | None = None):
+    def __init__(self, port: int, token: str | None, roots: list[Path], device: int, out_root: Path, splat_python: str | None = None,
+                 sources: list[str] | None = None, ffmpeg: str | None = None, gpu_budget: int | None = None,
+                 max_waiting: int = MAX_WAITING_JOBS):
         super().__init__(("127.0.0.1", port), Handler)
+        from .volumes import http_url
+
+        # One GPU budget for every session and job (by default a part of the memory free now), the uploads they
+        # share, and the queue the jobs run from one at a time.
+        self.gpu_share = Gpu(device, gpu_budget)
+        self.queue = JobQueue(max_waiting)
         self.token = token
         self.roots = roots
         self.device = device
         self.out_root = out_root
+        # Remote stores (http(s), gs://, s3://) are read only from under these, when any are given.
+        self.sources = [http_url(u) for u in (sources or []) if u.strip()]
+        # Found now, not once a movie's every frame is rendered.
+        self.ffmpeg = ffmpeg if ffmpeg is not None else shutil.which("ffmpeg")
         self.sessions: dict[str, Session] = {}
         self.movies: dict[str, Movie] = {}
+        self.stills: dict[str, Still] = {}
         self.splats: dict[str, Splat] = {}
         self.splat_python = splat_python
         self.splat_check: dict[str, Any] = {"python": splat_python, "ready": False, "error": "checking"}
@@ -856,13 +1481,64 @@ class RenderServer(ThreadingHTTPServer):
 
     def _reaper(self) -> None:
         while True:
-            time.sleep(30)
-            now = time.time()
-            with self.lock:
-                for sid, s in list(self.sessions.items()):
-                    if now - s.last_used > IDLE_SECONDS:
-                        s.close()
-                        del self.sessions[sid]
+            time.sleep(REAP_EVERY)
+            self.reap()
+
+    def reap(self, now: float | None = None) -> list[str]:
+        """Closes the sessions nothing has asked about for IDLE_SECONDS; their ids."""
+        now = time.time() if now is None else now
+        with self.lock:
+            idle = [self.sessions.pop(sid) for sid, s in list(self.sessions.items()) if now - s.last_used > IDLE_SECONDS]
+        for s in idle:
+            self.close_session(s)
+        return [s.id for s in idle]
+
+    def close_session(self, s: Session) -> None:
+        """Closes a session (taken out of the table already), and lets go of the store's arrays when no other
+        session shows it."""
+        from . import detail
+
+        s.close()
+        url = (s.spec.get("volume") or {}).get("url")
+        with self.lock:
+            others = any((o.spec.get("volume") or {}).get("url") == url for o in self.sessions.values())
+        if url and not others:
+            detail.forget(url)
+
+    def check_disk(self, folder: Path, need: int, what: str) -> None:
+        """Refuses (507) a job that would leave less than DISK_MARGIN free where it writes."""
+        p = folder
+        while not p.exists() and p != p.parent:
+            p = p.parent
+        free = shutil.disk_usage(p).free
+        if free < need + DISK_MARGIN:
+            raise Refused(f"Too little disk on the render computer: {gb(free)} free in {p}, and this {what} needs about {gb(need)} "
+                          f"with {gb(DISK_MARGIN)} kept spare. Free some space or choose another output folder.",
+                          507, None, reason="disk", need_mb=need >> 20, free_mb=free >> 20)
+
+    def submit(self, table: dict[str, Any], job: Job) -> None:
+        """Queues a job and lists it; a job the queue refuses lets go of what it holds."""
+        try:
+            self.queue.submit(job)
+        except Refused:
+            job.finish()
+            raise
+        self.keep(table, job.id, job)
+
+    def keep(self, table: dict[str, Any], jid: str, job: Any) -> None:
+        """Lists a job, letting go of all but the last KEEP_FINISHED finished ones (under the lock: requests run in threads)."""
+        with self.lock:
+            table[jid] = job
+            done = [k for k, v in table.items() if v.status in FINISHED]
+            for k in done[:-KEEP_FINISHED]:
+                del table[k]
+
+    @staticmethod
+    def disk_free(folder: Path) -> int:
+        p = folder
+        while not p.exists() and p != p.parent:
+            p = p.parent
+        return shutil.disk_usage(p).free
 
     def gpu(self) -> dict[str, Any]:
         try:
@@ -876,23 +1552,28 @@ class RenderServer(ThreadingHTTPServer):
             return {"backend": "none", "error": f"{type(e).__name__}: {e}"}
 
     def check_source(self, url: str) -> None:
-        """Stores on this computer are read only under the runner's folders; http(s), gs:// and s3:// stores are read as given."""
+        """Stores on this computer are read only under the runner's folders; http(s), gs:// and s3:// stores as given,
+        or only from under the allowed sources when there are any."""
         from .volumes import http_url
 
         u = http_url(url)
         if u.startswith(("http://", "https://")):
+            if self.sources and not any(u == a or u.startswith(a + "/") for a in self.sources):
+                raise BadRequest("this render service reads remote stores only from its allowed sources")
             return
         p = Path(u.removeprefix("file://")).expanduser().resolve()
         if not any(p == r or r in p.parents for r in self.roots):
             raise BadRequest("a store on this computer must be under one of the runner's folders")
 
-    def output_dir(self, requested: str | None, mid: str) -> Path:
-        if not requested:
-            return self.out_root / mid
-        p = Path(requested).expanduser().resolve()
-        if not any(p == r or r in p.parents for r in self.roots):
-            raise BadRequest("the output folder must be under one of the runner's folders")
-        return p
+    def output_dir(self, requested: str | None, name: str) -> Path:
+        """A job's own new folder, `name` (its kind and id), in the folder asked for or the output root: a job never
+        writes over files already there."""
+        base = self.out_root
+        if requested:
+            base = Path(requested).expanduser().resolve()
+            if not any(base == r or r in base.parents for r in self.roots):
+                raise BadRequest("the output folder must be under one of the runner's folders")
+        return base / name
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -920,8 +1601,54 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _json(self, code: int, obj: Any) -> None:
-        self._send(code, json.dumps(obj).encode())
+    def _json(self, code: int, obj: Any, headers: dict[str, str] | None = None) -> None:
+        self._send(code, json.dumps(obj).encode(), headers=headers)
+
+    def _file(self, path: Path, ctype: str, filename: str) -> None:
+        """A file streamed (never read whole), with byte ranges (Range: bytes=a-b, a-, -n) for resuming a download."""
+        size = path.stat().st_size
+        start, end = 0, size  # end exclusive
+        code = 200
+        extra = {"Accept-Ranges": "bytes", "Content-Disposition": f'attachment; filename="{filename}"'}
+        rng = (self.headers.get("Range") or "").strip()
+        if rng:
+            m = re.fullmatch(r"bytes=(\d*)-(\d*)", rng)
+            if m is None or (not m.group(1) and not m.group(2)):
+                self._send(416, b"", "text/plain", {"Content-Range": f"bytes */{size}"})
+                return
+            if m.group(1):
+                start = int(m.group(1))
+                end = min(size, int(m.group(2)) + 1) if m.group(2) else size
+            else:
+                start = max(0, size - int(m.group(2)))
+            if start >= size or end <= start:
+                self._send(416, b"", "text/plain", {"Content-Range": f"bytes */{size}"})
+                return
+            code = 206
+            extra["Content-Range"] = f"bytes {start}-{end - 1}/{size}"
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(end - start))
+        self.send_header("Cache-Control", "no-store")
+        for k, v in extra.items():
+            self.send_header(k, v)
+        origin = self.headers.get("Origin") or ""
+        if _LOCAL_ORIGIN.match(origin):
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges")
+        self.end_headers()
+        if self.command == "HEAD":
+            return
+        with open(path, "rb") as f:
+            f.seek(start)
+            left = end - start
+            while left > 0:
+                chunk = f.read(min(FILE_CHUNK, left))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                left -= len(chunk)
 
     def _body(self) -> dict[str, Any]:
         n = int(self.headers.get("Content-Length") or 0)
@@ -948,12 +1675,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json(401, {"error": "token"})
             return
         path, _, query = self.path.partition("?")
-        q = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
-        parts = [p for p in path.split("/") if p]
+        q = dict(parse_qsl(query, keep_blank_values=True))
+        parts = [unquote(p) for p in path.split("/") if p]
         S = self.server
         try:
             if method == "GET" and parts in ([], ["info"]):
-                self._json(200, {"service": "render", "version": __version__, "gpu": S.gpu(), "presets": list(builtin()), "lightmaps": lightmap_names(), "splats": S.splat_check})
+                from .volumes import cache_info
+
+                self._json(200, {"service": "render", "version": __version__, "gpu": S.gpu(), "presets": list(builtin()), "lightmaps": lightmap_names(), "splats": S.splat_check,
+                                 "ffmpeg": S.ffmpeg is not None, "budget": S.gpu_share.info(), "queue": S.queue.info(),
+                                 "disk": {"output": str(S.out_root), "free_mb": S.disk_free(S.out_root) >> 20}, "cache": cache_info()})
             elif method == "GET" and parts == ["presets"]:
                 self._json(200, [p.to_dict() for p in builtin().values()])
             elif method == "POST" and parts == ["sessions"]:
@@ -963,9 +1694,16 @@ class Handler(BaseHTTPRequestHandler):
                 for part in ("volume", "labels"):
                     if (spec.get(part) or {}).get("url"):
                         S.check_source(spec[part]["url"])
+                for k in ("channel", "time"):
+                    spec["volume"][k] = index_of(spec["volume"].get(k), k)
+                # Let in only when what it will hold fits the GPU budget beside the other sessions and jobs: a 503 that
+                # says why otherwise (the page shows it, with Retry).
+                need = session_need(spec, S.gpu_share)
+                name = (spec["volume"]["url"].rstrip("/").split("/")[-1] or "this image")[:60]
+                res = S.gpu_share.budget.reserve(sum(need.values()), f"a view of {name}")
                 sid = uuid.uuid4().hex[:12]
                 with S.lock:
-                    s = Session(sid, spec, S.device)
+                    s = Session(sid, spec, S.device, S.gpu_share, res, need)
                     S.sessions[sid] = s
                 self._json(200, s.info())
             elif len(parts) >= 2 and parts[0] == "sessions":
@@ -980,18 +1718,27 @@ class Handler(BaseHTTPRequestHandler):
                 elif method == "DELETE" and rest == []:
                     with S.lock:
                         S.sessions.pop(s.id, None)
-                    s.close()
+                    S.close_session(s)
                     self._json(200, {"closed": s.id})
                 elif method in ("PUT", "POST") and rest == ["view"]:
                     view = self._body()
                     for k in ("inv_view_projection", "width", "height"):
                         if k not in view:
                             raise BadRequest(f"view.{k} is needed")
+                    # Within the limits a still has, so one view cannot ask for more than the GPU holds.
+                    view["width"], view["height"] = side(view["width"], "width"), side(view["height"], "height")
+                    view["max_samples"] = samples_of(view.get("max_samples") or None, 1024)
+                    # A view larger than the session's frame so far: counted against the budget first (a 503 if it does not fit).
+                    s.frame_bytes(view["width"], view["height"])
                     self._json(200, {"version": s.set_view(view)})
                 elif method == "GET" and rest == ["frame"]:
-                    after = int(q.get("after", "0"))
-                    timeout = min(60.0, float(q.get("timeout", "25")))
-                    f = s.wait_frame(after, timeout)
+                    after = int(number(q.get("after", "0"), "after"))
+                    timeout = max(0.0, min(60.0, number(q.get("timeout", "25"), "timeout")))
+                    f = None if s.status == "failed" else s.wait_frame(after, timeout)
+                    if s.status == "failed":
+                        # Gone for good (out of GPU memory): the page stops asking and says why.
+                        self._json(410, {"error": s.error or "the session failed", "status": "failed"})
+                        return
                     if f is None:
                         self._send(204, b"", headers={"X-Status": s.status, "X-Error": (s.error or "")[:200]})
                         return
@@ -999,7 +1746,7 @@ class Handler(BaseHTTPRequestHandler):
                     extra = {"X-Alpha-Offset": str(offset)} if offset else {}
                     if s.detail_loader is not None:
                         extra["X-Detail"] = s.detail_text()
-                    if q.get("have") is not None and int(q["have"]) != version:
+                    if q.get("have") is not None and int(number(q["have"], "have")) != version:
                         # The frame's points (each pixel's distance), for a page that has none for this view yet:
                         # in the same answer, so a moving view is one request a frame, not three.
                         pk = s.packed(version, "distance16")
@@ -1035,74 +1782,40 @@ class Handler(BaseHTTPRequestHandler):
                         self._send(204, b"")
                         return
                     self._send(200, pk[0], "application/octet-stream", {"X-Version": str(d[0]), **pk[1]})
-                elif method == "POST" and rest == ["still"]:
-                    # One view, path-traced to a sample count at a size, as a PNG (a renderer of its own).
-                    from PIL import Image
-
-                    from . import renderer as rmod
-
+                elif method == "POST" and rest == ["stills"]:
+                    # One view path-traced to a sample count at a size, as a PNG: a job (GET /stills/<id>).
                     if s.status != "ready":
                         raise BadRequest("the session's volume is not loaded")
                     body = self._body()
-                    view = dict(body.get("view") or {})
-                    w, h = int(body.get("width", view.get("width", 1920))), int(body.get("height", view.get("height", 1080)))
-                    if not (8 <= w <= 8192 and 8 <= h <= 8192):
-                        raise BadRequest("width and height must be 8 to 8192")
-                    if "inv_view_projection" not in view:
-                        raise BadRequest("view.inv_view_projection is needed")
-                    if (view.get("width"), view.get("height")) != (w, h) and view.get("width"):
-                        # The same camera at another shape: widen or narrow the view, not stretch it.
-                        from .movie import reshaped
-
-                        view["inv_view_projection"] = reshaped(view["inv_view_projection"], w / h, view.get("orbit_center"))
-                    view.update(width=w, height=h, scale=1.0)
-                    R = rmod.Renderer(s.device)
-                    L = s.loaded
-                    R.set_volume(rmod.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles))
-                    held = s.renderer.detail if s.renderer is not None else None
-                    if held is not None:
-                        # The still is of the view in the page: the finer detail held for it too.
-                        R.set_detail(rmod.Detail(held.data, held.world_from_voxel.copy()))
-                    R.set_view(s._state(view, R))
-                    R.step(max(1, min(4096, int(body.get("samples", 256)))))
-                    img = R.image()
-                    bg = body.get("background")
-                    if bg is not None:
-                        a = img[..., 3:4].astype(np.float32) / 255
-                        rgb = np.clip(img[..., :3].astype(np.float32) + np.asarray(bg[:3], np.float32) * 255 * (1 - a), 0, 255).astype(np.uint8)
-                        pic = Image.fromarray(rgb)
-                    else:
-                        pic = Image.fromarray(img, "RGBA")
-                    out = io.BytesIO()
-                    pic.save(out, "PNG")
-                    del R
-                    self._send(200, out.getvalue(), "image/png", {"Content-Disposition": f'attachment; filename="{safe_name(body.get("name"), "still")}.png"'})
+                    view, samples = still_plan(body)
+                    jid = uuid.uuid4().hex[:12]
+                    out = S.output_dir(body.get("output"), f"still-{jid}")
+                    S.check_disk(out, still_disk(view["width"], view["height"]), "still")
+                    j = Still(jid, s, view, samples, body, out)
+                    S.submit(S.stills, j)
+                    self._json(200, j.info())
                 elif method == "POST" and rest == ["movies"]:
+                    if s.status != "ready":
+                        raise BadRequest("the session's volume is not loaded")
                     spec = self._body()
-                    if not spec.get("keyframes"):
-                        raise BadRequest("keyframes are needed")
+                    plan = movie_plan(spec, S.ffmpeg)
                     mid = uuid.uuid4().hex[:12]
-                    out = S.output_dir(spec.get("output"), mid)
-                    m = Movie(mid, s, spec, out)
-                    S.movies[mid] = m
-                    done = [k for k, v in S.movies.items() if v.status in ("done", "failed", "cancelled")]
-                    for k in done[:-20]:
-                        del S.movies[k]
+                    out = S.output_dir(spec.get("output"), f"movie-{mid}")
+                    S.check_disk(out, movie_disk(plan), "movie")
+                    m = Movie(mid, s, spec, plan, out, S.ffmpeg)
+                    S.submit(S.movies, m)
                     self._json(200, m.info())
                 elif method == "POST" and rest == ["splats"]:
                     if s.status != "ready":
                         raise BadRequest("the session's volume is not loaded")
                     spec = self._body()
-                    if "inv_view_projection" not in (spec.get("view") or {}):
-                        raise BadRequest("view.inv_view_projection is needed")
+                    plan = splat_plan(spec)
                     pid = uuid.uuid4().hex[:12]
                     out = S.output_dir(spec.get("output"), f"splat-{pid}")
                     python = S.splat_python if S.splat_check.get("ready") else None
-                    j = Splat(pid, s, spec, out, python)
-                    S.splats[pid] = j
-                    done = [k for k, v in S.splats.items() if v.status in ("done", "failed", "cancelled")]
-                    for k in done[:-20]:
-                        del S.splats[k]
+                    S.check_disk(out, splat_disk(plan, plan["steps"] > 0 and python is not None), "splat")
+                    j = Splat(pid, s, spec, out, python, plan)
+                    S.submit(S.splats, j)
                     self._json(200, j.info())
                 else:
                     self._json(404, {"error": "not found"})
@@ -1118,8 +1831,7 @@ class Handler(BaseHTTPRequestHandler):
                     j.cancel()
                     self._json(200, j.info())
                 elif method == "GET" and len(parts) == 4 and parts[2] == "file" and parts[3] in SPLAT_FILES and j.status == "done" and (j.out_dir / parts[3]).is_file():
-                    data = (j.out_dir / parts[3]).read_bytes()
-                    self._send(200, data, SPLAT_FILES[parts[3]], {"Content-Disposition": f'attachment; filename="{parts[3]}"'})
+                    self._file(j.out_dir / parts[3], SPLAT_FILES[parts[3]], parts[3])
                 else:
                     self._json(404, {"error": "not found"})
             elif len(parts) >= 2 and parts[0] == "movies":
@@ -1129,17 +1841,32 @@ class Handler(BaseHTTPRequestHandler):
                 elif method == "GET" and parts[2:] == []:
                     self._json(200, m.info())
                 elif method == "DELETE" and parts[2:] == []:
-                    m.cancelled = True
+                    m.cancel()
                     self._json(200, m.info())
                 elif method == "GET" and parts[2:] == ["file"] and m.file and m.file.is_file():
-                    data = m.file.read_bytes()
-                    self._send(200, data, "video/mp4", {"Content-Disposition": f'attachment; filename="{safe_name(m.file.stem)}.mp4"'})
+                    self._file(m.file, "video/mp4", f"{safe_name(m.file.stem)}.mp4")
+                else:
+                    self._json(404, {"error": "not found"})
+            elif len(parts) >= 2 and parts[0] == "stills":
+                j = S.stills.get(parts[1])
+                if j is None:
+                    self._json(404, {"error": "no such still"})
+                elif method == "GET" and parts[2:] == []:
+                    self._json(200, j.info())
+                elif method == "DELETE" and parts[2:] == []:
+                    j.cancel()
+                    self._json(200, j.info())
+                elif method == "GET" and parts[2:] == ["file"] and j.file and j.file.is_file():
+                    self._file(j.file, "image/png", f"{safe_name(j.file.stem, 'still')}.png")
                 else:
                     self._json(404, {"error": "not found"})
             else:
                 self._json(404, {"error": "not found"})
         except BadRequest as e:
             self._json(400, {"error": str(e)})
+        except Refused as e:
+            # Not now (the GPU budget taken, too many jobs waiting) or not here (too little disk): said plainly.
+            self._json(e.status, e.answer(), {"Retry-After": str(e.retry_after)} if e.retry_after else None)
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception as e:  # noqa: BLE001
@@ -1182,7 +1909,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--token", default=os.environ.get("NGP_SERVICE_TOKEN"))
     p.add_argument("--device", type=int, default=0, help="the CUDA device (after CUDA_VISIBLE_DEVICES)")
     p.add_argument("--out", default=None, help="where movies and splats go by default (default <state-dir>/renders)")
+    p.add_argument("--gpu-budget", default=os.environ.get("NGP_RENDER_GPU_BUDGET"), metavar="SIZE",
+                   help="the GPU memory every session and job together may hold: bytes (24G, 12000M) or a part of what is free "
+                        "at the start (0.6); default $NGP_RENDER_GPU_BUDGET, else 0.8 of the free memory")
     p.add_argument("--splat-python", default=os.environ.get("NGP_SPLAT_PYTHON"), help="a Python with torch and gsplat, which fits splats (default $NGP_SPLAT_PYTHON; none: splats are captured, not fitted)")
+    p.add_argument("--allow-source", action="append", default=(os.environ.get("NGP_RENDER_SOURCES") or "").split(), metavar="URL",
+                   help="read remote stores (http(s), gs://, s3://) only from under this address; may be given more than once "
+                        "(default $NGP_RENDER_SOURCES, space-separated; none: any)")
     args = p.parse_args(argv)
     if not args.token:
         # Never open: any web page can send a simple POST to 127.0.0.1.
@@ -1192,8 +1925,20 @@ def main(argv: list[str] | None = None) -> int:
     state = Path(os.environ.get("NGP_STATE_DIR", "~/.ngplatform-runner")).expanduser()
     out_root = Path(args.out).expanduser().resolve() if args.out else state / "renders"
     roots.append(out_root)
-    srv = RenderServer(args.port, args.token, roots, args.device, out_root, args.splat_python)
-    print(f"ngplatform render {__version__}: GPU {srv.gpu()}", flush=True)
+    from .gpu import free_memory, parse_budget
+
+    free = free_memory(args.device)[0]
+    try:
+        # No GPU and no budget given: nothing is counted (a session fails when it uploads).
+        budget = parse_budget(args.gpu_budget, free) if free or args.gpu_budget else None
+    except ValueError as e:
+        p.error(str(e))
+    srv = RenderServer(args.port, args.token, roots, args.device, out_root, args.splat_python, args.allow_source, gpu_budget=budget)
+    print(f"ngplatform render {__version__}: GPU {srv.gpu()}; budget {gb(srv.gpu_share.budget.total)}", flush=True)
+    if srv.ffmpeg is None:
+        print("no ffmpeg on the PATH: movies cannot be made (stills and splats can)", flush=True)
+    if srv.sources:
+        print(f"remote stores only from: {', '.join(srv.sources)}", flush=True)
     if os.environ.get("NGP_SERVICE_TOKEN"):
         # Started by a runner: end with it, however it ends (a dropped ssh session, kill -9).
         parent = os.getppid()

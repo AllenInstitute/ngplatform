@@ -2,22 +2,22 @@
 
 Plugins that would be worth having, with the tools people use for the same
 work today, so a plugin can borrow what works there and skip what does not.
-The first group is on the
-[work plan](https://github.com/AllenInstitute/ngplatform/blob/main/TODO.md);
+The first group has been built (see each one's page, and
+[what is next](https://github.com/AllenInstitute/ngplatform/blob/main/STATUS.md#next));
 the rest are open. To take one on, or to suggest another, open an issue with
 the *Plugin idea* template.
 
-## Planned
+## Built
 
 | Plugin | What it would do | People use today |
 |---|---|---|
-| **Annotations** (from Labels; begun, see [Annotations](annotations.md)) | Labels, measuring (lengths, areas, line profiles), contours, statistics per label or region, and manual segmentation | Freeview's measure tools, ITK-SNAP, WebKnossos |
+| **Annotations** (from Labels; see [Annotations](annotations.md)) | Labels, measuring (lengths, areas, line profiles), contours, statistics per label or region, and manual segmentation | Freeview's measure tools, ITK-SNAP, WebKnossos |
 | **Segmentation** (now the [Segmentation](segmentation.md) plugin; see the [survey](segmentation-survey.md)) | Draw and erase labels: sphere brush, threshold-limited brush, 2-D/3-D fill, interpolation between slices; AI-assisted selection later; save masks locally | WebKnossos, ITK-SNAP, Freeview voxel edit, napari, 3D Slicer |
-| **Luxar** | Views through [Luxar](https://github.com/royerlab/luxar): HDR points, lines and meshes, Gaussian-splat volumes, straight from OME-Zarr and Zarr Vectors | Luxar's own viewer |
-| **Orientations** (begun, see [Orientations](orientations.md)) | Vector fields, DTI tensors and FA colour, spherical-harmonic ODF glyphs that refine as you zoom (multiscale) | FURY / DIPY, MRtrix `mrview`, DSI Studio, TrackVis |
-| **Filters** | Mean, median, Gaussian and Frangi (vesselness) computed on the fly, chunk by chunk, at every level | Fiji, napari, ITK, Freeview's filters |
-| **Collections** | A tab for an OME-Zarr collection (RFC-8): its images, coordinate systems and transforms | — |
-| **Capture** | GIFs, movies, slice sweeps, rotations, magnified screenshots | Freeview movie frames, Neuroglancer's Python video tool |
+| **Luxar** (see [Luxar rendering](luxar.md)) | Views through [Luxar](https://github.com/royerlab/luxar): HDR points, lines and meshes, Gaussian-splat volumes, straight from OME-Zarr and Zarr Vectors | Luxar's own viewer |
+| **Orientations** (see [Orientations](orientations.md)) | Vector fields, DTI tensors and FA colour, spherical-harmonic ODF glyphs that refine as you zoom (multiscale) | FURY / DIPY, MRtrix `mrview`, DSI Studio, TrackVis |
+| **Filters** (see [Filters](filters.md)) | Mean, median, Gaussian and Frangi (vesselness) computed on the fly, chunk by chunk, at every level | Fiji, napari, ITK, Freeview's filters |
+| **Collections** (see [OME Collections](collections.md)) | A scene of its own for an OME-Zarr collection (RFC-8): its images, coordinate systems and transforms | — |
+| **Capture** (built into the app: see [Capture](../guide/interface.md#capture)) | GIFs, movies, slice sweeps, rotations, magnified screenshots | Freeview movie frames, Neuroglancer's Python video tool |
 
 ## Open ideas
 

@@ -19,7 +19,7 @@ import { History } from "./history.js";
 import type { ImageBlock, Vec3 } from "./kernels.js";
 import { CHUNK, LabelVolume } from "./label_volume.js";
 import { CowVolume } from "./cow_volume.js";
-import { discard, keep, readKept } from "./keep.js";
+import { discard, keep, persist, readKept } from "./keep.js";
 import { hashColour } from "./segments.js";
 import { LABEL_STORE_EXTENSION, serveInPage } from "./store_format.js";
 
@@ -27,6 +27,9 @@ import { LABEL_STORE_EXTENSION, serveInPage } from "./store_format.js";
 export const PALETTE = ["#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231", "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe", "#008080", "#e6beff", "#9a6324", "#fffac8", "#800000", "#aaffc3"];
 
 export const colourOf = (value: number) => PALETTE[(value - 1) % PALETTE.length];
+
+/** A volume opened with more segments than this keeps Neuroglancer's colours (see `Session.palette`). */
+export const PALETTE_SEGMENTS = 1000;
 
 export interface Reference {
   layer: string;
@@ -36,6 +39,9 @@ export interface Reference {
 }
 
 let sessions = 0;
+
+/** Whether this browser's refusal to keep the copies for good has been said (once a visit). */
+let refusalTold = false;
 
 export class Session {
   readonly history = new History();
@@ -52,6 +58,19 @@ export class Session {
   counts = new Map<number, number>();
   /** Strokes since the last save. */
   unsaved = 0;
+  /** Activity has been told that undo let go of the oldest strokes. */
+  undoLimitTold = false;
+  /** What `Editor.applyHidden` last showed the layer (undefined: the layer shows its own list). */
+  hiddenApplied: string | undefined;
+  /**
+   * Its segments are coloured from the palette, each colour written in the
+   * layer's state; a volume opened with more than PALETTE_SEGMENTS segments
+   * (a copied segmentation) keeps Neuroglancer's own colours instead, which
+   * need no state.  Undefined until the editor decides, when it opens.
+   */
+  palette: boolean | undefined;
+  /** The scene its layer was shown in when it was opened: a layer gone from that scene, while it is shown, was removed. */
+  scene: string | undefined;
   private readonly unserve: () => void;
   private refreshTimer: ReturnType<typeof setTimeout> | undefined;
   private lastRefresh = 0;
@@ -62,8 +81,15 @@ export class Session {
   private keeping: Promise<unknown> = Promise.resolve();
   /** When the oldest change not yet kept was made: drawing without a pause is kept every few seconds all the same. */
   private dirtySince: number | undefined;
-  /** Leaving the page keeps what is not kept yet. */
+  /**
+   * Leaving the page, or hiding it (another tab, the window minimised, a
+   * phone's app switched), keeps what is not kept yet: hidden comes first,
+   * while there is still time for the browser's storage to be written.
+   */
   private readonly onPageHide = () => this.keepNow();
+  private readonly onHidden = () => {
+    if (document.visibilityState === "hidden") this.keepNow();
+  };
   private blockGeneration = 0;
 
   private constructor(
@@ -135,6 +161,7 @@ export class Session {
     if (this.dirtySince === undefined) {
       this.dirtySince = Date.now();
       window.addEventListener("pagehide", this.onPageHide);
+      document.addEventListener("visibilitychange", this.onHidden);
     }
     // 1.5 s after the last change, or at once when changes have waited 5 s.
     this.keepTimer = setTimeout(() => this.keepNow(), Date.now() - this.dirtySince > 5000 ? 0 : 1500);
@@ -145,15 +172,22 @@ export class Session {
     clearTimeout(this.keepTimer);
     this.keepTimer = undefined;
     this.dirtySince = undefined;
-    window.removeEventListener("pagehide", this.onPageHide);
+    this.unlisten();
     const keys = [...this.dirty];
     this.dirty.clear();
     const versions = keys.map((k) => this.volume.versionOf(k));
     const original = this.volume instanceof CowVolume ? this.volume.original : undefined;
     this.keeping = this.keeping.then(async () => {
-      if (await keep(this.volume, { id: this.id, name: this.layer, labels: [...this.labels], reference: this.reference?.layer, original }, keys, versions)) {
+      if (await keep(this.volume, { id: this.id, name: this.layer, labels: [...this.labels], reference: this.reference?.layer, original, palette: this.palette }, keys, versions)) {
         this.volume.keptAt(keys, versions);
         this.keepFailed = false;
+        // The first copy kept: ask that the browser not clear it when short of space.
+        if ((await persist()) === false && !refusalTold) {
+          refusalTold = true;
+          const text = "This browser may clear the label volumes it keeps when it is short of space: save them to keep them.";
+          this.ctx.ui.toast(text);
+          this.ctx.log.info(text);
+        }
         return;
       }
       // Not kept (storage full, say): kept again with the next change, so a reload does not bring back less.
@@ -163,8 +197,24 @@ export class Session {
     });
   }
 
+  /**
+   * Keeps everything not kept yet, and waits for it: true when the browser
+   * holds the whole volume as it is now (so it can be closed, and opened
+   * again from there).
+   */
+  async keepAll(): Promise<boolean> {
+    this.keepNow();
+    await this.keeping;
+    return !this.keepFailed && this.dirty.size === 0;
+  }
+
   /** The last keep failed (said once until one succeeds). */
   private keepFailed = false;
+
+  private unlisten(): void {
+    window.removeEventListener("pagehide", this.onPageHide);
+    document.removeEventListener("visibilitychange", this.onHidden);
+  }
 
   /** Where the label volume's voxels are in the global space (once its layer has loaded). */
   placement(): Placement | undefined {
@@ -276,13 +326,36 @@ export class Session {
 
   /** The label's colour, picked from the palette the first time (edited in place, the original's if it has one). */
   colour(value: number): string {
-    const own = this.labels.get(value)?.colour ?? this.theirs.get(value)?.colour;
-    if (own !== undefined) return own;
-    if (!(this.volume instanceof CowVolume)) return colourOf(value);
-    // Edited in place, the original's segments keep Neuroglancer's colours: the layer's default, or its hash.
-    const spec = this.ctx.viewer.layerSpec(this.layer) as { colorSeed?: number; segmentDefaultColor?: string } | undefined;
-    return spec?.segmentDefaultColor ?? hashColour(value, spec?.colorSeed ?? 0);
+    return this.colours()(value);
   }
+
+  /**
+   * Each label's colour, as `colour`, with the layer's state read once: a
+   * list of 100k segments otherwise reads it 100k times (a third of a
+   * second).
+   */
+  colours(): (value: number) => string {
+    type Spec = { colorSeed?: number; segmentDefaultColor?: string } | undefined;
+    let spec: Spec | null = null;
+    return (value) => {
+      const own = this.labels.get(value)?.colour ?? this.theirs.get(value)?.colour;
+      if (own !== undefined) return own;
+      if (!(this.volume instanceof CowVolume) && this.palette !== false) return colourOf(value);
+      // Edited in place, or opened with many segments, they keep Neuroglancer's colours: the layer's default, or its hash.
+      if (spec === null) {
+        spec = this.ctx.viewer.layerSpec(this.layer) as Spec;
+        const seed = spec?.colorSeed ?? 0;
+        if (this.hashed.seed !== seed) this.hashed = { seed, colours: new Map() };
+      }
+      if (spec?.segmentDefaultColor !== undefined) return spec.segmentDefaultColor;
+      let c = this.hashed.colours.get(value);
+      if (c === undefined) this.hashed.colours.set(value, (c = hashColour(value, this.hashed.seed)));
+      return c;
+    };
+  }
+
+  /** Neuroglancer's hash colours worked out so far, for the layer's colour seed (the list asks for every one each time it is drawn). */
+  private hashed: { seed: number; colours: Map<number, string> } = { seed: 0, colours: new Map() };
 
   /**
    * Gives the layer the labels' colours (Neuroglancer otherwise picks its
@@ -291,8 +364,10 @@ export class Session {
    */
   applyColours(values: number[]): void {
     const wanted: Record<string, string> = {};
-    const inPlace = this.volume instanceof CowVolume;
-    for (const v of values) if (v > 0 && (!inPlace || this.labels.has(v) || this.theirs.has(v))) wanted[String(v)] = this.colour(v);
+    // Colours Neuroglancer gives by itself (its hash) are not written: with many segments they would fill the state.
+    const own = !(this.volume instanceof CowVolume) && this.palette !== false;
+    for (const v of values) if (v > 0 && (own || this.labels.has(v) || this.theirs.has(v))) wanted[String(v)] = this.colour(v);
+    if (Object.keys(wanted).length === 0) return;
     this.ctx.viewer.patchState(
       (ng) => {
         const layer = ((ng.layers as Record<string, unknown>[] | undefined) ?? []).find((l) => l.name === this.layer);
@@ -311,7 +386,7 @@ export class Session {
     // Changes not kept yet are kept, unless the session is being forgotten.
     if (!forget && this.keepTimer !== undefined) this.keepNow();
     clearTimeout(this.keepTimer);
-    window.removeEventListener("pagehide", this.onPageHide);
+    this.unlisten();
     this.unserve();
     this.ctx.workspace.local.close(this.source);
     if (forget) void this.keeping.then(() => discard(this.id));

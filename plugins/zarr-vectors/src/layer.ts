@@ -91,7 +91,7 @@ export class ZarrVectorsSegmentationUserLayer extends SegmentationUserLayer {
 
   constructor(...args: ConstructorParameters<typeof SegmentationUserLayer>) {
     super(...args);
-    // The Render tab offers its resolution sliders only where the base
+    // The Display tab offers its resolution sliders only where the base
     // class sees one of its own 2-d / 3-d render layers; the dense layers
     // count too. Wrapped rather than rewritten, so whatever the base class
     // counts (it differs between Neuroglancer versions) still counts.
@@ -156,15 +156,17 @@ export class ZarrVectorsSegmentationUserLayer extends SegmentationUserLayer {
           const i = dense.helper.attributes.findIndex(
             (a: { id: string }) => a.id === id,
           );
-          const width = dense.helper.attributes[i]?.components ?? 1;
           const out: number[] = [];
+          if (i === -1) return out;
           for (const chunk of dense.drawnChunks as {
-            attributeValues?: Float32Array[];
+            valueOf(i: number, v: number): number | undefined;
             numOwnVertices: number;
           }[]) {
-            const values = chunk.attributeValues?.[i];
-            if (values === undefined) continue;
-            for (let v = 0; v < chunk.numOwnVertices; ++v) out.push(values[v * width]);
+            for (let v = 0; v < chunk.numOwnVertices; ++v) {
+              const value = chunk.valueOf(i, v);
+              if (value === undefined) break;
+              out.push(value);
+            }
           }
           return out;
         },

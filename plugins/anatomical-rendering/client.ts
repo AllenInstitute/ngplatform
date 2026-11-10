@@ -41,10 +41,48 @@ function headers(link: Link, json: boolean): Record<string, string> {
   return h;
 }
 
-export class ServiceError extends Error {}
+/**
+ * An answer from the service that is not a success: its HTTP status (404: it
+ * no longer knows the session; 410: the session failed; 503, 429, 507: a
+ * refusal, below), what the answer said besides its error (`reason`,
+ * `need_mb`…), and the seconds its `Retry-After` asks to wait.
+ */
+export class ServiceError extends Error {
+  constructor(message: string, readonly status = 0, readonly detail: Record<string, unknown> = {}, readonly retryAfter?: number) {
+    super(message);
+  }
+}
 
-async function call<T>(link: Link, method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-  const r = await go(link, path, { method, body: body === undefined ? undefined : JSON.stringify(body), signal }, body !== undefined);
+/** Megabytes in a few words: "900 MB", "1.2 GB". */
+export function sizeText(mb: number): string {
+  return mb < 1024 ? `${Math.round(mb)} MB` : `${(mb / 1024).toFixed(mb < 10240 ? 1 : 0)} GB`;
+}
+
+/**
+ * The service's refusals in plain words: its GPU busy (503), too many jobs
+ * waiting (429), its disk nearly full (507), and whether trying again can
+ * help (a job that could never fit, a 400, cannot).  Undefined for any
+ * other error.
+ */
+export function refusal(e: unknown): { text: string; retry: boolean } | undefined {
+  if (!(e instanceof ServiceError)) return undefined;
+  const d = e.detail;
+  const mb = (k: string) => (typeof d[k] === "number" ? sizeText(d[k] as number) : undefined);
+  if (d.reason === "gpu-budget" || (e.status === 503 && d.need_mb !== undefined)) {
+    const need = mb("need_mb"), free = mb("free_mb");
+    return { text: `The render computer's GPU is busy${need && free ? ` (needs ${need}, ${free} free)` : ""}. Retry, or close another view.`, retry: true };
+  }
+  if (d.reason === "queue-full" || e.status === 429) return { text: "Too many jobs waiting on the render computer. Retry when one has finished.", retry: true };
+  if (d.reason === "disk" || e.status === 507) {
+    const need = mb("need_mb"), free = mb("free_mb");
+    return { text: `The render computer's disk is nearly full${need ? ` (needs ${need}${free ? `, ${free} free` : ""})` : ""}. Free some space there, then Retry.`, retry: true };
+  }
+  if (e.status === 400 && typeof d.error === "string") return { text: d.error, retry: false };
+  return undefined;
+}
+
+async function call<T>(link: Link, method: string, path: string, body?: unknown, signal?: AbortSignal, init: RequestInit = {}): Promise<T> {
+  const r = await go(link, path, { ...init, method, body: body === undefined ? undefined : JSON.stringify(body), signal }, body !== undefined);
   const text = await r.text();
   let data: unknown;
   try {
@@ -53,8 +91,13 @@ async function call<T>(link: Link, method: string, path: string, body?: unknown,
     data = text;
   }
   if (!r.ok) {
-    const msg = (data as { error?: string } | undefined)?.error ?? `${r.status} ${r.statusText}`;
-    throw new ServiceError(`${method} ${path}: ${msg}`);
+    const detail = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+    const msg = typeof detail.error === "string" ? detail.error : `${r.status} ${r.statusText}`;
+    const wait = Number(r.headers.get("Retry-After"));
+    const retryAfter = Number.isFinite(wait) && wait > 0 ? wait : undefined;
+    // A refusal (or a request the service says it cannot take) in its plain words; anything else with the request.
+    const plain = refusal(new ServiceError("", r.status, detail));
+    throw new ServiceError(plain ? plain.text : `${method} ${path}: ${msg}`, r.status, detail, retryAfter);
   }
   return data as T;
 }
@@ -65,8 +108,33 @@ export interface ServiceInfo {
   gpu: { backend: string; name?: string; free_mb?: number; total_mb?: number; error?: string };
   presets: string[];
   lightmaps?: string[];
-  /** Whether the host can fit splats (a Python with torch and gsplat); hosts before splats say nothing. */
-  splats?: { python: string | null; ready: boolean; gsplat?: string; error?: string };
+  /** Whether the host can fit splats (a Python with torch and gsplat), the gsplat version the fit is written for, and a warning when another is installed; hosts before splats say nothing. */
+  splats?: { python: string | null; ready: boolean; gsplat?: string; error?: string; pinned?: string; warning?: string };
+  /** Whether the host has ffmpeg, which movies need; hosts before this say nothing. */
+  ffmpeg?: boolean;
+  /** The GPU memory every session and job draws on (MB), and what holds it; older hosts say nothing. */
+  budget?: { total_mb: number; used_mb: number; free_mb: number; held?: { what: string; mb: number }[] };
+  /** The stills, movies and splats: the one running and those waiting, in turn. */
+  queue?: { running: { kind: string; id: string } | null; waiting: { kind: string; id: string }[]; max_waiting: number };
+  /** The space free where jobs write (MB). */
+  disk?: { output: string; free_mb: number };
+  cache?: Record<string, unknown>;
+}
+
+/** The Remote card's line for a host: its GPU, the budget in use and the queue ("GPU: 12.3 of 38 GB in use · 1 job running"). */
+export function serviceText(info: ServiceInfo): string {
+  const g = info.gpu;
+  if (g.backend !== "cuda") return `No GPU: ${g.error ?? ""}`;
+  const gb = (mb: number) => (mb / 1024).toFixed(mb < 102400 ? 1 : 0).replace(/\.0$/, "");
+  const parts = [g.name ?? "GPU"];
+  if (info.budget) parts.push(`GPU: ${gb(info.budget.used_mb)} of ${gb(info.budget.total_mb)} GB in use`);
+  else parts.push(`${Math.round((g.free_mb ?? 0) / 1024)} of ${Math.round((g.total_mb ?? 0) / 1024)} GB free`);
+  const q = info.queue;
+  if (q && (q.running || q.waiting.length > 0)) {
+    const n = q.waiting.length;
+    parts.push([q.running ? "1 job running" : "", n ? `${n} waiting` : ""].filter(Boolean).join(", "));
+  }
+  return parts.join(" · ");
 }
 
 export interface PresetInfo {
@@ -81,6 +149,8 @@ export interface VolumeMeta {
   url: string;
   level: string;
   shape: number[];
+  /** The loaded level's numpy type ("uint16", "float32"…). */
+  dtype?: string;
   voxel_mm: number[];
   /** Voxel (x, y, z) to physical mm, column-major. */
   affine: number[];
@@ -93,6 +163,12 @@ export interface VolumeMeta {
   seconds: number;
   /** The box holding the tissue (physical mm, x, y, z: low, high). */
   tissue_mm?: [number[], number[]] | null;
+  /** The channel and time point shown (from 0), and how many the image has; older hosts say nothing. */
+  channel?: number;
+  time?: number;
+  channels?: number;
+  times?: number;
+  axes?: string[];
 }
 
 export interface SessionInfo {
@@ -173,8 +249,18 @@ export interface MovieInfo {
   progress: number;
   message: string;
   error: string | null;
+  /** While it waits its turn: its place (1: next) and the jobs before it, the one running included. */
+  queue_position?: number;
+  jobs_ahead?: number;
   file: string | null;
+  /** The movie's size and frames, as the host makes it (its sides even for H.264). */
+  width?: number;
+  height?: number;
+  frames?: number;
 }
+
+/** A still being path-traced on the host, as a job. */
+export type StillInfo = Omit<MovieInfo, "width" | "height" | "frames">;
 
 /** Gaussian splats being made on the host: views path-traced from all round, then fitted to them. */
 export interface SplatInfo {
@@ -183,6 +269,8 @@ export interface SplatInfo {
   progress: number;
   message: string;
   error: string | null;
+  queue_position?: number;
+  jobs_ahead?: number;
   /** The folder on the host with the views, the cameras and the fitted splat. */
   folder: string;
   /** The files of a finished splat the page can fetch ("scene.splat", "splat.ply", "cameras.json", "fit.json"). */
@@ -204,22 +292,33 @@ export class RenderService {
   presets(): Promise<PresetInfo[]> {
     return call(this.link, "GET", "/presets");
   }
-  open(volume: { url: string; budget?: number; level?: string; cylinder?: number; detail_budget?: number }, labels?: { url: string }): Promise<SessionInfo> {
+  /** Opens a session on an image (at a channel and time point, from 0; a new session is needed to change either). */
+  open(volume: { url: string; budget?: number; level?: string; cylinder?: number; detail_budget?: number; channel?: number; time?: number }, labels?: { url: string }): Promise<SessionInfo> {
     return call(this.link, "POST", "/sessions", { volume, labels });
   }
   session(id: string): Promise<SessionInfo> {
     return call(this.link, "GET", `/sessions/${id}`);
   }
-  close(id: string): Promise<unknown> {
-    return call(this.link, "DELETE", `/sessions/${id}`);
+  /** Closes a session; `keepalive` lets the request finish as the page closes. */
+  close(id: string, keepalive = false): Promise<unknown> {
+    return call(this.link, "DELETE", `/sessions/${id}`, undefined, undefined, keepalive ? { keepalive: true } : {});
   }
   setView(id: string, view: ViewSpec): Promise<{ version: number }> {
     return call(this.link, "PUT", `/sessions/${id}/view`, view);
   }
-  /** One view path-traced to a sample count at a size, as a PNG. */
-  async still(id: string, spec: Record<string, unknown>): Promise<Blob> {
-    const r = await go(this.link, `/sessions/${id}/still`, { method: "POST", body: JSON.stringify(spec) }, true);
-    if (!r.ok) throw new ServiceError(`still: ${((await r.json().catch(() => ({}))) as { error?: string }).error ?? r.status}`);
+  /** One view path-traced to a sample count at a size, as a job: its progress with stillInfo, its PNG with stillFile. */
+  still(id: string, spec: Record<string, unknown>): Promise<StillInfo> {
+    return call(this.link, "POST", `/sessions/${id}/stills`, spec);
+  }
+  stillInfo(id: string): Promise<StillInfo> {
+    return call(this.link, "GET", `/stills/${id}`);
+  }
+  cancelStill(id: string): Promise<StillInfo> {
+    return call(this.link, "DELETE", `/stills/${id}`);
+  }
+  async stillFile(id: string): Promise<Blob> {
+    const r = await go(this.link, `/stills/${id}/file`);
+    if (!r.ok) throw new ServiceError(`still file: ${r.status}`, r.status);
     return r.blob();
   }
   movie(id: string, spec: Record<string, unknown>): Promise<MovieInfo> {
@@ -259,7 +358,10 @@ export class RenderService {
   async frame(id: string, after: number, signal?: AbortSignal, have = -1): Promise<Frame | undefined> {
     const r = await go(this.link, `/sessions/${id}/frame?after=${after}&timeout=20&have=${have}`, { signal });
     if (r.status === 204) return undefined;
-    if (!r.ok) throw new ServiceError(`frame: ${r.status}`);
+    if (!r.ok) {
+      const error = ((await r.json().catch(() => ({}))) as { error?: string }).error;
+      throw new ServiceError(`frame: ${error ?? r.status}`, r.status);
+    }
     let blob = await r.blob();
     const n = (k: string) => Number(r.headers.get(k) ?? 0);
     const version = n("X-Version");

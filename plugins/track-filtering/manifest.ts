@@ -11,24 +11,28 @@ export const TRACK_FILTERING_MANIFEST: Manifest = {
   kind: "tool",
   enabledByDefault: false,
   description: "Groups of the objects that pass through regions: tracts, segments or annotations. Each group is a layer.",
-  guide: `TrackVis-style filtering for any Zarr Vectors dataset: streamlines, skeletons, graphs, or point clouds whose points belong to objects. A **group** keeps the objects that pass through its regions and whose attributes are in range, and shows them as a layer of its own, in its own colour.
+  guide: `TrackVis-style filtering for any dataset that is not an image: Zarr Vectors streamlines, skeletons, graphs or point clouds whose points belong to objects; segmentations; annotation layers. A **group** keeps the objects that pass through its regions, with attributes in range and the tags it keeps, and shows them as a layer of its own, in its own colour.
 
 ## Making a group
-- **+ New group** in the Filtering tab, then add regions: **spheres** and **boxes**, each **AND** (must pass through), **OR** (through one of the OR regions) or **NOT** (must not). Drag the x, y, z and size sliders, or type values (Enter, or **Set**); **Here** moves a region to the views' centre.
+- **+ New group** in the Filtering panel (the Tools dock, under Vectors), then add regions: **spheres**, **boxes**, **disks** and **masks**, each **AND** (must pass through), **OR** (through one of the OR regions) or **NOT** (must not). With no group, the first region makes one. Alt+Shift+S puts a sphere at the mouse, Alt+Shift+B a box.
+- Move a region with its sliders, or type a value in a box beside one: it applies on Enter or on leaving the box. **Move here** puts it at the views' centre, **Go to** takes the views to it; Alt-drag it in a view.
 - On streamlines and skeletons a region can instead ask for **either end** or **both ends** of a track in it (TrackVis's endpoint modes).
-- Ranges on the objects' attributes (length, FA, …) narrow it further; tags (stored groups and categories) too.
-- The count is first previewed from a coarse level, then made exact from level 0.
+- **Attributes** (length, FA, …): a minimum and a maximum each, over its histogram.
+- **Stored groups** (the store's own groups and categories, as tags): **Keep** keeps only the objects in at least one kept group; **Leave out** drops those in any left-out group.
+- The count is first previewed from a coarse level (marked ~), then made exact from level 0.
+- Click a group's row to edit it; double-click its name, or the pencil, to rename it.
 
-## Saving
-- **Save .trk**: the group's streamlines, whole, as a TrackVis file (all of them, or a level's sample). It is written in batches straight to the file, so a large group takes time (the reading dominates) but not memory.
-- **Density map**: how many of the group's streamlines pass through each voxel (1 mm for a brain), shown as an image layer; **Save .nii** keeps it as a NIfTI file in the store's RAS+ millimetres.
-- **Save groups into the store**: for a zarr-vectors folder opened from this computer (Add → Local, in Chrome or Edge), the groups are written into the store itself (level 0's \`groups\`, with names and counts, as zarr-vectors-py writes them), where other tools, and the viewer as tags, see them.
-- **Run on this computer**: with the runner on this computer paired (Jobs tab), the group goes to a Python job that tests the whole tractogram there and writes a new .trk, a Zarr Vectors store with coarser levels and/or a density map, then opens them here. For tractograms too large to save from the browser. Regions (spheres, boxes, disks, masks, with their end modes) and attribute ranges go with it; tags do not yet.
-- **Export CSV**: the group's objects and their attributes.
-- **Statistics** (below the groups): each group's count and an attribute's mean ± SD and median; **CSV** gives every attribute's n, mean, SD, median and range for every group.
+## Output
+- **Export CSV**: the group's objects and their attributes, once the count is exact.
+- **Save .trk**: the group's streamlines, whole, as a TrackVis file (all of them, or a level's sample). In Chrome and Edge it is written in batches straight to the file you choose, so a large group takes time (the reading dominates) but not memory; other browsers build the file in memory and download it, up to 1 GB (larger: Chrome or Edge, or Run on this computer).
+- **Make density map**: how many of the group's streamlines pass through each voxel, at the **Density voxel** size (1 mm for a brain unless you choose another), shown as an image layer; **Save .nii** keeps it as a NIfTI file in the store's RAS+ millimetres.
+- **Run on this computer**: with the runner on this computer paired (Settings → Compute), the group goes to a Python job that tests the whole tractogram there and writes a new .trk, a Zarr Vectors store with coarser levels and/or a density map, then opens them here; it shows in Activity. For tractograms too large to save from the browser. Regions (with their end modes), attribute ranges and tags all go with it.
+- **Save groups into the store**: for a Zarr Vectors folder opened from this computer (in Chrome or Edge), every group with its exact answer is written into the store itself (level 0's \`groups\`, with names and counts, as zarr-vectors-py writes them), where other tools, and the viewer as tags, see them. A stored group of the same name is replaced; the store has its old groups or the new ones, never a mix.
+- **Statistics**: each group's count and an attribute's mean ± SD and median; **Export CSV** gives every attribute's n, mean, SD, median and range for every group.
 
 ## How it scales
 Regions read only the chunks they overlap, at level 0, cached as they are read, so a small region in a large tractogram is quick; a region covering the whole brain reads all of it. Attributes are held for every object (about 100 bytes each); a group of millions of objects is fine to show and save.`,
+
   links: [
     { title: "zarr-vectors-tools (convert TRK, TRX, TCK and skeletons)", url: "https://github.com/AllenInstitute/zarr-vectors-tools" },
     { title: "This plugin's source", url: "https://github.com/AllenInstitute/ngplatform/tree/main/plugins/track-filtering" },
@@ -37,7 +41,7 @@ Regions read only the chunks they overlap, at level 0, cached as they are read, 
   requires: { plugins: ["org.ngplatform.zarr-vectors"] },
   activation: ["onView:trackFiltering.panel", "onCommand:trackFiltering.sphereAtMouse", "onCommand:trackFiltering.boxAtMouse"],
   contributes: {
-    panels: [{ id: FILTERING_PANEL, title: "Filtering", slot: "left", order: 40 }],
+    panels: [{ id: FILTERING_PANEL, title: "Filtering", slot: "left", group: "Vectors", order: 40 }],
     commands: [
       { id: "trackFiltering.show", title: "Show the track groups", group: "Filtering" },
       { id: "trackFiltering.newGroup", title: "New track group", group: "Filtering" },

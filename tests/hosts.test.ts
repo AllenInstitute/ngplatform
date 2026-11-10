@@ -1,7 +1,8 @@
 /** The computers with runners (This computer, and others through an SSH tunnel): pairing links with a name, the list kept in the browser, the check every 5 s, pick and fetch. */
 import { describe, expect, it } from "vitest";
+import { fetchRemoteState } from "../src/platform/deadline.js";
 import { HostList, hostStatusLine, LOCAL_HOST } from "../src/platform/hosts.js";
-import { pairingFromHash, RunnerService } from "../src/platform/runner.js";
+import { pairingFromHash, RunnerClient, RunnerService } from "../src/platform/runner.js";
 import type { HostGpu, HostInfo } from "../src/sdk/types.js";
 
 function memory() {
@@ -23,11 +24,13 @@ interface FakeHost {
   gpus: HostGpu[];
   services: Record<string, { ready: boolean; error: string | null; pid: number | null }>;
   down: boolean;
+  /** A half-open tunnel: asked, it never answers (until the request is given up). */
+  hung: boolean;
 }
 
 /** Runners at several addresses: each answers /status with its computer, and /svc/ with what it was asked. */
 function fakeHosts(hosts: Record<string, Partial<FakeHost>>) {
-  const all = new Map<string, FakeHost>(Object.entries(hosts).map(([address, h]) => [address, { token: "token-0123456789abcdef", hostname: "box", gpus: [], services: {}, down: false, ...h }]));
+  const all = new Map<string, FakeHost>(Object.entries(hosts).map(([address, h]) => [address, { token: "token-0123456789abcdef", hostname: "box", gpus: [], services: {}, down: false, hung: false, ...h }]));
   const calls: { url: string; auth: string | null; method: string; headers: Headers; body?: unknown }[] = [];
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -36,6 +39,13 @@ function fakeHosts(hosts: Record<string, Partial<FakeHost>>) {
     calls.push({ url, auth: headers.get("Authorization"), method: init?.method ?? "GET", headers, body: init?.body });
     const host = all.get(address);
     if (host === undefined || host.down) throw new TypeError("Failed to fetch");
+    if (host.hung) {
+      return new Promise<Response>((_, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted) reject(signal.reason);
+        signal?.addEventListener("abort", () => reject(signal.reason));
+      });
+    }
     const reply = (status: number, value: unknown) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
     if (headers.get("Authorization") !== `Bearer ${host.token}`) return reply(401, { error: "the pairing token is missing or wrong" });
     const path = url.slice(address.length);
@@ -224,5 +234,75 @@ describe("HostList", () => {
       "ws: RTX A6000, 47 GB free; RTX A6000, 2 GB free — render starting",
     );
     expect(hostStatusLine(host({ info: { hostname: "ws", platform: "", gpus: [], services: { render: { ready: false, error: "render ended …; not started again (log: x)", pid: null } } } }))).toBe("ws: no GPU — render failed");
+  });
+});
+
+describe("a half-open tunnel", () => {
+  it("gives up a runner's request after its deadline, naming the computer", async () => {
+    const fake = fakeHosts({ [WS]: { hung: true } });
+    const named = new RunnerClient(WS, TOKEN, fake.fetchImpl, "workstation", 30);
+    await expect(named.jobs()).rejects.toThrow(`workstation (${WS}) did not answer in 0 s: is the runner running and the tunnel open?`);
+    const local = new RunnerClient(WS, TOKEN, fake.fetchImpl, undefined, 30);
+    await expect(local.status()).rejects.toThrow(`The runner at ${WS} did not answer`);
+    // Stopped by the caller: an abort, not a deadline.
+    const stop = new AbortController();
+    const asked = local.status(stop.signal);
+    stop.abort();
+    await expect(asked).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("gives up a host's service that does not start answering, and names the host", async () => {
+    const fake = fakeHosts({ [WS]: {} });
+    const storage = memory();
+    const hosts = new HostList(new RunnerService(storage, fake.fetchImpl, 10), storage, fake.fetchImpl, 10, 1000, 30_000, 30);
+    await hosts.add("workstation", WS, TOKEN);
+    fake.hosts.get(WS)!.hung = true;
+    await expect(hosts.fetch("workstation", "render/frame")).rejects.toThrow(`workstation (${WS}) did not answer in 0 s: is the tunnel open and the runner running?`);
+    // Answering: the deadline does not cut a long answer short.
+    fake.hosts.get(WS)!.hung = false;
+    const response = await hosts.fetch("workstation", "render/frame");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(await response.text()).toBe("/svc/render/frame done");
+  });
+
+  it("gives up reading a state from a URL, naming the computer", async () => {
+    const hung = ((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal!.reason)))) as typeof fetch;
+    await expect(fetchRemoteState("https://states.example.org:8443/a.json", 30, hung)).rejects.toThrow("states.example.org:8443 did not answer in 0 s.");
+    const gone = (async () => new Response("", { status: 404, statusText: "Not Found" })) as typeof fetch;
+    await expect(fetchRemoteState("https://states.example.org/a.json", 30, gone)).rejects.toThrow("states.example.org answered 404 Not Found.");
+  });
+});
+
+describe("checks while the page is hidden", () => {
+  it("pause, and start again at once when it is shown", async () => {
+    const fake = fakeHosts({ [WS]: {} });
+    const storage = memory();
+    const hosts = new HostList(new RunnerService(storage, fake.fetchImpl, 10), storage, fake.fetchImpl, 5);
+    await hosts.add("workstation", WS, TOKEN);
+    const listeners = new Set<() => void>();
+    const page = {
+      hidden: false,
+      addEventListener: (_: string, f: () => void) => void listeners.add(f),
+      removeEventListener: (_: string, f: () => void) => void listeners.delete(f),
+    };
+    const checks = () => fake.calls.filter((c) => c.url.endsWith("/status")).length;
+    hosts.start(page as never);
+    await new Promise((r) => setTimeout(r, 40));
+    expect(checks()).toBeGreaterThan(2);
+    page.hidden = true;
+    listeners.forEach((f) => f());
+    await new Promise((r) => setTimeout(r, 10));
+    const paused = checks();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(checks()).toBe(paused);
+    page.hidden = false;
+    listeners.forEach((f) => f());
+    await new Promise((r) => setTimeout(r, 1));
+    expect(checks()).toBe(paused + 1);
+    await new Promise((r) => setTimeout(r, 40));
+    expect(checks()).toBeGreaterThan(paused + 2);
+    hosts.stop();
+    expect(listeners.size).toBe(0);
   });
 });

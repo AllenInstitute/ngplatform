@@ -35,6 +35,8 @@ export interface DockTabSpec {
   id: string;
   title: string;
   slot: DockSlot;
+  /** The heading it is listed under in a dock with a menu (the Tools dock). */
+  group?: string;
   order?: number;
   when?: string;
   /** Pixels the dock is grown to (at least) when the panel is shown: a table needs some height. */
@@ -104,11 +106,13 @@ export interface HostServices {
     overlay(): { element: HTMLElement; dispose(): void };
     screenshotOverlay(paint: (context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void): Disposer;
     form<T>(title: string, schema: Schema, initial?: Partial<T>): Promise<T | undefined>;
+    sheet(title: string, render: (body: HTMLElement, close: () => void) => Disposer | void, options?: { wide?: boolean }): () => void;
   };
   workspace: WorkspaceApi;
   viewer: ViewerApi;
   slices: {
-    get(key: string): unknown;
+    /** The data stored under `key`; undefined when none, or when stored by a version newer than `version`. */
+    get(key: string, version: number): unknown;
     set(key: string, version: number, value: unknown): void;
     onChanged(callback: () => void): Disposer;
   };
@@ -123,7 +127,7 @@ export interface HostServices {
   log(message: string, level: "info" | "error", source?: string): void;
 }
 
-/** "off": switched off in the Plugins tab.  "disabled": stopped this session after failing. */
+/** "off": switched off in the Plugins panel.  "disabled": stopped this session after failing. */
 export type PluginStatus = "off" | "registered" | "activating" | "active" | "failed" | "disabled";
 
 export interface PluginRecord {
@@ -318,7 +322,6 @@ export class PluginHost {
         entry.module = await entry.load();
         await entry.module.activate(this.contextFor(entry));
         entry.status = "active";
-        this.services.log(`Activated ${entry.manifest.name} ${entry.manifest.version}.`, "info", entry.manifest.id);
       } catch (e) {
         entry.status = "failed";
         entry.error = (e as Error).message;
@@ -476,6 +479,7 @@ export class PluginHost {
         screenshotOverlay: (paint) => own(s.ui.screenshotOverlay(paint)),
         confirm: (message) => s.ui.confirm(message),
         form: (title, schema, initial) => s.ui.form(title, schema, initial),
+        sheet: (title, render, options) => s.ui.sheet(title, render, options),
       },
       workspace: s.workspace,
       viewer: {
@@ -488,7 +492,7 @@ export class PluginHost {
       state: {
         get: <T>() => {
           if (slice === undefined) throw new PluginError(`${owner} declares no appState`);
-          return s.slices.get(slice.key) as T | undefined;
+          return s.slices.get(slice.key, slice.version) as T | undefined;
         },
         set: (value) => {
           if (slice === undefined) throw new PluginError(`${owner} declares no appState`);

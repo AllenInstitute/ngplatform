@@ -65,7 +65,8 @@ describe("slab arithmetic", () => {
         for (const f of finer) expect(f.lo.every((v, a) => v % fine.chunk[a] === 0)).toBe(true);
       }
     }
-  });
+    // Walks every slab of large levels: seconds on a shared CI machine.
+  }, 60_000);
 
   it("cuts chunks from a slab and puts them back", () => {
     const g = grid([150, 70, 9], [64, 32, 4], [1, 1, 1]);

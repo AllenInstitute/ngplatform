@@ -62,7 +62,7 @@ export const MANIFEST_SCHEMA: Schema = {
           items: {
             type: "object",
             required: ["id", "title", "slot"],
-            properties: { id, title: { type: "string" }, slot, order: { type: "number" }, when, minSize: { type: "number", minimum: 0 } },
+            properties: { id, title: { type: "string" }, slot, group: { type: "string" }, order: { type: "number" }, when, minSize: { type: "number", minimum: 0 } },
           },
         },
         datasetActions: {
@@ -86,7 +86,16 @@ export const MANIFEST_SCHEMA: Schema = {
         contextKeys: { type: "array", items: { type: "string" } },
         sceneKinds: {
           type: "array",
-          items: { type: "object", required: ["kind", "title"], properties: { kind: id, title: { type: "string" }, panel: id } },
+          items: {
+            type: "object",
+            required: ["kind", "title"],
+            properties: {
+              kind: id,
+              title: { type: "string" },
+              panel: id,
+              add: { type: "object", required: ["title", "command"], properties: { title: { type: "string" }, command: id } },
+            },
+          },
         },
       },
     },

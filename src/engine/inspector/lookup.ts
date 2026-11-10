@@ -1,5 +1,5 @@
 /**
- * A segmentation layer's lookup table, in its Render tab: one of the tables
+ * A segmentation layer's lookup table, in its Display tab: one of the tables
  * that come with the app (or that it fetches from their publishers), or a
  * file from this computer.  Choosing one colours and names the segments
  * (see ../lookup_tables.ts); "None" takes its colours and names off again.
@@ -14,7 +14,7 @@ import { button, el, type Scope } from "./ui.js";
 const ACCEPT = ".txt,.lut,.ctbl,.label,.csv,.tsv,.xml,.json";
 
 export function lookupTableControl(scope: Scope, layer: SegmentationUserLayer): HTMLElement {
-  const select = el("select", { class: "ins-select", "aria-label": "Lookup table" }) as HTMLSelectElement;
+  const select = el("select", { class: "text-input", "aria-label": "Lookup table" }) as HTMLSelectElement;
   const status = el("p", { class: "ins-note ins-lut-status" });
   const fileInput = el("input", { type: "file", accept: ACCEPT, hidden: true }) as HTMLInputElement;
   const fromFile = button("File…", () => fileInput.click(), "Load a lookup table from this computer (FreeSurfer colour table, ITK-SNAP labels, FSL atlas XML, Allen structure graph JSON)");

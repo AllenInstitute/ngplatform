@@ -49,7 +49,7 @@ export class LevelCells {
   private readers = new Map<string, Promise<ZarrArrayReader | undefined>>();
 
   constructor(
-    private access: Pick<ZarrVectorsStoreAccess, "read" | "shardIndexes">,
+    private access: Pick<ZarrVectorsStoreAccess, "read" | "shardIndexes" | "url">,
     readonly levelPath: string,
     known: ReadonlyMap<string, any> = new Map(),
   ) {
@@ -63,9 +63,14 @@ export class LevelCells {
     }
   }
 
+  /** The store's URL, when its access names one (for warnings). */
+  get storeUrl(): string | undefined {
+    return this.access.url;
+  }
+
   /** The cells of `level`, with the arrays the store metadata described. */
   static forLevel(
-    access: Pick<ZarrVectorsStoreAccess, "read" | "shardIndexes">,
+    access: Pick<ZarrVectorsStoreAccess, "read" | "shardIndexes" | "url">,
     level: ZarrVectorsLevel,
     description: ZarrVectorsGeometryDescription,
   ) {

@@ -6,7 +6,7 @@
  * (`crop`), which moves the origin to the box's corner.
  */
 import { gunzip } from "@ngplatform/sdk/precomputed";
-import { gzip, niftiFile, omeZarrMetadata } from "../registration/volume_io.js";
+import { gzip, niftiFile, niftiHeader, omeZarrMetadata } from "../registration/volume_io.js";
 import { multiply4 } from "../registration/fit.js";
 import type { CowVolume, Original } from "./cow_volume.js";
 import { type Box, CHUNK, isEmpty, LABEL_ARRAYS, type LabelArray, type LabelType, LabelVolume, type Vec3 } from "./label_volume.js";
@@ -30,6 +30,65 @@ export async function niftiGz(volume: LabelVolume, description = ""): Promise<Ui
   return gzip(nii);
 }
 
+/** The most bytes of voxels `niftiParts` makes at once. */
+export const SLAB_BYTES = 32 * 2 ** 20;
+
+/**
+ * A NIfTI of the volume as parts, in order: its header, then slabs of
+ * whole sections (z), each at most about `slabBytes`, so a 2 GB volume is
+ * never whole in memory.  `write` takes each part (to compress it and write
+ * it on, see `gzipWriter`) and is waited for before the next is made.
+ */
+export async function niftiParts(volume: LabelVolume, description: string, write: (part: Uint8Array) => Promise<void>, progress?: (done: number, total: number) => void, slabBytes = SLAB_BYTES): Promise<void> {
+  const [nx, ny, nz] = volume.size;
+  await write(niftiHeader({ size: volume.size, type: volume.type, voxelToRas: volume.voxelToRas }, { label: true, description: description.slice(0, 79) }));
+  const plane = nx * ny * LABEL_ARRAYS[volume.type].BYTES_PER_ELEMENT;
+  const depth = Math.max(1, Math.floor(slabBytes / plane));
+  for (let z = 0; z < nz; z += depth) {
+    const data = volume.dense({ lo: [0, 0, z], hi: [nx, ny, Math.min(nz, z + depth)] });
+    await write(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+    progress?.(Math.min(nz, z + depth), nz);
+  }
+}
+
+/**
+ * A gzipped file written as its parts come: through the browser's
+ * compression into `target` (a file being written), or, with none, into a
+ * Blob that `close` gives (for a download).  `abort` drops what was written.
+ */
+export function gzipWriter(target?: WritableStream<Uint8Array>): { write(part: Uint8Array): Promise<void>; close(): Promise<Blob | undefined>; abort(): Promise<void> } {
+  const compress = new CompressionStream("gzip");
+  const writer = compress.writable.getWriter();
+  const parts: Uint8Array[] = [];
+  const out = target
+    ? compress.readable.pipeTo(target)
+    : (async () => {
+        const reader = compress.readable.getReader();
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) return;
+          parts.push(value);
+        }
+      })();
+  // A failure is said by the next write or the close.
+  out.catch(() => {});
+  return {
+    async write(part) {
+      await writer.ready;
+      await writer.write(part as Uint8Array<ArrayBuffer>);
+    },
+    async close() {
+      await writer.close();
+      await out;
+      return target ? undefined : new Blob(parts as BlobPart[]);
+    },
+    async abort() {
+      await writer.abort().catch(() => {});
+      await out.catch(() => {});
+    },
+  };
+}
+
 /** A segment's name, colour and group, as saved. */
 export interface SavedLabel {
   value: number;
@@ -49,9 +108,11 @@ function labelMetadata(volume: LabelVolume, description: string | undefined, lab
     const group = JSON.parse(new TextDecoder().decode(files.get("zarr.json")));
     const rgba = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).concat(255);
     if (labels.length) {
+      // (With no colour and no property, an empty image-label still says the store is a label image.)
       group.attributes.ome["image-label"] = {
         colors: labels.filter((l) => l.colour).map((l) => ({ "label-value": l.value, rgba: rgba(l.colour!) })),
-        properties: labels.map((l) => ({ "label-value": l.value, ...(l.name ? { name: l.name } : {}), ...(l.group ? { group: l.group } : {}) })),
+        // Only the segments with something to say: a bare id is no property.
+        properties: labels.filter((l) => l.name || l.group).map((l) => ({ "label-value": l.value, ...(l.name ? { name: l.name } : {}), ...(l.group ? { group: l.group } : {}) })),
       };
     }
     Object.assign(group.attributes, attributes);
@@ -62,14 +123,27 @@ function labelMetadata(volume: LabelVolume, description: string | undefined, lab
 
 const bytesOf = (c: LabelArray) => new Uint8Array(c.buffer.slice(c.byteOffset, c.byteOffset + c.byteLength));
 
-/** An OME-Zarr (Zarr v3, gzipped chunks) of the volume's pyramid, as files by path; chunks not painted are left out. */
+/**
+ * An OME-Zarr (Zarr v3, gzipped chunks) of the volume's pyramid, as files
+ * by path; chunks not painted are left out.  With `out.write`, each file
+ * is handed to it as it is made (into a folder: the store is never whole in
+ * memory), and the map returned is empty; `out.gzip` compresses (in a
+ * worker).
+ */
 export async function omeZarr(
   volume: LabelVolume,
   description?: string,
   progress?: (done: number, total: number) => void,
   labels: SavedLabel[] = [],
+  out?: { write?(path: string, bytes: Uint8Array): Promise<void>; gzip?(bytes: Uint8Array): Promise<Uint8Array> },
 ): Promise<Map<string, Uint8Array>> {
   const files = labelMetadata(volume, description, labels);
+  const compress = out?.gzip ?? gzip;
+  const write = out?.write;
+  if (write !== undefined) {
+    for (const [path, bytes] of files) await write(path, bytes);
+    files.clear();
+  }
   const todo: [number, number, number, number][] = [];
   for (let level = 0; level < volume.levels.length; ++level) {
     const seen = new Set<string>();
@@ -84,7 +158,12 @@ export async function omeZarr(
   let done = 0;
   for (const [level, cx, cy, cz] of todo) {
     const c = volume.levelChunk(level, cx, cy, cz);
-    if (c !== undefined) files.set(`${level}/c/${cz}/${cy}/${cx}`, await gzip(bytesOf(c)));
+    if (c !== undefined) {
+      const path = `${level}/c/${cz}/${cy}/${cx}`;
+      const bytes = await compress(bytesOf(c));
+      if (write !== undefined) await write(path, bytes);
+      else files.set(path, bytes);
+    }
     progress?.(++done, todo.length);
   }
   return files;
@@ -148,8 +227,9 @@ const WHOLE_BLOCK: Vec3 = [4, 4, 1];
 export async function writeWhole(
   volume: CowVolume,
   write: (path: string, bytes: Uint8Array) => Promise<void>,
-  options: { description?: string; labels?: SavedLabel[]; progress?: (done: number, total: number) => void; cancelled?: () => boolean } = {},
+  options: { description?: string; labels?: SavedLabel[]; progress?: (done: number, total: number) => void; cancelled?: () => boolean; gzip?: (bytes: Uint8Array) => Promise<Uint8Array> } = {},
 ): Promise<number> {
+  const compress = options.gzip ?? gzip;
   for (const [path, bytes] of labelMetadata(volume, options.description, options.labels ?? [])) await write(path, bytes);
   const plan = volume.levels.map((l) => {
     const grid = l.size.map((n) => Math.ceil(n / CHUNK)) as Vec3;
@@ -184,7 +264,7 @@ export async function writeWhole(
               c = volume.fromBlock(block!, extent, from, from.map((v, k) => Math.min(CHUNK, extent[k] - v)) as Vec3);
             }
             if (c && !isEmpty(c)) {
-              await write(`${level}/c/${cz}/${cy}/${cx}`, await gzip(bytesOf(c)));
+              await write(`${level}/c/${cz}/${cy}/${cx}`, await compress(bytesOf(c)));
               ++written;
             }
           }
@@ -229,4 +309,65 @@ export async function readEdits(files: Map<string, Blob | Uint8Array>): Promise<
     chunks.push({ at: [Number(m[3]), Number(m[2]), Number(m[1])], data: new Type(raw.slice().buffer as ArrayBuffer) });
   }
   return { note, labels, chunks };
+}
+
+// ------------------------------------------------------------ into a folder
+
+/** Writes a file by its path under a folder, making the folders on the way. */
+export async function writeFile(root: FileSystemDirectoryHandle, path: string, bytes: Uint8Array): Promise<void> {
+  const parts = path.split("/");
+  let dir = root;
+  for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part, { create: true });
+  const w = await (await dir.getFileHandle(parts[parts.length - 1], { create: true })).createWritable();
+  await w.write(bytes as unknown as BufferSource);
+  await w.close();
+}
+
+/** A folder's listing (in the File System Access API, not yet in TypeScript's DOM types). */
+interface Listed {
+  entries(): AsyncIterable<[string, FileSystemHandle]>;
+}
+
+/**
+ * Removes from a store's folder what an earlier save left there and this
+ * one did not write (`written`, paths within the folder).  In Zarr a chunk
+ * with no file is the fill value, so a chunk now all 0 is left out of a
+ * save, and its old file would bring the erased labels back; a level the
+ * new pyramid does not have goes too.  Only the store's levels (folders
+ * named by number) are looked in: other files in the folder are kept.
+ * Resolves the files and folders removed.
+ */
+export async function pruneStore(root: FileSystemDirectoryHandle, written: Iterable<string>): Promise<number> {
+  const files = new Set(written);
+  const folders = new Set<string>();
+  for (const path of files) {
+    const parts = path.split("/");
+    for (let k = 1; k < parts.length; ++k) folders.add(parts.slice(0, k).join("/"));
+  }
+  let removed = 0;
+  const prune = async (dir: FileSystemDirectoryHandle, at: string): Promise<void> => {
+    const entries: [string, FileSystemHandle][] = [];
+    for await (const entry of (dir as unknown as Listed).entries()) entries.push(entry);
+    for (const [name, handle] of entries) {
+      const path = at ? `${at}/${name}` : name;
+      if (at === "" && !/^\d+$/.test(name)) continue;
+      const keep = handle.kind === "directory" ? folders.has(path) : files.has(path);
+      if (!keep) {
+        await dir.removeEntry(name, { recursive: handle.kind === "directory" });
+        ++removed;
+      } else if (handle.kind === "directory") await prune(handle as FileSystemDirectoryHandle, path);
+    }
+  };
+  await prune(root, "");
+  return removed;
+}
+
+/**
+ * Writes a store's files by path into its folder, then removes what an
+ * earlier save into the same folder left there (`pruneStore`): read back,
+ * the folder holds this save and nothing older.
+ */
+export async function writeStore(root: FileSystemDirectoryHandle, files: Map<string, Uint8Array>): Promise<void> {
+  for (const [path, bytes] of files) await writeFile(root, path, bytes);
+  await pruneStore(root, files.keys());
 }

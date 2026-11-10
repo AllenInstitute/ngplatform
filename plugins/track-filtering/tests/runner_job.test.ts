@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { emptyFilter } from "../filter.js";
 import { maskBits, type RoiGeometry } from "../roi.js";
-import { cannotRun, groupPredicate, type JobRegion, maskRegion, safeName } from "../runner_job.js";
+import { groupPredicate, type JobRegion, maskRegion, objectSet, safeName, usesTags } from "../runner_job.js";
 
 const sphere = (x: number, ends?: "either" | "both"): RoiGeometry => ({ shape: "sphere", center: [x, 0, 0], radius: 5, size: [10, 10, 10], ...(ends ? { ends } : {}) });
 const box: RoiGeometry = { shape: "box", center: [10, 20, 30], radius: 1, size: [4, 6, -8] };
@@ -54,11 +54,21 @@ describe("groupPredicate", () => {
     });
   });
 
-  it("refuses tags, which the job does not have", () => {
-    expect(cannotRun(emptyFilter())).toBeUndefined();
-    const tagged = { ...emptyFilter(), includeTags: ["CST"] };
-    expect(cannotRun(tagged)).toMatch(/tags/);
+  it("sends tags as the objects they choose, which the tree's group node tests", () => {
+    expect(usesTags(emptyFilter())).toBe(false);
+    const tagged = { ...emptyFilter(), includeTags: ["CST"], excludeTags: ["short"] };
+    expect(usesTags(tagged)).toBe(true);
+    // Without the objects the tags choose, there is nothing to send.
     expect(() => groupPredicate([], tagged)).toThrow(/tags/);
+    const doc = groupPredicate([{ op: "and", geometry: sphere(1) }], tagged, BigUint64Array.from([0n, 9n, 3n]));
+    expect(doc.tree).toMatchObject({ op: "and", args: [{ op: "passes" }, { op: "group", ids: [0] }] });
+    // Bits 0, 3 and 9 of 10, most significant first: 1001 0000, 0100 0000.
+    expect(doc.groups).toEqual([{ size: 10, bits: btoa(String.fromCharCode(0b10010000, 0b01000000)) }]);
+    // Tags alone; and tags that choose nothing choose nothing.
+    expect(groupPredicate([], tagged, new BigUint64Array(0))).toMatchObject({ tree: { op: "group", ids: [0] }, groups: [{ size: 0, bits: "" }] });
+    // A group without tags carries no set.
+    expect(groupPredicate([], emptyFilter(), BigUint64Array.from([1n])).groups).toBeUndefined();
+    expect(() => objectSet(BigUint64Array.from([2n ** 40n]))).toThrow(/too large/);
   });
 });
 

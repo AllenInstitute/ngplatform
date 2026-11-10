@@ -2,12 +2,12 @@
  * Offers of tool plugins that are off: which to look for, which to show in
  * a toast, and what this browser said ("Not now", offers off).  The data
  * each plugin serves is its offer's (plugins/offers.ts); the toasts and the
- * Datasets tab's buttons are src/ui/plugin_offers.ts.
+ * Layers panel's buttons are src/ui/plugin_offers.ts.
  *
  * - A plugin is looked for while it is off, has an offer, and this browser
  *   neither said "Not now" to it nor switched offers off (Settings).
  * - A `toast` offer is shown in a toast once per browser; every offer that
- *   applies is listed in the Datasets tab until it is turned on or "Not now".
+ *   applies is listed in the Layers panel until it is turned on or "Not now".
  * - A workspace that holds state of a plugin that is off says so (whatever
  *   the offers), and keeps that state.
  */
@@ -16,7 +16,7 @@ import type { Manifest } from "../sdk/types.js";
 const KEY = "ngplatform.offers";
 
 export interface OfferPrefs {
-  /** Settings → "Show offers for tools that are off", unticked. */
+  /** Settings › View → "Offer tools that are off when the data suits them", unticked. */
   off: boolean;
   /** "Not now", by plugin. */
   dismissed: string[];

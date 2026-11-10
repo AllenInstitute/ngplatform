@@ -85,7 +85,7 @@ function sourceCard(scope: Scope, layer: UserLayer, source: LayerDataSource): { 
   const body = el("div", { class: "ins-source-body" });
   const remove = button("Remove", () => {
     source.spec = { ...source.spec, url: "" };
-  }, "Remove this data source from the layer", "ins-danger");
+  }, "Remove this data source from the layer", "outline ins-remove");
   element.append(el("div", { class: "ins-section-head" }, el("h4", { class: "ins-section-title" }, "Data source"), el("div", { class: "ins-head-tools" }, remove)), url.element, status, messagesView(scope, source.messages as never), body);
 
   let loadedFor: unknown = null;
@@ -100,7 +100,7 @@ function sourceCard(scope: Scope, layer: UserLayer, source: LayerDataSource): { 
     loadedScope = undefined;
     body.replaceChildren();
     if (source.spec.url === "") {
-      status.textContent = "Type or paste a data source URL above.";
+      status.textContent = "Paste a data URL above.";
       return;
     }
     if (state === undefined) {
@@ -114,9 +114,11 @@ function sourceCard(scope: Scope, layer: UserLayer, source: LayerDataSource): { 
     }
     status.textContent = "";
     loadedScope = scope.child();
-    body.append(...loadedSource(loadedScope, state as LoadedLayerDataSource));
+    // Parts, transform, the image's coordinate systems and levels: rarely changed, so folded away.
+    const details = el("details", { class: "ins-details" }, el("summary", {}, "Details"), ...loadedSource(loadedScope, state as LoadedLayerDataSource));
     const base = omeBase(source.spec.url);
-    if (base !== undefined) body.append(omeSection(base));
+    if (base !== undefined) details.append(omeSection(base));
+    body.append(details);
   });
   return { element, focus: () => url.input.focus() };
 }
@@ -155,7 +157,7 @@ function urlField(scope: Scope, layer: UserLayer, source: LayerDataSource) {
     if (value !== "" && value === existing.url) return;
     source.spec = { ...existing, url: value, setManually: true } as never;
   };
-  const input = growingInput(source.spec.url, commit, { class: "ins-text ins-grow ins-url", placeholder: "Data source URL, e.g. zarr://https://…", "aria-label": "Data source URL" });
+  const input = growingInput(source.spec.url, commit, { class: "text-input mono ins-grow", placeholder: "Data source URL, e.g. zarr://https://…", "aria-label": "Data source URL" });
   const menu = el("ul", { class: "ins-completions", role: "listbox" });
   menu.hidden = true;
   let controller: AbortController | undefined;
@@ -311,9 +313,9 @@ export function transformTable(scope: Scope, t: WatchableCoordinateSpaceTransfor
     }
     cells.push(el("div", { class: "ins-tx-in" }, el("span", { class: "ins-tx-name" }, "offset")));
     for (let i = 0; i < rank; ++i) {
-      const name = textInput(outputSpace.names[i], (v) => setOutput(t, i, { name: v.trim() }), { class: "ins-text ins-tx-cell", "aria-label": `Name of output dimension ${i + 1}` });
+      const name = textInput(outputSpace.names[i], (v) => setOutput(t, i, { name: v.trim() }), { class: "text-input ins-tx-cell", "aria-label": `Name of output dimension ${i + 1}` });
       const scale = textInput(scaleText(outputSpace.scales[i], outputSpace.units[i], 6), (v) => setOutput(t, i, { scale: v.replace(/\s+/g, "") }), {
-        class: "ins-text ins-tx-cell",
+        class: "text-input ins-tx-cell",
         "aria-label": `Scale of ${outputSpace.names[i]}`,
       });
       cells.push(el("div", { class: "ins-tx-out" }, name, scale));
@@ -326,7 +328,7 @@ export function transformTable(scope: Scope, t: WatchableCoordinateSpaceTransfor
             const next = Float64Array.from(t.value.transform);
             next[k] = n;
             t.transform = next;
-          }, { class: "ins-text ins-tx-cell num", "aria-label": `${outputSpace.names[i]} from ${j < rank ? inputSpace.names[j] : "offset"}` }),
+          }, { class: "text-input mono num ins-tx-cell", "aria-label": `${outputSpace.names[i]} from ${j < rank ? inputSpace.names[j] : "offset"}` }),
         );
       }
     }

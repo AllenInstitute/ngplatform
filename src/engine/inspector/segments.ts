@@ -58,7 +58,7 @@ function segmentsView(scope: Scope, layer: SegmentationUserLayer): HTMLElement[]
   // ------------------------------------------------------------- query box
   const input = el("input", {
     type: "search",
-    class: "ins-text ins-query",
+    class: "text-input mono ins-query",
     placeholder: "Search ids, labels, #tags…",
     title: "Ids, a label prefix, /regex/, #tag, prop>1 (a range), <prop (sort by it), |prop (show it as a column). Enter shows the matches.",
     "aria-label": "Segment query",
@@ -90,7 +90,7 @@ function segmentsView(scope: Scope, layer: SegmentationUserLayer): HTMLElement[]
   const status = el("p", { class: "ins-note ins-status" });
   const tags = el("div", { class: "ins-tags" });
   const histograms = el("div", { class: "ins-histograms" });
-  const sortSelect = el("select", { class: "ins-select", "aria-label": "Sort by" }) as HTMLSelectElement;
+  const sortSelect = el("select", { class: "text-input", "aria-label": "Sort by" }) as HTMLSelectElement;
   const header = el("div", { class: "ins-seg-row ins-seg-head" });
   const body = el("div", { class: "ins-seg-body" });
   const viewport = el("div", { class: "ins-seg-list", tabindex: "0" }, el("div", { class: "ins-seg-spacer" }, body));
@@ -230,7 +230,7 @@ function segmentsView(scope: Scope, layer: SegmentationUserLayer): HTMLElement[]
           setQuery({ ...filter, numericalConstraints: full ? others : [...others, { fieldId: p.id, bounds: [a, b] as never }] });
         };
         const num = (v: number, set: (x: number) => void) => {
-          const box = el("input", { type: "number", class: "ins-number", step: "any", value: Number(v.toPrecision(6)) }) as HTMLInputElement;
+          const box = el("input", { type: "number", class: "text-input num-input", step: "any", value: Number(v.toPrecision(6)) }) as HTMLInputElement;
           box.addEventListener("change", () => {
             const x = Number(box.value);
             if (Number.isFinite(x)) set(x);
@@ -243,7 +243,7 @@ function segmentsView(scope: Scope, layer: SegmentationUserLayer): HTMLElement[]
           el("span", { class: "ins-label" }, p.id),
           histogramSvg(hist?.histogram),
           el("div", { class: "ins-inline" }, num(lo, (x) => setRange(x, hi)), el("span", { class: "ins-faint" }, "to"), num(hi, (x) => setRange(lo, x))),
-          constraint ? button("×", () => setRange(-Infinity, Infinity), "Remove this range", "ins-chip-x") : el("span"),
+          constraint ? button("×", () => setRange(-Infinity, Infinity), "Remove this range", "icon ins-remove") : el("span"),
         );
       }),
     );

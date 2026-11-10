@@ -45,8 +45,12 @@ export interface LayerStyle {
   /** How much a dense bundle absorbs, in emission blending. */
   absorption: number;
   toneMap: ToneMap;
-  /** In the 2-D views, lines within half this of the section show, fading out towards it (mm). */
-  slab: number;
+  /**
+   * In the 2-D views, lines within half this of the section show, fading
+   * out towards it (mm); undefined follows the data's size (`autoSlab`), so
+   * a slab suits EM in nanometres as well as a brain in millimetres.
+   */
+  slab?: number;
   /** About how many vertices to keep loaded for a view, in millions: more is finer and slower. */
   detail: number;
   /** Dim each line by how many times over the lines drawn cover the view, so dense views glow rather than turn white, and keep their brightness as levels change. */
@@ -72,7 +76,6 @@ export const DEFAULT_STYLE: LayerStyle = {
   sharpness: 0.5,
   absorption: 1,
   toneMap: "aces-hue",
-  slab: 4,
   detail: 2,
   autoBrightness: true,
   bloom: 0,
@@ -108,8 +111,12 @@ export const TONE_LABELS: [ToneMap, string][] = [
 const num = (v: unknown, lo: number, hi: number, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : fallback);
 const pick = <T extends string>(v: unknown, options: T[], fallback: T): T => (options.includes(v as T) ? (v as T) : fallback);
 
-/** A layer's style from saved state, every field checked and defaulted. */
-export function readStyle(raw: unknown): LayerStyle {
+/**
+ * A layer's style from saved state, every field checked and defaulted.
+ * `legacy`: saved before the slab followed the data, when every style
+ * saved the default of then, 4 mm, which is read as following the data.
+ */
+export function readStyle(raw: unknown, legacy = false): LayerStyle {
   const s = (raw ?? {}) as Partial<LayerStyle>;
   const d = DEFAULT_STYLE;
   const range = Array.isArray(s.range) && s.range.length === 2 && s.range.every((v) => typeof v === "number" && Number.isFinite(v)) ? ([s.range[0], s.range[1]] as [number, number]) : undefined;
@@ -126,7 +133,7 @@ export function readStyle(raw: unknown): LayerStyle {
     sharpness: num(s.sharpness, 0, 1, d.sharpness),
     absorption: num(s.absorption, 0, 20, d.absorption),
     toneMap: pick(s.toneMap, TONE_MAPS, d.toneMap),
-    slab: num(s.slab, 0.01, 1000, d.slab),
+    slab: typeof s.slab === "number" && Number.isFinite(s.slab) && !(legacy && s.slab === LEGACY_SLAB) ? Math.min(MAX_SLAB, Math.max(MIN_SLAB, s.slab)) : undefined,
     detail: num(s.detail, 0.1, 50, d.detail),
     autoBrightness: s.autoBrightness !== false,
     bloom: num(s.bloom, 0, 3, d.bloom),
@@ -136,18 +143,92 @@ export function readStyle(raw: unknown): LayerStyle {
 
 /** The plugin's state: styles by layer name. */
 export interface Saved {
+  /** 2: the slab follows the data unless set (state without it is read as `readStyle`'s legacy). */
+  version: 2;
   layers: Record<string, LayerStyle>;
   /** Momentum on rotating the 3-D view (kept here so a link brings it back). */
   momentum: boolean;
 }
 
 export function readSaved(raw: unknown): Saved {
-  const s = (raw ?? {}) as { layers?: Record<string, unknown>; momentum?: unknown };
+  const s = (raw ?? {}) as { version?: unknown; layers?: Record<string, unknown>; momentum?: unknown };
   const layers: Record<string, LayerStyle> = {};
   if (s.layers !== null && typeof s.layers === "object") {
-    for (const [name, style] of Object.entries(s.layers)) layers[name] = readStyle(style);
+    for (const [name, style] of Object.entries(s.layers)) layers[name] = readStyle(style, s.version !== 2);
   }
-  return { layers, momentum: s.momentum === true };
+  return { version: 2, layers, momentum: s.momentum === true };
+}
+
+// ---------------------------------------------------------------- slab
+
+/** The slab every style saved before it followed the data (mm). */
+const LEGACY_SLAB = 4;
+/** A slab is kept between these (mm): a tenth of a nanometre and ten metres. */
+const MIN_SLAB = 1e-7;
+const MAX_SLAB = 1e4;
+
+/** What a store says of its size: its axes' units and scales and its bounds, in its own coordinates. */
+export interface StoreSize {
+  axisUnits: string[];
+  axisScales: number[];
+  bounds: { lower: number[]; upper: number[] };
+}
+
+/**
+ * A store's size along each axis in millimetres: its bounds times its
+ * scales, in metres (a unit with an SI prefix is read as metres), or with
+ * no unit read as millimetres, as the 2-D views read a dimension without one.
+ */
+export function extentMm(store: StoreSize): number[] {
+  return store.bounds.lower.map((lo, i) => {
+    const scale = store.axisScales[i] ?? 1;
+    return Math.abs((store.bounds.upper[i] ?? lo) - lo) * (store.axisUnits[i] === "m" ? scale * 1000 : scale);
+  });
+}
+
+/**
+ * The slab that follows the data (mm): a fortieth of its mean size, to one
+ * significant figure: 4 mm for a human brain's tractogram, 30 µm for a
+ * cubic millimetre of EM, a few µm for one cell's meshes.
+ */
+export function autoSlab(extent: number[]): number {
+  const sizes = extent.filter((v) => Number.isFinite(v) && v > 0);
+  if (sizes.length === 0) return LEGACY_SLAB;
+  const mean = sizes.reduce((a, b) => a + b, 0) / sizes.length;
+  return Math.min(MAX_SLAB, Math.max(MIN_SLAB, Number((mean / 40).toPrecision(1))));
+}
+
+/** A layer's slab (mm): the one set, or the one that follows the data. */
+export function slabOf(style: LayerStyle, extent: number[]): number {
+  return style.slab ?? autoSlab(extent);
+}
+
+/** How the slab's slider reads: in `unit` (`perUnit` mm each), from `min` to `max` by `step`. */
+export interface SlabScale {
+  unit: "mm" | "µm" | "nm";
+  perUnit: number;
+  min: number;
+  max: number;
+  step: number;
+}
+
+/** A 1, 2 or 5 times a power of ten, the nearest to `v` (as ratios). */
+function nice(v: number): number {
+  const p = 10 ** Math.floor(Math.log10(v));
+  const m = v / p;
+  return Number(((m < Math.sqrt(2) ? 1 : m < Math.sqrt(10) ? 2 : m < Math.sqrt(50) ? 5 : 10) * p).toPrecision(1));
+}
+
+/**
+ * The slab's slider for data whose own slab is `auto` (mm): in the unit
+ * that reads it in ones to hundreds, from about an eighth of it to ten
+ * times it (0.5 to 40 mm for a brain; its number box takes any value).
+ */
+export function slabScale(auto: number): SlabScale {
+  const [unit, perUnit] = auto >= 1 ? (["mm", 1] as const) : auto >= 1e-3 ? (["µm", 1e-3] as const) : (["nm", 1e-6] as const);
+  const a = auto / perUnit;
+  const step = nice(a / 8);
+  return { unit, perUnit, min: step, max: Number((10 * a).toPrecision(3)), step };
 }
 
 /** "#rrggbb" to linear-ish 0..1 RGB (the colour as picked; the tone map works on it as light). */

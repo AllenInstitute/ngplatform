@@ -39,7 +39,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - User guide:
-      - The window, tab by tab: guide/interface.md
+      - The window, part by part: guide/interface.md
       - Loading and exporting data: guide/data.md
       - Signing in: guide/signing-in.md
       - Jobs on this computer: guide/local-jobs.md
@@ -53,7 +53,6 @@ nav:
       - Segmentation: plugins/segmentation.md
       - "Drawing labels: a survey": plugins/segmentation-survey.md
       - Registration: plugins/registration.md
-      - Volume rendering: plugins/volume-rendering.md
       - Anatomical rendering: plugins/anatomical-rendering.md
       - Collections: plugins/collections.md
       - Filters: plugins/filters.md
@@ -63,12 +62,16 @@ nav:
       - Time series: plugins/time-series.md
       - Ideas for new plugins: plugins/ideas.md
       - Page template: plugins/template.md
+      - SDK reference: plugins/sdk.md
   - Contributing: contributing.md
-  - Design notes:
-      - The repository plan: editor_repo_plan.md
   - Development:
       - "Audit, part 1: platform and seven plugins": dev/audit.md
       - "Audit, part 2: annotations to capture": dev/audit-2.md
       - "Speed: startup, bundle, first image, memory, drawing": dev/speed.md
       - "Workflows: ten tasks, counted": dev/workflows.md
       - "Code review: shared helpers, dead code, bugs, tests": dev/code-review.md
+      - "Cinematic Anatomy, and where Anatomical rendering stands": dev/cinematic-anatomy-survey.md
+      - "Anatomical rendering: the remaining features": dev/cinematic-roadmap.md
+      - "Security: what the app protects, and what it allows": dev/security.md
+      - "Casts into Neuroglancer's internals": dev/neuroglancer-casts.md
+      - "Patches for the Neuroglancer fork": fork-patches/README.md

@@ -36,7 +36,7 @@ import {
   resolveGeometryKind,
 } from "./geometry_kind.js";
 import { intraLinksPath } from "./links.js";
-import { mapConcurrent } from "./util.js";
+import { mapConcurrent, warnOnce } from "./util.js";
 import type { ZarrArrayRead } from "./zarr_array.js";
 import {
   coalesceRangeReads,
@@ -44,6 +44,7 @@ import {
   ShardIndexCache,
   ZarrArrayReader,
 } from "./zarr_array.js";
+import { NotFoundError } from "neuroglancer/unstable/kvstore/index.js";
 import { joinBaseUrlAndPath } from "neuroglancer/unstable/kvstore/url.js";
 import { allSiPrefixes, supportedUnits } from "neuroglancer/unstable/util/si_units.js";
 
@@ -145,6 +146,62 @@ export interface ZarrVectorsStoreAccess {
   /** Child directory names of `path`; throws if listing is unsupported. */
   listDirectories(path: string, signal?: AbortSignal): Promise<string[]>;
   shardIndexes: ShardIndexCache;
+  /** The store's URL, when it has one: named in its warnings. */
+  url?: string;
+}
+
+/** How often a read that failed on the network is tried, and the first wait between tries. */
+export interface ReadRetry {
+  attempts: number;
+  delayMs: number;
+}
+
+/** Four tries over about two seconds: a dropped connection, not an outage. */
+export const READ_RETRY: ReadRetry = { attempts: 4, delayMs: 250 };
+
+/**
+ * A read that failed on the network every time it was tried. It has
+ * status 0, as Neuroglancer's network errors do, so callers that keep
+ * results (see `retryable` in util.ts) know not to keep it.
+ */
+export class ReadFailedError extends Error {
+  readonly status = 0;
+}
+
+/**
+ * What a failed read from a kvstore context means: `undefined` when the key
+ * is not there (404, or 403 as S3 says it), the error otherwise. Neuroglancer
+ * reports a network or CORS failure (status 0) as "not found" too, which
+ * would make a dropped connection read as an empty cell; with
+ * `throwIfMissing` its cause still tells the two apart.
+ */
+function missingOrThrow(e: unknown): undefined {
+  if (e instanceof NotFoundError) {
+    const cause = (e as { cause?: unknown }).cause;
+    if ((cause as { status?: unknown } | undefined)?.status === 0) throw cause;
+    return undefined;
+  }
+  throw e;
+}
+
+/** A network or CORS failure, as `fetch` (TypeError) or Neuroglancer (status 0) reports it. */
+function isNetworkError(e: unknown): boolean {
+  return e instanceof TypeError || (e as { status?: unknown } | null)?.status === 0;
+}
+
+function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve, reject) => {
+    signal?.throwIfAborted();
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal!.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 /** Store access through a (frontend or worker) kvstore context. */
@@ -158,17 +215,57 @@ export function kvStoreAccess(
   },
   storeUrl: string,
   shardIndexes = new ShardIndexCache(),
+  retry: ReadRetry = READ_RETRY,
 ): ZarrVectorsStoreAccess {
+  const readOnce = async (
+    path: string,
+    options: Parameters<ZarrArrayRead>[1],
+  ) => {
+    const { byteRange } = options;
+    const response = await context
+      .read(joinBaseUrlAndPath(storeUrl, path), {
+        signal: options.signal,
+        byteRange,
+        throwIfMissing: true,
+      })
+      .catch(missingOrThrow);
+    if (response === undefined) return undefined;
+    return { response, bytes: new Uint8Array(await response.response.arrayBuffer()) };
+  };
+  // A network failure is tried again a few times, waiting longer each
+  // time; then it fails the read (and the chunk), never reading as empty.
+  const readWithRetry: typeof readOnce = async (path, options) => {
+    for (let attempt = 1; ; ++attempt) {
+      try {
+        return await readOnce(path, options);
+      } catch (e) {
+        options.signal?.throwIfAborted();
+        if (!isNetworkError(e)) throw e;
+        if (attempt >= retry.attempts) {
+          warnOnce(
+            "some data could not be read (network error); it is read again " +
+              "when the view comes back to it",
+            storeUrl,
+          );
+          throw new ReadFailedError(
+            `${path}: network error, ${attempt} tries`,
+            { cause: e },
+          );
+        }
+        await sleep(
+          retry.delayMs * 2 ** (attempt - 1) * (1 + Math.random() / 2),
+          options.signal,
+        );
+      }
+    }
+  };
   return {
     // Cells of one shard needed together are fetched together.
     read: coalesceRangeReads(async (path, options) => {
       const { byteRange } = options;
-      const response = await context.read(joinBaseUrlAndPath(storeUrl, path), {
-        signal: options.signal,
-        byteRange,
-      });
-      if (response === undefined) return undefined;
-      const bytes = new Uint8Array(await response.response.arrayBuffer());
+      const read = await readWithRetry(path, options);
+      if (read === undefined) return undefined;
+      const { response, bytes } = read;
       if (byteRange === undefined) return bytes;
       // A server may ignore the range and send more, such as the whole
       // file; keep only what was asked for, wherever it starts.
@@ -198,6 +295,7 @@ export function kvStoreAccess(
         .filter((d) => d !== "");
     },
     shardIndexes,
+    url: storeUrl,
   };
 }
 

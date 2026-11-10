@@ -35,7 +35,7 @@ OME-Zarr. The scripts are kept in the session's scratchpad (`d4/flows`).
 | 2 | Open a two-channel OME-Zarr by URL, set each channel's contrast to 1–99 % | 10 | **5** | — |
 | 3 | Copy a link to the current view | 2 | 2 | — |
 | 4 | On an image, mark three points and save them as CSV | 10 | **7** | Annotations is offered only once an annotation layer exists; a new layer's Point tool is on, and picking it turns it off |
-| 5 | On an image, paint a label and save it as NIfTI | 9 | **7** | Segmentation is offered only for a segmentation: turn it on in the Plugins tab |
+| 5 | On an image, paint a label and save it as NIfTI | 9 | **7** | Segmentation is offered only for a segmentation: turn it on in the Plugins panel |
 | 6 | Two images: three landmark pairs, save the transform (LTA) | 10 | **9** | — |
 | 7 | A 4-D image: pin two voxels' time courses, save the CSV | 5 | 5 | — |
 | 8 | Draw a tractogram the Luxar way | 3 | 3 | — |
@@ -59,7 +59,7 @@ the radius · ++alt+shift+s++ over region B · type the radius · **Save
 
 **What changed.** ++alt+shift+s++ and ++alt+shift+b++ put a sphere or a
 box at the mouse (at the views' centre when the mouse is elsewhere), in
-the group being edited or a new one, and show the Filtering tab. The
+the group being edited or a new one, and show the Track filtering panel. The
 empty group list says so, and offers **+ Sphere** and **+ Box** itself
 (a region makes the group). Building this found a bug: a layer added
 while the mouse was over a view (the group's layer, from the key) threw
@@ -74,11 +74,11 @@ point.)
 ### 2. A remote OME-Zarr, contrast 1–99 %
 
 **Before (10):** **Add** · *Dataset from a URL…* · paste into Source ·
-**Add** · Render tab · scroll to the contrast control · **1-99%** · the
-Dapi channel · Render tab again (the other channel opened on Source) ·
+**Add** · Display tab · scroll to the contrast control · **1-99%** · the
+Dapi channel · Display tab again (the other channel opened on Source) ·
 **1-99%**.
 
-**After (5):** ++ctrl+v++ on the window · Render tab · **1-99%** · the
+**After (5):** ++ctrl+v++ on the window · Display tab · **1-99%** · the
 Dapi channel · **1-99%**.
 
 **What changed.**
@@ -88,11 +88,11 @@ Dapi channel · **1-99%**.
   path ending in `.zarr`, `.n5`, `.nii.gz`, `.trk` and the like); another
   web address is asked about first; a pasted Neuroglancer link or state
   asks whether to open it (it replaces the workspace) or open it as a new
-  scene (`pasteAction` in `src/core/state_io.ts`). The empty Datasets tab
-  says so.
-- The Render tab shows the shader's controls (contrast, colour) above the
+  scene (`pasteAction` in `src/core/state_io.ts`). The start card over
+  an empty scene says so ("Or drop files here").
+- The Display tab (once Render) shows the shader's controls (contrast, colour) above the
   shader's code, so the contrast is in view without scrolling.
-- Picking another view of a dataset in the Layer tab's header keeps the
+- Picking another view of a dataset in the Layers tab's header keeps the
   tab you are on.
 - A bug: until the histogram and the colour bar first draw, their
   canvases keep the default 300 × 150 size and lay over the **Min-Max**,
@@ -119,7 +119,7 @@ data* · **Point** (with no layer yet, it makes one) · three Ctrl+clicks ·
 **Save CSV** (the table opens with the first point).
 
 **What changed.** Annotations and Segmentation are listed under *Tools
-for this data* for any image, in the Datasets tab only (no toast: a use
+for this data* for any image, in the Layers tab only (no toast: a use
 worth offering, not pressing). Offers can now say "list only"
 (`plugins/offers.ts`). The tool that is on is highlighted and named under
 the tools: "Point is on: Ctrl+click a point in a view. Pick it again to
@@ -127,7 +127,7 @@ stop."
 
 ### 5. Paint a label on an image, saved as NIfTI
 
-**Before (9):** drop the image · Plugins tab · scroll to Segmentation ·
+**Before (9):** drop the image · Plugins panel · scroll to Segmentation ·
 its switch · **Create** · two brush strokes · **Save** · save dialog.
 
 **After (7):** drop the image · **Segmentation** under *Tools for this
@@ -167,7 +167,7 @@ filtered view could not be saved as a file (Export now saves it).
 
 ### 10. Compare two scenes (7, unchanged)
 
-Drop the image · right-click the scene tab · *Duplicate* · Render tab ·
+Drop the image · right-click the scene tab · *Duplicate* · Display tab ·
 *Colour map: Viridis* · Scene 1 tab · Scene 2 tab.
 
 ## Left, with estimates

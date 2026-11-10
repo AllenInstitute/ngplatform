@@ -1,16 +1,67 @@
 /**
- * The Python tab: a Python console (Pyodide, CPython compiled to
- * WebAssembly) running in this page, loaded the first time the tab opens.
+ * The Python panel (Activity dock): a Python console (Pyodide, CPython compiled to
+ * WebAssembly) running in this page, loaded the first time the panel opens.
  * `ngp` drives the workspace: the scene's Neuroglancer state as a dict, its
  * layers, the position, and every command in the palette; arrays made here
  * show as layers (ngp.show).  numpy, scipy and the other Pyodide packages
  * load when imported.
+ *
+ * Pyodide comes from cdn.jsdelivr.net, at a pinned version, so the Python
+ * panel needs the network the first time it opens (the browser caches it
+ * after).  Its two scripts are checked against the hashes below
+ * (Subresource Integrity) before they run; the WebAssembly and standard
+ * library they then load are not, and the packages are checked by Pyodide
+ * against its own lock file.
  */
+import { asTool } from "../docks.js";
 import { clear, h } from "../dom.js";
 import type { Workbench } from "../workbench.js";
 
 // The same Pyodide as chunkmirage's engine (vendor/chunkmirage/web/src/pyworker.ts), so the browser fetches and caches one.
 const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/";
+/**
+ * The SHA-384 of Pyodide 0.28.3's scripts, for Subresource Integrity:
+ * `curl -s <PYODIDE><file> | openssl dgst -sha384 -binary | base64`.
+ * Moving PYODIDE to another version needs these made again.
+ */
+export const PYODIDE_INTEGRITY = {
+  "pyodide.mjs": "sha384-81fS7esAvlEVAVK509OWewC3dTwye8WYv/Qw69eL8WcPB/67xk3ju1SxzR3KAEzr",
+  "pyodide.asm.js": "sha384-r0/vSQNahhZUJBO7ne5kqeNO4O9xSg658nGR6cGiQtzyIYSOfY9J8JUwOUdUMEkd",
+};
+
+/** A classic script, run only when its bytes match `integrity`. */
+function scriptWithIntegrity(src: string, integrity: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    script.integrity = integrity;
+    script.crossOrigin = "anonymous";
+    script.onload = () => resolve();
+    script.onerror = () => {
+      script.remove();
+      reject(new Error(`could not load ${src}, or it is not the file this app expects`));
+    };
+    document.head.append(script);
+  });
+}
+
+/**
+ * Pyodide's module, its scripts checked first: pyodide.asm.js run by a
+ * script element with its hash (Pyodide then finds it there rather than
+ * loading it again), pyodide.mjs fetched with its hash and imported from
+ * the checked copy.
+ */
+async function importPyodide(): Promise<{ loadPyodide(o: { indexURL: string }): Promise<Pyodide> }> {
+  await scriptWithIntegrity(`${PYODIDE}pyodide.asm.js`, PYODIDE_INTEGRITY["pyodide.asm.js"]);
+  const response = await fetch(`${PYODIDE}pyodide.mjs`, { integrity: PYODIDE_INTEGRITY["pyodide.mjs"] });
+  if (!response.ok) throw new Error(`${PYODIDE}pyodide.mjs answered ${response.status}`);
+  const url = URL.createObjectURL(new Blob([await response.text()], { type: "text/javascript" }));
+  try {
+    return (await import(/* @vite-ignore */ url)) as { loadPyodide(o: { indexURL: string }): Promise<Pyodide> };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
 
 interface PyProxyLike {
   (...args: unknown[]): Promise<unknown>;
@@ -187,14 +238,15 @@ class _Workspace:
     def viewer(self):
         return _bridge.viewer()
 
-    def panel(self, title, id=None, slot="left"):
-        """Adds a tab (slot "left", "right" or "bottom") drawn by a function given the
-        tab's element, when shown and again whenever the workspace changes:
-        @ngp.panel("My tab")
+    def panel(self, title, id=None, slot="left", group="Python"):
+        """Adds a panel drawn by a function given the panel's element, when shown and
+        again whenever the workspace changes.  A tool (slot "left") goes to the Tools
+        dock, listed under group; slot "bottom" puts it in the Activity dock:
+        @ngp.panel("My panel")
         def draw(host): host.textContent = f"{len(ngp.layers())} layers"
         """
         def register(function):
-            _bridge.registerPanel(id or function.__name__, title, slot, function)
+            _bridge.registerPanel(id or function.__name__, title, slot, function, group)
             return function
         return register
 
@@ -266,12 +318,12 @@ export async function runPythonPlugin(wb: Workbench, owner: string, source: stri
   }
 }
 
-/** Where printed output goes while the Python tab is open. */
+/** Where printed output goes while the Python panel is open. */
 let pythonSink: ((text: string, kind: "out" | "err") => void) | undefined;
 
 export function loadPython(wb: Workbench): Promise<Pyodide> {
   pyodide ??= (async () => {
-    const module = (await import(/* @vite-ignore */ `${PYODIDE}pyodide.mjs`)) as { loadPyodide(o: { indexURL: string }): Promise<Pyodide> };
+    const module = await importPyodide();
     const py = await module.loadPyodide({ indexURL: PYODIDE });
     const { engine, store, commands } = wb;
     py.registerJsModule("_ngp_bridge", {
@@ -325,17 +377,19 @@ export function loadPython(wb: Workbench): Promise<Pyodide> {
           kept.destroy?.();
         });
       },
-      registerPanel: (id: string, title: string, slot: string, fn: { (host: HTMLElement): unknown; destroy?(): void; copy?(): typeof fn }) => {
+      registerPanel: (id: string, title: string, slot: string, fn: { (host: HTMLElement): unknown; destroy?(): void; copy?(): typeof fn }, group?: string | null) => {
         const owner = pythonOwner;
         const own = pythonCommands.get(owner) ?? new Map<string, () => void>();
         pythonCommands.set(owner, own);
         const tab = `python.${owner}.${id}`.replace(/[^A-Za-z0-9_.-]/g, "_");
         own.get(tab)?.();
         const kept = fn.copy?.() ?? fn;
-        const off = wb.docks.addTab({
+        // Where a plugin's panel goes: a tool in the Tools dock, under its group.
+        const off = wb.docks.addTab(asTool({
           id: tab,
           title,
           slot: (["left", "right", "bottom"].includes(slot) ? slot : "left") as "left" | "right" | "bottom",
+          group: group || "Python",
           order: 95,
           owner: owner === "console" ? "python" : `python:${owner}`,
           // Drawn when shown, and again (a moment later) whenever the workspace changes.
@@ -359,7 +413,7 @@ export function loadPython(wb: Workbench): Promise<Pyodide> {
               offChange();
             };
           },
-        });
+        }));
         own.set(tab, () => {
           off();
           kept.destroy?.();
@@ -367,7 +421,7 @@ export function loadPython(wb: Workbench): Promise<Pyodide> {
       },
     });
     await py.runPythonAsync(PRELUDE);
-    // Printed output goes to the Python tab when it is open, else to the Activity tab (a command's print, say).
+    // Printed output goes to the Python panel when it is open, else to the Activity log (a command's print, say).
     py.setStdout({ batched: (t) => (pythonSink ? pythonSink(t, "out") : wb.log.add(t, "info", "Python")) });
     py.setStderr({ batched: (t) => (pythonSink ? pythonSink(t, "err") : wb.log.add(t, "error", "Python")) });
     return py;

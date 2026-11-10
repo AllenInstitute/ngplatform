@@ -33,13 +33,21 @@ import {
   ZarrVectorsMeshSourceParameters,
   ZarrVectorsObjectSkeletonSourceParameters,
   ZARR_VECTORS_SEED_OBJECT_TABLE_RPC_ID,
+  ZARR_VECTORS_SHADER_VALUES_RPC_ID,
+  ZARR_VECTORS_WARNING_RPC_ID,
 } from "./base.js";
-import type { DenseChunkData } from "./chunk_pipeline.js";
 import { LevelPipeline } from "./chunk_pipeline.js";
+import type { DrawAttribute, DrawChunkData } from "./dense_pack.js";
+import { drawBytesPerVertex, drawChunkBytes, drawLayout } from "./dense_pack.js";
+import { KIND_CAPABILITIES } from "./geometry_kind.js";
 import {
+  dense3dBudget,
   DRAWS_2D,
   DRAWS_3D,
   forEachDenseChunkToLoad,
+  perChunkLevels,
+  selectDense3dChunks,
+  setNodePosition,
 } from "./dense_lod.js";
 import {
   objectMeshLayout,
@@ -51,7 +59,7 @@ import {
   ObjectReader,
 } from "./object_reader.js";
 import type { ZarrVectorsObjectTable } from "./objects.js";
-import { seedObjectTable } from "./objects.js";
+import { seedObjectTable, setShaderValueSource } from "./objects.js";
 import type { ZarrVectorsStoreAccess } from "./store.js";
 import { kvStoreAccess } from "./store.js";
 import type { SharedKvStoreContextCounterpart } from "neuroglancer/unstable/kvstore/backend.js";
@@ -90,6 +98,7 @@ import {
 } from "neuroglancer/unstable/visibility_priority/backend.js";
 import type { RPC } from "neuroglancer/unstable/worker_rpc.js";
 import { registerRPC, registerSharedObject } from "neuroglancer/unstable/worker_rpc.js";
+import { setWarningSink } from "./util.js";
 
 const accesses = new Map<
   string,
@@ -98,6 +107,37 @@ const accesses = new Map<
 
 /** Object tables the frontend sent, by store URL then level path. */
 const seededTables = new Map<string, Map<string, ZarrVectorsObjectTable>>();
+
+// Warnings found here go to the main thread, which shows them to the user
+// (once per store); Neuroglancer's chunk worker keeps its RPC on globalThis.
+setWarningSink((warning) =>
+  (globalThis as { rpc?: RPC }).rpc?.invoke(ZARR_VECTORS_WARNING_RPC_ID, warning),
+);
+
+// The object values shaders read come from the main thread, which reads
+// the same columns for the Segments tab: each is downloaded once.
+setShaderValueSource((access, levelPath, wanted) => {
+  const rpc = (globalThis as { rpc?: RPC }).rpc;
+  if (rpc === undefined || access.url === undefined) return undefined;
+  return rpc
+    .promiseInvoke<{
+      values?: Float32Array[];
+      missing?: boolean;
+      error?: string;
+      retry?: boolean;
+    }>(ZARR_VECTORS_SHADER_VALUES_RPC_ID, {
+      storeUrl: access.url,
+      levelPath,
+      wanted,
+    })
+    .then((answer) => {
+      if (answer.error !== undefined) {
+        // A network failure stays one, so the chunk is read again later.
+        throw answer.retry ? new TypeError(answer.error) : new Error(answer.error);
+      }
+      return answer.missing ? undefined : answer.values;
+    });
+});
 
 registerRPC(ZARR_VECTORS_SEED_OBJECT_TABLE_RPC_ID, function (x) {
   const { storeUrl, levelPath, table } = x as {
@@ -149,37 +189,43 @@ function storeAccess(
 // ------------------------------------------------------------ dense chunks
 
 export class ZarrVectorsDenseChunk extends SliceViewChunk {
-  data: DenseChunkData | undefined;
+  data: DrawChunkData | undefined;
+  /**
+   * The chunk manager's priority round in which a 3-D view last asked for
+   * the chunk: a chunk no 3-D view asks for is drawn in cross-sections only.
+   */
+  wanted3d = -1;
+  /** Loaded for cross-sections only, without its bridges off the plane. */
+  partialBridges = false;
 
   serialize(msg: any, transfers: any[]) {
     super.serialize(msg, transfers);
     const { data } = this;
     if (data !== undefined) {
       msg.data = data;
-      transfers.push(
+      const buffers = new Set<ArrayBufferLike>([
         data.positions.buffer,
-        data.segmentIds.buffer,
+        data.vertexObjects.buffer,
+        data.objectIds.buffer,
         data.edges.buffer,
-        ...(data.faces.byteLength > 0 ? [data.faces.buffer] : []),
-        ...data.attributes.map((a) => a.buffer),
-      );
+        data.faces.buffer,
+      ]);
+      for (const a of data.attributes) if (a !== undefined) buffers.add(a.buffer);
+      for (const b of buffers) if (b.byteLength > 0) transfers.push(b);
     }
     this.data = undefined;
   }
 
   downloadSucceeded() {
     const { data } = this;
-    let bytes = 0;
+    let bytes = { gpu: 0, cpu: 0 };
     if (data !== undefined) {
-      bytes =
-        data.positions.byteLength +
-        data.segmentIds.byteLength +
-        data.edges.byteLength +
-        data.faces.byteLength;
-      for (const a of data.attributes) bytes += a.byteLength;
+      const source = this.source as ZarrVectorsGeometryChunkSourceBackend;
+      bytes = drawChunkBytes(data, source.layout);
+      source.knownBytes.set(this.key!, bytes.gpu);
     }
-    this.systemMemoryBytes = bytes;
-    this.gpuMemoryBytes = bytes;
+    this.systemMemoryBytes = bytes.cpu;
+    this.gpuMemoryBytes = bytes.gpu;
     super.downloadSucceeded();
   }
 
@@ -199,10 +245,25 @@ export class ZarrVectorsGeometryChunkSourceBackend extends WithParameters(
   ZarrVectorsGeometryChunkSourceParameters,
 ) {
   private pipeline_: LevelPipeline | undefined;
+  private layout_: DrawAttribute[] | undefined;
+  /** GPU bytes of each chunk read so far, by key, for the 3-d view's budget. */
+  knownBytes = new Map<string, number>();
+
+  /** The values the shader reads per vertex, as chunks carry them. */
+  get layout(): DrawAttribute[] {
+    return (this.layout_ ??= drawLayout(this.parameters.description));
+  }
+
+  get isMesh(): boolean {
+    return (
+      KIND_CAPABILITIES[this.parameters.description.geometryKind].primitive ===
+      "triangles"
+    );
+  }
 
   private get pipeline() {
     if (this.pipeline_ === undefined) {
-      const { storeUrl, description, level } = this.parameters;
+      const { storeUrl, description, level, objectValues } = this.parameters;
       this.pipeline_ = new LevelPipeline(
         storeAccess(this, storeUrl),
         description,
@@ -214,16 +275,29 @@ export class ZarrVectorsGeometryChunkSourceBackend extends WithParameters(
             chunk.priorityTier !== ChunkPriorityTier.RECENT
           );
         },
+        objectValues === undefined ? undefined : new Set(objectValues),
       );
     }
     return this.pipeline_;
   }
 
   async download(chunk: ZarrVectorsDenseChunk, signal: AbortSignal) {
-    chunk.data = await this.pipeline.download(
+    const round = () => this.chunkManager.recomputeChunkPriorities.count;
+    const sliceOnly = chunk.wanted3d !== round();
+    chunk.data = await this.pipeline.downloadForDrawing(
       Array.from(chunk.chunkGridPosition, Math.round),
       signal,
+      // Bridges only into neighbours at hand (read, or drawn by a view at
+      // this level): the far ends of the rest cost most of a big cell.
+      { sliceOnly, neighboursAtHand: true },
     );
+    // Read for cross-sections, a 3-D view reads it again with the
+    // neighbours it draws at hand.
+    chunk.partialBridges = sliceOnly && (chunk.data?.ghostsLeftOut ?? 0) > 0;
+    // A 3-D view asked for it meanwhile: the next round reads it again.
+    if (chunk.partialBridges && chunk.wanted3d === round()) {
+      this.chunkManager.scheduleUpdateChunkPriorities();
+    }
   }
 }
 ZarrVectorsGeometryChunkSourceBackend.prototype.chunkConstructor =
@@ -524,6 +598,24 @@ export class ZarrVectorsDenseRenderLayerBackend extends withChunkManager(
     };
   }
 
+  /**
+   * Lets a loaded chunk go so that it is read again, as the chunk queue
+   * does when it evicts one for room.
+   */
+  private reloadChunk(chunk: ZarrVectorsDenseChunk) {
+    // A chunk no view held last round would be dropped from its source by
+    // this; it is let go in the next round instead, once it is held.
+    if (chunk.priorityTier === ChunkPriorityTier.RECENT) {
+      this.chunkManager.scheduleUpdateChunkPriorities();
+      return;
+    }
+    const queue = this.chunkManager.queueManager;
+    if (chunk.state === ChunkState.GPU_MEMORY) queue.freeChunkGPUMemory(chunk);
+    queue.freeChunkSystemMemory(chunk);
+    chunk.partialBridges = false;
+    queue.updateChunkState(chunk, ChunkState.QUEUED);
+  }
+
   private recomputeChunkPriorities() {
     this.chunkManager.registerLayer(this);
     for (const attachment of this.attachments.values()) {
@@ -552,31 +644,80 @@ export class ZarrVectorsDenseRenderLayerBackend extends withChunkManager(
       const renderScaleTarget = (
         isSliceView ? this.renderScaleTarget2d : this.renderScaleTarget3d
       ).value;
+      const visit = (
+        tsource: TransformedSource<any, any>,
+        isTarget: boolean,
+      ) => {
+        const chunk = (
+          tsource.source as ZarrVectorsGeometryChunkSourceBackend
+        ).getChunk(tsource.curPositionInChunks);
+        if (!isSliceView) {
+          chunk.wanted3d = this.chunkManager.recomputeChunkPriorities.count;
+          if (chunk.partialBridges && chunk.state <= ChunkState.SYSTEM_MEMORY) {
+            // Loaded for cross-sections without its bridges off the
+            // plane, which a 3-D view shows: read it again, whole.
+            this.reloadChunk(chunk);
+          }
+        }
+        if (isTarget) {
+          ++this.numVisibleChunksNeeded;
+          if (chunk.state === ChunkState.GPU_MEMORY) {
+            ++this.numVisibleChunksAvailable;
+          }
+        }
+        // The coarse stand-in loads first: it is small and fills the view.
+        this.chunkManager.requestChunk(
+          chunk,
+          priorityTier,
+          basePriority + (isTarget ? 0 : SCALE_PRIORITY_MULTIPLIER),
+        );
+      };
+      const sources = transformedSources[0];
+      if (!isSliceView && perChunkLevels(sources, this.chains)) {
+        // A level per chunk, nearest detail first, within a GPU budget.
+        const roots = selectDense3dChunks(
+          projectionParameters,
+          this.localPosition.value,
+          sources,
+          this.densities,
+          renderScaleTarget,
+          dense3dBudget(
+            this.chunkManager.queueManager.gpuMemoryCapacity.sizeLimit.value,
+          ),
+          drawBytesPerVertex(
+            (sources[0].source as ZarrVectorsGeometryChunkSourceBackend)
+              .parameters.description,
+          ),
+          (level, position) => {
+            const tsource = sources[level];
+            setNodePosition(tsource, position);
+            return (
+              tsource.source as ZarrVectorsGeometryChunkSourceBackend
+            ).knownBytes.get(tsource.curPositionInChunks.join());
+          },
+        );
+        for (const { root, leaves } of roots) {
+          for (const leaf of leaves) {
+            const tsource = sources[leaf.level];
+            setNodePosition(tsource, leaf.position);
+            visit(tsource, true);
+          }
+          if (leaves.length === 1 && leaves[0] === root) continue;
+          const tsource = sources[root.level];
+          setNodePosition(tsource, root.position);
+          visit(tsource, false);
+        }
+        continue;
+      }
       forEachDenseChunkToLoad(
         projectionParameters,
         this.localPosition.value,
-        transformedSources[0],
+        sources,
         this.densities,
         this.chains,
         renderScaleTarget,
         isSliceView,
-        (tsource, _levelIndex, isTarget) => {
-          const chunk = (
-            tsource.source as ZarrVectorsGeometryChunkSourceBackend
-          ).getChunk(tsource.curPositionInChunks);
-          if (isTarget) {
-            ++this.numVisibleChunksNeeded;
-            if (chunk.state === ChunkState.GPU_MEMORY) {
-              ++this.numVisibleChunksAvailable;
-            }
-          }
-          // The coarse stand-in loads first: it is small and fills the view.
-          this.chunkManager.requestChunk(
-            chunk,
-            priorityTier,
-            basePriority + (isTarget ? 0 : SCALE_PRIORITY_MULTIPLIER),
-          );
-        },
+        (tsource, _levelIndex, isTarget) => visit(tsource, isTarget),
       );
     }
   }

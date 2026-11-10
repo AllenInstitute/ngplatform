@@ -29,8 +29,14 @@
 import type { ProjectionParameters } from "neuroglancer/unstable/projection_parameters.js";
 import type { TransformedSource } from "neuroglancer/unstable/sliceview/base.js";
 import { forEachVisibleVolumetricChunk } from "neuroglancer/unstable/sliceview/base.js";
-import type { mat4 } from "neuroglancer/unstable/util/geom.js";
-import { mat3, mat3FromMat4, prod3 } from "neuroglancer/unstable/util/geom.js";
+import {
+  getFrustumPlanes,
+  isAABBVisible,
+  mat3,
+  mat3FromMat4,
+  mat4,
+  prod3,
+} from "neuroglancer/unstable/util/geom.js";
 
 const tempMat3 = mat3.create();
 
@@ -314,4 +320,312 @@ export function levelDensities(
     out[i] = Math.max(out[i]!, out[i + 1]!);
   }
   return out as number[];
+}
+
+// ------------------------------------------------------------ 3-d, per chunk
+
+/**
+ * The GPU bytes a 3-d view's chunks may take, by its estimate: half the GPU
+ * memory limit, the rest left to other layers and to the stand-ins.
+ */
+export function dense3dBudget(gpuMemoryLimit: number): number {
+  return gpuMemoryLimit / 2;
+}
+
+/** A chunk of one level, by its position in the display subspace of the chunk grid. */
+export interface DenseNode {
+  level: number;
+  position: Float32Array;
+}
+
+/** What a 3-d view draws under one of the coarsest level's chunks. */
+export interface DenseRoot {
+  root: DenseNode;
+  /** The chunks drawn in its place: itself, or finer chunks covering it. */
+  leaves: DenseNode[];
+}
+
+const tempMvp = new Float32Array(16) as unknown as mat4;
+const tempPlanes = new Float32Array(24);
+
+/**
+ * Whether a 3-d view can choose a level per chunk: no level adds to another
+ * (each region is drawn from exactly one), and each level's chunks nest in
+ * the next coarser level's.
+ */
+export function perChunkLevels(
+  transformedSources: readonly TransformedSource<any, any>[],
+  chains: readonly (readonly number[])[],
+): boolean {
+  if (transformedSources.length < 2) return false;
+  if (chains.some((c) => c.length > 1)) return false;
+  for (let l = 0; l + 1 < transformedSources.length; ++l) {
+    const fine = transformedSources[l].chunkLayout.size;
+    const coarse = transformedSources[l + 1].chunkLayout.size;
+    for (let i = 0; i < 3; ++i) {
+      const ratio = coarse[i] / fine[i];
+      if (!(ratio >= 1) || Math.abs(ratio - Math.round(ratio)) > 1e-6) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * The chunks a 3-d view draws, level by level per chunk, as Neuroglancer's
+ * multiscale meshes choose theirs: starting from the coarsest level's
+ * chunks in view, a chunk is replaced by the next finer level's chunks
+ * covering it while that level's vertices, as seen at the chunk's distance
+ * (the pixel size there), are still at least `renderScaleTarget` pixels
+ * apart. The nearest chunks are refined first, and none once the chunks
+ * chosen would take more than `budgetBytes` on the GPU (`knownBytes` for a
+ * chunk read before, else `bytesPerVertex` at its level's density, as dense
+ * as the coarsest chunk over it is), so a view close to a big store loads
+ * its nearest detail and not the rest.
+ *
+ * Frontend (drawing) and worker (requesting) call this with the same
+ * inputs, so they agree.
+ */
+export function selectDense3dChunks(
+  projectionParameters: ProjectionParameters,
+  localPosition: Float32Array,
+  transformedSources: readonly TransformedSource<any, any>[],
+  densities: readonly number[],
+  renderScaleTarget: number,
+  budgetBytes: number,
+  bytesPerVertex: number,
+  knownBytes?: (level: number, position: Float32Array) => number | undefined,
+): DenseRoot[] {
+  const numLevels = transformedSources.length;
+  const top = numLevels - 1;
+  const coarse = transformedSources[top];
+  const roots: DenseRoot[] = [];
+  forEachVisibleVolumetricChunk(
+    projectionParameters,
+    localPosition,
+    coarse,
+    () => {
+      const { curPositionInChunks, chunkDisplayDimensionIndices } = coarse;
+      const position = new Float32Array(3);
+      for (let i = 0; i < 3; ++i) {
+        position[i] = curPositionInChunks[chunkDisplayDimensionIndices[i]];
+      }
+      const root = { level: top, position };
+      roots.push({ root, leaves: [root] });
+    },
+  );
+  if (numLevels < 2 || roots.length === 0) return roots;
+  return refineDense3dChunks(
+    roots.map((r) => r.root),
+    {
+      viewProjectionMat: projectionParameters.viewProjectionMat,
+      width: projectionParameters.width,
+      height: projectionParameters.height,
+      transform: coarse.chunkLayout.transform,
+      chunkSizes: transformedSources.map((t) => t.chunkLayout.size),
+      lowerClip: coarse.lowerClipDisplayBound,
+      upperClip: coarse.upperClipDisplayBound,
+    },
+    densities,
+    renderScaleTarget,
+    budgetBytes,
+    bytesPerVertex,
+    knownBytes,
+  );
+}
+
+/** What {@link refineDense3dChunks} needs of the view and the levels. */
+export interface Dense3dView {
+  viewProjectionMat: mat4;
+  width: number;
+  height: number;
+  /** Stored units (the display subspace of the chunk grid) to display space. */
+  transform: mat4;
+  /** Each level's chunk size, finest first, in stored units. */
+  chunkSizes: ArrayLike<number>[];
+  /** The data's bounds, in stored units. */
+  lowerClip: ArrayLike<number>;
+  upperClip: ArrayLike<number>;
+}
+
+/**
+ * {@link selectDense3dChunks} from the coarsest level's chunks in view
+ * (`roots`, all of the coarsest level).
+ */
+export function refineDense3dChunks(
+  rootNodes: readonly DenseNode[],
+  view: Dense3dView,
+  densities: readonly number[],
+  renderScaleTarget: number,
+  budgetBytes: number,
+  bytesPerVertex: number,
+  knownBytes?: (level: number, position: Float32Array) => number | undefined,
+): DenseRoot[] {
+  const roots: DenseRoot[] = rootNodes.map((root) => ({ root, leaves: [root] }));
+  const { viewProjectionMat, width, height } = view;
+  // Stored units to clip space.
+  const m = mat4.multiply(tempMvp, viewProjectionMat, view.transform);
+  getFrustumPlanes(tempPlanes, m);
+  // Pixels per stored unit at w = 1, along the axis that is longest on screen.
+  let scale = 0;
+  for (let i = 0; i < 3; ++i) {
+    scale = Math.max(
+      scale,
+      Math.hypot(m[4 * i] * width, m[4 * i + 1] * height) / 2,
+    );
+  }
+  // The smallest w in view: on the near plane.
+  const [nearA, nearB, nearC, nearD] = tempPlanes.subarray(16, 20);
+  const minWClip =
+    m[3] * -nearD * nearA + m[7] * -nearD * nearB + m[11] * -nearD * nearC + m[15];
+  const { lowerClip, upperClip, chunkSizes } = view;
+
+  /** The node's box (stored units, clipped to the data), or undefined if out of view. */
+  const boxOf = (level: number, position: Float32Array) => {
+    const size = chunkSizes[level];
+    const lower = [0, 0, 0];
+    const upper = [0, 0, 0];
+    for (let i = 0; i < 3; ++i) {
+      lower[i] = Math.max(position[i] * size[i], lowerClip[i]);
+      upper[i] = Math.min((position[i] + 1) * size[i], upperClip[i]);
+      if (!(upper[i] >= lower[i])) return undefined;
+    }
+    return { lower, upper };
+  };
+  /** Stored units per pixel at the box's nearest point. */
+  const pixelSize = (box: { lower: number[]; upper: number[] }) => {
+    let w = m[15];
+    for (let i = 0; i < 3; ++i) {
+      const c = m[4 * i + 3];
+      w += c * (c > 0 ? box.lower[i] : box.upper[i]);
+    }
+    return Math.max(w, minWClip, 1e-9) / scale;
+  };
+  const volumeOf = (box: { lower: number[]; upper: number[] }) => {
+    let v = 1;
+    for (let i = 0; i < 3; ++i) v *= Math.max(box.upper[i] - box.lower[i], MIN_EXTENT);
+    return v;
+  };
+  /**
+   * Pixels between the level's vertices drawn in the box, as if they
+   * covered its projection evenly (its depth seen through).
+   */
+  const spacing = (level: number, volume: number, pixel: number) =>
+    1 / (pixel * Math.sqrt(densities[level] * Math.cbrt(volume)));
+  const target = Math.max(renderScaleTarget, 1e-3);
+  // A store's chunks can hold many times its mean density. A chunk read
+  // before counts at its own size; one not yet read, at its level's density
+  // scaled by how much denser than its level's mean the coarsest chunk over
+  // it turned out (`local`, per root), which loads first as the stand-in.
+  const local = new Float64Array(roots.length).fill(1);
+  const bytesOf = (
+    level: number,
+    volume: number,
+    position: Float32Array,
+    rootIndex: number,
+  ) =>
+    knownBytes?.(level, position) ??
+    densities[level] * volume * bytesPerVertex * local[rootIndex];
+
+  interface Candidate {
+    rootIndex: number;
+    node: DenseNode;
+    volume: number;
+    pixel: number;
+  }
+  let used = 0;
+  const queue: Candidate[] = [];
+  roots.forEach(({ root }, rootIndex) => {
+    const box = boxOf(root.level, root.position)!;
+    const volume = volumeOf(box);
+    const known = knownBytes?.(root.level, root.position);
+    const mean = densities[root.level] * volume * bytesPerVertex;
+    if (known !== undefined && mean > 0) local[rootIndex] = known / mean;
+    used += known ?? mean;
+    // Refined once its own size says how dense it is (when sizes are known
+    // at all), so no finer chunk is read only to be let go.
+    if (knownBytes === undefined || known !== undefined) {
+      queue.push({ rootIndex, node: root, volume, pixel: pixelSize(box) });
+    }
+  });
+  const leafSets = roots.map(() => new Map<string, DenseNode>());
+  roots.forEach(({ root }, i) => leafSets[i].set(`${root.level}:${root.position.join()}`, root));
+  // Nearest (finest pixels) first; a binary heap would do the same in fewer
+  // steps, but the queue holds at most a few hundred chunks.
+  while (queue.length > 0) {
+    let best = 0;
+    for (let i = 1; i < queue.length; ++i) {
+      if (queue[i].pixel < queue[best].pixel) best = i;
+    }
+    const c = queue[best];
+    queue[best] = queue[queue.length - 1];
+    queue.pop();
+    const finer = c.node.level - 1;
+    if (finer < 0) continue;
+    if (spacing(finer, c.volume, c.pixel) < target) continue;
+    const children: Candidate[] = [];
+    const size = chunkSizes[finer];
+    const parentSize = chunkSizes[c.node.level];
+    const lo = [0, 0, 0];
+    const hi = [0, 0, 0];
+    for (let i = 0; i < 3; ++i) {
+      lo[i] = Math.round((c.node.position[i] * parentSize[i]) / size[i]);
+      hi[i] = Math.round(((c.node.position[i] + 1) * parentSize[i]) / size[i]);
+    }
+    let childBytes = 0;
+    for (let x = lo[0]; x < hi[0]; ++x) {
+      for (let y = lo[1]; y < hi[1]; ++y) {
+        for (let z = lo[2]; z < hi[2]; ++z) {
+          const position = Float32Array.of(x, y, z);
+          const box = boxOf(finer, position);
+          if (
+            box === undefined ||
+            !isAABBVisible(
+              box.lower[0],
+              box.lower[1],
+              box.lower[2],
+              box.upper[0],
+              box.upper[1],
+              box.upper[2],
+              tempPlanes,
+            )
+          ) {
+            continue;
+          }
+          const volume = volumeOf(box);
+          childBytes += bytesOf(finer, volume, position, c.rootIndex);
+          children.push({
+            rootIndex: c.rootIndex,
+            node: { level: finer, position },
+            volume,
+            pixel: pixelSize(box),
+          });
+        }
+      }
+    }
+    const delta =
+      childBytes - bytesOf(c.node.level, c.volume, c.node.position, c.rootIndex);
+    if (used + delta > budgetBytes) continue;
+    used += delta;
+    const leaves = leafSets[c.rootIndex];
+    leaves.delete(`${c.node.level}:${c.node.position.join()}`);
+    for (const child of children) {
+      leaves.set(`${child.node.level}:${child.node.position.join()}`, child.node);
+      queue.push(child);
+    }
+  }
+  roots.forEach((r, i) => (r.leaves = [...leafSets[i].values()]));
+  return roots;
+}
+
+/** Points `tsource.curPositionInChunks` at a node's chunk. */
+export function setNodePosition(
+  tsource: TransformedSource<any, any>,
+  position: Float32Array,
+) {
+  const { curPositionInChunks, chunkDisplayDimensionIndices } = tsource;
+  for (let i = 0; i < 3; ++i) {
+    curPositionInChunks[chunkDisplayDimensionIndices[i]] = position[i];
+  }
 }

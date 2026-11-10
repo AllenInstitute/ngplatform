@@ -8,7 +8,7 @@
  * by reaching into the viewer, so a later "dataset" can differ from the
  * layers that show it without the UI noticing.
  */
-import { type SliceSpec, readSlice, writeSlice } from "../core/app_state.js";
+import { type SliceSpec, isStoredSlice, newerSlice, readSlice, writeSlice } from "../core/app_state.js";
 import { describeStep } from "../core/change_label.js";
 import { type HistoryData, type HistoryNode, type HistoryRow, StateHistory } from "../core/history.js";
 import { encodeFragment, type WorkspaceState } from "../core/state_io.js";
@@ -26,6 +26,7 @@ import {
   layersOf,
   moveScene,
   PLATFORM_KEY,
+  platformProblem,
   type PlatformState,
   readPlatform,
   removeScene,
@@ -83,6 +84,8 @@ export class WorkspaceStore {
   private lastEditKey: string | undefined;
   private listeners = new Set<() => void>();
   private sliceListeners = new Set<() => void>();
+  /** Slices already reported as unreadable since the workspace was opened. */
+  private reported = new Set<string>();
 
   constructor(
     readonly engine: EngineLike,
@@ -232,6 +235,9 @@ export class WorkspaceStore {
   private apply(state: WorkspaceState): void {
     const { [PLATFORM_KEY]: _platform, ...rest } = state.app;
     this.app = rest;
+    this.reported.clear();
+    const problem = platformProblem(state.app);
+    if (problem !== undefined) this.options.log(problem, "error");
     this.platform = readPlatform(state.app);
     this.engine.setState(state.ng);
     this.notifySlices();
@@ -593,7 +599,7 @@ export class WorkspaceStore {
 
   /**
    * Points a layer at the same data read another way (with the sign-in
-   * chosen for it in the Auth tab): one undo step, named `label`.  The
+   * chosen for it in Settings › Sign-in): one undo step, named `label`.  The
    * dataset keeps the new source too, for the next layer made from it.
    */
   setLayerSource(name: string, source: unknown, label: string): void {
@@ -668,7 +674,13 @@ export class WorkspaceStore {
   // -------------------------------------------------------- plugin slices
 
   getSlice<T>(spec: SliceSpec<T>): T {
-    return readSlice(this.app, spec);
+    return readSlice(this.app, spec, (message) => this.reportOnce(spec.key, message));
+  }
+
+  private reportOnce(key: string, message: string): void {
+    if (this.reported.has(key)) return;
+    this.reported.add(key);
+    this.options.log(message, "error");
   }
 
   setSlice<T>(spec: SliceSpec<T>, value: T): void {
@@ -677,10 +689,21 @@ export class WorkspaceStore {
     this.settle();
   }
 
-  /** Raw access for the plugin host, which knows each plugin's key and version. */
-  rawSlice(key: string): unknown {
+  /**
+   * Raw access for the plugin host, which knows each plugin's key and
+   * version.  Data stored by an older version is returned as it was (the
+   * plugin reads it by its shape); by a newer one, it is not read, and the
+   * user is told once.
+   */
+  rawSlice(key: string, version?: number): unknown {
     const stored = this.app[key];
-    return typeof stored === "object" && stored !== null && "data" in stored ? (stored as { data: unknown }).data : undefined;
+    if (!isStoredSlice(stored)) return undefined;
+    const newer = version === undefined ? undefined : newerSlice(key, stored.version, version);
+    if (newer !== undefined) {
+      this.reportOnce(key, `${newer} It is not read; a change here replaces it.`);
+      return undefined;
+    }
+    return stored.data;
   }
 
   setRawSlice(key: string, version: number, value: unknown): void {

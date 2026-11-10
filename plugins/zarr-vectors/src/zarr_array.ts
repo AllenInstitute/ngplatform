@@ -67,7 +67,8 @@ import {
   isElementType,
   numberToFloat16,
 } from "./dtype.js";
-import { AsyncLru, mapConcurrent } from "./util.js";
+import type { BudgetedCache, ByteBudget } from "./util.js";
+import { AsyncLru, DECODED_BUDGET, mapConcurrent } from "./util.js";
 import type { ByteRangeRequest } from "neuroglancer/unstable/kvstore/index.js";
 import { DataType } from "neuroglancer/unstable/util/data_type.js";
 
@@ -524,12 +525,14 @@ const COALESCE_MAX_LENGTH = 8 * 1024 * 1024;
  */
 const COALESCE_WINDOW_MS = 20;
 /**
- * Bytes of range reads kept, per store, to answer later reads of the same
- * bytes without a request. Objects requested in waves (the chunk manager
- * hands out so many downloads at a time) share cells, and a wave's merged
- * read of a cell spans most of what the next wave asks for.
+ * Range reads are kept, per store, to answer later reads of the same bytes
+ * without a request, within the worker's one budget for the data it keeps
+ * (`DECODED_BUDGET`). Objects requested in waves (the chunk manager hands
+ * out so many downloads at a time) share cells, and a wave's merged read of
+ * a cell spans most of what the next wave asks for. A range longer than
+ * this is not kept: a whole cell, which its reader keeps itself.
  */
-const RANGE_CACHE_BYTES = 256 * 1024 * 1024;
+const RANGE_CACHE_MAX_RANGE = 16 * 1024 * 1024;
 /**
  * A merged read is extended by this share of its length on each side (at
  * most the merge gap). A wave of objects sharing a cell asks for most of a
@@ -547,21 +550,36 @@ interface CachedRange {
 }
 
 /**
- * Range reads kept by key, bounded by bytes: a read inside a kept range is
- * answered from it (with a copy), the least recently used kept ranges going
- * first when the bound is passed.
+ * Range reads kept by key, charged to a byte budget shared with the
+ * worker's other caches: a read inside a kept range is answered from it
+ * (with a copy), the least recently used kept ranges going first when the
+ * budget (or `maxBytes`) is passed.
  */
-class RangeCache {
+export class RangeCache implements BudgetedCache {
   private ranges = new Map<string, CachedRange[]>();
   private bytes = 0;
   private clock = 0;
 
-  constructor(private readonly maxBytes: number) {}
+  constructor(
+    private readonly maxBytes = Infinity,
+    private readonly budget: ByteBudget | undefined = DECODED_BUDGET,
+    private readonly maxRange = RANGE_CACHE_MAX_RANGE,
+  ) {}
+
+  /** The bytes kept. */
+  get size(): number {
+    return this.bytes;
+  }
+
+  private key(path: string, r: CachedRange) {
+    return `${r.offset}\u0000${path}`;
+  }
 
   get(path: string, offset: number, length: number): Uint8Array | undefined {
     for (const r of this.ranges.get(path) ?? []) {
       if (r.offset <= offset && offset + length <= r.offset + r.bytes.length) {
         r.used = ++this.clock;
+        this.budget?.touch(this, this.key(path, r));
         const from = offset - r.offset;
         return r.bytes.slice(from, from + length);
       }
@@ -570,23 +588,48 @@ class RangeCache {
   }
 
   put(path: string, offset: number, bytes: Uint8Array) {
-    if (bytes.length === 0 || bytes.length > this.maxBytes / 4) return;
+    if (bytes.length === 0 || bytes.length > Math.min(this.maxRange, this.maxBytes / 4)) {
+      return;
+    }
     let kept = this.ranges.get(path);
     if (kept === undefined) this.ranges.set(path, (kept = []));
-    // Ranges this one covers are redundant now.
+    // Ranges this one covers are redundant now (and one at the same offset).
     for (let i = kept.length - 1; i >= 0; --i) {
       const r = kept[i];
       if (
         r.offset >= offset &&
         r.offset + r.bytes.length <= offset + bytes.length
       ) {
-        this.bytes -= r.bytes.length;
-        kept.splice(i, 1);
+        this.drop(path, kept, i);
       }
     }
-    kept.push({ offset, bytes, used: ++this.clock });
+    if (kept.length === 0) this.ranges.set(path, kept);
+    const range = { offset, bytes, used: ++this.clock };
+    kept.push(range);
     this.bytes += bytes.length;
+    this.budget?.charge(this, this.key(path, range), bytes.length);
     while (this.bytes > this.maxBytes) this.evict();
+  }
+
+  /** @internal The budget lets a range go. */
+  forget(key: string): void {
+    const at = key.indexOf("\u0000");
+    const offset = Number(key.slice(0, at));
+    const path = key.slice(at + 1);
+    const kept = this.ranges.get(path);
+    const i = kept?.findIndex((r) => r.offset === offset) ?? -1;
+    if (kept === undefined || i === -1) return;
+    this.bytes -= kept[i].bytes.length;
+    kept.splice(i, 1);
+    if (kept.length === 0) this.ranges.delete(path);
+  }
+
+  private drop(path: string, kept: CachedRange[], i: number) {
+    const r = kept[i];
+    this.budget?.release(this, this.key(path, r));
+    this.bytes -= r.bytes.length;
+    kept.splice(i, 1);
+    if (kept.length === 0) this.ranges.delete(path);
   }
 
   private evict() {
@@ -602,9 +645,7 @@ class RangeCache {
     }
     if (oldest === undefined || oldestPath === undefined) return;
     const kept = this.ranges.get(oldestPath)!;
-    kept.splice(kept.indexOf(oldest), 1);
-    if (kept.length === 0) this.ranges.delete(oldestPath);
-    this.bytes -= oldest.bytes.length;
+    this.drop(oldestPath, kept, kept.indexOf(oldest));
   }
 }
 
@@ -631,7 +672,7 @@ export function coalesceRangeReads(
   maxGap = COALESCE_MAX_GAP,
   maxLength = COALESCE_MAX_LENGTH,
   windowMs = COALESCE_WINDOW_MS,
-  cacheBytes = RANGE_CACHE_BYTES,
+  cacheBytes = Infinity,
 ): ZarrArrayRead {
   let pending = new Map<string, PendingRange[]>();
   let scheduled = false;

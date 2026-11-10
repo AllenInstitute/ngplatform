@@ -18,6 +18,12 @@ dependencies = []
 jobs = ["zarr-vectors-tools"]
 # The render service (ngplatform_render), on a computer with an NVIDIA GPU.
 render = ["numpy", "zarr>=3", "fsspec", "aiohttp", "pillow", "cupy-cuda12x"]
+# Fitting splats (the render service's --splat-python, a Python of its own): torch with CUDA, and the gsplat
+# whose API splat/fit.py is written against (GSPLAT_VERSION there).
+splat = ["numpy", "pillow", "torch", "gsplat==1.4.0"]
+# The tests (runner/tests), as CI runs them: without a GPU the render tests
+# that need CuPy skip, as do the filter tests without zarr-vectors-tools.
+test = ["pytest", "numpy", "zarr>=3", "fsspec", "aiohttp", "pillow"]
 
 [project.scripts]
 ngplatform-runner = "ngplatform_runner.__main__:main"

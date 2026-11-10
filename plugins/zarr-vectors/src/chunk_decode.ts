@@ -55,8 +55,15 @@ export interface DecodedChunk {
   edges: Uint32Array;
   /** Vertex index triples (meshes). */
   faces: Uint32Array;
-  /** Unit tangent per vertex, for kinds that have one. */
+  /** Unit tangent per vertex, for kinds that have one (not with `joinsPrevious`). */
   tangents: Float32Array | undefined;
+  /**
+   * For drawing (`DecodeChunkOptions.walkFlags`): per vertex, 1 where an
+   * edge joins it to the vertex before it, given in place of `edges` and
+   * `tangents` when every fragment is a run of rows in walk order. The
+   * shader draws those edges and derives the tangents from it.
+   */
+  joinsPrevious?: Uint8Array;
   /** One array per exposed attribute, `components` values per vertex. */
   attributes: Float32Array[];
   /**
@@ -86,17 +93,33 @@ export function forEachFragmentVertex(
   }
 }
 
-/** Edges joining consecutive vertices of each fragment. */
+/**
+ * Edges joining consecutive vertices of each fragment, in fragment order.
+ * Counted first, then written into one typed array: a level-0 cell holds
+ * millions of vertices.
+ */
 export function sequentialEdges(fragments: FragmentIndex): Uint32Array {
-  const out: number[] = [];
-  for (let f = 0; f < fragments.numFragments; ++f) {
-    let prev = -1;
-    forEachFragmentVertex(fragments, f, (v) => {
-      if (prev >= 0) out.push(prev, v);
-      prev = v;
-    });
+  const n = fragments.numFragments;
+  let count = 0;
+  for (let f = 0; f < n; ++f) count += Math.max(0, fragments.rowCount(f) - 1);
+  const out = new Uint32Array(2 * count);
+  let k = 0;
+  for (let f = 0; f < n; ++f) {
+    if (fragments.isRange(f)) {
+      const { start, count } = fragments.range(f);
+      for (let v = start + 1; v < start + count; ++v) {
+        out[k++] = v - 1;
+        out[k++] = v;
+      }
+    } else {
+      const rows = fragments.indices(f);
+      for (let i = 1; i < rows.length; ++i) {
+        out[k++] = rows[i - 1];
+        out[k++] = rows[i];
+      }
+    }
   }
-  return Uint32Array.from(out);
+  return out;
 }
 
 /**
@@ -134,6 +157,75 @@ function delta(positions: Float32Array, from: number, to: number) {
   return [0, 1, 2].map((d) => positions[3 * to + d] - positions[3 * from + d]);
 }
 
+/**
+ * The unit vector from row `a` to row `b`, written at row `v` (left zero
+ * where they coincide). The square root of the sum of squares is several
+ * times faster than `Math.hypot`, and the same once rounded to float32: the
+ * differences are exact, as they are of float32 values.
+ */
+function unitInto(
+  out: Float32Array,
+  positions: Float32Array,
+  v: number,
+  a: number,
+  b: number,
+) {
+  const dx = positions[3 * b] - positions[3 * a];
+  const dy = positions[3 * b + 1] - positions[3 * a + 1];
+  const dz = positions[3 * b + 2] - positions[3 * a + 2];
+  const norm = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  if (norm > 0) {
+    out[3 * v] = dx / norm;
+    out[3 * v + 1] = dy / norm;
+    out[3 * v + 2] = dz / norm;
+  }
+}
+
+/**
+ * Per vertex, 1 where the vertex before it is the previous vertex of the
+ * same fragment's walk; `undefined` unless every fragment is a run of
+ * consecutive rows in order (as curve stores are written), when these
+ * flags alone give the edges ({@link sequentialEdges}) and the tangents
+ * ({@link walkTangents}).
+ */
+export function walkJoins(
+  fragments: FragmentIndex,
+  numVertices: number,
+): Uint8Array | undefined {
+  const out = new Uint8Array(numVertices);
+  for (let f = 0; f < fragments.numFragments; ++f) {
+    if (fragments.isRange(f)) {
+      const { start, count } = fragments.range(f);
+      if (start + count > numVertices) return undefined;
+      for (let v = start + 1; v < start + count; ++v) out[v] = 1;
+      continue;
+    }
+    const rows = fragments.indices(f);
+    for (let i = 1; i < rows.length; ++i) {
+      if (rows[i] !== rows[i - 1] + 1 || rows[i] >= numVertices) return undefined;
+      out[rows[i]] = 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * The walk tangent of vertex `v` from {@link walkJoins}' flags, as
+ * {@link walkTangents} gives it (of `own` vertices), written at `at`.
+ */
+export function joinedTangentInto(
+  out: Float32Array,
+  at: number,
+  positions: Float32Array,
+  joins: Uint8Array,
+  v: number,
+) {
+  const prev = joins[v] ? v - 1 : v;
+  const next = v + 1 < joins.length && joins[v + 1] ? v + 1 : v;
+  out[3 * at] = out[3 * at + 1] = out[3 * at + 2] = 0;
+  unitInto(out, positions, at, prev, next);
+}
+
 /** Tangents along each fragment's walk (central differences, one-sided at ends). */
 export function walkTangents(
   positions: Float32Array,
@@ -141,14 +233,26 @@ export function walkTangents(
 ): Float32Array {
   const out = new Float32Array(positions.length);
   for (let f = 0; f < fragments.numFragments; ++f) {
-    const walk: number[] = [];
-    forEachFragmentVertex(fragments, f, (v) => walk.push(v));
+    if (fragments.isRange(f)) {
+      const { start, count } = fragments.range(f);
+      if (count < 2) continue;
+      const last = start + count - 1;
+      for (let v = start; v <= last; ++v) {
+        unitInto(out, positions, v, v > start ? v - 1 : v, v < last ? v + 1 : v);
+      }
+      continue;
+    }
+    const walk = fragments.indices(f);
     const n = walk.length;
     if (n < 2) continue;
     for (let i = 0; i < n; ++i) {
-      const prev = walk[Math.max(0, i - 1)];
-      const next = walk[Math.min(n - 1, i + 1)];
-      normalizeInto(out, walk[i], delta(positions, prev, next));
+      unitInto(
+        out,
+        positions,
+        walk[i],
+        walk[i > 0 ? i - 1 : 0],
+        walk[i < n - 1 ? i + 1 : n - 1],
+      );
     }
   }
   return out;
@@ -257,6 +361,16 @@ export interface DecodeChunkOptions {
   skipAttributes?: boolean;
   /** The `vertices` cell, when the caller has it (or its read) already. */
   vertices?: Promise<Uint8Array | undefined>;
+  /**
+   * For drawing: where every fragment is a run of rows in walk order, give
+   * {@link DecodedChunk.joinsPrevious} instead of edges and walk tangents.
+   */
+  walkFlags?: boolean;
+  /**
+   * Leave the object values' slots empty (zero length) rather than NaN per
+   * vertex: the caller gives them per object.
+   */
+  skipObjectValues?: boolean;
 }
 
 /** Decodes the chunk at `chunkKey`, or `undefined` if it is empty. */
@@ -337,7 +451,16 @@ export async function decodeChunk(
 
   let edges: Uint32Array = new Uint32Array(0);
   let faces: Uint32Array = new Uint32Array(0);
-  if (primitive === "triangles") {
+  const joinsPrevious =
+    options.walkFlags &&
+    primitive === "lines" &&
+    tangent === "walk" &&
+    linksConvention === "implicit_sequential"
+      ? walkJoins(fragments, numVertices)
+      : undefined;
+  if (joinsPrevious !== undefined) {
+    // Edges and tangents follow from the flags.
+  } else if (primitive === "triangles") {
     faces = triangulate(records, linkWidth);
   } else if (primitive === "lines") {
     edges =
@@ -347,7 +470,7 @@ export async function decodeChunk(
           ? branchedEdges(fragments, records, await options.relinkedChildren)
           : records;
   }
-  const tangents = options.skipTangents
+  const tangents = options.skipTangents || joinsPrevious !== undefined
     ? undefined
     : tangent === "walk"
       ? walkTangents(positions, fragments)
@@ -363,7 +486,9 @@ export async function decodeChunk(
       const path = `vertex_attributes/${a.name}`;
       // An object's value: filled in by whoever knows the objects.
       if (a.objectValue !== undefined) {
-        return new Float32Array(count).fill(NaN);
+        return options.skipObjectValues
+          ? new Float32Array(0)
+          : new Float32Array(count).fill(NaN);
       }
       if (bytes === undefined) {
         // Not stored here: unknown, not zero (0 can be a real value or code).
@@ -371,6 +496,7 @@ export async function decodeChunk(
           warnOnce(
             `${cells.levelPath} has no vertex attribute ${a.name}; it reads ` +
               "as NaN there",
+            cells.storeUrl,
           );
         }
         return new Float32Array(count).fill(NaN);
@@ -387,6 +513,7 @@ export async function decodeChunk(
         warnOnce(
           `${cells.levelPath}/${path} stores ${type} x${width} per vertex, ` +
             `not x${a.components}; it reads as NaN there`,
+          cells.storeUrl,
         );
         return new Float32Array(count).fill(NaN);
       }
@@ -415,6 +542,7 @@ export async function decodeChunk(
       warnOnce(
         `${cells.levelPath}/${column}: ${chunkKey} does not hold one ` +
           `${type} per fragment; objects there are found from the manifests`,
+        cells.storeUrl,
       );
     }
   } else if (!description.hasObjects) {
@@ -444,6 +572,7 @@ export async function decodeChunk(
     edges,
     faces,
     tangents,
+    joinsPrevious,
     attributes: decodedAttributes,
     segmentIds,
     fragmentIds,

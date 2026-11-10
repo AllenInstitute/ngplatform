@@ -5,9 +5,10 @@
  *
  * A group keeps the objects (streamlines, skeletons, points, segments,
  * annotations) that pass through its regions (spheres and boxes, each AND,
- * OR or NOT) and, for Zarr Vectors, whose attributes are in range.  Each group is a layer of the dataset, in its own
- * colour, so it shows and is switched on and off like any layer, here and in
- * the Datasets tab.  Regions are drawn in the views as annotations: drag one
+ * OR or NOT) and, for Zarr Vectors, whose attributes are in range and whose
+ * tags are kept.  Each group is a layer of the dataset, in its own colour,
+ * so it shows and is switched on and off like any layer, here and in the
+ * Layers panel.  Regions are drawn in the views as annotations: drag one
  * with Alt to move it, and the group follows.
  *
  * Speed: region tests run in a worker (roi_worker.ts) on the store's own
@@ -17,28 +18,31 @@
  * layer's temporary visible set, never stored: the groups are the plugin's
  * state (in the link, undoable) and the answer is recomputed from them.
  *
+ * The panel is built once from the SDK's parts (cards, fields, sliders, a
+ * status line) and brought up to date in place: its parts that change shape
+ * are regions, drawn again only when their key changes.
+ *
  * It uses only the plugin API and the Zarr Vectors package's reader.
  */
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
 import type { DatasetInfo, Disposer, Json, PlatformContext, PluginModule, RunnerJob, SegmentProperties } from "@ngplatform/sdk";
-import { downloadBlob, el } from "@ngplatform/sdk/dom";
+import { type Attrs, button, card, checkbox, type Child, downloadBlob, el, emptyState, field, iconButton, info, numberInput, region, select, slider, statusLine } from "@ngplatform/sdk/dom";
 import { precomputedUrl } from "@ngplatform/sdk/sources";
 import { annotationGeometry, annotationMeets } from "./annotation_regions.js";
-import { addDensity, densityGrid, displayMax, niftiFile } from "./density.js";
+import { addDensity, defaultVoxel, densityGrid, displayMax, niftiFile } from "./density.js";
 import type { NmRegion } from "./labels.js";
 import { LabelsEngine } from "./labels_client.js";
 import {
+  AnswerCounts,
   type ColumnStatistics,
   computeMask,
   countPassing,
   emptyFilter,
   type FilterSpec,
   groupStatistics,
-  histogram,
   isEmptyFilter,
   passingIds,
   statisticsCsv,
-  tagCounts,
   toCsv,
 } from "./filter.js";
 import { FILTERING_PANEL } from "./manifest.js";
@@ -46,9 +50,9 @@ import { multiply, placement } from "../annotations/geometry.js";
 import { layerStore, readableImages } from "../annotations/voxels.js";
 import { groupMask, type MaskSource, type Roi, type RoiEnds, type RoiGeometry, type RoiOp, type RoiShape, rowIndex, rowMask } from "./roi.js";
 import { type Curves, type Dimensions, previewLevel, RoiEngine, type RoiResult, type StoreInfo, toStore } from "./roi_client.js";
-import { cannotRun, groupPredicate, type JobRegion, safeName, type ZvfDocument } from "./runner_job.js";
-import { fileName, millimetres, trkBody, trkHeader, trkSpace, writeTrk } from "./trk.js";
-import { groupFiles, mergeGroups, type StoredGroup, withGroupsListed } from "./zv_groups.js";
+import { groupPredicate, type JobRegion, safeName, usesTags, type ZvfDocument } from "./runner_job.js";
+import { fileName, millimetres, trkBody, trkHeader, trkSpace } from "./trk.js";
+import { mergeGroups, type StoredGroup, writeGroups } from "./zv_groups.js";
 
 /**
  * What other plugins (the volume view) see of the track groups:
@@ -81,9 +85,17 @@ export interface Group {
 export interface Saved {
   dataset?: string;
   groups: Group[];
-  /** The group being edited. */
+  /** The group being edited: written with the next change, but choosing one is not a change of its own. */
   editing?: string;
 }
+
+/** What makes the readers region tests run in: the worker's for a store, the labels worker's for a segmentation (a test gives its own). */
+export interface Engines {
+  roi(url: string): RoiEngine;
+  labels(url: string): LabelsEngine;
+}
+
+const WORKERS: Engines = { roi: (url) => new RoiEngine(url), labels: (url) => new LabelsEngine(url) };
 
 /** Points per batch when saving .trk: about 48 MB of the file in memory at a time. */
 const BATCH_POINTS = 4_000_000;
@@ -106,6 +118,14 @@ const DISK_THICKNESS = 0.04;
  */
 const GROUP_STORE_POINTS = 8_000_000;
 const GROUP_STORE_DELAY_MS = 400;
+/** How often the panel follows progress, ms. */
+const PROGRESS_MS = 100;
+/**
+ * The largest .trk built for a download (browsers without a save dialog
+ * hold the whole file until it is saved); past it, Chrome or Edge, or the
+ * runner, write it to disk as it is made.
+ */
+export const DOWNLOAD_BYTES = 2 ** 30;
 /** A first look at a big group, from a sample level: about this many points at most. */
 const GROUP_PREVIEW_POINTS = 1_000_000;
 /** A density map's look: a heat colour map, clear where it is zero. */
@@ -173,6 +193,15 @@ interface SaveStream {
   abort(): Promise<void>;
 }
 
+/** Bytes at the start of a download held as bytes, to be written over (a .trk header is 1000). */
+const HELD_BYTES = 64 * 1024;
+
+/** Why a file is not built for a download. */
+export function tooBigToDownload(bytes: number, cap = DOWNLOAD_BYTES): string {
+  const gb = (b: number) => `${(b / 2 ** 30).toFixed(b < 10 * 2 ** 30 ? 1 : 0)} GB`;
+  return `it would be about ${gb(bytes)}, and this browser builds a download in memory (up to ${gb(cap)}). Save it in Chrome or Edge, or use Run on this computer`;
+}
+
 interface SaveTarget {
   name: string;
   /** True when parts go straight to disk; false when they are held until a download. */
@@ -190,10 +219,13 @@ type SavePicker = (options: unknown) => Promise<{ name: string; createWritable()
 /**
  * Where a file goes: chosen in the browser's save dialog where it has one
  * (asked first, while the click still counts as the user's), written to
- * disk part by part; else a download, assembled from its parts at the end.
- * `undefined` when the dialog is cancelled.
+ * disk part by part; else a download, assembled from its parts at the end:
+ * the parts are held as blobs (which the browser may keep out of the
+ * page's memory), the first ones as bytes so a header can be rewritten,
+ * and a file past `cap` bytes is refused.  `undefined` when the dialog is
+ * cancelled.
  */
-async function saveTarget(name: string, description: string, extension: string): Promise<SaveTarget | undefined> {
+export async function saveTarget(name: string, description: string, extension: string, cap = DOWNLOAD_BYTES): Promise<SaveTarget | undefined> {
   const picker = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker;
   if (picker !== undefined) {
     try {
@@ -220,22 +252,24 @@ async function saveTarget(name: string, description: string, extension: string):
     name,
     streams: false,
     async open() {
-      const parts: Uint8Array[] = [];
+      const parts: (Uint8Array | Blob)[] = [];
       let length = 0;
       return {
         async write(part) {
-          parts.push(new Uint8Array(part));
+          if (length + part.byteLength > cap) throw new Error(tooBigToDownload(length + part.byteLength, cap));
+          // The first few kB stay bytes (a header to rewrite); the rest blobs.
+          parts.push(length < HELD_BYTES ? new Uint8Array(part) : new Blob([part]));
           length += part.byteLength;
         },
         async writeAt(position, part) {
-          // Only into what is held: the first part (a header) in practice.
+          // Only into what is held as bytes: the first part (a header) in practice.
           let start = 0;
           for (const p of parts) {
-            if (position >= start && position + part.byteLength <= start + p.byteLength) {
+            if (p instanceof Uint8Array && position >= start && position + part.byteLength <= start + p.byteLength) {
               p.set(new Uint8Array(part), position - start);
               return;
             }
-            start += p.byteLength;
+            start += p instanceof Blob ? p.size : p.byteLength;
           }
           throw new Error(`cannot rewrite bytes ${position}..${position + part.byteLength} of ${length}`);
         },
@@ -252,91 +286,31 @@ async function saveTarget(name: string, description: string, extension: string):
 
 // ------------------------------------------------------------------- DOM
 
-/** A pencil, as the platform's edit icon draws it. */
-function pencil(): SVGSVGElement {
-  const ns = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("aria-hidden", "true");
-  const path = document.createElementNS(ns, "path");
-  path.setAttribute("d", "M4 20h4L19 9l-4-4L4 16zM14 6l4 4");
-  for (const [k, v] of Object.entries({ fill: "none", stroke: "currentColor", "stroke-width": "1.7", "stroke-linecap": "round", "stroke-linejoin": "round" })) path.setAttribute(k, v);
-  svg.append(path);
-  return svg;
-}
-
 function fmt(v: number): string {
   if (!Number.isFinite(v)) return "–";
   const a = Math.abs(v);
   return a !== 0 && (a < 0.01 || a >= 1e5) ? v.toExponential(2) : v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+/** What the shared parts do not draw: a group's swatch and count, a region's box, an attribute's histogram. */
 const STYLE = `
-.tf { display: grid; gap: 10px; }
-.tf-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.tf-groups { display: grid; gap: 3px; }
-.tf-group { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 5px 6px; border-radius: var(--r); border: 1px solid transparent; cursor: pointer; }
-.tf-group:hover { background: var(--ink-3); }
-.tf-group.editing { border-color: var(--select); background: var(--select-soft); }
-.tf-group .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-.tf-group .count { font: 11px/1 var(--mono); color: var(--muted); white-space: nowrap; }
-.tf-group .count.busy { color: var(--warn); }
-.tf-group .tf-edit { height: 22px; opacity: 0.5; }
-.tf-group:hover .tf-edit, .tf-group.editing .tf-edit { opacity: 1; }
-.tf-edit svg { width: 14px; height: 14px; }
-.tf-rename { font: 500 13px/1.2 var(--ui); height: 22px; min-width: 0; padding: 0 4px; border: 1px solid var(--select); border-radius: 0; background: var(--ink-0); color: var(--text); }
-.tf-swatch { width: 18px; height: 18px; padding: 0; border: 1px solid var(--line-strong); border-radius: 0; background: none; cursor: pointer; }
-.tf-swatch::-webkit-color-swatch-wrapper { padding: 0; }
-.tf-swatch::-webkit-color-swatch { border: 0; border-radius: 0; }
-.tf-swatch::-moz-color-swatch { border: 0; border-radius: 0; }
-.tf-editor { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
-.tf-name { font: 600 14px/1.3 var(--ui); background: transparent; border: 1px solid transparent; border-radius: 0; color: var(--text); padding: 2px 4px; min-width: 0; flex: 1; }
-.tf-name:hover, .tf-name:focus { border-color: var(--line); background: var(--ink-0); }
-.tf-status { font-size: 12px; color: var(--muted); }
-.tf-save { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.tf-save select { height: 24px; border-radius: 0; border: 1px solid var(--line); background: var(--ink-0); color: var(--text); font: 12px/1 var(--ui); max-width: 210px; }
-.tf-save-status { font: 11px/1.3 var(--mono); color: var(--faint); flex-basis: 100%; }
-.tf-status strong { color: var(--text); font: 600 16px/1 var(--mono); margin-right: 4px; }
-.tf-roi { border: 1px solid var(--line); border-radius: var(--r); padding: 6px 8px; display: grid; gap: 5px; }
-.tf-roi-head { display: flex; align-items: center; gap: 6px; }
-.tf-roi-head .label { font-weight: 500; flex: 1; }
-.tf-roi .tf-stats { border-top: 1px solid var(--line); padding-top: 8px; }
-.tf-stats .tf-row { margin: 6px 0; gap: 6px; }
-.tf-stats select { flex: 1; min-width: 0; height: 24px; border-radius: 0; border: 1px solid var(--line); background: var(--ink-0); color: var(--text); font: 12px/1 var(--ui); }
-.tf-stats-table { width: 100%; border-collapse: collapse; font: 11px/1.4 var(--mono); }
-.tf-stats-table th { text-align: left; font: 500 10px/1.4 var(--ui); color: var(--muted); padding: 2px 4px 2px 0; }
-.tf-stats-table td { padding: 2px 4px 2px 0; color: var(--text); white-space: nowrap; }
-.tf-stats-table td:first-child { white-space: normal; font-family: var(--ui); }
-.tf-roi .tf-ends select { height: 24px; border-radius: 0; border: 1px solid var(--line); background: var(--ink-0); color: var(--text); font: 12px/1 var(--ui); width: 100%; }
-.tf-roi select { height: 24px; border-radius: 0; border: 1px solid var(--line); background: var(--ink-0); color: var(--text); font: 600 11px/1 var(--mono); }
-.tf-xyz { display: grid; gap: 2px; }
-.tf-field { display: grid; grid-template-columns: 44px minmax(0, 1fr) 72px; align-items: center; gap: 6px; }
-.tf-field > span { font-size: 10px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; }
-.tf-field input[type="range"] { width: 100%; margin: 0; accent-color: var(--accent); }
-.tf-field input[type="number"] { width: 100%; box-sizing: border-box; height: 22px; border: 1px solid var(--line); border-radius: 0; background: var(--ink-0); color: var(--text); font: 12px/1 var(--mono); padding: 0 4px; }
-.tf-roi-status { font: 11px/1.3 var(--mono); color: var(--faint); }
-.tf-prop { border: 1px solid var(--line); border-radius: var(--r); padding: 8px; display: grid; gap: 4px; }
-.tf-prop.filtered { border-color: #8a8a8a; }
-.tf-prop-head { display: flex; align-items: baseline; gap: 6px; }
-.tf-prop-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tf-range { margin-left: auto; font: 11px/1 var(--mono); color: var(--muted); white-space: nowrap; }
+.tf-groups .colour-input { width: var(--ctl-h); padding: 0; }
+.tf-count { white-space: nowrap; }
+.tf-count.busy { color: var(--warn); }
+.tf-roi { border: 1px solid var(--line); padding: var(--sp-3) var(--sp-4); display: grid; gap: var(--sp-3); }
+.tf-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tf-roi .row > select.text-input, .tf-tag > select.text-input { width: auto; }
 .tf-hist { width: 100%; height: 34px; display: block; }
 .tf-hist .all { fill: var(--ink-4); }
 .tf-hist .pass { fill: var(--accent); }
-.tf-sliders { position: relative; height: 18px; }
-.tf-sliders input { position: absolute; inset: 0; width: 100%; margin: 0; pointer-events: none; background: none; -webkit-appearance: none; appearance: none; height: 18px; }
-.tf-sliders input::-webkit-slider-thumb { pointer-events: all; -webkit-appearance: none; width: 12px; height: 16px; border-radius: 0; background: var(--accent); cursor: ew-resize; }
-.tf-sliders input::-moz-range-thumb { pointer-events: all; width: 12px; height: 16px; border-radius: 0; background: var(--accent); border: 0; cursor: ew-resize; }
-.tf-sliders::before { content: ""; position: absolute; left: 0; right: 0; top: 8px; height: 2px; background: var(--line); }
-.tf details > summary { cursor: pointer; list-style: none; }
-.tf details > summary::-webkit-details-marker { display: none; }
-.tf details[open] > summary { margin-bottom: 8px; }
-.tf-tags { display: grid; gap: 2px; max-height: 220px; overflow: auto; }
-.tf-tag { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; font-size: 12px; cursor: pointer; padding: 2px 4px; border-radius: 0; }
-.tf-tag:hover { background: var(--ink-3); }
-.tf-tag input { margin: 0; accent-color: var(--accent); }
-.tf-tag .count { font: 11px/1 var(--mono); color: var(--muted); }
+.tf-values { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--sp-2) var(--sp-4); }
+.tf-tags { max-height: 220px; overflow: auto; }
 `;
+
+/** What the Regions card's (i) says. */
+const REGIONS_INFO =
+  "A region starts at the centre of the views; Alt+Shift+S puts a sphere at the mouse, Alt+Shift+B a box. Alt-drag it in a view to move it. " +
+  "AND: tracks must pass through it. OR: through at least one OR region. NOT: must not.";
 
 // --------------------------------------------------------------- results
 
@@ -369,7 +343,44 @@ export function combineIds(results: { op: RoiOp; ids: string[] }[]): string[] {
   return [...(keep ?? [])].filter((id) => !nots.has(id));
 }
 
-class TrackGroups {
+/**
+ * Annotations as compared with what a layer holds: keys in order, numbers
+ * to a tolerance (Neuroglancer keeps coordinates as 32-bit floats, so a
+ * copy written in doubles would never look the same and be written again).
+ */
+export function annotationsKey(list: unknown): string {
+  const norm = (v: unknown): unknown =>
+    typeof v === "number"
+      ? Math.round(v * 1e3) / 1e3
+      : Array.isArray(v)
+        ? v.map(norm)
+        : v !== null && typeof v === "object"
+          ? Object.fromEntries(
+              Object.keys(v)
+                .sort()
+                .map((k) => [k, norm((v as Record<string, unknown>)[k])]),
+            )
+          : v;
+  return JSON.stringify(norm(list ?? []));
+}
+
+/** A streamline group's own store: the answer it holds, the work making it, and the store once open. */
+interface GroupStore {
+  mask: Uint8Array | undefined;
+  controller: AbortController;
+  timer?: ReturnType<typeof setTimeout>;
+  source?: string;
+}
+
+/** Whether two answers choose the same objects. */
+export function sameAnswer(a: Uint8Array | undefined, b: Uint8Array | undefined): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; ++i) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+export class TrackGroups {
   private saved: Saved;
   private props: SegmentProperties | undefined;
   private rowOf: ((id: bigint) => number | undefined) | undefined;
@@ -383,6 +394,8 @@ class TrackGroups {
   /** Mask images' levels, by store. */
   private maskLevels = new Map<string, MaskLevel[]>();
   private tokens = new Map<string, number>();
+  /** What stops each group's tests still running: aborted when a newer query supersedes them. */
+  private stops = new Map<string, AbortController>();
   private exactTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private layerWatches = new Map<string, Disposer>();
   private propsOff: Disposer | undefined;
@@ -406,20 +419,23 @@ class TrackGroups {
   /** Each streamline group's own store (see GROUP_STORE_POINTS), by group id. */
   /** Set while a group's layer is being pointed at its store, so showing it does not start over. */
   private attaching = false;
-  private groupStores = new Map<string, { version: number; controller: AbortController; timer?: ReturnType<typeof setTimeout>; source?: string }>();
+  private groupStores = new Map<string, GroupStore>();
   private curveCache = new Map<string, { promise: Promise<Curves>; controller: AbortController; waiting: number; progress: Set<(done: number, total: number) => void> }>();
   /** The .trk save in progress, if any. */
   private saving: { groupId: string; done: number; total: number; controller: AbortController; what?: string } | undefined;
   /** Level saved from: 0 is every streamline. */
   private trkLevel = 0;
+  /** A density map's voxel size, mm; undefined: the store's default (defaultVoxel). */
+  private densityVoxel: number | undefined;
   /** What the last save of each group did. */
   private saved_ = new Map<string, string>();
-  /** The "too large to draw whole" note a group shows, to take it away when the group shrinks. */
+  /** The note a group too large to draw whole shows. */
   private sizeNotes = new Map<string, string>();
-  /** The Statistics section: open or not, the attribute shown, and statistics by answer. */
-  private statsOpen = false;
+  /** The attribute the Statistics card shows, and statistics by answer. */
   private statsColumn: string | undefined;
   private readonly statsCache = new WeakMap<Uint8Array, Map<string, ColumnStatistics>>();
+  /** Histograms, tag counts and passing ids by answer: a progress tick counts nothing again. */
+  private readonly counts = new AnswerCounts();
   /** The density map last made for each group, to save. */
   private readonly densities = new Map<string, File>();
   /** Region ids last written to the annotation layer: only these can be "deleted in a view". */
@@ -432,22 +448,31 @@ class TrackGroups {
    */
   private seen = new Set<string>();
   private host: HTMLElement | undefined;
-  private updaters: (() => void)[] = [];
-  private built = "";
+  /** The panel's parts (see `part`), each with what sets it in place. */
+  private readonly parts = new Map<string, (() => void)[]>();
+  /** Brings the panel up to date; undefined while it is not shown. */
+  private panelSync: (() => void) | undefined;
   /** The group whose name is being edited in the list. */
   private renaming: string | undefined;
   private readonly offs: Disposer[] = [];
+  private updateTimer: ReturnType<typeof setTimeout> | undefined;
 
-  constructor(private readonly ctx: PlatformContext) {
+  constructor(
+    private readonly ctx: PlatformContext,
+    private readonly engines: Engines = WORKERS,
+  ) {
     this.saved = readSaved(ctx.state.get());
     this.offs.push(
       ctx.state.onChanged(() => {
         // Undo, redo, a link: the groups changed from outside.
         if (this.writing || this.commitTimer !== undefined) return;
         const saved = readSaved(ctx.state.get());
+        // The group being edited is chosen here (choosing one is not a change): it stays while it is there.
+        const editing = saved.groups.some((g) => g.id === this.saved.editing) ? this.saved.editing : saved.editing;
+        const next = { ...saved, editing };
         // Undoing something else hands back the same groups: keep their answers.
-        if (JSON.stringify(saved) === JSON.stringify(this.saved)) return;
-        this.saved = saved;
+        if (JSON.stringify(next) === JSON.stringify(this.saved)) return;
+        this.saved = next;
         this.evaluateAll();
         this.refresh();
       }),
@@ -477,10 +502,23 @@ class TrackGroups {
     for (const off of this.layerWatches.values()) off();
     for (const t of this.exactTimers.values()) clearTimeout(t);
     if (this.commitTimer !== undefined) clearTimeout(this.commitTimer);
-    // Work still going stops.  (The groups' own stores stay open: their layers may still show them.)
-    for (const entry of this.groupStores.values()) {
+    if (this.updateTimer !== undefined) clearTimeout(this.updateTimer);
+    for (const stop of this.stops.values()) stop.abort();
+    this.stops.clear();
+    // Work still going stops, and the groups' own stores are let go: each layer goes back to the
+    // dataset's source, showing the group's objects, so nothing made here is held once switched off.
+    const stores = [...this.groupStores.entries()];
+    this.groupStores.clear();
+    for (const [id, entry] of stores) {
       entry.controller.abort();
       if (entry.timer !== undefined) clearTimeout(entry.timer);
+      if (entry.source === undefined) continue;
+      try {
+        this.attachGroupStore(id);
+      } catch {
+        // The viewer is going too.
+      }
+      this.ctx.workspace.local.close(entry.source);
     }
     for (const entry of this.curveCache.values()) entry.controller.abort();
     this.curveCache.clear();
@@ -637,12 +675,12 @@ class TrackGroups {
       this.info = undefined;
       this.engineUrl = url;
       if (url !== undefined && (kind === "segmentation" || kind === "precomputed-annotations")) {
-        this.labels = new LabelsEngine(url);
+        this.labels = this.engines.labels(url);
         this.evaluateAll();
       } else if (url !== undefined && kind === "annotations") {
         this.evaluateAll();
       } else if (url !== undefined) {
-        const engine = new RoiEngine(url);
+        const engine = this.engines.roi(url);
         this.engine = engine;
         // A tractogram on this computer reads whole streamlines from its file by id.
         void this.ctx.workspace.local.send(url, { capabilities: true }).then(
@@ -657,7 +695,7 @@ class TrackGroups {
             if (this.engine !== engine) return;
             this.info = info;
             this.evaluateAll();
-            this.renderPanel();
+            this.sync();
           },
           (e) => this.ctx.log.error(`Could not open ${url} for region tests: ${(e as Error).message}`),
         );
@@ -674,7 +712,7 @@ class TrackGroups {
     this.watchGroupLayers();
     this.writeAnnotations();
     if (this.waiting && this.props !== undefined && this.info !== undefined && this.dims() !== undefined) this.evaluateAll();
-    this.renderPanel();
+    this.sync();
   }
 
   private loadProps(): void {
@@ -683,7 +721,7 @@ class TrackGroups {
     this.props = props;
     this.rowOf = props && rowIndex(props.ids);
     this.evaluateAll();
-    this.renderPanel();
+    this.sync();
   }
 
   /** Re-applies a group's answer when its layer is made or replaced (undo, a colour change). */
@@ -709,7 +747,8 @@ class TrackGroups {
 
   // ------------------------------------------------------------ groups
 
-  newGroup(): void {
+  /** A new group (with `rois`, when a region makes it), and its layer: one undo step. */
+  newGroup(rois: Roi[] = []): void {
     const n = this.groups().length;
     const dataset = this.dataset();
     const source = dataset && this.sourceOf(dataset);
@@ -717,14 +756,15 @@ class TrackGroups {
       id: `g${Date.now().toString(36)}`,
       name: `Group ${n + 1}`,
       colour: PALETTE[n % PALETTE.length],
-      rois: [],
+      rois,
       filter: emptyFilter(),
       ...(source === undefined ? {} : { source: sourceKey(source) }),
     };
     // Its name selected in the list, ready to be typed over.
     this.renaming = group.id;
-    this.save({ groups: [...this.saved.groups, group], editing: group.id, dataset: dataset?.id });
-    this.ensureLayer(group);
+    this.saved = { ...this.saved, groups: [...this.saved.groups, group], editing: group.id, dataset: dataset?.id };
+    // Its layer is named in the same write as the group (ensureLayer saves).
+    if (this.ensureLayer(group) === undefined) this.save();
     // Show all objects is off once there are groups: the groups are the view.
     if (n === 0 && dataset !== undefined) for (const base of this.baseLayers(dataset)) this.ctx.viewer.setLayerVisible(base, false);
     this.ctx.ui.showPanel(FILTERING_PANEL);
@@ -744,7 +784,9 @@ class TrackGroups {
     const exact = this.exactTimers.get(group.id);
     if (exact !== undefined) clearTimeout(exact);
     this.exactTimers.delete(group.id);
-    this.tokens.set(group.id, (this.tokens.get(group.id) ?? 0) + 1);
+    this.nextQuery(group.id);
+    this.stops.get(group.id)?.abort();
+    this.stops.delete(group.id);
     this.versions.delete(group.id);
     this.saved_.delete(group.id);
     this.sizeNotes.delete(group.id);
@@ -753,22 +795,34 @@ class TrackGroups {
     this.writeAnnotations();
   }
 
+  /**
+   * Edits another group.  Not a change of the groups, so not an undo step:
+   * it is kept here, and goes into the state with the next change.
+   */
+  selectGroup(id: string): void {
+    if (this.saved.editing === id) return;
+    this.saved = { ...this.saved, editing: id };
+    this.notify();
+    this.writeAnnotations();
+    this.sync();
+  }
+
   private startRename(group: Group): void {
     this.renaming = group.id;
-    if (this.saved.editing !== group.id) this.save({ editing: group.id });
-    this.renderPanel();
+    this.selectGroup(group.id);
+    this.sync();
   }
 
   /** The name field a group's row shows while it is renamed: Enter or leaving it keeps the name, Escape does not. */
   private renameInput(group: Group): HTMLInputElement {
-    const input = el("input", { class: "tf-rename", value: group.name, "aria-label": "Group name", spellcheck: "false" }) as HTMLInputElement;
+    const input = el("input", { class: "text-input", value: group.name, "aria-label": "Group name", spellcheck: "false" }) as HTMLInputElement;
     let done = false;
     const finish = (keep: boolean) => {
       if (done) return;
       done = true;
       this.renaming = undefined;
       if (keep) this.renameGroup(group, input.value);
-      this.renderPanel();
+      this.sync();
     };
     input.addEventListener("click", (e) => e.stopPropagation());
     input.addEventListener("keydown", (e) => {
@@ -783,10 +837,12 @@ class TrackGroups {
       window.addEventListener("click", () => setTimeout(keep, 0), { once: true, capture: true });
       setTimeout(keep, 400);
     });
-    requestAnimationFrame(() => {
+    // Once it is in the panel (a frame later; a turn where there are no frames).
+    const later = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (f: () => void) => setTimeout(f, 0);
+    later(() => {
       if (!input.isConnected) return;
       input.focus();
-      input.select();
+      input.select?.();
     });
     return input;
   }
@@ -825,7 +881,14 @@ class TrackGroups {
     const kind = this.kindOf(dataset);
     this.creating.add(group.id);
     let layer: string;
+    // The layer's name is written with the group, then the layer made quietly (it joins that
+    // undo step); only a name the workspace had to change is written again.
+    const named = (name: string) => {
+      this.saved = { ...this.saved, groups: this.saved.groups.map((g) => (g.id === group.id ? { ...g, layer: name } : g)) };
+      this.save();
+    };
     try {
+      named(group.name);
       const spec: Json =
         kind === "annotations" || kind === "precomputed-annotations"
           ? { name: group.name, type: "annotation", source: "local://annotations", annotations: [], annotationColor: group.colour }
@@ -841,8 +904,7 @@ class TrackGroups {
               };
       // Part of making the group (whose state change is the undo step), not a step of its own.
       layer = this.ctx.workspace.addLayer(dataset.id, spec, { quiet: true });
-      this.saved = { ...this.saved, groups: this.saved.groups.map((g) => (g.id === group.id ? { ...g, layer } : g)) };
-      this.save();
+      if (layer !== group.name) named(layer);
     } finally {
       this.creating.delete(group.id);
     }
@@ -865,12 +927,6 @@ class TrackGroups {
     if (shape === "mask" && image === undefined) {
       this.ctx.ui.toast("Open an image or label volume (OME-Zarr, NIfTI, precomputed) to use as a mask.", "error");
       return;
-    }
-    let group = this.editing();
-    if (group === undefined) {
-      this.newGroup();
-      group = this.editing();
-      if (group === undefined) return;
     }
     // A fifth of a level-0 chunk, in global units: 5–6 mm on a typical
     // tractogram.  Without a store (a segmentation, annotations): about 40
@@ -895,11 +951,17 @@ class TrackGroups {
       ...(shape === "disk" ? { axis: 2, radius: size * 2 } : {}),
       ...(image !== undefined ? { mask: { layer: image } } : {}),
     };
-    this.updateGroup(group.id, (g) => ({ ...g, rois: [...g.rois, roi] }));
-    this.ensureLayer(this.editing()!);
+    const group = this.editing();
+    if (group === undefined) {
+      // No group yet: the region makes one, in one undo step.
+      this.newGroup([roi]);
+    } else {
+      this.updateGroup(group.id, (g) => ({ ...g, rois: [...g.rois, roi] }));
+      this.ensureLayer(this.editing()!);
+    }
     this.writeAnnotations();
     this.evaluateGroup(this.editing()!);
-    this.renderPanel();
+    this.sync();
   }
 
   private updateRoi(group: Group, roiId: string, patch: Partial<Roi>, soon = false): void {
@@ -1084,10 +1146,29 @@ class TrackGroups {
     this.saveSoon();
     for (const g of moved) this.evaluateGroup(g);
     if (drawn.length > 0) this.writeAnnotations();
-    this.renderPanel();
+    this.sync();
   }
 
   // -------------------------------------------------------- evaluation
+
+  /**
+   * A new query for a group: answers to the ones before are dropped when they
+   * come (a new token), and their tests still running are cancelled.
+   */
+  private nextQuery(id: string): { token: number; signal: AbortSignal } {
+    const token = (this.tokens.get(id) ?? 0) + 1;
+    this.tokens.set(id, token);
+    this.stops.get(id)?.abort();
+    const stop = new AbortController();
+    this.stops.set(id, stop);
+    return { token, signal: stop.signal };
+  }
+
+  /** Works a group's answer out again, at once (after it failed). */
+  private retry(id: string): void {
+    const group = this.groups().find((g) => g.id === id);
+    if (group !== undefined) this.evaluateGroup(group, true);
+  }
 
   private evaluateAll(): void {
     this.waiting = false;
@@ -1104,8 +1185,7 @@ class TrackGroups {
     const props = this.props;
     const rowOf = this.rowOf;
     const dims = this.dims();
-    const token = (this.tokens.get(group.id) ?? 0) + 1;
-    this.tokens.set(group.id, token);
+    const { token, signal } = this.nextQuery(group.id);
     const current = () => this.tokens.get(group.id) === token;
     if (this.info?.objects === false) {
       this.setResult(group, { mask: undefined, count: 0, state: "error", detail: "This store has no objects to group." });
@@ -1157,15 +1237,17 @@ class TrackGroups {
         results.map((r, i) => ({ op: group.rois[i].op as RoiOp, rows: rowMask(n, r.ids, rowOf) })),
       );
     const preview = previewLevel(info);
-    if (preview !== undefined && !exactNow) {
+    if (preview === undefined || exactNow) {
+      this.setResult(group, { ...(this.results.get(group.id) ?? { mask: undefined, count: 0 }), state: "computing", detail: "Counting…" });
+    } else {
       this.setResult(group, { ...(this.results.get(group.id) ?? { mask: undefined, count: 0 }), state: "computing", detail: "Previewing…" });
-      void Promise.all(geometries.map((g) => engine.evaluate(g, preview))).then(
+      void Promise.all(geometries.map((g) => engine.evaluate(g, preview, undefined, signal))).then(
         (results) => {
           // The exact answer can come first (its levels are cached): a late preview must not replace it.
           if (!current() || this.results.get(group.id)?.state === "exact") return;
           const mask = combine(results);
           const sample = Math.round(100 * (info.levels[preview].vertexCount ?? 0) / (info.levels[0].vertexCount || 1));
-          this.setResult(group, { mask, count: countPassing(mask), state: "preview", detail: `preview from level ${preview} (about ${sample}% of the vertices); exact to follow` });
+          this.setResult(group, { mask, count: countPassing(mask), state: "preview", detail: `Previewed from about ${sample}% of the points; counting exactly…` });
         },
         () => {},
       );
@@ -1189,14 +1271,24 @@ class TrackGroups {
             if (!current()) return;
             const prior = this.results.get(group.id);
             if (prior?.state === "exact") return;
-            this.setResult(group, { ...(prior ?? { mask: undefined, count: 0 }), state: prior?.state === "preview" ? "preview" : "computing", detail: `exact: ${done} of ${total} chunks read` });
+            const detail = `Counting exactly: ${done} of ${total} chunks read…`;
+            if (prior?.state === "preview" || prior?.state === "computing") {
+              // The answer is the same, only how far the count has got: the panel catches up a few times a second.
+              this.results.set(group.id, { ...prior, detail });
+              this.updateSoon();
+            } else this.setResult(group, { ...(prior ?? { mask: undefined, count: 0 }), state: "computing", detail });
           };
           void Promise.all(
             geometries.map((g, i) =>
-              engine.evaluate(g, 0, (done, total) => {
-                progress.set(group.rois[i].id, [done, total]);
-                report();
-              }),
+              engine.evaluate(
+                g,
+                0,
+                (done, total) => {
+                  progress.set(group.rois[i].id, [done, total]);
+                  report();
+                },
+                signal,
+              ),
             ),
           ).then(
             (results) => {
@@ -1299,8 +1391,7 @@ class TrackGroups {
 
   /** A group of a segmentation's segments or of annotations: each region's objects, combined. */
   private evaluateOther(group: Group, kind: "segmentation" | "annotations" | "precomputed-annotations"): void {
-    const token = (this.tokens.get(group.id) ?? 0) + 1;
-    this.tokens.set(group.id, token);
+    const { token, signal } = this.nextQuery(group.id);
     const current = () => this.tokens.get(group.id) === token;
     const nm = this.nmPerUnit();
     if (group.rois.length === 0) {
@@ -1328,7 +1419,7 @@ class TrackGroups {
     const prior = this.results.get(group.id);
     this.setResult(group, { ...(prior ?? { mask: undefined, count: 0 }), state: "computing", detail: kind === "segmentation" ? "Reading the regions' voxels…" : "Reading the regions' annotations…" });
     if (kind === "precomputed-annotations") {
-      void Promise.all(regions.map((region) => labels.annotations(region))).then(
+      void Promise.all(regions.map((region) => labels.annotations(region, signal))).then(
         (results) => {
           if (!current()) return;
           const ids = combineIds(results.map((r, i) => ({ op: group.rois[i].op, ids: r.ids })));
@@ -1353,7 +1444,7 @@ class TrackGroups {
       setTimeout(() => {
         this.exactTimers.delete(group.id);
         if (!current()) return;
-        void Promise.all(regions.map((region) => labels.evaluate(region))).then(
+        void Promise.all(regions.map((region) => labels.evaluate(region, undefined, signal))).then(
           (results) => {
             if (!current()) return;
             const ids = combineIds(results.map((r, i) => ({ op: group.rois[i].op, ids: Array.from(r.ids, String) })));
@@ -1374,7 +1465,7 @@ class TrackGroups {
     this.versions.set(group.id, (this.versions.get(group.id) ?? 0) + 1);
     this.notify();
     this.show(group);
-    for (const update of this.updaters) update();
+    this.updateAll();
     if (result.state === "exact" || result.state === "empty") this.scheduleGroupStore(group);
   }
 
@@ -1386,12 +1477,13 @@ class TrackGroups {
   /** Makes a group's own store once its exact answer has stayed a moment. */
   private scheduleGroupStore(group: Group): void {
     if (!this.drawsOwnStores()) return;
-    const version = this.versions.get(group.id) ?? 0;
+    const mask = this.results.get(group.id)?.mask;
     const current = this.groupStores.get(group.id);
-    if (current?.version === version) return;
+    // The same objects as the store being made or shown (a region moved within them, say): kept.
+    if (current !== undefined && sameAnswer(current.mask, mask)) return;
     current?.controller.abort();
     if (current?.timer !== undefined) clearTimeout(current.timer);
-    const entry: { version: number; controller: AbortController; timer?: ReturnType<typeof setTimeout>; source?: string } = { version, controller: new AbortController(), source: current?.source };
+    const entry: GroupStore = { mask, controller: new AbortController(), source: current?.source };
     this.groupStores.set(group.id, entry);
     entry.timer = setTimeout(() => {
       entry.timer = undefined;
@@ -1403,10 +1495,10 @@ class TrackGroups {
     }, GROUP_STORE_DELAY_MS);
   }
 
-  private async buildGroupStore(id: string, entry: { version: number; controller: AbortController; source?: string }): Promise<void> {
-    const { props, info } = this;
-    const mask = this.results.get(id)?.mask;
-    if (props === undefined || info === undefined || mask === undefined) return;
+  private async buildGroupStore(id: string, entry: GroupStore): Promise<void> {
+    const { props, info, engine } = this;
+    const mask = entry.mask;
+    if (props === undefined || info === undefined || engine === undefined || mask === undefined) return;
     const ids = passingIds(props, mask);
     const signal = entry.controller.signal;
     if (ids.length === 0) {
@@ -1420,24 +1512,21 @@ class TrackGroups {
     if (level > 0) {
       // Past what the page draws whole: the group is drawn from a sample level.
       const sample = Math.round((100 * (info.levels[level].vertexCount ?? 0)) / Math.max(1, total));
-      const note = `Too large to draw whole (${ids.length.toLocaleString()} streamlines, ~${(estimate(info.levels[0]) / 1e6).toFixed(0)} M points): showing level ${level}, ~${sample}% of the points. Save .trk writes all of them.`;
-      this.saved_.set(id, note);
-      this.sizeNotes.set(id, note);
+      this.sizeNotes.set(id, `Drawn from a sample (level ${level}, ~${sample}% of the points); Save .trk writes every one.`);
       this.updateAll();
-    } else if (this.sizeNotes.has(id)) {
-      // The group has shrunk: its size note goes (a note from saving since stays).
-      if (this.saved_.get(id) === this.sizeNotes.get(id)) this.saved_.delete(id);
-      this.sizeNotes.delete(id);
+    } else if (this.sizeNotes.delete(id)) {
+      // The group has shrunk: drawn whole again.
       this.updateAll();
     }
     // A big group first from a sample level (read in seconds), then whole.
     const preview = info.levels.find((l) => l.index > level && estimate(l) <= GROUP_PREVIEW_POINTS && estimate(l) >= GROUP_PREVIEW_POINTS / 20)?.index;
     for (const at of preview === undefined ? [level] : [preview, level]) {
-      const curves = await this.readCurves(id, ids, at, undefined, signal);
+      // Read and written as a .trk in the region worker: the page only hands the file on.
+      const bytes = await engine.trk(ids, at, trkSpace(info), signal);
       signal.throwIfAborted();
       const group = this.saved.groups.find((g) => g.id === id);
       if (group === undefined) return;
-      const file = new File([writeTrk(curves, trkSpace(info))], fileName(group.name, ".trk"));
+      const file = new File([bytes], fileName(group.name, ".trk"));
       const [found] = await this.ctx.workspace.local.open(file, { derived: true });
       // Moved on while it opened: useGroupStore closes the store just made (throwing first would leak it).
       if (!this.useGroupStore(id, entry, found?.source)) return;
@@ -1446,7 +1535,7 @@ class TrackGroups {
   }
 
   /** Shows a group from a store just made; false (and it is let go) when the group has moved on. */
-  private useGroupStore(id: string, entry: { version: number; controller: AbortController; source?: string }, source: string | undefined): boolean {
+  private useGroupStore(id: string, entry: GroupStore, source: string | undefined): boolean {
     if (this.groupStores.get(id) !== entry) {
       if (source !== undefined) this.ctx.workspace.local.close(source);
       return false;
@@ -1538,48 +1627,67 @@ class TrackGroups {
               ? { type: "ellipsoid", id, center: at(a.points[0], a.nm), radii: at(a.points[1], a.nm) }
               : { type: a.type, id, pointA: at(a.points[0], a.nm), pointB: at(a.points[1], a.nm) },
         );
-        this.ctx.viewer.patchState((ng) => {
-          const target = (ng.layers as Json[] | undefined)?.find((l) => l.name === layer);
-          if (target !== undefined) target.annotations = annotations;
-        });
+        this.writeCopies(layer, result, annotations);
         return;
       }
       if (kind === "annotations") {
         // The group's layer holds copies of the passing annotations.
         const passing = new Set(result.ids);
-        const annotations = this.baseAnnotations().filter((a) => passing.has(String(a.id)));
-        const spec = this.ctx.viewer.layerSpec(layer);
-        if (JSON.stringify(spec?.annotations ?? []) === JSON.stringify(annotations)) return;
-        this.ctx.viewer.patchState((ng) => {
-          const target = (ng.layers as Json[] | undefined)?.find((l) => l.name === layer);
-          if (target !== undefined) target.annotations = annotations;
-        });
+        this.writeCopies(
+          layer,
+          result,
+          this.baseAnnotations().filter((a) => passing.has(String(a.id))),
+        );
       } else {
         this.ctx.viewer.setTemporaryVisibleSegments(layer, BigUint64Array.from(result.ids, (id) => BigInt(id)));
       }
       return;
     }
     if (result.mask === undefined || this.props === undefined) return;
-    this.ctx.viewer.setTemporaryVisibleSegments(layer, passingIds(this.props, result.mask));
+    this.ctx.viewer.setTemporaryVisibleSegments(layer, this.counts.passingIds(this.props, result.mask));
   }
 
+  /**
+   * Writes a group's passing annotations into its layer: an answer derived
+   * from what the user did, so quietly (it joins that undo step, not one of
+   * its own) and only once the answer is final and differs from what the
+   * layer holds.  An answer still being worked out (the one before, shown
+   * meanwhile) is not written: after an undo it would put back what the
+   * undo took away.
+   */
+  private writeCopies(layer: string, result: GroupResult, annotations: Json[]): void {
+    if (result.state !== "exact" && result.state !== "empty") return;
+    const spec = this.ctx.viewer.layerSpec(layer);
+    if (spec === undefined || annotationsKey(spec.annotations) === annotationsKey(annotations)) return;
+    this.ctx.viewer.patchState(
+      (ng) => {
+        const target = (ng.layers as Json[] | undefined)?.find((l) => l.name === layer);
+        if (target !== undefined) target.annotations = annotations;
+      },
+      { quiet: true },
+    );
+  }
+
+  /** The edited group's objects as CSV: from its exact answer only (a preview is a sample). */
   exportCsv(): void {
     const group = this.editing();
-    const ids = group && this.results.get(group.id)?.ids;
-    if (group !== undefined && ids !== undefined) {
-      const blob = new Blob([["id", ...ids].join("\n") + "\n"], { type: "text/csv" });
-      downloadBlob(blob, `${group.name}.csv`);
-      this.ctx.log.info(`Exported ${ids.length.toLocaleString()} ids of ${group.name} as CSV.`);
-      return;
-    }
-    const mask = group && this.results.get(group.id)?.mask;
-    if (this.props === undefined || mask === undefined || group === undefined) {
+    const result = group && this.results.get(group.id);
+    if (group === undefined || result === undefined || (result.ids === undefined && (result.mask === undefined || this.props === undefined))) {
       this.ctx.ui.toast("No group with objects to export.", "error");
       return;
     }
-    const blob = new Blob([toCsv(this.props, mask)], { type: "text/csv" });
-    downloadBlob(blob, `${group.name}.csv`);
-    this.ctx.log.info(`Exported ${countPassing(mask).toLocaleString()} objects of ${group.name} as CSV.`);
+    if (result.state !== "exact") {
+      this.ctx.ui.toast("Wait for the exact count, then export.", "error");
+      return;
+    }
+    const name = fileName(group.name, ".csv");
+    if (result.ids !== undefined) {
+      downloadBlob(new Blob([["id", ...result.ids].join("\n") + "\n"], { type: "text/csv" }), name);
+      this.ctx.log.info(`Exported ${result.ids.length.toLocaleString()} ids of ${group.name} as CSV.`);
+      return;
+    }
+    downloadBlob(new Blob([toCsv(this.props!, result.mask!)], { type: "text/csv" }), name);
+    this.ctx.log.info(`Exported ${countPassing(result.mask!).toLocaleString()} objects of ${group.name} as CSV.`);
   }
 
   /**
@@ -1610,6 +1718,15 @@ class TrackGroups {
     }
     const target = await saveTarget(fileName(`${dataset.name} ${group.name}${level > 0 ? ` level ${level}` : ""}`, ".trk"), "TrackVis tracks", ".trk");
     if (target === undefined) return;
+    if (!target.streams) {
+      // Built in memory for a download: refused before reading when it would not fit.
+      const points = (ids.length * (info.levels[level]?.vertexCount ?? info.levels[0].vertexCount ?? 0)) / Math.max(1, props.ids.length);
+      const estimate = 1000 + 4 * ids.length + 12 * points;
+      if (estimate > DOWNLOAD_BYTES) {
+        this.ctx.ui.toast(`Could not save ${group.name}: ${tooBigToDownload(estimate)}.`, "error");
+        return;
+      }
+    }
     const controller = new AbortController();
     const saving = { groupId: group.id, done: 0, total: 0, controller };
     this.saving = saving;
@@ -1635,7 +1752,7 @@ class TrackGroups {
         const progress = (done: number, chunks: number) => {
           saving.done = from + Math.round((done / Math.max(1, chunks)) * part.length);
           saving.total = ids.length;
-          this.updateAll();
+          this.updateSoon();
         };
         const curves =
           part.length === ids.length
@@ -1674,10 +1791,11 @@ class TrackGroups {
 
   /**
    * A group's track density map: how many of its streamlines (read from
-   * `level`, as for .trk) pass through each voxel, shown as an image layer
-   * and offered as a NIfTI file.
+   * `level`, as for .trk) pass through each `voxel` mm voxel (the panel's
+   * choice, else the store's default), shown as an image layer and offered
+   * as a NIfTI file.
    */
-  async densityMap(group = this.editing(), level = this.trkLevel): Promise<void> {
+  async densityMap(group = this.editing(), level = this.trkLevel, voxel = this.densityVoxel): Promise<void> {
     const dataset = this.dataset();
     const result = group && this.results.get(group.id);
     const { props, engine, info } = this;
@@ -1698,12 +1816,18 @@ class TrackGroups {
       this.ctx.ui.toast(`${group.name} has no streamlines to map.`, "error");
       return;
     }
+    let grid: ReturnType<typeof densityGrid>;
+    try {
+      grid = densityGrid(info, voxel);
+    } catch (e) {
+      this.ctx.ui.toast(`Cannot map ${group.name}: ${(e as Error).message}.`, "error");
+      return;
+    }
     const controller = new AbortController();
     const saving = { groupId: group.id, done: 0, total: ids.length, controller, what: "Counting streamlines" };
     this.saving = saving;
     this.updateAll();
     const started = performance.now();
-    const grid = densityGrid(info);
     const voxels = grid.dims[0] * grid.dims[1] * grid.dims[2];
     const counts = new Float32Array(voxels);
     const stamp = new Int32Array(voxels);
@@ -1716,7 +1840,7 @@ class TrackGroups {
         const part = ids.subarray(from, Math.min(ids.length, from + batch));
         const progress = (done: number, chunks: number) => {
           saving.done = from + Math.round((done / Math.max(1, chunks)) * part.length);
-          this.updateAll();
+          this.updateSoon();
         };
         const curves =
           part.length === ids.length
@@ -1730,13 +1854,17 @@ class TrackGroups {
       const found = await this.ctx.workspace.local.open(file);
       if (found[0] !== undefined) {
         this.ctx.workspace.addDataset({ source: found[0].source, name, kind: "image" });
-        // A heat map over the anatomy: clear where no streamline passes.
-        this.ctx.viewer.patchState((ng) => {
-          const layer = (ng.layers as Json[] | undefined)?.find((l) => l.name === name && l.source === found[0].source);
-          if (layer === undefined) return;
-          layer.shader = DENSITY_SHADER;
-          layer.shaderControls = { normalized: { range: [0, displayMax(counts)] } };
-        });
+        // A heat map over the anatomy: clear where no streamline passes.  Part of adding the map
+        // (the undo step), not a step of its own.
+        this.ctx.viewer.patchState(
+          (ng) => {
+            const layer = (ng.layers as Json[] | undefined)?.find((l) => l.name === name && l.source === found[0].source);
+            if (layer === undefined) return;
+            layer.shader = DENSITY_SHADER;
+            layer.shaderControls = { normalized: { range: [0, displayMax(counts)] } };
+          },
+          { quiet: true },
+        );
       }
       const seconds = (performance.now() - started) / 1000;
       const message = `Density map of ${ids.length.toLocaleString()} streamlines on a ${grid.dims.join(" × ")} grid of ${grid.voxel} mm voxels, in ${seconds.toFixed(1)} s.`;
@@ -1785,17 +1913,21 @@ class TrackGroups {
     const toast = this.ctx.ui.toast;
     if (group === undefined) return;
     if (!runner.available()) {
-      toast("Pair the runner on this computer first: Remote tab, This computer.", "error");
+      toast("Pair the runner on this computer first: Settings → Compute.", "error");
       return;
     }
-    const reason = cannotRun(group.filter);
     const dataset = this.currentDataset;
     const source = dataset && this.sourceOf(dataset);
     const dims = this.dims();
     const info = this.info;
     const engine = this.engine;
-    if (reason !== undefined || this.kind() !== "zarr-vectors" || source === undefined || dims === undefined || info === undefined || engine === undefined) {
-      toast(reason ?? "Only groups of an open Zarr Vectors dataset (a tractogram or store) run on this computer.", "error");
+    const props = this.props;
+    if (this.kind() !== "zarr-vectors" || source === undefined || dims === undefined || info === undefined || engine === undefined) {
+      toast("Only groups of an open Zarr Vectors dataset (a tractogram or store) run on this computer.", "error");
+      return;
+    }
+    if (usesTags(group.filter) && props === undefined) {
+      toast("The objects' tags are still being read: try again in a moment.", "error");
       return;
     }
     let filter: ZvfDocument;
@@ -1810,7 +1942,13 @@ class TrackGroups {
         if (this.maskLevelsOf(roi) === undefined) await this.loadMaskLevels(roi, engine);
         regions.push({ op: roi.op, geometry, mask: await engine.maskVolume(this.maskSource(roi, dims, info)) });
       }
-      filter = groupPredicate(regions, group.filter);
+      // Tags: the objects they choose, by the ids the job reads (the store's object ids, a file's streamline numbers).
+      let tagged: BigUint64Array | undefined;
+      if (usesTags(group.filter)) {
+        const chosen = passingIds(props!, computeMask(props!, { ranges: {}, includeTags: group.filter.includeTags, excludeTags: group.filter.excludeTags }));
+        tagged = (await engine.objectIds(chosen, 0)).objectIds;
+      }
+      filter = groupPredicate(regions, group.filter, tagged);
     } catch (e) {
       toast(`Cannot run ${group.name}: ${(e as Error).message}`, "error");
       return;
@@ -1834,7 +1972,7 @@ class TrackGroups {
       if (input === undefined) return;
     }
     const folder = input.replace(/[\\/]+$/, "").replace(/[\\/][^\\/]*$/, "");
-    const options = await this.ctx.ui.form<{ folder: string; name: string; trk: boolean; store: boolean; density: boolean; open: boolean }>(
+    const options = await this.ctx.ui.form<{ folder: string; name: string; trk: boolean; store: boolean; density: boolean; voxel: number; open: boolean }>(
       `Run ${group.name} on this computer`,
       {
         type: "object",
@@ -1843,12 +1981,13 @@ class TrackGroups {
           name: { type: "string", title: "Name", description: "The files' name, before .trk, .zarr and _density.nii.gz" },
           trk: { type: "boolean", title: "A TrackVis .trk" },
           store: { type: "boolean", title: "A Zarr Vectors store with coarser levels" },
-          density: { type: "boolean", title: "A density map (1 mm voxels, .nii.gz)" },
+          density: { type: "boolean", title: "A density map (.nii.gz)" },
+          voxel: { type: "number", title: "Density voxel size (mm)", minimum: 0.01, maximum: 100 },
           open: { type: "boolean", title: "Open the results here when the job is done" },
         },
         required: ["folder", "name"],
       },
-      { folder, name: safeName(group.name), trk: true, store: true, density: false, open: true },
+      { folder, name: safeName(group.name), trk: true, store: true, density: false, voxel: this.densityVoxel ?? defaultVoxel(info), open: true },
     );
     if (options === undefined) return;
     if (!options.trk && !options.store && !options.density) {
@@ -1859,7 +1998,10 @@ class TrackGroups {
     const args: Record<string, unknown> = { input, filter, name: group.name, levels: 3 };
     if (options.trk) args.trk = `${base}.trk`;
     if (options.store) args.store = `${base}.zarr`;
-    if (options.density) args.density = `${base}_density.nii.gz`;
+    if (options.density) {
+      args.density = `${base}_density.nii.gz`;
+      args.voxel = options.voxel;
+    }
     let job: RunnerJob;
     try {
       job = await runner.start("filter", args);
@@ -1867,7 +2009,7 @@ class TrackGroups {
       toast(`The runner did not start the job: ${(e as Error).message}`, "error");
       return;
     }
-    toast(`${job.title}: started on this computer${job.pid !== null ? ` (PID ${job.pid})` : ""}; it shows in the Jobs tab.`);
+    toast(`${job.title}: started on this computer${job.pid !== null ? ` (PID ${job.pid})` : ""}; it shows in Activity.`);
     this.runs.set(group.id, job);
     this.updateAll();
     let done: RunnerJob;
@@ -1878,7 +2020,7 @@ class TrackGroups {
       });
     } catch (e) {
       // The runner went away: the job is no longer followed, and the button comes back.
-      done = { ...job, state: "failed", message: `${(e as Error).message}. See the Jobs tab.` };
+      done = { ...job, state: "failed", message: `${(e as Error).message}. See Activity.` };
     }
     this.runs.set(group.id, done);
     this.updateAll();
@@ -1898,10 +2040,6 @@ class TrackGroups {
   /** Each group's last job on this computer. */
   private runs = new Map<string, RunnerJob>();
 
-  private updateAll(): void {
-    for (const update of this.updaters) update();
-  }
-
   /** The dataset's store, when it is on this computer: where groups can be written. */
   private localStore(): { url: string; writable: boolean } | undefined {
     const dataset = this.dataset();
@@ -1916,6 +2054,7 @@ class TrackGroups {
    * Writes the groups into the dataset's own store (level 0's `groups`), so
    * the store carries them: other tools, and the viewer (as segment tags),
    * see them.  A stored group with the same name is replaced; others stay.
+   * The store has its old groups or its new ones, never a mix (writeGroups).
    */
   async saveGroupsToStore(): Promise<void> {
     const local = this.localStore();
@@ -1948,11 +2087,18 @@ class TrackGroups {
         mine,
       );
       const level = `${local.url}${stored.levelPath}/`;
-      for (const [path, bytes] of groupFiles(merged)) await this.ctx.workspace.local.write(level + path, bytes);
-      const levelResponse = await fetch(`${level}zarr.json`, { cache: "no-store" });
-      if (!levelResponse.ok) throw new Error(`${stored.levelPath}/zarr.json could not be read (${levelResponse.status})`);
-      const levelJson = await levelResponse.text();
-      await this.ctx.workspace.local.write(`${level}zarr.json`, withGroupsListed(levelJson));
+      await writeGroups(
+        {
+          read: async (path) => {
+            const response = await fetch(level + path, { cache: "no-store" });
+            if (response.status === 404) return undefined;
+            if (!response.ok) throw new Error(`${stored.levelPath}/${path} could not be read (${response.status})`);
+            return response.text();
+          },
+          write: (path, data) => this.ctx.workspace.local.write(level + path, data),
+        },
+        merged,
+      );
       const message = `Wrote ${mine.length} group${mine.length === 1 ? "" : "s"} into ${stored.levelPath}/groups (${merged.length} in the store)${missing ? `; ${missing} objects had no object id and were left out` : ""}.`;
       this.ctx.log.info(message);
       this.ctx.ui.toast(message);
@@ -2082,7 +2228,7 @@ class TrackGroups {
 
   /**
    * A region at the mouse (else the views' centre), from a key: in the
-   * group being edited, or a new group; the Filtering tab is shown.
+   * group being edited, or a new group; the Filtering panel is shown.
    */
   addAtMouse(shape: "sphere" | "box"): void {
     if (this.dataset() === undefined) {
@@ -2097,159 +2243,414 @@ class TrackGroups {
 
   render(host: HTMLElement): Disposer {
     this.host = host;
-    this.built = "";
-    this.renderPanel();
+    this.panelSync = this.buildPanel(host);
+    this.sync();
     return () => {
       this.host = undefined;
-      this.updaters = [];
-      this.built = "";
+      this.panelSync = undefined;
+      this.parts.clear();
     };
   }
 
-  private renderPanel(): void {
-    const host = this.host;
-    if (host === undefined) return;
-    const editing = this.editing();
-    const signature = JSON.stringify([
-      this.candidates().map((d) => [d.id, d.name]),
-      this.dataset()?.id,
-      this.props?.ids.length,
-      this.info !== undefined,
-      this.groups().map((g) => [g.id, g.name, g.colour, g.layer, g.rois.map((r) => [r.id, r.shape, r.op, r.mask?.layer])]),
-      editing?.id,
-      this.renaming,
-      editing?.filter.includeTags,
-      editing !== undefined && isEmptyFilter(editing.filter),
-    ]);
-    if (signature === this.built && host.firstChild !== null) {
-      for (const update of this.updaters) update();
-      return;
-    }
-    this.built = signature;
-    this.updaters = [];
-    const root = el("div", { class: "tf" });
-    host.replaceChildren(root);
-    const dataset = this.dataset();
-    if (dataset === undefined) {
-      root.append(
-        el("p", { class: "empty", title: "Groups keep the objects that pass through regions: tracts, points, segments or annotations. Each group is a layer." }, "Add a tractogram, a segmentation or annotations to filter them."),
-      );
-      return;
-    }
+  /** Brings the panel up to date with the groups and the scene: the parts whose key changed are drawn again, the rest set in place. */
+  private sync(): void {
+    this.panelSync?.();
+  }
 
-    // Dataset.
-    const select = el("select", { class: "text-input", "aria-label": "Dataset" }) as HTMLSelectElement;
-    for (const d of this.candidates()) select.append(el("option", { value: d.id }, d.name));
-    select.value = dataset.id;
-    select.addEventListener("change", () => this.save({ dataset: select.value }));
-    root.append(el("label", { class: "field" }, el("span", {}, "Dataset"), select));
-    const bases = this.baseLayers(dataset);
-    if (bases.length > 0) {
-      const all = el("input", { type: "checkbox" }) as HTMLInputElement;
-      all.addEventListener("change", () => bases.forEach((b) => this.ctx.viewer.setLayerVisible(b, all.checked)));
-      this.updaters.push(() => {
-        all.checked = bases.some((b) => this.layerInfo(b)?.visible);
-      });
-      root.append(el("label", { class: "field check" }, all, el("span", {}, "Show all objects")));
-    }
+  /** Sets the panel in place soon: progress ticks come many times a second, the panel follows a few times. */
+  private updateSoon(): void {
+    if (this.updateTimer !== undefined) return;
+    this.updateTimer = setTimeout(() => {
+      this.updateTimer = undefined;
+      this.updateAll();
+    }, PROGRESS_MS);
+  }
 
-    // Groups.
-    root.append(
-      el(
-        "div",
-        { class: "tf-row" },
-        el("h3", { class: "section-title", style: "margin:0;flex:1" }, "Groups"),
-        el("button", { class: "btn outline small", type: "button", onclick: () => this.newGroup() }, "+ New group"),
-      ),
+  /** Sets every part of the panel in place from the answers (a count, progress): nothing is drawn again. */
+  private updateAll(): void {
+    for (const updates of this.parts.values()) for (const update of updates) update();
+  }
+
+  /**
+   * A part of the panel drawn again only when its key changes; `on` adds
+   * what sets it in place (updateAll), replaced each time it is drawn.
+   */
+  private part<K>(name: string, draw: (key: K, on: (update: () => void) => void) => Child | Child[], attrs: Attrs = {}) {
+    return region<K>((key) => {
+      const updates: (() => void)[] = [];
+      this.parts.set(name, updates);
+      return draw(key, (update) => updates.push(update));
+    }, attrs);
+  }
+
+  /** Draws the panel's cards once, and returns what brings them up to date. */
+  private buildPanel(host: HTMLElement): () => void {
+    const fixed: (() => void)[] = [];
+    this.parts.set("panel", fixed);
+    const on = (update: () => void) => fixed.push(update);
+    const empty = emptyState("Nothing to filter in this scene.", { label: "Open data…", run: () => void this.ctx.commands.invoke("dataset.add") });
+
+    // Dataset: which one, and its own layers.
+    const dataset = this.part("dataset", ([choices, bases]: [[string, string][], string[]], on) => {
+      const choose = select(choices, this.currentDataset?.id ?? "", (id) => this.save({ dataset: id }), "Dataset");
+      on(() => choose.set(this.currentDataset?.id ?? ""));
+      if (bases.length === 0) return field("Dataset", choose);
+      const all = checkbox("Show all objects", false, (shown) => bases.forEach((b) => this.ctx.viewer.setLayerVisible(b, shown)));
+      on(() => all.set(bases.some((b) => this.layerInfo(b)?.visible === true)));
+      return [field("Dataset", choose), all];
+    }, { class: "stack" });
+
+    // Groups: the list, the edited one chosen there.
+    const noGroups = emptyState("No groups yet.", { label: "New group", run: () => this.newGroup() });
+    const list = this.part("groups", (_key: unknown, on) => this.groupRows(on), { class: "datasets tf-groups" });
+    const actions = el(
+      "div",
+      { class: "row" },
+      button("+ New group", () => this.newGroup()),
+      el("span", { class: "spacer" }),
+      button("Delete group", () => {
+        const group = this.editing();
+        if (group !== undefined) this.deleteGroup(group);
+      }),
     );
-    const local = this.localStore();
-    if (local !== undefined) {
-      root.append(
-        el(
-          "div",
-          { class: "tf-row" },
-          el(
-            "button",
-            {
-              class: "btn small",
-              type: "button",
-              disabled: !local.writable,
-              title: local.writable ? "Write the groups into this store's groups (level 0)" : "This browser cannot write into folders: use Chrome or Edge",
-              onclick: () => void this.saveGroupsToStore(),
-            },
-            "Save groups into the store",
-          ),
-          el("span", { class: "tf-roi-status" }, "on this computer"),
-        ),
-      );
-    }
-    const list = el("div", { class: "tf-groups" });
-    const groups = this.groups();
-    if (groups.length === 0) {
-      // A region straight away makes the group too.
-      list.append(
-        el("p", { class: "empty" }, "No groups yet. A region makes one: Alt+Shift+S puts a sphere at the mouse, Alt+Shift+B a box."),
-        el(
-          "div",
-          { class: "tf-row" },
-          el("button", { class: "btn outline small", type: "button", title: "A new group with a sphere at the centre of the views", onclick: () => this.addRoi("sphere") }, "+ Sphere"),
-          el("button", { class: "btn outline small", type: "button", title: "A new group with a box at the centre of the views", onclick: () => this.addRoi("box") }, "+ Box"),
-        ),
-      );
-    }
-    for (const group of groups) {
-      const colour = el("input", { type: "color", class: "tf-swatch", value: group.colour, title: "Colour", "aria-label": `${group.name} colour` }) as HTMLInputElement;
+    const sizeNote = el("p", { class: "hint" });
+    const answer = statusLine();
+    on(() => {
+      const group = this.editing();
+      const r = group && this.results.get(group.id);
+      // Progress and errors only: the count is in the list.
+      if (r === undefined || r.state === "exact" || r.state === "empty") answer.clear();
+      else if (r.state === "error") answer.error(r.detail, { label: "Retry", run: () => this.retry(group!.id) });
+      else answer.progress(r.detail);
+      const note = group && this.sizeNotes.get(group.id);
+      sizeNote.textContent = note ?? "";
+      sizeNote.hidden = note === undefined;
+    });
+
+    // Regions.
+    const addMask = button("+ Mask", () => this.addRoi("mask"));
+    const regions = this.part(
+      "regions",
+      (_key: unknown, on) => {
+        const group = this.editing();
+        if (group === undefined || group.rois.length === 0) return emptyState(group === undefined ? "No regions yet." : "No regions in this group.");
+        return group.rois.map((roi, i) => this.roiControl(group, roi, i, on));
+      },
+      { class: "stack" },
+    );
+
+    // Attributes, each a range over its histogram; counted only while the card is open.
+    const attributeBadge = el("span");
+    const attributes = this.part(
+      "attributes",
+      (_key: unknown, on) => {
+        const group = this.editing();
+        const props = this.kind() === "zarr-vectors" ? this.props : undefined;
+        if (group === undefined || props === undefined) return null;
+        return props.numeric.map((column) => this.rangeControl(group, props, column, () => attributesCard.open, on));
+      },
+      { class: "stack" },
+    );
+    const attributesCard = card(
+      "trackFiltering.attributes",
+      "Attributes",
+      { badge: attributeBadge, info: "Keeps the objects whose attributes are in range. A histogram shows every object, and in colour those in the group." },
+      attributes,
+    );
+    attributesCard.addEventListener("toggle", () => this.updateAll());
+    on(() => {
+      const n = Object.keys(this.editing()?.filter.ranges ?? {}).length;
+      attributeBadge.textContent = n === 0 ? "" : `${n} set`;
+    });
+
+    // Stored groups: the store's groups and categories, as tags.
+    const tagBadge = el("span");
+    const tags = this.part("tags", (_key: unknown, on) => this.tagRows(() => tagsCard.open, on), { class: "list tf-tags" });
+    const tagsCard = card(
+      "trackFiltering.tags",
+      "Stored groups",
+      { badge: tagBadge, info: "The store's own groups and categories. Keep: only objects in at least one kept group. Leave out: no object in a left-out group." },
+      tags,
+    );
+    tagsCard.addEventListener("toggle", () => this.updateAll());
+    on(() => {
+      const filter = this.editing()?.filter;
+      const n = (filter?.includeTags.length ?? 0) + (filter?.excludeTags.length ?? 0);
+      tagBadge.textContent = n === 0 ? "" : `${n} set`;
+    });
+
+    // Output, and statistics over every group.
+    const output = this.part("output", (_key: unknown, on) => this.outputControls(on), { class: "stack" });
+    const statistics = this.part("statistics", (_key: unknown, on) => this.statistics(() => statisticsCard.open, on), { class: "stack" });
+    const statisticsCard = card(
+      "trackFiltering.statistics",
+      "Statistics",
+      { info: "Each group's count and one attribute's mean ± SD and median, from exact answers. Export CSV writes every attribute's n, mean, SD, median and range for every group." },
+      statistics,
+    );
+    statisticsCard.addEventListener("toggle", () => this.updateAll());
+
+    const groupsCard = card(
+      "trackFiltering.groups",
+      "Groups",
+      { open: true, info: "Each group is a layer of the objects that pass through its regions, with attributes in range. A region makes a group when there is none: Alt+Shift+S puts a sphere at the mouse, Alt+Shift+B a box." },
+      noGroups,
+      list,
+      actions,
+      sizeNote,
+      answer,
+    );
+    const regionsCard = card(
+      "trackFiltering.regions",
+      "Regions",
+      { open: true, info: REGIONS_INFO },
+      el("div", { class: "row" }, button("+ Sphere", () => this.addRoi("sphere")), button("+ Box", () => this.addRoi("box")), button("+ Disk", () => this.addRoi("disk")), addMask),
+      regions,
+    );
+    const outputCard = card("trackFiltering.output", "Output", { open: true }, output);
+    const cards = el("div", {}, card("trackFiltering.dataset", "Dataset", { open: true }, dataset), groupsCard, regionsCard, attributesCard, tagsCard, outputCard, statisticsCard);
+    host.replaceChildren(empty, cards);
+
+    return () => {
+      const current = this.dataset();
+      empty.hidden = current !== undefined;
+      cards.hidden = current === undefined;
+      if (current === undefined) return;
+      const kind = this.kind();
+      const groups = this.groups();
+      const editing = this.editing();
+      const props = kind === "zarr-vectors" ? this.props : undefined;
+      const lines = this.linesGeometry();
+      dataset.update([this.candidates().map((d) => [d.id, d.name]), this.baseLayers(current)]);
+      list.update([groups.map((g) => [g.id, g.name, g.colour, g.layer]), editing?.id, this.renaming]);
+      noGroups.hidden = groups.length > 0;
+      actions.hidden = groups.length === 0;
+      addMask.hidden = kind !== "zarr-vectors";
+      const masks = editing?.rois.some((r) => r.shape === "mask") ? readableImages(this.ctx, ["image", "segmentation"]) : [];
+      const layers = this.ctx.viewer.layers();
+      regions.update([
+        editing?.id,
+        kind,
+        lines,
+        this.info !== undefined,
+        editing?.rois.map((r) => [r.id, r.shape, r.mask?.layer, layers.find((l) => l.name === r.mask?.layer)?.type]),
+        masks,
+      ]);
+      attributesCard.hidden = editing === undefined || !props?.numeric.length;
+      attributes.update([editing?.id, props?.ids.length, props?.numeric.map((c) => [c.id, c.min, c.max])]);
+      tagsCard.hidden = editing === undefined || !props?.tags?.names.length;
+      tags.update([editing?.id, props?.ids.length, props?.tags?.names]);
+      outputCard.hidden = editing === undefined;
+      const local = this.localStore();
+      output.update([editing?.id, kind, lines, this.info?.levels.map((l) => l.vertexCount), local, this.info !== undefined]);
+      statisticsCard.hidden = groups.length === 0;
+      statistics.update([groups.map((g) => [g.id, g.name]), props?.numeric.map((c) => c.id)]);
+      this.updateAll();
+    };
+  }
+
+  /** Whether the dataset's objects are lines (streamlines): what .trk, density maps and the runner's job take. */
+  private linesGeometry(): boolean {
+    return this.kind() === "zarr-vectors" && /^(streamline|polyline|line)s?$/.test(this.info?.geometry ?? "");
+  }
+
+  /** The groups' rows: colour, shown, name (double-click or the pencil to rename), count. A click edits that group. */
+  private groupRows(on: (update: () => void) => void): HTMLElement[] {
+    const editing = this.editing();
+    return this.groups().map((group) => {
+      const colour = el("input", { type: "color", class: "colour-input", value: group.colour, "aria-label": `${group.name} colour` }) as HTMLInputElement;
       colour.addEventListener("click", (e) => e.stopPropagation());
       colour.addEventListener("change", () => this.recolour(group, colour.value));
-      const eye = el("input", { type: "checkbox", title: "Show or hide this group", "aria-label": `Show ${group.name}` }) as HTMLInputElement;
-      eye.addEventListener("click", (e) => e.stopPropagation());
-      eye.addEventListener("change", () => this.setGroupVisible(group, eye.checked));
-      const count = el("span", { class: "count" });
-      this.updaters.push(() => {
-        const info = this.layerInfo(group.layer);
-        eye.checked = info?.visible === true;
+      const shown = checkbox(`Show ${group.name}`, this.layerInfo(group.layer)?.visible === true, (v) => this.setGroupVisible(group, v), { hideLabel: true });
+      shown.addEventListener("click", (e) => e.stopPropagation());
+      const count = el("span", { class: "readout tf-count" });
+      on(() => {
+        shown.set(this.layerInfo(group.layer)?.visible === true);
         const r = this.results.get(group.id);
         count.textContent = r === undefined || (r.mask === undefined && r.ids === undefined) ? "…" : `${r.count.toLocaleString()}${r.state === "preview" ? "~" : ""}`;
-        count.className = r?.state === "exact" || r?.state === "empty" ? "count" : "count busy";
-        count.title = r?.detail ?? "";
+        count.className = r?.state === "exact" || r?.state === "empty" ? "readout tf-count" : "readout tf-count busy";
       });
       const rename = (e: Event) => {
         e.stopPropagation();
         this.startRename(group);
       };
-      list.append(
+      return el(
+        "div",
+        { class: group.id === editing?.id ? "ds-row selected" : "ds-row", onclick: () => this.selectGroup(group.id) },
+        colour,
+        shown,
+        this.renaming === group.id ? this.renameInput(group) : el("span", { class: "ds-name", ondblclick: rename }, group.name),
+        count,
+        iconButton("edit", `Rename ${group.name}`, rename),
+      );
+    });
+  }
+
+  /** The edited group's tag rows: each tag's objects (in the group / in all), and whether it is kept, left out or either. */
+  private tagRows(shown: () => boolean, on: (update: () => void) => void): HTMLElement[] {
+    const group = this.editing();
+    const props = this.kind() === "zarr-vectors" ? this.props : undefined;
+    const tags = props?.tags;
+    if (group === undefined || props === undefined || tags === undefined) return [];
+    const filter = () => this.saved.groups.find((g) => g.id === group.id)?.filter ?? group.filter;
+    const mode = (tag: string) => (filter().includeTags.includes(tag) ? "keep" : filter().excludeTags.includes(tag) ? "out" : "");
+    const all = this.counts.tagCounts(props);
+    const counts: HTMLElement[] = [];
+    const rows = tags.names.map((tag, i) => {
+      const choose = select(
+        [
+          ["", "Either"],
+          ["keep", "Keep"],
+          ["out", "Leave out"],
+        ],
+        mode(tag),
+        (v) => this.setTag(group, tag, v as "" | "keep" | "out"),
+        tag,
+      );
+      on(() => choose.set(mode(tag)));
+      const count = el("span", { class: "readout" });
+      counts.push(count);
+      const description = tags.descriptions[i];
+      return el("div", { class: "row tf-tag" }, el("span", { class: "tf-name" }, tag), description && description !== tag ? info(description, `About ${tag}`) : null, count, choose);
+    });
+    // Counted once per answer, and only while the card is open.
+    let drawn: Uint32Array | undefined | null = null;
+    on(() => {
+      if (!shown()) return;
+      const mask = this.results.get(group.id)?.mask;
+      const passing = mask === undefined ? undefined : this.counts.tagCounts(props, mask);
+      if (passing === drawn) return;
+      drawn = passing;
+      counts.forEach((c, i) => (c.textContent = passing === undefined ? `${all[i]}` : `${passing[i]} / ${all[i]}`));
+    });
+    return rows;
+  }
+
+  /** Keeps a tag's objects, leaves them out, or neither. */
+  private setTag(group: Group, tag: string, mode: "" | "keep" | "out"): void {
+    this.updateGroup(group.id, (g) => {
+      const include = g.filter.includeTags.filter((t) => t !== tag);
+      const exclude = g.filter.excludeTags.filter((t) => t !== tag);
+      if (mode === "keep") include.push(tag);
+      if (mode === "out") exclude.push(tag);
+      return { ...g, filter: { ...g.filter, includeTags: include, excludeTags: exclude } };
+    });
+    this.evaluateGroup(this.saved.groups.find((g) => g.id === group.id)!, true);
+    this.updateAll();
+  }
+
+  /** The Output card: CSV for every kind; for streamlines .trk, a density map, the runner's job; the store's groups. */
+  private outputControls(on: (update: () => void) => void): Child[] {
+    const group = this.editing();
+    const store = this.info;
+    if (group === undefined) return [];
+    const result = () => this.results.get(group.id);
+    const exact = () => result()?.state === "exact" && result()!.count > 0;
+    const csv = button("Export CSV", () => this.exportCsv());
+    on(() => (csv.disabled = !exact()));
+    const out: Child[] = [el("div", { class: "row" }, csv)];
+
+    if (this.linesGeometry() && store !== undefined) {
+      const total = store.levels[0]?.vertexCount;
+      const levels = store.levels.map((l): [string, string] => {
+        const share = l.index === 0 || total === undefined || l.vertexCount === undefined ? undefined : (100 * l.vertexCount) / total;
+        return [String(l.index), l.index === 0 ? "All streamlines" : `Level ${l.index} sample${share === undefined ? "" : ` (about ${share >= 1 ? Math.round(share) : Number(share.toPrecision(1))}%)`}`];
+      });
+      const level = select(levels, String(this.trkLevel), (v) => (this.trkLevel = Number(v)), "Streamlines");
+      const trk = button("Save .trk", () => void this.saveTrk());
+      const cancel = button("Cancel", () => this.saving?.controller.abort());
+      const voxel = numberInput(this.densityVoxel ?? defaultVoxel(store), (v) => (this.densityVoxel = v > 0 ? v : undefined), { step: "any", min: 0.01, "aria-label": "Density voxel size, mm" });
+      const density = button("Make density map", () => void this.densityMap());
+      const nii = button("Save .nii", () => void this.saveDensity(this.editing()!));
+      const progress = statusLine();
+      const done = el("p", { class: "hint" });
+      on(() => {
+        const busy = this.saving !== undefined;
+        const mine = this.saving?.groupId === group.id;
+        trk.disabled = density.disabled = busy || !exact();
+        level.disabled = busy;
+        cancel.hidden = !mine;
+        nii.hidden = !this.densities.has(group.id);
+        if (mine) {
+          const s = this.saving!;
+          progress.progress(s.total === 0 ? "Reading the group's manifests…" : `${s.what ?? "Writing streamlines"}: ${s.done.toLocaleString()} of ${s.total.toLocaleString()}…`);
+        } else progress.clear();
+        const last = mine ? undefined : this.saved_.get(group.id);
+        done.textContent = last ?? "";
+        done.hidden = last === undefined;
+      });
+      out.push(
+        field("Streamlines", level),
+        el("div", { class: "row" }, trk, cancel),
+        field("Density voxel (mm)", voxel, { info: "A density map counts the group's streamlines through each voxel, shown as an image layer; Save .nii keeps it as a NIfTI file." }),
+        el("div", { class: "row" }, density, nii),
+        progress,
+        done,
+      );
+
+      // The whole tractogram, filtered on this computer.
+      const run = button("Run on this computer", () => void this.runOnComputer());
+      const job = el("p", { class: "readout" });
+      const runRow = el("div", { class: "row" }, run, info("Filters the whole tractogram in a Python job on this computer, writing a new .trk, a Zarr Vectors store or a density map, and opens them here when it is done.", "About Run on this computer"));
+      on(() => {
+        const runner = this.ctx.runner;
+        const last = this.runs.get(group.id);
+        const running = last !== undefined && (last.state === "queued" || last.state === "running");
+        runRow.hidden = !runner.available();
+        run.disabled = running;
+        job.textContent =
+          last === undefined
+            ? ""
+            : running
+              ? `On this computer: ${last.state === "queued" ? "waiting" : last.progress === null ? "running" : `${Math.round(last.progress * 100)}%`}${last.message ? `, ${last.message}` : ""}`
+              : `On this computer: ${last.state}${last.state === "failed" ? `: ${last.message}` : last.state === "done" ? `: ${last.outputs.map((o) => o.path.split("/").pop()).join(", ")}` : ""}`;
+        job.hidden = job.textContent === "" || runRow.hidden;
+      });
+      out.push(runRow, job);
+    }
+
+    // The groups, into the store they filter (a folder on this computer).
+    const local = this.localStore();
+    if (local !== undefined) {
+      const write = button("Save groups into the store", () => void this.saveGroupsToStore());
+      write.disabled = !local.writable;
+      out.push(
         el(
           "div",
-          { class: group.id === editing?.id ? "tf-group editing" : "tf-group", title: "Edit this group", onclick: () => this.save({ editing: group.id }) },
-          colour,
-          eye,
-          this.renaming === group.id ? this.renameInput(group) : el("span", { class: "name", title: "Double-click to rename", ondblclick: rename }, group.name),
-          count,
-          el("button", { class: "btn small icon tf-edit", type: "button", title: "Rename", "aria-label": `Rename ${group.name}`, onclick: rename }, pencil()),
+          { class: "row" },
+          write,
+          info(
+            local.writable
+              ? "Writes every group with its exact answer into the store's level 0 groups, where other tools, and the viewer as tags, see them. A stored group of the same name is replaced."
+              : "This browser cannot write into folders: open the store from its folder in Chrome or Edge.",
+            "About saving groups into the store",
+          ),
         ),
       );
     }
-    root.append(list);
-
-    if (editing !== undefined) root.append(this.editor(editing));
-    if (groups.length > 0) root.append(this.statistics(groups));
-    for (const update of this.updaters) update();
+    return out;
   }
 
-  /** Each group's count and one attribute's mean ± SD and median; every attribute in the CSV. */
-  private statistics(groups: Group[]): HTMLElement {
+  /** The Statistics card: each group's count and one attribute's mean ± SD and median; every attribute in the CSV. */
+  private statistics(shown: () => boolean, on: (update: () => void) => void): Child[] {
+    const groups = this.groups();
     const props = this.kind() === "zarr-vectors" ? this.props : undefined;
-    const details = el("details", { class: "tf-stats" }) as HTMLDetailsElement;
-    details.open = this.statsOpen;
-    const select = el("select", { "aria-label": "Attribute" }) as HTMLSelectElement;
-    for (const c of props?.numeric ?? []) select.append(el("option", { value: c.id }, c.id));
-    if (props?.numeric.some((c) => c.id === this.statsColumn)) select.value = this.statsColumn!;
-    const table = el("table", { class: "tf-stats-table" });
-    const csv = el("button", { class: "btn small", type: "button", title: "Every attribute's statistics for every group, as CSV", onclick: () => this.exportStatistics(groups) }, "Export CSV");
+    const columns = props?.numeric ?? [];
+    if (!columns.some((c) => c.id === this.statsColumn)) this.statsColumn = columns[0]?.id;
+    const attribute = select(
+      columns.map((c) => [c.id, c.id]),
+      this.statsColumn ?? "",
+      (v) => {
+        this.statsColumn = v;
+        this.updateAll();
+      },
+      "Attribute",
+    );
+    const table = el("table", { class: "stats-table" });
     const format = (v: number) => (Number.isFinite(v) ? Number(v.toPrecision(4)).toLocaleString() : "–");
-    const update = () => {
-      if (!details.open) return;
-      const column = props?.numeric.find((c) => c.id === select.value);
+    on(() => {
+      if (!shown()) return;
+      const column = columns.find((c) => c.id === this.statsColumn);
       table.replaceChildren(
         el("tr", {}, el("th", {}, "Group"), el("th", {}, "Objects"), ...(column ? [el("th", {}, "Mean ± SD"), el("th", {}, "Median")] : [])),
         ...groups.map((g) => {
@@ -2260,23 +2661,16 @@ class TrackGroups {
             "tr",
             {},
             el("td", {}, g.name),
-            el("td", {}, r === undefined || !exact ? "…" : r.count.toLocaleString()),
+            el("td", {}, exact ? r!.count.toLocaleString() : "…"),
             ...(column ? [el("td", {}, stats ? `${format(stats.mean)} ± ${format(stats.sd)}` : "…"), el("td", {}, stats ? format(stats.median) : "…")] : []),
           );
         }),
       );
-    };
-    select.addEventListener("change", () => {
-      this.statsColumn = select.value;
-      update();
     });
-    details.addEventListener("toggle", () => {
-      this.statsOpen = details.open;
-      update();
-    });
-    this.updaters.push(update);
-    details.append(el("summary", { class: "section-title" }, "Statistics"), el("div", { class: "tf-row" }, props?.numeric.length ? select : el("span"), csv), table);
-    return details;
+    return [
+      el("div", { class: "row" }, columns.length > 0 ? field("Attribute", attribute) : null, button("Export CSV", () => this.exportStatistics())),
+      table,
+    ];
   }
 
   /** One attribute's statistics over a group's objects, kept while its answer stays the same. */
@@ -2300,325 +2694,205 @@ class TrackGroups {
     this.ctx.log.info(`Exported the statistics of ${groups.length} groups as CSV.`);
   }
 
-  /** Save as .trk: the level to save from, progress, and cancel. */
-  private saveControl(group: Group): HTMLElement {
-    const info = this.info;
-    const button = el("button", { class: "btn small", type: "button", onclick: () => void this.saveTrk(group) }, "Save .trk") as HTMLButtonElement;
-    const density = el("button", { class: "btn small", type: "button", onclick: () => void this.densityMap(group) }, "Make density map") as HTMLButtonElement;
-    const saveNii = el("button", { class: "btn small", type: "button", title: "Save the density map as a NIfTI file", onclick: () => void this.saveDensity(group) }, "Save .nii") as HTMLButtonElement;
-    const cancel = el("button", { class: "btn outline small", type: "button", onclick: () => this.saving?.controller.abort() }, "Cancel") as HTMLButtonElement;
-    const run = el("button", { class: "btn small tf-run-local", type: "button", onclick: () => void this.runOnComputer(group) }, "Run on this computer") as HTMLButtonElement;
-    const runNote = el("div", { class: "tf-run-status" });
-    const level = el("select", { "aria-label": "Streamlines to save" }) as HTMLSelectElement;
-    const total = info?.levels[0]?.vertexCount;
-    for (const l of info?.levels ?? [{ index: 0, vertexCount: undefined, chunkShape: [] }]) {
-      const share = l.index === 0 || total === undefined || l.vertexCount === undefined ? undefined : (100 * l.vertexCount) / total;
-      const label = l.index === 0 ? "All streamlines" : `Level ${l.index} sample${share === undefined ? "" : ` (about ${share >= 1 ? Math.round(share) : Number(share.toPrecision(1))}%)`}`;
-      level.append(el("option", { value: String(l.index) }, label));
-    }
-    level.value = String(this.trkLevel);
-    level.addEventListener("change", () => (this.trkLevel = Number(level.value)));
-    const note = el("div", { class: "tf-save-status" });
-    this.updaters.push(() => {
-      const r = this.results.get(group.id);
-      const busy = this.saving !== undefined;
-      const mine = this.saving?.groupId === group.id;
-      button.disabled = busy || r?.state !== "exact" || r.count === 0;
-      button.title = r?.state === "exact" ? "Save this group's streamlines, whole, as a TrackVis .trk file" : "Available once the group's exact answer is in";
-      density.disabled = button.disabled;
-      density.title = r?.state === "exact" ? "Count the group's streamlines through each voxel, shown as an image layer" : "Available once the group's exact answer is in";
-      saveNii.hidden = !this.densities.has(group.id);
-      level.disabled = busy;
-      cancel.hidden = !mine;
-      if (mine) {
-        const s = this.saving!;
-        note.textContent = s.total === 0 ? "Reading the group's manifests…" : `${s.what ?? "Writing streamlines"}: ${s.done.toLocaleString()} of ${s.total.toLocaleString()}`;
-      } else {
-        note.textContent = this.saved_.get(group.id) ?? "";
-      }
-      note.hidden = note.textContent === "";
-      const runner = this.ctx.runner;
-      const job = this.runs.get(group.id);
-      const reason = cannotRun(group.filter);
-      run.hidden = !runner.available();
-      run.disabled = reason !== undefined || (job !== undefined && (job.state === "queued" || job.state === "running"));
-      run.title = reason ?? "Filter the whole tractogram in a Python job on this computer, writing a new .trk, a Zarr Vectors store or a density map";
-      runNote.textContent =
-        job === undefined
-          ? ""
-          : job.state === "running" || job.state === "queued"
-            ? `On this computer: ${job.state === "queued" ? "waiting" : job.progress === null ? "running" : `${Math.round(job.progress * 100)}%`}${job.pid !== null ? ` (PID ${job.pid})` : ""}${job.message ? `, ${job.message}` : ""}`
-            : `On this computer: ${job.state}${job.state === "failed" ? `: ${job.message}` : job.state === "done" ? `: ${job.outputs.map((o) => o.path.split("/").pop()).join(", ")}` : ""}`;
-      runNote.hidden = runNote.textContent === "";
+  /**
+   * A value of a region (x, y, z, a size): a slider that moves the region as
+   * it is dragged (one undo step when let go), its number box beside it.
+   * Within `bounds` (the dataset's extent), widened to take a typed value.
+   */
+  private regionValue(
+    group: Group,
+    roi: Roi,
+    on: (update: () => void) => void,
+    label: string,
+    get: () => number,
+    set: (v: number) => Partial<Roi>,
+    step: number,
+    bounds: [number, number],
+    unit?: string,
+  ): HTMLElement[] {
+    const v0 = get();
+    const s = slider(v0, {
+      min: Math.min(bounds[0], v0),
+      max: Math.max(bounds[1], v0),
+      step,
+      unit,
+      label,
+      unbounded: true,
+      oninput: (v) => this.updateRoi(group, roi.id, set(v), true),
+      onchange: (v) => this.updateRoi(group, roi.id, set(v)),
     });
-    return el("div", { class: "tf-save" }, button, density, level, cancel, saveNii, run, note, runNote);
+    on(() => {
+      const v = get();
+      if (v < Number(s.range.min)) s.range.min = String(v);
+      if (v > Number(s.range.max)) s.range.max = String(v);
+      s.set(v);
+    });
+    return [el("span", { class: "muted" }, label), s];
   }
 
-  private editor(group: Group): HTMLElement {
-    const kind = this.kind();
-    // Attributes are Zarr Vectors' object columns.
-    const props = kind === "zarr-vectors" ? this.props : undefined;
-    const box = el("div", { class: "tf-editor" });
-    const name = el("input", { class: "tf-name", value: group.name, "aria-label": "Group name", spellcheck: "false" }) as HTMLInputElement;
-    name.addEventListener("change", () => this.renameGroup(group, name.value));
-    name.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") name.blur();
-    });
-    box.append(
-      el(
-        "div",
-        { class: "tf-row" },
-        name,
-        el("button", { class: "btn small", type: "button", title: "Export this group's objects as CSV", onclick: () => this.exportCsv() }, "Export CSV"),
-        el("button", { class: "btn small", type: "button", title: "Delete this group", onclick: () => this.deleteGroup(group) }, "Delete"),
-      ),
-    );
-    const status = el("div", { class: "tf-status" });
-    this.updaters.push(() => {
-      const r = this.results.get(group.id);
-      status.replaceChildren(
-        el("strong", {}, r?.mask === undefined && r?.ids === undefined ? "–" : `${r!.count.toLocaleString()}${r!.state === "preview" ? "~" : ""}`),
-        props === undefined ? "" : `of ${props.ids.length.toLocaleString()} objects · `,
-        r?.detail ?? "",
-      );
-    });
-    box.append(status);
-    // Streamlines only: .trk holds lines.
-    if (kind === "zarr-vectors" && /^(streamline|polyline|line)s?$/.test(this.info?.geometry ?? "")) box.append(this.saveControl(group));
-
-    // Regions.
-    box.append(
-      el(
-        "div",
-        { class: "tf-row" },
-        el("h3", { class: "section-title", style: "margin:0;flex:1" }, "Regions"),
-        el("button", { class: "btn outline small", type: "button", title: "A sphere at the centre of the views", onclick: () => this.addRoi("sphere") }, "+ Sphere"),
-        el("button", { class: "btn outline small", type: "button", title: "A box at the centre of the views", onclick: () => this.addRoi("box") }, "+ Box"),
-        el("button", { class: "btn outline small", type: "button", title: "A disk at the centre of the views, which tracks must cross (TrackVis's disk), optionally within an angle of its normal", onclick: () => this.addRoi("disk") }, "+ Disk"),
-        this.kind() === "zarr-vectors"
-          ? el("button", { class: "btn outline small", type: "button", title: "An image's voxels (a painted label volume, or an image above a threshold) that tracks must pass through", onclick: () => this.addRoi("mask") }, "+ Mask")
-          : null,
-      ),
-    );
-    if (group.rois.length === 0) {
-      box.append(el("p", { class: "note" }, "A region starts at the centre of the views (Alt+Shift+S or B: at the mouse); Alt-drag it to move it."));
-    }
-    group.rois.forEach((roi, i) => box.append(this.roiControl(group, roi, i)));
-
-    // Attributes and groups.
-    if (props !== undefined && props.numeric.length > 0) {
-      const details = el("details", { open: !isEmptyFilter(group.filter) || group.rois.length === 0 });
-      details.append(el("summary", { class: "section-title" }, "Attributes"));
-      for (const column of props.numeric) details.append(this.rangeControl(group, props, column));
-      box.append(details);
-    }
-    const tags = props?.tags;
-    if (props !== undefined && tags !== undefined && tags.names.length > 0) {
-      const details = el("details", { open: group.filter.includeTags.length > 0 });
-      details.append(el("summary", { class: "section-title" }, "Stored groups"), el("p", { class: "note" }, "Ticked: keep objects in any ticked group."));
-      const all = tagCounts(props);
-      const list = el("div", { class: "tf-tags" });
-      const counts: HTMLElement[] = [];
-      tags.names.forEach((tag, i) => {
-        const tick = el("input", { type: "checkbox" }) as HTMLInputElement;
-        tick.checked = group.filter.includeTags.includes(tag);
-        tick.addEventListener("change", () => {
-          const include = new Set(group.filter.includeTags);
-          if (tick.checked) include.add(tag);
-          else include.delete(tag);
-          this.updateGroup(group.id, (g) => ({ ...g, filter: { ...g.filter, includeTags: [...include] } }));
-          this.evaluateGroup(this.saved.groups.find((g) => g.id === group.id)!, true);
-        });
-        const c = el("span", { class: "count" });
-        counts.push(c);
-        list.append(el("label", { class: "tf-tag", title: tags.descriptions[i] || tag }, tick, el("span", {}, tag), c));
-      });
-      this.updaters.push(() => {
-        const mask = this.results.get(group.id)?.mask;
-        const passing = mask === undefined ? undefined : tagCounts(props, mask);
-        counts.forEach((c, i) => {
-          c.textContent = passing === undefined ? `${all[i]}` : `${passing[i]} / ${all[i]}`;
-        });
-      });
-      details.append(list);
-      box.append(details);
-    }
-    return box;
-  }
-
-  private roiControl(group: Group, roi: Roi, index: number): HTMLElement {
+  private roiControl(group: Group, roi: Roi, index: number, on: (update: () => void) => void): HTMLElement {
     const current = () => this.saved.groups.find((g) => g.id === group.id)?.rois.find((r) => r.id === roi.id) ?? roi;
-    const op = el("select", { "aria-label": "Operator", title: "AND: must pass through. OR: through one of the OR regions. NOT: must not." }) as HTMLSelectElement;
-    for (const o of ["and", "or", "not"]) op.append(el("option", { value: o }, o.toUpperCase()));
-    op.value = roi.op;
-    op.addEventListener("change", () => this.updateRoi(group, roi.id, { op: op.value as RoiOp }));
-    // Lines (streamlines, skeletons) can be tested by their ends instead.
-    const lines = this.kind() === "zarr-vectors" && /^(streamline|polyline|line|skeleton|graph)s?$/.test(this.info?.geometry ?? "");
-    const ends = el("select", { "aria-label": "What must be in the region", title: "What of each track must be in the region" }) as HTMLSelectElement;
-    for (const [value, label] of [["", "Passes through"], ["either", "Either end in it"], ["both", "Both ends in it"]]) ends.append(el("option", { value }, label));
-    ends.value = roi.ends ?? "";
-    ends.addEventListener("change", () => this.updateRoi(group, roi.id, { ends: (ends.value || undefined) as RoiEnds | undefined }));
-    // Each value: a slider that moves the region as it is dragged, and a
-    // box to type it (Enter, or Set, applies what is typed).
-    const typed: (() => void)[] = [];
-    const number = (label: string, get: () => number, set: (v: number) => Partial<Roi>, step: number, bounds: () => [number, number]) => {
-      const slider = el("input", { type: "range", step, "aria-label": `${label} (slider)` }) as HTMLInputElement;
-      const input = el("input", { type: "number", step, "aria-label": label }) as HTMLInputElement;
-      const fit = () => {
-        const [lo, hi] = bounds();
-        const v = get();
-        slider.min = String(Math.min(lo, v));
-        slider.max = String(Math.max(hi, v));
-      };
-      slider.addEventListener("pointerdown", fit);
-      slider.addEventListener("input", () => {
-        const v = Number(slider.value);
-        input.value = String(Math.round(v * 100) / 100);
-        this.updateRoi(group, roi.id, set(v), true);
-      });
-      const apply = () => {
-        const v = Number(input.value);
-        if (Number.isFinite(v) && v !== get()) this.updateRoi(group, roi.id, set(v));
-      };
-      typed.push(apply);
-      input.addEventListener("change", apply);
-      this.updaters.push(() => {
-        if (document.activeElement !== input) input.value = String(Math.round(get() * 100) / 100);
-        if (document.activeElement !== slider) {
-          fit();
-          slider.value = String(get());
-        }
-      });
-      return el("label", { class: "tf-field" }, el("span", {}, label), slider, input);
-    };
+    const op = select(
+      [
+        ["and", "AND"],
+        ["or", "OR"],
+        ["not", "NOT"],
+      ],
+      roi.op,
+      (v) => this.updateRoi(group, roi.id, { op: v as RoiOp }),
+      "Operator",
+    );
+    on(() => op.set(current().op));
+    const status = el("span", { class: "readout" });
+    on(() => {
+      status.textContent = this.roiStatus.get(roi.id) ?? "";
+      status.hidden = status.textContent === "";
+    });
+    const name = `${roi.shape === "sphere" ? "Sphere" : roi.shape === "disk" ? "Disk" : roi.shape === "mask" ? "Mask" : "Box"} ${index + 1}`;
+    const remove = iconButton("close", `Remove ${name}`, () => this.removeRoi(group, roi.id));
+    if (roi.shape === "mask") return this.maskRow(group, roi, name, op, remove, status, on);
+
     // The dataset's extent, in the view's coordinates, for the sliders.
     const extent = (k: number): [number, number] => {
       const info = this.info;
       const dims = this.dims();
-      const name = info?.axisNames[k];
-      if (info === undefined || dims === undefined || name === undefined) return [current().center[k] - 100, current().center[k] + 100];
-      const global = dims[name]?.[0];
+      const axis = info?.axisNames[k];
+      if (info === undefined || dims === undefined || axis === undefined) return [roi.center[k] - 100, roi.center[k] + 100];
+      const global = dims[axis]?.[0];
       const factor = global !== undefined && info.axisScales[k] > 0 ? global / info.axisScales[k] : 1;
       const offset = info.coordinateOffset?.[k] ?? 0;
       const a = (info.bounds.lower[k] + offset) / factor;
       const b = (info.bounds.upper[k] + offset) / factor;
       return [Math.min(a, b), Math.max(a, b)];
     };
-    const span = (): [number, number] => [0.1, Math.max(...[0, 1, 2].map((k) => extent(k)[1] - extent(k)[0])) / 2];
-    const c = (k: number) => (v: number) => {
+    const span: [number, number] = [0.1, Math.max(...[0, 1, 2].map((k) => extent(k)[1] - extent(k)[0])) / 2];
+    const value = (label: string, get: () => number, set: (v: number) => Partial<Roi>, step: number, bounds: [number, number], unit?: string) =>
+      this.regionValue(group, roi, on, label, get, set, step, bounds, unit);
+    const centre = (k: number) => (v: number) => {
       const center = [...current().center] as [number, number, number];
       center[k] = v;
       return { center };
     };
-    const fields = el(
-      "div",
-      { class: "tf-xyz" },
-      number("x", () => current().center[0], c(0), 0.5, () => extent(0)),
-      number("y", () => current().center[1], c(1), 0.5, () => extent(1)),
-      number("z", () => current().center[2], c(2), 0.5, () => extent(2)),
-      roi.shape !== "box"
-        ? number("radius", () => current().radius, (v) => ({ radius: Math.max(0.1, v) }), 0.5, span)
-        : number("width", () => current().size[0], (v) => ({ size: [Math.max(0.1, v), current().size[1], current().size[2]] }), 0.5, span),
-    );
-    const axis = el("select", { "aria-label": "Disk axis", title: "The plane the disk lies in: the axis it lies across" }) as HTMLSelectElement;
-    for (const [value, label] of [["0", "Across x (sagittal)"], ["1", "Across y (coronal)"], ["2", "Across z (axial)"]]) axis.append(el("option", { value }, label));
-    axis.value = String(roi.axis ?? 2);
-    axis.addEventListener("change", () => this.updateRoi(group, roi.id, { axis: Number(axis.value) }));
-    const extra =
-      roi.shape === "disk"
-        ? el(
-            "div",
-            { class: "tf-xyz" },
-            el("label", { class: "tf-field" }, el("span", {}, "plane"), axis),
-            number("angle limit °", () => current().angle ?? 90, (v) => ({ angle: v >= 90 ? undefined : Math.max(0, v) }), 1, () => [0, 90]),
-          )
-        : roi.shape === "box"
-        ? el(
-            "div",
-            { class: "tf-xyz" },
-            number("height", () => current().size[1], (v) => ({ size: [current().size[0], Math.max(0.1, v), current().size[2]] }), 0.5, span),
-            number("depth", () => current().size[2], (v) => ({ size: [current().size[0], current().size[1], Math.max(0.1, v)] }), 0.5, span),
-          )
-        : null;
-    const status = el("div", { class: "tf-roi-status" });
-    this.updaters.push(() => {
-      status.textContent = this.roiStatus.get(roi.id) ?? "";
-    });
-    if (roi.shape === "mask") return this.maskRow(group, roi, index, op, status);
+    const size = (k: number) => (v: number) => {
+      const next = [...current().size] as [number, number, number];
+      next[k] = Math.max(0.1, v);
+      return { size: next };
+    };
+    const values = [
+      ...value("x", () => current().center[0], centre(0), 0.5, extent(0)),
+      ...value("y", () => current().center[1], centre(1), 0.5, extent(1)),
+      ...value("z", () => current().center[2], centre(2), 0.5, extent(2)),
+      ...(roi.shape === "box"
+        ? [...value("Width", () => current().size[0], size(0), 0.5, span), ...value("Height", () => current().size[1], size(1), 0.5, span), ...value("Depth", () => current().size[2], size(2), 0.5, span)]
+        : value("Radius", () => current().radius, (v) => ({ radius: Math.max(0.1, v) }), 0.5, span)),
+    ];
+    if (roi.shape === "disk") {
+      const plane = select(
+        [
+          ["0", "Across x (sagittal)"],
+          ["1", "Across y (coronal)"],
+          ["2", "Across z (axial)"],
+        ],
+        String(roi.axis ?? 2),
+        (v) => this.updateRoi(group, roi.id, { axis: Number(v) }),
+        "Disk plane",
+      );
+      on(() => plane.set(String(current().axis ?? 2)));
+      values.push(el("span", { class: "muted" }, "Plane"), plane, ...value("Angle limit", () => current().angle ?? 90, (v) => ({ angle: v >= 90 ? undefined : Math.max(0, v) }), 1, [0, 90], "°"));
+    }
+    // Lines (streamlines, skeletons) can be tested by their ends instead.
+    const lines = this.kind() === "zarr-vectors" && /^(streamline|polyline|line|skeleton|graph)s?$/.test(this.info?.geometry ?? "");
+    if (lines && roi.shape !== "disk") {
+      const ends = select(
+        [
+          ["", "Pass through it"],
+          ["either", "Either end in it"],
+          ["both", "Both ends in it"],
+        ],
+        roi.ends ?? "",
+        (v) => this.updateRoi(group, roi.id, { ends: (v || undefined) as RoiEnds | undefined }),
+        "What must be in the region",
+      );
+      on(() => ends.set(current().ends ?? ""));
+      values.unshift(el("span", { class: "muted" }, "Tracks"), ends);
+    }
     return el(
       "div",
       { class: "tf-roi" },
       el(
         "div",
-        { class: "tf-roi-head" },
-        el("span", { class: "label" }, `${roi.shape === "sphere" ? "Sphere" : roi.shape === "disk" ? "Disk" : "Box"} ${index + 1}`),
+        { class: "row" },
+        el("span", { class: "tf-name" }, name),
         op,
-        el("button", { class: "btn small", type: "button", title: "Apply the typed values", onclick: () => typed.forEach((apply) => apply()) }, "Apply"),
-        el("button", { class: "btn small", type: "button", title: "Move it to the centre of the views", onclick: () => this.updateRoi(group, roi.id, { center: this.viewCentre() }) }, "Here"),
-        el("button", { class: "btn small", type: "button", title: "Go to it", onclick: () => this.ctx.viewer.setPosition([...current().center]) }, "Go"),
-        el("button", { class: "btn small", type: "button", title: "Remove it", "aria-label": "Remove", onclick: () => this.removeRoi(group, roi.id) }, "×"),
+        button("Move here", () => this.updateRoi(group, roi.id, { center: this.viewCentre() }), "Move it to the centre of the views"),
+        button("Go to", () => this.ctx.viewer.setPosition([...current().center]), "Move the views to it"),
+        remove,
       ),
-      lines && roi.shape !== "disk" ? el("div", { class: "tf-ends" }, ends) : null,
-      fields,
-      extra,
+      el("div", { class: "tf-values" }, ...values),
       status,
     );
   }
 
   /** A mask region's row: its image, and which voxels (at or above a value; one label). */
-  private maskRow(group: Group, roi: Roi, index: number, op: HTMLElement, status: HTMLElement): HTMLElement {
+  private maskRow(group: Group, roi: Roi, name: string, op: HTMLElement, remove: HTMLElement, status: HTMLElement, on: (update: () => void) => void): HTMLElement {
     const mask = roi.mask ?? { layer: "" };
-    const layers = readableImages(this.ctx, ["image", "segmentation"]);
-    const layer = el("select", { "aria-label": "Mask image", title: "The image whose voxels the mask is" }) as HTMLSelectElement;
-    for (const name of new Set([...layers, mask.layer])) layer.append(el("option", { value: name }, name));
-    layer.value = mask.layer;
-    layer.addEventListener("change", () => this.updateRoi(group, roi.id, { mask: { layer: layer.value } }));
+    const images = readableImages(this.ctx, ["image", "segmentation"]);
+    const layer = select(
+      [...new Set([...images, mask.layer])].map((n): [string, string] => [n, n]),
+      mask.layer,
+      (v) => this.updateRoi(group, roi.id, { mask: { layer: v } }),
+      "Mask image",
+    );
     const labels = this.ctx.viewer.layers().find((l) => l.name === mask.layer)?.type === "segmentation";
     // Images: voxels at or above a value (blank: not 0). Labels: one label (blank: any but 0).
-    const value = el("input", { type: "number", step: "any", placeholder: labels ? "any" : "not 0", "aria-label": labels ? "Mask label" : "Mask threshold", value: String((labels ? mask.label : mask.threshold) ?? "") }) as HTMLInputElement;
+    const value = el("input", {
+      class: "text-input num-input",
+      type: "number",
+      step: "any",
+      placeholder: labels ? "any" : "not 0",
+      "aria-label": labels ? "Mask label" : "Mask threshold",
+      value: String((labels ? mask.label : mask.threshold) ?? ""),
+    }) as HTMLInputElement;
     value.addEventListener("change", () => {
       const v = value.value.trim() === "" ? undefined : Number(value.value);
       const kept = v !== undefined && Number.isFinite(v) ? v : undefined;
       this.updateRoi(group, roi.id, { mask: { layer: mask.layer, ...(kept === undefined ? {} : labels ? { label: kept } : { threshold: kept }) } });
     });
+    on(() => {
+      const m = this.saved.groups.find((g) => g.id === group.id)?.rois.find((r) => r.id === roi.id)?.mask;
+      if (value.ownerDocument.activeElement !== value) value.value = String((labels ? m?.label : m?.threshold) ?? "");
+    });
     return el(
       "div",
       { class: "tf-roi" },
-      el(
-        "div",
-        { class: "tf-roi-head" },
-        el("span", { class: "label" }, `Mask ${index + 1}`),
-        op,
-        el("button", { class: "btn small", type: "button", title: "Remove it", "aria-label": "Remove", onclick: () => this.removeRoi(group, roi.id) }, "×"),
-      ),
-      el(
-        "div",
-        { class: "tf-xyz" },
-        el("label", { class: "tf-field" }, el("span", {}, "image"), layer),
-        el("label", { class: "tf-field" }, el("span", {}, labels ? "label" : "at or above"), value),
-      ),
+      el("div", { class: "row" }, el("span", { class: "tf-name" }, name), op, remove),
+      el("div", { class: "tf-values" }, el("span", { class: "muted" }, "Image"), layer, el("span", { class: "muted" }, labels ? "Label" : "At or above"), value),
       status,
     );
   }
 
-  /** A histogram and a two-handled range for one numeric attribute of the edited group. */
-  private rangeControl(group: Group, props: SegmentProperties, column: SegmentProperties["numeric"][number]): HTMLElement {
-    const { id, min, max } = column;
-    const step = max > min ? (max - min) / 400 : 1;
+  /**
+   * A histogram and a range (two sliders) for one numeric attribute of the
+   * edited group; the group's histogram is counted only while `shown`.
+   */
+  private rangeControl(group: Group, props: SegmentProperties, column: SegmentProperties["numeric"][number], shown: () => boolean, on: (update: () => void) => void): HTMLElement {
+    const { id } = column;
+    // A round step, about a 400th of the span, and the ends rounded out to it: short numbers in the boxes.
+    const step = column.max > column.min ? 10 ** Math.floor(Math.log10((column.max - column.min) / 400)) : 1;
+    const min = Math.floor(column.min / step) * step;
+    const max = Math.ceil(column.max / step) * step;
     const ranges = () => this.saved.groups.find((g) => g.id === group.id)?.filter.ranges ?? {};
     const current = (): [number, number] => ranges()[id] ?? [min, max];
-    const [lo0, hi0] = current();
-    const lo = el("input", { type: "range", min, max, step, value: lo0, "aria-label": `${id} minimum` }) as HTMLInputElement;
-    const hi = el("input", { type: "range", min, max, step, value: hi0, "aria-label": `${id} maximum` }) as HTMLInputElement;
-    const label = el("span", { class: "tf-range" });
-    const block = el("div", { class: "tf-prop" });
+    const label = el("span", { class: "readout" });
     const svgNs = "http://www.w3.org/2000/svg";
     const svg = document.createElementNS(svgNs, "svg");
     svg.setAttribute("class", "tf-hist");
     svg.setAttribute("viewBox", `0 0 ${BINS} 1`);
     svg.setAttribute("preserveAspectRatio", "none");
-    const all = histogram(column.values, min, max, BINS);
-    const peak = Math.max(1, ...all);
+    svg.setAttribute("aria-hidden", "true");
+    const all = this.counts.histogram(column, BINS);
+    let peak = 1;
+    for (const n of all) peak = Math.max(peak, n);
     const bars = (counts: Uint32Array, cls: string) =>
       Array.from(counts, (n, b) => {
         const r = document.createElementNS(svgNs, "rect");
@@ -2633,38 +2907,42 @@ class TrackGroups {
     svg.append(...bars(all, "all"));
     const passGroup = document.createElementNS(svgNs, "g");
     svg.append(passGroup);
-    const describe = (a: number, b: number) => {
-      label.textContent = `${fmt(a)} – ${fmt(b)}`;
-      block.classList.toggle("filtered", a > min || b < max);
-    };
-    describe(lo0, hi0);
-    const live = () => {
-      let a = Number(lo.value);
-      let b = Number(hi.value);
-      if (a > b) [a, b] = [b, a];
-      describe(a, b);
+    // A new range: preview while a slider moves, saved (one undo step) when it is let go.
+    const change = (end: 0 | 1, v: number, soon: boolean) => {
+      const range = current();
+      range[end] = v;
+      const [a, b] = range[0] <= range[1] ? range : [range[1], range[0]];
       const next = { ...ranges() };
       if (a <= min && b >= max) delete next[id];
       else next[id] = [a, b];
-      this.updateGroup(group.id, (g) => ({ ...g, filter: { ...g.filter, ranges: next } }), true);
+      this.updateGroup(group.id, (g) => ({ ...g, filter: { ...g.filter, ranges: next } }), soon);
       this.evaluateGroup(this.saved.groups.find((g) => g.id === group.id)!);
     };
-    for (const input of [lo, hi]) input.addEventListener("input", live);
-    this.updaters.push(() => {
+    const [lo0, hi0] = current();
+    const options = { min, max, step };
+    const lo = slider(lo0, { ...options, label: `${id} minimum`, oninput: (v) => change(0, v, true), onchange: (v) => change(0, v, false) });
+    const hi = slider(hi0, { ...options, label: `${id} maximum`, oninput: (v) => change(1, v, true), onchange: (v) => change(1, v, false) });
+    let drawn: Uint32Array | undefined | null = null;
+    on(() => {
       const mask = this.results.get(group.id)?.mask;
-      const passing = mask === undefined ? undefined : histogram(column.values, min, max, BINS, mask);
-      passGroup.replaceChildren(...(passing === undefined ? [] : bars(passing, "pass")));
+      // Counted once per answer, and drawn again only when it changes.
+      const passing = !shown() || mask === undefined ? undefined : this.counts.histogram(column, BINS, mask);
+      if (passing !== drawn) {
+        drawn = passing;
+        passGroup.replaceChildren(...(passing === undefined ? [] : bars(passing, "pass")));
+      }
       const [a, b] = current();
-      if (document.activeElement !== lo) lo.value = String(a);
-      if (document.activeElement !== hi) hi.value = String(b);
-      describe(a, b);
+      lo.set(a);
+      hi.set(b);
+      label.textContent = a > min || b < max ? `${fmt(a)} – ${fmt(b)}` : "";
     });
-    block.append(
-      el("div", { class: "tf-prop-head" }, el("span", { class: "tf-prop-name", title: column.description ?? id }, id), label),
+    return el(
+      "div",
+      { class: "stack" },
+      el("div", { class: "row" }, el("span", {}, id), column.description ? info(column.description, `About ${id}`) : null, el("span", { class: "spacer" }), label),
       svg,
-      el("div", { class: "tf-sliders" }, lo, hi),
+      el("div", { class: "tf-values" }, el("span", { class: "muted" }, "Min"), lo, el("span", { class: "muted" }, "Max"), hi),
     );
-    return block;
   }
 }
 

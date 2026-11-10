@@ -1,15 +1,28 @@
 name: CI
 
-# Unit tests and type-check, then a build of the app against the pinned
-# commit of the zarr-vectors Neuroglancer fork.  While this is pilot work it
-# runs only by hand, from the Actions tab (the tests run locally before every
-# push).
+# The checks, on as few runs as will do (plans/README.md, decision 2): on
+# every pull request, and by hand from the Actions tab.  Never on a push,
+# so work-in-progress pushes start no run; `[skip ci]` on them is no longer
+# needed, though harmless.  The tests run locally before every push.
+#
+# Each run:
+#   app      npm ci; the type-check of the app and of the zarr-vectors
+#            plugin; both test suites (the platform's and zarr-vectors');
+#            the build, against the pinned commit of the Neuroglancer fork;
+#            and the bundle-size budget (tests/e2e/bundle_budget.mjs).
+#   runner   the runner's and render service's tests (runner/tests) on a
+#            CPU: those that need CuPy and a GPU, torch or
+#            zarr-vectors-tools skip.
+#
+# The browser smoke test (tests/e2e/smoke.mjs) is not run here yet: it needs
+# Chrome with SwiftShader and Playwright (see the head of that file).
 on:
+  pull_request:
   workflow_dispatch:
 
-# A newer push to the same branch replaces a run still in progress.
+# A newer run for the same pull request replaces one still in progress.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -21,15 +34,15 @@ env:
   # ngplatform-upstream).  zarr-vectors is not in it: it is a plugin in
   # plugins/.  Bump it deliberately, with the e2e smoke test passing locally.
   FORK_REPO: Andrew-Keenlyside/neuroglancer
-  FORK_SHA: 435cdcb012eceb70eb1e5200bdd919af3eb7a5c5
+  FORK_SHA: 2a12b947fecabab078e58a99366e375e2411b44b
   # The fork's install fetches Playwright browsers, which this job does not
   # use and which Playwright does not ship for every runner image.
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
 jobs:
-  test-and-build:
+  app:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
         with:
@@ -47,7 +60,9 @@ jobs:
           node-version: 22
       - run: npm ci --no-audit --no-fund
         working-directory: neuroglancer
-      - run: npm install --no-audit --no-fund
+      # Exactly what package-lock.json says: a lock out of step with
+      # package.json fails here.
+      - run: npm ci --no-audit --no-fund
         working-directory: ngplatform
       # Installing ran Neuroglancer's prepare script, which points its package
       # at a built lib/.  Build from its TypeScript instead, as local
@@ -55,9 +70,29 @@ jobs:
       # which the zarr-vectors plugin's worker half imports.
       - run: node build_tools/postpack.ts && rm -rf lib
         working-directory: neuroglancer
-      - run: npm test
+      - name: Type-check (the app, and the zarr-vectors plugin)
+        run: npm run typecheck
         working-directory: ngplatform
-      - run: npm run typecheck
+      - name: Tests (the platform's, then zarr-vectors')
+        run: npm test
         working-directory: ngplatform
-      - run: npm run build
+      - name: Build
+        run: npm run build
         working-directory: ngplatform
+      - name: Bundle-size budget
+        run: npm run budget
+        working-directory: ngplatform
+
+  runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The runner with its test extra (pytest, and what the render
+      # service's CPU tests read and write with); no CuPy, so the GPU tests skip.
+      - run: python -m pip install "./runner[test]"
+      - name: Tests (runner and render service)
+        run: python -m pytest runner/tests -q -rs

@@ -13,31 +13,40 @@
  * to their fixed partner.
  */
 import type { Json, LayerTransform, PlatformContext, PluginModule } from "@ngplatform/sdk";
-import { downloadBlob, el, safeFileName } from "@ngplatform/sdk/dom";
+import {
+  type Action,
+  button,
+  card,
+  checkbox,
+  downloadBlob,
+  el,
+  emptyState,
+  field,
+  iconButton,
+  info,
+  type OnOff,
+  region,
+  roving,
+  safeFileName,
+  select,
+  type Settable,
+  type Slider,
+  slider,
+  type StatusLine,
+  statusLine,
+  toggle,
+} from "@ngplatform/sdk/dom";
 import { layerSourceUrl } from "@ngplatform/sdk/sources";
 import { WorkerRpc } from "@ngplatform/sdk/worker_rpc";
 import { storeOf } from "../volume-view/sources.js";
 import { apply4, describe, fit, type Fit, identity4, invert4, type Mat4, MINIMUM, type Model, multiply4, type Vec3 } from "./fit.js";
 import { needsGeometry, readTransformFile, type VolumeGeometry, writeItk, writeLta, writePlain } from "./formats.js";
-import {
-  axisOrder,
-  identityManual,
-  isIdentityManual,
-  type Manual,
-  manualMatrix,
-  permute,
-  readManual,
-  SCALE_SLIDER,
-  scaleFromSlider,
-  sliderFromScale,
-  translationStep,
-  turned,
-  unpermute,
-} from "./manual.js";
+import { axisOrder, identityManual, isIdentityManual, type Manual, manualMatrix, permute, readManual, translationStep, turned, unpermute } from "./manual.js";
 import { REGISTRATION_PANEL } from "./manifest.js";
 import type { SaveRequest } from "./save_worker.js";
 import { DIRECTIONS, type Direction, straighten } from "./straighten.js";
 import { ENLARGE, type Method, zipFiles } from "./volume_io.js";
+import { withSharedChunks } from "../volume-view/chunk_host.js";
 
 interface Pair {
   id: string;
@@ -128,21 +137,34 @@ export function neuroglancer(t: LayerTransform, p: Mat4): Float64Array {
 
 const fmt = (v: number) => (Math.abs(v) >= 100 ? v.toFixed(1) : v.toFixed(2));
 
-/** A number for a typed field: no more decimals than `step` needs, and one more. */
-function typedValue(v: number, step: number): string {
-  const decimals = Math.max(0, Math.min(6, 1 - Math.floor(Math.log10(step))));
-  return String(Number(v.toFixed(decimals)));
+/**
+ * Why the layers that cannot be moved are not offered: those that are not
+ * 3-D (a 2-D section, channels, time), as "“movie” is 4-D".  Annotation
+ * layers and layers not yet loaded are left out.
+ */
+export function notOffered(layers: { name: string; type: string; rank?: number }[]): string {
+  const skipped = layers.filter((l) => (l.type === "image" || l.type === "segmentation") && l.rank !== undefined && l.rank !== 3);
+  return skipped.map((l) => `“${l.name}” is ${l.rank}-D`).join(", ");
 }
 
 type Tab = "rotate" | "translate" | "scale" | "flip";
 type ImageFormat = SaveRequest["format"];
 
-/** At most this much of an image is read for saving (its finest level that fits). */
+/** The panel's places for progress and errors. */
+type Part = "straighten" | "warp" | "file" | "image";
+
+/** At most this much memory a save in memory uses (it takes the image's finest level that fits). */
 const MAX_BYTES = 512 * 2 ** 20;
 
+/** What Registration asks of its worker (a fake one in the tests). */
+export interface SaveWorker {
+  request<T>(message: object, progress?: (what: string, done: number, total: number) => void, signal?: AbortSignal): Promise<T>;
+  dispose(): void;
+}
+
 /** Registration's worker: geometry and saving, as promises with progress and cancel. */
-class SaveClient {
-  private readonly rpc = new WorkerRpc(() => new Worker(new URL("./save_worker.ts", import.meta.url), { type: "module", name: "registration" }), {
+class SaveClient implements SaveWorker {
+  private readonly rpc = new WorkerRpc(() => withSharedChunks(new Worker(new URL("./save_worker.ts", import.meta.url), { type: "module", name: "registration" })), {
     stopped: (why) => `the saving worker stopped: ${why}`,
     restart: true,
   });
@@ -164,10 +186,10 @@ type FilePicker = {
   showDirectoryPicker?(o?: unknown): Promise<FileSystemDirectoryHandle>;
 };
 
-class Registration {
+export class Registration {
   private saved: Saved;
   private result: Fit | { error: string } | undefined;
-  private panelUpdate: ((force?: boolean) => void) | undefined;
+  private panelUpdate: (() => void) | undefined;
   private tab: Tab = "rotate";
   /** The image save's choices (the formats are kept in this browser; the rest this session only). */
   private imageFormat: ImageFormat = "nii.gz";
@@ -176,11 +198,16 @@ class Registration {
   private grid = "";
   private transformFormat: "lta" | "itk" | "plain" = "lta";
   private saving: AbortController | undefined;
-  private saveNote = "";
-  private noteUpdate: (() => void) | undefined;
-  private client: SaveClient | undefined;
+  /** The shown panel's status lines (progress and errors), by part. */
+  private lines: Record<Part, StatusLine> | undefined;
+  private client: SaveWorker | undefined;
+  /** The landmarks' points (global, as written into their annotation layers) by annotation id, to tell a dragged one. */
+  private written = new Map<string, number[]>();
 
-  constructor(private readonly ctx: PlatformContext) {
+  constructor(
+    private readonly ctx: PlatformContext,
+    private readonly makeWorker: () => SaveWorker = () => new SaveClient(),
+  ) {
     this.saved = readSaved(ctx.state.get());
     // The file formats chosen last, in this browser.
     const formats = ctx.settings.get<{ transform?: string; image?: string }>("formats") ?? {};
@@ -189,6 +216,7 @@ class Registration {
     // The state's notice comes for any plugin's change: only a change of this plugin's state is read again
     // (else a drag's move, kept in memory until it ends, would be read over and applied twice).
     let seen = JSON.stringify(ctx.state.get() ?? null);
+    let readBack: ReturnType<typeof setTimeout> | undefined;
     ctx.subscriptions.push(
       ctx.state.onChanged(() => {
         const now = JSON.stringify(ctx.state.get() ?? null);
@@ -199,12 +227,33 @@ class Registration {
         this.panelUpdate?.();
       }),
       ctx.viewer.onLayersChanged(() => this.panelUpdate?.()),
+      // A landmark dragged in its annotation layer is read back into its pair, once the drag rests.
+      ctx.viewer.onStateChanged(() => {
+        clearTimeout(readBack);
+        readBack = setTimeout(() => this.readBack(), 250);
+      }),
       () => {
+        clearTimeout(readBack);
         this.saving?.abort();
         this.client?.dispose();
       },
     );
     this.refit(false);
+  }
+
+  /** Reports progress in a part of the panel (when shown). */
+  private progress(part: Part, text: string): void {
+    this.lines?.[part].progress(text);
+  }
+
+  /** Reports a failure in a part of the panel; as a toast when the panel is not shown. */
+  private problem(part: Part, text: string, action?: Action): void {
+    if (this.lines) this.lines[part].error(text, action);
+    else this.ctx.ui.toast(text, "error");
+  }
+
+  private settle(part: Part): void {
+    this.lines?.[part].clear();
   }
 
   private save(patch: Partial<Saved>): void {
@@ -266,7 +315,7 @@ class Registration {
     const name = this.layer();
     const t = name && this.ctx.viewer.layerTransform(name);
     if (!name || !t) {
-      this.ctx.ui.toast("Choose the moving layer in the Registration tab first.", "error");
+      this.ctx.ui.toast("Choose the moving layer in the Registration panel first.", "error");
       this.ctx.ui.showPanel(REGISTRATION_PANEL);
       return;
     }
@@ -278,9 +327,10 @@ class Registration {
     }
     // A moving point is kept in the moving layer's own space.
     const point = role === "fixed" ? at : apply4(invert4(p), at);
+    // A new pair object: the one in the state may be an undo step's too.
     const pairs = [...this.saved.pairs];
-    const open = pairs.find((q) => q[role] === undefined);
-    if (open !== undefined) open[role] = point;
+    const open = pairs.findIndex((q) => q[role] === undefined);
+    if (open !== -1) pairs[open] = { ...pairs[open], [role]: point };
     else pairs.push({ id: crypto.randomUUID().slice(0, 8), [role]: point, on: true });
     this.save({ pairs, base: this.saved.base ?? Array.from(t.matrix) });
     this.refit(true);
@@ -440,15 +490,12 @@ class Registration {
       this.placed(name, neuroglancer(t, multiply4(permute(r, order), physical(t)!)));
       // The marks were on the image as it was; they no longer are.
       this.save({ marks: undefined });
-      this.straightenNote = `Straightened: #1 → #2 now points ${first}, #3 → #4 as near ${second} as it can.`;
+      this.settle("straighten");
     } catch (e) {
-      this.straightenNote = `Could not straighten: ${(e as Error).message}.`;
+      this.problem("straighten", `Could not straighten: ${(e as Error).message}.`);
     }
     this.panelUpdate?.();
   }
-
-  private straightenNote = "";
-  private warpNote = "";
 
   /**
    * A new layer of the moving image warped by the pairs (a thin-plate
@@ -462,21 +509,14 @@ class Registration {
     const source = name ? layerSourceUrl(this.ctx.viewer.layerSpec(name)) : undefined;
     const pairs = this.saved.pairs.filter((q) => q.on && q.fixed && q.moving);
     if (!name || !t) return;
-    if (source === undefined) {
-      this.warpNote = `${name} has no source address that can be read again, so it cannot be warped.`;
-      this.panelUpdate?.();
-      return;
-    }
-    if (pairs.length < 4) {
-      this.warpNote = `A warp needs four complete pairs or more, not all in one plane; there ${pairs.length === 1 ? "is" : "are"} ${pairs.length}.`;
-      this.panelUpdate?.();
-      return;
-    }
+    if (source === undefined) return this.problem("warp", `${name} has no source address that can be read again, so it cannot be warped.`);
+    if (pairs.length < 4) return this.problem("warp", `A warp needs four complete pairs or more, not all in one plane; there ${pairs.length === 1 ? "is" : "are"} ${pairs.length}.`);
     // Pairs in x, y, z order: fixed in the layer's output dimensions', moving in its own.
     const order = (names: string[]) => ["x", "y", "z"].map((a) => names.indexOf(a));
     const pick = (v: Vec3, o: number[]) => (o.every((i) => i >= 0) ? o.map((i) => v[i]) : [...v]);
     const fo = order(t.output.names);
     const mo = order(t.input.names);
+    this.progress("warp", "Adding the warped layer…");
     try {
       const url = await this.ctx.workspace.computed.url({
         source,
@@ -495,11 +535,10 @@ class Registration {
           { quiet: true },
         );
       }
-      this.warpNote = `Added ${warped}: the moving image warped through the pairs, computed as you view it.`;
+      this.settle("warp");
     } catch (e) {
-      this.warpNote = `Could not warp: ${(e as Error).message}`;
+      this.problem("warp", `Could not warp: ${(e as Error).message}`);
     }
-    this.panelUpdate?.();
   }
 
   /** Freeview's Move Center to Current Cursor Location: the translation that puts the volume's centre at the views' centre. */
@@ -531,8 +570,8 @@ class Registration {
     return { name, t, move: unpermute(multiply4(p, invert4(d)), axisOrder(t.output.names)) };
   }
 
-  private worker(): SaveClient {
-    return (this.client ??= new SaveClient());
+  private worker(): SaveWorker {
+    return (this.client ??= this.makeWorker());
   }
 
   /** The store an image layer reads (OME-Zarr, NIfTI as virtual Zarr, precomputed), for the worker. */
@@ -568,6 +607,13 @@ class Registration {
       // With the volumes' geometry (moving; fixed: the grid chosen, else the moving one's), as FreeSurfer's tools want.
       const src = await this.geometry(r.name);
       const dst = this.grid && this.grid !== ENLARGE ? await this.geometry(this.grid) : src;
+      if (!src || !dst) {
+        const which = !src ? r.name : this.grid;
+        const go = await this.ctx.ui.confirm(
+          `The voxel grid of “${which}” could not be read, so the LTA would be saved without the volumes' geometry: FreeSurfer's tools then need --mov and --targ to use it. Save it anyway?`,
+        );
+        if (!go) return;
+      }
       text = writeLta(r.move, { src, dst });
     } else {
       text = format === "itk" ? writeItk(r.move) : writePlain(r.move);
@@ -594,14 +640,10 @@ class Registration {
       this.placed(name, neuroglancer(t, multiply4(r, d)));
       this.ctx.log.info(`Placed ${name} with ${file.name}.`);
       this.showLandmarks();
+      this.settle("file");
     } catch (e) {
-      this.ctx.ui.toast(`Could not read ${file.name}: ${(e as Error).message}`, "error");
+      this.problem("file", `Could not read ${file.name}: ${(e as Error).message}`);
     }
-  }
-
-  private note(text: string): void {
-    this.saveNote = text;
-    this.noteUpdate?.();
   }
 
   /**
@@ -613,13 +655,11 @@ class Registration {
     const r = this.relative();
     if (!r) return;
     const store = this.storeOf(r.name);
-    if (store === undefined) {
-      this.ctx.ui.toast("This layer's data cannot be read for saving: OME-Zarr, NIfTI and precomputed images can be.", "error");
-      return;
-    }
+    if (store === undefined) return this.problem("image", "This layer's data cannot be read for saving: OME-Zarr, NIfTI and precomputed images can be.");
     const format = this.imageFormat;
     const base = `${fileName(r.name)}_registered`;
     const suffix = format === "zarr" ? ".ome.zarr" : `.${format}`;
+    const retry = { label: "Retry", run: () => void this.saveImage() };
     // Where to, asked first (a picker needs the click that asked for it).
     const picker = window as unknown as FilePicker;
     let file: FileSystemFileHandle | undefined;
@@ -629,9 +669,11 @@ class Registration {
       else if (format !== "zarr" && picker.showSaveFilePicker)
         file = await picker.showSaveFilePicker({ id: "ngplatform-save", suggestedName: base + suffix, types: [{ description: /^mg/.test(format) ? "FreeSurfer volume" : "NIfTI", accept: { "application/octet-stream": [suffix] } }] });
     } catch (e) {
-      if ((e as DOMException).name !== "AbortError") this.note(`Could not choose where to save: ${(e as Error).message}`);
+      if ((e as DOMException).name !== "AbortError") this.problem("image", `Could not choose where to save: ${(e as Error).message}`);
       return;
     }
+    // A store of that name already there (an earlier save) is not removed if this one stops.
+    const fresh = folder !== undefined && !(await folder.getDirectoryHandle(base + suffix).then(() => true, () => false));
     this.saving?.abort();
     const controller = (this.saving = new AbortController());
     this.panelUpdate?.();
@@ -652,10 +694,10 @@ class Registration {
       ...(file ? { file } : {}),
     };
     try {
-      this.note("Reading…");
+      this.progress("image", "Reading…");
       const saved = await this.worker().request<{ files: [string, Uint8Array][]; level: number; voxelSize: number; size: number[]; written?: boolean }>(
         { type: "save", ...request },
-        (what, done, total) => this.note(total > 1 ? `${what}: ${Math.round((100 * done) / total)}%` : `${what}…`),
+        (what, done, total) => this.progress("image", total > 1 ? `${what}: ${Math.round((100 * done) / total)}%` : `${what}…`),
         controller.signal,
       );
       let where: string;
@@ -674,7 +716,7 @@ class Registration {
             const writable = await (await dir.getFileHandle(parts[parts.length - 1], { create: true })).createWritable();
             await writable.write(bytes as unknown as BufferSource);
             await writable.close();
-            if (++n % 50 === 0) this.note(`Writing: ${n.toLocaleString()} of ${files.size.toLocaleString()} files`);
+            if (++n % 50 === 0) this.progress("image", `Writing: ${n.toLocaleString()} of ${files.size.toLocaleString()} files`);
           }
           where = `${folder.name}/${base}${suffix}`;
         } else {
@@ -695,13 +737,17 @@ class Registration {
           where = base + suffix;
         }
       }
+      this.settle("image");
+      // Said once, as a toast: the status line reports progress and errors only.
       const resolution = saved.voxelSize >= 0.1 ? `${+saved.voxelSize.toFixed(2)} mm` : `${+(saved.voxelSize * 1000).toFixed(2)} µm`;
       const level = saved.level > 0 ? `, level ${saved.level} (${resolution}): the finest that fits in memory` : "";
-      this.note(`Saved ${where}: ${saved.size.join(" × ")}${level}.`);
+      this.ctx.ui.toast(`Saved ${where}: ${saved.size.join(" × ")}${level}.`);
       this.ctx.log.info(`Saved ${r.name} as ${where}.`);
     } catch (e) {
-      if ((e as DOMException).name === "AbortError") this.note("Cancelled.");
-      else this.note(`Could not save: ${(e as Error).message}`);
+      // A cancelled or failed OME-Zarr leaves no partial store behind (a file being written is discarded by its writer).
+      if (folder && fresh) await folder.removeEntry(base + suffix, { recursive: true }).catch(() => {});
+      if ((e as DOMException).name === "AbortError") this.settle("image");
+      else this.problem("image", `Could not save: ${(e as Error).message}`, retry);
     } finally {
       if (this.saving === controller) this.saving = undefined;
       this.panelUpdate?.();
@@ -724,6 +770,7 @@ class Registration {
         if (f && m && q.on) moving.push({ type: "line", id: `l${q.id}`, pointA: m, pointB: f });
       });
     }
+    this.written = new Map([...fixed, ...moving].filter((a) => a.type === "point").map((a) => [a.id as string, a.point as number[]]));
     const state = this.ctx.viewer.getState() as { layers?: Json[] };
     const current = (n: string) => JSON.stringify((state.layers ?? []).find((l) => l.name === n)?.annotations ?? null);
     const wanted = fixed.length + moving.length > 0;
@@ -738,448 +785,508 @@ class Registration {
     });
   }
 
+  /**
+   * Landmarks dragged in their annotation layers, read back into their
+   * pairs (and the pairs fitted again).  A point counts as dragged when it
+   * is not where it was written and not where its pair puts it (so an undo,
+   * which puts back both, or Neuroglancer keeping the points as 32-bit
+   * floats, changes nothing).
+   */
+  readBack(): void {
+    const name = this.layer();
+    const t = name && this.ctx.viewer.layerTransform(name);
+    const p = t ? physical(t) : undefined;
+    if (!t || !p) return;
+    const ng = this.ctx.viewer.getState() as { dimensions?: Record<string, [number, string]>; layers?: Json[] };
+    const dims = Object.entries(ng.dimensions ?? {});
+    const axes = t.output.names.map((n) => dims.findIndex(([d]) => d === n));
+    if (axes.some((i) => i === -1)) return;
+    const voxel = axes.map((i) => mm(dims[i][1][0], dims[i][1][1]));
+    const points = (layer: string) => {
+      const found = new Map<string, number[]>();
+      for (const a of ((ng.layers ?? []).find((l) => l.name === layer)?.annotations as Json[] | undefined) ?? []) {
+        if (a.type === "point" && typeof a.id === "string" && Array.isArray(a.point)) found.set(a.id, a.point as number[]);
+      }
+      return found;
+    };
+    // Apart by more than a thousandth of a voxel of the global space.
+    const apart = (a: ArrayLike<number>, b: ArrayLike<number>) => [0, 1, 2].some((r) => Math.abs(a[r] - b[r]) > 1e-3 * voxel[r]);
+    const moved = (id: string, at: number[] | undefined) => at !== undefined && JSON.stringify(at) !== JSON.stringify(this.written.get(id));
+    const fixed = points(FIXED_LAYER);
+    const moving = points(MOVING_LAYER);
+    const inverse = invert4(p);
+    let changed = false;
+    const pairs = this.saved.pairs.map((q) => {
+      let next = q;
+      const f = fixed.get(`f${q.id}`);
+      if (q.fixed && moved(`f${q.id}`, f)) {
+        const at = axes.map((i, r) => f![i] * voxel[r]) as Vec3;
+        if (apart(at, q.fixed)) next = { ...next, fixed: at };
+      }
+      const m = moving.get(`m${q.id}`);
+      if (q.moving && moved(`m${q.id}`, m)) {
+        const at = apply4(inverse, axes.map((i, r) => m![i] * voxel[r]) as Vec3);
+        if (apart(apply4(p, at), apply4(p, q.moving))) next = { ...next, moving: at };
+      }
+      changed ||= next !== q;
+      return next;
+    });
+    for (const [id, at] of [...fixed, ...moving]) this.written.set(id, at);
+    if (!changed) return;
+    this.save({ pairs });
+    this.refit(true);
+  }
+
+  /** Moves the views to a pair: its fixed point, else where the moving layer puts its moving one. */
+  private goTo(q: Pair): void {
+    const name = this.layer();
+    const t = name && this.ctx.viewer.layerTransform(name);
+    const p = t ? physical(t) : undefined;
+    if (!t || !p) return;
+    const at = q.fixed ?? (q.moving && apply4(p, q.moving));
+    const position = at && this.toGlobal(t, at);
+    if (position) this.ctx.viewer.setPosition(position);
+  }
+
   // ------------------------------------------------ panel
 
-  /** Freeview's Transform Volume controls: Rotate, Translate, Scale and Flip tabs, a slider and a typed value an axis. */
-  private transformControls(t: LayerTransform | undefined): HTMLElement {
-    const m = this.saved.manual;
-    const enabled = t !== undefined;
-    const order = t ? axisOrder(t.output.names) : ([0, 1, 2] as [number, number, number]);
-    const named = t !== undefined && ["x", "y", "z"].every((n) => t.output.names.includes(n));
-    const labels = named ? ["X (L-R)", "Y (P-A)", "Z (I-S)"] : (t?.output.names ?? ["x", "y", "z"]).map((n) => n.toUpperCase());
-    const start = t ? (this.saved.start ?? Array.from(t.matrix)) : undefined;
-    const size = t && start ? this.extent(t, start) : undefined;
-    const tabs = el("div", { class: "segmented rg-tabs", role: "tablist" });
-    for (const [id, title] of [
-      ["rotate", "Rotate"],
-      ["translate", "Translate"],
-      ["scale", "Scale"],
-      ["flip", "Flip"],
-    ] as [Tab, string][]) {
-      tabs.append(
-        el("button", { type: "button", role: "tab", "aria-pressed": String(this.tab === id), onclick: () => ((this.tab = id), this.panelUpdate?.(true)) }, title),
-      );
-    }
-    /** One axis: a slider (moving the layer as it is dragged) and a typed value. */
-    const axis = (k: number, o: { min: number; max: number; step: number; unit: string; slider: (v: number) => number; value: (n: number) => number; get: (m: Manual) => number; set: (m: Manual, v: number) => Manual; typedStep: number }) => {
-      const range = el("input", { type: "range", min: o.min, max: o.max, step: o.step, disabled: !enabled, "aria-label": `${labels[k]} slider` }) as HTMLInputElement;
-      const number = el("input", { type: "number", class: "text-input rg-num", step: o.typedStep, disabled: !enabled, "aria-label": labels[k] }) as HTMLInputElement;
-      range.value = String(o.slider(o.get(m)));
-      number.value = typedValue(o.get(m), o.typedStep);
-      range.addEventListener("input", () => {
-        const v = o.value(Number(range.value));
-        number.value = typedValue(v, o.typedStep);
-        this.applyManual(o.set(this.saved.manual, v), false);
-      });
-      range.addEventListener("change", () => this.applyManual(o.set(this.saved.manual, o.value(Number(range.value))), true));
-      number.addEventListener("change", () => {
-        const v = Number(number.value);
-        if (!Number.isFinite(v)) return;
-        this.applyManual(o.set(this.saved.manual, v), true);
-      });
-      return el("div", { class: "rg-axis" }, el("span", { class: "rg-axis-name" }, labels[k]), range, number, el("span", { class: "rg-unit" }, o.unit));
-    };
-    const body = el("div", { class: "rg-tab" });
-    if (this.tab === "rotate") {
-      for (let k = 0; k < 3; ++k) {
-        body.append(
-          axis(k, {
-            min: -180,
-            max: 180,
-            step: 0.5,
-            typedStep: 0.5,
-            unit: "°",
-            slider: (v) => ((((v + 180) % 360) + 360) % 360) - 180,
-            value: (n) => n,
-            get: (x) => x.rotate[k],
-            set: (x, v) => ({ ...x, rotate: x.rotate.map((r, i) => (i === k ? v : r)) as Vec3 }),
-          }),
-        );
-      }
-      // The pivot, chosen before turning (Freeview disables the choice once turned).
-      const fixedPivot = turned(m);
-      const choice = (value: Manual["around"], text: string) => {
-        const radio = el("input", { type: "radio", name: "rg-around", checked: m.around === value, disabled: !enabled || fixedPivot }) as HTMLInputElement;
-        radio.addEventListener("change", () => this.save({ manual: { ...this.saved.manual, around: value } }));
-        return el("label", { class: "field check" }, radio, el("span", {}, text));
-      };
-      body.append(
-        el("div", { class: "rg-around" }, choice("centre", "Rotate around the centre of the volume"), choice("cursor", "Rotate around the cursor (the views' centre)")),
-      );
-      if (fixedPivot && m.pivot) body.append(el("p", { class: "note rg-tight" }, `Turning about ${m.pivot.map((v) => v.toFixed(1)).join(", ")} mm until the angles are back at 0.`));
-    } else if (this.tab === "translate") {
-      for (let k = 0; k < 3; ++k) {
-        const extent = size?.[order[k]] ?? 256;
-        const step = translationStep(extent);
-        body.append(
-          axis(k, {
-            min: -Number((Math.ceil(extent / step) * step).toPrecision(6)),
-            max: Number((Math.ceil(extent / step) * step).toPrecision(6)),
-            step,
-            typedStep: step,
-            unit: "mm",
-            slider: (v) => v,
-            value: (n) => n,
-            get: (x) => x.translate[k],
-            set: (x, v) => ({ ...x, translate: x.translate.map((r, i) => (i === k ? v : r)) as Vec3 }),
-          }),
-        );
-      }
-      body.append(el("div", { class: "rg-row" }, el("button", { class: "btn outline small", type: "button", disabled: !enabled, onclick: () => this.centreToCursor() }, "Move centre to cursor")));
-    } else if (this.tab === "scale") {
-      for (let k = 0; k < 3; ++k) {
-        body.append(
-          axis(k, {
-            min: 0,
-            max: SCALE_SLIDER,
-            step: 1,
-            typedStep: 0.001,
-            unit: "×",
-            slider: sliderFromScale,
-            value: scaleFromSlider,
-            get: (x) => x.scale[k],
-            set: (x, v) => ({ ...x, scale: x.scale.map((r, i) => (i === k ? (v > 0 ? v : r) : r)) as Vec3 }),
-          }),
-        );
-      }
-    } else {
-      for (let k = 0; k < 3; ++k) {
-        const box = el("input", { type: "checkbox", checked: m.flip[k], disabled: !enabled }) as HTMLInputElement;
-        box.addEventListener("change", () => this.applyManual({ ...this.saved.manual, flip: this.saved.manual.flip.map((f, i) => (i === k ? box.checked : f)) as Manual["flip"] }, true));
-        body.append(el("label", { class: "field check" }, box, el("span", {}, `Flip ${labels[k]}`)));
-      }
-    }
-    return el("div", { class: "rg-transform" }, tabs, body);
-  }
-
-  private saveControls(name: string | undefined): HTMLElement {
-    const has = name !== undefined;
-    const select = (label: string, options: [string, string][], value: string, change: (v: string) => void, disabled = false) => {
-      const s = el("select", { class: "text-input", "aria-label": label, disabled }) as HTMLSelectElement;
-      for (const [v, text] of options) s.append(el("option", { value: v }, text));
-      s.value = value;
-      s.addEventListener("change", () => change(s.value));
-      return el("label", { class: "field" }, el("span", {}, label), s);
-    };
-    const redraw = () => this.panelUpdate?.(true);
-    const file = el("input", { type: "file", accept: ".txt,.lta,.mat,.tfm,.xfm,.dat", hidden: true }) as HTMLInputElement;
-    file.addEventListener("change", () => file.files?.[0] && void this.importFile(file.files[0]));
-    const segmentation = this.ctx.viewer.layers().find((l) => l.name === name)?.type === "segmentation";
-    const grids = this.grids(name);
-    if (this.grid && this.grid !== ENLARGE && !grids.includes(this.grid)) this.grid = "";
-    const note = el("p", { class: "note rg-tight", role: "status" });
-    this.noteUpdate = () => {
-      note.textContent = this.saveNote;
-      note.hidden = this.saveNote === "";
-    };
-    this.noteUpdate();
-    return el(
-      "div",
-      { class: "rg-save" },
-      el("h3", { class: "section-title" }, "Transform file"),
-      el(
-        "div",
-        { class: "rg-row" },
-        select("Format", [["lta", "FreeSurfer LTA"], ["itk", "ITK / ANTs"], ["plain", "4 × 4 text"]], this.transformFormat, (v) => {
-          this.transformFormat = v as typeof this.transformFormat;
-          this.keepFormats();
-        }),
-      ),
-      el(
-        "div",
-        { class: "rg-row" },
-        el("button", { class: "btn small", type: "button", disabled: !has, title: "The layer's new placement, relative to its file's, moving to fixed RAS mm", onclick: () => void this.exportFile(this.transformFormat) }, "Save transform"),
-        el("button", { class: "btn outline small", type: "button", disabled: !has, title: "LTA, ITK / ANTs (.txt, .mat), 4 × 4 text, MNI .xfm; register.dat and FSL .mat with the fixed image chosen under “Onto the grid of”", onclick: () => file.click() }, "Import…"),
-        file,
-      ),
-      el("h3", { class: "section-title" }, "Image"),
-      el(
-        "div",
-        { class: "rg-grid2" },
-        select("Format", [["nii.gz", "NIfTI (.nii.gz)"], ["nii", "NIfTI (.nii)"], ["mgz", "FreeSurfer (.mgz)"], ["mgh", "FreeSurfer (.mgh)"], ["zarr", "OME-Zarr"]], this.imageFormat, (v) => {
-          this.imageFormat = v as ImageFormat;
-          this.keepFormats();
-        }),
-        select("Voxels", [["resample", "Resampled"], ["header", "Unchanged (new header)"]], this.headerOnly ? "header" : "resample", (v) => ((this.headerOnly = v === "header"), redraw())),
-        select("Sample method", [["nearest", "Nearest neighbour"], ["linear", "Trilinear"], ["cubic", "Cubic"]], segmentation ? "nearest" : this.method, (v) => (this.method = v as Method), this.headerOnly || segmentation),
-        select("Onto the grid of", [["", "Its own (cropped to it)"], [ENLARGE, "Its own, enlarged to hold it all"], ...grids.map((g): [string, string] => [g, g])], this.grid, (v) => (this.grid = v), this.headerOnly),
-      ),
-      el(
-        "p",
-        { class: "note rg-tight" },
-        this.headerOnly
-          ? "The voxels as they are, with the new placement in the header."
-          : segmentation
-            ? "Labels are always resampled nearest neighbour."
-            : "The voxels moved into the grid, as Freeview saves a moved volume.",
-      ),
-      el(
-        "div",
-        { class: "rg-row" },
-        el("button", { class: "btn small", type: "button", disabled: !has || this.saving !== undefined, onclick: () => void this.saveImage() }, "Save image…"),
-        this.saving ? el("button", { class: "btn outline small", type: "button", onclick: () => this.saving?.abort() }, "Cancel") : null,
-      ),
-      note,
-    );
-  }
-
+  /**
+   * Draws the panel once into `host` and keeps it up to date in place
+   * (plugins/README.md, "Building a panel"): controls are set from the state
+   * with `set()`, and what changes shape (the pairs, the axes of a newly
+   * chosen layer) is a `region()`, so a change of state never takes a value
+   * from under the person typing it, closes a select or ends a drag.
+   */
   render(host: HTMLElement): () => void {
-    let built = "";
-    const draw = (force = false) => {
-      const { saved } = this;
-      const candidates = this.candidates();
-      // Rebuilt only when something shown changes (not while a slider is dragged, which moves the layer only).
-      const r0 = this.result;
-      const signature = JSON.stringify([
-        candidates,
-        this.ctx.state.get(),
-        r0 === undefined ? null : "error" in r0 ? r0.error : [r0.rms, r0.residuals],
-        this.grids(this.layer()),
-        this.saving !== undefined,
-      ]);
-      if (!force && signature === built && host.firstChild !== null) return;
-      built = signature;
-      const layer = el("select", { class: "text-input", "aria-label": "Moving layer" }) as HTMLSelectElement;
-      layer.append(el("option", { value: "" }, "Choose…"));
-      for (const n of candidates) layer.append(el("option", { value: n }, n));
-      layer.value = this.layer() ?? "";
-      layer.addEventListener("change", () => {
-        this.straightenNote = "";
-        this.warpNote = "";
-        this.save({ layer: layer.value || undefined, base: undefined, pairs: [], marks: undefined, start: undefined, manual: identityManual(this.saved.manual.around) });
-      });
-      const model = el("select", { class: "text-input", "aria-label": "Model" }) as HTMLSelectElement;
-      for (const m of ["translation", "rigid", "similarity", "affine"]) model.append(el("option", { value: m }, `${m[0].toUpperCase()}${m.slice(1)} (${MINIMUM[m as Model]}+ pairs)`));
-      model.value = saved.model;
-      model.addEventListener("change", () => {
-        this.save({ model: model.value as Model });
-        this.refit(true);
-      });
-      const live = el("input", { type: "checkbox" }) as HTMLInputElement;
-      live.checked = saved.live;
-      live.addEventListener("change", () => this.save({ live: live.checked }));
-      const r = this.result;
-      const stats =
-        r === undefined
-          ? ""
-          : "error" in r
-            ? r.error
-            : (() => {
-                const { determinant, scales } = describe(r.matrix);
-                return `RMS ${fmt(r.rms)} mm, largest ${fmt(r.max)} mm · scales ${scales.map((s) => s.toFixed(3)).join(", ")}${determinant < 0 ? " · mirrored!" : ""}`;
-              })();
-      const errors = r !== undefined && !("error" in r) ? r.residuals : [];
-      let k = 0;
-      const rows = saved.pairs.map((q, i) => {
-        const on = el("input", { type: "checkbox", title: "Use this pair" }) as HTMLInputElement;
-        on.checked = q.on;
-        on.addEventListener("change", () => {
-          this.save({ pairs: saved.pairs.map((x) => (x.id === q.id ? { ...x, on: on.checked } : x)) });
-          this.refit(true);
+    const ctx = this.ctx;
+    const lines: Record<Part, StatusLine> = { straighten: statusLine(), warp: statusLine(), file: statusLine(), image: statusLine() };
+    this.lines = lines;
+    const all = () => this.candidates();
+
+    // Nothing to move: only this, and its action.
+    const empty = region((text: string) => emptyState(text, { label: "Open data…", run: () => void ctx.commands.invoke("dataset.add") }));
+
+    // ---- the moving layer
+    const layer = select([], "", (v) => {
+      for (const s of Object.values(lines)) s.clear();
+      this.save({ layer: v || undefined, base: undefined, pairs: [], marks: undefined, start: undefined, manual: identityManual(this.saved.manual.around) });
+    }, "Moving layer");
+    const skipped = region((text: string) => (text ? el("p", { class: "hint" }, `Only 3-D layers can be moved: ${text}.`) : null));
+
+    // ---- Transform: Freeview's Transform Volume, a tab for each of rotate, translate, scale and flip.
+    const tabButtons = (
+      [
+        ["rotate", "Rotate"],
+        ["translate", "Translate"],
+        ["scale", "Scale"],
+        ["flip", "Flip"],
+      ] as [Tab, string][]
+    ).map(([id, title]) => el("button", { type: "button", role: "tab", "data-tab": id, onclick: () => ((this.tab = id), showTab()) }, title));
+    // The arrow keys move between the tabs, one tab stop for the row.
+    const tabList = el("div", { class: "segmented", role: "tablist", "aria-label": "Transform" }, ...tabButtons);
+    roving(tabList, { items: () => tabButtons, orientation: "horizontal", tabStop: true, onMove: (t) => t.click() });
+    let axes: { slider: Slider; get: (m: Manual) => number }[] = [];
+    let flips: OnOff[] = [];
+    let around: Settable<HTMLSelectElement, string> | undefined;
+    let centre: HTMLButtonElement | undefined;
+    let bodies: Partial<Record<Tab, HTMLElement>> = {};
+    const showTab = () => {
+      for (const b of tabButtons) {
+        const shown = b.getAttribute("data-tab") === this.tab;
+        b.setAttribute("aria-selected", String(shown));
+        b.setAttribute("tabindex", shown ? "0" : "-1");
+      }
+      for (const [id, body] of Object.entries(bodies)) body.hidden = id !== this.tab;
+    };
+    /** The tabs' controls, for the moving layer: drawn again only when the layer (its axes, its size) changes. */
+    const transform = region((key: { enabled: boolean; labels: string[]; ranges: { max: number; step: number }[] }) => {
+      const disabled = !key.enabled;
+      /** One axis: the slider moves the layer as it is dragged; a typed value may go beyond its ends. */
+      const axis = (k: number, tab: string, o: { min: number; max: number; step: number; unit: string; get: (m: Manual) => number; set: (m: Manual, v: number) => Manual | undefined }) => {
+        const s = slider(o.get(this.saved.manual), {
+          min: o.min,
+          max: o.max,
+          step: o.step,
+          unit: o.unit,
+          label: `${tab} ${key.labels[k]}`,
+          unbounded: true,
+          disabled,
+          oninput: (v) => {
+            const m = o.set(this.saved.manual, v);
+            if (m) this.applyManual(m, false);
+          },
+          onchange: (v) => {
+            const m = o.set(this.saved.manual, v);
+            if (m) this.applyManual(m, true);
+            else s.set(o.get(this.saved.manual));
+          },
         });
-        const complete = q.on && q.fixed && q.moving;
-        const error = complete ? errors[k++] : undefined;
-        // In x, y, z order, whatever order the layer keeps its dimensions in.
-        const names = (this.layer() && this.ctx.viewer.layerTransform(this.layer()!)?.output.names) || ["x", "y", "z"];
-        const order = [0, 1, 2].sort((a, b) => (names[a] ?? "").localeCompare(names[b] ?? ""));
-        const v = (p?: Vec3) => (p ? order.map((k) => `${names[k]} ${p[k].toFixed(1)}`).join("  ") : "—");
-        return el(
+        axes.push({ slider: s, get: o.get });
+        return el("label", { class: "rg-axis" }, el("span", {}, key.labels[k]), s);
+      };
+      const set = (part: "rotate" | "translate" | "scale", k: number) => (m: Manual, v: number) => ({ ...m, [part]: m[part].map((x, i) => (i === k ? v : x)) as Vec3 });
+      axes = [];
+      around = select(
+        [
+          ["centre", "The volume's centre"],
+          ["cursor", "The cursor (the views' centre)"],
+        ],
+        this.saved.manual.around,
+        (v) => this.save({ manual: { ...this.saved.manual, around: v === "cursor" ? "cursor" : "centre" } }),
+        "Rotate around",
+      );
+      centre = button("Move centre to cursor", () => this.centreToCursor());
+      flips = [0, 1, 2].map((k) =>
+        checkbox(`Flip ${key.labels[k]}`, this.saved.manual.flip[k], (on) => this.applyManual({ ...this.saved.manual, flip: this.saved.manual.flip.map((f, i) => (i === k ? on : f)) as Manual["flip"] }, true), { disabled }),
+      );
+      bodies = {
+        rotate: el(
+          "div",
+          { class: "stack", role: "tabpanel" },
+          ...[0, 1, 2].map((k) => axis(k, "Rotate", { min: -180, max: 180, step: 0.5, unit: "°", get: (m) => m.rotate[k], set: set("rotate", k) })),
+          field("Rotate around", around, { info: "Chosen before turning: once the volume is turned, it turns about the same point until the angles are back at 0, as in Freeview." }),
+        ),
+        translate: el(
+          "div",
+          { class: "stack", role: "tabpanel" },
+          ...[0, 1, 2].map((k) => axis(k, "Translate", { min: -key.ranges[k].max, max: key.ranges[k].max, step: key.ranges[k].step, unit: "mm", get: (m) => m.translate[k], set: set("translate", k) })),
+          el("div", { class: "row" }, centre),
+        ),
+        // Scale: 0.5 to 2 on the slider (Freeview's range), any value above 0 typed.
+        scale: el(
+          "div",
+          { class: "stack", role: "tabpanel" },
+          ...[0, 1, 2].map((k) => axis(k, "Scale", { min: 0.5, max: 2, step: 0.001, unit: "×", get: (m) => m.scale[k], set: (m, v) => (v > 0 ? set("scale", k)(m, v) : undefined) })),
+        ),
+        flip: el("div", { class: "stack", role: "tabpanel" }, ...flips),
+      };
+      showTab();
+      return Object.values(bodies);
+    });
+    const restore = button("Restore to original", () => this.restore());
+    const following = checkbox(
+      "Apply to all visible volumes",
+      this.saved.all === true,
+      (on) => {
+        this.save({ all: on });
+        this.syncFollowers(on);
+      },
+      { info: "Every other visible image and segmentation moves as this layer does, as Freeview's Apply to all visible volumes; cleared, they go back where their files put them." },
+    );
+
+    // ---- Straighten with four landmarks.
+    const marks = [0, 1, 2, 3].map((i) => el("button", { class: "btn outline small", type: "button", "aria-label": `Mark #${i + 1} at the views' centre`, onclick: () => this.markHere(i) }));
+    const directions = ([0, 1] as const).map((k) =>
+      select(
+        DIRECTIONS.map((d): [string, string] => [d, d]),
+        (this.saved.lines ?? ["P→A", "I→S"])[k],
+        (v) => {
+          const lines = [...(this.saved.lines ?? ["P→A", "I→S"])] as [Direction, Direction];
+          lines[k] = v as Direction;
+          this.save({ lines });
+        },
+        k === 0 ? "#1 → #2 points" : "#3 → #4 points",
+      ),
+    );
+    const straighten = button("Straighten", () => this.straightenNow(), undefined, "btn small");
+
+    // ---- Landmark pairs.
+    const pairsBadge = el("span");
+    const fixedHere = button("Fixed here", () => this.mark("fixed"));
+    const movingHere = button("Moving here", () => this.mark("moving"));
+    const pairs = region((key: { pairs: Pair[]; errors: (number | undefined)[]; names: string[] }) => {
+      if (key.pairs.length === 0) return null;
+      // In x, y, z order (or the layer's own names'), whatever order the layer keeps its dimensions in.
+      const order = [0, 1, 2].sort((a, b) => (key.names[a] ?? "").localeCompare(key.names[b] ?? ""));
+      const v = (p?: Vec3) => (p ? order.map((k) => p[k].toFixed(1)).join(", ") : "—");
+      const axes = order.map((k) => key.names[k]).join(", ");
+      const rows = key.pairs.map((q, i) =>
+        el(
           "tr",
           {},
           el("td", {}, String(i + 1)),
-          el("td", {}, on),
-          el("td", { class: "mono" }, v(q.fixed)),
-          el("td", { class: "mono" }, v(q.moving)),
-          el("td", { class: "mono" }, error === undefined ? "" : fmt(error)),
           el(
             "td",
             {},
-            el("button", {
-              class: "btn icon",
-              type: "button",
-              title: "Remove",
-              onclick: () => {
-                this.save({ pairs: saved.pairs.filter((x) => x.id !== q.id) });
-                this.refit(true);
-              },
-            }, "×"),
+            checkbox(`Use pair ${i + 1}`, q.on, (on) => {
+              this.save({ pairs: this.saved.pairs.map((x) => (x.id === q.id ? { ...x, on } : x)) });
+              this.refit(true);
+            }, { hideLabel: true }),
           ),
-        );
-      });
-      const name = this.layer();
-      const hasLayer = name !== undefined;
-      const t = name ? this.ctx.viewer.layerTransform(name) : undefined;
-      const moved = saved.base !== undefined || saved.start !== undefined;
-      host.replaceChildren(
-        el(
-          "div",
-          { class: "rg" },
-          el("label", { class: "field" }, el("span", {}, "Moving layer"), candidates.length ? layer : el("span", { class: "note" }, "No 3-D layer to move.")),
-          el("h3", { class: "section-title" }, "Transform"),
-          this.transformControls(t),
+          el("td", { class: "readout" }, v(q.fixed)),
+          el("td", { class: "readout" }, v(q.moving)),
+          el("td", { class: "readout" }, key.errors[i] === undefined ? "" : fmt(key.errors[i]!)),
           el(
-            "div",
-            { class: "rg-row" },
-            el("button", { class: "btn outline small", type: "button", disabled: !moved, title: "The transform the layer had before registering", onclick: () => this.restore() }, "Restore to original"),
-          ),
-          el(
-            "label",
-            { class: "field check", title: "Every other visible image and segmentation moves as this layer does (Freeview's Apply to all visible volumes)" },
-            el("input", {
-              type: "checkbox",
-              checked: saved.all === true,
-              disabled: !hasLayer,
-              onchange: (e: Event) => {
-                const on = (e.target as HTMLInputElement).checked;
-                this.save({ all: on });
-                this.syncFollowers(on);
-              },
+            "td",
+            { class: "rg-actions" },
+            iconButton("target", `Go to pair ${i + 1}`, () => this.goTo(q)),
+            iconButton("close", `Remove pair ${i + 1}`, () => {
+              this.save({ pairs: this.saved.pairs.filter((x) => x.id !== q.id) });
+              this.refit(true);
             }),
-            el("span", {}, "Apply to all visible volumes"),
           ),
-          el("h3", { class: "section-title" }, "Straighten with landmarks"),
-          el(
-            "p",
-            { class: "note rg-tight", title: "As Freeview's landmarks: the line #1 → #2 is turned onto one axis and #3 → #4 as near another as it can, about the volume's centre (for example the AC to the PC onto P → A)." },
-            "Mark four points at the views' centre, then straighten.",
-          ),
-          el(
-            "div",
-            { class: "rg-row" },
-            ...[0, 1, 2, 3].map((i) =>
-              el(
-                "button",
-                { class: "btn outline small", type: "button", disabled: !hasLayer, title: saved.marks?.[i] ? `#${i + 1}: ${saved.marks[i]!.map((v) => v.toFixed(1)).join(", ")} mm` : `Mark #${i + 1} at the views' centre`, onclick: () => this.markHere(i) },
-                saved.marks?.[i] ? `#${i + 1} ✓` : `#${i + 1} here`,
-              ),
-            ),
-          ),
-          el(
-            "div",
-            { class: "rg-grid2" },
-            ...([0, 1] as const).map((k) =>
-              el(
-                "label",
-                { class: "field" },
-                el("span", {}, k === 0 ? "#1 → #2 points" : "#3 → #4 points"),
-                el(
-                  "select",
-                  {
-                    onchange: (e: Event) => {
-                      const lines = [...(saved.lines ?? ["P→A", "I→S"])] as [Direction, Direction];
-                      lines[k] = (e.target as HTMLSelectElement).value as Direction;
-                      this.save({ lines });
-                    },
-                  },
-                  ...DIRECTIONS.map((d) => el("option", { value: d, ...(d === (saved.lines ?? ["P→A", "I→S"])[k] ? { selected: "" } : {}) }, d)),
-                ),
-              ),
-            ),
-          ),
-          el(
-            "div",
-            { class: "rg-row" },
-            el("button", { class: "btn small", type: "button", disabled: !hasLayer || !saved.marks || saved.marks.length < 4 || saved.marks.some((m) => !m), onclick: () => this.straightenNow() }, "Straighten"),
-          ),
-          this.straightenNote ? el("p", { class: "note" }, this.straightenNote) : null,
-          el("h3", { class: "section-title" }, "Landmarks"),
-          el("p", { class: "note rg-tight" }, "Fixed point: Alt+F at the mouse. Its match in the moving layer: Alt+M."),
-          el(
-            "div",
-            { class: "rg-row" },
-            el("button", { class: "btn outline small", type: "button", disabled: !hasLayer, onclick: () => this.mark("fixed") }, "Fixed here"),
-            el("button", { class: "btn outline small", type: "button", disabled: !hasLayer, onclick: () => this.mark("moving") }, "Moving here"),
-          ),
-          saved.pairs.length
-            ? el("table", { class: "rg-pairs" }, el("thead", {}, el("tr", {}, ...["#", "", "Fixed (mm)", "Moving (mm)", "Error", ""].map((x) => el("th", {}, x)))), el("tbody", {}, ...rows))
-            : null,
-          el("label", { class: "field" }, el("span", {}, "Model"), model),
-          el("label", { class: "field check" }, live, el("span", {}, "Live: move the layer with each pair")),
-          stats ? el("p", { class: r && "error" in r ? "note error rg-tight" : "note rg-tight" }, stats) : null,
-          el(
-            "div",
-            { class: "rg-row" },
-            el("button", { class: "btn small", type: "button", disabled: !hasLayer || saved.live, onclick: () => this.apply() }, "Apply"),
-            el("button", { class: "btn outline small", type: "button", disabled: !saved.pairs.length, onclick: () => this.save({ pairs: [] }) }, "Clear pairs"),
-          ),
-          el(
-            "div",
-            { class: "rg-row" },
-            el(
-              "button",
-              { class: "btn outline small", type: "button", disabled: !hasLayer, title: "A new layer: the moving image warped so each fixed point lands on its pair (a thin-plate spline, four pairs or more)", onclick: () => void this.warp() },
-              "Warp through the pairs",
-            ),
-          ),
-          this.warpNote ? el("p", { class: "note rg-tight" }, this.warpNote) : null,
-          this.saveControls(name),
         ),
       );
-      foldSections(host.firstElementChild as HTMLElement, this.ctx);
+      return el("table", { class: "rg-pairs" }, el("thead", {}, el("tr", {}, ...["#", "Use", `Fixed ${axes} (mm)`, `Moving ${axes} (mm)`, "Error", ""].map((x) => el("th", {}, x)))), el("tbody", {}, ...rows));
+    });
+    const model = select(
+      (["translation", "rigid", "similarity", "affine"] as Model[]).map((m): [string, string] => [m, `${m[0].toUpperCase()}${m.slice(1)} (${MINIMUM[m]}+ pairs)`]),
+      this.saved.model,
+      (v) => {
+        this.save({ model: v as Model });
+        this.refit(true);
+      },
+      "Model",
+    );
+    const live = toggle("Live", this.saved.live, (on) => this.save({ live: on }), { info: "Moves the layer with each pair; when off, Apply moves it." });
+    const stats = region((key: { text: string; error: boolean }) => (key.text ? el("p", { class: key.error ? "hint" : "readout" }, key.text) : null));
+    const apply = button("Apply", () => this.apply(), undefined, "btn small");
+    const clearPairs = button("Clear pairs", () => this.save({ pairs: [] }));
+    const warp = button("Warp through the pairs", () => void this.warp());
+
+    // ---- Transform file.
+    const transformFormat = select(
+      [
+        ["lta", "FreeSurfer LTA"],
+        ["itk", "ITK / ANTs"],
+        ["plain", "4 × 4 text"],
+      ],
+      this.transformFormat,
+      (v) => {
+        this.transformFormat = v as typeof this.transformFormat;
+        this.keepFormats();
+      },
+      "Format",
+    );
+    const file = el("input", { type: "file", accept: ".txt,.lta,.mat,.tfm,.xfm,.dat", hidden: true, "aria-label": "Transform file to import" }) as HTMLInputElement;
+    file.addEventListener("change", () => {
+      const chosen = file.files?.[0];
+      // Emptied, so choosing the same file again (after mending it, or the fixed image) reads it again.
+      file.value = "";
+      if (chosen) void this.importFile(chosen);
+    });
+    const saveTransform = button("Save transform", () => void this.exportFile(this.transformFormat), undefined, "btn small");
+    const importButton = button("Import…", () => file.click());
+
+    // ---- Image.
+    const imageFormat = select(
+      [
+        ["nii.gz", "NIfTI (.nii.gz)"],
+        ["nii", "NIfTI (.nii)"],
+        ["mgz", "FreeSurfer (.mgz)"],
+        ["mgh", "FreeSurfer (.mgh)"],
+        ["zarr", "OME-Zarr"],
+      ],
+      this.imageFormat,
+      (v) => {
+        this.imageFormat = v as ImageFormat;
+        this.keepFormats();
+      },
+      "Format",
+    );
+    const voxels = select(
+      [
+        ["resample", "Resampled"],
+        ["header", "Unchanged (new header)"],
+      ],
+      this.headerOnly ? "header" : "resample",
+      (v) => ((this.headerOnly = v === "header"), sync()),
+      "Voxels",
+    );
+    const method = select(
+      [
+        ["nearest", "Nearest neighbour"],
+        ["linear", "Trilinear"],
+        ["cubic", "Cubic"],
+      ],
+      this.method,
+      (v) => (this.method = v as Method),
+      "Sample method",
+    );
+    const grid = select([], "", (v) => (this.grid = v), "Onto the grid of");
+    const saveImage = button("Save image…", () => void this.saveImage(), undefined, "btn small");
+    const cancel = button("Cancel", () => this.saving?.abort());
+
+    const main = el(
+      "div",
+      { class: "stack" },
+      el("div", { class: "stack" }, field("Moving layer", layer), skipped),
+      card(
+        "registration.transform",
+        "Transform",
+        { open: true },
+        tabList,
+        transform,
+        el("div", { class: "row" }, restore),
+        following,
+      ),
+      card(
+        "registration.straighten",
+        "Straighten",
+        { info: "As Freeview's landmarks: mark four points at the views' centre; the line #1 → #2 is turned onto one axis and #3 → #4 as near another as it can, about the volume's centre (the AC to the PC onto P → A, say)." },
+        el("div", { class: "row" }, ...marks),
+        el("div", { class: "grid-2" }, field("#1 → #2 points", directions[0]), field("#3 → #4 points", directions[1])),
+        el("div", { class: "row" }, straighten),
+        lines.straighten,
+      ),
+      card(
+        "registration.landmarks",
+        "Landmarks",
+        { badge: pairsBadge, info: "A fixed point at the mouse: Alt+F. Its match in the moving layer: Alt+M. Drag a point in its annotation layer to move it." },
+        el("div", { class: "row" }, fixedHere, movingHere),
+        pairs,
+        field("Model", model),
+        live,
+        stats,
+        el("div", { class: "row" }, apply, clearPairs),
+        el(
+          "div",
+          { class: "row" },
+          warp,
+          info("A new layer: the moving image warped so each fixed point lands on its pair, smoothly between (a thin-plate spline; four pairs or more, not all in one plane). It is computed as you view it; the moving layer stays as it is.", "About Warp"),
+        ),
+        lines.warp,
+      ),
+      card(
+        "registration.transformFile",
+        "Transform file",
+        {
+          info: "Saves the layer's new placement, relative to its file's, moving to fixed RAS mm. Imports LTA, ITK / ANTs (.txt, .mat), 4 × 4 text and MNI .xfm; register.dat and FSL .mat with the fixed image chosen under Image › Onto the grid of.",
+        },
+        field("Format", transformFormat),
+        el("div", { class: "row" }, saveTransform, importButton, file),
+        lines.file,
+      ),
+      card(
+        "registration.image",
+        "Image",
+        {},
+        el(
+          "div",
+          { class: "grid-2" },
+          field("Format", imageFormat),
+          field("Voxels", voxels, { info: "Resampled: the voxels moved into the grid, as Freeview saves a moved volume. Unchanged: the voxels as they are, with the new placement in the header." }),
+          field("Sample method", method, { info: "Labels are always resampled nearest neighbour." }),
+          field("Onto the grid of", grid),
+        ),
+        el("div", { class: "row" }, saveImage, cancel),
+        lines.image,
+      ),
+    );
+    host.append(el("div", { class: "rg" }, empty, main));
+
+    /** Brings the panel up to date with the state, the layers and the fit. */
+    const sync = () => {
+      const { saved } = this;
+      const candidates = all();
+      const why = notOffered(ctx.viewer.layers().map((l) => ({ name: l.name, type: l.type, rank: ctx.viewer.layerTransform(l.name)?.rank })));
+      if (candidates.length === 0) empty.update(why ? `No 3-D layer to move: ${why}.` : "No 3-D layer to move.");
+      empty.hidden = candidates.length > 0;
+      main.hidden = candidates.length === 0;
+      if (candidates.length === 0) return;
+      skipped.update(why);
+
+      const name = this.layer();
+      const has = name !== undefined;
+      const t = name ? ctx.viewer.layerTransform(name) : undefined;
+      setOptions(layer, [["", "Choose…"], ...candidates.map((n): [string, string] => [n, n])], name ?? "");
+
+      // Transform.
+      const named = t !== undefined && ["x", "y", "z"].every((n) => t.output.names.includes(n));
+      const labels = named ? ["X (L-R)", "Y (P-A)", "Z (I-S)"] : (t?.output.names ?? ["x", "y", "z"]).map((n) => n.toUpperCase());
+      const order = t ? axisOrder(t.output.names) : ([0, 1, 2] as const);
+      const size = t ? this.extent(t, saved.start ?? Array.from(t.matrix)) : undefined;
+      const ranges = [0, 1, 2].map((k) => {
+        const extent = size?.[order[k]] ?? 256;
+        const step = translationStep(extent);
+        return { max: Number((Math.ceil(extent / step) * step).toPrecision(6)), step };
+      });
+      transform.update({ enabled: t !== undefined, labels, ranges });
+      for (const a of axes) a.slider.set(a.get(saved.manual));
+      flips.forEach((f, k) => f.set(saved.manual.flip[k]));
+      around?.set(saved.manual.around);
+      if (around) around.disabled = !t || turned(saved.manual);
+      if (centre) centre.disabled = !t;
+      tabButtons.forEach((b) => (b.disabled = !t));
+      restore.disabled = saved.base === undefined && saved.start === undefined;
+      following.set(saved.all === true);
+      following.input.disabled = !has;
+
+      // Straighten.
+      marks.forEach((b, i) => {
+        b.textContent = saved.marks?.[i] ? `#${i + 1} ✓` : `#${i + 1} here`;
+        b.disabled = !has;
+      });
+      directions.forEach((d, k) => d.set((saved.lines ?? ["P→A", "I→S"])[k]));
+      straighten.disabled = !has || !saved.marks || saved.marks.length < 4 || saved.marks.some((m) => !m);
+
+      // Landmarks.
+      const r = this.result;
+      const residuals = r !== undefined && !("error" in r) ? r.residuals : [];
+      let k = 0;
+      const errors = saved.pairs.map((q) => (q.on && q.fixed && q.moving ? residuals[k++] : undefined));
+      pairs.update({ pairs: saved.pairs, errors, names: t?.output.names ?? ["x", "y", "z"] });
+      pairsBadge.textContent = saved.pairs.length ? `${saved.pairs.length} pair${saved.pairs.length === 1 ? "" : "s"}` : "";
+      fixedHere.disabled = movingHere.disabled = !has;
+      model.set(saved.model);
+      live.set(saved.live);
+      stats.update(
+        r === undefined
+          ? { text: "", error: false }
+          : "error" in r
+            ? { text: r.error, error: true }
+            : (() => {
+                const { determinant, scales } = describe(r.matrix);
+                return { text: `RMS ${fmt(r.rms)} mm, largest ${fmt(r.max)} mm · scales ${scales.map((s) => s.toFixed(3)).join(", ")}${determinant < 0 ? " · mirrored" : ""}`, error: false };
+              })(),
+      );
+      apply.disabled = !has || saved.live || r === undefined || "error" in r;
+      clearPairs.disabled = saved.pairs.length === 0;
+      warp.disabled = !has;
+
+      // Transform file and image.
+      transformFormat.set(this.transformFormat);
+      saveTransform.disabled = importButton.disabled = !has;
+      const segmentation = ctx.viewer.layers().find((l) => l.name === name)?.type === "segmentation";
+      const grids = this.grids(name);
+      if (this.grid && this.grid !== ENLARGE && !grids.includes(this.grid)) this.grid = "";
+      imageFormat.set(this.imageFormat);
+      voxels.set(this.headerOnly ? "header" : "resample");
+      method.set(segmentation ? "nearest" : this.method);
+      method.disabled = this.headerOnly || segmentation;
+      setOptions(grid, [["", "Its own (cropped to it)"], [ENLARGE, "Its own, enlarged to hold it all"], ...grids.map((g): [string, string] => [g, g])], this.grid);
+      grid.disabled = this.headerOnly;
+      saveImage.disabled = !has || this.saving !== undefined;
+      cancel.hidden = this.saving === undefined;
     };
-    this.panelUpdate = draw;
-    draw(true);
+    this.panelUpdate = sync;
+    sync();
     return () => {
-      if (this.panelUpdate === draw) this.panelUpdate = undefined;
-      this.noteUpdate = undefined;
+      if (this.panelUpdate === sync) this.panelUpdate = undefined;
+      if (this.lines === lines) this.lines = undefined;
     };
   }
 }
 
-/**
- * The panel's sections (each heading and what follows it, to the next) as
- * folding sections, open or closed as the user left them (in this browser).
- */
-function foldSections(root: HTMLElement, ctx: PlatformContext): void {
-  const open = ctx.settings.get<Record<string, boolean>>("openSections") ?? {};
-  const children = [...root.children].flatMap((c) => (c.classList.contains("rg-save") ? [...c.children] : [c]));
-  const out: Element[] = [];
-  let body: HTMLElement | undefined;
-  for (const c of children) {
-    if (c.tagName === "H3" && c.classList.contains("section-title")) {
-      const title = c.textContent ?? "";
-      body = el("div", { class: "rg-body" });
-      const details = el("details", { class: "rg-section" }, el("summary", { class: "section-title" }, title), body) as HTMLDetailsElement;
-      details.open = open[title] !== false;
-      details.addEventListener("toggle", () => {
-        const now = ctx.settings.get<Record<string, boolean>>("openSections") ?? {};
-        ctx.settings.set("openSections", { ...now, [title]: details.open });
-      });
-      out.push(details);
-    } else if (body !== undefined) body.append(c);
-    else out.push(c);
+/** A select's options, replaced only when they change (so an open select stays open), and its value. */
+function setOptions(s: Settable<HTMLSelectElement, string>, options: [string, string][], value: string): void {
+  const key = JSON.stringify(options);
+  if (s.getAttribute("data-options") !== key) {
+    s.setAttribute("data-options", key);
+    s.replaceChildren(...options.map(([v, text]) => el("option", { value: v }, text)));
+    s.value = value;
   }
-  root.replaceChildren(...out);
+  s.set(value);
 }
 
 const STYLE = `
-.rg { display: grid; gap: 8px; }
-.rg-section { border-top: 1px solid var(--line); padding-top: 4px; }
-.rg-section > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; margin: 0; padding: 4px 0; user-select: none; }
-.rg-section > summary::-webkit-details-marker { display: none; }
-.rg-section > summary::before { content: "▸"; color: var(--faint); font-size: 10px; width: 10px; }
-.rg-section[open] > summary::before { content: "▾"; }
-.rg-section[open] > summary { margin-bottom: 6px; }
-.rg-body { display: grid; gap: 8px; }
-.rg .section-title { margin: 8px 0 0; }
-.rg-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.rg-tight { margin: 0; }
-.rg-pairs { width: 100%; border-collapse: collapse; font-size: 12px; }
-.rg-pairs th { text-align: left; color: var(--faint); font-weight: 500; padding: 2px 4px; }
-.rg-pairs td { padding: 2px 4px; border-top: 1px solid var(--line); }
-.rg-pairs td.mono { font-family: var(--mono); font-size: 11px; }
-.rg-transform { display: grid; gap: 8px; }
-.rg-tabs { align-self: start; justify-self: start; }
-.rg-tab { display: grid; gap: 6px; }
-.rg-axis { display: grid; grid-template-columns: 58px minmax(60px, 1fr) 76px 18px; align-items: center; gap: 6px; font-size: 12px; }
-.rg-axis-name { color: var(--muted); white-space: nowrap; }
-.rg-axis input[type="range"] { width: 100%; min-width: 0; accent-color: var(--select); }
-.rg-num { height: 24px; padding: 0 4px; font: 12px/1 var(--mono); min-width: 0; width: 100%; }
-.rg-unit { color: var(--faint); }
-.rg-around { display: grid; gap: 4px; }
-.rg-save { display: grid; gap: 8px; }
-.rg-grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
-.rg-grid2 select { min-width: 0; width: 100%; }
+.rg { display: grid; gap: var(--sp-4); }
+.rg-axis { display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: var(--sp-3); }
+.rg-axis > span { color: var(--muted); font-size: var(--fs-body); white-space: nowrap; }
+.rg-pairs { width: 100%; border-collapse: collapse; font-size: var(--fs-body); }
+.rg-pairs th { text-align: left; color: var(--faint); font-weight: 500; font-size: var(--fs-caption); padding: var(--sp-1) var(--sp-2); }
+.rg-pairs td { padding: var(--sp-1) var(--sp-2); border-top: 1px solid var(--line); }
+.rg-actions { white-space: nowrap; text-align: right; }
 `;
 
 export const plugin: PluginModule = {

@@ -14,7 +14,9 @@ import { LabelVolume } from "../label_volume.js";
 import { omeZarrMetadata } from "../../registration/volume_io.js";
 import { maskCount, maskSection } from "../preview.js";
 import { component, otsu, THRESHOLD_SELECT } from "../quick_select.js";
-import { cropped, niftiGz, omeZarr } from "../save.js";
+import { cropped, gzipWriter, niftiGz, niftiParts, omeZarr, pruneStore, writeStore } from "../save.js";
+import { SaveWorker } from "../save_client.js";
+import { gunzip } from "@ngplatform/sdk/precomputed";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -35,6 +37,51 @@ function serve(get: (key: string) => Uint8Array | undefined | Promise<Uint8Array
     const range = /bytes=(\d+)-(\d+)/.exec(init?.headers?.Range ?? "");
     return new Response((range ? data.slice(Number(range[1]), Number(range[2]) + 1) : data.slice()) as BlobPart, { status: range ? 206 : 200 });
   });
+}
+
+/** A folder in memory, as much of the File System Access API's as a save uses. */
+class MemoryFolder {
+  readonly entries = new Map<string, MemoryFolder | Uint8Array>();
+  readonly handle = {
+    kind: "directory",
+    getDirectoryHandle: async (name: string, options?: { create?: boolean }) => {
+      let d = this.entries.get(name);
+      if (d === undefined && options?.create) this.entries.set(name, (d = new MemoryFolder()));
+      if (!(d instanceof MemoryFolder)) throw new DOMException(name, "NotFoundError");
+      return d.handle;
+    },
+    getFileHandle: async (name: string) => ({
+      createWritable: async () => ({ write: async (b: Uint8Array) => void this.entries.set(name, b.slice()), close: async () => {} }),
+    }),
+    removeEntry: async (name: string) => void this.entries.delete(name),
+    entries: () => this.list(),
+  } as unknown as FileSystemDirectoryHandle;
+
+  private async *list(): AsyncGenerator<[string, { kind: string }]> {
+    for (const [name, e] of [...this.entries]) yield [name, e instanceof MemoryFolder ? e.handle : { kind: "file" }];
+  }
+
+  async file(path: string, bytes: Uint8Array): Promise<void> {
+    const parts = path.split("/");
+    let d: MemoryFolder = this;
+    for (const p of parts.slice(0, -1)) {
+      await d.handle.getDirectoryHandle(p, { create: true });
+      d = d.entries.get(p) as MemoryFolder;
+    }
+    d.entries.set(parts[parts.length - 1], bytes);
+  }
+
+  get(path: string): Uint8Array | undefined {
+    const parts = path.split("/");
+    let d: MemoryFolder | Uint8Array | undefined = this;
+    for (const p of parts) d = d instanceof MemoryFolder ? d.entries.get(p) : undefined;
+    return d instanceof Uint8Array ? d : undefined;
+  }
+
+  /** Every file's path. */
+  paths(at = ""): string[] {
+    return [...this.entries].flatMap(([name, e]) => (e instanceof MemoryFolder ? e.paths(`${at}${name}/`) : [`${at}${name}`]));
+  }
 }
 
 describe("a label volume in chunks", () => {
@@ -409,12 +456,16 @@ describe("undo and redo", () => {
   it("keeps a budget of bytes, the oldest strokes going first", () => {
     const v = vol();
     const history = new History(64 ** 3 * 3);
+    const dropped: number[] = [];
     for (let i = 0; i < 4; ++i) {
       const s = new Stroke(v);
       s.set(i, 0, 0, i + 1);
       s.finish();
-      history.push(s);
+      dropped.push(history.push(s));
     }
+    // It says how many it let go (the editor tells Activity).
+    expect(dropped[0]).toBe(0);
+    expect(dropped.reduce((a, b) => a + b)).toBeGreaterThan(0);
     expect(history.undo().length).toBe(1);
     history.undo();
     expect(history.canUndo).toBe(false);
@@ -504,6 +555,7 @@ describe("quick select", () => {
 });
 
 describe("copying labels above 2^24", () => {
+  let stores = 0;
   /** A one-level label store of `type` (raw chunks, 4 a side), its first voxels `values` (x fastest). */
   async function store(type: "uint32" | "uint64", values: bigint[]) {
     const files = omeZarrMetadata([{ size: [4, 4, 4], voxelToRas: PLACE }], "uint32", "labels", { label: true, chunk: 4, codecs: [{ name: "bytes", configuration: { endian: "little" } }] });
@@ -513,7 +565,8 @@ describe("copying labels above 2^24", () => {
     const chunk = type === "uint64" ? new BigUint64Array(64) : new Uint32Array(64);
     values.forEach((v, i) => (chunk[i] = (type === "uint64" ? v : Number(v)) as never));
     files.set("0/c/0/0/0", new Uint8Array(chunk.buffer));
-    const base = `https://example.org/${type}.ome.zarr/`;
+    // A store at an address of its own: readers of an image on a server share its chunks.
+    const base = `https://example.org/${type}-${++stores}.ome.zarr/`;
     serve((key) => files.get(key), base);
     const reader = new VolumeReader();
     const { levels } = await reader.open([base], undefined);
@@ -569,6 +622,47 @@ describe("saving", () => {
     expect(data.reduce((n, x) => n + (x !== 0 ? 1 : 0), 0)).toBe(2);
   });
 
+  it("streams a NIfTI in slabs of sections, never the whole volume at once, the same file as made whole", async () => {
+    const v = vol([30, 20, 10], "uint16");
+    const s = new Stroke(v);
+    s.set(3, 4, 5, 1000);
+    s.set(29, 19, 9, 7);
+    s.finish();
+    // Slabs of at most 3 sections (30 × 20 × 2 bytes each).
+    const parts: number[] = [];
+    const out = gzipWriter();
+    await niftiParts(v, "test", (part) => (parts.push(part.byteLength), out.write(part)), undefined, 30 * 20 * 2 * 3);
+    const blob = (await out.close())!;
+    expect(parts).toEqual([352, 3600, 3600, 3600, 1200]);
+    const streamed = await gunzip(new Uint8Array(await blob.arrayBuffer()));
+    const whole = await gunzip(await niftiGz(v, "test"));
+    expect(streamed).toEqual(whole);
+    // Through the save client (without workers here, the same done in this thread).
+    const saver = new SaveWorker();
+    const stream = await saver.stream();
+    await niftiParts(v, "test", (part) => stream.write(part));
+    expect(await gunzip(new Uint8Array(await (await stream.close())!.arrayBuffer()))).toEqual(whole);
+  });
+
+  it("writes an OME-Zarr file by file as made, the same files as made whole", async () => {
+    const v = vol([300, 200, 100]);
+    const s = new Stroke(v);
+    s.set(250, 150, 90, 4);
+    s.set(10, 10, 10, 2);
+    s.finish();
+    const whole = await omeZarr(v, "test");
+    const written = new Map<string, Uint8Array>();
+    const saver = new SaveWorker();
+    const left = await omeZarr(v, "test", undefined, [], { gzip: (b) => saver.gzip(b), write: async (path, bytes) => void written.set(path, bytes) });
+    expect(left.size).toBe(0);
+    expect([...written.keys()].sort()).toEqual([...whole.keys()].sort());
+    for (const [path, bytes] of whole) {
+      if (path.includes("/c/")) expect(await gunzip(written.get(path)!)).toEqual(await gunzip(bytes));
+      else expect(written.get(path)).toEqual(bytes);
+    }
+    // Gzips every chunk twice over: seconds on a shared CI machine.
+  }, 60_000);
+
   it("cuts the painted box, moving the origin to its corner", () => {
     const v = vol();
     const s = new Stroke(v);
@@ -601,5 +695,41 @@ describe("saving", () => {
     const values = await reader.rawPoints(0, Float64Array.from([250, 150, 90, 249, 150, 90]), "nearest", new AbortController().signal);
     expect(Array.from(values)).toEqual([4, 0]);
     expect(levels.length).toBe(4);
+  });
+
+  it("saves again into the same folder without bringing erased labels back", async () => {
+    const v = vol([300, 200, 100]);
+    let s = new Stroke(v);
+    s.set(250, 150, 90, 4);
+    s.set(10, 10, 10, 5);
+    s.finish();
+    const root = new MemoryFolder();
+    await root.file("notes.txt", new Uint8Array([1]));
+    await writeStore(root.handle, await omeZarr(v));
+    expect(root.paths()).toContain("0/c/0/0/0");
+    // Label 5 erased: its chunk is now empty, so the second save does not write it.
+    s = new Stroke(v);
+    s.set(10, 10, 10, 0);
+    s.finish();
+    const files = await omeZarr(v);
+    expect(files.has("0/c/0/0/0")).toBe(false);
+    await writeStore(root.handle, files);
+    // The folder holds exactly this save, and the file that is not the store's.
+    expect(root.paths().sort()).toEqual([...files.keys(), "notes.txt"].sort());
+    const saved = new Map(root.paths().map((p) => [p, root.get(p)!]));
+    serve((key) => saved.get(key), "http://again.test/");
+    const reader = new VolumeReader();
+    await reader.open(["http://again.test/"], undefined);
+    const values = await reader.rawPoints(0, Float64Array.from([250, 150, 90, 10, 10, 10]), "nearest", new AbortController().signal);
+    expect(Array.from(values)).toEqual([4, 0]);
+  });
+
+  it("removes a store's old chunks and levels, and keeps other files", async () => {
+    const root = new MemoryFolder();
+    for (const p of ["zarr.json", "0/zarr.json", "0/c/0/0/0", "0/c/0/0/1", "0/c/1/0/0", "4/zarr.json", "4/c/0/0/0", "notes/a.txt", "readme.md"]) await root.file(p, new Uint8Array([1]));
+    const removed = await pruneStore(root.handle, ["zarr.json", "0/zarr.json", "0/c/0/0/1"]);
+    expect(root.paths().sort()).toEqual(["0/c/0/0/1", "0/zarr.json", "notes/a.txt", "readme.md", "zarr.json"]);
+    // 0/c/0/0/0, the folder 0/c/1 and the level 4.
+    expect(removed).toBe(3);
   });
 });

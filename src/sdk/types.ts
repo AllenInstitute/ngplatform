@@ -6,13 +6,14 @@
  *  - A **data type** plugin teaches Neuroglancer a format (a data source,
  *    with code in Neuroglancer's workers).  It has no platform code; the
  *    catalogue names its Neuroglancer modules.
- *  - A **tool** plugin adds to the workspace around the viewer: a tab in the
- *    left dock, commands, analyses.  It never imports Neuroglancer or the
+ *  - A **tool** plugin adds to the workspace around the viewer: a panel in the
+ *    Tools dock, commands, analyses.  It never imports Neuroglancer or the
  *    platform's internals: it gets a `PlatformContext` on activation and
  *    works through it.  Everything it adds is owned by it, and deactivating
  *    it removes it all.
  *
- * Either kind is switched on or off in the Plugins tab, which reloads the
+ * Either kind is switched on or off in the Plugins panel (left dock).  A
+ * tool comes on at once; a data type, or turning a plugin off, reloads the
  * page with the same link.
  */
 import type { LookupEntry, LookupTable } from "../core/lookup_table.js";
@@ -90,7 +91,7 @@ export interface Manifest {
   kind: PluginKind;
   /** One sentence, shown under the plugin's name. */
   description?: string;
-  /** A short user guide in Markdown (## headings, lists, `code`, [links](…)), behind "About" in the Plugins tab. */
+  /** A short user guide in Markdown (## headings, lists, `code`, [links](…)), behind "About" in the Plugins panel. */
   guide?: string;
   /** Where to find out more: repositories, specifications, papers. */
   links?: { title: string; url: string }[];
@@ -114,8 +115,13 @@ export interface Manifest {
   contributes?: {
     commands?: CommandContribution[];
     keybindings?: { key: string; command: string; args?: unknown; when?: string }[];
-    /** `minSize`: pixels the dock grows to, at least, when the panel is shown (not saved as the dock's size). */
-    panels?: { id: string; title: string; slot: DockSlot; order?: number; when?: string; minSize?: number }[];
+    /**
+     * A panel in the `left` slot is a tool: it goes to the Tools dock, listed
+     * under `group` ("Image", "Labels", "Space", "Vectors"; "Other" when not
+     * given).  `minSize`: pixels the dock grows to, at least, when the panel
+     * is shown (not saved as the dock's size).
+     */
+    panels?: { id: string; title: string; slot: DockSlot; group?: string; order?: number; when?: string; minSize?: number }[];
     datasetActions?: { command: string; title?: string; when?: string }[];
     openHandlers?: { id: string; pattern: string; title?: string }[];
     examples?: { id: string; title: string; description: string; remote?: boolean; state?: Json }[];
@@ -126,9 +132,12 @@ export interface Manifest {
     /**
      * Kinds of scene the plugin adds: each a tab in the scene bar (`title`)
      * while the plugin is on, which makes the scene the first time it is
-     * clicked; switching to one shows `panel`.
+     * clicked; switching to one shows `panel`.  With `add`, the scene bar
+     * instead always has a tab `add.title` (with a +) that runs
+     * `add.command`: the plugin makes the scenes of its kind itself, as many
+     * as it likes.
      */
-    sceneKinds?: { kind: string; title: string; panel?: string }[];
+    sceneKinds?: { kind: string; title: string; panel?: string; add?: { title: string; command: string } }[];
   };
 }
 
@@ -180,6 +189,7 @@ export interface WorkspaceApi {
   switchScene(id: string): void;
   /** A new scene (blank, or a copy of the active one); `kind` makes it a scene of a kind the plugin contributes. */
   newScene(options?: { copy?: boolean; name?: string; kind?: string }): string;
+  renameScene(id: string, name: string): void;
 
   /** Every dataset the workspace knows, shown in any scene or none. */
   datasets(): DatasetInfo[];
@@ -214,7 +224,7 @@ export interface WorkspaceApi {
    */
   undoSteps(): { undo?: UndoStep; redo?: UndoStep };
 
-  /** Data opened from this computer (Add → Local), which plugins can write into. */
+  /** Data opened from this computer (Open a file…, or Add data → Local file or folder…), which plugins can write into. */
   local: {
     /** Whether a URL is under local data, and whether its folder can be written. */
     locate(url: string): { writable: boolean } | undefined;
@@ -314,6 +324,19 @@ export interface ViewerApi {
    */
   patchState(edit: (ng: Json) => void, options?: { quiet?: boolean }): void;
   onStateChanged(callback: () => void): Disposer;
+  /**
+   * A number that changes whenever a layer changes (its specification, its
+   * annotations among it, or the list of layers), but not when the view
+   * moves: a plugin reading layers out of `getState` (which writes out every
+   * annotation) can keep what it read until this changes.
+   */
+  layersGeneration?(): number;
+  /**
+   * One top-level key of the state (`selection`, `selectedLayer`,
+   * `dimensions`, `position`…) without writing out the rest: cheap, where
+   * `getState` writes out every layer.  Not for `layers` (use `getState`).
+   */
+  statePart?(key: string): unknown;
   layers(): LayerInfo[];
   layerSpec(name: string): Json | undefined;
   setLayerVisible(name: string, visible: boolean): void;
@@ -369,7 +392,7 @@ export interface ViewerApi {
    * temporary set made meanwhile included, and its notSelectedAlpha).
    */
   hideLayerDrawing(layer: string, hidden: boolean): void;
-  /** Shows a surface map (an attribute of a surface layer's store) as its overlay, as Render → Surface's Overlay does; false when the layer is not a surface. */
+  /** Shows a surface map (an attribute of a surface layer's store) as its overlay, as Display → Surface's Overlay does; false when the layer is not a surface. */
   setSurfaceOverlay(layer: string, map: string): boolean;
   /** Whether an annotation is being drawn in steps (a polyline, a line, a box): a plugin's edits to annotation layers wait for it. */
   annotationInProgress(): boolean;
@@ -409,7 +432,7 @@ export interface ViewerApi {
   /**
    * Label lookup tables, the names and colours of a segmentation's values:
    * those that come with the app, the one a layer has, and giving a layer
-   * one as its Render → Lookup table does.  A table is named by its
+   * one as its Display → Colour → Lookup table does.  A table is named by its
    * `lut://` URL.
    */
   lookupTables: LookupTablesApi;
@@ -573,7 +596,7 @@ export interface RunnerJob {
 
 /**
  * The runner: Python jobs on the user's own computer (`python -m
- * ngplatform_runner`), which the app is paired with in the Remote tab.  Jobs
+ * ngplatform_runner`), which the app is paired with in Settings › Compute.  Jobs
  * read and write files only under the folders the runner was started with.
  */
 export interface RunnerApi {
@@ -710,10 +733,22 @@ export interface PlatformContext {
     confirm(message: string): Promise<boolean>;
     /** A dialog generated from a schema; resolves undefined on cancel. */
     form<T>(title: string, schema: Schema, initial?: Partial<T>): Promise<T | undefined>;
+    /**
+     * A sheet (as the platform's Open is) whose body the plugin draws, with
+     * a Close button; Escape or a click outside closes it too.  Returns what
+     * closes it.
+     */
+    sheet(title: string, render: (body: HTMLElement, close: () => void) => Disposer | void, options?: { wide?: boolean }): () => void;
   };
   workspace: WorkspaceApi;
   viewer: ViewerApi;
-  /** This plugin's slice of the workspace state: undoable, in the link, migrated. */
+  /**
+   * This plugin's slice of the workspace state: undoable, in the link.
+   * State saved by an older version of the plugin (its manifest's
+   * `appState.version`) is returned as it was saved, for the plugin to read
+   * by its shape; state saved by a newer version is not read (`get` returns
+   * undefined) and the user is told.
+   */
   state: {
     get<T>(): T | undefined;
     set<T>(value: T): void;
@@ -742,7 +777,7 @@ export interface PlatformContext {
     info(message: string): void;
     error(message: string): void;
   };
-  /** Sign-in: a provider adds its services to the Auth tab. */
+  /** Sign-in: a provider adds its services to Settings › Sign-in. */
   auth: {
     register(provider: AuthProvider): Disposer;
   };
@@ -767,7 +802,7 @@ export interface AuthService {
   title: string;
   /** What uses it (the datasets, apps or URLs). */
   detail?: string;
-  /** The addresses typed into the Auth tab that led here (removable there). */
+  /** The addresses typed into Settings › Sign-in that led here (removable there). */
   manual?: string[];
   status(signal?: AbortSignal): Promise<AuthStatus>;
   /** Called from a click: it may open a sign-in window at once. */
@@ -782,13 +817,13 @@ export interface AuthService {
 export interface AuthProvider {
   id: string;
   title: string;
-  /** One line for the Auth tab. */
+  /** One line for Settings › Sign-in. */
   description?: string;
-  /** Whether this provider takes a server typed into the Auth tab (a URL). */
+  /** Whether this provider takes a server typed into Settings › Sign-in (a URL). */
   accepts?(server: string): boolean;
   /** Its services, from the workspace's data sources and the servers added to it by hand. */
   services(input: { sources: string[]; manual: string[] }): Promise<AuthService[]>;
-  /** The ways it lets a layer read its data, offered in the Auth tab's drop-down for each layer. */
+  /** The ways it lets a layer read its data, offered in the drop-down for each layer (Settings › Sign-in, and the layer's controls). */
   sourceSignIns?(input: { sources: string[]; manual: string[] }): SourceSignIn[];
 }
 

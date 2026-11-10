@@ -175,6 +175,148 @@ export const ANATOMICAL_VIEWS: { name: string; forward: [number, number, number]
   { name: "Inferior", forward: [0, 0, 1], up: [0, 1, 0] },
 ];
 
+/** The sides +axis and -axis point to (words of OME-Zarr's anatomical orientations: "right", "left"), per axis. */
+export type AxisSides = Record<Axis, { pos: string; neg: string }>;
+
+/** The letters a side's button shows, in the order the buttons come. */
+const SIDE_LETTERS: [string, string][] = [
+  ["left", "L"], ["right", "R"], ["anterior", "A"], ["posterior", "P"], ["superior", "S"], ["inferior", "I"],
+  ["dorsal", "D"], ["ventral", "V"], ["rostral", "Ro"], ["caudal", "Ca"], ["cranial", "Cr"],
+  ["proximal", "Pr"], ["distal", "Di"], ["palmar", "Pa"], ["plantar", "Pl"],
+];
+/** Sides that are "up" when the view looks across them, and those that are "up" when it looks along that axis. */
+const UP_SIDES = ["superior", "dorsal", "cranial"];
+const FRONT_SIDES = ["anterior", "rostral", "ventral"];
+
+/**
+ * The image's anatomical orientation from its OME-Zarr metadata (the
+ * attributes of its zarr.json, or its .zattrs): each of x, y and z with an
+ * `orientation` of type "anatomical" ("left-to-right": +x points right).
+ * Undefined unless all three say.
+ */
+export function anatomicalSides(attributes: unknown): AxisSides | undefined {
+  const a = attributes as { ome?: unknown; multiscales?: unknown } | undefined;
+  const ome = (a?.ome ?? a) as { multiscales?: { axes?: unknown[]; coordinateSystems?: { axes?: unknown[] }[] }[] } | undefined;
+  const ms = ome?.multiscales?.[0];
+  const axes = ms?.axes ?? ms?.coordinateSystems?.at(-1)?.axes ?? [];
+  const out: Partial<AxisSides> = {};
+  for (const ax of axes as { name?: unknown; orientation?: { type?: unknown; value?: unknown } }[]) {
+    const name = ax?.name;
+    const o = ax?.orientation;
+    if ((name !== "x" && name !== "y" && name !== "z") || o?.type !== "anatomical" || typeof o.value !== "string") continue;
+    const m = /^([a-z]+)-to-([a-z]+)$/.exec(o.value);
+    if (m) out[name] = { neg: m[1], pos: m[2] };
+  }
+  return out.x && out.y && out.z ? (out as AxisSides) : undefined;
+}
+
+/** A button that turns the 3-D view: what it shows, what it is called, and the camera's direction and up (display coordinates). */
+export interface ViewButton {
+  label: string;
+  name: string;
+  forward: [number, number, number];
+  up: [number, number, number];
+}
+
+/**
+ * The buttons that turn the view to look from each side of the image: by
+ * its anatomical sides when its metadata gives them (L, R, A, P, S, I),
+ * else by axis (+x, -x, ...: "from +x" looks towards -x).  `display`: the
+ * displayed dimensions' names (x, y and z in some order); none without
+ * all three.  The view is upright: superior (else +z) up, and looking
+ * along that axis, anterior (else +y) up.
+ */
+export function viewButtons(display: readonly string[], sides: AxisSides | undefined): ViewButton[] {
+  const index = (["x", "y", "z"] as Axis[]).map((a) => display.indexOf(a));
+  if (index.some((i) => i < 0 || i > 2)) return [];
+  const unit = (axis: Axis, sign: number): [number, number, number] => {
+    const v: [number, number, number] = [0, 0, 0];
+    v[index[["x", "y", "z"].indexOf(axis)]] = sign;
+    return v;
+  };
+  // Which axis, and which way along it, is up; and which is up when looking along that one.
+  const along = (wanted: string[], fallback: [Axis, number]): [Axis, number] => {
+    for (const axis of ["x", "y", "z"] as Axis[]) {
+      const s = sides?.[axis];
+      if (s && wanted.includes(s.pos)) return [axis, 1];
+      if (s && wanted.includes(s.neg)) return [axis, -1];
+    }
+    return fallback;
+  };
+  const up = along(UP_SIDES, ["z", 1]);
+  let front = along(FRONT_SIDES, ["y", 1]);
+  if (front[0] === up[0]) front = up[0] === "y" ? ["z", 1] : ["y", 1];
+  const out: (ViewButton & { order: number })[] = [];
+  for (const axis of ["x", "y", "z"] as Axis[]) {
+    for (const sign of [1, -1]) {
+      const side = sides === undefined ? undefined : sign > 0 ? sides[axis].pos : sides[axis].neg;
+      const letter = SIDE_LETTERS.findIndex(([w]) => w === side);
+      const label = side === undefined ? `${sign > 0 ? "+" : "−"}${axis}` : letter >= 0 ? SIDE_LETTERS[letter][1] : side.slice(0, 2);
+      const camUp = axis === up[0] ? unit(...front) : unit(...up);
+      out.push({
+        label,
+        name: side === undefined ? label : side,
+        // From that side, looking back across the image.
+        forward: unit(axis, -sign),
+        up: camUp,
+        order: side === undefined ? out.length : letter >= 0 ? letter : 99,
+      });
+    }
+  }
+  return out.sort((a, b) => a.order - b.order).map(({ order: _o, ...b }) => b);
+}
+
+/** The axes of an image's source as Neuroglancer reads them (LayerTransform's input): names, units, and the extent when known. */
+export interface SourceAxes {
+  names: string[];
+  units: string[];
+  bounds?: { lower: number[]; upper: number[] };
+}
+
+/**
+ * What the image's axes allow: `problem` when it cannot be rendered
+ * (fewer than three spatial axes; in this browser, more than one time
+ * point or channel); on a computer, how many time points and channels it
+ * has when more than one (the panel then offers a choice of each).
+ * Spatial axes are those in metres.
+ */
+export function axesCheck(axes: SourceAxes | undefined, browser: boolean): { problem?: string; times?: number; channels?: number } {
+  if (axes === undefined) return {};
+  const spatial = axes.units.filter((u) => u === "m").length;
+  if (spatial < 3) return { problem: `This image has ${spatial === 1 ? "one spatial axis" : `${spatial === 0 ? "no" : spatial} spatial axes`}: rendering needs x, y and z.` };
+  const extent = (i: number) => (axes.bounds ? Math.round(axes.bounds.upper[i] - axes.bounds.lower[i]) : 1);
+  let times = 1;
+  let channels = 1;
+  axes.names.forEach((n, i) => {
+    if (axes.units[i] === "m" || extent(i) <= 1) return;
+    if (axes.units[i] === "s" || /^t'?$/i.test(n)) times *= extent(i);
+    else channels *= extent(i);
+  });
+  if (times === 1 && channels === 1) return {};
+  const parts = [times > 1 ? `${times} time points` : "", channels > 1 ? `${channels} channels` : ""].filter(Boolean).join(" and ");
+  if (browser) return { problem: `This image has ${parts}: this browser renders an image with one of each. Render it on a computer.` };
+  return { ...(times > 1 ? { times } : {}), ...(channels > 1 ? { channels } : {}) };
+}
+
+/** A link a host sent, for an `href`: http(s) only (never `javascript:`); undefined otherwise. */
+export function safeHref(url: unknown): string | undefined {
+  if (typeof url !== "string") return undefined;
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Where a page can read a store's metadata (gs:// as Google Cloud Storage's public address); undefined for a host's own paths and s3. */
+export function metadataBase(url: string): string | undefined {
+  if (url.startsWith("n5://")) return undefined;
+  if (/^https?:\/\//.test(url)) return url.replace(/\/+$/, "");
+  const gs = /^gs:\/\/(.+)$/.exec(url);
+  return gs ? `https://storage.googleapis.com/${gs[1].replace(/\/+$/, "")}` : undefined;
+}
+
 /** A key for a camera and size, to tell whether the view changed (rounded so jitter does not count). */
 export function viewKey(inv: ArrayLike<number>, width: number, height: number): string {
   let s = `${width}x${height}`;

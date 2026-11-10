@@ -1,0 +1,1301 @@
+{
+ "summary": {
+  "Font sizes": 5,
+  "Button styles": 13,
+  "Input and select styles": 5,
+  "Heading styles": 3,
+  "Corner radii": 2,
+  "Text in the browser's default font": 0,
+  "Elements with inline styles": 0,
+  "On/off controls not made with toggle or checkbox": 0,
+  "Controls without an accessible name": 0,
+  "Roles missing required attributes": 0,
+  "Positive tabindex": 0,
+  "Images without alt": 0
+ },
+ "panels": {
+  "Start card": {
+   "fontSizes": {
+    "13px": 4,
+    "12px": 3
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 7
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 3,
+    "rgb(148, 148, 148)": 2,
+    "rgb(0, 0, 0)": 1,
+    "rgb(138, 138, 138)": 1
+   },
+   "buttons": {
+    "13px | 73.625px | 0px | rgb(18, 18, 18) | rgb(42, 42, 42)": 2,
+    "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 1
+   },
+   "inputs": {},
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {},
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 55,
+   "controls": 4,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Layers (image)": {
+   "fontSizes": {
+    "11px": 8,
+    "12px": 36,
+    "13px": 1
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 24,
+    "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 21
+   },
+   "colors": {
+    "rgb(148, 148, 148)": 25,
+    "rgb(222, 222, 222)": 17,
+    "rgb(138, 138, 138)": 2,
+    "rgb(255, 255, 255)": 1
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 4,
+    "13px | 16.25px | 0px | rgba(0, 0, 0, 0) | rgb(222, 222, 222)": 1,
+    "12px | 24px | 0px | rgb(28, 28, 28) | rgba(0, 0, 0, 0)": 1,
+    "12px | 24px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 1,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 4
+   },
+   "inputs": {
+    "12px | 24px | 0px | rgb(0, 0, 0)": 4,
+    "12px | 22px | 0px | rgb(0, 0, 0)": 4,
+    "12px | 12px | 0px | rgb(59, 59, 59)": 1
+   },
+   "checkboxes": {
+    "plain": 1,
+    "ins-check": 1
+   },
+   "handMadeOnOff": 0,
+   "headings": {
+    "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 3
+   },
+   "radii": {
+    "50%": 1
+   },
+   "inlineStyled": 0,
+   "words": 84,
+   "controls": 22,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Plugins": {
+   "fontSizes": {
+    "12px": 37,
+    "11px": 5
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 42
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 13,
+    "rgb(148, 148, 148)": 29
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 1,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 1,
+    "12px | 17.3906px | 0px | rgba(0, 0, 0, 0) | rgb(148, 148, 148)": 12
+   },
+   "inputs": {},
+   "checkboxes": {
+    "switch": 12
+   },
+   "handMadeOnOff": 0,
+   "headings": {
+    "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 5
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 178,
+   "controls": 26,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Track filtering (SRB)": {
+   "fontSizes": {
+    "12px": 2
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 2
+   },
+   "colors": {
+    "rgb(148, 148, 148)": 1,
+    "rgb(222, 222, 222)": 1
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 1
+   },
+   "inputs": {},
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {},
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 8,
+   "controls": 1,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Luxar rendering (SRB)": {
+   "fontSizes": {
+    "12px": 14,
+    "11px": 2
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 16
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 6,
+    "rgb(148, 148, 148)": 10
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 3
+   },
+   "inputs": {
+    "12px | 24px | 0px | rgb(0, 0, 0)": 8
+   },
+   "checkboxes": {
+    "switch": 2
+   },
+   "handMadeOnOff": 0,
+   "headings": {
+    "12px | 600 | none | rgb(222, 222, 222) | normal": 8
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 51,
+   "controls": 13,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Filters (SRB)": {
+   "fontSizes": {
+    "12px": 7,
+    "11px": 2
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 8,
+    "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 1
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 3,
+    "rgb(148, 148, 148)": 5,
+    "rgb(0, 0, 0)": 1
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 2,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 1,
+    "12px | 24px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
+   },
+   "inputs": {
+    "12px | 24px | 0px | rgb(0, 0, 0)": 3
+   },
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {
+    "12px | 600 | none | rgb(222, 222, 222) | normal": 4
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 29,
+   "controls": 7,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Anatomical rendering (SRB)": {
+   "fontSizes": {
+    "12px": 67,
+    "11px": 16
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 82,
+    "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 1
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 37,
+    "rgb(148, 148, 148)": 45,
+    "rgb(138, 138, 138)": 1
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 20,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 22
+   },
+   "inputs": {
+    "12px | 24px | 0px | rgb(0, 0, 0)": 36
+   },
+   "checkboxes": {
+    "switch": 1,
+    "plain": 7
+   },
+   "handMadeOnOff": 0,
+   "headings": {
+    "12px | 600 | none | rgb(222, 222, 222) | normal": 18,
+    "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 3
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 125,
+   "controls": 86,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Registration (SRB)": {
+   "fontSizes": {
+    "12px": 38,
+    "11px": 3
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 41
+   },
+   "colors": {
+    "rgb(148, 148, 148)": 19,
+    "rgb(222, 222, 222)": 7,
+    "rgb(138, 138, 138)": 15
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 1,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 13,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 13
+   },
+   "inputs": {
+    "12px | 24px | 0px | rgb(0, 0, 0)": 13
+   },
+   "checkboxes": {
+    "plain": 1,
+    "switch": 1
+   },
+   "handMadeOnOff": 0,
+   "headings": {
+    "12px | 600 | none | rgb(222, 222, 222) | normal": 10
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 36,
+   "controls": 42,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Time series (SRB)": {
+   "fontSizes": {
+    "12px": 2,
+    "11px": 1
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 3
+   },
+   "colors": {
+    "rgb(148, 148, 148)": 1,
+    "rgb(222, 222, 222)": 1,
+    "rgb(138, 138, 138)": 1
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 1
+   },
+   "inputs": {},
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {},
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 14,
+   "controls": 1,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Orientations (SRB)": {
+   "fontSizes": {
+    "12px": 18,
+    "11px": 3
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 20,
+    "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 1
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 10,
+    "rgb(148, 148, 148)": 10,
+    "rgb(138, 138, 138)": 1
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 11,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 1
+   },
+   "inputs": {
+    "12px | 24px | 0px | rgb(0, 0, 0)": 7
+   },
+   "checkboxes": {
+    "switch": 1,
+    "plain": 5
+   },
+   "handMadeOnOff": 0,
+   "headings": {
+    "12px | 600 | none | rgb(222, 222, 222) | normal": 8
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 36,
+   "controls": 25,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "OME Collections (SRB)": {
+   "fontSizes": {
+    "12px": 2
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 2
+   },
+   "colors": {
+    "rgb(148, 148, 148)": 1,
+    "rgb(222, 222, 222)": 1
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 1
+   },
+   "inputs": {},
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {},
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 5,
+   "controls": 1,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Segmentation (SRB)": {
+   "fontSizes": {
+    "12px": 8
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 8
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 3,
+    "rgb(148, 148, 148)": 4,
+    "rgb(0, 0, 0)": 1
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 2
+   },
+   "inputs": {
+    "12px | 24px | 0px | rgb(0, 0, 0)": 4
+   },
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {
+    "12px | 600 | none | rgb(222, 222, 222) | normal": 2
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 47,
+   "controls": 7,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Atlas (SRB)": {
+   "fontSizes": {
+    "12px": 2
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 2
+   },
+   "colors": {
+    "rgb(148, 148, 148)": 1,
+    "rgb(222, 222, 222)": 1
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 1
+   },
+   "inputs": {},
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {},
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 7,
+   "controls": 1,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Annotations (SRB)": {
+   "fontSizes": {
+    "11px": 2,
+    "12px": 5
+   },
+   "fonts": {
+    "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 1,
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 6
+   },
+   "colors": {
+    "rgb(138, 138, 138)": 2,
+    "rgb(222, 222, 222)": 4,
+    "rgb(148, 148, 148)": 1
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 4
+   },
+   "inputs": {
+    "12px | 24px | 0px | rgb(0, 0, 0)": 2
+   },
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {},
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 23,
+   "controls": 6,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Activity": {
+   "fontSizes": {
+    "11px": 2,
+    "12px": 8
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 6,
+    "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 4
+   },
+   "colors": {
+    "rgb(148, 148, 148)": 2,
+    "rgb(102, 204, 102)": 2,
+    "rgb(138, 138, 138)": 3,
+    "rgb(224, 113, 107)": 1,
+    "rgb(222, 222, 222)": 2
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 1,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 1
+   },
+   "inputs": {},
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {
+    "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 1
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 47,
+   "controls": 2,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Sheet: Open": {
+   "fontSizes": {
+    "15px": 1,
+    "13px": 8,
+    "11px": 1,
+    "12px": 2
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 12
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 7,
+    "rgb(0, 0, 0)": 1,
+    "rgb(148, 148, 148)": 3,
+    "rgb(138, 138, 138)": 1
+   },
+   "buttons": {
+    "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 4,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 1
+   },
+   "inputs": {
+    "12px | 120px | 0px | rgb(0, 0, 0)": 1
+   },
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {
+    "15px | 600 | none | rgb(222, 222, 222) | normal": 1,
+    "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 1
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 55,
+   "controls": 7,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Sheet: Settings view": {
+   "fontSizes": {
+    "15px": 1,
+    "13px": 8,
+    "12px": 15,
+    "11px": 4
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 28
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 14,
+    "rgb(148, 148, 148)": 13,
+    "rgb(0, 0, 0)": 1
+   },
+   "buttons": {
+    "13px | 28px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 1,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 6,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 2,
+    "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
+   },
+   "inputs": {
+    "13px | 28px | 0px | rgb(0, 0, 0)": 6
+   },
+   "checkboxes": {
+    "plain": 9
+   },
+   "handMadeOnOff": 0,
+   "headings": {
+    "15px | 600 | none | rgb(222, 222, 222) | normal": 1,
+    "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 4
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 69,
+   "controls": 25,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Sheet: Settings sign-in": {
+   "fontSizes": {
+    "15px": 1,
+    "13px": 17,
+    "12px": 8,
+    "14px": 1,
+    "11px": 1
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 26,
+    "Roboto, \"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 1,
+    "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 1
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 15,
+    "rgb(148, 148, 148)": 11,
+    "rgb(227, 227, 227)": 1,
+    "rgb(0, 0, 0)": 1
+   },
+   "buttons": {
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 11,
+    "13px | 28px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 1,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 6,
+    "14px | 40px | 20px | rgb(19, 19, 20) | rgb(142, 145, 143)": 1,
+    "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
+   },
+   "inputs": {
+    "13px | 28px | 0px | rgb(0, 0, 0)": 4
+   },
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {
+    "15px | 600 | none | rgb(222, 222, 222) | normal": 1,
+    "12px | 600 | none | rgb(222, 222, 222) | normal": 12
+   },
+   "radii": {
+    "20px": 1
+   },
+   "inlineStyled": 0,
+   "words": 45,
+   "controls": 24,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Sheet: Settings compute": {
+   "fontSizes": {
+    "15px": 1,
+    "13px": 10,
+    "12px": 7,
+    "11px": 1
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 17,
+    "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 2
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 7,
+    "rgb(148, 148, 148)": 6,
+    "rgb(102, 204, 102)": 1,
+    "rgb(138, 138, 138)": 3,
+    "rgb(224, 113, 107)": 1,
+    "rgb(0, 0, 0)": 1
+   },
+   "buttons": {
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 6,
+    "13px | 28px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 1,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 4,
+    "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
+   },
+   "inputs": {
+    "13px | 28px | 0px | rgb(0, 0, 0)": 1
+   },
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {
+    "15px | 600 | none | rgb(222, 222, 222) | normal": 1,
+    "12px | 600 | none | rgb(222, 222, 222) | normal": 4
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 57,
+   "controls": 13,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Sheet: Settings storage": {
+   "fontSizes": {
+    "15px": 1,
+    "13px": 8,
+    "11px": 2,
+    "12px": 5
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 16
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 3,
+    "rgb(148, 148, 148)": 11,
+    "rgb(138, 138, 138)": 1,
+    "rgb(0, 0, 0)": 1
+   },
+   "buttons": {
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 6,
+    "13px | 28px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 1,
+    "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
+   },
+   "inputs": {
+    "13px | 28px | 0px | rgb(0, 0, 0)": 5
+   },
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {
+    "15px | 600 | none | rgb(222, 222, 222) | normal": 1,
+    "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 2
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 38,
+   "controls": 13,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Sheet: Settings developer": {
+   "fontSizes": {
+    "15px": 1,
+    "13px": 11,
+    "11px": 14,
+    "12px": 40
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 26,
+    "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 40
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 46,
+    "rgb(148, 148, 148)": 14,
+    "rgb(138, 138, 138)": 5,
+    "rgb(0, 0, 0)": 1
+   },
+   "buttons": {
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 9,
+    "13px | 28px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 1,
+    "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
+   },
+   "inputs": {},
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {
+    "15px | 600 | none | rgb(222, 222, 222) | normal": 1,
+    "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 1
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 96,
+   "controls": 11,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Sheet: Keyboard": {
+   "fontSizes": {
+    "15px": 1,
+    "11px": 61,
+    "12px": 50,
+    "13px": 1
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 4,
+    "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 109
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 51,
+    "rgb(148, 148, 148)": 61,
+    "rgb(0, 0, 0)": 1
+   },
+   "buttons": {
+    "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
+   },
+   "inputs": {},
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {
+    "15px | 600 | none | rgb(222, 222, 222) | normal": 1,
+    "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 2
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 87,
+   "controls": 1,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Sheet: Capture": {
+   "fontSizes": {
+    "15px": 1,
+    "12px": 6,
+    "11px": 1,
+    "13px": 2
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 10
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 3,
+    "rgb(148, 148, 148)": 6,
+    "rgb(0, 0, 0)": 1
+   },
+   "buttons": {
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 1,
+    "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
+   },
+   "inputs": {
+    "13px | 28px | 0px | rgb(0, 0, 0)": 5
+   },
+   "checkboxes": {
+    "plain": 1
+   },
+   "handMadeOnOff": 0,
+   "headings": {
+    "15px | 600 | none | rgb(222, 222, 222) | normal": 1,
+    "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 1
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 33,
+   "controls": 8,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Sheet: Add dataset": {
+   "fontSizes": {
+    "15px": 1,
+    "12px": 3,
+    "13px": 2
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 6
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 2,
+    "rgb(148, 148, 148)": 3,
+    "rgb(138, 138, 138)": 1
+   },
+   "buttons": {
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 1,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 1
+   },
+   "inputs": {
+    "13px | 28px | 0px | rgb(0, 0, 0)": 3
+   },
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {
+    "15px | 600 | none | rgb(222, 222, 222) | normal": 1
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 20,
+   "controls": 5,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Sheet: Add collection": {
+   "fontSizes": {
+    "15px": 1,
+    "11px": 4,
+    "12px": 4,
+    "13px": 6
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 14,
+    "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 1
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 7,
+    "rgb(148, 148, 148)": 6,
+    "rgb(138, 138, 138)": 1,
+    "rgb(0, 0, 0)": 1
+   },
+   "buttons": {
+    "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 3,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 1
+   },
+   "inputs": {
+    "13px | 28px | 0px | rgb(0, 0, 0)": 3
+   },
+   "checkboxes": {
+    "plain": 1
+   },
+   "handMadeOnOff": 0,
+   "headings": {
+    "15px | 600 | none | rgb(222, 222, 222) | normal": 1,
+    "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 3
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 75,
+   "controls": 9,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Layers (tracts)": {
+   "fontSizes": {},
+   "fonts": {},
+   "colors": {},
+   "buttons": {},
+   "inputs": {},
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {},
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 192,
+   "controls": 0,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Track filtering (tracts)": {
+   "fontSizes": {
+    "12px": 54,
+    "11px": 3
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 54,
+    "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 3
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 27,
+    "rgb(148, 148, 148)": 24,
+    "rgb(217, 177, 79)": 3,
+    "rgb(138, 138, 138)": 3
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 13,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 13
+   },
+   "inputs": {
+    "12px | 24px | 0px | rgb(0, 0, 0)": 27
+   },
+   "checkboxes": {
+    "plain": 4
+   },
+   "handMadeOnOff": 0,
+   "headings": {
+    "12px | 600 | none | rgb(222, 222, 222) | normal": 12
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 87,
+   "controls": 57,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Luxar rendering (tracts)": {
+   "fontSizes": {
+    "12px": 22,
+    "11px": 3
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 25
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 13,
+    "rgb(148, 148, 148)": 12
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 5
+   },
+   "inputs": {
+    "12px | 24px | 0px | rgb(0, 0, 0)": 9
+   },
+   "checkboxes": {
+    "switch": 7
+   },
+   "handMadeOnOff": 0,
+   "headings": {
+    "12px | 600 | none | rgb(222, 222, 222) | normal": 12
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 86,
+   "controls": 21,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Orientations (tracts)": {
+   "fontSizes": {
+    "12px": 18,
+    "11px": 3
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 20,
+    "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 1
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 10,
+    "rgb(148, 148, 148)": 10,
+    "rgb(138, 138, 138)": 1
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 11,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 1
+   },
+   "inputs": {
+    "12px | 24px | 0px | rgb(0, 0, 0)": 7
+   },
+   "checkboxes": {
+    "switch": 1,
+    "plain": 5
+   },
+   "handMadeOnOff": 0,
+   "headings": {
+    "12px | 600 | none | rgb(222, 222, 222) | normal": 8
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 36,
+   "controls": 25,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Layers (EM)": {
+   "fontSizes": {},
+   "fonts": {},
+   "colors": {},
+   "buttons": {},
+   "inputs": {},
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {},
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 144,
+   "controls": 0,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Luxar rendering (EM)": {
+   "fontSizes": {
+    "12px": 20,
+    "11px": 4
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 24
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 10,
+    "rgb(148, 148, 148)": 14
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 7
+   },
+   "inputs": {
+    "12px | 24px | 0px | rgb(0, 0, 0)": 10
+   },
+   "checkboxes": {
+    "switch": 4
+   },
+   "handMadeOnOff": 0,
+   "headings": {
+    "12px | 600 | none | rgb(222, 222, 222) | normal": 12
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 74,
+   "controls": 21,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Segmentation (EM)": {
+   "fontSizes": {
+    "12px": 8
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 8
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 3,
+    "rgb(148, 148, 148)": 4,
+    "rgb(0, 0, 0)": 1
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1,
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 2
+   },
+   "inputs": {
+    "12px | 24px | 0px | rgb(0, 0, 0)": 4
+   },
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {
+    "12px | 600 | none | rgb(222, 222, 222) | normal": 2
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 79,
+   "controls": 7,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Atlas (EM)": {
+   "fontSizes": {
+    "12px": 6
+   },
+   "fonts": {
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 6
+   },
+   "colors": {
+    "rgb(222, 222, 222)": 3,
+    "rgb(148, 148, 148)": 3
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 1
+   },
+   "inputs": {
+    "12px | 24px | 0px | rgb(0, 0, 0)": 2
+   },
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {
+    "12px | 600 | none | rgb(222, 222, 222) | normal": 4
+   },
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 103,
+   "controls": 3,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  },
+  "Annotations (EM)": {
+   "fontSizes": {
+    "11px": 2,
+    "12px": 5
+   },
+   "fonts": {
+    "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 1,
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 6
+   },
+   "colors": {
+    "rgb(138, 138, 138)": 2,
+    "rgb(222, 222, 222)": 4,
+    "rgb(148, 148, 148)": 1
+   },
+   "buttons": {
+    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 4
+   },
+   "inputs": {
+    "12px | 24px | 0px | rgb(0, 0, 0)": 2
+   },
+   "checkboxes": {},
+   "handMadeOnOff": 0,
+   "headings": {},
+   "radii": {},
+   "inlineStyled": 0,
+   "words": 23,
+   "controls": 6,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
+  }
+ }
+}

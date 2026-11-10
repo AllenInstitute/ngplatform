@@ -4,7 +4,7 @@
  *
  * From this computer: a JavaScript tool plugin (a module exporting
  * `manifest` and `plugin`, or a folder with manifest.json and the module it
- * names as `main`) or a Python file (run in the Python tab's interpreter,
+ * names as `main`) or a Python file (run in the Python panel's interpreter,
  * where `@ngp.command(...)` adds palette commands).  "Reload" reads the file
  * again, so a plugin can be edited and reloaded with the workspace open.
  * Where the browser can (Chrome, Edge), the file is remembered between

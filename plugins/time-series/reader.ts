@@ -14,7 +14,7 @@
  */
 import { httpJson } from "@ngplatform/sdk/precomputed";
 import { httpAccess, openZarrArray, ShardIndexCache, ZarrArrayReader } from "neuroglancer-zarr-vectors/reader";
-import { withZarr2 } from "../orientations/zarr2.js";
+import { withZarr2 } from "../volume-view/zarr2.js";
 import { storedOrder } from "../volume-view/volume_reader.js";
 
 export interface SeriesInfo {

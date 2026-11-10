@@ -1,6 +1,12 @@
+import { execFileSync } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { build as esbuild } from "esbuild";
 import { defineConfig, type Plugin } from "vite";
+import { neuroglancerCheck } from "./scripts/neuroglancer_pin.mjs";
+import { contentSecurityPolicy } from "./src/platform/csp.js";
+import type { BuildInfo } from "./src/platform/build_info.js";
+import { type BuiltFile, shellFiles } from "./src/sw_parts.js";
 
 // Neuroglancer is consumed as TypeScript source (see package.json), following
 // its own examples/vite configuration.  Plugins live in plugins/, one folder
@@ -12,6 +18,64 @@ const jpg = fileURLToPath(new URL("./node_modules/neuroglancer/src/third_party/j
 const webWorker = fileURLToPath(new URL("./node_modules/web-worker/src/browser/index.js", import.meta.url));
 // chunkmirage's browser engine, from its repository (a submodule: vendor/chunkmirage).
 const chunkmirage = fileURLToPath(new URL("./vendor/chunkmirage/web/src/", import.meta.url));
+// The Zarr Vectors plugin from this checkout, whatever node_modules links to (a shared
+// node_modules would otherwise build another checkout's copy). Its package.json exports.
+const zarrVectors = fileURLToPath(new URL("./plugins/zarr-vectors/src/", import.meta.url));
+
+const root = fileURLToPath(new URL(".", import.meta.url));
+const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string };
+
+/** This repository's commit, short, marked when the tree has uncommitted changes (CI's GITHUB_SHA when git cannot say). */
+function commitOf(): string {
+  const git = (...args: string[]) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  try {
+    const commit = git("rev-parse", "--short=12", "HEAD");
+    return git("status", "--porcelain", "--untracked-files=no") === "" ? commit : `${commit}+changes`;
+  } catch {
+    return process.env.GITHUB_SHA?.slice(0, 12) ?? "unknown";
+  }
+}
+
+/**
+ * What this build is (src/platform/build_info.ts), and a warning when the
+ * Neuroglancer checkout beside this one is not at the commit package.json
+ * pins: the build would then differ from CI's and the deploy's.
+ */
+function buildInfo(): BuildInfo {
+  const check = neuroglancerCheck(root);
+  for (const problem of check.problems) console.warn(`\x1b[33mwarning: Neuroglancer: ${problem}\x1b[0m`);
+  return {
+    version: pkg.version,
+    commit: commitOf(),
+    date: new Date().toISOString(),
+    neuroglancer: { commit: check.commit ? `${check.commit.slice(0, 12)}${check.dirty ? "+changes" : ""}` : "unknown", pin: check.pin?.slice(0, 12) ?? "unknown" },
+  };
+}
+const BUILD = buildInfo();
+
+/**
+ * The Content Security Policy (src/platform/csp.ts) in the built pages,
+ * just after their charset (which must come in the first 1024 bytes) and
+ * before anything it governs.  The dev server goes without (Vite there
+ * injects styles inline and talks to the page over a socket).
+ */
+function contentSecurity(): Plugin {
+  return {
+    name: "ngplatform-content-security-policy",
+    apply: "build",
+    transformIndexHtml: {
+      order: "post",
+      handler(html) {
+        const meta = `<meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy()}" />`;
+        if (!/<meta charset="utf-8" \/>/.test(html)) throw new Error("index.html: no <meta charset> to put the Content-Security-Policy after");
+        return html.replace(/<meta charset="utf-8" \/>/, (charset) => `${charset}\n    ${meta}`);
+      },
+    },
+  };
+}
+
+/** The fonts served with the app (public/fonts), kept by the service worker with the page. */
+const FONTS = readdirSync(new URL("./public/fonts/", import.meta.url)).filter((f) => /\.(woff2|css)$/.test(f)).map((f) => `fonts/${f}`);
 
 /**
  * The service worker (src/sw.ts), bundled on its own into sw.js beside the
@@ -19,7 +83,7 @@ const chunkmirage = fileURLToPath(new URL("./vendor/chunkmirage/web/src/", impor
  * `type: "module"` must be.  Served from memory by the dev server.
  */
 function serviceWorker(): Plugin {
-  const bundle = async () => {
+  const bundle = async (precache: string[] = []) => {
     const out = await esbuild({
       entryPoints: [fileURLToPath(new URL("./src/sw.ts", import.meta.url))],
       bundle: true,
@@ -28,6 +92,12 @@ function serviceWorker(): Plugin {
       minify: true,
       write: false,
       alias: { "chunkmirage-web": chunkmirage.replace(/\/$/, "") },
+      // The worker's version: a new build's worker drops the caches of older ones.
+      // The files it keeps for the app to open offline (none from the dev server).
+      define: {
+        __SW_VERSION__: JSON.stringify(`${pkg.version}-${Date.now().toString(36)}`),
+        __SW_PRECACHE__: JSON.stringify(precache),
+      },
       resolveExtensions: [".ts", ".js"],
     });
     return out.outputFiles[0].text;
@@ -46,8 +116,15 @@ function serviceWorker(): Plugin {
         );
       });
     },
-    async generateBundle() {
-      this.emitFile({ type: "asset", fileName: "sw.js", source: await bundle() });
+    async generateBundle(_options, output) {
+      // The main page's build only (Vite builds each worker apart, through these plugins too).
+      const files: BuiltFile[] = Object.values(output).map((f) =>
+        f.type === "chunk"
+          ? { fileName: f.fileName, type: "chunk", isEntry: f.isEntry, isDynamicEntry: f.isDynamicEntry, facadeModuleId: f.facadeModuleId, imports: f.imports, css: [...(f.viteMetadata?.importedCss ?? [])] }
+          : { fileName: f.fileName, type: "asset" },
+      );
+      if (!files.some((f) => f.isEntry && /index\.html$/.test(f.facadeModuleId ?? ""))) return;
+      this.emitFile({ type: "asset", fileName: "sw.js", source: await bundle(shellFiles(files, ["favicon.svg", ...FONTS])) });
     },
   };
 }
@@ -77,7 +154,10 @@ function preloadDefaultPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [serviceWorker(), preloadDefaultPlugin()],
+  plugins: [serviceWorker(), preloadDefaultPlugin(), contentSecurity()],
+  define: {
+    __BUILD_INFO__: JSON.stringify(BUILD),
+  },
   // Relative asset URLs, so the built app can be served from any path: a
   // bucket prefix, GitHub Pages, or an artifact host.
   base: "",
@@ -87,6 +167,9 @@ export default defineConfig({
       { find: /^@ngplatform\/sdk\/(.*)$/, replacement: `${sdk}$1.ts` },
       { find: /^neuroglancer\/unstable\/third_party\/jpgjs\/jpg\.js$/, replacement: jpg },
       { find: /^chunkmirage-web\/(.*)$/, replacement: `${chunkmirage}$1` },
+      { find: /^neuroglancer-zarr-vectors$/, replacement: `${zarrVectors}register_default.ts` },
+      { find: /^neuroglancer-zarr-vectors\/source-url$/, replacement: `${zarrVectors}source_url.ts` },
+      { find: /^neuroglancer-zarr-vectors\/(backend|async_computation|reader)$/, replacement: `${zarrVectors}$1.ts` },
       // geotiff's worker pool (chunkmirage reads GeoTIFFs with it) imports web-worker, whose
       // browser build the conditions above (Neuroglancer's, in place of Vite's defaults) miss.
       { find: /^web-worker$/, replacement: webWorker },
@@ -109,6 +192,9 @@ export default defineConfig({
   build: {
     target: "es2022",
     chunkSizeWarningLimit: 4 * 1024 * 1024,
+    // Source maps beside the files but not linked from them: the page does
+    // not load them, and a stack saved from Activity can be read against them.
+    sourcemap: "hidden",
     assetsDir: "assets",
     rollupOptions: {
       // The app, and plain Neuroglancer with the plugins' formats.

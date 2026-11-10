@@ -1,0 +1,34 @@
+{
+ "ng": {
+  "layers": [
+   {
+    "type": "image",
+    "source": "https://h.example.org/b/brain.ome.zarr/|zarr3:",
+    "name": "brain"
+   }
+  ]
+ },
+ "app": {
+  "platform": {
+   "version": 2,
+   "activeScene": "s-a",
+   "scenes": [
+    {
+     "id": "s-a",
+     "name": "Future",
+     "layout": {
+      "anything": 1
+     }
+    }
+   ],
+   "datasets": [],
+   "collections": []
+  },
+  "trackFiltering": {
+   "version": 9,
+   "data": {
+    "somethingNew": true
+   }
+  }
+ }
+}

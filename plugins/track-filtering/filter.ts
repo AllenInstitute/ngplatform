@@ -106,6 +106,45 @@ export function tagCounts(props: SegmentProperties, mask?: Uint8Array): Uint32Ar
   return out;
 }
 
+/**
+ * What the panel counts over a group's answer (each attribute's histogram,
+ * each stored group's count, the passing ids), counted once per answer.
+ * An answer is a new mask; progress towards the next one (chunks read, a
+ * save's progress) keeps it, so a progress tick finds its counts here and
+ * costs nothing per object.  Kept while the mask is (over every object:
+ * while the column, or the properties, are).  The counting functions are
+ * the module's own; a test may count their calls.
+ */
+export class AnswerCounts {
+  private readonly kept = new WeakMap<object, Map<string, Uint32Array | BigUint64Array>>();
+
+  constructor(private readonly count = { histogram, tagCounts, passingIds }) {}
+
+  /** A column's histogram over [min, max] in `bins`, over the answer's objects (or every object). */
+  histogram(column: { id: string; values: ArrayLike<number>; min: number; max: number }, bins: number, mask?: Uint8Array): Uint32Array {
+    const key = `histogram ${column.id} ${column.min} ${column.max} ${bins}`;
+    return this.remember(mask ?? (column.values as object), key, () => this.count.histogram(column.values, column.min, column.max, bins, mask)) as Uint32Array;
+  }
+
+  /** How many of the answer's objects (or of every object) carry each tag. */
+  tagCounts(props: SegmentProperties, mask?: Uint8Array): Uint32Array {
+    return this.remember(mask ?? props, "tags", () => this.count.tagCounts(props, mask)) as Uint32Array;
+  }
+
+  /** The ids of the answer's objects. */
+  passingIds(props: SegmentProperties, mask: Uint8Array): BigUint64Array {
+    return this.remember(mask, "ids", () => this.count.passingIds(props, mask)) as BigUint64Array;
+  }
+
+  private remember(owner: object, key: string, make: () => Uint32Array | BigUint64Array): Uint32Array | BigUint64Array {
+    let byKey = this.kept.get(owner);
+    if (byKey === undefined) this.kept.set(owner, (byKey = new Map()));
+    let value = byKey.get(key);
+    if (value === undefined) byKey.set(key, (value = make()));
+    return value;
+  }
+}
+
 /** CSV of the passing objects: id, then every numeric column, then tags. */
 export function toCsv(props: SegmentProperties, mask: Uint8Array): string {
   const header = ["id", ...props.numeric.map((p) => p.id), ...(props.tags ? ["tags"] : [])];

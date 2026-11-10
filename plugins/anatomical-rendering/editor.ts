@@ -135,6 +135,12 @@ export function shifted(stops: DataStop[], shift: number, scale: number, centre:
   return stops.map((s) => ({ ...s, value: centre + (s.value - centre) * scale + shift }));
 }
 
+/** A colour token of the app's stylesheet as the canvas reads it (`fallback` outside a styled page: tests). */
+function token(e: Element, name: string, fallback: string): string {
+  const v = typeof getComputedStyle === "function" ? getComputedStyle(e).getPropertyValue(name).trim() : "";
+  return v || fallback;
+}
+
 const hex = (c: number[]) => "#" + c.map((x) => Math.round(Math.min(1, Math.max(0, x)) * 255).toString(16).padStart(2, "0")).join("");
 const unhex = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
 
@@ -153,8 +159,8 @@ export class ColourmapEditor {
 
   /** onChange: the stops as edited (on the colourmap's axis), after each change; onWarp: the histogram's warp, after each change. */
   constructor(private onChange: (stops: DataStop[]) => void, private onWarp: (warp: WarpPoint[]) => void = () => undefined) {
-    this.canvas = el("canvas", { width: "420", height: "150", style: "width: 100%; cursor: crosshair; border: 1px solid #555; border-radius: 3px" }) as HTMLCanvasElement;
-    this.element = el("div", {}, this.canvas);
+    this.canvas = el("canvas", { class: "ar-editor", width: "420", height: "150", "aria-label": "Colourmap over the image's histogram" }) as HTMLCanvasElement;
+    this.element = this.canvas;
     this.canvas.addEventListener("pointerdown", (e) => this.down(e));
     this.canvas.addEventListener("pointermove", (e) => this.move(e));
     this.canvas.addEventListener("pointerup", () => {
@@ -198,12 +204,13 @@ export class ColourmapEditor {
   draw(): void {
     const g = this.canvas.getContext("2d")!;
     const W = this.canvas.width, H = this.canvas.height;
-    g.fillStyle = "#1e1e1e";
+    const c = this.canvas;
+    g.fillStyle = token(c, "--ink-1", "#0c0c0c");
     g.fillRect(0, 0, W, H);
     // The image's histogram (log counts), grey.
     if (this.counts.length) {
       const n = this.counts.length, top = Math.log1p(Math.max(...this.counts));
-      g.fillStyle = "#5a5a5a";
+      g.fillStyle = token(c, "--plot", "#777");
       for (let i = 0; i < n; ++i) {
         const v0 = this.hlo + ((this.hhi - this.hlo) * i) / n, v1 = this.hlo + ((this.hhi - this.hlo) * (i + 1)) / n;
         // The histogram through its warp: where each image value falls on the colourmap's axis.
@@ -219,13 +226,13 @@ export class ColourmapEditor {
       g.fillStyle = hex(c.color.map((k) => Math.min(1, k * 1.6)));
       g.fillRect(x, H - 24, 1, 18);
     }
-    g.strokeStyle = "#e8e8e8";
+    g.strokeStyle = token(c, "--text", "#dedede");
     g.lineWidth = 1.5;
     g.beginPath();
     this.stops.forEach((s, i) => (i ? g.lineTo(this.x(s.value), this.y(s.opacity)) : g.moveTo(this.x(s.value), this.y(s.opacity))));
     g.stroke();
     // The histogram's warp handles: triangles under it, dragged left and right.
-    g.fillStyle = "#9fd3ff";
+    g.fillStyle = token(c, "--dec-z", "#4f88dc");
     for (const p of this.warp) {
       const x = this.x(p.to), y = H - 30;
       g.beginPath();
@@ -238,7 +245,7 @@ export class ColourmapEditor {
     for (const k of this.points) {
       const s = this.stops[k];
       g.fillStyle = hex(s.color.map((c) => Math.min(1, c * 1.6)));
-      g.strokeStyle = "#fff";
+      g.strokeStyle = token(c, "--text-strong", "#fff");
       g.beginPath();
       g.arc(this.x(s.value), this.y(s.opacity), 5, 0, Math.PI * 2);
       g.fill();

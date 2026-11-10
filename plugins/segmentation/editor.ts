@@ -37,7 +37,7 @@ import { storeOf } from "../volume-view/sources.js";
 import { CowVolume, type Original } from "./cow_volume.js";
 import { chooseUndo, Stroke } from "./history.js";
 import { ballReach, ballShape, dabsBetween, fillOutline, floodFill, type ImageBlock, inRange, interpolate, type Paint, paintBall, relabel, sameLabel, type Vec3, voxelIndex } from "./kernels.js";
-import { discard, type KeptInfo, kept, restore, restoreInto } from "./keep.js";
+import { discard, type KeptInfo, kept, restore, restoreInto, storageUse } from "./keep.js";
 import { CHUNK, LABEL_ARRAYS, LABEL_MAX, type LabelType, LabelVolume } from "./label_volume.js";
 import { BRUSHING, DRAWING, EDITING, PREVIEWING, SEGMENTATION_PANEL, SELECTING } from "./manifest.js";
 import { Painter, type ViewPoint } from "./painter.js";
@@ -45,14 +45,21 @@ import { maskCount, PreviewOverlay } from "./preview.js";
 import { type Mask, type Prompt, type QuickSelectMethod, type QuickSelectRequest, QuickSelectRegistry } from "./quick_select.js";
 import { layerWindow, sectionAxes, sectionBounds, stackMasks } from "./sam.js";
 import { SamModel, samMethod } from "./sam_model.js";
-import { cropped, editsZarr, niftiBytes, niftiGz, omeZarr, readEdits, type SavedLabel, writeWhole } from "./save.js";
+import { cropped, editsZarr, niftiBytes, niftiParts, omeZarr, pruneStore, readEdits, type SavedLabel, writeFile, writeStore, writeWhole } from "./save.js";
+import { SaveWorker } from "./save_client.js";
 import { addGroup, assign, editGroup, groupOf, members, readGroups, removeGroup, type SegmentationSaved, type VolumeGroups } from "./segment_groups.js";
-import { isVisible, nextSegment, type SegmentRow, segmentRows, type SegmentsState, withVisibility } from "./segments.js";
-import { type Reference, Session } from "./session.js";
+import { LIST_MAX, nextSegment, type SegmentRow, segmentRows, type SegmentsState, visibility, withVisibility } from "./segments.js";
+import { PALETTE_SEGMENTS, type Reference, Session } from "./session.js";
 import { brushes, cycle, draws, stepRadius, type Tool, TOOLS } from "./tools.js";
 
+/** How long the model's worker stays after Quick select is left (ms). */
+export const SAM_RELEASE_WAIT = 30_000;
+/** How long a removed label layer's volume waits before it is let go (ms): a layer replaced shows again within it. */
+export const RELEASE_WAIT = 1000;
 /** A NIfTI holds every voxel: beyond this, save the painted box only. */
 export const MAX_NIFTI = 2 * 2 ** 30;
+/** A save's progress is drawn at most this often. */
+export const SAVE_PROGRESS_MS = 250;
 /** Voxels read to open a label image or copy a segmentation. */
 export const MAX_COPY = 512 * 2 ** 20;
 /** The block a copy is read in, in voxels. */
@@ -116,6 +123,8 @@ export class Editor implements LabelVolumes {
   readonly quickSelect = new QuickSelectRegistry();
   /** Quick select's model (AI (MobileSAM)): its files, the runtime, the last timings. */
   readonly sam = new SamModel();
+  /** Compresses and writes saves off the main thread. */
+  private readonly saver = new SaveWorker();
   private readonly painter: Painter;
   private readonly previewOverlay: PreviewOverlay;
   private readonly offs: Disposer[] = [];
@@ -158,10 +167,18 @@ export class Editor implements LabelVolumes {
   saveCrop = false;
   /** Edited in place: save the edits only, or the whole volume (a job). */
   saveInPlace: "edits" | "whole" = "edits";
-  /** What the last save (or the one under way) said. */
-  note = "";
+  /**
+   * A save under way (how far), or the last one failed (why), for the
+   * panel's status line; undefined when there is nothing to report.  A save
+   * done is said in a toast and in Activity.
+   */
+  saveStatus: { kind: "progress" | "error"; text: string } | undefined;
+  /** Counts failed saves: the panel opens its Save card once for each. */
+  saveFailures = 0;
   /** Label volumes kept in this browser and not open now. */
   keptHere: KeptInfo[] = [];
+  /** This browser's storage for the site: what it holds and allows, and whether it is kept for good. */
+  storage: { usage?: number; quota?: number; persisted?: boolean } = {};
 
   /** Work on the volume in order (a stroke's dabs may wait for image values). */
   private queue: Promise<void> = Promise.resolve();
@@ -244,6 +261,9 @@ export class Editor implements LabelVolumes {
           const named = layers.find((l) => l.sources.some((source) => source.includes(s.fileName)))?.name;
           if (named !== undefined) s.layer = named;
         }
+        // A label layer removed from the scene it was opened in: its volume is let go once kept.
+        const scene = this.sceneId();
+        for (const s of this.sessions) if (s.scene === scene && !here.includes(s)) void this.release(s);
         if (this.pending !== undefined && !here.includes(this.pending.session)) this.cancelPreview();
         if (this.current !== undefined && !here.includes(this.current)) {
           this.current = here[0];
@@ -254,13 +274,65 @@ export class Editor implements LabelVolumes {
           this.value = this.rows()[0]?.value ?? 1;
         }
         void this.restoreLost();
+        for (const s of here) this.applyHidden(s);
         this.changed();
       }),
-      // Groups are in the workspace state: undo, redo and another scene change them.
-      ctx.state.onChanged(() => this.changed()),
+      // Groups and the segments hidden are in the workspace state: undo, redo and another scene change them.
+      ctx.state.onChanged(() => {
+        for (const s of this.inScene()) this.applyHidden(s);
+        this.changed();
+      }),
     );
     void this.restoreLost();
     void this.refreshKept();
+  }
+
+  private sceneId(): string | undefined {
+    return this.ctx.workspace.scenes().find((s) => s.active)?.id;
+  }
+
+  /** Sessions being let go (their layer removed). */
+  private readonly releasing = new Set<Session>();
+
+  /**
+   * A label layer removed (in Neuroglancer's layer list, say): its volume
+   * and its undo history would otherwise stay in memory for the rest of the
+   * visit (up to a gigabyte), shown nowhere.  Once everything is kept in
+   * this browser it is closed; undoing the removal brings the layer back
+   * from there (`restoreLost`).  Changes the browser could not keep keep it
+   * open, and Activity says so.
+   */
+  private async release(session: Session): Promise<void> {
+    if (this.releasing.has(session)) return;
+    this.releasing.add(session);
+    try {
+      const gone = () => this.sessions.includes(session) && session.scene === this.sceneId() && !this.inScene().includes(session);
+      // A moment first: a layer replaced or moved shows again at once.
+      await new Promise((resolve) => setTimeout(resolve, RELEASE_WAIT));
+      if (!gone()) return;
+      const kept = await session.keepAll();
+      if (!gone()) return;
+      const changes = `${session.unsaved} unsaved change${session.unsaved === 1 ? "" : "s"}`;
+      if (!kept) {
+        this.ctx.log.error(`“${session.layer}” was removed, but this browser could not keep its ${session.unsaved > 0 ? changes : "label volume"} (its storage full?): it stays open in memory. Undo the removal and save it.`);
+        return;
+      }
+      session.dispose();
+      this.sessions.splice(this.sessions.indexOf(session), 1);
+      // Undo brings the layer back: it is looked for again.
+      this.sought.delete(session.id);
+      if (this.current === session) this.current = this.inScene()[0];
+      if (this.current === undefined && this.editing) this.setEditing(false);
+      this.ctx.log.info(
+        session.unsaved > 0
+          ? `“${session.layer}” was removed: its label volume is closed, and its ${changes} kept in this browser. Undo brings the layer back, or open it from Kept in this browser in Segmentation.`
+          : `“${session.layer}” was removed: its label volume is closed (kept in this browser: undo brings the layer back).`,
+      );
+      this.changed();
+      void this.refreshKept();
+    } finally {
+      this.releasing.delete(session);
+    }
   }
 
   /** The label volumes the active scene shows (a layer reads its store). */
@@ -286,13 +358,15 @@ export class Editor implements LabelVolumes {
     this.sam.dispose();
     for (const s of this.sessions) s.dispose();
     clearTimeout(this.countsTimer);
+    clearTimeout(this.samTimer);
+    this.saver.dispose();
   }
 
   // ------------------------------------------------------------ tools
 
   setTool(tool: Tool): void {
     if (draws(tool) && this.current === undefined) {
-      this.ctx.ui.toast("Make a segmentation layer first (Segmentation tab).");
+      this.ctx.ui.toast("Make a segmentation layer first (Segmentation panel).");
       this.ctx.ui.showPanel(SEGMENTATION_PANEL);
       return;
     }
@@ -314,8 +388,23 @@ export class Editor implements LabelVolumes {
     this.apply();
   }
 
+  /** Lets the model's worker go a while after Quick select is left (going back at once keeps it). */
+  private samTimer: ReturnType<typeof setTimeout> | undefined;
+
+  private releaseSamLater(): void {
+    clearTimeout(this.samTimer);
+    this.samTimer = undefined;
+    if (this.editing && this.tool === "quick") return;
+    if (!this.sam.started) return;
+    this.samTimer = setTimeout(() => {
+      this.samTimer = undefined;
+      if (!(this.editing && this.tool === "quick")) this.sam.release();
+    }, SAM_RELEASE_WAIT);
+  }
+
   /** Puts the tool and editing state into the painter and the context keys. */
   private apply(): void {
+    this.releaseSamLater();
     const drawing = this.editing && draws(this.tool);
     this.painter.active = drawing;
     this.ctx.context.set(EDITING, this.editing);
@@ -380,16 +469,59 @@ export class Editor implements LabelVolumes {
   rows(): SegmentRow[] {
     const s = this.current;
     if (s === undefined) return [];
-    const state = this.segmentsState(s);
+    const visible = this.visible(s);
     // Edited in place: the original's names for its segments met in the edits.
     const names = s.theirs.size ? new Map([...[...s.counts.keys()].filter((v) => s.theirs.has(v)).map((v) => [v, s.theirs.get(v)!] as const), ...s.labels]) : s.labels;
-    const rows = segmentRows(s.counts, names, (v) => s.colour(v), (v) => isVisible(state, v));
-    if (!rows.some((r) => r.value === this.value)) rows.push({ value: this.value, name: "", colour: s.colour(this.value), voxels: 0, visible: isVisible(state, this.value) });
-    return rows.sort((a, b) => a.value - b.value);
+    const colour = s.colours();
+    const rows = segmentRows(s.counts, names, colour, visible);
+    if (!rows.some((r) => r.value === this.value)) {
+      rows.push({ value: this.value, name: "", colour: colour(this.value), voxels: 0, visible: visible(this.value) });
+      rows.sort((a, b) => a.value - b.value);
+    }
+    return rows;
   }
 
   private segmentsState(session: Session): SegmentsState {
     return (this.ctx.viewer.layerSpec(session.layer) as SegmentsState | undefined) ?? {};
+  }
+
+  /** The segments a volume hides itself (one with more than LIST_MAX segments; see segments.ts). */
+  private hiddenOf(session: Session): Set<number> {
+    return new Set(this.ctx.state.get<SegmentationSaved>()?.hidden?.[session.id] ?? []);
+  }
+
+  /** Whether a volume's layer shows each segment: its own list, less those the plugin hides. */
+  private visible(session: Session): (value: number) => boolean {
+    const listed = visibility(this.segmentsState(session));
+    const hidden = this.hiddenOf(session);
+    return hidden.size === 0 ? listed : (v) => listed(v) && !hidden.has(v);
+  }
+
+  /** The segments a volume knows: painted, named or made, and the active one. */
+  private known(session: Session, more: number[] = []): number[] {
+    return [...new Set([...session.counts.keys(), ...session.labels.keys(), this.value, ...more])];
+  }
+
+  /**
+   * Shows the segments a volume hides itself by showing its layer the
+   * others, as a temporary set (not in the state); none hidden, the layer
+   * shows its own.  Again after strokes (a new segment shows) and after
+   * undo.
+   */
+  private applyHidden(session: Session): void {
+    const hidden = this.hiddenOf(session);
+    const applied = session.hiddenApplied;
+    if (hidden.size === 0) {
+      if (applied !== undefined) this.ctx.viewer.setTemporaryVisibleSegments(session.layer, undefined);
+      session.hiddenApplied = undefined;
+      return;
+    }
+    const listed = visibility(this.segmentsState(session));
+    const shown = this.known(session).filter((v) => listed(v) && !hidden.has(v));
+    const key = `${session.layer}|${shown.length}|${[...hidden].join(",")}|${session.counts.size}`;
+    if (key === applied) return;
+    session.hiddenApplied = key;
+    this.ctx.viewer.setTemporaryVisibleSegments(session.layer, BigUint64Array.from(shown, (v) => BigInt(v)));
   }
 
   /** Paints with a segment from now on. */
@@ -438,6 +570,21 @@ export class Editor implements LabelVolumes {
     this.changed();
   }
 
+  /** Names segments as shown in a layer's own list (shown again there, with many segments). */
+  private patchSegments(session: Session, values: number[], quiet: boolean): void {
+    this.ctx.viewer.patchState(
+      (ng) => {
+        const layer = ((ng.layers as Record<string, unknown>[] | undefined) ?? []).find((l) => l.name === session.layer);
+        if (layer === undefined) return;
+        const ids = new Set(values.map(String));
+        const list = ((layer.segments as string[] | undefined) ?? []).filter((s) => !ids.has(s.replace(/^!/, "")));
+        // A list naming only these would hide the rest: the rest are named shown by having no list ("!id" only).
+        layer.segments = list.some((s) => !s.startsWith("!")) ? [...list, ...ids] : list;
+      },
+      { quiet },
+    );
+  }
+
   /** Shows or hides a segment in its layer (Neuroglancer's visible segments). */
   show(session: Session, value: number, visible: boolean, quiet = false): void {
     this.showSegments(session, [value], visible, quiet);
@@ -445,10 +592,31 @@ export class Editor implements LabelVolumes {
 
   /** Shows or hides several segments (a group) in its layer, as one change. */
   showSegments(session: Session, values: number[], visible: boolean, quiet = false): void {
-    let state = this.segmentsState(session);
-    const change = values.filter((v) => isVisible(state, v) !== visible);
+    const now = this.visible(session);
+    const change = values.filter((v) => now(v) !== visible);
     if (change.length === 0) return;
-    const known = [...new Set([...session.counts.keys(), ...session.labels.keys(), this.value, ...values])];
+    const known = this.known(session, values);
+    const hidden = this.hiddenOf(session);
+    // Many segments: those hidden kept here, not every id in the layer's list (and in each undo step).
+    if (hidden.size > 0 || known.length > LIST_MAX) {
+      for (const v of change) {
+        if (visible) hidden.delete(v);
+        else hidden.add(v);
+      }
+      const saved = this.ctx.state.get<SegmentationSaved>() ?? {};
+      const rest = { ...saved.hidden };
+      if (hidden.size > 0) rest[session.id] = [...hidden].sort((a, b) => a - b);
+      else delete rest[session.id];
+      // Shown again where the layer's own list hides it: the list names it.
+      const listed = visibility(this.segmentsState(session));
+      const listShows = visible ? change.filter((v) => !listed(v)) : [];
+      this.ctx.state.set<SegmentationSaved>({ ...saved, hidden: rest });
+      this.applyHidden(session);
+      if (listShows.length > 0) this.patchSegments(session, listShows, quiet);
+      this.changed();
+      return;
+    }
+    let state = this.segmentsState(session);
     for (const v of change) state = withVisibility(state, known, v, visible);
     const next = state as Required<SegmentsState>;
     this.ctx.viewer.patchState(
@@ -637,6 +805,7 @@ export class Editor implements LabelVolumes {
     if (info.original !== undefined) return this.reopenInPlace(info, replace);
     const volume = await restore(info);
     const session = await Session.open(this.ctx, this.voxels, volume, info.name, { id: info.id, replace });
+    session.palette = info.palette;
     for (const [value, label] of info.labels) session.labels.set(value, label);
     if (info.reference && this.ctx.viewer.layers().some((l) => l.name === info.reference)) await this.chooseReference(session, info.reference);
     this.adopt(session, replace === undefined);
@@ -706,7 +875,9 @@ export class Editor implements LabelVolumes {
 
   async refreshKept(): Promise<void> {
     const open = new Set(this.sessions.map((s) => s.id));
-    this.keptHere = (await kept()).filter((k) => !open.has(k.id));
+    const [all, storage] = await Promise.all([kept(), storageUse()]);
+    this.keptHere = all.filter((k) => !open.has(k.id));
+    this.storage = storage;
     this.changed();
   }
 
@@ -823,11 +994,16 @@ export class Editor implements LabelVolumes {
 
   private adopt(session: Session, edit = true): void {
     this.sessions.push(session);
+    session.scene = this.sceneId();
     this.current = session;
     // What the last save said was of another volume.
-    this.note = "";
+    this.saveStatus = undefined;
     session.counts = session.volume.counts();
-    this.value = [...session.counts.keys()].sort((a, b) => a - b)[0] ?? 1;
+    // Many segments (a copied segmentation): Neuroglancer's colours, not a colour each in the state.
+    if (session.palette === undefined) session.palette = session.counts.size <= PALETTE_SEGMENTS;
+    let first: number | undefined;
+    for (const v of session.counts.keys()) if (first === undefined || v < first) first = v;
+    this.value = first ?? 1;
     session.applyColours([...session.counts.keys(), this.value]);
     // A brush that shows at the scale of the whole grid: a two-hundredth of its largest side.
     if (this.autoRadius && this.unit === "voxels") this.radius = Math.max(2, Math.round(Math.max(...session.volume.size) / 200));
@@ -1150,7 +1326,11 @@ export class Editor implements LabelVolumes {
       // A segment painted shows, even where others are hidden.
       this.show(session, value, true, true);
     }
-    session.history.push(stroke);
+    // Undo keeps 512 MB of strokes: past it the oldest go, said once (undo would otherwise just stop).
+    if (session.history.push(stroke) > 0 && !session.undoLimitTold) {
+      session.undoLimitTold = true;
+      this.ctx.log.info(`“${session.layer}”: undo keeps the last ${fmtBytes(session.history.limit)} of strokes; the oldest can no longer be undone. Save to keep a copy.`);
+    }
     session.changed(stroke.keys());
     session.unsaved++;
     session.refresh();
@@ -1175,10 +1355,18 @@ export class Editor implements LabelVolumes {
     const hi: Vec3 = [0, 0, 0];
     lo[axis] = index;
     hi[axis] = index + 1;
-    lo[u] = Math.floor(Math.min(...points.map((p) => p[0])));
-    hi[u] = Math.ceil(Math.max(...points.map((p) => p[0]))) + 1;
-    lo[w] = Math.floor(Math.min(...points.map((p) => p[1])));
-    hi[w] = Math.ceil(Math.max(...points.map((p) => p[1]))) + 1;
+    // A loop, not Math.min over a spread: a long outline has many points.
+    let [u0, u1, w0, w1] = [Infinity, -Infinity, Infinity, -Infinity];
+    for (const [pu, pw] of points) {
+      u0 = Math.min(u0, pu);
+      u1 = Math.max(u1, pu);
+      w0 = Math.min(w0, pw);
+      w1 = Math.max(w1, pw);
+    }
+    lo[u] = Math.floor(u0);
+    hi[u] = Math.ceil(u1) + 1;
+    lo[w] = Math.floor(w0);
+    hi[w] = Math.ceil(w1) + 1;
     if (this.limit) {
       const block = await session.imageBox(lo, hi);
       if (block === undefined) return this.noRange();
@@ -1581,7 +1769,11 @@ export class Editor implements LabelVolumes {
     this.changed();
     clearTimeout(this.countsTimer);
     this.countsTimer = setTimeout(() => {
-      if (this.current) this.current.counts = this.current.volume.counts();
+      if (this.current) {
+        this.current.counts = this.current.volume.counts();
+        // A segment painted for the first time shows, past the segments hidden.
+        this.applyHidden(this.current);
+      }
       this.changed();
     }, 300);
   }
@@ -1637,7 +1829,7 @@ export class Editor implements LabelVolumes {
       await this.saveSession(session);
     } catch (e) {
       // A file picker that failed (not one closed), or a folder that could not be made.
-      this.setNote(`Could not save: ${(e as Error).message}`);
+      this.saveFailed(`Could not save: ${(e as Error).message}`);
     } finally {
       this.saving = false;
     }
@@ -1678,39 +1870,66 @@ export class Editor implements LabelVolumes {
     }
     const description = `${session.layer}, labels drawn in ngplatform`;
     const before = session.unsaved;
-    this.setNote("Writing…");
+    this.saveProgress("Writing…");
     try {
       let where: string;
-      if (zarr) {
-        const files = await omeZarr(out, description, (done, total) => this.setNote(`Writing: ${Math.round((100 * done) / total)}%`), this.savedLabels(session));
-        where = await writeFolder(files, folder, base + suffix);
+      const progress = (done: number, total: number) => this.saveProgress(`Writing: ${Math.round((100 * done) / total)}%`);
+      // Compressed in the save worker, and written as made: a large volume is never whole in memory twice.
+      const gzip = (bytes: Uint8Array) => this.saver.gzip(bytes);
+      if (zarr && folder) {
+        const name = base + suffix;
+        const root = await folder.getDirectoryHandle(name, { create: true });
+        const written: string[] = [];
+        await omeZarr(out, description, progress, this.savedLabels(session), {
+          gzip,
+          write: (path, bytes) => {
+            written.push(path);
+            return writeFile(root, path, bytes);
+          },
+        });
+        // What an earlier save into the folder left, and this one did not write, goes.
+        await pruneStore(root, written);
+        where = `${folder.name}/${name}`;
+      } else if (zarr) {
+        // No folder to write into (outside Chrome and Edge): a zip, built in memory.
+        where = await writeFolder(await omeZarr(out, description, progress, this.savedLabels(session), { gzip }), undefined, base + suffix);
       } else {
-        const bytes = await niftiGz(out, description);
-        if (file) {
-          const w = await file.createWritable();
-          await w.write(bytes as unknown as BufferSource);
-          await w.close();
-          where = file.name;
-        } else {
-          downloadBlob(new Blob([bytes as BlobPart]), base + suffix);
-          where = base + suffix;
+        const stream = await this.saver.stream(file);
+        try {
+          await niftiParts(out, description, (part) => stream.write(part), progress);
+          const blob = await stream.close();
+          if (file) where = file.name;
+          else {
+            downloadBlob(blob!, base + suffix);
+            where = base + suffix;
+          }
+        } catch (e) {
+          await stream.abort();
+          throw e;
         }
       }
       this.markSaved(session, before);
-      this.setNote(`Saved ${where}: ${out.size.join(" × ")}${box ? `, the painted box from voxel ${box.lo.join(", ")}` : ""}.`);
-      this.ctx.log.info(`Saved ${session.layer} as ${where}.`);
+      this.saved(`Saved ${session.layer} as ${where}${box ? `: the painted box, ${out.size.join(" × ")} from voxel ${box.lo.join(", ")}` : ""}.`);
     } catch (e) {
-      this.setNote(`Could not save: ${(e as Error).message}`);
+      this.saveFailed(`Could not save: ${(e as Error).message}`);
     }
   }
 
-  /** The segments' names, colours and groups, as saved. */
+  /**
+   * The segments' names, colours and groups, as saved.  A volume coloured
+   * by Neuroglancer's hash (many segments, or edited in place) saves only
+   * the colours given by hand or by the original: the hash gives the rest
+   * again, and 100k of them would make the store's zarr.json megabytes.
+   */
   private savedLabels(session: Session): SavedLabel[] {
     const groups = this.groups(session);
+    const colour = session.colours();
+    const hashed = session.volume instanceof CowVolume || session.palette === false;
+    const own = (value: number) => session.labels.get(value)?.colour ?? session.theirs.get(value)?.colour;
     return [...new Set([...session.counts.keys(), ...session.labels.keys()])]
       .filter((v) => v > 0)
       .sort((a, b) => a - b)
-      .map((value) => ({ value, name: session.labels.get(value)?.name || session.theirs.get(value)?.name || undefined, colour: session.colour(value), group: groupOf(groups, value)?.name }));
+      .map((value) => ({ value, name: session.labels.get(value)?.name || session.theirs.get(value)?.name || undefined, colour: hashed ? own(value) : colour(value), group: groupOf(groups, value)?.name }));
   }
 
   /**
@@ -1739,35 +1958,45 @@ export class Editor implements LabelVolumes {
     const labels = this.savedLabels(session);
     const before = session.unsaved;
     if (!whole) {
-      this.setNote("Writing the edits…");
+      this.saveProgress("Writing the edits…");
       try {
-        const files = await editsZarr(volume, description, (done, total) => this.setNote(`Writing the edits: ${Math.round((100 * done) / total)}%`), labels);
+        const files = await editsZarr(volume, description, (done, total) => this.saveProgress(`Writing the edits: ${Math.round((100 * done) / total)}%`), labels);
         const where = await writeFolder(files, folder, name);
         this.markSaved(session, before);
-        this.setNote(`Saved the edits as ${where}: ${volume.chunkCount} chunks of 64³; the rest is ${original.layer} (${original.store}), which they name. Open edits… opens them over it again.`);
-        this.ctx.log.info(`Saved the edits of ${session.layer} as ${where}.`);
+        this.saved(`Saved the edits of ${session.layer} as ${where}: ${volume.chunkCount} chunks of 64³ over ${original.layer} (${original.store}).`);
       } catch (e) {
-        this.setNote(`Could not save: ${(e as Error).message}`);
+        this.saveFailed(`Could not save: ${(e as Error).message}`);
       }
       return;
     }
     const root = await folder!.getDirectoryHandle(name, { create: true });
     const where = `${folder!.name}/${name}`;
-    this.setNote(`Writing the whole volume into ${where}, a job (see Jobs); edits made meanwhile may or may not be in it.`);
+    this.saveProgress(`Writing the whole volume into ${where} (in Activity)…`);
     try {
-      const n = await this.ctx.jobs.run(`Saving ${session.layer}`, (job) =>
-        writeWhole(volume, (path, bytes) => writeFile(root, path, bytes), {
-          description,
-          labels,
-          progress: (done, total) => job.progress(done / total, `Block ${done} of ${total}`),
-          cancelled: () => job.cancelled,
-        }),
-      );
+      const n = await this.ctx.jobs.run(`Saving ${session.layer}`, async (job) => {
+        const written: string[] = [];
+        const n = await writeWhole(
+          volume,
+          (path, bytes) => {
+            written.push(path);
+            return writeFile(root, path, bytes);
+          },
+          {
+            description,
+            labels,
+            progress: (done, total) => job.progress(done / total, `Block ${done} of ${total}`),
+            cancelled: () => job.cancelled,
+            gzip: (bytes) => this.saver.gzip(bytes),
+          },
+        );
+        // Chunks all 0 are not written: remove what an earlier save left in their place.
+        await pruneStore(root, written);
+        return n;
+      });
       this.markSaved(session, before);
-      this.setNote(`Saved the whole volume as ${where}: ${n.toLocaleString()} chunks.`);
-      this.ctx.log.info(`Saved ${session.layer} (the whole volume) as ${where}.`);
+      this.saved(`Saved ${session.layer} (the whole volume) as ${where}: ${n.toLocaleString()} chunks.`);
     } catch (e) {
-      this.setNote(`Could not save the whole volume: ${(e as Error).message}`);
+      this.saveFailed(`Could not save the whole volume: ${(e as Error).message}`);
     }
   }
 
@@ -1813,8 +2042,40 @@ export class Editor implements LabelVolumes {
     }
   }
 
-  private setNote(text: string): void {
-    this.note = text;
+  private saveProgress(text: string): void {
+    const now = performance.now();
+    const shown = this.saveStatus?.kind === "progress" ? this.saveStatus.text : undefined;
+    this.saveStatus = { kind: "progress", text };
+    // Drawn again at most every SAVE_PROGRESS_MS: each draw lists the segments, and with 100k of them,
+    // drawn for every chunk, an OME-Zarr's save took three times as long.  (A new step, not a new percentage, at once.)
+    if (text === shown) return;
+    const percent = (t: string | undefined) => t?.replace(/\d+%$/, "%");
+    if (percent(text) === percent(shown) && now - this.saveDrawn < SAVE_PROGRESS_MS) return;
+    this.saveDrawn = now;
+    this.changed();
+  }
+
+  /** When the save's progress was last drawn. */
+  private saveDrawn = -Infinity;
+
+  /** A save done: said in a toast and in Activity; the status line clears. */
+  private saved(text: string): void {
+    this.saveStatus = undefined;
+    this.ctx.ui.toast(text);
+    this.ctx.log.info(text);
+    this.changed();
+  }
+
+  /**
+   * A save failed: said in the panel's status line (its Save card opened),
+   * in a toast (the tool bar and the command save with the panel hidden) and in
+   * Activity.
+   */
+  private saveFailed(text: string): void {
+    this.saveStatus = { kind: "error", text };
+    ++this.saveFailures;
+    this.ctx.ui.toast(text, "error");
+    this.ctx.log.error(text);
     this.changed();
   }
 }
@@ -1829,21 +2090,13 @@ interface Brushing {
   disc: boolean;
 }
 
-/** Writes a file by its path under a folder, making the folders on the way. */
-async function writeFile(root: FileSystemDirectoryHandle, path: string, bytes: Uint8Array): Promise<void> {
-  const parts = path.split("/");
-  let dir = root;
-  for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part, { create: true });
-  const w = await (await dir.getFileHandle(parts[parts.length - 1], { create: true })).createWritable();
-  await w.write(bytes as unknown as BufferSource);
-  await w.close();
-}
-
-/** Files by path written into `name` in a folder, or (no folder) downloaded as `name`.zip; resolves where. */
+/**
+ * Files by path written into `name` in a folder (what an earlier save left
+ * there removed), or (no folder) downloaded as `name`.zip; resolves where.
+ */
 async function writeFolder(files: Map<string, Uint8Array>, folder: FileSystemDirectoryHandle | undefined, name: string): Promise<string> {
   if (folder) {
-    const root = await folder.getDirectoryHandle(name, { create: true });
-    for (const [path, bytes] of files) await writeFile(root, path, bytes);
+    await writeStore(await folder.getDirectoryHandle(name, { create: true }), files);
     return `${folder.name}/${name}`;
   }
   downloadBlob(zipFiles(new Map([...files].map(([p, b]) => [`${name}/${p}`, b]))), `${name}.zip`);

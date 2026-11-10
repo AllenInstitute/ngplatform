@@ -3,7 +3,7 @@
  * user: the scene's local annotation layers, each with fields (values from
  * a list, a number, text, or an ontology's terms), groups, and comments,
  * listed in the annotation table (./table_panel.ts) and set up in the
- * Annotate section (./annotate_panel.ts).
+ * Annotate card (./annotate_panel.ts).
  *
  * Annotations stay in Neuroglancer's state; what Neuroglancer can hold is
  * kept there (see ./values.ts and ./groups.ts), the rest in this plugin's
@@ -18,13 +18,13 @@ import { el } from "@ngplatform/sdk/dom";
 import { TABLE_PANEL } from "./manifest.js";
 import { measure, type AnnotationJson } from "./measure.js";
 import { lookupTerms, type Term } from "./ontology.js";
-import { rankOf, space, toGlobalOf } from "./scene.js";
+import { onSceneChanged, rankOf, space, stateLayers, statePart, toGlobalOf } from "./scene.js";
 import { buildRows, rowName, type Row, type TableLayer } from "./table.js";
 import { withShaderKept } from "./groups.js";
 import { physical } from "./ui.js";
 import { type Comment, type Field, fieldsOf, type LayerMeta, type LayerSpec, metaOf, prune, readValue } from "./values.js";
 
-/** Neuroglancer's annotation tools, by the names the Annotate section gives them. */
+/** Neuroglancer's annotation tools, by the names the Annotate card gives them. */
 export const TOOLS: [string, string, string][] = [
   ["annotatePoint", "Point", "Ctrl+click a point"],
   ["annotateLine", "Line", "Ctrl+click its two ends"],
@@ -80,7 +80,7 @@ export class Annotate {
     document.addEventListener("mousemove", move, { passive: true });
     this.offs.push(
       () => document.removeEventListener("mousemove", move),
-      ctx.viewer.onStateChanged(() => this.stateChanged()),
+      onSceneChanged(ctx, () => this.stateChanged()),
       ctx.state.onChanged(() => this.notify()),
       ctx.viewer.onCursorChanged(() => this.hover()),
     );
@@ -88,7 +88,7 @@ export class Annotate {
   }
 
   dispose(): void {
-    if (this.waiting !== undefined) clearInterval(this.waiting);
+    this.waiting?.();
     this.offs.forEach((off) => off());
     this.overlay.dispose();
   }
@@ -116,7 +116,7 @@ export class Annotate {
   /** The active scene's local annotation layers (annotations kept in the state). */
   layers(): TableLayer[] {
     const saved = this.saved();
-    const layers = ((this.ctx.viewer.getState() as { layers?: Json[] }).layers ?? []) as unknown as LayerSpec[];
+    const layers = stateLayers(this.ctx) as unknown as LayerSpec[];
     return layers
       .filter((l) => Array.isArray(l.annotations))
       .map((spec) => ({ spec, meta: metaOf(saved.layers?.[spec.name]), managed: isManaged(spec) }));
@@ -224,27 +224,47 @@ export class Annotate {
 
   /** Edits waiting for an annotation being drawn, by layer (the latest of each). */
   private readonly pending = new Map<string, { spec: LayerSpec; meta: LayerMeta; before: Set<string | undefined>; scene: string | undefined }>();
-  private waiting: ReturnType<typeof setInterval> | undefined;
+  /** Stops listening for the end of drawing (set while edits wait for it). */
+  private waiting: Disposer | undefined;
 
+  /**
+   * Applies the waiting edits once drawing ends: when the annotation is
+   * added (the state changes), or dropped (Escape: a key, no change of
+   * state), or after a click that may have ended it; nothing is polled.
+   */
   private waitForDrawing(): void {
     if (this.waiting !== undefined) return;
-    this.waiting = setInterval(() => {
-      if (this.ctx.viewer.annotationInProgress()) return;
-      clearInterval(this.waiting);
+    const check = () => {
+      if (this.waiting === undefined || this.ctx.viewer.annotationInProgress()) return;
+      this.waiting();
+      this.applyWaiting();
+    };
+    // After Neuroglancer has handled the key or the click.
+    const soon = () => void setTimeout(check, 0);
+    const offState = this.ctx.viewer.onStateChanged(check);
+    window.addEventListener("keyup", soon, true);
+    window.addEventListener("pointerup", soon, true);
+    this.waiting = () => {
+      offState();
+      window.removeEventListener("keyup", soon, true);
+      window.removeEventListener("pointerup", soon, true);
       this.waiting = undefined;
-      const edits = [...this.pending];
-      this.pending.clear();
-      // The annotation drawn meanwhile is in the layer now: each edit is applied to the layer as it is.
-      for (const [name, { spec, meta, before, scene }] of edits) {
-        // An edit made in another scene is not applied to a layer of the same name here.
-        if (scene !== activeScene(this.ctx)) continue;
-        const now = this.layer(name)?.spec;
-        const known = new Set(spec.annotations.map((a) => a.id));
-        // Drawn: new since the edit was queued (not ones the edit deleted).
-        const drawn = (now?.annotations ?? []).filter((a) => !known.has(a.id) && !before.has(a.id));
-        this.write(name, { ...spec, annotations: [...spec.annotations, ...drawn] }, meta);
-      }
-    }, 250);
+    };
+  }
+
+  private applyWaiting(): void {
+    const edits = [...this.pending];
+    this.pending.clear();
+    // The annotation drawn meanwhile is in the layer now: each edit is applied to the layer as it is.
+    for (const [name, { spec, meta, before, scene }] of edits) {
+      // An edit made in another scene is not applied to a layer of the same name here.
+      if (scene !== activeScene(this.ctx)) continue;
+      const now = this.layer(name)?.spec;
+      const known = new Set(spec.annotations.map((a) => a.id));
+      // Drawn: new since the edit was queued (not ones the edit deleted).
+      const drawn = (now?.annotations ?? []).filter((a) => !known.has(a.id) && !before.has(a.id));
+      this.write(name, { ...spec, annotations: [...spec.annotations, ...drawn] }, meta);
+    }
   }
 
   /** Writes only a layer's record (comments, text and terms). */
@@ -316,9 +336,8 @@ export class Annotate {
   /** The drawing tool Ctrl+click uses in the chosen layer: its tool, while it is the selected layer. */
   currentTool(): string | undefined {
     const name = this.chosen();
-    const ng = this.ctx.viewer.getState() as { layers?: Json[]; selectedLayer?: { layer?: string } };
-    if (name === undefined || ng.selectedLayer?.layer !== name) return undefined;
-    const t = ng.layers?.find((l) => l.name === name)?.tool;
+    if (name === undefined || statePart<{ layer?: string }>(this.ctx, "selectedLayer")?.layer !== name) return undefined;
+    const t = stateLayers(this.ctx).find((l) => l.name === name)?.tool;
     return typeof t === "string" ? t : undefined;
   }
 
@@ -328,7 +347,7 @@ export class Annotate {
     if (points.length === 0) return undefined;
     const g = points.map(toGlobalOf(this.ctx, layer, rankOf(a)));
     // Dimensions the annotation does not have stay where the view is.
-    const position = ((this.ctx.viewer.getState() as { position?: number[] }).position ?? []) as number[];
+    const position = statePart<number[]>(this.ctx, "position") ?? [];
     return g[0].map((_, i) => {
       const v = g.reduce((s, p) => s + p[i], 0) / g.length;
       return Number.isFinite(v) ? v : (position[i] ?? 0);
@@ -443,12 +462,12 @@ export class Annotate {
         if (drawn.length === 1) {
           this.selected = { layer: l.spec.name, id: drawn[0].id };
           this.lastSelection = `${l.spec.name}|${drawn[0].id}`;
-          // The table opens for the layer drawn in from the Annotate section (not Measure's, say).
+          // The table opens for the layer drawn in from the Annotate card (not Measure's, say).
           if (l.spec.name === this.chosen()) this.ctx.ui.showPanel(TABLE_PANEL);
         }
       }
     }
-    const selection = (this.ctx.viewer.getState() as { selection?: { layers?: Record<string, { annotationId?: string }> } }).selection?.layers ?? {};
+    const selection = statePart<{ layers?: Record<string, { annotationId?: string }> }>(this.ctx, "selection")?.layers ?? {};
     for (const [layer, s] of Object.entries(selection)) {
       if (typeof s?.annotationId !== "string" || !now.get(layer)?.has(s.annotationId)) continue;
       const key = `${layer}|${s.annotationId}`;
@@ -460,7 +479,7 @@ export class Annotate {
     if (this.selected && !now.get(this.selected.layer)?.has(this.selected.id)) {
       this.selected = undefined;
     }
-    // Listeners redraw only what changed (moving about changes the state too).
+    // Listeners redraw only what changed (onSceneChanged leaves out moving about).
     this.notify();
   }
 
@@ -489,11 +508,11 @@ export class Annotate {
     const facts = fields.map((f) => [f.title, row.values[f.title]] as const).filter(([, v]) => v);
     this.tip.replaceChildren(
       el("strong", {}, rowName(row)),
-      row.groupPath ? el("div", { class: "an-faint" }, row.groupPath) : "",
-      row.size ? el("div", { class: "an-faint" }, physical(row.size.value, row.size.quantity === "length" ? 1 : row.size.quantity === "area" ? 2 : 3)) : "",
-      ...facts.map(([k, v]) => el("div", {}, el("span", { class: "an-faint" }, `${k}: `), v)),
-      ...row.comments.slice(-3).map((c) => el("div", { class: "an-tip-comment" }, `“${c.text}”`, el("span", { class: "an-faint" }, ` ${c.time.slice(0, 16).replace("T", " ")}`))),
-      row.comments.length > 3 ? el("div", { class: "an-faint" }, `and ${row.comments.length - 3} more`) : "",
+      row.groupPath ? el("div", { class: "faint" }, row.groupPath) : "",
+      row.size ? el("div", { class: "faint" }, physical(row.size.value, row.size.quantity === "length" ? 1 : row.size.quantity === "area" ? 2 : 3)) : "",
+      ...facts.map(([k, v]) => el("div", {}, el("span", { class: "faint" }, `${k}: `), v)),
+      ...row.comments.slice(-3).map((c) => el("div", { class: "an-tip-comment" }, `“${c.text}”`, el("span", { class: "faint" }, ` ${c.time.slice(0, 16).replace("T", " ")}`))),
+      row.comments.length > 3 ? el("div", { class: "faint" }, `and ${row.comments.length - 3} more`) : "",
     );
     const box = this.overlay.element.getBoundingClientRect();
     this.tip.style.left = `${this.pointer[0] - box.left + 14}px`;

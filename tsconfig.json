@@ -23,7 +23,12 @@
     "paths": {
       "@ngplatform/sdk": ["./src/sdk/index.ts"],
       "@ngplatform/sdk/*": ["./src/sdk/*.ts"],
-      "chunkmirage-web/*": ["./vendor/chunkmirage/web/src/*"]
+      "chunkmirage-web/*": ["./vendor/chunkmirage/web/src/*"],
+      "neuroglancer-zarr-vectors": ["./plugins/zarr-vectors/src/register_default.ts"],
+      "neuroglancer-zarr-vectors/backend": ["./plugins/zarr-vectors/src/backend.ts"],
+      "neuroglancer-zarr-vectors/async_computation": ["./plugins/zarr-vectors/src/async_computation.ts"],
+      "neuroglancer-zarr-vectors/reader": ["./plugins/zarr-vectors/src/reader.ts"],
+      "neuroglancer-zarr-vectors/source-url": ["./plugins/zarr-vectors/src/source_url.ts"]
     }
   },
   // Each plugin's top-level files and tests; zarr-vectors' package is

@@ -12,14 +12,20 @@
  * Light adds up in a float target over the whole canvas, is tone mapped
  * onto the canvas, and the canvas is blended over the views as light added
  * (CSS `plus-lighter`) for glow, or laid over them for emission and solid.
+ *
+ * Every layer draws with the 2-D views' one shared WebGL context
+ * (./shared2d.ts), and its drawing is copied onto its own canvas, a plain
+ * 2-D one: a layer costs no context of its own, and its chunk copies share
+ * the context's budget with the other layers'.
  */
 import type { ViewPanelInfo } from "@ngplatform/sdk";
 import { SAMPLES } from "./chunk_build.js";
 import { GpuChunks, selectChunks, type Selection } from "./chunks.js";
 import { samplesFor } from "./objects.js";
 import type { LayerView } from "./layer_view.js";
-import { Bloom } from "./bloom.js";
-import { type GpuChunk, LightTarget, Renderer } from "./render_gl.js";
+import type { GpuChunk } from "./render_gl.js";
+import { type Context2d, copyTo, Shared2d } from "./shared2d.js";
+import { extentMm, slabOf } from "./style.js";
 import { apply, boxInFrustum, coverage, invertAffine, measurePanel, modelToPanel, multiply, pixelsPerUnit, screenArea, shownShare } from "./view_math.js";
 
 const GPU_BYTES = 512 * 1024 * 1024;
@@ -27,17 +33,20 @@ const GPU_SET_BYTES = 384 * 1024 * 1024;
 
 export class View2d {
   private readonly overlay: { element: HTMLElement; dispose(): void };
+  /** The layer's own canvas over the views (2-D: the shared context's drawing is copied onto it). */
   private readonly canvas: HTMLCanvasElement;
-  private gl: WebGL2RenderingContext | null = null;
-  private renderer: Renderer | undefined;
+  private readonly shared = Shared2d.acquire();
+  /** The shared context's epoch the copies below were made in. */
+  private epoch = -1;
   private chunks: GpuChunks | undefined;
   private sets: GpuChunks | undefined;
-  private target: LightTarget | undefined;
-  private bloom: Bloom | undefined;
   private queued = false;
   private visible = true;
+  /** Its canvas shows a drawing (for a screenshot). */
+  private shows = false;
   private readonly offRendered: () => void;
   private readonly offScreenshot: () => void;
+  private readonly offRestored: () => void;
   problem: string | undefined;
   selections: Selection[] = [];
   /** What was last drawn, to skip drawing it again. */
@@ -45,6 +54,7 @@ export class View2d {
   private drawnStyle: unknown;
   /** Chunks were left for the next frame. */
   private more = false;
+  private wasFull = false;
 
   constructor(private readonly view: LayerView) {
     this.overlay = view.ctx.ui.overlay();
@@ -53,12 +63,9 @@ export class View2d {
     this.overlay.element.append(this.canvas);
     this.offRendered = view.ctx.viewer.onRendered(() => this.schedule());
     this.offScreenshot = view.ctx.ui.screenshotOverlay((context, canvas) => this.paint(context, canvas));
-    this.canvas.addEventListener("webglcontextlost", (e) => {
-      e.preventDefault();
-      this.renderer = this.chunks = this.sets = this.target = this.bloom = undefined;
-    });
-    this.canvas.addEventListener("webglcontextrestored", () => {
-      this.gl = null;
+    // The shared context restored after a loss: drawn again (what the canvas showed stays meanwhile).
+    this.offRestored = this.shared.onRestored(() => {
+      this.signature = "";
       this.schedule();
     });
   }
@@ -84,19 +91,35 @@ export class View2d {
     });
   }
 
-  private context(): WebGL2RenderingContext | null {
-    if (this.gl === null) {
-      this.gl = this.canvas.getContext("webgl2", { alpha: true, premultipliedAlpha: true, antialias: false, depth: true, stencil: false, preserveDrawingBuffer: true });
-      if (this.gl === null) {
-        this.problem = "No WebGL2 for the 2-D views.";
-        return null;
-      }
-      this.renderer = new Renderer(this.gl);
-      this.target = new LightTarget(this.gl, this.renderer.floatTargets);
-      this.chunks = new GpuChunks(this.renderer, this.view.client, GPU_BYTES);
-      this.bloom = new Bloom(this.renderer, this.renderer.floatTargets);
+  /** The shared context, with this layer's copies in it; undefined while it is lost (waiting quietly) or missing. */
+  private context(): Context2d | undefined {
+    const c = this.shared.context();
+    if (this.epoch !== this.shared.epoch) {
+      // Lost since the copies were made: they went with it.
+      this.chunks?.forget();
+      this.sets?.forget();
+      this.chunks = this.sets = undefined;
+      this.epoch = this.shared.epoch;
     }
-    return this.gl;
+    if (c === undefined) {
+      this.problem = this.shared.lost ? undefined : this.shared.problem;
+      return undefined;
+    }
+    this.chunks ??= new GpuChunks(c.renderer, this.view.client, GPU_BYTES, this.shared.pool);
+    return c;
+  }
+
+  /** Copies refused for want of GPU memory in the 2-D views. */
+  get full(): boolean {
+    return (this.chunks?.refused ?? false) || (this.sets?.refused ?? false);
+  }
+
+  /** Clears its canvas (nothing to draw, or the context is lost). */
+  private clear(): void {
+    if (!this.shows) return;
+    this.canvas.getContext("2d")?.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.shows = false;
+    this.signature = "";
   }
 
   /** A 2-D panel's matrices: store coordinates to its clip space, and to mm from its section. */
@@ -132,23 +155,23 @@ export class View2d {
     const { view } = this;
     const info = view.client.info;
     const panels = this.visible ? view.ctx.viewer.panels().filter((p) => p.kind === "2d") : [];
-    const gl = panels.length > 0 && info !== undefined ? this.context() : this.gl;
-    if (gl === null) return;
+    const c = panels.length > 0 && info !== undefined ? this.context() : undefined;
+    if (c === undefined) {
+      this.clear();
+      return;
+    }
     const base = this.overlay.element.getBoundingClientRect();
     const dpr = globalThis.devicePixelRatio || 1;
     const width = Math.max(1, Math.round(base.width * dpr));
     const height = Math.max(1, Math.round(base.height * dpr));
-    if (this.canvas.width !== width || this.canvas.height !== height) {
-      this.canvas.width = width;
-      this.canvas.height = height;
-    }
     const style = view.style;
     this.canvas.style.mixBlendMode = style.blending === "glow" || style.blending === "glow-through" ? "plus-lighter" : "normal";
     const state = view.ctx.viewer.getState() as { dimensions?: Record<string, [number, string]>; position?: number[] };
     const dims = state.dimensions ?? {};
     const names = Object.keys(dims);
     const globals = { names, scales: names.map((n) => dims[n][0]), units: names.map((n) => dims[n][1]), position: names.map((_, i) => state.position?.[i] ?? 0) };
-    const halfSlab = style.slab / 2;
+    // The slab in mm, as set or following the store's size (EM in nanometres, a brain in millimetres).
+    const halfSlab = info === undefined ? 0 : slabOf(style, extentMm(info)) / 2;
     const layouts = panels.flatMap((panel) => {
       const rect = panel.element.getBoundingClientRect();
       if (rect.width < 2 || rect.height < 2) return [];
@@ -175,16 +198,34 @@ export class View2d {
     this.drawnStyle = style;
     // This drawing says its own problem, if any: one that has passed does not stay.
     this.problem = undefined;
+    // Drawn in the shared context at the canvas's size, then copied onto the layer's canvas.
+    if (c.canvas.width !== width || c.canvas.height !== height) {
+      c.canvas.width = width;
+      c.canvas.height = height;
+    }
+    try {
+      this.draw(c, width, height, base, dpr, layouts);
+    } finally {
+      copyTo(this.canvas, c.canvas);
+      this.shows = true;
+    }
+  }
+
+  /** The layer's drawing in the shared context (its default framebuffer, cleared first). */
+  private draw(c: Context2d, width: number, height: number, base: DOMRect, dpr: number, layouts: { rect: DOMRect; m: NonNullable<ReturnType<View2d["panelMatrices"]>> }[]): void {
+    const { view } = this;
+    const { gl } = c;
+    const info = view.client.info;
+    const style = view.style;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, width, height);
     gl.clearColor(0, 0, 0, 0);
     gl.clearDepth(1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    if (info === undefined || layouts.length === 0 || this.renderer === undefined) return;
+    if (info === undefined || layouts.length === 0) return;
     const solid = style.blending === "solid";
-    const renderer = this.renderer;
+    const { renderer, target, bloom: bloomPass } = c;
     const chunks = this.chunks!;
-    const target = this.target!;
     if (!solid && !target.bind(width, height, null)) {
       this.problem = "This GPU cannot add light up in a float target here.";
       return;
@@ -214,7 +255,7 @@ export class View2d {
     // The fewest samples of the chosen objects a panel draws, for the panel.
     let fewest = SAMPLES;
     if (drawing.sets !== undefined) {
-      this.sets ??= new GpuChunks(renderer, view.client.objects, GPU_SET_BYTES);
+      this.sets ??= new GpuChunks(renderer, view.client.objects, GPU_SET_BYTES, this.shared.pool);
       const taken = this.sets.take(view.client.objects.drawn(), drawing.sets);
       sets = taken.chunks;
       more ||= taken.more;
@@ -296,7 +337,7 @@ export class View2d {
     if (!solid) {
       const emission = style.blending === "emission";
       // Bloom over the whole canvas (a panel's glow may reach a little into the next).
-      const bloom = style.bloom > 0 ? this.bloom!.run(target.texture!, width, height, emission) : undefined;
+      const bloom = style.bloom > 0 ? bloomPass.run(target.texture!, width, height, emission) : undefined;
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, width, height);
       gl.enable(gl.BLEND);
@@ -307,11 +348,16 @@ export class View2d {
     }
     this.more = more;
     if (more) this.schedule();
+    // Copies refused, or room again: the panel says so.
+    if (this.full !== this.wasFull) {
+      this.wasFull = this.full;
+      view.onStatus?.();
+    }
   }
 
   /** Paints the canvas into a screenshot of Neuroglancer's canvas, blended as it is on screen. */
   paint(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void {
-    if (!this.visible || this.gl === null) return;
+    if (!this.visible || !this.shows) return;
     const canvasRect = canvas.getBoundingClientRect();
     const scale = canvas.width / Math.max(1, canvasRect.width);
     const base = this.overlay.element.getBoundingClientRect();
@@ -327,12 +373,18 @@ export class View2d {
     this.disposed = true;
     this.offScreenshot();
     this.offRendered();
-    this.chunks?.clear();
-    this.sets?.clear();
-    this.target?.release();
-    this.bloom?.release();
-    this.renderer?.dispose();
+    this.offRestored();
+    // Copies made in a context since lost went with it.
+    if (this.epoch === this.shared.epoch && !this.shared.lost) {
+      this.chunks?.dispose();
+      this.sets?.dispose();
+    } else {
+      this.chunks?.forget();
+      this.sets?.forget();
+    }
+    this.chunks = this.sets = undefined;
     this.overlay.dispose();
-    this.gl?.getExtension("WEBGL_lose_context")?.loseContext();
+    // The last layer gives the context back.
+    this.shared.release();
   }
 }

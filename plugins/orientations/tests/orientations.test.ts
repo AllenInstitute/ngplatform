@@ -14,12 +14,12 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { computeGlyphs, type GlyphOptions, odfRadius, voxelFrame, withFlips } from "../glyphs.js";
 import { spatialGroup } from "../ome4.js";
 import { readSaved, resolveBasis, resolveFrame, resolveKind, resolveTensorOrder } from "../plugin.js";
-import { OrientationReader } from "../reader.js";
+import { componentDimOf, OrientationReader } from "../reader.js";
 import { directionShader } from "../shader.js";
 import { fitSh } from "../sh.js";
 import { icosphere } from "../sphere.js";
 import { boxAround, chooseLevel, layerMove, planesAround, planSection, sectionOf, slabOf, slabVoxels, unproject, type Vec3 } from "../view.js";
-import { buildStore, crossingSh, fibreOdf, spiral, type Store, storeFetch, tensorField, toZarr2, vectorField } from "./synthetic.js";
+import { buildStore, crossingSh, fibreOdf, spiral, type Store, storeFetch, tensorField, toZarr2, vectorField, withAxis } from "./synthetic.js";
 
 const SIZE: [number, number, number] = [32, 32, 8];
 const stores: Record<string, Store> = {};
@@ -30,6 +30,10 @@ beforeAll(() => {
   stores["http://synthetic.test/vector.ome.zarr/"] = buildStore(vectorField(SIZE));
   stores["http://synthetic.test/tensor-v2.ome.zarr/"] = toZarr2(stores["http://synthetic.test/tensor.ome.zarr/"]);
   stores["http://synthetic.test/tensor-v2f.ome.zarr/"] = toZarr2(stores["http://synthetic.test/tensor.ome.zarr/"], "F");
+  const tensor = stores["http://synthetic.test/tensor.ome.zarr/"];
+  stores["http://synthetic.test/tczyx.ome.zarr/"] = withAxis(tensor, { name: "t", type: "time" });
+  stores["http://synthetic.test/tczyx-thick.ome.zarr/"] = withAxis(tensor, { name: "t", type: "time" }, { thick: true });
+  stores["http://synthetic.test/on-t.ome.zarr/"] = withAxis(tensor, { name: "c", type: "channel" }, { rename: { name: "t", type: "time" } });
   const out = process.env.ORIENTATIONS_WRITE;
   if (out) {
     // Bigger ones to look at.
@@ -127,6 +131,40 @@ describe("reading orientation pyramids", () => {
     }
   });
 
+  it("reads tczyx with one time point as czyx, and components along t beside a size-1 c", async () => {
+    vi.stubGlobal("fetch", storeFetch(stores));
+    const request = { lo: [0, 0, 2] as Vec3, hi: [32, 32, 4] as Vec3 };
+    const read = async (url: string) => {
+      const reader = new OrientationReader();
+      const opened = await reader.open(url);
+      return { opened, voxels: await reader.voxels(0, request, new AbortController().signal) };
+    };
+    const plain = await read("http://synthetic.test/tensor.ome.zarr/");
+    for (const url of ["http://synthetic.test/tczyx.ome.zarr/", "http://synthetic.test/tczyx-thick.ome.zarr/", "http://synthetic.test/on-t.ome.zarr/"]) {
+      const five = await read(url);
+      expect(five.opened.levels.map((l) => [l.size, l.components])).toEqual(plain.opened.levels.map((l) => [l.size, l.components]));
+      expect(Array.from(five.opened.levels[0].voxelToRas)).toEqual(Array.from(plain.opened.levels[0].voxelToRas));
+      expect(Array.from(five.voxels.values)).toEqual(Array.from(plain.voxels.values));
+    }
+    expect((await read("http://synthetic.test/tczyx.ome.zarr/")).opened.componentAxis).toBe("c");
+    expect((await read("http://synthetic.test/on-t.ome.zarr/")).opened.componentAxis).toBe("t");
+  });
+
+  it("refuses a time axis of more than one point beside the components, and a single component", async () => {
+    const store = withAxis(stores["http://synthetic.test/tensor.ome.zarr/"], { name: "t", type: "time" });
+    const three = new Map(store);
+    for (const [key, bytes] of store) {
+      if (!/^\d+\/zarr\.json$/.test(key)) continue;
+      const array = JSON.parse(new TextDecoder().decode(bytes));
+      three.set(key, new TextEncoder().encode(JSON.stringify({ ...array, shape: [3, ...array.shape.slice(1)] })));
+    }
+    vi.stubGlobal("fetch", storeFetch({ "http://synthetic.test/three/": three }));
+    await expect(new OrientationReader().open("http://synthetic.test/three/")).rejects.toThrow(/has 3 time points beside its components/);
+    expect(componentDimOf(["t", "c", "z", "y", "x"], [1, 45, 8, 8, 8], 1)).toBe(1);
+    expect(componentDimOf(["t", "c", "z", "y", "x"], [6, 1, 8, 8, 8], 1)).toBe(0);
+    expect(componentDimOf(["t", "c", "z", "y", "x"], [1, 1, 8, 8, 8], 1)).toBe(1);
+  });
+
   it("strips a NIfTI's fourth axis (t, read in place) from OME-Zarr 0.6 metadata", () => {
     const group = {
       attributes: {
@@ -169,6 +207,13 @@ describe("reading orientation pyramids", () => {
       [0, 0, 2, -72],
     ]);
     expect(() => spatialGroup({ attributes: { ome: { multiscales: [{ axes: [{ name: "z" }, { name: "y" }, { name: "x" }], datasets: [{ path: "0" }] }] } } })).toThrow(/components/);
+    // tczyx: c is taken, and t kept for the reader to read at index 0.
+    const five = spatialGroup({
+      attributes: { ome: { multiscales: [{ axes: [{ name: "t", type: "time" }, { name: "c", type: "channel" }, { name: "z" }, { name: "y" }, { name: "x" }], datasets: [{ path: "0", coordinateTransformations: [{ type: "scale", scale: [1, 1, 2, 2, 2] }] }] }] } },
+    });
+    expect([five.component, five.name]).toEqual([1, "c"]);
+    expect(five.group.attributes.ome.multiscales[0].axes.map((a: { name: string }) => a.name)).toEqual(["t", "z", "y", "x"]);
+    expect(five.group.attributes.ome.multiscales[0].datasets[0].coordinateTransformations[0].scale).toEqual([1, 2, 2, 2]);
   });
 });
 

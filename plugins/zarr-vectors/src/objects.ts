@@ -30,6 +30,7 @@
  */
 
 import { isDenseLayout, SPANS_PATH } from "./dense_manifests.js";
+import type { ZarrVectorsGeometryDescription } from "./base.js";
 import type { ElementType } from "./dtype.js";
 import {
   decodeFloat32,
@@ -41,7 +42,7 @@ import {
   checkObjectIndexLayout,
   readJson,
 } from "./store.js";
-import { mapConcurrent, retryable, warnOnce } from "./util.js";
+import { AsyncLru, mapConcurrent, retryable, warnOnce } from "./util.js";
 import {
   decodeUtf32,
   fillBytes,
@@ -139,6 +140,43 @@ function openReader(
   );
 }
 
+/**
+ * A column's rows as read, per store, for a while: the Segments tab's
+ * properties and the object values shaders read are often the same column,
+ * read moments apart, and are downloaded once. Bounded by bytes; a read in
+ * flight is shared.
+ */
+const columnRowsCache = new WeakMap<ZarrVectorsStoreAccess, AsyncLru<Uint8Array>>();
+const COLUMN_ROWS_BYTES = 64 * 1024 * 1024;
+
+function readColumnRows(
+  access: ZarrVectorsStoreAccess,
+  reader: ZarrArrayReader,
+  path: string,
+  rows: number,
+  signal?: AbortSignal,
+  concurrency?: number,
+): Promise<Uint8Array> {
+  let cache = columnRowsCache.get(access);
+  if (cache === undefined) {
+    cache = new AsyncLru<Uint8Array>(Infinity, COLUMN_ROWS_BYTES, (b) => b.byteLength);
+    columnRowsCache.set(access, cache);
+  }
+  // Read without any one caller's signal, so the other can still use it.
+  const promise = cache.get(`${path}|${rows}`, () =>
+    reader.readRows(0, rows, undefined, concurrency),
+  );
+  if (signal === undefined) return promise;
+  signal.throwIfAborted();
+  return new Promise<Uint8Array>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
+}
+
 /** Reads the object table of a level, or `undefined` if it has no objects. */
 export function readObjectTable(
   access: ZarrVectorsStoreAccess,
@@ -223,6 +261,7 @@ async function loadObjectTable(
       warnOnce(
         `${levelPath}: ${reader.array.path} has ${reader.array.shape[0]} ` +
           `rows for ${numObjects} objects; not used`,
+        access.url,
       );
       return undefined;
     }
@@ -237,7 +276,10 @@ async function loadObjectTable(
       );
   };
   const [objectIds, segmentColumn] = await Promise.all([
-    readIds(objectIdsReader),
+    segmentIdReader === undefined &&
+    (await sortedIdentity(objectIdsReader, objectIndexAttrs, numObjects, signal))
+      ? undefined
+      : readIds(objectIdsReader),
     readIds(segmentIdReader),
   ]);
   let segmentIds: BigUint64Array;
@@ -267,6 +309,34 @@ async function loadObjectTable(
     dense,
     objectIndexAttrs,
   };
+}
+
+/**
+ * Whether a level's `object_ids` are its rows (0, 1, 2 …), told from two
+ * values rather than the whole column (3.3 M ids are 200 reads): ids the
+ * writer says are sorted (`object_ids_sorted`), being distinct, are the rows
+ * exactly when the first is 0 and the last is one less than their count.
+ */
+async function sortedIdentity(
+  reader: ZarrArrayReader | undefined,
+  objectIndexAttrs: any,
+  numObjects: number,
+  signal: AbortSignal | undefined,
+): Promise<boolean> {
+  if (reader === undefined || objectIndexAttrs?.object_ids_sorted !== true) {
+    return false;
+  }
+  const { array } = reader;
+  if (!(array.shape[0] >= numObjects) || array.shape.length !== 1) return false;
+  // Two chunks or fewer cost no more read whole.
+  if (Math.ceil(numObjects / array.readChunkShape[0]) <= 2) return false;
+  const type = array.elementType as ElementType;
+  const [first, last] = await Promise.all(
+    [0, numObjects - 1].map(async (row) =>
+      decodeUint64(await reader.readRows(row, row + 1, signal), type, 1)[0],
+    ),
+  );
+  return first === 0n && last === BigInt(numObjects - 1);
 }
 
 /**
@@ -342,7 +412,7 @@ export class SegmentIdIndex {
 
 /**
  * Id of the tags property.  Every group and every category of a
- * dictionary-encoded attribute is one tag, so the Seg tab can select
+ * dictionary-encoded attribute is one tag, so the Segments tab can select
  * `#bundle_name` or `#cell_type=L2IT`.
  */
 const TAGS_PROPERTY_ID = "group";
@@ -856,7 +926,10 @@ async function decodeAttribute(
   const type = array.elementType;
   const width = ELEMENT_BYTES[type];
   const channels = array.shape.slice(1).reduce((a, b) => a * b, 1);
-  const bytes = await reader.readRows(0, n, signal, PROPERTY_CHUNK_CONCURRENCY);
+  // A copy: the decoders below may keep views of it.
+  const bytes = (
+    await readColumnRows(access, reader, path, n, signal, PROPERTY_CHUNK_CONCURRENCY)
+  ).slice();
 
   let missing: Uint8Array | undefined;
   if (attrs.fill_sentinel_meaning === "absent") {
@@ -1021,7 +1094,7 @@ async function addChainCounts(
 
 // -------------------------------------------------------------- properties
 
-/** A property id Neuroglancer's Seg tab can filter by (`name>3`). */
+/** A property id Neuroglancer's Segments tab can filter by (`name>3`). */
 function propertyCandidate(name: string): string {
   let id = name.replace(/[^a-zA-Z0-9_]+/g, "_");
   if (!/^[a-zA-Z]/.test(id)) id = id.startsWith("_") ? `a${id}` : `a_${id}`;
@@ -1066,7 +1139,7 @@ function rowsBySegmentId(
 
 /**
  * Builds the segment-property map of a level from its object attributes and
- * groups.  Numeric columns become numeric properties (so the Seg tab can
+ * groups.  Numeric columns become numeric properties (so the Segments tab can
  * filter `length>50`), text columns text properties; groups and the
  * categories of dictionary-encoded columns become tags (`#bundle_name`,
  * `#cell_type=L2IT`).  `chainPaths` is level 0's additive chain, level 0
@@ -1229,6 +1302,24 @@ export interface ShaderObjectValue {
   categories?: string[];
 }
 
+/**
+ * The object values (`obj_<column>` attributes) `shader` reads, by name or
+ * through `prop_obj_<column>()`, sorted: the others need not be read.
+ */
+export function shaderObjectValues(
+  description: ZarrVectorsGeometryDescription,
+  shader: string,
+): string[] {
+  return description.attributes
+    .filter(
+      (a) =>
+        a.objectValue !== undefined &&
+        new RegExp(`\\b(?:prop_)?${a.id}\\b`).test(shader),
+    )
+    .map((a) => a.id)
+    .sort();
+}
+
 /** Object values offered by default when a store has at most this many. */
 const DEFAULT_SHADER_COLUMNS = 8;
 
@@ -1365,6 +1456,23 @@ export function readShaderObjectValues(
   return promise;
 }
 
+/**
+ * Where a chunk worker gets shader values from: the main thread, which reads
+ * the same columns for the Segments tab (so they are downloaded once).
+ * `undefined` from it: read them here.
+ */
+export type ShaderValueSource = (
+  access: ZarrVectorsStoreAccess,
+  levelPath: string,
+  wanted: readonly ShaderObjectValue[],
+) => Promise<Float32Array[] | undefined> | undefined;
+
+let shaderValueSource: ShaderValueSource | undefined;
+
+export function setShaderValueSource(source: ShaderValueSource | undefined) {
+  shaderValueSource = source;
+}
+
 async function loadShaderObjectValues(
   access: ZarrVectorsStoreAccess,
   levelPath: string,
@@ -1372,9 +1480,28 @@ async function loadShaderObjectValues(
 ): Promise<ShaderObjectValues | undefined> {
   const table = await readObjectTable(access, levelPath);
   if (table === undefined) return undefined;
-  const n = table.numObjects;
+  const values =
+    (await shaderValueSource?.(access, levelPath, wanted)) ??
+    (await readShaderObjectValueColumns(access, levelPath, wanted));
+  if (values === undefined) return undefined;
   const index = new SegmentIdIndex(table.segmentIds);
-  const values = await Promise.all(
+  return { rowOf: (id) => index.rowOf(id), values };
+}
+
+/**
+ * The object values `wanted`, one float per row of `levelPath`'s object
+ * table, read afresh (not kept): as {@link readShaderObjectValues} reads
+ * them, for whoever keeps them.
+ */
+export async function readShaderObjectValueColumns(
+  access: ZarrVectorsStoreAccess,
+  levelPath: string,
+  wanted: readonly ShaderObjectValue[],
+): Promise<Float32Array[] | undefined> {
+  const table = await readObjectTable(access, levelPath);
+  if (table === undefined) return undefined;
+  const n = table.numObjects;
+  return Promise.all(
     wanted.map(async ({ column }) => {
       const out = new Float32Array(n).fill(NaN);
       try {
@@ -1387,15 +1514,13 @@ async function loadShaderObjectValues(
           }
           return out;
         }
-        const reader = await openReader(
-          access,
-          `${levelPath}/object_attributes/${column}`,
-        );
+        const path = `${levelPath}/object_attributes/${column}`;
+        const reader = await openReader(access, path);
         if (reader === undefined) return out;
         const { array } = reader;
         const rows = Math.min(n, array.shape[0]);
         const type = array.elementType as ElementType;
-        const bytes = await reader.readRows(0, rows);
+        const bytes = (await readColumnRows(access, reader, path, rows)).slice();
         const numbers = decodeNumbers(bytes, type, rows);
         const attrs = array.attributes ?? {};
         const absent =
@@ -1414,10 +1539,10 @@ async function loadShaderObjectValues(
         warnOnce(
           `object values for shaders: ${column ?? "groups"} unreadable ` +
             `(${e instanceof Error ? e.message : e})`,
+          access.url,
         );
       }
       return out;
     }),
   );
-  return { rowOf: (id) => index.rowOf(id), values };
 }

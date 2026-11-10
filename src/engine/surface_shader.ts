@@ -2,7 +2,7 @@
  * The shader for a surface drawn as Freeview draws one: curvature in two
  * greys (Freeview's binary curvature: sulci dark, gyri light), an overlay
  * (thickness, a statistic) on top where its magnitude passes a threshold,
- * in a colour map, and a parcellation's own colours over both.  The Render
+ * in a colour map, and a parcellation's own colours over both.  The Display
  * tab's Surface controls write it into a Zarr Vectors layer's shader; the
  * threshold, the overlay's top and the parcellation's opacity are shader
  * controls, so dragging them recompiles nothing.
