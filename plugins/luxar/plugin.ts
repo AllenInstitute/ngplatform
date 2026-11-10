@@ -246,7 +246,7 @@ export class Luxar {
 
   /** Opens Settings › Sign-in, then asks the refused layers again until they can be read (or a while has passed). */
   private signIn(): void {
-    void this.ctx.commands.invoke("settings.signIn");
+    void this.ctx.commands.invoke("settings.signIn", { card: "sign-in.other" });
     if (this.signInPoll !== undefined) clearInterval(this.signInPoll);
     let polls = 0;
     this.signInPoll = setInterval(() => void this.askAgain(++polls >= SIGN_IN_POLLS), SIGN_IN_POLL_MS);

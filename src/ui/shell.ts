@@ -1026,7 +1026,20 @@ export class Shell {
       run: (args?: { section?: SettingsSection }) => showSettingsSheet(wb, args?.section),
     });
     add({ id: "view.settings", title: "View settings…", group: "View", run: () => showSettingsSheet(wb, "view") });
-    add({ id: "settings.signIn", title: "Sign-in settings…", group: "View", run: () => showSettingsSheet(wb, "sign-in") });
+    add({
+      id: "settings.signIn",
+      title: "Sign-in settings…",
+      group: "View",
+      // `card`: a card of Settings › Sign-in to open and show ("sign-in.other": the CAVE servers' sign-ins).
+      args: { type: "object", properties: { card: { type: "string" } } },
+      run: (args?: { card?: string }) => {
+        showSettingsSheet(wb, "sign-in");
+        const card = args?.card === undefined ? null : document.querySelector<HTMLDetailsElement>(`.sheet details[data-card="${CSS.escape(args.card)}"]`);
+        if (card === null) return;
+        card.open = true;
+        card.scrollIntoView({ block: "nearest" });
+      },
+    });
     add({ id: "settings.compute", title: "Compute: pair a computer…", group: "View", run: () => showSettingsSheet(wb, "compute") });
     add({ id: "view.screenshot", title: "Screenshot (Neuroglancer)…", group: "View", run: () => engine.showScreenshotDialog() });
     add({ id: "view.capture", title: "Capture a picture (magnified, trimmed)…", group: "View", run: async () => (await captureSheet()).showCaptureSheet(wb, "picture") });

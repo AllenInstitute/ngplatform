@@ -75,6 +75,7 @@ function fakeContext(layers: LayerInfo[], saved?: unknown) {
   const workspaceListeners = new Set<() => void>();
   const context = new Map<string, unknown>();
   const invoked: string[] = [];
+  const invokedArgs: unknown[] = [];
   let selected: string | undefined;
   let shown: { all: boolean; size: number; has(id: bigint): boolean; ids(): BigUint64Array; notSelectedAlpha: number } | undefined;
   const ctx = {
@@ -111,7 +112,7 @@ function fakeContext(layers: LayerInfo[], saved?: unknown) {
       selectedLayer: () => selected,
     },
     context: { set: (key: string, value: unknown) => void context.set(key, value) },
-    commands: { invoke: async (id: string) => void invoked.push(id) },
+    commands: { invoke: async (id: string, args?: unknown) => void (invoked.push(id), invokedArgs.push(args)) },
   };
   return {
     ctx: ctx as unknown as PlatformContext,
@@ -119,6 +120,7 @@ function fakeContext(layers: LayerInfo[], saved?: unknown) {
     state: () => state as { layers: Record<string, Record<string, unknown>> } | undefined,
     context,
     invoked,
+    invokedArgs,
     select(name: string | undefined) {
       selected = name;
       workspaceListeners.forEach((f) => f());
@@ -301,6 +303,8 @@ describe("the Luxar panel", () => {
     expect(dom.text(status)).toBe("Sign in to read this layer's meshes. Sign in…");
     dom.find(status, "button", "Sign in…").click();
     expect(f.invoked).toEqual(["settings.signIn"]);
+    // Settings › Sign-in opens on the card with the CAVE servers' sign-ins.
+    expect(f.invokedArgs).toEqual([{ card: "sign-in.other" }]);
     // No worker for a layer that cannot be read.
     expect(workers.length).toBe(0);
     luxar.dispose();
