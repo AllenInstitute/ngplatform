@@ -105,7 +105,84 @@ const measure = (sel) =>
       words: (root.innerText.match(/[A-Za-z][A-Za-z'’-]*/g) || []).length,
       controls: buttons.length + inputs.length + checks.length,
     };
-  }, sel);
+  }, sel).then(async (m) => (m ? { ...m, access: await access(sel) } : m));
+
+/**
+ * The accessibility check, in the page (no axe-core: a small one of our own)
+ * over the visible elements under `sel`, the root included, leaving out
+ * Neuroglancer's own widgets and anything under `skip`.  It counts controls
+ * with no accessible name, elements with a role but not the attributes it
+ * needs, positive tabindex, and images without alt; and keeps the first few
+ * of each, to find them.
+ */
+const accessCheck = ({ sel, skip }) => {
+  const root = document.querySelector(sel);
+  if (!root) return null;
+  // Not in a closed card either: its contents keep their boxes but are not drawn (content-visibility).
+  const visible = (e) => {
+    const r = e.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && e.checkVisibility({ visibilityProperty: true, contentVisibilityAuto: true });
+  };
+  const ignored = (e) => e.closest(".ng-host, .ins-embed, [class*='neuroglancer-']") || (skip && e.closest(skip) && !root.matches(skip));
+  const all = [root, ...root.querySelectorAll("*")].filter((e) => visible(e) && !ignored(e));
+  const role = (e) => e.getAttribute("role") ?? "";
+  const shown = (e) => (e.innerText ?? e.textContent ?? "").trim();
+  const byIds = (ids) =>
+    ids
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent.trim() ?? "")
+      .join(" ")
+      .trim();
+  const named = (e) => {
+    if (e.getAttribute("aria-label")?.trim()) return true;
+    const by = e.getAttribute("aria-labelledby");
+    if (by && byIds(by)) return true;
+    if (e.labels && [...e.labels].some((l) => shown(l))) return true;
+    if (e.tagName === "INPUT" && ["button", "submit", "reset"].includes(e.type) && e.value) return true;
+    const byContent = ["BUTTON", "A", "SUMMARY"].includes(e.tagName) || /^(button|tab|menuitem|menuitemcheckbox|menuitemradio|option|link|switch|checkbox|radio|treeitem)$/.test(role(e));
+    if (byContent && (shown(e) || [...e.querySelectorAll("img[alt], svg title")].some((i) => (i.alt ?? i.textContent).trim()))) return true;
+    return Boolean(e.getAttribute("title")?.trim() || e.getAttribute("placeholder")?.trim());
+  };
+  const controlRoles = /^(button|tab|menuitem|menuitemcheckbox|menuitemradio|option|switch|checkbox|radio|slider|spinbutton|combobox|textbox|searchbox|link|treeitem)$/;
+  const isControl = (e) =>
+    ["BUTTON", "SELECT", "TEXTAREA", "SUMMARY"].includes(e.tagName) ||
+    (e.tagName === "INPUT" && e.type !== "hidden") ||
+    (e.tagName === "A" && e.hasAttribute("href")) ||
+    controlRoles.test(role(e)) ||
+    (role(e) === "separator" && e.hasAttribute("tabindex"));
+  // What each role cannot do without (WAI-ARIA's required states, and a name for a dialog).
+  const lacks = (e) => {
+    const r = role(e);
+    const has = (a) => e.hasAttribute(a);
+    const native = e.tagName === "INPUT";
+    if (r === "tab") return !has("aria-selected");
+    if (r === "dialog" || r === "alertdialog") return !named(e);
+    if (r === "combobox") return !has("aria-expanded");
+    if (r === "slider" || r === "scrollbar") return !native && !has("aria-valuenow");
+    if (r === "separator") return has("tabindex") && !has("aria-valuenow");
+    if (r === "checkbox" || r === "switch" || r === "radio" || r === "menuitemcheckbox" || r === "menuitemradio") return !native && !has("aria-checked");
+    if (r === "img") return !named(e);
+    // A container role with none of what it holds: a tab list without tabs (buttons there instead), say.
+    const owned = { tablist: '[role="tab"]', menu: '[role^="menuitem"]', listbox: '[role="option"]', tree: '[role="treeitem"]' }[r];
+    if (owned) return e.querySelector(owned) === null;
+    return false;
+  };
+  const describe = (e) => `${e.tagName.toLowerCase()}${e.className && typeof e.className === "string" ? "." + e.className.trim().split(/\s+/).join(".") : ""}${role(e) ? `[role=${role(e)}]` : ""} ${e.outerHTML.slice(0, 100)}`;
+  const unnamed = all.filter((e) => isControl(e) && !named(e));
+  const roles = all.filter(lacks);
+  const tabindex = all.filter((e) => Number(e.getAttribute("tabindex")) > 0);
+  const images = all.filter((e) => e.tagName === "IMG" && !e.hasAttribute("alt"));
+  return {
+    unnamed: unnamed.length,
+    roles: roles.length,
+    tabindex: tabindex.length,
+    images: images.length,
+    found: [...unnamed.map((e) => `no name: ${describe(e)}`), ...roles.map((e) => `role: ${describe(e)}`), ...tabindex.map((e) => `tabindex: ${describe(e)}`), ...images.map((e) => `no alt: ${describe(e)}`)].slice(0, 12),
+  };
+};
+const access = (sel, skip) => page.evaluate(accessCheck, { sel, skip });
+/** Places checked for accessibility only (their styles are not panels'): the frame of the app, menus, the palette. */
+const accessOnly = {};
 
 const panels = {};
 async function open(hash) {
@@ -170,10 +247,29 @@ await sheet("Keyboard", () => page.evaluate(() => window.workbench.run("help.sho
 await sheet("Capture", () => page.evaluate(() => window.workbench.run("view.capture")));
 await sheet("Add dataset", () => page.evaluate(() => window.workbench.run("dataset.add")));
 await sheet("Add collection", () => page.evaluate(() => window.workbench.run("collections.add")));
+await page.evaluate(() => window.workbench.run("help.palette"));
+await page.waitForTimeout(600);
+await page.keyboard.press("ArrowDown");
+accessOnly["Command palette"] = await access(".scrim .sheet");
+await shot("3_sheet_Palette", page.locator(".scrim .sheet"));
+await page.keyboard.press("Escape");
+await page.waitForTimeout(300);
 await page.locator(".topbar button", { hasText: "Share" }).first().click();
 await page.waitForTimeout(400);
+accessOnly["Menu: Share"] = await access(".menu");
 await shot("4_menu_Share");
 await page.keyboard.press("Escape");
+await page.waitForTimeout(300);
+if (await page.locator(".dock-right .dock-picker").count()) {
+  await page.locator(".dock-right .dock-picker").first().click();
+  await page.waitForTimeout(400);
+  accessOnly["Menu: Tools"] = await access(".menu");
+  await shot("4_menu_Tools");
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+}
+// The frame of the app: the top bar, the dock heads and resizers, the status strip (the panels are counted above).
+accessOnly["App frame"] = await access("#app", ".dock-pane, .scrim, .menu");
 
 // Tractograms (S-21-46): the vector tools.
 await open("#example=s2146-mni");
@@ -189,6 +285,11 @@ await toolPanels("EM", "8_em", /segment|atlas|annot|luxar/i);
 await page.setViewportSize({ width: 1280, height: 760 });
 await page.waitForTimeout(800);
 await shot("09_laptop_em");
+// A phone's window: the top bar's labels hidden, its buttons still named.
+await page.setViewportSize({ width: 390, height: 844 });
+await page.waitForTimeout(800);
+accessOnly["App frame (phone)"] = await access("#app", ".dock-pane, .scrim, .menu");
+await shot("09_phone_em");
 await browser.close();
 
 // The measures across every panel and sheet (as in plans/README.md).
@@ -207,6 +308,15 @@ const summary = {
   // two may sit side by side; what is counted is an on/off control made by hand.
   "On/off controls not made with toggle or checkbox": measured.reduce((n, p) => n + (p.handMadeOnOff ?? 0), 0),
 };
+// The accessibility check's counts, over the panels and sheets and the places checked only for it.
+const checked = [...measured.map((p) => p.access), ...Object.values(accessOnly)].filter(Boolean);
+const count = (k) => checked.reduce((n, a) => n + a[k], 0);
+Object.assign(summary, {
+  "Controls without an accessible name": count("unnamed"),
+  "Roles missing required attributes": count("roles"),
+  "Positive tabindex": count("tabindex"),
+  "Images without alt": count("images"),
+});
 
 if (process.env.UI_AUDIT_BASELINE) writeFileSync(baselineFile, JSON.stringify({ summary, panels }, null, 1) + "\n");
 const baseline = existsSync(baselineFile) ? JSON.parse(readFileSync(baselineFile, "utf8")) : undefined;
@@ -225,9 +335,19 @@ const md = [
     .filter(([, p]) => p)
     .map(([k, p]) => row([k, p.words, p.controls, Object.keys(p.fontSizes).length, Object.keys(p.buttons).length, Object.keys(p.inputs).length, Object.keys(p.headings).length, Object.keys(p.radii).length, p.inlineStyled])),
   "",
+  "## Accessibility",
+  "",
+  row(["Place", "Unnamed controls", "Roles lacking attributes", "Positive tabindex", "Images without alt"]),
+  row(Array(5).fill("---")),
+  ...[...Object.entries(panels).map(([k, p]) => [k, p?.access]), ...Object.entries(accessOnly)]
+    .filter(([, a]) => a && a.unnamed + a.roles + a.tabindex + a.images > 0)
+    .map(([k, a]) => row([k, a.unnamed, a.roles, a.tabindex, a.images])),
+  "",
+  ...[...Object.entries(panels).map(([k, p]) => [k, p?.access]), ...Object.entries(accessOnly)].flatMap(([k, a]) => (a?.found.length ? [`- ${k}:`, ...a.found.map((f) => `  - \`${f.replace(/`/g, "'")}\``)] : [])),
+  "",
   `${shots.length} screenshots; ${problems.length} page errors${problems.length ? ": " + problems.slice(0, 5).join("; ") : ""}.`,
 ];
-writeFileSync(`${out}/report.json`, JSON.stringify({ summary, panels, shots, problems }, null, 1));
+writeFileSync(`${out}/report.json`, JSON.stringify({ summary, panels, accessOnly, shots, problems }, null, 1));
 writeFileSync(`${out}/report.md`, md.join("\n") + "\n");
 console.log(md.slice(0, Object.keys(summary).length + 4).join("\n"));
 console.log(`\n${shots.length} screenshots in ${out}; ${problems.length} page errors.`);
