@@ -61,20 +61,20 @@ Item line numbers are from that commit and move as the code changes.
 
 ### Style baseline and targets
 
-| Measure (across all panels and sheets) | Baseline (5c986ab) | Target |
-|---|---|---|
-| Font sizes | 9 | 4 |
-| Button styles (size, height, radius, fill, border) | 22 | 6 or fewer |
-| Input and select styles | 17 | 4 or fewer |
-| Heading styles | 8 | 3 |
-| Corner radii on a square theme | 8 | 0 (pills for status chips only) |
-| Text in the browser's default font (elements) | 63 | 0 |
-| Elements with inline styles | 90 | Only computed geometry |
-| On/off controls not made with the SDK's toggle or checkbox (was: panels mixing switches and checkboxes, 1) | 60 (at 2B) | 0 |
+| Measure (across all panels and sheets) | Baseline (5c986ab) | After Phase 2 | Target |
+|---|---|---|---|
+| Font sizes | 9 | 5 | 4 |
+| Button styles (size, height, radius, fill, border) | 22 | 13 | 6 or fewer |
+| Input and select styles | 17 | 5 | 4 or fewer |
+| Heading styles | 8 | 3 | 3 |
+| Corner radii on a square theme | 8 | 2 (status dots, Google button) | 0 (pills for status chips only) |
+| Text in the browser's default font (elements) | 63 | 0 | 0 |
+| Elements with inline styles | 90 | 0 | Only computed geometry |
+| On/off controls not made with the SDK's toggle or checkbox (was: panels mixing switches and checkboxes, 1) | 60 (at 2B) | 0 | 0 |
 
 ## Batches
 
-188 items (51 done). Phases run in order; within a phase, batches as each file says.
+188 items (133 done). Phases run in order; within a phase, batches as each file says.
 
 | Phase | Batch | Items | Blockers |
 |---|---|---|---|

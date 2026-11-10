@@ -83,31 +83,31 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
 
 **Items:** 13
 
-- [ ] **Major** · S · The muted class used for 9 notes does not exist  
+- [x] **Major** · S · The muted class used for 9 notes does not exist (89244e9)  
   `plugin.ts:561, 1280, 1413`
-- [ ] **Major** · M · Private styles, literal colours, about 30 inline styles; the splat window should be a platform sheet  
+- [x] **Major** · M · Private styles, literal colours, about 30 inline styles; the splat window should be a platform sheet (89244e9)  
   `plugin.ts:166, 594; editor.ts:156; splatview.ts:422`
-- [ ] **Major** · S · Split the long cards: Regions and Quality out of Rendering; Movie and Splat out of Output  
+- [x] **Major** · S · Split the long cards: Regions and Quality out of Rendering; Movie and Splat out of Output (89244e9)  
   `plugin.ts:1297, 1390`
-- [ ] **Major** · S · Wording: the status repeats the GPU and says 'off'; labels carry explanations; three unlabelled checkboxes  
+- [x] **Major** · S · Wording: the status repeats the GPU and says 'off'; labels carry explanations; three unlabelled checkboxes (89244e9)  
   `plugin.ts:1172, 1194, 584, 1207`
-- [ ] **Major** · M · Check the image's axes first (time, channels, 2-D); the L/R/A/P/S/I buttons assume RAS  
+- [x] **Major** · M · Check the image's axes first (time, channels, 2-D); the L/R/A/P/S/I buttons assume RAS (fe57a13)  
   `plugin.ts:341, 1285`
-- [ ] **Major** · S–M · Splats are offered but have never run: mark them experimental until a real run; test the .ply reader  
+- [x] **Major** · S–M · Splats are offered but have never run: mark them experimental until a real run; test the .ply reader (89244e9)  
   `plugin.ts:1096; splatview.ts:60`
-- [ ] **Minor** · S · Dispose leaks: the WebGPU renderer, settle timer, frame bitmaps, old shaders  
+- [x] **Minor** · S · Dispose leaks: the WebGPU renderer, settle timer, frame bitmaps, old shaders (c4a5ac5)  
   `plugin.ts:1453; draw.ts:193, 310`
-- [ ] **Minor** · S · Overlapping connects; preset links from the host go into href unchecked  
+- [x] **Minor** · S · Overlapping connects; preset links from the host go into href unchecked (c4a5ac5)  
   `plugin.ts:303, 441, 1253`
-- [ ] **Minor** · S–M · In-browser mode: brick bounds on the main thread, readiness read from status text, region controls shown though unsupported  
+- [x] **Minor** · S–M · In-browser mode: brick bounds on the main thread, readiness read from status text, region controls shown though unsupported (c4a5ac5)  
   `local.ts:353; plugin.ts:840`
-- [ ] **Minor** · M · Stills have no progress or cancel; keyframes cannot be revisited or reordered; jobs are lost on reload  
+- [x] **Minor** · M · Stills have no progress or cancel; keyframes cannot be revisited or reordered; jobs are lost on reload (213a477)  
   `plugin.ts:919, 952`
-- [ ] **Minor** · S–M · Tests for the session lifecycle, view scheduling and frame parsing; README and docs names  
+- [x] **Minor** · S–M · Tests for the session lifecycle, view scheduling and frame parsing; README and docs names (89244e9, e10e332)  
   `plugin.ts:668; client.ts:259; README.md:42`
-- [ ] **Plan** · S · Splats stay visible, marked In progress (decision 5): a tag on the Splat card and in the docs, until a fit has run end to end  
+- [x] **Plan** · S · Splats stay visible, marked In progress (decision 5): a tag on the Splat card and in the docs, until a fit has run end to end (89244e9)  
   `plugins/anatomical-rendering/plugin.ts (Output); docs/plugins/anatomical-rendering.md`
-- [ ] **Minor** · S · Anatomical rendering: Tests for the session lifecycle (switch computer, reconnect, page close), with a fake context; the page-close request checked in a browser (found in 1C)  
+- [x] **Minor** · S · Anatomical rendering: Tests for the session lifecycle (switch computer, reconnect, page close), with a fake context; the page-close request checked in a browser (found in 1C) (89244e9)  
   `plugin.ts closeSession, connect, pagehide`
 
 ## 2D2 · Panel: Track filtering
@@ -118,17 +118,17 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
 
 **Items:** 6
 
-- [ ] **Major** · L · One long page with private styling: Dataset, Group, Regions, Attributes, Stored groups, Output and Statistics cards  
+- [x] **Major** · L · One long page with private styling: Dataset, Group, Regions, Attributes, Stored groups, Output and Statistics cards (1cfaba4)  
   `plugin.ts:283, 2109`
-- [ ] **Major** · S · Wording: explanations, a shortcut-list empty state, a status that narrates  
+- [x] **Major** · S · Wording: explanations, a shortcut-list empty state, a status that narrates (1cfaba4)  
   `plugin.ts:2182, 2191, 2378, 2404`
-- [ ] **Major** · M · Tags half supported: the runner refuses them; excludeTags has no control  
+- [x] **Major** · M · Tags half supported: the runner refuses them; excludeTags has no control (1cfaba4, f467d1f)  
   `runner_job.ts:120; plugin.ts:2424`
-- [ ] **Major** · M–L · TrackGroups is untested (token races, store lifecycle, .trk header rewrite, density cancel)  
+- [x] **Major** · M–L · TrackGroups is untested (token races, store lifecycle, .trk header rewrite, density cancel) (1cfaba4)  
   `plugins/track-filtering/tests`
-- [ ] **Major** · S · Docs: stale names, Set vs Apply, missing features and files  
+- [x] **Major** · S · Docs: stale names, Set vs Apply, missing features and files (07c22b2)  
   `manifest.ts:16, 26; README`
-- [ ] **Minor** · S–M · CSV export before the exact answer; choosing a group is an undo step, and + Sphere with no group yet makes up to three; non-atomic store save; density maps at a fixed 1 mm  
+- [x] **Minor** · S–M · CSV export before the exact answer; choosing a group is an undo step, and + Sphere with no group yet makes up to three; non-atomic store save; density maps at a fixed 1 mm (1d77aeb, c2e2c63, 1cfaba4)  
   `plugin.ts:758, 1567, 1729, 1950`
 
 ## 2D3 · Panel: Luxar
@@ -139,15 +139,15 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
 
 **Items:** 5
 
-- [ ] **Major** · M · The 2-D slab is in millimetres (0.5–40): every EM mesh crosses every section  
+- [x] **Major** · M · The 2-D slab is in millimetres (0.5–40): every EM mesh crosses every section (671e0ea)  
   `plugin.ts:535; style.ts:48`
-- [ ] **Major** · M · Panel not built from the shared parts: no cards, private CSS with a missing token, a 4 px radius  
+- [x] **Major** · M · Panel not built from the shared parts: no cards, private CSS with a missing token, a 4 px radius (78e7124)  
   `plugin.ts:408, 440, 491, 562`
-- [ ] **Major** · S · Wording: explanatory notes, a 30-word empty state, renamed layer rows, a narrating status  
+- [x] **Major** · S · Wording: explanatory notes, a 30-word empty state, renamed layer rows, a narrating status (78e7124)  
   `plugin.ts:366, 388, 532; layer_view.ts:281`
-- [ ] **Major** · M · Redraws the whole panel on any workspace change and writes state while drawing (an undo step from viewing)  
+- [x] **Major** · M · Redraws the whole panel on any workspace change and writes state while drawing (an undo step from viewing) (78e7124)  
   `plugin.ts:106, 317, 478`
-- [ ] **Minor** · S · The toggle command is hidden for images and meshes; the 2,000-segment cap is silent  
+- [x] **Minor** · S · The toggle command is hidden for images and meshes; the 2,000-segment cap is silent (78e7124)  
   `manifest.ts:40; mesh_layers.ts:40`
 
 ## 2D4 · Panel: Registration
@@ -158,27 +158,27 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
 
 **Items:** 11
 
-- [ ] **Major** · M · Cards are made by scraping h3 text (renaming loses their state): build card()s directly  
+- [x] **Major** · M · Cards are made by scraping h3 text (renaming loses their state): build card()s directly (d3c31a9)  
   `plugin.ts:1134`
-- [ ] **Major** · M · The whole panel rebuilds on any change: typing a value then Tab loses focus  
+- [x] **Major** · M · The whole panel rebuilds on any change: typing a value then Tab loses focus (d3c31a9)  
   `plugin.ts:775, 935, 1013`
-- [ ] **Major** · S · Empty state 'No 3-D layer to move.' sits above a panel of disabled controls  
+- [x] **Major** · S · Empty state 'No 3-D layer to move.' sits above a panel of disabled controls (d3c31a9)  
   `plugin.ts:1017`
-- [ ] **Major** · S · Wording: explanatory notes and announcements  
+- [x] **Major** · S · Wording: explanatory notes and announcements (d3c31a9)  
   `plugin.ts:443, 498, 809, 910, 1044, 1086, 1097`
-- [ ] **Major** · S / L · Only rank-3 layers: document it (or support 2-D sections, channels, time)  
+- [x] **Major** · S / L · Only rank-3 layers: document it (or support 2-D sections, channels, time) (d3c31a9)  
   `plugin.ts:226`
-- [ ] **Major** · S–M · A cubic save can need 8× the source size in memory, beyond the 512 MB cap  
+- [x] **Major** · S–M · A cubic save can need 8× the source size in memory, beyond the 512 MB cap (2b5724c)  
   `volume_io.ts:41, 108; save_worker.ts:171`
-- [ ] **Major** · M · The Registration class is untested (mark, refit, Live, Apply, followers, undo, warp, save)  
+- [x] **Major** · M · The Registration class is untested (mark, refit, Live, Apply, followers, undo, warp, save) (d3c31a9)  
   `plugins/registration/tests`
-- [ ] **Minor** · S · Controls: selects without text-input, private .rg-num, sliders in the selection green, a text ×  
+- [x] **Minor** · S · Controls: selects without text-input, private .rg-num, sliders in the selection green, a text × (d3c31a9)  
   `plugin.ts:766, 1005, 1066, 1173`
-- [ ] **Minor** · S · LTA written without geometry silently; cancel leaves a partial folder; the same file cannot be re-imported  
+- [x] **Minor** · S · LTA written without geometry silently; cancel leaves a partial folder; the same file cannot be re-imported (2b5724c, d3c31a9)  
   `plugin.ts:557, 667, 865`
-- [ ] **Minor** · M · No go-to on a pair row; dragging a landmark is not read back  
+- [x] **Minor** · M · No go-to on a pair row; dragging a landmark is not read back (d3c31a9)  
   `plugin.ts:731`
-- [ ] **Minor** · S · Guide and README omit Straighten, Warp and several import formats  
+- [x] **Minor** · S · Guide and README omit Straighten, Warp and several import formats (3657135)  
   `manifest.ts:16; README`
 
 ## 2D5 · Panel: Filters
@@ -189,19 +189,19 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
 
 **Items:** 7
 
-- [ ] **Major** · M · No cards, private helpers and style; --border is not a token so a literal colour applies  
+- [x] **Major** · M · No cards, private helpers and style; --border is not a token so a literal colour applies (e548517)  
   `filters/plugin.ts:13–34`
-- [ ] **Major** · S · Selects and number boxes lack the shared classes; Remove is text unlike the × elsewhere  
+- [x] **Major** · S · Selects and number boxes lack the shared classes; Remove is text unlike the × elsewhere (e548517)  
   `plugin.ts:194, 225, 271`
-- [ ] **Major** · M · Images it cannot filter (2-D, channels, RGB, time) are offered and fail late  
+- [x] **Major** · M · Images it cannot filter (2-D, channels, RGB, time) are offered and fail late (e548517)  
   `plugin.ts:100`
-- [ ] **Major** · M · Each tuning adds a new layer: edit the selected filtered layer in place  
+- [x] **Major** · M · Each tuning adds a new layer: edit the selected filtered layer in place (e548517)  
   `plugin.ts:153`
-- [ ] **Major** · S · No upper bound on radius or sigma (a typo or a link can ask for a huge halo per chunk)  
+- [x] **Major** · S · No upper bound on radius or sigma (a typo or a link can ask for a huge halo per chunk) (ee5edcf)  
   `plugin.ts:209; pipeline.ts:101`
-- [ ] **Major** · M · plugin.ts is untested  
+- [x] **Major** · M · plugin.ts is untested (e548517)  
   `plugins/filters/tests`
-- [ ] **Minor** · S · DoG and Python output show white; empty state without action; a race in add(); docs say Filters tab  
+- [x] **Minor** · S · DoG and Python output show white; empty state without action; a race in add(); docs say Filters tab (e548517, 372ea63)  
   `plugin.ts:152, 172, 293; filters.md:21`
 
 ## 2D6 · Panel: Orientations
@@ -212,19 +212,19 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
 
 **Items:** 7
 
-- [ ] **Major** · M · The panel rebuilds on every cursor move and glyph read  
+- [x] **Major** · M · The panel rebuilds on every cursor move and glyph read (55fe78a)  
   `plugin.ts:655, 672, 722, 983`
-- [ ] **Major** · S · describe() announces store, kind, levels and glyph counts  
+- [x] **Major** · S · describe() announces store, kind, levels and glyph counts (55fe78a)  
   `plugin.ts:908, 970`
-- [ ] **Major** · S–M · About 17 controls without cards (Image, Glyphs, Views, Voxel)  
+- [x] **Major** · S–M · About 17 controls without cards (Image, Glyphs, Views, Voxel) (55fe78a)  
   `plugin.ts:983`
-- [ ] **Major** · S · Private controls and CSS; format errors retried every 5 s forever  
+- [x] **Major** · S · Private controls and CSS; format errors retried every 5 s forever (55fe78a)  
   `plugin.ts:402, 932, 1112`
-- [ ] **Major** · S–M · A size-1 time axis is refused  
+- [x] **Major** · S–M · A size-1 time axis is refused (d0acf3f)  
   `ome4.ts:54`
-- [ ] **Minor** · S · Empty state without action; unclear names; WebGL context loss; stale docs  
+- [x] **Minor** · S · Empty state without action; unclear names; WebGL context loss; stale docs (a47fdb1, 278c6b6)  
   `plugin.ts:976, 989; overlay.ts:53`
-- [ ] **Minor** · M · The plugin logic and GL code are untested  
+- [x] **Minor** · M · The plugin logic and GL code are untested (55fe78a, a47fdb1)  
   `plugins/orientations/tests`
 
 ## 2D7 · Panel: Time series
@@ -235,15 +235,15 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
 
 **Items:** 5
 
-- [ ] **Major** · M · Controls are rebuilt on every read, closing selects while playing  
+- [x] **Major** · M · Controls are rebuilt on every read, closing selects while playing (7a7f855)  
   `plugin.ts:997, 1110`
-- [ ] **Major** · S · Images it cannot read are left out silently ('No image with a time axis' while one is shown)  
+- [x] **Major** · S · Images it cannot read are left out silently ('No image with a time axis' while one is shown) (7a7f855)  
   `plugin.ts:294, 314`
-- [ ] **Major** · S · Explanatory text and a two-sentence empty state  
+- [x] **Major** · S · Explanatory text and a two-sentence empty state (7a7f855)  
   `plugin.ts:1051, 1136`
-- [ ] **Minor** · S · Hand-drawn transport icons, hand-built controls, a literal cursor colour, no Retry  
+- [x] **Minor** · S · Hand-drawn transport icons, hand-built controls, a literal cursor colour, no Retry (7a7f855)  
   `plugin.ts:34, 187, 1024, 1103`
-- [ ] **Minor** · M · Panel logic untested; docs say bottom dock  
+- [x] **Minor** · M · Panel logic untested; docs say bottom dock (7a7f855, c92c91c)  
   `time-series.md:6`
 
 ## 2D8 · Panel: Atlas
@@ -254,13 +254,13 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
 
 **Items:** 4
 
-- [ ] **Major** · S · Go to has no progress or cancel; repeated clicks start parallel passes  
+- [x] **Major** · S · Go to has no progress or cancel; repeated clicks start parallel passes (55e46f9)  
   `plugin.ts:248; label_client.ts:68`
-- [ ] **Major** · M · No cards; private stylesheet, inline styles and its own button helper  
+- [x] **Major** · M · No cards; private stylesheet, inline styles and its own button helper (55e46f9)  
   `plugin.ts:18, 352, 438`
-- [ ] **Major** · S · Wording: narrating status lines and an instruction; a cancelled count never restarts  
+- [x] **Major** · S · Wording: narrating status lines and an instruction; a cancelled count never restarts (55e46f9)  
   `plugin.ts:215, 351, 434, 468`
-- [ ] **Minor** · S · Unbounded count cache; imports Annotations internals; docs disagree with the UI  
+- [x] **Minor** · S · Unbounded count cache; imports Annotations internals; docs disagree with the UI (55e46f9, 4d82bc4)  
   `plugin.ts:11, 69; manifest.ts:307`
 
 ## 2D9 · Panel: Segmentation
@@ -271,15 +271,15 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
 
 **Items:** 5
 
-- [ ] **Major** · S · Save errors appear only inside the closed Save card  
+- [x] **Major** · S · Save errors appear only inside the closed Save card (aa6b6a3)  
   `editor.ts:1640, 1816; panel.ts:267`
-- [ ] **Major** · S–M · Recent strokes can be lost on close; no persistent storage request  
+- [x] **Major** · S–M · Recent strokes can be lost on close; no persistent storage request (4d3ce21)  
   `session.ts:66, 140, 144`
-- [ ] **Major** · M · Borrows Annotations' private classes; literal colours; errors coloured as warnings  
+- [x] **Major** · M · Borrows Annotations' private classes; literal colours; errors coloured as warnings (aa6b6a3)  
   `style.ts:5, 24, 79; preview.ts:182`
-- [ ] **Major** · S–M · Browser copies pile up unmanaged; Discard without confirm  
+- [x] **Major** · S–M · Browser copies pile up unmanaged; Discard without confirm (4d3ce21, aa6b6a3)  
   `keep.ts; panel.ts:210, 223`
-- [ ] **Major** · S · Wording and docs: narrating status, model and licence paragraph, Save described at the top  
+- [x] **Major** · S · Wording and docs: narrating status, model and licence paragraph, Save described at the top (aa6b6a3, 1dd5e3f)  
   `panel.ts:254, 268, 578; docs`
 
 ## 2D10 · Panel: Annotations
@@ -290,13 +290,13 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
 
 **Items:** 4
 
-- [ ] **Major** · S · Explanations in the panel and empty states without action  
+- [x] **Major** · S · Explanations in the panel and empty states without action (bfdb86a)  
   `annotate_panel.ts:187; measure_panel.ts:177, 194; statistics_panel.ts:224`
-- [ ] **Major** · S · Statistics cannot be cancelled  
+- [x] **Major** · S · Statistics cannot be cancelled (bfdb86a)  
   `statistics_panel.ts:200`
-- [ ] **Minor** · S–M · Controls inconsistent across sections; the colour swatch class is missing; dead CSS  
+- [x] **Minor** · S–M · Controls inconsistent across sections; the colour swatch class is missing; dead CSS (bfdb86a, e131648)  
   `labels.ts:433; style.ts:137, 188; table_panel.ts:337`
-- [ ] **Minor** · S · Drawing completion polled every 250 ms; a disabled button without a reason; stale docs  
+- [x] **Minor** · S · Drawing completion polled every 250 ms; a disabled button without a reason; stale docs (76a2b5a, e90b709)  
   `annotate.ts:227; labels.ts:433`
 
 ## 2D11 · Panel: OME Collections
@@ -307,17 +307,17 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
 
 **Items:** 6
 
-- [ ] **Major** · S · NGFF 0.6 rotation and mapAxis transforms are not composed (members hidden silently)  
+- [x] **Major** · S · NGFF 0.6 rotation and mapAxis transforms are not composed (members hidden silently) (4ea9ebe)  
   `collection.ts:103`
-- [ ] **Major** · S–M · Every member is added as an image, so label images show grey  
+- [x] **Major** · S–M · Every member is added as an image, so label images show grey (4ea9ebe)  
   `plugin.ts:375`
-- [ ] **Major** · S · Notes repeat what the graph shows; private radii, inline styles and a private remove button  
+- [x] **Major** · S · Notes repeat what the graph shows; private radii, inline styles and a private remove button (4ea9ebe)  
   `plugin.ts:119, 614, 770, 992, 1002`
-- [ ] **Major** · M · plugin.ts is untested (follow, generations, fromView, discover)  
+- [x] **Major** · M · plugin.ts is untested (follow, generations, fromView, discover) (4ea9ebe)  
   `plugins/collections/tests`
-- [ ] **Minor** · M · Affine relationships are typed as 12 numbers: a matrix editor  
+- [x] **Minor** · M · Affine relationships are typed as 12 numbers: a matrix editor (4ea9ebe)  
   `plugin.ts:918`
-- [ ] **Minor** · S · download() duplicates downloadBlob; unknown units become mm silently; no timeouts on discovery  
+- [x] **Minor** · S · download() duplicates downloadBlob; unknown units become mm silently; no timeouts on discovery (4ea9ebe, 4ea4516)  
   `plugin.ts:58, 258, 289, 582`
 
 ## 2D12 · Panels: Layers, Settings and the shell
@@ -328,13 +328,13 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
 
 **Items:** 4
 
-- [ ] **Major** · S · Design system: Inline styles: Anatomical 51 elements, Layers 21, Atlas 3. Move to classes  
+- [x] **Major** · S · Design system: Inline styles: Anatomical 51 elements, Layers 21, Atlas 3. Move to classes (691ffbe, b42b9db)  
   `measured; plugin.ts files`
-- [ ] **Major** · S · Core app: Empty states without their action: No data in this scene, No rules, Nothing is served, No jobs, a failed panel without Retry  
+- [x] **Major** · S · Core app: Empty states without their action: No data in this scene, No rules, Nothing is served, No jobs, a failed panel without Retry (4966ae9)  
   `datasets.ts:136; auth.ts:138; runner.ts:304, 494; docks.ts:233`
-- [ ] **Major** · S · Core app: Remaining explanatory notes: local data, plugin URL, Google client ID, Add a computer, Saved with the workspace  
+- [x] **Major** · S · Core app: Remaining explanatory notes: local data, plugin URL, Google client ID, Add a computer, Saved with the workspace (1b32cd8, 4966ae9)  
   `sheets.ts:375, 426; misc.ts:116; auth.ts:646; runner.ts:352`
-- [ ] **Major** · S · Core app: Old tab names in user-facing strings: Add → Local file, Auth tab, Jobs tab  
+- [x] **Major** · S · Core app: Old tab names in user-facing strings: Add → Local file, Auth tab, Jobs tab (dfd6b21)  
   `src/sw.ts:141; engine/google_gcs.ts:84; runner/__main__.py:119`
 
 ## 2E · Docs and screenshots
@@ -345,13 +345,13 @@ Each batch ends with the checks in [README.md](README.md#checks-for-every-batch)
 
 **Items:** 5
 
-- [ ] **Major** · S–M · Core app: Docs and the numbered interface figure predate the new layout (signing-in, data, from-neuroglancer, from-freeview, local-jobs, runner README, STATUS)  
+- [x] **Major** · S–M · Core app: Docs and the numbered interface figure predate the new layout (signing-in, data, from-neuroglancer, from-freeview, local-jobs, runner README, STATUS) (1bc85cc)  
   `docs/guide/*; docs/images/interface-numbered.png`
-- [ ] **Major** · S · All plugins: Docs sweep: 'X tab', 'bottom dock', 'Jobs tab' throughout plugin guides, READMEs and user pages  
+- [x] **Major** · S · All plugins: Docs sweep: 'X tab', 'bottom dock', 'Jobs tab' throughout plugin guides, READMEs and user pages (e0e65c4, 88eb567)  
   `docs/plugins; plugins/*/README.md; manifests`
-- [ ] **Major** · S–M · Zarr Vectors: User doc misses GraphML, Parquet, Arrow, LAS/LAZ, CIFTI and EM meshes; no troubleshooting  
+- [x] **Major** · S–M · Zarr Vectors: User doc misses GraphML, Parquet, Arrow, LAS/LAZ, CIFTI and EM meshes; no troubleshooting (4d22df7)  
   `docs/plugins/zarr-vectors.md`
-- [ ] **Minor** · S · Core app: State the supported browsers (folder access, MP4 and file system access are Chrome and Edge only)  
+- [x] **Minor** · S · Core app: State the supported browsers (folder access, MP4 and file system access are Chrome and Edge only) (1bc85cc)  
   `README, docs`
-- [ ] **Minor** · S · Core app: Junk and internal files: volume.ts.orig, TODO.md; no SDK reference page  
+- [x] **Minor** · S · Core app: Junk and internal files: volume.ts.orig, TODO.md; no SDK reference page (86068ed)  
   `src/virtual/out; docs`
