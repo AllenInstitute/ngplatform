@@ -248,7 +248,7 @@ describe("the Atlas panel", () => {
     await settle();
   };
   const card = (id: string) => host.querySelector(`[data-card=${id}]`) as HTMLDetailsElement;
-  const rows = () => [...host.querySelectorAll(".at-node")] as HTMLElement[];
+  const rows = () => [...host.querySelectorAll("[role=treeitem]")] as HTMLElement[];
   const row = (name: string) => rows().find((r) => dom.text(r.querySelector(".at-name")!) === name)!;
 
   it("says only what is missing, with its action, when there is no segmentation", async () => {
@@ -296,7 +296,7 @@ describe("the Atlas panel", () => {
     world.add("seg", { table: ALLEN });
     await open();
     const before = rows();
-    row("fiber tracts").click();
+    row("fiber tracts").querySelector<HTMLElement>(".at-node")!.click();
     // The same row elements, not new ones.
     expect(rows().every((r, i) => r === before[i])).toBe(true);
     expect(row("fiber tracts").getAttribute("aria-selected")).toBe("true");
@@ -309,6 +309,105 @@ describe("the Atlas panel", () => {
     // Show only makes its values the layer's segments, as one patch.
     dom.find(host, "button", "Show only").click();
     expect(world.raw.viewer.patchState).toHaveBeenCalledTimes(1);
+  });
+
+  it("is a WAI-ARIA tree: items with their level, opened state and selection, children in a group, one item in the tab order", async () => {
+    world.add("seg", { table: ALLEN });
+    await open();
+    const tree = host.querySelector("[role=tree]")!;
+    expect(tree.getAttribute("aria-label")).toBe("Regions");
+    const root = row("root");
+    expect([root.getAttribute("aria-level"), root.getAttribute("aria-expanded"), root.getAttribute("aria-selected")]).toEqual(["1", "true", "false"]);
+    // Its children are in its group, a level down; a leaf has no opened state.
+    const group = root.querySelector("[role=group]")!;
+    expect(group.querySelectorAll("[role=treeitem]")).toHaveLength(3);
+    expect(row("fiber tracts").getAttribute("aria-level")).toBe("2");
+    expect(row("fiber tracts").hasAttribute("aria-expanded")).toBe(false);
+    expect(row("Basic cell groups and regions").getAttribute("aria-expanded")).toBe("false");
+    // Named by its own row, not its children's.
+    expect(root.getAttribute("aria-label")).toBe("root");
+    expect(rows().filter((r) => r.getAttribute("tabindex") === "0")).toEqual([root]);
+  });
+
+  it("moves, opens, closes, jumps and chooses by keyboard, opening a region in place", async () => {
+    world.add("seg", { table: ALLEN });
+    await open();
+    const key = (k: string) => dom.fire(document.activeElement!, "keydown", k);
+    const at = () => dom.text(document.activeElement!.querySelector(".at-name")!);
+    row("root").focus();
+    key("ArrowDown");
+    expect(at()).toBe("Basic cell groups and regions");
+    expect(document.activeElement!.getAttribute("tabindex")).toBe("0");
+    expect(row("root").getAttribute("tabindex")).toBe("-1");
+    // Right opens it, in place: the items already drawn are the same elements.
+    const before = rows();
+    key("ArrowRight");
+    expect(row("Basic cell groups and regions").getAttribute("aria-expanded")).toBe("true");
+    expect(rows()).toHaveLength(before.length + 1);
+    expect(before.every((r) => rows().includes(r))).toBe(true);
+    expect(at()).toBe("Basic cell groups and regions");
+    // Right again goes to its first child; Left back to the parent; Left again closes it.
+    key("ArrowRight");
+    expect(at()).toBe("Cerebrum");
+    expect(row("Cerebrum").getAttribute("aria-level")).toBe("3");
+    key("ArrowLeft");
+    expect(at()).toBe("Basic cell groups and regions");
+    key("ArrowLeft");
+    expect(row("Basic cell groups and regions").getAttribute("aria-expanded")).toBe("false");
+    expect(rows()).toHaveLength(before.length);
+    // Home and End; Up at the top stays.
+    key("End");
+    expect(at()).toBe("ventricular systems");
+    key("Home");
+    expect(at()).toBe("root");
+    key("ArrowUp");
+    expect(at()).toBe("root");
+    // A letter goes to the next region starting with it; letters typed together, to one starting with them all.
+    const clock = vi.spyOn(Date, "now").mockReturnValue(10_000);
+    key("f");
+    expect(at()).toBe("fiber tracts");
+    clock.mockReturnValue(20_000);
+    key("v");
+    expect(at()).toBe("ventricular systems");
+    clock.mockReturnValue(30_000);
+    key("b");
+    key("a");
+    expect(at()).toBe("Basic cell groups and regions");
+    clock.mockReturnValue(40_000);
+    key("v");
+    clock.mockRestore();
+    // Enter chooses, as a click does.
+    key("Enter");
+    expect(row("ventricular systems").getAttribute("aria-selected")).toBe("true");
+    expect(dom.text(card("atlas.region"))).toContain("ventricular systems");
+    // Drawn again (the counts arrive, the tree listing only regions in the image), the focus stays on the same region.
+    key("Home");
+    const old = row("root");
+    counter.counts[0].answer.resolve(countedOf(counter.counts[0].store));
+    await settle();
+    expect(row("root")).not.toBe(old);
+    expect(document.activeElement).toBe(row("root"));
+  });
+
+  it("shows every segment with Show all, listed, so the 3-D view draws their meshes", async () => {
+    world.add("seg", { table: ALLEN });
+    world.ng.layers.push({ name: "seg", type: "segmentation" });
+    await open();
+    row("fiber tracts").querySelector<HTMLElement>(".at-node")!.click();
+    dom.find(host, "button", "Show only").click();
+    const spec = () => world.ng.layers[0] as { segments?: string[]; visible?: boolean };
+    expect(spec().segments).toEqual(["1009"]);
+    // A label in the image but not in the table is shown too.
+    const counted = countedOf(counter.counts[0].store);
+    counted.labels.set(5000n, counted.labels.get(320n)!);
+    counter.counts[0].answer.resolve(counted);
+    await settle();
+    dom.find(host, "button", "Show all").click();
+    // Not an empty list (every segment in the slices, no mesh in 3-D): every value of the table and the image.
+    const shown = spec().segments!;
+    expect(shown).toHaveLength(23);
+    expect(shown).toEqual(expect.arrayContaining(["997", "320", "943", "382", "1009", "73", "5000"]));
+    expect(spec().visible).toBe(true);
   });
 
   it("uses the SDK's checkbox and no inline styles outside the tree's rows", async () => {
@@ -339,7 +438,7 @@ describe("the Atlas panel", () => {
     await settle();
     expect(dom.text(card("atlas.volumes"))).toContain("Could not count the voxels: no array Retry");
     // Go to needs the counts: it counts again.
-    row("root").click();
+    row("root").querySelector<HTMLElement>(".at-node")!.click();
     dom.find(card("atlas.region"), "button", "Go to").click();
     await settle();
     expect(counter.counts).toHaveLength(3);
@@ -351,7 +450,7 @@ describe("the Atlas panel", () => {
     await open();
     counter.counts[0].answer.resolve(countedOf(counter.counts[0].store));
     await settle();
-    row("root").click();
+    row("root").querySelector<HTMLElement>(".at-node")!.click();
     const region = card("atlas.region");
     // Hidden until a Go to is under way.
     const cancel = [...region.querySelectorAll("button")].find((b) => b.textContent === "Cancel")!;
@@ -484,7 +583,7 @@ describe("the Atlas panel", () => {
       expect(card("atlas.volumes").querySelector<HTMLElement>(".status-line")!.hidden).toBe(true);
       expect(dom.text(card("atlas.volumes"))).toContain("(level 2)");
       expect(dom.text(card("atlas.volumes"))).toMatch(/regions of the table not seen at level 2/);
-      row("root").click();
+      row("root").querySelector<HTMLElement>(".at-node")!.click();
       expect(dom.text(card("atlas.region"))).toContain("voxels, with its descendants");
       dom.find(card("atlas.volumes"), "button", "Count at full resolution").click();
       await settle();

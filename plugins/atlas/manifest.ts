@@ -23,12 +23,12 @@ export const ATLAS_MANIFEST: Manifest = {
 
 ## Regions
 - **Under the cursor** names the region the pointer is over, with its path in the tree ("Isocortex › Somatomotor areas › Primary motor area").
-- The tree: the Allen ontology's hierarchy, with acronyms; FreeSurfer's labels grouped (cerebral cortex, cerebral white matter, subcortical grey matter, cerebellum, brain stem, ventricles and CSF, other), each by hemisphere; Schaefer's parcellations by hemisphere, then network; other tables as a flat list. The caret opens a region.
+- The tree: the Allen ontology's hierarchy, with acronyms; FreeSurfer's labels grouped (cerebral cortex, cerebral white matter, subcortical grey matter, cerebellum, brain stem, ventricles and CSF, other), each by hemisphere; Schaefer's parcellations by hemisphere, then network; other tables as a flat list. The caret opens a region. By keyboard: Up and Down move, Right and Left open and close, a letter jumps, Enter chooses.
 - **Search** filters the tree by name, acronym or value. **Only regions in the image** hides regions with no voxels in the label image.
 
 ## Region
 Click a region in the tree to choose it:
-- **Show only**: it and all its descendants become the layer's visible segments; **Add to shown** adds them to those shown; **Show all** shows every segment again.
+- **Show only**: it and all its descendants become the layer's visible segments; **Add to shown** adds them to those shown; **Show all** shows every segment again, meshes in 3-D too.
 - **Go to**: moves to the region's voxel nearest its centre, with its progress and **Cancel**; a new Go to stops the last.
 - Double-click a region: Show only and Go to.
 

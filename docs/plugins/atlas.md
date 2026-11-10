@@ -31,7 +31,11 @@ in the hierarchy, and read each region's volume.
      counts come from a coarser level than the finest, a line under the
      tree says how many regions were not seen there: they may be smaller
      than a voxel at that level, not absent.
-   - The tree; the caret beside a region opens it.
+   - The tree; the caret beside a region opens it. By keyboard, Tab
+     reaches the tree; Up and Down move, Right opens a region or goes to
+     its first child, Left closes it or goes to its parent, Home and End
+     go to the first and last, typing a letter goes to the next region
+     starting with it, and Enter chooses.
      - **Allen CCF**: the ontology's hierarchy (Basic cell groups and
        regions › Cerebrum › Cerebral cortex › … › Isocortex › Somatomotor
        areas › Primary motor area › Layer 1), with acronyms.
@@ -46,7 +50,8 @@ in the hierarchy, and read each region's volume.
    and volume, and:
    - **Show only**: the region and everything under it become the layer's
      visible segments; **Add to shown** adds them to those shown; **Show
-     all** shows every segment again.
+     all** lists every segment again (the table's and the image's), so
+     the 3-D view draws all their meshes.
    - **Go to**: moves the views to the region's voxel nearest its centre.
      It shows its progress, with **Cancel**; clicking Go to again stops the
      one under way and starts anew.

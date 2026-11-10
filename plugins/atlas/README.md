@@ -42,7 +42,9 @@ graph loaded from a file keeps its tree when the link is opened.
 
 **Show only** sets the layer's `segments` to the region's values (as one
 undo step, kept in the link); **Add to shown** adds them to those listed; **Show
-all** removes the list. **Go to** moves to the region's voxel nearest its
+all** lists every value of the table and every label counted: an empty
+list would show every segment in the slices but no mesh in 3-D, which
+draws only the segments listed. **Go to** moves to the region's voxel nearest its
 centre (the centre of a region on both sides is on the midline, outside
 it): the mean position of its voxels from the counts, then a second pass
 over the chunks within the region's bounding box for the nearest voxel of
@@ -53,6 +55,21 @@ its pass). Voxels are placed through the layer's transform with
 another plugin the panel still uses (the SDK has no placement of a voxel
 grid in the global space); the store a layer reads comes from the volume
 view's `sources.ts`, whose reader the worker uses.
+
+## The tree by keyboard
+
+The tree follows the WAI-ARIA tree pattern: `role="tree"`, each region a
+`treeitem` with `aria-level`, `aria-expanded` (when it has children) and
+`aria-selected` (the region chosen), named by its own row, and an open
+region's children in a `group` inside it. One item is in the tab order
+at a time (a roving tabindex: the last focused, else the region chosen,
+else the first). Up and Down move; Right opens or goes to the first
+child, Left closes or goes to the parent; Home and End; Enter or Space
+chooses; letters typed together (within 0.7 s) go to the next region
+whose name starts with them. Opening or closing a region adds or takes
+away its children's items in place; the tree is drawn again only when
+what it lists changes (the atlas, the counts, the search, Only regions in
+the image), and the focused region keeps the focus.
 
 ## Counting
 
@@ -89,7 +106,9 @@ table. `tests/labels.test.ts`: counting and the nearest voxel on a small
 volume, chunk by chunk in another array order, and through the reader on a
 NIfTI (ids past 2^24) and a precomputed uint64 segmentation.
 `tests/panel.test.ts`: the panel against a fake context and counter: the
-empty state and its action, the table chosen and its tree, the count's
+empty state and its action, the table chosen and its tree, the tree's
+ARIA roles and attributes, its keys and a region opened in place, Show
+all listing every segment, the count's
 progress, a cancelled count started again, the counts kept, the row
 chosen marked in place, Go to's progress, Cancel and a new Go to stopping
 the last, and the region under the cursor.

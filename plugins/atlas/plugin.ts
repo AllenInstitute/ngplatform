@@ -26,10 +26,12 @@ const STYLE = `
 .at-cursor { min-height: calc(2 * var(--ctl-h)); border: 1px solid var(--line); padding: var(--sp-3) var(--sp-4); display: grid; gap: var(--sp-1); align-content: start; }
 .at-tree { max-height: 48vh; overflow: auto; border: 1px solid var(--line); padding: var(--sp-1) 0; }
 .at-tree > .empty { padding: var(--sp-3) var(--sp-4); }
+.at-item { outline: none; }
+.at-item:focus-visible > .at-node { outline: 2px solid var(--accent); outline-offset: -2px; }
 .at-node { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-1) var(--sp-3) var(--sp-1) 0; cursor: pointer; white-space: nowrap; }
 .at-node:hover { background: var(--hover); }
-.at-node[aria-selected="true"] { background: var(--select-soft); }
-.at-node.at-match .at-name { font-weight: 600; }
+.at-item[aria-selected="true"] > .at-node { background: var(--select-soft); }
+.at-item.at-match > .at-node .at-name { font-weight: 600; }
 .at-caret { width: 12px; flex: none; text-align: center; color: var(--faint); font-size: var(--fs-caption); }
 .at-swatch { width: 10px; height: 10px; flex: none; border: 1px solid var(--swatch-line); }
 .at-swatch.at-none { visibility: hidden; }
@@ -41,7 +43,8 @@ const STYLE = `
 
 const REGION_INFO =
   "Show only: the region and everything under it become the layer's visible segments. Add to shown adds them to those shown; Show all shows every segment again. " +
-  "Go to moves the views to the region's voxel nearest its centre. Double-click a region in the tree to show only it and go to it.";
+  "Go to moves the views to the region's voxel nearest its centre. Double-click a region in the tree to show only it and go to it. " +
+  "In the tree, the arrow keys move and open regions, Home and End go to the first and last, a letter to the next region starting with it, and Enter chooses.";
 
 const VOLUMES_INFO =
   "The label image is counted in the background: first at its finest level of at most 64 million voxels, then, when regions of the table are not seen there, at a finer level that can be read in about a minute. " +
@@ -135,6 +138,10 @@ export class AtlasPanel {
   private catalogue: LookupTableInfo[];
   /** Bumped when what the tree lists may change: the atlas, the counts, the regions opened. */
   private treeGeneration = 0;
+  /** The region whose item is in the tree's tab order (a roving tabindex). */
+  private focused: Region | undefined;
+  /** What has been typed to jump to a region, and when. */
+  private typed = { text: "", at: 0 };
   private parts?: ReturnType<AtlasPanel["build"]>;
 
   constructor(
@@ -390,11 +397,22 @@ export class AtlasPanel {
     });
   }
 
-  private showAll(): void {
+  /**
+   * Shows every segment: the table's values and those counted in the image,
+   * listed.  An empty list would show them all in the slices but no mesh in
+   * the 3-D view, which draws only the segments listed.
+   */
+  showAll(): void {
     const layer = this.layer;
+    const values = new Set<string>();
+    for (const r of this.atlas?.all() ?? []) if (r.value !== undefined && r.value !== 0n) values.add(String(r.value));
+    for (const v of this.counted?.labels.keys() ?? []) if (v !== 0n) values.add(String(v));
     this.ctx.viewer.patchState((ng) => {
       const spec = ((ng.layers as Record<string, unknown>[] | undefined) ?? []).find((l) => l.name === layer);
-      if (spec !== undefined) delete spec.segments;
+      if (spec === undefined) return;
+      if (values.size === 0) delete spec.segments;
+      else spec.segments = [...values];
+      spec.visible = true;
     });
   }
 
@@ -493,6 +511,7 @@ export class AtlasPanel {
       this.drawTree();
     });
     const tree = el("div", { class: "at-tree", role: "tree", "aria-label": "Regions" });
+    tree.addEventListener("keydown", (e) => this.onTreeKey(e));
     // The region under the cursor, the search and the tree: shown once the layer has an atlas.
     const browse = el("div", { class: "stack" }, field("Under the cursor", cursor), field("Search", search), only, tree);
     const regionsBadge = el("span");
@@ -537,7 +556,7 @@ export class AtlasPanel {
       region: card("atlas.region", "Region", { open: true, info: REGION_INFO }, noChoice, chosen),
       volumes: card("atlas.volumes", "Volumes", { info: VOLUMES_INFO }, el("div", { class: "row" }, countStatus, cancelCount), el("div", { class: "row" }, grid, el("span", { class: "spacer" }), saveCsv), unseenRow),
     };
-    return { empty, layer, own, table, kind, tableStatus, cursor, noTable, browse, search, only, tree, regionsBadge, noChoice, chosen, chosenName, chosenPath, chosenVolume, goButton, cancelGo, goStatus, grid, saveCsv, countStatus, cancelCount, unseenRow, unseenText, fullCount, cards, rows: new Map<Region, HTMLElement>(), treeKey: "", layersKey: undefined as string | undefined };
+    return { empty, layer, own, table, kind, tableStatus, cursor, noTable, browse, search, only, tree, regionsBadge, noChoice, chosen, chosenName, chosenPath, chosenVolume, goButton, cancelGo, goStatus, grid, saveCsv, countStatus, cancelCount, unseenRow, unseenText, fullCount, cards, rows: new Map<Region, HTMLElement>(), items: new Map<HTMLElement, Region>(), treeKey: "", layersKey: undefined as string | undefined };
   }
 
   render(host: HTMLElement): () => void {
@@ -618,7 +637,11 @@ export class AtlasPanel {
     }
   }
 
-  /** The tree: drawn again only when what it lists changes; choosing a region marks its row in place. */
+  /**
+   * The tree: drawn again only when what it lists changes (the atlas, the
+   * counts, the search), not when a region is chosen (its item is marked in
+   * place) or opened (its children are added under it).
+   */
   private drawTree(): void {
     const p = this.parts;
     if (p === undefined) return;
@@ -626,67 +649,211 @@ export class AtlasPanel {
     const key = `${this.treeGeneration}|${this.onlyPresent}|${this.query}`;
     if (atlas !== undefined && key !== p.treeKey) {
       p.treeKey = key;
-      this.listRegions(atlas, p.tree, p.rows);
+      this.listRegions(atlas, p.tree);
     }
-    for (const [r, row] of p.rows) row.setAttribute("aria-selected", String(r === this.chosen));
+    for (const [r, item] of p.rows) item.setAttribute("aria-selected", String(r === this.chosen));
+    this.rove();
   }
 
-  private listRegions(atlas: Atlas, tree: HTMLElement, rows: Map<Region, HTMLElement>): void {
-    const scroll = tree.scrollTop;
-    rows.clear();
+  /** What the tree lists of `r`'s children, and whether `r` is open, for the counts and search in force. */
+  private shape(atlas: Atlas): { children(r: Region): Region[]; open(r: Region): boolean; listed(r: Region): boolean; matches: Set<Region> } {
     const totals = this.onlyPresent ? this.totals : undefined;
     const searching = this.query.trim() !== "";
     const { matches, shown } = atlas.search(this.query);
-    const volume = this.counted?.voxelVolume;
-    const visit = (r: Region, depth: number) => {
-      if (totals !== undefined && !totals.has(r)) return;
-      if (searching && !shown.has(r)) return;
-      const children = totals === undefined ? r.children : r.children.filter((c) => totals.has(c));
-      const open = searching ? r.children.some((c) => shown.has(c)) : this.expanded.has(r.key);
-      const n = this.totals?.get(r);
-      const caret = el("span", { class: "at-caret" }, children.length === 0 ? "" : open ? "▾" : "▸");
-      const row = el(
-        "div",
-        {
-          class: `at-node${matches.has(r) ? " at-match" : ""}`,
-          role: "treeitem",
-          "aria-level": depth + 1,
-          "aria-expanded": children.length === 0 ? undefined : String(open),
-          // The indent is the row's depth; the swatch the region's own colour.
-          style: `padding-left: ${4 + depth * 10}px`,
-          title: atlas.pathText(r),
-        },
-        caret,
-        el("span", r.colour ? { class: "at-swatch", style: `background: rgb(${r.colour.join(",")})` } : { class: "at-swatch at-none" }),
-        el("span", { class: "at-name" }, r.name),
-        r.acronym ? el("span", { class: "at-acronym" }, r.acronym) : null,
-        n !== undefined && volume !== undefined ? el("span", { class: "at-volume" }, physicalText(n * volume, 3)) : null,
-      );
-      if (children.length > 0 && !searching) {
-        caret.addEventListener("click", (e) => {
-          e.stopPropagation();
-          if (open) this.expanded.delete(r.key);
-          else this.expanded.add(r.key);
-          this.treeGeneration++;
-          this.drawTree();
-        });
-      }
-      row.addEventListener("click", () => this.pick(r));
-      row.addEventListener("dblclick", () => {
-        this.show(r, "only");
-        void this.goTo(r);
-      });
-      rows.set(r, row);
-      tree.append(row);
-      if (open) for (const c of children) visit(c, depth + 1);
+    const listed = (r: Region) => (totals === undefined || totals.has(r)) && (!searching || shown.has(r));
+    return {
+      matches,
+      listed,
+      children: (r) => r.children.filter((c) => totals === undefined || totals.has(c)),
+      open: (r) => (searching ? r.children.some((c) => shown.has(c)) : this.expanded.has(r.key)),
     };
+  }
+
+  private listRegions(atlas: Atlas, tree: HTMLElement): void {
+    const p = this.parts!;
+    const scroll = tree.scrollTop;
+    // The tree had the focus: the same region's item takes it back once drawn.
+    const had = tree.contains(document.activeElement);
+    p.rows.clear();
+    p.items.clear();
+    const shape = this.shape(atlas);
     tree.replaceChildren();
-    for (const r of atlas.roots) visit(r, 0);
+    for (const r of atlas.roots) if (shape.listed(r)) tree.append(this.item(atlas, r, 0, shape));
+    const totals = this.onlyPresent ? this.totals : undefined;
     const unseen = totals === undefined ? 0 : this.unseen();
-    if (rows.size === 0) tree.append(el("p", { class: "empty" }, searching ? "No region matches." : unseen > 0 ? "No regions seen at this level." : "No regions in the image."));
+    if (p.rows.size === 0) tree.append(el("p", { class: "empty" }, this.query.trim() !== "" ? "No region matches." : unseen > 0 ? "No regions seen at this level." : "No regions in the image."));
     // A coarse count may miss small regions: they are said to be unseen, not absent.
     if (unseen > 0 && this.counted) tree.append(el("p", { class: "hint at-unseen" }, `${unseen.toLocaleString()} more not seen at level ${this.counted.level}; they may be smaller than a voxel there.`));
     tree.scrollTop = scroll;
+    if (had) this.rove()?.focus();
+  }
+
+  /** A region's item in the tree: its row, and its children's items in a group when it is open. */
+  private item(atlas: Atlas, r: Region, depth: number, shape: ReturnType<AtlasPanel["shape"]>): HTMLElement {
+    const p = this.parts!;
+    const children = shape.children(r).filter(shape.listed);
+    const open = children.length > 0 && shape.open(r);
+    const n = this.totals?.get(r);
+    const volume = this.counted?.voxelVolume;
+    const size = n !== undefined && volume !== undefined ? physicalText(n * volume, 3) : undefined;
+    const caret = el("span", { class: "at-caret", "aria-hidden": "true" }, children.length === 0 ? "" : open ? "▾" : "▸");
+    const row = el(
+      "div",
+      {
+        class: "at-node",
+        // The indent is the row's depth; the swatch the region's own colour.
+        style: `padding-left: ${4 + depth * 10}px`,
+        title: atlas.pathText(r),
+      },
+      caret,
+      el("span", r.colour ? { class: "at-swatch", style: `background: rgb(${r.colour.join(",")})` } : { class: "at-swatch at-none" }),
+      el("span", { class: "at-name" }, r.name),
+      r.acronym ? el("span", { class: "at-acronym" }, r.acronym) : null,
+      size ? el("span", { class: "at-volume" }, size) : null,
+    );
+    const item = el(
+      "div",
+      {
+        class: `at-item${shape.matches.has(r) ? " at-match" : ""}`,
+        role: "treeitem",
+        tabindex: -1,
+        "aria-level": depth + 1,
+        "aria-expanded": children.length === 0 ? undefined : String(open),
+        "aria-selected": String(r === this.chosen),
+        // Its own name, not its children's.
+        "aria-label": [r.name, r.acronym, size].filter(Boolean).join(", "),
+      },
+      row,
+    );
+    if (children.length > 0) caret.addEventListener("click", (e) => (e.stopPropagation(), this.toggle(r, !this.isOpen(r))));
+    row.addEventListener("click", () => this.pick(r));
+    row.addEventListener("dblclick", () => {
+      this.show(r, "only");
+      void this.goTo(r);
+    });
+    p.rows.set(r, item);
+    p.items.set(item, r);
+    if (open) item.append(this.group(atlas, children, depth + 1, shape));
+    return item;
+  }
+
+  private group(atlas: Atlas, children: Region[], depth: number, shape: ReturnType<AtlasPanel["shape"]>): HTMLElement {
+    return el("div", { role: "group" }, ...children.map((c) => this.item(atlas, c, depth, shape)));
+  }
+
+  private isOpen(r: Region): boolean {
+    return this.parts?.rows.get(r)?.getAttribute("aria-expanded") === "true";
+  }
+
+  /** Opens or closes a region in place: its children's items added under it, or taken away. */
+  private toggle(r: Region, open: boolean): void {
+    const p = this.parts;
+    const atlas = this.atlas;
+    const item = p?.rows.get(r);
+    if (p === undefined || atlas === undefined || item === undefined || item.getAttribute("aria-expanded") === null) return;
+    // While searching, what is open follows the search.
+    if (this.query.trim() !== "" || this.isOpen(r) === open) return;
+    if (open) this.expanded.add(r.key);
+    else this.expanded.delete(r.key);
+    const shape = this.shape(atlas);
+    const group = item.querySelector("[role=group]");
+    if (open) item.append(this.group(atlas, shape.children(r).filter(shape.listed), Number(item.getAttribute("aria-level")), shape));
+    else if (group !== null) {
+      const had = group.contains(document.activeElement);
+      for (const sub of group.querySelectorAll("[role=treeitem]")) {
+        const gone = p.items.get(sub as HTMLElement);
+        p.items.delete(sub as HTMLElement);
+        if (gone !== undefined) p.rows.delete(gone);
+        if (gone === this.focused) this.focused = r;
+      }
+      group.remove();
+      if (had) item.focus();
+    }
+    item.setAttribute("aria-expanded", String(open));
+    item.querySelector(".at-caret")!.textContent = open ? "▾" : "▸";
+    this.rove();
+  }
+
+  /** Puts one item in the tab order: the one last focused, else the region chosen, else the first; returns it. */
+  private rove(): HTMLElement | undefined {
+    const p = this.parts;
+    if (p === undefined) return undefined;
+    const first = this.visible()[0];
+    const target = (this.focused && p.rows.get(this.focused)) ?? (this.chosen && p.rows.get(this.chosen)) ?? first;
+    for (const item of p.rows.values()) item.setAttribute("tabindex", item === target ? "0" : "-1");
+    return target;
+  }
+
+  /** The items shown, top to bottom. */
+  private visible(): HTMLElement[] {
+    return (this.parts?.tree.querySelectorAll("[role=treeitem]") ?? []) as unknown as HTMLElement[];
+  }
+
+  private focusOn(item: HTMLElement | undefined): void {
+    const r = item && this.parts?.items.get(item);
+    if (item === undefined || r === undefined) return;
+    this.focused = r;
+    this.rove();
+    item.focus();
+    (item as Partial<HTMLElement>).scrollIntoView?.({ block: "nearest" });
+  }
+
+  /**
+   * The tree's keys, after the WAI-ARIA tree pattern: Up and Down move,
+   * Right opens a region or goes to its first child, Left closes it or goes
+   * to its parent, Home and End go to the first and last, Enter or Space
+   * chooses, and a letter goes to the next region whose name starts with
+   * what has been typed.
+   */
+  private onTreeKey(e: KeyboardEvent): void {
+    const p = this.parts;
+    const item = e.target as HTMLElement;
+    const r = p?.items.get(item);
+    if (p === undefined || r === undefined) return;
+    const list = [...this.visible()];
+    const i = list.indexOf(item);
+    let to: HTMLElement | undefined;
+    switch (e.key) {
+      case "ArrowDown":
+        to = list[i + 1];
+        break;
+      case "ArrowUp":
+        to = list[i - 1];
+        break;
+      case "Home":
+        to = list[0];
+        break;
+      case "End":
+        to = list[list.length - 1];
+        break;
+      case "ArrowRight":
+        if (item.getAttribute("aria-expanded") === "false") this.toggle(r, true);
+        else if (item.getAttribute("aria-expanded") === "true") to = item.querySelector<HTMLElement>("[role=treeitem]") ?? undefined;
+        else return;
+        break;
+      case "ArrowLeft":
+        if (item.getAttribute("aria-expanded") === "true" && this.query.trim() === "") this.toggle(r, false);
+        else if ((to = r.parent && p.rows.get(r.parent)) === undefined) return;
+        break;
+      case "Enter":
+      case " ":
+        this.focused = r;
+        this.pick(r);
+        break;
+      default: {
+        if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey || !/\S/.test(e.key)) return;
+        const now = Date.now();
+        this.typed = { text: now - this.typed.at < 700 ? this.typed.text + e.key.toLowerCase() : e.key.toLowerCase(), at: now };
+        const name = (x: HTMLElement) => p.items.get(x)!.name.toLowerCase();
+        // The next region starting with what was typed, from this one when adding to it, else from the one after.
+        const from = this.typed.text.length > 1 ? i : i + 1;
+        const order = [...list.slice(from), ...list.slice(0, from)];
+        to = order.find((x) => name(x).startsWith(this.typed.text));
+        if (to === undefined) return;
+      }
+    }
+    e.preventDefault();
+    if (to !== undefined) this.focusOn(to);
   }
 
   /** Chooses a region: its row marked, the Region card set. */
