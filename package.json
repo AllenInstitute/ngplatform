@@ -28,12 +28,15 @@
     "zarrita": "0.7.5"
   },
   "devDependencies": {
-    "@types/node": "^22.18.0",
-    "@vitest/web-worker": "^3.2.7",
+    "@eslint/js": "9.39.1",
+    "@types/node": "22.20.5",
+    "@vitest/web-worker": "3.2.7",
+    "eslint": "9.39.1",
     "jsdom": "27.1.0",
-    "typescript": "~5.8.3",
-    "vite": "^6.4.1",
-    "vitest": "^3.2.4"
+    "typescript": "5.8.3",
+    "typescript-eslint": "8.46.3",
+    "vite": "6.4.5",
+    "vitest": "3.2.7"
   },
   "neuroglancer": {
     "//": "The Neuroglancer commit the app is built against (file:../neuroglancer): scripts/neuroglancer_pin.mjs checks the sibling checkout against it; CI's FORK_SHA names the same commit.",
