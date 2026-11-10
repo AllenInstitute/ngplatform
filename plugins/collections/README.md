@@ -22,9 +22,10 @@ edited here.
 |---|---|
 | `manifest.ts` | The Collection panel, the collection scene kind with its Add collection tab, the `collections.add` command and the state slice (per scene: the collection's URL, its document once made or edited here, and the system it is viewed in) |
 | `plugin.ts` | The Add collection sheet, the panel (drawn once and updated in place: the systems graph, members, systems and transforms with their editing and the affine's 3 × 4 grid, which members are warped or hidden and why) and a collection tab's layers and placements; every read of metadata has a deadline (`READ_TIMEOUT`, 15 s) |
+| `graph_view.ts` | The graph's layout (`layoutGraph`): a group per coordinate system, its members in rows of two below it, each member's box naming its transform, members joined to no system last; a group of more than `SHOWN` (12) folded behind "+N more"; transforms between systems as arcs in a gutter. `nextBox` moves the keyboard's focus between boxes (pure, unit-tested) |
 | `collection.ts` | The model: reading the tree, building one (from a scene's images, edits, a 4 × 4 written as the simplest transform), resolving paths, members, transforms as 4 × 4 on x, y, z, a member placed in any system by the chain of transforms (inverted where walked backwards), chains through a displacement field and the warp that shows them, the groups above an image to look in (pure, unit-tested) |
 | `examples/srb_gallery.json` | A small collection: the SRB 2026a template as is, moved and mirrored |
-| `tests/` | The model (`collection.test.ts`, each transform kind among it) and the class and panel against a fake context and fetch (`plugin.test.ts`); `npm test` runs them |
+| `tests/` | The model (`collection.test.ts`, each transform kind among it), the graph's layout with a hundred members and its keyboard moves (`graph_view.test.ts`), and the class and panel against a fake context and fetch (`plugin.test.ts`, the graph by keyboard among it); `npm test` runs them |
 
 The RFC is a draft and has no implementations yet; this follows its text of
 October 2026 and reads what it can: identity, scale, translation,

@@ -35,11 +35,19 @@ close a tab like any scene.
 
 ## A collection's tab
 
-- **Graph**: the collection's images (left) and its coordinate systems
-  (right), each transform an arrow. Click a system (or **View in it**) to
-  view the images in it: each is placed by the chain of transforms leading
-  to it (a transform walked backwards is inverted); an image with no chain
-  to it is hidden, and says why under **Members**.
+- **Graph**: a group per coordinate system, its images below it, each
+  image's box naming the transform that joins it (images joined to no
+  system come last). A system's box names its transforms to other systems,
+  drawn as arrows on the right. A group of more than 12 images shows the
+  first 11 and **+N more**, which opens it (**Members** lists every one).
+  Click a system (or **View in it**) to view the images in it: each is
+  placed by the chain of transforms leading to it (a transform walked
+  backwards is inverted); an image with no chain to it is hidden, and says
+  why under **Members**. Click an image to select its layer.
+  By keyboard, Tab reaches the graph; the arrow keys move between boxes,
+  Home and End to the first and last, and Enter or Space does what a click
+  does. A screen reader names each box, e.g. "member brain.ome.zarr, in
+  system MNI, translation".
 - **Members**: the tree (each node's type, name and where it is). Add a
   member, one of the workspace's OME-Zarr datasets or an address; it stays
   hidden until a relationship places it. Remove one with its × button, and

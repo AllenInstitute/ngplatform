@@ -43,6 +43,7 @@ import {
   zarrGroupUrl,
 } from "./collection.js";
 import example from "./examples/srb_gallery.json";
+import { GRAPH, type GraphBox, layoutGraph, looseHeading, nextBox } from "./graph_view.js";
 import { ADD_COLLECTION, COLLECTION_KIND, COLLECTIONS_PANEL } from "./manifest.js";
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -175,16 +176,19 @@ const STYLE = `
 .cl-kind { font: var(--fs-caption) var(--mono); color: var(--muted); }
 .cl-value { font: var(--fs-caption) var(--mono); overflow-wrap: anywhere; }
 .cl-graph { width: 100%; height: auto; display: block; }
-.cl-graph .cl-sys { cursor: pointer; }
+.cl-graph .cl-node { cursor: pointer; outline: none; }
 .cl-graph .cl-sys rect { fill: var(--ink-3); stroke: var(--line-strong); }
 .cl-graph .cl-sys.on rect { stroke: var(--select); stroke-width: 2; }
-.cl-graph .cl-sys:hover rect { fill: var(--ink-4); }
-.cl-graph .cl-mem rect { fill: var(--ink-2); stroke: var(--line); }
+.cl-graph .cl-node:hover rect { fill: var(--ink-4); }
+.cl-graph .cl-mem rect, .cl-graph .cl-more rect { fill: var(--ink-2); stroke: var(--line); }
+.cl-graph .cl-more rect { stroke-dasharray: 2 2; }
 .cl-graph .cl-mem.warped rect { stroke: var(--select); stroke-dasharray: 4 2; }
 .cl-graph .cl-mem.hidden text { fill: var(--faint); }
+.cl-graph .cl-node:focus-visible rect { stroke: var(--accent); stroke-width: 2; }
 .cl-graph text { fill: var(--text); font-family: var(--ui); font-size: var(--fs-caption); }
+.cl-graph text.cl-how { fill: var(--faint); font-family: var(--mono); }
 .cl-graph .cl-edge { stroke: var(--muted); fill: none; }
-.cl-graph .cl-edge-label { fill: var(--faint); font-family: var(--mono); font-size: var(--fs-caption); }
+.cl-graph .cl-spine { stroke: var(--line-strong); fill: none; }
 .cl-tag { margin-left: var(--sp-3); padding: 0 var(--sp-2); border: 1px dashed var(--select); font: var(--fs-caption) var(--mono); color: var(--muted); }
 .cl-tag.off { border-color: var(--line); color: var(--faint); }
 .cl-tag.warn { border-color: var(--warn); }
@@ -227,6 +231,10 @@ export class Collections {
   /** Members shown warped through a displacement field in the system viewed; members hidden, by name, with why. */
   private warped = new Set<string>();
   private hidden = new Map<string, string>();
+  /** The graph's groups shown in full, the box last focused in it, and the graph drawn. */
+  private graphOpen = new Set<string>();
+  private graphFocus = "";
+  private graphEl: SVGSVGElement | undefined;
 
   constructor(private readonly ctx: PlatformContext) {
     ctx.subscriptions.push(
@@ -838,59 +846,95 @@ export class Collections {
   // ------------------------------------------------------------- the panel
 
   /**
-   * The coordinate systems as a graph: members on the left, the
-   * collections' systems on the right, each transform an edge; the system
-   * the tab is viewed in is outlined, and clicking one views in it.
+   * The coordinate systems as a graph (laid out by ./graph_view.ts): a
+   * group per system, its members below it, the system the tab is viewed in
+   * outlined.  One box at a time takes the focus (a roving tabindex): the
+   * arrow keys, Home and End move between boxes; Enter or Space, like a
+   * click, views in a system, selects a member's layer, or opens a group
+   * folded past `SHOWN` members.
    */
   private graphView(root: CollectionNode): SVGSVGElement {
-    const systems = sceneSystems(root);
-    const mems = members(root).map((m) => m.node);
-    const g = graph(root);
-    const keyOf = new Map<string, string>();
-    for (const m of mems) for (const k of [m.id, m.name, ...m.systems.map((s) => s.id)]) if (k) keyOf.set(k, `m:${m.name}`);
-    for (const s of systems) keyOf.set(s.id, `s:${s.id}`);
-    const W = 300;
-    const rowH = 26;
-    const rows = Math.max(mems.length, systems.length, 1);
-    const H = rows * rowH + 10;
-    const at = new Map<string, { x: number; y: number }>();
-    mems.forEach((m, i) => at.set(`m:${m.name}`, { x: 6, y: 5 + i * rowH + (rows - mems.length) * rowH * 0.5 }));
-    systems.forEach((s, i) => at.set(`s:${s.id}`, { x: W - 116, y: 5 + i * rowH + (rows - systems.length) * rowH * 0.5 }));
     const chosen = this.saved().system;
-    const box = (key: string, label: string, cls: string, onclick?: () => void) => {
-      const p = at.get(key)!;
-      return svg(
-        "g",
-        { class: cls, ...(onclick ? { onclick, role: "button", tabindex: 0 } : {}) },
-        svg("rect", { x: p.x, y: p.y, width: 110, height: rowH - 6 }),
-        svg("text", { x: p.x + 6, y: p.y + rowH / 2 + 1 }, label.length > 17 ? `${label.slice(0, 16)}…` : label),
-        svg("title", {}, cls.includes("warped") ? `${label}: warped through a displacement field` : label),
-      );
-    };
-    const edges = g.transforms.flatMap((t) => {
-      const a = at.get(keyOf.get(t.input) ?? "");
-      const b = at.get(keyOf.get(t.output) ?? "");
-      if (!a || !b) return [];
-      // A transform from a system to a member (as registration writes a field) runs right to left.
-      const back = a.x > b.x;
-      const ax = back ? a.x : a.x + 110;
-      const ay = a.y + (rowH - 6) / 2;
-      const bx = back ? b.x + 110 : b.x;
-      const by = b.y + (rowH - 6) / 2;
-      const same = a.x === b.x;
-      const d = same ? `M${a.x + 110},${ay} C${a.x + 150},${ay} ${b.x + 150},${by} ${b.x + 110},${by}` : `M${ax},${ay} C${(ax + bx) / 2},${ay} ${(ax + bx) / 2},${by} ${bx},${by}`;
-      // The label by the member's end, where edges into one system do not overlap.
-      const label = same ? { x: a.x + 116, y: ay - 3 } : back ? { x: bx + 4, y: by + 11 } : { x: ax + 4, y: ay - 3 };
-      return [svg("path", { class: "cl-edge", d, "marker-end": "url(#cl-arrow)" }), svg("text", { class: "cl-edge-label", ...label }, t.type)];
-    });
-    return svg(
-      "svg",
-      { class: "cl-graph", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Coordinate systems and transforms" },
-      svg("defs", {}, svg("marker", { id: "cl-arrow", viewBox: "0 0 8 8", refX: 8, refY: 4, markerWidth: 6, markerHeight: 6, orient: "auto" }, svg("path", { d: "M0,0 L8,4 L0,8 z", fill: "currentColor" }))),
-      ...edges,
-      ...mems.map((m) => box(`m:${m.name}`, m.name, `cl-mem${this.warped.has(m.name) ? " warped" : ""}${this.hidden.has(m.name) ? " hidden" : ""}`)),
-      ...systems.map((s) => box(`s:${s.id}`, s.name ?? s.id, `cl-sys${s.id === chosen ? " on" : ""}`, () => void this.choose(s.id))),
+    const layout = layoutGraph(
+      {
+        systems: sceneSystems(root),
+        members: members(root).map(({ node: m }) => ({
+          name: m.name,
+          keys: [m.id, m.name, ...m.systems.map((s) => s.id)].filter((k): k is string => !!k),
+          warped: this.warped.has(m.name),
+          hidden: this.hidden.has(m.name),
+        })),
+        transforms: graph(root).transforms,
+      },
+      this.graphOpen,
+      chosen,
     );
+    const { boxes } = layout;
+    // The box that takes the focus: the one last focused, if it is still drawn.
+    let current = Math.max(0, boxes.findIndex((b) => b.key === this.graphFocus));
+    const act = (b: GraphBox) => {
+      if (b.kind === "system") void this.choose(b.system!);
+      else if (b.kind === "member") this.ctx.workspace.selectLayer(b.member!);
+      else if (b.group !== undefined) {
+        if (!this.graphOpen.delete(b.group)) this.graphOpen.add(b.group);
+        this.update?.();
+      }
+    };
+    const nodes = boxes.map((b, i) => {
+      const cls = `cl-node cl-${b.kind === "system" ? "sys" : b.kind === "member" ? "mem" : "more"}${b.kind === "system" && b.system === chosen ? " on" : ""}${b.warped ? " warped" : ""}${b.hidden ? " hidden" : ""}`;
+      const g = svg(
+        "g",
+        { class: cls, role: "button", tabindex: i === current ? 0 : -1, "aria-label": b.label, "data-key": b.key },
+        svg("rect", { x: b.x, y: b.y, width: b.w, height: b.h }),
+        svg("text", { x: b.x + 6, y: b.y + GRAPH.line }, b.lines[0]),
+        ...(b.lines[1] ? [svg("text", { class: "cl-how", x: b.x + 6, y: b.y + 2 * GRAPH.line + 1 }, b.lines[1])] : []),
+        svg("title", {}, b.title),
+      );
+      g.addEventListener("click", () => {
+        this.graphFocus = b.key;
+        act(b);
+      });
+      g.addEventListener("focus", () => {
+        current = i;
+        this.graphFocus = b.key;
+      });
+      return g;
+    });
+    const move = (to: number) => {
+      nodes[current].setAttribute("tabindex", "-1");
+      nodes[to].setAttribute("tabindex", "0");
+      current = to;
+      this.graphFocus = boxes[to].key;
+      nodes[to].focus();
+    };
+    const loose = looseHeading(layout);
+    const view = svg(
+      "svg",
+      { class: "cl-graph", viewBox: `0 0 ${layout.width} ${layout.height}`, role: "group", "aria-label": "Coordinate systems and their members: arrow keys move, Enter chooses" },
+      svg("defs", {}, svg("marker", { id: "cl-arrow", viewBox: "0 0 8 8", refX: 8, refY: 4, markerWidth: 6, markerHeight: 6, orient: "auto" }, svg("path", { d: "M0,0 L8,4 L0,8 z", fill: "currentColor" }))),
+      ...layout.spines.map((p) => svg("path", { class: "cl-spine", d: p.d })),
+      ...layout.arcs.map((p) => svg("path", { class: "cl-edge", d: p.d, "marker-end": "url(#cl-arrow)" })),
+      ...(loose ? [svg("text", { class: "cl-how", x: loose.x, y: loose.y }, "Joined to no system")] : []),
+      ...nodes,
+    );
+    view.addEventListener("keydown", (e) => {
+      const b = boxes[current];
+      if (b === undefined) return;
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        act(b);
+        return;
+      }
+      const to = nextBox(boxes, current, e.key);
+      if (to === undefined) return;
+      e.preventDefault();
+      move(to);
+    });
+    // Drawn again (a system chosen, a group opened) while a box had the focus: the same box takes it back.
+    const had = this.graphEl !== undefined && this.graphEl.contains(document.activeElement);
+    this.graphEl = view;
+    if (had && nodes[current]) queueMicrotask(() => nodes[current].focus());
+    return view;
   }
 
   /** The member tree: each of the top collection's removable and placeable from the view; why one is hidden; a label image tagged. */
@@ -1165,7 +1209,7 @@ export class Collections {
       const system = this.saved().system;
       const labels = members(root).filter((m) => this.ctx.viewer.layerSpec(m.node.name)?.type === "segmentation").map((m) => m.node.name);
       const key = { doc: this.doc, url: this.documentUrl, system, warped: [...this.warped], hidden: [...this.hidden], labels };
-      graphRegion.update(key);
+      graphRegion.update({ ...key, open: [...this.graphOpen] });
       noSystem.hidden = sceneSystems(root).some((s) => s.id === system);
       memberList.update(key);
       systemList.update(key);

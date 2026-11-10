@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LayerTransform, PlatformContext } from "@ngplatform/sdk";
 import { type FakeDom, fakeDocument } from "@ngplatform/sdk/testing";
 import { Collections, EXAMPLE_URL, GROUPS_KEPT, groupsKept, ORDER_WAIT, plugin, READ_TIMEOUT, type Saved, twelveNumbers } from "../plugin.js";
+import { SHOWN } from "../graph_view.js";
 import { ADD_COLLECTION, COLLECTION_KIND, COLLECTIONS_PANEL } from "../manifest.js";
 
 const MM = 1e-3;
@@ -93,6 +94,7 @@ function fakeContext(datasets: { name: string; source: string }[] = []) {
       removeLayer: vi.fn((name: string) => void layers.splice(layers.findIndex((l) => l.name === name), 1)),
       renameLayer: vi.fn(),
       renameScene: vi.fn((id: string, name: string) => void (scenes.find((s) => s.id === id)!.name = name)),
+      selectLayer: vi.fn(),
       computed: { url: vi.fn(async () => "computed://warped") },
     },
     state: {
@@ -525,6 +527,61 @@ describe("building in the panel", () => {
     dom.find(panel, "button", "Download JSON").click();
     expect(created).toHaveBeenCalledTimes(1);
     created.mockRestore();
+  });
+});
+
+describe("the graph by keyboard", () => {
+  it("takes the focus at one box, moves with the arrow keys, and chooses with Enter, at a hundred members", async () => {
+    const h = host();
+    const nodes = Array.from({ length: 100 }, (_, i) => ({ id: `m${i}`, path: `${h}/m${i}.zarr`, at: i }));
+    const doc = collection("hundred", nodes, {
+      systems: [{ id: "mni", name: "MNI", axes: ["z", "y", "x"].map((name) => ({ name, unit: "millimeter" })) }],
+      transforms: [{ type: "scale", scale: [1e-3, 1e-3, 1e-3], input: { id: "world" }, output: { id: "mni" } }],
+    });
+    const w = fakeContext();
+    const c = new Collections(w.ctx);
+    const panel = dom.host();
+    c.render(panel);
+    await c.openDocument(doc);
+    await settle();
+    const boxes = () => [...panel.querySelectorAll(".cl-node")] as HTMLElement[];
+    const graph = panel.querySelector(".cl-graph")!;
+    expect(graph.getAttribute("role")).toBe("group");
+    // World's 100 members folded; one box in the tab order, the system viewed.
+    expect(boxes()).toHaveLength(1 + (SHOWN - 1) + 1 + 1);
+    expect(boxes().filter((b) => b.getAttribute("tabindex") === "0").map((b) => b.getAttribute("data-key"))).toEqual(["s:world"]);
+    expect(boxes()[0].getAttribute("aria-label")).toBe("system World, viewed, 100 members, scale → MNI");
+    expect(boxes()[1].getAttribute("aria-label")).toBe("member M0, in system World, translation");
+    boxes()[0].focus();
+    dom.fire(document.activeElement!, "keydown", "ArrowDown");
+    expect(document.activeElement).toBe(boxes()[1]);
+    dom.fire(document.activeElement!, "keydown", "ArrowRight");
+    expect(document.activeElement?.getAttribute("data-key")).toBe("m:s:world:M1");
+    // The roving tabindex follows.
+    expect(boxes().filter((b) => b.getAttribute("tabindex") === "0")).toEqual([document.activeElement]);
+    // Enter on a member selects its layer.
+    dom.fire(document.activeElement!, "keydown", "Enter");
+    expect(w.raw.workspace.selectLayer).toHaveBeenCalledWith("M1");
+    // Enter on "+N more" opens the group; the focus stays on that box.
+    dom.fire(document.activeElement!, "keydown", "End");
+    dom.fire(document.activeElement!, "keydown", "ArrowUp");
+    expect(document.activeElement?.getAttribute("data-key")).toBe(`m:s:world:M${SHOWN - 2}`);
+    dom.fire(document.activeElement!, "keydown", "ArrowRight");
+    expect(document.activeElement?.getAttribute("data-key")).toBe("more:s:world");
+    expect(dom.text(document.activeElement!)).toContain(`+${100 - (SHOWN - 1)} more`);
+    dom.fire(document.activeElement!, "keydown", "Enter");
+    await settle();
+    expect(boxes()).toHaveLength(1 + 100 + 1 + 1);
+    expect(document.activeElement?.getAttribute("data-key")).toBe("more:s:world");
+    expect(dom.text(document.activeElement!)).toContain("Show fewer");
+    // Enter on a system views in it, as a click does; the focus comes back to it once drawn again.
+    dom.fire(document.activeElement!, "keydown", "End");
+    expect(document.activeElement?.getAttribute("data-key")).toBe("s:mni");
+    dom.fire(document.activeElement!, "keydown", "Enter");
+    for (let i = 0; i < 10; ++i) await settle();
+    expect(w.saved().system).toBe("mni");
+    expect(document.activeElement?.getAttribute("data-key")).toBe("s:mni");
+    expect(document.activeElement?.getAttribute("aria-label")).toContain("system MNI, viewed");
   });
 });
 
