@@ -145,8 +145,8 @@ memory: every streamline, 73 s and a 7.3 GB spill (binning 57 s of it);
 
 When even 1 in 10 000 does not fit, or the storage refuses to grow (a
 private window keeps OPFS in memory, with less room), opening fails with
-a message naming the local runner ("Open through the local runner (Jobs →
-This computer)"). `NeedsRunner` (`kind: "runner"`) in `vectors/spill.ts`
+a message naming the local runner ("Open it through the runner on this
+computer (Settings › Compute → This computer)"). `NeedsRunner` (`kind: "runner"`) in `vectors/spill.ts`
 is the hook for the page to offer the hand-off.
 
 ## Large meshes
