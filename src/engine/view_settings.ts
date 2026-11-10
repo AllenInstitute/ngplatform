@@ -81,11 +81,13 @@ export function mountViewSettings(host: HTMLElement, viewer: Viewer): () => void
         bytes("GPU memory", capacities.gpuMemory.sizeLimit),
         bytes("System memory", capacities.systemMemory.sizeLimit),
         count("Downloads at once", capacities.download.itemLimit),
+        bytes("Data downloading at once", capacities.download.sizeLimit),
       ),
       el(
         "div",
         { class: "options" },
         check("Prefetch the chunks nearby", viewer.chunkQueueManager.enablePrefetch),
+        check("Download a coarser level while moving; finish nearly done downloads", viewer.chunkQueueManager.enableMovementAwareDownloads),
         check("Coarser levels while moving (adaptive downsampling)", viewer.enableAdaptiveDownsampling),
       ),
     ),

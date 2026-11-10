@@ -97,6 +97,23 @@ The production polish: the work of an audit of every panel and plugin
 - A deploy workflow (by hand), this changelog, `npm run lint` (ESLint),
   `npm run check:neuroglancer` for the Neuroglancer pin.
 
+### Loading big chunks (performance step 2, Neuroglancer fork)
+
+- Downloads are limited by the size of the chunks in flight as well as their
+  number: on a 50 Mbit/s link a quarter of an SRB 2026a view (192³ chunks)
+  shows after 8 s instead of 26 s, and the view fills in steps instead of all
+  at once at the end. Small-chunk stores load as before; on a fast link the
+  limit rises by itself. Settings › View › Loading: "Data downloading at
+  once".
+- While a 2-D view moves it asks for one level coarser, and a download that
+  is mostly done is finished rather than cancelled: a fast pan over
+  S-21-46 makes 75 requests instead of 332 (7% cancelled instead of 58%) and
+  shows 93% of the view during the move instead of 60%. On by default;
+  Settings › View › Loading: "Download a coarser level while moving".
+- Sub-chunks of one shard needed together are read with one request.
+- At most six decode workers, and a worker that decoded a very large chunk
+  is replaced, so its memory is given back.
+
 ## 0.2.0 — 2026-10-31
 
 The platform around Neuroglancer: datasets, scenes and plugins around a
