@@ -52,6 +52,8 @@ interface Mounted {
   host: HTMLElement;
   rendered: boolean;
   dispose?: Disposer;
+  /** Counts the renders, so a slow render that a later one overtook disposes of itself. */
+  renders: number;
 }
 
 /** What a panel that failed shows: what went wrong, and Retry. */
@@ -60,6 +62,43 @@ export function failedPanel(message: string, retry: () => void): HTMLElement {
   const text = shown.querySelector(".empty");
   if (text !== null) text.className = "empty error";
   return shown;
+}
+
+/**
+ * Renders a mounted tab's panel, once: the disposer it gives is kept, or
+ * called at once when the panel was hidden, or rendered again, before a
+ * slow render finished (so two renders in flight never leak one).
+ * `failed` shows why it failed.
+ */
+export function renderPanel(
+  mounted: Pick<Mounted, "tab" | "host" | "rendered" | "dispose" | "renders">,
+  failed: (message: string) => void,
+): void {
+  if (mounted.rendered) return;
+  mounted.rendered = true;
+  // A render still loading when the panel was hidden and shown again is no longer the panel's.
+  const render = ++mounted.renders;
+  const current = () => mounted.rendered && mounted.renders === render;
+  try {
+    const result = mounted.tab.render(mounted.host);
+    if (result instanceof Promise) {
+      result.then(
+        (d) => {
+          if (typeof d === "function") {
+            if (current()) mounted.dispose = d;
+            else d();
+          }
+        },
+        (e) => {
+          if (current()) failed(`This panel failed to load: ${(e as Error).message}`);
+        },
+      );
+    } else if (typeof result === "function") {
+      mounted.dispose = result;
+    }
+  } catch (e) {
+    failed(`This panel failed: ${(e as Error).message}`);
+  }
 }
 
 const TITLES: Record<DockSlot, string> = { left: "Layers", right: "Tools", bottom: "Activity" };
@@ -191,7 +230,7 @@ export class DockManager {
       { class: "tab", type: "button", role: "tab", id: `tab-${tab.id}`, "aria-selected": "false", onclick: () => this.show(tab.id) },
       tab.title,
     );
-    const mounted: Mounted = { tab, button, host, rendered: false };
+    const mounted: Mounted = { tab, button, host, rendered: false, renders: 0 };
     dock.tabs.set(tab.id, mounted);
     this.bySlotOf.set(tab.id, tab.slot);
     dock.body.append(host);
@@ -243,28 +282,7 @@ export class DockManager {
   }
 
   private render(mounted: Mounted): void {
-    if (mounted.rendered) return;
-    mounted.rendered = true;
-    try {
-      const result = mounted.tab.render(mounted.host);
-      if (result instanceof Promise) {
-        result.then(
-          (d) => {
-            if (typeof d === "function") {
-              if (mounted.rendered) mounted.dispose = d;
-              else d();
-            }
-          },
-          (e) => {
-            if (mounted.rendered) this.failed(mounted, `This panel failed to load: ${(e as Error).message}`);
-          },
-        );
-      } else if (typeof result === "function") {
-        mounted.dispose = result;
-      }
-    } catch (e) {
-      this.failed(mounted, `This panel failed: ${(e as Error).message}`);
-    }
+    renderPanel(mounted, (message) => this.failed(mounted, message));
   }
 
   private select(slot: DockSlot, id: string): void {

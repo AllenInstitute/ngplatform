@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type FakeDom, fakeDocument } from "../src/sdk/testing.js";
 import { renderDatasetsPanel } from "../src/ui/panels/datasets.js";
-import { failedPanel } from "../src/ui/docks.js";
+import { failedPanel, renderPanel } from "../src/ui/docks.js";
 import { renderRunnerSection } from "../src/ui/runner.js";
 import type { Workbench } from "../src/ui/workbench.js";
 
@@ -189,5 +189,33 @@ describe("Docks: a panel that failed", () => {
     expect(shown.querySelector(".empty")!.className).toBe("empty error");
     dom.find(shown, "button", "Retry").click();
     expect(retry).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Docks: a panel rendered while an earlier render is still loading", () => {
+  it("disposes of the earlier one when it finishes, and keeps the later one", async () => {
+    const loads: ((d: () => void) => void)[] = [];
+    const disposers = [vi.fn(), vi.fn()];
+    const mounted = {
+      tab: { id: "t", title: "T", slot: "right", render: () => new Promise<() => void>((resolve) => loads.push(resolve)) },
+      host: {} as HTMLElement,
+      rendered: false,
+      renders: 0,
+      dispose: undefined as (() => void) | undefined,
+    };
+    const failed = vi.fn();
+    renderPanel(mounted as never, failed);
+    // Hidden (a transient tab) and shown again before the first render finished.
+    mounted.rendered = false;
+    renderPanel(mounted as never, failed);
+    // The later render finishes first, then the earlier one.
+    loads[1](disposers[1]);
+    await Promise.resolve();
+    loads[0](disposers[0]);
+    await Promise.resolve();
+    expect(mounted.dispose).toBe(disposers[1]);
+    expect(disposers[0]).toHaveBeenCalledOnce();
+    expect(disposers[1]).not.toHaveBeenCalled();
+    expect(failed).not.toHaveBeenCalled();
   });
 });
