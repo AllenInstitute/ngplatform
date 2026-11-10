@@ -241,7 +241,7 @@ check(await noSheet("Escape to close Settings"), "Escape closes a sheet");
 await click(page.locator('.topbar button[aria-label="Settings"]'));
 await until("Settings", () => document.querySelector(".settings-nav") !== null);
 const sections = await page.locator(".settings-nav button").allInnerTexts();
-check(sections.join(",") === "View,Sign-in,Compute,Storage,Developer", `Settings has its sections (${sections.join(", ")})`);
+check(sections.join(",") === "View,Sign-in,Compute,Storage,Developer,About", `Settings has its sections (${sections.join(", ")})`);
 for (const name of sections) {
   await click(page.locator(".settings-nav button", { hasText: name }));
   const opened = await until(`Settings › ${name}`, (n) => document.querySelector('.settings-nav [aria-selected="true"]')?.textContent === n && document.querySelector(".settings-body")?.childElementCount > 0, name);

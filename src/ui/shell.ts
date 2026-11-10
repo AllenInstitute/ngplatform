@@ -374,16 +374,18 @@ export class Shell {
       log: (message, level, source) => log.add(message, level, source),
     });
 
-    this.registerPanels();
-    this.registerCommands();
-    this.registerKeys();
-    registerBuiltins(wb);
+    // Made before the panels: the Plugins panel, when it is the tab a dock
+    // opens on, draws at once and lists these.
     this.localPlugins = new LocalPlugins({
       host: wb.plugins,
       runPython: async (owner, source) => (await pythonPanel()).runPythonPlugin(wb, owner, source),
       forgetPython: (owner) => void pythonPanel().then((m) => m.forgetPython(owner)),
       log: (message, level) => log.add(message, level ?? "info"),
     });
+    this.registerPanels();
+    this.registerCommands();
+    this.registerKeys();
+    registerBuiltins(wb);
     void this.localPlugins.restore();
     // Local data opened on earlier visits: the workspace's links to it work
     // once reading is allowed again.

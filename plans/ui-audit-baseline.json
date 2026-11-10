@@ -7,7 +7,11 @@
   "Corner radii": 2,
   "Text in the browser's default font": 0,
   "Elements with inline styles": 0,
-  "On/off controls not made with toggle or checkbox": 0
+  "On/off controls not made with toggle or checkbox": 0,
+  "Controls without an accessible name": 0,
+  "Roles missing required attributes": 0,
+  "Positive tabindex": 0,
+  "Images without alt": 0
  },
  "panels": {
   "Start card": {
@@ -36,7 +40,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 55,
-   "controls": 4
+   "controls": 4,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Layers (image)": {
    "fontSizes": {
@@ -79,7 +90,14 @@
    },
    "inlineStyled": 0,
    "words": 84,
-   "controls": 22
+   "controls": 22,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Plugins": {
    "fontSizes": {
@@ -109,7 +127,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 178,
-   "controls": 26
+   "controls": 26,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Track filtering (SRB)": {
    "fontSizes": {
@@ -132,7 +157,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 8,
-   "controls": 1
+   "controls": 1,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Luxar rendering (SRB)": {
    "fontSizes": {
@@ -162,7 +194,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 51,
-   "controls": 13
+   "controls": 13,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Filters (SRB)": {
    "fontSizes": {
@@ -194,7 +233,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 29,
-   "controls": 7
+   "controls": 7,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Anatomical rendering (SRB)": {
    "fontSizes": {
@@ -229,7 +275,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 125,
-   "controls": 86
+   "controls": 86,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Registration (SRB)": {
    "fontSizes": {
@@ -263,7 +316,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 36,
-   "controls": 42
+   "controls": 42,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Time series (SRB)": {
    "fontSizes": {
@@ -288,7 +348,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 14,
-   "controls": 1
+   "controls": 1,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Orientations (SRB)": {
    "fontSizes": {
@@ -322,7 +389,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 36,
-   "controls": 25
+   "controls": 25,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "OME Collections (SRB)": {
    "fontSizes": {
@@ -345,7 +419,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 5,
-   "controls": 1
+   "controls": 1,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Segmentation (SRB)": {
    "fontSizes": {
@@ -374,7 +455,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 47,
-   "controls": 7
+   "controls": 7,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Atlas (SRB)": {
    "fontSizes": {
@@ -397,7 +485,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 7,
-   "controls": 1
+   "controls": 1,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Annotations (SRB)": {
    "fontSizes": {
@@ -425,7 +520,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 23,
-   "controls": 6
+   "controls": 6,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Activity": {
    "fontSizes": {
@@ -456,7 +558,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 47,
-   "controls": 2
+   "controls": 2,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Sheet: Open": {
    "fontSizes": {
@@ -491,26 +600,33 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 55,
-   "controls": 7
+   "controls": 7,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Sheet: Settings view": {
    "fontSizes": {
     "15px": 1,
-    "13px": 7,
+    "13px": 8,
     "12px": 15,
     "11px": 4
    },
    "fonts": {
-    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 27
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 28
    },
    "colors": {
     "rgb(222, 222, 222)": 14,
-    "rgb(148, 148, 148)": 12,
+    "rgb(148, 148, 148)": 13,
     "rgb(0, 0, 0)": 1
    },
    "buttons": {
     "13px | 28px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 1,
-    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 5,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 6,
     "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 2,
     "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
    },
@@ -527,30 +643,37 @@
    },
    "radii": {},
    "inlineStyled": 0,
-   "words": 68,
-   "controls": 24
+   "words": 69,
+   "controls": 25,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Sheet: Settings sign-in": {
    "fontSizes": {
     "15px": 1,
-    "13px": 16,
+    "13px": 17,
     "12px": 8,
     "14px": 1,
     "11px": 1
    },
    "fonts": {
-    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 25,
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 26,
     "Roboto, \"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 1,
     "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 1
    },
    "colors": {
     "rgb(222, 222, 222)": 15,
-    "rgb(148, 148, 148)": 10,
+    "rgb(148, 148, 148)": 11,
     "rgb(227, 227, 227)": 1,
     "rgb(0, 0, 0)": 1
    },
    "buttons": {
-    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 10,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 11,
     "13px | 28px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 1,
     "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 6,
     "14px | 40px | 20px | rgb(19, 19, 20) | rgb(142, 145, 143)": 1,
@@ -569,30 +692,37 @@
     "20px": 1
    },
    "inlineStyled": 0,
-   "words": 44,
-   "controls": 23
+   "words": 45,
+   "controls": 24,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Sheet: Settings compute": {
    "fontSizes": {
     "15px": 1,
-    "13px": 9,
+    "13px": 10,
     "12px": 7,
     "11px": 1
    },
    "fonts": {
-    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 16,
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 17,
     "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 2
    },
    "colors": {
     "rgb(222, 222, 222)": 7,
-    "rgb(148, 148, 148)": 5,
+    "rgb(148, 148, 148)": 6,
     "rgb(102, 204, 102)": 1,
     "rgb(138, 138, 138)": 3,
     "rgb(224, 113, 107)": 1,
     "rgb(0, 0, 0)": 1
    },
    "buttons": {
-    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 5,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 6,
     "13px | 28px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 1,
     "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 4,
     "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
@@ -608,27 +738,34 @@
    },
    "radii": {},
    "inlineStyled": 0,
-   "words": 56,
-   "controls": 12
+   "words": 57,
+   "controls": 13,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Sheet: Settings storage": {
    "fontSizes": {
     "15px": 1,
-    "13px": 7,
+    "13px": 8,
     "11px": 2,
     "12px": 5
    },
    "fonts": {
-    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 15
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 16
    },
    "colors": {
     "rgb(222, 222, 222)": 3,
-    "rgb(148, 148, 148)": 10,
+    "rgb(148, 148, 148)": 11,
     "rgb(138, 138, 138)": 1,
     "rgb(0, 0, 0)": 1
    },
    "buttons": {
-    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 5,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 6,
     "13px | 28px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 1,
     "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
    },
@@ -643,28 +780,35 @@
    },
    "radii": {},
    "inlineStyled": 0,
-   "words": 37,
-   "controls": 12
+   "words": 38,
+   "controls": 13,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Sheet: Settings developer": {
    "fontSizes": {
     "15px": 1,
-    "13px": 10,
+    "13px": 11,
     "11px": 14,
     "12px": 40
    },
    "fonts": {
-    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 25,
+    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 26,
     "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 40
    },
    "colors": {
     "rgb(222, 222, 222)": 46,
-    "rgb(148, 148, 148)": 13,
+    "rgb(148, 148, 148)": 14,
     "rgb(138, 138, 138)": 5,
     "rgb(0, 0, 0)": 1
    },
    "buttons": {
-    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 8,
+    "13px | 28px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 9,
     "13px | 28px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 1,
     "13px | 28px | 0px | rgb(208, 208, 208) | rgba(0, 0, 0, 0)": 1
    },
@@ -677,8 +821,15 @@
    },
    "radii": {},
    "inlineStyled": 0,
-   "words": 95,
-   "controls": 10
+   "words": 96,
+   "controls": 11,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Sheet: Keyboard": {
    "fontSizes": {
@@ -709,7 +860,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 87,
-   "controls": 1
+   "controls": 1,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Sheet: Capture": {
    "fontSizes": {
@@ -744,7 +902,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 33,
-   "controls": 8
+   "controls": 8,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Sheet: Add dataset": {
    "fontSizes": {
@@ -775,7 +940,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 20,
-   "controls": 5
+   "controls": 5,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Sheet: Add collection": {
    "fontSizes": {
@@ -813,49 +985,35 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 75,
-   "controls": 9
+   "controls": 9,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Layers (tracts)": {
-   "fontSizes": {
-    "11px": 20,
-    "12px": 56,
-    "13px": 1
-   },
-   "fonts": {
-    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 58,
-    "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 19
-   },
-   "colors": {
-    "rgb(148, 148, 148)": 53,
-    "rgb(222, 222, 222)": 19,
-    "rgb(138, 138, 138)": 3,
-    "rgb(255, 255, 255)": 2
-   },
-   "buttons": {
-    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 7,
-    "13px | 16.25px | 0px | rgba(0, 0, 0, 0) | rgb(222, 222, 222)": 1,
-    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 7,
-    "12px | 24px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 4,
-    "12px | 24px | 0px | rgb(28, 28, 28) | rgba(0, 0, 0, 0)": 1
-   },
-   "inputs": {
-    "12px | 24px | 0px | rgb(0, 0, 0)": 13,
-    "12px | 12px | 0px | rgb(59, 59, 59)": 1
-   },
-   "checkboxes": {
-    "plain": 7,
-    "ins-check": 4
-   },
+   "fontSizes": {},
+   "fonts": {},
+   "colors": {},
+   "buttons": {},
+   "inputs": {},
+   "checkboxes": {},
    "handMadeOnOff": 0,
-   "headings": {
-    "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 8
-   },
-   "radii": {
-    "50%": 7
-   },
+   "headings": {},
+   "radii": {},
    "inlineStyled": 0,
-   "words": 255,
-   "controls": 45
+   "words": 192,
+   "controls": 0,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Track filtering (tracts)": {
    "fontSizes": {
@@ -888,8 +1046,15 @@
    },
    "radii": {},
    "inlineStyled": 0,
-   "words": 83,
-   "controls": 57
+   "words": 87,
+   "controls": 57,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Luxar rendering (tracts)": {
    "fontSizes": {
@@ -919,7 +1084,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 86,
-   "controls": 21
+   "controls": 21,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Orientations (tracts)": {
    "fontSizes": {
@@ -953,47 +1125,35 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 36,
-   "controls": 25
+   "controls": 25,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Layers (EM)": {
-   "fontSizes": {
-    "11px": 15,
-    "12px": 29,
-    "13px": 1
-   },
-   "fonts": {
-    "\"IBM Plex Sans\", system-ui, -apple-system, \"Segoe UI\", sans-serif": 42,
-    "\"IBM Plex Mono\", ui-monospace, SFMono-Regular, Menlo, monospace": 3
-   },
-   "colors": {
-    "rgb(148, 148, 148)": 35,
-    "rgb(222, 222, 222)": 8,
-    "rgb(138, 138, 138)": 2
-   },
-   "buttons": {
-    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgba(0, 0, 0, 0)": 6,
-    "13px | 16.25px | 0px | rgba(0, 0, 0, 0) | rgb(222, 222, 222)": 1,
-    "12px | 24px | 0px | rgb(28, 28, 28) | rgba(0, 0, 0, 0)": 1,
-    "12px | 24px | 0px | rgba(0, 0, 0, 0) | rgb(42, 42, 42)": 4,
-    "12px | 24px | 0px | rgb(28, 28, 28) | rgb(42, 42, 42)": 2
-   },
-   "inputs": {
-    "12px | 24px | 0px | rgb(0, 0, 0)": 9
-   },
-   "checkboxes": {
-    "plain": 2,
-    "ins-check": 4
-   },
+   "fontSizes": {},
+   "fonts": {},
+   "colors": {},
+   "buttons": {},
+   "inputs": {},
+   "checkboxes": {},
    "handMadeOnOff": 0,
-   "headings": {
-    "11px | 600 | uppercase | rgb(148, 148, 148) | 0.88px": 6
-   },
-   "radii": {
-    "50%": 2
-   },
+   "headings": {},
+   "radii": {},
    "inlineStyled": 0,
-   "words": 171,
-   "controls": 29
+   "words": 144,
+   "controls": 0,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Luxar rendering (EM)": {
    "fontSizes": {
@@ -1023,7 +1183,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 74,
-   "controls": 21
+   "controls": 21,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Segmentation (EM)": {
    "fontSizes": {
@@ -1052,7 +1219,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 79,
-   "controls": 7
+   "controls": 7,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Atlas (EM)": {
    "fontSizes": {
@@ -1079,7 +1253,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 103,
-   "controls": 3
+   "controls": 3,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   },
   "Annotations (EM)": {
    "fontSizes": {
@@ -1107,7 +1288,14 @@
    "radii": {},
    "inlineStyled": 0,
    "words": 23,
-   "controls": 6
+   "controls": 6,
+   "access": {
+    "unnamed": 0,
+    "roles": 0,
+    "tabindex": 0,
+    "images": 0,
+    "found": []
+   }
   }
  }
 }

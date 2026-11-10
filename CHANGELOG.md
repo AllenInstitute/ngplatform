@@ -54,6 +54,30 @@ The production polish: the work of an audit of every panel and plugin
 - Runners and hosts: requests given up after a deadline, with the
   computer's name.
 
+### Accessibility (Phase 4)
+
+- Sheets are modal dialogs: focus kept inside, given back to what opened
+  them. Menus, dock tabs, the Settings sections, the Tools picker and
+  Registration's tabs move with the arrow keys; dock resizers and the
+  view split move with them too.
+- The command palette is a combobox for screen readers; error toasts are
+  alerts and stay while hovered; Share is named on narrow screens.
+- Reduced motion: transitions, the progress bar and the 3-D views' glide
+  (Neuroglancer's and Luxar's) stop.
+- OME Collections' graph grouped by coordinate system, readable at 100
+  members and usable by keyboard; the Atlas tree by keyboard, and Show
+  all keeps the 3-D meshes.
+- `npm run ui:audit` checks names, roles, tab order and alt text.
+
+### Checks (Phase 5A)
+
+- CI on pull requests and by hand only: typecheck, both test suites, the
+  runner's tests, the build and a bundle-size budget.
+- The browser smoke test waits on the app's state and serves its own data
+  and runner; UI modules have unit tests in a DOM.
+- Docks open on the tab last chosen; a menu closes on an Escape pressed at
+  once.
+
 ### Security and release (Phase 5B)
 
 - A Content Security Policy in the built page: no inline script, no

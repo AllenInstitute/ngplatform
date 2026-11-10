@@ -190,6 +190,9 @@ async function open(hash) {
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => window.workbench !== undefined, null, { timeout: 60_000 });
   await page.waitForTimeout(8000);
+  // The app's own "could not start" page catches the error, so no page error is raised: count it.
+  const failed = await page.evaluate(() => document.querySelector(".boot-failed")?.textContent ?? null);
+  if (failed) problems.push(`${hash}: ${failed.trim()}`);
 }
 const enabledPanels = () =>
   page.evaluate(() => {
@@ -353,5 +356,9 @@ console.log(md.slice(0, Object.keys(summary).length + 4).join("\n"));
 console.log(`\n${shots.length} screenshots in ${out}; ${problems.length} page errors.`);
 if (worse.length) {
   console.log(`Worse than the baseline: ${worse.join(", ")}.`);
+  process.exitCode = 1;
+}
+if (problems.length) {
+  console.log(`Page errors: ${problems.slice(0, 5).join("; ")}`);
   process.exitCode = 1;
 }
