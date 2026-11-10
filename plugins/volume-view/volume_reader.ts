@@ -7,14 +7,18 @@
  * refused, naming its size, rather than crashing the tab.
  *
  * Chunks are kept in a byte-bounded cache, so reading the same box again
- * reads nothing.  The volume worker runs this; it is plain code, so it is
+ * reads nothing.  Chunks are read many at a time when they are small and a
+ * few at a time when they are big (by their bytes), and ranges inside a
+ * shard skip the browser's HTTP cache (see {@link storeRead}).  The volume worker runs this; it is plain code, so it is
  * tested without one.
  *
  * OME-Zarr is read in Zarr v3 or v2 (0.4, through ./zarr2.ts), and as one
  * 3-D image: size-1 t and c axes (bioformats2raw's tczyx) are read at index
  * 0, and a real time series or several channels are refused.
  */
-import { httpAccess, openZarrArray, ShardIndexCache, type ZarrArrayRead, ZarrArrayReader } from "neuroglancer-zarr-vectors/reader";
+import { joinBaseUrlAndPath } from "neuroglancer/unstable/kvstore/url.js";
+import { openZarrArray, ShardIndexCache, type ZarrArrayRead, ZarrArrayReader } from "neuroglancer-zarr-vectors/reader";
+import { coalesceRangeReads } from "../zarr-vectors/src/zarr_array.js";
 import { httpJson, PrecomputedScale, readInfo } from "@ngplatform/sdk/precomputed";
 import { mergeLevels, parseOmeLevels, scaleLevel, type VolumeLevel } from "./ome.js";
 import { PRECOMPUTED } from "./sources.js";
@@ -42,6 +46,8 @@ interface OpenLevel {
   /** For x, y, z: the array dimension it is. */
   dimOf: [number, number, number];
   grid: number[];
+  /** A stored chunk's bytes, decoded: what reading it holds in memory. */
+  chunkBytes: number;
 }
 
 /** A voxel box of a level, x, y, z, from `lo` up to (not including) `hi`. */
@@ -52,7 +58,22 @@ export interface Region {
 
 export type Progress = (done: number, total: number) => void;
 
-const CONCURRENCY = 8;
+/** The most chunks read at once: small ones, such as 64³ chunks inside shards. */
+export const MAX_CONCURRENT = 32;
+
+/** The most bytes of chunks (decoded) read at once, by default, so big chunks are read a few at a time. */
+export const IN_FLIGHT_BYTES = 128 * 2 ** 20;
+
+/**
+ * How many chunks of `chunkBytes` are read at once: as many as fit in
+ * `inFlight` bytes, from one up to {@link MAX_CONCURRENT}.  Requests for
+ * small chunks cost more in waiting than in bytes (32 at once read a box of
+ * 64³ chunks about three times as fast as 8); big ones all downloading
+ * together share the link and land together.
+ */
+export function concurrencyFor(chunkBytes: number, inFlight = IN_FLIGHT_BYTES): number {
+  return Math.max(1, Math.min(MAX_CONCURRENT, Math.floor(inFlight / Math.max(1, chunkBytes))));
+}
 
 /** The most bytes one read of a whole level or a box may make, by default: 1 GiB. */
 export const MAX_READ_BYTES = 2 ** 30;
@@ -66,12 +87,12 @@ function sizeText(bytes: number): string {
 }
 
 /**
- * Runs `work` on items, a few at a time, until done or `signal` aborts.  The
+ * Runs `work` on items, `limit` at a time, until done or `signal` aborts.  The
  * first failure stops it: no item is started after it, the ones under way
  * are let finish, and then it is thrown, so nothing is still working on the
  * caller's output once it has the error.
  */
-async function each<T>(items: T[], signal: AbortSignal, work: (item: T) => Promise<void>): Promise<void> {
+async function each<T>(items: T[], limit: number, signal: AbortSignal, work: (item: T) => Promise<void>): Promise<void> {
   let next = 0;
   let failure: { error: unknown } | undefined;
   const run = async () => {
@@ -83,7 +104,7 @@ async function each<T>(items: T[], signal: AbortSignal, work: (item: T) => Promi
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, items.length) }, run));
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, run));
   signal.throwIfAborted();
   if (failure !== undefined) throw failure.error;
 }
@@ -252,6 +273,51 @@ export async function storedOrder(read: ZarrArrayRead, path: string, axes: strin
   };
 }
 
+/**
+ * A store's keys, read over http(s) or from this app's local and virtual
+ * URLs (which its service worker answers).  Range reads, of a shard's index
+ * and the chunks inside it, skip the browser's HTTP cache: Chromium answers
+ * cached range reads of one URL one at a time, so 32 ranges of one shard
+ * took 5–7 s, against 0.7–1.2 s uncached.  Whole keys (metadata, unsharded
+ * chunks) go through the cache as usual; decoded chunks are kept by the
+ * reader.  Ranges of one key asked for together are merged, as the Zarr
+ * Vectors reader merges them.
+ */
+export function storeRead(storeUrl: string): ZarrArrayRead {
+  return coalesceRangeReads(async (path, { signal, byteRange }) => {
+    const url = joinBaseUrlAndPath(storeUrl, path);
+    let init: RequestInit = { signal };
+    if (byteRange !== undefined) {
+      const range = "suffixLength" in byteRange ? `bytes=-${byteRange.suffixLength}` : `bytes=${byteRange.offset}-${byteRange.offset + byteRange.length - 1}`;
+      init = { headers: { Range: range }, signal, cache: "no-store" };
+    }
+    let response = await fetch(url, init);
+    // A store still being made from a file on this computer answers 503 for a while: ask again.
+    for (let attempt = 0; response.status === 503 && attempt < 120; ++attempt) {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(10_000, 500 * 2 ** attempt)));
+      signal?.throwIfAborted();
+      response = await fetch(url, init);
+    }
+    if (response.status === 404 || response.status === 403) return undefined;
+    if (!response.ok) throw new Error(`${url}: ${response.status} ${response.statusText}`);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (byteRange === undefined) return bytes;
+    // A server may ignore the range and send the whole key (200): keep only what was asked for.
+    let from: number;
+    let length: number;
+    if ("suffixLength" in byteRange) {
+      length = byteRange.suffixLength;
+      from = bytes.length - length;
+    } else {
+      length = byteRange.length;
+      const start = response.status === 206 ? Number(response.headers.get("Content-Range")?.match(/bytes (\d+)-/)?.[1] ?? byteRange.offset) : 0;
+      from = byteRange.offset - start;
+    }
+    if (from < 0) throw new Error(`${url}: the answer does not hold the bytes asked for`);
+    return from === 0 && bytes.length <= length ? bytes : bytes.slice(from, from + length);
+  });
+}
+
 export class VolumeReader {
   private levels: OpenLevel[] = [];
   private cache = new Map<string, Promise<Uint8Array | undefined>>();
@@ -263,11 +329,19 @@ export class VolumeReader {
    * `maxReadBytes`: the most one read of a level or a box may allocate;
    * a larger one is refused with a message naming its size and the
    * coarser levels that fit, rather than crashing the tab.
+   * `inFlightBytes`: the most bytes of chunks read at once
+   * ({@link concurrencyFor}).
    */
   constructor(
     private readonly cacheBytes = 256 * 1024 * 1024,
     readonly maxReadBytes = MAX_READ_BYTES,
+    readonly inFlightBytes = IN_FLIGHT_BYTES,
   ) {}
+
+  /** How many of a level's chunks are read at once. */
+  private concurrency(level: OpenLevel): number {
+    return concurrencyFor(level.chunkBytes, this.inFlightBytes);
+  }
 
   /** Refuses a read of `size` voxels of `width` bytes each from level `index`, when it is past the cap. */
   private checkSize(index: number, size: readonly number[], width: number, region: boolean): void {
@@ -330,16 +404,16 @@ export class VolumeReader {
       }),
     );
     const merged = mergeLevels(pyramids);
-    // One access (and shard-index cache, keyed by path in the store) per store.
-    const accesses = new Map<string, { access: ReturnType<typeof httpAccess>; shardIndexes: ShardIndexCache }>();
+    // One read (and shard-index cache, keyed by path in the store) per store.
+    const accesses = new Map<string, { read: ZarrArrayRead; shardIndexes: ShardIndexCache }>();
     this.levels = await Promise.all(
       merged.map(async (level): Promise<OpenLevel> => {
         let store = accesses.get(level.url);
-        if (store === undefined) accesses.set(level.url, (store = { access: httpAccess(level.url), shardIndexes: new ShardIndexCache() }));
-        const { access, shardIndexes } = store;
+        if (store === undefined) accesses.set(level.url, (store = { read: storeRead(level.url), shardIndexes: new ShardIndexCache() }));
+        const { shardIndexes } = store;
         const where = `${level.url}${level.path}`;
         // Zarr v2 arrays (OME-Zarr 0.4) read as v3.
-        const plain = withZarr2(access.read);
+        const plain = withZarr2(store.read);
         // Chunks stored transposed (a NIfTI read as virtual Zarr, a Fortran-order v2 array) are read in their stored order.
         const stored = await storedOrder(plain, level.path, level.axes, signal);
         const read = stored?.read ?? plain;
@@ -391,6 +465,7 @@ export class VolumeReader {
           fill,
           dimOf,
           grid: shape.map((s, d) => Math.ceil(s / chunkShape[d])),
+          chunkBytes: array.readChunkShape.reduce((a, b) => a * b, 1) * array.elementBytes,
         });
       }),
     );
@@ -446,7 +521,9 @@ export class VolumeReader {
         const [cx, cy, cz] = reader.chunk;
         const [sx, sy, sz] = scale.size;
         const level: LevelInfo = { ...scaleLevel(url, scale), shape: [sz, sy, sx], chunk: [cz, cy, cx], size: [sx, sy, sz], type };
-        const common = { fill: 0, dimOf: [2, 1, 0] as [number, number, number], grid: [reader.grid[2], reader.grid[1], reader.grid[0]] };
+        // Labels are stored as 64-bit integers; images as their type (one of NUMERIC, or a 64-bit one).
+        const width = labels || wide !== undefined ? 8 : NUMERIC[stored as keyof typeof NUMERIC].BYTES_PER_ELEMENT;
+        const common = { fill: 0, dimOf: [2, 1, 0] as [number, number, number], grid: [reader.grid[2], reader.grid[1], reader.grid[0]], chunkBytes: cx * cy * cz * width };
         const raw = labels
           ? async ([z, y, x]: number[]) => {
               const ids = await reader.readLabels([x, y, z]);
@@ -514,7 +591,7 @@ export class VolumeReader {
     const indices: number[][] = [];
     for (let a = first[0]; a <= last[0]; ++a) for (let b = first[1]; b <= last[1]; ++b) for (let c = first[2]; c <= last[2]; ++c) indices.push([a, b, c]);
     let done = 0;
-    await each(indices, signal, async (ci) => {
+    await each(indices, this.concurrency(level), signal, async (ci) => {
       const data = await this.chunk(level, ci);
       if (data !== undefined) {
         const origin = [0, 1, 2].map((d) => ci[d] * cs[d]);
@@ -557,7 +634,7 @@ export class VolumeReader {
     const indices: number[][] = [];
     for (let a = 0; a < level.grid[0]; ++a) for (let b = 0; b < level.grid[1]; ++b) for (let c = 0; c < level.grid[2]; ++c) indices.push([a, b, c]);
     let done = 0;
-    await each(indices, signal, async (ci) => {
+    await each(indices, this.concurrency(level), signal, async (ci) => {
       const data = await read(ci);
       if (data !== undefined) {
         const origin = [0, 1, 2].map((d) => ci[d] * cs[d]);
@@ -616,7 +693,7 @@ export class VolumeReader {
     const indices: number[][] = [];
     for (let a = first[0]; a <= last[0]; ++a) for (let b = first[1]; b <= last[1]; ++b) for (let c = first[2]; c <= last[2]; ++c) indices.push([a, b, c]);
     let done = 0;
-    await each(indices, signal, async (ci) => {
+    await each(indices, this.concurrency(level), signal, async (ci) => {
       const bytes = await read(ci);
       if (bytes !== undefined && !signal.aborted) {
         const data = values(bytes, level.rawChunk ? type : "uint8");
@@ -685,7 +762,7 @@ export class VolumeReader {
     const indices: number[][] = [];
     for (let a = first[0]; a <= last[0]; ++a) for (let b = first[1]; b <= last[1]; ++b) for (let c = first[2]; c <= last[2]; ++c) indices.push([a, b, c]);
     let done = 0;
-    await each(indices, signal, async (ci) => {
+    await each(indices, this.concurrency(level), signal, async (ci) => {
       const bytes = await read(ci);
       if (bytes !== undefined) {
         const data = values(bytes, level.rawChunk ? type : "uint8");
@@ -745,7 +822,7 @@ export class VolumeReader {
       group.voxels.push(v);
     }
     const read = level.rawChunk ?? level.readChunk;
-    await each([...byChunk.values()], signal, async ({ index: ci, voxels }) => {
+    await each([...byChunk.values()], this.concurrency(level), signal, async ({ index: ci, voxels }) => {
       const bytes = await read(ci);
       if (bytes === undefined) return;
       const data = values(bytes, level.rawChunk ? type : "uint8");

@@ -4,9 +4,9 @@
  * voxel, regions of a level, and placement.  `NET=1` also reads a box of
  * MICrONS' electron microscopy.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { encodeZIndexCompressed3d } from "neuroglancer/unstable/util/zorder.js";
-import { chunkId, decodeMinishardIndex, type RangeRead, PrecomputedScale, readInfo, type Scale, shardOf, type Sharding } from "@ngplatform/sdk/precomputed";
+import { chunkId, decodeMinishardIndex, httpRead, type RangeRead, PrecomputedScale, readInfo, type Scale, shardOf, type Sharding } from "@ngplatform/sdk/precomputed";
 import { apply, scaleLevel } from "../ome.js";
 import { precomputedUrl, storeOf } from "../sources.js";
 
@@ -93,6 +93,24 @@ function shardedScale(size: [number, number, number], chunk: [number, number, nu
   };
   return { scale, reader: new PrecomputedScale("mem://x/", scale, "uint8", read), grid };
 }
+
+describe("reading over http", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reads a range of a shard past the browser's cache, and a whole file through it", async () => {
+    const inits: (RequestInit | undefined)[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init?: RequestInit) => {
+      inits.push(init);
+      return new Response(new Uint8Array(4) as BlobPart, { status: (init?.headers as Record<string, string>)?.Range ? 206 : 200 });
+    });
+    await httpRead("http://p.test/s0/0.shard", { offset: 8, length: 4 });
+    await httpRead("http://p.test/info");
+    expect(inits.map((i) => [(i?.headers as Record<string, string>)?.Range, i?.cache])).toEqual([
+      ["bytes=8-11", "no-store"],
+      [undefined, undefined],
+    ]);
+  });
+});
 
 describe("precomputed images", () => {
   it("names chunks as Neuroglancer does", () => {

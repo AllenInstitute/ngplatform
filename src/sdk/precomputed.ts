@@ -100,7 +100,8 @@ export type RangeRead = (url: string, range?: { offset: number; length: number }
 export const httpRead: RangeRead = async (url, range, signal) => {
   const headers: Record<string, string> = {};
   if (range !== undefined) headers.Range = `bytes=${range.offset}-${range.offset + range.length - 1}`;
-  const response = await fetch(url, { headers, signal });
+  // Ranges skip the browser's HTTP cache: Chromium answers cached range reads of one URL (a shard) one at a time.
+  const response = await fetch(url, range === undefined ? { headers, signal } : { headers, signal, cache: "no-store" });
   if (response.status === 404 || response.status === 403) return undefined;
   if (!response.ok) throw new Error(`${url}: ${response.status} ${response.statusText}`);
   const bytes = new Uint8Array(await response.arrayBuffer());

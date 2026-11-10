@@ -3,12 +3,13 @@
  * OME-Zarr 0.4 in Zarr v2 (raw, zlib and gzip chunks, both key separators,
  * C and Fortran order, big-endian values, a fill value), images with size-1
  * t and c axes, fill values in the array's own type, a chunk that cannot be
- * read, and the units a store may give its axes.
+ * read, and the units a store may give its axes; how many chunks are read at
+ * once, and range reads inside a shard kept out of the browser's cache.
  */
 import zlib from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { apply, parseOmeLevels } from "../ome.js";
-import { fillOf, VolumeReader } from "../volume_reader.js";
+import { concurrencyFor, fillOf, MAX_CONCURRENT, VolumeReader } from "../volume_reader.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -190,7 +191,8 @@ describe("a chunk that cannot be read", () => {
     const files = v2Store(ZYX, [4, 8, 8], [1, 2, 2], ([z, y, x]) => valueAt(x, y, z));
     let broken = true;
     const asked = serve(files, (key) => broken && key === "0/0.1.0");
-    const reader = new VolumeReader();
+    // Chunks of 8 bytes, read 8 at a time.
+    const reader = new VolumeReader(undefined, undefined, 64);
     await reader.open([BASE], undefined);
     const chunkReads = () => asked.filter((k) => /^0\/\d/.test(k)).length;
     const opened = chunkReads();
@@ -204,6 +206,139 @@ describe("a chunk that cannot be read", () => {
     broken = false;
     const { data } = await reader.volume(0, signal(), undefined, { lo: [0, 2, 0], hi: [2, 4, 1] });
     expect(data.length).toBe(4);
+  });
+});
+
+describe("chunks read at once", () => {
+  it("reads up to 32 small chunks at once, and big ones as many as fit in the bytes allowed", () => {
+    expect(concurrencyFor(64 ** 3)).toBe(MAX_CONCURRENT);
+    expect(concurrencyFor(192 ** 3)).toBe(18);
+    expect(concurrencyFor(256 ** 3 * 4)).toBe(2);
+    expect(concurrencyFor(512 ** 3)).toBe(1);
+    expect(concurrencyFor(2 * 512 ** 3)).toBe(1);
+  });
+
+  /** Serves `files` slowly, counting the chunk reads under way at once. */
+  function serveSlowly(files: Map<string, Uint8Array>) {
+    const seen = { now: 0, peak: 0, reads: 0 };
+    vi.stubGlobal("fetch", async (url: string | URL) => {
+      const key = String(url).slice(BASE.length);
+      const chunk = /^0\/\d/.test(key);
+      if (chunk) {
+        seen.peak = Math.max(seen.peak, ++seen.now);
+        ++seen.reads;
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        --seen.now;
+      }
+      const bytes = files.get(key);
+      return bytes === undefined ? new Response(null, { status: 404 }) : new Response(bytes.slice() as BlobPart);
+    });
+    return seen;
+  }
+
+  it("keeps small chunks to 32 at once", async () => {
+    // 2 × 2 × 2 chunks of uint16 (16 bytes): 256 of them.
+    const seen = serveSlowly(v2Store(ZYX, [8, 16, 16], [2, 2, 2], ([z, y, x]) => valueAt(x, y, z)));
+    const reader = new VolumeReader();
+    await reader.open([BASE], undefined);
+    seen.peak = 0;
+    seen.reads = 0;
+    const { data } = await reader.rawVolume(0, signal());
+    expect(new Uint16Array(data.buffer)[16 * 16 * 3 + 16 * 5 + 7]).toBe(valueAt(7, 5, 3));
+    expect(seen.reads).toBe(256);
+    expect(seen.peak).toBe(MAX_CONCURRENT);
+  });
+
+  it("keeps big chunks within the bytes allowed at once, in every kind of read", async () => {
+    // 4 × 4 × 4 chunks of uint16 (128 bytes), 512 bytes allowed: 4 at once.
+    const seen = serveSlowly(v2Store(ZYX, [8, 16, 16], [4, 4, 4], ([z, y, x]) => valueAt(x, y, z)));
+    const reader = new VolumeReader(undefined, undefined, 512);
+    await reader.open([BASE], undefined);
+    const reads: [string, () => Promise<unknown>][] = [
+      ["volume", () => reader.volume(0, signal())],
+      ["rawVolume", () => reader.rawVolume(0, signal())],
+      ["rawRegion", () => reader.rawRegion(0, { lo: [0, 0, 0], hi: [16, 16, 8] }, signal())],
+      ["eachRawChunk", () => reader.eachRawChunk(0, signal(), () => {})],
+      ["rawPoints", () => reader.rawPoints(0, Float64Array.from({ length: 96 }, (_, i) => [i % 16, (i * 7) % 16, i % 8][i % 3]), "nearest", signal())],
+    ];
+    for (const [name, read] of reads) {
+      // Read afresh: rawVolume and the others do not keep chunks, volume does (cleared by opening again).
+      await reader.open([BASE], undefined);
+      seen.peak = 0;
+      await read();
+      expect([name, seen.peak]).toEqual([name, 4]);
+    }
+  });
+});
+
+/**
+ * An OME-Zarr 0.5 store (Zarr v3) of one 4 × 4 × 4 uint8 array in a single
+ * shard of 2 × 2 × 2 chunks, its index at the end; each voxel `value` of its
+ * x, y, z.
+ */
+function shardedStore(value: (x: number, y: number, z: number) => number): Map<string, Uint8Array> {
+  const files = new Map<string, Uint8Array>();
+  files.set(
+    "zarr.json",
+    json({
+      zarr_format: 3,
+      node_type: "group",
+      attributes: { ome: { version: "0.5", multiscales: [{ axes: ZYX, datasets: [{ path: "0", coordinateTransformations: [{ type: "scale", scale: [1, 1, 1] }] }] }] } },
+    }),
+  );
+  files.set(
+    "0/zarr.json",
+    json({
+      zarr_format: 3,
+      node_type: "array",
+      shape: [4, 4, 4],
+      data_type: "uint8",
+      chunk_grid: { name: "regular", configuration: { chunk_shape: [4, 4, 4] } },
+      chunk_key_encoding: { name: "default", configuration: { separator: "/" } },
+      fill_value: 0,
+      codecs: [{ name: "sharding_indexed", configuration: { chunk_shape: [2, 2, 2], codecs: [{ name: "bytes" }], index_codecs: [{ name: "bytes", configuration: { endian: "little" } }], index_location: "end" } }],
+      dimension_names: ["z", "y", "x"],
+    }),
+  );
+  const shard = new Uint8Array(8 * 8 + 8 * 16);
+  const index = new DataView(shard.buffer, 64);
+  for (let c = 0; c < 8; ++c) {
+    const [cz, cy, cx] = [c >> 2, (c >> 1) & 1, c & 1];
+    for (let e = 0; e < 8; ++e) shard[8 * c + e] = value(2 * cx + (e & 1), 2 * cy + ((e >> 1) & 1), 2 * cz + (e >> 2));
+    index.setBigUint64(16 * c, BigInt(8 * c), true);
+    index.setBigUint64(16 * c + 8, 8n, true);
+  }
+  files.set("0/c/0/0/0", shard);
+  return files;
+}
+
+describe("range reads", () => {
+  it("reads ranges inside a shard past the browser's cache, and whole keys through it", async () => {
+    const files = shardedStore((x, y, z) => 16 * z + 4 * y + x);
+    const asked: { key: string; range?: string; cache?: RequestCache }[] = [];
+    vi.stubGlobal("fetch", async (url: string | URL, init?: RequestInit) => {
+      const key = String(url).slice(BASE.length);
+      const range = (init?.headers as Record<string, string> | undefined)?.Range;
+      asked.push({ key, range, cache: init?.cache });
+      const bytes = files.get(key);
+      if (bytes === undefined) return new Response(null, { status: 404 });
+      if (range === undefined) return new Response(bytes.slice() as BlobPart);
+      const [, a, b] = /^bytes=(\d*)-(\d*)$/.exec(range)!;
+      const start = a === "" ? bytes.length - Number(b) : Number(a);
+      const end = a === "" ? bytes.length : Math.min(bytes.length, Number(b) + 1);
+      return new Response(bytes.slice(start, end) as BlobPart, { status: 206, headers: { "Content-Range": `bytes ${start}-${end - 1}/${bytes.length}` } });
+    });
+    const reader = new VolumeReader();
+    await reader.open([BASE], undefined);
+    const { data } = await reader.rawVolume(0, signal());
+    expect(Array.from(data)).toEqual(Array.from({ length: 64 }, (_, i) => i));
+    const ranged = asked.filter((r) => r.range !== undefined);
+    // The shard's index and its chunks.
+    expect(ranged.length).toBeGreaterThanOrEqual(2);
+    expect(ranged.every((r) => r.key === "0/c/0/0/0" && r.cache === "no-store")).toBe(true);
+    const whole = asked.filter((r) => r.range === undefined);
+    expect(whole.map((r) => r.key)).toContain("0/zarr.json");
+    expect(whole.every((r) => r.cache === undefined)).toBe(true);
   });
 });
 
