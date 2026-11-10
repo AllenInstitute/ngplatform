@@ -152,6 +152,11 @@ layers, so one shader colours the overview and the selected objects alike:
   the column cannot be read (a warning). A network error is not taken
   as no value: the chunk fails and is read again later.
 
+The overview reads only the object values its shader reads (by name or
+through `prop_`); the others stay NaN on its vertices and cost no reads, so
+a shader that colours by direction opens without downloading any object
+column. A shader edited to read another value loads the chunks again with it.
+
 By default the group index and, when the store has at most 8 eligible
 columns (single-channel, numeric or dictionary, not 64-bit), all of them are
 added; with more, none, and a warning says how to choose. `#attributes=`
@@ -371,8 +376,10 @@ here in `src/virtual/*.spec.ts`). For large files:
   mesh_vertex_clustering`, `bin_shape`), so each level is a level of detail
   of the multiscale mesh.
 - An object table whose rows are its ids (no `object_ids` or
-  `object_attributes/segment_id`) makes its segment ids only when something
-  reads them, and does not send them to the chunk worker (`identityTable`
+  `object_attributes/segment_id`, or `object_ids` the writer marks
+  `object_ids_sorted` that start at 0 and end at one less than their count,
+  told from two reads rather than the whole column) makes its segment ids
+  only when something reads them, and does not send them to the chunk worker (`identityTable`
   in `objects.ts`), so tens of millions of streamlines do not cost 8 bytes
   each per level.
 

@@ -61,6 +61,7 @@ import {
   selectDenseLevel,
 } from "./dense_lod.js";
 import { KIND_CAPABILITIES, positionAttribute } from "./geometry_kind.js";
+import { shaderObjectValues } from "./objects.js";
 import type { HashMapUint64 } from "neuroglancer/unstable/gpu_hash/hash_table.js";
 import { GPUHashTable, HashSetShaderManager } from "neuroglancer/unstable/gpu_hash/shader.js";
 import { WithSharedKvStoreContext } from "neuroglancer/unstable/kvstore/chunk_source_frontend.js";
@@ -101,7 +102,11 @@ import {
 import type { SliceViewPanelRenderContext } from "neuroglancer/unstable/sliceview/renderlayer.js";
 import { SliceViewPanelRenderLayer } from "neuroglancer/unstable/sliceview/renderlayer.js";
 import type { WatchableValueInterface } from "neuroglancer/unstable/trackable_value.js";
-import { registerNested, WatchableValue } from "neuroglancer/unstable/trackable_value.js";
+import {
+  makeCachedDerivedWatchableValue,
+  registerNested,
+  WatchableValue,
+} from "neuroglancer/unstable/trackable_value.js";
 import type { Uint64Map } from "neuroglancer/unstable/uint64_map.js";
 import { DataType } from "neuroglancer/unstable/util/data_type.js";
 import type { Borrowed } from "neuroglancer/unstable/util/disposable.js";
@@ -407,7 +412,14 @@ export class ZarrVectorsMultiscaleGeometrySource extends RefCounted {
     return 3;
   }
 
-  getSources(): SliceViewSingleResolutionSource<ZarrVectorsGeometryChunkSource>[][] {
+  /**
+   * Each level's chunk source. `objectValues`, the object values a shader
+   * reads (see {@link shaderObjectValues}), are part of a source's
+   * parameters: a shader that reads another one gets sources that read it.
+   */
+  getSources(
+    objectValues?: readonly string[],
+  ): SliceViewSingleResolutionSource<ZarrVectorsGeometryChunkSource>[][] {
     return [
       this.levels.map(({ spec, parameters }) => ({
         chunkSource: this.chunkManager.getChunkSource(
@@ -415,7 +427,14 @@ export class ZarrVectorsMultiscaleGeometrySource extends RefCounted {
           {
             sharedKvStoreContext: this.sharedKvStoreContext,
             spec,
-            parameters,
+            parameters:
+              objectValues === undefined
+                ? parameters
+                : Object.assign(
+                    new ZarrVectorsGeometryChunkSourceParameters(),
+                    parameters,
+                    { objectValues: [...objectValues] },
+                  ),
           },
         ),
         chunkToMultiscaleTransform: identityTransform(spec.rank),
@@ -1290,17 +1309,27 @@ function DenseRenderLayer<
     attach(attachment: VisibleLayerInfo<LayerView, DenseAttachmentState>) {
       super.attach(attachment);
       const { displayState, source } = this.options;
+      // Only the object values the shader reads are read (as one string,
+      // so an edit that reads the same ones keeps the sources).
+      const objectValues = attachment.registerDisposer(
+        makeCachedDerivedWatchableValue(
+          (shader: string) =>
+            shaderObjectValues(source.description, shader).join(","),
+          [displayState.skeletonRenderingOptions.shader],
+        ),
+      );
       const sources = attachment.registerDisposer(
         registerNested(
           (
             context: RefCounted,
             transform: RenderLayerTransformOrError,
             displayDimensionRenderInfo: DisplayDimensionRenderInfo,
+            used: string,
           ) => {
             const transformed = getVolumetricTransformedSources(
               displayDimensionRenderInfo,
               transform,
-              () => source.getSources(),
+              () => source.getSources(used === "" ? [] : used.split(",")),
               attachment.messages,
               this,
             );
@@ -1324,6 +1353,7 @@ function DenseRenderLayer<
           },
           displayState.transform,
           attachment.view.displayDimensionRenderInfo,
+          objectValues,
         ),
       );
       attachment.state = {

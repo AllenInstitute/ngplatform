@@ -181,10 +181,6 @@ async function fragmentOwners(
 }
 
 /**
- * Sets each vertex's object values (`obj_<name>`, `obj_group`) from the
- * object it belongs to: `segmentIds` holds two uint32 per vertex.
- */
-/**
  * Starts reading the object values {@link fillObjectValues} will put on
  * vertices, so they are at hand when the first object's geometry is.
  */
@@ -201,15 +197,25 @@ export function prefetchObjectValues(
   );
 }
 
+/**
+ * Sets each vertex's object values (`obj_<name>`, `obj_group`) from the
+ * object it belongs to: `segmentIds` holds two uint32 per vertex. Only those
+ * in `used` (attribute ids), when given; the others stay as they are (NaN).
+ */
 export async function fillObjectValues(
   access: ZarrVectorsStoreAccess,
   description: ZarrVectorsGeometryDescription,
   attributes: Float32Array[],
   segmentIds: Uint32Array,
   numVertices: number,
+  used?: ReadonlySet<string>,
 ) {
   const slots = description.attributes.flatMap((a, i) =>
-    a.objectValue !== undefined && i < attributes.length ? [i] : [],
+    a.objectValue !== undefined &&
+    i < attributes.length &&
+    (used === undefined || used.has(a.id))
+      ? [i]
+      : [],
   );
   if (slots.length === 0 || description.objectValuesPath === undefined) return;
   const objects = await readShaderObjectValues(
@@ -276,12 +282,15 @@ export class LevelPipeline {
   /**
    * `isRequested` says whether the view also wants the chunk at a cell, so a
    * ghost read of it can fetch the whole cell for that chunk to reuse.
+   * `objectValues` are the object values (attribute ids) to read and put on
+   * vertices, when not all of them: those a shader reads.
    */
   constructor(
     private access: ZarrVectorsStoreAccess,
     private description: ZarrVectorsGeometryDescription,
     private level: ZarrVectorsLevel,
     private isRequested: (chunk: readonly number[]) => boolean = () => false,
+    private objectValues?: ReadonlySet<string>,
   ) {
     this.cells = LevelCells.forLevel(access, level, description);
     // Lines bridge to their neighbours' vertices; a mesh's faces reach them.
@@ -556,6 +565,7 @@ export class LevelPipeline {
       decoded.attributes,
       segmentIds,
       decoded.numVertices,
+      this.objectValues,
     );
     const out = assembleChunk(
       decoded,

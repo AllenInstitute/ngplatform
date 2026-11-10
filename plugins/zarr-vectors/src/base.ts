@@ -73,6 +73,12 @@ class ZarrVectorsSourceParameters {
 /** One level's spatial chunks, for the dense overview. */
 export class ZarrVectorsGeometryChunkSourceParameters extends ZarrVectorsSourceParameters {
   static RPC_ID = "zarr-vectors/GeometryChunkSource";
+  /**
+   * The object values (attribute ids, `obj_<column>`) the layer's shader
+   * reads: only these are read and put on vertices, the rest left NaN.
+   * `undefined`: all of them.
+   */
+  objectValues?: string[];
 }
 
 /**

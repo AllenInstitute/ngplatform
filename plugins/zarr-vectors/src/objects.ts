@@ -30,6 +30,7 @@
  */
 
 import { isDenseLayout, SPANS_PATH } from "./dense_manifests.js";
+import type { ZarrVectorsGeometryDescription } from "./base.js";
 import type { ElementType } from "./dtype.js";
 import {
   decodeFloat32,
@@ -238,7 +239,10 @@ async function loadObjectTable(
       );
   };
   const [objectIds, segmentColumn] = await Promise.all([
-    readIds(objectIdsReader),
+    segmentIdReader === undefined &&
+    (await sortedIdentity(objectIdsReader, objectIndexAttrs, numObjects, signal))
+      ? undefined
+      : readIds(objectIdsReader),
     readIds(segmentIdReader),
   ]);
   let segmentIds: BigUint64Array;
@@ -268,6 +272,34 @@ async function loadObjectTable(
     dense,
     objectIndexAttrs,
   };
+}
+
+/**
+ * Whether a level's `object_ids` are its rows (0, 1, 2 …), told from two
+ * values rather than the whole column (3.3 M ids are 200 reads): ids the
+ * writer says are sorted (`object_ids_sorted`), being distinct, are the rows
+ * exactly when the first is 0 and the last is one less than their count.
+ */
+async function sortedIdentity(
+  reader: ZarrArrayReader | undefined,
+  objectIndexAttrs: any,
+  numObjects: number,
+  signal: AbortSignal | undefined,
+): Promise<boolean> {
+  if (reader === undefined || objectIndexAttrs?.object_ids_sorted !== true) {
+    return false;
+  }
+  const { array } = reader;
+  if (!(array.shape[0] >= numObjects) || array.shape.length !== 1) return false;
+  // Two chunks or fewer cost no more read whole.
+  if (Math.ceil(numObjects / array.readChunkShape[0]) <= 2) return false;
+  const type = array.elementType as ElementType;
+  const [first, last] = await Promise.all(
+    [0, numObjects - 1].map(async (row) =>
+      decodeUint64(await reader.readRows(row, row + 1, signal), type, 1)[0],
+    ),
+  );
+  return first === 0n && last === BigInt(numObjects - 1);
 }
 
 /**
@@ -1228,6 +1260,24 @@ export interface ShaderObjectValue {
   column: string | undefined;
   /** Category labels of a dictionary column (the shader sees the code). */
   categories?: string[];
+}
+
+/**
+ * The object values (`obj_<column>` attributes) `shader` reads, by name or
+ * through `prop_obj_<column>()`, sorted: the others need not be read.
+ */
+export function shaderObjectValues(
+  description: ZarrVectorsGeometryDescription,
+  shader: string,
+): string[] {
+  return description.attributes
+    .filter(
+      (a) =>
+        a.objectValue !== undefined &&
+        new RegExp(`\\b(?:prop_)?${a.id}\\b`).test(shader),
+    )
+    .map((a) => a.id)
+    .sort();
 }
 
 /** Object values offered by default when a store has at most this many. */

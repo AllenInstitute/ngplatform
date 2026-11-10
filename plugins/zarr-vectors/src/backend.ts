@@ -217,7 +217,7 @@ export class ZarrVectorsGeometryChunkSourceBackend extends WithParameters(
 
   private get pipeline() {
     if (this.pipeline_ === undefined) {
-      const { storeUrl, description, level } = this.parameters;
+      const { storeUrl, description, level, objectValues } = this.parameters;
       this.pipeline_ = new LevelPipeline(
         storeAccess(this, storeUrl),
         description,
@@ -229,6 +229,7 @@ export class ZarrVectorsGeometryChunkSourceBackend extends WithParameters(
             chunk.priorityTier !== ChunkPriorityTier.RECENT
           );
         },
+        objectValues === undefined ? undefined : new Set(objectValues),
       );
     }
     return this.pipeline_;
