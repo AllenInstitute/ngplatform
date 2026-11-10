@@ -149,7 +149,7 @@ layers, so one shader colours the overview and the selected objects alike:
   dictionary-encoded column gives its code, and the codes are listed in the
   browser console when the layer opens. A value the store marks absent is
   NaN (test with `isnan`), and so is every value when the object table or
-  the column cannot be read (warned in the console); a network error is
+  the column cannot be read (a warning); a network error is
   not kept, so the next chunk reads them again.
 
 By default the group index and, when the store has at most 8 eligible
@@ -219,8 +219,7 @@ cost; an object index and directory listing also change what can be shown.
 
 A feature is trusted only where the data bears it out: a stamped face group
 whose rows index another fragment, or whose count does not match the
-fragments, sends that chunk back to the whole-cell read with a console
-warning.
+fragments, sends that chunk back to the whole-cell read with a warning.
 
 ## Format support
 
@@ -297,7 +296,12 @@ and those under the mouse) for the platform's Surface controls.
 Caches: decoded chunks (384 MB), raw vertex cells (128 MB) and the bytes of
 byte-range reads (256 MB; objects requested in later waves find their rows in
 an earlier wave's merged read) are shared by every reader of a store and
-bounded by bytes, as are cross-chunk links. The
+bounded by bytes, as are cross-chunk links. Decoded chunks, vertex cells and
+cross-chunk links are also charged to one budget over every store in the
+worker (`DECODED_BUDGET`, 768 MB; `setDecodedCacheBytes`), which lets go of
+the least recently used of any store first, so three stores open together
+hold no more than one. Precomputed mesh stores share a 192 MB budget of
+decoded cells the same way (`MESH_CELL_BUDGET`). The
 worker drops a store's caches, including its shard indexes, when the last
 layer using it is removed, so a store rewritten in place is read afresh once
 its layer is removed and added again; within one layer there is no live
@@ -307,7 +311,14 @@ Editing: the viewer does not edit zarr-vectors stores. Edits made elsewhere
 (zarr-vectors-py's `EditSession`) show after the layer is reloaded, at level
 0; coarser levels show what they held until the pyramid is rebuilt.
 
-Not read yet (reported once in the console):
+Warnings (a store written by a newer version, columns that cannot be read,
+groups past what Neuroglancer can tag, levels skipped) are given once per
+store: in the console, and to the application as a `ngplatform:warning`
+event on `window` (`{ source, store, message }`; ngplatform puts them in the
+Activity log). The worker's own reach the main thread through Neuroglancer's
+RPC (`zarr-vectors/warning`).
+
+Not read yet (a warning):
 
 - Draco-encoded vertices (the level is skipped). zarr-vectors-py also reorders
   vertices when it writes Draco, so its cross-chunk faces would be wrong.

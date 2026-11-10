@@ -79,8 +79,9 @@ attributes this plugin reads.
   tab need the store's object index; without it only the overview is
   drawn. A mesh whose faces cross chunks needs the server to list
   directories (a bucket, or a server's index page); otherwise the faces
-  across chunks are missing and the console warns. Levels or features the
-  plugin cannot read yet (above) are skipped with a console warning.
+  across chunks are missing, with a warning in the Activity dock. Levels
+  or features the plugin cannot read yet (above) are skipped with a
+  warning there, given once per store.
 - **A local file stops loading after a reload.** In Firefox and Safari,
   and in Chrome and Edge when you did not allow the file again, open it
   again: links to local files work only in the browser that opened them.

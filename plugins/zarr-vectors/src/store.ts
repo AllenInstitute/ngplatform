@@ -145,6 +145,8 @@ export interface ZarrVectorsStoreAccess {
   /** Child directory names of `path`; throws if listing is unsupported. */
   listDirectories(path: string, signal?: AbortSignal): Promise<string[]>;
   shardIndexes: ShardIndexCache;
+  /** The store's URL, when it has one: named in its warnings. */
+  url?: string;
 }
 
 /** Store access through a (frontend or worker) kvstore context. */
@@ -198,6 +200,7 @@ export function kvStoreAccess(
         .filter((d) => d !== "");
     },
     shardIndexes,
+    url: storeUrl,
   };
 }
 

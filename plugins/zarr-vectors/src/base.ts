@@ -121,3 +121,8 @@ export const ZARR_VECTORS_DENSE_RENDER_LAYER_UPDATE_SOURCES_RPC_ID =
  */
 export const ZARR_VECTORS_SEED_OBJECT_TABLE_RPC_ID =
   "zarr-vectors/seedObjectTable";
+/**
+ * Worker -> frontend: a warning about a store, for the user
+ * (`{ store?, message }`, as util.ts's `StoreWarning`).
+ */
+export const ZARR_VECTORS_WARNING_RPC_ID = "zarr-vectors/warning";

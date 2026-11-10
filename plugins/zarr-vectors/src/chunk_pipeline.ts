@@ -204,6 +204,7 @@ export async function fillObjectValues(
     warnOnce(
       "object values could not be read " +
         `(${e instanceof Error ? e.message : e}); shown as no value (NaN)`,
+      access.url,
     );
     return undefined;
   });
@@ -272,7 +273,7 @@ export class LevelPipeline {
         cells: this.cells,
         listDirectories: (path) =>
           access.listDirectories(`${level.path}/${path}`),
-        warn: warnOnce,
+        warn: (message: string) => warnOnce(message, access.url),
       });
     }
   }
@@ -332,6 +333,7 @@ export class LevelPipeline {
         warnOnce(
           "could not map fragments to objects " +
             `(${e instanceof Error ? e.message : e}); objects are coloured per chunk`,
+          this.access.url,
         );
       });
     }

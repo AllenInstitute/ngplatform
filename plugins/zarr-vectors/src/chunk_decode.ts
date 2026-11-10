@@ -371,6 +371,7 @@ export async function decodeChunk(
           warnOnce(
             `${cells.levelPath} has no vertex attribute ${a.name}; it reads ` +
               "as NaN there",
+            cells.storeUrl,
           );
         }
         return new Float32Array(count).fill(NaN);
@@ -387,6 +388,7 @@ export async function decodeChunk(
         warnOnce(
           `${cells.levelPath}/${path} stores ${type} x${width} per vertex, ` +
             `not x${a.components}; it reads as NaN there`,
+          cells.storeUrl,
         );
         return new Float32Array(count).fill(NaN);
       }
@@ -415,6 +417,7 @@ export async function decodeChunk(
       warnOnce(
         `${cells.levelPath}/${column}: ${chunkKey} does not hold one ` +
           `${type} per fragment; objects there are found from the manifests`,
+        cells.storeUrl,
       );
     }
   } else if (!description.hasObjects) {

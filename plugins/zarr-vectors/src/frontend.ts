@@ -43,6 +43,7 @@ import {
   ZarrVectorsMeshSourceParameters,
   ZarrVectorsObjectSkeletonSourceParameters,
   ZARR_VECTORS_SEED_OBJECT_TABLE_RPC_ID,
+  ZARR_VECTORS_WARNING_RPC_ID,
 } from "./base.js";
 import {
   attributeLayout,
@@ -79,7 +80,8 @@ import {
   parseAttributesFragment,
   readJson,
 } from "./store.js";
-import { warnOnce } from "./util.js";
+import { type StoreWarning, warnOnce } from "./util.js";
+import { registerRPC } from "neuroglancer/unstable/worker_rpc.js";
 import { WithSharedKvStoreContext } from "neuroglancer/unstable/kvstore/chunk_source_frontend.js";
 import type { SharedKvStoreContext } from "neuroglancer/unstable/kvstore/frontend.js";
 import {
@@ -95,6 +97,12 @@ import type { VertexAttributeInfo } from "neuroglancer/unstable/skeleton/base.js
 import { SkeletonSource } from "neuroglancer/unstable/skeleton/frontend.js";
 import { DataType } from "neuroglancer/unstable/util/data_type.js";
 import * as matrix from "neuroglancer/unstable/util/matrix.js";
+
+// The worker's warnings, passed on as the frontend's own are (once per store).
+registerRPC(ZARR_VECTORS_WARNING_RPC_ID, function (x) {
+  const { store, message } = x as StoreWarning;
+  warnOnce(message, store);
+});
 
 export class ZarrVectorsObjectSkeletonSource extends WithParameters(
   WithSharedKvStoreContext(SkeletonSource),
@@ -237,7 +245,7 @@ async function buildDataSource(
   const access = kvStoreAccess(context.kvStoreContext, storeUrl);
   const warnings: string[] = [];
   const reportWarnings = () => {
-    for (const w of warnings.splice(0)) warnOnce(`${storeUrl}: ${w}`);
+    for (const w of warnings.splice(0)) warnOnce(w, storeUrl);
   };
   const propertiesOf = (
     levelPath: string,

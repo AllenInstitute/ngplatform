@@ -49,7 +49,7 @@ import { contextKeyFor } from "./context.js";
 import { asTool, type DockTab, DockManager, prefs } from "./docks.js";
 import { h, icon, iconButton, isMac, keyLabel, mark } from "./dom.js";
 import { closeSheet, confirmDialog, copyText, formDialog, offer, promptDialog, sheet, sheetIsOpen, showMenu, showPalette, showSheet, toast } from "./overlays.js";
-import { ActivityLog } from "./panels/activity.js";
+import { ActivityLog, WARNING_EVENT, warningLine } from "./panels/activity.js";
 import { showAddMenu } from "./panels/datasets.js";
 import { layerTarget } from "./panels/layer.js";
 import { renderLayersPanel } from "./panels/layers.js";
@@ -464,6 +464,11 @@ export class Shell {
     log.onAdd((message, level) => {
       last = { message, level };
       line();
+    });
+    // Data type plugins' warnings about what they read (a newer format, columns left out), each once per store.
+    window.addEventListener(WARNING_EVENT, (e) => {
+      const warning = warningLine((e as CustomEvent).detail);
+      if (warning !== undefined) log.add(warning.message, "info", warning.source);
     });
     jobs.onChange(line);
     store.onChange(refresh);

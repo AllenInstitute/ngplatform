@@ -33,6 +33,7 @@ import {
   ZarrVectorsMeshSourceParameters,
   ZarrVectorsObjectSkeletonSourceParameters,
   ZARR_VECTORS_SEED_OBJECT_TABLE_RPC_ID,
+  ZARR_VECTORS_WARNING_RPC_ID,
 } from "./base.js";
 import type { DenseChunkData } from "./chunk_pipeline.js";
 import { LevelPipeline } from "./chunk_pipeline.js";
@@ -90,6 +91,7 @@ import {
 } from "neuroglancer/unstable/visibility_priority/backend.js";
 import type { RPC } from "neuroglancer/unstable/worker_rpc.js";
 import { registerRPC, registerSharedObject } from "neuroglancer/unstable/worker_rpc.js";
+import { setWarningSink } from "./util.js";
 
 const accesses = new Map<
   string,
@@ -98,6 +100,12 @@ const accesses = new Map<
 
 /** Object tables the frontend sent, by store URL then level path. */
 const seededTables = new Map<string, Map<string, ZarrVectorsObjectTable>>();
+
+// Warnings found here go to the main thread, which shows them to the user
+// (once per store); Neuroglancer's chunk worker keeps its RPC on globalThis.
+setWarningSink((warning) =>
+  (globalThis as { rpc?: RPC }).rpc?.invoke(ZARR_VECTORS_WARNING_RPC_ID, warning),
+);
 
 registerRPC(ZARR_VECTORS_SEED_OBJECT_TABLE_RPC_ID, function (x) {
   const { storeUrl, levelPath, table } = x as {

@@ -223,6 +223,7 @@ async function loadObjectTable(
       warnOnce(
         `${levelPath}: ${reader.array.path} has ${reader.array.shape[0]} ` +
           `rows for ${numObjects} objects; not used`,
+        access.url,
       );
       return undefined;
     }
@@ -1414,6 +1415,7 @@ async function loadShaderObjectValues(
         warnOnce(
           `object values for shaders: ${column ?? "groups"} unreadable ` +
             `(${e instanceof Error ? e.message : e})`,
+          access.url,
         );
       }
       return out;

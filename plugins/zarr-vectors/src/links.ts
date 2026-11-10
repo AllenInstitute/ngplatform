@@ -29,6 +29,7 @@
 import type { LevelCells } from "./level_cells.js";
 import {
   AsyncLru,
+  DECODED_BUDGET,
   mapConcurrent,
   retryable,
   SHARED_SIGNAL,
@@ -267,16 +268,19 @@ export class CrossChunkLinks {
   private discovery: Promise<Discovery | null> | undefined;
   // Bounded by size, not count: a level can have dozens of offset arrays,
   // so one object's nodes alone need thousands of (array, chunk) entries,
-  // most of them empty.
+  // most of them empty.  Charged to the worker's one budget over every
+  // store too, as the decoded chunks are.
   private cellCache = new AsyncLru<CrossChunkLinkRecord[]>(
     Infinity,
     256 * 1024 * 1024,
     recordsBytes,
+    DECODED_BUDGET,
   );
   private ownedCache = new AsyncLru<OwnedLinks>(
     Infinity,
     64 * 1024 * 1024,
     (o) => recordsBytes(o.records) + o.keys.byteLength,
+    DECODED_BUDGET,
   );
   constructor(private options: CrossChunkLinksOptions) {}
 

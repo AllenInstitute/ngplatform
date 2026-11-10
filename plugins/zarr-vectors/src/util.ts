@@ -18,11 +18,50 @@
 
 const warned = new Set<string>();
 
-/** Logs a diagnostic once per session. */
-export function warnOnce(message: string) {
-  if (warned.has(message)) return;
-  warned.add(message);
-  console.warn(`zarr-vectors: ${message}`);
+/** A warning about a store, for the user: what the reader could not read or show. */
+export interface StoreWarning {
+  /** The store's URL, when the warning is about one. */
+  store?: string;
+  message: string;
+}
+
+/**
+ * The event the main thread's warnings are dispatched as on `window`
+ * (`detail`: {@link StoreWarning} with `source: "Zarr Vectors"`), for the
+ * application to show them (ngplatform puts them in the Activity log).
+ */
+export const WARNING_EVENT = "ngplatform:warning";
+
+let sink: ((warning: StoreWarning) => void) | undefined =
+  typeof window !== "undefined" && typeof CustomEvent !== "undefined"
+    ? (warning) =>
+        window.dispatchEvent(
+          new CustomEvent(WARNING_EVENT, {
+            detail: { source: "Zarr Vectors", ...warning },
+          }),
+        )
+    : undefined;
+
+/**
+ * Where warnings go besides the console: on the main thread an event on
+ * `window` (above); a worker sends them to the main thread (backend.ts).
+ */
+export function setWarningSink(
+  next: ((warning: StoreWarning) => void) | undefined,
+) {
+  sink = next;
+}
+
+/**
+ * Logs a diagnostic once per store and session, and passes it on to the
+ * user (the sink).  `store` is the store's URL, when it is about one.
+ */
+export function warnOnce(message: string, store?: string) {
+  const key = store === undefined ? message : `${store}\u0000${message}`;
+  if (warned.has(key)) return;
+  warned.add(key);
+  console.warn(`zarr-vectors: ${store === undefined ? "" : `${store}: `}${message}`);
+  sink?.(store === undefined ? { message } : { store, message });
 }
 
 /**
@@ -37,10 +76,100 @@ export function retryable(e: unknown): boolean {
 }
 
 /**
+ * A byte budget shared by several caches (one per store, per level, per
+ * kind), so that however many stores are open their caches together stay
+ * within it: the entry used least recently among all of them is let go
+ * first.  Only loaded entries are charged; loads in flight are not, and
+ * are never evicted.
+ */
+export class ByteBudget {
+  /** Charged entries, least recently used first. */
+  private entries = new Map<string, { lru: AsyncLru<any>; key: string; size: number }>();
+  private ids = new WeakMap<AsyncLru<any>, number>();
+  private next = 0;
+  private total = 0;
+
+  constructor(private maxBytes: number) {}
+
+  /** The bytes charged, over every cache sharing it. */
+  get size(): number {
+    return this.total;
+  }
+
+  get limit(): number {
+    return this.maxBytes;
+  }
+
+  /** Changes the limit, evicting the least recently used until it holds. */
+  setMaxBytes(maxBytes: number): void {
+    this.maxBytes = maxBytes;
+    this.evict(undefined);
+  }
+
+  private id(lru: AsyncLru<any>, key: string): string {
+    let n = this.ids.get(lru);
+    if (n === undefined) this.ids.set(lru, (n = this.next++));
+    return `${n}|${key}`;
+  }
+
+  /** @internal An entry of `lru` loaded: charged, as the most recent, and others evicted past the limit. */
+  charge(lru: AsyncLru<any>, key: string, size: number): void {
+    const id = this.id(lru, key);
+    this.release(lru, key);
+    this.entries.set(id, { lru, key, size });
+    this.total += size;
+    this.evict(id);
+  }
+
+  /** @internal An entry used again: the most recent. */
+  touch(lru: AsyncLru<any>, key: string): void {
+    const id = this.id(lru, key);
+    const entry = this.entries.get(id);
+    if (entry === undefined) return;
+    this.entries.delete(id);
+    this.entries.set(id, entry);
+  }
+
+  /** @internal An entry gone from its cache. */
+  release(lru: AsyncLru<any>, key: string): void {
+    const id = this.id(lru, key);
+    const entry = this.entries.get(id);
+    if (entry === undefined) return;
+    this.entries.delete(id);
+    this.total -= entry.size;
+  }
+
+  private evict(keep: string | undefined): void {
+    for (const [id, entry] of this.entries) {
+      if (this.total <= this.maxBytes) return;
+      if (id === keep) continue;
+      this.entries.delete(id);
+      this.total -= entry.size;
+      entry.lru.forget(entry.key);
+    }
+  }
+}
+
+/**
+ * Decoded data a worker keeps, over every store it reads: the object
+ * reader's decoded chunks and vertex cells and the cross-chunk links'
+ * records, each also within its own limit.  Three whole-brain stores
+ * share it rather than each taking its own.
+ */
+export const DECODED_BUDGET = new ByteBudget(768 * 1024 * 1024);
+
+/** Sets the bytes of decoded data a worker keeps over every store (768 MB by default). */
+export function setDecodedCacheBytes(bytes: number): void {
+  DECODED_BUDGET.setMaxBytes(bytes);
+}
+
+/**
  * Least-recently-used cache of promises.  Concurrent requests for one key
  * share a load; a load that fails is forgotten so the next request retries.
  * Bounded by entry count and, when `sizeOf` is given, by total size; loads
- * still in flight are never evicted, so they stay shared.
+ * still in flight are never evicted, so they stay shared.  With a `budget`,
+ * its loaded entries are also charged to that budget, which several caches
+ * share and which evicts across them.
  */
 export class AsyncLru<T> {
   private entries = new Map<string, Promise<T>>();
@@ -51,6 +180,7 @@ export class AsyncLru<T> {
     private maxEntries: number,
     private maxSize = Infinity,
     private sizeOf?: (value: T) => number,
+    private budget?: ByteBudget,
   ) {}
 
   /** Changes the size limit (evicting from the oldest until it holds). */
@@ -58,9 +188,7 @@ export class AsyncLru<T> {
     this.maxSize = maxSize;
     for (const key of [...this.entries.keys()]) {
       if (this.totalSize <= this.maxSize) break;
-      this.totalSize -= this.sizes.get(key) ?? 0;
-      this.sizes.delete(key);
-      this.entries.delete(key);
+      this.delete(key);
     }
   }
 
@@ -79,6 +207,7 @@ export class AsyncLru<T> {
     if (existing !== undefined) {
       this.entries.delete(key);
       this.entries.set(key, existing);
+      if (this.sizes.has(key)) this.budget?.touch(this, key);
       return existing;
     }
     const promise = load();
@@ -90,6 +219,7 @@ export class AsyncLru<T> {
         this.sizes.set(key, size);
         this.totalSize += size;
         this.evict();
+        if (this.entries.get(key) === promise) this.budget?.charge(this, key, size);
       },
       () => {
         if (this.entries.get(key) === promise) this.delete(key);
@@ -104,10 +234,24 @@ export class AsyncLru<T> {
     if (!this.entries.has(key)) this.get(key, () => Promise.resolve(value));
   }
 
+  /** Drops an entry, loaded or still loading (a load dropped is no longer shared). */
+  remove(key: string): void {
+    if (this.entries.has(key)) this.delete(key);
+  }
+
+  /** @internal Lets an entry go for the budget, which has already stopped charging it. */
+  forget(key: string): void {
+    if (!this.sizes.has(key)) return;
+    this.entries.delete(key);
+    this.totalSize -= this.sizes.get(key) ?? 0;
+    this.sizes.delete(key);
+  }
+
   private delete(key: string) {
     this.entries.delete(key);
     this.totalSize -= this.sizes.get(key) ?? 0;
     this.sizes.delete(key);
+    this.budget?.release(this, key);
   }
 
   private evict() {

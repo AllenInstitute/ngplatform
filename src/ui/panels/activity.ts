@@ -4,6 +4,21 @@ import { h } from "../dom.js";
 
 export type { LogLevel };
 
+/** The event data type plugins send their warnings as, on `window` (see `warningLine`). */
+export const WARNING_EVENT = "ngplatform:warning";
+
+/**
+ * A data type plugin's warning (the detail of a `WARNING_EVENT`: its
+ * `source`, the `store` it is about, and the `message`) as a line of the
+ * log: the store named by its last part.  Undefined for anything else.
+ */
+export function warningLine(detail: unknown): { message: string; source?: string } | undefined {
+  const d = detail as { source?: unknown; store?: unknown; message?: unknown } | null | undefined;
+  if (typeof d?.message !== "string" || d.message === "") return undefined;
+  const store = typeof d.store === "string" ? d.store.replace(/\|[^|]*:$/, "").replace(/\/+$/, "").split("/").pop() : undefined;
+  return { message: store ? `${store}: ${d.message}` : d.message, source: typeof d.source === "string" ? d.source : undefined };
+}
+
 /** Lines kept for saving (more than the panel shows). */
 const KEEP = 1000;
 
