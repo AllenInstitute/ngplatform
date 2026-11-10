@@ -4,10 +4,10 @@
  * view's reader) off the main thread, and counts its labels or finds a
  * region's voxel nearest a point (see ./labels.ts).
  *
- * In:  { type: "count", id, store }
+ * In:  { type: "count", id, store, level? }  (level: by default the finest of at most 64 M voxels)
  *      { type: "nearest", id, store, level, labels, point, lo, hi }
  *      { type: "cancel", id }
- * Out: { type: "counted", id, level, size, voxelToRas, labels, counts, sums, bounds }
+ * Out: { type: "counted", id, level, size, sizes, voxelToRas, labels, counts, sums, bounds }  (sizes: every level's, finest first)
  *      { type: "nearest", id, voxel }
  *      { type: "progress", id, done, total }
  *      { type: "error", id, message }
@@ -38,12 +38,12 @@ self.onmessage = (event: MessageEvent) => {
   const work = (async () => {
     const { reader, levels } = await open(msg.store);
     if (msg.type === "count") {
-      const level = countingLevel(levels.map((l) => l.size));
+      const level = typeof msg.level === "number" && msg.level >= 0 && msg.level < levels.length ? msg.level : countingLevel(levels.map((l) => l.size));
       const counter = new LabelCounter();
       await reader.eachRawChunk(level, signal, (values, box) => counter.add(values, box), progress);
       const r = counter.result();
       const { size, voxelToRas } = levels[level];
-      postMessage({ type: "counted", id: msg.id, level, size, voxelToRas: Array.from(voxelToRas), ...r }, { transfer: [r.labels.buffer, r.counts.buffer, r.sums.buffer, r.bounds.buffer] });
+      postMessage({ type: "counted", id: msg.id, level, size, sizes: levels.map((l) => l.size), voxelToRas: Array.from(voxelToRas), ...r }, { transfer: [r.labels.buffer, r.counts.buffer, r.sums.buffer, r.bounds.buffer] });
     } else if (msg.type === "nearest") {
       const nearest = new NearestVoxel(new Set(msg.labels as number[]), msg.point);
       await reader.eachRawChunk(msg.level, signal, (values, box) => nearest.add(values, box), progress, { lo: msg.lo, hi: msg.hi });

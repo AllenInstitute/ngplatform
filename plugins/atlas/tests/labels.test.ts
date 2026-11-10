@@ -2,7 +2,7 @@ import { niftiFile } from "@ngplatform/sdk/volume_out";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openNifti } from "../../../src/virtual/images/nifti.js";
 import { VolumeReader } from "../../volume-view/volume_reader.js";
-import { countingLevel, LabelCounter, NearestVoxel } from "../labels.js";
+import { countingLevel, LabelCounter, NearestVoxel, refineLevel } from "../labels.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -67,6 +67,23 @@ describe("passes over a label volume", () => {
     expect(countingLevel(sizes)).toBe(2);
     expect(countingLevel(sizes, 2e8)).toBe(1);
     expect(countingLevel(sizes, 10)).toBe(2);
+  });
+
+  it("counts again at the finest level the first count's rate reads in about a minute", () => {
+    const sizes: [number, number, number][] = [
+      [1000, 1000, 1000],
+      [500, 500, 500],
+      [250, 250, 250],
+    ];
+    // 250³ in a second: 500³ (8 s) and 1000³ (64 s) are about a minute or less.
+    expect(refineLevel(sizes, 2, 1)).toBe(1);
+    expect(refineLevel(sizes, 2, 0.5)).toBe(0);
+    // 250³ in 10 s: 500³ would take 80 s.
+    expect(refineLevel(sizes, 2, 10)).toBeUndefined();
+    expect(refineLevel(sizes, 2, 10, 120)).toBe(1);
+    // Nothing finer than level 0; an unknown time finds nothing affordable.
+    expect(refineLevel(sizes, 0, 0.001)).toBeUndefined();
+    expect(refineLevel(sizes, 2, Infinity)).toBeUndefined();
   });
 });
 

@@ -18,6 +18,7 @@ import { apply, globalSpace, placement } from "../annotations/geometry.js";
 import { storeOf } from "../volume-view/sources.js";
 import { Atlas, KIND_TEXT, type Region } from "./hierarchy.js";
 import { type Counted, LabelClient } from "./label_client.js";
+import { refineLevel } from "./labels.js";
 import { ATLAS_PANEL } from "./manifest.js";
 
 /** The tree's own look: rows with a caret, a swatch, the name, acronym and volume.  Everything else is the app's. */
@@ -35,6 +36,7 @@ const STYLE = `
 .at-name { flex: 1 1 auto; min-width: 8em; overflow: hidden; text-overflow: ellipsis; }
 .at-acronym, .at-volume { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--faint); font: var(--fs-caption) var(--mono); }
 .at-volume { padding-left: var(--sp-3); }
+.at-tree > .at-unseen { padding: var(--sp-2) var(--sp-4) 0; margin: 0; }
 `;
 
 const REGION_INFO =
@@ -42,7 +44,8 @@ const REGION_INFO =
   "Go to moves the views to the region's voxel nearest its centre. Double-click a region in the tree to show only it and go to it.";
 
 const VOLUMES_INFO =
-  "The label image is counted once, in the background, at its finest level of at most 64 million voxels. A region's volume includes everything under it. " +
+  "The label image is counted in the background: first at its finest level of at most 64 million voxels, then, when regions of the table are not seen there, at a finer level that can be read in about a minute. " +
+  "A region smaller than a voxel of the level counted may not be seen: Count at full resolution reads every voxel. A region's volume includes everything under it. " +
   "Save CSV writes every region's voxels and volume, its own and with its descendants.";
 
 /** How many label images' counts are kept, the most recently used. */
@@ -97,7 +100,14 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 export type Counter = Pick<LabelClient, "count" | "centre" | "dispose">;
 
 /** Where the count of the chosen layer's image stands. */
-type CountState = { kind: "idle" } | { kind: "counting"; percent?: number } | { kind: "cancelled" } | { kind: "failed"; message: string } | { kind: "unreadable" };
+type CountState =
+  | { kind: "idle" }
+  | { kind: "counting"; percent?: number }
+  // Counting again at a finer level, the coarse counts shown meanwhile.
+  | { kind: "refining"; level: number; percent?: number }
+  | { kind: "cancelled" }
+  | { kind: "failed"; message: string }
+  | { kind: "unreadable" };
 
 export class AtlasPanel {
   private layer = "";
@@ -118,6 +128,8 @@ export class AtlasPanel {
   /** The layer and store last counted or being counted. */
   private countingFor = "";
   private readonly counts = new Lru<Counted>(COUNTS_KEPT);
+  /** The count under way (first or finer): Cancel, or another layer, aborts it. */
+  private countAbort: AbortController | undefined;
   /** The Go to under way: a new one, or Cancel, aborts it. */
   private going: AbortController | undefined;
   private catalogue: LookupTableInfo[];
@@ -140,6 +152,11 @@ export class AtlasPanel {
         if (layer !== undefined && layer !== this.layer) this.choose(layer);
       }),
       () => this.going?.abort(),
+      () => {
+        // Switched off: a count stopped now reports nothing.
+        this.parts = undefined;
+        this.countAbort?.abort();
+      },
       () => this.client.dispose(),
     );
     this.sync();
@@ -170,6 +187,7 @@ export class AtlasPanel {
 
   /** The counts and the region chosen belong to the last layer. */
   private forgetCounts(): void {
+    this.countAbort?.abort();
     this.counted = undefined;
     this.totals = undefined;
     this.chosen = undefined;
@@ -259,6 +277,7 @@ export class AtlasPanel {
       () =>
         this.ctx.jobs.run(`Counting the regions of ${layer}`, async (job) => {
           const controller = new AbortController();
+          this.countAbort = controller;
           return this.client.count(
             store,
             (done, total) => {
@@ -277,11 +296,8 @@ export class AtlasPanel {
     try {
       const c = await counted;
       if (!mine()) return c;
-      this.counted = c;
-      this.countState = { kind: "idle" };
-      this.totals = this.atlas?.totals(this.voxelsPerValue(c));
-      this.treeGeneration++;
-      this.draw();
+      this.useCounts(c);
+      void this.refine(c);
       return c;
     } catch (e) {
       if (mine()) {
@@ -289,6 +305,71 @@ export class AtlasPanel {
         this.drawVolumes();
       }
       return undefined;
+    }
+  }
+
+  private useCounts(c: Counted): void {
+    this.counted = c;
+    this.countState = { kind: "idle" };
+    this.totals = this.atlas?.totals(this.voxelsPerValue(c));
+    this.treeGeneration++;
+    this.draw();
+  }
+
+  /** The table's regions with a value not seen in a count (none at level 0: every voxel was read). */
+  private unseen(c: Counted | undefined = this.counted): number {
+    if (c === undefined || c.level === 0 || this.atlas === undefined) return 0;
+    let n = 0;
+    for (const r of this.atlas.all()) if (r.value !== undefined && r.value !== 0n && !c.labels.has(r.value)) n++;
+    return n;
+  }
+
+  /**
+   * Counts again at a finer level when the table has regions the count did
+   * not see (they may be smaller than a voxel there): the finest level read
+   * in about REFINE_SECONDS at the first count's rate, or `level` when the
+   * user asks (Count at full resolution: level 0, however long).  The
+   * coarse counts show meanwhile; Cancel keeps them.
+   */
+  private async refine(c: Counted, level?: number): Promise<void> {
+    if (level === undefined && this.unseen(c) === 0) return;
+    const chosen = level ?? refineLevel(c.sizes ?? [], c.level, c.seconds ?? Infinity);
+    if (chosen === undefined || chosen >= c.level) return;
+    const layer = this.layer;
+    const key = this.countingFor;
+    const mine = () => this.layer === layer && this.countingFor === key && this.counted === c;
+    this.countAbort?.abort();
+    const controller = new AbortController();
+    this.countAbort = controller;
+    this.countState = { kind: "refining", level: chosen };
+    this.drawVolumes();
+    try {
+      const fine = await this.ctx.jobs.run(`Counting the regions of ${layer} at level ${chosen}`, (job) =>
+        this.client.count(
+          c.store,
+          (done, total) => {
+            if (job.cancelled) controller.abort();
+            job.progress(done / total, `${done} of ${total} chunks`);
+            if (mine()) {
+              this.countState = { kind: "refining", level: chosen, percent: Math.round((100 * done) / total) };
+              this.drawVolumes();
+            }
+          },
+          controller.signal,
+          chosen,
+        ),
+      );
+      // Kept in place of the coarse counts.
+      this.counts.put(c.store, fine, 1);
+      if (mine()) this.useCounts(fine);
+    } catch (e) {
+      if (mine()) {
+        // Cancelled: the coarse counts stay, with Count at full resolution beside them.
+        this.countState = isAbort(e) ? { kind: "idle" } : { kind: "failed", message: (e as Error).message };
+        this.drawVolumes();
+      }
+    } finally {
+      if (this.countAbort === controller) this.countAbort = undefined;
     }
   }
 
@@ -444,14 +525,19 @@ export class AtlasPanel {
     const grid = el("p", { class: "hint" });
     const saveCsv = button("Save CSV", () => this.saveCsv());
     const countStatus = statusLine();
+    const cancelCount = button("Cancel", () => this.countAbort?.abort(), "Stop counting (the counts already made stay)");
+    // Regions of the table a coarse count did not see, and the count that would.
+    const unseenText = el("span", { class: "hint" });
+    const fullCount = button("Count at full resolution", () => void (this.counted && this.refine(this.counted, 0)), "Read every voxel of the finest level: no region is missed");
+    const unseenRow = el("div", { class: "row" }, unseenText, fullCount);
 
     const cards = {
       atlas: card("atlas.atlas", "Atlas", { open: true }, el("div", { class: "grid-2" }, field("Layer", layer), field("Atlas", table)), kind, tableStatus),
       regions: card("atlas.regions", "Regions", { open: true, badge: regionsBadge }, noTable, browse),
       region: card("atlas.region", "Region", { open: true, info: REGION_INFO }, noChoice, chosen),
-      volumes: card("atlas.volumes", "Volumes", { info: VOLUMES_INFO }, countStatus, el("div", { class: "row" }, grid, el("span", { class: "spacer" }), saveCsv)),
+      volumes: card("atlas.volumes", "Volumes", { info: VOLUMES_INFO }, el("div", { class: "row" }, countStatus, cancelCount), el("div", { class: "row" }, grid, el("span", { class: "spacer" }), saveCsv), unseenRow),
     };
-    return { empty, layer, own, table, kind, tableStatus, cursor, noTable, browse, search, only, tree, regionsBadge, noChoice, chosen, chosenName, chosenPath, chosenVolume, goButton, cancelGo, goStatus, grid, saveCsv, countStatus, cards, rows: new Map<Region, HTMLElement>(), treeKey: "", layersKey: undefined as string | undefined };
+    return { empty, layer, own, table, kind, tableStatus, cursor, noTable, browse, search, only, tree, regionsBadge, noChoice, chosen, chosenName, chosenPath, chosenVolume, goButton, cancelGo, goStatus, grid, saveCsv, countStatus, cancelCount, unseenRow, unseenText, fullCount, cards, rows: new Map<Region, HTMLElement>(), treeKey: "", layersKey: undefined as string | undefined };
   }
 
   render(host: HTMLElement): () => void {
@@ -596,7 +682,10 @@ export class AtlasPanel {
     };
     tree.replaceChildren();
     for (const r of atlas.roots) visit(r, 0);
-    if (rows.size === 0) tree.append(el("p", { class: "empty" }, searching ? "No region matches." : "No regions in the image."));
+    const unseen = totals === undefined ? 0 : this.unseen();
+    if (rows.size === 0) tree.append(el("p", { class: "empty" }, searching ? "No region matches." : unseen > 0 ? "No regions seen at this level." : "No regions in the image."));
+    // A coarse count may miss small regions: they are said to be unseen, not absent.
+    if (unseen > 0 && this.counted) tree.append(el("p", { class: "hint at-unseen" }, `${unseen.toLocaleString()} more not seen at level ${this.counted.level}; they may be smaller than a voxel there.`));
     tree.scrollTop = scroll;
   }
 
@@ -620,9 +709,15 @@ export class AtlasPanel {
     const above = atlas.path(r).slice(0, -1);
     p.chosenPath.hidden = above.length === 0;
     p.chosenPath.textContent = above.map((x) => x.name).join(" › ");
-    const n = this.totals?.get(r) ?? (this.counted ? 0 : undefined);
-    p.chosenVolume.hidden = n === undefined || this.counted === undefined;
-    p.chosenVolume.textContent = n !== undefined && this.counted ? `${physicalText(n * this.counted.voxelVolume, 3)} (${n.toLocaleString()} voxels, with its descendants)` : "";
+    const c = this.counted;
+    const n = this.totals?.get(r) ?? (c ? 0 : undefined);
+    p.chosenVolume.hidden = n === undefined || c === undefined;
+    p.chosenVolume.textContent =
+      n === undefined || c === undefined
+        ? ""
+        : n === 0 && c.level > 0
+          ? `Not seen at level ${c.level}: it may be smaller than a voxel there.`
+          : `${physicalText(n * c.voxelVolume, 3)} (${n.toLocaleString()} voxels, with its descendants)`;
   }
 
   private drawGoing(): void {
@@ -637,6 +732,7 @@ export class AtlasPanel {
     const s = this.countState;
     const again = { label: s.kind === "cancelled" ? "Count again" : "Retry", run: () => void this.count() };
     if (s.kind === "counting") p.countStatus.progress(`Counting the voxels…${s.percent === undefined ? "" : ` ${s.percent}%`}`);
+    else if (s.kind === "refining") p.countStatus.progress(`Counting at level ${s.level}${s.level === 0 ? " (full resolution)" : ""}…${s.percent === undefined ? "" : ` ${s.percent}%`}`);
     else if (s.kind === "cancelled") p.countStatus.error("Counting cancelled.", again);
     else if (s.kind === "failed") p.countStatus.error(`Could not count the voxels: ${s.message}`, again);
     else if (s.kind === "unreadable") p.countStatus.error("Volumes and Go to need an OME-Zarr, NIfTI, MGH or precomputed label image.");
@@ -644,6 +740,11 @@ export class AtlasPanel {
     const c = this.counted;
     p.grid.textContent = c ? `${c.size.join(" × ")} voxels of ${physicalText(Math.cbrt(c.voxelVolume))}${c.level > 0 ? ` (level ${c.level})` : ""}` : "";
     p.saveCsv.disabled = c === undefined || this.totals === undefined;
+    p.cancelCount.hidden = s.kind !== "counting" && s.kind !== "refining";
+    const unseen = this.unseen();
+    p.unseenRow.hidden = unseen === 0 || c === undefined;
+    p.unseenText.textContent = c && unseen > 0 ? `${unseen.toLocaleString()} region${unseen === 1 ? "" : "s"} of the table not seen at level ${c.level}: smaller than a voxel there, or not in the image.` : "";
+    p.fullCount.disabled = s.kind === "refining" || s.kind === "counting";
   }
 }
 

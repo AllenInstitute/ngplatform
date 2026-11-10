@@ -12,6 +12,7 @@ import type { Json, LayerTransform, LookupTableInfo, PlatformContext } from "@ng
 import { parseLookupTable } from "@ngplatform/sdk/lookup";
 import { type FakeDom, fakeDocument } from "@ngplatform/sdk/testing";
 import type { Counted } from "../label_client.js";
+import { countingLevel, LabelCounter } from "../labels.js";
 import { AtlasPanel, type Counter, labelOf, physicalText } from "../plugin.js";
 
 const ALLEN = "lut://AllenCCF2017";
@@ -64,6 +65,56 @@ class FakeCounter implements Counter {
     signal?.addEventListener("abort", () => answer.reject(abortError()));
     this.centres.push({ values, signal, progress, answer });
     return answer.promise;
+  }
+  dispose = vi.fn();
+}
+
+/**
+ * A synthetic label pyramid, 32³ at level 0 and halved (nearest voxel, as
+ * many label pyramids are made) to 16³ and 8³: MOp1 (320) fills x < 16,
+ * MOp2/3 (943) the rest below y = 8, and CA1 (382) is three voxels at odd
+ * coordinates, so no coarser level has it.
+ */
+function pyramid(): { size: [number, number, number]; data: Uint32Array }[] {
+  const n = 32;
+  const data = new Uint32Array(n ** 3);
+  for (let z = 0, i = 0; z < n; ++z) for (let y = 0; y < n; ++y) for (let x = 0; x < n; ++x, ++i) data[i] = x < 16 ? 320 : y < 8 ? 943 : 0;
+  for (const x of [21, 23, 25]) data[x + n * (11 + n * 13)] = 382;
+  const levels = [{ size: [n, n, n] as [number, number, number], data }];
+  while (levels[levels.length - 1].size[0] > 8) {
+    const { size, data: fine } = levels[levels.length - 1];
+    const m = size[0] / 2;
+    const coarse = new Uint32Array(m ** 3);
+    for (let z = 0, i = 0; z < m; ++z) for (let y = 0; y < m; ++y) for (let x = 0; x < m; ++x, ++i) coarse[i] = fine[2 * x + size[0] * (2 * y + size[0] * 2 * z)];
+    levels.push({ size: [m, m, m], data: coarse });
+  }
+  return levels;
+}
+
+/** Counts the synthetic pyramid as the worker would, its first count held to 8³ voxels (as 64 M holds a large image to a coarse level). */
+class PyramidCounter implements Counter {
+  readonly levels = pyramid();
+  requests: { level: number | undefined; signal?: AbortSignal; progress?: (done: number, total: number) => void; go: () => void }[] = [];
+  count(store: string, progress?: (done: number, total: number) => void, signal?: AbortSignal, level?: number): Promise<Counted> {
+    return new Promise<Counted>((resolve, reject) => {
+      signal?.addEventListener("abort", () => reject(abortError()));
+      const go = () => {
+        const sizes = this.levels.map((l) => l.size);
+        const at = level ?? countingLevel(sizes, 8 ** 3);
+        const { size, data } = this.levels[at];
+        const counter = new LabelCounter();
+        counter.add(data, { lo: [0, 0, 0], hi: size, start: 0, stride: [1, size[0], size[0] * size[1]] });
+        const r = counter.result();
+        const scale = 2 ** at;
+        const labels = new Map(Array.from(r.labels, (l, i) => [BigInt(l), { count: r.counts[i], sum: [0, 0, 0] as [number, number, number], lo: [0, 0, 0] as [number, number, number], hi: [0, 0, 0] as [number, number, number] }]));
+        // The first count read 8³ voxels in a millisecond: 32³ takes well under a minute at that rate.
+        resolve({ store, level: at, size, sizes, seconds: 0.001, voxelToRas: Float64Array.from([scale, 0, 0, 0, 0, scale, 0, 0, 0, 0, scale, 0, 0, 0, 0, 1]), voxelVolume: scale ** 3, labels });
+      };
+      this.requests.push({ level, signal, progress, go });
+    });
+  }
+  centre(): Promise<[number, number, number] | undefined> {
+    return Promise.resolve(undefined);
   }
   dispose = vi.fn();
 }
@@ -371,5 +422,77 @@ describe("the Atlas panel", () => {
     expect(dom.text(host.querySelector(".at-cursor")!)).toContain("Somatomotor areas › Primary motor area");
     world.hover({ value: "123456" });
     expect(dom.text(host.querySelector(".at-cursor")!)).toBe("123456 (not in the table)");
+  });
+
+  describe("a region of a few voxels at full resolution", () => {
+    let pyramidCounter: PyramidCounter;
+    const openPyramid = async () => {
+      pyramidCounter = new PyramidCounter();
+      new AtlasPanel(world.ctx, pyramidCounter).render(host);
+      await settle();
+    };
+    const names = () => rows().map((r) => dom.text(r.querySelector(".at-name")!));
+    const openAll = async () => {
+      // Opens every region in the tree, down to the leaves.
+      for (let more = true; more; ) {
+        more = false;
+        for (const r of rows()) {
+          if (r.getAttribute("aria-expanded") === "false") {
+            dom.fire(r.querySelector(".at-caret")!, "click");
+            more = true;
+            break;
+          }
+        }
+      }
+    };
+
+    it("is missed at a coarse level, said to be unseen there (not absent), and found by the finer count that follows", async () => {
+      world.add("seg", { table: ALLEN });
+      await openPyramid();
+      expect(pyramidCounter.requests.map((r) => r.level)).toEqual([undefined]);
+      pyramidCounter.requests[0].go();
+      await settle();
+      // The first count is at 8³ (level 2): CA1 is not in it.
+      expect(dom.text(card("atlas.volumes"))).toContain("8 × 8 × 8 voxels of 4 mm (level 2)");
+      await openAll();
+      expect(names()).not.toContain("Field CA1");
+      expect(dom.text(card("atlas.regions"))).toMatch(/\d+ more not seen at level 2; they may be smaller than a voxel there\./);
+      expect(dom.text(card("atlas.regions"))).not.toContain("No regions in the image.");
+      // A finer count follows by itself: level 0 fits the time budget at the first count's rate.
+      expect(pyramidCounter.requests.map((r) => r.level)).toEqual([undefined, 0]);
+      expect(dom.text(card("atlas.volumes"))).toContain("Counting at level 0 (full resolution)…");
+      expect(dom.find(card("atlas.volumes"), "button", "Cancel").hidden).toBe(false);
+      pyramidCounter.requests[1].go();
+      await settle();
+      expect(dom.text(card("atlas.volumes"))).toContain("32 × 32 × 32 voxels of 1 mm");
+      expect(dom.text(card("atlas.volumes"))).not.toContain("not seen");
+      await openAll();
+      expect(names()).toContain("Field CA1");
+      expect(dom.text(row("Field CA1"))).toContain("3 mm³");
+      expect(dom.text(card("atlas.regions"))).not.toContain("not seen");
+    });
+
+    it("keeps the coarse counts when the finer count is cancelled, and counts at full resolution when asked", async () => {
+      world.add("seg", { table: ALLEN });
+      await openPyramid();
+      pyramidCounter.requests[0].go();
+      await settle();
+      dom.find(card("atlas.volumes"), "button", "Cancel").click();
+      await settle();
+      expect(pyramidCounter.requests[1].signal!.aborted).toBe(true);
+      // The coarse counts stay, no error, and what they may miss is said, with the count that would not.
+      expect(card("atlas.volumes").querySelector<HTMLElement>(".status-line")!.hidden).toBe(true);
+      expect(dom.text(card("atlas.volumes"))).toContain("(level 2)");
+      expect(dom.text(card("atlas.volumes"))).toMatch(/regions of the table not seen at level 2/);
+      row("root").click();
+      expect(dom.text(card("atlas.region"))).toContain("voxels, with its descendants");
+      dom.find(card("atlas.volumes"), "button", "Count at full resolution").click();
+      await settle();
+      expect(pyramidCounter.requests.map((r) => r.level)).toEqual([undefined, 0, 0]);
+      pyramidCounter.requests[2].go();
+      await settle();
+      await openAll();
+      expect(names()).toContain("Field CA1");
+    });
   });
 });

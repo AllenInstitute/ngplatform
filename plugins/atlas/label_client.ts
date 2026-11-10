@@ -20,6 +20,10 @@ export interface Counted {
   /** The level counted (0 the finest) and its size in voxels. */
   level: number;
   size: [number, number, number];
+  /** Every level's size, finest first (the levels a finer count can choose from). */
+  sizes?: [number, number, number][];
+  /** How long the count took, in seconds. */
+  seconds?: number;
   /** Voxel indices (x, y, z) to RAS millimetres, 4 × 4 row-major. */
   voxelToRas: Float64Array;
   /** Cubic millimetres in one voxel. */
@@ -39,12 +43,14 @@ export class LabelClient {
     return this.rpc.request<T>(message, { signal, progress: progress && ((msg) => progress(msg.done, msg.total)) });
   }
 
-  /** Every label's voxels in a store, at its finest level of at most 64 M voxels. */
-  async count(store: string, progress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Counted> {
-    const r = await this.request<{ level: number; size: [number, number, number]; voxelToRas: number[]; labels: Float64Array; counts: Float64Array; sums: Float64Array; bounds: Int32Array }>(
-      { type: "count", store },
+  /** Every label's voxels in a store, at `level`, by default its finest level of at most 64 M voxels. */
+  async count(store: string, progress?: (done: number, total: number) => void, signal?: AbortSignal, level?: number): Promise<Counted> {
+    const started = performance.now();
+    const r = await this.request<{ level: number; size: [number, number, number]; sizes: [number, number, number][]; voxelToRas: number[]; labels: Float64Array; counts: Float64Array; sums: Float64Array; bounds: Int32Array }>(
+      { type: "count", store, level },
       { progress, signal },
     );
+    const seconds = (performance.now() - started) / 1000;
     const labels = new Map<bigint, LabelStats>();
     r.labels.forEach((label, i) => {
       if (!Number.isInteger(label)) return;
@@ -58,7 +64,7 @@ export class LabelClient {
     });
     const m = Float64Array.from(r.voxelToRas);
     const det = m[0] * (m[5] * m[10] - m[6] * m[9]) - m[1] * (m[4] * m[10] - m[6] * m[8]) + m[2] * (m[4] * m[9] - m[5] * m[8]);
-    return { store, level: r.level, size: r.size, voxelToRas: m, voxelVolume: Math.abs(det), labels };
+    return { store, level: r.level, size: r.size, sizes: r.sizes, seconds, voxelToRas: m, voxelVolume: Math.abs(det), labels };
   }
 
   /**

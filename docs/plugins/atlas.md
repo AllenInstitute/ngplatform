@@ -27,7 +27,10 @@ in the hierarchy, and read each region's volume.
    - **Under the cursor** names the region the pointer is over and its
      path, e.g. "Isocortex › Somatomotor areas › Primary motor area".
    - **Search** filters by name, acronym or label value. **Only regions in
-     the image** hides those with no voxels in this label image.
+     the image** hides those with no voxels in this label image. While the
+     counts come from a coarser level than the finest, a line under the
+     tree says how many regions were not seen there: they may be smaller
+     than a voxel at that level, not absent.
    - The tree; the caret beside a region opens it.
      - **Allen CCF**: the ontology's hierarchy (Basic cell groups and
        regions › Cerebrum › Cerebral cortex › … › Isocortex › Somatomotor
@@ -48,13 +51,20 @@ in the hierarchy, and read each region's volume.
      It shows its progress, with **Cancel**; clicking Go to again stops the
      one under way and starts anew.
    - Double-click a region in the tree to show only it and go to it.
-5. **Volumes** card: the label image is counted once, in the background
-   (its finest level of at most 64 million voxels; the card says which
-   grid). The count is also in Activity, where it can be cancelled; a
-   cancelled count starts again with **Count again**, or when Go to needs
-   it. Each region's volume, with everything under it, shows in the tree;
-   **Save CSV** writes every region's voxels and volume, its own and with
-   its parts.
+5. **Volumes** card: the label image is counted in the background, first
+   at its finest level of at most 64 million voxels, so the tree and the
+   volumes show soon. When regions of the table are not seen at that
+   level, it is counted again at the finest level that can be read in
+   about a minute (at the first count's speed), and that count replaces
+   the first. The card says which grid and level were counted, and shows
+   the progress with **Cancel** (the counts already made stay). The counts
+   are also in Activity. When the finest level was not read, the card says
+   how many regions were not seen; **Count at full resolution** reads every
+   voxel of the finest level, however long that takes, so no region is
+   missed. A cancelled first count starts again with **Count again**, or
+   when Go to needs it. Each region's volume, with everything under it,
+   shows in the tree; **Save CSV** writes every region's voxels and volume,
+   its own and with its parts.
 
 ## Notes from users
 
