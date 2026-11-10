@@ -59,6 +59,14 @@ Item line numbers are from that commit and move as the code changes.
   (`UI_AUDIT_BASELINE=1`).
 - For a panel batch: its screenshots looked at, at 1440 × 900 and 1280 × 760.
 
+CI (decision 2: as few runs as possible) runs on pull requests and by
+hand, never on a push, so work-in-progress pushes start nothing. A run
+does `npm ci`, the type-check of both projects, `npm test` (both suites),
+the build with its bundle-size budget (`npm run budget`), and the runner's
+pytest on a CPU, where the GPU tests skip. The browser smoke test
+(`npm run e2e`, local fixtures only) is run by hand; see
+[docs/contributing.md](../docs/contributing.md#checks-and-ci).
+
 ### Style baseline and targets
 
 | Measure (across all panels and sheets) | Baseline (5c986ab) | After Phase 2 | Target |

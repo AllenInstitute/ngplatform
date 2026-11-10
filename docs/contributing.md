@@ -37,6 +37,35 @@ npm run e2e        # the GUI in headless Chrome, against a served build
   before opening a pull request.
 - **Style:** match the code around you. Comments say why, in plain words.
 
+## Checks and CI
+
+CI runs as seldom as it usefully can: on every pull request, and by hand
+from the Actions tab. It never runs on a push, so pushing work in progress
+costs nothing (`[skip ci]` in its message is not needed). Each run has two
+jobs ([`.github/workflows/ci.yml`](https://github.com/AllenInstitute/ngplatform/blob/main/.github/workflows/ci.yml)):
+
+- **app:** `npm ci`, then `npm run typecheck` (the app and the zarr-vectors
+  plugin), `npm test` (the platform's tests, then zarr-vectors'), the
+  build, and `npm run budget`, which fails when the JavaScript the page
+  loads at startup, or the largest file the build makes, grows past its
+  limit (in `tests/e2e/bundle_budget.mjs`).
+- **runner:** the runner's and render service's tests, `python -m pytest
+  runner/tests`, with `pip install "./runner[test]"`. On CI's CPU the tests
+  that need CuPy and a GPU, torch or zarr-vectors-tools skip.
+
+Tests of the UI modules run in a DOM (jsdom): a test file opts in with a
+first line of `// @vitest-environment dom`; every other test runs in Node.
+
+The browser smoke test is run by hand before a pull request that changes
+anything visible; it needs no network, as it serves its own data and a
+fake runner:
+
+```bash
+npm run build
+python3 -m http.server 4231 --bind 127.0.0.1 --directory dist &
+CHROME=/path/to/chrome SWIFTSHADER=1 npm run e2e -- http://127.0.0.1:4231/
+```
+
 ## These docs
 
 The docs are Markdown in `docs/`, built with MkDocs:
