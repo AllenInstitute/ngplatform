@@ -384,15 +384,19 @@ export class Collections {
     return [...this.found].filter(([g, name]) => name && groups.has(g)).map(([url, name]) => ({ url, name: name! }));
   }
 
-  /** Opens the collection at `url` in a tab of its own; whether it could be read. */
-  async openUrl(url: string): Promise<boolean> {
+  /**
+   * Opens the collection at `url` in a tab of its own; whether it could be
+   * read.  `wait`: also wait for its members to be placed (the Add
+   * collection sheet closes once it is read, the members follow).
+   */
+  async openUrl(url: string, wait = true): Promise<boolean> {
     if (url === "") {
       this.error = "Enter a collection's address (its collection.json or Zarr group), or choose the example.";
       this.update?.();
       return false;
     }
     const doc = await this.fetchDocument(url);
-    return doc !== undefined && (await this.openDocument(doc, url));
+    return doc !== undefined && (await this.openDocument(doc, url, wait));
   }
 
   /**
@@ -401,7 +405,7 @@ export class Collections {
    * `url`: where it was read from (its paths are relative to it); none for
    * one made here, which the tab keeps whole.
    */
-  async openDocument(doc: unknown, url?: string): Promise<boolean> {
+  async openDocument(doc: unknown, url?: string, wait = true): Promise<boolean> {
     const root = this.readOrSay(doc, url);
     if (root === undefined) {
       this.update?.();
@@ -418,7 +422,13 @@ export class Collections {
     this.documentUrl = url ?? "";
     this.loadedKey = this.keyOf(saved);
     this.ctx.state.set<Saved>(saved);
-    await this.show(system, generation, []);
+    const placing = this.show(system, generation, []);
+    if (wait) await placing;
+    else
+      placing.catch((e) => {
+        this.error = `Could not place the collection's members: ${(e as Error).message}`;
+        this.update?.();
+      });
     return true;
   }
 
@@ -744,12 +754,12 @@ export class Collections {
               "section",
               {},
               el("h3", { class: "section-title" }, "Holding this workspace's images"),
-              ...found.map((f) => el("div", { class: "row" }, el("strong", { class: "cl-grow" }, f.name), button("Open", attempt(() => this.openUrl(f.url))))),
+              ...found.map((f) => el("div", { class: "row" }, el("strong", { class: "cl-grow" }, f.name), button("Open", attempt(() => this.openUrl(f.url, false))))),
             ),
           );
         const url = el("input", { class: "text-input mono cl-grow", type: "text", placeholder: "https://…/collection.json or a Zarr group", "aria-label": "Collection address", spellcheck: "false", value: this.typed }) as HTMLInputElement;
         url.addEventListener("input", () => (this.typed = url.value));
-        const openTyped = attempt(() => this.openUrl(url.value.trim()));
+        const openTyped = attempt(() => this.openUrl(url.value.trim(), false));
         url.addEventListener("keydown", (e) => {
           if (e.key === "Enter") void openTyped();
         });
@@ -760,7 +770,7 @@ export class Collections {
             const f = file.files?.[0];
             if (f === undefined) return false;
             try {
-              return await this.openDocument(JSON.parse(await f.text()));
+              return await this.openDocument(JSON.parse(await f.text()), undefined, false);
             } catch (e) {
               this.error = `${f.name} is not a collection: ${(e as Error).message}`;
               return false;
@@ -784,7 +794,7 @@ export class Collections {
               { class: "example" },
               el("span", { class: "title" }, "SRB 2026a gallery"),
               el("span", { class: "desc" }, "The synchrotron reference brain template three times in one coordinate system: as it is, moved, and mirrored left to right."),
-              button("Open", attempt(() => this.openUrl(EXAMPLE_URL)), undefined, "btn outline"),
+              button("Open", attempt(() => this.openUrl(EXAMPLE_URL, false)), undefined, "btn outline"),
             ),
           ),
           said,
@@ -840,7 +850,7 @@ export class Collections {
       const own = t && physical(t, t.defaultMatrix);
       return { ...image, placement: now && own ? placementOf(Array.from(now), Array.from(own), t!.output.names) : undefined };
     });
-    return this.openDocument(collectionFromScene(name, { name, unit }, placed));
+    return this.openDocument(collectionFromScene(name, { name, unit }, placed), undefined, false);
   }
 
   // ------------------------------------------------------------- the panel

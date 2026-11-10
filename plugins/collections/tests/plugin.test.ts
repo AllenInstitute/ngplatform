@@ -362,6 +362,20 @@ describe("placing many members", () => {
     expect(w.added.map((a) => a.name)).toEqual(["A", "B", "C"]);
   });
 
+  it("answers once a collection is read without waiting for its members, when asked not to (the Add collection sheet)", async () => {
+    const h = host();
+    const hung = deferred<unknown>();
+    table.set(`${h}/a.zarr/zarr.json`, hung.promise);
+    const w = fakeContext();
+    const c = new Collections(w.ctx);
+    // The member's metadata never answers here, yet the collection is open.
+    expect(await c.openDocument(collection("one", [{ id: "a", path: `${h}/a.zarr`, at: 0 }]), undefined, false)).toBe(true);
+    expect(w.added).toHaveLength(0);
+    hung.resolve({ attributes: { ome: { multiscales: [] } } });
+    await settle();
+    expect(w.added.map((a) => a.name)).toEqual(["A"]);
+  });
+
   it("keeps at most GROUPS_KEPT images' metadata, and lets go of it when another collection opens", async () => {
     const h = host();
     const many = Array.from({ length: GROUPS_KEPT + 20 }, (_, i) => ({ id: `m${i}`, path: `${h}/m${i}.zarr`, at: 0 }));
