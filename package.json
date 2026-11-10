@@ -40,6 +40,6 @@
   },
   "neuroglancer": {
     "//": "The Neuroglancer commit the app is built against (file:../neuroglancer): scripts/neuroglancer_pin.mjs checks the sibling checkout against it; CI's FORK_SHA names the same commit.",
-    "commit": "435cdcb012eceb70eb1e5200bdd919af3eb7a5c5"
+    "commit": "2a12b947fecabab078e58a99366e375e2411b44b"
   }
 }
