@@ -107,15 +107,24 @@ export const GROUPS_KEPT = 256;
 
 /** An image's metadata: its group's zarr.json (or .zattrs), read once per image while kept. */
 const groups = new Map<string, Promise<unknown>>();
+/** The Zarr version an image's metadata was found in (3: zarr.json, 2: .zattrs), once read. */
+const versions = new Map<string, 2 | 3>();
 function groupOf(url: string): Promise<unknown> {
   let group = groups.get(url);
   if (group === undefined) {
     const json = (key: string) => readJson(`${url}/${key}`).catch(() => undefined);
-    group = (async () => (await json("zarr.json")) ?? (await json(".zattrs")))();
+    group = (async () => {
+      const v3 = await json("zarr.json");
+      if (v3 !== undefined) versions.set(url, 3);
+      const v2 = v3 === undefined ? await json(".zattrs") : undefined;
+      if (v2 !== undefined) versions.set(url, 2);
+      return v3 ?? v2;
+    })();
     groups.set(url, group);
     for (const old of groups.keys()) {
       if (groups.size <= GROUPS_KEPT) break;
       groups.delete(old);
+      versions.delete(old);
     }
   }
   return group;
@@ -414,6 +423,7 @@ export class Collections {
     const generation = ++this.generation;
     // Images of the collections opened before are let go of.
     groups.clear();
+    versions.clear();
     this.ctx.workspace.newScene({ name: root.name, kind: COLLECTION_KIND });
     const system = sceneSystems(root)[0]?.id;
     const saved: Saved = url === undefined ? { doc, system } : { url, system };
@@ -546,8 +556,11 @@ export class Collections {
     const layer = node.name;
     const location = node.location;
     if (location === undefined) return;
-    const plain = `zarr://${location.url}/`;
     const kind = (await this.isLabel(node)) ? "segmentation" : "image";
+    // Named by the Zarr version its metadata (read already) was found in: Neuroglancer then looks for no other's.
+    await groupOf(location.url);
+    const version = versions.get(location.url);
+    const plain = `${version === undefined ? "zarr" : `zarr${version}`}://${location.url}/`;
     if (!this.current(generation)) return;
     let placement = placeInto(root, node, system);
     let source = plain;

@@ -36,6 +36,7 @@ import { looksAnatomical, type PanelConvention, panelRotations } from "./anatomi
 import { applyLookupTable, layerLookupSource } from "./lookup_tables.js";
 import { addMomentum } from "./momentum.js";
 import { mountInspector } from "./inspector/index.js";
+import { sizeMemoryLimits } from "./memory.js";
 import { type ChunkSourceStatistics, chunkStatistics, mountViewSettings } from "./view_settings.js";
 import { guardSelectedValues, type SelectedValues } from "./selected_values.js";
 import { watchOutlines } from "./outlines.js";
@@ -291,6 +292,8 @@ export class Engine {
       externalSidePanels: true,
       showPanelBorders: true,
     });
+    // GPU and system memory by the computer's memory, not Neuroglancer's 1 GB and 2 GB everywhere.
+    sizeMemoryLimits(this.viewer);
     guardSelectedValues(this.viewer.layerSelectedValues as unknown as SelectedValues);
     this.viewer.coordinateSpace.changed.add(() => {
       this.preferXyz();

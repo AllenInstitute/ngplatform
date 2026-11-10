@@ -7,6 +7,7 @@
  */
 import { describeError, isStaleChunkError, reloadOnceForStaleChunk } from "./core/errors.js";
 import { Engine } from "./engine/engine.js";
+import { watchGpuMemory } from "./engine/memory.js";
 import { registerGoogleCredentials } from "./engine/google_credentials.js";
 import { urlSafeParse } from "./engine/neuroglancer.js";
 import { loadDataTypePlugins } from "./engine/plugins.js";
@@ -94,6 +95,15 @@ async function boot(): Promise<void> {
     rules,
   );
   const log = shell.activity;
+  // A hint, in Activity and as a toast, when what the views need no longer fits in GPU memory.
+  watchGpuMemory(
+    () => engine.chunkStatistics(),
+    () => engine.viewer.chunkQueueManager.capacities.gpuMemory.sizeLimit.value,
+    (message) => {
+      log.add(message, "info", "View");
+      toast(message);
+    },
+  );
   errors.attach((error) => {
     log.add(error.message, "error", error.source, error.stack);
     const line = error.message.split("\n")[0];

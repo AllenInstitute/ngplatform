@@ -284,6 +284,25 @@ describe("opening a collection in a tab", () => {
     expect([...panel.querySelectorAll(".cl-tag")].filter((t) => dom.text(t) === "labels")).toHaveLength(2);
   });
 
+  it("names each member's Zarr version in its source, from the metadata it read, so Neuroglancer looks for no other's", async () => {
+    const h = host();
+    table.set(`${h}/v3.ome.zarr/zarr.json`, { zarr_format: 3, node_type: "group", attributes: { ome: { multiscales: [] } } });
+    table.set(`${h}/v2.ome.zarr/.zattrs`, { multiscales: [] });
+    const doc = collection("versions", [
+      { id: "v3", path: `${h}/v3.ome.zarr`, at: 0 },
+      { id: "v2", path: `${h}/v2.ome.zarr`, at: 0 },
+      { id: "none", path: `${h}/none.ome.zarr`, at: 0 },
+    ]);
+    const w = fakeContext();
+    const c = new Collections(w.ctx);
+    c.render(dom.host());
+    await c.openDocument(doc);
+    await settle();
+    expect(w.added.map((a) => a.source)).toEqual([`zarr3://${h}/v3.ome.zarr/`, `zarr2://${h}/v2.ome.zarr/`, `zarr://${h}/none.ome.zarr/`]);
+    // The metadata read once each, to tell labels from images: no other read to name the version.
+    expect(fetched.asked.filter((u) => u.startsWith(`${h}/v3.ome.zarr/`))).toEqual([`${h}/v3.ome.zarr/zarr.json`]);
+  });
+
   it("hides a member it cannot place, and names the transform kinds it does not apply", async () => {
     const h = host();
     const doc = collection("partly", [{ id: "a", path: `${h}/a.zarr`, at: 5 }, { id: "b", path: `${h}/b.zarr` }, { id: "c", path: `${h}/c.zarr` }], {

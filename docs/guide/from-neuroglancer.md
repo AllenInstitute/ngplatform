@@ -11,6 +11,7 @@ ngplatform moves the controls around the views and adds a workspace.
 | The state in the URL | still in the URL, now holding every scene; **Share** copies a plain Neuroglancer link to one scene |
 | One state per tab | several **scenes** in one workspace, as tabs in the top bar |
 | Settings, screenshot, help | the gear (**Settings**), camera (**Capture**) and **?** icons in the top bar |
+| GPU memory 1 GB, system memory 2 GB | sized by your computer's memory (Chrome and Edge): a quarter of it on the GPU, up to 2 GB; three eighths in system memory, up to 3 GB. Change them in Settings › View; when the GPU memory is full, Activity says so |
 | Keyboard shortcuts | the same, plus a command palette (++ctrl+k++) |
 
 **Going back is always one click:** the **Neuroglancer** button opens the

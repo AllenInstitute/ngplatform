@@ -779,11 +779,13 @@ export class LocalData {
     if (attributes?.zarr_vectors !== undefined || /\.zarrvectors$/i.test(name)) {
       return { source: `${url}|zarr-vectors:`, name: stem, kind: "auto", format: "zarr-vectors store", path };
     }
+    // The Zarr version named in the source, as it is known here: Neuroglancer then reads only its metadata.
+    const zarr = v3 !== undefined ? "zarr3" : "zarr2";
     if ((attributes?.ome ?? attributes)?.multiscales !== undefined) {
-      return { source: `zarr://${url}`, name: stem, kind: "image", format: "OME-Zarr image", path };
+      return { source: `${zarr}://${url}`, name: stem, kind: "image", format: "OME-Zarr image", path };
     }
     if (v3?.node_type === "array" || (await this.file(id, at(".zarray"))) !== undefined) {
-      return { source: `zarr://${url}`, name: stem, kind: "image", format: "Zarr array", path };
+      return { source: `${zarr}://${url}`, name: stem, kind: "image", format: "Zarr array", path };
     }
     const info = await this.json(id, at("info"));
     if (info?.["@type"] !== undefined || info?.scales !== undefined || info?.type !== undefined) {
