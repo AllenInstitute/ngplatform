@@ -3,7 +3,7 @@
  * position and one word per vertex, objects' ids and values once per
  * object, no index buffer for runs of rows, tangents derived from the
  * neighbours. What they draw is what the per-vertex arrays drew; they take
- * a third of the bytes on the GPU, and a tenth on the CPU.
+ * a third of the bytes, on the GPU and on the CPU alike.
  */
 
 import { describe, expect, it } from "vitest";
@@ -124,7 +124,7 @@ describe("a chunk packed for drawing", () => {
     expect(bridges).toBeGreaterThan(0);
   });
 
-  it("takes a third of the GPU bytes per vertex, and a tenth of the CPU's", () => {
+  it("takes a third of the bytes per vertex, on the GPU and on the CPU", () => {
     // A big level-0 cell's worth (6.6 M vertices in 171 k streamlines, as
     // S-21-46's largest), at a tenth: 660 k vertices in 17 k fragments,
     // three object values the shader could read (one used), one ghost in
@@ -186,7 +186,7 @@ describe("a chunk packed for drawing", () => {
     );
     const values = { rowOf: (id: bigint) => Number(id) - 1000, values: [new Float32Array(numFragments).fill(3)] };
     const packed = packForDrawing(lean, description, { ids: ["obj_a"], values });
-    const { gpu, cpu } = drawChunkBytes(packed, drawLayout(description), false);
+    const { gpu, cpu } = drawChunkBytes(packed);
     const n = old.numVertices;
     // Before, the GPU and the CPU each held every array.
     const perVertex = { before: oldBytes / n, gpu: gpu / n, cpu: cpu / n };
@@ -194,7 +194,7 @@ describe("a chunk packed for drawing", () => {
     expect(perVertex.before).toBeGreaterThan(50);
     expect(perVertex.gpu).toBeLessThan(16.5);
     expect(oldBytes / gpu).toBeGreaterThan(3);
-    expect(oldBytes / cpu).toBeGreaterThan(10);
+    expect(oldBytes / cpu).toBeGreaterThan(3);
     // The same picture: ids and edges.
     expect(drawnEdges(packed)).toEqual(sortedEdges(old.edges));
     for (let v = 0; v < n; v += 997) {

@@ -38,12 +38,16 @@ import {
 } from "./base.js";
 import { LevelPipeline } from "./chunk_pipeline.js";
 import type { DrawAttribute, DrawChunkData } from "./dense_pack.js";
-import { drawChunkBytes, drawLayout } from "./dense_pack.js";
+import { drawBytesPerVertex, drawChunkBytes, drawLayout } from "./dense_pack.js";
 import { KIND_CAPABILITIES } from "./geometry_kind.js";
 import {
+  dense3dBudget,
   DRAWS_2D,
   DRAWS_3D,
   forEachDenseChunkToLoad,
+  perChunkLevels,
+  selectDense3dChunks,
+  setNodePosition,
 } from "./dense_lod.js";
 import {
   objectMeshLayout,
@@ -193,8 +197,6 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
   wanted3d = -1;
   /** Loaded for cross-sections only, without its bridges off the plane. */
   partialBridges = false;
-  /** Bytes the frontend keeps once the chunk is on the GPU (for picking). */
-  keptBytes = 0;
 
   serialize(msg: any, transfers: any[]) {
     super.serialize(msg, transfers);
@@ -212,25 +214,18 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
       for (const b of buffers) if (b.byteLength > 0) transfers.push(b);
     }
     this.data = undefined;
-    // The frontend keeps only what picking needs once it has uploaded the
-    // rest; the system memory charged is that.
-    if (this.systemMemoryBytes !== this.keptBytes) {
-      this.systemMemoryBytes = this.keptBytes;
-    }
   }
 
   downloadSucceeded() {
     const { data } = this;
-    let gpu = 0;
+    let bytes = { gpu: 0, cpu: 0 };
     if (data !== undefined) {
       const source = this.source as ZarrVectorsGeometryChunkSourceBackend;
-      const bytes = drawChunkBytes(data, source.layout, source.isMesh);
-      gpu = bytes.gpu;
-      this.keptBytes = bytes.cpu;
+      bytes = drawChunkBytes(data, source.layout);
+      source.knownBytes.set(this.key!, bytes.gpu);
     }
-    // Until it moves to the frontend, the worker holds all of it.
-    this.systemMemoryBytes = gpu;
-    this.gpuMemoryBytes = gpu;
+    this.systemMemoryBytes = bytes.cpu;
+    this.gpuMemoryBytes = bytes.gpu;
     super.downloadSucceeded();
   }
 
@@ -251,6 +246,8 @@ export class ZarrVectorsGeometryChunkSourceBackend extends WithParameters(
 ) {
   private pipeline_: LevelPipeline | undefined;
   private layout_: DrawAttribute[] | undefined;
+  /** GPU bytes of each chunk read so far, by key, for the 3-d view's budget. */
+  knownBytes = new Map<string, number>();
 
   /** The values the shader reads per vertex, as chunks carry them. */
   get layout(): DrawAttribute[] {
@@ -262,29 +259,6 @@ export class ZarrVectorsGeometryChunkSourceBackend extends WithParameters(
       KIND_CAPABILITIES[this.parameters.description.geometryKind].primitive ===
       "triangles"
     );
-  }
-
-  /**
-   * A chunk the GPU lets go of is read again when next wanted: the frontend
-   * kept only what picking needs, not what it would take to upload it again.
-   */
-  chunkStateChanged(chunk: ZarrVectorsDenseChunk, oldState: ChunkState) {
-    super.chunkStateChanged(chunk, oldState);
-    if (
-      oldState === ChunkState.GPU_MEMORY &&
-      chunk.state === ChunkState.SYSTEM_MEMORY
-    ) {
-      // Not while the queue is moving chunks about.
-      queueMicrotask(() => {
-        if (chunk.source !== this || chunk.state !== ChunkState.SYSTEM_MEMORY) {
-          return;
-        }
-        const queue = this.chunkManager.queueManager;
-        queue.freeChunkSystemMemory(chunk);
-        chunk.partialBridges = false;
-        queue.updateChunkState(chunk, ChunkState.QUEUED);
-      });
-    }
   }
 
   private get pipeline() {
@@ -313,9 +287,13 @@ export class ZarrVectorsGeometryChunkSourceBackend extends WithParameters(
     chunk.data = await this.pipeline.downloadForDrawing(
       Array.from(chunk.chunkGridPosition, Math.round),
       signal,
-      { sliceOnly },
+      // Bridges only into neighbours at hand (read, or drawn by a view at
+      // this level): the far ends of the rest cost most of a big cell.
+      { sliceOnly, neighboursAtHand: true },
     );
-    chunk.partialBridges = (chunk.data?.ghostsLeftOut ?? 0) > 0;
+    // Read for cross-sections, a 3-D view reads it again with the
+    // neighbours it draws at hand.
+    chunk.partialBridges = sliceOnly && (chunk.data?.ghostsLeftOut ?? 0) > 0;
     // A 3-D view asked for it meanwhile: the next round reads it again.
     if (chunk.partialBridges && chunk.wanted3d === round()) {
       this.chunkManager.scheduleUpdateChunkPriorities();
@@ -666,39 +644,80 @@ export class ZarrVectorsDenseRenderLayerBackend extends withChunkManager(
       const renderScaleTarget = (
         isSliceView ? this.renderScaleTarget2d : this.renderScaleTarget3d
       ).value;
+      const visit = (
+        tsource: TransformedSource<any, any>,
+        isTarget: boolean,
+      ) => {
+        const chunk = (
+          tsource.source as ZarrVectorsGeometryChunkSourceBackend
+        ).getChunk(tsource.curPositionInChunks);
+        if (!isSliceView) {
+          chunk.wanted3d = this.chunkManager.recomputeChunkPriorities.count;
+          if (chunk.partialBridges && chunk.state <= ChunkState.SYSTEM_MEMORY) {
+            // Loaded for cross-sections without its bridges off the
+            // plane, which a 3-D view shows: read it again, whole.
+            this.reloadChunk(chunk);
+          }
+        }
+        if (isTarget) {
+          ++this.numVisibleChunksNeeded;
+          if (chunk.state === ChunkState.GPU_MEMORY) {
+            ++this.numVisibleChunksAvailable;
+          }
+        }
+        // The coarse stand-in loads first: it is small and fills the view.
+        this.chunkManager.requestChunk(
+          chunk,
+          priorityTier,
+          basePriority + (isTarget ? 0 : SCALE_PRIORITY_MULTIPLIER),
+        );
+      };
+      const sources = transformedSources[0];
+      if (!isSliceView && perChunkLevels(sources, this.chains)) {
+        // A level per chunk, nearest detail first, within a GPU budget.
+        const roots = selectDense3dChunks(
+          projectionParameters,
+          this.localPosition.value,
+          sources,
+          this.densities,
+          renderScaleTarget,
+          dense3dBudget(
+            this.chunkManager.queueManager.gpuMemoryCapacity.sizeLimit.value,
+          ),
+          drawBytesPerVertex(
+            (sources[0].source as ZarrVectorsGeometryChunkSourceBackend)
+              .parameters.description,
+          ),
+          (level, position) => {
+            const tsource = sources[level];
+            setNodePosition(tsource, position);
+            return (
+              tsource.source as ZarrVectorsGeometryChunkSourceBackend
+            ).knownBytes.get(tsource.curPositionInChunks.join());
+          },
+        );
+        for (const { root, leaves } of roots) {
+          for (const leaf of leaves) {
+            const tsource = sources[leaf.level];
+            setNodePosition(tsource, leaf.position);
+            visit(tsource, true);
+          }
+          if (leaves.length === 1 && leaves[0] === root) continue;
+          const tsource = sources[root.level];
+          setNodePosition(tsource, root.position);
+          visit(tsource, false);
+        }
+        continue;
+      }
       forEachDenseChunkToLoad(
         projectionParameters,
         this.localPosition.value,
-        transformedSources[0],
+        sources,
         this.densities,
         this.chains,
         renderScaleTarget,
         isSliceView,
-        (tsource, _levelIndex, isTarget) => {
-          const chunk = (
-            tsource.source as ZarrVectorsGeometryChunkSourceBackend
-          ).getChunk(tsource.curPositionInChunks);
-          if (!isSliceView) {
-            chunk.wanted3d = this.chunkManager.recomputeChunkPriorities.count;
-            if (chunk.partialBridges && chunk.state <= ChunkState.SYSTEM_MEMORY) {
-              // Loaded for cross-sections without its bridges off the
-              // plane, which a 3-D view shows: read it again, whole.
-              this.reloadChunk(chunk);
-            }
-          }
-          if (isTarget) {
-            ++this.numVisibleChunksNeeded;
-            if (chunk.state === ChunkState.GPU_MEMORY) {
-              ++this.numVisibleChunksAvailable;
-            }
-          }
-          // The coarse stand-in loads first: it is small and fills the view.
-          this.chunkManager.requestChunk(
-            chunk,
-            priorityTier,
-            basePriority + (isTarget ? 0 : SCALE_PRIORITY_MULTIPLIER),
-          );
-        },
+        (tsource, _levelIndex, isTarget) => visit(tsource, isTarget),
       );
     }
   }

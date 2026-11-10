@@ -27,9 +27,8 @@
  * positions. Only the bridges into neighbouring chunks are listed, and the
  * tangents of their far ends kept.
  *
- * Kept on the CPU once drawn: the words and the object list, for picking;
- * and for a mesh, its faces and per-vertex values, which the Surface
- * controls read and other surfaces' normals are made from.
+ * The frontend keeps the same arrays, to upload them again once the GPU has
+ * let the chunk go, as Neuroglancer does, and for picking.
  */
 
 import type { ZarrVectorsGeometryDescription } from "./base.js";
@@ -68,6 +67,27 @@ export function drawLayout(
     layout.push({ id: "tangent", components: 3, kind: "tangent" });
   }
   return layout;
+}
+
+/**
+ * About how many GPU bytes a vertex takes, for budgets: its position and
+ * word, its vertex attributes, and where edges or tangents cannot be
+ * derived (graphs, skeletons), an edge and a tangent each.
+ */
+export function drawBytesPerVertex(
+  description: ZarrVectorsGeometryDescription,
+): number {
+  let bytes = 16;
+  for (const a of description.attributes) {
+    if (a.objectValue === undefined) bytes += 4 * a.components;
+  }
+  const { primitive, tangent } = KIND_CAPABILITIES[description.geometryKind];
+  if (primitive === "lines" && description.linksConvention !== "implicit_sequential") {
+    bytes += 8;
+  }
+  if (tangent === "edges") bytes += 12;
+  if (primitive === "triangles") bytes += 12 + 24;
+  return bytes;
 }
 
 /** One chunk, ready to upload. */
@@ -203,37 +223,21 @@ export function packForDrawing(
 }
 
 /**
- * The bytes a chunk takes on the GPU, and those kept on the CPU once it is
- * there (for a mesh, its faces and per-vertex values too).
+ * The bytes a chunk takes on the GPU, and on the CPU: the arrays uploaded,
+ * which the frontend keeps to upload again once the GPU has let it go (and
+ * reads for picking); the GPU also holds a mesh's normals.
  */
 export function drawChunkBytes(
   data: DrawChunkData,
-  layout: readonly DrawAttribute[],
-  mesh: boolean,
+  _layout?: readonly DrawAttribute[],
 ): { gpu: number; cpu: number } {
-  let objectValues = 0;
-  let vertexValues = 0;
-  let tangents = 0;
-  data.attributes.forEach((a, i) => {
-    const bytes = a?.byteLength ?? 0;
-    const kind = layout[i]?.kind;
-    if (kind === "object") objectValues += bytes;
-    else if (kind === "tangent") tangents += bytes;
-    else vertexValues += bytes;
-  });
-  const picking =
-    data.vertexObjects.byteLength + data.objectIds.byteLength + objectValues;
-  let gpu =
-    picking +
+  let cpu =
     data.positions.byteLength +
+    data.vertexObjects.byteLength +
+    data.objectIds.byteLength +
     data.edges.byteLength +
-    data.faces.byteLength +
-    vertexValues +
-    tangents;
-  // A mesh's normals, one per vertex.
-  if (data.faces.length > 0) gpu += data.numVertices * 12;
-  return {
-    gpu,
-    cpu: picking + (mesh ? data.faces.byteLength + vertexValues : 0),
-  };
+    data.faces.byteLength;
+  for (const a of data.attributes) cpu += a?.byteLength ?? 0;
+  const normals = data.faces.length > 0 ? data.numVertices * 12 : 0;
+  return { gpu: cpu + normals, cpu };
 }
