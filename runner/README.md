@@ -211,6 +211,51 @@ places, add `--allow-source <url>` (more than once for several, or
 must then be under one of them. Its API is in
 [plugins/anatomical-rendering/README.md](../plugins/anatomical-rendering/README.md).
 
+**GPU memory.** Every session and job draws on one budget: by default 0.8
+of the GPU memory free when the service starts, or `--gpu-budget` (`24G`,
+`12000M`, or a part of the free memory such as `0.6`; also
+`NGP_RENDER_GPU_BUDGET`). A new session is let in only when what it will
+hold fits beside the others (its volume, labels, finer detail and its
+frame), else `POST /sessions` answers 503 with `Retry-After` and says why;
+a view larger than the session's frame so far asks for more the same way
+(`PUT /sessions/<id>/view`, 503). Sessions and jobs on the same image, level,
+channel and time point share one upload of it (and one read), counted once,
+which goes when the last of them closes. `/info` lists the budget
+(`budget`: `total_mb`, `used_mb`, `free_mb`, what holds it, the uploads and
+how many use each).
+
+**Jobs.** Stills, movies and splats run one at a time, in the order asked
+for. While one waits its answer has `status: "queued"`, `queue_position`
+(1: next to start) and `jobs_ahead` (those before it, the one running
+included); a 429 with `Retry-After` refuses one when 8 wait already. A job
+that could never fit the budget is a 400. At its turn a job waits (up to
+ten minutes) for the GPU memory its frame needs, saying so in `message`.
+`/info` has the queue (`queue`: `running`, `waiting`, `max_waiting`).
+
+**Disk.** A job is refused (507, with the space free and needed) when it
+would leave less than 1 GB free where it writes. A movie's frames are
+deleted once its MP4 is made. Levels the service makes are cached by the
+store, the level, the channel and time point and a stamp of the level's
+metadata (its file's time, or the server's ETag or Last-Modified), so a
+store written again is read again; the cache keeps within
+`NGP_RENDER_CACHE_GB` (20 by default), least recently used out first.
+Downloads (`/stills/<id>/file`, `/movies/<id>/file`,
+`/splats/<id>/file/<name>`) are streamed and take a `Range`.
+
+**Channels and time points.** An image with channel or time axes is shown
+at channel 0 and time point 0 unless the session asks for others:
+`POST /sessions {volume: {url, channel, time}}` (whole numbers from 0, else
+a 400; out of the image's range, the session fails saying how many it
+has). A loaded session's `volume` says which it shows and how many there
+are: `channel`, `time`, `channels`, `times`, `axes`. Images need x, y and z
+axes; 2-D images are not rendered.
+
+**Splats.** Fitting needs a Python of its own with torch and gsplat 1.4.0
+(`pip install "./runner[splat]"`), given with `--splat-python`; `/info`
+says whether it is ready and warns of another gsplat. The fit runs on the
+service's GPU (`--device`), keeps the views on the CPU (reading them from
+their files as needed) and ends with the service.
+
 ## Using a GPU on another machine over SSH
 
 The browser on one computer (a laptop) can use a runner on another (a
@@ -315,3 +360,9 @@ forwarder on this computer (`tests/forwarder.py`), since they cannot log in
 anywhere. The tests of real jobs (filtering, converting, serving a `.trk`)
 run when zarr-vectors-tools can be imported, and use the tractograms in
 `plugins/zarr-vectors/testdata/tractograms`.
+
+The render service's tests that render need CuPy and a CUDA GPU, and are
+skipped without them; the movie's encoding needs `ffmpeg`. The splat fit's
+tests run when `NGP_TEST_TORCH_PYTHON` names a Python with torch (gsplat is
+stood in for), for example
+`NGP_TEST_TORCH_PYTHON=/path/to/torch-env/bin/python python -m pytest runner/tests -q`.

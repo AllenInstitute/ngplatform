@@ -90,7 +90,7 @@ def ready_session(monkeypatch, renderer: FakeRenderer) -> Session:
         threading.Thread(target=self._loop, daemon=True).start()
 
     monkeypatch.setattr(Session, "_load", load)
-    monkeypatch.setattr(Session, "_state", lambda self, view, R=None: type("St", (), {"fast": 0.0, "width": 8, "height": 8})())
+    monkeypatch.setattr(Session, "_state", lambda self, view, R=None, detail_affine=None: type("St", (), {"fast": 0.0, "width": 8, "height": 8})())
     s = Session("s1", {"volume": {"url": "x"}}, 0)
     for _ in range(100):
         if s.status == "ready":
