@@ -450,11 +450,11 @@ export class AtlasPanel {
     const counted = this.counted;
     if (atlas === undefined || counted === undefined || this.totals === undefined) return;
     const own = this.voxelsPerValue(counted);
-    const rows: (string | number)[][] = [["value", "acronym", "name", "path", "voxels", "volume_mm3", "voxels_with_descendants", "volume_with_descendants_mm3"]];
+    const rows: (string | number)[][] = [["value", "acronym", "name", "path", "voxels", "volume_mm3", "voxels_with_descendants", "volume_with_descendants_mm3", "level_counted"]];
     for (const r of atlas.all()) {
       const total = this.totals.get(r) ?? 0;
       const n = r.value === undefined ? 0 : (own.get(r.value) ?? 0);
-      rows.push([r.value?.toString() ?? "", r.acronym ?? "", r.name, atlas.pathText(r, " > "), n, n * counted.voxelVolume, total, total * counted.voxelVolume]);
+      rows.push([r.value?.toString() ?? "", r.acronym ?? "", r.name, atlas.pathText(r, " > "), n, n * counted.voxelVolume, total, total * counted.voxelVolume, counted.level]);
     }
     downloadBlob(new Blob([csv(rows)], { type: "text/csv" }), `${safeFileName(this.layer, "atlas")}_regions.csv`);
   }
