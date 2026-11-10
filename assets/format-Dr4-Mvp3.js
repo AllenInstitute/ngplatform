@@ -1,3 +1,0 @@
-function a(n){return/[",\n\r]/.test(n)?`"${n.replace(/"/g,'""')}"`:n}function f(n){const e=t=>a(typeof t=="number"?Number.isFinite(t)?String(t):"":t);return n.map(t=>t.map(e).join(",")).join(`
-`)+`
-`}function s(n,e,t=4){if(!(e>n))return[n];const o=(e-n)/t,c=10**Math.floor(Math.log10(o)),i=[1,2,5,10].map(r=>r*c).find(r=>r>=o*(1-1e-9))??o,u=[];for(let r=Math.ceil(n/i-1e-9)*i;r<=e+i*1e-9;r+=i)u.push(Number(r.toPrecision(12)));return u}function p(n){return n>=1?`${+n.toFixed(2)} mm`:`${Math.round(n*1e3)} µm`}function m(n){return n>=2**40?`${(n/2**40).toFixed(1)} TB`:n>=2**30?`${(n/2**30).toFixed(1)} GB`:n>=2**20?`${(n/2**20).toFixed(0)} MB`:`${Math.ceil(n/2**10)} KB`}export{f as a,m as b,a as c,p as m,s as t};
