@@ -223,8 +223,10 @@ changes are not saved yet. Choose the **Format**: NIfTI (.nii.gz, marked
 as labels) or an OME-Zarr folder (in a zip where the browser cannot write
 folders). **Only the painted box** saves the box round what is painted,
 placed where it was. OME-Zarr writes only the painted chunks, so it suits
-large grids, and carries the segments' names and colours; NIfTI holds
-every voxel.
+large grids, and carries the segments' names and colours (past 1,000
+segments, or edited in place, only the colours given by hand: Neuroglancer
+gives the rest again, and 100,000 of them would make its metadata
+megabytes); NIfTI holds every voxel.
 
 Saves are compressed off the page's main thread and written as they are
 made: a NIfTI a few sections at a time straight into its file, an

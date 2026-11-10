@@ -58,6 +58,8 @@ export const SAM_RELEASE_WAIT = 30_000;
 export const RELEASE_WAIT = 1000;
 /** A NIfTI holds every voxel: beyond this, save the painted box only. */
 export const MAX_NIFTI = 2 * 2 ** 30;
+/** A save's progress is drawn at most this often. */
+export const SAVE_PROGRESS_MS = 250;
 /** Voxels read to open a label image or copy a segmentation. */
 export const MAX_COPY = 512 * 2 ** 20;
 /** The block a copy is read in, in voxels. */
@@ -1913,14 +1915,21 @@ export class Editor implements LabelVolumes {
     }
   }
 
-  /** The segments' names, colours and groups, as saved. */
+  /**
+   * The segments' names, colours and groups, as saved.  A volume coloured
+   * by Neuroglancer's hash (many segments, or edited in place) saves only
+   * the colours given by hand or by the original: the hash gives the rest
+   * again, and 100k of them would make the store's zarr.json megabytes.
+   */
   private savedLabels(session: Session): SavedLabel[] {
     const groups = this.groups(session);
     const colour = session.colours();
+    const hashed = session.volume instanceof CowVolume || session.palette === false;
+    const own = (value: number) => session.labels.get(value)?.colour ?? session.theirs.get(value)?.colour;
     return [...new Set([...session.counts.keys(), ...session.labels.keys()])]
       .filter((v) => v > 0)
       .sort((a, b) => a - b)
-      .map((value) => ({ value, name: session.labels.get(value)?.name || session.theirs.get(value)?.name || undefined, colour: colour(value), group: groupOf(groups, value)?.name }));
+      .map((value) => ({ value, name: session.labels.get(value)?.name || session.theirs.get(value)?.name || undefined, colour: hashed ? own(value) : colour(value), group: groupOf(groups, value)?.name }));
   }
 
   /**
@@ -2034,9 +2043,20 @@ export class Editor implements LabelVolumes {
   }
 
   private saveProgress(text: string): void {
+    const now = performance.now();
+    const shown = this.saveStatus?.kind === "progress" ? this.saveStatus.text : undefined;
     this.saveStatus = { kind: "progress", text };
+    // Drawn again at most every SAVE_PROGRESS_MS: each draw lists the segments, and with 100k of them,
+    // drawn for every chunk, an OME-Zarr's save took three times as long.  (A new step, not a new percentage, at once.)
+    if (text === shown) return;
+    const percent = (t: string | undefined) => t?.replace(/\d+%$/, "%");
+    if (percent(text) === percent(shown) && now - this.saveDrawn < SAVE_PROGRESS_MS) return;
+    this.saveDrawn = now;
     this.changed();
   }
+
+  /** When the save's progress was last drawn. */
+  private saveDrawn = -Infinity;
 
   /** A save done: said in a toast and in Activity; the status line clears. */
   private saved(text: string): void {

@@ -108,9 +108,11 @@ function labelMetadata(volume: LabelVolume, description: string | undefined, lab
     const group = JSON.parse(new TextDecoder().decode(files.get("zarr.json")));
     const rgba = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).concat(255);
     if (labels.length) {
+      // (With no colour and no property, an empty image-label still says the store is a label image.)
       group.attributes.ome["image-label"] = {
         colors: labels.filter((l) => l.colour).map((l) => ({ "label-value": l.value, rgba: rgba(l.colour!) })),
-        properties: labels.map((l) => ({ "label-value": l.value, ...(l.name ? { name: l.name } : {}), ...(l.group ? { group: l.group } : {}) })),
+        // Only the segments with something to say: a bare id is no property.
+        properties: labels.filter((l) => l.name || l.group).map((l) => ({ "label-value": l.value, ...(l.name ? { name: l.name } : {}), ...(l.group ? { group: l.group } : {}) })),
       };
     }
     Object.assign(group.attributes, attributes);

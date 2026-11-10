@@ -10,6 +10,7 @@ import { Editor } from "../editor.js";
 import { forgetPersist } from "../keep.js";
 import { LabelVolume } from "../label_volume.js";
 import { Panel } from "../panel.js";
+import { omeZarr, type SavedLabel } from "../save.js";
 import { Session } from "../session.js";
 import { Toolbar } from "../toolbar.js";
 import type { Voxels } from "../../annotations/voxels.js";
@@ -110,6 +111,14 @@ describe(`${N.toLocaleString("en-GB")} segments`, () => {
     w.editor.rows();
     expect(spec.mock.calls.length).toBeLessThan(10);
     spec.mockRestore();
+    // Saved as OME-Zarr: the hash colours and the bare ids are not written (they were 15 MB of zarr.json at 96k).
+    w.editor.rename(12, "Named");
+    const labels = (w.editor as unknown as { savedLabels(s: Session): SavedLabel[] }).savedLabels(w.session);
+    const files = await omeZarr(w.session.volume, "t", undefined, labels);
+    const head = JSON.parse(new TextDecoder().decode(files.get("zarr.json")));
+    expect(files.get("zarr.json")!.length).toBeLessThan(10_000);
+    expect(head.attributes.ome["image-label"].properties).toEqual([{ "label-value": 12, name: "Named" }]);
+    expect(head.attributes.ome["image-label"].colors.length).toBeLessThanOrEqual(1);
     // The picker finds a segment by id among 100k, listing at most 50.
     const picker = bar!.querySelector("input.sg-segment-select") as HTMLInputElement;
     dom.fire(picker, "focus");
@@ -127,4 +136,27 @@ describe(`${N.toLocaleString("en-GB")} segments`, () => {
     w.editor.dispose();
     await new Promise((resolve) => setTimeout(resolve, 0));
   }, 600_000);
+
+  it("draw a save's progress a few times, not once a chunk", async () => {
+    const f = fakeContext();
+    const editor = new Editor(f.ctx, {} as Voxels);
+    // 64 chunks of 64³ on level 0 (85 with the coarser levels), a segment each.
+    const volume = new LabelVolume([512, 512, 64], "uint32", PLACE, "t");
+    for (let cy = 0; cy < 8; ++cy) for (let cx = 0; cx < 8; ++cx) volume.chunk(volume.key(cx, cy, 0), true)!.fill(1 + cx + 8 * cy);
+    const session = await Session.open(f.ctx, {} as Voxels, volume, "Labels");
+    (editor as unknown as { adopt(s: Session, edit?: boolean): void }).adopt(session, true);
+    const folder = await memoryStorage().storage.getDirectory();
+    (window as unknown as { showDirectoryPicker: unknown }).showDirectoryPicker = async () => folder;
+    editor.saveFormat = "zarr";
+    let draws = 0;
+    const off = editor.onChanged(() => ++draws);
+    await editor.save();
+    off();
+    expect(editor.saveStatus).toBeUndefined();
+    expect(f.log.info).toHaveBeenCalledWith(expect.stringContaining("Saved Labels"));
+    // The start, a few percentages at most, and the end; it was one a chunk.
+    expect(draws).toBeLessThan(10);
+    editor.dispose();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
 });
