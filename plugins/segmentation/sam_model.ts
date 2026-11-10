@@ -116,6 +116,19 @@ export class SamModel {
     this.changed();
   }
 
+  /** Whether the model's worker is running (it holds the model, its runtime and the last embeddings). */
+  get started(): boolean {
+    return this.worker !== undefined;
+  }
+
+  /** Lets the worker go (Quick select was left): the next prompt starts it again, from the files kept in this browser. */
+  release(): void {
+    if (this.worker === undefined) return;
+    this.stop();
+    this.state = this.kept >= MODEL_BYTES ? "kept" : "absent";
+    this.changed();
+  }
+
   dispose(): void {
     this.stop();
     this.listeners.clear();

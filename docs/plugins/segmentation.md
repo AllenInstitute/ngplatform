@@ -108,6 +108,9 @@ Runtime Web.
 - The first prompt in a region computes the image's embedding ("Computing
   the image's embedding…" on the bar): a few seconds on the CPU, much less
   on a GPU. Further clicks near it take a fraction of a second.
+- Half a minute after you leave Quick select (another tool, or editing
+  stopped), the model is let go from memory with its embeddings; the next
+  prompt loads it again from this browser.
 - The model sees the section round the prompt, at least **Context**
   voxels across (256; in the panel), with the image's values as its layer
   shows them (the layer's window).

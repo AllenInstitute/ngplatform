@@ -51,6 +51,8 @@ import { LIST_MAX, nextSegment, type SegmentRow, segmentRows, type SegmentsState
 import { PALETTE_SEGMENTS, type Reference, Session } from "./session.js";
 import { brushes, cycle, draws, stepRadius, type Tool, TOOLS } from "./tools.js";
 
+/** How long the model's worker stays after Quick select is left (ms). */
+export const SAM_RELEASE_WAIT = 30_000;
 /** How long a removed label layer's volume waits before it is let go (ms): a layer replaced shows again within it. */
 export const RELEASE_WAIT = 1000;
 /** A NIfTI holds every voxel: beyond this, save the painted box only. */
@@ -351,6 +353,7 @@ export class Editor implements LabelVolumes {
     this.sam.dispose();
     for (const s of this.sessions) s.dispose();
     clearTimeout(this.countsTimer);
+    clearTimeout(this.samTimer);
   }
 
   // ------------------------------------------------------------ tools
@@ -379,8 +382,23 @@ export class Editor implements LabelVolumes {
     this.apply();
   }
 
+  /** Lets the model's worker go a while after Quick select is left (going back at once keeps it). */
+  private samTimer: ReturnType<typeof setTimeout> | undefined;
+
+  private releaseSamLater(): void {
+    clearTimeout(this.samTimer);
+    this.samTimer = undefined;
+    if (this.editing && this.tool === "quick") return;
+    if (!this.sam.started) return;
+    this.samTimer = setTimeout(() => {
+      this.samTimer = undefined;
+      if (!(this.editing && this.tool === "quick")) this.sam.release();
+    }, SAM_RELEASE_WAIT);
+  }
+
   /** Puts the tool and editing state into the painter and the context keys. */
   private apply(): void {
+    this.releaseSamLater();
     const drawing = this.editing && draws(this.tool);
     this.painter.active = drawing;
     this.ctx.context.set(EDITING, this.editing);

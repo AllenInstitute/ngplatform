@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type FakeDom, fakeDocument } from "@ngplatform/sdk/testing";
-import { Editor, RELEASE_WAIT } from "../editor.js";
+import { Editor, RELEASE_WAIT, SAM_RELEASE_WAIT } from "../editor.js";
 import { History, Stroke } from "../history.js";
 import { forgetPersist } from "../keep.js";
 import { LabelVolume } from "../label_volume.js";
@@ -119,5 +119,48 @@ describe("undo past its budget", () => {
     const told = w.log.info.mock.calls.map((c) => c[0]).filter((m) => m.includes("can no longer be undone"));
     expect(told).toEqual(["“Labels”: undo keeps the last 256 KB of strokes; the oldest can no longer be undone. Save to keep a copy."]);
     w.editor.dispose();
+  });
+});
+
+describe("the model's worker", () => {
+  it("is let go a while after Quick select is left, kept when it is taken again at once, and stopped when the plugin is", async () => {
+    vi.useFakeTimers();
+    const workers: { terminated: boolean }[] = [];
+    vi.stubGlobal(
+      "Worker",
+      class {
+        terminated = false;
+        onmessage: unknown;
+        onerror: unknown;
+        constructor() {
+          workers.push(this);
+        }
+        postMessage() {}
+        terminate() {
+          this.terminated = true;
+        }
+      },
+    );
+    const w = await withVolume();
+    w.editor.setTool("quick");
+    void w.editor.sam.load().catch(() => {});
+    expect(w.editor.sam.started).toBe(true);
+    // Left, and taken again within the wait: kept.
+    w.editor.setTool("brush");
+    await vi.advanceTimersByTimeAsync(SAM_RELEASE_WAIT / 2);
+    w.editor.setTool("quick");
+    await vi.advanceTimersByTimeAsync(SAM_RELEASE_WAIT);
+    expect(workers[0].terminated).toBe(false);
+    // Left for good (editing stopped): let go after the wait.
+    w.editor.setEditing(false);
+    await vi.advanceTimersByTimeAsync(SAM_RELEASE_WAIT + 10);
+    expect(workers[0].terminated).toBe(true);
+    expect(w.editor.sam.started).toBe(false);
+    // Started again, then the plugin switched off: stopped at once.
+    w.editor.setTool("quick");
+    void w.editor.sam.load().catch(() => {});
+    expect(workers).toHaveLength(2);
+    w.editor.dispose();
+    expect(workers[1].terminated).toBe(true);
   });
 });
