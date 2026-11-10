@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type FakeDom, fakeDocument } from "@ngplatform/sdk/testing";
 import { Editor, RELEASE_WAIT } from "../editor.js";
+import { History, Stroke } from "../history.js";
 import { forgetPersist } from "../keep.js";
 import { LabelVolume } from "../label_volume.js";
 import { Session } from "../session.js";
@@ -98,5 +99,25 @@ describe("a label layer removed", () => {
     await afterWait();
     expect(w.editor.sessions).toHaveLength(1);
     expect(w.dispose).not.toHaveBeenCalled();
+  });
+});
+
+describe("undo past its budget", () => {
+  it("tells Activity once that the oldest strokes can no longer be undone", async () => {
+    const w = await withVolume();
+    // A budget of one stroke's chunk.
+    Object.defineProperty(w.session, "history", { value: new History(64 ** 3) });
+    const commit = (x: number) => {
+      const s = new Stroke(w.session.volume);
+      s.set(x, 0, 0, 1);
+      (w.editor as unknown as { commit(s: Stroke, session: Session, value: number): void }).commit(s, w.session, 1);
+    };
+    commit(1);
+    expect(w.log.info).not.toHaveBeenCalled();
+    commit(2);
+    commit(3);
+    const told = w.log.info.mock.calls.map((c) => c[0]).filter((m) => m.includes("can no longer be undone"));
+    expect(told).toEqual(["“Labels”: undo keeps the last 256 KB of strokes; the oldest can no longer be undone. Save to keep a copy."]);
+    w.editor.dispose();
   });
 });

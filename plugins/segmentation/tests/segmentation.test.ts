@@ -454,12 +454,16 @@ describe("undo and redo", () => {
   it("keeps a budget of bytes, the oldest strokes going first", () => {
     const v = vol();
     const history = new History(64 ** 3 * 3);
+    const dropped: number[] = [];
     for (let i = 0; i < 4; ++i) {
       const s = new Stroke(v);
       s.set(i, 0, 0, i + 1);
       s.finish();
-      history.push(s);
+      dropped.push(history.push(s));
     }
+    // It says how many it let go (the editor tells Activity).
+    expect(dropped[0]).toBe(0);
+    expect(dropped.reduce((a, b) => a + b)).toBeGreaterThan(0);
     expect(history.undo().length).toBe(1);
     history.undo();
     expect(history.canUndo).toBe(false);

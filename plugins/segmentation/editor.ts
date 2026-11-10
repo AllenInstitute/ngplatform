@@ -1301,7 +1301,11 @@ export class Editor implements LabelVolumes {
       // A segment painted shows, even where others are hidden.
       this.show(session, value, true, true);
     }
-    session.history.push(stroke);
+    // Undo keeps 512 MB of strokes: past it the oldest go, said once (undo would otherwise just stop).
+    if (session.history.push(stroke) > 0 && !session.undoLimitTold) {
+      session.undoLimitTold = true;
+      this.ctx.log.info(`“${session.layer}”: undo keeps the last ${fmtBytes(session.history.limit)} of strokes; the oldest can no longer be undone. Save to keep a copy.`);
+    }
     session.changed(stroke.keys());
     session.unsaved++;
     session.refresh();

@@ -99,13 +99,24 @@ export class History {
     return this.undone[this.undone.length - 1]?.time;
   }
 
-  push(stroke: Stroke): void {
-    if (stroke.changes === 0) return;
+  /** The undo budget, in bytes. */
+  get limit(): number {
+    return this.budget;
+  }
+
+  /** Adds a stroke; returns how many of the oldest were let go to stay within the budget (they can no longer be undone). */
+  push(stroke: Stroke): number {
+    if (stroke.changes === 0) return 0;
     stroke.time = this.now();
     this.done.push(stroke);
     this.undone = [];
     let total = this.done.reduce((n, s) => n + s.bytes, 0);
-    while (total > this.budget && this.done.length > 1) total -= this.done.shift()!.bytes;
+    let dropped = 0;
+    while (total > this.budget && this.done.length > 1) {
+      total -= this.done.shift()!.bytes;
+      dropped++;
+    }
+    return dropped;
   }
 
   /** Undoes the last stroke; returns the chunks it changed. */

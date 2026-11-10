@@ -58,6 +58,8 @@ export class Session {
   counts = new Map<number, number>();
   /** Strokes since the last save. */
   unsaved = 0;
+  /** Activity has been told that undo let go of the oldest strokes. */
+  undoLimitTold = false;
   /** What `Editor.applyHidden` last showed the layer (undefined: the layer shows its own list). */
   hiddenApplied: string | undefined;
   /**
