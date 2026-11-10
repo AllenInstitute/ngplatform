@@ -17,17 +17,24 @@
  * read as a virtual Zarr Vectors mesh store (./precomputed_meshes.ts, made in
  * the layer's reading worker), which takes the same mesh path as a Zarr
  * Vectors mesh store.  A segment shown that the store does not hold makes a
- * new store, handed over to as a track-filtering group's new store is.
+ * new store, handed over to as a track-filtering group's new store is: the
+ * new store's view takes on the reading worker of the one before, which
+ * keeps the volume open and each segment's manifest, so only the new
+ * segment's is read.  The meshes are read with the layer's own sign-in
+ * (Google, middleauth as CAVE uses, ngauth; graphene segmentations too);
+ * a server that refuses says to sign in.
  */
 import type { Disposer, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { button, card, type Child, el, emptyState, field, numberInput, type OnOff, region, select, type Settable, type Slider, slider, statusLine, toggle } from "@ngplatform/sdk/dom";
-import { precomputedUrl } from "@ngplatform/sdk/sources";
+import { meshSourceOf, type SourceSignInNeed } from "@ngplatform/sdk/sources";
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
 import { Momentum } from "./camera.js";
 import { storeOf } from "../volume-view/sources.js";
 import type { StoreInfo } from "./client.js";
 import { LayerView } from "./layer_view.js";
-import { meshIdsFor, meshStoreUrl, parseMeshStoreUrl, segmentCapNote, volumeHasMeshes } from "./mesh_layers.js";
+import { meshIdsFor, type MeshStatus, meshStatus, meshStoreUrl, parseMeshStoreUrl, segmentCapNote } from "./mesh_layers.js";
+import type { AuthHeader } from "./precomputed_meshes.js";
+import { signInHeaders } from "./sign_in.js";
 import { SplatView } from "./splat_view.js";
 import { drawnSources } from "./sources.js";
 import { LUXAR_CAN_DRAW, LUXAR_PANEL } from "./manifest.js";
@@ -55,6 +62,19 @@ type NumberKey = "width" | "exposure" | "sharpness" | "absorption" | "detail" | 
 
 /** At most this long a layer's view of its previous store keeps drawing while the new one reads. */
 const OUTGOING_MS = 30_000;
+/** Segments chosen within this long of each other make one new mesh store, not one each. */
+export const SEGMENT_SETTLE_MS = 150;
+/** After Sign in, a refused layer is asked again this often, this many times. */
+const SIGN_IN_POLL_MS = 3000;
+const SIGN_IN_POLLS = 100;
+
+/** What is known of a segmentation's meshes: its status (undefined while asking), and the sign-in's headers. */
+interface MeshVolumeEntry {
+  state: MeshStatus | undefined;
+  need: SourceSignInNeed | undefined;
+  headers: AuthHeader[];
+  asking: boolean;
+}
 
 /** The image a layer reads, when it is an image this plugin can draw as splats. */
 export function imageOfLayer(layer: LayerInfo): string | undefined {
@@ -76,9 +96,13 @@ export function storeOfLayer(layer: LayerInfo, spec?: { source?: unknown }): str
   return undefined;
 }
 
-/** The precomputed volume a segmentation layer reads (its http(s) URL, ending in "/"), when it is one. */
-export function precomputedSegmentationOf(layer: LayerInfo): string | undefined {
-  return layer.type === "segmentation" ? precomputedUrl(layer.sources[0]) : undefined;
+/**
+ * The precomputed (or graphene) volume a segmentation layer reads (its
+ * http(s) URL, ending in "/"; `graphene+` before a graphene one), and the
+ * sign-in it reads with, when it is one.
+ */
+export function precomputedSegmentationOf(layer: LayerInfo): { volume: string; signIn?: SourceSignInNeed } | undefined {
+  return layer.type === "segmentation" ? meshSourceOf(layer.sources[0]) : undefined;
 }
 
 export class Luxar {
@@ -99,8 +123,12 @@ export class Luxar {
   private editing: string | undefined;
   private readonly momentum: Momentum;
   private readonly offs: Disposer[] = [];
-  /** Precomputed volumes, by URL: whether their segments have meshes (undefined while asking). */
-  private readonly meshVolumes = new Map<string, boolean | undefined>();
+  /** Precomputed volumes, by URL: whether their segments have meshes, and the sign-in's headers. */
+  private readonly meshVolumes = new Map<string, MeshVolumeEntry>();
+  /** Segmentation layers whose new segments wait a moment for more (SEGMENT_SETTLE_MS). */
+  private readonly settling = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Asking refused layers again after Sign in. */
+  private signInPoll: ReturnType<typeof setInterval> | undefined;
   /** Segmentation layers with meshes, watched for the segments they show. */
   private readonly segmentWatch = new Map<string, Disposer>();
   /** Each layer's store as last opened, for its settings while it is off. */
@@ -137,7 +165,7 @@ export class Luxar {
   }
 
   candidates(): LayerInfo[] {
-    return this.ctx.viewer.layers().filter((l) => this.storeOf(l) !== undefined || imageOfLayer(l) !== undefined || this.meshVolumeOf(l) !== undefined);
+    return this.ctx.viewer.layers().filter((l) => this.storeOf(l) !== undefined || imageOfLayer(l) !== undefined || this.isMeshLayer(l));
   }
 
   /**
@@ -163,18 +191,84 @@ export class Luxar {
    * (the panel and the layers are brought up to date when it is).
    */
   private meshVolumeOf(layer: LayerInfo): string | undefined {
-    const volume = precomputedSegmentationOf(layer);
-    if (volume === undefined) return undefined;
-    if (!this.meshVolumes.has(volume)) {
-      this.meshVolumes.set(volume, undefined);
-      void volumeHasMeshes(volume).then((has) => {
-        this.meshVolumes.set(volume, has);
-        if (!has || this.disposed) return;
-        this.sync();
-        this.panelUpdate?.();
-      });
+    const entry = this.meshEntry(layer);
+    return entry?.[1].state === "meshes" ? entry[0] : undefined;
+  }
+
+  /** A segmentation with meshes, or one whose `info` could not be read without a sign-in (listed, to say so). */
+  private isMeshLayer(layer: LayerInfo): boolean {
+    const state = this.meshEntry(layer)?.[1].state;
+    return state === "meshes" || state === "sign-in";
+  }
+
+  /** Whether a layer's meshes need a sign-in to be read. */
+  private needsSignIn(layer: LayerInfo): boolean {
+    return this.meshEntry(layer)?.[1].state === "sign-in";
+  }
+
+  /** What is known of a segmentation layer's volume, asked for the first time it is seen. */
+  private meshEntry(layer: LayerInfo): [string, MeshVolumeEntry] | undefined {
+    const source = precomputedSegmentationOf(layer);
+    if (source === undefined) return undefined;
+    let entry = this.meshVolumes.get(source.volume);
+    if (entry === undefined) {
+      entry = { state: undefined, need: source.signIn, headers: [], asking: false };
+      this.meshVolumes.set(source.volume, entry);
+      void this.ask(source.volume, entry);
     }
-    return this.meshVolumes.get(volume) === true ? volume : undefined;
+    return [source.volume, entry];
+  }
+
+  /** Reads a volume's `info` with its sign-in: whether it has meshes, or wants a sign-in. */
+  private async ask(volume: string, entry: MeshVolumeEntry): Promise<void> {
+    if (entry.asking) return;
+    entry.asking = true;
+    try {
+      const headers = await signInHeaders(entry.need);
+      const state = await meshStatus(volume, headers);
+      if (this.disposed) return;
+      const changed = state !== entry.state;
+      entry.headers = headers;
+      entry.state = state;
+      if (!changed || state === "none") return;
+      this.sync();
+      this.panelUpdate?.();
+    } finally {
+      entry.asking = false;
+    }
+  }
+
+  /** Opens Settings › Sign-in, then asks the refused layers again until they can be read (or a while has passed). */
+  private signIn(): void {
+    void this.ctx.commands.invoke("settings.signIn");
+    if (this.signInPoll !== undefined) clearInterval(this.signInPoll);
+    let polls = 0;
+    this.signInPoll = setInterval(() => void this.askAgain(++polls >= SIGN_IN_POLLS), SIGN_IN_POLL_MS);
+  }
+
+  /** The layers refused for want of a sign-in, asked again: a view whose sign-in has a new token reads afresh. */
+  private async askAgain(last: boolean): Promise<void> {
+    if (this.disposed) return;
+    let waiting = false;
+    for (const [volume, entry] of this.meshVolumes) {
+      if (entry.state !== "sign-in") continue;
+      waiting = true;
+      void this.ask(volume, entry);
+    }
+    for (const [name, view] of this.views) {
+      if (!(view instanceof LayerView) || !view.client.signIn) continue;
+      waiting = true;
+      const entry = this.meshVolumes.get(parseMeshStoreUrl(view.storeUrl)?.volume ?? "");
+      if (entry === undefined) continue;
+      const headers = await signInHeaders(entry.need);
+      if (this.disposed || this.views.get(name) !== view || JSON.stringify(headers) === JSON.stringify(view.headers)) continue;
+      entry.headers = headers;
+      this.retry(name);
+    }
+    if ((!waiting || last) && this.signInPoll !== undefined) {
+      clearInterval(this.signInPoll);
+      this.signInPoll = undefined;
+    }
   }
 
   private write(saved: Saved): void {
@@ -195,7 +289,7 @@ export class Luxar {
     // for segments) is drawn in them.
     const spec = this.ctx.viewer.layerSpec(name) as { segmentDefaultColor?: unknown; segmentColors?: unknown } | undefined;
     // A segmentation's meshes: each cell in its colour in the layer.
-    if (layer !== undefined && this.meshVolumeOf(layer) !== undefined) return { ...DEFAULT_STYLE, on: false, colourBy: "segment" };
+    if (layer !== undefined && this.isMeshLayer(layer)) return { ...DEFAULT_STYLE, on: false, colourBy: "segment" };
     const coloured = spec?.segmentDefaultColor !== undefined || (typeof spec?.segmentColors === "object" && spec.segmentColors !== null && Object.keys(spec.segmentColors).length > 0);
     return { ...DEFAULT_STYLE, on: false, ...(coloured ? { colourBy: "segment" as const } : {}) };
   }
@@ -267,6 +361,8 @@ export class Luxar {
   private sync(): void {
     if (this.disposed) return;
     const layers = new Map(this.ctx.viewer.layers().map((l) => [l.name, l]));
+    /** Views let go of whose reading worker the layer's new view may take on; disposed at the end. */
+    const spare = new Map<string, LayerView>();
     for (const [name, view] of this.views) {
       const layer = layers.get(name);
       const style = this.saved.layers[name];
@@ -282,6 +378,9 @@ export class Luxar {
           // While Neuroglancer made the layer afresh it may have seemed hidden for a moment.
           view.setVisible(true);
           this.outgoing.set(name, { view, timer: this.handOverLater(name) });
+        } else if (view instanceof LayerView && parseMeshStoreUrl(view.storeUrl) !== undefined && layer !== undefined && style?.on) {
+          // A mesh store's view may hand its reading worker (the volume, its manifests) to the next store's.
+          spare.set(name, view);
         } else view.dispose();
       }
     }
@@ -303,7 +402,12 @@ export class Luxar {
           view = new SplatView(this.ctx, name, image, style);
           view.onStatus = () => this.statusUpdate?.();
         } else {
-          const lines = new LayerView(this.ctx, name, store!, style);
+          // The same segmentation's meshes, read with the same sign-in: its worker kept the volume open.
+          const before = spare.get(name) ?? this.outgoing.get(name)?.view;
+          const volume = parseMeshStoreUrl(store!)?.volume;
+          const headers = volume === undefined ? [] : (this.meshVolumes.get(volume)?.headers ?? []);
+          const adopt = before !== undefined && volume !== undefined && parseMeshStoreUrl(before.storeUrl)?.volume === volume && JSON.stringify(before.headers) === JSON.stringify(headers) ? before : undefined;
+          const lines = new LayerView(this.ctx, name, store!, style, { adopt, headers });
           // Held (reading, not drawing) while the view of the store before it still draws.
           lines.held = this.outgoing.has(name);
           lines.onStatus = () => {
@@ -321,6 +425,7 @@ export class Luxar {
         out.view.setVisible(layer.visible);
       }
     }
+    for (const view of spare.values()) view.dispose();
     // A layer is drawn either by Neuroglancer or here, not both: its own
     // drawing is hidden (not in the link) while ours is on; asked each time,
     // as a layer still loading may not take it yet, and a layer made afresh
@@ -341,6 +446,8 @@ export class Luxar {
       if (layer !== undefined && this.meshVolumeOf(layer) !== undefined) continue;
       off();
       this.segmentWatch.delete(name);
+      clearTimeout(this.settling.get(name));
+      this.settling.delete(name);
     }
     for (const layer of layers.values()) {
       if (this.segmentWatch.has(layer.name) || this.meshVolumeOf(layer) === undefined) continue;
@@ -349,7 +456,16 @@ export class Luxar {
         this.ctx.viewer.onSegmentsChanged(layer.name, () => {
           const view = this.views.get(layer.name);
           const now = this.ctx.viewer.layers().find((l) => l.name === layer.name);
-          if (now !== undefined && this.saved.layers[layer.name]?.on && (view === undefined || this.storeOf(now) !== view.storeUrl)) this.sync();
+          // Segments clicked one after another make one new store once they settle.
+          if (now !== undefined && this.saved.layers[layer.name]?.on && (view === undefined || this.storeOf(now) !== view.storeUrl) && !this.settling.has(layer.name)) {
+            this.settling.set(
+              layer.name,
+              setTimeout(() => {
+                this.settling.delete(layer.name);
+                this.sync();
+              }, SEGMENT_SETTLE_MS),
+            );
+          }
           this.panelUpdate?.();
         }),
       );
@@ -370,7 +486,7 @@ export class Luxar {
   private kindOf(name: string): SettingsKind {
     const layer = this.ctx.viewer.layers().find((l) => l.name === name);
     if (layer !== undefined && imageOfLayer(layer) !== undefined) return "splats";
-    if (layer !== undefined && this.meshVolumeOf(layer) !== undefined) return "mesh";
+    if (layer !== undefined && this.isMeshLayer(layer)) return "mesh";
     const view = this.views.get(name);
     const primitive = view instanceof LayerView ? view.client.info?.primitive : undefined;
     return primitive === "points" ? "points" : primitive === "triangles" ? "mesh" : "lines";
@@ -448,13 +564,18 @@ export class Luxar {
     const updateStatus = () => {
       const name = this.editing;
       const view = name === undefined ? undefined : this.views.get(name);
-      const report = view?.report() ?? {};
+      const layer = name === undefined ? undefined : ctx.viewer.layers().find((l) => l.name === name);
+      // A segmentation whose info was refused: no view yet, and a sign-in to offer.
+      const refused = view === undefined && layer !== undefined && this.needsSignIn(layer);
+      const report: ReturnType<LayerView["report"]> = refused ? { error: "Sign in to read this layer's meshes.", signIn: true } : (view?.report() ?? {});
       // While the view of the layer's previous store still draws, the new one is reading.
       const progress = report.progress ?? (name !== undefined && this.outgoing.has(name) ? "Reading…" : undefined);
-      const key = JSON.stringify([report.error, progress]);
+      const key = JSON.stringify([report.error, progress, report.warning]);
       if (key === shownStatus) return;
       shownStatus = key;
-      if (report.error !== undefined && name !== undefined) status.error(report.error, { label: "Retry", run: () => this.retry(name) });
+      if (report.error !== undefined && report.signIn) status.error(report.error, { label: "Sign in…", run: () => this.signIn() });
+      else if (report.error !== undefined && name !== undefined) status.error(report.error, { label: "Retry", run: () => this.retry(name) });
+      else if (report.warning !== undefined) status.error(report.warning);
       else if (progress !== undefined) status.progress(progress);
       else status.clear();
     };
@@ -702,6 +823,10 @@ export class Luxar {
   dispose(): void {
     this.disposed = true;
     this.panelUpdate = this.statusUpdate = undefined;
+    for (const timer of this.settling.values()) clearTimeout(timer);
+    this.settling.clear();
+    if (this.signInPoll !== undefined) clearInterval(this.signInPoll);
+    this.signInPoll = undefined;
     this.offs.forEach((off) => off());
     this.segmentWatch.forEach((off) => off());
     this.segmentWatch.clear();

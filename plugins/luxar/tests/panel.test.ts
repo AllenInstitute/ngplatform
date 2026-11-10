@@ -37,23 +37,31 @@ function storeInfo(o: { units: string; scale: number; size: number[]; primitive?
 }
 
 /** The reading workers made, for the test to answer as each would. */
-let workers: { onmessage: ((e: { data: unknown }) => void) | null; terminated: boolean }[] = [];
+let workers: FakeWorker[] = [];
 
 class FakeWorker {
   onmessage: ((e: { data: unknown }) => void) | null = null;
   onerror: unknown = null;
   terminated = false;
+  /** The store's open each answer is for (the client ignores answers for another). */
+  epoch: number | undefined;
   constructor() {
     workers.push(this);
   }
-  postMessage() {}
+  postMessage(msg: { type: string; epoch?: number }) {
+    if (msg.type === "open") this.epoch = msg.epoch;
+  }
   terminate() {
     this.terminated = true;
+  }
+  /** Answers as the worker would, for its store's open. */
+  say(data: Record<string, unknown>) {
+    this.onmessage!({ data: { ...data, epoch: this.epoch } });
   }
 }
 
 /** The last worker's store opens, with `info`. */
-const open = (info: StoreInfo) => workers[workers.length - 1].onmessage!({ data: { type: "opened", info } });
+const open = (info: StoreInfo) => workers[workers.length - 1].say({ type: "opened", info });
 
 /**
  * A context with what Luxar uses.  `writes` counts the state written (each
@@ -252,7 +260,7 @@ describe("the Luxar panel", () => {
     luxar.render(host);
     const status = host.querySelector<HTMLElement>(".status-line")!;
     expect(dom.text(status)).toBe("Opening the store…");
-    workers[0].onmessage!({ data: { type: "error", message: "403 Forbidden" } });
+    workers[0].say({ type: "error", message: "403 Forbidden" });
     await vi.waitFor(() => expect(dom.text(status)).toBe("Could not open the store: 403 Forbidden Retry"));
     dom.find(status, "button", "Retry").click();
     expect(workers.length).toBe(2);
@@ -275,6 +283,25 @@ describe("the Luxar panel", () => {
     f.show(12);
     f.select(undefined);
     expect(dom.text(host.querySelector(".list")!)).toBe("Cells (v1300)");
+    luxar.dispose();
+  });
+
+  it("says a segmentation refused for want of a sign-in needs one, with Sign in, not that it has no meshes", async () => {
+    vi.stubGlobal("fetch", async () => new Response("", { status: 401 }));
+    const seg: LayerInfo = { name: "Cells (CAVE)", type: "segmentation", visible: true, ready: true, sources: ["graphene://middleauth+https://cave.test/segmentation/table/t"] };
+    const f = fakeContext([seg]);
+    f.show(3);
+    const host = dom.host();
+    const luxar = new Luxar(f.ctx);
+    luxar.render(host);
+    // Listed, so the panel can say why it is not drawn.
+    await vi.waitFor(() => expect(dom.text(host.querySelector(".list")!)).toBe("Cells (CAVE)"));
+    const status = host.querySelector<HTMLElement>(".status-line")!;
+    expect(dom.text(status)).toBe("Sign in to read this layer's meshes. Sign in…");
+    dom.find(status, "button", "Sign in…").click();
+    expect(f.invoked).toEqual(["settings.signIn"]);
+    // No worker for a layer that cannot be read.
+    expect(workers.length).toBe(0);
     luxar.dispose();
   });
 

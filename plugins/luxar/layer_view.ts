@@ -13,6 +13,7 @@ import type { Selection } from "./chunks.js";
 import { StoreClient } from "./client.js";
 import { type ObjectPlan, objectPlan } from "./objects.js";
 import type { DrawUniforms } from "./render_gl.js";
+import type { AuthHeader } from "./precomputed_meshes.js";
 import { needsTable, type ObjectShading } from "./segments.js";
 import { COLORMAP_INDEX, COLOUR_INDEX, type LayerStyle, rgbOf, scalarOf, TONE_INDEX } from "./style.js";
 import { View2d } from "./view2d.js";
@@ -59,6 +60,8 @@ export class LayerView {
   private frozen = false;
   /** Disposed: a store that opens afterwards draws nothing. */
   private disposed = false;
+  /** The sign-in's headers its reads carry. */
+  readonly headers: readonly AuthHeader[];
   /** The last drawing of chosen segments, and when it was last current (see freeze). */
   private chosen: { drawing: LayerDrawing & { key: string }; ids: BigUint64Array | undefined; at: number } | undefined;
 
@@ -67,8 +70,11 @@ export class LayerView {
     readonly name: string,
     readonly storeUrl: string,
     public style: LayerStyle,
+    /** `adopt`: the view of the layer's store before, whose reading worker (and what it keeps) this one takes on; `headers`, the sign-in's. */
+    options: { adopt?: LayerView; headers?: readonly AuthHeader[] } = {},
   ) {
-    this.client = new StoreClient(storeUrl);
+    this.headers = options.headers ?? [];
+    this.client = new StoreClient(storeUrl, { adopt: options.adopt?.client, headers: this.headers });
     this.client.setScalar(scalarOf(this.drawnStyle(style)));
     this.view3d = new View3d(this);
     this.view2d = new View2d(this);
@@ -297,8 +303,10 @@ export class LayerView {
    * For the panel's status line: what is being read, or what went wrong;
    * neither once all it wants is drawn (the line is then hidden).
    */
-  report(): { progress?: string; error?: string } {
+  report(): { progress?: string; error?: string; signIn?: boolean; warning?: string } {
     const { client } = this;
+    // Refused for want of a sign-in: said so, not "no meshes" (the panel offers Sign in).
+    if (client.error !== undefined && client.signIn) return { error: "Sign in to read this layer's meshes.", signIn: true };
     if (client.error !== undefined && client.info === undefined) return { error: `Could not open the store: ${client.error}` };
     if (client.info === undefined) return { progress: "Opening the store…" };
     const problem = this.view3d.problem ?? this.view2d.problem;

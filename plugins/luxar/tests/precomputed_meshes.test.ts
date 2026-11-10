@@ -11,8 +11,10 @@ import { describe, expect, it } from "vitest";
 import { shardOf } from "@ngplatform/sdk/precomputed";
 import { LevelPipeline, openZarrVectorsStore } from "neuroglancer-zarr-vectors/reader";
 import { applyAffine, composeAffine, decodeLegacyFragment, decodeMultilodManifest, dequantize } from "../../zarr-vectors/src/virtual/precomputed_meshes.js";
-import { meshIdsFor, meshStoreUrl, parseMeshStoreUrl } from "../mesh_layers.js";
-import { type DracoDecode, openPrecomputedMeshes, storeAccess } from "../precomputed_meshes.js";
+import { meshSourceOf } from "@ngplatform/sdk/sources";
+import { meshIdsFor, meshStatus, meshStoreUrl, parseMeshStoreUrl } from "../mesh_layers.js";
+import { type DracoDecode, MeshVolume, openPrecomputedMeshes, SignInNeeded, storeAccess } from "../precomputed_meshes.js";
+import { signInHeaders } from "../sign_in.js";
 
 const signal = new AbortController().signal;
 
@@ -233,7 +235,8 @@ describe("precomputed meshes as a Zarr Vectors mesh store", () => {
       expect(store.fragmentCounts).toEqual([3, 2]);
       const before = reads.length;
       const levels = await readAll(store);
-      expect(reads.length - before).toBe(5);
+      // Five fragments in the plan; segment 9's one fragment serves both levels and is read once.
+      expect(reads.length - before).toBe(4);
       expect(levels.length).toBe(2);
       // Stored → nm (×16, ×16, ×40) → voxels (/8, /8, /40): x and y twice the stored model's, z the same.
       const v = (p: number[]) => [2 * p[0], 2 * p[1], p[2]];
@@ -281,5 +284,151 @@ describe("precomputed meshes as a Zarr Vectors mesh store", () => {
     expect(levels.length).toBe(1);
     expect(levels[0].vertices.get(7n)!.sort()).toEqual([[10, 20, 10], [20, 20, 10], [10, 30, 20]].sort());
     expect(levels[0].faces).toBe(1);
+  });
+});
+
+describe("a segmentation's meshes kept open across its stores", () => {
+  /** A volume of `n` segments (ids 1 to n), each one triangle at its own node, unsharded. */
+  function volume(n: number) {
+    const files = new Map<string, Uint8Array>();
+    infos(files);
+    for (let id = 1; id <= n; ++id) {
+      const frag = fragmentBytes(TRI_Q, TRI);
+      files.set(`${MESH}${id}.index`, manifestBytes({ chunkShape: [10, 10, 10], gridOrigin: [0, 0, 0], lods: [{ scale: 1, offset: [0, 0, 0], nodes: [[id % 10, 0, 0]], sizes: [frag.byteLength] }] }));
+      files.set(`${MESH}${id}`, frag);
+    }
+    return files;
+  }
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => BigInt(i + 1));
+  const manifests = (reads: string[]) => reads.filter((r) => r.endsWith(".index")).length;
+
+  it("reads 1 manifest, not 1,001, when 1 segment is added to 1,000", async () => {
+    const { read, reads } = memoryFiles(volume(1001));
+    const meshes = await MeshVolume.open(VOLUME, { read, decode: fakeDraco });
+    let store = await meshes.store(ids(1000));
+    expect(store.plan.ids.length).toBe(1000);
+    expect(manifests(reads)).toBe(1000);
+    const before = reads.length;
+    store = await meshes.store(ids(1001));
+    expect(store.plan.ids.length).toBe(1001);
+    // Only the new segment's manifest; no info read again.
+    expect(reads.slice(before)).toEqual([`${MESH}1001.index`]);
+    // Letting a segment go reads nothing.
+    const after = reads.length;
+    store = await meshes.store(ids(999));
+    expect(store.plan.ids.length).toBe(999);
+    expect(reads.length).toBe(after);
+  });
+
+  it("reads a kept fragment once, whichever store asks for it", async () => {
+    const { read, reads } = memoryFiles(volume(2));
+    const meshes = await MeshVolume.open(VOLUME, { read, decode: fakeDraco });
+    const fragmentsRead = () => reads.filter((r) => /\/mesh\/\d+@/.test(r)).length;
+    // Every fragment of a store read, as its cells are.
+    const readEvery = async (ids: bigint[]) => Promise.all((await meshes.store(ids)).plan.levels.flatMap((l) => l.fragments.map((f) => f.read())));
+    await readEvery([1n]);
+    expect(fragmentsRead()).toBe(1);
+    await readEvery([1n, 2n]);
+    // Segment 1's fragment was kept: only segment 2's is read.
+    expect(fragmentsRead()).toBe(2);
+  });
+
+  it("tries a manifest whose read failed again, not taking it as missing", async () => {
+    const files = volume(1);
+    let fail = true;
+    const read = async (url: string, range?: { offset: number; length: number }) => {
+      if (url.endsWith(".index") && fail) throw new Error("503 Service Unavailable");
+      const data = files.get(url);
+      return data === undefined ? undefined : range === undefined ? data : data.subarray(range.offset, range.offset + range.length);
+    };
+    const meshes = await MeshVolume.open(VOLUME, { read, decode: fakeDraco });
+    await expect(meshes.store([1n])).rejects.toThrow("503");
+    fail = false;
+    expect((await meshes.store([1n])).plan.ids).toEqual([1n]);
+  });
+});
+
+describe("meshes read with the layer's sign-in", () => {
+  const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status });
+
+  it("finds a source's volume and sign-in: Google, ngauth, middleauth, graphene", () => {
+    const base = "https://app.test/ngp/";
+    expect(meshSourceOf("precomputed://gs://b/seg", base)).toEqual({ volume: "https://storage.googleapis.com/b/seg/" });
+    expect(meshSourceOf("precomputed://gs+google://b/seg|neuroglancer-precomputed:", base)).toEqual({ volume: `${base}gcs-google/b/seg/`, signIn: { kind: "google" } });
+    expect(meshSourceOf("precomputed://gs+ngauth+https://auth.test/b/seg", base)).toEqual({ volume: "https://storage.googleapis.com/b/seg/", signIn: { kind: "ngauth", server: "https://auth.test", bucket: "b" } });
+    expect(meshSourceOf("precomputed://middleauth+https://em.test/seg", base)).toEqual({ volume: "https://em.test/seg/", signIn: { kind: "middleauth", app: "https://em.test" } });
+    expect(meshSourceOf("graphene://middleauth+https://cave.test/segmentation/table/t", base)).toEqual({
+      volume: "graphene+https://cave.test/segmentation/table/t/",
+      signIn: { kind: "middleauth", app: "https://cave.test" },
+    });
+    expect(meshSourceOf("zarr://https://x.test/a.zarr", base)).toBeUndefined();
+  });
+
+  it("takes the middleauth token Neuroglancer keeps for the data server's sign-in server", async () => {
+    const asked: string[] = [];
+    const env = {
+      fetch: (async (url: string) => {
+        asked.push(url);
+        return json({ login_url: "https://auth.test/sticky_auth/" });
+      }) as unknown as typeof fetch,
+      storage: { getItem: (key: string) => (key === "auth_token_v2_https://auth.test/sticky_auth" ? JSON.stringify({ tokenType: "Bearer", accessToken: "tok" }) : null) },
+    };
+    expect(await signInHeaders({ kind: "middleauth", app: "https://cave.test" }, env)).toEqual([{ prefix: "https://cave.test/", value: "Bearer tok" }]);
+    expect(asked).toEqual(["https://cave.test/auth_info"]);
+    // Not signed in: no header (the server's refusal then says to sign in).
+    expect(await signInHeaders({ kind: "middleauth", app: "https://cave.test" }, { ...env, storage: { getItem: () => null } })).toEqual([]);
+    expect(await signInHeaders({ kind: "google" }, env)).toEqual([]);
+  });
+
+  it("says a refused info needs a sign-in, not that there are no meshes", async () => {
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      const auth = (init?.headers as Record<string, string> | undefined)?.Authorization;
+      return auth === "Bearer tok" ? json({ type: "segmentation", mesh: "mesh" }) : json({ error: "no" }, 401);
+    }) as unknown as typeof fetch;
+    expect(await meshStatus("https://em.test/seg/", [], fetchImpl)).toBe("sign-in");
+    expect(await meshStatus("https://em.test/seg/", [{ prefix: "https://em.test/", value: "Bearer tok" }], fetchImpl)).toBe("meshes");
+    // A bucket's 403 is a sign-in too, for the info a volume must have.
+    expect(await meshStatus("https://storage.googleapis.com/b/seg/", [], (async () => new Response("", { status: 403 })) as unknown as typeof fetch)).toBe("sign-in");
+    expect(await meshStatus("https://em.test/seg/", [], (async () => json({ type: "image" })) as unknown as typeof fetch)).toBe("none");
+    // The worker's open: a sign-in needed, flagged so.
+    const opened = MeshVolume.open("https://em.test/seg/", { decode: fakeDraco, fetch: fetchImpl });
+    await expect(opened).rejects.toBeInstanceOf(SignInNeeded);
+    await expect(opened).rejects.toHaveProperty("signIn", true);
+  });
+
+  it("reads a graphene segmentation's meshes: manifests from the meshing server with the token, fragments from its shards", async () => {
+    const app = "https://cave.test";
+    const volumeUrl = `${app}/segmentation/table/t/`;
+    const meshDir = "https://storage.googleapis.com/b/seg/graphene_meshes/";
+    // A whole fragment: one triangle, in nanometres.
+    const fragment = new Uint8Array(Float32Array.from([80, 160, 400, 160, 160, 400, 80, 240, 800, 0, 0, 0]).buffer);
+    const shard = concat([new Uint8Array(4), fragment]);
+    const asked: { url: string; auth?: string; range?: string }[] = [];
+    const fetchImpl = (async (url: string, init?: RequestInit) => {
+      const h = (init?.headers ?? {}) as Record<string, string>;
+      asked.push({ url, auth: h.Authorization, range: h.Range });
+      if (url.startsWith(app) && h.Authorization !== "Bearer tok") return json({}, 401);
+      if (url === `${volumeUrl}info`) return json({ type: "segmentation", data_dir: "gs://b/seg", mesh: "graphene_meshes", scales: [{ resolution: RESOLUTION }], app: { supported_api_versions: [1] } });
+      if (url === `${meshDir}info`) return json({ "@type": "neuroglancer_legacy_mesh", sharding: { "@type": "neuroglancer_uint64_sharded_v1" } });
+      if (url === `${app}/meshing/api/v1/table/t/manifest/7:0?verify=1&prepend_seg_ids=1`) return json({ fragments: ["~7:~2/0.shard:4:48"] });
+      if (url === `${meshDir}initial/2/0.shard`) {
+        const [from, to] = h.Range!.slice("bytes=".length).split("-").map(Number);
+        return new Response(shard.slice(from, to + 1), { status: 206 });
+      }
+      return new Response("", { status: 404 });
+    }) as unknown as typeof fetch;
+    const decodeWhole = async (bytes: Uint8Array) => ({ vertexPositions: new Float32Array(bytes.slice(0, 36).buffer), indices: Uint32Array.from([0, 1, 2]) });
+    const headers = [{ prefix: `${app}/`, value: "Bearer tok" }];
+    const meshes = await MeshVolume.open(`graphene+${volumeUrl}`, { decode: fakeDraco, decodeWhole, fetch: fetchImpl, headers });
+    const store = await meshes.store([7n]);
+    expect(store.plan.ids).toEqual([7n]);
+    const levels = await readAll(store);
+    expect(levels[0].vertices.get(7n)!.sort()).toEqual([[10, 20, 10], [20, 20, 10], [10, 30, 20]].sort());
+    // The meshing server was asked with the token; the bucket without it, for the range of the shard.
+    expect(asked.find((a) => a.url.includes("/manifest/"))!.auth).toBe("Bearer tok");
+    expect(asked.find((a) => a.url.endsWith("0.shard"))).toEqual({ url: `${meshDir}initial/2/0.shard`, auth: undefined, range: "bytes=4-51" });
+    // Without the token, the meshing server's refusal is a sign-in.
+    const unsigned = await MeshVolume.open(`graphene+${volumeUrl}`, { decode: fakeDraco, decodeWhole, fetch: fetchImpl, headers: [] }).catch((e) => e);
+    expect(unsigned).toBeInstanceOf(SignInNeeded);
   });
 });

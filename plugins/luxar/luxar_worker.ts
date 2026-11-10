@@ -8,17 +8,27 @@
  * names the volume and the segments).
  *
  * The main thread says which chunks it wants, most wanted first, as the
- * views change; a new list replaces the queue, and chunks already being
- * read finish (the reader caches what they fetched).
+ * views change; a new list replaces the queue, and a chunk being read that
+ * it no longer names is cancelled (its fetches aborted).
+ *
+ * The worker may be handed on to the layer's next store (plugin.ts: a
+ * segmentation showing one more segment): each "open" has an `epoch`, every
+ * answer carries it, and what was being read for the store before is
+ * cancelled.  A segmentation's meshes are opened once (`MeshVolume`) and
+ * kept across its stores, so a new store reads only the new segments'
+ * manifests.
  *
  * It also reads a layer's chosen objects whole, by id, through the
  * reader's object index (`ObjectReader`): a batch of ids at a time, built
  * as one chunk (its segments sorted into pieces of space, for culling).
  *
- * Messages in:  { type: "open", storeUrl }
+ * Messages in:  { type: "open", storeUrl, epoch, headers }   headers: the sign-in's (precomputed_meshes.AuthHeader)
  *               { type: "want", keys, scalar }    keys "<level>|x.y.z"; scalar as styles.scalarOf
  *               { type: "objects", key, level, mode, ids, scalar }   mode "curves" | "skeletons"
- * Messages out: { type: "opened", info } | { type: "error", key?, message }
+ *               { type: "cancelObjects" }         the objects being read are no longer wanted
+ * Messages out (each with its `epoch`):
+ *               { type: "opened", info } | { type: "error", key?, message, signIn? }
+ *               { type: "warning", message }    a mesh store's, after it opened (a fragment that failed)
  *               { type: "chunk", key, scalar, chunk } | { type: "empty", key, scalar }
  *               { type: "objects", key, scalar, chunk, found } | { type: "objectsError", key, scalar, message }
  */
@@ -35,7 +45,9 @@ import {
   type ZarrVectorsStoreAccess,
 } from "neuroglancer-zarr-vectors/reader";
 import { decodeDracoPartitioned } from "neuroglancer/unstable/mesh/draco/index.js";
-import { openPrecomputedMeshes, parseMeshStoreUrl, storeAccess } from "./precomputed_meshes.js";
+import { decodeDraco } from "neuroglancer/unstable/mesh/draco/index.js";
+import { type AuthHeader, MeshVolume, parseMeshStoreUrl, type PrecomputedMeshStore, storeAccess } from "./precomputed_meshes.js";
+import { ReadQueue } from "./read_queue.js";
 import { type BuiltChunk, buildChunk, type ChunkInput, curvesInput, type ScalarSource, skeletonsInput, sortIntoPieces } from "./chunk_build.js";
 
 // Compressed cells decode in the platform's async-computation worker, with
@@ -80,12 +92,14 @@ export interface StoreInfo {
 let store: ZarrVectorsStore | undefined;
 let access: ZarrVectorsStoreAccess | undefined;
 const pipelines = new Map<number, LevelPipeline>();
-let queue: string[] = [];
-let scalar = "none";
-const inFlight = new Set<string>();
-let running = 0;
+/** The store's open: answers carry it, and a read for an earlier one says nothing. */
+let epoch = 0;
+/** The object reads in flight. */
+const readingObjects = new Set<AbortController>();
+/** A segmentation's meshes, kept across its stores (by volume and sign-in). */
+let meshVolume: { key: string; volume: Promise<MeshVolume> } | undefined;
 
-const post = (message: unknown, transfer: Transferable[] = []) => (self as unknown as Worker).postMessage(message, transfer);
+const post = (message: Record<string, unknown>, transfer: Transferable[] = []) => (self as unknown as Worker).postMessage({ ...message, epoch }, transfer);
 
 function pipelineOf(level: number): LevelPipeline {
   let pipeline = pipelines.get(level);
@@ -159,16 +173,58 @@ async function readJson(path: string): Promise<any | undefined> {
   return bytes === undefined ? undefined : JSON.parse(new TextDecoder().decode(bytes));
 }
 
-async function open(storeUrl: string): Promise<StoreInfo> {
+/** A graphene fragment decoded whole. */
+async function dracoWhole(bytes: Uint8Array): Promise<{ indices: Uint32Array | Uint16Array; vertexPositions: Float32Array }> {
+  const mesh = await decodeDraco(bytes);
+  return { indices: mesh.indices, vertexPositions: mesh.vertexPositions as Float32Array };
+}
+
+/** Drops what the store before had: its reads cancelled, its queue and readers gone. */
+/** Stops passing on the store's later warnings. */
+let offWarnings: (() => void) | undefined;
+
+function reset(): void {
+  offWarnings?.();
+  offWarnings = undefined;
+  chunkReads.cancelAll();
+  for (const c of readingObjects) c.abort();
+  readingObjects.clear();
+  store = undefined;
+  access = undefined;
+  pipelines.clear();
+  objectReaders.clear();
+}
+
+async function open(storeUrl: string, headers: AuthHeader[]): Promise<StoreInfo> {
+  const at = epoch;
   const meshes = parseMeshStoreUrl(storeUrl);
+  let opening: ZarrVectorsStoreAccess;
+  let meshStore: PrecomputedMeshStore | undefined;
   // A segmentation's precomputed meshes: the store is made here, its fragments read and decoded (Draco) as its cells are asked for.
-  const meshStore = meshes === undefined ? undefined : await openPrecomputedMeshes(meshes.volume, meshes.ids, { decode: dracoFragment });
-  if (meshStore !== undefined) access = storeAccess(meshStore);
+  if (meshes !== undefined) {
+    const key = JSON.stringify([meshes.volume, headers]);
+    if (meshVolume?.key !== key) {
+      const volume = MeshVolume.open(meshes.volume, { decode: dracoFragment, decodeWhole: dracoWhole, headers });
+      meshVolume = { key, volume };
+      volume.catch(() => {
+        if (meshVolume?.volume === volume) meshVolume = undefined;
+      });
+    }
+    meshStore = await (await meshVolume.volume).store(meshes.ids);
+    opening = storeAccess(meshStore);
+  }
   // Listing where the server allows it: a mesh's faces that span chunks are found only so.
-  else access = httpAccess(storeUrl, { listing: true });
-  store = await openZarrVectorsStore(access, []);
+  else opening = httpAccess(storeUrl, { listing: true });
+  const opened = await openZarrVectorsStore(opening, []);
+  // Another store was opened meanwhile: this one is not used.
+  if (at !== epoch) throw new Superseded();
+  access = opening;
+  store = opened;
+  // Said later (a fragment that still fails after its retries): passed on as it comes.
+  offWarnings = meshStore?.onWarning((message) => post({ type: "warning", message }));
   pipelines.clear();
   const { shares, counts } = await objectShares(store);
+  if (at !== epoch) throw new Superseded();
   const kind = store.description.geometryKind;
   const primitive = kind === "point_cloud" ? "points" : kind === "mesh" ? "triangles" : "lines";
   const objectRead: ObjectRead = !store.description.hasObjects || primitive === "triangles" ? undefined : primitive === "lines" && store.description.linksConvention === "implicit_sequential" ? "curves" : "skeletons";
@@ -188,13 +244,17 @@ async function open(storeUrl: string): Promise<StoreInfo> {
   };
 }
 
-async function read(key: string, forScalar: string): Promise<void> {
+/** An open answered after another store was opened: nothing is said of it. */
+class Superseded extends Error {}
+
+async function read(key: string, forScalar: string, signal: AbortSignal): Promise<void> {
   const [levelText, coordsText] = key.split("|");
   const level = Number(levelText);
   const coords = coordsText.split(".").map(Number);
   try {
     // Bridges: the segments that cross into a neighbouring chunk, so lines run on unbroken.
-    const data = await pipelineOf(level).download(coords, new AbortController().signal, { bridges: true });
+    const data = await pipelineOf(level).download(coords, signal, { bridges: true });
+    if (signal.aborted) return;
     if (data === undefined || data.numVertices === 0) {
       post({ type: "empty", key, scalar: forScalar });
       return;
@@ -202,7 +262,9 @@ async function read(key: string, forScalar: string): Promise<void> {
     const chunk = buildChunk(data, scalarSource(forScalar));
     post({ type: "chunk", key, scalar: forScalar, chunk }, [chunk.vertices.buffer, chunk.segments.buffer, chunk.slots.buffer, chunk.objectIds.buffer, chunk.objectWeight.buffer, chunk.triangles.buffer, chunk.normals.buffer]);
   } catch (e) {
-    post({ type: "error", key, scalar: forScalar, message: (e as Error).message ?? String(e) });
+    // Cancelled: no longer wanted, so nothing to say (it is not a failure to try again later).
+    if (signal.aborted) return;
+    post({ type: "error", key, scalar: forScalar, message: (e as Error).message ?? String(e), signIn: (e as { signIn?: boolean }).signIn === true });
   }
 }
 
@@ -219,9 +281,11 @@ function objectReaderOf(level: number): ObjectReader {
 
 /** Objects whole: a batch of ids at a level, as one chunk cut into pieces of space. */
 async function readObjects(key: string, level: number, mode: "curves" | "skeletons", ids: BigUint64Array, forScalar: string): Promise<void> {
+  const control = new AbortController();
+  const signal = control.signal;
+  readingObjects.add(control);
   try {
     const reader = objectReaderOf(level);
-    const signal = new AbortController().signal;
     const source = scalarSource(forScalar);
     let input: ChunkInput;
     let found: bigint[];
@@ -243,6 +307,7 @@ async function readObjects(key: string, level: number, mode: "curves" | "skeleto
       found = parts.map((p) => p.id);
       input = skeletonsInput(parts, store!.description.attributes.map((a) => a.components));
     }
+    if (signal.aborted) return;
     const foundIds = BigUint64Array.from(found);
     if (input.numVertices === 0) {
       post({ type: "objects", key, scalar: forScalar, chunk: null, found: foundIds }, [foundIds.buffer]);
@@ -264,37 +329,33 @@ async function readObjects(key: string, level: number, mode: "curves" | "skeleto
       ...(chunk.pieces ? [chunk.pieces.buffer] : []),
     ]);
   } catch (e) {
-    post({ type: "objectsError", key, scalar: forScalar, message: (e as Error).message ?? String(e) });
+    if (!signal.aborted) post({ type: "objectsError", key, scalar: forScalar, message: (e as Error).message ?? String(e) });
+  } finally {
+    readingObjects.delete(control);
   }
 }
 
-function pump(): void {
-  while (running < CONCURRENCY && queue.length > 0) {
-    const key = queue.shift()!;
-    if (inFlight.has(`${scalar}#${key}`)) continue;
-    const tag = `${scalar}#${key}`;
-    inFlight.add(tag);
-    ++running;
-    void read(key, scalar).finally(() => {
-      inFlight.delete(tag);
-      --running;
-      pump();
-    });
-  }
-}
+/** The chunk reads: at most CONCURRENCY at once, those no longer wanted cancelled (./read_queue.ts). */
+const chunkReads = new ReadQueue(read, CONCURRENCY);
 
 self.onmessage = (event: MessageEvent) => {
   const msg = event.data;
   if (msg.type === "open") {
-    open(msg.storeUrl).then(
+    reset();
+    epoch = msg.epoch ?? epoch + 1;
+    open(msg.storeUrl, msg.headers ?? []).then(
       (info) => post({ type: "opened", info }),
-      (e) => post({ type: "error", message: (e as Error).message ?? String(e) }),
+      (e) => {
+        if (!(e instanceof Superseded)) post({ type: "error", message: (e as Error).message ?? String(e), signIn: (e as { signIn?: boolean }).signIn === true });
+      },
     );
   } else if (msg.type === "want") {
     if (store === undefined) return;
-    scalar = msg.scalar;
-    queue = (msg.keys as string[]).filter((k) => !inFlight.has(`${scalar}#${k}`));
-    pump();
+    // Reads no longer wanted (another scalar, or out of view) are cancelled.
+    chunkReads.want(msg.keys as string[], msg.scalar);
+  } else if (msg.type === "cancelObjects") {
+    for (const c of readingObjects) c.abort();
+    readingObjects.clear();
   } else if (msg.type === "objects") {
     if (store === undefined) return;
     void readObjects(msg.key, msg.level, msg.mode, msg.ids, msg.scalar);
