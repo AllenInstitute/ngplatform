@@ -158,6 +158,19 @@ export class FakeElement extends FakeNode {
     this.childNodes.length = 0;
     this.append(...nodes);
   }
+  /** Puts `node` before `ref` (at the end when `ref` is null), moving it from where it was. */
+  insertBefore(node: FakeNode, ref: FakeNode | null): FakeNode {
+    if (ref === null) {
+      this.append(node);
+      return node;
+    }
+    node.parentNode?.removeChild(node);
+    const i = this.childNodes.indexOf(ref);
+    if (i < 0) throw new Error("insertBefore: the reference node is not a child");
+    node.parentNode = this;
+    this.childNodes.splice(i, 0, node);
+    return node;
+  }
   removeChild(node: FakeNode): void {
     const i = this.childNodes.indexOf(node);
     if (i >= 0) this.childNodes.splice(i, 1);

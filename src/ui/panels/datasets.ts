@@ -8,11 +8,12 @@
  * not here.  Below the list, up to three tools that are off but would serve
  * this data, the rest behind More.
  *
- * The list is drawn again only when what it shows changes (not on every
- * move of the views), and the control that had the keyboard keeps it.
+ * Each row is drawn again only when what it shows changes (not on every
+ * move of the views, and not when another dataset changes), and the
+ * control that had the keyboard keeps it.
  */
 import type { LayerInfo } from "../../engine/engine.js";
-import { checkbox, emptyState, type OnOff, region } from "../../sdk/dom.js";
+import { checkbox, emptyState, type OnOff } from "../../sdk/dom.js";
 import { clear, h, icon, iconButton } from "../dom.js";
 import { promptDialog, showMenu } from "../overlays.js";
 import type { Workbench } from "../workbench.js";
@@ -73,7 +74,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
   const { store, engine } = wb;
   /** "Local" for data on this computer; nothing for data from the web. */
   const where = (url: string) => (wb.localData.parse(url.replace(/^[a-z0-9+]+:\/\/(?=https?:)/, "")) !== undefined ? "Local" : "");
-  const list = region((rows: Row[]) => drawRows(rows), { class: "datasets" });
+  const list = h("div", { class: "datasets" });
   const addButton = iconButton("plus", "Add data", () => showAddMenu(addButton, wb), { class: "btn icon", "aria-haspopup": "menu" });
   const permission = h(
     "div",
@@ -148,9 +149,9 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
         h("span", {}, `${lost.map((l) => l.name).join(", ")}: closed with the tab. Open the files again (Add data → Local file or folder…) or drop them here.`),
       );
     }
-    // The list, drawn again only when what it shows has changed; the control that had the keyboard keeps it.
+    // The rows whose content changed, drawn again; the control that had the keyboard keeps it.
     const focused = [...focusable].find(([, e]) => e === document.activeElement)?.[0];
-    if (list.update(rows()) && focused !== undefined) focusable.get(focused)?.focus();
+    if (updateRows(rows()) && focused !== undefined) focusable.get(focused)?.focus();
   };
 
   /** What the list shows, as plain data. */
@@ -236,82 +237,138 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
 
   /** The controls of the list that take the keyboard, by a key that names the dataset or view. */
   const focusable = new Map<string, HTMLElement>();
-  const focusKey = <E extends HTMLElement>(e: E, key: string): E => {
-    focusable.set(key, e);
-    return e;
+
+  /** Each row drawn, by dataset: what it shows (as JSON), its element, and its controls' keys. */
+  const drawn = new Map<string, { json: string; element: HTMLElement; keys: string[] }>();
+
+  /**
+   * The list brought up to `rows`: rows whose content changed drawn again,
+   * rows gone removed, new ones added, and all put in order, each moved only
+   * when out of place.  Whether anything changed.
+   */
+  const updateRows = (rows: Row[]): boolean => {
+    let changed = false;
+    if (rows.length === 0) {
+      if (empty.parentNode === list && drawn.size === 0) return false;
+      drawn.clear();
+      focusable.clear();
+      clear(list, empty);
+      return true;
+    }
+    if (empty.parentNode === list) {
+      empty.remove();
+      changed = true;
+    }
+    /** Lets go of a row's controls (those it still holds: a key may since name a control of another row). */
+    const forget = (drawnRow: { element: HTMLElement; keys: string[] }) =>
+      drawnRow.keys.forEach((k) => {
+        const e = focusable.get(k);
+        if (e !== undefined && drawnRow.element.contains(e)) focusable.delete(k);
+      });
+    const wanted = new Set(rows.map((r) => r.id));
+    for (const [id, row] of drawn) {
+      if (wanted.has(id)) continue;
+      forget(row);
+      row.element.remove();
+      drawn.delete(id);
+      changed = true;
+    }
+    rows.forEach((row, i) => {
+      const json = JSON.stringify(row);
+      let now = drawn.get(row.id);
+      if (now === undefined || now.json !== json) {
+        if (now !== undefined) forget(now);
+        const keys: string[] = [];
+        const element = drawRow(row, (e, key) => {
+          focusable.set(key, e);
+          keys.push(key);
+          return e;
+        });
+        if (now !== undefined) {
+          list.insertBefore(element, now.element);
+          now.element.remove();
+        }
+        now = { json, element, keys };
+        drawn.set(row.id, now);
+        changed = true;
+      }
+      const at = list.children[i];
+      if (at !== now.element) {
+        list.insertBefore(now.element, at ?? null);
+        changed = true;
+      }
+    });
+    return changed;
   };
 
-  const drawRows = (rows: Row[]) => {
-    focusable.clear();
-    if (rows.length === 0) return empty;
-    return rows.map((row) => {
-      const select = () => store.selectDataset(row.id);
-      const shown = visibility(`Show ${row.name}`, row.visible, (v) => store.setDatasetVisible(row.id, v));
-      focusKey(shown.input, `vis:${row.id}`);
-      const head = h(
-        "div",
-        {
-          class: row.selected ? "ds-row selected" : "ds-row",
-          tabindex: 0,
-          role: "button",
-          "aria-pressed": String(row.selected),
-          onclick: select,
-          ondblclick: (e: Event) => {
-            if ((e.target as HTMLElement).closest(".ds-name") !== null) void rename(row.id);
-          },
-          oncontextmenu: (e: Event) => menu(row.id, at(e)),
-          onkeydown: (e: Event) => {
-            // Keys on the row itself, not on its tick box or ⋯ button.
-            if (e.target !== e.currentTarget) return;
-            const k = (e as KeyboardEvent).key;
-            if (k === "Enter") select();
-            if (k === " ") {
-              e.preventDefault();
-              store.setDatasetVisible(row.id, !row.visible);
-            }
-          },
+  /** A dataset's row (and its views); `focusKey` records the controls that take the keyboard. */
+  const drawRow = (row: Row, focusKey: <E extends HTMLElement>(e: E, key: string) => E): HTMLElement => {
+    const select = () => store.selectDataset(row.id);
+    const shown = visibility(`Show ${row.name}`, row.visible, (v) => store.setDatasetVisible(row.id, v));
+    focusKey(shown.input, `vis:${row.id}`);
+    const head = h(
+      "div",
+      {
+        class: row.selected ? "ds-row selected" : "ds-row",
+        tabindex: 0,
+        role: "button",
+        "aria-pressed": String(row.selected),
+        onclick: select,
+        ondblclick: (e: Event) => {
+          if ((e.target as HTMLElement).closest(".ds-name") !== null) void rename(row.id);
         },
-        shown,
-        statusDot(row.status),
-        h("span", { class: "ds-name" }, row.name),
-        h("span", { class: "type" }, row.where),
-        focusKey(
-          iconButton("more", "More actions", (e) => {
-            e.stopPropagation();
-            menu(row.id, e.currentTarget as HTMLElement);
-          }),
-          `more:${row.id}`,
-        ),
-        h("span", { class: "sub", title: row.url }, row.sub),
-      );
-      focusKey(head, `row:${row.id}`);
-      if (row.views.length === 0) return head;
-      const views = h(
-        "div",
-        { class: "ds-layers" },
-        ...row.views.map((view) => {
-          const viewShown = visibility(`Show ${view.name}`, view.visible, (v) => store.setLayerVisible(view.name, v));
-          focusKey(viewShown.input, `vis-view:${view.name}`);
-          return focusKey(
-            h(
-              "div",
-              {
-                class: view.selected ? "layer-row selected" : "layer-row",
-                tabindex: 0,
-                onclick: () => store.selectLayer(view.name),
-                oncontextmenu: (e: Event) => viewMenu(row.id, view.name, at(e)),
-              },
-              viewShown,
-              statusDot(view.status),
-              h("span", { class: "ds-name" }, view.name),
-              h("span", { class: "type" }, view.where),
-            ),
-            `view:${view.name}`,
-          );
+        oncontextmenu: (e: Event) => menu(row.id, at(e)),
+        onkeydown: (e: Event) => {
+          // Keys on the row itself, not on its tick box or ⋯ button.
+          if (e.target !== e.currentTarget) return;
+          const k = (e as KeyboardEvent).key;
+          if (k === "Enter") select();
+          if (k === " ") {
+            e.preventDefault();
+            store.setDatasetVisible(row.id, !row.visible);
+          }
+        },
+      },
+      shown,
+      statusDot(row.status),
+      h("span", { class: "ds-name" }, row.name),
+      h("span", { class: "type" }, row.where),
+      focusKey(
+        iconButton("more", "More actions", (e) => {
+          e.stopPropagation();
+          menu(row.id, e.currentTarget as HTMLElement);
         }),
-      );
-      return h("div", { class: "ds-group" }, head, views);
-    });
+        `more:${row.id}`,
+      ),
+      h("span", { class: "sub", title: row.url }, row.sub),
+    );
+    focusKey(head, `row:${row.id}`);
+    if (row.views.length === 0) return head;
+    const views = h(
+      "div",
+      { class: "ds-layers" },
+      ...row.views.map((view) => {
+        const viewShown = visibility(`Show ${view.name}`, view.visible, (v) => store.setLayerVisible(view.name, v));
+        focusKey(viewShown.input, `vis-view:${view.name}`);
+        return focusKey(
+          h(
+            "div",
+            {
+              class: view.selected ? "layer-row selected" : "layer-row",
+              tabindex: 0,
+              onclick: () => store.selectLayer(view.name),
+              oncontextmenu: (e: Event) => viewMenu(row.id, view.name, at(e)),
+            },
+            viewShown,
+            statusDot(view.status),
+            h("span", { class: "ds-name" }, view.name),
+            h("span", { class: "type" }, view.where),
+          ),
+          `view:${view.name}`,
+        );
+      }),
+    );
+    return h("div", { class: "ds-group" }, head, views);
   };
 
   const offs = [store.onChange(render), engine.onLayersChanged(render), engine.onSelectionChanged(render), wb.localData.onChange(render), wb.offers.onChange(renderOffers)];

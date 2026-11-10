@@ -91,8 +91,66 @@ describe("Layers panel: the list", () => {
     dom.check(before[1], false);
     const after = host.querySelectorAll("input")[1];
     expect(after).not.toBe(before[1]);
+    // Only that dataset's row: the other is kept.
+    expect(host.querySelectorAll("input")[0]).toBe(before[0]);
     expect(after.checked).toBe(false);
     expect(document.activeElement).toBe(after);
+  });
+
+  it("with 200 datasets, a settle replaces no row and a change to one dataset draws only its row again", () => {
+    const datasets = Array.from({ length: 200 }, (_, i) => ({ id: `d${i}`, name: `data ${i}`, layers: [`layer ${i}`] }));
+    const { wb, changed, layers } = fakeWorkbench(datasets);
+    const host = dom.host();
+    renderDatasetsPanel(host, wb);
+    const list = host.querySelector(".datasets")!;
+    const rowsOf = () => [...list.querySelectorAll<HTMLElement>(".ds-row")];
+    const before = rowsOf();
+    expect(before).toHaveLength(200);
+    // Counts the rows put into the list from here on.
+    let inserted = 0;
+    const insertBefore = list.insertBefore.bind(list);
+    list.insertBefore = ((node: Node, ref: Node | null) => (++inserted, insertBefore(node, ref))) as typeof list.insertBefore;
+    // A settle after the views moved: nothing the list shows changed.
+    changed();
+    expect(inserted).toBe(0);
+    expect(rowsOf().every((r, i) => r === before[i])).toBe(true);
+    // Dataset 57 hidden: its row alone is drawn again, in its place.
+    layers.get("layer 57")!.visible = false;
+    changed();
+    const after = rowsOf();
+    expect(inserted).toBe(1);
+    expect(after.filter((r, i) => r !== before[i])).toEqual([after[57]]);
+    expect(dom.find<HTMLInputElement>(after[57], "input").checked).toBe(false);
+  });
+
+  it("keeps rows when datasets move or go, and draws a new one alone", () => {
+    const datasets = [
+      { id: "a", name: "brain", layers: ["brain"] },
+      { id: "b", name: "tracts", layers: ["tracts"] },
+      { id: "c", name: "labels", layers: ["labels"] },
+    ];
+    const { wb, changed } = fakeWorkbench(datasets);
+    const host = dom.host();
+    renderDatasetsPanel(host, wb);
+    const rowsOf = () => [...host.querySelectorAll<HTMLElement>(".ds-row")];
+    const [a, b, c] = rowsOf();
+    datasets.reverse();
+    changed();
+    expect(rowsOf()).toEqual([c, b, a]);
+    datasets.splice(1, 1);
+    datasets.push({ id: "d", name: "mesh", layers: ["mesh"] });
+    changed();
+    const now = rowsOf();
+    expect(now.slice(0, 2)).toEqual([c, a]);
+    expect(dom.text(now[2])).toContain("mesh");
+    // All gone: the empty state, and back.
+    datasets.length = 0;
+    changed();
+    expect(host.querySelector(".empty-state")).not.toBeNull();
+    datasets.push({ id: "a", name: "brain", layers: ["brain"] });
+    changed();
+    expect(host.querySelector(".empty-state")).toBeNull();
+    expect(rowsOf()).toHaveLength(1);
   });
 
   it("says when the scene has no data, with the action that adds some", () => {
