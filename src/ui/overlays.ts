@@ -445,14 +445,14 @@ export function showMenu(anchor: HTMLElement | { x: number; y: number }, items: 
     }
     closeMenu();
   };
-  // Added once this click is over; removed by closeMenu however the menu
-  // closes (an item chosen, another menu opened), so a menu opened from an
-  // item is not closed by its parent's listener.  Keys on the window, ahead
-  // of a sheet's on the document: Escape closes the menu, not the sheet too.
-  const timer = setTimeout(() => {
-    document.addEventListener("mousedown", dismiss, true);
-    window.addEventListener("keydown", dismiss, true);
-  });
+  // Keys at once, so an Escape pressed as soon as the menu shows closes it;
+  // on the window, ahead of a sheet's on the document, so Escape closes the
+  // menu and not the sheet too.  Clicks once this click is over, so the
+  // click that opened the menu does not close it.  Both are removed by
+  // closeMenu however the menu closes (an item chosen, another menu
+  // opened), so a menu opened from an item is not closed by its parent's.
+  window.addEventListener("keydown", dismiss, true);
+  const timer = setTimeout(() => document.addEventListener("mousedown", dismiss, true));
   menuListeners = () => {
     clearTimeout(timer);
     document.removeEventListener("mousedown", dismiss, true);

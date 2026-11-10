@@ -118,6 +118,8 @@ describe("opening and closing", () => {
     expect(docks.isShowing("python")).toBe(true);
     expect(pane("python").hidden).toBe(false);
     expect(pane("activity").hidden).toBe(true);
+    // Opening the dock on python makes python's panel, not the one selected before.
+    expect(activity.counts.renders).toBe(0);
     docks.toggle("bottom");
     expect(docks.isShowing("python")).toBe(false);
     expect(root.classList.contains("bottom-collapsed")).toBe(true);
@@ -221,12 +223,7 @@ describe("remembered", () => {
     expect(again.isCollapsed("bottom")).toBe(false);
   });
 
-  // Known bug (src/ui/docks.ts, addTab): the first tab added is selected,
-  // and selecting it saves it as the remembered tab, so a remembered tab
-  // added after it is never chosen.  This test fails as expected until
-  // addTab reads the remembered tab without overwriting it; then remove
-  // `.fails`.
-  it.fails("keeps the tab shown for the next visit, whatever order the tabs are added in", () => {
+  it("keeps the tab shown for the next visit, whatever order the tabs are added in", () => {
     docks.addTab(tab("activity", "bottom", { order: 10 }).spec);
     docks.addTab(tab("python", "bottom", { order: 40 }).spec);
     docks.show("python");

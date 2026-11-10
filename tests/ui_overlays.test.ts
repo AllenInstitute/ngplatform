@@ -31,10 +31,11 @@ describe("sheets", () => {
     expect(sheetIsOpen()).toBe(true);
     const dialog = document.querySelector<HTMLElement>(".scrim > .sheet")!;
     expect(dialog.getAttribute("role")).toBe("dialog");
-    expect(dialog.getAttribute("aria-label")).toBe("Settings");
-    expect(dialog.querySelector(".sheet-title")!.textContent).toBe("Settings");
-    dialog.tabIndex = -1;
-    dialog.focus();
+    expect(dialog.getAttribute("aria-modal")).toBe("true");
+    // Named by its title.
+    expect(document.getElementById(dialog.getAttribute("aria-labelledby")!)!.textContent).toBe("Settings");
+    // The keyboard goes into it, on its first control.
+    expect(document.activeElement).toBe(dialog.querySelector(".sheet-foot button"));
 
     key(document, "Escape");
     expect(sheetIsOpen()).toBe(false);
@@ -207,6 +208,14 @@ describe("menus", () => {
     document.querySelector(".menu-item")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     expect(document.querySelector(".menu")).not.toBeNull();
     document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(document.querySelector(".menu")).toBeNull();
+  });
+
+  it("closes with Escape pressed as soon as it shows", () => {
+    vi.useFakeTimers();
+    const anchor = document.body.appendChild(document.createElement("button"));
+    showMenu(anchor, [{ label: "Rename…", run: () => {} }]);
+    key(document.activeElement!, "Escape");
     expect(document.querySelector(".menu")).toBeNull();
   });
 

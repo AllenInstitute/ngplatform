@@ -290,6 +290,7 @@ export class DockManager {
     dock.body.append(host);
     dock.layoutTabs();
     this.applyWhen();
+    // The tab last chosen in this dock (on this visit or an earlier one), whichever tabs are added before it.
     const remembered = prefs.get(`${tab.slot}.tab`);
     if (dock.selected === undefined || remembered === tab.id) this.select(tab.slot, tab.id);
     return () => this.removeTab(tab.id);
@@ -339,7 +340,13 @@ export class DockManager {
     renderPanel(mounted, (message) => this.failed(mounted, message));
   }
 
-  private select(slot: DockSlot, id: string): void {
+  /**
+   * Shows `id` in its dock.  Only a tab the person chose (`chosen`) is kept
+   * as the one to show next visit: a tab selected because it came first,
+   * or because the one shown went, is not, so it does not replace the
+   * remembered tab before that tab is added.
+   */
+  private select(slot: DockSlot, id: string, chosen = false): void {
     const dock = this.docks[slot];
     const mounted = dock.tabs.get(id);
     if (mounted === undefined) return;
@@ -355,7 +362,7 @@ export class DockManager {
     mounted.host.hidden = false;
     if (dock.menu) dock.layoutTabs();
     if (!dock.el.classList.contains("collapsed")) this.render(mounted);
-    prefs.set(`${slot}.tab`, id);
+    if (chosen) prefs.set(`${slot}.tab`, id);
     for (const listener of this.listeners) listener(id);
   }
 
@@ -366,8 +373,9 @@ export class DockManager {
     id = this.alias(id);
     const slot = this.bySlotOf.get(id);
     if (slot === undefined) return;
+    // Selected before the dock opens, so opening it renders this tab and not the one shown before.
+    this.select(slot, id, true);
     this.setCollapsed(slot, false);
-    this.select(slot, id);
     // A panel that needs room grows its dock for now; the size the person set stays saved.
     const min = this.docks[slot].tabs.get(id)?.tab.minSize;
     if (min !== undefined) {
