@@ -494,19 +494,25 @@ export class Panel {
     };
     // The list's items in order: group heads and segment rows.
     const items: (() => HTMLElement)[] = [];
+    // The active segment's place among them (after the group heads above it).
+    let activeItem = -1;
+    const add = (r: (typeof rows)[number], grouped: boolean) => {
+      if (r.value === e.value) activeItem = items.length;
+      items.push(() => segmentRow(r, grouped));
+    };
     if (vg.groups.length === 0) {
-      for (const r of rows) items.push(() => segmentRow(r, false));
+      for (const r of rows) add(r, false);
     } else {
       for (const section of grouped(vg, rows)) {
         const shown = section.rows.filter((r) => r.visible).length;
         items.push(() => head(section.group, section.rows.length, shown));
-        if (!section.group?.collapsed) for (const r of section.rows) items.push(() => segmentRow(r, true));
+        if (!section.group?.collapsed) for (const r of section.rows) add(r, true);
       }
     }
     if (items.length <= VIRTUAL_MIN) {
       for (const make of items) table.append(make());
     } else {
-      this.virtualList(table, items, rows.findIndex((r) => r.value === e.value));
+      this.virtualList(table, items, activeItem, e.value);
     }
     const max = LABEL_MAX[session.volume.type];
     return el(
@@ -530,13 +536,15 @@ export class Panel {
 
   /** Where the long segment list was scrolled to (it is drawn again as segments change). */
   private listScroll = 0;
+  /** The active segment when the long list was last drawn: the list goes to it only when it changes. */
+  private listActive: number | undefined;
 
   /**
    * A long list drawn in view only: every item the same height, a spacer
    * as tall as all of them, and the rows in view (and a few each side)
    * drawn again as it scrolls.
    */
-  private virtualList(table: HTMLElement, items: (() => HTMLElement)[], active: number): void {
+  private virtualList(table: HTMLElement, items: (() => HTMLElement)[], active: number, value: number): void {
     table.classList.add("sg-virtual");
     const spacer = el("div", { class: "sg-virtual-space", style: `height: ${items.length * ROW_HEIGHT}px` });
     const view = el("div", { class: "sg-virtual-window" });
@@ -564,9 +572,12 @@ export class Panel {
         draw();
       });
     });
-    // Where it was, or at the active segment when that is out of view.
+    // Where it was; at the active segment when another one has become active and is out of view
+    // (not when a row elsewhere is hidden, recoloured or renamed: the list stays where it was scrolled).
     let top = this.listScroll;
-    if (active >= 0 && (active * ROW_HEIGHT < top || (active + 1) * ROW_HEIGHT > top + LIST_HEIGHT)) top = Math.max(0, active * ROW_HEIGHT - LIST_HEIGHT / 2);
+    const moved = value !== this.listActive;
+    this.listActive = value;
+    if (moved && active >= 0 && (active * ROW_HEIGHT < top || (active + 1) * ROW_HEIGHT > top + LIST_HEIGHT)) top = Math.max(0, active * ROW_HEIGHT - LIST_HEIGHT / 2);
     table.scrollTop = top;
     draw();
     // Once in the page its height is known: the rows in view drawn again for it.

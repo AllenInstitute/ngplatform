@@ -5,7 +5,7 @@
  * view, and the tool bar's segment picker builds no option per segment.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type FakeDom, fakeDocument } from "@ngplatform/sdk/testing";
+import { FakeEvent, type FakeDom, fakeDocument } from "@ngplatform/sdk/testing";
 import { Editor } from "../editor.js";
 import { forgetPersist } from "../keep.js";
 import { LabelVolume } from "../label_volume.js";
@@ -84,12 +84,32 @@ describe(`${N.toLocaleString("en-GB")} segments`, () => {
     w.editor.show(w.session, 5, true);
     expect(vi.mocked(w.ctx.viewer.setTemporaryVisibleSegments).mock.calls.at(-1)![1]).toBeUndefined();
     // Scrolled far down, the rows there are drawn (and only about as many).
-    const ids = () => [...list.querySelectorAll(".sg-id")].map((x) => Number(dom.text(x)));
+    // (The list in the panel now: showing segment 5 again drew it anew.)
+    const shown = () => host.querySelector(".sg-segments") as HTMLElement;
+    const ids = () => [...shown().querySelectorAll(".sg-id")].map((x) => Number(dom.text(x)));
     expect(ids()[0]).toBe(1);
-    (list as HTMLElement).scrollTop = 27 * 80_000;
-    dom.fire(list as HTMLElement, "scroll");
+    shown().scrollTop = 27 * 80_000;
+    dom.fire(shown(), "scroll");
     expect(ids()).toContain(80_001);
-    expect(nodes(list)).toBeLessThan(2_000);
+    expect(nodes(shown())).toBeLessThan(2_000);
+    // A segment hidden down there: the list is drawn again where it was, not back at the active segment.
+    const rowOf = (v: number) => [...host.querySelectorAll(".sg-segment")].find((r) => Number(dom.text(r.querySelector(".sg-id")!)) === v)!;
+    const hide = [...rowOf(80_001).querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "Hide" || b.getAttribute("title") === "Hide")!;
+    // (Not bubbling to the row, whose click makes a segment active: the fake DOM has no closest().)
+    hide.dispatchEvent(new FakeEvent("click", false) as unknown as Event);
+    expect(w.editor.rows().find((r) => r.value === 80_001)!.visible).toBe(false);
+    expect(shown()).not.toBe(list);
+    expect(shown().scrollTop).toBe(27 * 80_000);
+    expect(ids()).toContain(80_001);
+    // Another segment made active: the list goes to it.
+    w.editor.activate(7);
+    expect(ids()).toContain(7);
+    w.editor.show(w.session, 80_001, true);
+    // The rows' colours read the layer's state once, not once a segment (a third of a second at 100k in Chrome).
+    const spec = vi.spyOn(w.ctx.viewer, "layerSpec");
+    w.editor.rows();
+    expect(spec.mock.calls.length).toBeLessThan(10);
+    spec.mockRestore();
     // The picker finds a segment by id among 100k, listing at most 50.
     const picker = bar!.querySelector("input.sg-segment-select") as HTMLInputElement;
     dom.fire(picker, "focus");

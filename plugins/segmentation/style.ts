@@ -16,6 +16,8 @@ export const STYLE = `
 .sg-inline select.text-input { width: auto; flex: none; }
 .sg-save { align-items: end; }
 .sg-active-value { gap: var(--sp-3); }
+/* Room for a 32-bit id (ten digits): a copied segmentation's run past the shared field's 64 px. */
+.sg-active-value .num-input { width: calc(10ch + 2 * var(--sp-2) + 2px); }
 .sg-kept-row { flex-wrap: nowrap; }
 .sg-kept-name { display: grid; flex: 1; min-width: 0; }
 .sg-kept-name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -68,7 +70,7 @@ export const STYLE = `
 .sg-bar .sg-icon[aria-pressed="true"] { color: var(--accent-ink); background: var(--accent); }
 .sg-value { min-width: 64px; text-align: center; font: var(--fs-caption) var(--mono); color: var(--text); }
 .sg-chip { width: 14px; height: 14px; border: 1px solid var(--swatch-line); margin: 0 var(--sp-1) 0 var(--sp-2); flex: none; }
-.sg-bar .sg-segment-select { width: 150px; height: 24px; font-size: var(--fs-body); }
+.sg-bar .sg-segment-select { width: 170px; height: 24px; font-size: var(--fs-body); }
 .sg-picker { position: relative; display: inline-flex; }
 .sg-picker-list { position: absolute; top: calc(100% + 2px); left: 0; z-index: 3; min-width: 220px; max-height: 280px; overflow-y: auto; background: var(--ink-1); border: 1px solid var(--line-strong); box-shadow: var(--shadow-float); }
 .sg-picker-list[hidden] { display: none; }

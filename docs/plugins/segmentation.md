@@ -185,6 +185,8 @@ in its row.
   link; past 1,000 segments, those hidden are kept by the plugin (in the
   link, as a short list) rather than the layer listing every other one.
   Neuroglancer's own Segments tab then does not show which are hidden.
+  Hiding or recolouring a row leaves the list where it is scrolled; it
+  moves to the active segment only when another one is made active.
 
 **Groups**, as in WebKnossos's segment list:
 

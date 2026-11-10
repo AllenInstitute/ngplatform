@@ -326,13 +326,36 @@ export class Session {
 
   /** The label's colour, picked from the palette the first time (edited in place, the original's if it has one). */
   colour(value: number): string {
-    const own = this.labels.get(value)?.colour ?? this.theirs.get(value)?.colour;
-    if (own !== undefined) return own;
-    if (!(this.volume instanceof CowVolume) && this.palette !== false) return colourOf(value);
-    // Edited in place, or opened with many segments, they keep Neuroglancer's colours: the layer's default, or its hash.
-    const spec = this.ctx.viewer.layerSpec(this.layer) as { colorSeed?: number; segmentDefaultColor?: string } | undefined;
-    return spec?.segmentDefaultColor ?? hashColour(value, spec?.colorSeed ?? 0);
+    return this.colours()(value);
   }
+
+  /**
+   * Each label's colour, as `colour`, with the layer's state read once: a
+   * list of 100k segments otherwise reads it 100k times (a third of a
+   * second).
+   */
+  colours(): (value: number) => string {
+    type Spec = { colorSeed?: number; segmentDefaultColor?: string } | undefined;
+    let spec: Spec | null = null;
+    return (value) => {
+      const own = this.labels.get(value)?.colour ?? this.theirs.get(value)?.colour;
+      if (own !== undefined) return own;
+      if (!(this.volume instanceof CowVolume) && this.palette !== false) return colourOf(value);
+      // Edited in place, or opened with many segments, they keep Neuroglancer's colours: the layer's default, or its hash.
+      if (spec === null) {
+        spec = this.ctx.viewer.layerSpec(this.layer) as Spec;
+        const seed = spec?.colorSeed ?? 0;
+        if (this.hashed.seed !== seed) this.hashed = { seed, colours: new Map() };
+      }
+      if (spec?.segmentDefaultColor !== undefined) return spec.segmentDefaultColor;
+      let c = this.hashed.colours.get(value);
+      if (c === undefined) this.hashed.colours.set(value, (c = hashColour(value, this.hashed.seed)));
+      return c;
+    };
+  }
+
+  /** Neuroglancer's hash colours worked out so far, for the layer's colour seed (the list asks for every one each time it is drawn). */
+  private hashed: { seed: number; colours: Map<number, string> } = { seed: 0, colours: new Map() };
 
   /**
    * Gives the layer the labels' colours (Neuroglancer otherwise picks its

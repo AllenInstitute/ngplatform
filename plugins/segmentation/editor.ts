@@ -470,9 +470,10 @@ export class Editor implements LabelVolumes {
     const visible = this.visible(s);
     // Edited in place: the original's names for its segments met in the edits.
     const names = s.theirs.size ? new Map([...[...s.counts.keys()].filter((v) => s.theirs.has(v)).map((v) => [v, s.theirs.get(v)!] as const), ...s.labels]) : s.labels;
-    const rows = segmentRows(s.counts, names, (v) => s.colour(v), visible);
+    const colour = s.colours();
+    const rows = segmentRows(s.counts, names, colour, visible);
     if (!rows.some((r) => r.value === this.value)) {
-      rows.push({ value: this.value, name: "", colour: s.colour(this.value), voxels: 0, visible: visible(this.value) });
+      rows.push({ value: this.value, name: "", colour: colour(this.value), voxels: 0, visible: visible(this.value) });
       rows.sort((a, b) => a.value - b.value);
     }
     return rows;
@@ -1915,10 +1916,11 @@ export class Editor implements LabelVolumes {
   /** The segments' names, colours and groups, as saved. */
   private savedLabels(session: Session): SavedLabel[] {
     const groups = this.groups(session);
+    const colour = session.colours();
     return [...new Set([...session.counts.keys(), ...session.labels.keys()])]
       .filter((v) => v > 0)
       .sort((a, b) => a - b)
-      .map((value) => ({ value, name: session.labels.get(value)?.name || session.theirs.get(value)?.name || undefined, colour: session.colour(value), group: groupOf(groups, value)?.name }));
+      .map((value) => ({ value, name: session.labels.get(value)?.name || session.theirs.get(value)?.name || undefined, colour: colour(value), group: groupOf(groups, value)?.name }));
   }
 
   /**
