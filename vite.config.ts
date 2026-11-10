@@ -18,6 +18,9 @@ const jpg = fileURLToPath(new URL("./node_modules/neuroglancer/src/third_party/j
 const webWorker = fileURLToPath(new URL("./node_modules/web-worker/src/browser/index.js", import.meta.url));
 // chunkmirage's browser engine, from its repository (a submodule: vendor/chunkmirage).
 const chunkmirage = fileURLToPath(new URL("./vendor/chunkmirage/web/src/", import.meta.url));
+// The Zarr Vectors plugin from this checkout, whatever node_modules links to (a shared
+// node_modules would otherwise build another checkout's copy). Its package.json exports.
+const zarrVectors = fileURLToPath(new URL("./plugins/zarr-vectors/src/", import.meta.url));
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string };
@@ -164,6 +167,9 @@ export default defineConfig({
       { find: /^@ngplatform\/sdk\/(.*)$/, replacement: `${sdk}$1.ts` },
       { find: /^neuroglancer\/unstable\/third_party\/jpgjs\/jpg\.js$/, replacement: jpg },
       { find: /^chunkmirage-web\/(.*)$/, replacement: `${chunkmirage}$1` },
+      { find: /^neuroglancer-zarr-vectors$/, replacement: `${zarrVectors}register_default.ts` },
+      { find: /^neuroglancer-zarr-vectors\/source-url$/, replacement: `${zarrVectors}source_url.ts` },
+      { find: /^neuroglancer-zarr-vectors\/(backend|async_computation|reader)$/, replacement: `${zarrVectors}$1.ts` },
       // geotiff's worker pool (chunkmirage reads GeoTIFFs with it) imports web-worker, whose
       // browser build the conditions above (Neuroglancer's, in place of Vite's defaults) miss.
       { find: /^web-worker$/, replacement: webWorker },
