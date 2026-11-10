@@ -18,6 +18,9 @@ dependencies = []
 jobs = ["zarr-vectors-tools"]
 # The render service (ngplatform_render), on a computer with an NVIDIA GPU.
 render = ["numpy", "zarr>=3", "fsspec", "aiohttp", "pillow", "cupy-cuda12x"]
+# Fitting splats (the render service's --splat-python, a Python of its own): torch with CUDA, and the gsplat
+# whose API splat/fit.py is written against (GSPLAT_VERSION there).
+splat = ["numpy", "pillow", "torch", "gsplat==1.4.0"]
 
 [project.scripts]
 ngplatform-runner = "ngplatform_runner.__main__:main"
