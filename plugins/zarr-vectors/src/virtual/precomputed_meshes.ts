@@ -22,7 +22,13 @@
  *   fragments are read and decoded when one of its keys is first asked
  *   for, and a few decoded cells are kept;
  * - a level's `vertex_count` is the planner's estimate (from the fragments'
- *   encoded sizes) until its cells are read.
+ *   encoded sizes) until its cells are read;
+ * - a cell's fragments are read a few at a time, with the signal of the
+ *   reads that want the cell (it is cancelled once none of them does), and
+ *   a fragment that fails is tried again with a growing pause; one that
+ *   still fails is left out, the cell keeps the others, and the store
+ *   says so in its warnings.  Decoded cells of every store share one byte
+ *   budget unless a store is given its own.
  *
  * Coordinates are the segmentation volume's own (Neuroglancer's model space
  * of a precomputed volume: nanometres over the finest scale's resolution),
@@ -32,14 +38,20 @@
  * HTTP and decoding Draco is the caller's (plugins/luxar/precomputed_meshes.ts).
  */
 
-import { AsyncLru } from "../util.js";
+import { AsyncLru, ByteBudget, mapConcurrent } from "../util.js";
 
 const MANIFEST_ROWS = 16384;
 const COLUMN_ROWS = 65536;
 const FACES = "links/0/0.0.0_0.0.0";
 const FRAGMENT_INDEX_MAGIC = 0x5a564647; // 'ZVFG', as fragment_index.ts reads it
-/** Decoded cells kept, by their bytes. */
+/** Decoded cells kept, by their bytes, over every store that is not given its own limit. */
 const CELL_CACHE_BYTES = 192 * 1024 * 1024;
+export const MESH_CELL_BUDGET = new ByteBudget(CELL_CACHE_BYTES);
+/** Fragments of one cell read at once. */
+const FRAGMENT_CONCURRENCY = 8;
+/** A failed fragment read is tried this many more times, after 250 ms, then 500 ms, …. */
+const FRAGMENT_RETRIES = 3;
+const FRAGMENT_BACKOFF_MS = 250;
 
 const json = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 const bytesOf = (a: ArrayBufferView) => new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
@@ -152,6 +164,43 @@ export function composeAffine(a: readonly number[], b: readonly number[]): numbe
   return out;
 }
 
+/**
+ * Reads each item's part, at most `concurrency` at once: an item whose
+ * read fails is left out (undefined) and counted, so one bad segment of
+ * thousands does not fail them all.  An abort stops starting reads and is
+ * thrown.  Resolves to the results in order, how many failed, and the
+ * first failure.
+ */
+export async function readEach<T, R>(
+  items: readonly T[],
+  read: (item: T) => Promise<R | undefined>,
+  concurrency = 8,
+  signal?: AbortSignal,
+): Promise<{ results: (R | undefined)[]; failed: number; error?: unknown }> {
+  const results = new Array<R | undefined>(items.length);
+  let failed = 0;
+  let error: unknown;
+  await mapConcurrent(items, concurrency, async (item, i) => {
+    signal?.throwIfAborted();
+    try {
+      results[i] = await read(item);
+    } catch (e) {
+      if (signal?.aborted || isAbort(e)) throw e;
+      failed++;
+      error ??= e;
+    }
+  });
+  return { results, failed, error };
+}
+
+/** What a store says of segments left out: "3 of 2,000 segments had no mesh (1 could not be read: …)". */
+export function missingSegments(total: number, missing: number, failed: number, error?: unknown): string | undefined {
+  if (missing + failed === 0) return undefined;
+  const n = (v: number) => v.toLocaleString("en-GB");
+  const why = failed > 0 ? ` (${n(failed)} could not be read: ${error instanceof Error ? error.message : String(error)})` : "";
+  return `${n(missing + failed)} of ${n(total)} segment${total === 1 ? "" : "s"} had no mesh${why}`;
+}
+
 // ------------------------------------------------------------- the store
 
 /** A fragment's triangles, in store coordinates. */
@@ -165,7 +214,8 @@ export interface PlannedFragment {
   /** Index into the plan's ids. */
   object: number;
   centre: readonly number[];
-  read: () => Promise<FragmentMesh>;
+  /** Reads and decodes it; `signal` aborts the read once nothing wants the cell. */
+  read: (signal?: AbortSignal) => Promise<FragmentMesh>;
 }
 
 export interface PlannedLevel {
@@ -190,6 +240,18 @@ export interface MeshStorePlan {
   /** A store unit's size along x, y, z, and its unit ("nanometer"), for the store's axes. */
   scales: number[];
   unit: string;
+  /** What the reader of the plan wants said: segments with no mesh, and the like. */
+  warnings?: string[];
+}
+
+/** How a store reads its cells; the defaults suit a remote server. */
+export interface MeshStoreOptions {
+  /** Fragments of one cell read at once. */
+  concurrency?: number;
+  /** Times a failed fragment is tried again. */
+  retries?: number;
+  /** The first pause before trying again, doubled each time. */
+  backoffMs?: number;
 }
 
 interface Cell {
@@ -205,6 +267,40 @@ interface DecodedCell {
   vertexCounts: number[];
   faceCounts: number[];
   bytes: number;
+  /** Fragments that could not be read and are left out, and why the first one failed. */
+  failed: number;
+  error?: unknown;
+}
+
+const isAbort = (e: unknown) => (e as Error | undefined)?.name === "AbortError";
+
+/** Waits `ms`, or rejects at once when `signal` aborts. */
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason);
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/** A fragment read, tried again after a pause when it fails (never once aborted). */
+async function readFragment(f: PlannedFragment, signal: AbortSignal, options: Required<MeshStoreOptions>): Promise<FragmentMesh> {
+  for (let attempt = 0; ; ++attempt) {
+    signal.throwIfAborted();
+    try {
+      return await f.read(signal);
+    } catch (e) {
+      if (signal.aborted || isAbort(e) || attempt >= options.retries) throw e;
+      await pause(options.backoffMs * 2 ** attempt, signal);
+    }
+  }
 }
 
 interface Served {
@@ -244,9 +340,30 @@ export function fragmentIndex(counts: ArrayLike<number>): Uint8Array {
   return out;
 }
 
-/** A cell's fragments read and put together: per object, its vertices, then its faces as rows of the cell. */
-async function decodeCell(cell: Cell): Promise<DecodedCell> {
-  const parts = await Promise.all(cell.fragments.map((list) => Promise.all(list.map((f) => f.read()))));
+/**
+ * A cell's fragments read (a few at a time) and put together: per object,
+ * its vertices, then its faces as rows of the cell.  A fragment that still
+ * fails after its retries is left out and counted; a cell none of whose
+ * fragments could be read fails.
+ */
+async function decodeCell(cell: Cell, signal: AbortSignal, options: Required<MeshStoreOptions>): Promise<DecodedCell> {
+  const flat = cell.fragments.flat();
+  const read = new Array<FragmentMesh | undefined>(flat.length);
+  let failed = 0;
+  let error: unknown;
+  await mapConcurrent(flat, options.concurrency, async (f, i) => {
+    try {
+      read[i] = await readFragment(f, signal, options);
+    } catch (e) {
+      if (signal.aborted || isAbort(e)) throw e;
+      failed++;
+      error ??= e;
+    }
+  });
+  signal.throwIfAborted();
+  if (failed === flat.length && flat.length > 0) throw error;
+  let at = 0;
+  const parts = cell.fragments.map((list) => list.map(() => read[at++]).filter((p): p is FragmentMesh => p !== undefined));
   const vertexCounts = parts.map((list) => list.reduce((n, p) => n + p.positions.length / 3, 0));
   const faceCounts = parts.map((list) => list.reduce((n, p) => n + p.triangles.length / 3, 0));
   const vertices = new Float32Array(3 * vertexCounts.reduce((a, b) => a + b, 0));
@@ -266,7 +383,7 @@ async function decodeCell(cell: Cell): Promise<DecodedCell> {
       t += p.triangles.length;
     }
   }
-  return { vertices, faces, vertexCounts, faceCounts, bytes: vertices.byteLength + faces.byteLength };
+  return { vertices, faces, vertexCounts, faceCounts, bytes: vertices.byteLength + faces.byteLength, failed, error };
 }
 
 /** One vlen-bytes element. */
@@ -302,30 +419,47 @@ export class PrecomputedMeshStore {
    * are counted once it is read and taken off once it goes.
    */
   private readonly decoded: AsyncLru<DecodedCell>;
+  /** Cells being read: the reads waiting on each, and how to stop it once none is. */
+  private readonly reading = new Map<string, { controller: AbortController; waiting: number; held: boolean }>();
+  private readonly options: Required<MeshStoreOptions>;
   readonly count: number;
+  /** What a user should know (segments with no mesh, fragments left out), each said once. */
+  readonly warnings: string[] = [];
+  private readonly listeners = new Set<(warning: string) => void>();
+  /** Fragments left out of the cells read so far, over every level. */
+  failedFragments = 0;
 
+  /**
+   * `cacheBytes`: the decoded cells this store keeps; without it, its cells
+   * share one budget (`MESH_CELL_BUDGET`, 192 MB) with every other store's.
+   */
   constructor(
     readonly plan: MeshStorePlan,
-    cacheBytes = CELL_CACHE_BYTES,
+    cacheBytes?: number,
+    options: MeshStoreOptions = {},
   ) {
-    this.decoded = new AsyncLru<DecodedCell>(Infinity, cacheBytes, (c) => c.bytes);
+    this.decoded = cacheBytes === undefined ? new AsyncLru<DecodedCell>(Infinity, Infinity, (c) => c.bytes, MESH_CELL_BUDGET) : new AsyncLru<DecodedCell>(Infinity, cacheBytes, (c) => c.bytes);
+    this.options = { concurrency: options.concurrency ?? FRAGMENT_CONCURRENCY, retries: options.retries ?? FRAGMENT_RETRIES, backoffMs: options.backoffMs ?? FRAGMENT_BACKOFF_MS };
+    for (const w of plan.warnings ?? []) this.warn(w);
     this.count = plan.ids.length;
     this.served = plan.levels.map((level) => {
-      const byKey = new Map<string, Cell>();
+      const byKey = new Map<string, Cell & { slot: Map<number, number> }>();
       for (const f of level.fragments) {
         const at = [0, 1, 2].map((k) => Math.floor(f.centre[k] / level.chunk)) as [number, number, number];
         const key = at.join("/");
         let cell = byKey.get(key);
-        if (cell === undefined) byKey.set(key, (cell = { at, owners: [], fragments: [] }));
-        let i = cell.owners.indexOf(f.object);
-        if (i === -1) {
+        if (cell === undefined) byKey.set(key, (cell = { at, owners: [], fragments: [], slot: new Map() }));
+        // Each object's place in the cell by a map, not a search: a cell can hold thousands of segments.
+        let i = cell.slot.get(f.object);
+        if (i === undefined) {
           i = cell.owners.length;
+          cell.slot.set(f.object, i);
           cell.owners.push(f.object);
           cell.fragments.push([]);
         }
         cell.fragments[i].push(f);
       }
-      const cells = [...byKey.values()];
+      const cells: Cell[] = [...byKey.values()].map(({ at, owners, fragments }) => ({ at, owners, fragments }));
       // Objects ascending within a cell (fragment order), cells in a fixed order.
       for (const cell of cells) {
         const order = cell.owners.map((o, i) => [o, i]).sort((a, b) => a[0] - b[0]);
@@ -359,6 +493,18 @@ export class PrecomputedMeshStore {
     this.served.forEach((_, k) => {
       for (const a of ["vertices", "vertex_fragments", "link_fragments", FACES, "object_index/manifests", "object_index/object_ids"]) add(`${k}/${a}`);
     });
+  }
+
+  /** Calls `listener` with each warning from now on; returns how to stop. */
+  onWarning(listener: (warning: string) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private warn(warning: string): void {
+    if (this.warnings.includes(warning)) return;
+    this.warnings.push(warning);
+    for (const listener of this.listeners) listener(warning);
   }
 
   /** How many fragments each level reads in all, finest first. */
@@ -412,16 +558,18 @@ export class PrecomputedMeshStore {
     });
   }
 
-  async get(key: string): Promise<Uint8Array | undefined> {
+  /** A key's bytes; `signal` gives up waiting (and stops a cell's reads once nothing else waits for it). */
+  async get(key: string, signal?: AbortSignal): Promise<Uint8Array | undefined> {
+    signal?.throwIfAborted();
     if (key === "zarr.json") return json(this.root());
     const m = /^(\d+)\/(.*)$/.exec(key);
     const k = m === null ? -1 : Number(m[1]);
     const s = this.served[k];
     if (s === undefined) return undefined;
-    return this.levelKey(k, s, m![2]);
+    return this.levelKey(k, s, m![2], signal);
   }
 
-  private async levelKey(k: number, s: Served, key: string): Promise<Uint8Array | undefined> {
+  private async levelKey(k: number, s: Served, key: string, signal?: AbortSignal): Promise<Uint8Array | undefined> {
     const { plan, origin, shape, nonempty } = s;
     const perCell = (attributes: Record<string, unknown>) =>
       json({
@@ -477,13 +625,13 @@ export class PrecomputedMeshStore {
       case "object_index/manifests/zarr.json":
         return json(column(this.count, MANIFEST_ROWS, "variable_length_bytes", ""));
       case "object_index/object_ids/zarr.json":
-        return json(column(this.count, COLUMN_ROWS, "int64", 0));
+        return json(column(this.count, COLUMN_ROWS, "uint64", 0));
     }
     const cellKey = /^(vertices|vertex_fragments|link_fragments|links\/0\/0\.0\.0_0\.0\.0)\/c\/(-?\d+\/-?\d+\/-?\d+)$/.exec(key);
     if (cellKey !== null) {
       const i = s.cellByKey.get(cellKey[2]);
       if (i === undefined) return undefined;
-      const cell = await this.cell(k, s, i);
+      const cell = await this.cell(k, s, i, signal);
       switch (cellKey[1]) {
         case "vertices":
           return element(bytesOf(cell.vertices));
@@ -500,9 +648,9 @@ export class PrecomputedMeshStore {
     const first = Number(chunk[2]) * (chunk[1] === "object_index/manifests" ? MANIFEST_ROWS : COLUMN_ROWS);
     if (first >= this.count) return undefined;
     if (chunk[1] === "object_index/manifests") return this.manifests(s, first);
-    // The segmentation's own ids (int64, as zarr-vectors stores them; ids past 2^63 wrap).
-    const ids = new BigInt64Array(COLUMN_ROWS);
-    for (let i = 0; i < COLUMN_ROWS && first + i < this.count; ++i) ids[i] = BigInt.asIntN(64, this.plan.ids[first + i]);
+    // The segmentation's own ids, as uint64: ids at or past 2^63 stay as they are.
+    const ids = new BigUint64Array(COLUMN_ROWS);
+    for (let i = 0; i < COLUMN_ROWS && first + i < this.count; ++i) ids[i] = BigInt.asUintN(64, this.plan.ids[first + i]);
     return bytesOf(ids);
   }
 
@@ -511,9 +659,70 @@ export class PrecomputedMeshStore {
     return this.decoded.size;
   }
 
-  /** A cell's fragments read and put together, or kept from before. */
-  private cell(k: number, s: Served, i: number): Promise<DecodedCell> {
-    return this.decoded.get(`${k}/${i}`, () => decodeCell(s.cells[i]));
+  /**
+   * A cell's fragments read and put together, or kept from before.  The
+   * read is shared by every request for the cell; it is aborted once each
+   * of them has given up (a request without a signal holds it to the end).
+   */
+  private cell(k: number, s: Served, i: number, signal?: AbortSignal): Promise<DecodedCell> {
+    signal?.throwIfAborted();
+    const key = `${k}/${i}`;
+    const shared = this.decoded.get(key, () => {
+      const controller = new AbortController();
+      const entry = { controller, waiting: 0, held: false };
+      this.reading.set(key, entry);
+      const read = decodeCell(s.cells[i], controller.signal, this.options).then((cell) => {
+        if (cell.failed > 0) {
+          this.failedFragments += cell.failed;
+          const total = s.cells[i].fragments.reduce((n, list) => n + list.length, 0);
+          const why = cell.error instanceof Error ? cell.error.message : String(cell.error);
+          this.warn(`Some mesh fragments could not be read and are left out (${cell.failed} of ${total} in a cell of level ${k}: ${why})`);
+        }
+        return cell;
+      });
+      void read.finally(() => this.reading.get(key) === entry && this.reading.delete(key)).catch(() => {});
+      return read;
+    });
+    const entry = this.reading.get(key);
+    // Already read, or no way to give up: the shared read as it is.
+    if (entry === undefined) return shared;
+    if (signal === undefined) {
+      entry.held = true;
+      return shared;
+    }
+    entry.waiting++;
+    return new Promise<DecodedCell>((resolve, reject) => {
+      let settled = false;
+      const settle = () => {
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        entry.waiting--;
+      };
+      const onAbort = () => {
+        if (settled) return;
+        settle();
+        if (entry.waiting === 0 && !entry.held) {
+          // Nothing wants the cell now: its reads stop, and it is read afresh when next asked for.
+          entry.controller.abort();
+          this.decoded.remove(key);
+          if (this.reading.get(key) === entry) this.reading.delete(key);
+        }
+        reject(signal.reason);
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      shared.then(
+        (cell) => {
+          if (settled) return;
+          settle();
+          resolve(cell);
+        },
+        (e) => {
+          if (settled) return;
+          settle();
+          reject(e);
+        },
+      );
+    });
   }
 
   /** A chunk of manifests: per object, u32 blocks, then per block int64 x3 cell, u8 mode 0, int64 fragment. */

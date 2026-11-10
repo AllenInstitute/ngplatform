@@ -37,10 +37,12 @@ import {
   type FragmentMesh,
   type MeshStorePlan,
   type MultilodManifest,
+  missingSegments,
   nodeBox,
   type PlannedFragment,
   type PlannedLevel,
   PrecomputedMeshStore,
+  readEach,
 } from "../zarr-vectors/src/virtual/precomputed_meshes.js";
 
 import { MAX_SEGMENTS } from "./mesh_layers.js";
@@ -60,6 +62,8 @@ export const VERTEX_BUDGET = 8_000_000;
 export const VERTICES_PER_BYTE = 0.4;
 /** A legacy mesh's fragments are read whole when its store opens: at most this many bytes. */
 export const LEGACY_BYTES = 256 * 1024 * 1024;
+/** Segments' manifests read at once. */
+export const MANIFEST_CONCURRENCY = 8;
 
 /** Decodes a Draco fragment without dequantizing: indices, and x y z per vertex as stored. */
 export type DracoDecode = (bytes: Uint8Array, bits: number) => Promise<{ indices: Uint32Array | Uint16Array; vertexPositions: Uint32Array }>;
@@ -186,8 +190,8 @@ export function planMultilod(
         fragments.push({
           object: s.object,
           centre: [0, 1, 2].map((k) => (box.lower[k] + box.upper[k]) / 2),
-          read: async (): Promise<FragmentMesh> => {
-            const bytes = await readRange(s.file, { offset, length });
+          read: async (signal?: AbortSignal): Promise<FragmentMesh> => {
+            const bytes = await readRange(s.file, { offset, length }, signal);
             if (bytes === undefined) throw new Error(`${s.file}: a mesh fragment is missing`);
             const decoded = await decode(bytes, bits);
             return { positions: applyAffine(toStore, dequantize(decoded.vertexPositions, manifest, lod, position, bits)), triangles: decoded.indices instanceof Uint32Array ? decoded.indices : Uint32Array.from(decoded.indices) };
@@ -213,7 +217,7 @@ const scaling = (s: number[]) => [s[0], 0, 0, 0, 0, s[1], 0, 0, 0, 0, s[2], 0];
 export async function openPrecomputedMeshes(
   volume: string,
   ids: readonly bigint[],
-  options: { decode: DracoDecode; read?: RangeRead; budget?: number },
+  options: { decode: DracoDecode; read?: RangeRead; budget?: number; concurrency?: number },
 ): Promise<PrecomputedMeshStore> {
   const read = options.read ?? httpRead;
   const info = await readJson(read, `${volume}info`);
@@ -232,27 +236,29 @@ export async function openPrecomputedMeshes(
     const transform = Array.isArray(meshInfo.transform) && meshInfo.transform.length === 12 ? meshInfo.transform.map(Number) : scaling([1, 1, 1]);
     const bits = Number(meshInfo.vertex_quantization_bits ?? 10);
     const sharded = meshInfo.sharding !== undefined ? new ShardedManifests(meshUrl, meshInfo.sharding as Sharding, read) : undefined;
-    const found = await Promise.all(
-      wanted.map(async (id) => {
-        if (sharded !== undefined) return sharded.manifest(id);
-        const bytes = await read(`${meshUrl}${id}.index`);
-        return bytes === undefined ? undefined : { bytes, file: `${meshUrl}${id}`, start: 0 };
-      }),
+    // A few at a time; a segment whose manifest cannot be read (or decoded) is left out and counted.
+    const { results: found, failed, error } = await readEach(
+      wanted,
+      async (id) => {
+        const f = sharded !== undefined ? await sharded.manifest(id) : await read(`${meshUrl}${id}.index`).then((bytes) => bytes && { bytes, file: `${meshUrl}${id}`, start: 0 });
+        return f && { ...f, manifest: decodeMultilodManifest(f.bytes) };
+      },
+      options.concurrency ?? MANIFEST_CONCURRENCY,
     );
     const kept = wanted.filter((_, i) => found[i] !== undefined);
     const segments: SegmentMesh[] = [];
-    found.forEach((f) => {
-      if (f === undefined) return;
-      const manifest = decodeMultilodManifest(f.bytes);
+    for (const f of found) {
+      if (f === undefined) continue;
       // Unsharded, the data file starts at 0: fragment offsets count from there.
-      segments.push({ object: segments.length, manifest, file: f.file, start: sharded !== undefined ? f.start : manifest.dataBytes });
-    });
+      segments.push({ object: segments.length, manifest: f.manifest, file: f.file, start: sharded !== undefined ? f.start : f.manifest.dataBytes });
+    }
     const { levels, lo, hi } = planMultilod(segments, composeAffine(toVoxels, transform), bits, read, options.decode, options.budget);
-    plan = { name, ids: kept, lo, hi, levels, scales: resolution, unit: "nanometer" };
+    const missing = missingSegments(wanted.length, wanted.length - kept.length - failed, failed, error);
+    plan = { name, ids: kept, lo, hi, levels, scales: resolution, unit: "nanometer", ...(missing ? { warnings: [missing] } : {}) };
   } else {
     plan = await planLegacy(meshUrl, wanted, toVoxels, read, name, resolution);
   }
-  if (plan.ids.length === 0 || plan.levels.length === 0) throw new Error(`none of the ${wanted.length} segments has a mesh`);
+  if (plan.ids.length === 0 || plan.levels.length === 0) throw new Error(`none of the ${wanted.length} segments has a mesh${plan.warnings?.[0]?.includes("could not be read") ? `: ${plan.warnings[0]}` : ""}`);
   if (!plan.lo.every(Number.isFinite)) plan = { ...plan, lo: [0, 0, 0], hi: [1, 1, 1] };
   return new PrecomputedMeshStore(plan);
 }
@@ -266,19 +272,29 @@ async function planLegacy(meshUrl: string, ids: bigint[], toVoxels: number[], re
   let edge = 0;
   let bytes = 0;
   let vertices = 0;
+  let failed = 0;
+  let error: unknown;
+  let tried = 0;
   for (const id of ids) {
     if (bytes > LEGACY_BYTES) break;
-    const listing = await readJson(read, `${meshUrl}${id}:0`).catch(() => undefined);
-    const names = Array.isArray(listing?.fragments) ? (listing.fragments as unknown[]).filter((f): f is string => typeof f === "string") : [];
-    const meshes = (
-      await Promise.all(
-        names.map(async (f) => {
-          // Names relative to the mesh directory (they often hold colons, which a URL would read as a scheme).
-          const data = await read(`${meshUrl}${f}`);
-          return data === undefined ? undefined : decodeLegacyFragment(data);
-        }),
-      )
-    ).filter((m): m is FragmentMesh => m !== undefined && m.triangles.length > 0);
+    tried++;
+    let meshes: FragmentMesh[];
+    try {
+      const listing = await readJson(read, `${meshUrl}${id}:0`);
+      const names = Array.isArray(listing?.fragments) ? (listing.fragments as unknown[]).filter((f): f is string => typeof f === "string") : [];
+      const read_ = await readEach(names, async (f) => {
+        // Names relative to the mesh directory (they often hold colons, which a URL would read as a scheme).
+        const data = await read(`${meshUrl}${f}`);
+        return data === undefined ? undefined : decodeLegacyFragment(data);
+      }, MANIFEST_CONCURRENCY);
+      // A fragment that cannot be read leaves the segment out, not part of it.
+      if (read_.failed > 0) throw read_.error;
+      meshes = read_.results.filter((m): m is FragmentMesh => m !== undefined && m.triangles.length > 0);
+    } catch (e) {
+      failed++;
+      error ??= e;
+      continue;
+    }
     if (meshes.length === 0) continue;
     const object = kept.length;
     kept.push(id);
@@ -301,14 +317,15 @@ async function planLegacy(meshUrl: string, ids: bigint[], toVoxels: number[], re
       fragments.push({ object, centre: [0, 1, 2].map((k) => (flo[k] + fhi[k]) / 2), read: async () => mesh });
     }
   }
-  return { name, ids: kept, lo, hi, levels: [{ chunk: ceilPow2(edge), fragments, vertices, label: "legacy" }], scales, unit: "nanometer" };
+  const missing = missingSegments(tried, tried - kept.length - failed, failed, error);
+  return { name, ids: kept, lo, hi, levels: [{ chunk: ceilPow2(edge), fragments, vertices, label: "legacy" }], scales, unit: "nanometer", ...(missing ? { warnings: [missing] } : {}) };
 }
 
 /** The store as the Zarr Vectors reader reads one: keys, byte ranges of them, directory listings. */
 export function storeAccess(store: PrecomputedMeshStore): ZarrVectorsStoreAccess {
   return {
     async read(key, options = {}) {
-      const data = await store.get(key);
+      const data = await store.get(key, options.signal);
       if (data === undefined) return undefined;
       const r = options.byteRange;
       if (r === undefined) return data;

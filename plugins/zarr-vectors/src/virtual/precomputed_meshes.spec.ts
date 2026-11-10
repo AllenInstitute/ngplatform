@@ -3,10 +3,12 @@
  * cells it keeps stay within their byte limit however reads overlap and
  * finish (a cell still being read is shared, never evicted, and counted
  * once it is read), and a level of more cells than a call takes arguments
- * is planned.
+ * is planned; a cell's reads are cancelled once nothing wants it, a failed
+ * fragment is tried again and, failing still, left out with a warning;
+ * segment ids past 2^63 are kept; and several stores share one budget.
  */
 import { describe, expect, it } from "vitest";
-import { type FragmentMesh, type MeshStorePlan, PrecomputedMeshStore } from "./precomputed_meshes.js";
+import { type FragmentMesh, MESH_CELL_BUDGET, type MeshStorePlan, PrecomputedMeshStore } from "./precomputed_meshes.js";
 
 /** One triangle's fragment: 3 vertices and 3 corners, 36 + 12 bytes decoded. */
 const TRIANGLE: FragmentMesh = { positions: new Float32Array(9), triangles: Uint32Array.from([0, 1, 2]) };
@@ -108,5 +110,157 @@ describe("the precomputed-mesh store's decoded cells", () => {
     const array = JSON.parse(new TextDecoder().decode((await store.get("0/vertices/zarr.json"))!));
     expect(array.shape).toEqual([n, 1, 1]);
     expect(array.attributes.chunk_grid_origin).toEqual([0, 0, 0]);
+  });
+});
+
+/** A plan of one cell holding `n` segments' fragments, each read by `read(i, signal)`. */
+function cellOf(n: number, read: (i: number, signal?: AbortSignal) => Promise<FragmentMesh>, ids?: bigint[]): MeshStorePlan {
+  return {
+    name: "test",
+    ids: ids ?? Array.from({ length: n }, (_, i) => BigInt(i + 1)),
+    lo: [0, 0, 0],
+    hi: [10, 10, 10],
+    scales: [1, 1, 1],
+    unit: "nanometer",
+    levels: [{ chunk: 10, vertices: 3 * n, fragments: Array.from({ length: n }, (_, i) => ({ object: i, centre: [5, 5, 5], read: (signal?: AbortSignal) => read(i, signal) })) }],
+  };
+}
+
+/** A read that waits until its signal aborts (then rejects), counting the aborts. */
+function hanging() {
+  let started = 0;
+  let aborted = 0;
+  const read = (_: number, signal?: AbortSignal) =>
+    new Promise<FragmentMesh>((_, reject) => {
+      started++;
+      signal?.addEventListener("abort", () => {
+        aborted++;
+        reject(signal.reason);
+      });
+    });
+  return { read, started: () => started, aborted: () => aborted };
+}
+
+describe("cancelling and retrying a cell's reads", () => {
+  it("stops a cell's fragment reads once every request for it is cancelled, a few read at a time", async () => {
+    const h = hanging();
+    const store = new PrecomputedMeshStore(cellOf(20, h.read), undefined, { concurrency: 4 });
+    const one = new AbortController();
+    const two = new AbortController();
+    const a = store.get("0/vertices/c/0/0/0", one.signal);
+    const b = store.get("0/vertex_fragments/c/0/0/0", two.signal);
+    await new Promise((r) => setTimeout(r, 0));
+    // Shared: one read of the cell, four fragments at a time.
+    expect(h.started()).toBe(4);
+    one.abort();
+    await expect(a).rejects.toThrow(/abort/i);
+    // The other request still wants it.
+    expect(h.aborted()).toBe(0);
+    two.abort();
+    await expect(b).rejects.toThrow(/abort/i);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.aborted()).toBe(4);
+    expect(h.started()).toBe(4);
+    // Asked for again: read afresh, not the aborted read.
+    const again = new AbortController();
+    const c = store.get("0/vertices/c/0/0/0", again.signal);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.started()).toBe(8);
+    again.abort();
+    await expect(c).rejects.toThrow(/abort/i);
+  });
+
+  it("tries a failed fragment again after a pause, and gets it", async () => {
+    let tries = 0;
+    const store = new PrecomputedMeshStore(
+      cellOf(1, async () => {
+        if (++tries < 3) throw new Error("503 Service Unavailable");
+        return TRIANGLE;
+      }),
+      undefined,
+      { backoffMs: 1 },
+    );
+    const vertices = await store.get("0/vertices/c/0/0/0");
+    expect(tries).toBe(3);
+    expect(vertices!.byteLength).toBe(8 + 36);
+    expect(store.warnings).toEqual([]);
+  });
+
+  it("keeps a cell's other fragments when one still fails, and says so", async () => {
+    const seen: string[] = [];
+    let tries = 0;
+    const store = new PrecomputedMeshStore(
+      cellOf(5, async (i) => {
+        if (i === 2) {
+          tries++;
+          throw new Error("fragment 2: 500 Server Error");
+        }
+        return TRIANGLE;
+      }),
+      undefined,
+      { backoffMs: 1, retries: 2 },
+    );
+    store.onWarning((w) => seen.push(w));
+    const vertices = await store.get("0/vertices/c/0/0/0");
+    // Tried three times in all; four triangles of five kept.
+    expect(tries).toBe(3);
+    expect(vertices!.byteLength).toBe(8 + 4 * 36);
+    const index = await store.get("0/vertex_fragments/c/0/0/0");
+    expect(index).toBeDefined();
+    expect(store.failedFragments).toBe(1);
+    expect(seen).toEqual(["Some mesh fragments could not be read and are left out (1 of 5 in a cell of level 0: fragment 2: 500 Server Error)"]);
+    expect(store.warnings).toEqual(seen);
+  });
+
+  it("fails a cell none of whose fragments can be read, and reads it again next time", async () => {
+    let fail = true;
+    const store = new PrecomputedMeshStore(
+      cellOf(2, async () => {
+        if (fail) throw new Error("offline");
+        return TRIANGLE;
+      }),
+      undefined,
+      { backoffMs: 1, retries: 0 },
+    );
+    await expect(store.get("0/vertices/c/0/0/0")).rejects.toThrow("offline");
+    fail = false;
+    expect((await store.get("0/vertices/c/0/0/0"))!.byteLength).toBe(8 + 2 * 36);
+  });
+});
+
+describe("segment ids and many segments", () => {
+  it("serves ids at and past 2^63 as uint64, unchanged", async () => {
+    const ids = [1n, 2n ** 63n - 1n, 2n ** 63n, 2n ** 64n - 1n];
+    const store = new PrecomputedMeshStore(cellOf(4, async () => TRIANGLE, ids));
+    const array = JSON.parse(new TextDecoder().decode((await store.get("0/object_index/object_ids/zarr.json"))!));
+    expect(array.data_type).toBe("uint64");
+    const bytes = (await store.get("0/object_index/object_ids/c/0"))!;
+    expect(Array.from(new BigUint64Array(bytes.buffer, bytes.byteOffset, 4))).toEqual(ids);
+  });
+
+  it("plans a cell of 100,000 segments in linear time", () => {
+    const n = 100_000;
+    const t0 = performance.now();
+    const store = new PrecomputedMeshStore(cellOf(n, async () => TRIANGLE));
+    const ms = performance.now() - t0;
+    expect(store.fragmentCounts).toEqual([n]);
+    // A search per fragment (the old indexOf) took about 3.6 s for the owners alone; a map, 12 ms.
+    expect(ms).toBeLessThan(2000);
+  });
+
+  it("keeps the decoded cells of several stores within one budget", async () => {
+    const before = MESH_CELL_BUDGET.limit;
+    MESH_CELL_BUDGET.setMaxBytes(5 * CELL_BYTES);
+    try {
+      const stores = [0, 1, 2].map(() => new PrecomputedMeshStore(plan(4).plan));
+      // Their reads finish at once.
+      for (const s of stores) (s.plan.levels[0].fragments as { read: unknown }[]).forEach((f) => (f.read = async () => TRIANGLE));
+      for (const s of stores) for (let i = 0; i < 4; ++i) await s.get(`0/vertices/c/${i}/0/0`);
+      // 12 cells read over three stores, 5 kept: the last store's four, and the second's last.
+      expect(MESH_CELL_BUDGET.size).toBe(5 * CELL_BYTES);
+      expect(stores.map((s) => s.cachedBytes)).toEqual([0, CELL_BYTES, 4 * CELL_BYTES]);
+    } finally {
+      MESH_CELL_BUDGET.setMaxBytes(before);
+    }
   });
 });

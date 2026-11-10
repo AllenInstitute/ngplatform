@@ -162,7 +162,8 @@ async function readJson(path: string): Promise<any | undefined> {
 async function open(storeUrl: string): Promise<StoreInfo> {
   const meshes = parseMeshStoreUrl(storeUrl);
   // A segmentation's precomputed meshes: the store is made here, its fragments read and decoded (Draco) as its cells are asked for.
-  if (meshes !== undefined) access = storeAccess(await openPrecomputedMeshes(meshes.volume, meshes.ids, { decode: dracoFragment }));
+  const meshStore = meshes === undefined ? undefined : await openPrecomputedMeshes(meshes.volume, meshes.ids, { decode: dracoFragment });
+  if (meshStore !== undefined) access = storeAccess(meshStore);
   // Listing where the server allows it: a mesh's faces that span chunks are found only so.
   else access = httpAccess(storeUrl, { listing: true });
   store = await openZarrVectorsStore(access, []);
@@ -182,7 +183,8 @@ async function open(storeUrl: string): Promise<StoreInfo> {
     geometry: kind,
     primitive,
     attributes: store.description.attributes.filter((a) => a.objectValue === undefined).map((a) => ({ id: a.id, name: a.name, components: a.components })),
-    warnings: store.warnings,
+    // The mesh store's own (segments with no mesh) with the reader's.
+    warnings: [...store.warnings, ...(meshStore?.warnings ?? [])],
   };
 }
 
