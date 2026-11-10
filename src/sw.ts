@@ -23,14 +23,24 @@
  *   this worker's memory only: when the browser has stopped it and started
  *   it again (it does so with an idle worker), or Google answers 401, it
  *   asks the open tabs for them again (`google-tokens-ask`).
+ *
+ * Each of these is answered only under the app's own folder (the worker's
+ * scope).  The worker carries its build's version: a new one takes over at
+ * once (skipWaiting), drops the caches of older versions when active, and
+ * tells the pages its version (`sw-version`).
  */
 import { relay } from "chunkmirage-web/relay";
 import { type GoogleTokenTable, tokenFromTable } from "./core/sign_in_rules.js";
+import { ask, prefixesOf, parseRange, type Range, routeOf, staleCaches } from "./sw_parts.js";
 
 declare const self: ServiceWorkerGlobalScope;
+/** This build's version (vite.config.ts): the package's version and when it was built. */
+declare const __SW_VERSION__: string;
+const VERSION = typeof __SW_VERSION__ === "string" ? __SW_VERSION__ : "dev";
 
-const PREFIX = new URL("./local/", self.registration.scope).pathname;
-const GOOGLE_PREFIX = new URL("./gcs-google/", self.registration.scope).pathname;
+const PREFIXES = prefixesOf(self.registration.scope);
+const PREFIX = PREFIXES.local;
+const GOOGLE_PREFIX = PREFIXES.google;
 /** The Google accounts' access tokens, from the page (none: signed out). */
 let googleTokens: GoogleTokenTable = { default: null, rules: [] };
 /** Whether a page has given this worker its tokens since it started. */
@@ -43,7 +53,16 @@ const owners = new Map<string, string>();
 let active: string | undefined;
 
 self.addEventListener("install", () => void self.skipWaiting());
-self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+self.addEventListener("activate", (event) =>
+  event.waitUntil(
+    (async () => {
+      // The caches of older versions of this worker go; others' are left alone.
+      for (const name of staleCaches(await caches.keys(), VERSION)) await caches.delete(name);
+      await self.clients.claim();
+      for (const client of await self.clients.matchAll({ type: "window" })) client.postMessage({ type: "sw-version", version: VERSION });
+    })(),
+  ),
+);
 
 self.addEventListener("message", (event) => {
   const data = event.data as { type?: string; id?: string } | undefined;
@@ -51,6 +70,7 @@ self.addEventListener("message", (event) => {
   if (data?.type === "local-register" && source && data.id !== undefined) owners.set(data.id, source.id);
   if (data?.type === "local-claim") event.waitUntil(self.clients.claim());
   if (data?.type === "ngp-active" && source) active = source.id;
+  if (data?.type === "sw-version") (event.ports[0] ?? source)?.postMessage({ type: "sw-version", version: VERSION });
   if (data?.type === "google-tokens") {
     googleTokens = (data as { tokens?: GoogleTokenTable }).tokens ?? { default: null, rules: [] };
     tokensGiven = true;
@@ -59,12 +79,6 @@ self.addEventListener("message", (event) => {
 
 /** How long a page may take over one read: a large .nii.gz is decompressed on its first. */
 const READ_TIMEOUT = 10 * 60 * 1000;
-
-interface Range {
-  start?: number;
-  end?: number;
-  suffix?: number;
-}
 
 interface Answer {
   status: number;
@@ -75,20 +89,11 @@ interface Answer {
   contentType?: string;
 }
 
-/**
- * Asks a page.  A local request names its file `file`, not `path`:
- * chunkmirage's page end (routes.ts) takes any message with a `path` for
- * one of its own and declines it.
+/*
+ * Pages are asked with `ask` (./sw_parts.ts).  A local request names its
+ * file `file`, not `path`: chunkmirage's page end (routes.ts) takes any
+ * message with a `path` for one of its own and declines it.
  */
-function ask<T>(client: Client, request: Record<string, unknown>, timeout: number): Promise<T | undefined> {
-  const channel = new MessageChannel();
-  const answer = new Promise<T | undefined>((resolve) => {
-    channel.port1.onmessage = (e) => resolve(e.data as T);
-    setTimeout(() => resolve(undefined), timeout);
-  });
-  client.postMessage(request, [channel.port2]);
-  return answer;
-}
 
 /** The page holding `id`: the one that registered it, or (after this worker restarted) the one that says so. */
 async function owner(id: string): Promise<Client | undefined> {
@@ -113,14 +118,6 @@ async function read(id: string, file: string, range: Range | undefined, head: bo
   if (client === undefined) return { status: 410 };
   const answer = await ask<Answer>(client, { type: "local-read", id, file, range, head }, READ_TIMEOUT);
   return answer ?? { status: 504, message: "The page holding this data did not answer in time." };
-}
-
-function parseRange(header: string | null): Range | undefined {
-  if (!header) return undefined;
-  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
-  if (!m) return undefined;
-  if (m[1] === "") return { suffix: Number(m[2]) };
-  return { start: Number(m[1]), end: m[2] === "" ? undefined : Number(m[2]) + 1 };
 }
 
 async function local(request: Request, url: URL): Promise<Response> {
@@ -158,15 +155,11 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith(GOOGLE_PREFIX)) {
-    if (request.method === "GET" || request.method === "HEAD") event.respondWith(google(request, url));
-    return;
-  }
-  if (url.pathname.startsWith(PREFIX)) {
-    if (request.method === "GET" || request.method === "HEAD") event.respondWith(local(request, url));
-    return;
-  }
-  if (url.pathname.includes("/virtual/")) event.respondWith(computed(request, url));
+  const route = routeOf(url.pathname, PREFIXES);
+  const reads = request.method === "GET" || request.method === "HEAD";
+  if (route === "google" && reads) event.respondWith(google(request, url));
+  else if (route === "local" && reads) event.respondWith(local(request, url));
+  else if (route === "virtual") event.respondWith(computed(request, url));
 });
 
 /**
@@ -220,7 +213,7 @@ async function google(request: Request, url: URL): Promise<Response> {
  * tab in use closed).
  */
 async function computed(request: Request, url: URL): Promise<Response> {
-  if (url.pathname.includes("/virtual/ngp/") && active !== undefined) {
+  if (url.pathname.startsWith(`${PREFIXES.virtual}ngp/`) && active !== undefined) {
     const first = await relay(request.clone(), { pick: (pages) => pages.filter((p) => p.id === active) });
     if (first.status !== 503) return first;
   }

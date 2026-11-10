@@ -28,6 +28,8 @@ function serviceWorker(): Plugin {
       minify: true,
       write: false,
       alias: { "chunkmirage-web": chunkmirage.replace(/\/$/, "") },
+      // The worker's version: a new build's worker drops the caches of older ones.
+      define: { __SW_VERSION__: JSON.stringify(`${process.env.npm_package_version ?? "0"}-${Date.now().toString(36)}`) },
       resolveExtensions: [".ts", ".js"],
     });
     return out.outputFiles[0].text;
