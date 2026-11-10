@@ -16,6 +16,7 @@ import { renderOverviewSettings } from "./overview.js";
 import { renderAuthPanel } from "./panels/auth.js";
 import { renderStatisticsPanel } from "./panels/misc.js";
 import { renderRemotePanel } from "./panels/remote.js";
+import { renderAbout } from "./about.js";
 import { setTractogramDiskGigabytes, setVectorCacheMegabytes, tractogramDiskGigabytes, vectorCacheMegabytes } from "../virtual/vectors/formats.js";
 import type { Workbench } from "./workbench.js";
 
@@ -386,7 +387,7 @@ export function showLocalSheet(wb: Workbench, local: LocalData): void {
 // ---------------------------------------------------------------- settings
 
 /** The sections of Settings, by the id `settings.open` takes. */
-export const SETTINGS_SECTIONS = { view: "View", "sign-in": "Sign-in", compute: "Compute", storage: "Storage", developer: "Developer" } as const;
+export const SETTINGS_SECTIONS = { view: "View", "sign-in": "Sign-in", compute: "Compute", storage: "Storage", developer: "Developer", about: "About" } as const;
 export type SettingsSection = keyof typeof SETTINGS_SECTIONS;
 
 /**
@@ -458,6 +459,7 @@ const SECTION_RENDER: Record<SettingsSection, (host: HTMLElement, wb: Workbench)
   },
   "sign-in": (host, wb) => renderAuthPanel(host, wb),
   compute: (host, wb) => renderRemotePanel(host, wb),
+  about: (host, wb) => renderAbout(host, wb),
   storage: (host, wb) => {
     const overviews = h("div", { class: "section overview-section" });
     renderOverviewSettings(overviews, wb);

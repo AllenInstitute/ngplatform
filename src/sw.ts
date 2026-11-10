@@ -24,6 +24,13 @@
  *   it again (it does so with an idle worker), or Google answers 401, it
  *   asks the open tabs for them again (`google-tokens-ask`).
  *
+ * - The app itself, so it opens offline once it has been opened online:
+ *   its page and startup code are kept when the worker is installed (the
+ *   list the build writes in, `__SW_PRECACHE__`), the other files of the
+ *   build as they are first used.  The page comes from the network when it
+ *   can, so a new build is seen at once; the files the build named by their
+ *   contents come from the cache first.  Data is never kept here.
+ *
  * Each of these is answered only under the app's own folder (the worker's
  * scope).  The worker carries its build's version: a new one takes over at
  * once (skipWaiting), drops the caches of older versions when active, and
@@ -31,12 +38,16 @@
  */
 import { relay } from "chunkmirage-web/relay";
 import { type GoogleTokenTable, tokenFromTable } from "./core/sign_in_rules.js";
-import { ask, prefixesOf, parseRange, type Range, routeOf, staleCaches } from "./sw_parts.js";
+import { ask, cacheName, prefixesOf, parseRange, type Range, routeOf, shellPageKey, shellRequest, staleCaches } from "./sw_parts.js";
 
 declare const self: ServiceWorkerGlobalScope;
 /** This build's version (vite.config.ts): the package's version and when it was built. */
 declare const __SW_VERSION__: string;
 const VERSION = typeof __SW_VERSION__ === "string" ? __SW_VERSION__ : "dev";
+/** The app's page and startup files, relative to the scope (none from the dev server). */
+declare const __SW_PRECACHE__: string[];
+const PRECACHE = typeof __SW_PRECACHE__ === "object" ? __SW_PRECACHE__ : [];
+const SHELL = cacheName(VERSION);
 
 const PREFIXES = prefixesOf(self.registration.scope);
 const PREFIX = PREFIXES.local;
@@ -52,7 +63,16 @@ const owners = new Map<string, string>();
 /** The tab last in use, which computed images are asked of first: every tab can compute them, and one should. */
 let active: string | undefined;
 
-self.addEventListener("install", () => void self.skipWaiting());
+self.addEventListener("install", (event) => {
+  void self.skipWaiting();
+  // Each file on its own: one that fails (a flaky network) leaves the rest kept and the worker installed.
+  event.waitUntil(
+    (async () => {
+      const cache = await caches.open(SHELL);
+      await Promise.allSettled(PRECACHE.map((path) => cache.add(new URL(path, self.registration.scope).href)));
+    })(),
+  );
+});
 self.addEventListener("activate", (event) =>
   event.waitUntil(
     (async () => {
@@ -160,7 +180,41 @@ self.addEventListener("fetch", (event) => {
   if (route === "google" && reads) event.respondWith(google(request, url));
   else if (route === "local" && reads) event.respondWith(local(request, url));
   else if (route === "virtual") event.respondWith(computed(request, url));
+  else if (request.method === "GET" && !request.headers.has("range")) {
+    const shell = shellRequest(url, self.registration.scope, request.mode);
+    if (shell === "page") event.respondWith(page(request, url));
+    else if (shell === "asset") event.respondWith(asset(request));
+  }
 });
+
+/** The app's page: from the network, kept; the kept copy when the network fails. */
+async function page(request: Request, url: URL): Promise<Response> {
+  const key = shellPageKey(url, self.registration.scope);
+  try {
+    const response = await fetch(request);
+    if (response.ok) {
+      const copy = response.clone();
+      void caches.open(SHELL).then((cache) => cache.put(key, copy)).catch(() => {});
+    }
+    return response;
+  } catch (error) {
+    const kept = await caches.match(key);
+    if (kept !== undefined) return kept;
+    throw error;
+  }
+}
+
+/** A file of the build: the kept copy, else from the network and kept. */
+async function asset(request: Request): Promise<Response> {
+  const kept = await caches.match(request, { ignoreSearch: true });
+  if (kept !== undefined) return kept;
+  const response = await fetch(request);
+  if (response.ok && response.type === "basic") {
+    const copy = response.clone();
+    void caches.open(SHELL).then((cache) => cache.put(request, copy)).catch(() => {});
+  }
+  return response;
+}
 
 /**
  * The tokens of the open tabs (the one in use first; the first that has

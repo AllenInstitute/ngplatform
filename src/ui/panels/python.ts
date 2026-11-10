@@ -5,6 +5,13 @@
  * layers, the position, and every command in the palette; arrays made here
  * show as layers (ngp.show).  numpy, scipy and the other Pyodide packages
  * load when imported.
+ *
+ * Pyodide comes from cdn.jsdelivr.net, at a pinned version, so the Python
+ * panel needs the network the first time it opens (the browser caches it
+ * after).  Its two scripts are checked against the hashes below
+ * (Subresource Integrity) before they run; the WebAssembly and standard
+ * library they then load are not, and the packages are checked by Pyodide
+ * against its own lock file.
  */
 import { asTool } from "../docks.js";
 import { clear, h } from "../dom.js";
@@ -12,6 +19,49 @@ import type { Workbench } from "../workbench.js";
 
 // The same Pyodide as chunkmirage's engine (vendor/chunkmirage/web/src/pyworker.ts), so the browser fetches and caches one.
 const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/";
+/**
+ * The SHA-384 of Pyodide 0.28.3's scripts, for Subresource Integrity:
+ * `curl -s <PYODIDE><file> | openssl dgst -sha384 -binary | base64`.
+ * Moving PYODIDE to another version needs these made again.
+ */
+export const PYODIDE_INTEGRITY = {
+  "pyodide.mjs": "sha384-81fS7esAvlEVAVK509OWewC3dTwye8WYv/Qw69eL8WcPB/67xk3ju1SxzR3KAEzr",
+  "pyodide.asm.js": "sha384-r0/vSQNahhZUJBO7ne5kqeNO4O9xSg658nGR6cGiQtzyIYSOfY9J8JUwOUdUMEkd",
+};
+
+/** A classic script, run only when its bytes match `integrity`. */
+function scriptWithIntegrity(src: string, integrity: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    script.integrity = integrity;
+    script.crossOrigin = "anonymous";
+    script.onload = () => resolve();
+    script.onerror = () => {
+      script.remove();
+      reject(new Error(`could not load ${src}, or it is not the file this app expects`));
+    };
+    document.head.append(script);
+  });
+}
+
+/**
+ * Pyodide's module, its scripts checked first: pyodide.asm.js run by a
+ * script element with its hash (Pyodide then finds it there rather than
+ * loading it again), pyodide.mjs fetched with its hash and imported from
+ * the checked copy.
+ */
+async function importPyodide(): Promise<{ loadPyodide(o: { indexURL: string }): Promise<Pyodide> }> {
+  await scriptWithIntegrity(`${PYODIDE}pyodide.asm.js`, PYODIDE_INTEGRITY["pyodide.asm.js"]);
+  const response = await fetch(`${PYODIDE}pyodide.mjs`, { integrity: PYODIDE_INTEGRITY["pyodide.mjs"] });
+  if (!response.ok) throw new Error(`${PYODIDE}pyodide.mjs answered ${response.status}`);
+  const url = URL.createObjectURL(new Blob([await response.text()], { type: "text/javascript" }));
+  try {
+    return (await import(/* @vite-ignore */ url)) as { loadPyodide(o: { indexURL: string }): Promise<Pyodide> };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
 
 interface PyProxyLike {
   (...args: unknown[]): Promise<unknown>;
@@ -273,7 +323,7 @@ let pythonSink: ((text: string, kind: "out" | "err") => void) | undefined;
 
 export function loadPython(wb: Workbench): Promise<Pyodide> {
   pyodide ??= (async () => {
-    const module = (await import(/* @vite-ignore */ `${PYODIDE}pyodide.mjs`)) as { loadPyodide(o: { indexURL: string }): Promise<Pyodide> };
+    const module = await importPyodide();
     const py = await module.loadPyodide({ indexURL: PYODIDE });
     const { engine, store, commands } = wb;
     py.registerJsModule("_ngp_bridge", {

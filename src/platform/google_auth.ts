@@ -1,12 +1,19 @@
 /**
  * Google sign-in for the whole browser, with several accounts at once: an
  * OAuth access token per account from Google Identity Services' token
- * flow, kept in this browser with its expiry, that reads Google Cloud
+ * flow, kept with its expiry, that reads Google Cloud
  * Storage buckets as `gs+google://bucket/path` (see src/engine/google_gcs.ts).
  * One account is the default; sign-in rules (./sign_in_rules.ts) choose
  * another for a bucket or a folder.  It needs an OAuth client ID registered
  * for this site's address, built in (VITE_GOOGLE_CLIENT_ID) or set in the
  * Settings › Sign-in; docs/guide/signing-in.md says how to make one.
+ *
+ * The accounts (their emails, and which is the default) are kept in this
+ * browser (localStorage); their access tokens only in this tab
+ * (sessionStorage), so a token is gone when the tab closes and a script
+ * that reads the browser's storage later finds none.  Another tab, or the
+ * same one reopened, signs in again with one click (Google remembers the
+ * consent).  Tokens last an hour at most.
  *
  * Adding an account opens Google's account chooser; signing in again for
  * one passes its email as the hint, so Google goes straight to it.  A popup
@@ -32,6 +39,8 @@ export const ACCOUNTS_KEY = "ngplatform.google.accounts";
 /** Where the one token of the first version was kept (moved into ACCOUNTS_KEY on first read). */
 export const OLD_TOKEN_KEY = "ngplatform.google.token";
 const CLIENT_KEY = "ngplatform.google.clientId";
+/** Where the access tokens are kept, by email, in the tab's storage (GoogleEnvironment.tokenStorage). */
+export const TOKENS_KEY = "ngplatform.google.tokens";
 /** A token this close to its expiry is taken as expired, so a request never starts with one about to lapse. */
 const MARGIN_MS = 60_000;
 
@@ -88,7 +97,10 @@ export interface GoogleOAuth2 {
 
 /** What the Google sign-in needs from the browser; tests give fakes. */
 export interface GoogleEnvironment {
+  /** Where the accounts are kept: the browser's localStorage. */
   storage: Pick<Storage, "getItem" | "setItem" | "removeItem">;
+  /** Where their access tokens are kept: the tab's sessionStorage.  None: with the accounts, in `storage`. */
+  tokenStorage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
   fetch: typeof fetch;
   now(): number;
   /** Loads Google Identity Services (its script, once). */
@@ -102,6 +114,7 @@ export function browserGoogleEnvironment(): GoogleEnvironment {
   type WithGoogle = { google?: { accounts?: { oauth2?: GoogleOAuth2 } } };
   return {
     storage: localStorage,
+    tokenStorage: tabStorage(),
     fetch: (input, init) => fetch(input, init),
     now: () => Date.now(),
     loadClient: () =>
@@ -127,6 +140,17 @@ export function browserGoogleEnvironment(): GoogleEnvironment {
       return () => window.removeEventListener("storage", handle);
     },
   };
+}
+
+/** This tab's sessionStorage; none (a browser that refuses it) keeps the tokens in memory, for this page only. */
+function tabStorage(): Pick<Storage, "getItem" | "setItem" | "removeItem"> {
+  try {
+    sessionStorage.getItem(TOKENS_KEY);
+    return sessionStorage;
+  } catch {
+    const memory = new Map<string, string>();
+    return { getItem: (k) => memory.get(k) ?? null, setItem: (k, v) => void memory.set(k, v), removeItem: (k) => void memory.delete(k) };
+  }
 }
 
 export type GoogleState = "unconfigured" | "signed-out" | "expired" | "signed-in";
@@ -178,20 +202,42 @@ export class GoogleSignIn {
 
   // ------------------------------------------------------------ accounts
 
-  /** What is kept, the first version's single token moved in. */
+  /** What is kept, the first version's single token moved in, and tokens kept with the accounts by earlier versions moved to the tab. */
   private kept(): Kept {
     const raw = this.env.storage.getItem(ACCOUNTS_KEY);
     if (raw === null) return this.migrate();
+    let kept: Kept;
     try {
-      const kept = JSON.parse(raw);
-      const accounts = Array.isArray(kept?.accounts)
-        ? (kept.accounts as GoogleAccount[]).filter((a) => typeof a?.email === "string").map((a) => ({ email: a.email, token: validToken(a.token) }))
+      const parsed = JSON.parse(raw);
+      const accounts = Array.isArray(parsed?.accounts)
+        ? (parsed.accounts as GoogleAccount[]).filter((a) => typeof a?.email === "string").map((a) => ({ email: a.email, token: validToken(a.token) }))
         : [];
       const fallback = accounts[0]?.email;
-      return { default: accounts.some((a) => a.email === kept.default) ? kept.default : fallback, accounts };
+      kept = { default: accounts.some((a) => a.email === parsed.default) ? parsed.default : fallback, accounts };
     } catch {
       return { accounts: [] };
     }
+    const tabs = this.env.tokenStorage;
+    if (tabs === undefined) return kept;
+    const inBrowser = kept.accounts.some((a) => a.token !== undefined);
+    const tokens = readTokens(tabs.getItem(TOKENS_KEY));
+    for (const account of kept.accounts) account.token = tokens[account.email] ?? account.token;
+    // Tokens an earlier version kept in the browser's storage: into this tab's, and out of the browser's.
+    if (inBrowser) this.write(kept);
+    return kept;
+  }
+
+  /** Writes the accounts to the browser's storage, and their tokens to the tab's (or with them, when there is none). */
+  private write(kept: Kept): void {
+    const tabs = this.env.tokenStorage;
+    if (tabs === undefined) {
+      this.env.storage.setItem(ACCOUNTS_KEY, JSON.stringify(kept));
+      return;
+    }
+    this.env.storage.setItem(ACCOUNTS_KEY, JSON.stringify({ default: kept.default, accounts: kept.accounts.map((a) => ({ email: a.email })) }));
+    const tokens = Object.fromEntries(kept.accounts.flatMap((a) => (a.token === undefined ? [] : [[a.email, a.token]])));
+    if (Object.keys(tokens).length === 0) tabs.removeItem(TOKENS_KEY);
+    else tabs.setItem(TOKENS_KEY, JSON.stringify(tokens));
   }
 
   /** The first version kept one token under OLD_TOKEN_KEY: it becomes the default account. */
@@ -209,13 +255,13 @@ export class GoogleSignIn {
     if (token === undefined) return { accounts: [] };
     const email = typeof old?.email === "string" ? old.email : "";
     const kept: Kept = { default: email, accounts: [{ email, token }] };
-    this.env.storage.setItem(ACCOUNTS_KEY, JSON.stringify(kept));
+    this.write(kept);
     return kept;
   }
 
   private keep(kept: Kept): void {
     if (kept.default === undefined || !kept.accounts.some((a) => a.email === kept.default)) kept.default = kept.accounts[0]?.email;
-    this.env.storage.setItem(ACCOUNTS_KEY, JSON.stringify(kept));
+    this.write(kept);
     this.changed();
   }
 
@@ -456,6 +502,20 @@ export class GoogleSignIn {
     // At most a day ahead: setTimeout overflows past about 24.8 days.
     const delay = Math.min(next - MARGIN_MS - now + 1000, 86_400_000);
     this.expiryTimer = setTimeout(() => this.changed(), delay);
+  }
+}
+
+/** The tab's tokens by email; those that cannot be read are none. */
+function readTokens(raw: string | null): Record<string, GoogleAccount["token"]> {
+  if (raw === null) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(parsed ?? {}).flatMap(([email, token]) => {
+      const valid = validToken(token);
+      return valid === undefined ? [] : [[email, valid]];
+    }));
+  } catch {
+    return {};
   }
 }
 

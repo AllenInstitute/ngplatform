@@ -11,6 +11,7 @@ import { registerGoogleCredentials } from "./engine/google_credentials.js";
 import { urlSafeParse } from "./engine/neuroglancer.js";
 import { loadDataTypePlugins } from "./engine/plugins.js";
 import { revalidateFetches } from "./engine/workers/plugins.js";
+import { exposeForDebugging } from "./platform/debug.js";
 import { browserGoogleEnvironment, GoogleSignIn, googleTokens } from "./platform/google_auth.js";
 import { SignInRules } from "./platform/sign_in_rules.js";
 import { loadChoices, loadThisTab, resolveEnabled, returningVisitor } from "./platform/plugin_switches.js";
@@ -80,9 +81,9 @@ async function boot(): Promise<void> {
 
   const shell = new Shell(document.getElementById("app")!);
   const engine = new Engine(shell.engineHost);
-  // For debugging from the console, as Neuroglancer's own page does.
-  (window as unknown as { viewer: unknown; engine: unknown }).viewer = engine.viewer;
-  (window as unknown as { engine: unknown }).engine = engine;
+  // For debugging from the console, as Neuroglancer's own page does (in production only with ?debug: src/platform/debug.ts).
+  exposeForDebugging("viewer", engine.viewer);
+  exposeForDebugging("engine", engine);
 
   shell.attach(
     engine,
@@ -99,12 +100,19 @@ async function boot(): Promise<void> {
     const short = line.length > 140 ? `${line.slice(0, 137)}…` : line;
     toast(/^\w*Error\b/.test(short) ? short : `Error: ${short}`, "error");
   });
+  bootDone();
+}
+
+/** The loading screen (index.html) goes once the shell is built, or the app could not start. */
+function bootDone(): void {
+  document.getElementById("boot")?.remove();
 }
 
 /** When the app cannot start at all: the reason, and a reload, in place of a blank page. */
 function bootFailed(error: unknown): void {
   console.error(error);
   if (reloading) return;
+  bootDone();
   const app = document.getElementById("app");
   if (app === null) return;
   const box = document.createElement("div");

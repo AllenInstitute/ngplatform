@@ -7,8 +7,8 @@
  * for a tractogram past the browser's storage limit, the choice of a
  * sample in the browser or the runner's conversion.
  */
-import { type HostList, hostStatusLine, LOCAL_HOST } from "../platform/hosts.js";
-import { isActive, normaliseAddress, pairingFromHash, type RunnerEntry, RunnerError, type RunnerService } from "../platform/runner.js";
+import { hostStatusLine, LOCAL_HOST } from "../platform/hosts.js";
+import { isActive, normaliseAddress, pairingFromHash, type RunnerEntry, RunnerError, type RunnerService, runnerVersionWarning } from "../platform/runner.js";
 import { bytesText } from "../sdk/format.js";
 import type { RunnerApi, RunnerJob, RunnerOutput } from "../sdk/types.js";
 import { emptyState, field, info } from "../sdk/dom.js";
@@ -275,6 +275,7 @@ export function renderRunnerSection(wb: Workbench, runner: RunnerService, host =
             ...info.roots.flatMap((r, i) => [i > 0 ? ", " : "", h("code", {}, r)]),
             ". ",
             info.tools ? `zarr-vectors-tools ${info.tools}.` : h("strong", { class: "error" }, "zarr-vectors-tools is missing from the runner's Python: jobs will fail."),
+            runnerVersionWarning(info.version) === undefined ? null : h("strong", { class: "error runner-outdated" }, ` ${runnerVersionWarning(info.version)}`),
           )
         : h("p", { class: "note first error runner-error" }, state === "connecting" ? `Connecting to ${pairing.address}…` : (runner.error() ?? `The runner at ${pairing.address} does not answer.`)),
       part === "host"

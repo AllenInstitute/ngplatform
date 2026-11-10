@@ -72,3 +72,74 @@ export function ask<T>(client: { postMessage(message: unknown, transfer: Transfe
   client.postMessage(request, [channel.port2]);
   return answer;
 }
+
+// ---------------------------------------------------------------- the app shell
+
+/** What a request under the app is, for the worker's cache of the app itself. */
+export type ShellRequest = "page" | "asset";
+
+/**
+ * Whether a request is for the app itself, kept so it opens offline: its
+ * page (`./`, `./index.html`, `./neuroglancer.html`; fetched from the
+ * network first, the copy kept used when that fails) or a file the build
+ * named by its contents (`./assets/…`, the fonts, the icon; never changed
+ * under a name, so a kept copy is used first).  Anything else (data, the
+ * worker's own jobs, the dev server's modules) is left to the network.
+ */
+export function shellRequest(url: URL, scope: string, mode: string): ShellRequest | undefined {
+  const base = new URL(scope);
+  if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname)) return undefined;
+  const rest = url.pathname.slice(base.pathname.length);
+  if (mode === "navigate") return rest === "" || rest === "index.html" || rest === "neuroglancer.html" ? "page" : undefined;
+  if (/^assets\/[^/]+$/.test(rest) && !rest.endsWith(".map")) return "asset";
+  if (/^fonts\/[^/]+$/.test(rest) || rest === "favicon.svg") return "asset";
+  return undefined;
+}
+
+/** The address a page is kept under: `./` and `./index.html` are the same page, whatever their query. */
+export function shellPageKey(url: URL, scope: string): string {
+  const rest = url.pathname.slice(new URL(scope).pathname.length);
+  return new URL(rest === "" ? "index.html" : rest, scope).href;
+}
+
+/** A file of the build, as Rollup describes it (the parts read here). */
+export interface BuiltFile {
+  fileName: string;
+  type: "chunk" | "asset";
+  isEntry?: boolean;
+  isDynamicEntry?: boolean;
+  facadeModuleId?: string | null;
+  imports?: string[];
+  css?: string[];
+}
+
+/** Neuroglancer's workers, which every viewer starts. */
+const VIEWER_WORKERS = /^assets\/(chunk_worker|async_worker|chunk_worker\.bundle|async_computation\.bundle)-[^/]+\.js$/;
+
+/**
+ * The files the worker keeps when it is installed, so the app opens offline
+ * after one visit: the page, the code it starts with (the main entry, the
+ * plugin it waits for, everything they import, their styles) and
+ * Neuroglancer's workers.  The rest (plugins' code, decoders) is kept as it
+ * is first used.  Paths relative to the app's folder.
+ */
+export function shellFiles(files: BuiltFile[], extra: string[] = []): string[] {
+  const byName = new Map(files.map((f) => [f.fileName, f]));
+  const keep = new Set<string>(["./", "index.html", ...extra]);
+  const visit = (name: string) => {
+    if (keep.has(name)) return;
+    const file = byName.get(name);
+    if (file === undefined) return;
+    keep.add(name);
+    for (const css of file.css ?? []) keep.add(css);
+    for (const next of file.imports ?? []) visit(next);
+  };
+  for (const f of files) {
+    if (f.type !== "chunk") continue;
+    if (f.isEntry && /(^|\/)index\.html$/.test(f.facadeModuleId ?? "")) visit(f.fileName);
+    // The data type plugin main.ts waits for (vite.config.ts preloads it too).
+    if (f.isDynamicEntry && /zarr-vectors\/src\/register_default\.ts$/.test(f.facadeModuleId ?? "")) visit(f.fileName);
+  }
+  for (const f of files) if (VIEWER_WORKERS.test(f.fileName)) keep.add(f.fileName);
+  return [...keep].sort();
+}

@@ -12,6 +12,8 @@ import { activeScene, layersOf, sourceUrls } from "../core/workspace.js";
 import { type Engine, LAYOUTS } from "../engine/engine.js";
 import { prefersReducedMotion } from "../engine/momentum.js";
 import { AuthRegistry, browserAuthEnvironment, middleauthProvider, ngauthProvider } from "../platform/auth.js";
+import { exposeForDebugging } from "../platform/debug.js";
+import { watchRunnerVersions } from "./about.js";
 import { accountLabel, type GoogleSignIn, googleProvider } from "../platform/google_auth.js";
 import { googleTokenTable, sourceWithRules } from "../core/sign_in_rules.js";
 import { applyRulesToNewLayers, type SignInRules } from "../platform/sign_in_rules.js";
@@ -314,8 +316,8 @@ export class Shell {
     this.wb = wb;
     this.switches = { catalogue: plugins.catalogue, choices: plugins.choices, thisTab: plugins.thisTab, resolution: plugins.resolution };
     wb.offers = new PluginOffers(wb, plugins.catalogue, (ids) => this.turnOnPlugins(ids));
-    // For debugging from the console, beside window.viewer.
-    (window as unknown as { workbench: Workbench }).workbench = wb;
+    // For debugging from the console, beside window.viewer (in production only with ?debug).
+    exposeForDebugging("workbench", wb);
     const apis = createPlatformApis(wb);
     wb.plugins = new PluginHost({
       commands,
@@ -418,6 +420,8 @@ export class Shell {
     // A large image first viewed: offer to build its overview in the background.
     offerOverviews(wb);
     offerSampledTractograms(wb, wb.runner);
+    // A runner older than this app needs: said once, in Activity (src/ui/about.ts).
+    watchRunnerVersions(wb);
     // Local data opened again (dropped files go with a reload): the layers
     // that read it before read it again, under its new id.
     const relink = async () => {

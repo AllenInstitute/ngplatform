@@ -72,4 +72,6 @@ nav:
       - "Code review: shared helpers, dead code, bugs, tests": dev/code-review.md
       - "Cinematic Anatomy, and where Anatomical rendering stands": dev/cinematic-anatomy-survey.md
       - "Anatomical rendering: the remaining features": dev/cinematic-roadmap.md
+      - "Security: what the app protects, and what it allows": dev/security.md
+      - "Casts into Neuroglancer's internals": dev/neuroglancer-casts.md
       - "Patches for the Neuroglancer fork": fork-patches/README.md

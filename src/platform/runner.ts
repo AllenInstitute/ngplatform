@@ -4,11 +4,42 @@
  *
  * The runner listens on 127.0.0.1 only and answers requests that carry its
  * pairing token.  The address and token are kept in localStorage, never in
- * the link.  While something watches (the Activity dock or Settings › Compute) or a job is running,
+ * the link: a pairing outlasts the tab, as a runner left running is meant
+ * to (docs/dev/security.md weighs this).  A runner older than this app
+ * needs (MIN_RUNNER_VERSION) is reported in Settings › Compute and About.  While something watches (the Activity dock or Settings › Compute) or a job is running,
  * the job list is fetched every 1.5 s.
  */
 import { RUNNER_TIMEOUT, seconds, timedOut, withDeadline } from "./deadline.js";
 import type { HostGpu, HostServiceState, RunnerJob } from "../sdk/types.js";
+
+/**
+ * The oldest runner this app works with: 0.1.0 brought what it asks of
+ * every runner (its computer and GPUs in /info, jobs that report progress,
+ * --public-url for a tunnel).  Raise it when the app starts to need
+ * something newer, with the runner's own version (runner/pyproject.toml
+ * and ngplatform_runner/__init__.py).
+ */
+export const MIN_RUNNER_VERSION = "0.1.0";
+
+/** Compares two versions (1.2.3, with any pre-release part after the numbers ignored): negative when a is older. */
+export function compareVersions(a: string, b: string): number {
+  const parts = (v: string) => v.trim().replace(/^v/i, "").split(/[-+]/)[0].split(".").map((n) => Number.parseInt(n, 10) || 0);
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/** What to tell the user of a runner too old for this app (undefined when it is new enough). */
+export function runnerVersionWarning(version: string | undefined, minimum = MIN_RUNNER_VERSION): string | undefined {
+  if (version !== undefined && version !== "" && compareVersions(version, minimum) >= 0) return undefined;
+  return (
+    `This runner (${version || "of an unknown version"}) is older than this app needs (${minimum} or later): some jobs may fail or not appear. ` +
+    "Update it from the same copy of ngplatform as this app (git pull; if it was installed, pip install ./runner again), then stop it and start it again."
+  );
+}
 
 export interface RunnerKind {
   kind: string;
