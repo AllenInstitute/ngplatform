@@ -313,6 +313,8 @@ export class LayerView {
     if (problem !== undefined) return { error: problem };
     if (client.objects.error !== undefined) return { error: `Could not read the chosen objects: ${client.objects.error}` };
     if (client.error !== undefined) return { error: `Could not read a chunk: ${client.error}` };
+    // The GPU budget shared by the layers is full: what is drawn is part of the layer.
+    if (this.view3d.full || this.view2d.full) return { warning: "GPU memory is full: part of this layer is not drawn. Lower its Detail, or switch off another layer." };
     const drawing = this.drawing();
     if (drawing.plan !== undefined) {
       // Read whole, by id: how far it has got.

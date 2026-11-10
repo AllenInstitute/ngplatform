@@ -9,6 +9,11 @@
  * reads), so the sections Neuroglancer draws afterwards do not paint over
  * lines in front of them, and do hide lines behind them.  "Solid" draws
  * straight into the view, depth-tested like any opaque layer.
+ *
+ * Every layer's chunk copies share one budget in Neuroglancer's context
+ * (./gpu_pool.ts' POOL_3D): a layer not drawn for a while gives its copies
+ * up to one that needs room, and past the budget a layer draws what it has
+ * and says the rest did not fit (`full`).
  */
 import type { Drawer3d, Frame3d } from "@ngplatform/sdk";
 import { SAMPLES } from "./chunk_build.js";
@@ -16,12 +21,13 @@ import { GpuChunks, selectChunks, type Selection } from "./chunks.js";
 import { samplesFor } from "./objects.js";
 import type { LayerView } from "./layer_view.js";
 import { Bloom } from "./bloom.js";
+import { POOL_3D } from "./gpu_pool.js";
 import { DepthTarget, type DrawUniforms, type GpuChunk, LightTarget, type Outputs, type Pass, Renderer } from "./render_gl.js";
 import { apply, boxInFrustum, coverage, eyeOf, glowFalloff, invert4, invertAffine, modelTo, multiply, pixelsPerUnit, screenArea, shownShare } from "./view_math.js";
 
-/** GPU memory for one layer's chunks in the 3-D view. */
+/** GPU memory for one layer's chunks in the 3-D view (within POOL_3D, shared by every layer). */
 const GPU_BYTES = 768 * 1024 * 1024;
-/** GPU memory for its chosen objects read whole. */
+/** GPU memory for its chosen objects read whole (within POOL_3D too). */
 const GPU_SET_BYTES = 512 * 1024 * 1024;
 const SOLID_INSTEAD = "This GPU cannot add light up in a float target here: drawing solid lines instead.";
 
@@ -106,6 +112,7 @@ export class View3d implements Drawer3d {
   }
 
   private failed: string | undefined;
+  private wasFull = false;
 
   private drawNow(frame: Frame3d): void {
     const { gl } = frame;
@@ -127,8 +134,8 @@ export class View3d implements Drawer3d {
       return;
     }
     this.problem = this.broken ? SOLID_INSTEAD : undefined;
-    this.chunks ??= new GpuChunks(this.renderer, view.client, GPU_BYTES);
-    this.sets ??= new GpuChunks(this.renderer, view.client.objects, GPU_SET_BYTES);
+    this.chunks ??= new GpuChunks(this.renderer, view.client, GPU_BYTES, POOL_3D);
+    this.sets ??= new GpuChunks(this.renderer, view.client.objects, GPU_SET_BYTES, POOL_3D);
     const chunks = this.chunks;
     const modelToClip = multiply(frame.viewProjection, toDisplay);
     const toModel = invertAffine(toDisplay);
@@ -156,6 +163,11 @@ export class View3d implements Drawer3d {
       more ||= taken.more;
     }
     if (more) view.redraw();
+    // Copies refused, or room again: the panel says so.
+    if (this.full !== this.wasFull) {
+      this.wasFull = this.full;
+      view.onStatus?.();
+    }
     // Held: reading, while the view of the layer's previous store draws.
     if (view.held || (drawn.length === 0 && sets.length === 0)) return;
 
@@ -287,9 +299,14 @@ export class View3d implements Drawer3d {
     }
   }
 
+  /** Copies refused for want of GPU memory: part of the layer is not drawn. */
+  get full(): boolean {
+    return (this.chunks?.refused ?? false) || (this.sets?.refused ?? false);
+  }
+
   dispose(): void {
-    this.chunks?.clear();
-    this.sets?.clear();
+    this.chunks?.dispose();
+    this.sets?.dispose();
     this.sets = undefined;
     this.target?.release();
     this.nearest?.release();

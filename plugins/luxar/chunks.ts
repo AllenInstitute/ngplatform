@@ -10,6 +10,7 @@
  */
 import type { BuiltChunk } from "./chunk_build.js";
 import type { StoreInfo } from "./client.js";
+import type { GpuPool, PoolMember } from "./gpu_pool.js";
 import type { GpuChunk, Renderer } from "./render_gl.js";
 import type { ObjectShading } from "./segments.js";
 import { chooseLevel, chunkBox, chunkRange, chunksIn } from "./view_math.js";
@@ -96,17 +97,33 @@ export interface ChunkSource {
   readonly generation: number;
 }
 
-/** One view's GPU copies of a layer's chunks, least recently drawn first. */
-export class GpuChunks {
+/** About a built chunk's bytes on the GPU (render_gl's upload counts them exactly). */
+const gpuBytesOf = (c: BuiltChunk) => c.vertices.byteLength + c.slots.byteLength + c.segmentCount * 16 + c.normals.byteLength + c.triangles.byteLength;
+
+/**
+ * One view's GPU copies of a layer's chunks, least recently drawn first:
+ * within its own `budget`, and within its context's `pool` shared with the
+ * other layers (./gpu_pool.ts), which may take its copies when it has not
+ * drawn for a while, or refuse it more.
+ */
+export class GpuChunks implements PoolMember {
   private readonly map = new Map<string, GpuChunk | null>();
   private bytes = 0;
   private generation = -1;
+  lastDrawn = -Infinity;
+  /** Some chunks it was to draw last were not uploaded: the pool had no room. */
+  refused = false;
+  /** The keys drawn last, kept on the GPU when it is trimmed. */
+  private drawing = new Set<string>();
 
   constructor(
     private readonly renderer: Renderer,
     private readonly client: ChunkSource,
     private readonly budget: number,
-  ) {}
+    private readonly pool?: GpuPool,
+  ) {
+    pool?.add(this);
+  }
 
   /** Whether a chunk can be drawn now (or is known to be empty). */
   arrived(key: string): boolean {
@@ -128,6 +145,9 @@ export class GpuChunks {
    */
   take(keys: string[], shading?: ObjectShading, uploadBytes = 96 * 1024 * 1024): { chunks: GpuChunk[]; more: boolean } {
     this.check();
+    this.lastDrawn = performance.now();
+    this.drawing = new Set(keys);
+    this.refused = false;
     const out: GpuChunk[] = [];
     let uploaded = 0;
     let more = false;
@@ -139,6 +159,10 @@ export class GpuChunks {
         if (built === null) gpu = null;
         else if (uploaded > uploadBytes) {
           more = true;
+          continue;
+        } else if (this.pool !== undefined && !this.pool.reserve(this, gpuBytesOf(built), (target) => this.trim(target))) {
+          // No room in the context's budget, even after letting go of idle layers' copies: not drawn, and said.
+          this.refused = true;
           continue;
         } else {
           gpu = this.renderer.upload(built);
@@ -153,17 +177,32 @@ export class GpuChunks {
         out.push(gpu);
       }
     }
-    const keep = new Set(keys);
+    this.trimTo(this.budget);
+    return { chunks: out, more };
+  }
+
+  /** Lets go of the least recently drawn copies it is not drawing now, down to `target` bytes of its own. */
+  private trimTo(target: number): void {
     for (const [key, gpu] of this.map) {
-      if (this.bytes <= this.budget) break;
-      if (keep.has(key)) continue;
+      if (this.bytes <= target) break;
+      if (this.drawing.has(key)) continue;
       this.map.delete(key);
       if (gpu) {
         this.renderer.release(gpu);
         this.bytes -= gpu.bytes;
       }
     }
-    return { chunks: out, more };
+  }
+
+  /** For the pool: lets go of copies not drawn now until the pool's total is within `target`. */
+  private trim(target: number): void {
+    const others = (this.pool?.total ?? this.bytes) - this.bytes;
+    this.trimTo(Math.max(0, target - others));
+  }
+
+  /** For the pool: every copy let go (the layer has not drawn for a while). */
+  evict(): void {
+    this.clear();
   }
 
   get gpuBytes(): number {
@@ -174,5 +213,18 @@ export class GpuChunks {
     for (const gpu of this.map.values()) if (gpu) this.renderer.release(gpu);
     this.map.clear();
     this.bytes = 0;
+  }
+
+  /** Every copy let go, and out of its pool. */
+  dispose(): void {
+    this.clear();
+    this.pool?.remove(this);
+  }
+
+  /** The context was lost: its copies went with it (nothing to release), and it leaves its pool. */
+  forget(): void {
+    this.map.clear();
+    this.bytes = 0;
+    this.pool?.remove(this);
   }
 }
