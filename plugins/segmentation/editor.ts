@@ -45,7 +45,8 @@ import { maskCount, PreviewOverlay } from "./preview.js";
 import { type Mask, type Prompt, type QuickSelectMethod, type QuickSelectRequest, QuickSelectRegistry } from "./quick_select.js";
 import { layerWindow, sectionAxes, sectionBounds, stackMasks } from "./sam.js";
 import { SamModel, samMethod } from "./sam_model.js";
-import { cropped, editsZarr, niftiBytes, niftiGz, omeZarr, pruneStore, readEdits, type SavedLabel, writeFile, writeStore, writeWhole } from "./save.js";
+import { cropped, editsZarr, niftiBytes, niftiParts, omeZarr, pruneStore, readEdits, type SavedLabel, writeFile, writeStore, writeWhole } from "./save.js";
+import { SaveWorker } from "./save_client.js";
 import { addGroup, assign, editGroup, groupOf, members, readGroups, removeGroup, type SegmentationSaved, type VolumeGroups } from "./segment_groups.js";
 import { LIST_MAX, nextSegment, type SegmentRow, segmentRows, type SegmentsState, visibility, withVisibility } from "./segments.js";
 import { PALETTE_SEGMENTS, type Reference, Session } from "./session.js";
@@ -120,6 +121,8 @@ export class Editor implements LabelVolumes {
   readonly quickSelect = new QuickSelectRegistry();
   /** Quick select's model (AI (MobileSAM)): its files, the runtime, the last timings. */
   readonly sam = new SamModel();
+  /** Compresses and writes saves off the main thread. */
+  private readonly saver = new SaveWorker();
   private readonly painter: Painter;
   private readonly previewOverlay: PreviewOverlay;
   private readonly offs: Disposer[] = [];
@@ -354,6 +357,7 @@ export class Editor implements LabelVolumes {
     for (const s of this.sessions) s.dispose();
     clearTimeout(this.countsTimer);
     clearTimeout(this.samTimer);
+    this.saver.dispose();
   }
 
   // ------------------------------------------------------------ tools
@@ -1866,19 +1870,39 @@ export class Editor implements LabelVolumes {
     this.saveProgress("Writing…");
     try {
       let where: string;
-      if (zarr) {
-        const files = await omeZarr(out, description, (done, total) => this.saveProgress(`Writing: ${Math.round((100 * done) / total)}%`), this.savedLabels(session));
-        where = await writeFolder(files, folder, base + suffix);
+      const progress = (done: number, total: number) => this.saveProgress(`Writing: ${Math.round((100 * done) / total)}%`);
+      // Compressed in the save worker, and written as made: a large volume is never whole in memory twice.
+      const gzip = (bytes: Uint8Array) => this.saver.gzip(bytes);
+      if (zarr && folder) {
+        const name = base + suffix;
+        const root = await folder.getDirectoryHandle(name, { create: true });
+        const written: string[] = [];
+        await omeZarr(out, description, progress, this.savedLabels(session), {
+          gzip,
+          write: (path, bytes) => {
+            written.push(path);
+            return writeFile(root, path, bytes);
+          },
+        });
+        // What an earlier save into the folder left, and this one did not write, goes.
+        await pruneStore(root, written);
+        where = `${folder.name}/${name}`;
+      } else if (zarr) {
+        // No folder to write into (outside Chrome and Edge): a zip, built in memory.
+        where = await writeFolder(await omeZarr(out, description, progress, this.savedLabels(session), { gzip }), undefined, base + suffix);
       } else {
-        const bytes = await niftiGz(out, description);
-        if (file) {
-          const w = await file.createWritable();
-          await w.write(bytes as unknown as BufferSource);
-          await w.close();
-          where = file.name;
-        } else {
-          downloadBlob(new Blob([bytes as BlobPart]), base + suffix);
-          where = base + suffix;
+        const stream = await this.saver.stream(file);
+        try {
+          await niftiParts(out, description, (part) => stream.write(part), progress);
+          const blob = await stream.close();
+          if (file) where = file.name;
+          else {
+            downloadBlob(blob!, base + suffix);
+            where = base + suffix;
+          }
+        } catch (e) {
+          await stream.abort();
+          throw e;
         }
       }
       this.markSaved(session, before);
@@ -1951,6 +1975,7 @@ export class Editor implements LabelVolumes {
             labels,
             progress: (done, total) => job.progress(done / total, `Block ${done} of ${total}`),
             cancelled: () => job.cancelled,
+            gzip: (bytes) => this.saver.gzip(bytes),
           },
         );
         // Chunks all 0 are not written: remove what an earlier save left in their place.

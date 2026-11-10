@@ -14,7 +14,9 @@ import { LabelVolume } from "../label_volume.js";
 import { omeZarrMetadata } from "../../registration/volume_io.js";
 import { maskCount, maskSection } from "../preview.js";
 import { component, otsu, THRESHOLD_SELECT } from "../quick_select.js";
-import { cropped, niftiGz, omeZarr, pruneStore, writeStore } from "../save.js";
+import { cropped, gzipWriter, niftiGz, niftiParts, omeZarr, pruneStore, writeStore } from "../save.js";
+import { SaveWorker } from "../save_client.js";
+import { gunzip } from "@ngplatform/sdk/precomputed";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -616,6 +618,46 @@ describe("saving", () => {
     expect(data[3 + 30 * (4 + 20 * 5)]).toBe(1000);
     expect(data[29 + 30 * (19 + 20 * 9)]).toBe(7);
     expect(data.reduce((n, x) => n + (x !== 0 ? 1 : 0), 0)).toBe(2);
+  });
+
+  it("streams a NIfTI in slabs of sections, never the whole volume at once, the same file as made whole", async () => {
+    const v = vol([30, 20, 10], "uint16");
+    const s = new Stroke(v);
+    s.set(3, 4, 5, 1000);
+    s.set(29, 19, 9, 7);
+    s.finish();
+    // Slabs of at most 3 sections (30 × 20 × 2 bytes each).
+    const parts: number[] = [];
+    const out = gzipWriter();
+    await niftiParts(v, "test", (part) => (parts.push(part.byteLength), out.write(part)), undefined, 30 * 20 * 2 * 3);
+    const blob = (await out.close())!;
+    expect(parts).toEqual([352, 3600, 3600, 3600, 1200]);
+    const streamed = await gunzip(new Uint8Array(await blob.arrayBuffer()));
+    const whole = await gunzip(await niftiGz(v, "test"));
+    expect(streamed).toEqual(whole);
+    // Through the save client (without workers here, the same done in this thread).
+    const saver = new SaveWorker();
+    const stream = await saver.stream();
+    await niftiParts(v, "test", (part) => stream.write(part));
+    expect(await gunzip(new Uint8Array(await (await stream.close())!.arrayBuffer()))).toEqual(whole);
+  });
+
+  it("writes an OME-Zarr file by file as made, the same files as made whole", async () => {
+    const v = vol([300, 200, 100]);
+    const s = new Stroke(v);
+    s.set(250, 150, 90, 4);
+    s.set(10, 10, 10, 2);
+    s.finish();
+    const whole = await omeZarr(v, "test");
+    const written = new Map<string, Uint8Array>();
+    const saver = new SaveWorker();
+    const left = await omeZarr(v, "test", undefined, [], { gzip: (b) => saver.gzip(b), write: async (path, bytes) => void written.set(path, bytes) });
+    expect(left.size).toBe(0);
+    expect([...written.keys()].sort()).toEqual([...whole.keys()].sort());
+    for (const [path, bytes] of whole) {
+      if (path.includes("/c/")) expect(await gunzip(written.get(path)!)).toEqual(await gunzip(bytes));
+      else expect(written.get(path)).toEqual(bytes);
+    }
   });
 
   it("cuts the painted box, moving the origin to its corner", () => {

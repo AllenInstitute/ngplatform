@@ -224,6 +224,13 @@ placed where it was. OME-Zarr writes only the painted chunks, so it suits
 large grids, and carries the segments' names and colours; NIfTI holds
 every voxel.
 
+Saves are compressed off the page's main thread and written as they are
+made: a NIfTI a few sections at a time straight into its file, an
+OME-Zarr folder a chunk at a time, so a large volume is never held whole
+twice and the page stays responsive. (A zip, where the browser cannot
+write folders, and a NIfTI downloaded rather than written into a file
+chosen, are built in memory, compressed.)
+
 While it saves, the panel's status line shows how far it has got. A save
 done is said in a message and in Activity. A save that fails says why in
 the status line, with **Save again**, opens the Save card, and is also
