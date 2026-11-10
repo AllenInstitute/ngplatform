@@ -9,7 +9,7 @@
 import { deflateSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type FakeDom, fakeDocument } from "@ngplatform/sdk/testing";
-import { RenderService } from "../client.js";
+import { refusal, RenderService, ServiceError } from "../client.js";
 import { plugin } from "../plugin.js";
 import { fakeContext, frame3d, IMAGE, XYZ } from "./fake_context.js";
 
@@ -128,5 +128,116 @@ describe("a frame as the service sends it", () => {
     const service = new RenderService({ base: "", token: "", viaRunner: true, hostFetch: async () => answers.shift()! });
     expect(await service.frame("s1", 0)).toBeUndefined();
     await expect(service.frame("s1", 0)).rejects.toMatchObject({ status: 404, message: "frame: no such session" });
+  });
+});
+
+describe("the service's refusals, in plain words", () => {
+  /** A service whose every request is answered with this status, body and headers. */
+  const answering = (status: number, body: unknown, headers: Record<string, string> = {}) =>
+    new RenderService({ base: "", token: "", viaRunner: true, hostFetch: async () => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...headers } }) });
+
+  it("says the GPU is busy (503), with what it needs and has, and keeps Retry-After", async () => {
+    const service = answering(503, { error: "The render computer's GPU is busy: …", reason: "gpu-budget", need_mb: 900, free_mb: 300, budget_mb: 38000 }, { "Retry-After": "30" });
+    const e = await service.open({ url: "https://example.org/brain.ome.zarr" }).catch((x) => x);
+    expect(e).toBeInstanceOf(ServiceError);
+    expect(e).toMatchObject({ status: 503, retryAfter: 30, message: "The render computer's GPU is busy (needs 900 MB, 300 MB free). Retry, or close another view." });
+    expect(refusal(e)).toEqual({ text: e.message, retry: true });
+    // A view larger than the session's frame so far: the same refusal.
+    await expect(service.setView("s1", { inv_view_projection: [], width: 1, height: 1, preset: "p" })).rejects.toMatchObject({ status: 503 });
+  });
+
+  it("says too many jobs wait (429), and the disk is nearly full (507)", async () => {
+    const queue = await answering(429, { error: "…", reason: "queue-full", waiting: 8 }, { "Retry-After": "30" }).still("s1", {}).catch((x) => x);
+    expect(queue.message).toBe("Too many jobs waiting on the render computer. Retry when one has finished.");
+    expect(refusal(queue)?.retry).toBe(true);
+    const disk = await answering(507, { error: "…", reason: "disk", need_mb: 2048, free_mb: 900 }).movie("s1", {}).catch((x) => x);
+    expect(disk.message).toBe("The render computer's disk is nearly full (needs 2.0 GB, 900 MB free). Free some space there, then Retry.");
+    expect(refusal(disk)?.retry).toBe(true);
+  });
+
+  it("gives a job that could never fit (400) as the computer words it, with no Retry; other errors as before", async () => {
+    const never = await answering(400, { error: "This splat needs about 60 GB of GPU memory, more than the render computer's budget of 38 GB: make it smaller" }).splat("s1", {}).catch((x) => x);
+    expect(never.message).toMatch(/^This splat needs about 60 GB/);
+    expect(refusal(never)?.retry).toBe(false);
+    const gone = await answering(404, { error: "no such session" }).session("s1").catch((x) => x);
+    expect(gone.message).toBe("GET /sessions/s1: no such session");
+    expect(refusal(gone)).toBeUndefined();
+  });
+});
+
+describe("refused on the render computer, in the panel", () => {
+  let dom: FakeDom;
+  beforeEach(() => {
+    dom = fakeDocument();
+  });
+  afterEach(() => {
+    for (const f of active.splice(0)) for (const off of f.ctx.subscriptions.splice(0)) off();
+    dom.restore();
+  });
+
+  const BUSY = { error: "busy", reason: "gpu-budget", need_mb: 900, free_mb: 300, budget_mb: 38000 };
+  const statusOf = (host: HTMLElement) => host.querySelector<HTMLElement>(".status-line")!;
+
+  it("says the GPU is busy when the session is refused, and Retry opens it again", async () => {
+    const f = fakeContext({ layers: [IMAGE], axes: { brain: XYZ }, state: ON });
+    active.push(f);
+    const a = f.services.get("workstation")!;
+    a.refusals.push({ method: "POST", path: /^\/sessions$/, status: 503, body: BUSY, retryAfter: 30 });
+    await plugin.activate(f.ctx);
+    const host = dom.host();
+    f.panels.get("anatomicalRendering.panel")!(host);
+    await vi.waitFor(() => expect(dom.text(statusOf(host))).toContain("The render computer's GPU is busy (needs 900 MB, 300 MB free). Retry, or close another view."));
+    dom.find(statusOf(host), "button", "Retry").click();
+    await vi.waitFor(() => expect(a.asked("POST", /^render\/sessions$/)).toHaveLength(2));
+    await vi.waitFor(() => expect(statusOf(host).hidden).toBe(true));
+  });
+
+  it("keeps the session when a view is refused, and Retry sends the view again", async () => {
+    const { f, host } = await started(dom);
+    const a = f.services.get("workstation")!;
+    a.refusals.push({ method: "PUT", path: /\/view$/, status: 503, body: BUSY, retryAfter: 30 });
+    const drawer = f.drawers.at(-1)!;
+    drawer.draw(frame3d());
+    await vi.waitFor(() => expect(dom.text(statusOf(host))).toContain("GPU is busy"));
+    dom.find(statusOf(host), "button", "Retry").click();
+    drawer.draw(frame3d());
+    await vi.waitFor(() => expect(a.asked("PUT", /\/view$/)).toHaveLength(2));
+    // The same session: not closed, not opened again.
+    expect(a.asked("POST", /^render\/sessions$/)).toHaveLength(1);
+    expect(a.asked("DELETE", /sessions/)).toHaveLength(0);
+  });
+
+  it("says too many jobs wait when a still is refused, and Retry asks for it again", async () => {
+    const { f, host } = await started(dom);
+    const a = f.services.get("workstation")!;
+    a.refusals.push({ method: "POST", path: /\/stills$/, status: 429, body: { error: "…", reason: "queue-full", waiting: 8 }, retryAfter: 30 });
+    f.drawers.at(-1)!.draw(frame3d());
+    dom.find(host, "button", "Save still (PNG)").click();
+    await vi.waitFor(() => expect(dom.text(statusOf(host))).toContain("Still: Too many jobs waiting on the render computer."));
+    dom.find(statusOf(host), "button", "Retry").click();
+    await vi.waitFor(() => expect(a.asked("POST", /\/stills$/)).toHaveLength(2));
+    expect(statusOf(host).hidden).toBe(true);
+    expect(f.toasts).toEqual([]);
+  });
+
+  it("says the disk is nearly full when a splat is refused, and Retry asks for it again", async () => {
+    const { f, host } = await started(dom);
+    const a = f.services.get("workstation")!;
+    a.refusals.push({ method: "POST", path: /\/splats$/, status: 507, body: { error: "…", reason: "disk", need_mb: 5120, free_mb: 800 } });
+    f.drawers.at(-1)!.draw(frame3d());
+    dom.find(host, "button", "Make splat").click();
+    await vi.waitFor(() => expect(dom.text(statusOf(host))).toContain("Splat: The render computer's disk is nearly full (needs 5.0 GB, 800 MB free)."));
+    dom.find(statusOf(host), "button", "Retry").click();
+    await vi.waitFor(() => expect(a.asked("POST", /\/splats$/)).toHaveLength(2));
+  });
+
+  it("says a job that could never fit in a toast, with no Retry", async () => {
+    const { f, host } = await started(dom);
+    const a = f.services.get("workstation")!;
+    a.refusals.push({ method: "POST", path: /\/stills$/, status: 400, body: { error: "This still needs about 60 GB of GPU memory, more than the render computer's budget of 38 GB: make it smaller" } });
+    f.drawers.at(-1)!.draw(frame3d());
+    dom.find(host, "button", "Save still (PNG)").click();
+    await vi.waitFor(() => expect(f.toasts).toEqual(["Still: This still needs about 60 GB of GPU memory, more than the render computer's budget of 38 GB: make it smaller"]));
+    expect(statusOf(host).hidden).toBe(true);
   });
 });

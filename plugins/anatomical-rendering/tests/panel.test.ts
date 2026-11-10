@@ -124,13 +124,70 @@ describe("the Anatomical panel", () => {
     expect(f.services.get("workstation")!.asked("POST", /^render\/sessions$/)).toHaveLength(0);
   });
 
-  it("renders the first time point of a time series on a computer, and refuses it in this browser", async () => {
-    const series = { names: ["t", "z", "y", "x"], units: ["s", "m", "m", "m"], bounds: { lower: [0, 0, 0, 0], upper: [12, 10, 10, 10] } };
-    const f = fakeContext({ layers: [IMAGE], axes: { brain: series } });
+  it("offers a choice of channel and time point on a computer, each a new session and one undo step; this browser refuses them", async () => {
+    const tc = { names: ["t", "c'", "z", "y", "x"], units: ["s", "", "m", "m", "m"], bounds: { lower: [0, 0, 0, 0, 0], upper: [12, 3, 10, 10, 10] } };
+    const f = fakeContext({ layers: [IMAGE], axes: { brain: tc }, state: { on: true, layer: "brain" } });
+    const service = f.services.get("workstation")!;
+    service.volume = { channels: 3, times: 12, axes: ["t", "c", "z", "y", "x"] };
+    const set = vi.spyOn(f.ctx.state, "set");
     const { host } = await open(dom, f);
-    expect(dom.text(cardOf(dom, host, "Rendering"))).toContain("This image has 12 time points: the first time point is rendered.");
+    await vi.waitFor(() => expect(service.asked("POST", /^render\/sessions$/)).toHaveLength(1));
+    const rendering = cardOf(dom, host, "Rendering");
+    // The controls in place of a note that only the first is rendered.
+    expect(dom.text(rendering)).not.toContain("is rendered");
+    const channel = rendering.querySelector<HTMLSelectElement>("select[aria-label=Channel]")!;
+    expect([...channel.querySelectorAll("option")].map((o) => o.textContent)).toEqual(["0", "1", "2"]);
+    const time = rendering.querySelector<HTMLInputElement>("input[type=range][aria-label=\"Time point\"]")!;
+    expect([time.getAttribute("min"), time.getAttribute("max")]).toEqual(["0", "11"]);
+    // The first session asked for the first of each (nothing said: the computer's default).
+    expect((service.asked("POST", /^render\/sessions$/)[0].body as { volume: Record<string, unknown> }).volume.channel).toBeUndefined();
+
+    channel.value = "2";
+    dom.fire(channel, "change");
+    expect(set).toHaveBeenCalledTimes(1);
+    expect(readSaved(f.state()).volumeAt).toEqual({ "https://example.org/brain.ome.zarr": { channel: 2, time: 0 } });
+    await vi.waitFor(() => expect(service.asked("POST", /^render\/sessions$/)).toHaveLength(2));
+    expect((service.asked("POST", /^render\/sessions$/)[1].body as { volume: Record<string, unknown> }).volume).toMatchObject({ channel: 2 });
+    expect(service.asked("DELETE", /^render\/sessions\/workstation-s1$/)).toHaveLength(1);
+
+    time.value = "5";
+    dom.fire(time, "change");
+    expect(set).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(service.asked("POST", /^render\/sessions$/)).toHaveLength(3));
+    expect((service.asked("POST", /^render\/sessions$/)[2].body as { volume: Record<string, unknown> }).volume).toMatchObject({ channel: 2, time: 5 });
+
+    // Undo puts the state back: the session follows, and the controls show it.
+    f.ctx.state.set({ ...readSaved(f.state()), volumeAt: {} });
+    await vi.waitFor(() => expect(service.asked("POST", /^render\/sessions$/)).toHaveLength(4));
+    expect(channel.value).toBe("0");
+
     f.ctx.state.set({ ...readSaved(f.state()), where: "browser" });
-    expect(dom.text(cardOf(dom, host, "Rendering"))).toContain("this browser renders an image with one of each");
+    expect(dom.text(rendering)).toContain("this browser renders an image with one of each");
+    expect(rendering.querySelector("select[aria-label=Channel]")).toBeNull();
+  });
+
+  it("shows the computer's GPU budget in use and its queue in Remote, quietly, and a splat warning", async () => {
+    const f = fakeContext({ layers: [IMAGE], axes: { brain: XYZ } });
+    const service = f.services.get("workstation")!;
+    service.info = {
+      budget: { total_mb: 38912, used_mb: 12595, free_mb: 26317, held: [] },
+      queue: { running: { kind: "movie", id: "m1" }, waiting: [{ kind: "still", id: "s2" }], max_waiting: 8 },
+      splats: { python: "/x/python", ready: true, gsplat: "1.5.0", pinned: "1.4.0", warning: "gsplat 1.5.0: the fit is written for 1.4.0 (pip install gsplat==1.4.0)" },
+    };
+    const { host } = await open(dom, f);
+    expect(dom.text(cardOf(dom, host, "Remote"))).toContain("Test GPU · GPU: 12.3 of 38 GB in use · 1 job running, 1 waiting");
+    expect(dom.text(cardOf(dom, host, "Splat"))).toContain("gsplat 1.5.0: the fit is written for 1.4.0");
+  });
+
+  it("lists a job waiting its turn with its place", async () => {
+    const f = fakeContext({ layers: [IMAGE], axes: { brain: XYZ }, state: { on: true, layer: "brain" } });
+    const service = f.services.get("workstation")!;
+    service.jobStart = { status: "queued", progress: 0, message: "waiting for 2 jobs ahead", queue_position: 2, jobs_ahead: 2 };
+    const { host } = await open(dom, f);
+    await vi.waitFor(() => expect(service.asked("POST", /^render\/sessions$/)).toHaveLength(1));
+    f.drawers.at(-1)!.draw(frame3d());
+    dom.find(host, "button", "Save still (PNG)").click();
+    await vi.waitFor(() => expect(dom.text(cardOf(dom, host, "Output"))).toContain("waiting, 2 jobs ahead"));
   });
 
   it("labels the view buttons by axis when the image's metadata gives no anatomical orientation", async () => {

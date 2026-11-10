@@ -147,9 +147,9 @@ describe("what an image's axes allow", () => {
     expect(axesCheck({ names: ["y", "x"], units: ["m", "m"] }, false).problem).toMatch(/2 spatial axes/);
   });
 
-  it("renders the first time point and channel on a computer; this browser takes one of each only", () => {
+  it("counts the time points and channels on a computer (a choice of each); this browser takes one of each only", () => {
     const tc = { names: ["t", "c'", "z", "y", "x"], units: ["s", "", "m", "m", "m"], bounds: { lower: [0, 0, 0, 0, 0], upper: [5, 3, 9, 9, 9] } };
-    expect(axesCheck(tc, false).note).toBe("This image has 5 time points and 3 channels: the first time point and channel are rendered.");
+    expect(axesCheck(tc, false)).toEqual({ times: 5, channels: 3 });
     expect(axesCheck(tc, true).problem).toMatch(/this browser renders an image with one of each/);
     // Size-1 time and channel axes (bioformats2raw's tczyx) are no limit.
     expect(axesCheck({ ...tc, bounds: { lower: [0, 0, 0, 0, 0], upper: [1, 1, 9, 9, 9] } }, true)).toEqual({});

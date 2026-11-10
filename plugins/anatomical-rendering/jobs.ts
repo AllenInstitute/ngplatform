@@ -22,6 +22,8 @@ export interface JobRecord {
   error?: string;
   /** A splat's files the page can fetch. */
   files?: string[];
+  /** While it waits its turn: the jobs before it on its computer (the one running included). */
+  ahead?: number;
   /** When it was asked for (ms since 1970). */
   started: number;
 }
@@ -52,6 +54,7 @@ export function readJobs(raw: unknown): JobRecord[] {
       message: typeof j.message === "string" ? j.message : "",
       ...(typeof j.error === "string" ? { error: j.error } : {}),
       ...(Array.isArray(j.files) ? { files: j.files.filter((f) => typeof f === "string") } : {}),
+      ...(typeof j.ahead === "number" && Number.isFinite(j.ahead) ? { ahead: j.ahead } : {}),
       started: typeof j.started === "number" ? j.started : 0,
     }))
     .slice(-MAX_JOBS);
@@ -77,13 +80,26 @@ export function dropJob(list: readonly JobRecord[], job: Pick<JobRecord, "kind" 
   return list.filter((j) => !(j.kind === job.kind && j.id === job.id && j.host === job.host));
 }
 
+/**
+ * How far a job is, in a few words: its place while it waits its turn
+ * ("waiting, 2 jobs ahead"), or the computer's message while it waits for
+ * GPU memory at its turn, else its progress.
+ */
+export function jobProgress(j: Pick<JobRecord, "status" | "progress" | "message" | "ahead">): string {
+  if (j.status === "queued") {
+    if (j.ahead !== undefined) return j.ahead > 0 ? `waiting, ${j.ahead} job${j.ahead === 1 ? "" : "s"} ahead` : "waiting, next to start";
+    return j.message ? (/^waiting/i.test(j.message) ? j.message : `waiting, ${j.message}`) : "waiting";
+  }
+  if (/^waiting for GPU memory/i.test(j.message)) return j.message;
+  return `${Math.round(j.progress * 100)}%${j.message ? `, ${j.message}` : ""}`;
+}
+
 /** One line for a job in the list: its name, then how far it is or how it ended. */
 export function jobText(j: JobRecord): string {
   switch (j.status) {
     case "queued":
-      return `${j.name}: waiting`;
     case "running":
-      return `${j.name}: ${Math.round(j.progress * 100)}%${j.message ? `, ${j.message}` : ""}`;
+      return `${j.name}: ${jobProgress(j)}`;
     case "done":
       return `${j.name}: done`;
     case "failed":

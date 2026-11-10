@@ -33,16 +33,34 @@ The parameter block both renderers read is laid out once, in
 
 | Request | What |
 |---|---|
-| `GET /info` | Its GPU, presets, light maps, whether it can fit splats, and whether it has `ffmpeg` (movies need it) |
+| `GET /info` | Its GPU, presets, light maps, whether it can fit splats (`splats.pinned`: the gsplat version the fit is written for; `splats.warning` when another is installed), and whether it has `ffmpeg` (movies need it); `budget` (the GPU memory every session and job draws on: `total_mb`, `used_mb`, `free_mb`, what holds it, the uploads), `queue` (`running`, `waiting`, `max_waiting`), `disk` (`free_mb` where jobs write) and `cache`. The Remote card shows the budget in use and the queue, read again every 15 s while the panel is open |
 | `GET /presets` | The presets in full |
-| `POST /sessions` `{volume: {url, budget?, level?}, labels?: {url}}` | Loads the image (and labels) and puts it on the GPU; `GET /sessions/<id>` says how far it is, then the level and its placement |
-| `PUT /sessions/<id>/view` | A view: `inv_view_projection` (column-major), `width`, `height`, `scale`, `world_from_physical`, `unit_mm`, `preset`, `overrides`, `light`, `clips`, `labels`, `background`, `max_samples`, `aperture`, `focus`, `orbit_center`. Sides are kept to 8–8192 pixels and `max_samples` to 1–4096 |
+| `POST /sessions` `{volume: {url, budget?, level?, channel?, time?}, labels?: {url}}` | Loads the image (and labels) at a channel and time point (whole numbers from 0, default 0; out of the image's range, the session fails saying how many it has) and puts it on the GPU; `GET /sessions/<id>` says how far it is, then the level and its placement, and in `volume` the `channel` and `time` shown, how many there are (`channels`, `times`) and the `axes`. Another channel or time point is another session. Over the GPU budget: 503 with `Retry-After: 30` and `{error, reason: "gpu-budget", need_mb, free_mb, budget_mb}` |
+| `PUT /sessions/<id>/view` | A view: `inv_view_projection` (column-major), `width`, `height`, `scale`, `world_from_physical`, `unit_mm`, `preset`, `overrides`, `light`, `clips`, `labels`, `background`, `max_samples`, `aperture`, `focus`, `orbit_center`. Sides are kept to 8–8192 pixels and `max_samples` to 1–4096. A view larger than the session's frame so far may get the same 503 as `POST /sessions` |
 | `GET /sessions/<id>/frame?after=N&have=V` | The next frame after N (long poll): a JPEG and its alpha plane (deflated, from `X-Alpha-Offset`) when the view asks for `frame_format: "jpeg"`, as the page does, else WebP with alpha; `X-Frame`, `X-Samples`, `X-Version`, `X-Width`, `X-Height`, `X-Detail`; the first frame of a view the page has no distances for (`have`) carries them after the picture (`X-Distance-*`). 410 with the error once the session has failed (out of GPU memory: its memory is let go) |
 | `GET /sessions/<id>/depth` | The view's depth (GL 0..1, float16, zlib); `?channel=distance` the distance along each ray to the tissue (float32, zlib) |
 | `POST /sessions/<id>/resolve` `{preset, overrides}` | The preset at this image's values (its window and histogram matching resolved): what the colourmap editor shows |
 | `POST /sessions/<id>/stills` `{view, width, height, samples, background?, name?}` | A still as a job: `GET /stills/<id>` for progress, `DELETE` to cancel, `/stills/<id>/file` for the PNG. At most 8192 × 8192 pixels, 4096 samples, and width × height × samples within 8192² × 256 |
 | `POST /sessions/<id>/movies` `{keyframes, fps, width, height, samples, crf?}` | A movie (a preview is one at about 384 px, 8 samples, 12 fps); `GET /movies/<id>` for progress, `DELETE` to cancel (ffmpeg too), `/movies/<id>/file` for the MP4. Checked before it starts: fps 1–120, sides made even for H.264, frames and pixels within limits, ffmpeg found. Its passes go to the GPU one at a time (`Renderer.step_beside`), so the live view's wait behind it is one pass, not the frame's |
 | `POST /sessions/<id>/splats` `{view, views, size, samples, cover, steps}` | Splats of the view: the views path-traced from all round, then fitted (0 steps: the views only); `GET /splats/<id>` for progress and its files, `DELETE` to cancel, `/splats/<id>/file/<name>` for `scene.splat`, `splat.ply`, `cameras.json` |
+
+Stills, movies and splats run one at a time, in the order asked for. A job
+starts as `status: "queued"`, with `queue_position` (1: next), `jobs_ahead`
+(the one running included) and a `message` ("waiting for 2 jobs ahead"); at
+its turn it may wait for GPU memory ("waiting for GPU memory (…)"). The
+panel lists it as "Still: waiting, 2 jobs ahead". A job is refused with
+**429** `{reason: "queue-full", waiting}` when 8 wait already, **507**
+`{reason: "disk", need_mb, free_mb}` when it would leave less than 1 GB free
+where it writes, and **400** when it could never fit the GPU budget.
+Downloads (`/stills/<id>/file`, `/movies/<id>/file`, `/splats/<id>/file/<name>`)
+take a `Range`.
+
+The panel says each refusal in plain words (`refusal()` in `client.ts`): the
+GPU busy (with what it needs and has free), too many jobs waiting, the disk
+nearly full. A refused session or view is in the status line with **Retry**
+(a view is sent again; the session is kept); a refused still, movie or
+splat is there too, and **Retry** asks for it again. A job that could never
+fit is a toast, with no Retry. Nothing is retried by itself.
 
 ## Tests
 

@@ -9,9 +9,9 @@
  */
 import type { Disposer, Frame3d, JobControl, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { button, card, checkbox, downloadBlob, el, emptyState, field, iconButton, info, numberInput, region, select, type Settable, type Slider, slider, statusLine, toggle } from "@ngplatform/sdk/dom";
-import { type Distance, hostLink, type Link, type MovieInfo, type PresetInfo, RenderService, ServiceError, type ServiceInfo, type SessionInfo, type ViewSpec } from "./client.js";
+import { type Distance, hostLink, type Link, type MovieInfo, type PresetInfo, refusal, RenderService, ServiceError, type ServiceInfo, serviceText, type SessionInfo, type ViewSpec, type VolumeMeta } from "./client.js";
 import { invert4, PictureDrawer } from "./draw.js";
-import { dropJob, finished, type JobKind, type JobRecord, jobText, putJob, readJobs } from "./jobs.js";
+import { dropJob, finished, type JobKind, type JobRecord, jobProgress, jobText, putJob, readJobs } from "./jobs.js";
 import { clampInt, evenSide, LIMITS, movieSettings, retryDelay, stillProblem, windowStep } from "./limits.js";
 import { parsePly, parseSplat, showSplats, type SplatCamera } from "./splatview.js";
 import { ColourmapEditor, type DataStop, histogramHandles, shifted, type Tuning, type WarpPoint, warpInverse } from "./editor.js";
@@ -65,6 +65,8 @@ export interface Saved {
   exposure: number;
   /** For "window" presets: the data values at the window's ends, per image (its OME-Zarr store); else the host's guess. */
   windows: Record<string, [number, number]>;
+  /** The channel and time point rendered (from 0), per image (its OME-Zarr store), for an image with more than one; else the first. */
+  volumeAt: Record<string, { channel: number; time: number }>;
   /** The colourmap tuned for an image (its OME-Zarr store): stops edited over its histogram (data values), shift and compression. */
   tunings: Record<string, Tuning>;
   lightAzimuth: number;
@@ -129,6 +131,11 @@ export function readSaved(raw: unknown): Saved {
       Object.entries(s.windows && typeof s.windows === "object" ? s.windows : {}).filter(
         (e): e is [string, [number, number]] => Array.isArray(e[1]) && e[1].length === 2 && e[1].every((x) => typeof x === "number" && Number.isFinite(x)) && e[1][1] > e[1][0],
       ),
+    ),
+    volumeAt: Object.fromEntries(
+      Object.entries(s.volumeAt && typeof s.volumeAt === "object" ? s.volumeAt : {})
+        .filter((e): e is [string, { channel: number; time: number }] => !!e[1] && typeof e[1] === "object")
+        .map(([k, v]) => [k, { channel: Math.max(0, Math.round(num(v.channel, 0))), time: Math.max(0, Math.round(num(v.time, 0))) }]),
     ),
     tunings: Object.fromEntries(
       Object.entries(s.tunings && typeof s.tunings === "object" ? s.tunings : {})
@@ -290,6 +297,8 @@ interface HostSetting {
 const HOST_KEY = "host";
 /** The stills, movies and splats asked for, kept in this browser (jobs.ts). */
 const JOBS_KEY = "jobs";
+/** How often the open panel reads the computer's budget and queue again (ms). */
+const INFO_EVERY_MS = 15_000;
 const NO_FFMPEG = "Movies need ffmpeg on the render computer.";
 const NO_HOST = "No paired computer has the render service: pair one (Settings › Compute), or render in this browser.";
 
@@ -314,12 +323,16 @@ class AnatomicalRendering {
   /** Each image's anatomical orientation from its metadata (null: none given, or not readable), by store. */
   private readonly sides = new Map<string, AxisSides | null>();
   private sessionKey = "";
+  /** How many channels and time points each image has (by store), as a loaded session said: kept while another session loads. */
+  private readonly counts = new Map<string, { channels: number; times: number }>();
   private abort: AbortController | undefined;
   private lastKey = "";
   private lastScale = 1;
   private lastFrame: Frame3d | undefined;
   private lastSpec: ViewSpec | undefined;
   private sending = false;
+  /** The last view sent was refused (the GPU busy): Retry sends it again rather than opening the session again. */
+  private viewRefused = false;
   /** The view being sent, until the host answers with its version. */
   private pendingView: Promise<void> | undefined;
   private queued: ViewSpec | undefined;
@@ -442,8 +455,40 @@ class AnatomicalRendering {
   }
 
   /** What the image's axes allow where it renders (view.ts, axesCheck): a problem that stops it, or a note. */
-  private axesOf(layer: LayerInfo): { problem?: string; note?: string } {
+  private axesOf(layer: LayerInfo): { problem?: string; times?: number; channels?: number } {
     return axesCheck(this.ctx.viewer.layerTransform?.(layer.name)?.input, this.saved.where === "browser");
+  }
+
+  /**
+   * How many channels and time points the image has, on a computer: as the
+   * session says once loaded, else as Neuroglancer reads its axes;
+   * undefined when it has one of each (nothing to choose).
+   */
+  private volumeCounts(layer: LayerInfo): { channels: number; times: number } | undefined {
+    if (this.saved.where === "browser") return undefined;
+    const axes = this.axesOf(layer);
+    const src = omeZarrSource(layer.sources[0]);
+    const known = src === undefined ? undefined : this.counts.get(src);
+    const counts = known ?? { channels: axes.channels ?? 1, times: axes.times ?? 1 };
+    return counts.channels > 1 || counts.times > 1 ? counts : undefined;
+  }
+
+  /** The channel and time point to render of the image: as chosen, within what it has. */
+  private volumeAt(layer: LayerInfo): { channel: number; time: number } {
+    const src = omeZarrSource(layer.sources[0]);
+    const at = src === undefined ? undefined : this.saved.volumeAt[src];
+    const n = this.volumeCounts(layer);
+    if (at === undefined || n === undefined) return { channel: 0, time: 0 };
+    return { channel: Math.min(at.channel, n.channels - 1), time: Math.min(at.time, n.times - 1) };
+  }
+
+  /** Renders another channel or time point of the image: one undo step, and a new session (the computer loads one of each per session). */
+  private setVolumeAt(layer: LayerInfo, change: Partial<{ channel: number; time: number }>): void {
+    const src = omeZarrSource(layer.sources[0]);
+    if (src === undefined) return;
+    const next = { ...this.volumeAt(layer), ...change };
+    this.save((x) => (x.volumeAt[src] = next));
+    this.update();
   }
 
   /** The buttons that turn the view, by the image's anatomical sides when its metadata gives them, else by axis. */
@@ -530,6 +575,19 @@ class AnatomicalRendering {
     this.update();
     this.panelUpdate?.();
     if (service !== undefined && info !== undefined) this.resumeJobs(service);
+  }
+
+  /** Reads the computer's /info again, quietly (its budget in use and its queue, for the Remote card); an error leaves what was shown. */
+  private async refreshInfo(service = this.service): Promise<void> {
+    if (service === undefined || service !== this.service || this.serviceInfo === undefined) return;
+    try {
+      const info = await service.info(AbortSignal.timeout(8000));
+      if (service !== this.service || this.serviceInfo === undefined || this.disposed) return;
+      this.serviceInfo = info;
+      this.panelUpdate?.();
+    } catch {
+      // Not answering for a moment: the frame loop and Reconnect say so, not this.
+    }
   }
 
   private update(): void {
@@ -735,14 +793,23 @@ class AnatomicalRendering {
     const url = omeZarrSource(target.sources[0])!;
     const labels = this.labelsSource();
     const detailBudget = this.saved.detail ? this.saved.detailBudget : 0;
-    const key = JSON.stringify([service.link.base, url, labels, this.saved.budget, this.saved.jar, detailBudget]);
+    // The channel and time point: another of either is another session (the computer cannot change them in place).
+    const at = this.volumeAt(target);
+    const key = JSON.stringify([service.link.base, url, labels, this.saved.budget, this.saved.jar, detailBudget, at.channel, at.time]);
     if (key === this.sessionKey) return;
     this.closeSession();
     this.sessionKey = key;
     const abort = new AbortController();
     this.abort = abort;
     try {
-      let info = await service.open({ url, budget: this.saved.budget, detail_budget: detailBudget, ...(this.saved.jar ? { cylinder: JAR_FRACTION } : {}) }, labels ? { url: labels } : undefined);
+      let info = await service.open({
+        url,
+        budget: this.saved.budget,
+        detail_budget: detailBudget,
+        ...(this.saved.jar ? { cylinder: JAR_FRACTION } : {}),
+        ...(at.channel ? { channel: at.channel } : {}),
+        ...(at.time ? { time: at.time } : {}),
+      }, labels ? { url: labels } : undefined);
       if (abort.signal.aborted) {
         // Another image (or detail) was asked for while this one was opening: it is not wanted.
         void service.close(info.id).catch(() => undefined);
@@ -757,9 +824,17 @@ class AnatomicalRendering {
         if (abort.signal.aborted) break;
         this.session = info;
       }
+      const v = info.volume as SessionInfo["volume"] & Partial<VolumeMeta>;
+      if (info.status === "ready" && v.channels !== undefined && v.times !== undefined && !abort.signal.aborted) {
+        this.counts.set(url, { channels: v.channels, times: v.times });
+        // More of either than Neuroglancer's axes said, and another chosen before: that one is opened instead.
+        const now = this.volumeAt(target);
+        if (now.channel !== at.channel || now.time !== at.time) return this.update();
+      }
       // Loaded (or failed): the window and the colourmap editor follow the image's values.
       this.panelUpdate?.();
       if (info.status !== "ready" || abort.signal.aborted) return;
+      void this.refreshInfo(service);
       await this.resolvePreset();
       this.lastKey = "";
       this.handle?.redraw();
@@ -823,6 +898,7 @@ class AnatomicalRendering {
     this.distance = undefined;
     this.depth = undefined;
     this.queued = undefined;
+    this.viewRefused = false;
     this.lastKey = "";
     this.lastLook = "";
     this.lastScale = 1;
@@ -831,11 +907,24 @@ class AnatomicalRendering {
     this.drawer.set(undefined);
   }
 
-  /** After an error: connect again when the computer did not answer, else open the session (or the browser's renderer) again. */
+  /** A refused job asked for again. */
+  private retryJob(): void {
+    const r = this.refused;
+    this.refused = undefined;
+    this.statusUpdate?.();
+    r?.retry();
+  }
+
+  /** After an error: connect again when the computer did not answer, send the view again when the computer refused it, else open the session (or the browser's renderer) again. */
   private retry(): void {
     this.problem = "";
     this.reopened = 0;
-    if (this.saved.where === "browser") {
+    if (this.viewRefused && this.session?.status === "ready") {
+      this.viewRefused = false;
+      this.lastKey = "";
+      this.lastLook = "";
+      this.handle?.redraw();
+    } else if (this.saved.where === "browser") {
       this.closeLocal();
       this.update();
     } else if (this.serviceInfo === undefined) {
@@ -1032,11 +1121,19 @@ class AnatomicalRendering {
     this.pendingView = this.opened!.service.setView(sid, spec)
       .then((r) => {
         if (this.opened?.id !== sid) return;
+        if (this.viewRefused) {
+          // A view the computer took after one it refused: the refusal is over.
+          this.viewRefused = false;
+          this.problem = "";
+          this.statusUpdate?.();
+        }
         this.views.set(r.version, spec.inv_view_projection);
         for (const k of this.views.keys()) if (k < r.version - 64) this.views.delete(k);
       })
       .catch((e) => {
         if (this.opened?.id !== sid) return;
+        // The computer's GPU too busy for a larger view: the session stays, and Retry sends the view again.
+        this.viewRefused = refusal(e) !== undefined;
         this.problem = (e as Error).message;
         this.statusUpdate?.();
       })
@@ -1143,7 +1240,7 @@ class AnatomicalRendering {
         downloadBlob(await service.stillFile(info.id), "anatomical-rendering.png");
       });
     } catch (e) {
-      this.ctx.ui.toast(`Still: ${(e as Error).message}`, "error");
+      this.jobFailed("Still", e, () => void this.saveStill());
     } finally {
       this.stillRunning = false;
       this.panelUpdate?.();
@@ -1151,6 +1248,18 @@ class AnatomicalRendering {
   }
 
   // ------------------------------------------------------------------ jobs
+  /** A job the computer refused for now (its GPU busy, too many waiting, its disk nearly full): said in the status line, with Retry. */
+  private refused: { text: string; retry: () => void } | undefined;
+
+  /** A job that failed to start or ended badly: a refusal that may pass goes to the status line with Retry, anything else to a toast. */
+  private jobFailed(what: string, e: unknown, retry: () => void): void {
+    const r = refusal(e);
+    if (r?.retry) {
+      this.refused = { text: `${what}: ${r.text}`, retry };
+      this.statusUpdate?.();
+    } else this.ctx.ui.toast(`${what}: ${(e as Error).message}`, "error");
+  }
+
   /** Records a job in the list kept in this browser, and shows it. */
   private recordJob(job: JobRecord): void {
     this.jobs = putJob(this.jobs, job);
@@ -1165,7 +1274,7 @@ class AnatomicalRendering {
    * (kept in this browser) and in Activity's `job`, whose Cancel cancels it
    * on the computer.  A job the computer no longer knows is "gone".
    */
-  private async follow(kind: JobKind, service: RenderService, first: { id: string; status: string; progress: number; message: string; error: string | null; files?: string[] }, name: string, job?: JobControl): Promise<JobRecord> {
+  private async follow(kind: JobKind, service: RenderService, first: { id: string; status: string; progress: number; message: string; error: string | null; files?: string[]; jobs_ahead?: number; ahead?: number }, name: string, job?: JobControl): Promise<JobRecord> {
     const host = service.link.label ?? "";
     const key = `${kind}:${host}:${first.id}`;
     const record = (i: typeof first): JobRecord => ({
@@ -1178,10 +1287,12 @@ class AnatomicalRendering {
       message: i.message,
       ...(i.error ? { error: i.error } : {}),
       ...(i.files ? { files: i.files } : {}),
+      ...(i.status === "queued" && (i.jobs_ahead ?? i.ahead) !== undefined ? { ahead: i.jobs_ahead ?? i.ahead } : {}),
       started: this.jobs.find((j) => j.kind === kind && j.id === first.id && j.host === host)?.started ?? Date.now(),
     });
     let rec = record(first);
     this.recordJob(rec);
+    void this.refreshInfo(service);
     this.following.add(key);
     let asked = false;
     try {
@@ -1190,10 +1301,13 @@ class AnatomicalRendering {
           asked = true;
           await this.cancelJob(service, rec);
         }
-        job?.progress(rec.progress, rec.message);
+        job?.progress(rec.progress, jobProgress(rec));
         await sleep(kind === "splat" ? 2000 : kind === "movie" ? 1000 : 500);
         try {
+          const was = rec.status;
           rec = record(kind === "still" ? await service.stillInfo(first.id) : kind === "movie" ? await service.movieInfo(first.id) : await service.splatInfo(first.id));
+          // A job started or ended: the Remote card's queue and budget change.
+          if (rec.status !== was) void this.refreshInfo(service);
         } catch (e) {
           if (!(e instanceof ServiceError && e.status === 404)) throw e;
           rec = { ...rec, status: "gone" };
@@ -1321,7 +1435,9 @@ class AnatomicalRendering {
           preview = await service.movie(sid, this.movieSpec(extra, true));
           while (open && (preview.status === "queued" || preview.status === "running")) {
             bar.value = preview.progress;
-            note.textContent = preview.message || "Rendering a preview…";
+            note.textContent = preview.status === "queued" || /^waiting/i.test(preview.message)
+              ? `Preview ${jobProgress({ status: preview.status, progress: preview.progress, message: preview.message, ahead: preview.jobs_ahead })}`
+              : preview.message || "Rendering a preview…";
             await new Promise((r) => setTimeout(r, 400));
             preview = await service.movieInfo(preview.id);
           }
@@ -1331,7 +1447,11 @@ class AnatomicalRendering {
           if (!open) return;
           stage.replaceChildren(el("video", { src: url, autoplay: true, loop: true, muted: true, playsinline: true, controls: true, class: "ar-video" }));
         } catch (e) {
-          if (open) stage.replaceChildren(el("p", { class: "empty error" }, `The preview failed: ${(e as Error).message}`));
+          if (!open) return;
+          // Refused for now (the GPU busy, too many jobs waiting, the disk nearly full): Retry asks again.
+          const r = refusal(e);
+          stage.replaceChildren(el("p", { class: "empty error" }, r ? r.text : `The preview failed: ${(e as Error).message}`));
+          if (r?.retry) stage.append(el("div", { class: "row" }, button("Retry", () => (close(), this.renderMovie(extra)))));
         }
       })();
       return () => {
@@ -1354,7 +1474,7 @@ class AnatomicalRendering {
         downloadBlob(await service.movieFile(info.id), `${name}.mp4`);
       });
     } catch (e) {
-      this.ctx.ui.toast(`Movie: ${(e as Error).message}`, "error");
+      this.jobFailed("Movie", e, () => void this.movieJob(this.session?.status === "ready" ? this.session.id : sid, spec));
     }
   }
 
@@ -1387,7 +1507,7 @@ class AnatomicalRendering {
       });
       if (done.files?.includes("scene.splat")) this.ctx.ui.toast(`Splat made: ${done.message}`);
     } catch (e) {
-      this.ctx.ui.toast(`Splat: ${(e as Error).message}`, "error");
+      this.jobFailed("Splat", e, () => void this.makeSplat());
     }
   }
 
@@ -1431,12 +1551,13 @@ class AnatomicalRendering {
    * under way (the image loading); nothing otherwise.  What the panel shows
    * already (the GPU, Render off, the level, samples) is not repeated.
    */
-  private status(): { error?: string; action?: "retry" | "pair"; progress?: string } {
+  private status(): { error?: string; action?: "retry" | "pair" | "again"; progress?: string } {
     const host = this.saved.where === "host";
     if (host && this.connectProblem && this.connecting === undefined) return { error: this.connectProblem, action: this.service === undefined ? "pair" : "retry" };
     const s = host ? this.session : undefined;
     if (this.problem) return { error: this.problem, action: "retry" };
     if (s?.status === "failed") return { error: `Failed: ${s.error ?? "unknown error"}`, action: "retry" };
+    if (this.refused) return { error: this.refused.text, action: "again" };
     if (!this.saved.on) return {};
     if (host && this.connecting !== undefined) return { progress: `Connecting to ${this.link()?.label ?? "the render computer"}…` };
     if (s?.status === "loading") return { progress: `Loading: ${s.message} (${Math.round(s.progress * 100)}%)` };
@@ -1501,6 +1622,31 @@ class AnatomicalRendering {
     // ----------------------------------------------------------- Rendering
     const image = choices((v) => this.save((x) => (x.layer = v)), "Image");
     const imageNote = el("p", { class: "hint" });
+    // An image with several channels or time points: which one is rendered (another opens a new session).
+    let channelChoice: Settable<HTMLSelectElement, string> | undefined;
+    let timeChoice: Slider | undefined;
+    const volumePart = region((n: { channels: number; times: number } | undefined) => {
+      channelChoice = timeChoice = undefined;
+      if (n === undefined) return null;
+      const target = () => this.target();
+      const at = target() ? this.volumeAt(target()!) : { channel: 0, time: 0 };
+      if (n.channels > 1) {
+        channelChoice = select(Array.from({ length: n.channels }, (_, i): [string, string] => [String(i), String(i)]), String(at.channel), (v) => {
+          const t = target();
+          if (t) this.setVolumeAt(t, { channel: Number(v) });
+        }, "Channel");
+      }
+      if (n.times > 1) {
+        timeChoice = slider(at.time, { min: 0, max: n.times - 1, step: 1, label: "Time point", onchange: (v) => {
+          const t = target();
+          if (t) this.setVolumeAt(t, { time: Math.round(v) });
+        } });
+      }
+      return [
+        channelChoice && field("Channel", channelChoice, { info: `This image has ${n.channels} channels, numbered from 0: one is rendered at a time.` }),
+        timeChoice && field("Time point", timeChoice, { info: `This image has ${n.times} time points, numbered from 0: one is rendered at a time.` }),
+      ];
+    }, { class: "stack" });
     const preset = choices((v) => this.save((x) => (x.preset = v)), "Preset");
     const references = region((refs: ReturnType<AnatomicalRendering["references"]>) =>
       refs.length === 0
@@ -1556,6 +1702,7 @@ class AnatomicalRendering {
     const rendering = card("anatomical.rendering", "Rendering", { open: true },
       field("Image", image),
       imageNote,
+      volumePart,
       el("div", { class: "row" },
         field("Preset", preset, { info: "A look per modality or organ. Load… reads a preset (or a list of them) from a JSON file: a name, a domain, stops of value, colour and opacity, and the material." }),
         button("Load…", () => this.loadPresetFile())),
@@ -1812,7 +1959,9 @@ class AnatomicalRendering {
         if (st.error !== undefined) {
           status.error(st.error, st.action === "pair"
             ? { label: "Pair a computer…", run: () => void ctx.commands.invoke(COMPUTE_SETTINGS.command, COMPUTE_SETTINGS.args) }
-            : { label: "Retry", run: () => this.retry() });
+            : st.action === "again"
+              ? { label: "Retry", run: () => this.retryJob() }
+              : { label: "Retry", run: () => this.retry() });
         } else if (st.progress !== undefined) status.progress(st.progress);
         else status.clear();
       }
@@ -1856,14 +2005,22 @@ class AnatomicalRendering {
         hosts.some((h) => h.name === this.host.name) ? this.host.name! : "",
       );
       const g = this.serviceInfo?.gpu;
-      gpu.textContent = g === undefined ? "" : g.backend === "cuda" ? `${g.name}, ${Math.round((g.free_mb ?? 0) / 1024)} of ${Math.round((g.total_mb ?? 0) / 1024)} GB free` : `No GPU: ${g.error ?? ""}`;
+      gpu.textContent = this.serviceInfo === undefined ? "" : serviceText(this.serviceInfo);
       gpu.hidden = !onHost_ || g === undefined;
       reconnect.hidden = hosts.length === 0;
 
       // Rendering.
       rendering.hidden = imgs.length === 0;
       image.update(imgs.map((l) => [l.name, l.name]), target?.name ?? "");
-      imageNote.textContent = axes.problem ?? axes.note ?? "";
+      imageNote.textContent = axes.problem ?? "";
+      const counts = target && axes.problem === undefined ? this.volumeCounts(target) : undefined;
+      volumePart.update(counts);
+      volumePart.hidden = counts === undefined;
+      if (target && counts) {
+        const at = this.volumeAt(target);
+        channelChoice?.set(String(at.channel));
+        timeChoice?.set(at.time);
+      }
       imageNote.hidden = imageNote.textContent === "";
       imageNote.className = axes.problem !== undefined ? "hint error" : "hint";
       const presetList = s.where === "browser" ? LOCAL_PRESETS.map((p) => ({ name: p.name, modality: p.modality ?? "" })) : this.presets;
@@ -1959,7 +2116,7 @@ class AnatomicalRendering {
       rotTurn.set(String(s.rotation.degrees));
       rotStep.set(s.rotation.step);
       const fit = this.serviceInfo?.splats;
-      cannotFit.textContent = fit && !fit.ready ? `Views only: this computer cannot fit (${fit.error ?? "no splat Python"}).` : "";
+      cannotFit.textContent = fit && !fit.ready ? `Views only: this computer cannot fit (${fit.error ?? "no splat Python"}).` : fit?.warning ? `${fit.warning}.` : "";
       cannotFit.hidden = !onHost_ || cannotFit.textContent === "";
       splatViews.input.set(s.splat.views);
       splatSize.input.set(s.splat.size);
@@ -1972,7 +2129,13 @@ class AnatomicalRendering {
     };
     this.panelUpdate = sync;
     sync();
+    // While the panel is open: the computer's budget and queue now and then, for Remote (not while the page is hidden).
+    const infoTimer = setInterval(() => {
+      if (this.panelUpdate !== sync) return clearInterval(infoTimer);
+      if (this.saved.where === "host" && !document.hidden) void this.refreshInfo();
+    }, INFO_EVERY_MS);
     return () => {
+      clearInterval(infoTimer);
       this.panelUpdate = undefined;
       this.statusUpdate = undefined;
       this.jobsUpdate = undefined;

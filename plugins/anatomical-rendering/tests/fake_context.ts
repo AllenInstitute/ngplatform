@@ -25,6 +25,14 @@ export class FakeService {
   readonly jobs = new Map<string, Record<string, unknown>>();
   /** The answer to GET /info: a host without the render service fails. */
   up = true;
+  /** More for GET /info (the budget, the queue, splats' warning). */
+  info: Record<string, unknown> = {};
+  /** More for a session's volume (its channels and time points). */
+  volume: Record<string, unknown> = {};
+  /** What a new job answers first (its status, its place in the queue). */
+  jobStart: Record<string, unknown> = {};
+  /** Refusals to answer once each, in turn, to requests of a method to paths matching: the status, the body, Retry-After. */
+  readonly refusals: { method: string; path: RegExp; status: number; body: Record<string, unknown>; retryAfter?: number }[] = [];
 
   constructor(readonly host: string) {}
 
@@ -35,11 +43,16 @@ export class FakeService {
     const json = (data: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } }));
     const p = path.replace(/^render/, "").replace(/\?.*$/, "");
     if (!this.up) return Promise.reject(new Error("not answering"));
-    if (p === "/info") return json({ service: "render", version: "test", gpu: { backend: "cuda", name: "Test GPU", free_mb: 4096, total_mb: 8192 }, presets: ["HiP-CT brain"], ffmpeg: true });
+    const refused = this.refusals.findIndex((r) => r.method === method && r.path.test(p));
+    if (refused >= 0) {
+      const [r] = this.refusals.splice(refused, 1);
+      return Promise.resolve(new Response(JSON.stringify(r.body), { status: r.status, headers: { "Content-Type": "application/json", ...(r.retryAfter ? { "Retry-After": String(r.retryAfter) } : {}) } }));
+    }
+    if (p === "/info") return json({ service: "render", version: "test", gpu: { backend: "cuda", name: "Test GPU", free_mb: 4096, total_mb: 8192 }, presets: ["HiP-CT brain"], ffmpeg: true, ...this.info });
     if (p === "/presets") return json([{ name: "HiP-CT brain", modality: "HiP-CT", description: "", density: 40 }]);
     if (p === "/sessions" && method === "POST") {
       const id = `${this.host}-s${++this.sessions}`;
-      return json({ id, status: "ready", progress: 1, message: "level 0 (10 × 10 × 10)", error: null, volume: { lo: 0, hi: 255, dtype: "uint8" }, labels: null, samples: 0, ms_per_pass: 0 });
+      return json({ id, status: "ready", progress: 1, message: "level 0 (10 × 10 × 10)", error: null, volume: { lo: 0, hi: 255, dtype: "uint8", channel: body?.volume?.channel ?? 0, time: body?.volume?.time ?? 0, ...this.volume }, labels: null, samples: 0, ms_per_pass: 0 });
     }
     if (/^\/sessions\/[^/]+$/.test(p) && method === "DELETE") return json({});
     if (/^\/sessions\/[^/]+\/view$/.test(p)) return json({ version: ++this.versions });
@@ -58,7 +71,7 @@ export class FakeService {
     const start = /^\/sessions\/[^/]+\/(stills|movies|splats)$/.exec(p);
     if (start) {
       const id = `${start[1]}-${this.jobs.size + 1}`;
-      const j = { id, status: "running", progress: 0.25, message: "frame 1", error: null, file: null, folder: "", files: [], result: null };
+      const j = { id, status: "running", progress: 0.25, message: "frame 1", error: null, file: null, folder: "", files: [], result: null, ...this.jobStart };
       this.jobs.set(id, j);
       return json(j);
     }

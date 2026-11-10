@@ -276,10 +276,11 @@ export interface SourceAxes {
 /**
  * What the image's axes allow: `problem` when it cannot be rendered
  * (fewer than three spatial axes; in this browser, more than one time
- * point or channel), `note` when only part of it is (on a computer, the
- * first time point and channel).  Spatial axes are those in metres.
+ * point or channel); on a computer, how many time points and channels it
+ * has when more than one (the panel then offers a choice of each).
+ * Spatial axes are those in metres.
  */
-export function axesCheck(axes: SourceAxes | undefined, browser: boolean): { problem?: string; note?: string } {
+export function axesCheck(axes: SourceAxes | undefined, browser: boolean): { problem?: string; times?: number; channels?: number } {
   if (axes === undefined) return {};
   const spatial = axes.units.filter((u) => u === "m").length;
   if (spatial < 3) return { problem: `This image has ${spatial === 1 ? "one spatial axis" : `${spatial === 0 ? "no" : spatial} spatial axes`}: rendering needs x, y and z.` };
@@ -294,8 +295,7 @@ export function axesCheck(axes: SourceAxes | undefined, browser: boolean): { pro
   if (times === 1 && channels === 1) return {};
   const parts = [times > 1 ? `${times} time points` : "", channels > 1 ? `${channels} channels` : ""].filter(Boolean).join(" and ");
   if (browser) return { problem: `This image has ${parts}: this browser renders an image with one of each. Render it on a computer.` };
-  const first = [times > 1 ? "time point" : "", channels > 1 ? "channel" : ""].filter(Boolean).join(" and ");
-  return { note: `This image has ${parts}: the first ${first} ${times > 1 && channels > 1 ? "are" : "is"} rendered.` };
+  return { ...(times > 1 ? { times } : {}), ...(channels > 1 ? { channels } : {}) };
 }
 
 /** A link a host sent, for an `href`: http(s) only (never `javascript:`); undefined otherwise. */
