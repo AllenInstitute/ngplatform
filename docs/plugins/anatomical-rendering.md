@@ -62,9 +62,12 @@ view: **Centre** on the tissue, or from each side of the image (see
 **View** below).
 
 Before it opens an image, the panel checks its axes. A 2-D image is not
-rendered (it says so under **Image**). On a computer, an image with time
-points or channels renders its first time point and channel, and says so;
-this browser's renderer takes images with one of each only.
+rendered (it says so under **Image**). On a computer, an image with several
+channels or time points renders one of each: **Rendering** then has a
+**Channel** choice and a **Time point** slider (numbered from 0, as
+Neuroglancer numbers them). Choosing another opens a new session on the
+computer, kept with the scene as one undo step. This browser's renderer
+takes images with one of each only.
 
 ## What you can set
 
@@ -337,6 +340,24 @@ refined, without the picture jumping:
   and when another computer is chosen or **Reconnect** is pressed; one
   nothing has asked about for 3 minutes is closed on the host all the same,
   and the page opens a new one if it is still there.
+- The render computer shares one GPU budget between every session and job
+  (all its tabs and users). **Remote** shows it, with the queue, as
+  "GPU: 12.3 of 38 GB in use · 1 job running". When a new session (or a
+  larger view) would not fit, the line says "The render computer's GPU is
+  busy (needs 900 MB, 300 MB free). Retry, or close another view."; close
+  another tab's view or wait for a job, then **Retry**. Nothing is retried
+  by itself.
+- Stills, movies and splats run one at a time on the render computer. One
+  waiting its turn is listed with its place ("Still: waiting, 2 jobs
+  ahead"), and at its turn it may wait for GPU memory ("waiting for GPU
+  memory (…)"), also in Activity. With 8 waiting already, a new one is
+  refused ("Too many jobs waiting on the render computer"); when the
+  computer's disk is nearly full it is refused too ("The render computer's
+  disk is nearly full (needs 2.0 GB, 900 MB free)"); the line says which,
+  with **Retry**. A job too large ever to fit the budget is refused with
+  the computer's reason: make it smaller.
+- **Splat** shows the computer's warning when its gsplat is not the version
+  the fit is written for.
 - A session that runs the GPU out of memory stops and lets its memory go;
   the line says so, and **Retry** opens it again (with a smaller **Whole
   volume**, say). A computer that stops answering is asked again less and
@@ -359,8 +380,8 @@ from noisy first frames and detail coming in at once).
 - The image is placed by its OME-Zarr transforms in Neuroglancer's x, y, z
   (as the volume view does); a layer's own transform in the viewer is not
   applied yet.
-- One image (and one segmentation) at a time; of an image with time points
-  or channels, the first of each is rendered (on a computer).
+- One image (and one segmentation) at a time, and one channel and time
+  point of it (chosen in **Rendering**, on a computer).
 - Splats are *in progress*: the panel offers them, but no fit has yet run
   end to end.
 - Rendering is for looking, teaching and figures, not for reading values.
