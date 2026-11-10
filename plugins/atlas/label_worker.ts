@@ -22,7 +22,7 @@ setAsyncComputationWorkerFactory(() => asyncComputationWorker(["org.ngplatform.z
 
 const controllers = new Map<number, AbortController>();
 
-// Each reader holds up to 128 MB of chunks: keep the last two stores' only.
+// The last two stores kept open (their chunks are in the cache all the tools share).
 const open = readerCache(2);
 
 self.onmessage = (event: MessageEvent) => {

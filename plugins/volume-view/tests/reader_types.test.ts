@@ -208,7 +208,7 @@ describe("the cap on one read", () => {
   it("refuses a level past it, naming the size and the coarser levels that fit", async () => {
     serve(precomputed("uint16", "raw"));
     // Level 0: 6 × 5 × 3 uint16 = 180 bytes; level 1: 3 × 3 × 2 = 36 bytes.
-    const reader = new VolumeReader(undefined, 100);
+    const reader = new VolumeReader(100);
     expect(reader.maxReadBytes).toBe(100);
     await reader.open([STORE], undefined);
     await expect(reader.rawVolume(0, signal())).rejects.toThrow("Level 0 (6 × 5 × 3 voxels) is 180 bytes, past the 100 bytes one read may take: read a coarser level (level 1 fit)");

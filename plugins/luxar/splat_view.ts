@@ -27,6 +27,7 @@ import { SplatView2d } from "./splat_view2d.js";
 import { BLOCK, CELL, type SplatImageInfo } from "./splat_worker.js";
 import { COLORMAP_INDEX, type LayerStyle, rgbOf, TONE_INDEX } from "./style.js";
 import { apply, boxInFrustum, columnMajor, invertAffine, multiply } from "./view_math.js";
+import { withSharedChunks } from "../volume-view/chunk_host.js";
 
 /** GPU memory for one image's splats. */
 const GPU_BYTES = 512 * 1024 * 1024;
@@ -72,7 +73,7 @@ export class SplatView {
     readonly storeUrl: string,
     public style: LayerStyle,
   ) {
-    this.worker = new Worker(new URL("./splat_worker.ts", import.meta.url), { type: "module", name: "luxar splats" });
+    this.worker = withSharedChunks(new Worker(new URL("./splat_worker.ts", import.meta.url), { type: "module", name: "luxar splats" }));
     this.worker.onmessage = (event: MessageEvent) => {
       const msg = event.data;
       if (msg.type === "opened") this.info = msg.info;

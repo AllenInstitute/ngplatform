@@ -26,7 +26,7 @@ setAsyncComputationWorkerFactory(() => asyncComputationWorker(["org.ngplatform.z
 
 const controllers = new Map<number, AbortController>();
 
-// Each reader holds up to 128 MB of chunks: the last three stores' only (an image and a segmentation at once, for statistics).
+// The last three stores kept open (an image and a segmentation at once, for statistics); their chunks are in the cache all the tools share.
 const open = readerCache(3);
 
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];

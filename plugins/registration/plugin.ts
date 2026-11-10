@@ -46,6 +46,7 @@ import { REGISTRATION_PANEL } from "./manifest.js";
 import type { SaveRequest } from "./save_worker.js";
 import { DIRECTIONS, type Direction, straighten } from "./straighten.js";
 import { ENLARGE, type Method, zipFiles } from "./volume_io.js";
+import { withSharedChunks } from "../volume-view/chunk_host.js";
 
 interface Pair {
   id: string;
@@ -163,7 +164,7 @@ export interface SaveWorker {
 
 /** Registration's worker: geometry and saving, as promises with progress and cancel. */
 class SaveClient implements SaveWorker {
-  private readonly rpc = new WorkerRpc(() => new Worker(new URL("./save_worker.ts", import.meta.url), { type: "module", name: "registration" }), {
+  private readonly rpc = new WorkerRpc(() => withSharedChunks(new Worker(new URL("./save_worker.ts", import.meta.url), { type: "module", name: "registration" })), {
     stopped: (why) => `the saving worker stopped: ${why}`,
     restart: true,
   });

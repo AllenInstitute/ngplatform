@@ -192,7 +192,7 @@ describe("a chunk that cannot be read", () => {
     let broken = true;
     const asked = serve(files, (key) => broken && key === "0/0.1.0");
     // Chunks of 8 bytes, read 8 at a time.
-    const reader = new VolumeReader(undefined, undefined, 64);
+    const reader = new VolumeReader(undefined, 64);
     await reader.open([BASE], undefined);
     const chunkReads = () => asked.filter((k) => /^0\/\d/.test(k)).length;
     const opened = chunkReads();
@@ -252,7 +252,7 @@ describe("chunks read at once", () => {
   it("keeps big chunks within the bytes allowed at once, in every kind of read", async () => {
     // 4 × 4 × 4 chunks of uint16 (128 bytes), 512 bytes allowed: 4 at once.
     const seen = serveSlowly(v2Store(ZYX, [8, 16, 16], [4, 4, 4], ([z, y, x]) => valueAt(x, y, z)));
-    const reader = new VolumeReader(undefined, undefined, 512);
+    const reader = new VolumeReader(undefined, 512);
     await reader.open([BASE], undefined);
     const reads: [string, () => Promise<unknown>][] = [
       ["volume", () => reader.volume(0, signal())],

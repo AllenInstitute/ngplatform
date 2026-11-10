@@ -4,6 +4,7 @@
  * as promises, with progress and cancelling.
  */
 import { WorkerRpc } from "@ngplatform/sdk/worker_rpc";
+import { withSharedChunks } from "../volume-view/chunk_host.js";
 
 /** One label's voxels at the level counted. */
 export interface LabelStats {
@@ -32,7 +33,7 @@ export interface Counted {
 }
 
 export class LabelClient {
-  private readonly rpc = new WorkerRpc(() => new Worker(new URL("./label_worker.ts", import.meta.url), { type: "module", name: "atlas" }), {
+  private readonly rpc = new WorkerRpc(() => withSharedChunks(new Worker(new URL("./label_worker.ts", import.meta.url), { type: "module", name: "atlas" })), {
     stopped: (why) => `the label counter stopped: ${why}`,
     // A failed worker is replaced by the next request.
     restart: true,

@@ -6,11 +6,13 @@
  * over every stored chunk.  A whole-level read larger than a cap is
  * refused, naming its size, rather than crashing the tab.
  *
- * Chunks are kept in a byte-bounded cache, so reading the same box again
- * reads nothing.  Chunks are read many at a time when they are small and a
- * few at a time when they are big (by their bytes), and ranges inside a
- * shard skip the browser's HTTP cache (see {@link storeRead}).  The volume worker runs this; it is plain code, so it is
- * tested without one.
+ * Chunks are kept in one byte-bounded cache shared by every tool's reader
+ * (./shared_chunks.ts), so reading the same box again reads nothing, and
+ * two tools reading one image hold it once.  Chunks are read many at a
+ * time when they are small and a few at a time when they are big (by their
+ * bytes), and ranges inside a shard skip the browser's HTTP cache (see
+ * {@link storeRead}).  The volume worker runs this; it is plain code, so it
+ * is tested without one.
  *
  * OME-Zarr is read in Zarr v3 or v2 (0.4, through ./zarr2.ts), and as one
  * 3-D image: size-1 t and c axes (bioformats2raw's tczyx) are read at index
@@ -19,8 +21,9 @@
 import { joinBaseUrlAndPath } from "neuroglancer/unstable/kvstore/url.js";
 import { openZarrArray, ShardIndexCache, type ZarrArrayRead, ZarrArrayReader } from "neuroglancer-zarr-vectors/reader";
 import { coalesceRangeReads } from "../zarr-vectors/src/zarr_array.js";
-import { httpJson, PrecomputedScale, readInfo } from "@ngplatform/sdk/precomputed";
+import { httpJson, PrecomputedScale, readInfo, type Scale } from "@ngplatform/sdk/precomputed";
 import { mergeLevels, parseOmeLevels, scaleLevel, type VolumeLevel } from "./ome.js";
+import { chunkSource } from "./shared_chunks.js";
 import { PRECOMPUTED } from "./sources.js";
 import { withZarr2 } from "./zarr2.js";
 
@@ -34,12 +37,37 @@ export interface LevelInfo extends VolumeLevel {
   type?: string;
 }
 
+/**
+ * What a level is opened from: enough for the image chunk worker to open
+ * it again and read its chunks (./shared_chunks.ts).
+ */
+export type LevelRef = { kind: "ome"; level: VolumeLevel } | { kind: "precomputed"; url: string; scale: Scale; stored: string; labels: boolean };
+
+/** A level as opened: what it is, and its chunks' own values read from the store (kept by no one). */
+export interface RawLevel {
+  info: LevelInfo;
+  ref: LevelRef;
+  /** A stored chunk's own values, decoded, in the array's order and of the full chunk shape. */
+  raw(index: number[]): Promise<Uint8Array | undefined>;
+  type: keyof typeof NUMERIC;
+  /** The value where there is no chunk. */
+  fill: number;
+  /** For x, y, z: the array dimension it is. */
+  dimOf: [number, number, number];
+  grid: number[];
+  /** A stored chunk's bytes, decoded: what reading it holds in memory. */
+  chunkBytes: number;
+}
+
 interface OpenLevel {
   info: LevelInfo;
   /** A read chunk, decoded, in the array's order and of the full chunk shape. */
   readChunk(index: number[]): Promise<Uint8Array | undefined>;
-  /** The chunk's own values (before the window), for other types than uint8. */
-  rawChunk?(index: number[]): Promise<Uint8Array | undefined>;
+  /**
+   * The chunk's own values (before the window), for other types than uint8;
+   * `keep` false for a pass over every chunk, which keeps none of them.
+   */
+  rawChunk?(index: number[], keep?: boolean): Promise<Uint8Array | undefined>;
   type: keyof typeof NUMERIC;
   /** The value where there is no chunk. */
   fill: number;
@@ -118,9 +146,9 @@ function namingChunks(level: OpenLevel): OpenLevel {
   const { url, path } = level.info;
   const where = url.endsWith("/") ? `${url}${path}` : `${url}/${path}`;
   const named =
-    (read: (index: number[]) => Promise<Uint8Array | undefined>) =>
-    (index: number[]): Promise<Uint8Array | undefined> =>
-      read(index).catch((error: unknown) => {
+    (read: (index: number[], keep?: boolean) => Promise<Uint8Array | undefined>) =>
+    (index: number[], keep?: boolean): Promise<Uint8Array | undefined> =>
+      read(index, keep).catch((error: unknown) => {
         if ((error as Error)?.name === "AbortError") throw error;
         throw new Error(`${where}: chunk ${index.join(".")} could not be read: ${(error as Error)?.message ?? error}`, { cause: error });
       });
@@ -318,22 +346,120 @@ export function storeRead(storeUrl: string): ZarrArrayRead {
   });
 }
 
+/** A store's reads and shard indexes, shared by its levels (the shard-index cache is keyed by path in the store). */
+export type StoreAccess = { read: ZarrArrayRead; shardIndexes: ShardIndexCache };
+
+/**
+ * Opens an OME-Zarr level (of a pyramid read by {@link parseOmeLevels} and
+ * {@link mergeLevels}): its array's metadata, and how its chunks are read.
+ * `accesses` holds one read per store, opened as needed.
+ */
+export async function openOmeLevel(level: VolumeLevel, accesses: Map<string, StoreAccess>, signal?: AbortSignal): Promise<RawLevel> {
+  let store = accesses.get(level.url);
+  if (store === undefined) accesses.set(level.url, (store = { read: storeRead(level.url), shardIndexes: new ShardIndexCache() }));
+  const { shardIndexes } = store;
+  const where = `${level.url}${level.path}`;
+  // Zarr v2 arrays (OME-Zarr 0.4) read as v3.
+  const plain = withZarr2(store.read);
+  // Chunks stored transposed (a NIfTI read as virtual Zarr, a Fortran-order v2 array) are read in their stored order.
+  const stored = await storedOrder(plain, level.path, level.axes, signal);
+  const read = stored?.read ?? plain;
+  const axesOfArray = stored?.axes ?? level.axes;
+  const array = await openZarrArray(read, level.path, signal);
+  if (array === undefined) throw new Error(`${where}: no array`);
+  const wide = array.elementType in NARROWED ? (array.elementType as keyof typeof NARROWED) : undefined;
+  if (!(array.elementType in NUMERIC) && wide === undefined) throw new Error(`${where}: ${array.elementType} values cannot be read`);
+  const rank = array.shape.length;
+  if (rank !== axesOfArray.length) throw new Error(`${where}: a ${rank}-D array, but the image names ${axesOfArray.length} axes (${axesOfArray.join(", ")})`);
+  // x, y and z, in the array's order.  Other axes (t, c) are read at
+  // index 0: only when they are size 1, as bioformats2raw's tczyx is.
+  const kept = axesOfArray.flatMap((a, d) => (["x", "y", "z"].includes(a) ? [d] : []));
+  const series = axesOfArray.findIndex((a, d) => !kept.includes(d) && array.shape[d] !== 1);
+  if (series !== -1) throw new Error(`${where} has ${stepsOf(axesOfArray[series], array.shape[series])}; a single 3-D image (one time point, one channel) is needed`);
+  const axes = kept.map((d) => axesOfArray[d]);
+  const shape = kept.map((d) => array.shape[d]);
+  const chunkShape = kept.map((d) => array.readChunkShape[d]);
+  const dimOf = [0, 1, 2].map((k) => axes.indexOf("xyz"[k])) as [number, number, number];
+  const type = (wide === undefined ? array.elementType : NARROWED[wide]) as keyof typeof NUMERIC;
+  const info: LevelInfo = { ...level, axes, shape, chunk: chunkShape, size: [shape[dimOf[0]], shape[dimOf[1]], shape[dimOf[2]]], type };
+  const reader = new ZarrArrayReader(array, read, shardIndexes);
+  const fill = fillOf(array.fillValue, type);
+  if (wide !== undefined && fill !== Number(array.fillValue ?? 0)) throw new Error(`${where}: a fill value of ${array.fillValue} is past what 32 bits hold`);
+  // A chunk's index and bytes with the size-1 axes put back and taken out again.
+  const whole = (index: number[]) => {
+    const full = new Array<number>(rank).fill(0);
+    kept.forEach((d, i) => (full[d] = index[i]));
+    return full;
+  };
+  // A chunk thicker than 1 along a size-1 axis (chunks may pass the array's edge) holds padding there.
+  const thick = array.readChunkShape.some((s, d) => !kept.includes(d) && s !== 1);
+  const raw = async (index: number[]) => {
+    let bytes = await reader.readChunk(whole(index));
+    if (bytes === undefined) return undefined;
+    if (thick) bytes = spatialBlock(bytes, array.readChunkShape, kept, array.elementBytes);
+    if (array.bigEndian && array.elementBytes > 1) bytes = swapped(bytes, array.elementBytes);
+    return wide === undefined ? bytes : narrow(bytes, wide);
+  };
+  return {
+    info,
+    ref: { kind: "ome", level },
+    raw,
+    type,
+    fill,
+    dimOf,
+    grid: shape.map((s, d) => Math.ceil(s / chunkShape[d])),
+    chunkBytes: array.readChunkShape.reduce((a, b) => a * b, 1) * array.elementBytes,
+  };
+}
+
+/**
+ * A scale of a Neuroglancer precomputed image or segmentation, as an array
+ * in z, y, x order.  An image's values are read as its data type (64-bit
+ * ones narrowed to 32 bits, as in OME-Zarr); a segmentation's labels are
+ * read as 32-bit ones, as 64-bit labels in OME-Zarr are.
+ */
+export function openPrecomputedScale(url: string, scale: Scale, stored: string, labels: boolean): RawLevel {
+  const wide = stored in NARROWED ? (stored as keyof typeof NARROWED) : undefined;
+  const type: keyof typeof NUMERIC = labels ? "uint32" : wide !== undefined ? NARROWED[wide] : (stored as keyof typeof NUMERIC);
+  const reader = new PrecomputedScale(url, scale, stored);
+  const [cx, cy, cz] = reader.chunk;
+  const [sx, sy, sz] = scale.size;
+  const info: LevelInfo = { ...scaleLevel(url, scale), shape: [sz, sy, sx], chunk: [cz, cy, cx], size: [sx, sy, sz], type };
+  // Labels are stored as 64-bit integers; images as their type (one of NUMERIC, or a 64-bit one).
+  const width = labels || wide !== undefined ? 8 : NUMERIC[stored as keyof typeof NUMERIC].BYTES_PER_ELEMENT;
+  const raw = labels
+    ? async ([z, y, x]: number[]) => {
+        const ids = await reader.readLabels([x, y, z]);
+        return ids && narrow(new Uint8Array(ids.buffer, ids.byteOffset, ids.byteLength), "uint64");
+      }
+    : async ([z, y, x]: number[]) => {
+        const bytes = await reader.readValues([x, y, z]);
+        return bytes && wide !== undefined ? narrow(bytes, wide) : bytes;
+      };
+  return {
+    info,
+    ref: { kind: "precomputed", url, scale, stored, labels },
+    raw,
+    type,
+    fill: 0,
+    dimOf: [2, 1, 0],
+    grid: [reader.grid[2], reader.grid[1], reader.grid[0]],
+    chunkBytes: cx * cy * cz * width,
+  };
+}
+
 export class VolumeReader {
   private levels: OpenLevel[] = [];
-  private cache = new Map<string, Promise<Uint8Array | undefined>>();
-  private sizes = new Map<string, number>();
-  private cached = 0;
 
   /**
-   * `cacheBytes`: decoded chunks kept, a few hundred megabytes at most.
    * `maxReadBytes`: the most one read of a level or a box may allocate;
    * a larger one is refused with a message naming its size and the
    * coarser levels that fit, rather than crashing the tab.
    * `inFlightBytes`: the most bytes of chunks read at once
-   * ({@link concurrencyFor}).
+   * ({@link concurrencyFor}).  Decoded chunks are kept in the cache all the
+   * tools share (./shared_chunks.ts), not by each reader.
    */
   constructor(
-    private readonly cacheBytes = 256 * 1024 * 1024,
     readonly maxReadBytes = MAX_READ_BYTES,
     readonly inFlightBytes = IN_FLIGHT_BYTES,
   ) {}
@@ -358,35 +484,30 @@ export class VolumeReader {
     throw new Error(`${what} is ${sizeText(bytes)}, past the ${sizeText(this.maxReadBytes)} one read may take: ${advice}`);
   }
 
-  private remember(key: string, bytes: number): void {
-    this.sizes.set(key, bytes);
-    this.cached += bytes;
-    for (const [old] of this.cache) {
-      if (this.cached <= this.cacheBytes) break;
-      if (old === key) continue;
-      this.cached -= this.sizes.get(old) ?? 0;
-      this.sizes.delete(old);
-      this.cache.delete(old);
-    }
-  }
-
-  /** A read chunk of a level (in the array's order), decoded; shared and cached. */
-  private chunk(level: OpenLevel, index: number[]): Promise<Uint8Array | undefined> {
-    const key = `${level.info.url}${level.info.path}|${index.join(".")}`;
-    const hit = this.cache.get(key);
-    if (hit !== undefined) {
-      this.cache.delete(key);
-      this.cache.set(key, hit);
-      return hit;
-    }
-    // Shared by every request that wants it, so no one request cancels it.
-    const pending = level.readChunk(index).then((data) => {
-      this.remember(key, data?.byteLength ?? 0);
-      return data;
+  /**
+   * An opened level as this reader reads it: its chunks through the shared
+   * cache (a level opened again forgets what was kept of it, in case it was
+   * written again), drawn through this reader's window.
+   */
+  private adopt(level: RawLevel): OpenLevel {
+    const source = chunkSource();
+    source.forget(level.ref);
+    const { ref, raw, type } = level;
+    const rawChunk = (index: number[], keep = true) => source.chunk(ref, index, keep, raw);
+    return namingChunks({
+      info: level.info,
+      readChunk: async (index) => {
+        const bytes = await rawChunk(index);
+        // Other types than uint8: through the image's window, to 0..255.
+        return bytes === undefined || type === "uint8" ? bytes : toUint8(values(bytes, type), this.window);
+      },
+      rawChunk,
+      type,
+      fill: level.fill,
+      dimOf: level.dimOf,
+      grid: level.grid,
+      chunkBytes: level.chunkBytes,
     });
-    pending.catch(() => this.cache.delete(key));
-    this.cache.set(key, pending);
-    return pending;
   }
 
   /** Opens the stores' levels (finest first), placed in `space` where they name it. */
@@ -404,72 +525,10 @@ export class VolumeReader {
       }),
     );
     const merged = mergeLevels(pyramids);
-    // One read (and shard-index cache, keyed by path in the store) per store.
-    const accesses = new Map<string, { read: ZarrArrayRead; shardIndexes: ShardIndexCache }>();
-    this.levels = await Promise.all(
-      merged.map(async (level): Promise<OpenLevel> => {
-        let store = accesses.get(level.url);
-        if (store === undefined) accesses.set(level.url, (store = { read: storeRead(level.url), shardIndexes: new ShardIndexCache() }));
-        const { shardIndexes } = store;
-        const where = `${level.url}${level.path}`;
-        // Zarr v2 arrays (OME-Zarr 0.4) read as v3.
-        const plain = withZarr2(store.read);
-        // Chunks stored transposed (a NIfTI read as virtual Zarr, a Fortran-order v2 array) are read in their stored order.
-        const stored = await storedOrder(plain, level.path, level.axes, signal);
-        const read = stored?.read ?? plain;
-        const axesOfArray = stored?.axes ?? level.axes;
-        const array = await openZarrArray(read, level.path, signal);
-        if (array === undefined) throw new Error(`${where}: no array`);
-        const wide = array.elementType in NARROWED ? (array.elementType as keyof typeof NARROWED) : undefined;
-        if (!(array.elementType in NUMERIC) && wide === undefined) throw new Error(`${where}: ${array.elementType} values cannot be read`);
-        const rank = array.shape.length;
-        if (rank !== axesOfArray.length) throw new Error(`${where}: a ${rank}-D array, but the image names ${axesOfArray.length} axes (${axesOfArray.join(", ")})`);
-        // x, y and z, in the array's order.  Other axes (t, c) are read at
-        // index 0: only when they are size 1, as bioformats2raw's tczyx is.
-        const kept = axesOfArray.flatMap((a, d) => (["x", "y", "z"].includes(a) ? [d] : []));
-        const series = axesOfArray.findIndex((a, d) => !kept.includes(d) && array.shape[d] !== 1);
-        if (series !== -1) throw new Error(`${where} has ${stepsOf(axesOfArray[series], array.shape[series])}; a single 3-D image (one time point, one channel) is needed`);
-        const axes = kept.map((d) => axesOfArray[d]);
-        const shape = kept.map((d) => array.shape[d]);
-        const chunkShape = kept.map((d) => array.readChunkShape[d]);
-        const dimOf = [0, 1, 2].map((k) => axes.indexOf("xyz"[k])) as [number, number, number];
-        const type = (wide === undefined ? array.elementType : NARROWED[wide]) as keyof typeof NUMERIC;
-        const info: LevelInfo = { ...level, axes, shape, chunk: chunkShape, size: [shape[dimOf[0]], shape[dimOf[1]], shape[dimOf[2]]], type };
-        const reader = new ZarrArrayReader(array, read, shardIndexes);
-        const fill = fillOf(array.fillValue, type);
-        if (wide !== undefined && fill !== Number(array.fillValue ?? 0)) throw new Error(`${where}: a fill value of ${array.fillValue} is past what 32 bits hold`);
-        // A chunk's index and bytes with the size-1 axes put back and taken out again.
-        const whole = (index: number[]) => {
-          const full = new Array<number>(rank).fill(0);
-          kept.forEach((d, i) => (full[d] = index[i]));
-          return full;
-        };
-        // A chunk thicker than 1 along a size-1 axis (chunks may pass the array's edge) holds padding there.
-        const thick = array.readChunkShape.some((s, d) => !kept.includes(d) && s !== 1);
-        const raw = async (index: number[]) => {
-          let bytes = await reader.readChunk(whole(index));
-          if (bytes === undefined) return undefined;
-          if (thick) bytes = spatialBlock(bytes, array.readChunkShape, kept, array.elementBytes);
-          if (array.bigEndian && array.elementBytes > 1) bytes = swapped(bytes, array.elementBytes);
-          return wide === undefined ? bytes : narrow(bytes, wide);
-        };
-        return namingChunks({
-          info,
-          readChunk: async (index) => {
-            const bytes = await raw(index);
-            // Other types than uint8: through the image's window, to 0..255.
-            return bytes === undefined || type === "uint8" ? bytes : toUint8(values(bytes, type), this.window);
-          },
-          rawChunk: raw,
-          type,
-          fill,
-          dimOf,
-          grid: shape.map((s, d) => Math.ceil(s / chunkShape[d])),
-          chunkBytes: array.readChunkShape.reduce((a, b) => a * b, 1) * array.elementBytes,
-        });
-      }),
-    );
-    this.reset();
+    // One read (and shard-index cache) per store.
+    const accesses = new Map<string, StoreAccess>();
+    const opened = await Promise.all(merged.map((level) => openOmeLevel(level, accesses, signal)));
+    this.levels = opened.map((level) => this.adopt(level));
     this.window = [0, 255];
     const coarsest = this.levels[this.levels.length - 1];
     if (coarsest !== undefined && coarsest.type !== "uint8") this.window = await this.windowOf(coarsest, signal);
@@ -487,7 +546,7 @@ export class VolumeReader {
     for (let i = 0; i < chunks.length; i += step) {
       signal?.throwIfAborted();
       // A chunk that cannot be read as numbers (a label past 32 bits) is left out of the sample.
-      const raw = await level.rawChunk?.(chunks[i]).catch(() => undefined);
+      const raw = await level.rawChunk?.(chunks[i], false).catch(() => undefined);
       if (raw === undefined) continue;
       const v = values(raw, level.type);
       const stride = Math.max(1, Math.floor(v.length / 20000));
@@ -502,66 +561,25 @@ export class VolumeReader {
 
   /**
    * A Neuroglancer precomputed image or segmentation: its scales, finest
-   * first, as arrays in z, y, x order.  An image's values are read as its
-   * data type (64-bit ones narrowed to 32 bits, as in OME-Zarr) and drawn
-   * through the window of its coarsest scale; a segmentation's labels are
-   * read as 32-bit ones, as 64-bit labels in OME-Zarr are.
+   * first ({@link openPrecomputedScale}), an image drawn through the window
+   * of its coarsest scale.
    */
   private async openPrecomputed(url: string, signal?: AbortSignal): Promise<{ levels: LevelInfo[]; name: string }> {
     const info = await readInfo(url, undefined, signal);
     if (info.type !== "image" && info.type !== "segmentation") throw new Error(`${url}: a precomputed ${info.type ?? "source"}, not an image or segmentation`);
     const labels = info.type === "segmentation";
     const stored = info.data_type;
-    const wide = stored in NARROWED ? (stored as keyof typeof NARROWED) : undefined;
-    if (!labels && !(stored in NUMERIC) && wide === undefined) throw new Error(`${url}: ${stored} values cannot be read`);
-    const type: keyof typeof NUMERIC = labels ? "uint32" : wide !== undefined ? NARROWED[wide] : (stored as keyof typeof NUMERIC);
-    this.levels = info.scales
-      .map((scale): OpenLevel => {
-        const reader = new PrecomputedScale(url, scale, stored);
-        const [cx, cy, cz] = reader.chunk;
-        const [sx, sy, sz] = scale.size;
-        const level: LevelInfo = { ...scaleLevel(url, scale), shape: [sz, sy, sx], chunk: [cz, cy, cx], size: [sx, sy, sz], type };
-        // Labels are stored as 64-bit integers; images as their type (one of NUMERIC, or a 64-bit one).
-        const width = labels || wide !== undefined ? 8 : NUMERIC[stored as keyof typeof NUMERIC].BYTES_PER_ELEMENT;
-        const common = { fill: 0, dimOf: [2, 1, 0] as [number, number, number], grid: [reader.grid[2], reader.grid[1], reader.grid[0]], chunkBytes: cx * cy * cz * width };
-        const raw = labels
-          ? async ([z, y, x]: number[]) => {
-              const ids = await reader.readLabels([x, y, z]);
-              return ids && narrow(new Uint8Array(ids.buffer, ids.byteOffset, ids.byteLength), "uint64");
-            }
-          : async ([z, y, x]: number[]) => {
-              const bytes = await reader.readValues([x, y, z]);
-              return bytes && wide !== undefined ? narrow(bytes, wide) : bytes;
-            };
-        return namingChunks({
-          info: level,
-          readChunk: async (index) => {
-            const bytes = await raw(index);
-            // Other types than uint8: through the image's window, to 0..255.
-            return bytes === undefined || type === "uint8" ? bytes : toUint8(values(bytes, type), this.window);
-          },
-          rawChunk: raw,
-          type,
-          ...common,
-        });
-      })
-      .sort((a, b) => a.info.voxelSize - b.info.voxelSize);
-    this.reset();
+    if (!labels && !(stored in NUMERIC) && !(stored in NARROWED)) throw new Error(`${url}: ${stored} values cannot be read`);
+    this.levels = info.scales.map((scale) => this.adopt(openPrecomputedScale(url, scale, stored, labels))).sort((a, b) => a.info.voxelSize - b.info.voxelSize);
     this.window = [0, 255];
     const coarsest = this.levels[this.levels.length - 1];
-    if (!labels && coarsest !== undefined && type !== "uint8") this.window = await this.windowOf(coarsest, signal);
+    if (!labels && coarsest !== undefined && coarsest.type !== "uint8") this.window = await this.windowOf(coarsest, signal);
     return { levels: this.levels.map((l) => l.info), name: url.replace(/\/$/, "").split("/").pop() ?? "" };
   }
 
   /** The fill value as drawn: through the image's window to 0..255, as chunks are. */
   private shownFill(level: OpenLevel): number {
     return level.type === "uint8" ? level.fill : toUint8([level.fill], this.window)[0];
-  }
-
-  private reset(): void {
-    this.cache.clear();
-    this.sizes.clear();
-    this.cached = 0;
   }
 
   /** A level, or the `region` of it, x fastest. */
@@ -592,7 +610,7 @@ export class VolumeReader {
     for (let a = first[0]; a <= last[0]; ++a) for (let b = first[1]; b <= last[1]; ++b) for (let c = first[2]; c <= last[2]; ++c) indices.push([a, b, c]);
     let done = 0;
     await each(indices, this.concurrency(level), signal, async (ci) => {
-      const data = await this.chunk(level, ci);
+      const data = await level.readChunk(ci);
       if (data !== undefined) {
         const origin = [0, 1, 2].map((d) => ci[d] * cs[d]);
         const from = [0, 1, 2].map((d) => Math.max(origin[d], aLo[d]));
@@ -635,7 +653,7 @@ export class VolumeReader {
     for (let a = 0; a < level.grid[0]; ++a) for (let b = 0; b < level.grid[1]; ++b) for (let c = 0; c < level.grid[2]; ++c) indices.push([a, b, c]);
     let done = 0;
     await each(indices, this.concurrency(level), signal, async (ci) => {
-      const data = await read(ci);
+      const data = await read(ci, false);
       if (data !== undefined) {
         const origin = [0, 1, 2].map((d) => ci[d] * cs[d]);
         const to = [0, 1, 2].map((d) => Math.min(origin[d] + cs[d], shape[d]));
@@ -694,7 +712,7 @@ export class VolumeReader {
     for (let a = first[0]; a <= last[0]; ++a) for (let b = first[1]; b <= last[1]; ++b) for (let c = first[2]; c <= last[2]; ++c) indices.push([a, b, c]);
     let done = 0;
     await each(indices, this.concurrency(level), signal, async (ci) => {
-      const bytes = await read(ci);
+      const bytes = await read(ci, false);
       if (bytes !== undefined && !signal.aborted) {
         const data = values(bytes, level.rawChunk ? type : "uint8");
         const from = [0, 1, 2].map((d) => Math.max(ci[d] * cs[d], aLo[d]));
@@ -865,15 +883,15 @@ export class VolumeReader {
 
 /**
  * Readers by store, opened once, for a worker that reads several stores in
- * turn: each holds up to `cacheBytes` of chunks, so only the `keep` used
- * last are kept.
+ * turn: the `keep` used last are kept open (their chunks are in the shared
+ * cache, not in the readers).
  */
-export function readerCache(keep: number, cacheBytes = 128 * 2 ** 20): (store: string) => Promise<{ reader: VolumeReader; levels: Awaited<ReturnType<VolumeReader["open"]>>["levels"] }> {
+export function readerCache(keep: number): (store: string) => Promise<{ reader: VolumeReader; levels: Awaited<ReturnType<VolumeReader["open"]>>["levels"] }> {
   const readers = new Map<string, Promise<{ reader: VolumeReader; levels: Awaited<ReturnType<VolumeReader["open"]>>["levels"] }>>();
   return (store) => {
     let r = readers.get(store);
     if (r === undefined) {
-      const reader = new VolumeReader(cacheBytes);
+      const reader = new VolumeReader();
       r = reader.open([store], undefined).then(({ levels }) => ({ reader, levels }));
       readers.set(store, r);
       const opened = r;

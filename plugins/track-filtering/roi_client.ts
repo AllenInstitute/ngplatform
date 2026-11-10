@@ -7,6 +7,7 @@
 import { type MaskSource, type MaskVolume, type Roi, type RoiGeometry, roiKey } from "./roi.js";
 import type { StoreInfo } from "./roi_worker.js";
 import type { TrkSpace } from "./trk.js";
+import { withSharedChunks } from "../volume-view/chunk_host.js";
 
 export type { StoreInfo };
 
@@ -84,7 +85,7 @@ export class RoiEngine {
     readonly storeUrl: string,
     options: RoiEngineOptions = {},
   ) {
-    this.start = options.start ?? (() => new Worker(new URL("./roi_worker.ts", import.meta.url), { type: "module", name: "track-filtering regions" }));
+    this.start = options.start ?? (() => withSharedChunks(new Worker(new URL("./roi_worker.ts", import.meta.url), { type: "module", name: "track-filtering regions" })));
     this.cacheBytes = options.cacheBytes ?? RESULT_CACHE_BYTES;
     this.ready = new Promise((resolve, reject) => {
       this.opened = resolve;

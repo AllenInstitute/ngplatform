@@ -2,11 +2,12 @@
 import { WorkerRpc } from "@ngplatform/sdk/worker_rpc";
 import type { LevelInfo } from "./volume_worker.js";
 import type { Region } from "./volume_reader.js";
+import { withSharedChunks } from "./chunk_host.js";
 
 export type { LevelInfo, Region };
 
 export class VolumeClient {
-  private readonly rpc = new WorkerRpc(() => new Worker(new URL("./volume_worker.ts", import.meta.url), { type: "module", name: "volume view" }), {
+  private readonly rpc = new WorkerRpc(() => withSharedChunks(new Worker(new URL("./volume_worker.ts", import.meta.url), { type: "module", name: "volume view" })), {
     stopped: (why) => `the volume reader stopped: ${why}. Reload the page to try again`,
   });
 
