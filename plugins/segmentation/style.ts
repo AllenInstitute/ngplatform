@@ -24,6 +24,9 @@ export const STYLE = `
 
 .sg-segments { display: grid; max-height: 320px; overflow-y: auto; border: 1px solid var(--line); }
 .sg-segments:empty { display: none; }
+.sg-segments.sg-virtual { display: block; }
+.sg-virtual-space { position: relative; }
+.sg-virtual .sg-segment, .sg-virtual .sg-group-head { height: 27px; box-sizing: border-box; }
 .sg-segment { display: grid; grid-template-columns: 22px 20px auto minmax(0, 1fr) auto auto; gap: var(--sp-3); align-items: center; padding: var(--sp-1) var(--sp-2) var(--sp-1) var(--sp-1); border-left: 3px solid transparent; font-size: var(--fs-body); cursor: pointer; }
 .sg-segment + .sg-segment { border-top: 1px solid var(--line); }
 .sg-segment:hover { background: var(--hover); }
@@ -65,7 +68,15 @@ export const STYLE = `
 .sg-bar .sg-icon[aria-pressed="true"] { color: var(--accent-ink); background: var(--accent); }
 .sg-value { min-width: 64px; text-align: center; font: var(--fs-caption) var(--mono); color: var(--text); }
 .sg-chip { width: 14px; height: 14px; border: 1px solid var(--swatch-line); margin: 0 var(--sp-1) 0 var(--sp-2); flex: none; }
-.sg-bar .sg-segment-select { width: auto; max-width: 150px; height: 24px; font-size: var(--fs-body); }
+.sg-bar .sg-segment-select { width: 150px; height: 24px; font-size: var(--fs-body); }
+.sg-picker { position: relative; display: inline-flex; }
+.sg-picker-list { position: absolute; top: calc(100% + 2px); left: 0; z-index: 3; min-width: 220px; max-height: 280px; overflow-y: auto; background: var(--ink-1); border: 1px solid var(--line-strong); box-shadow: var(--shadow-float); }
+.sg-picker-list[hidden] { display: none; }
+.sg-picker-option { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-1) var(--sp-3); cursor: pointer; white-space: nowrap; }
+.sg-picker-option:hover { background: var(--hover); }
+.sg-picker-option.sg-active { background: var(--select-soft); }
+.sg-picker-option .sg-chip { margin: 0; }
+.sg-picker-more { padding: var(--sp-2) var(--sp-3); }
 .sg-dims button { height: 24px; padding: 0 var(--sp-4); font-size: var(--fs-body); }
 .sg-bar .sg-icon.sg-unsaved { color: var(--warn); }
 .sg-bar .sg-icon.sg-accept { color: var(--ok); }

@@ -106,6 +106,21 @@ export class FakeElement extends FakeNode {
   set className(v: string) {
     this.attributes.set("class", v);
   }
+  /** The class names, as a live list over `className` (add, remove, toggle, contains). */
+  get classList() {
+    const names = () => this.className.split(/\s+/).filter(Boolean);
+    const set = (list: string[]) => (this.className = list.join(" "));
+    return {
+      add: (...add: string[]) => set([...names(), ...add.filter((c) => !names().includes(c))]),
+      remove: (...remove: string[]) => set(names().filter((c) => !remove.includes(c))),
+      contains: (c: string) => names().includes(c),
+      toggle: (c: string, force?: boolean) => {
+        const on = force ?? !names().includes(c);
+        set(on ? [...names().filter((x) => x !== c), c] : names().filter((x) => x !== c));
+        return on;
+      },
+    };
+  }
   get id(): string {
     return this.attributes.get("id") ?? "";
   }

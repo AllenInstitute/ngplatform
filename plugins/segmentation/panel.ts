@@ -26,6 +26,27 @@ import { segmentName } from "./segments.js";
 import type { Session } from "./session.js";
 import { brushes, TOOLS } from "./tools.js";
 
+/** Past this many items (rows and group heads) the segment list draws only those in view. */
+export const VIRTUAL_MIN = 200;
+/** Each item's height in a list drawn in view only (style.ts gives it), the list's at most, and the rows drawn past each end. */
+const ROW_HEIGHT = 27;
+const LIST_HEIGHT = 320;
+const OVERSCAN = 8;
+
+/** A hash of the segment rows (value, name, colour, voxels, shown): the list is drawn again when it changes. */
+export function rowsHash(rows: { value: number; name: string; colour: string; voxels: number; visible: boolean }[]): number {
+  let h = 0x811c9dc5;
+  const mix = (n: number) => (h = Math.imul(h ^ n, 0x01000193) >>> 0);
+  for (const r of rows) {
+    mix(r.value);
+    mix(r.voxels);
+    mix(r.visible ? 1 : 0);
+    for (let i = 0; i < r.name.length; ++i) mix(r.name.charCodeAt(i));
+    for (let i = 0; i < r.colour.length; ++i) mix(r.colour.charCodeAt(i));
+  }
+  return h;
+}
+
 const IN_PLACE_INFO =
   "Edited in place, the segmentation is read at its finest level as it is shown or drawn on, a chunk of 64³ voxels at a time; a chunk is copied when you first change it, and only changed chunks are kept (in this page up to 512 MB, then in this browser's storage). The original is hidden and never written. Save writes the edits alone (an OME-Zarr that names the original) or the whole volume.";
 
@@ -81,7 +102,8 @@ export class Panel {
       if (s !== undefined) {
         const rows = e.rows();
         badge(segmentsCard, String(rows.length));
-        segmentsBody.update([s.fileName, rows, e.value, e.groups(s), s.volume.type]);
+        // A hash of the rows, not the rows: with 100k segments their text alone is megabytes.
+        segmentsBody.update([s.fileName, rowsHash(rows), rows.length, e.value, e.groups(s), s.volume.type]);
         toolBody.update(this.toolKey());
         valuesBody.update([s.fileName, s.reference?.layer, s.reference?.level, readableImages(this.ctx), e.limit, e.low, e.high]);
         badge(saveCard, s.unsaved ? `${s.unsaved} unsaved` : "");
@@ -470,13 +492,21 @@ export class Panel {
       row.addEventListener("dragend", () => (this.dragging = false));
       return row;
     };
+    // The list's items in order: group heads and segment rows.
+    const items: (() => HTMLElement)[] = [];
     if (vg.groups.length === 0) {
-      for (const r of rows) table.append(segmentRow(r, false));
+      for (const r of rows) items.push(() => segmentRow(r, false));
     } else {
       for (const section of grouped(vg, rows)) {
-        table.append(head(section.group, section.rows.length, section.rows.filter((r) => r.visible).length));
-        if (!section.group?.collapsed) for (const r of section.rows) table.append(segmentRow(r, true));
+        const shown = section.rows.filter((r) => r.visible).length;
+        items.push(() => head(section.group, section.rows.length, shown));
+        if (!section.group?.collapsed) for (const r of section.rows) items.push(() => segmentRow(r, true));
       }
+    }
+    if (items.length <= VIRTUAL_MIN) {
+      for (const make of items) table.append(make());
+    } else {
+      this.virtualList(table, items, rows.findIndex((r) => r.value === e.value));
     }
     const max = LABEL_MAX[session.volume.type];
     return el(
@@ -496,6 +526,54 @@ export class Panel {
         : null,
       rows.every((r) => r.voxels === 0) ? emptyState("Nothing painted yet.", { label: "Brush (B)", run: () => e.setTool("brush") }) : null,
     );
+  }
+
+  /** Where the long segment list was scrolled to (it is drawn again as segments change). */
+  private listScroll = 0;
+
+  /**
+   * A long list drawn in view only: every item the same height, a spacer
+   * as tall as all of them, and the rows in view (and a few each side)
+   * drawn again as it scrolls.
+   */
+  private virtualList(table: HTMLElement, items: (() => HTMLElement)[], active: number): void {
+    table.classList.add("sg-virtual");
+    const spacer = el("div", { class: "sg-virtual-space", style: `height: ${items.length * ROW_HEIGHT}px` });
+    const view = el("div", { class: "sg-virtual-window" });
+    spacer.append(view);
+    table.append(spacer);
+    let drawn = "";
+    const draw = () => {
+      const top = table.scrollTop || 0;
+      this.listScroll = top;
+      const height = table.clientHeight || LIST_HEIGHT;
+      const first = Math.max(0, Math.floor(top / ROW_HEIGHT) - OVERSCAN);
+      const last = Math.min(items.length, Math.ceil((top + height) / ROW_HEIGHT) + OVERSCAN);
+      const key = `${first}-${last}`;
+      if (key === drawn) return;
+      drawn = key;
+      view.style.transform = `translateY(${first * ROW_HEIGHT}px)`;
+      view.replaceChildren(...items.slice(first, last).map((make) => make()));
+    };
+    let queued = false;
+    table.addEventListener("scroll", () => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => {
+        queued = false;
+        draw();
+      });
+    });
+    // Where it was, or at the active segment when that is out of view.
+    let top = this.listScroll;
+    if (active >= 0 && (active * ROW_HEIGHT < top || (active + 1) * ROW_HEIGHT > top + LIST_HEIGHT)) top = Math.max(0, active * ROW_HEIGHT - LIST_HEIGHT / 2);
+    table.scrollTop = top;
+    draw();
+    // Once in the page its height is known: the rows in view drawn again for it.
+    requestAnimationFrame(() => {
+      table.scrollTop = top;
+      draw();
+    });
   }
 
   // ---------------------------------------------------------------- tool

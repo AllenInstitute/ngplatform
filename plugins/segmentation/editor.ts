@@ -47,8 +47,8 @@ import { layerWindow, sectionAxes, sectionBounds, stackMasks } from "./sam.js";
 import { SamModel, samMethod } from "./sam_model.js";
 import { cropped, editsZarr, niftiBytes, niftiGz, omeZarr, pruneStore, readEdits, type SavedLabel, writeFile, writeStore, writeWhole } from "./save.js";
 import { addGroup, assign, editGroup, groupOf, members, readGroups, removeGroup, type SegmentationSaved, type VolumeGroups } from "./segment_groups.js";
-import { isVisible, nextSegment, type SegmentRow, segmentRows, type SegmentsState, withVisibility } from "./segments.js";
-import { type Reference, Session } from "./session.js";
+import { LIST_MAX, nextSegment, type SegmentRow, segmentRows, type SegmentsState, visibility, withVisibility } from "./segments.js";
+import { PALETTE_SEGMENTS, type Reference, Session } from "./session.js";
 import { brushes, cycle, draws, stepRadius, type Tool, TOOLS } from "./tools.js";
 
 /** How long a removed label layer's volume waits before it is let go (ms): a layer replaced shows again within it. */
@@ -267,10 +267,14 @@ export class Editor implements LabelVolumes {
           this.value = this.rows()[0]?.value ?? 1;
         }
         void this.restoreLost();
+        for (const s of here) this.applyHidden(s);
         this.changed();
       }),
-      // Groups are in the workspace state: undo, redo and another scene change them.
-      ctx.state.onChanged(() => this.changed()),
+      // Groups and the segments hidden are in the workspace state: undo, redo and another scene change them.
+      ctx.state.onChanged(() => {
+        for (const s of this.inScene()) this.applyHidden(s);
+        this.changed();
+      }),
     );
     void this.restoreLost();
     void this.refreshKept();
@@ -441,16 +445,58 @@ export class Editor implements LabelVolumes {
   rows(): SegmentRow[] {
     const s = this.current;
     if (s === undefined) return [];
-    const state = this.segmentsState(s);
+    const visible = this.visible(s);
     // Edited in place: the original's names for its segments met in the edits.
     const names = s.theirs.size ? new Map([...[...s.counts.keys()].filter((v) => s.theirs.has(v)).map((v) => [v, s.theirs.get(v)!] as const), ...s.labels]) : s.labels;
-    const rows = segmentRows(s.counts, names, (v) => s.colour(v), (v) => isVisible(state, v));
-    if (!rows.some((r) => r.value === this.value)) rows.push({ value: this.value, name: "", colour: s.colour(this.value), voxels: 0, visible: isVisible(state, this.value) });
-    return rows.sort((a, b) => a.value - b.value);
+    const rows = segmentRows(s.counts, names, (v) => s.colour(v), visible);
+    if (!rows.some((r) => r.value === this.value)) {
+      rows.push({ value: this.value, name: "", colour: s.colour(this.value), voxels: 0, visible: visible(this.value) });
+      rows.sort((a, b) => a.value - b.value);
+    }
+    return rows;
   }
 
   private segmentsState(session: Session): SegmentsState {
     return (this.ctx.viewer.layerSpec(session.layer) as SegmentsState | undefined) ?? {};
+  }
+
+  /** The segments a volume hides itself (one with more than LIST_MAX segments; see segments.ts). */
+  private hiddenOf(session: Session): Set<number> {
+    return new Set(this.ctx.state.get<SegmentationSaved>()?.hidden?.[session.id] ?? []);
+  }
+
+  /** Whether a volume's layer shows each segment: its own list, less those the plugin hides. */
+  private visible(session: Session): (value: number) => boolean {
+    const listed = visibility(this.segmentsState(session));
+    const hidden = this.hiddenOf(session);
+    return hidden.size === 0 ? listed : (v) => listed(v) && !hidden.has(v);
+  }
+
+  /** The segments a volume knows: painted, named or made, and the active one. */
+  private known(session: Session, more: number[] = []): number[] {
+    return [...new Set([...session.counts.keys(), ...session.labels.keys(), this.value, ...more])];
+  }
+
+  /**
+   * Shows the segments a volume hides itself by showing its layer the
+   * others, as a temporary set (not in the state); none hidden, the layer
+   * shows its own.  Again after strokes (a new segment shows) and after
+   * undo.
+   */
+  private applyHidden(session: Session): void {
+    const hidden = this.hiddenOf(session);
+    const applied = session.hiddenApplied;
+    if (hidden.size === 0) {
+      if (applied !== undefined) this.ctx.viewer.setTemporaryVisibleSegments(session.layer, undefined);
+      session.hiddenApplied = undefined;
+      return;
+    }
+    const listed = visibility(this.segmentsState(session));
+    const shown = this.known(session).filter((v) => listed(v) && !hidden.has(v));
+    const key = `${session.layer}|${shown.length}|${[...hidden].join(",")}|${session.counts.size}`;
+    if (key === applied) return;
+    session.hiddenApplied = key;
+    this.ctx.viewer.setTemporaryVisibleSegments(session.layer, BigUint64Array.from(shown, (v) => BigInt(v)));
   }
 
   /** Paints with a segment from now on. */
@@ -499,6 +545,21 @@ export class Editor implements LabelVolumes {
     this.changed();
   }
 
+  /** Names segments as shown in a layer's own list (shown again there, with many segments). */
+  private patchSegments(session: Session, values: number[], quiet: boolean): void {
+    this.ctx.viewer.patchState(
+      (ng) => {
+        const layer = ((ng.layers as Record<string, unknown>[] | undefined) ?? []).find((l) => l.name === session.layer);
+        if (layer === undefined) return;
+        const ids = new Set(values.map(String));
+        const list = ((layer.segments as string[] | undefined) ?? []).filter((s) => !ids.has(s.replace(/^!/, "")));
+        // A list naming only these would hide the rest: the rest are named shown by having no list ("!id" only).
+        layer.segments = list.some((s) => !s.startsWith("!")) ? [...list, ...ids] : list;
+      },
+      { quiet },
+    );
+  }
+
   /** Shows or hides a segment in its layer (Neuroglancer's visible segments). */
   show(session: Session, value: number, visible: boolean, quiet = false): void {
     this.showSegments(session, [value], visible, quiet);
@@ -506,10 +567,31 @@ export class Editor implements LabelVolumes {
 
   /** Shows or hides several segments (a group) in its layer, as one change. */
   showSegments(session: Session, values: number[], visible: boolean, quiet = false): void {
-    let state = this.segmentsState(session);
-    const change = values.filter((v) => isVisible(state, v) !== visible);
+    const now = this.visible(session);
+    const change = values.filter((v) => now(v) !== visible);
     if (change.length === 0) return;
-    const known = [...new Set([...session.counts.keys(), ...session.labels.keys(), this.value, ...values])];
+    const known = this.known(session, values);
+    const hidden = this.hiddenOf(session);
+    // Many segments: those hidden kept here, not every id in the layer's list (and in each undo step).
+    if (hidden.size > 0 || known.length > LIST_MAX) {
+      for (const v of change) {
+        if (visible) hidden.delete(v);
+        else hidden.add(v);
+      }
+      const saved = this.ctx.state.get<SegmentationSaved>() ?? {};
+      const rest = { ...saved.hidden };
+      if (hidden.size > 0) rest[session.id] = [...hidden].sort((a, b) => a - b);
+      else delete rest[session.id];
+      // Shown again where the layer's own list hides it: the list names it.
+      const listed = visibility(this.segmentsState(session));
+      const listShows = visible ? change.filter((v) => !listed(v)) : [];
+      this.ctx.state.set<SegmentationSaved>({ ...saved, hidden: rest });
+      this.applyHidden(session);
+      if (listShows.length > 0) this.patchSegments(session, listShows, quiet);
+      this.changed();
+      return;
+    }
+    let state = this.segmentsState(session);
     for (const v of change) state = withVisibility(state, known, v, visible);
     const next = state as Required<SegmentsState>;
     this.ctx.viewer.patchState(
@@ -698,6 +780,7 @@ export class Editor implements LabelVolumes {
     if (info.original !== undefined) return this.reopenInPlace(info, replace);
     const volume = await restore(info);
     const session = await Session.open(this.ctx, this.voxels, volume, info.name, { id: info.id, replace });
+    session.palette = info.palette;
     for (const [value, label] of info.labels) session.labels.set(value, label);
     if (info.reference && this.ctx.viewer.layers().some((l) => l.name === info.reference)) await this.chooseReference(session, info.reference);
     this.adopt(session, replace === undefined);
@@ -891,7 +974,11 @@ export class Editor implements LabelVolumes {
     // What the last save said was of another volume.
     this.saveStatus = undefined;
     session.counts = session.volume.counts();
-    this.value = [...session.counts.keys()].sort((a, b) => a - b)[0] ?? 1;
+    // Many segments (a copied segmentation): Neuroglancer's colours, not a colour each in the state.
+    if (session.palette === undefined) session.palette = session.counts.size <= PALETTE_SEGMENTS;
+    let first: number | undefined;
+    for (const v of session.counts.keys()) if (first === undefined || v < first) first = v;
+    this.value = first ?? 1;
     session.applyColours([...session.counts.keys(), this.value]);
     // A brush that shows at the scale of the whole grid: a two-hundredth of its largest side.
     if (this.autoRadius && this.unit === "voxels") this.radius = Math.max(2, Math.round(Math.max(...session.volume.size) / 200));
@@ -1653,7 +1740,11 @@ export class Editor implements LabelVolumes {
     this.changed();
     clearTimeout(this.countsTimer);
     this.countsTimer = setTimeout(() => {
-      if (this.current) this.current.counts = this.current.volume.counts();
+      if (this.current) {
+        this.current.counts = this.current.volume.counts();
+        // A segment painted for the first time shows, past the segments hidden.
+        this.applyHidden(this.current);
+      }
       this.changed();
     }, 300);
   }

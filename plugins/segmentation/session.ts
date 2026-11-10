@@ -28,6 +28,9 @@ export const PALETTE = ["#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231", "
 
 export const colourOf = (value: number) => PALETTE[(value - 1) % PALETTE.length];
 
+/** A volume opened with more segments than this keeps Neuroglancer's colours (see `Session.palette`). */
+export const PALETTE_SEGMENTS = 1000;
+
 export interface Reference {
   layer: string;
   store: string;
@@ -55,6 +58,15 @@ export class Session {
   counts = new Map<number, number>();
   /** Strokes since the last save. */
   unsaved = 0;
+  /** What `Editor.applyHidden` last showed the layer (undefined: the layer shows its own list). */
+  hiddenApplied: string | undefined;
+  /**
+   * Its segments are coloured from the palette, each colour written in the
+   * layer's state; a volume opened with more than PALETTE_SEGMENTS segments
+   * (a copied segmentation) keeps Neuroglancer's own colours instead, which
+   * need no state.  Undefined until the editor decides, when it opens.
+   */
+  palette: boolean | undefined;
   /** The scene its layer was shown in when it was opened: a layer gone from that scene, while it is shown, was removed. */
   scene: string | undefined;
   private readonly unserve: () => void;
@@ -164,7 +176,7 @@ export class Session {
     const versions = keys.map((k) => this.volume.versionOf(k));
     const original = this.volume instanceof CowVolume ? this.volume.original : undefined;
     this.keeping = this.keeping.then(async () => {
-      if (await keep(this.volume, { id: this.id, name: this.layer, labels: [...this.labels], reference: this.reference?.layer, original }, keys, versions)) {
+      if (await keep(this.volume, { id: this.id, name: this.layer, labels: [...this.labels], reference: this.reference?.layer, original, palette: this.palette }, keys, versions)) {
         this.volume.keptAt(keys, versions);
         this.keepFailed = false;
         // The first copy kept: ask that the browser not clear it when short of space.
@@ -314,8 +326,8 @@ export class Session {
   colour(value: number): string {
     const own = this.labels.get(value)?.colour ?? this.theirs.get(value)?.colour;
     if (own !== undefined) return own;
-    if (!(this.volume instanceof CowVolume)) return colourOf(value);
-    // Edited in place, the original's segments keep Neuroglancer's colours: the layer's default, or its hash.
+    if (!(this.volume instanceof CowVolume) && this.palette !== false) return colourOf(value);
+    // Edited in place, or opened with many segments, they keep Neuroglancer's colours: the layer's default, or its hash.
     const spec = this.ctx.viewer.layerSpec(this.layer) as { colorSeed?: number; segmentDefaultColor?: string } | undefined;
     return spec?.segmentDefaultColor ?? hashColour(value, spec?.colorSeed ?? 0);
   }
@@ -327,8 +339,10 @@ export class Session {
    */
   applyColours(values: number[]): void {
     const wanted: Record<string, string> = {};
-    const inPlace = this.volume instanceof CowVolume;
-    for (const v of values) if (v > 0 && (!inPlace || this.labels.has(v) || this.theirs.has(v))) wanted[String(v)] = this.colour(v);
+    // Colours Neuroglancer gives by itself (its hash) are not written: with many segments they would fill the state.
+    const own = !(this.volume instanceof CowVolume) && this.palette !== false;
+    for (const v of values) if (v > 0 && (own || this.labels.has(v) || this.theirs.has(v))) wanted[String(v)] = this.colour(v);
+    if (Object.keys(wanted).length === 0) return;
     this.ctx.viewer.patchState(
       (ng) => {
         const layer = ((ng.layers as Record<string, unknown>[] | undefined) ?? []).find((l) => l.name === this.layer);

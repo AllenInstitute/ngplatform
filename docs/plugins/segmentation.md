@@ -65,8 +65,10 @@ While a segmentation layer is edited, a tool bar shows at the top of the
 - Hold ++space++ to move the view with the left button while a drawing
   tool is on.
 - The tools draw in the 2-D views only; the 3-D view rotates as usual.
-- On the right of the bar: the **active segment** (its colour, a list of
-  the others) and **New segment** (++c++); **Undo** (++ctrl+z++) and
+- On the right of the bar: the **active segment** (its colour, and a
+  search box: type an id or part of a name to list the segments found,
+  at most 50 at a time; ++enter++ takes the first, or the id typed) and
+  **New segment** (++c++); **Undo** (++ctrl+z++) and
   **Redo** (++ctrl+y++); **Interpolate** (++v++); **Save**; and **×**,
   which hides the bar. **Edit** in the panel shows it again.
 
@@ -174,6 +176,12 @@ in its row.
 - **Go to** moves the views to the segment (its voxel nearest its centre).
 - **Merge** gives a segment's voxels to the active segment; **Delete**
   erases them. Both can be undone.
+- A long list (a copied segmentation can have 100,000 segments) draws only
+  the rows in view as it scrolls. A layer opened with more than 1,000
+  segments keeps Neuroglancer's own colours for them, not one each in the
+  link; past 1,000 segments, those hidden are kept by the plugin (in the
+  link, as a short list) rather than the layer listing every other one.
+  Neuroglancer's own Segments tab then does not show which are hidden.
 
 **Groups**, as in WebKnossos's segment list:
 

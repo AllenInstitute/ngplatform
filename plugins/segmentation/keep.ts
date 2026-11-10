@@ -33,6 +33,8 @@ export interface KeptInfo {
   chunks: number;
   /** Edited in place: the original its unedited chunks are read from. */
   original?: Original;
+  /** Whether its segments are coloured from the palette (see `Session.palette`). */
+  palette?: boolean;
 }
 
 type Dir = FileSystemDirectoryHandle & {

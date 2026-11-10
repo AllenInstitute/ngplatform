@@ -10,7 +10,7 @@ import { el } from "@ngplatform/sdk/dom";
 import type { Editor } from "./editor.js";
 import { iconButton } from "./icons.js";
 import { LABEL_MAX } from "./label_volume.js";
-import { segmentName } from "./segments.js";
+import { type SegmentRow, segmentName } from "./segments.js";
 import { brushes, TOOLS } from "./tools.js";
 
 export class Toolbar {
@@ -85,6 +85,12 @@ export class Toolbar {
     const session = e.current;
     this.bar.hidden = !e.editing || session === undefined;
     if (this.bar.hidden || session === undefined) return;
+    // Not while the segment picker is typed in: drawn when it is left.
+    const typing = document.activeElement as HTMLElement | null;
+    if (typing?.classList?.contains("sg-segment-select") && this.bar.contains(typing)) {
+      typing.addEventListener("blur", () => this.draw(), { once: true });
+      return;
+    }
     const group = (...children: (Node | null)[]) => el("div", { class: "sg-group" }, ...children);
 
     const tools = group(...TOOLS.map((t) => iconButton(t.id, `${t.title} (${t.key}): ${t.hint}`, () => e.setTool(t.id), e.tool === t.id)));
@@ -159,13 +165,7 @@ export class Toolbar {
     // The active segment: its colour, id and name, the others to choose from, and New segment.
     const rows = e.rows();
     const active = rows.find((r) => r.value === e.value);
-    const choose = el("select", { class: "text-input sg-segment-select", title: "The active segment: tools paint it", "aria-label": "Active segment" }) as HTMLSelectElement;
-    for (const r of rows) choose.append(el("option", { value: String(r.value) }, `${r.value} · ${segmentName(r)}`));
-    choose.value = String(e.value);
-    choose.addEventListener("change", () => {
-      choose.blur();
-      e.activate(Number(choose.value));
-    });
+    const choose = segmentPicker(rows, e.value, (v) => e.activate(v));
     const segment = group(
       el("span", { class: "sg-chip", style: `background:${active?.colour ?? session.colour(e.value)}`, title: `Segment ${e.value}` }),
       choose,
@@ -191,6 +191,87 @@ export class Toolbar {
     this.placed = "";
     this.place();
   }
+}
+
+/** The most segments the picker lists at once: typing narrows them. */
+export const PICKER_MAX = 50;
+
+/** The segments a search finds: by id (those starting with the digits typed first), else by name; at most `max`, and how many in all. */
+export function findSegments(rows: SegmentRow[], query: string, max = PICKER_MAX): { found: SegmentRow[]; total: number } {
+  const q = query.trim().toLowerCase();
+  if (q === "") return { found: rows.slice(0, max), total: rows.length };
+  const byId = /^\d+$/.test(q);
+  const found: SegmentRow[] = [];
+  let total = 0;
+  for (const r of rows) {
+    const hit = byId ? String(r.value).startsWith(q) : segmentName(r).toLowerCase().includes(q);
+    if (!hit) continue;
+    if (found.length < max) found.push(r);
+    total++;
+  }
+  return { found, total };
+}
+
+/**
+ * The active segment as a search box rather than a select: typing an id or
+ * a name lists the segments found (at most PICKER_MAX), Enter takes the
+ * first (or the id typed, a new one among them), Escape leaves it.  No
+ * option is made per segment, so 100k segments cost nothing until searched.
+ */
+export function segmentPicker(rows: SegmentRow[], value: number, choose: (value: number) => void): HTMLElement {
+  const label = (r: SegmentRow | undefined, v: number) => `${v} · ${r ? segmentName(r) : `Segment ${v}`}`;
+  const current = rows.find((r) => r.value === value);
+  const input = el("input", { class: "text-input sg-segment-select", type: "search", value: label(current, value), placeholder: "Segment id or name", title: "The active segment: tools paint it. Type an id or a name to find another", "aria-label": "Active segment", "aria-autocomplete": "list", role: "combobox", "aria-expanded": "false" }) as HTMLInputElement;
+  const list = el("div", { class: "sg-picker-list", role: "listbox", hidden: true });
+  let found: SegmentRow[] = [];
+  const show = () => {
+    const query = input.value === label(current, value) ? "" : input.value;
+    const r = findSegments(rows, query);
+    found = r.found;
+    list.replaceChildren(
+      ...found.map((row) => {
+        const option = el("div", { class: `sg-picker-option${row.value === value ? " sg-active" : ""}`, role: "option", "aria-selected": String(row.value === value) }, el("span", { class: "sg-chip", style: `background:${row.colour}` }), el("span", { class: "sg-id" }, String(row.value)), el("span", { class: "sg-name" }, segmentName(row)));
+        // Before the box loses its focus.
+        option.addEventListener("mousedown", (ev) => {
+          ev.preventDefault();
+          pick(row.value);
+        });
+        return option;
+      }),
+      r.total > found.length ? el("div", { class: "sg-picker-more hint" }, `${(r.total - found.length).toLocaleString()} more: type to narrow`) : "",
+      r.total === 0 ? el("div", { class: "sg-picker-more hint" }, /^\d+$/.test(query.trim()) ? `Enter: segment ${query.trim()} (new)` : "No segment found.") : "",
+    );
+    list.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+  };
+  const pick = (v: number) => {
+    list.hidden = true;
+    input.blur();
+    choose(v);
+  };
+  input.addEventListener("focus", () => {
+    input.select?.();
+    show();
+  });
+  input.addEventListener("input", show);
+  input.addEventListener("keydown", (k) => {
+    if (k.key === "Enter") {
+      const typed = input.value.trim();
+      if (/^\d+$/.test(typed) && Number(typed) > 0) pick(Number(typed));
+      else if (found[0] !== undefined) pick(found[0].value);
+    } else if (k.key === "Escape") {
+      input.value = label(current, value);
+      input.blur();
+    }
+    // The tools' keys are not the views' while typing here.
+    k.stopPropagation();
+  });
+  input.addEventListener("blur", () => {
+    list.hidden = true;
+    input.setAttribute("aria-expanded", "false");
+    input.value = label(current, value);
+  });
+  return el("span", { class: "sg-picker" }, input, list);
 }
 
 /**

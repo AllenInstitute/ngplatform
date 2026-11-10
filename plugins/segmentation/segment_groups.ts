@@ -29,6 +29,8 @@ export interface VolumeGroups {
 export interface SegmentationSaved {
   /** Segment groups by label volume id. */
   groups?: Record<string, VolumeGroups>;
+  /** Segments hidden, by label volume id, for a volume with more segments than its layer's list may name (see segments.ts). */
+  hidden?: Record<string, number[]>;
 }
 
 /** Colours for new groups, distinct from the segment palette's first ones. */

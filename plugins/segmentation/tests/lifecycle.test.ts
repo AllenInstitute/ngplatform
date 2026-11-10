@@ -5,88 +5,15 @@
  * it, and is not let go when another scene is shown.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PlatformContext } from "@ngplatform/sdk";
 import { type FakeDom, fakeDocument } from "@ngplatform/sdk/testing";
 import { Editor, RELEASE_WAIT } from "../editor.js";
 import { forgetPersist } from "../keep.js";
 import { LabelVolume } from "../label_volume.js";
 import { Session } from "../session.js";
 import type { Voxels } from "../../annotations/voxels.js";
+import { fakeContext, memoryStorage } from "./editor_context.js";
 
 const PLACE = Float64Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-
-/** Browser storage in memory, as much as keep.ts uses; `full` refuses every write. */
-function memoryStorage(full = false) {
-  const files = new Map<string, unknown>();
-  const folder = (path: string): unknown => ({
-    kind: "directory",
-    getDirectoryHandle: async (name: string) => folder(`${path}/${name}`),
-    getFileHandle: async (name: string) => ({
-      createWritable: async () => ({
-        write: async (d: unknown) => {
-          if (full) throw new DOMException("full", "QuotaExceededError");
-          files.set(`${path}/${name}`, d);
-        },
-        close: async () => {},
-      }),
-    }),
-    removeEntry: async (name: string) => void files.delete(`${path}/${name}`),
-    entries: async function* () {},
-  });
-  return { files, storage: { getDirectory: async () => folder(""), persist: async () => true, persisted: async () => true, estimate: async () => ({}) } };
-}
-
-/** A context with what the editor touches; layers and scenes the test sets. */
-function fakeContext() {
-  const layers: { name: string; type: string; visible: boolean; sources: string[]; ready: boolean }[] = [];
-  const scenes = [
-    { id: "s1", name: "One", active: true },
-    { id: "s2", name: "Two", active: false },
-  ];
-  const listeners = { layers: new Set<() => void>() };
-  const log = { info: vi.fn(), error: vi.fn() };
-  const none = () => () => {};
-  const ctx = {
-    viewer: {
-      layers: () => layers,
-      layerSpec: () => undefined,
-      layerTransform: () => undefined,
-      getState: () => ({ layers: [] }),
-      patchState: vi.fn(),
-      onLayersChanged: (f: () => void) => (listeners.layers.add(f), () => listeners.layers.delete(f)),
-      onStateChanged: none,
-      onRendered: none,
-      onCursorChanged: none,
-      reloadData: vi.fn(),
-    },
-    workspace: {
-      scenes: () => scenes,
-      local: { open: async (f: File) => [{ source: `zarr3://http://local/${f.name}`, name: f.name, kind: "segmentation" }], close: vi.fn() },
-      datasets: () => [],
-      addDataset: vi.fn((spec: { name: string; source: { url: string } }) => {
-        layers.push({ name: spec.name, type: "segmentation", visible: true, sources: [spec.source.url], ready: true });
-        return spec.name;
-      }),
-      selectLayer: vi.fn(),
-      removeLayer: vi.fn(),
-      undoSteps: () => ({}),
-    },
-    ui: { overlay: () => ({ element: document.createElement("div"), dispose: () => {} }), toast: vi.fn(), confirm: vi.fn(async () => true), showPanel: vi.fn() },
-    services: { provide: none, get: () => new Promise(() => {}) },
-    commands: { register: none, invoke: vi.fn() },
-    state: { get: () => undefined, set: vi.fn(), onChanged: none },
-    jobs: { run: vi.fn() },
-    context: { set: vi.fn() },
-    log,
-  };
-  return {
-    ctx: ctx as unknown as PlatformContext,
-    layers,
-    scenes,
-    log,
-    fireLayers: () => [...listeners.layers].forEach((f) => f()),
-  };
-}
 
 let dom: FakeDom;
 beforeEach(() => {
