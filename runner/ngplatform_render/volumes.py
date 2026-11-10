@@ -9,7 +9,14 @@ from the finest stored level that is larger, as it is read: by the mean
 of each 2x2x2 block for images, by majority vote for labels, 2x at a
 time, so they are levels the store could have held.  Levels made this
 way are kept in a cache on disk, since they cost a read of the level
-under them; the store itself is never written.
+under them; the store itself is never written.  The cache is keyed by the
+store, the level's metadata and a stamp of it (its file's time, or the
+server's ETag or Last-Modified), so a store written again is read again,
+and it is kept within a size (least recently used out first).
+
+An image with channels or time points (OME axes of type "channel" and
+"time", or named c and t) is read at one of each: `channel` and `time`,
+0 unless asked.
 """
 
 from __future__ import annotations
@@ -19,10 +26,10 @@ import json
 import math
 import os
 import threading
-import time
+import time as _time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 
@@ -79,6 +86,51 @@ class Multiscale:
     name: str = ""
     labels: bool = False
     n5: bool = False
+    types: list[str] = field(default_factory=list)  # array axes' OME types ("space", "channel", "time", or "")
+
+    def channel_axis(self) -> int | None:
+        return _axis_of(self, "channel", ("c", "channel", "ch"))
+
+    def time_axis(self) -> int | None:
+        return _axis_of(self, "time", ("t", "time"))
+
+    def fixed(self, channel: int | None = None, time: int | None = None) -> dict[int, int]:
+        """The index each non-spatial axis is read at: `channel` and `time` on theirs (0 when not given), 0 on any
+        other. A ValueError that says what the image has when either is out of range or has no axis."""
+        shape = self.levels[0].shape
+        out = {i: 0 for i in range(len(self.axes)) if i not in self.spatial}
+        for what, axis, k in (("channel", self.channel_axis(), channel), ("time point", self.time_axis(), time)):
+            if k is None:
+                continue
+            k = int(k)
+            n = shape[axis] if axis is not None else 1
+            if axis is None and k != 0:
+                raise ValueError(f"{what} {k}: this image has no {what} axis")
+            if not 0 <= k < n:
+                raise ValueError(f"{what} {k} is out of range: this image has {n} ({what}s 0-{n - 1})")
+            if axis is not None:
+                out[axis] = k
+        return out
+
+    def counts(self) -> dict[str, Any]:
+        """The image's axes, and how many channels and time points it has (1 when it has no such axis)."""
+        shape = self.levels[0].shape
+        c, t = self.channel_axis(), self.time_axis()
+        return {"axes": list(self.axes), "channels": int(shape[c]) if c is not None else 1, "times": int(shape[t]) if t is not None else 1}
+
+
+def _axis_of(ms: "Multiscale", kind: str, names: tuple[str, ...]) -> int | None:
+    for i, ty in enumerate(ms.types):
+        if i not in ms.spatial and ty == kind:
+            return i
+    for i, n in enumerate(ms.axes):
+        if i not in ms.spatial and n.lower() in names:
+            return i
+    return None
+
+
+class Cancelled(Exception):
+    """A read stopped because whoever wanted it no longer does (a session closed while it loaded)."""
 
 
 class N5Array:
@@ -280,6 +332,7 @@ def open_multiscale(url: str) -> Multiscale:
         cs = ms.get("coordinateSystems") or []
         axes_meta = cs[0]["axes"] if cs else []
     names = [a["name"] if isinstance(a, dict) else str(a) for a in axes_meta]
+    types = [str(a.get("type") or "") if isinstance(a, dict) else "" for a in axes_meta]
     units = [a.get("unit", "") if isinstance(a, dict) else "" for a in axes_meta]
     ndim = len(names)
     spatial = [names.index(k) for k in ("x", "y", "z") if k in names]
@@ -302,13 +355,102 @@ def open_multiscale(url: str) -> Multiscale:
         levels.append(Level(d["path"], tuple(arr.shape), str(arr.dtype), A, vox))
     levels.sort(key=lambda lv: math.prod(lv.shape))
     levels.reverse()  # finest first
-    return Multiscale(url, names, spatial, levels, ms.get("name", ""), labels)
+    return Multiscale(url, names, spatial, levels, ms.get("name", ""), labels, types=types)
 
 
 def _cache_dir() -> Path:
     d = Path(os.environ.get("NGP_RENDER_CACHE") or Path(os.environ.get("NGP_STATE_DIR", "~/.ngplatform-runner")).expanduser() / "render-cache")
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def cache_max_bytes() -> int:
+    """How large the cache of made levels may grow ($NGP_RENDER_CACHE_GB, 20 GB by default)."""
+    return int(float(os.environ.get("NGP_RENDER_CACHE_GB", "20")) * (1 << 30))
+
+
+_cache_lock = threading.Lock()
+
+
+def cache_entries(d: Path | None = None) -> list[tuple[float, int, Path]]:
+    """The made levels in the cache: (last used, bytes, file), least recently used first."""
+    d = d or _cache_dir()
+    out = []
+    for p in d.glob("*.npy"):
+        if p.name.endswith(".tmp.npy"):
+            continue
+        try:
+            st = p.stat()
+        except FileNotFoundError:
+            continue
+        out.append((st.st_mtime, st.st_size, p))
+    out.sort()
+    return out
+
+
+def cache_evict(keep: Path | None = None, max_bytes: int | None = None) -> list[Path]:
+    """Deletes the least recently used made levels until the cache is within its size (all but `keep`); those deleted."""
+    cap = cache_max_bytes() if max_bytes is None else max_bytes
+    gone = []
+    with _cache_lock:
+        entries = cache_entries()
+        total = sum(n for _, n, _ in entries)
+        for _, n, p in entries:
+            if total <= cap:
+                break
+            if p == keep:
+                continue
+            try:
+                p.unlink()
+            except FileNotFoundError:
+                pass
+            total -= n
+            gone.append(p)
+    return gone
+
+
+def cache_info() -> dict[str, Any]:
+    entries = cache_entries()
+    return {"folder": str(_cache_dir()), "files": len(entries), "mb": round(sum(n for _, n, _ in entries) / (1 << 20)),
+            "max_mb": round(cache_max_bytes() / (1 << 20))}
+
+
+def _metadata_files(url: str, ms: Multiscale, level: Level) -> list[str]:
+    base = http_url(url)
+    if ms.n5:
+        return [f"{base}/{level.path}/attributes.json"]
+    return [f"{base}/{level.path}/zarr.json", f"{base}/{level.path}/.zarray"]
+
+
+def content_stamp(url: str, ms: Multiscale, level: Level) -> str:
+    """What says whether a level's array has been written again: its metadata file's bytes with its time and size
+    (on this computer, and the array folder's time), or the server's ETag or Last-Modified; the level's shape and
+    type when neither can be had."""
+    import urllib.request
+
+    parts = [f"{level.shape}|{level.dtype}"]
+    for f in _metadata_files(url, ms, level):
+        try:
+            if f.startswith(("http://", "https://")):
+                req = urllib.request.Request(f, method="HEAD", headers={"User-Agent": "ngplatform-render"})
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    tag = r.headers.get("ETag") or r.headers.get("Last-Modified")
+                if tag:
+                    parts.append(tag)
+                    break
+                body = _http_get(f)
+                if body is not None:
+                    parts.append(hashlib.sha1(body).hexdigest())
+                    break
+            else:
+                p = Path(f.removeprefix("file://"))
+                if p.is_file():
+                    st, dst = p.stat(), p.parent.stat()
+                    parts.append(f"{st.st_mtime_ns}|{st.st_size}|{dst.st_mtime_ns}|{hashlib.sha1(p.read_bytes()).hexdigest()}")
+                    break
+        except Exception:  # noqa: BLE001 - a store that will not say: its shape and type only
+            continue
+    return "|".join(parts)
 
 
 def _reduce2(block: np.ndarray, labels: bool) -> np.ndarray:
@@ -338,14 +480,9 @@ class Loaded:
     from_cache: bool = False
     window: tuple[float, float] | None = None  # a guess at the tissue's values (data units), for "window" presets
     quantiles: list[float] | None = None  # the tissue's values at QUANTILES (data units), for matching histograms
-
-
-def _spatial_view(arr, ms: Multiscale):
-    """An index tuple selecting the first entry of every non-spatial axis, and the z, y, x order."""
-    sel = []
-    for i, n in enumerate(ms.axes):
-        sel.append(slice(None) if i in ms.spatial else 0)
-    return tuple(sel)
+    channel: int = 0  # the channel and time point read (0 for an image without those axes)
+    time: int = 0
+    counts: dict[str, Any] = field(default_factory=dict)  # Multiscale.counts(): its axes, channels and time points
 
 
 def _order_zyx(a: np.ndarray, ms: Multiscale) -> np.ndarray:
@@ -355,11 +492,18 @@ def _order_zyx(a: np.ndarray, ms: Multiscale) -> np.ndarray:
     return np.transpose(a, [names.index(k) for k in ("z", "y", "x")])
 
 
+#: A level is read in blocks of at least this many bytes (a whole number of its chunks or shards).
+READ_BLOCK_BYTES = 64 << 20
+
+
 def _read(url: str, level: Level, ms: Multiscale, progress: Callable[[float, str], None] | None,
-          factor: int = 1, labels: bool = False) -> np.ndarray:
+          factor: int = 1, labels: bool = False, fixed: dict[int, int] | None = None,
+          cancelled: Callable[[], bool] | None = None) -> np.ndarray:
     """The level's spatial axes as a (z, y, x) array, read in chunk-aligned blocks; with
     factor > 1, each block reduced 2x at a time as it comes (so memory holds the output and
-    one block), which is how levels are made here."""
+    one block), which is how levels are made here. Non-spatial axes are read at `fixed`
+    (axis: index; 0 for any not given). Stops (Cancelled) between blocks once `cancelled()`."""
+    fixed = fixed or {}
     import zarr
     from concurrent.futures import ThreadPoolExecutor
 
@@ -371,7 +515,7 @@ def _read(url: str, level: Level, ms: Multiscale, progress: Callable[[float, str
     # Blocks: the chunk (or shard) shape, grown to at least 64 MB and to a multiple of the factor.
     blk = [max(int(shard[i]), factor) for i in (zi, yi, xi)]
     itemsize = np.dtype(arr.dtype).itemsize
-    while math.prod(blk) * itemsize < (64 << 20) and any(b < m for b, m in zip(blk, n)):
+    while math.prod(blk) * itemsize < READ_BLOCK_BYTES and any(b < m for b, m in zip(blk, n)):
         k = int(np.argmin([b / m for b, m in zip(blk, n)]))
         blk[k] = min(blk[k] * 2, max(n[k], blk[k]))
     blk = [-(-b // factor) * factor for b in blk]
@@ -383,11 +527,13 @@ def _read(url: str, level: Level, ms: Multiscale, progress: Callable[[float, str
     lock = threading.Lock()
 
     def one(b):
+        if cancelled is not None and cancelled():
+            raise Cancelled("closed while loading")
         z, y, x = b
-        sel = [0] * len(ms.axes)
-        for i, nm in enumerate(ms.axes):
+        sel: list[Any] = [0] * len(ms.axes)
+        for i in range(len(ms.axes)):
             if i not in ms.spatial:
-                sel[i] = 0
+                sel[i] = fixed.get(i, 0)
         stops = (min(n[0], z + blk[0]), min(n[1], y + blk[1]), min(n[2], x + blk[2]))
         sel[zi], sel[yi], sel[xi] = slice(z, stops[0]), slice(y, stops[1]), slice(x, stops[2])
         a = _order_zyx(np.asarray(arr[tuple(sel)]), ms)
@@ -403,7 +549,14 @@ def _read(url: str, level: Level, ms: Multiscale, progress: Callable[[float, str
                 progress(done[0] / len(boxes), f"read {level.path}" + (f" -> {factor}x" if factor > 1 else "") + f" {done[0]}/{len(boxes)} blocks")
 
     with ThreadPoolExecutor(max_workers=8) as ex:
-        list(ex.map(one, boxes))
+        futures = [ex.submit(one, b) for b in boxes]
+        try:
+            for f in futures:
+                f.result()
+        except BaseException:
+            for f in futures:
+                f.cancel()
+            raise
     return out
 
 
@@ -584,13 +737,19 @@ def tissue_box(q: np.ndarray, affine: np.ndarray, background: float, lo: float, 
 
 
 def load(url: str, budget: int = 400_000_000, labels: bool | None = None, level: str | None = None,
-         progress: Callable[[float, str], None] | None = None, make_from: str | None = None, factor: int | None = None) -> Loaded:
+         progress: Callable[[float, str], None] | None = None, make_from: str | None = None, factor: int | None = None,
+         channel: int | None = None, time: int | None = None, cancelled: Callable[[], bool] | None = None) -> Loaded:
     """Reads the finest level with at most `budget` voxels (or the level named), making coarser
     levels from a finer stored one when no stored level is within 4x under the budget.
-    `make_from` and `factor` (a power of 2) make a level from that stored level regardless."""
-    t0 = time.time()
+    `make_from` and `factor` (a power of 2) make a level from that stored level regardless.
+    `channel` and `time` pick those of an image that has them (checked against its axes: a
+    ValueError when out of range). Stops (Cancelled) between blocks once `cancelled()`."""
+    t0 = _time.time()
     ms = open_multiscale(url)
     is_labels = ms.labels if labels is None else labels
+    fixed = ms.fixed(channel, time)
+    ci, ti = ms.channel_axis(), ms.time_axis()
+    at_c, at_t = (fixed.get(ci, 0) if ci is not None else 0), (fixed.get(ti, 0) if ti is not None else 0)
 
     def nvox(lv: Level) -> int:
         return math.prod(lv.shape[i] for i in ms.spatial)
@@ -615,25 +774,32 @@ def load(url: str, budget: int = 400_000_000, labels: bool | None = None, level:
                 f *= 2
             if not fitting or nvox(base) / f ** 3 > nvox(fitting[0]):
                 chosen, factor = base, f
-    key = hashlib.sha1(f"{http_url(url)}|{chosen.path}|{factor}|{int(is_labels)}|v1".encode()).hexdigest()
-    cache = _cache_dir() / f"{key}.npy"
     made = factor > 1
     from_cache = False
-    if made and cache.is_file():
+    cache = None
+    if made:
+        # The store, the level, how it was made, the channel and time point, and a stamp of the level's metadata:
+        # a store written again (a new stamp) is read again, not served from the cache.
+        stamp = content_stamp(url, ms, chosen)
+        key = hashlib.sha1(f"{http_url(url)}|{chosen.path}|{factor}|{int(is_labels)}|{sorted(fixed.items())}|{stamp}|v2".encode()).hexdigest()
+        cache = _cache_dir() / f"{key}.npy"
+    if cache is not None and cache.is_file():
         data = np.load(cache, mmap_mode=None)
         from_cache = True
+        try:
+            os.utime(cache)  # used now: the last to go
+        except OSError:
+            pass
         if progress:
             progress(1.0, f"level {chosen.path}/{factor}x from the cache")
     else:
-        data = _read(url, chosen, ms, progress, factor, is_labels)
+        data = _read(url, chosen, ms, progress, factor, is_labels, fixed, cancelled)
         if made:
             if not is_labels:
                 src_dtype = np.dtype(chosen.dtype)
                 if src_dtype.kind in "ui":
                     data = np.clip(np.rint(data), np.iinfo(src_dtype).min, np.iinfo(src_dtype).max).astype(src_dtype)
-            tmp = cache.with_name(f"{cache.stem}.{os.getpid()}.{threading.get_ident()}.tmp.npy")
-            np.save(tmp, data)
-            os.replace(tmp, cache)
+            _cache_put(cache, data)
     A = chosen.affine.copy()
     if factor > 1:
         # Voxel i of the coarse level covers voxels f*i .. f*i + f - 1: its centre is at f*i + (f - 1) / 2.
@@ -647,4 +813,24 @@ def load(url: str, budget: int = 400_000_000, labels: bool | None = None, level:
     src = tuple(chosen.shape[i] for i in ms.spatial)
     win = None if is_labels else guess_window(q, lo, hi)
     qs = tissue_quantiles(q, lo, hi, win) if win else None
-    return Loaded(q, A, lo, hi, pc, name, vox, src, time.time() - t0, made, from_cache, win, qs)
+    return Loaded(q, A, lo, hi, pc, name, vox, src, _time.time() - t0, made, from_cache, win, qs, at_c, at_t, ms.counts())
+
+
+def _cache_put(cache: Path, data: np.ndarray) -> None:
+    """Keeps a made level in the cache, when it fits within the cache's size and the disk has room for it; the
+    least recently used levels go to make room."""
+    import shutil
+
+    if data.nbytes > cache_max_bytes():
+        return
+    try:
+        if shutil.disk_usage(cache.parent).free < data.nbytes + (1 << 30):
+            cache_evict(max_bytes=max(0, sum(n for _, n, _ in cache_entries()) - data.nbytes))
+            if shutil.disk_usage(cache.parent).free < data.nbytes + (1 << 30):
+                return  # not kept: made again next time
+        tmp = cache.with_name(f"{cache.stem}.{os.getpid()}.{threading.get_ident()}.tmp.npy")
+        np.save(tmp, data)
+        os.replace(tmp, cache)
+    except OSError:
+        return
+    cache_evict(keep=cache)
