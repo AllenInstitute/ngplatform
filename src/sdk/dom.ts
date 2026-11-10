@@ -545,3 +545,82 @@ export function card(id: string, title: string, options: CardOptions, ...childre
   });
   return d;
 }
+
+export interface RovingOptions {
+  /** The items, in order; those disabled or hidden are passed over. */
+  items: () => HTMLElement[];
+  /** Which arrows move: Left and Right ("horizontal", tabs), Up and Down ("vertical", menus), or both. */
+  orientation?: "horizontal" | "vertical" | "both";
+  /**
+   * Keeps one item in the tab order (tabindex 0, the rest -1), so Tab
+   * enters the group once and the arrows move within it: tabs and
+   * toolbars.  The item kept is the one last moved to, or `current()`.
+   */
+  tabStop?: boolean;
+  /** The item the group's tab stop starts on (the selected tab). */
+  current?: () => HTMLElement | undefined;
+  /** Called on the item an arrow moved to: a tab list selects it. */
+  onMove?: (item: HTMLElement) => void;
+  /** Typing a letter moves to the next item whose text starts with it (menus). */
+  typeahead?: boolean;
+}
+
+export interface Roving {
+  /** Puts the tab stop on `item` (or `current()`, or the first item): after the items change. */
+  sync(item?: HTMLElement): void;
+  dispose(): void;
+}
+
+const usable = (e: HTMLElement) => !e.hidden && !(e as HTMLButtonElement).disabled && e.getAttribute("aria-disabled") !== "true";
+
+/**
+ * Arrow keys within a group of items, the one way the app's menus, tab
+ * lists and pickers move: the arrows go to the next or previous item
+ * (round at the ends), Home and End to the first and last, and (with
+ * `typeahead`) a letter to the next item starting with it.  Enter and
+ * Space are left to the item, a button, which they click.
+ *
+ *     roving(tablist, { items: () => tabs, orientation: "horizontal", tabStop: true, onMove: (t) => t.click() })
+ */
+export function roving(container: HTMLElement, options: RovingOptions): Roving {
+  const orientation = options.orientation ?? "vertical";
+  const next = orientation === "horizontal" ? ["ArrowRight"] : orientation === "vertical" ? ["ArrowDown"] : ["ArrowRight", "ArrowDown"];
+  const previous = orientation === "horizontal" ? ["ArrowLeft"] : orientation === "vertical" ? ["ArrowUp"] : ["ArrowLeft", "ArrowUp"];
+  const sync = (item?: HTMLElement) => {
+    if (!options.tabStop) return;
+    const items = options.items();
+    const stop = item ?? options.current?.() ?? items.find(usable);
+    for (const i of items) i.setAttribute("tabindex", i === stop ? "0" : "-1");
+  };
+  const move = (item: HTMLElement) => {
+    sync(item);
+    item.focus();
+    options.onMove?.(item);
+  };
+  const onKey = (event: Event) => {
+    const e = event as KeyboardEvent;
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    const all = options.items();
+    const items = all.filter(usable);
+    if (items.length === 0) return;
+    const from = items.findIndex((i) => i === e.target || i.contains(e.target as Node));
+    if (from < 0) return;
+    let to: HTMLElement | undefined;
+    if (next.includes(e.key)) to = items[(from + 1) % items.length];
+    else if (previous.includes(e.key)) to = items[(from - 1 + items.length) % items.length];
+    else if (e.key === "Home") to = items[0];
+    else if (e.key === "End") to = items[items.length - 1];
+    else if (options.typeahead && e.key.length === 1 && e.key.trim() !== "") {
+      const letter = e.key.toLowerCase();
+      const after = [...items.slice(from + 1), ...items.slice(0, from + 1)];
+      to = after.find((i) => (i.textContent ?? "").trim().toLowerCase().startsWith(letter));
+    }
+    if (to === undefined) return;
+    e.preventDefault();
+    e.stopPropagation();
+    move(to);
+  };
+  container.addEventListener("keydown", onKey);
+  sync();
+  return { sync, dispose: () => container.removeEventListener("keydown", onKey) };
+}

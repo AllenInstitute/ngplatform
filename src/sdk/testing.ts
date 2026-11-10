@@ -15,16 +15,34 @@
 
 type Listener = (e: FakeEvent) => void;
 
-/** An event: its type, its key (keyboard events), and whether it was stopped or prevented. */
+/** What else a keyboard event carries: the keys held down with it. */
+export interface FakeEventInit {
+  shiftKey?: boolean;
+  ctrlKey?: boolean;
+  altKey?: boolean;
+  metaKey?: boolean;
+}
+
+/** An event: its type, its key (keyboard events) and the keys held with it, and whether it was stopped or prevented. */
 export class FakeEvent {
   defaultPrevented = false;
   stopped = false;
   target: FakeNode | undefined;
+  readonly shiftKey: boolean;
+  readonly ctrlKey: boolean;
+  readonly altKey: boolean;
+  readonly metaKey: boolean;
   constructor(
     readonly type: string,
     readonly bubbles = true,
     readonly key?: string,
-  ) {}
+    init: FakeEventInit = {},
+  ) {
+    this.shiftKey = init.shiftKey === true;
+    this.ctrlKey = init.ctrlKey === true;
+    this.altKey = init.altKey === true;
+    this.metaKey = init.metaKey === true;
+  }
   preventDefault(): void {
     this.defaultPrevented = true;
   }
@@ -39,7 +57,9 @@ class FakeNode {
   constructor(readonly ownerDocument: FakeDocument) {}
   addEventListener(type: string, fn: Listener, capture: boolean | { capture?: boolean } = false): void {
     const list = this.listeners.get(type) ?? [];
-    list.push({ fn, capture: typeof capture === "boolean" ? capture : capture.capture === true });
+    const c = typeof capture === "boolean" ? capture : capture.capture === true;
+    // As in a browser, the same listener added twice (same phase) is there once.
+    if (!list.some((l) => l.fn === fn && l.capture === c)) list.push({ fn, capture: c });
     this.listeners.set(type, list);
   }
   removeEventListener(type: string, fn: Listener, capture: boolean | { capture?: boolean } = false): void {
@@ -90,7 +110,8 @@ export class FakeElement extends FakeNode {
   readonly tagName: string;
   readonly childNodes: FakeNode[] = [];
   readonly attributes = new Map<string, string>();
-  readonly style: Record<string, string> = {};
+  /** Inline styles: properties by name, and custom properties (`--left`) through setProperty. */
+  readonly style: Record<string, string> & FakeStyle = fakeStyle();
   value = "";
   checked = false;
   constructor(doc: FakeDocument, tag: string) {
@@ -247,6 +268,31 @@ export class FakeElement extends FakeNode {
   get offsetWidth(): number {
     return 0;
   }
+  get offsetHeight(): number {
+    return 0;
+  }
+  scrollIntoView(): void {}
+}
+
+interface FakeStyle {
+  setProperty(name: string, value: string): void;
+  getPropertyValue(name: string): string;
+  removeProperty(name: string): string;
+}
+
+function fakeStyle(): Record<string, string> & FakeStyle {
+  const style = {} as Record<string, string> & FakeStyle;
+  const methods: FakeStyle = {
+    setProperty: (name, value) => void (style[name] = String(value)),
+    getPropertyValue: (name) => style[name] ?? "",
+    removeProperty: (name) => {
+      const was = style[name] ?? "";
+      delete style[name];
+      return was;
+    },
+  };
+  for (const [k, v] of Object.entries(methods)) Object.defineProperty(style, k, { value: v, enumerable: false });
+  return style;
 }
 
 function matcher(selector: string): (e: FakeElement) => boolean {
@@ -288,6 +334,13 @@ class FakeDocument extends FakeNode {
   createTextNode(text: string): FakeText {
     return new FakeText(this, text);
   }
+  /** Elements in the document (under its body) matching simple selectors, as for an element. */
+  querySelectorAll(selectors: string): FakeElement[] {
+    return this.body.querySelectorAll(selectors);
+  }
+  querySelector(selectors: string): FakeElement | null {
+    return this.body.querySelector(selectors);
+  }
 }
 
 /** What `fakeDocument()` gives a test. */
@@ -295,8 +348,8 @@ export interface FakeDom {
   readonly document: Document;
   /** A new element in `document.body`, to draw a panel into. */
   host(): HTMLElement;
-  /** Fires `type` at `target` (bubbling), with `key` for keyboard events; returns whether it was not prevented. */
-  fire(target: Element | Document, type: string, key?: string): boolean;
+  /** Fires `type` at `target` (bubbling), with `key` (and the keys held, `init`) for keyboard events; returns whether it was not prevented. */
+  fire(target: Element | Document, type: string, key?: string, init?: FakeEventInit): boolean;
   /** Types `value` into a field as a person would: focus, the value, `input`, `change`, then blur. */
   type(input: HTMLInputElement | HTMLTextAreaElement, value: string): void;
   /** Ticks or unticks a checkbox (or a switch), firing `change` when that changes it. */
@@ -329,8 +382,8 @@ export function fakeDocument(): FakeDom {
       doc.body.append(e);
       return as<HTMLElement>(e);
     },
-    fire(target, type, key) {
-      return as<FakeNode>(target).dispatchEvent(new FakeEvent(type, true, key));
+    fire(target, type, key, init) {
+      return as<FakeNode>(target).dispatchEvent(new FakeEvent(type, true, key, init));
     },
     type(input, value) {
       const e = as<FakeElement>(input);

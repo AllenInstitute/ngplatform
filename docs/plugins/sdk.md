@@ -30,7 +30,7 @@ The types, the manifest check and the parts a panel is built from.
 | `Disposer`, `Json`, `DockSlot` | Small shared types. |
 | `checkManifest`, `MANIFEST_SCHEMA` | Checks a manifest (the tests run it on every plugin). |
 | `PLATFORM_CONTEXT_KEYS` | The names on `ctx`, for checks. |
-| `card`, `field`, `slider`, `toggle`, `checkbox`, `info`, `emptyState`, `statusLine`, `region`, `icon`, `iconButton`, `el` | The parts of a panel, also in `@ngplatform/sdk/dom` (below). |
+| `card`, `field`, `slider`, `toggle`, `checkbox`, `info`, `emptyState`, `statusLine`, `region`, `roving`, `icon`, `iconButton`, `el` | The parts of a panel, also in `@ngplatform/sdk/dom` (below). |
 
 ## `@ngplatform/sdk/dom`
 
@@ -50,6 +50,7 @@ are in [Building a panel](https://github.com/AllenInstitute/ngplatform/blob/main
 | `emptyState` | One line and its action, for a panel with nothing to show. |
 | `statusLine` | Progress and errors, an error with its action (Retry, say). |
 | `region` | Part of a panel drawn again only when what it shows changes. |
+| `roving` | Arrow keys, Home, End (and a letter, in menus) within a group of items: a list of tabs, a menu, a picker. |
 | `icon` | One of the app's icons by name (`IconName`). |
 | `downloadBlob`, `safeFileName` | Save a file the browser downloads; a file name made safe. |
 
