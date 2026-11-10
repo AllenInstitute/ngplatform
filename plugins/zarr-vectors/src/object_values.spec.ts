@@ -14,7 +14,7 @@ import { ShardIndexCache } from "./zarr_array.js";
 
 const read = fixtureRead("props_types");
 
-function access(fail: (path: string) => boolean, error = () => Object.assign(new Error("Network or CORS error"), { status: 0 })): ZarrVectorsStoreAccess {
+function access(fail: (path: string) => boolean, error: () => Error = () => Object.assign(new Error("Network or CORS error"), { status: 0 })): ZarrVectorsStoreAccess {
   return {
     read: async (path, options) => {
       if (fail(path)) throw error();

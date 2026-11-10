@@ -33,10 +33,7 @@
 
 import type { ZarrVectorsGeometryDescription } from "./base.js";
 import type { DecodedChunk } from "./chunk_decode.js";
-import {
-  decodeChunk,
-  forEachFragmentVertex,
-} from "./chunk_decode.js";
+import { decodeChunk } from "./chunk_decode.js";
 import type { ElementType } from "./dtype.js";
 import {
   attributeDtype,
@@ -247,7 +244,7 @@ export async function fillObjectValues(
 /** The id of a fragment no object claims. */
 const NO_OBJECT = 0xffffffffffffffffn;
 
-interface Ghost {
+export interface Ghost {
   /** The local vertex the bridge starts from. */
   host: number;
   chunkKey: string;
@@ -459,14 +456,23 @@ export class LevelPipeline {
             ? (f) => BigInt(f)
             : (f) => chunkOwners?.[f] ?? NO_OBJECT;
       }
-      for (let f = 0; f < decoded.fragments.numFragments; ++f) {
+      const { fragments } = decoded;
+      for (let f = 0; f < fragments.numFragments; ++f) {
         const id = idOf(f);
         const lo = Number(id & 0xffffffffn);
         const hi = Number(id >> 32n);
-        forEachFragmentVertex(decoded.fragments, f, (v) => {
-          ids[2 * v] = lo;
-          ids[2 * v + 1] = hi;
-        });
+        if (fragments.isRange(f)) {
+          const { start, count } = fragments.range(f);
+          for (let v = start; v < start + count; ++v) {
+            ids[2 * v] = lo;
+            ids[2 * v + 1] = hi;
+          }
+        } else {
+          for (const v of fragments.indices(f)) {
+            ids[2 * v] = lo;
+            ids[2 * v + 1] = hi;
+          }
+        }
       }
       segmentIds = ids;
     }
@@ -645,8 +651,12 @@ export class LevelPipeline {
  * carrying its host's segment id and attributes, with a tangent along the
  * bridge in the curve's walk direction; the faces, then those reaching
  * across (`crossFaces`, ghosts as -1 - index), where every corner was found.
+ *
+ * With no ghosts to append, the decoded arrays are used as they are; only
+ * the positions are copied, as they view the vertex cell kept for
+ * neighbours, and the chunk's arrays are handed over to the frontend.
  */
-function assembleChunk(
+export function assembleChunk(
   decoded: DecodedChunk,
   segmentIds: Uint32Array,
   ghosts: readonly Ghost[],
@@ -658,6 +668,20 @@ function assembleChunk(
   const kept = ghosts
     .map((g, i) => ({ ...g, i }))
     .filter((g) => !Number.isNaN(ghostPositions[3 * g.i]));
+  if (kept.length === 0) {
+    const attributes = [...decoded.attributes];
+    if (decoded.tangents !== undefined) attributes.push(decoded.tangents);
+    return {
+      numVertices: own,
+      numOwnVertices: own,
+      positions: decoded.positions.slice(0, own * 3),
+      segmentIds:
+        segmentIds.length === own * 2 ? segmentIds : segmentIds.slice(0, own * 2),
+      edges: decoded.edges,
+      faces: withCrossFaces(decoded.faces, crossFaces, new Int32Array(ghosts.length).fill(-1)),
+      attributes,
+    };
+  }
   const total = own + kept.length;
   const row = new Int32Array(ghosts.length).fill(-1);
   kept.forEach((g, k) => (row[g.i] = own + k));
@@ -707,27 +731,38 @@ function assembleChunk(
       }
     });
   });
-  let faces = decoded.faces;
-  if (crossFaces.length > 0) {
-    const across: number[] = [];
-    for (let f = 0; f + 3 <= crossFaces.length; f += 3) {
-      const corners = [0, 1, 2].map((k) => {
-        const c = crossFaces[f + k];
-        return c >= 0 ? c : row[-1 - c];
-      });
-      if (corners.every((c) => c >= 0)) across.push(...corners);
-    }
-    faces = new Uint32Array(decoded.faces.length + across.length);
-    faces.set(decoded.faces);
-    faces.set(across, decoded.faces.length);
-  }
   return {
     numVertices: total,
     numOwnVertices: own,
     positions,
     segmentIds: ids,
     edges,
-    faces,
+    faces: withCrossFaces(decoded.faces, crossFaces, row),
     attributes,
   };
+}
+
+/**
+ * The chunk's faces, then those reaching across (`crossFaces`, ghosts as
+ * -1 - index, `row` the vertex each ghost became, -1 if dropped) whose
+ * every corner was found.
+ */
+function withCrossFaces(
+  faces: Uint32Array,
+  crossFaces: readonly number[],
+  row: Int32Array,
+): Uint32Array {
+  if (crossFaces.length === 0) return faces;
+  const across: number[] = [];
+  for (let f = 0; f + 3 <= crossFaces.length; f += 3) {
+    const corners = [0, 1, 2].map((k) => {
+      const c = crossFaces[f + k];
+      return c >= 0 ? c : row[-1 - c];
+    });
+    if (corners.every((c) => c >= 0)) across.push(...corners);
+  }
+  const out = new Uint32Array(faces.length + across.length);
+  out.set(faces);
+  out.set(across, faces.length);
+  return out;
 }

@@ -86,17 +86,33 @@ export function forEachFragmentVertex(
   }
 }
 
-/** Edges joining consecutive vertices of each fragment. */
+/**
+ * Edges joining consecutive vertices of each fragment, in fragment order.
+ * Counted first, then written into one typed array: a level-0 cell holds
+ * millions of vertices.
+ */
 export function sequentialEdges(fragments: FragmentIndex): Uint32Array {
-  const out: number[] = [];
-  for (let f = 0; f < fragments.numFragments; ++f) {
-    let prev = -1;
-    forEachFragmentVertex(fragments, f, (v) => {
-      if (prev >= 0) out.push(prev, v);
-      prev = v;
-    });
+  const n = fragments.numFragments;
+  let count = 0;
+  for (let f = 0; f < n; ++f) count += Math.max(0, fragments.rowCount(f) - 1);
+  const out = new Uint32Array(2 * count);
+  let k = 0;
+  for (let f = 0; f < n; ++f) {
+    if (fragments.isRange(f)) {
+      const { start, count } = fragments.range(f);
+      for (let v = start + 1; v < start + count; ++v) {
+        out[k++] = v - 1;
+        out[k++] = v;
+      }
+    } else {
+      const rows = fragments.indices(f);
+      for (let i = 1; i < rows.length; ++i) {
+        out[k++] = rows[i - 1];
+        out[k++] = rows[i];
+      }
+    }
   }
-  return Uint32Array.from(out);
+  return out;
 }
 
 /**
@@ -134,6 +150,30 @@ function delta(positions: Float32Array, from: number, to: number) {
   return [0, 1, 2].map((d) => positions[3 * to + d] - positions[3 * from + d]);
 }
 
+/**
+ * The unit vector from row `a` to row `b`, written at row `v` (left zero
+ * where they coincide). The square root of the sum of squares is several
+ * times faster than `Math.hypot`, and the same once rounded to float32: the
+ * differences are exact, as they are of float32 values.
+ */
+function unitInto(
+  out: Float32Array,
+  positions: Float32Array,
+  v: number,
+  a: number,
+  b: number,
+) {
+  const dx = positions[3 * b] - positions[3 * a];
+  const dy = positions[3 * b + 1] - positions[3 * a + 1];
+  const dz = positions[3 * b + 2] - positions[3 * a + 2];
+  const norm = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  if (norm > 0) {
+    out[3 * v] = dx / norm;
+    out[3 * v + 1] = dy / norm;
+    out[3 * v + 2] = dz / norm;
+  }
+}
+
 /** Tangents along each fragment's walk (central differences, one-sided at ends). */
 export function walkTangents(
   positions: Float32Array,
@@ -141,14 +181,26 @@ export function walkTangents(
 ): Float32Array {
   const out = new Float32Array(positions.length);
   for (let f = 0; f < fragments.numFragments; ++f) {
-    const walk: number[] = [];
-    forEachFragmentVertex(fragments, f, (v) => walk.push(v));
+    if (fragments.isRange(f)) {
+      const { start, count } = fragments.range(f);
+      if (count < 2) continue;
+      const last = start + count - 1;
+      for (let v = start; v <= last; ++v) {
+        unitInto(out, positions, v, v > start ? v - 1 : v, v < last ? v + 1 : v);
+      }
+      continue;
+    }
+    const walk = fragments.indices(f);
     const n = walk.length;
     if (n < 2) continue;
     for (let i = 0; i < n; ++i) {
-      const prev = walk[Math.max(0, i - 1)];
-      const next = walk[Math.min(n - 1, i + 1)];
-      normalizeInto(out, walk[i], delta(positions, prev, next));
+      unitInto(
+        out,
+        positions,
+        walk[i],
+        walk[i > 0 ? i - 1 : 0],
+        walk[i < n - 1 ? i + 1 : n - 1],
+      );
     }
   }
   return out;

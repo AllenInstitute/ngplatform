@@ -212,6 +212,13 @@ export class FragmentIndex {
     return { start, count };
   }
 
+  /** How many rows fragment `f` has, without materialising them. */
+  rowCount(f: number): number {
+    if (this.isRange(f)) return this.range(f).count;
+    const eIdx = f - this.getPopcountPrefix()[f];
+    return this.csrOffsets[eIdx + 1] - this.csrOffsets[eIdx];
+  }
+
   /**
    * Return the row indices of fragment `f`.  Range fragments materialise
    * as `[start, start+count)`; explicit fragments return a copy of the
