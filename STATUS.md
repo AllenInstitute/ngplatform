@@ -153,6 +153,12 @@ it, work asked for or agreed and not built yet (this replaces `TODO.md`):
   painted mask; stereo; region colours in the WebGPU renderer.
 - chunkmirage: levels made by downsampling for any virtual store, not
   only for the render service.
+- geotiff stays on 3.1.0-beta.0. The stable 3.0.5 reads every tile the
+  same (checked on Sentinel-2, USGS 3DEP and Copernicus COGs and a
+  multi-page TIFF; `tests/chunkmirage_geotiff.test.ts`), but it caches no
+  blocks by default, so a COG takes 1.5 to 7 times the requests. It can
+  move once chunkmirage (JaneliaSciComp, `web/src/sources.ts`) passes
+  `{ blockSize: 65536 }` to `fromUrl`: a change to suggest upstream.
 - Luxar: fitted Gaussian splats (a GPU fit that writes new files; where
   they go to be agreed first); its glow saturating on folded surfaces.
 
