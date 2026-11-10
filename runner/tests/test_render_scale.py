@@ -808,3 +808,77 @@ def test_a_fitted_splat_through_the_service_on_its_gpu(tmp_path, monkeypatch):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+# ------------------------------------------------------------------ the splat fit with the real gsplat
+def splat_python() -> str | None:
+    """A Python with torch (CUDA) and gsplat, for the real fit's tests (NGP_TEST_SPLAT_PYTHON; this one when it has
+    gsplat). gsplat builds its CUDA kernels the first time (minutes; nvcc from CUDA_HOME or the PATH)."""
+    p = os.environ.get("NGP_TEST_SPLAT_PYTHON")
+    if p:
+        return p
+    try:
+        import gsplat  # noqa: F401
+        import torch
+
+        return sys.executable if torch.cuda.is_available() else None
+    except ImportError:
+        return None
+
+
+needs_gsplat = pytest.mark.skipif(splat_python() is None, reason="needs a Python with torch (CUDA) and gsplat: set NGP_TEST_SPLAT_PYTHON")
+
+
+def read_ply(path: Path) -> tuple[list[str], np.ndarray]:
+    data = path.read_bytes()
+    end = data.index(b"end_header\n") + len(b"end_header\n")
+    head = data[:end].decode().splitlines()
+    n = int(next(line.split()[2] for line in head if line.startswith("element vertex")))
+    names = [line.split()[2] for line in head if line.startswith("property")]
+    return names, np.frombuffer(data[end:], "<f4", count=n * len(names)).reshape(n, len(names))
+
+
+@needs_gsplat
+def test_the_fit_runs_with_the_real_gsplat(tmp_path):
+    from ngplatform_render.splat.fit import GSPLAT_VERSION
+
+    capture(tmp_path / "cap", n=16, w=64, h=48)
+    python = splat_python()
+    env = {**os.environ, "PYTHONPATH": str(helpers.RUNNER), "PATH": server.splat_path(python, os.environ.get("PATH", ""))}
+    r = subprocess.run([python, "-m", "ngplatform_render.splat.fit", str(tmp_path / "cap"), "--steps", "200", "--sh", "1",
+                        "--device", "cuda:0"], capture_output=True, text=True, env=env, timeout=1800)
+    assert r.returncode == 0, r.stdout + r.stderr
+    fit = json.loads((tmp_path / "cap" / "fit.json").read_text())
+    assert fit["gsplat"] == GSPLAT_VERSION and fit["device"] == "cuda:0" and fit["held_out"] == 2 and fit["gpu_peak_mb"] > 0
+    names, a = read_ply(tmp_path / "cap" / "splat.ply")
+    assert len(a) == fit["gaussians"] > 0 and names[:3] == ["x", "y", "z"] and len(names) == 3 + 3 + 3 + 9 + 1 + 3 + 4
+    assert np.isfinite(a).all()
+    assert (tmp_path / "cap" / "scene.splat").stat().st_size == 32 * len(a)
+
+
+@needs_gpu
+@needs_gsplat
+def test_a_splat_fitted_with_the_real_gsplat_through_the_service(tmp_path, monkeypatch):
+    """The views of a ball, fitted by the real gsplat: the held-out views are drawn again from the Gaussians."""
+    from test_render import ball, write_store
+
+    monkeypatch.setenv("NGP_RENDER_CACHE", str(tmp_path / "cache"))
+    url = write_store(tmp_path / "s.ome.zarr", ball(48), levels=1)
+    srv, call = serve(tmp_path, splat_python=splat_python())
+    try:
+        assert wait_for(lambda: srv.splat_check.get("error") != "checking", 120)
+        assert srv.splat_check["ready"] and "warning" not in srv.splat_check, srv.splat_check
+        info = _open(call, url)
+        st, j = call("POST", f"/sessions/{info['id']}/splats", {"view": _view_of(info, 96, 72), "views": 24, "size": 96, "samples": 8,
+                                                               "steps": 600, "points": 5000})
+        assert st == 200
+        assert wait_for(lambda: call("GET", f"/splats/{j['id']}")[1]["status"] in server.FINISHED, 1800)
+        done = call("GET", f"/splats/{j['id']}")[1]
+        assert done["status"] == "done", (done, (Path(done["folder"]) / "fit.log").read_text())
+        res = done["result"]
+        assert res["device"] == "cuda:0" and res["held_out"] == 3 and res["psnr_held_out"] > 20, res
+        _, a = read_ply(Path(done["folder"]) / "splat.ply")
+        assert len(a) == res["gaussians"] and np.isfinite(a).all()
+    finally:
+        srv.shutdown()
+        srv.server_close()

@@ -250,11 +250,30 @@ has). A loaded session's `volume` says which it shows and how many there
 are: `channel`, `time`, `channels`, `times`, `axes`. Images need x, y and z
 axes; 2-D images are not rendered.
 
-**Splats.** Fitting needs a Python of its own with torch and gsplat 1.4.0
-(`pip install "./runner[splat]"`), given with `--splat-python`; `/info`
-says whether it is ready and warns of another gsplat. The fit runs on the
-service's GPU (`--device`), keeps the views on the CPU (reading them from
+**Splats.** Fitting needs a Python of its own with torch (with CUDA) and
+gsplat 1.4.0 (`pip install "./runner[splat]"`), given with `--splat-python`;
+`/info` says whether it is ready and warns of another gsplat. The fit runs on
+the service's GPU (`--device`), keeps the views on the CPU (reading them from
 their files as needed) and ends with the service.
+
+A venv beside a Python that already has torch keeps torch and numpy as they
+are (gsplat 1.4.0 works with torch 2.12 and CUDA 12.6):
+
+```sh
+/path/to/torch-env/bin/python -m venv --system-site-packages /path/to/splat-venv
+/path/to/splat-venv/bin/pip install gsplat==1.4.0
+```
+
+gsplat builds its CUDA kernels the first time it fits (about 4 minutes on 32
+cores; they are kept in `~/.cache/torch_extensions` after that). The build
+needs nvcc of the CUDA torch was built for and ninja: the service puts the
+splat Python's own folder (where pip put ninja) first on the fit's PATH, and
+nvcc is found from `CUDA_HOME` or the PATH, so start the service with, for
+example, `CUDA_HOME=/usr/local/cuda-12.6 PATH=/usr/local/cuda-12.6/bin:$PATH`.
+A splat of the 100 um SRB template (64 views of 384 px at 64 samples, 3000
+steps, about 100 000 Gaussians) takes 1.5 minutes for the views and a
+minute for the fit on an RTX A6000, with 1.6 GB of GPU memory for the fit
+(`gpu_peak_mb` in its `fit.json`).
 
 ## Using a GPU on another machine over SSH
 
@@ -365,4 +384,6 @@ The render service's tests that render need CuPy and a CUDA GPU, and are
 skipped without them; the movie's encoding needs `ffmpeg`. The splat fit's
 tests run when `NGP_TEST_TORCH_PYTHON` names a Python with torch (gsplat is
 stood in for), for example
-`NGP_TEST_TORCH_PYTHON=/path/to/torch-env/bin/python python -m pytest runner/tests -q`.
+`NGP_TEST_TORCH_PYTHON=/path/to/torch-env/bin/python python -m pytest runner/tests -q`;
+the real fit's test runs when `NGP_TEST_SPLAT_PYTHON` names a splat Python
+(torch with CUDA and gsplat, as above) and a GPU is there.

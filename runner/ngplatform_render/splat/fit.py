@@ -88,7 +88,7 @@ class Views:
         im = Image.open(self.folder / self.frames[i]["file"]).convert("RGBA")
         if self.scale > 1:
             im = im.resize((im.width // self.scale, im.height // self.scale), Image.LANCZOS)
-        a = np.ascontiguousarray(np.asarray(im))
+        a = np.array(im)  # a copy torch may write to (PIL's own is read-only)
         self.reads += 1
         if a.nbytes <= self.max_bytes:
             self._held[i] = a
@@ -228,6 +228,8 @@ def fit(folder: Path, steps: int = 30000, sh_degree: int = 3, scale: int = 1, ma
         "gaussians": int(len(g["means"])), "steps": steps, "sh_degree": sh_degree, "scale": scale,
         "views": n, "held_out": len(held), "psnr_held_out": round(float(np.mean(psnr)), 2) if psnr else None,
         "seconds": round(time.time() - started, 1), "gsplat": version, "device": str(device),
+        # The most GPU memory torch held for the fit (MB): what the render service counts as SPLAT_FIT_BYTES.
+        "gpu_peak_mb": round(torch.cuda.max_memory_reserved(device) / (1 << 20)) if device.type == "cuda" else None,
         "files": {"ply": "splat.ply", "splat": "scene.splat"},
     }
     (folder / "fit.json").write_text(json.dumps(result, indent=1))

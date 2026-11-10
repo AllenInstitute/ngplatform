@@ -1376,6 +1376,7 @@ class Splat(Job):
         env = dict(os.environ)
         here = str(Path(__file__).resolve().parent.parent)
         env["PYTHONPATH"] = here + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+        env["PATH"] = splat_path(self.python, env.get("PATH", ""))
         device = self.session.device if self.session is not None else 0
         cmd = [self.python, "-m", "ngplatform_render.splat.fit", str(self.out_dir), "--steps", str(steps), "--sh", str(max(0, min(3, sh))),
                "--device", f"cuda:{device}"]
@@ -1410,6 +1411,14 @@ class Splat(Job):
     def info(self) -> dict[str, Any]:
         files = [f for f in SPLAT_FILES if (self.out_dir / f).is_file()] if self.status == "done" else []
         return {**super().info(), "folder": str(self.out_dir), "files": files, "result": self.result}
+
+
+def splat_path(python: str, path: str) -> str:
+    """The PATH for the splat Python: its own folder first. gsplat builds its CUDA kernels the first time it runs,
+    with the ninja installed beside that Python (in a venv, not on the service's PATH) and nvcc (CUDA_HOME, or the
+    PATH)."""
+    own = str(Path(python).parent)
+    return path if own in path.split(os.pathsep) else own + (os.pathsep + path if path else "")
 
 
 def splat_python_check(python: str | None) -> dict[str, Any]:
