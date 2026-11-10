@@ -229,6 +229,13 @@ describe("the build's facts", () => {
     expect(off.Built).toBe("unknown");
   });
 
+  it("has a changelog entry for package.json's version, and one for the work not yet released", () => {
+    const version = JSON.parse(read("package.json")).version as string;
+    const changelog = read("CHANGELOG.md");
+    expect(changelog).toMatch(new RegExp(`^## ${version.replace(/\./g, "\\.")} — \\d{4}-\\d{2}-\\d{2}$`, "m"));
+    expect(changelog).toMatch(/^## Unreleased$/m);
+  });
+
   it("pins one Neuroglancer commit, the one CI builds against", () => {
     const check = neuroglancerCheck(new URL(".", root).pathname);
     expect(check.pin).toMatch(/^[0-9a-f]{40}$/);
