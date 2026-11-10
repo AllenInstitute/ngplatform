@@ -628,7 +628,7 @@ const SPACE_UNITS: Record<string, number> = {
   kilometer: 1e6,
   megameter: 1e9,
   mile: 1609344,
-  parsec: 3.0856775814913673e19,
+  parsec: 30856775814913670000,
   petameter: 1e18,
   picometer: 1e-9,
   terameter: 1e15,

@@ -53,7 +53,6 @@ import { asTool, describeSize, followDrag, type DockTab, DockManager, prefs } fr
 import { h, icon, iconButton, isMac, keyLabel, mark } from "./dom.js";
 import { closeSheet, confirmDialog, copyText, formDialog, offer, promptDialog, sheet, sheetIsOpen, showMenu, showPalette, showSheet, toast } from "./overlays.js";
 import { ActivityLog, WARNING_EVENT, warningLine } from "./panels/activity.js";
-import { showAddMenu } from "./panels/datasets.js";
 import { layerTarget } from "./panels/layer.js";
 import { renderLayersPanel } from "./panels/layers.js";
 import { renderJobsPanel, renderPluginsPanel } from "./panels/misc.js";
@@ -340,6 +339,8 @@ export class Shell {
         form: (title, schema, initial) => formDialog(title, schema, initial),
         sheet: (title, render, options) => {
           const body = h("div", { class: "plugin-sheet" });
+          // Assigned once, after close exists: render may close the sheet at once.
+          // eslint-disable-next-line prefer-const
           let dispose: (() => void) | void;
           const close = showSheet(sheet(title, [body], [h("button", { class: "btn", type: "button", onclick: () => close() }, "Close")], options), () => dispose?.());
           dispose = render(body, close);

@@ -84,7 +84,8 @@ describe("Settings", () => {
   it("opens each section when chosen, disposing of the one before", () => {
     showSettingsSheet(wb);
     const body = () => document.querySelector(".settings-body")!;
-    for (const b of nav().slice(1)) {
+    const developer = nav().findIndex((b) => b.textContent === "Developer");
+    for (const b of nav().slice(1, developer + 1)) {
       b.click();
       expect(pressed()).toBe(b.textContent);
       expect(body().childElementCount).toBeGreaterThan(0);
@@ -94,6 +95,10 @@ describe("Settings", () => {
     expect(viewDisposed).toHaveBeenCalledOnce();
     expect(panels.disposed).toEqual(["sign-in", "compute"]);
     expect(body().textContent).toContain("Reload the scene's layers");
+    // About, after Developer: the build's version.
+    nav().find((b) => b.textContent === "About")!.click();
+    expect(panels.disposed).toEqual(["sign-in", "compute", "statistics"]);
+    expect(body().textContent).toContain("Version");
   });
 
   it("goes from section to section with the arrow keys", () => {

@@ -34,7 +34,6 @@ try {
 const base = process.argv[2] ?? "http://127.0.0.1:4231/";
 const shots = process.argv[3] ?? "tests/e2e/screenshots";
 mkdirSync(shots, { recursive: true });
-const origin = new URL(base).origin;
 
 let failures = 0;
 const check = (ok, what) => {
