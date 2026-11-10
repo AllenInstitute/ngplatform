@@ -1,0 +1,98 @@
+# Changelog
+
+What changed in each version of ngplatform, newest first. A version is a
+tag `vX.Y.Z` on `main` with the same version in `package.json`; how to
+make one is in [docs/contributing.md](docs/contributing.md#releases).
+Settings › About shows the version, the commit and the date of the build
+you are using.
+
+## Unreleased
+
+The production polish: the work of an audit of every panel and plugin
+(`plans/`), from the crashes up to the release process.
+
+### Fixes that lost data or crashed (Phase 0 and 1)
+
+- The app starts when a plugin fails to load (marked failed in Plugins),
+  reloads once for a stale chunk after a redeploy, and reports uncaught
+  errors in Activity with their stack; Settings › Developer saves the log.
+- Links from other releases: a newer workspace or plugin state is reported,
+  not read as if current.
+- Sheets stack: a dialog opened from a sheet returns to it; Escape closes
+  the top one only.
+- Shared image readers: Zarr v2 / OME-Zarr 0.4 (Fortran-order chunk keys
+  fixed), size-1 time and channel axes, fill values in the array's type.
+- Render service: stills as jobs, views and movies checked before
+  rendering, out of GPU memory frees the session, idle sessions closed.
+- Segmentation: saving again into a folder no longer brings back erased
+  labels. Luxar, Track filtering and Zarr Vectors: late answers ignored,
+  undo steps joined, cell caches within their limits.
+
+### One style (Phase 2)
+
+- Type, spacing, control heights and colours as tokens; every control in
+  IBM Plex Sans; square corners; `--faint` at 4.5:1 contrast.
+- Every panel built from the SDK's shared parts (toggle, checkbox, info,
+  slider, empty state, status line, cards), drawn once and updated in
+  place.
+- Neuroglancer's own controls restyled with the same tokens.
+- The docs, the user guide and its figures on the new layout.
+
+### Scale (Phase 3)
+
+- Render service: one GPU budget with admission, a job queue, streamed
+  downloads; channel and time point chosen for volumes.
+- Track filtering: a million streamlines through a region change, cancelled
+  superseded tests, region answers within 192 MB.
+- Layers panel: one dataset's change redraws its row only.
+- Segmentation: 100,000 segments keep the state small; saves compressed in
+  a worker and written as made.
+- Zarr Vectors, precomputed meshes and Luxar: shared byte budgets, cancelled
+  reads, retries with backoff, one WebGL context for every layer.
+- Exports outside Chrome and Edge capped at 1 GB with the reason; a long
+  workspace link shared as a file.
+- Runners and hosts: requests given up after a deadline, with the
+  computer's name.
+
+### Security and release (Phase 5B)
+
+- A Content Security Policy in the built page: no inline script, no
+  `<object>`, no `<base>`; what it allows and why is in
+  [docs/dev/security.md](docs/dev/security.md).
+- Google sign-in's access tokens kept in the tab (sessionStorage), not the
+  browser: another tab or a reopened one signs in again with one click.
+- The console's `window.viewer`, `window.engine` and `window.workbench`
+  only from the dev server or with `?debug` in the address.
+- A plugin from a URL says plainly what it can reach before it runs.
+- Settings › About: the version, the build's commit and date, the
+  Neuroglancer commit, each runner's version. A runner older than the app
+  needs is reported, with what to do.
+- IBM Plex served with the app instead of from Google Fonts; Pyodide's
+  scripts checked with Subresource Integrity.
+- The app opens offline once it has been opened online: the service worker
+  keeps the page and its startup code.
+- A loading screen while the startup code downloads.
+- A deploy workflow (by hand), this changelog, `npm run lint` (ESLint),
+  `npm run check:neuroglancer` for the Neuroglancer pin.
+
+## 0.2.0 — 2026-10-31
+
+The platform around Neuroglancer: datasets, scenes and plugins around a
+viewer that shows only data. Deployed to GitHub Pages up to `3c48aba`
+(8 November 2026).
+
+- The shell: Open, Share, undo and redo, the command palette, docks and
+  sheets; workspaces kept in the browser and shared as links.
+- Data type plugins (Zarr Vectors, with GraphML, Parquet, Arrow, LAS/LAZ,
+  CIFTI and EM meshes) and tool plugins (Anatomical rendering, Track
+  filtering, Luxar, Registration, Filters, Orientations, Time series, Atlas,
+  Segmentation, Annotations, OME Collections), on and off in Plugins.
+- Google sign-in with several accounts and sign-in rules per bucket.
+- The runner on this computer and others over SSH: jobs, serving local
+  files, the render service.
+- Python in the page (Pyodide), plugins from a file or a URL.
+
+## 0.1.0 — 2026-10-30
+
+The first platform shell around Neuroglancer: open, share, undo, commands
+and docks.
