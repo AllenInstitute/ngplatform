@@ -65,6 +65,7 @@ import type {
 import {
   AsyncLru,
   mapConcurrent,
+  DECODED_BUDGET,
   retryable,
   SHARED_SIGNAL,
   warnOnce,
@@ -113,28 +114,34 @@ export interface DenseChunkData {
   ghostTangents?: Float32Array;
 }
 
-/** Raw vertex cells, by pipeline and cell, shared by chunks and ghosts. */
+/**
+ * Raw vertex cells, by pipeline and cell, shared by chunks and ghosts;
+ * charged to the worker's one budget for the data it keeps.
+ */
 const vertexCells = new AsyncLru<Uint8Array | undefined>(
   Infinity,
-  256 * 1024 * 1024,
+  Infinity,
   (b) => b?.byteLength ?? 0,
+  DECODED_BUDGET,
 );
 let nextPipelineId = 0;
 
 /**
  * A neighbour's attribute cells, decoded, for the corners of faces reaching
- * into it (read again when that chunk is drawn too, so kept a while).
+ * into it (read again when that chunk is drawn too, so kept a while);
+ * charged to the same budget.
  */
 const neighbourAttributes = new AsyncLru<Float32Array | undefined>(
   Infinity,
-  64 * 1024 * 1024,
+  Infinity,
   (a) => a?.byteLength ?? 0,
+  DECODED_BUDGET,
 );
 
 /**
- * Caps the raw vertex cells kept between reads (256 MiB by default).  A
- * worker that keeps its own decoded copy of what it needs can make this
- * small.
+ * Caps the raw vertex cells kept between reads, within the worker's
+ * budget (`setDecodedCacheBytes`). A worker that keeps its own decoded copy
+ * of what it needs can make this small.
  */
 export function setVertexCellCacheBytes(bytes: number): void {
   vertexCells.setMaxSize(bytes);
@@ -315,10 +322,13 @@ export class LevelPipeline {
     }
   }
 
-  /** The raw vertex cell at `chunkKey`, fetched once for every reader. */
-  private vertexCell(chunkKey: string) {
-    return vertexCells.get(`${this.id}|${chunkKey}`, () =>
-      this.cells.readCell("vertices", chunkKey, SHARED_SIGNAL),
+  /**
+   * The raw vertex cell at `chunkKey`, fetched once for every reader, and
+   * not at all once every reader waiting for it has given up (`signal`).
+   */
+  private vertexCell(chunkKey: string, signal: AbortSignal | undefined) {
+    return vertexCells.getShared(`${this.id}|${chunkKey}`, signal, (shared) =>
+      this.cells.readCell("vertices", chunkKey, shared),
     );
   }
 
@@ -414,6 +424,11 @@ export class LevelPipeline {
    * read, or drawn by the view, and leaves out the rest, which lie off the
    * plane: reading them would cost more than the chunk itself.
    *
+   * `neighboursAtHand: true` does the same for a chunk a 3-D view draws:
+   * there a neighbour no one draws at this level is drawn at a coarser one
+   * (or is out of view), and reading the rows its bridges end on can cost
+   * most of a big cell, for one segment each.
+   *
    * `forDrawing: true` puts no object values on vertices (they go per
    * object, {@link packForDrawing}) and, where the curves are runs of rows,
    * gives `joinsPrevious` in place of their edges and tangents.
@@ -421,7 +436,12 @@ export class LevelPipeline {
   async download(
     chunk: number[],
     signal: AbortSignal,
-    options: { bridges?: boolean; sliceOnly?: boolean; forDrawing?: boolean } = {},
+    options: {
+      bridges?: boolean;
+      sliceOnly?: boolean;
+      neighboursAtHand?: boolean;
+      forDrawing?: boolean;
+    } = {},
   ): Promise<DenseChunkData | undefined> {
     const { description } = this;
     const chunkKey = chunk.join(".");
@@ -459,7 +479,7 @@ export class LevelPipeline {
         relinkedChildren,
         // A mesh's faces draw its outline on cross-sections.
         skipFaces: false,
-        vertices: this.vertexCell(chunkKey),
+        vertices: this.vertexCell(chunkKey, signal),
         skipSegmentIds: mode === "manifests",
         fragmentIdColumn: mode === "object_id" ? "object_id" : "segment_id",
         walkFlags: options.forDrawing,
@@ -565,7 +585,7 @@ export class LevelPipeline {
     }
     // Decided once per neighbour, before any of their reads start.
     const atHand = new Map<string, boolean>();
-    const include = options.sliceOnly
+    const include = options.sliceOnly || options.neighboursAtHand
       ? (key: string) => {
           let ok = atHand.get(key);
           if (ok === undefined) atHand.set(key, (ok = this.atHand(key)));
@@ -608,7 +628,7 @@ export class LevelPipeline {
   async downloadForDrawing(
     chunk: number[],
     signal: AbortSignal,
-    options: { sliceOnly?: boolean } = {},
+    options: { sliceOnly?: boolean; neighboursAtHand?: boolean } = {},
   ): Promise<DrawChunkData | undefined> {
     const data = await this.download(chunk, signal, {
       ...options,
@@ -729,14 +749,16 @@ export class LevelPipeline {
       // draw that chunk anyway; otherwise only the rows needed, if possible.
       let whole = vertexCells.peek(`${this.id}|${key}`);
       if (whole === undefined && this.isRequested(key.split(".").map(Number))) {
-        whole = this.vertexCell(key);
+        whole = this.vertexCell(key, signal);
+      } else if (whole !== undefined) {
+        whole = this.vertexCell(key, signal);
       }
       const found = await this.cells.vertexRows(
         key,
         type,
         whole === undefined ? wanted : [],
         signal,
-        () => this.vertexCell(key),
+        () => this.vertexCell(key, signal),
       );
       if (whole !== undefined) {
         const bytes = await whole.catch(unlessRetryable(undefined));

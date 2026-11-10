@@ -75,6 +75,11 @@ export function retryable(e: unknown): boolean {
   return typeof status === "number" && (status === 0 || status === 429 || status >= 500);
 }
 
+/** A cache a {@link ByteBudget} can make let go of an entry. */
+export interface BudgetedCache {
+  forget(key: string): void;
+}
+
 /**
  * A byte budget shared by several caches (one per store, per level, per
  * kind), so that however many stores are open their caches together stay
@@ -84,8 +89,8 @@ export function retryable(e: unknown): boolean {
  */
 export class ByteBudget {
   /** Charged entries, least recently used first. */
-  private entries = new Map<string, { lru: AsyncLru<any>; key: string; size: number }>();
-  private ids = new WeakMap<AsyncLru<any>, number>();
+  private entries = new Map<string, { lru: BudgetedCache; key: string; size: number }>();
+  private ids = new WeakMap<BudgetedCache, number>();
   private next = 0;
   private total = 0;
 
@@ -106,14 +111,14 @@ export class ByteBudget {
     this.evict(undefined);
   }
 
-  private id(lru: AsyncLru<any>, key: string): string {
+  private id(lru: BudgetedCache, key: string): string {
     let n = this.ids.get(lru);
     if (n === undefined) this.ids.set(lru, (n = this.next++));
     return `${n}|${key}`;
   }
 
   /** @internal An entry of `lru` loaded: charged, as the most recent, and others evicted past the limit. */
-  charge(lru: AsyncLru<any>, key: string, size: number): void {
+  charge(lru: BudgetedCache, key: string, size: number): void {
     const id = this.id(lru, key);
     this.release(lru, key);
     this.entries.set(id, { lru, key, size });
@@ -122,7 +127,7 @@ export class ByteBudget {
   }
 
   /** @internal An entry used again: the most recent. */
-  touch(lru: AsyncLru<any>, key: string): void {
+  touch(lru: BudgetedCache, key: string): void {
     const id = this.id(lru, key);
     const entry = this.entries.get(id);
     if (entry === undefined) return;
@@ -131,7 +136,7 @@ export class ByteBudget {
   }
 
   /** @internal An entry gone from its cache. */
-  release(lru: AsyncLru<any>, key: string): void {
+  release(lru: BudgetedCache, key: string): void {
     const id = this.id(lru, key);
     const entry = this.entries.get(id);
     if (entry === undefined) return;
@@ -151,10 +156,11 @@ export class ByteBudget {
 }
 
 /**
- * Decoded data a worker keeps, over every store it reads: the object
- * reader's decoded chunks and vertex cells and the cross-chunk links'
- * records, each also within its own limit.  Three whole-brain stores
- * share it rather than each taking its own.
+ * Data a worker keeps between reads, over every store it reads: the object
+ * reader's decoded chunks, the dense chunks' raw vertex cells and their
+ * neighbours' attributes, the cross-chunk links' records, and the byte
+ * ranges kept by coalesced reads.  Three whole-brain stores share it
+ * rather than each taking its own.
  */
 export const DECODED_BUDGET = new ByteBudget(768 * 1024 * 1024);
 
@@ -171,10 +177,15 @@ export function setDecodedCacheBytes(bytes: number): void {
  * its loaded entries are also charged to that budget, which several caches
  * share and which evicts across them.
  */
-export class AsyncLru<T> {
+export class AsyncLru<T> implements BudgetedCache {
   private entries = new Map<string, Promise<T>>();
   private sizes = new Map<string, number>();
   private totalSize = 0;
+  /** Loads in flight by {@link getShared}, with who still waits for them. */
+  private flights = new Map<
+    string,
+    { promise: Promise<T>; controller: AbortController; waiting: number; pinned: boolean }
+  >();
 
   constructor(
     private maxEntries: number,
@@ -229,6 +240,51 @@ export class AsyncLru<T> {
     return promise;
   }
 
+  /**
+   * As {@link get}, for a load several callers may share and each may give
+   * up on: the load is aborted, and forgotten, once every caller that gave
+   * a `signal` has aborted it (a caller without one waits to the end).
+   * Each caller's promise rejects when its own signal aborts.
+   */
+  getShared(
+    key: string,
+    signal: AbortSignal | undefined,
+    load: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    let flight = this.flights.get(key);
+    if (flight === undefined) {
+      if (this.entries.has(key)) return withSignal(this.get(key, load as never), signal);
+      const controller = new AbortController();
+      const promise = this.get(key, () => load(controller.signal));
+      const started = { promise, controller, waiting: 0, pinned: false };
+      flight = started;
+      this.flights.set(key, started);
+      const settle = () => {
+        if (this.flights.get(key) === started) this.flights.delete(key);
+      };
+      promise.then(settle, settle);
+    } else {
+      this.get(key, () => flight!.promise);
+    }
+    const shared = flight;
+    if (signal === undefined) {
+      shared.pinned = true;
+    } else if (!signal.aborted) {
+      ++shared.waiting;
+      const onAbort = () => {
+        if (--shared.waiting > 0 || shared.pinned) return;
+        if (this.flights.get(key) !== shared) return;
+        this.flights.delete(key);
+        if (this.entries.get(key) === shared.promise) this.delete(key);
+        shared.controller.abort(signal.reason);
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      const done = () => signal.removeEventListener("abort", onAbort);
+      shared.promise.then(done, done);
+    }
+    return withSignal(shared.promise, signal);
+  }
+
   /** Records a value that was computed elsewhere. */
   put(key: string, value: T) {
     if (!this.entries.has(key)) this.get(key, () => Promise.resolve(value));
@@ -266,6 +322,22 @@ export class AsyncLru<T> {
       if (this.sizes.has(key)) this.delete(key);
     }
   }
+}
+
+/** `promise`, or its rejection once `signal` aborts, whichever comes first. */
+export function withSignal<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (signal === undefined) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
 }
 
 /** Runs `fn` over `items` with at most `limit` in flight. */
