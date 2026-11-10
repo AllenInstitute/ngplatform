@@ -658,7 +658,8 @@ describe("saving", () => {
       if (path.includes("/c/")) expect(await gunzip(written.get(path)!)).toEqual(await gunzip(bytes));
       else expect(written.get(path)).toEqual(bytes);
     }
-  });
+    // Gzips every chunk twice over: seconds on a shared CI machine.
+  }, 60_000);
 
   it("cuts the painted box, moving the origin to its corner", () => {
     const v = vol();

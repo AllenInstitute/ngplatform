@@ -54,6 +54,9 @@ beforeEach(() => {
     keybindings: { list: () => [{ key: "mod+k", command: "help.palette" }] },
     commands: { get: (id: string) => (id === "help.palette" ? { title: "Search commands" } : undefined) },
     log: { text: () => "" },
+    // Settings › About lists the runners: this computer's, not paired.
+    runner: { pairing: () => undefined, onChange: () => () => {} },
+    hosts: { names: () => [], runner: () => undefined, onChange: () => () => {} },
     run: vi.fn(),
   } as unknown as Workbench;
 });
@@ -99,6 +102,7 @@ describe("Settings", () => {
     nav().find((b) => b.textContent === "About")!.click();
     expect(panels.disposed).toEqual(["sign-in", "compute", "statistics"]);
     expect(body().textContent).toContain("Version");
+    expect(body().textContent).toContain("not paired");
   });
 
   it("goes from section to section with the arrow keys", () => {
