@@ -46,6 +46,15 @@ export function damped(velocity: number, ms: number): number {
   return velocity * Math.pow(0.75, ms / (1000 / 60));
 }
 
+/** The system asks for less motion. */
+function prefersReducedMotion(): boolean {
+  try {
+    return globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  } catch {
+    return false;
+  }
+}
+
 export class Momentum {
   private on = false;
   private samples: { t: number; q: Quat }[] = [];
@@ -113,6 +122,8 @@ export class Momentum {
 
   /** Keeps turning at the speed of the drag's last moments, slowing down. */
   private start(): void {
+    // Asked for less motion (the system setting): the view stops when let go.
+    if (prefersReducedMotion()) return;
     const s = this.samples;
     if (s.length < 2) return;
     const first = s[0];

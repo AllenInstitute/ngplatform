@@ -26,6 +26,7 @@ import {
   info,
   type OnOff,
   region,
+  roving,
   safeFileName,
   select,
   type Settable,
@@ -880,13 +881,20 @@ export class Registration {
         ["flip", "Flip"],
       ] as [Tab, string][]
     ).map(([id, title]) => el("button", { type: "button", role: "tab", "data-tab": id, onclick: () => ((this.tab = id), showTab()) }, title));
+    // The arrow keys move between the tabs, one tab stop for the row.
+    const tabList = el("div", { class: "segmented", role: "tablist", "aria-label": "Transform" }, ...tabButtons);
+    roving(tabList, { items: () => tabButtons, orientation: "horizontal", tabStop: true, onMove: (t) => t.click() });
     let axes: { slider: Slider; get: (m: Manual) => number }[] = [];
     let flips: OnOff[] = [];
     let around: Settable<HTMLSelectElement, string> | undefined;
     let centre: HTMLButtonElement | undefined;
     let bodies: Partial<Record<Tab, HTMLElement>> = {};
     const showTab = () => {
-      for (const b of tabButtons) b.setAttribute("aria-pressed", String(b.getAttribute("data-tab") === this.tab));
+      for (const b of tabButtons) {
+        const shown = b.getAttribute("data-tab") === this.tab;
+        b.setAttribute("aria-selected", String(shown));
+        b.setAttribute("tabindex", shown ? "0" : "-1");
+      }
       for (const [id, body] of Object.entries(bodies)) body.hidden = id !== this.tab;
     };
     /** The tabs' controls, for the moving layer: drawn again only when the layer (its axes, its size) changes. */
@@ -1106,7 +1114,7 @@ export class Registration {
         "registration.transform",
         "Transform",
         { open: true },
-        el("div", { class: "segmented", role: "tablist", "aria-label": "Transform" }, ...tabButtons),
+        tabList,
         transform,
         el("div", { class: "row" }, restore),
         following,
