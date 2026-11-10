@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LayerTransform, PlatformContext } from "@ngplatform/sdk";
 import { type FakeDom, fakeDocument } from "@ngplatform/sdk/testing";
-import { Collections, EXAMPLE_URL, plugin, READ_TIMEOUT, type Saved, twelveNumbers } from "../plugin.js";
+import { Collections, EXAMPLE_URL, GROUPS_KEPT, groupsKept, ORDER_WAIT, plugin, READ_TIMEOUT, type Saved, twelveNumbers } from "../plugin.js";
 import { ADD_COLLECTION, COLLECTION_KIND, COLLECTIONS_PANEL } from "../manifest.js";
 
 const MM = 1e-3;
@@ -310,6 +310,66 @@ describe("opening a collection in a tab", () => {
     await settle();
     expect(dom.text(panel)).toContain("unit 'pixel' read as mm");
     expect(dom.text(panel)).not.toMatch(/unit 'micrometer'/);
+  });
+});
+
+describe("placing many members", () => {
+  it("places the others while one member's metadata hangs, in the collection's order", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const h = host();
+      // B's metadata never answers.
+      table.set(`${h}/b.zarr/zarr.json`, new Promise(() => {}));
+      const doc = collection("slow one", ["a", "b", "c", "d", "e", "f"].map((id, i) => ({ id, path: `${h}/${id}.zarr`, at: i })));
+      const w = fakeContext();
+      const c = new Collections(w.ctx);
+      void c.openDocument(doc);
+      await settle();
+      // A at once; the rest wait their turn behind B, but only for a while.
+      expect(w.added.map((a) => a.name)).toEqual(["A"]);
+      await vi.advanceTimersByTimeAsync(ORDER_WAIT);
+      await settle();
+      expect(w.added.map((a) => a.name)).toEqual(["A", "C", "D", "E", "F"]);
+      expect(w.transforms.map((t) => t.layer)).toEqual(["A", "C", "D", "E", "F"]);
+      expect(w.layer("F").matrix[12]).toBeCloseTo(0.005);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("asks for several members' metadata at once, and adds their layers in order", async () => {
+    const h = host();
+    const answers = ["a", "b", "c"].map((id) => {
+      const d = deferred<unknown>();
+      table.set(`${h}/${id}.zarr/zarr.json`, d.promise);
+      return d;
+    });
+    const doc = collection("three", ["a", "b", "c"].map((id) => ({ id, path: `${h}/${id}.zarr`, at: 0 })));
+    const w = fakeContext();
+    const c = new Collections(w.ctx);
+    const opening = c.openDocument(doc);
+    await settle();
+    // All three asked before any answered.
+    expect(fetched.asked.filter((u) => u.endsWith("/zarr.json"))).toHaveLength(3);
+    // Answered last to first: still added first to last.
+    for (const d of answers.reverse()) {
+      d.resolve({ attributes: { ome: { multiscales: [] } } });
+      await settle();
+    }
+    await opening;
+    expect(w.added.map((a) => a.name)).toEqual(["A", "B", "C"]);
+  });
+
+  it("keeps at most GROUPS_KEPT images' metadata, and lets go of it when another collection opens", async () => {
+    const h = host();
+    const many = Array.from({ length: GROUPS_KEPT + 20 }, (_, i) => ({ id: `m${i}`, path: `${h}/m${i}.zarr`, at: 0 }));
+    const w = fakeContext();
+    const c = new Collections(w.ctx);
+    await c.openDocument(collection("many", many));
+    expect(w.added).toHaveLength(GROUPS_KEPT + 20);
+    expect(groupsKept()).toBe(GROUPS_KEPT);
+    await c.openDocument(collection("two", many.slice(0, 2)));
+    expect(groupsKept()).toBe(2);
   });
 });
 

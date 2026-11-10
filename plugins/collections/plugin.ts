@@ -101,7 +101,10 @@ export function twelveNumbers(text: string): number[] | undefined {
   return numbers.length === 12 && numbers.every(Number.isFinite) ? numbers : undefined;
 }
 
-/** An image's metadata: its group's zarr.json (or .zattrs), read once per image. */
+/** How many images' metadata is kept (the oldest let go first); a collection opened lets go of the rest. */
+export const GROUPS_KEPT = 256;
+
+/** An image's metadata: its group's zarr.json (or .zattrs), read once per image while kept. */
 const groups = new Map<string, Promise<unknown>>();
 function groupOf(url: string): Promise<unknown> {
   let group = groups.get(url);
@@ -109,8 +112,36 @@ function groupOf(url: string): Promise<unknown> {
     const json = (key: string) => readJson(`${url}/${key}`).catch(() => undefined);
     group = (async () => (await json("zarr.json")) ?? (await json(".zattrs")))();
     groups.set(url, group);
+    for (const old of groups.keys()) {
+      if (groups.size <= GROUPS_KEPT) break;
+      groups.delete(old);
+    }
   }
   return group;
+}
+
+/** How many images' metadata is kept now (for tests). */
+export const groupsKept = (): number => groups.size;
+
+/** How many members are placed at once. */
+export const PLACED_AT_ONCE = 4;
+/**
+ * How long a member waits for the one before it to be added (ms), so the
+ * layers keep the collection's order; after that, a member whose metadata
+ * is slow no longer holds the others back, and is added when it comes.
+ */
+export const ORDER_WAIT = 2000;
+
+/** Runs `run` on each item, at most `limit` at once, in their order. */
+async function eachAtOnce<T>(items: T[], limit: number, run: (item: T, index: number) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      await run(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
 /** The contrast range an image (a Zarr group's URL) is shown with by default (`displayRangeOf`). */
@@ -369,6 +400,8 @@ export class Collections {
       return false;
     }
     const generation = ++this.generation;
+    // Images of the collections opened before are let go of.
+    groups.clear();
     this.ctx.workspace.newScene({ name: root.name, kind: COLLECTION_KIND });
     const system = sceneSystems(root)[0]?.id;
     const saved: Saved = url === undefined ? { doc, system } : { url, system };
@@ -448,54 +481,98 @@ export class Collections {
     const unit = unitOf(sceneSystems(root).find((s) => s.id === system)).mm;
     this.warped.clear();
     this.hidden.clear();
-    for (const m of members(root)) {
-      const layer = m.node.name;
-      if (m.node.location === undefined) continue;
-      const plain = `zarr://${m.node.location.url}/`;
-      const kind = (await this.isLabel(m.node)) ? "segmentation" : "image";
-      if (!this.current(generation)) return;
-      let placement = placeInto(root, m.node, system);
-      let source = plain;
-      let warped = false;
-      let why = "";
-      if (placement === undefined) {
-        const steps = chainInto(root, m.node, system);
-        placement = steps && stepsMatrix(steps);
-        const shown = placement === undefined && steps !== undefined ? fieldWarp(steps, unit) : undefined;
-        if (shown !== undefined && kind === "segmentation") why = "a label image is not warped through a field";
-        else if (shown !== undefined) {
-          placement = shown.placement;
-          try {
-            source = await this.ctx.workspace.computed.url({ source: plain, chunk: [64, 64, 64], warp: shown.warp });
-            warped = true;
-          } catch (e) {
-            why = `it could not be warped: ${(e as Error).message}`;
-            this.ctx.log.error(`Could not warp ${layer}: ${(e as Error).message}`);
-            placement = undefined;
-          }
+    const placed = members(root).filter((m) => m.node.location !== undefined);
+    // Members are placed a few at once.  Each waits for the one before it to
+    // be added, so the layers keep the collection's order, but only for a
+    // while: one whose metadata is slow is then passed by.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const waited = new Promise<void>((resolve) => (timer = setTimeout(resolve, ORDER_WAIT)));
+    const added = placed.map(() => {
+      let done!: () => void;
+      const promise = new Promise<void>((resolve) => (done = resolve));
+      return { promise, done };
+    });
+    try {
+      await eachAtOnce(placed, PLACED_AT_ONCE, async (m, i) => {
+        const turn = () => (i === 0 ? Promise.resolve() : Promise.race([added[i - 1].promise, waited]));
+        try {
+          await this.placeMember(root, m.node, system, unit, generation, turn, added[i].done);
+        } catch (e) {
           if (!this.current(generation)) return;
+          this.hidden.set(m.node.name, `it could not be shown: ${(e as Error).message}`);
+          this.ctx.log.error(`Could not show ${m.node.name}: ${(e as Error).message}`);
+        } finally {
+          added[i].done();
         }
-        if (placement === undefined && why === "") why = hiddenWhy(root, m.node);
-      }
-      if (warped) this.warped.add(layer);
-      if (placement === undefined) {
-        this.hidden.set(layer, why);
-        // There to be seen in the layer list, not shown.
-        if (this.ctx.viewer.layerSpec(layer) === undefined) await this.setSource(layer, plain, kind);
-      } else await this.setSource(layer, source, kind, warped ? m.node.location.url : undefined);
-      if (!this.current(generation)) return;
-      this.setVisible(layer, placement !== undefined);
-      if (placement !== undefined) {
-        const notPlaced = await this.setPlacement(layer, placement, unit);
-        if (notPlaced !== "") {
-          // Not placed: hidden rather than shown in the wrong place.
-          this.hidden.set(layer, notPlaced);
-          this.setVisible(layer, false);
-        }
-      }
-      if (!this.current(generation)) return;
+      });
+    } finally {
+      clearTimeout(timer);
     }
+    if (!this.current(generation)) return;
     this.update?.();
+  }
+
+  /**
+   * Places one member's layer in `system` (see `place`): `turn` settles when
+   * its layer may be added, and `addedNow` is called once it is.
+   */
+  private async placeMember(
+    root: CollectionNode,
+    node: CollectionNode,
+    system: string,
+    unit: number,
+    generation: number,
+    turn: () => Promise<void>,
+    addedNow: () => void,
+  ): Promise<void> {
+    const layer = node.name;
+    const location = node.location;
+    if (location === undefined) return;
+    const plain = `zarr://${location.url}/`;
+    const kind = (await this.isLabel(node)) ? "segmentation" : "image";
+    if (!this.current(generation)) return;
+    let placement = placeInto(root, node, system);
+    let source = plain;
+    let warped = false;
+    let why = "";
+    if (placement === undefined) {
+      const steps = chainInto(root, node, system);
+      placement = steps && stepsMatrix(steps);
+      const shown = placement === undefined && steps !== undefined ? fieldWarp(steps, unit) : undefined;
+      if (shown !== undefined && kind === "segmentation") why = "a label image is not warped through a field";
+      else if (shown !== undefined) {
+        placement = shown.placement;
+        try {
+          source = await this.ctx.workspace.computed.url({ source: plain, chunk: [64, 64, 64], warp: shown.warp });
+          warped = true;
+        } catch (e) {
+          why = `it could not be warped: ${(e as Error).message}`;
+          this.ctx.log.error(`Could not warp ${layer}: ${(e as Error).message}`);
+          placement = undefined;
+        }
+        if (!this.current(generation)) return;
+      }
+      if (placement === undefined && why === "") why = hiddenWhy(root, node);
+    }
+    await turn();
+    if (!this.current(generation)) return;
+    if (warped) this.warped.add(layer);
+    if (placement === undefined) {
+      this.hidden.set(layer, why);
+      // There to be seen in the layer list, not shown.
+      if (this.ctx.viewer.layerSpec(layer) === undefined) await this.setSource(layer, plain, kind);
+    } else await this.setSource(layer, source, kind, warped ? location.url : undefined);
+    addedNow();
+    if (!this.current(generation)) return;
+    this.setVisible(layer, placement !== undefined);
+    if (placement !== undefined) {
+      const notPlaced = await this.setPlacement(layer, placement, unit, () => this.current(generation));
+      if (notPlaced !== "" && this.current(generation)) {
+        // Not placed: hidden rather than shown in the wrong place.
+        this.hidden.set(layer, notPlaced);
+        this.setVisible(layer, false);
+      }
+    }
   }
 
   private setVisible(layer: string, visible: boolean): void {
@@ -514,8 +591,8 @@ export class Collections {
    * it cannot be placed (it has not x, y and z alone, or its metadata did
    * not load).
    */
-  private async layerPlacement(layer: string): Promise<{ now: Mat4; own: Mat4; names: string[]; t: LayerTransform } | string> {
-    for (let i = 0; i < 100; ++i) {
+  private async layerPlacement(layer: string, still: () => boolean = () => true): Promise<{ now: Mat4; own: Mat4; names: string[]; t: LayerTransform } | string> {
+    for (let i = 0; i < 100 && still(); ++i) {
       const t = this.ctx.viewer.layerTransform(layer);
       if (t !== undefined) {
         const now = physical(t, t.matrix);
@@ -529,8 +606,9 @@ export class Collections {
   }
 
   /** Sets a layer's transform to its own (from its metadata) followed by `placement` (in units of `unit` mm); "" when placed, else why not. */
-  private async setPlacement(layer: string, placement: Mat4, unit: number): Promise<string> {
-    const at = await this.layerPlacement(layer);
+  private async setPlacement(layer: string, placement: Mat4, unit: number, still: () => boolean = () => true): Promise<string> {
+    const at = await this.layerPlacement(layer, still);
+    if (!still()) return "";
     if (typeof at === "string") {
       this.ctx.log.error(`${layer} is not placed: ${at}.`);
       return at;
