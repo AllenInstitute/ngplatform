@@ -87,7 +87,19 @@ is converted.
   on, the meshes of the segments the layer shows are drawn, read from its
   precomputed meshes, coarse levels first. At most 2,000 segments: with
   more shown, the panel says so under the layer (*Showing 2,000 of 14,203
-  segments*).
+  segments*). Choosing one more segment reads only that segment's mesh
+  files.
+- **Signed-in and CAVE segmentations**: the meshes are read with the
+  layer's own sign-in (Google, middleauth as CAVE uses, or ngauth), and a
+  CAVE (`graphene://`) segmentation's meshes are read from its meshing
+  server. If the server refuses, the panel says *Sign in to read this
+  layer's meshes* with **Sign in…**, which opens Settings › Sign-in; the
+  layer is drawn once you have signed in.
+- **Many layers**: the layers share one GPU budget and one 2-D drawing
+  context. A hidden layer gives its GPU memory up to the ones you look at;
+  if the shown ones need more than there is, the panel says *GPU memory is
+  full* and part of the layer is not drawn: lower its **Detail**, or switch
+  another layer off.
 
 Not yet: fitted Gaussian splats (Luxar's GPU fit, which makes new files).
 

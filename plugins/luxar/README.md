@@ -22,17 +22,21 @@ Vectors mesh store (below). Nothing is converted and no files are written.
 | `layer_view.ts` | One layer drawn Luxar-style: its worker, its 3-D and 2-D drawing, the uniforms from its style |
 | `view3d.ts` | The 3-D view, through `viewer.draw3d`: the float target, tone mapping, depth |
 | `view2d.ts` | The 2-D views, on a canvas over them (the platform's overlay), with each panel's camera |
+| `shared2d.ts` | The 2-D views' one WebGL context, shared by every layer; each layer's drawing copied onto its own 2-D canvas; context loss and restore |
+| `gpu_pool.ts` | One GPU budget per context for every layer's chunk copies: idle layers' copies go first, past it an upload is refused and said |
 | `render_gl.ts` | WebGL2: the line and point shaders, upload, the tone-mapping composite |
 | `mesh_gl.ts` | A mesh's shaders: lit triangles in 3-D, the outline where the section cuts them in 2-D |
 | `bloom.ts` | Bloom: the bright pass and the separable Gaussian blur at three scales |
 | `chunks.ts` | Levels of detail and which chunks a view reads and draws; the per-context GPU cache |
-| `client.ts`, `luxar_worker.ts` | Reading a store's chunks with the Zarr Vectors reader, in a worker; and a layer's chosen objects whole, by id (`ObjectReader`) |
+| `client.ts`, `luxar_worker.ts` | Reading a store's chunks with the Zarr Vectors reader, in a worker; and a layer's chosen objects whole, by id (`ObjectReader`); a worker handed on to the layer's next mesh store |
+| `read_queue.ts` | The worker's queue of chunk reads: at most six at once, those no longer wanted cancelled |
+| `sign_in.ts` | The header a segmentation's mesh reads carry for its sign-in (middleauth, ngauth; Google needs none) |
 | `objects.ts` | Whether a layer's chosen objects are read whole (`objectPlan`), in which batches, and what has been read, by object (`ObjectSets`) |
 | `chunk_build.ts` | A decoded chunk made ready to draw: a vertex texture, (previous, start, end, next) segments, and each vertex's object as a slot in the chunk's list of objects; objects read whole built the same way, their segments sorted into pieces of space |
 | `segments.ts` | Which of a chunk's objects show, how strongly (the others at the layer's notSelectedAlpha) and their colours: the table the shaders look each vertex's object up in |
 | `sources.ts` | Which of a layer's sources it draws (a source with its parts off draws nothing) |
-| `mesh_layers.ts` | Segmentations with precomputed meshes: whether a volume has them, the virtual mesh store's URL for the segments a layer shows, and which segments it holds |
-| `precomputed_meshes.ts` | Reading a segmentation's precomputed meshes (manifests, sharded or not; fragments; Draco) as a virtual Zarr Vectors mesh store, in the worker; the store itself is `../zarr-vectors/src/virtual/precomputed_meshes.ts` |
+| `mesh_layers.ts` | Segmentations with precomputed meshes: whether a volume has them (or needs a sign-in), the virtual mesh store's URL for the segments a layer shows, and which segments it holds |
+| `precomputed_meshes.ts` | Reading a segmentation's precomputed or graphene meshes (manifests, sharded or not; fragments; Draco) as a virtual Zarr Vectors mesh store, in the worker, the volume kept open across stores (`MeshVolume`); the store itself is `../zarr-vectors/src/virtual/precomputed_meshes.ts` |
 | `view_math.ts` | Matrices, frustum and slab tests, level choice |
 | `camera.ts` | Optional momentum on rotating the 3-D view |
 | `style.ts` | The per-layer style kept in the workspace |
@@ -161,7 +165,26 @@ names the volume and the segments.
   scale's resolution), the mesh `info`, and each segment's manifest:
   `<id>.index`, or a sharded directory's entry for the id
   (`neuroglancer_multilod_draco`, sharded or not), or `<id>:0` (legacy).
-  No geometry is read.
+  No geometry is read. The volume is opened once per worker
+  (`MeshVolume`), and each segment's manifest is kept by id (up to
+  8,000), each decoded fragment up to 128 MB: a store made again for one
+  more segment reads that segment's manifest only (adding 1 segment to
+  1,000 read 1,001 manifests before, 1 now). A failed manifest read is
+  tried again next time, not kept.
+- **Sign-in**: the volume is read with the layer's own sign-in
+  (`meshSourceOf` in `@ngplatform/sdk/sources`): `gs+google://` through
+  the app's signed-in route, `middleauth+https://` with the token
+  Neuroglancer keeps for the server's sign-in server, `gs+ngauth+https://`
+  with a token from the ngauth server (`sign_in.ts`), passed to the worker
+  as a header. A 401, or a 403 for the volume's `info`, is a sign-in
+  needed (`SignInNeeded`): the panel says so with **Sign in…** (Settings ›
+  Sign-in) and asks again every 3 s for a while, not "no meshes".
+- **Graphene** (`graphene://`, CAVE's proofread segmentations): each
+  segment's manifest comes from the meshing server
+  (`…/meshing/api/v1/table/<name>/manifest/<id>:0?verify=1&prepend_seg_ids=1`,
+  with the sign-in), and its fragments from the `initial/` shards (a byte
+  range) or `dynamic/` under the data directory's mesh folder, decoded
+  whole (Draco) and read as a legacy mesh is: one level.
 - **Levels**: store level *i* is level of detail *first + i* of the
   meshes (a segment with fewer levels gives its coarsest to the coarser
   ones), so Luxar reads the coarsest first and finer ones as its Detail
@@ -183,7 +206,10 @@ names the volume and the segments.
   the segmentation's ids; letting a segment go only hides it (the layer's
   table), and showing one it lacks makes a new store, which takes over
   from the old one once it has what it wants to draw (as below for a
-  track-filtering group's new store). At most 2,000 segments: with more
+  track-filtering group's new store). The new store's view takes on the
+  old one's reading worker (`StoreClient`'s `adopt`: each open has an
+  epoch, and answers for another are ignored), so the volume stays open;
+  segments chosen within 150 ms of each other make one store. At most 2,000 segments: with more
   shown, the panel says so under the layer (*Showing 2,000 of 14,203
   segments*). With none
   chosen, nothing is drawn: a segmentation's every mesh is not read.
@@ -253,9 +279,22 @@ view's centre first. The coarsest level's chunks in view are read first so
 something shows at once, and stand in for a finer chunk until it arrives
 (the finest coarser level that has all of its box). Chunks are read with
 `LevelPipeline.download(…, { bridges: true })`, so lines continue across
-chunk faces. Built chunks are kept on the main thread (384 MiB) and on each
-GPU context (768 MiB for 3-D, 512 MiB for 2-D), least recently drawn first
-out.
+chunk faces; a read the views no longer want is cancelled (`read_queue.ts`).
+Built chunks are kept on the main thread (384 MiB) and on the GPU (per
+layer at most 768 MiB for 3-D, 512 MiB for 2-D), least recently drawn first
+out, within one budget per context shared by every layer (`gpu_pool.ts`):
+1 GiB in Neuroglancer's context, 768 MiB in the 2-D views' shared one. A
+layer that needs room takes the copies of a layer not drawn for a second
+(hidden, say); past the budget its upload is refused, and the panel says
+*GPU memory is full: part of this layer is not drawn.*
+
+The 2-D views draw every layer in one WebGL context (`shared2d.ts`), on a
+canvas not shown, and copy each layer's drawing at once onto the layer's
+own canvas over the views (a 2-D canvas, which keeps the layer's blending
+with the views below). Before, each layer had a context of its own (a
+browser keeps about 16), and about 2.1 GB of GPU budget. When the shared
+context is lost the layers wait without a message, and draw again once the
+browser restores it.
 
 ### Brightness
 
