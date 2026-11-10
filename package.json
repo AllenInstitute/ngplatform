@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "budget": "node tests/e2e/bundle_budget.mjs",
     "preview": "vite preview",
     "test": "vitest --run && vitest --run --root plugins/zarr-vectors",
     "e2e": "node tests/e2e/smoke.mjs",
