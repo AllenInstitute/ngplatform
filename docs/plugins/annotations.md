@@ -136,7 +136,9 @@ view's side.
   its **length**, every box and ellipsoid with its **volume**, or its
   **area** when it is flat (drawn in one section), in physical units through
   the layer's transform. Click a
-  row to go to it; **Save as CSV** writes them all.
+  row to go to it; **Save as CSV** writes them all. The table shows 500 rows
+  at a time ("Showing 500 of 12,345"); **Show 500 more** adds rows, and the
+  CSV always has every measurement.
 - **Line profile**: choose a line (or polyline) and an image, then
   **Profile**: the image's values along it, about one sample a voxel
   (nearest voxel or trilinear, under **Sampling**), as a plot that reads

@@ -3,7 +3,7 @@
  * annotation layers and their annotations placed in it, and image layers
  * placed through their transforms.
  */
-import type { Json, PlatformContext } from "@ngplatform/sdk";
+import type { Disposer, Json, PlatformContext } from "@ngplatform/sdk";
 import { annotationToGlobal, type GlobalSpace, globalSpace, invertOr, type Mat4, placement, type Placement } from "./geometry.js";
 import type { AnnotationJson } from "./measure.js";
 import type { ImageLevel } from "./voxels.js";
@@ -14,12 +14,57 @@ export interface AnnotationLayer {
 }
 
 export function space(ctx: PlatformContext): GlobalSpace {
-  return globalSpace(ctx.viewer.getState());
+  return globalSpace({ dimensions: statePart(ctx, "dimensions") } as Json);
+}
+
+/**
+ * The state's layers as last read.  Writing out the state writes out every
+ * annotation, so they are read again only when a layer changes (the
+ * viewer's layers generation), not each time the view moves.  The arrays
+ * are shared: never changed in place.
+ */
+const readLayers = new WeakMap<PlatformContext, { generation: number; layers: Json[] }>();
+
+export function stateLayers(ctx: PlatformContext): Json[] {
+  const generation = ctx.viewer.layersGeneration?.();
+  const known = readLayers.get(ctx);
+  if (generation !== undefined && known?.generation === generation) return known.layers;
+  const layers = ((ctx.viewer.getState() as { layers?: Json[] }).layers ?? []) as Json[];
+  if (generation !== undefined) readLayers.set(ctx, { generation, layers });
+  return layers;
+}
+
+/** One top-level key of the state (`selection`, `position`…), without writing out the layers when the viewer can. */
+export function statePart<T = unknown>(ctx: PlatformContext, key: string): T | undefined {
+  return (ctx.viewer.statePart ? ctx.viewer.statePart(key) : (ctx.viewer.getState() as Record<string, unknown>)[key]) as T | undefined;
+}
+
+/**
+ * Calls back when what the Annotations sections show may have changed: a
+ * layer (its annotations among it), the selection, the selected layer or
+ * the global dimensions; not when the view only moves.  A viewer that
+ * cannot tell a layer's change calls back on every change of state.
+ */
+export function onSceneChanged(ctx: PlatformContext, callback: () => void): Disposer {
+  const keyNow = () => {
+    const generation = ctx.viewer.layersGeneration?.();
+    return generation === undefined ? undefined : JSON.stringify([generation, statePart(ctx, "selection") ?? null, statePart(ctx, "selectedLayer") ?? null, statePart(ctx, "dimensions") ?? null]);
+  };
+  // As the caller has drawn it.
+  let last = keyNow();
+  const check = () => {
+    const key = keyNow();
+    if (key !== undefined && key === last) return;
+    last = key;
+    callback();
+  };
+  const offs = [ctx.viewer.onStateChanged(check), ctx.viewer.onLayersChanged(check)];
+  return () => offs.forEach((off) => off());
 }
 
 /** Annotation layers in the active scene with annotations kept in the state (local ones). */
 export function annotationLayers(ctx: PlatformContext): AnnotationLayer[] {
-  const layers = ((ctx.viewer.getState() as { layers?: Json[] }).layers ?? []) as { name: string; type?: string; annotations?: AnnotationJson[] }[];
+  const layers = stateLayers(ctx) as unknown as { name: string; type?: string; annotations?: AnnotationJson[] }[];
   return layers.filter((l) => Array.isArray(l.annotations)).map((l) => ({ name: l.name, annotations: l.annotations! }));
 }
 

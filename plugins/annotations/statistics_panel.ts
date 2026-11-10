@@ -12,7 +12,7 @@ import { csv } from "@ngplatform/sdk/format";
 import { apply, between, invertOr, multiply, voxelVolume } from "./geometry.js";
 import type { AnnotationJson } from "./measure.js";
 import { useMeasureTool } from "./measure_panel.js";
-import { annotationFromGlobal, annotationLayers, imagePlacement, rankOf } from "./scene.js";
+import { annotationFromGlobal, annotationLayers, imagePlacement, onSceneChanged, rankOf } from "./scene.js";
 import type { LabelVolumes } from "../segmentation/editor.js";
 import { corners, levelWithin, type Region, type Summary, voxelBox } from "./statistics.js";
 import { fmt, physical } from "./ui.js";
@@ -230,9 +230,9 @@ export class Statistics {
     };
     this.update = draw;
     draw();
-    const offs = [this.ctx.viewer.onStateChanged(draw), this.ctx.viewer.onLayersChanged(draw)];
+    const off = onSceneChanged(this.ctx, draw);
     return () => {
-      offs.forEach((off) => off());
+      off();
       this.update = undefined;
     };
   }

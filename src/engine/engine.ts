@@ -562,6 +562,19 @@ export class Engine {
     return this.managed(name)?.layer ?? undefined;
   }
 
+  /** Changes whenever a layer, or the list of layers, changes; not when the view moves (see ViewerApi.layersGeneration). */
+  layersGeneration(): number {
+    const lm = this.viewer.layerManager;
+    return lm.layersChanged.count + lm.specificationChanged.count + lm.readyStateChanged.count;
+  }
+
+  /** One top-level key of the state, without writing out the layers (see ViewerApi.statePart). */
+  statePart(key: string): unknown {
+    if (key === "layers" || key === "crossSectionBackgroundColor") return (this.getState() as Json)[key];
+    const child = this.viewer.state.children.get(key) as { toJSON?(): unknown } | undefined;
+    return child?.toJSON?.();
+  }
+
   /** A layer's specification, as it would appear in the state's layer list. */
   layerSpec(name: string): Json | undefined {
     return this.managed(name)?.toJSON() as Json | undefined;

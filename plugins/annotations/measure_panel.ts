@@ -11,7 +11,7 @@ import { csv } from "@ngplatform/sdk/format";
 import { toVoxel } from "./geometry.js";
 import { type Measurement, measureAll, powerOf, samplePath, sampleCount } from "./measure.js";
 import { linePlot } from "./plot.js";
-import { annotationLayers, imagePlacement, rankOf, space, toGlobalOf } from "./scene.js";
+import { annotationLayers, imagePlacement, onSceneChanged, rankOf, space, stateLayers, statePart, toGlobalOf } from "./scene.js";
 import { fileName, fmt, physical } from "./ui.js";
 import { layerStore, readableImages, type Voxels } from "./voxels.js";
 
@@ -37,6 +37,9 @@ interface Profile {
   voxels: number[][];
 }
 
+/** Measurements drawn in the table at first, and added by Show more. */
+export const ROWS_STEP = 500;
+
 export class Measure {
   private profile: Profile | undefined;
   /** Why the last profile could not be read ("" when it could). */
@@ -58,8 +61,17 @@ export class Measure {
     this.running?.abort();
   }
 
+  /** The measurements as last worked out, and what they were worked out from (the layers' generation and the global space). */
+  private measured: { key: string; list: Measurement[] } | undefined;
+
   measurements(): Measurement[] {
-    return measureAll(annotationLayers(this.ctx), (layer, rank) => toGlobalOf(this.ctx, layer, rank), space(this.ctx));
+    const generation = this.ctx.viewer.layersGeneration?.();
+    const global = space(this.ctx);
+    const key = generation === undefined ? undefined : JSON.stringify([generation, global]);
+    if (key !== undefined && this.measured?.key === key) return this.measured.list;
+    const list = measureAll(annotationLayers(this.ctx), (layer, rank) => toGlobalOf(this.ctx, layer, rank), global);
+    this.measured = key === undefined ? undefined : { key, list };
+    return list;
   }
 
   private useTool(tool: string): void {
@@ -113,7 +125,7 @@ export class Measure {
       const toGlobal = toGlobalOf(this.ctx, m.layer, rankOf(a));
       const path = (a.points ?? [a.pointA!, a.pointB!]).map(toGlobal);
       // The scene's position fills dimensions the annotation does not have.
-      const position = ((this.ctx.viewer.getState() as { position?: number[] }).position ?? []) as number[];
+      const position = statePart<number[]>(this.ctx, "position") ?? [];
       const full = path.map((p) => p.map((v, i) => (Number.isFinite(v) ? v : (position[i] ?? 0))));
       const levels = await this.voxels.levels(store);
       const level = 0;
@@ -144,6 +156,8 @@ export class Measure {
   // -------------------------------------------------------------- panel
 
   private update: (() => void) | undefined;
+  /** How many measurements the table draws, this visit. */
+  private limit = ROWS_STEP;
 
   /**
    * Drawn once: the tools, then the measurements and the profile, each a
@@ -158,8 +172,9 @@ export class Measure {
       return [id, b] as const;
     });
     const drawLine = { label: "Draw a line", run: () => this.useTool("annotateLine") };
-    const table = region((all: Measurement[]) =>
-      all.length === 0
+    // At most `this.limit` rows are drawn (a layer can hold 10^5 annotations); Show more adds rows, and the CSV has every one.
+    const table = region(({ shown: all, total }: { shown: Measurement[]; total: number }) =>
+      total === 0
         ? emptyState("Nothing measured yet.", drawLine)
         : [
             el(
@@ -184,6 +199,17 @@ export class Measure {
                 ),
               ),
             ),
+            all.length < total
+              ? el(
+                  "div",
+                  { class: "row" },
+                  el("span", { class: "muted" }, `Showing ${all.length.toLocaleString("en-GB")} of ${total.toLocaleString("en-GB")}`),
+                  button(`Show ${Math.min(ROWS_STEP, total - all.length).toLocaleString("en-GB")} more`, () => {
+                    this.limit += ROWS_STEP;
+                    this.update?.();
+                  }),
+                )
+              : "",
             el("div", { class: "row" }, button("Save as CSV", () => this.exportCsv(), "Every measurement in a table")),
           ],
       { class: "stack" },
@@ -205,7 +231,7 @@ export class Measure {
       const tool = this.currentTool();
       const all = this.measurements();
       for (const [id, b] of toolButtons) b.setAttribute("aria-pressed", String(tool === id));
-      table.update(all);
+      table.update({ shown: all.slice(0, this.limit), total: all.length });
       const lines = all.filter((m) => m.type === "line" || m.type === "polyline");
       const images = readableImages(this.ctx);
       if (!lines.some((l) => `${l.layer}|${l.id}` === this.line)) this.line = lines[0] ? `${lines[0].layer}|${lines[0].id}` : "";
@@ -217,9 +243,9 @@ export class Measure {
     };
     this.update = draw;
     draw();
-    const offs = [this.ctx.viewer.onStateChanged(draw), this.ctx.viewer.onLayersChanged(draw)];
+    const off = onSceneChanged(this.ctx, draw);
     return () => {
-      offs.forEach((off) => off());
+      off();
       this.update = undefined;
     };
   }
@@ -261,9 +287,8 @@ export class Measure {
  * than turning it off).
  */
 export function measureTool(ctx: PlatformContext): string | undefined {
-  const ng = ctx.viewer.getState() as { layers?: Json[]; selectedLayer?: { layer?: string } };
-  if (ng.selectedLayer?.layer !== LAYER) return undefined;
-  const t = (ng.layers ?? []).find((l) => l.name === LAYER)?.tool;
+  if (statePart<{ layer?: string }>(ctx, "selectedLayer")?.layer !== LAYER) return undefined;
+  const t = stateLayers(ctx).find((l) => l.name === LAYER)?.tool;
   return typeof t === "string" ? t : undefined;
 }
 

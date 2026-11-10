@@ -99,6 +99,8 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
     getState: () => store.ng(),
     patchState: (edit, options) => store.patchState(edit, options),
     onStateChanged: (callback) => engine.onStateChanged(callback),
+    layersGeneration: () => engine.layersGeneration(),
+    statePart: (key) => engine.statePart(key),
     layers: layerInfos,
     layerSpec: (name) => engine.layerSpec(name),
     setLayerVisible: (name, visible) => store.setLayerVisible(name, visible),

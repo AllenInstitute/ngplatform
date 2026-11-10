@@ -324,6 +324,19 @@ export interface ViewerApi {
    */
   patchState(edit: (ng: Json) => void, options?: { quiet?: boolean }): void;
   onStateChanged(callback: () => void): Disposer;
+  /**
+   * A number that changes whenever a layer changes (its specification, its
+   * annotations among it, or the list of layers), but not when the view
+   * moves: a plugin reading layers out of `getState` (which writes out every
+   * annotation) can keep what it read until this changes.
+   */
+  layersGeneration?(): number;
+  /**
+   * One top-level key of the state (`selection`, `selectedLayer`,
+   * `dimensions`, `position`…) without writing out the rest: cheap, where
+   * `getState` writes out every layer.  Not for `layers` (use `getState`).
+   */
+  statePart?(key: string): unknown;
   layers(): LayerInfo[];
   layerSpec(name: string): Json | undefined;
   setLayerVisible(name: string, visible: boolean): void;

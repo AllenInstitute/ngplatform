@@ -18,7 +18,7 @@ import { el } from "@ngplatform/sdk/dom";
 import { TABLE_PANEL } from "./manifest.js";
 import { measure, type AnnotationJson } from "./measure.js";
 import { lookupTerms, type Term } from "./ontology.js";
-import { rankOf, space, toGlobalOf } from "./scene.js";
+import { onSceneChanged, rankOf, space, stateLayers, statePart, toGlobalOf } from "./scene.js";
 import { buildRows, rowName, type Row, type TableLayer } from "./table.js";
 import { withShaderKept } from "./groups.js";
 import { physical } from "./ui.js";
@@ -80,7 +80,7 @@ export class Annotate {
     document.addEventListener("mousemove", move, { passive: true });
     this.offs.push(
       () => document.removeEventListener("mousemove", move),
-      ctx.viewer.onStateChanged(() => this.stateChanged()),
+      onSceneChanged(ctx, () => this.stateChanged()),
       ctx.state.onChanged(() => this.notify()),
       ctx.viewer.onCursorChanged(() => this.hover()),
     );
@@ -116,7 +116,7 @@ export class Annotate {
   /** The active scene's local annotation layers (annotations kept in the state). */
   layers(): TableLayer[] {
     const saved = this.saved();
-    const layers = ((this.ctx.viewer.getState() as { layers?: Json[] }).layers ?? []) as unknown as LayerSpec[];
+    const layers = stateLayers(this.ctx) as unknown as LayerSpec[];
     return layers
       .filter((l) => Array.isArray(l.annotations))
       .map((spec) => ({ spec, meta: metaOf(saved.layers?.[spec.name]), managed: isManaged(spec) }));
@@ -336,9 +336,8 @@ export class Annotate {
   /** The drawing tool Ctrl+click uses in the chosen layer: its tool, while it is the selected layer. */
   currentTool(): string | undefined {
     const name = this.chosen();
-    const ng = this.ctx.viewer.getState() as { layers?: Json[]; selectedLayer?: { layer?: string } };
-    if (name === undefined || ng.selectedLayer?.layer !== name) return undefined;
-    const t = ng.layers?.find((l) => l.name === name)?.tool;
+    if (name === undefined || statePart<{ layer?: string }>(this.ctx, "selectedLayer")?.layer !== name) return undefined;
+    const t = stateLayers(this.ctx).find((l) => l.name === name)?.tool;
     return typeof t === "string" ? t : undefined;
   }
 
@@ -348,7 +347,7 @@ export class Annotate {
     if (points.length === 0) return undefined;
     const g = points.map(toGlobalOf(this.ctx, layer, rankOf(a)));
     // Dimensions the annotation does not have stay where the view is.
-    const position = ((this.ctx.viewer.getState() as { position?: number[] }).position ?? []) as number[];
+    const position = statePart<number[]>(this.ctx, "position") ?? [];
     return g[0].map((_, i) => {
       const v = g.reduce((s, p) => s + p[i], 0) / g.length;
       return Number.isFinite(v) ? v : (position[i] ?? 0);
@@ -468,7 +467,7 @@ export class Annotate {
         }
       }
     }
-    const selection = (this.ctx.viewer.getState() as { selection?: { layers?: Record<string, { annotationId?: string }> } }).selection?.layers ?? {};
+    const selection = statePart<{ layers?: Record<string, { annotationId?: string }> }>(this.ctx, "selection")?.layers ?? {};
     for (const [layer, s] of Object.entries(selection)) {
       if (typeof s?.annotationId !== "string" || !now.get(layer)?.has(s.annotationId)) continue;
       const key = `${layer}|${s.annotationId}`;
@@ -480,7 +479,7 @@ export class Annotate {
     if (this.selected && !now.get(this.selected.layer)?.has(this.selected.id)) {
       this.selected = undefined;
     }
-    // Listeners redraw only what changed (moving about changes the state too).
+    // Listeners redraw only what changed (onSceneChanged leaves out moving about).
     this.notify();
   }
 

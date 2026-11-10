@@ -9,7 +9,7 @@
 import type { Disposer, PlatformContext, ViewPanelInfo } from "@ngplatform/sdk";
 import { button, checkbox, el, emptyState, field, iconButton, info, region, select, slider } from "@ngplatform/sdk/dom";
 import type { AnnotationJson } from "./measure.js";
-import { rankOf, toGlobalOf } from "./scene.js";
+import { rankOf, stateLayers, statePart, toGlobalOf } from "./scene.js";
 
 export type Placement = "top-left" | "top" | "top-right" | "left" | "center" | "right" | "bottom-left" | "bottom" | "bottom-right" | "side";
 type Anchor = { kind: "point"; position: number[] } | { kind: "group"; group: string } | { kind: "annotation"; layer: string; annotation: string };
@@ -186,11 +186,11 @@ export class Labels {
 
   /** A label's pin as a global position, when it can be found. */
   private position(label: Label): number[] | undefined {
-    const ng = this.ctx.viewer.getState() as { dimensions?: Record<string, [number, string]>; position?: number[]; layers?: unknown[] };
     const anchor = label.anchor;
     if (anchor.kind === "point") return anchor.position;
     if (anchor.kind === "annotation") {
-      const layer = (ng.layers as { name?: string; annotations?: Record<string, unknown>[] }[] | undefined)?.find((l) => l.name === anchor.layer);
+      // The layers as last read: placing labels each frame does not write out every annotation.
+      const layer = (stateLayers(this.ctx) as { name?: string; annotations?: Record<string, unknown>[] }[]).find((l) => l.name === anchor.layer);
       const a = layer?.annotations?.find((x) => x.id === anchor.annotation);
       if (a === undefined) return undefined;
       // The middle of its points (a line's middle, a box's or polyline's centre), placed by the layer's transform.
@@ -199,7 +199,7 @@ export class Labels {
       if (points.length === 0) return undefined;
       const toGlobal = toGlobalOf(this.ctx, anchor.layer, rankOf(own));
       const g = points.map((p) => toGlobal(p));
-      const position = ng.position ?? [];
+      const position = statePart<number[]>(this.ctx, "position") ?? [];
       return g[0].map((_, i) => {
         const v = g.reduce((s, p) => s + p[i], 0) / g.length;
         return Number.isFinite(v) ? v : (position[i] ?? 0);
@@ -223,10 +223,12 @@ export class Labels {
       );
     }
     const mm = this.centres.get(group.id)?.mm;
-    if (mm === undefined || ng.dimensions === undefined) return undefined;
-    return Object.entries(ng.dimensions).map(([name, [scale, unit]], i) => {
+    const dimensions = statePart<Record<string, [number, string]>>(this.ctx, "dimensions");
+    if (mm === undefined || dimensions === undefined) return undefined;
+    const position = statePart<number[]>(this.ctx, "position");
+    return Object.entries(dimensions).map(([name, [scale, unit]], i) => {
       const axis = ["x", "y", "z"].indexOf(name);
-      if (axis === -1) return ng.position?.[i] ?? 0;
+      if (axis === -1) return position?.[i] ?? 0;
       return unit === "m" ? (mm[axis] * 1e-3) / scale : mm[axis];
     });
   }
@@ -413,7 +415,7 @@ export class Labels {
    */
   render(host: HTMLElement): Disposer {
     const atPosition = () => {
-      const position = (this.ctx.viewer.getState() as { position?: number[] }).position;
+      const position = statePart<number[]>(this.ctx, "position");
       if (position) this.add({ kind: "point", position: [...position] }, "Label");
     };
     const forGroups = () => {
@@ -422,7 +424,7 @@ export class Labels {
     };
     const fromAnnotations = () => {
       const have = new Set(this.labels.flatMap((l) => (l.anchor.kind === "annotation" ? [`${l.anchor.layer}|${l.anchor.annotation}`] : [])));
-      const layers = ((this.ctx.viewer.getState() as { layers?: unknown[] }).layers ?? []) as { name: string; annotations?: { id: string; description?: string }[] }[];
+      const layers = stateLayers(this.ctx) as unknown as { name: string; annotations?: { id: string; description?: string }[] }[];
       let added = 0;
       for (const layer of layers) {
         for (const a of layer.annotations ?? []) {
