@@ -7,6 +7,7 @@
  * the link.  While something watches (the Activity dock or Settings › Compute) or a job is running,
  * the job list is fetched every 1.5 s.
  */
+import { RUNNER_TIMEOUT, seconds, timedOut, withDeadline } from "./deadline.js";
 import type { HostGpu, HostServiceState, RunnerJob } from "../sdk/types.js";
 
 export interface RunnerKind {
@@ -129,23 +130,40 @@ export class RunnerClient {
     readonly address: string,
     readonly token: string,
     private readonly fetchImpl: typeof fetch = (input, init) => fetch(input, init),
+    /** The computer's name, for errors (a host's); none for This computer's runner. */
+    readonly name?: string,
+    /** How long a request may take (ms) before it is given up. */
+    private readonly timeout = RUNNER_TIMEOUT,
   ) {}
+
+  /** The runner as errors name it. */
+  private who(): string {
+    return this.name === undefined ? `The runner at ${this.address}` : `${this.name} (${this.address})`;
+  }
 
   async request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
     let response: Response;
+    let text: string;
     try {
       response = await this.fetchImpl(`${this.address}${path}`, {
         method,
         headers: { Authorization: `Bearer ${this.token}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal,
+        // A tunnel that is half open never answers: the request is given up after a while.
+        signal: withDeadline(this.timeout, signal),
         cache: "no-store",
       });
+      text = await response.text();
     } catch (e) {
+      if (timedOut(e)) throw new RunnerError(`${this.who()} did not answer in ${seconds(this.timeout)}: is the runner running${this.name === undefined ? "" : " and the tunnel open"}?`, 0);
       if ((e as Error).name === "AbortError") throw e;
-      throw new RunnerError(`The runner at ${this.address} does not answer: is it running? (python -m ngplatform_runner --root <folder>)`, 0);
+      throw new RunnerError(
+        this.name === undefined
+          ? `${this.who()} does not answer: is it running? (python -m ngplatform_runner --root <folder>)`
+          : `${this.who()} does not answer: is the tunnel open and the runner running?`,
+        0,
+      );
     }
-    const text = await response.text();
     let value: unknown;
     try {
       value = text === "" ? undefined : JSON.parse(text);
@@ -227,6 +245,8 @@ export class RunnerService {
     private readonly fetchImpl?: typeof fetch,
     /** ms between fetches while watched or while a job runs. */
     private readonly interval = 1500,
+    /** The computer's name, for errors (a host's); none for This computer's runner. */
+    private readonly name?: string,
   ) {
     try {
       const raw = storage.getItem(STORAGE_KEY);
@@ -239,7 +259,7 @@ export class RunnerService {
 
   private use(pairing: Pairing | undefined): void {
     this.pairingValue = pairing;
-    this.clientValue = pairing === undefined ? undefined : new RunnerClient(pairing.address, pairing.token, this.fetchImpl);
+    this.clientValue = pairing === undefined ? undefined : new RunnerClient(pairing.address, pairing.token, this.fetchImpl, this.name);
     this.state = pairing === undefined ? "unpaired" : "connecting";
     this.infoValue = undefined;
     this.errorValue = undefined;
@@ -283,7 +303,7 @@ export class RunnerService {
   async pair(address: string, token: string): Promise<RunnerInfo> {
     const pairing = { address: normaliseAddress(address), token: token.trim() };
     if (pairing.token === "") throw new RunnerError("Enter the token the runner printed", 0);
-    const client = new RunnerClient(pairing.address, pairing.token, this.fetchImpl);
+    const client = new RunnerClient(pairing.address, pairing.token, this.fetchImpl, this.name);
     const info = await client.status();
     if (info.name !== "ngplatform-runner") throw new RunnerError(`${pairing.address} is not an ngplatform runner`, 0);
     this.storage.setItem(STORAGE_KEY, JSON.stringify(pairing));

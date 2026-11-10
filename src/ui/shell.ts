@@ -17,6 +17,7 @@ import { applyRulesToNewLayers, type SignInRules } from "../platform/sign_in_rul
 import { JobService } from "../platform/jobs.js";
 import { HostList } from "../platform/hosts.js";
 import { RunnerService } from "../platform/runner.js";
+import { fetchRemoteState } from "../platform/deadline.js";
 import { ComputedImages } from "../virtual/computed.js";
 import { collectDropped, LocalData } from "../virtual/local_data.js";
 import { LocalPlugins } from "../platform/local_plugins.js";
@@ -1347,9 +1348,12 @@ export class Shell {
         else store.open(parsed.state, from, { resume });
       } else if (parsed.kind === "remote") {
         this.setStatus("busy", "Fetching state");
-        const response = await fetch(parsed.url);
-        if (!response.ok) throw new InputError(`${parsed.url} answered ${response.status} ${response.statusText}.`);
-        const json = await response.json();
+        let json: unknown;
+        try {
+          json = await fetchRemoteState(parsed.url);
+        } catch (e) {
+          throw new InputError(`Could not read the state at ${parsed.url}: ${(e as Error).message}`);
+        }
         const again = parseInput(JSON.stringify(json), this.wb.parseFragment);
         if (again.kind !== "state") throw new InputError("That URL did not hold a state.");
         if (asScene) store.openAsScene(again.state.ng, layerNameFor(parsed.url), parsed.url);

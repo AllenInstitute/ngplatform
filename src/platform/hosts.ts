@@ -8,9 +8,12 @@
  * pairing), whose pairing is kept in this browser's list of hosts
  * (`ngplatform.hosts`) instead of `ngplatform.runner`.  A check every 5 s
  * asks each host's runner for its status (its computer, GPUs, services),
- * which marks it up or down.
+ * which marks it up or down; the checks pause while the page is hidden
+ * (another tab in front, the window minimised) and start again when it is
+ * shown.
  */
 import type { Host, HostDetails, HostInfo, HostsApi } from "../sdk/types.js";
+import { eitherSignal, SERVICE_TIMEOUT, seconds, timedOut } from "./deadline.js";
 import { normaliseAddress, type Pairing, type RunnerInfo, RunnerError, RunnerService } from "./runner.js";
 
 /** The name of the runner on this computer, which `ctx.runner` is. */
@@ -60,6 +63,9 @@ export function hostStatusLine(host: HostInfo): string {
   return `${head}: ${gpus.length > 0 ? gpus.join("; ") : "no GPU"}${services.length > 0 ? ` — ${services.join(", ")}` : ""}`;
 }
 
+/** What the checks need of the page: whether it is hidden, and to hear when that changes. */
+export type VisiblePage = Pick<Document, "hidden" | "addEventListener" | "removeEventListener">;
+
 /** Whether a host has a GPU that can be used. */
 export const hasGpu = (host: HostInfo) => host.info?.gpus.some((g) => g.ok) ?? false;
 
@@ -72,6 +78,9 @@ export class HostList {
   private running = false;
   private lastSeen = "";
   private checking: Promise<void> | undefined;
+  /** The page whose being hidden pauses the checks, and what hears of it. */
+  private page: VisiblePage | undefined;
+  private onVisibility: (() => void) | undefined;
 
   constructor(
     /** This computer's runner. */
@@ -84,6 +93,8 @@ export class HostList {
     private readonly timeout = 4000,
     /** ms between checks of a host that did not answer (a runner that is not started, a tunnel that is closed). */
     private readonly downInterval = 30000,
+    /** ms a host's service may take to start answering a request (a half-open tunnel never does). */
+    private readonly serviceTimeout = SERVICE_TIMEOUT,
   ) {
     try {
       const raw = storage.getItem(HOSTS_KEY);
@@ -133,7 +144,7 @@ export class HostList {
         this.changed(true);
       },
     };
-    return new RunnerService(storage, this.fetchImpl);
+    return new RunnerService(storage, this.fetchImpl, undefined, name);
   }
 
   /** This computer (when paired) first, then the others in the order they were paired. */
@@ -231,11 +242,23 @@ export class HostList {
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Bearer ${client.token}`);
     const fetchImpl = this.fetchImpl ?? ((input: RequestInfo | URL, options?: RequestInit) => fetch(input, options));
+    // Given up when the service has not started answering in time; once it
+    // has, its answer (a long render, a stream) may take as long as it needs.
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(new DOMException("The service did not answer in time", "TimeoutError")), this.serviceTimeout);
     try {
-      return await fetchImpl(`${client.address}/svc/${path.replace(/^\/+/, "")}`, { cache: "no-store", ...init, headers });
+      return await fetchImpl(`${client.address}/svc/${path.replace(/^\/+/, "")}`, {
+        cache: "no-store",
+        ...init,
+        headers,
+        signal: eitherSignal(init.signal ?? undefined, deadline.signal),
+      });
     } catch (e) {
+      if (timedOut(e)) throw new RunnerError(`${name} (${client.address}) did not answer in ${seconds(this.serviceTimeout)}: is the tunnel open and the runner running?`, 0);
       if ((e as Error).name === "AbortError") throw e;
       throw new RunnerError(`${name} (${client.address}) does not answer: is the tunnel open and the runner running?`, 0);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -291,16 +314,29 @@ export class HostList {
     this.changed();
   }
 
-  /** Checks every 5 s from now on (until stop). */
-  start(): void {
+  /**
+   * Checks every 5 s from now on (until stop), while `page` is shown: hidden,
+   * the checks pause, and shown again, one is made at once.
+   */
+  start(page: VisiblePage | undefined = typeof document === "undefined" ? undefined : document): void {
     if (this.running) return;
     this.running = true;
+    this.page = page;
     const loop = () => {
-      if (!this.running) return;
+      this.timer = undefined;
+      if (!this.running || this.page?.hidden === true) return;
       void this.check().finally(() => {
-        if (this.running) this.timer = setTimeout(loop, this.interval);
+        // One timer, however many loops waited on this check (one before the page was hidden, one after it was shown).
+        if (this.running && this.page?.hidden !== true && this.timer === undefined) this.timer = setTimeout(loop, this.interval);
       });
     };
+    this.onVisibility = () => {
+      if (this.page?.hidden === true) {
+        if (this.timer !== undefined) clearTimeout(this.timer);
+        this.timer = undefined;
+      } else if (this.running && this.timer === undefined) loop();
+    };
+    page?.addEventListener("visibilitychange", this.onVisibility);
     loop();
   }
 
@@ -308,6 +344,9 @@ export class HostList {
     this.running = false;
     if (this.timer !== undefined) clearTimeout(this.timer);
     this.timer = undefined;
+    if (this.onVisibility !== undefined) this.page?.removeEventListener("visibilitychange", this.onVisibility);
+    this.onVisibility = undefined;
+    this.page = undefined;
   }
 
   /** The SDK's `ctx.hosts`. */
