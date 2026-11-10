@@ -10,6 +10,7 @@ import { InputError, layerNameFor, neuroglancerLink, parseInput, pasteAction, ty
 import { ContextKeys } from "../core/when.js";
 import { activeScene, layersOf, sourceUrls } from "../core/workspace.js";
 import { type Engine, LAYOUTS } from "../engine/engine.js";
+import { prefersReducedMotion } from "../engine/momentum.js";
 import { AuthRegistry, browserAuthEnvironment, middleauthProvider, ngauthProvider } from "../platform/auth.js";
 import { accountLabel, type GoogleSignIn, googleProvider } from "../platform/google_auth.js";
 import { googleTokenTable, sourceWithRules } from "../core/sign_in_rules.js";
@@ -46,7 +47,7 @@ import { PluginOffers } from "./plugin_offers.js";
 import type { CatalogueEntry } from "../../plugins/index.js";
 import { registerBuiltins } from "../builtins/index.js";
 import { contextKeyFor } from "./context.js";
-import { asTool, type DockTab, DockManager, prefs } from "./docks.js";
+import { asTool, describeSize, followDrag, type DockTab, DockManager, prefs } from "./docks.js";
 import { h, icon, iconButton, isMac, keyLabel, mark } from "./dom.js";
 import { closeSheet, confirmDialog, copyText, formDialog, offer, promptDialog, sheet, sheetIsOpen, showMenu, showPalette, showSheet, toast } from "./overlays.js";
 import { ActivityLog, WARNING_EVENT, warningLine } from "./panels/activity.js";
@@ -107,7 +108,15 @@ export class Shell {
   }
   /** A plugin's view beside Neuroglancer's, and the divider between them. */
   private readonly viewArea = h("div", { class: "engine-view", hidden: true });
-  private readonly viewSplit = h("div", { class: "engine-split", hidden: true, role: "separator", "aria-orientation": "vertical", title: "Drag to resize" });
+  private readonly viewSplit = h("div", {
+    class: "engine-split",
+    hidden: true,
+    role: "separator",
+    tabindex: 0,
+    "aria-orientation": "vertical",
+    "aria-label": "Resize the view beside the viewer",
+    title: "Drag to resize",
+  });
   private view: { owner: string; dispose: () => void } | undefined;
   private google: GoogleSignIn | undefined;
   private localPlugins: LocalPlugins | undefined;
@@ -136,7 +145,8 @@ export class Shell {
         h("button", { class: "btn outline", type: "button", onclick: () => this.wb.run("workspace.open") }, icon("open"), "Open"),
         h(
           "button",
-          { class: "btn", type: "button", "aria-haspopup": "menu", onclick: (e: Event) => this.showShareMenu(e.currentTarget as HTMLElement) },
+          // Named for a screen reader also where a narrow window hides its label.
+          { class: "btn", type: "button", "aria-haspopup": "menu", "aria-label": "Share", onclick: (e: Event) => this.showShareMenu(e.currentTarget as HTMLElement) },
           icon("link"),
           h("span", { class: "hide-narrow" }, "Share"),
         ),
@@ -178,6 +188,7 @@ export class Shell {
     );
     const engine = h("section", { class: "engine", "aria-label": "Viewer" }, this.engineHost, this.viewSplit, this.viewArea, this.startCard);
     this.viewSplit.addEventListener("pointerdown", (e) => this.dragViewSplit(e, engine));
+    this.viewSplit.addEventListener("keydown", (e) => this.stepViewSplit(e));
     const centre = h("div", { class: "centre" }, engine, this.statusStrip);
     const workspace = h(
       "div",
@@ -972,7 +983,13 @@ export class Shell {
       group: "View",
       run: () => {
         engine.momentum = !engine.momentum;
-        toast(engine.momentum ? "The 3-D view keeps turning after a drag." : "The 3-D view stops when you let go.");
+        toast(
+          !engine.momentum
+            ? "The 3-D view stops when you let go."
+            : prefersReducedMotion()
+              ? "The 3-D view keeps turning after a drag, though not while your system asks for less motion."
+              : "The 3-D view keeps turning after a drag.",
+        );
       },
     });
     add({
@@ -1147,8 +1164,13 @@ export class Shell {
     // The modifier no binding uses here (Ctrl on macOS, the Windows key elsewhere): not "1" pressed alone.
     if (isMac() ? e.ctrlKey : e.metaKey) return;
     const target = e.target as HTMLElement | null;
+    // In a menu, a letter moves to the item starting with it, as typing does: not a shortcut.
     const typing =
-      target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable === true;
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement ||
+      target?.isContentEditable === true ||
+      target?.closest?.('[role="menu"]') != null;
     // A digit typed with Shift arrives as "!", "@"…; use the physical key for digits.
     const key = /^Digit\d$/.test(e.code) ? keyFromCode(e) : keyFromEvent(e);
     const binding = this.wb.keybindings.resolve(key, this.context.all(), typing);
@@ -1330,7 +1352,7 @@ export class Shell {
     this.viewArea.replaceChildren(host);
     this.viewArea.hidden = false;
     this.viewSplit.hidden = false;
-    this.viewArea.style.flexBasis = `${prefs.get("viewShare") ?? "50"}%`;
+    this.setViewShare(Number(prefs.get("viewShare") ?? "50"));
     let cleanup: (() => void) | void;
     const mounted = {
       owner,
@@ -1356,20 +1378,36 @@ export class Shell {
     return mounted.dispose;
   }
 
+  /** The view beside the viewer takes `share` per cent of the width (15 to 85); returns what it took. */
+  private setViewShare(share: number): number {
+    const kept = Math.min(85, Math.max(15, Number.isFinite(share) ? share : 50));
+    this.viewArea.style.flexBasis = `${kept}%`;
+    describeSize(this.viewSplit, kept, 15, 85);
+    return kept;
+  }
+
+  /** Dragging the split between the viewer and a view beside it: kept once let go, not at every move. */
   private dragViewSplit(event: PointerEvent, engine: HTMLElement): void {
     event.preventDefault();
     const box = engine.getBoundingClientRect();
-    const move = (e: PointerEvent) => {
-      const share = Math.min(85, Math.max(15, (100 * (box.right - e.clientX)) / box.width));
-      this.viewArea.style.flexBasis = `${share}%`;
-      prefs.set("viewShare", share.toFixed(1));
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    let share: number | undefined;
+    followDrag(
+      window,
+      (e) => (share = this.setViewShare((100 * (box.right - e.clientX)) / box.width)),
+      () => {
+        if (share !== undefined) prefs.set("viewShare", share.toFixed(1));
+      },
+    );
+  }
+
+  /** The split with the keyboard: Left widens the view beside the viewer, Right narrows it (Shift for more). */
+  private stepViewSplit(e: KeyboardEvent): void {
+    const now = Number(this.viewSplit.getAttribute("aria-valuenow") ?? "50");
+    const step = e.shiftKey ? 10 : 2;
+    const share = e.key === "ArrowLeft" ? now + step : e.key === "ArrowRight" ? now - step : e.key === "Home" ? 15 : e.key === "End" ? 85 : undefined;
+    if (share === undefined) return;
+    e.preventDefault();
+    prefs.set("viewShare", this.setViewShare(share).toFixed(1));
   }
 
   // -------------------------------------------------------------- open

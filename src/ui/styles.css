@@ -220,7 +220,7 @@ a.btn { text-decoration: none; }
 }
 .segmented button + button { margin-left: -1px; }
 .segmented button:hover { color: var(--text); }
-.segmented button[aria-pressed="true"] { background: var(--ink-3); color: var(--text); }
+.segmented button[aria-pressed="true"], .segmented button[aria-selected="true"] { background: var(--ink-3); color: var(--text); }
 
 /* scene tabs */
 .scene-tabs { display: flex; align-items: center; gap: var(--sp-1); min-width: 0; overflow-x: auto; scrollbar-width: none; }
@@ -306,7 +306,16 @@ kbd {
 .dot.busy { background: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
 .dot.err { background: var(--err); }
 @keyframes pulse { 50% { opacity: 0.35; } }
-@media (prefers-reduced-motion: reduce) { .dot.busy { animation: none; } }
+/*
+ * Less motion, when the system asks for it: nothing slides, fades or pulses
+ * (changes happen at once), and a bar whose progress is not known stands
+ * still at half strength rather than sweeping.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0s !important; transition-delay: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+  .dot.busy { animation: none; }
+  .job .bar.indeterminate .fill { animation: none; width: 100% !important; transform: none; opacity: 0.45; }
+}
 
 /* -------------------------------------------------------------- workspace */
 .workspace {
@@ -374,7 +383,7 @@ kbd {
   font-size: var(--fs-body); letter-spacing: 0.02em; white-space: nowrap;
 }
 .tab:hover { color: var(--text); }
-.tab[aria-selected="true"] { color: var(--text); background: var(--ink-3); }
+.tab[aria-selected="true"], .tab.dock-picker { color: var(--text); background: var(--ink-3); }
 .dock-body { flex: 1; overflow: auto; min-height: 0; }
 .dock-pane { padding: var(--sp-5); min-height: 100%; box-sizing: border-box; }
 .dock.collapsed .dock-body, .dock.collapsed .dock-tabs { display: none; }
@@ -389,6 +398,7 @@ kbd {
 .resizer-left, .resizer-right { width: 5px; margin-inline: -2px; cursor: col-resize; }
 .resizer-bottom { height: 5px; margin-block: -2px; cursor: row-resize; }
 .resizer:hover, .resizer.dragging { background: var(--line-hover); }
+.resizer:focus-visible, .engine-split:focus-visible { background: var(--accent); outline: none; }
 .app.left-collapsed .resizer-left, .app.right-collapsed .resizer-right, .app.bottom-collapsed .resizer-bottom { display: none; }
 
 /* bottom dock */
@@ -943,6 +953,8 @@ textarea.state-input.tall { min-height: 50vh; }
   border: 0; border-bottom: 1px solid var(--line); background: transparent; font-size: var(--fs-title);
 }
 .palette-input:focus-visible { outline: none; }
+/* A sheet with no control takes the keyboard itself, without a ring. */
+.sheet[tabindex="-1"]:focus { outline: none; }
 .results { list-style: none; margin: 0; padding: var(--sp-3); overflow: auto; }
 .result {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 var(--sp-5); align-items: center;

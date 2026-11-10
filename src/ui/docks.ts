@@ -11,7 +11,7 @@
 import type { ContextKeys } from "../core/when.js";
 import type { DockTabSpec } from "../platform/plugin_host.js";
 import type { Disposer, DockSlot } from "../sdk/types.js";
-import { emptyState } from "../sdk/dom.js";
+import { emptyState, type Roving, roving } from "../sdk/dom.js";
 import { h, icon } from "./dom.js";
 import { showMenu } from "./overlays.js";
 
@@ -106,10 +106,36 @@ const DEFAULT_SIZE: Record<DockSlot, string> = { left: "300px", right: "360px", 
 /** Collapsed until the person opens them. */
 const START_COLLAPSED: Record<DockSlot, boolean> = { left: false, right: true, bottom: true };
 
+/**
+ * Follows a drag on `target` until it ends, however it ends: let go, or
+ * taken away (a touch the browser takes for a scroll, a lost capture), so a
+ * handle is never left stuck to the pointer.  `end` runs once.
+ */
+export function followDrag(target: HTMLElement | Window, move: (e: PointerEvent) => void, end: () => void): void {
+  const onMove = (e: Event) => move(e as PointerEvent);
+  const stops = ["pointerup", "pointercancel", "lostpointercapture"];
+  const stop = () => {
+    target.removeEventListener("pointermove", onMove);
+    for (const type of stops) target.removeEventListener(type, stop);
+    end();
+  };
+  target.addEventListener("pointermove", onMove);
+  for (const type of stops) target.addEventListener(type, stop);
+}
+
+/** A separator's position, for a screen reader: its value now and its range. */
+export function describeSize(handle: HTMLElement, now: number, min: number, max: number): void {
+  handle.setAttribute("aria-valuenow", String(Math.round(now)));
+  handle.setAttribute("aria-valuemin", String(Math.round(min)));
+  handle.setAttribute("aria-valuemax", String(Math.round(max)));
+}
+
 class Dock {
   readonly el: HTMLElement;
-  readonly head = h("div", { class: "dock-head", role: "tablist" });
+  readonly head = h("div", { class: "dock-head" });
   readonly tabsEl = h("div", { class: "dock-tabs" });
+  /** Left and Right move between the tabs (the Tools dock's one picker has its own keys). */
+  readonly keys: Roving;
   readonly body = h("div", { class: "dock-body" });
   readonly tabs = new Map<string, Mounted>();
   selected: string | undefined;
@@ -121,7 +147,18 @@ class Dock {
     private readonly manager: DockManager,
   ) {
     this.menu = slot === "right";
-    this.el = h("aside", { class: `dock dock-${slot}`, "aria-label": TITLES[slot] });
+    this.el = h("aside", { class: `dock dock-${slot}`, id: `dock-${slot}`, "aria-label": TITLES[slot] });
+    if (!this.menu) {
+      this.tabsEl.setAttribute("role", "tablist");
+      this.tabsEl.setAttribute("aria-label", TITLES[slot]);
+    }
+    this.keys = roving(this.tabsEl, {
+      items: () => (this.menu ? [] : this.ordered().map((m) => m.button)),
+      orientation: "horizontal",
+      tabStop: true,
+      current: () => (this.selected !== undefined ? this.tabs.get(this.selected)?.button : undefined),
+      onMove: (button) => button.click(),
+    });
     const toggle = h(
       "button",
       {
@@ -146,16 +183,17 @@ class Dock {
   layoutTabs(): void {
     if (!this.menu) {
       this.tabsEl.replaceChildren(...this.ordered().map((m) => m.button));
+      this.keys.sync();
       return;
     }
     const shown = this.selected !== undefined ? this.tabs.get(this.selected) : undefined;
     const picker = h(
       "button",
-      { class: "tab dock-picker", type: "button", "aria-haspopup": "menu", "aria-selected": "true", title: "Choose a tool" },
+      { class: "tab dock-picker", type: "button", "aria-haspopup": "menu", title: "Choose a tool", "aria-label": `Tool: ${shown?.tab.title ?? "none"}. Choose a tool` },
       shown?.tab.title ?? "Tools",
       icon("chevron-down"),
     );
-    picker.addEventListener("click", () => {
+    const open = () => {
       const groups = new Map<string, Mounted[]>();
       for (const m of this.visibleTabs()) groups.set(m.tab.group ?? "Other", [...(groups.get(m.tab.group ?? "Other") ?? []), m]);
       showMenu(
@@ -166,6 +204,13 @@ class Dock {
           ...tabs.map((m) => ({ label: m.tab.title, current: m.tab.id === this.selected, run: () => this.manager.show(m.tab.id) })),
         ]),
       );
+    };
+    picker.addEventListener("click", open);
+    // Down or Up opens the menu too, as on any menu button.
+    picker.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      e.preventDefault();
+      open();
     });
     this.tabsEl.replaceChildren(picker);
   }
@@ -224,10 +269,19 @@ export class DockManager {
   addTab(tab: DockTab): Disposer {
     const dock = this.docks[tab.slot];
     if (this.bySlotOf.has(tab.id)) throw new Error(`dock tab ${tab.id} already exists`);
-    const host = h("div", { class: "dock-pane", "data-tab": tab.id, role: "tabpanel", "aria-label": tab.title, hidden: true });
+    // A tab panel named by its tab; the Tools dock has a picker, not tabs, so its panels are regions named by their titles.
+    const host = h("div", {
+      class: "dock-pane",
+      "data-tab": tab.id,
+      id: `pane-${tab.id}`,
+      role: dock.menu ? "region" : "tabpanel",
+      "aria-labelledby": dock.menu ? undefined : `tab-${tab.id}`,
+      "aria-label": dock.menu ? tab.title : undefined,
+      hidden: true,
+    });
     const button = h(
       "button",
-      { class: "tab", type: "button", role: "tab", id: `tab-${tab.id}`, "aria-selected": "false", onclick: () => this.show(tab.id) },
+      { class: "tab", type: "button", role: "tab", id: `tab-${tab.id}`, "aria-selected": "false", "aria-controls": `pane-${tab.id}`, onclick: () => this.show(tab.id) },
       tab.title,
     );
     const mounted: Mounted = { tab, button, host, rendered: false, renders: 0 };
@@ -297,6 +351,7 @@ export class DockManager {
     }
     dock.selected = id;
     mounted.button.setAttribute("aria-selected", "true");
+    dock.keys.sync();
     mounted.host.hidden = false;
     if (dock.menu) dock.layoutTabs();
     if (!dock.el.classList.contains("collapsed")) this.render(mounted);
@@ -380,37 +435,78 @@ export class DockManager {
     }
   }
 
-  /** A drag handle that resizes `slot`. */
+  /** The smallest and largest a dock may be, in pixels, in this window. */
+  private limits(slot: DockSlot): [number, number] {
+    if (slot === "bottom") return [90, window.innerHeight * 0.6];
+    return [160, window.innerWidth * (window.innerWidth <= 760 ? 0.34 : 0.5)];
+  }
+
+  /** Sets a dock's size (within its limits) and says so on its resizer; returns the size set. */
+  private resize(slot: DockSlot, size: number, handle: HTMLElement): number {
+    const [min, max] = this.limits(slot);
+    const px = Math.round(Math.max(min, Math.min(max, size)));
+    this.root.style.setProperty(`--${slot}`, `${px}px`);
+    describeSize(handle, px, min, max);
+    return px;
+  }
+
+  /** The size a dock is now: as drawn, or as set. */
+  private sizeOf(slot: DockSlot): number {
+    const rect = this.docks[slot].el.getBoundingClientRect();
+    const drawn = slot === "bottom" ? rect.height : rect.width;
+    return drawn > 0 ? drawn : parseFloat(this.root.style.getPropertyValue(`--${slot}`)) || parseFloat(DEFAULT_SIZE[slot]);
+  }
+
+  /**
+   * A handle that resizes `slot`: dragged, or with the keyboard, as a
+   * separator a screen reader reads with its size.  The arrows move it 10
+   * px (40 with Shift), Home and End to the smallest and largest.  The size
+   * is kept when a drag ends, or at each key.
+   */
   resizer(slot: DockSlot): HTMLElement {
     const vertical = slot === "bottom";
     const el = h("div", {
       class: `resizer resizer-${slot}`,
       role: "separator",
+      tabindex: 0,
       "aria-orientation": vertical ? "horizontal" : "vertical",
+      "aria-label": `Resize the ${TITLES[slot]} dock`,
+      "aria-controls": `dock-${slot}`,
       title: "Drag to resize",
     });
+    describeSize(el, this.sizeOf(slot), ...this.limits(slot));
+    const keep = () => prefs.set(`${slot}.size`, this.root.style.getPropertyValue(`--${slot}`));
+    // Which way grows the dock: right for the left dock, left for the right, up for the bottom.
+    const grow = slot === "left" ? "ArrowRight" : slot === "right" ? "ArrowLeft" : "ArrowUp";
+    const shrink = slot === "left" ? "ArrowLeft" : slot === "right" ? "ArrowRight" : "ArrowDown";
+    el.addEventListener("keydown", (e) => {
+      const step = e.shiftKey ? 40 : 10;
+      const [min, max] = this.limits(slot);
+      const now = this.sizeOf(slot);
+      const size = e.key === grow ? now + step : e.key === shrink ? now - step : e.key === "Home" ? min : e.key === "End" ? max : undefined;
+      if (size === undefined) return;
+      e.preventDefault();
+      this.resize(slot, size, el);
+      keep();
+    });
+    el.addEventListener("focus", () => describeSize(el, Math.round(this.sizeOf(slot)), ...this.limits(slot)));
     el.addEventListener("pointerdown", (down) => {
       down.preventDefault();
-      el.setPointerCapture(down.pointerId);
+      el.setPointerCapture?.(down.pointerId);
       el.classList.add("dragging");
       const start = vertical ? down.clientY : down.clientX;
-      const rect = this.docks[slot].el.getBoundingClientRect();
-      const startSize = vertical ? rect.height : rect.width;
-      const move = (e: PointerEvent) => {
-        const now = vertical ? e.clientY : e.clientX;
-        const delta = slot === "left" ? now - start : start - now;
-        const limit = vertical ? window.innerHeight * 0.6 : window.innerWidth * (window.innerWidth <= 760 ? 0.34 : 0.5);
-        const size = Math.max(vertical ? 90 : 160, Math.min(limit, startSize + delta));
-        this.root.style.setProperty(`--${slot}`, `${Math.round(size)}px`);
-      };
-      const up = () => {
-        el.classList.remove("dragging");
-        el.removeEventListener("pointermove", move);
-        el.removeEventListener("pointerup", up);
-        prefs.set(`${slot}.size`, this.root.style.getPropertyValue(`--${slot}`));
-      };
-      el.addEventListener("pointermove", move);
-      el.addEventListener("pointerup", up);
+      const startSize = this.sizeOf(slot);
+      followDrag(
+        el,
+        (e) => {
+          const now = vertical ? e.clientY : e.clientX;
+          this.resize(slot, startSize + (slot === "left" ? now - start : start - now), el);
+        },
+        () => {
+          el.classList.remove("dragging");
+          keep();
+        },
+      );
     });
     return el;
   }

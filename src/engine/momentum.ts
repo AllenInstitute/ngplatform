@@ -8,7 +8,8 @@
  * Measured from the 3-D orientation itself while a pointer is down (so
  * whichever binding turns the view, it works), as the rotation per
  * millisecond over the last few events before release; then that rotation,
- * decaying, applied once a frame.
+ * decaying, applied once a frame.  Not when the system asks for less
+ * motion: then the view stops where it is let go.
  */
 import { quat } from "neuroglancer/unstable/util/geom.js";
 
@@ -23,6 +24,15 @@ const DECAY_MS = 320;
 const WINDOW_MS = 90;
 /** Slower than this (radians a millisecond) it stops. */
 const STOP = 0.00004;
+
+/** Whether the system asks for less motion (Reduce motion, Show animations off). */
+export function prefersReducedMotion(): boolean {
+  try {
+    return globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  } catch {
+    return false;
+  }
+}
 
 export function addMomentum(host: HTMLElement, orientation: Orientation, enabled: () => boolean): () => void {
   let down = false;
@@ -53,7 +63,7 @@ export function addMomentum(host: HTMLElement, orientation: Orientation, enabled
     down = false;
     const now = performance.now();
     const recent = samples.filter((s) => now - s.t <= WINDOW_MS);
-    if (!enabled() || recent.length < 2 || now - recent[recent.length - 1].t > 50) return;
+    if (!enabled() || prefersReducedMotion() || recent.length < 2 || now - recent[recent.length - 1].t > 50) return;
     const first = recent[0];
     const last = recent[recent.length - 1];
     const dt = last.t - first.t;

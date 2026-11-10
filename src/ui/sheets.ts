@@ -9,7 +9,7 @@ import { InputError, layerCount, parseInput } from "../core/state_io.js";
 import { layerNameFor } from "../core/state_io.js";
 import { closeSheet, sheet, showSheet, toast } from "./overlays.js";
 import { type DroppedItem, LocalData, type FoundDataset, type LocalEntry } from "../virtual/local_data.js";
-import { checkbox, downloadBlob, info } from "../sdk/dom.js";
+import { checkbox, downloadBlob, info, roving } from "../sdk/dom.js";
 import { clear, h, icon, keyLabel } from "./dom.js";
 import { kindLabel } from "./panels/format.js";
 import { renderOverviewSettings } from "./overview.js";
@@ -395,21 +395,35 @@ export type SettingsSection = keyof typeof SETTINGS_SECTIONS;
  * developers.  One section at a time, each made when chosen.
  */
 export function showSettingsSheet(wb: Workbench, section: SettingsSection = "view"): void {
-  const nav = h("div", { class: "segmented settings-nav", role: "tablist" });
-  const body = h("div", { class: "settings-body" });
+  const nav = h("div", { class: "segmented settings-nav", role: "tablist", "aria-label": "Settings" });
+  const body = h("div", { class: "settings-body", id: "settings-section", role: "tabpanel" });
   let dispose: (() => void) | undefined;
+  const tabs = () => [...nav.querySelectorAll<HTMLButtonElement>("button")];
+  // Left and Right go from section to section, as on any row of tabs.
+  const keys = roving(nav, { items: tabs, orientation: "horizontal", tabStop: true, onMove: (b) => b.click() });
   const choose = (id: SettingsSection) => {
     dispose?.();
     dispose = undefined;
     body.replaceChildren();
-    for (const b of nav.querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.dataset.section === id));
+    for (const b of tabs()) {
+      const on = b.dataset.section === id;
+      b.setAttribute("aria-selected", String(on));
+      if (on) {
+        body.setAttribute("aria-labelledby", b.id);
+        keys.sync(b);
+      }
+    }
     dispose = SECTION_RENDER[id](body, wb);
   };
   for (const [id, title] of Object.entries(SETTINGS_SECTIONS) as [SettingsSection, string][]) {
-    nav.append(h("button", { type: "button", "data-section": id, "aria-pressed": "false", onclick: () => choose(id) }, title));
+    nav.append(
+      h("button", { type: "button", role: "tab", id: `settings-tab-${id}`, "data-section": id, "aria-selected": "false", "aria-controls": "settings-section", onclick: () => choose(id) }, title),
+    );
   }
   showSheet(sheet("Settings", [nav, body], [h("button", { class: "btn primary", type: "button", onclick: () => closeSheet() }, "Done")], { wide: true }), () => dispose?.());
   choose(section in SETTINGS_SECTIONS ? section : "view");
+  // The keyboard starts on the section shown.
+  nav.querySelector<HTMLElement>('[aria-selected="true"]')?.focus({ preventScroll: true });
 }
 
 const SECTION_RENDER: Record<SettingsSection, (host: HTMLElement, wb: Workbench) => (() => void) | undefined> = {
