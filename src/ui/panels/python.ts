@@ -1,6 +1,6 @@
 /**
- * The Python tab: a Python console (Pyodide, CPython compiled to
- * WebAssembly) running in this page, loaded the first time the tab opens.
+ * The Python panel (Activity dock): a Python console (Pyodide, CPython compiled to
+ * WebAssembly) running in this page, loaded the first time the panel opens.
  * `ngp` drives the workspace: the scene's Neuroglancer state as a dict, its
  * layers, the position, and every command in the palette; arrays made here
  * show as layers (ngp.show).  numpy, scipy and the other Pyodide packages
@@ -191,7 +191,7 @@ class _Workspace:
     def panel(self, title, id=None, slot="left", group="Python"):
         """Adds a panel drawn by a function given the panel's element, when shown and
         again whenever the workspace changes.  A tool (slot "left") goes to the Tools
-        dock, listed under group; slot "bottom" puts it in the bottom dock:
+        dock, listed under group; slot "bottom" puts it in the Activity dock:
         @ngp.panel("My panel")
         def draw(host): host.textContent = f"{len(ngp.layers())} layers"
         """
@@ -268,7 +268,7 @@ export async function runPythonPlugin(wb: Workbench, owner: string, source: stri
   }
 }
 
-/** Where printed output goes while the Python tab is open. */
+/** Where printed output goes while the Python panel is open. */
 let pythonSink: ((text: string, kind: "out" | "err") => void) | undefined;
 
 export function loadPython(wb: Workbench): Promise<Pyodide> {
@@ -371,7 +371,7 @@ export function loadPython(wb: Workbench): Promise<Pyodide> {
       },
     });
     await py.runPythonAsync(PRELUDE);
-    // Printed output goes to the Python tab when it is open, else to the Activity tab (a command's print, say).
+    // Printed output goes to the Python panel when it is open, else to the Activity log (a command's print, say).
     py.setStdout({ batched: (t) => (pythonSink ? pythonSink(t, "out") : wb.log.add(t, "info", "Python")) });
     py.setStderr({ batched: (t) => (pythonSink ? pythonSink(t, "err") : wb.log.add(t, "error", "Python")) });
     return py;

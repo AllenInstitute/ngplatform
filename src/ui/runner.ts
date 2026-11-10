@@ -548,7 +548,7 @@ async function convertDialog(runner: RunnerService): Promise<void> {
 /**
  * What the browser will copy of a tractogram of `bytes` bytes (the vectors
  * worker decides the same way, `spillPlan` in src/virtual/vectors/spill.ts):
- * every streamline, or past the storage limit (View settings) a sample.
+ * every streamline, or past the storage limit (Settings › Storage) a sample.
  */
 export async function tractogramPlan(bytes: number): Promise<SpillPlan> {
   const setting = tractogramDiskGigabytes();
@@ -562,7 +562,7 @@ const askedKey = (file: { name: string; size: number }) => `${file.name}|${file.
 /** Why a tractogram is past the limit, in plain words. */
 function limitText(file: { name: string; size: number }, plan: SpillPlan): string {
   const limit = plan.budget > 0 ? `past the ${bytesText(plan.budget)} limit` : "and none is allowed";
-  return `${file.name} is ${bytesText(file.size)}. Reading all of it here would copy about ${bytesText(plan.wholeBytes)} into this browser's storage, ${limit} (View settings → Local tractograms).`;
+  return `${file.name} is ${bytesText(file.size)}. Reading all of it here would copy about ${bytesText(plan.wholeBytes)} into this browser's storage, ${limit} (Settings › Storage → Local tractograms).`;
 }
 
 /** What a sample keeps, in plain words. */
@@ -653,7 +653,7 @@ export async function offerRunnerForLarge(wb: Workbench, runner: RunnerService, 
 }
 
 /**
- * Says so when a tractogram opened another way (Open from device, a
+ * Says so when a tractogram opened another way (Open a file…, a
  * folder, a reload) is read as a sample, with the runner's conversion
  * offered.  A drop asks first instead (`offerRunnerForLarge`).
  */

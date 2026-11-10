@@ -1,5 +1,5 @@
 /**
- * The Render tab's Surface section, for a Zarr Vectors mesh layer with
+ * The Display tab's Surface section, for a Zarr Vectors mesh layer with
  * values on its vertices (a FreeSurfer or GIFTI surface opened from this
  * computer, or a surface store zarr-vectors-tools wrote): Freeview's surface
  * controls.  Which surface of the hemisphere is shown (white, pial,

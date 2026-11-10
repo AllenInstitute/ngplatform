@@ -48,7 +48,7 @@ function humanise(key: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-/** "// Colour map: viridis" in a shader the Layer tab's colour maps wrote. */
+/** "// Colour map: viridis" in a shader the Display tab's colour maps wrote. */
 const colourMap = (shader: unknown) => (typeof shader === "string" ? /\/\/ Colour map: (\S+)/.exec(shader)?.[1] : undefined);
 
 /** The words for a layer's changes, and the names of the layers they touched. */

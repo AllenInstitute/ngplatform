@@ -20,10 +20,10 @@ Add it as a dataset with \`|zarr-vectors:\` after the store's URL:
 \`\`\`
 https://storage.googleapis.com/bucket/tracts.zarrvectors/|zarr-vectors:
 \`\`\`
-Stores ending in \`.zarrvectors\` are recognised without it. A store on this computer opens with Add → Local file or folder.
+Stores ending in \`.zarrvectors\` are recognised without it. A store on this computer opens with **+ → Local file or folder…** in the Layers panel.
 
 ## Tractograms on this computer
-A tractogram (TrackVis \`.trk\`, MRtrix \`.tck\` or \`.trx\`) opens in place (Open → Open from device), with nothing converted: the file is read once, in a worker, and served as a zarr-vectors store made from it, so it draws, selects and filters like any store. Points are in RAS+ millimetres, as nibabel reads them. A large file's cells are kept in the browser's private storage while it is open (about 1.4 times the file), with only an index and the cells last used in memory (View settings sets how much); coarse views come from sample levels of about one streamline in 10, 100, 1000. A file the browser cannot hold opens through the local runner instead (Jobs → This computer).
+A tractogram (TrackVis \`.trk\`, MRtrix \`.tck\` or \`.trx\`) opens in place (**Open → Open a file…**), with nothing converted: the file is read once, in a worker, and served as a zarr-vectors store made from it, so it draws, selects and filters like any store. Points are in RAS+ millimetres, as nibabel reads them. A large file's cells are kept in the browser's private storage while it is open (about 1.4 times the file), with only an index and the cells last used in memory (Settings › Storage sets how much); coarse views come from sample levels of about one streamline in 10, 100, 1000. A file the browser cannot hold opens through the local runner instead (Settings › Compute → This computer).
 
 ## Meshes on this computer
 A mesh or surface (\`.obj\`, \`.stl\`, \`.ply\`, GIFTI \`.gii\`, FreeSurfer \`lh.pial\` and the like) opens in place too; anatomical GIFTI and FreeSurfer surfaces are moved into scanner RAS as zarr-vectors-tools does: each \`.obj\` object (\`o\`/\`g\`) or the whole file is one object, ids from 1, at the file's coordinates (millimetres, or nanometres when it spans more than 50,000).
@@ -34,8 +34,8 @@ An SWC file opens as skeletons, one object per tree, in micrometres, with each n
 ## What you see
 - **Overview**: every object, drawn from the spatial chunks at the level of detail the view needs. With no segments selected, all objects show.
 - **Selected objects**: click an object (or tick it in the Segments tab) to load it whole, at full resolution.
-- **Attributes**: object attributes are segment properties: filter and sort them in the Segments tab, or colour by them in the Render tab's shader with \`prop_<name>()\` and \`obj_<name>\`.
-- **Levels**: "Resolution (slice)" and "Resolution (mesh)" in the Render tab trade detail for speed.
+- **Attributes**: object attributes are segment properties: filter and sort them in the Segments tab, or colour by them in the Display tab's shader with \`prop_<name>()\` and \`obj_<name>\`.
+- **Levels**: "Resolution (slice)" and "Resolution (mesh)" in the Display tab trade detail for speed.
 
 ## Writing stores
 [zarr-vectors-py](https://github.com/AllenInstitute/zarr-vectors-py) writes stores from Python; [zarr-vectors-tools](https://github.com/AllenInstitute/zarr-vectors-tools) converts TRK, TRX, TCK, precomputed skeletons, meshes and point clouds (\`zvtools convert\`) and builds the levels (\`zvtools pyramid\`).`,

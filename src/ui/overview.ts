@@ -4,7 +4,7 @@
  * can be cancelled), and kept between visits within a budget
  * (src/virtual/images/overview_cache.ts).  Offered when a large image is
  * first viewed; started and cleared from the Datasets row menu; the budget
- * and what each image keeps are in View settings.
+ * and what each image keeps are in Settings › Storage.
  */
 import type { DatasetRecord } from "../core/workspace.js";
 import type { OverviewStatus } from "../virtual/images/nifti.js";
@@ -83,7 +83,7 @@ export function offerOverviews(wb: Workbench): void {
   });
 }
 
-/** The overview cache's settings and what each image keeps, for View settings. */
+/** The overview cache's settings and what each image keeps, for Settings › Storage. */
 export function renderOverviewSettings(host: HTMLElement, wb: Workbench): void {
   const list = h("div", { class: "overview-list" });
   const total = h("span", { class: "note" });

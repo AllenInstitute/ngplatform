@@ -6,7 +6,7 @@
  */
 import { setAsyncComputationWorkerFactory } from "neuroglancer/unstable/worker_factories.js";
 import { CHUNK_WORKER_MODULES, revalidateFetches, workerPlugins, workerRevalidates } from "./plugins.js";
-// The platform's own scheme, gs+google:// (Google Cloud Storage with the Auth tab's Google sign-in).
+// The platform's own scheme, gs+google:// (Google Cloud Storage with the Google sign-in of Settings › Sign-in).
 import "../google_gcs.js";
 
 if (workerRevalidates(self.name)) revalidateFetches(self);

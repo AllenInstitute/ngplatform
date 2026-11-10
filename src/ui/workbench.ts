@@ -41,7 +41,7 @@ export interface Workbench {
   /** Every computer with a paired runner: This computer (`runner`) and others reached through an SSH tunnel. */
   hosts: HostList;
   services: ServiceRegistry;
-  /** The sign-in methods (the Auth tab's). */
+  /** The sign-in methods (Settings › Sign-in's). */
   auth: AuthRegistry;
   /** The Google accounts of this browser. */
   google: GoogleSignIn;

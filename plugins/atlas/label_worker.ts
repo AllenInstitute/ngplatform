@@ -1,5 +1,5 @@
 /**
- * The Atlas tab's worker: reads a label volume (OME-Zarr, a NIfTI or MGH
+ * The Atlas panel's worker: reads a label volume (OME-Zarr, a NIfTI or MGH
  * read as virtual Zarr, or a precomputed segmentation, through the volume
  * view's reader) off the main thread, and counts its labels or finds a
  * region's voxel nearest a point (see ./labels.ts).

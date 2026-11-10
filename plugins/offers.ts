@@ -4,7 +4,7 @@
  * The app looks at the active scene (layers, their types and sources, and
  * where needed a store's metadata, read once) and, for a plugin that is
  * off, asks its offer whether it applies. One that applies is listed in
- * the Datasets tab with a button that turns it on; a `toast` offer is also
+ * the Layers panel with a button that turns it on; a `toast` offer is also
  * shown once in a toast. See src/ui/plugin_offers.ts.
  *
  * Kept apart from the plugins' code, which loads only when a plugin is on.
@@ -28,13 +28,13 @@ export interface OfferScene {
   isLocal(url: string): boolean;
 }
 
-/** Whether an offer applies; "list": in the Datasets tab only, never in a toast (a use worth offering, not pressing). */
+/** Whether an offer applies; "list": in the Layers panel only, never in a toast (a use worth offering, not pressing). */
 export type Applies = boolean | "list";
 
 export interface Offer {
   /** What it does for this data, in a few words after its name: "Track filtering: select streamlines through regions". */
   pitch: string;
-  /** Also offered once in a toast (else only in the Datasets tab). */
+  /** Also offered once in a toast (else only in the Layers panel). */
   toast: boolean;
   applies(scene: OfferScene): Applies | Promise<Applies>;
 }

@@ -38,7 +38,7 @@ export async function openFromDevice(wb: Workbench, folder: boolean): Promise<bo
 
 /**
  * Opens what was dropped on the window (files or folders): read in place,
- * as Open from device reads them.  `dropped` is taken from the drop event
+ * as Open a file… reads them.  `dropped` is taken from the drop event
  * itself (`collectDropped`), which the browser empties once it returns.
  */
 export async function openDroppedItems(wb: Workbench, dropped: Promise<DroppedItem[]>, name?: (name: string) => string): Promise<boolean> {
@@ -60,7 +60,7 @@ async function addLocalEntry(wb: Workbench, entry: LocalEntry, name: (name: stri
   return true;
 }
 
-/** What Open from device reads, for messages. */
+/** What Open a file… reads, for messages. */
 const LOCAL_FORMATS = "NIfTI, FreeSurfer .mgz/.mgh, NumPy .npy, TIFF stacks, tractograms (.trk, .tck, .trx), meshes and surfaces (.obj, .stl, .ply, .gii, FreeSurfer), SWC neurons, point tables (.csv, .xyz) and LAS point clouds, OME-Zarr, zarr-vectors and precomputed";
 
 /** The datasets other scenes of the workspace show and this one does not, each added to this scene with a click. */

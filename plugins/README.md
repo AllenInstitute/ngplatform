@@ -1,7 +1,7 @@
 # Plugins
 
 Each plugin is a folder here. The app ships what [`index.ts`](index.ts)
-lists, and the **Plugins** tab (left dock) switches each on or off. Only Zarr
+lists, and the **Plugins** panel (left dock) switches each on or off. Only Zarr
 Vectors is on by default; the others are offered when data they work with is
 opened (below).
 
@@ -26,7 +26,7 @@ scene's state):
 |---|---|---|
 | [`starter_ts/`](starter_ts/) | A TypeScript plugin built into the app | Copy the folder, rename it and its ids, list it in `index.ts` (below) |
 | [`starter_ts/starter.mjs`](starter_ts/starter.mjs) | The same as one JavaScript file, no build | Plugins → **Add**, then **Reload** after each edit |
-| [`starter_py/`](starter_py/) | Python, in the page's Python (Pyodide): only `.py` files and a README | Plugins → **Add** its `starter.py`; `@ngp.command` adds a command (its id `python.<plugin>.<function>`), `@ngp.panel` a panel in the Tools dock; what it prints goes to the Python tab, or the Activity tab when that is closed |
+| [`starter_py/`](starter_py/) | Python, in the page's Python (Pyodide): only `.py` files and a README | Plugins → **Add** its `starter.py`; `@ngp.command` adds a command (its id `python.<plugin>.<function>`), `@ngp.panel` a panel in the Tools dock; what it prints goes to the Python panel, or the Activity log when that is closed |
 
 ## Adding a plugin
 
@@ -54,12 +54,12 @@ scene's state):
    {
      manifest: MY_MANIFEST,
      load: async () => (await import("./my-plugin/plugin.js")).plugin,
-     summary: "One line for the Plugins tab.",
+     summary: "One line for the Plugins panel.",
      group: "images",
      offer: OFFERS[MY_MANIFEST.id], // when to offer it while it is off (offers.ts)
    },
    ```
-   `group` places it in the Plugins tab (data types, vectors, images,
+   `group` places it in the Plugins panel (data types, vectors, images,
    segmentations and atlases, annotation). A data type instead gives
    `neuroglancer: () => import("…")` (its main-thread module, which
    registers the data source) and adds its worker modules to
@@ -69,23 +69,23 @@ scene's state):
    its own `package.json` (as `zarr-vectors/`) can also run its own tests, as
    the root `npm test` does for zarr-vectors.
 5. **Describe it**: the catalogue entry's `summary` is the one line the
-   Plugins tab shows; `description` is one sentence, and `guide` a short
+   Plugins panel shows; `description` is one sentence, and `guide` a short
    user guide in Markdown (`##` headings, lists, `` `code` ``, links) with
    `links` its repositories and papers, all shown behind **About**.
 
 ### Trying a plugin without building the app
 
-The Plugins tab's **Add** loads a plugin from this computer: a JavaScript
+The Plugins panel's **Add** loads a plugin from this computer: a JavaScript
 module (one file, bundled) exporting `manifest` (a tool) and `plugin`, or a
 folder with `manifest.json` and the module it names as `main`; or a Python
-file, run in the Python tab's interpreter, where `@ngp.command("Title")`
+file, run in the Python panel's interpreter, where `@ngp.command("Title")`
 adds a function to the command palette and `@ngp.panel("Title")` a panel
 in the Tools dock, under *Python* or `group="…"` (drawn by a function given
 the panel's element, when shown and whenever the workspace changes; the
 page's DOM is reachable through Pyodide's `js`). **Reload** reads it again after an
 edit. In Chrome and Edge the file is remembered between visits.
 
-**Add → From a URL…** loads a tool plugin someone has published: the URL of
+**Add → From a URL…** (in the Plugins panel) loads a tool plugin someone has published: the URL of
 its `manifest.json` (the module named by `main` beside it) or of the module
 itself, over https and served with CORS (GitHub Pages and jsDelivr are).
 The manifest is read first and shown, with a warning that the code will run
@@ -100,7 +100,7 @@ that folder plus one line in `index.ts`.
 ## Switching plugins on and off
 
 Only Zarr Vectors is on by default (`enabledByDefault`); every other plugin
-is off until someone turns it on, from the Plugins tab or from an offer.
+is off until someone turns it on, from the Plugins panel or from an offer.
 The choice is kept in this browser.
 
 - A tool plugin turns on at once, without a reload (`PluginHost.switchOn`):
@@ -111,24 +111,24 @@ The choice is kept in this browser.
 - Turning a plugin on also turns on the plugins it requires; turning one
   off also turns off the plugins that require it. The confirmation says
   which.
-- A plugin whose requirement is off is off, and the tab says why.
+- A plugin whose requirement is off is off, and the Plugins panel says why.
 - **Offers.** When data a tool plugin works with is opened while it is
-  off, the Layers tab lists it under *Tools for this data*, with a button
+  off, the Layers panel lists it under *Tools for this data*, with a button
   to turn it on and one for "Not now"; some offers also show once in a
   toast. Each entry in [`index.ts`](index.ts) has an `offer`
   ([`offers.ts`](offers.ts)): a few words on what it does, whether it is
   worth a toast, and `applies(scene)`, which looks at the scene's layers
-  (and, at most once per URL, a store's metadata). Settings → *Show offers
-  for tools that are off* turns them all off.
+  (and, at most once per URL, a store's metadata). Settings › View → *Offer
+  tools that are off when the data suits them* turns them all off.
 - A workspace that holds state of a plugin that is off (a link with track
   groups, say) says "This workspace uses Track filtering, which is off",
   with **Turn on**. The state stays in the workspace either way.
 - An example can name the tool plugins it is shown with (`plugins` in its
-  spec): opening it turns them on for this tab only, unless this browser
+  spec): opening it turns them on for this browser tab only, unless this browser
   turned them off. The S-21-46 and HCP-1065 examples do so for Track
   filtering.
 - A workspace with data in a format whose plugin is off says so when it
-  opens, and shows the Plugins tab.
+  opens, and shows the Plugins panel.
 
 Loading plugins from a URL at run time is not supported yet: plugins are
 built with the app.
@@ -161,7 +161,7 @@ A data type can also read files on this computer without converting them,
 as virtual stores. Its catalogue entry lists them (`virtualFormats`, each a
 `VirtualFormat` from `@ngplatform/sdk`: a file-name pattern, extensions for
 the file pickers, the layer source for the store's URL, and a worker). Local
-data then lists such files in folders and Open from device, and sends every
+data then lists such files in folders and **Open a file…**, and sends every
 key under a file's URL to the worker, which answers with
 `serveVirtualStores` from `@ngplatform/sdk/virtual`:
 
@@ -248,15 +248,15 @@ export const MANIFEST: Manifest = {
 - **Panels** (`contributes.panels`): a panel in a dock, in `order`. A tool's
   panel (`left`) goes to the Tools dock, listed under its `group`: `Image`,
   `Labels`, `Space`, `Vectors`, or `Other` when it names none; `bottom`
-  keeps it in the bottom dock; `minSize` (pixels) grows the dock to at least that
+  keeps it in the Activity dock at the bottom; `minSize` (pixels) grows the dock to at least that
   while the panel is shown (the annotation table asks for 300), without
   changing the size the person set.
 - **Scene kinds** (`contributes.sceneKinds: [{kind, title, panel}]`): a
   kind of scene the plugin adds, shown in the scene bar while the plugin is
-  on. Before one exists its tab (dashed) makes it; switching to it shows
+  on. Before one exists its scene tab (dashed) makes it; switching to it shows
   `panel`. The plugin sees the active scene's `kind` in
   `workspace.scenes()` and makes one with `workspace.newScene({kind})`; its
-  state slice is that scene's, as in any scene. The Collections tab is one.
+  state slice is that scene's, as in any scene. OME Collections' scenes are one.
 - **`when` clauses** read context keys: the platform's own (`hasLayers`,
   `sceneIsEmpty`, `sceneCount`, `selectedLayer`, `selectedLayerType`,
   `datasetKind`, `sourceFormat`, `canUndo`, `canRedo`, `framed`) and any the
@@ -293,7 +293,7 @@ it is deactivated. Subscriptions a plugin makes itself go in
 | Part | For |
 |---|---|
 | `commands.register / invoke` | Supply declared commands; call any command with arguments (validated against the declared schema, defaults filled in). |
-| `ui.panel / showPanel` | Render declared panels; return a disposer for cleanup. A panel declared in the `left` slot is a tool: it shows in the Tools dock on the right, chosen from its menu under its `group` (`bottom` panels stay in the bottom dock). Build it from the SDK's parts: see [Building a panel](#building-a-panel). |
+| `ui.panel / showPanel` | Render declared panels; return a disposer for cleanup. A panel declared in the `left` slot is a tool: it shows in the Tools dock on the right, chosen from its menu under its `group` (`bottom` panels stay in the Activity dock). Build it from the SDK's parts: see [Building a panel](#building-a-panel). |
 | `ui.view` | Show a view beside Neuroglancer's, where its 3-D panel would be; one at a time, with a draggable divider. |
 | `ui.viewToggle` | A switch beside "Sections" in the 3-D panel (volume rendering's "Volume"). |
 | `ui.overlay / screenshotOverlay` | An element over the views, and painting into Neuroglancer's screenshots (labels use both). |
@@ -303,14 +303,17 @@ it is deactivated. Subscriptions a plugin makes itself go in
 | `workspace.local` | Files of data opened from this computer: whether a URL is one, writing into it (track filtering saves groups this way), and opening a file the plugin made in the page as data (track filtering's density maps). |
 | `state` | The plugin's slice of the workspace state: in the link, undoable, versioned. |
 | `settings` | Per-user settings kept in this browser, never in the link. |
-| `jobs.run` | Long work with progress and cancel, shown in the Activity tab. |
+| `jobs.run` | Long work with progress and cancel, shown in the Activity dock. |
 | `runner` | Jobs on the user's own computer, through the runner they paired in Settings → Compute (see below). |
 | `services.provide / get` | Share an API with other plugins (`get` waits for the provider). |
 | `open.handler` | Handle pasted text matching a declared pattern. |
-| `log` | Lines in the Activity tab, tagged with the plugin. |
+| `log` | Lines in the Activity log, tagged with the plugin. |
 | `auth.register` | Add a sign-in method to Settings → Sign-in (see below). |
 
 ### Building a panel
+
+Every module of `@ngplatform/sdk`, with its main exports, is listed in the
+[SDK reference](../docs/plugins/sdk.md).
 
 Every panel is built from the same parts, from `@ngplatform/sdk/dom`, so
 plugins keep no private copies of controls or styles. Each part returns an
@@ -408,7 +411,7 @@ ctx.auth.register({
 
 `signIn` is called straight from the click, so a window it opens before its
 first `await` is not blocked. Data that a viewer layer already opened keeps
-the sign-in it had; the tab offers a reload, which keeps the workspace.
+the sign-in it had; Settings › Sign-in offers a reload, which keeps the workspace.
 
 A provider whose sign-in a layer chooses by its source's scheme (as
 Neuroglancer chooses credentials) adds `sourceSignIns`, which the layers'

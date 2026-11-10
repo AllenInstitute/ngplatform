@@ -1,13 +1,13 @@
 /**
  * Sign-in.  Providers say which services the workspace needs signing in to
- * (from its data sources and the servers added by hand in the Auth tab);
- * the tab shows each one's status and signs in and out.  Built in are
+ * (from its data sources and the servers added by hand in Settings › Sign-in);
+ * Settings › Sign-in shows each one's status and signs in and out.  Built in are
  * Google (./google_auth.ts), middleauth (the Google-backed sign-in CAVE and
  * similar servers use) and ngauth (tokens for Google Cloud Storage from a
  * server); plugins add others through `context.auth.register`.
  *
  * Providers also say how a layer reads its data with their sign-in (a URL
- * scheme: see ../core/source_auth.ts), for the tab's drop-down per layer.
+ * scheme: see ../core/source_auth.ts), for the drop-down per layer there.
  *
  * Tokens are kept where Neuroglancer keeps them, so a sign-in here is the
  * one the viewer uses, and one the viewer asked for shows here.
@@ -208,7 +208,7 @@ export function middleauthApps(sources: string[]): string[] {
 /**
  * Middleauth: a data server ("app") names its sign-in server at
  * `/auth_info`; signing in opens `<server>/api/v1/authorize`, which posts
- * the token back.  A server typed into the Auth tab may be either.
+ * the token back.  A server typed into Settings › Sign-in may be either.
  */
 export function middleauthProvider(env: AuthEnvironment): AuthProvider {
   const loginUrls = new Map<string, Promise<string | undefined>>();

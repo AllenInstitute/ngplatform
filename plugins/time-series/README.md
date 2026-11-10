@@ -13,7 +13,7 @@ parcel of the surface's parcellation. After FSLeyes' time series panel,
 Freeview's time course and napari's time slider.
 
 User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
-(and the manifest's `guide`, shown in the Plugins tab).
+(and the manifest's `guide`, shown in the Plugins panel).
 
 ## Files
 
@@ -102,7 +102,7 @@ User guide: [docs/plugins/time-series.md](../../docs/plugins/time-series.md)
   point is sent to the surface's store (`WorkspaceApi.local.send`, the
   store's `message`), then `ViewerApi.reloadData(store)` has Neuroglancer
   read the surface's values again. The surface shows them when `<stem>_t`
-  is its overlay (Render → Surface, or the panel's button, through
+  is its overlay (Display → Surface, or the panel's button, through
   `viewer.setSurfaceOverlay`). The time point is kept in the plugin's state
   (`surfaceTimes`, by store and series) once stepping settles, not while
   playing: in the link, so the store (which starts at 0) is sent it again

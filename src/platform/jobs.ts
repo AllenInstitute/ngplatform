@@ -1,5 +1,5 @@
 /**
- * Long-running work: each job shows in the Jobs tab with its progress, and
+ * Long-running work: each job shows in the Activity dock with its progress, and
  * can be cancelled.  Cancellation is cooperative: the work checks
  * `control.cancelled` between steps.
  */

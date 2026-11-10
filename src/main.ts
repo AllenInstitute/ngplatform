@@ -3,7 +3,7 @@
  * Neuroglancer modules (before any viewer exists, so their formats and
  * worker code are there from the start), then build the shell and mount the
  * engine inside it.  A plugin that fails to load is left out and marked in
- * the Plugins tab; errors nothing caught go to Activity from the start.
+ * the Plugins panel; errors nothing caught go to Activity from the start.
  */
 import { describeError, isStaleChunkError, reloadOnceForStaleChunk } from "./core/errors.js";
 import { Engine } from "./engine/engine.js";

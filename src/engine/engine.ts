@@ -394,7 +394,7 @@ export class Engine {
     });
   }
 
-  /** Shows a surface map as a surface layer's overlay (Render → Surface's Overlay); false when the layer is not a surface. */
+  /** Shows a surface map as a surface layer's overlay (Display → Surface's Overlay); false when the layer is not a surface. */
   setSurfaceOverlay(name: string, map: string): boolean {
     const layer = this.segmentationLayer(name);
     return layer !== undefined && setSurfaceOverlay(layer, map);
@@ -1003,7 +1003,7 @@ export class Engine {
     return layer && layerLookupSource(layer);
   }
 
-  /** Gives a segmentation layer a lookup table, as its Render tab does (see lookup_tables.ts). */
+  /** Gives a segmentation layer a lookup table, as its Display tab does (see lookup_tables.ts). */
   async setLookupTable(name: string, url: string | undefined): Promise<void> {
     const layer = this.segmentationLayer(name);
     if (layer === undefined) throw new Error(`${name} is not a segmentation layer`);

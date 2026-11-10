@@ -17,7 +17,7 @@
 /**
  * Segment properties from object attributes and groups, read from
  * `props_types` (see generate.py's `props_fixture`) and from fixtures with
- * arrays laid over them, and queried through Neuroglancer's own Seg-tab
+ * arrays laid over them, and queried through Neuroglancer's own Segments-tab
  * query code.
  */
 

@@ -9,8 +9,8 @@ belong in the plugin's own `README.md`.
 
 ![What it looks like in use](../images/plugins/your-plugin.png)
 
-**Kind:** tool or data type · on or off by default · where it lives (a tab,
-a switch, a command) · [Source and developer README](link to the folder)
+**Kind:** tool or data type · on or off by default · where it lives (a panel in
+the Tools dock, a switch, a command) · [Source and developer README](link to the folder)
 
 One paragraph: what it is for, and what it works on.
 

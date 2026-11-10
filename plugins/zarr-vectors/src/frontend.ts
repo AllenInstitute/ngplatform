@@ -213,7 +213,7 @@ function meshSubsourceEntry(
  * Segment properties that arrive after the layer does. Their columns are the
  * largest download of an open and nothing drawn needs them, so the layer is
  * not kept waiting: it rebuilds its property map when `ready` resolves
- * (`layer.ts`), and the Seg tab fills in then.
+ * (`layer.ts`), and the Segments tab fills in then.
  */
 export class ZarrVectorsLazyPropertyMap extends SegmentPropertyMap {
   constructor(readonly ready: Promise<InlineSegmentPropertyMap | undefined>) {
@@ -339,7 +339,7 @@ async function buildDataSource(
         `zarr-vectors: ${storeUrl}: object values in shaders: ${lines.join("; ")}` +
           (chosen.some((c) => c.column === undefined)
             ? " (obj_group is the index of the object's first group; " +
-              "group names are the Seg tab's tags, in store order)"
+              "group names are the Segments tab's tags, in store order)"
             : ""),
       );
     }

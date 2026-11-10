@@ -127,7 +127,7 @@ export interface HostServices {
   log(message: string, level: "info" | "error", source?: string): void;
 }
 
-/** "off": switched off in the Plugins tab.  "disabled": stopped this session after failing. */
+/** "off": switched off in the Plugins panel.  "disabled": stopped this session after failing. */
 export type PluginStatus = "off" | "registered" | "activating" | "active" | "failed" | "disabled";
 
 export interface PluginRecord {

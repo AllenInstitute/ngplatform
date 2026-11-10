@@ -342,7 +342,7 @@ export class SegmentIdIndex {
 
 /**
  * Id of the tags property.  Every group and every category of a
- * dictionary-encoded attribute is one tag, so the Seg tab can select
+ * dictionary-encoded attribute is one tag, so the Segments tab can select
  * `#bundle_name` or `#cell_type=L2IT`.
  */
 const TAGS_PROPERTY_ID = "group";
@@ -1021,7 +1021,7 @@ async function addChainCounts(
 
 // -------------------------------------------------------------- properties
 
-/** A property id Neuroglancer's Seg tab can filter by (`name>3`). */
+/** A property id Neuroglancer's Segments tab can filter by (`name>3`). */
 function propertyCandidate(name: string): string {
   let id = name.replace(/[^a-zA-Z0-9_]+/g, "_");
   if (!/^[a-zA-Z]/.test(id)) id = id.startsWith("_") ? `a${id}` : `a_${id}`;
@@ -1066,7 +1066,7 @@ function rowsBySegmentId(
 
 /**
  * Builds the segment-property map of a level from its object attributes and
- * groups.  Numeric columns become numeric properties (so the Seg tab can
+ * groups.  Numeric columns become numeric properties (so the Segments tab can
  * filter `length>50`), text columns text properties; groups and the
  * categories of dictionary-encoded columns become tags (`#bundle_name`,
  * `#cell_type=L2IT`).  `chainPaths` is level 0's additive chain, level 0

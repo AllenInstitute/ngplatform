@@ -1,5 +1,5 @@
 /**
- * A segmentation layer's lookup table, in its Render tab: one of the tables
+ * A segmentation layer's lookup table, in its Display tab: one of the tables
  * that come with the app (or that it fetches from their publishers), or a
  * file from this computer.  Choosing one colours and names the segments
  * (see ../lookup_tables.ts); "None" takes its colours and names off again.

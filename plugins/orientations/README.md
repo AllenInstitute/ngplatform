@@ -12,7 +12,7 @@ coarser glyphs: zoomed out, a view shows the coarse level's; zoom in and the
 finer level's load in and replace them.
 
 User guide: [docs/plugins/orientations.md](../../docs/plugins/orientations.md)
-(and the manifest's `guide`, shown behind **About** in the Plugins tab).
+(and the manifest's `guide`, shown behind **About** in the Plugins panel).
 
 ## Files
 

@@ -417,7 +417,7 @@ these segments, so the level settles.
 #### The others, faintly (notSelectedAlpha)
 
 When some objects are chosen and the layer's *notSelectedAlpha*
-("Opacity (off)" in the layer's Render tab, Neuroglancer's opacity of the
+("Opacity (off)" in the layer's Display tab, Neuroglancer's opacity of the
 segments not selected) is above 0, the others are drawn too, as
 Neuroglancer draws them: their light times that alpha. With the chosen
 objects read whole, the chunks are read for the others alone (their

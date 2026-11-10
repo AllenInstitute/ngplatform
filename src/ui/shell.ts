@@ -60,7 +60,7 @@ import { createPlatformApis } from "./apis.js";
 
 /**
  * Code that only some sessions use, loaded the first time it is: the Python
- * tab (and Python plugins), the capture sheet, the history menu.
+ * panel (and Python plugins), the capture sheet, the history menu.
  */
 const pythonPanel = () => import("./panels/python.js");
 const captureSheet = () => import("./capture.js");
@@ -418,7 +418,7 @@ export class Shell {
     for (const entry of plugins.catalogue) {
       const enabled = plugins.resolution.enabled.has(entry.manifest.id);
       // A data type plugin has no platform code: it was loaded with the viewer,
-      // unless that failed; then its activation fails, and the Plugins tab says why.
+      // unless that failed; then its activation fails, and the Plugins panel says why.
       const failure = plugins.failed?.get(entry.manifest.id);
       const load =
         failure !== undefined
@@ -466,7 +466,7 @@ export class Shell {
     store.onChange(refresh);
     // A plugin with state in the workspace (a filter in a shared link, say)
     // is loaded as the workspace opens, so its effect shows without opening
-    // its tab.
+    // its panel.
     const withState = () => {
       for (const entry of plugins.catalogue) {
         const key = entry.manifest.contributes?.appState?.key;
@@ -1137,8 +1137,8 @@ export class Shell {
 
   /**
    * Turns plugins on (with what they require) and keeps the choice.  Tool
-   * plugins come on at once, without a reload: their tabs and commands
-   * appear, and the first one's tab is shown.  A data type plugin needs the
+   * plugins come on at once, without a reload: their panels and commands
+   * appear, and the first one's panel is shown.  A data type plugin needs the
    * page reloaded (with the same link, so the workspace is kept).
    */
   private async turnOnPlugins(ids: string[]): Promise<void> {

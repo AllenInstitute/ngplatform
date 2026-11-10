@@ -167,7 +167,7 @@ export class DockManager {
     return this.aliases.get(id) ?? id;
   }
 
-  /** An element in a dock's head, after its tabs (the bottom dock's status line). */
+  /** An element in a dock's head, after its tabs (the Activity dock's status line). */
   addToHead(slot: DockSlot, element: HTMLElement): void {
     const dock = this.docks[slot];
     dock.head.insertBefore(element, dock.tabsEl.nextSibling);

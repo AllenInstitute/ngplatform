@@ -91,7 +91,7 @@ export class ZarrVectorsSegmentationUserLayer extends SegmentationUserLayer {
 
   constructor(...args: ConstructorParameters<typeof SegmentationUserLayer>) {
     super(...args);
-    // The Render tab offers its resolution sliders only where the base
+    // The Display tab offers its resolution sliders only where the base
     // class sees one of its own 2-d / 3-d render layers; the dense layers
     // count too. Wrapped rather than rewritten, so whatever the base class
     // counts (it differs between Neuroglancer versions) still counts.

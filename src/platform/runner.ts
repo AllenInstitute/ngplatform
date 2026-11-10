@@ -4,7 +4,7 @@
  *
  * The runner listens on 127.0.0.1 only and answers requests that carry its
  * pairing token.  The address and token are kept in localStorage, never in
- * the link.  While something watches (the Jobs or Remote tab) or a job is running,
+ * the link.  While something watches (the Activity dock or Settings › Compute) or a job is running,
  * the job list is fetched every 1.5 s.
  */
 import type { HostGpu, HostServiceState, RunnerJob } from "../sdk/types.js";
@@ -325,9 +325,9 @@ export class RunnerService {
       this.state = (e as RunnerError).status === 401 || (e as RunnerError).status === 403 ? "refused" : "unreachable";
       this.errorValue = (e as Error).message;
     }
-    // Listeners (the Jobs tab redraws) hear of a change, or of a job still
+    // Listeners (the Activity dock's job list redraws) hear of a change, or of a job still
     // running (its elapsed time), not of every poll: a redraw every 1.5 s
-    // would drop focus and clicks in the tab.
+    // would drop focus and clicks in the list.
     const seen = JSON.stringify([this.state, this.errorValue, this.jobList]);
     if (seen !== this.lastSeen || this.jobList.some(isActive)) this.notify();
     this.lastSeen = seen;
@@ -349,7 +349,7 @@ export class RunnerService {
     this.timer = setTimeout(() => void this.refresh(), delay);
   }
 
-  /** Keeps the job list fresh while the returned function has not been called (the Jobs tab, while shown). */
+  /** Keeps the job list fresh while the returned function has not been called (the Activity dock's job list, while shown). */
   watch(): () => void {
     this.watchers++;
     void this.refresh();

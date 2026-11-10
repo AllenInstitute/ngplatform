@@ -1,6 +1,6 @@
 # OME Collections
 
-**Kind:** tool · **Off by default** (offered when you open an image inside an OME collection; or turn it on in the Plugins tab) · the
+**Kind:** tool · **Off by default** (offered when you open an image inside an OME collection; or turn it on in the Plugins panel) · the
 **Add collection +** tab ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/collections)
 
@@ -90,7 +90,7 @@ download it and put it where it belongs.
 
 The tab keeps its collection and chosen system, like any scene, in the
 link. An image's own coordinate systems and transforms (OME-Zarr 0.4 to
-0.6) are also shown in its Layer → **Source** tab, under the layer's
+0.6) are also shown in its layer's **Source** tab, under the layer's
 transform.
 
 ## Notes from users

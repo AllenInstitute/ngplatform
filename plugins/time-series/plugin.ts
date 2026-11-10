@@ -1,5 +1,5 @@
 /**
- * The time series plugin: the Time series tab, with the time course of the
+ * The time series plugin: the Time series panel, with the time course of the
  * voxel under the mouse in an image with a time axis, pinned voxels and
  * region means beside it, playing through time, and the series saved as
  * CSV.

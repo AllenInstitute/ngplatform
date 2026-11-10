@@ -1,5 +1,5 @@
 /**
- * An image layer's colour map, in its Render tab: a menu that writes the
+ * An image layer's colour map, in its Display tab: a menu that writes the
  * shader for the chosen map (../colormaps.ts), keeping the contrast range.
  * "Custom" is whatever else the shader says, and choosing it changes
  * nothing.

@@ -6,12 +6,12 @@
  * One account is the default; sign-in rules (./sign_in_rules.ts) choose
  * another for a bucket or a folder.  It needs an OAuth client ID registered
  * for this site's address, built in (VITE_GOOGLE_CLIENT_ID) or set in the
- * Auth tab; docs/guide/signing-in.md says how to make one.
+ * Settings › Sign-in; docs/guide/signing-in.md says how to make one.
  *
  * Adding an account opens Google's account chooser; signing in again for
  * one passes its email as the hint, so Google goes straight to it.  A popup
  * opens only from a click: data waiting for an account that is signed out
- * or expired waits for the next one (the Auth tab's buttons, or the button
+ * or expired waits for the next one (the buttons in Settings › Sign-in, or the button
  * in Neuroglancer's status line).
  */
 import { googleAccountFor, type SignInRule } from "../core/sign_in_rules.js";
@@ -131,7 +131,7 @@ export function browserGoogleEnvironment(): GoogleEnvironment {
 
 export type GoogleState = "unconfigured" | "signed-out" | "expired" | "signed-in";
 
-/** An account's name in the tab: its email, or a stand-in when Google did not say. */
+/** An account's name in Settings › Sign-in: its email, or a stand-in when Google did not say. */
 export function accountLabel(email: string | undefined): string {
   return email === undefined ? "the default account" : email === "" ? "the account signed in before" : email;
 }
@@ -443,7 +443,7 @@ export class GoogleSignIn {
     for (const listener of [...this.listeners]) listener();
   }
 
-  /** Tells listeners when a token lapses, so the Auth tab shows it expired. */
+  /** Tells listeners when a token lapses, so Settings › Sign-in shows it expired. */
   private scheduleExpiry(): void {
     if (this.expiryTimer !== undefined) clearTimeout(this.expiryTimer);
     this.expiryTimer = undefined;
@@ -466,7 +466,7 @@ function validToken(token: unknown): GoogleAccount["token"] {
     : undefined;
 }
 
-/** An account's status as the Auth tab shows it. */
+/** An account's status as Settings › Sign-in shows it. */
 export function accountStatus(google: GoogleSignIn, account: string): AuthStatus {
   const token = google.stored(account);
   const user = accountLabel(account);
@@ -486,7 +486,7 @@ export function accountStatus(google: GoogleSignIn, account: string): AuthStatus
 }
 
 /**
- * The Google sign-in as a provider: a service per account (the Auth tab
+ * The Google sign-in as a provider: a service per account (Settings › Sign-in
  * shows them in its Google accounts section), or one to add the first.
  */
 export function googleProvider(google: GoogleSignIn): AuthProvider {

@@ -173,7 +173,7 @@ void main() {
 
 One pyramid level is drawn per view: the finest whose vertices, for what the
 view would load, fit one vertex per `renderScale`² pixels (`dense_lod.ts`).
-The coarsest level stands in while it loads. The Render tab's "Resolution
+The coarsest level stands in while it loads. The Display tab's "Resolution
 (slice)" and "Resolution (mesh)" sliders set the target, and their
 histograms show the level drawn and its chunks, loaded and not. A level without a vertex count
 (or with 0, which writers also use as a placeholder) is estimated from its
@@ -334,11 +334,11 @@ here in `src/virtual/*.spec.ts`). For large files:
   file itself, which Track filtering uses instead of reading every chunk
   their manifests name. While its first pass runs, its keys are answered
   `503`, which `httpAccess` (`reader.ts`) asks again, as Neuroglancer's
-  reads do. Past the storage limit (View settings → Local tractograms,
+  reads do. Past the storage limit (Settings › Storage → Local tractograms,
   4 GB by default) only a sample is kept: level 0 is then about 1 in 10ᵏ
   streamlines, whole (`coarsening_method: "subsample"`), and the page
   offers the runner's conversion. Past even 1 in 10 000, it fails naming
-  the local runner ("Open through the local runner (Jobs → This
+  the local runner ("Open it through the runner on this computer (Settings › Compute → This
   computer)").
 - **Meshes** of more than a million triangles: one face group per vertex
   fragment in every cell and no cross-cell faces (border vertices are
@@ -355,7 +355,7 @@ here in `src/virtual/*.spec.ts`). For large files:
 
 `properties` is built from level 0's `object_attributes/` (found by listing
 the directory) and its `groups` (`objects.ts`). Its columns are the largest
-download of an open, so the layer does not wait for them: the Seg tab fills
+download of an open, so the layer does not wait for them: the Segments tab fills
 in when they arrive.
 
 - Numbers keep a Neuroglancer type that holds them exactly: 8-32-bit
@@ -384,7 +384,7 @@ in when they arrive.
   Only tags that hold an object are coded; with more than 65,535 there are no
   tags (a warning). There is no `label` property: Neuroglancer already shows
   a segment's tags as its label.
-- Property ids can be filtered in the Seg tab (`[a-zA-Z][a-zA-Z0-9_]*`), are
+- Property ids can be filtered in the Segments tab (`[a-zA-Z][a-zA-Z0-9_]*`), are
   unique ignoring case, and are never `id`, `label` or `group` (the tags); a
   changed name keeps the original as its description. Tag names are unique
   ignoring case too, and a name stored exactly wins over a changed one.

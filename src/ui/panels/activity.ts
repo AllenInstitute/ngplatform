@@ -1,10 +1,10 @@
-/** The Activity tab: a log of what the workspace did, newest first. */
+/** The Activity panel: a log of what the workspace did, newest first. */
 import { type LogEntry, type LogLevel, logText } from "../../core/errors.js";
 import { h } from "../dom.js";
 
 export type { LogLevel };
 
-/** Lines kept for saving (more than the tab shows). */
+/** Lines kept for saving (more than the panel shows). */
 const KEEP = 1000;
 
 export class ActivityLog {

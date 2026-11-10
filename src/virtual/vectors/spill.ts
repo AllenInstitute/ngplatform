@@ -18,7 +18,7 @@
  */
 
 /** What to say when a file is past what the browser can do here: the local runner can. */
-export const RUNNER_HINT = "Open through the local runner (Jobs → This computer)";
+export const RUNNER_HINT = "Open it through the runner on this computer (Settings › Compute → This computer)";
 
 /**
  * A file past what this browser can do (`reason`): its message names the

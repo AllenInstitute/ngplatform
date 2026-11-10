@@ -23,7 +23,7 @@ const gb = (b: number) => `${(b / 2 ** 30).toFixed(1)} GB`;
 async function build(input: StreamlineInput, bytes: number): Promise<StreamlineStore> {
   const plan: SpillPlan = await currentSpillPlan(bytes);
   if (plan.mode === "none") {
-    throw new NeedsRunner(`${input.name} would need about ${gb(plan.wholeBytes)} of this browser's storage to be read here, and even one streamline in 10,000 is past the ${gb(plan.budget)} allowed (View settings)`);
+    throw new NeedsRunner(`${input.name} would need about ${gb(plan.wholeBytes)} of this browser's storage to be read here, and even one streamline in 10,000 is past the ${gb(plan.budget)} allowed (Settings › Storage)`);
   }
   const spill = plan.place === "disk" ? await OpfsSpill.create() : undefined;
   return StreamlineStore.build(input, { spill, sampleEvery: plan.every, plan });

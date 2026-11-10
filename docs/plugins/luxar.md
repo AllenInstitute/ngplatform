@@ -59,7 +59,7 @@ is converted.
   that are drawn from the level's chunks, as when every object shows. *Colour: the layer's segment colours* colours each object as
   Neuroglancer does.
 - **The others, faintly**: with the layer's *Opacity (off)*
-  (notSelectedAlpha, in its Render tab) above 0, the objects not chosen
+  (notSelectedAlpha, in its Display tab) above 0, the objects not chosen
   are drawn too, that much fainter, as Neuroglancer does (not with Solid
   tubes). While Luxar draws the layer the slider springs back to 0
   (Neuroglancer's own drawing is kept off that way), but the value you

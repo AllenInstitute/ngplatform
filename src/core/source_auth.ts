@@ -4,7 +4,7 @@
  * is rewriting that address:
  *
  *   gs://bucket/path                        Google Cloud Storage, anonymous
- *   gs+google://bucket/path                 … with the Google sign-in of the Auth tab
+ *   gs+google://bucket/path                 … with a Google account of Settings › Sign-in
  *   gs+ngauth+https://server/bucket/path    … with a token from an ngauth server
  *   https://host/path                       a web server, anonymous
  *   middleauth+https://host/path            … with a middleauth sign-in
@@ -41,7 +41,7 @@ export const PUBLIC_HTTP: SourceSignIn = {
   unwrap: (address) => (/^https?:\/\/[^/]/.test(address) ? address : undefined),
 };
 
-/** The Google sign-in of the Auth tab, for buckets (`gs+google://`). */
+/** The Google sign-in of Settings › Sign-in, for buckets (`gs+google://`). */
 export const GOOGLE_SIGN_IN: SourceSignIn = {
   id: "google",
   title: "Google",

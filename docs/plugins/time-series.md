@@ -2,7 +2,7 @@
 
 ![The time course of the voxel under the mouse, two pinned voxels and a region's mean in a synthetic 4-D brain](../images/plugins/time-series.png)
 
-**Kind:** tool · **Off by default** (offered when you open a 4-D image or a CIFTI series; or turn it on in the Plugins tab) · the
+**Kind:** tool · **Off by default** (offered when you open a 4-D image or a CIFTI series; or turn it on in the Plugins panel) · the
 **Time series** panel in the Activity dock at the bottom, and **Alt+P** to pin ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/time-series)
 
@@ -70,7 +70,7 @@ A GIFTI surface opened from this computer with a CIFTI time series
 (`.dtseries.nii`) beside it can be stepped through in time, and its
 vertices' time courses plotted. Choose the series in **Image** (it reads
 "surface: name_t (file)"), and press **Show name_t as the overlay** (or
-choose it in the surface layer's Render → Surface): it holds the values at
+choose it in the surface layer's Display → Surface): it holds the values at
 the time point the Time series panel shows, and the play and step
 buttons, the slider and clicks on the plot change it. The time point is kept in the link
 (shown again when the workspace opens) and each step is an undo step, as

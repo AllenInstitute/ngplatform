@@ -16,7 +16,7 @@ import { normaliseAddress, type Pairing, type RunnerInfo, RunnerError, RunnerSer
 /** The name of the runner on this computer, which `ctx.runner` is. */
 export const LOCAL_HOST = "This computer";
 const HOSTS_KEY = "ngplatform.hosts";
-/** The host chosen in the Remote tab for work that can run on any (pick() tries it first). */
+/** The host chosen in Settings › Compute for work that can run on any (pick() tries it first). */
 const PREFERRED_KEY = "ngplatform.hosts.preferred";
 
 export interface SavedHost {

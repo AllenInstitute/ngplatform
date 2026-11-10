@@ -1,5 +1,5 @@
 /**
- * The Render tab: how a layer is drawn, for each layer type the same
+ * The Display tab: how a layer is drawn, for each layer type the same
  * controls as Neuroglancer's own tab (its `LAYER_CONTROLS` and shader), in
  * the platform's rows. Resolution controls keep Neuroglancer's histogram of
  * the resolutions being drawn; they are components, not panels.

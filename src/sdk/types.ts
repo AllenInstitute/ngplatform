@@ -6,13 +6,14 @@
  *  - A **data type** plugin teaches Neuroglancer a format (a data source,
  *    with code in Neuroglancer's workers).  It has no platform code; the
  *    catalogue names its Neuroglancer modules.
- *  - A **tool** plugin adds to the workspace around the viewer: a tab in the
- *    left dock, commands, analyses.  It never imports Neuroglancer or the
+ *  - A **tool** plugin adds to the workspace around the viewer: a panel in the
+ *    Tools dock, commands, analyses.  It never imports Neuroglancer or the
  *    platform's internals: it gets a `PlatformContext` on activation and
  *    works through it.  Everything it adds is owned by it, and deactivating
  *    it removes it all.
  *
- * Either kind is switched on or off in the Plugins tab, which reloads the
+ * Either kind is switched on or off in the Plugins panel (left dock).  A
+ * tool comes on at once; a data type, or turning a plugin off, reloads the
  * page with the same link.
  */
 import type { LookupEntry, LookupTable } from "../core/lookup_table.js";
@@ -90,7 +91,7 @@ export interface Manifest {
   kind: PluginKind;
   /** One sentence, shown under the plugin's name. */
   description?: string;
-  /** A short user guide in Markdown (## headings, lists, `code`, [links](…)), behind "About" in the Plugins tab. */
+  /** A short user guide in Markdown (## headings, lists, `code`, [links](…)), behind "About" in the Plugins panel. */
   guide?: string;
   /** Where to find out more: repositories, specifications, papers. */
   links?: { title: string; url: string }[];
@@ -223,7 +224,7 @@ export interface WorkspaceApi {
    */
   undoSteps(): { undo?: UndoStep; redo?: UndoStep };
 
-  /** Data opened from this computer (Add → Local), which plugins can write into. */
+  /** Data opened from this computer (Open a file…, or Add data → Local file or folder…), which plugins can write into. */
   local: {
     /** Whether a URL is under local data, and whether its folder can be written. */
     locate(url: string): { writable: boolean } | undefined;
@@ -378,7 +379,7 @@ export interface ViewerApi {
    * temporary set made meanwhile included, and its notSelectedAlpha).
    */
   hideLayerDrawing(layer: string, hidden: boolean): void;
-  /** Shows a surface map (an attribute of a surface layer's store) as its overlay, as Render → Surface's Overlay does; false when the layer is not a surface. */
+  /** Shows a surface map (an attribute of a surface layer's store) as its overlay, as Display → Surface's Overlay does; false when the layer is not a surface. */
   setSurfaceOverlay(layer: string, map: string): boolean;
   /** Whether an annotation is being drawn in steps (a polyline, a line, a box): a plugin's edits to annotation layers wait for it. */
   annotationInProgress(): boolean;
@@ -418,7 +419,7 @@ export interface ViewerApi {
   /**
    * Label lookup tables, the names and colours of a segmentation's values:
    * those that come with the app, the one a layer has, and giving a layer
-   * one as its Render → Lookup table does.  A table is named by its
+   * one as its Display → Colour → Lookup table does.  A table is named by its
    * `lut://` URL.
    */
   lookupTables: LookupTablesApi;
@@ -582,7 +583,7 @@ export interface RunnerJob {
 
 /**
  * The runner: Python jobs on the user's own computer (`python -m
- * ngplatform_runner`), which the app is paired with in the Remote tab.  Jobs
+ * ngplatform_runner`), which the app is paired with in Settings › Compute.  Jobs
  * read and write files only under the folders the runner was started with.
  */
 export interface RunnerApi {
@@ -763,7 +764,7 @@ export interface PlatformContext {
     info(message: string): void;
     error(message: string): void;
   };
-  /** Sign-in: a provider adds its services to the Auth tab. */
+  /** Sign-in: a provider adds its services to Settings › Sign-in. */
   auth: {
     register(provider: AuthProvider): Disposer;
   };
@@ -788,7 +789,7 @@ export interface AuthService {
   title: string;
   /** What uses it (the datasets, apps or URLs). */
   detail?: string;
-  /** The addresses typed into the Auth tab that led here (removable there). */
+  /** The addresses typed into Settings › Sign-in that led here (removable there). */
   manual?: string[];
   status(signal?: AbortSignal): Promise<AuthStatus>;
   /** Called from a click: it may open a sign-in window at once. */
@@ -803,13 +804,13 @@ export interface AuthService {
 export interface AuthProvider {
   id: string;
   title: string;
-  /** One line for the Auth tab. */
+  /** One line for Settings › Sign-in. */
   description?: string;
-  /** Whether this provider takes a server typed into the Auth tab (a URL). */
+  /** Whether this provider takes a server typed into Settings › Sign-in (a URL). */
   accepts?(server: string): boolean;
   /** Its services, from the workspace's data sources and the servers added to it by hand. */
   services(input: { sources: string[]; manual: string[] }): Promise<AuthService[]>;
-  /** The ways it lets a layer read its data, offered in the Auth tab's drop-down for each layer. */
+  /** The ways it lets a layer read its data, offered in the drop-down for each layer (Settings › Sign-in, and the layer's controls). */
   sourceSignIns?(input: { sources: string[]; manual: string[] }): SourceSignIn[];
 }
 

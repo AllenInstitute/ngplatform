@@ -1233,7 +1233,7 @@ function DenseRenderLayer<
         displayState as unknown as SegmentationDisplayState3D,
         this,
       );
-      // The Render tab's resolution slider shows the levels this draws.
+      // The Display tab's resolution slider shows the levels this draws.
       this.registerDisposer(this.histogram.visibility.add(this.visibility));
       const redraw = () => this.redrawNeeded.dispatch();
       const options3d = displayState.skeletonRenderingOptions;

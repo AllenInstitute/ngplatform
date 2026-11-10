@@ -35,7 +35,7 @@ OME-Zarr. The scripts are kept in the session's scratchpad (`d4/flows`).
 | 2 | Open a two-channel OME-Zarr by URL, set each channel's contrast to 1–99 % | 10 | **5** | — |
 | 3 | Copy a link to the current view | 2 | 2 | — |
 | 4 | On an image, mark three points and save them as CSV | 10 | **7** | Annotations is offered only once an annotation layer exists; a new layer's Point tool is on, and picking it turns it off |
-| 5 | On an image, paint a label and save it as NIfTI | 9 | **7** | Segmentation is offered only for a segmentation: turn it on in the Plugins tab |
+| 5 | On an image, paint a label and save it as NIfTI | 9 | **7** | Segmentation is offered only for a segmentation: turn it on in the Plugins panel |
 | 6 | Two images: three landmark pairs, save the transform (LTA) | 10 | **9** | — |
 | 7 | A 4-D image: pin two voxels' time courses, save the CSV | 5 | 5 | — |
 | 8 | Draw a tractogram the Luxar way | 3 | 3 | — |
@@ -59,7 +59,7 @@ the radius · ++alt+shift+s++ over region B · type the radius · **Save
 
 **What changed.** ++alt+shift+s++ and ++alt+shift+b++ put a sphere or a
 box at the mouse (at the views' centre when the mouse is elsewhere), in
-the group being edited or a new one, and show the Filtering tab. The
+the group being edited or a new one, and show the Track filtering panel. The
 empty group list says so, and offers **+ Sphere** and **+ Box** itself
 (a region makes the group). Building this found a bug: a layer added
 while the mouse was over a view (the group's layer, from the key) threw
@@ -74,11 +74,11 @@ point.)
 ### 2. A remote OME-Zarr, contrast 1–99 %
 
 **Before (10):** **Add** · *Dataset from a URL…* · paste into Source ·
-**Add** · Render tab · scroll to the contrast control · **1-99%** · the
-Dapi channel · Render tab again (the other channel opened on Source) ·
+**Add** · Display tab · scroll to the contrast control · **1-99%** · the
+Dapi channel · Display tab again (the other channel opened on Source) ·
 **1-99%**.
 
-**After (5):** ++ctrl+v++ on the window · Render tab · **1-99%** · the
+**After (5):** ++ctrl+v++ on the window · Display tab · **1-99%** · the
 Dapi channel · **1-99%**.
 
 **What changed.**
@@ -127,7 +127,7 @@ stop."
 
 ### 5. Paint a label on an image, saved as NIfTI
 
-**Before (9):** drop the image · Plugins tab · scroll to Segmentation ·
+**Before (9):** drop the image · Plugins panel · scroll to Segmentation ·
 its switch · **Create** · two brush strokes · **Save** · save dialog.
 
 **After (7):** drop the image · **Segmentation** under *Tools for this
@@ -167,7 +167,7 @@ filtered view could not be saved as a file (Export now saves it).
 
 ### 10. Compare two scenes (7, unchanged)
 
-Drop the image · right-click the scene tab · *Duplicate* · Render tab ·
+Drop the image · right-click the scene tab · *Duplicate* · Display tab ·
 *Colour map: Viridis* · Scene 1 tab · Scene 2 tab.
 
 ## Left, with estimates
