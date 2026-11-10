@@ -15,12 +15,16 @@ The platform provides:
 
 - **A workspace:** datasets, scenes, and a link that holds them all.
 - **Local data:** files on your computer read in place as virtual Zarr stores.
-- **An SDK** (`@ngplatform/sdk`): plugins add tabs, commands, views,
+- **An SDK** (`@ngplatform/sdk`): plugins add panels, commands, views,
   overlays, jobs and data formats through it.
 
 <p align="center">
   <img src="docs/images/architecture.webp" alt="How ngplatform fits together: the user and plugins (from GitHub or this computer) work through ngplatform, which shows OME-Zarr and Zarr Vectors from cloud storage in Neuroglancer, computes in the browser (Pyodide) into dynamic Zarr, saves to local data, and serves local data of any format to Neuroglancer as virtual Zarr; cloud compute editing cloud storage is to come" width="640" />
 </p>
+
+**Browsers:** Chrome and Edge fully. Firefox and Safari work, without
+folder access (local files remembered between visits, writing into a
+folder) or MP4 export. See [Supported browsers](docs/index.md#supported-browsers).
 
 **Docs:** https://ngplatform.readthedocs.io/ has the user guide, a page for
 each plugin and how to contribute (sources in [`docs/`](docs/)).
@@ -48,10 +52,10 @@ plugins/
    `@ngplatform/sdk`.
 3. Add one line for it to [`plugins/index.ts`](plugins/index.ts) (and, for a
    data format, its worker modules to [`plugins/workers.ts`](plugins/workers.ts)).
-4. `npm test` checks the manifest and the entries; the **Plugins** tab
-   switches it on and off.
+4. `npm test` checks the manifest and the entries; the **Plugins** panel
+   (left dock) switches it on and off.
 
-To try one without building, the Plugins tab's **Add** loads a
+To try one without building, the Plugins panel's **Add** loads a
 JavaScript module or a Python file from your computer, and reloads it after
 each edit.
 

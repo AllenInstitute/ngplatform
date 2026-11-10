@@ -8,6 +8,11 @@ them, and opens their results as layers. It also serves files under its
 folders to the viewer, so a tractogram too large for the browser can be
 opened through it.
 
+In the app, **Settings › Compute** pairs it and shows what each computer
+has (**This computer**, and others reached over SSH); the **Activity** dock
+at the bottom lists each computer's jobs, with **Convert a tractogram…** and
+**Open a file…**.
+
 The user guide's page is [docs/guide/local-jobs.md](../docs/guide/local-jobs.md).
 
 ## Starting it
@@ -74,7 +79,7 @@ again when it starts.
 - Files it serves to the viewer (`/stores/<id>/…`) do not need the token,
   since Neuroglancer cannot send one. Each served path gets a random id of
   128 bits, which only the app that asked for it learns. Stop serving one
-  with `DELETE /serve/<id>` (in the app: Stop, in the Jobs tab).
+  with `DELETE /serve/<id>` (in the app: **Stop**, in the Activity dock).
 
 ## Jobs
 

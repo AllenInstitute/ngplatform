@@ -1,14 +1,18 @@
-# The window, tab by tab
+# The window, part by part
 
 ![The window, numbered as the sections below](../images/interface-numbered.png)
 
-The window has a top bar (1), the **Layers** dock on the left (2),
-Neuroglancer's views (3), the **Tools** dock on the right (4), there only
-while a tool is on, and the **Activity** dock at the bottom (5). The right
-and bottom docks start collapsed: the bottom one is then a single line with
-the running job or the last message (click it to open the dock). Docks can
-be resized by dragging their edges and collapsed with the icon in their tab
-bar; sizes, open tabs and collapsed docks are remembered by your browser.
+The window has a top bar (1), the left dock with the **Layers** and
+**Plugins** panels (2), Neuroglancer's views (3), the **Tools** dock on the
+right (4), there only while a tool is on, and the **Activity** dock at the
+bottom (5). The Tools and Activity docks start collapsed: the Activity dock
+is then a single line with the running job or the last message (click it to
+open the dock). Docks can be resized by dragging their edges and collapsed
+with the icon in their head; their sizes, the panel each shows and which
+are collapsed are remembered by your browser.
+
+Open, Settings, Keyboard and mouse, and Capture open as **sheets**: a
+window over the app, closed with **Done**, **Cancel** or ++escape++.
 
 The app has one theme, a dark one, in Neuroglancer's black and greys with
 square corners; there is no light theme. Its green marks only what is
@@ -22,6 +26,11 @@ Almost everything is also a command: **Commands** (++ctrl+k++) searches them
 all, and **Help → Keyboard and mouse** lists the keys and clicks most used
 (with all of them under *All keys*).
 
+The app works fully in Chrome and Edge. Firefox and Safari work too, but
+do not remember local files between visits, cannot write into a folder,
+and cannot export MP4: see
+[Supported browsers](../index.md#supported-browsers).
+
 ## 1. Top bar
 
 | Control | What it does |
@@ -32,7 +41,7 @@ all, and **Help → Keyboard and mouse** lists the keys and clicks most used
 | **⋯** (beside redo) | The history of changes, as a tree: go to any earlier state, including ones on branches left by going back and changing something else. See [History of changes](#history-of-changes). |
 | **Scene tabs** | One tab per scene. **+** adds a scene; each tab has a close button (closing the last leaves a blank scene). Rename, duplicate and delete scenes from the command palette. Each scene works as a viewer of its own: the tools (Filtering's groups, Annotations, Luxar and the rest) show that scene's own; a new scene starts with none, a duplicated one with a copy. |
 | Camera icon | **Capture**: a picture of the views (magnified, borders trimmed), or a movie (a sweep through slices or time, or a turn of the 3-D view) as GIF, WebM, MP4 or PNG frames; and Neuroglancer's own screenshot dialog. Labels from the Annotations plugin are painted in. See [Capture](#capture). |
-| Gear icon | **Settings**: *View* (the views' options, saved with the workspace, their orientation, and whether tools that are off are offered), *Sign-in* (see [Signing in](signing-in.md)), *Compute* (the computers that run jobs and rendering; see [Jobs on this computer](local-jobs.md)), *Storage* (overviews and tractograms kept in this browser) and *Developer* (Neuroglancer's chunk statistics, reloading the layers or the whole page, the state as JSON). |
+| Gear icon | **Settings**, in five sections: *View* (the views' options, saved with the workspace, their orientation, and whether tools that are off are offered), *Sign-in* (see [Signing in](signing-in.md)), *Compute* (the computers that run jobs and rendering; see [Jobs on this computer](local-jobs.md)), *Storage* (overviews and tractograms kept in this browser) and *Developer* (Neuroglancer's chunk statistics, reloading the layers or the whole page, the state as JSON). |
 | **?** icon | Help: the keyboard and mouse reference, the guide, the code on GitHub. |
 | **Commands** | The command palette (++ctrl+k++). |
 
@@ -114,9 +123,9 @@ path goes first (a branch's end, or the very first step). Steps store what
 they share with other steps once, so 400 steps of the default workspace
 take about 0.1 MB rather than 2.3 MB.
 
-## 2. Left dock
+## 2. Left dock: Layers and Plugins
 
-| Tab | What it holds |
+| Panel | What it holds |
 |---|---|
 | **Layers** | Above, what the scene shows: one row per dataset with its visibility, load state and where it is (the bucket or host and the file's name; the whole address in its tooltip). A dataset shown through several layers (a tractogram and its track groups, say) lists them beneath it. **+** adds data: a URL, a file or folder on this computer, or a new annotation layer. Datasets that other scenes show are offered in **Open** (and in **Add a dataset**). *Tools for this data* lists up to three plugins that are off but work with this data (the rest under **More…**): click one to turn it on (it opens in the Tools dock), × for "Not now". Pasting a data URL on the window (++ctrl+v++) adds it here; see [Data from a URL](data.md#data-from-a-url). Below, the selected layer's controls (see [Layer controls](#layer-controls)). |
 | **Plugins** | Every plugin, grouped by what it does, with a one-line description, a switch and an *About* guide. Only Zarr Vectors is on by default; a tool turns on at once, and turning one off reloads the page with the same link. **Add** loads a plugin from your computer or a URL. See [Plugins](../plugins/index.md). |
@@ -146,12 +155,12 @@ each kept open or closed as you left it.
 
 ## Layer controls
 
-Below the list in the Layers tab, the selected dataset's controls, as
+Below the list in the Layers panel, the selected dataset's controls, as
 Neuroglancer's own layer tabs. A header names the dataset and, when it is
 shown through several layers, lets you pick which one. Picking another view
 there (the next channel, say) keeps the tab you are on. A layer opens on
 **Display**. Its sign-in shows only when its data is not public (or did not
-load); otherwise it is in Settings → Sign-in.
+load); otherwise it is in Settings › Sign-in.
 
 | Tab | What it holds |
 |---|---|
@@ -258,12 +267,12 @@ Limits: Freeview's overlay settings beyond threshold and top (mid point,
 truncate, inverse, custom colour scales), label outlines, and several
 overlays at once are not there.
 
-## 5. Bottom dock
+## 5. Activity dock
 
 Collapsed to one line at first: the running job and its progress, else the
 last message. Click the line (or the icon at its end) to open the dock.
 
-| Tab | What it holds |
+| Panel | What it holds |
 |---|---|
 | **Activity** | Jobs, while there are any: long tasks from plugins (filters, statistics, saving), with progress and a cancel button, and, for a paired computer, the jobs run as Python processes on it through the runner, with their process id, progress, log, Cancel and Open (see [Jobs on this computer](local-jobs.md)). Below them, a log of what the workspace did, newest first: datasets added, errors. |
 | **Python** | A Python console running in the page (Pyodide). `ngp` drives the workspace; `await ngp.show(array, voxel_size=…)` shows a numpy array as a layer; `ngp.show_points(xyz, values=…)`, `ngp.show_lines(lines)` and `ngp.show_mesh(vertices, faces)` show points, streamlines and meshes made in Python (as Zarr Vectors, so Track filtering works on them), and `ngp.annotate(points=…, lines=…, boxes=…, ellipsoids=…)` adds an annotation layer. |

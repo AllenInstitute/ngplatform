@@ -1,11 +1,11 @@
 # Signing in
 
-Data behind a sign-in is read with the sign-ins in the **Auth** tab (left
-dock). Sign-ins and rules are kept in this browser, never in the link: a
+Data behind a sign-in is read with the sign-ins in **Settings › Sign-in**
+(the gear icon in the top bar). Sign-ins and rules are kept in this browser, never in the link: a
 link someone else opens asks them to sign in themselves, and never names
 your accounts.
 
-The tab has six parts:
+Settings › Sign-in has six cards:
 
 1. **Google accounts**: each Google account signed in here, with its state
    and buttons, and the **Sign in with Google** button that adds one.
@@ -19,8 +19,7 @@ The tab has six parts:
 5. **Layers in this scene**: each layer of the active scene that reads from
    a bucket or a web server, with a drop-down of the sign-ins that apply to
    it.
-6. **Google sign-in**: what the Google sign-in asks for, and its OAuth
-   client ID.
+6. **Google sign-in setup**: the Google sign-in's OAuth client ID.
 
 ## The kinds of sign-in
 
@@ -30,7 +29,7 @@ so the sign-in a layer uses is part of its source:
 | Source | Read with |
 |---|---|
 | `gs://bucket/path` | nothing: a public Google Cloud Storage bucket |
-| `gs+google://bucket/path` | the **Google** sign-in of Settings → Sign-in |
+| `gs+google://bucket/path` | a **Google** account of Settings › Sign-in |
 | `gs+ngauth+https://server/bucket/path` | a token from an **ngauth** server |
 | `https://host/path` | nothing: a public web server |
 | `middleauth+https://host/path` | a **middleauth** sign-in (CAVE, and CATMAID set up for it) |
@@ -78,17 +77,17 @@ in.
 
 Middleauth is the Google-backed sign-in that CAVE servers, and CATMAID
 servers set up for it, use. Its tokens are kept where Neuroglancer keeps
-them, so a sign-in made in the tab is the one the viewer uses and the
+them, so a sign-in made in Settings › Sign-in is the one the viewer uses and the
 other way round.
 
 A data server names its sign-in server at `/auth_info`. To sign in before
 opening its data, type the data server's address (a CAVE or CATMAID site)
-under **Add a sign-in server**, with **Middleauth** chosen: the tab looks
+under **Add a sign-in server**, with **Middleauth** chosen: the app looks
 up its sign-in server and lists that. The sign-in server's own address
 works too. A server can be removed again with **Remove**.
 
 CATMAID's own API tokens (sent as `X-Authorization: Token …`) are a
-different scheme, which neither Neuroglancer nor this tab uses.
+different scheme, which neither Neuroglancer nor this app uses.
 
 ### ngauth
 
@@ -97,7 +96,7 @@ Cloud Storage buckets it serves. Add it by its address with **ngauth**
 chosen (pasting a whole `gs+ngauth+https://…` source chooses it for you),
 or open data that names it. **Sign in** opens the server's login window,
 as Neuroglancer does. The server must allow this site's address; when it
-does not, the tab says so. Signing out is done on the server's own page.
+does not, the card says so. Signing out is done on the server's own page.
 
 ### Plugins
 
@@ -144,12 +143,12 @@ Rules do two things:
 
 A rule changed while data is open reaches it within about 15 seconds, or
 at once when a request is refused. Data that already failed (a chunk the
-old account could not read) loads again with **Reload** (Settings → reload
-layers).
+old account could not read) loads again with **Reload the scene's layers**
+(Settings › Developer, or the command palette).
 
 To make a rule:
 
-- **+ Rule** in the tab: type the address (it starts from the selected
+- **+ Rule** in the Rules card (**Add a rule…** when there is none): type the address (it starts from the selected
   layer's bucket), choose the sign-in, **Save rule**.
 - **Use for all of …** beside a layer's drop-down: a rule for the layer's
   bucket (or its web server's host) with the sign-in the layer has, applied
@@ -178,13 +177,15 @@ link: other layers from the same bucket are then read with that account
 too.
 
 When a layer's sign-in differs from its rule's, a line under the drop-down
-says so. The **Layer** tab shows the same drop-down and **Use for all of**
-under the layer's name. The list follows the active scene.
+says so. The layer's controls in the **Layers** panel show the same
+drop-down and **Use for all of** under the layer's name, when its data is
+not public or did not load. The list follows the active scene.
 
 ## Setting up Google sign-in
 
 Google sign-in needs an OAuth client ID registered for the site's address.
-Until there is one, the tab shows Google as **Not set up**.
+Until there is one, the Google accounts card says **Google sign-in is not
+set up**, with **Set up…**.
 
 To make one, in the [Google Cloud console](https://console.cloud.google.com/):
 
@@ -217,8 +218,8 @@ The client ID is not a secret. Give it to the site in either of two ways:
     or as an environment variable (a repository variable in the workflow
     that builds the site).
 
-- **In this browser**: paste it under **Google OAuth client ID** in the
-  Settings → Sign-in (**Google sign-in setup**) and press **Save**. It replaces the built-in one in this browser;
+- **In this browser**: paste it under **Google OAuth client ID** in
+  Settings › Sign-in (the **Google sign-in setup** card) and press **Save**. It replaces the built-in one in this browser;
   saving it empty goes back to the built-in one.
 
 Reading a bucket also needs the account that reads it to be allowed to:

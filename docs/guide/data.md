@@ -2,8 +2,9 @@
 
 ## Data from a URL
 
-**Add → URL** (or **Open → a link**) takes anything Neuroglancer reads, with
-its usual prefixes, plus Zarr Vectors stores:
+**+ → Dataset from a URL…** in the Layers panel (or a link typed in
+**Open**) takes anything Neuroglancer reads, with its usual prefixes, plus
+Zarr Vectors stores:
 
 | Data | Example source |
 |---|---|
@@ -22,14 +23,15 @@ about first. A pasted Neuroglancer link or state asks whether to open it
 scene.
 
 `gs://` and `s3://` buckets are read directly. Private Google Cloud buckets
-are read with a sign-in from the **Auth** tab (`gs+google://` with a Google account,
-or `gs+ngauth+https://` with an ngauth server), and CAVE-style servers with
+are read with a sign-in from **Settings › Sign-in** (`gs+google://` with a
+Google account, or `gs+ngauth+https://` with an ngauth server), and CAVE-style servers with
 middleauth (`middleauth+https://`): see [Signing in](signing-in.md).
 
 ## Data on your computer
 
-**Open → Open from device**, **Add → Local**, or dropping files or folders
-anywhere on the window, takes files or a whole folder. Nothing is uploaded: the files are read in place, in your browser,
+**Open → Open a file…** or **Folder…**, **+ → Local file or folder…** in
+the Layers panel, or dropping files or folders anywhere on the window,
+takes files or a whole folder. Nothing is uploaded: the files are read in place, in your browser,
 only where the views need them. Each one is presented to Neuroglancer as a
 chunked store made from it on the fly, a *virtual store*, so a large file
 is never loaded whole and coarser levels appear first.
@@ -54,16 +56,16 @@ is never loaded whole and coarser levels appear first.
 
 A tractogram is read once when it is opened, in a worker. The pass copies
 the points into spatial cells in the browser's private storage (OPFS),
-kept while the file is open and deleted when it is closed or its tab is.
+kept while the file is open and deleted when it is closed or its browser tab is.
 Memory holds an index of the cells (about 25 MB for 20 million
 streamlines) and the cells last used, up to a budget: 1/32 of this
-device's memory, between 64 and 512 MB, or what **View settings → Local
-tractograms → Memory for decoded cells** sets. While the pass runs the
+device's memory, between 64 and 512 MB, or what **Settings › Storage → Local
+tractograms → Memory for cells** sets. While the pass runs the
 layer waits (its reads are answered "still reading the file" and asked
 again).
 
 **How much is copied.** Copying every streamline takes about 1.5 times the
-file's size. **View settings → Local tractograms → Storage for a tractogram**
+file's size. **Settings › Storage → Local tractograms → Storage per tractogram**
 sets the most a tractogram may copy: 4 GB by default (never more than 10 %
 of the browser's quota or 80 % of what is free; 0 copies nothing to disk).
 Within it, every streamline is copied. Past it, only a sample is: about 1
@@ -96,7 +98,8 @@ level, and its note says so.
 
 When the browser's storage refuses to grow (a private window keeps it in
 memory, with less room), opening fails with a message to open the file
-through the runner on this computer instead (Jobs → This computer).
+through the runner on this computer instead (Settings › Compute → This
+computer).
 
 A mesh of more than a million triangles opens in cells with simplified
 levels (by vertex clustering), so the view shows a coarse level first and
@@ -105,8 +108,10 @@ beside them (curvature, labels, time series) are kept whole as one cell.
 Binary PLY reads fastest; very large OBJ and STL files still read slowly.
 
 Chrome and Edge remember local files between visits (you are asked to allow
-reading them again); links to them work in the same browser while the tab
-is open.
+reading them again); links to them work in the same browser while the
+browser tab is open. Firefox and Safari open files and folders too, but
+forget them when the page closes: see
+[Supported browsers](../index.md#supported-browsers).
 
 ### Large images: overviews
 
@@ -123,14 +128,15 @@ or reduced-resolution pages) is read as it is, not made again.
   you zoom in. Files under 64 MB keep nothing.
 - **Building the overview.** When an image of 1 GB or more is first shown,
   you are offered **Build the overview in the background**. It reads the file
-  once and keeps what the budget allows, and it appears in the Activity tab with
-  its progress (you can cancel it). It is also in Datasets → the row's ⋯,
-  beside **Clear its kept overview**. A 5 GB uncompressed TIFF (4096 × 4096
+  once and keeps what the budget allows, and it appears in the **Activity** dock
+  with its progress (you can cancel it). It is also in the Layers panel, in the
+  dataset's **⋯** menu (**Build its overview in the background**), beside
+  **Clear its kept overview**. A 5 GB uncompressed TIFF (4096 × 4096
   × 160, 16-bit) builds in about 21 s (245 MB/s; reading the file alone
   takes 7 s), and its first zoomed-out view, without the build, takes
   about 21 s; measured headless with the file in memory.
-- **Settings.** **View settings → Overviews of local images** sets the
-  budget, lists what each image keeps, and clears it.
+- **Settings.** **Settings › Storage → Overviews of local images** sets
+  the budget, lists what each image keeps, and clears it.
 
 Converting to OME-Zarr (Export, below) is still the fastest to view. An
 overview is for looking at a TIFF straight away, without waiting for a
@@ -142,19 +148,19 @@ What can be saved today, and where:
 
 | What | How | Format |
 |---|---|---|
-| A local image | Datasets → the row's ⋯ → **Export as…** | NIfTI (`.nii.gz`, `.nii`), FreeSurfer (`.mgz`, `.mgh`) or an OME-Zarr folder: the whole image at full resolution or a coarser level (up to 2 GB), or a box of 256 voxels a side around the position at any level; or, at any size, every level written into a folder chunk by chunk as OME-Zarr in one pass over the file (gzip-compressed; in browsers that can write folders, such as Chrome and Edge) |
-| A filtered view (Filters) | the same | As a local image. Each chunk is computed as it is written, so a large view takes a while; the Activity tab shows progress and Cancel |
+| A local image | Layers → the dataset's **⋯** → **Export as…** | NIfTI (`.nii.gz`, `.nii`), FreeSurfer (`.mgz`, `.mgh`) or an OME-Zarr folder: the whole image at full resolution or a coarser level (up to 2 GB), or a box of 256 voxels a side around the position at any level; or, at any size, every level written into a folder chunk by chunk as OME-Zarr in one pass over the file (gzip-compressed; in browsers that can write folders, such as Chrome and Edge) |
+| A filtered view (Filters) | the same | As a local image. Each chunk is computed as it is written, so a large view takes a while; the Activity dock shows progress and Cancel |
 | A local tractogram | the same | TrackVis `.trk` or MRtrix `.tck` |
 | A local mesh or surface | the same | OBJ, PLY, STL, or its vertices as CSV |
 | A local point table or SWC | the same | CSV |
 | A local graph (GraphML or edge list) | the same | GraphML, or its nodes as CSV |
-| A track group's streamlines | Filtering → a group → **Save .trk** | TrackVis `.trk` |
-| A track group's density | Filtering → a group → **Make density map** | NIfTI |
-| Group statistics | Filtering → Statistics → **Export CSV** | CSV |
+| A track group's streamlines | Track filtering → a group, **Output** card → **Save .trk** | TrackVis `.trk` |
+| A track group's density | Track filtering → a group, **Output** card → **Make density map**, then **Save .nii** | NIfTI |
+| Group statistics | Track filtering → **Statistics** card → **Export CSV** | CSV |
 | A transform | Registration → **Save transform** | FreeSurfer `.lta`, ITK / ANTs `.txt`, plain 4 × 4 |
 | A moved (registered) image | Registration → **Save image…** | NIfTI (`.nii`, `.nii.gz`) or OME-Zarr |
-| A picture of the views | Camera icon → **Picture…**: magnified, trimmed | PNG |
-| A movie of the views | Camera icon → **Movie…**: a sweep through slices or time, or a turn of the 3-D view | GIF, WebM, MP4, PNG frames (zip or folder) |
+| A picture of the views | Camera icon → **Picture…** (the Capture sheet): magnified, trimmed | PNG |
+| A movie of the views | Camera icon → **Movie: sweep slices or time…** or **Movie: turn the 3-D view…**: a sweep through slices or time, or a turn of the 3-D view | GIF, WebM, MP4, PNG frames (zip or folder); MP4 and a folder in Chrome and Edge only |
 | The workspace itself | the link in the address bar, or **Share** | link or JSON |
 
 !!! note "Coming"

@@ -4,7 +4,7 @@
 extended by plugins.** It runs in the browser, with nothing to install:
 [open it live](https://alleninstitute.github.io/ngplatform/).
 
-![The ngplatform window: datasets on the left, Neuroglancer's views in the middle, the selected layer's controls on the right](images/interface.png)
+![The ngplatform window: the Layers panel on the left with the selected layer's controls, Neuroglancer's views in the middle, the Filters tool in the Tools dock on the right and the Activity dock below](images/interface.png)
 
 ## What it does
 
@@ -32,6 +32,26 @@ ngplatform is that application, with Neuroglancer kept whole inside it:
   volume rendering). Plugins can be switched on and off, loaded from your
   computer while you write them, or loaded from a URL.
 
+## Supported browsers
+
+| Browser | |
+|---|---|
+| **Chrome** and **Edge** (desktop) | Everything. |
+| **Firefox** and **Safari** | Everything but the File System Access features below. |
+
+Only Chrome and Edge can:
+
+- keep **folder access**: remember the files and folders you opened (an
+  OME-Zarr or Zarr Vectors store, a FreeSurfer subject) between visits;
+- **write into a folder**: an export of every level as OME-Zarr, a
+  movie's PNG frames;
+- export a movie as **MP4** (GIF, WebM and zipped PNG frames work
+  everywhere).
+
+In Firefox and Safari, files and folders still open in place, read for
+this visit only (open them again after a reload), and what you save is
+downloaded as a file. Neuroglancer needs WebGL 2 in every browser.
+
 ## Who it is for
 
 - **Neuroglancer users** who want their scenes, local files and tools in one
@@ -44,8 +64,10 @@ ngplatform is that application, with Neuroglancer kept whole inside it:
 
 ## Where to go next
 
-- [The window, tab by tab](guide/interface.md)
+- [The window, part by part](guide/interface.md)
+- [Supported browsers](#supported-browsers)
 - [Loading and exporting data](guide/data.md)
 - [Plugins](plugins/index.md), and [ideas for new ones](plugins/ideas.md)
+- [The SDK reference](plugins/sdk.md), for writing a plugin
 - [Contributing](contributing.md): ngplatform is meant to be a community
   project, and every plugin has a page anyone can add notes to.
