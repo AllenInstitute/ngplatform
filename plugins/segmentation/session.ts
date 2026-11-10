@@ -55,6 +55,8 @@ export class Session {
   counts = new Map<number, number>();
   /** Strokes since the last save. */
   unsaved = 0;
+  /** The scene its layer was shown in when it was opened: a layer gone from that scene, while it is shown, was removed. */
+  scene: string | undefined;
   private readonly unserve: () => void;
   private refreshTimer: ReturnType<typeof setTimeout> | undefined;
   private lastRefresh = 0;
@@ -179,6 +181,17 @@ export class Session {
       if (!this.keepFailed) this.ctx.log.error(`${this.layer}: its changes could not be kept in this browser's storage (full?); save the segmentation to keep them.`);
       this.keepFailed = true;
     });
+  }
+
+  /**
+   * Keeps everything not kept yet, and waits for it: true when the browser
+   * holds the whole volume as it is now (so it can be closed, and opened
+   * again from there).
+   */
+  async keepAll(): Promise<boolean> {
+    this.keepNow();
+    await this.keeping;
+    return !this.keepFailed && this.dirty.size === 0;
   }
 
   /** The last keep failed (said once until one succeeds). */

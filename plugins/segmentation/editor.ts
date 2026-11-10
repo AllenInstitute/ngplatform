@@ -51,6 +51,8 @@ import { isVisible, nextSegment, type SegmentRow, segmentRows, type SegmentsStat
 import { type Reference, Session } from "./session.js";
 import { brushes, cycle, draws, stepRadius, type Tool, TOOLS } from "./tools.js";
 
+/** How long a removed label layer's volume waits before it is let go (ms): a layer replaced shows again within it. */
+export const RELEASE_WAIT = 1000;
 /** A NIfTI holds every voxel: beyond this, save the painted box only. */
 export const MAX_NIFTI = 2 * 2 ** 30;
 /** Voxels read to open a label image or copy a segmentation. */
@@ -252,6 +254,9 @@ export class Editor implements LabelVolumes {
           const named = layers.find((l) => l.sources.some((source) => source.includes(s.fileName)))?.name;
           if (named !== undefined) s.layer = named;
         }
+        // A label layer removed from the scene it was opened in: its volume is let go once kept.
+        const scene = this.sceneId();
+        for (const s of this.sessions) if (s.scene === scene && !here.includes(s)) void this.release(s);
         if (this.pending !== undefined && !here.includes(this.pending.session)) this.cancelPreview();
         if (this.current !== undefined && !here.includes(this.current)) {
           this.current = here[0];
@@ -269,6 +274,54 @@ export class Editor implements LabelVolumes {
     );
     void this.restoreLost();
     void this.refreshKept();
+  }
+
+  private sceneId(): string | undefined {
+    return this.ctx.workspace.scenes().find((s) => s.active)?.id;
+  }
+
+  /** Sessions being let go (their layer removed). */
+  private readonly releasing = new Set<Session>();
+
+  /**
+   * A label layer removed (in Neuroglancer's layer list, say): its volume
+   * and its undo history would otherwise stay in memory for the rest of the
+   * visit (up to a gigabyte), shown nowhere.  Once everything is kept in
+   * this browser it is closed; undoing the removal brings the layer back
+   * from there (`restoreLost`).  Changes the browser could not keep keep it
+   * open, and Activity says so.
+   */
+  private async release(session: Session): Promise<void> {
+    if (this.releasing.has(session)) return;
+    this.releasing.add(session);
+    try {
+      const gone = () => this.sessions.includes(session) && session.scene === this.sceneId() && !this.inScene().includes(session);
+      // A moment first: a layer replaced or moved shows again at once.
+      await new Promise((resolve) => setTimeout(resolve, RELEASE_WAIT));
+      if (!gone()) return;
+      const kept = await session.keepAll();
+      if (!gone()) return;
+      const changes = `${session.unsaved} unsaved change${session.unsaved === 1 ? "" : "s"}`;
+      if (!kept) {
+        this.ctx.log.error(`“${session.layer}” was removed, but this browser could not keep its ${session.unsaved > 0 ? changes : "label volume"} (its storage full?): it stays open in memory. Undo the removal and save it.`);
+        return;
+      }
+      session.dispose();
+      this.sessions.splice(this.sessions.indexOf(session), 1);
+      // Undo brings the layer back: it is looked for again.
+      this.sought.delete(session.id);
+      if (this.current === session) this.current = this.inScene()[0];
+      if (this.current === undefined && this.editing) this.setEditing(false);
+      this.ctx.log.info(
+        session.unsaved > 0
+          ? `“${session.layer}” was removed: its label volume is closed, and its ${changes} kept in this browser. Undo brings the layer back, or open it from Kept in this browser in Segmentation.`
+          : `“${session.layer}” was removed: its label volume is closed (kept in this browser: undo brings the layer back).`,
+      );
+      this.changed();
+      void this.refreshKept();
+    } finally {
+      this.releasing.delete(session);
+    }
   }
 
   /** The label volumes the active scene shows (a layer reads its store). */
@@ -833,6 +886,7 @@ export class Editor implements LabelVolumes {
 
   private adopt(session: Session, edit = true): void {
     this.sessions.push(session);
+    session.scene = this.sceneId();
     this.current = session;
     // What the last save said was of another volume.
     this.saveStatus = undefined;

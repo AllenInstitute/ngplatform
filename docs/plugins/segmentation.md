@@ -243,7 +243,14 @@ layer. The first time something is kept, the app asks the browser to keep
 it for good rather than clear it when short of space; if the browser
 refuses, a message says so.
 
-One whose page was closed is listed in the **Kept in this browser** card,
+Removing a segmentation layer in Neuroglancer's layer list closes its
+volume once it is kept, to free the memory it held (a large volume and its
+undo history can take a gigabyte); Activity says so. Undo brings the layer
+back from the copy kept here. If the browser could not keep it (its
+storage full), the volume stays open and Activity says that instead.
+
+One whose page was closed, or whose layer was removed, is listed in the
+**Kept in this browser** card,
 with its size and how long ago it was kept; its title shows the total.
 **Open** opens it again as a new layer; **Remove…** (or **Remove all…**)
 deletes it from the browser, after asking. Under the list: how much this
