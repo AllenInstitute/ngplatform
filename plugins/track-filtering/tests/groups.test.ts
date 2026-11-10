@@ -4,13 +4,17 @@
  * and put back after undo; a .trk is written with its streamline count in
  * the header last; a density map stops when cancelled; CSV waits for the
  * exact answer; and tags go to the runner's job as the objects they choose.
+ * At scale: superseded tests are cancelled, a failed count offers Retry,
+ * progress reaches the panel a few times a second, a group's store is made
+ * again only when its objects change and let go when switched off, and a
+ * download too large to build in memory is refused.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Json } from "@ngplatform/sdk";
 import { type FakeDom, fakeDocument } from "@ngplatform/sdk/testing";
-import { TrackGroups } from "../plugin.js";
+import { DOWNLOAD_BYTES, saveTarget, TrackGroups } from "../plugin.js";
 import type { ZvfDocument } from "../runner_job.js";
-import { curvesOf, sphereGroup, world } from "./fake_context.js";
+import { curvesOf, INFO, sphereGroup, world } from "./fake_context.js";
 
 /** A store made in the page, as the workspace names it. */
 const own = (n: number) => `http://127.0.0.1:4180/local/derived-${n}/Group 1.trk`;
@@ -318,5 +322,135 @@ describe("a group run on this computer", () => {
     expect(filter.groups).toEqual([{ size: 5, bits: btoa(String.fromCharCode(0b10101000)) }]);
     expect(args).toMatchObject({ density: "/data/Group_1_density.nii.gz", voxel: 2 });
     groups.dispose();
+  });
+});
+
+describe("TrackGroups at scale", () => {
+  let dom: FakeDom;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    dom = fakeDocument();
+  });
+  afterEach(() => {
+    dom.restore();
+    vi.useRealTimers();
+  });
+
+  it("cancels the tests a newer query supersedes", async () => {
+    const { groups, reader } = await opened();
+    const first = reader.evaluations[0];
+    groups["updateRoi"](sphereGroup(), "g1r", { radius: 8 });
+    // The first exact test is no longer wanted: the worker is told to stop it.
+    expect(first.signal?.aborted).toBe(true);
+    const preview = reader.evaluations[1];
+    expect(preview.signal?.aborted).toBe(false);
+    groups["updateRoi"](sphereGroup(), "g1r", { radius: 7 });
+    expect(preview.signal?.aborted).toBe(true);
+    await vi.advanceTimersByTimeAsync(150);
+    const exact = reader.evaluations.at(-1)!;
+    expect(exact.signal?.aborted).toBe(false);
+    // Deleting the group stops its tests too.
+    groups["deleteGroup"](groups["saved"].groups[0]);
+    expect(exact.signal?.aborted).toBe(true);
+    groups.dispose();
+  });
+
+  it("shows a count that failed with Retry, which counts again", async () => {
+    const { groups, reader } = await opened();
+    const host = dom.host();
+    const dispose = groups.render(host);
+    reader.evaluations[0].fail(new Error("the region reader stopped: out of memory"));
+    await settle();
+    const status = host.querySelector(".status-line.error")!;
+    expect(dom.text(status)).toBe("the region reader stopped: out of memory Retry");
+    dom.find<HTMLButtonElement>(host, "button", "Retry").click();
+    await settle();
+    expect(reader.evaluations).toHaveLength(2);
+    expect(reader.evaluations[1].level).toBe(0);
+    reader.evaluations[1].answer([1n, 2n]);
+    await settle();
+    expect(host.querySelector(".status-line.error")).toBeNull();
+    expect(answer(groups)).toEqual({ count: 2, exact: true });
+    dispose();
+    groups.dispose();
+  });
+
+  it("sets the panel a few times a second as a count progresses, not on every tick", async () => {
+    const { groups, reader } = await opened();
+    const host = dom.host();
+    const dispose = groups.render(host);
+    const sets = vi.spyOn(groups as unknown as { updateAll(): void }, "updateAll");
+    const exact = reader.evaluations[0];
+    for (let i = 1; i <= 100; ++i) exact.progress!(i, 100);
+    expect(sets).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(sets).toHaveBeenCalledTimes(1);
+    expect(dom.text(host)).toContain("Counting exactly: 100 of 100 chunks read…");
+    dispose();
+    groups.dispose();
+  });
+
+  it("makes a group's store again only when its objects change", async () => {
+    const { w, groups, reader } = await opened();
+    reader.evaluations[0].answer([1n, 2n]);
+    await vi.advanceTimersByTimeAsync(400);
+    reader.reads[0].answer();
+    await settle();
+    expect(w.opened).toHaveLength(1);
+    // The region moves, but the same streamlines pass: the store stays.
+    groups["updateRoi"](sphereGroup(), "g1r", { radius: 6 });
+    reader.evaluations.at(-1)!.answer([1n, 2n]);
+    await vi.advanceTimersByTimeAsync(150);
+    reader.evaluations.at(-1)!.answer([1n, 2n]);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(reader.reads).toHaveLength(1);
+    expect(w.opened).toHaveLength(1);
+    // Another streamline passes: a new store.
+    groups["updateRoi"](sphereGroup(), "g1r", { radius: 7 });
+    await vi.advanceTimersByTimeAsync(150);
+    reader.evaluations.at(-1)!.answer([1n, 2n, 3n]);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(reader.reads).toHaveLength(2);
+    expect(reader.reads[1].trk).toBeDefined();
+    groups.dispose();
+  });
+
+  it("lets the groups' own stores go when switched off, their layers back on the dataset", async () => {
+    const { w, groups, reader } = await opened();
+    reader.evaluations[0].answer([1n, 2n]);
+    await vi.advanceTimersByTimeAsync(400);
+    reader.reads[0].answer();
+    await settle();
+    const spec = () => (w.ng.layers as Json[]).find((l) => l.name === "Group 1")!;
+    expect(JSON.stringify(spec().source)).toContain(own(1));
+    groups.dispose();
+    expect(w.closed).toEqual([own(1)]);
+    expect(JSON.stringify(spec().source)).not.toContain("derived-");
+    expect(Array.from(w.visible.get("Group 1")!)).toEqual([1n, 2n]);
+  });
+
+  it("refuses a download too large to build in memory, before reading, and says what to do", async () => {
+    // Ten thousand million points: far past what a download is built from.
+    const w = world({ groups: [sphereGroup()], editing: "g1" }, { info: { ...INFO, levels: [{ index: 0, vertexCount: 1e10, chunkShape: [32, 32, 32] }] } });
+    const groups = new TrackGroups(w.ctx, w.engines);
+    await settle();
+    const reader = w.readers[0];
+    reader.evaluations[0].answer([1n, 2n, 3n]);
+    await settle();
+    const reads = reader.reads.length;
+    await groups.saveTrk();
+    expect(reader.reads).toHaveLength(reads);
+    expect(w.toasts.at(-1)?.message).toMatch(/^Could not save Group 1: it would be about [\d.]+ GB, and this browser builds a download in memory \(up to 1\.0 GB\)\. Save it in Chrome or Edge, or use Run on this computer\.$/);
+    groups.dispose();
+  });
+
+  it("stops building a download past its cap, holding parts as blobs", async () => {
+    const target = (await saveTarget("x.trk", "TrackVis tracks", ".trk", 3000))!;
+    expect(target.streams).toBe(false);
+    const stream = await target.open();
+    await stream.write(new ArrayBuffer(1000));
+    await stream.write(new ArrayBuffer(1500));
+    await expect(stream.write(new ArrayBuffer(1000))).rejects.toThrow(/builds a download in memory/);
+    expect(DOWNLOAD_BYTES).toBe(2 ** 30);
   });
 });

@@ -10,6 +10,7 @@ import type { LabelsEngine } from "../labels_client.js";
 import type { Engines, Saved } from "../plugin.js";
 import type { RoiGeometry } from "../roi.js";
 import type { Curves, RoiEngine, RoiResult, StoreInfo } from "../roi_client.js";
+import { type TrkSpace, writeTrk } from "../trk.js";
 
 /** The tractogram: a store on this computer, so its groups can be written into it. */
 export const STORE = "http://127.0.0.1:4180/local/d1/tracts.zarr/";
@@ -58,20 +59,41 @@ export function curvesOf(ids: BigUint64Array, level = 0): Curves {
 export class FakeRoiEngine {
   readonly ready: Promise<StoreInfo>;
   direct = undefined;
-  readonly evaluations: { geometry: RoiGeometry; level: number; answer(ids: bigint[]): void; fail(e: Error): void }[] = [];
-  readonly reads: { ids: BigUint64Array; level: number; signal?: AbortSignal; progress?: (done: number, total: number) => void; answer(curves?: Curves): void }[] = [];
+  readonly evaluations: {
+    geometry: RoiGeometry;
+    level: number;
+    progress?: (done: number, total: number) => void;
+    signal?: AbortSignal;
+    answer(ids: bigint[] | BigUint64Array): void;
+    fail(e: Error): void;
+  }[] = [];
+  /** Reads of whole streamlines; a group's own store asks for them as a .trk file (`trk`), written in the worker. */
+  readonly reads: {
+    ids: BigUint64Array;
+    level: number;
+    signal?: AbortSignal;
+    progress?: (done: number, total: number) => void;
+    trk?: TrkSpace;
+    answer(curves?: Curves): void;
+    answerBytes?(bytes: ArrayBuffer): void;
+    fail(e: Error): void;
+  }[] = [];
   disposed = false;
 
   constructor(info: StoreInfo = INFO) {
     this.ready = Promise.resolve(info);
   }
 
-  evaluate(geometry: RoiGeometry, level: number): Promise<RoiResult> {
+  evaluate(geometry: RoiGeometry, level: number, progress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<RoiResult> {
     const d = deferred<RoiResult>();
+    // As the worker does: a cancelled test stops, and says so.
+    signal?.addEventListener("abort", () => d.reject(new DOMException("Aborted", "AbortError")));
     this.evaluations.push({
       geometry,
       level,
-      answer: (ids) => d.resolve({ ids: BigUint64Array.from(ids), level, chunks: 1, bytes: 0, ms: 1 }),
+      progress,
+      signal,
+      answer: (ids) => d.resolve({ ids: ids instanceof BigUint64Array ? ids : BigUint64Array.from(ids), level, chunks: 1, bytes: 0, ms: 1 }),
       fail: (e) => d.reject(e),
     });
     return d.promise;
@@ -81,7 +103,22 @@ export class FakeRoiEngine {
     const d = deferred<Curves>();
     // As the worker does: a cancelled read stops, and says so.
     signal?.addEventListener("abort", () => d.reject(new DOMException("Aborted", "AbortError")));
-    this.reads.push({ ids, level, signal, progress, answer: (curves) => d.resolve(curves ?? curvesOf(ids, level)) });
+    this.reads.push({ ids, level, signal, progress, answer: (curves) => d.resolve(curves ?? curvesOf(ids, level)), fail: (e) => d.reject(e) });
+    return d.promise;
+  }
+
+  trk(ids: BigUint64Array, level: number, space: TrkSpace, signal?: AbortSignal): Promise<ArrayBuffer> {
+    const d = deferred<ArrayBuffer>();
+    signal?.addEventListener("abort", () => d.reject(new DOMException("Aborted", "AbortError")));
+    this.reads.push({
+      ids,
+      level,
+      signal,
+      trk: space,
+      answer: (curves) => d.resolve(writeTrk(curves ?? curvesOf(ids, level), space)),
+      answerBytes: (bytes) => d.resolve(bytes),
+      fail: (e) => d.reject(e),
+    });
     return d.promise;
   }
 
@@ -134,9 +171,10 @@ export interface World {
  * A world with the tractogram open (layer "tracts") and `saved` as the
  * plugin's state; groups with a `layer` get that layer.  `open` answers
  * opening a file in the page at once, unless `holdOpens`; `data: false`
- * is a scene with nothing to filter.
+ * is a scene with nothing to filter; `props` and `info` replace the six
+ * streamlines and their store (a test at scale).
  */
-export function world(saved: Partial<Saved> = {}, options: { tags?: boolean; holdOpens?: boolean; runner?: boolean; data?: boolean } = {}): World {
+export function world(saved: Partial<Saved> = {}, options: { tags?: boolean; holdOpens?: boolean; runner?: boolean; data?: boolean; props?: SegmentProperties; info?: StoreInfo } = {}): World {
   let state: unknown = { groups: [], ...saved };
   const writes: Saved[] = [];
   const listeners = { state: new Set<() => void>(), workspace: new Set<() => void>(), viewer: new Set<() => void>(), runner: new Set<() => void>() };
@@ -155,11 +193,11 @@ export function world(saved: Partial<Saved> = {}, options: { tags?: boolean; hol
     return typeof first === "string" ? first : String((first as { url?: string }).url ?? "");
   };
   const layers = (): LayerInfo[] => specs().map((l) => ({ name: String(l.name), type: String(l.type), visible: l.visible !== false, sources: [sourceOf(l)], ready: true, dataset: "d1" }));
-  const props = properties(options.tags);
+  const props = options.props ?? properties(options.tags);
   const readers: FakeRoiEngine[] = [];
   const engines: Engines = {
     roi: () => {
-      const reader = new FakeRoiEngine();
+      const reader = new FakeRoiEngine(options.info);
       readers.push(reader);
       return reader as unknown as RoiEngine;
     },

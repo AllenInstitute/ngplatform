@@ -51,7 +51,7 @@ import { layerStore, readableImages } from "../annotations/voxels.js";
 import { groupMask, type MaskSource, type Roi, type RoiEnds, type RoiGeometry, type RoiOp, type RoiShape, rowIndex, rowMask } from "./roi.js";
 import { type Curves, type Dimensions, previewLevel, RoiEngine, type RoiResult, type StoreInfo, toStore } from "./roi_client.js";
 import { groupPredicate, type JobRegion, safeName, usesTags, type ZvfDocument } from "./runner_job.js";
-import { fileName, millimetres, trkBody, trkHeader, trkSpace, writeTrk } from "./trk.js";
+import { fileName, millimetres, trkBody, trkHeader, trkSpace } from "./trk.js";
 import { mergeGroups, type StoredGroup, writeGroups } from "./zv_groups.js";
 
 /**
@@ -118,6 +118,14 @@ const DISK_THICKNESS = 0.04;
  */
 const GROUP_STORE_POINTS = 8_000_000;
 const GROUP_STORE_DELAY_MS = 400;
+/** How often the panel follows progress, ms. */
+const PROGRESS_MS = 100;
+/**
+ * The largest .trk built for a download (browsers without a save dialog
+ * hold the whole file until it is saved); past it, Chrome or Edge, or the
+ * runner, write it to disk as it is made.
+ */
+export const DOWNLOAD_BYTES = 2 ** 30;
 /** A first look at a big group, from a sample level: about this many points at most. */
 const GROUP_PREVIEW_POINTS = 1_000_000;
 /** A density map's look: a heat colour map, clear where it is zero. */
@@ -185,6 +193,15 @@ interface SaveStream {
   abort(): Promise<void>;
 }
 
+/** Bytes at the start of a download held as bytes, to be written over (a .trk header is 1000). */
+const HELD_BYTES = 64 * 1024;
+
+/** Why a file is not built for a download. */
+export function tooBigToDownload(bytes: number, cap = DOWNLOAD_BYTES): string {
+  const gb = (b: number) => `${(b / 2 ** 30).toFixed(b < 10 * 2 ** 30 ? 1 : 0)} GB`;
+  return `it would be about ${gb(bytes)}, and this browser builds a download in memory (up to ${gb(cap)}). Save it in Chrome or Edge, or use Run on this computer`;
+}
+
 interface SaveTarget {
   name: string;
   /** True when parts go straight to disk; false when they are held until a download. */
@@ -202,10 +219,13 @@ type SavePicker = (options: unknown) => Promise<{ name: string; createWritable()
 /**
  * Where a file goes: chosen in the browser's save dialog where it has one
  * (asked first, while the click still counts as the user's), written to
- * disk part by part; else a download, assembled from its parts at the end.
- * `undefined` when the dialog is cancelled.
+ * disk part by part; else a download, assembled from its parts at the end:
+ * the parts are held as blobs (which the browser may keep out of the
+ * page's memory), the first ones as bytes so a header can be rewritten,
+ * and a file past `cap` bytes is refused.  `undefined` when the dialog is
+ * cancelled.
  */
-async function saveTarget(name: string, description: string, extension: string): Promise<SaveTarget | undefined> {
+export async function saveTarget(name: string, description: string, extension: string, cap = DOWNLOAD_BYTES): Promise<SaveTarget | undefined> {
   const picker = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker;
   if (picker !== undefined) {
     try {
@@ -232,22 +252,24 @@ async function saveTarget(name: string, description: string, extension: string):
     name,
     streams: false,
     async open() {
-      const parts: Uint8Array[] = [];
+      const parts: (Uint8Array | Blob)[] = [];
       let length = 0;
       return {
         async write(part) {
-          parts.push(new Uint8Array(part));
+          if (length + part.byteLength > cap) throw new Error(tooBigToDownload(length + part.byteLength, cap));
+          // The first few kB stay bytes (a header to rewrite); the rest blobs.
+          parts.push(length < HELD_BYTES ? new Uint8Array(part) : new Blob([part]));
           length += part.byteLength;
         },
         async writeAt(position, part) {
-          // Only into what is held: the first part (a header) in practice.
+          // Only into what is held as bytes: the first part (a header) in practice.
           let start = 0;
           for (const p of parts) {
-            if (position >= start && position + part.byteLength <= start + p.byteLength) {
+            if (p instanceof Uint8Array && position >= start && position + part.byteLength <= start + p.byteLength) {
               p.set(new Uint8Array(part), position - start);
               return;
             }
-            start += p.byteLength;
+            start += p instanceof Blob ? p.size : p.byteLength;
           }
           throw new Error(`cannot rewrite bytes ${position}..${position + part.byteLength} of ${length}`);
         },
@@ -342,6 +364,22 @@ export function annotationsKey(list: unknown): string {
   return JSON.stringify(norm(list ?? []));
 }
 
+/** A streamline group's own store: the answer it holds, the work making it, and the store once open. */
+interface GroupStore {
+  mask: Uint8Array | undefined;
+  controller: AbortController;
+  timer?: ReturnType<typeof setTimeout>;
+  source?: string;
+}
+
+/** Whether two answers choose the same objects. */
+export function sameAnswer(a: Uint8Array | undefined, b: Uint8Array | undefined): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; ++i) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 export class TrackGroups {
   private saved: Saved;
   private props: SegmentProperties | undefined;
@@ -356,6 +394,8 @@ export class TrackGroups {
   /** Mask images' levels, by store. */
   private maskLevels = new Map<string, MaskLevel[]>();
   private tokens = new Map<string, number>();
+  /** What stops each group's tests still running: aborted when a newer query supersedes them. */
+  private stops = new Map<string, AbortController>();
   private exactTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private layerWatches = new Map<string, Disposer>();
   private propsOff: Disposer | undefined;
@@ -379,7 +419,7 @@ export class TrackGroups {
   /** Each streamline group's own store (see GROUP_STORE_POINTS), by group id. */
   /** Set while a group's layer is being pointed at its store, so showing it does not start over. */
   private attaching = false;
-  private groupStores = new Map<string, { version: number; controller: AbortController; timer?: ReturnType<typeof setTimeout>; source?: string }>();
+  private groupStores = new Map<string, GroupStore>();
   private curveCache = new Map<string, { promise: Promise<Curves>; controller: AbortController; waiting: number; progress: Set<(done: number, total: number) => void> }>();
   /** The .trk save in progress, if any. */
   private saving: { groupId: string; done: number; total: number; controller: AbortController; what?: string } | undefined;
@@ -415,6 +455,7 @@ export class TrackGroups {
   /** The group whose name is being edited in the list. */
   private renaming: string | undefined;
   private readonly offs: Disposer[] = [];
+  private updateTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
     private readonly ctx: PlatformContext,
@@ -461,10 +502,23 @@ export class TrackGroups {
     for (const off of this.layerWatches.values()) off();
     for (const t of this.exactTimers.values()) clearTimeout(t);
     if (this.commitTimer !== undefined) clearTimeout(this.commitTimer);
-    // Work still going stops.  (The groups' own stores stay open: their layers may still show them.)
-    for (const entry of this.groupStores.values()) {
+    if (this.updateTimer !== undefined) clearTimeout(this.updateTimer);
+    for (const stop of this.stops.values()) stop.abort();
+    this.stops.clear();
+    // Work still going stops, and the groups' own stores are let go: each layer goes back to the
+    // dataset's source, showing the group's objects, so nothing made here is held once switched off.
+    const stores = [...this.groupStores.entries()];
+    this.groupStores.clear();
+    for (const [id, entry] of stores) {
       entry.controller.abort();
       if (entry.timer !== undefined) clearTimeout(entry.timer);
+      if (entry.source === undefined) continue;
+      try {
+        this.attachGroupStore(id);
+      } catch {
+        // The viewer is going too.
+      }
+      this.ctx.workspace.local.close(entry.source);
     }
     for (const entry of this.curveCache.values()) entry.controller.abort();
     this.curveCache.clear();
@@ -730,7 +784,9 @@ export class TrackGroups {
     const exact = this.exactTimers.get(group.id);
     if (exact !== undefined) clearTimeout(exact);
     this.exactTimers.delete(group.id);
-    this.tokens.set(group.id, (this.tokens.get(group.id) ?? 0) + 1);
+    this.nextQuery(group.id);
+    this.stops.get(group.id)?.abort();
+    this.stops.delete(group.id);
     this.versions.delete(group.id);
     this.saved_.delete(group.id);
     this.sizeNotes.delete(group.id);
@@ -1095,6 +1151,25 @@ export class TrackGroups {
 
   // -------------------------------------------------------- evaluation
 
+  /**
+   * A new query for a group: answers to the ones before are dropped when they
+   * come (a new token), and their tests still running are cancelled.
+   */
+  private nextQuery(id: string): { token: number; signal: AbortSignal } {
+    const token = (this.tokens.get(id) ?? 0) + 1;
+    this.tokens.set(id, token);
+    this.stops.get(id)?.abort();
+    const stop = new AbortController();
+    this.stops.set(id, stop);
+    return { token, signal: stop.signal };
+  }
+
+  /** Works a group's answer out again, at once (after it failed). */
+  private retry(id: string): void {
+    const group = this.groups().find((g) => g.id === id);
+    if (group !== undefined) this.evaluateGroup(group, true);
+  }
+
   private evaluateAll(): void {
     this.waiting = false;
     for (const group of this.groups()) this.evaluateGroup(group, true);
@@ -1110,8 +1185,7 @@ export class TrackGroups {
     const props = this.props;
     const rowOf = this.rowOf;
     const dims = this.dims();
-    const token = (this.tokens.get(group.id) ?? 0) + 1;
-    this.tokens.set(group.id, token);
+    const { token, signal } = this.nextQuery(group.id);
     const current = () => this.tokens.get(group.id) === token;
     if (this.info?.objects === false) {
       this.setResult(group, { mask: undefined, count: 0, state: "error", detail: "This store has no objects to group." });
@@ -1167,7 +1241,7 @@ export class TrackGroups {
       this.setResult(group, { ...(this.results.get(group.id) ?? { mask: undefined, count: 0 }), state: "computing", detail: "Counting…" });
     } else {
       this.setResult(group, { ...(this.results.get(group.id) ?? { mask: undefined, count: 0 }), state: "computing", detail: "Previewing…" });
-      void Promise.all(geometries.map((g) => engine.evaluate(g, preview))).then(
+      void Promise.all(geometries.map((g) => engine.evaluate(g, preview, undefined, signal))).then(
         (results) => {
           // The exact answer can come first (its levels are cached): a late preview must not replace it.
           if (!current() || this.results.get(group.id)?.state === "exact") return;
@@ -1197,14 +1271,24 @@ export class TrackGroups {
             if (!current()) return;
             const prior = this.results.get(group.id);
             if (prior?.state === "exact") return;
-            this.setResult(group, { ...(prior ?? { mask: undefined, count: 0 }), state: prior?.state === "preview" ? "preview" : "computing", detail: `Counting exactly: ${done} of ${total} chunks read…` });
+            const detail = `Counting exactly: ${done} of ${total} chunks read…`;
+            if (prior?.state === "preview" || prior?.state === "computing") {
+              // The answer is the same, only how far the count has got: the panel catches up a few times a second.
+              this.results.set(group.id, { ...prior, detail });
+              this.updateSoon();
+            } else this.setResult(group, { ...(prior ?? { mask: undefined, count: 0 }), state: "computing", detail });
           };
           void Promise.all(
             geometries.map((g, i) =>
-              engine.evaluate(g, 0, (done, total) => {
-                progress.set(group.rois[i].id, [done, total]);
-                report();
-              }),
+              engine.evaluate(
+                g,
+                0,
+                (done, total) => {
+                  progress.set(group.rois[i].id, [done, total]);
+                  report();
+                },
+                signal,
+              ),
             ),
           ).then(
             (results) => {
@@ -1307,8 +1391,7 @@ export class TrackGroups {
 
   /** A group of a segmentation's segments or of annotations: each region's objects, combined. */
   private evaluateOther(group: Group, kind: "segmentation" | "annotations" | "precomputed-annotations"): void {
-    const token = (this.tokens.get(group.id) ?? 0) + 1;
-    this.tokens.set(group.id, token);
+    const { token, signal } = this.nextQuery(group.id);
     const current = () => this.tokens.get(group.id) === token;
     const nm = this.nmPerUnit();
     if (group.rois.length === 0) {
@@ -1336,7 +1419,7 @@ export class TrackGroups {
     const prior = this.results.get(group.id);
     this.setResult(group, { ...(prior ?? { mask: undefined, count: 0 }), state: "computing", detail: kind === "segmentation" ? "Reading the regions' voxels…" : "Reading the regions' annotations…" });
     if (kind === "precomputed-annotations") {
-      void Promise.all(regions.map((region) => labels.annotations(region))).then(
+      void Promise.all(regions.map((region) => labels.annotations(region, signal))).then(
         (results) => {
           if (!current()) return;
           const ids = combineIds(results.map((r, i) => ({ op: group.rois[i].op, ids: r.ids })));
@@ -1361,7 +1444,7 @@ export class TrackGroups {
       setTimeout(() => {
         this.exactTimers.delete(group.id);
         if (!current()) return;
-        void Promise.all(regions.map((region) => labels.evaluate(region))).then(
+        void Promise.all(regions.map((region) => labels.evaluate(region, undefined, signal))).then(
           (results) => {
             if (!current()) return;
             const ids = combineIds(results.map((r, i) => ({ op: group.rois[i].op, ids: Array.from(r.ids, String) })));
@@ -1394,12 +1477,13 @@ export class TrackGroups {
   /** Makes a group's own store once its exact answer has stayed a moment. */
   private scheduleGroupStore(group: Group): void {
     if (!this.drawsOwnStores()) return;
-    const version = this.versions.get(group.id) ?? 0;
+    const mask = this.results.get(group.id)?.mask;
     const current = this.groupStores.get(group.id);
-    if (current?.version === version) return;
+    // The same objects as the store being made or shown (a region moved within them, say): kept.
+    if (current !== undefined && sameAnswer(current.mask, mask)) return;
     current?.controller.abort();
     if (current?.timer !== undefined) clearTimeout(current.timer);
-    const entry: { version: number; controller: AbortController; timer?: ReturnType<typeof setTimeout>; source?: string } = { version, controller: new AbortController(), source: current?.source };
+    const entry: GroupStore = { mask, controller: new AbortController(), source: current?.source };
     this.groupStores.set(group.id, entry);
     entry.timer = setTimeout(() => {
       entry.timer = undefined;
@@ -1411,10 +1495,10 @@ export class TrackGroups {
     }, GROUP_STORE_DELAY_MS);
   }
 
-  private async buildGroupStore(id: string, entry: { version: number; controller: AbortController; source?: string }): Promise<void> {
-    const { props, info } = this;
-    const mask = this.results.get(id)?.mask;
-    if (props === undefined || info === undefined || mask === undefined) return;
+  private async buildGroupStore(id: string, entry: GroupStore): Promise<void> {
+    const { props, info, engine } = this;
+    const mask = entry.mask;
+    if (props === undefined || info === undefined || engine === undefined || mask === undefined) return;
     const ids = passingIds(props, mask);
     const signal = entry.controller.signal;
     if (ids.length === 0) {
@@ -1437,11 +1521,12 @@ export class TrackGroups {
     // A big group first from a sample level (read in seconds), then whole.
     const preview = info.levels.find((l) => l.index > level && estimate(l) <= GROUP_PREVIEW_POINTS && estimate(l) >= GROUP_PREVIEW_POINTS / 20)?.index;
     for (const at of preview === undefined ? [level] : [preview, level]) {
-      const curves = await this.readCurves(id, ids, at, undefined, signal);
+      // Read and written as a .trk in the region worker: the page only hands the file on.
+      const bytes = await engine.trk(ids, at, trkSpace(info), signal);
       signal.throwIfAborted();
       const group = this.saved.groups.find((g) => g.id === id);
       if (group === undefined) return;
-      const file = new File([writeTrk(curves, trkSpace(info))], fileName(group.name, ".trk"));
+      const file = new File([bytes], fileName(group.name, ".trk"));
       const [found] = await this.ctx.workspace.local.open(file, { derived: true });
       // Moved on while it opened: useGroupStore closes the store just made (throwing first would leak it).
       if (!this.useGroupStore(id, entry, found?.source)) return;
@@ -1450,7 +1535,7 @@ export class TrackGroups {
   }
 
   /** Shows a group from a store just made; false (and it is let go) when the group has moved on. */
-  private useGroupStore(id: string, entry: { version: number; controller: AbortController; source?: string }, source: string | undefined): boolean {
+  private useGroupStore(id: string, entry: GroupStore, source: string | undefined): boolean {
     if (this.groupStores.get(id) !== entry) {
       if (source !== undefined) this.ctx.workspace.local.close(source);
       return false;
@@ -1633,6 +1718,15 @@ export class TrackGroups {
     }
     const target = await saveTarget(fileName(`${dataset.name} ${group.name}${level > 0 ? ` level ${level}` : ""}`, ".trk"), "TrackVis tracks", ".trk");
     if (target === undefined) return;
+    if (!target.streams) {
+      // Built in memory for a download: refused before reading when it would not fit.
+      const points = (ids.length * (info.levels[level]?.vertexCount ?? info.levels[0].vertexCount ?? 0)) / Math.max(1, props.ids.length);
+      const estimate = 1000 + 4 * ids.length + 12 * points;
+      if (estimate > DOWNLOAD_BYTES) {
+        this.ctx.ui.toast(`Could not save ${group.name}: ${tooBigToDownload(estimate)}.`, "error");
+        return;
+      }
+    }
     const controller = new AbortController();
     const saving = { groupId: group.id, done: 0, total: 0, controller };
     this.saving = saving;
@@ -1658,7 +1752,7 @@ export class TrackGroups {
         const progress = (done: number, chunks: number) => {
           saving.done = from + Math.round((done / Math.max(1, chunks)) * part.length);
           saving.total = ids.length;
-          this.updateAll();
+          this.updateSoon();
         };
         const curves =
           part.length === ids.length
@@ -1746,7 +1840,7 @@ export class TrackGroups {
         const part = ids.subarray(from, Math.min(ids.length, from + batch));
         const progress = (done: number, chunks: number) => {
           saving.done = from + Math.round((done / Math.max(1, chunks)) * part.length);
-          this.updateAll();
+          this.updateSoon();
         };
         const curves =
           part.length === ids.length
@@ -2163,6 +2257,15 @@ export class TrackGroups {
     this.panelSync?.();
   }
 
+  /** Sets the panel in place soon: progress ticks come many times a second, the panel follows a few times. */
+  private updateSoon(): void {
+    if (this.updateTimer !== undefined) return;
+    this.updateTimer = setTimeout(() => {
+      this.updateTimer = undefined;
+      this.updateAll();
+    }, PROGRESS_MS);
+  }
+
   /** Sets every part of the panel in place from the answers (a count, progress): nothing is drawn again. */
   private updateAll(): void {
     for (const updates of this.parts.values()) for (const update of updates) update();
@@ -2217,7 +2320,7 @@ export class TrackGroups {
       const r = group && this.results.get(group.id);
       // Progress and errors only: the count is in the list.
       if (r === undefined || r.state === "exact" || r.state === "empty") answer.clear();
-      else if (r.state === "error") answer.error(r.detail);
+      else if (r.state === "error") answer.error(r.detail, { label: "Retry", run: () => this.retry(group!.id) });
       else answer.progress(r.detail);
       const note = group && this.sizeNotes.get(group.id);
       sizeNote.textContent = note ?? "";
