@@ -196,7 +196,7 @@ await until("the pairing question", () => [...document.querySelectorAll(".sheet 
 check(!(await page.evaluate(() => location.href)).includes(TOKEN), "the pairing link's token is taken out of the address bar");
 await click(page.locator(".sheet .btn.primary", { hasText: "Pair" }));
 await until("the runner paired from the link", () => window.workbench?.runner.connection() === "connected");
-await until("Settings › Compute showing the runner", () => document.querySelector('.settings-nav [aria-pressed="true"]')?.textContent === "Compute" && document.querySelector(".runner-connection")?.textContent === "connected");
+await until("Settings › Compute showing the runner", () => document.querySelector('.settings-nav [aria-selected="true"]')?.textContent === "Compute" && document.querySelector(".runner-connection")?.textContent === "connected");
 check((await page.locator(".runner-section").first().innerText()).includes("Runner 0.1.0 at http://127.0.0.1:8799 (PID 4242)"), "Settings › Compute shows the paired runner");
 await page.keyboard.press("Escape");
 await noSheet("Escape to close Settings");
@@ -245,7 +245,7 @@ const sections = await page.locator(".settings-nav button").allInnerTexts();
 check(sections.join(",") === "View,Sign-in,Compute,Storage,Developer", `Settings has its sections (${sections.join(", ")})`);
 for (const name of sections) {
   await click(page.locator(".settings-nav button", { hasText: name }));
-  const opened = await until(`Settings › ${name}`, (n) => document.querySelector('.settings-nav [aria-pressed="true"]')?.textContent === n && document.querySelector(".settings-body")?.childElementCount > 0, name);
+  const opened = await until(`Settings › ${name}`, (n) => document.querySelector('.settings-nav [aria-selected="true"]')?.textContent === n && document.querySelector(".settings-body")?.childElementCount > 0, name);
   const failed = await page.locator(".settings-body .empty.error").count();
   check(opened && failed === 0, `Settings › ${name} opens${failed ? " (it shows an error)" : ""}`);
   if (name === "View") await page.screenshot({ path: `${shots}/2-settings.png` });
@@ -331,9 +331,6 @@ await until("the Share menu", () => document.querySelector(".menu") !== null);
 const shareItems = await page.locator(".menu .menu-item").allInnerTexts();
 check(shareItems.includes("Copy workspace link") && shareItems.includes("Save workspace as a file") && shareItems.includes("Copy scene as Neuroglancer link"), `Share offers the link, the file and Neuroglancer (${shareItems.length} items)`);
 check(await page.evaluate(() => document.activeElement?.classList.contains("menu-item")), "the Share menu has the keyboard");
-// A menu listens for Escape from a timer set as it opens (so the click
-// that opened it does not close it); a timer set now runs after that one.
-await page.evaluate(() => new Promise((resolve) => setTimeout(resolve)));
 await page.keyboard.press("Escape");
 check(await until("Escape to close the Share menu", () => document.querySelector(".menu") === null), "Escape closes the Share menu");
 await click(page.locator(".topbar button", { hasText: "Share" }));

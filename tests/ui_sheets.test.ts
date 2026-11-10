@@ -64,13 +64,20 @@ afterEach(() => {
 
 describe("Settings", () => {
   const nav = () => [...document.querySelectorAll<HTMLButtonElement>(".settings-nav button")];
-  const pressed = () => nav().find((b) => b.getAttribute("aria-pressed") === "true")?.textContent;
+  const pressed = () => nav().find((b) => b.getAttribute("aria-selected") === "true")?.textContent;
 
   it("opens on View, with a button for every section", () => {
     showSettingsSheet(wb);
-    expect(document.querySelector(".sheet")!.getAttribute("aria-label")).toBe("Settings");
+    const dialog = document.querySelector(".sheet")!;
+    expect(document.getElementById(dialog.getAttribute("aria-labelledby")!)!.textContent).toBe("Settings");
     expect(nav().map((b) => b.textContent)).toEqual(Object.values(SETTINGS_SECTIONS));
+    expect(nav().every((b) => b.getAttribute("role") === "tab")).toBe(true);
     expect(pressed()).toBe("View");
+    // The keyboard starts on the section shown, the panel named by it.
+    expect(document.activeElement?.textContent).toBe("View");
+    const panel = document.querySelector(".settings-body")!;
+    expect(panel.getAttribute("role")).toBe("tabpanel");
+    expect(document.getElementById(panel.getAttribute("aria-labelledby")!)!.textContent).toBe("View");
     expect(document.querySelector(".settings-body .ng-settings")).not.toBeNull();
   });
 
@@ -87,6 +94,15 @@ describe("Settings", () => {
     expect(viewDisposed).toHaveBeenCalledOnce();
     expect(panels.disposed).toEqual(["sign-in", "compute"]);
     expect(body().textContent).toContain("Reload the scene's layers");
+  });
+
+  it("goes from section to section with the arrow keys", () => {
+    showSettingsSheet(wb);
+    key(document.activeElement!, "ArrowRight");
+    expect(pressed()).toBe("Sign-in");
+    expect(document.activeElement?.textContent).toBe("Sign-in");
+    key(document.activeElement!, "ArrowLeft");
+    expect(pressed()).toBe("View");
   });
 
   it("opens on the section asked for, or View for one it does not have", () => {
