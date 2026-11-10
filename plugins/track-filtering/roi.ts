@@ -501,3 +501,31 @@ export function groupMask(n: number, attributes: Uint8Array | undefined, regions
   }
   return mask;
 }
+
+/**
+ * Reads and tests chunks, `concurrency` at a time, in order.  `stale` is
+ * asked between chunks: once it says the work is no longer wanted (the
+ * request cancelled, or the store opened again), no further chunk is read
+ * and the answer is `false`.
+ */
+export async function scanChunks<T>(
+  coords: number[][],
+  concurrency: number,
+  read: (coords: number[]) => Promise<T>,
+  test: (data: T) => void,
+  stale: () => boolean,
+  progress?: (done: number, total: number) => void,
+): Promise<boolean> {
+  let next = 0;
+  let done = 0;
+  const work = async () => {
+    while (next < coords.length && !stale()) {
+      const data = await read(coords[next++]);
+      if (stale()) return;
+      test(data);
+      progress?.(++done, coords.length);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, coords.length) }, work));
+  return !stale();
+}
