@@ -14,7 +14,7 @@ import type { Manifest } from "@ngplatform/sdk";
 /** The panel (its id from when it held only labels). */
 export const ANNOTATIONS_PANEL = "annotations.labels";
 
-/** The annotation table, in the bottom dock. */
+/** The annotation table, in the Activity dock. */
 export const TABLE_PANEL = "annotations.table";
 
 export const ANNOTATIONS_MANIFEST: Manifest = {
@@ -24,7 +24,7 @@ export const ANNOTATIONS_MANIFEST: Manifest = {
   kind: "tool",
   enabledByDefault: false,
   description: "Annotations with groups, values and comments in a table; labels on the views for figures, measurements, and statistics in a region.",
-  guide: `Everything you add to annotate a dataset, in the **Annotations** panel (four cards; the (i) beside a heading or a control explains it), and the **Annotation table** in the bottom dock. Label volumes drawn by hand are in the **Segmentation** panel (the Segmentation plugin).
+  guide: `Everything you add to annotate a dataset, in the **Annotations** panel (four cards; the (i) beside a heading or a control explains it), and the **Annotation table** in the Activity dock. Label volumes drawn by hand are in the **Segmentation** panel (the Segmentation plugin).
 
 ## Annotate
 Points, lines, boxes, ellipsoids and polylines in a local annotation layer, organised as in WebKnossos and Neuroglass.

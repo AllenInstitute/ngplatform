@@ -2,7 +2,7 @@
 
 ![Three segments drawn on SRB 2026a, the tool bar over the views and the segment list](../images/plugins/segmentation.png)
 
-**Kind:** tool · **Off by default** (offered when you open a segmentation, and listed under *Tools for this data* for an image; or turn it on in the Plugins tab) · the **Segmentation** panel in the
+**Kind:** tool · **Off by default** (offered when you open a segmentation, and listed under *Tools for this data* for an image; or turn it on in the Plugins panel) · the **Segmentation** panel in the
 Tools dock and a tool bar over the views ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/segmentation)
 

@@ -3,7 +3,7 @@
 ![Labels pinned to structures, in 2-D and 3-D](../../docs/images/plugins/labels.png)
 
 Everything added to annotate a dataset, in the **Annotations** panel in
-the Tools dock (four folding cards), and the **Annotation table** in the bottom dock. Label
+the Tools dock (four folding cards), and the **Annotation table** in the Activity dock. Label
 volumes drawn by hand are the [Segmentation plugin](../segmentation/README.md).
 
 - **Annotate**: points, lines, boxes, ellipsoids and polylines in local

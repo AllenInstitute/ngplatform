@@ -2,12 +2,12 @@
 
 ![Labels pinned to structures, in 2-D and 3-D](../images/plugins/labels.png)
 
-**Kind:** tool · **Off by default** (offered when you open an annotation layer, and listed under *Tools for this data* for an image; or turn it on in the Plugins tab) · the **Annotations** panel in the Tools dock and the **Annotation table** (bottom dock) ·
+**Kind:** tool · **Off by default** (offered when you open an annotation layer, and listed under *Tools for this data* for an image; or turn it on in the Plugins panel) · the **Annotations** panel in the Tools dock and the **Annotation table** (Activity dock) ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/annotations)
 
 Everything you add to annotate a dataset, in one panel with four cards:
 **Annotate** (annotations with groups, values and comments, listed in the
-**Annotation table** in the bottom dock), **Labels** for figures,
+**Annotation table** in the Activity dock), **Labels** for figures,
 **Measure** and **Statistics**. Each card folds; the panel remembers which
 are open. The (i) beside a heading or a control explains it. Label volumes
 drawn by hand have a panel of their own: see [Segmentation](segmentation.md).
