@@ -205,10 +205,10 @@ export function planMultilod(
             keep(
               `${s.file}@${offset}+${length}`,
               async (shared?: AbortSignal): Promise<FragmentMesh> => {
-              const bytes = await readRange(s.file, { offset, length }, shared);
-              if (bytes === undefined) throw new Error(`${s.file}: a mesh fragment is missing`);
-              const decoded = await decode(bytes, bits);
-              return { positions: applyAffine(toStore, dequantize(decoded.vertexPositions, manifest, lod, position, bits)), triangles: decoded.indices instanceof Uint32Array ? decoded.indices : Uint32Array.from(decoded.indices) };
+                const bytes = await readRange(s.file, { offset, length }, shared);
+                if (bytes === undefined) throw new Error(`${s.file}: a mesh fragment is missing`);
+                const decoded = await decode(bytes, bits);
+                return { positions: applyAffine(toStore, dequantize(decoded.vertexPositions, manifest, lod, position, bits)), triangles: decoded.indices instanceof Uint32Array ? decoded.indices : Uint32Array.from(decoded.indices) };
               },
               signal,
             ),

@@ -305,6 +305,25 @@ describe("the Luxar panel", () => {
     luxar.dispose();
   });
 
+  it("notes what a store says of itself under its row, once each: segments with no mesh, a fragment that failed", async () => {
+    const f = fakeContext([tracts], { version: 2, layers: { "my tracts": { on: true } }, momentum: false });
+    const host = dom.host();
+    const luxar = new Luxar(f.ctx);
+    luxar.render(host);
+    const list = host.querySelector(".list")!;
+    expect(dom.text(list)).toBe("my tracts");
+    open({ ...storeInfo({ units: "m", scale: 0.001, size: [150, 180, 140] }), warnings: ["3 of 40 segments had no mesh"] });
+    await vi.waitFor(() => expect(dom.text(list)).toBe("my tracts 3 of 40 segments had no mesh"));
+    // Said later by the worker, and again: shown once.
+    workers[0].say({ type: "warning", message: "a mesh fragment could not be read" });
+    workers[0].say({ type: "warning", message: "a mesh fragment could not be read" });
+    await vi.waitFor(() => expect(dom.text(list)).toBe("my tracts 3 of 40 segments had no mesh. a mesh fragment could not be read"));
+    // Not in the status line, which is for progress and errors.
+    expect(host.querySelector<HTMLElement>(".status-line")!.hidden).toBe(true);
+    expect(f.writes()).toBe(0);
+    luxar.dispose();
+  });
+
   it("offers its toggle command for any layer it can draw, and only those", () => {
     const image: LayerInfo = { name: "template", type: "image", visible: true, ready: true, sources: ["zarr://https://data.test/t.ome.zarr"] };
     const other: LayerInfo = { name: "points", type: "annotation", visible: true, ready: true, sources: ["local://annotations"] };

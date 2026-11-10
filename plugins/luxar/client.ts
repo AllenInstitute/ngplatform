@@ -31,6 +31,8 @@ export class StoreClient {
   private detached = false;
   /** The store's server wants a sign-in. */
   signIn = false;
+  /** What the store says of itself, once each: the reader's notes, segments with no mesh, fragments that failed. */
+  readonly warnings: string[] = [];
   readonly ready: Promise<StoreInfo>;
   info: StoreInfo | undefined;
   error: string | undefined;
@@ -72,8 +74,14 @@ export class StoreClient {
       if (msg.epoch !== this.epoch) return;
       if (msg.type === "opened") {
         this.info = msg.info;
+        for (const w of (msg.info as StoreInfo).warnings ?? []) this.warn(w);
         opened(msg.info);
         this.send();
+        return;
+      }
+      if (msg.type === "warning") {
+        this.warn(msg.message);
+        this.onChunk?.();
         return;
       }
       if (msg.type === "error" && msg.key === undefined) {
@@ -124,6 +132,10 @@ export class StoreClient {
     this.objects = new ObjectSets((key, plan, ids) => {
       if (!this.detached) this.worker.postMessage({ type: "objects", key, level: plan.level, mode: plan.mode, ids, scalar: this.scalar }, [ids.buffer]);
     });
+  }
+
+  private warn(warning: string): void {
+    if (typeof warning === "string" && warning !== "" && !this.warnings.includes(warning)) this.warnings.push(warning);
   }
 
   /** The layer's chosen objects read whole, by id (./objects.ts). */

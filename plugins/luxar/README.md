@@ -169,8 +169,13 @@ names the volume and the segments.
   (`MeshVolume`), and each segment's manifest is kept by id (up to
   8,000), each decoded fragment up to 128 MB: a store made again for one
   more segment reads that segment's manifest only (adding 1 segment to
-  1,000 read 1,001 manifests before, 1 now). A failed manifest read is
-  tried again next time, not kept.
+  1,000 read 1,001 manifests before, 1 now). Manifests are read eight at
+  a time; a segment whose manifest fails is left out and counted (the
+  store's warning, shown once under the layer's row), and tried again
+  for the next store, not kept. A kept fragment's read is shared by the
+  cells that ask for it, and aborted only when every one of them has
+  given up (their signals, from the reader's cell reads, which the
+  worker's `read_queue.ts` aborts for chunks no longer wanted).
 - **Sign-in**: the volume is read with the layer's own sign-in
   (`meshSourceOf` in `@ngplatform/sdk/sources`): `gs+google://` through
   the app's signed-in route, `middleauth+https://` with the token

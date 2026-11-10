@@ -88,7 +88,9 @@ is converted.
   precomputed meshes, coarse levels first. At most 2,000 segments: with
   more shown, the panel says so under the layer (*Showing 2,000 of 14,203
   segments*). Choosing one more segment reads only that segment's mesh
-  files.
+  files. Segments with no mesh, or whose mesh could not be read, are left
+  out, and a quiet note under the layer says how many (*3 of 40 segments
+  had no mesh*), once.
 - **Signed-in and CAVE segmentations**: the meshes are read with the
   layer's own sign-in (Google, middleauth as CAVE uses, or ngauth), and a
   CAVE (`graphene://`) segmentation's meshes are read from its meshing

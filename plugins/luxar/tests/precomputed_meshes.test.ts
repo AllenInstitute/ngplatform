@@ -333,6 +333,52 @@ describe("a segmentation's meshes kept open across its stores", () => {
     expect(fragmentsRead()).toBe(2);
   });
 
+  it("shares a fragment's read between cells: aborted only once every cell has given up on it", async () => {
+    const files = volume(1);
+    const aborted: string[] = [];
+    let release = () => {};
+    const read = async (url: string, range?: { offset: number; length: number }, signal?: AbortSignal) => {
+      const data = files.get(url);
+      if (range === undefined) return data;
+      // The fragment's read waits until the test lets it go, or it is aborted.
+      await new Promise<void>((resolve, reject) => {
+        release = resolve;
+        signal?.addEventListener("abort", () => {
+          aborted.push(url);
+          reject(signal.reason);
+        });
+      });
+      return data!.subarray(range.offset, range.offset + range.length);
+    };
+    const meshes = await MeshVolume.open(VOLUME, { read, decode: fakeDraco });
+    const fragment = (await meshes.store([1n])).plan.levels[0].fragments[0];
+    const [a, b] = [new AbortController(), new AbortController()];
+    const first = fragment.read(a.signal);
+    const second = fragment.read(b.signal);
+    a.abort();
+    await expect(first).rejects.toBeDefined();
+    // The other cell still wants it: not aborted.
+    expect(aborted).toEqual([]);
+    release();
+    expect((await second).triangles.length).toBe(3);
+    // Kept: a later cell gets it without a read.
+    const again = (await meshes.store([1n])).plan.levels[0].fragments[0];
+    expect((await again.read(new AbortController().signal)).triangles.length).toBe(3);
+    expect(aborted).toEqual([]);
+    // Another fragment whose every asker gives up: its read stops, and it is not kept.
+    files.set(`${MESH}2.index`, files.get(`${MESH}1.index`)!);
+    files.set(`${MESH}2`, files.get(`${MESH}1`)!);
+    const other = (await meshes.store([2n])).plan.levels[0].fragments[0];
+    const c = new AbortController();
+    const d = new AbortController();
+    const reads = [other.read(c.signal), other.read(d.signal)];
+    c.abort();
+    expect(aborted).toEqual([]);
+    d.abort();
+    await Promise.allSettled(reads);
+    expect(aborted).toEqual([`${MESH}2`]);
+  });
+
   it("tries a manifest whose read failed again, not taking it as missing", async () => {
     const files = volume(1);
     let fail = true;

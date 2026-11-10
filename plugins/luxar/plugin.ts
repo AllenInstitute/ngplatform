@@ -591,12 +591,8 @@ export class Luxar {
       for (const layer of candidates) {
         const row = rows.get(layer.name)!;
         row.draw.set(this.styleOf(layer.name).on);
-        // A segmentation drawn from its meshes reads at most MAX_SEGMENTS of the segments it shows: said, not silent.
-        const shown = this.meshVolumeOf(layer) === undefined ? undefined : this.ctx.viewer.visibleSegments(layer.name);
-        const cap = shown === undefined || shown.all ? undefined : segmentCapNote(shown.size);
-        row.cap.hidden = cap === undefined;
-        row.cap.textContent = cap ?? "";
       }
+      notes(candidates);
       choose.update(names);
       choose.hidden = names.length < 2;
       if (this.editing !== undefined) chooser?.set(this.editing);
@@ -605,9 +601,29 @@ export class Luxar {
       momentum.set(this.saved.momentum);
       updateStatus();
     };
+    /**
+     * The quiet note under each layer's row: the segment cap, and what its
+     * store says of itself (segments with no mesh, fragments that failed,
+     * the reader's notes), each once per store.
+     */
+    const notes = (candidates: LayerInfo[]) => {
+      for (const layer of candidates) {
+        const row = rows.get(layer.name);
+        if (row === undefined) continue;
+        // A segmentation drawn from its meshes reads at most MAX_SEGMENTS of the segments it shows: said, not silent.
+        const shown = this.meshVolumeOf(layer) === undefined ? undefined : this.ctx.viewer.visibleSegments(layer.name);
+        const cap = shown === undefined || shown.all ? undefined : segmentCapNote(shown.size);
+        const view = this.views.get(layer.name);
+        const said = [cap, ...(view instanceof LayerView ? view.client.warnings : [])].filter((w): w is string => w !== undefined);
+        const text = said.join(". ");
+        row.cap.hidden = said.length === 0;
+        if (row.cap.textContent !== text) row.cap.textContent = text;
+      }
+    };
     // A view's news (its store opened, a chunk read: often) changes only the editing layer's settings
-    // (its kind, attributes, the slab's unit, the range) and the status: not the rows.
+    // (its kind, attributes, the slab's unit, the range), the status and the notes: not the rows.
     const news = () => {
+      notes(this.candidates());
       if (this.editing !== undefined) settings.update([this.editing, this.kindOf(this.editing)]);
       settingsSync?.();
       updateStatus();
