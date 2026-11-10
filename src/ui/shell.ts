@@ -18,6 +18,8 @@ import { JobService } from "../platform/jobs.js";
 import { HostList } from "../platform/hosts.js";
 import { RunnerService } from "../platform/runner.js";
 import { fetchRemoteState } from "../platform/deadline.js";
+import { downloadBlob } from "../sdk/dom.js";
+import { linkTooLong, workspaceFile } from "./export.js";
 import { ComputedImages } from "../virtual/computed.js";
 import { collectDropped, LocalData } from "../virtual/local_data.js";
 import { LocalPlugins } from "../platform/local_plugins.js";
@@ -603,8 +605,50 @@ export class Shell {
           return;
         }
         const link = workspaceLink(location.href, store.workspace());
+        if (linkTooLong(link)) {
+          // A link this long is cut or refused by chat tools and mail: shared as a file, or as JSON.
+          const FILE = "Save the workspace as a file";
+          const JSON_TEXT = "Copy the workspace as JSON";
+          const LINK = "Copy the long link anyway";
+          const answer = await formDialog<{ how: string }>(
+            "Share this workspace",
+            {
+              type: "object",
+              properties: {
+                how: {
+                  type: "string",
+                  title: "How",
+                  enum: [FILE, JSON_TEXT, LINK],
+                  default: FILE,
+                  description: `Its link would be ${(link.length / 1024).toFixed(0)} KB, longer than chat tools and mail keep whole. A file or JSON opens with Open (paste it); a file put on the web opens from a link to it: ${location.href.replace(/#.*$/, "")}#!<its URL>.`,
+                },
+              },
+              required: ["how"],
+            },
+            {},
+            "Share",
+          );
+          if (answer?.how === FILE) await wb.run("workspace.saveFile");
+          else if (answer?.how === JSON_TEXT) {
+            if (await copyText(store.serialize(), "the workspace")) toast("Copied the workspace as JSON. Paste it into Open to restore it.");
+          } else if (answer?.how === LINK && (await copyText(link, "the link"))) toast(`Link copied (${(link.length / 1024).toFixed(1)} KB). Some chat tools and mail may cut it short.`);
+          return;
+        }
         if (await copyText(link, "the link")) toast(`Link copied (${(link.length / 1024).toFixed(1)} KB).`);
         wb.log.add("Copied a link to the workspace.");
+      },
+    });
+    add({
+      id: "workspace.saveFile",
+      title: "Save this workspace as a file",
+      group: "Workspace",
+      hint: "A JSON file to send or put on the web; it opens with Open",
+      run: () => {
+        store.settle();
+        const file = workspaceFile(store.serialize(), activeScene(store.state()).name);
+        downloadBlob(file.blob, file.name);
+        toast(`Saved the workspace as ${file.name}. Paste it into Open, or link to it on the web with #!<its URL>, to open it.`);
+        wb.log.add(`Saved the workspace as ${file.name}.`);
       },
     });
     add({
@@ -1397,6 +1441,7 @@ export class Shell {
     const run = (id: string) => () => void this.wb.run(id);
     showMenu(anchor, [
       { label: "Copy workspace link", run: run("workspace.share") },
+      { label: "Save workspace as a file", run: run("workspace.saveFile") },
       { label: "Copy scene as Neuroglancer link", run: run("workspace.copyPlainLink") },
       { label: "Copy scene as Neuroglancer JSON", run: run("workspace.copyState") },
       "-",
