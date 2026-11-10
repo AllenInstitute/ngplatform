@@ -522,5 +522,7 @@ export const STYLE = `
 .labels-list { display: grid; gap: var(--sp-3); }
 .label-row { border: 1px solid var(--line); padding: var(--sp-3); display: grid; gap: var(--sp-2); }
 .label-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: var(--sp-3); align-items: center; }
+.label-row .row { align-items: end; }
 .label-row .row > .field { flex: 1 1 160px; }
+.label-row .row > .type { padding-bottom: var(--sp-3); }
 `;

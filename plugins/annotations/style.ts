@@ -6,6 +6,7 @@
  */
 export const STYLE = `
 .an { display: grid; gap: var(--sp-2); }
+.an .stack > :empty { display: none; }
 .an-end { display: flex; justify-content: flex-end; }
 .an-inline { display: flex; gap: var(--sp-2); align-items: center; }
 .an-inline .num-input { width: 0; flex: 1; min-width: 44px; }
@@ -42,11 +43,11 @@ export const STYLE = `
 .an-group[data-depth="4"] { padding-left: 56px; }
 .an-group[data-depth="5"] { padding-left: 70px; }
 .an-group[data-depth="6"] { padding-left: 84px; }
-.an-group > .text-input { flex: 1; min-width: 50px; }
-.an-group.an-active > .text-input { border-color: var(--select); }
+.an-group > input.text-input { flex: 1; min-width: 50px; }
+.an-group.an-active > input.text-input { border-color: var(--select); }
 .an-group .an-group-parent { width: 22px; flex: none; padding: 0; color: transparent; cursor: pointer; }
 .an-group .an-group-parent option { color: var(--text); background: var(--ink-1); }
-.an-group.an-dim > .text-input { color: var(--faint); }
+.an-group.an-dim > input.text-input { color: var(--faint); }
 .an-count { font: var(--fs-caption) var(--mono); min-width: 2ch; text-align: right; }
 .an-field-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--sp-3); align-items: center; font-size: var(--fs-body); }
 .an-field-row .faint { font-size: var(--fs-caption); }
