@@ -16,7 +16,7 @@ export const ANATOMICAL_RENDERING_MANIFEST: Manifest = {
 
 ## Starting it
 1. Start a runner with the render service where the GPU is (\`--service render="python -m ngplatform_render.server"\`), and pair with it (Settings › Compute, or the link it prints; over SSH, \`python -m ngplatform_runner tunnel HOST\`).
-2. In the **Anatomical** panel: **Remote** picks the computer; switch on **Render** at the top (also beside **Sections** in the 3-D view). **Rendering** has the image, preset and colours; **Regions**, **Quality**, **Lighting**, **Crops** (a clip facing the camera, clips across x, y, z, and boxes), **Output** (size, stills), **Movie** and **Splat** (in progress) follow. A 2-D image is not rendered; of an image with time points or channels, Rendering chooses which is (on a computer).
+2. In the **Anatomical** panel: **Remote** picks the computer; switch on **Render** at the top (also beside **Sections** in the 3-D view). **Rendering** has the image, preset and colours; **Regions**, **Quality**, **Lighting**, **Crops** (a clip facing the camera, clips across x, y, z, and boxes), **Output** (size, stills), **Movie** and **Splat** follow. A 2-D image is not rendered; of an image with time points or channels, Rendering chooses which is (on a computer).
 
 While the camera moves, the last picture stays in place in 3-D and moves with the view; it is rendered again when the camera stops (or, moving far, at half size).
 

@@ -56,7 +56,7 @@ preset, colours, density, exposure), **Regions** (on a computer), **Quality**
 (how much of the image the GPU holds, detail, samples, and what is rendered
 now), **Lighting**, **Crops** (a clip facing the camera, clips across x, y
 and z, and boxes), **Output** (the size of stills and movies, and stills),
-**Movie** (keyframes and rotations) and **Splat** (*in progress*). Each
+**Movie** (keyframes and rotations) and **Splat**. Each
 stays open or closed as you leave it. The row under the switch turns the
 view: **Centre** on the tissue, or from each side of the image (see
 **View** below).
@@ -191,7 +191,7 @@ takes images with one of each only.
   in this browser: after a reload the list comes back, those still running
   on the computer are followed again (in Activity too), and finished ones
   can be downloaded while the computer keeps them.
-- **Splat** (*in progress*: shown, but no fit has yet run end to end; for the web, phones and VR): **Make splat**
+- **Splat** (for the web, phones and VR): **Make splat**
   path-traces the look now from all round the position (**views**, each
   **size** pixels along its longer side at **samples**; **from** every side,
   this half, or near this side; a quarter of them closer in), then fits
@@ -207,7 +207,9 @@ takes images with one of each only.
   for a whole brain, and the fit 15 to 30 minutes more.
 
   The fit needs torch and gsplat in a Python of their own: start the render
-  service with `--splat-python PATH` (or set `NGP_SPLAT_PYTHON`). Without
+  service with `--splat-python PATH` (or set `NGP_SPLAT_PYTHON`); see
+  `runner/README.md` for making that Python (gsplat 1.4.0, which builds its
+  CUDA kernels with nvcc the first time, in about 4 minutes). Without
   one, the views are still made, and the folder (images, `cameras.json`,
   nerfstudio's `transforms.json`, `points.ply`) can be fitted later with
   `python -m ngplatform_render.splat.fit FOLDER` or another splat trainer.
@@ -382,8 +384,6 @@ from noisy first frames and detail coming in at once).
   applied yet.
 - One image (and one segmentation) at a time, and one channel and time
   point of it (chosen in **Rendering**, on a computer).
-- Splats are *in progress*: the panel offers them, but no fit has yet run
-  end to end.
 - Rendering is for looking, teaching and figures, not for reading values.
 - Finer detail comes from one stored level at a time, and only on a host:
   the browser's renderer holds one level.

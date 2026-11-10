@@ -1931,7 +1931,7 @@ class AnatomicalRendering {
     const splatSteps = splatField("Fit steps", (p) => p.steps, 0, 200000, (p, v) => (p.steps = v), "0 renders the views only.");
     const splatCover = select([["180", "every side"], ["90", "this half"], ["50", "near this side"]], String(saved().splat.cover), (v) => this.save((x) => (x.splat.cover = Number(v))), "From");
     const splats = jobList("splat");
-    const splat = card("anatomical.splat", "Splat", { badge: el("span", { class: "chip" }, "In progress"), info: "The look now, path-traced from all round and fitted with 3-D Gaussians that any browser, phone or headset draws at full speed. In progress: a fit has not yet run end to end." },
+    const splat = card("anatomical.splat", "Splat", { info: "The look now, path-traced from all round and fitted with 3-D Gaussians that any browser, phone or headset draws at full speed." },
       cannotFit,
       el("div", { class: "row" }, splatViews.field, splatSize.field, splatSamples.field, field("From", splatCover), splatSteps.field),
       el("div", { class: "row" },

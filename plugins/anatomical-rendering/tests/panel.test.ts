@@ -68,9 +68,9 @@ describe("the Anatomical panel", () => {
       while (e && !(e.tagName === "LABEL" && e.className.split(" ").includes("choice"))) e = e.parentNode as HTMLElement | null;
       expect(e, "an on/off control made with toggle() or checkbox()").not.toBeNull();
     }
-    // Nothing styled inline, and the splats marked as in progress.
+    // Nothing styled inline, and the splats no longer marked as in progress (a real fit has run end to end).
     expect(host.querySelectorAll("[style]")).toHaveLength(0);
-    expect(dom.text(cardOf(dom, host, "Splat").querySelector(".chip")!)).toBe("In progress");
+    expect(cardOf(dom, host, "Splat").querySelector(".chip")).toBeNull();
     // The status line says nothing while all is well and Render is off (no "off", no GPU: Remote shows it).
     expect(host.querySelector<HTMLElement>(".status-line")!.hidden).toBe(true);
   });
