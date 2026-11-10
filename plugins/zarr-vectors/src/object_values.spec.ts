@@ -1,7 +1,8 @@
 /**
  * Per-object values put on vertices for shaders (`fillObjectValues`): read
  * from the store's object table; when they cannot be read, no value (NaN)
- * rather than 0, which looks like data; a network error not kept.
+ * rather than 0, which looks like data; a network error fails the chunk
+ * (read again later) and is not kept.
  */
 
 import { describe, expect, it } from "vitest";
@@ -13,10 +14,10 @@ import { ShardIndexCache } from "./zarr_array.js";
 
 const read = fixtureRead("props_types");
 
-function access(fail: (path: string) => boolean): ZarrVectorsStoreAccess {
+function access(fail: (path: string) => boolean, error = () => Object.assign(new Error("Network or CORS error"), { status: 0 })): ZarrVectorsStoreAccess {
   return {
     read: async (path, options) => {
-      if (fail(path)) throw Object.assign(new Error("Network or CORS error"), { status: 0 });
+      if (fail(path)) throw error();
       return read(path, options);
     },
     listDirectories: async () => [],
@@ -37,8 +38,16 @@ async function vertices() {
 describe("object values on vertices", () => {
   it("are no value (NaN), not 0, when the object table cannot be read", async () => {
     const values = [new Float32Array(2)];
-    await fillObjectValues(access((p) => p.includes("object_index")), description, values, await vertices(), 2);
+    const unreadable = access((p) => p.includes("object_index"), () => new Error("not JSON"));
+    await fillObjectValues(unreadable, description, values, await vertices(), 2);
     expect(Array.from(values[0]).every(Number.isNaN)).toBe(true);
+  });
+
+  it("fail the chunk, rather than show no value, when the network fails", async () => {
+    const values = [new Float32Array(2)];
+    await expect(
+      fillObjectValues(access((p) => p.includes("object_index")), description, values, await vertices(), 2),
+    ).rejects.toMatchObject({ status: 0 });
   });
 
   it("are read again after a network error in a column", async () => {
@@ -51,8 +60,7 @@ describe("object values on vertices", () => {
       return false;
     });
     const first = [new Float32Array(2)];
-    await fillObjectValues(flaky, description, first, await vertices(), 2);
-    expect(Array.from(first[0]).every(Number.isNaN)).toBe(true);
+    await expect(fillObjectValues(flaky, description, first, await vertices(), 2)).rejects.toMatchObject({ status: 0 });
     const again = [new Float32Array(2)];
     await fillObjectValues(flaky, description, again, await vertices(), 2);
     expect(Number.isFinite(again[0][0])).toBe(true);

@@ -65,9 +65,22 @@ import type {
 import {
   AsyncLru,
   mapConcurrent,
+  retryable,
   SHARED_SIGNAL,
   warnOnce,
 } from "./util.js";
+
+/**
+ * For a catch that stands in a value for data that is unreadable: a read
+ * that may work later (the network) is passed on, so the chunk fails and is
+ * read again, instead of being kept without that data.
+ */
+function unlessRetryable<T>(value: T) {
+  return (e: unknown): T => {
+    if (retryable(e)) throw e;
+    return value;
+  };
+}
 
 /** One decoded chunk, ready to post to the frontend. */
 export interface DenseChunkData {
@@ -201,6 +214,7 @@ export async function fillObjectValues(
     description.objectValuesPath,
     slots.map((i) => description.attributes[i].objectValue!),
   ).catch((e) => {
+    if (retryable(e)) throw e;
     warnOnce(
       "object values could not be read " +
         `(${e instanceof Error ? e.message : e}); shown as no value (NaN)`,
@@ -301,9 +315,10 @@ export class LevelPipeline {
    *   manifests, which are never ambiguous, say.
    */
   private idMode() {
-    this.mode ??= (async () => {
+    if (this.mode !== undefined) return this.mode;
+    const promise = (async () => {
       const table = await readObjectTable(this.access, this.level.path).catch(
-        () => undefined,
+        unlessRetryable(undefined),
       );
       if (table === undefined || table.idSource === "row") {
         return { mode: "direct" as const };
@@ -321,7 +336,12 @@ export class LevelPipeline {
       }
       return { mode: "manifests" as const };
     })();
-    return this.mode;
+    // Decided again by the next chunk when the network failed it.
+    this.mode = promise;
+    promise.catch(() => {
+      if (this.mode === promise) this.mode = undefined;
+    });
+    return promise;
   }
 
   private fragmentOwners() {
@@ -330,6 +350,8 @@ export class LevelPipeline {
       this.owners = promise;
       promise.catch((e) => {
         if (this.owners === promise) this.owners = undefined;
+        // A network failure fails the chunk instead (read again later).
+        if (retryable(e)) return;
         warnOnce(
           "could not map fragments to objects " +
             `(${e instanceof Error ? e.message : e}); objects are coloured per chunk`,
@@ -426,7 +448,9 @@ export class LevelPipeline {
             ? table[Number(stored[f])]
             : NO_OBJECT;
       } else {
-        const owners = await this.fragmentOwners().catch(() => undefined);
+        const owners = await this.fragmentOwners().catch(
+          unlessRetryable(undefined),
+        );
         const chunkOwners = owners?.get(chunkKey);
         // Without the manifests (warned), colour per fragment in the chunk;
         // a fragment no object claims is no object.
@@ -546,7 +570,7 @@ export class LevelPipeline {
               const count = Math.floor(bytes.byteLength / ELEMENT_BYTES[type]);
               return decodeFloat32(bytes, type, count);
             })
-            .catch(() => undefined);
+            .catch(unlessRetryable(undefined));
           if (values === undefined) return;
           ghosts.forEach((g, gi) => {
             if (!g.corner || g.chunkKey !== key) return;
@@ -592,7 +616,7 @@ export class LevelPipeline {
         () => this.vertexCell(key),
       );
       if (whole !== undefined) {
-        const bytes = await whole.catch(() => undefined);
+        const bytes = await whole.catch(unlessRetryable(undefined));
         if (bytes !== undefined) {
           const all = decodeFloat32(
             bytes,

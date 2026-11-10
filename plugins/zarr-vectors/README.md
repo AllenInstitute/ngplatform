@@ -149,8 +149,8 @@ layers, so one shader colours the overview and the selected objects alike:
   dictionary-encoded column gives its code, and the codes are listed in the
   browser console when the layer opens. A value the store marks absent is
   NaN (test with `isnan`), and so is every value when the object table or
-  the column cannot be read (a warning); a network error is
-  not kept, so the next chunk reads them again.
+  the column cannot be read (a warning). A network error is not taken
+  as no value: the chunk fails and is read again later.
 
 By default the group index and, when the store has at most 8 eligible
 columns (single-channel, numeric or dictionary, not 64-bit), all of them are
@@ -216,6 +216,13 @@ cost; an object index and directory listing also change what can be shown.
 | `nonempty_chunks`                                         | empty cells skipped without a request                                                                         | a request that finds nothing                                                                                          |
 | zarr-vectors-tools `skeleton_layout`                      | skeleton layout known                                                                                         | inferred                                                                                                              |
 | `fragment_attributes/object_id`, or ids that are rows     | each fragment's object read directly                                                                          | taken from the level's manifests (a `segment_id` column may hold ids or rows, so it is used only where the two agree) |
+
+A read that fails on the network (Neuroglancer reports it as status 0,
+like a missing key) is not taken as an empty cell: it is tried four times
+over about two seconds, then fails the chunk, with a warning, and Neuroglancer
+asks for the chunk again when the view comes back to it. Nothing read from it
+is kept. Only a key the server says is not there (404, or 403 as S3 says it)
+reads as empty.
 
 A feature is trusted only where the data bears it out: a stamped face group
 whose rows index another fragment, or whose count does not match the
