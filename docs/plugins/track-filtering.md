@@ -60,7 +60,9 @@ For the group being edited:
 - **Save .trk** (streamlines): the whole streamlines as TrackVis, all of
   them or a level's sample (*Streamlines*). In Chrome and Edge it is written
   straight to the file you choose, in batches, so a large group takes time
-  but not memory; other browsers build it in memory and download it.
+  but not memory. Other browsers build it in memory and download it, up
+  to 1 GB; a larger group is refused before anything is read (use Chrome
+  or Edge, or **Run on this computer**).
 - **Make density map** (streamlines): streamlines per voxel, at the
   *Density voxel* size you choose (1 mm for a brain by default), shown as a
   heat map; **Save .nii** keeps it as a NIfTI file.
@@ -87,6 +89,14 @@ The first exact answer in a new area takes seconds (the download); moving a
 region around an area already read is exact at 10–20 updates a second. The
 corpus callosum box on S-21-46 (3.3 M streamlines) is exact in about 20 s
 from a cold start.
+
+Moving a region stops the tests for where it was. Answers are kept for
+asking again, up to about 200 MB. If the region reader stops (out of
+memory, say), it is started again and the count runs once more; if that
+fails too, the panel shows why, with **Retry**. Each streamline group's
+own store is written off the page's thread, made again only when the
+group's streamlines change, and let go when Track filtering is switched
+off (its layer goes back to the dataset, showing the same streamlines).
 
 ## Files
 

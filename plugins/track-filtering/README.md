@@ -18,7 +18,7 @@ Vectors plugin. The user's guide is
 | `plugin.ts` | `TrackGroups`: the groups, their answers, their layers and own stores, saving; the panel, built from the SDK's cards and controls and updated in place; provides the `trackFiltering.groups` service (the volume view draws groups through it) |
 | `filter.ts` | Attribute ranges and tags as a mask, counts and statistics (pure, unit-tested) |
 | `roi.ts` | Region tests on chunks, and combining regions' answers (pure, unit-tested) |
-| `roi_client.ts`, `roi_worker.ts` | Region tests and streamline reads in a worker, against the store |
+| `roi_client.ts`, `roi_worker.ts` | Region tests, streamline reads and each group's own `.trk` in a worker, against the store; answers kept within a byte bound, superseded tests cancelled, a dead worker started again |
 | `labels.ts`, `labels_client.ts`, `labels_worker.ts` | Region tests on a segmentation's voxels and on precomputed annotations, in a worker |
 | `annotation_regions.ts` | Region tests on an annotation layer's own annotations |
 | `density.ts` | Track density maps: the grid (a voxel size chosen, or the store's default), counting, the NIfTI file |
