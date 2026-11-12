@@ -1,9 +1,11 @@
 /**
- * The top of the Layers panel: what the active scene shows.
+ * The Layers panel: what the active scene shows.
  *
- * One row per dataset, with its visibility, load state and where it is; a
- * dataset shown through several layers lists them beneath it.  Selecting a
- * row brings its controls up below (./layer.ts).  Datasets that other
+ * One card per dataset: a row with its visibility, load state and where it
+ * is (a dataset shown through several layers lists them beneath it), and,
+ * opened, the dataset's settings as sections (Rendering, Source,
+ * Annotations…; ./layer.ts).  Selecting a dataset opens its card; its
+ * arrow opens and closes it, and several may be open.  Datasets that other
  * scenes show are offered in the Open sheet and the Add a dataset sheet,
  * not here.  Below the list, up to three tools that are off but would serve
  * this data, the rest behind More.
@@ -18,6 +20,7 @@ import { clear, h, icon, iconButton } from "../dom.js";
 import { promptDialog, showMenu } from "../overlays.js";
 import type { Workbench } from "../workbench.js";
 import { sourceName } from "./format.js";
+import { datasetBody } from "./layer.js";
 import { canExport, exportDataset } from "../export.js";
 import { buildOverview, clearOverview, overviewUrl } from "../overview.js";
 
@@ -54,6 +57,8 @@ interface Row {
   name: string;
   visible: boolean;
   selected: boolean;
+  /** Its card is open (its settings shown). */
+  expanded: boolean;
   status: Status;
   where: string;
   url: string;
@@ -149,9 +154,25 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
         h("span", {}, `${lost.map((l) => l.name).join(", ")}: closed with the tab. Open the files again (Add data → Local file or folder…) or drop them here.`),
       );
     }
+    // A dataset selected (here, in the views, by a command) opens its card.
+    const selectedLayer = engine.selectedLayer();
+    const selectedDataset = selectedLayer === undefined ? undefined : store.sceneDatasets().find((e) => e.layers.includes(selectedLayer))?.dataset.id;
+    if (selectedDataset !== lastSelected) {
+      lastSelected = selectedDataset;
+      if (selectedDataset !== undefined) expanded.add(selectedDataset);
+    }
     // The rows whose content changed, drawn again; the control that had the keyboard keeps it.
     const focused = [...focusable].find(([, e]) => e === document.activeElement)?.[0];
     if (updateRows(rows()) && focused !== undefined) focusable.get(focused)?.focus();
+  };
+
+  /** The datasets whose cards are open, and the dataset selected when the list was last drawn. */
+  const expanded = new Set<string>();
+  let lastSelected: string | undefined;
+  const toggle = (id: string) => {
+    if (expanded.has(id)) expanded.delete(id);
+    else expanded.add(id);
+    render();
   };
 
   /** What the list shows, as plain data. */
@@ -167,6 +188,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
         name: dataset.name,
         visible: layers.some((l) => l.visible),
         selected: selected !== undefined && entry.layers.includes(selected),
+        expanded: expanded.has(dataset.id),
         status: statusOf(layers),
         // Only where the data lives when that is this computer: the type is plain from the views.
         where: where(url),
@@ -195,7 +217,15 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
     if (index < 0 || dataset === undefined) return;
     const url = overviewUrl(wb, dataset);
     showMenu(anchor, [
-      { label: "Show controls", run: () => store.selectDataset(id) },
+      {
+        label: expanded.has(id) ? "Hide settings" : "Show settings",
+        run: () => {
+          if (expanded.has(id)) return toggle(id);
+          expanded.add(id);
+          store.selectDataset(id);
+          render();
+        },
+      },
       { label: "Rename…", run: () => void rename(id) },
       { label: "Add another view of it", run: () => store.addLayerView(id, entries[index].layers[0]) },
       ...(canExport(wb, dataset) ? [{ label: "Export as…", run: () => void exportDataset(wb, dataset) }] : []),
@@ -240,6 +270,14 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
 
   /** Each row drawn, by dataset: what it shows (as JSON), its element, and its controls' keys. */
   const drawn = new Map<string, { json: string; element: HTMLElement; keys: string[] }>();
+  /** Each dataset's card: the row drawn above, its settings below while it is open (kept as the row is drawn again). */
+  const cards = new Map<string, { element: HTMLElement; body: ReturnType<typeof datasetBody> }>();
+  const dropCard = (id: string) => {
+    const card = cards.get(id);
+    card?.body.dispose();
+    card?.element.remove();
+    cards.delete(id);
+  };
 
   /**
    * The list brought up to `rows`: rows whose content changed drawn again,
@@ -250,6 +288,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
     let changed = false;
     if (rows.length === 0) {
       if (empty.parentNode === list && drawn.size === 0) return false;
+      for (const id of [...cards.keys()]) dropCard(id);
       drawn.clear();
       focusable.clear();
       clear(list, empty);
@@ -269,11 +308,16 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
     for (const [id, row] of drawn) {
       if (wanted.has(id)) continue;
       forget(row);
-      row.element.remove();
+      dropCard(id);
       drawn.delete(id);
       changed = true;
     }
     rows.forEach((row, i) => {
+      let card = cards.get(row.id);
+      if (card === undefined) {
+        card = { element: h("div", { class: "ds-card" }), body: datasetBody(wb, row.id) };
+        cards.set(row.id, card);
+      }
       const json = JSON.stringify(row);
       let now = drawn.get(row.id);
       if (now === undefined || now.json !== json) {
@@ -284,17 +328,27 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
           keys.push(key);
           return e;
         });
-        if (now !== undefined) {
-          list.insertBefore(element, now.element);
-          now.element.remove();
-        }
+        // In the old row's place, else first in the card.
+        const before = now !== undefined && now.element.parentNode === card.element ? now.element : card.element.children[0];
+        if (before !== undefined) card.element.insertBefore(element, before);
+        else card.element.append(element);
+        now?.element.remove();
         now = { json, element, keys };
         drawn.set(row.id, now);
         changed = true;
       }
+      // Open: its settings below the row, brought up to the state; closed, let go.
+      card.element.classList.toggle("open", row.expanded);
+      if (row.expanded) {
+        if (card.body.element.parentNode !== card.element) card.element.append(card.body.element);
+        card.body.update();
+      } else if (card.body.element.parentNode === card.element) {
+        card.body.dispose();
+        card.body.element.remove();
+      }
       const at = list.children[i];
-      if (at !== now.element) {
-        list.insertBefore(now.element, at ?? null);
+      if (at !== card.element) {
+        list.insertBefore(card.element, at ?? null);
         changed = true;
       }
     });
@@ -303,13 +357,30 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
 
   /** A dataset's row (and its views); `focusKey` records the controls that take the keyboard. */
   const drawRow = (row: Row, focusKey: <E extends HTMLElement>(e: E, key: string) => E): HTMLElement => {
-    const select = () => store.selectDataset(row.id);
+    // Selecting a dataset opens its card.
+    const select = () => {
+      expanded.add(row.id);
+      store.selectDataset(row.id);
+      render();
+    };
     const shown = visibility(`Show ${row.name}`, row.visible, (v) => store.setDatasetVisible(row.id, v));
     focusKey(shown.input, `vis:${row.id}`);
+    const arrow = h("button", {
+      class: "ds-expand",
+      type: "button",
+      "aria-expanded": String(row.expanded),
+      "aria-label": `${row.expanded ? "Hide" : "Show"} the settings of ${row.name}`,
+      title: row.expanded ? "Hide its settings" : "Show its settings",
+      onclick: (e: Event) => {
+        e.stopPropagation();
+        toggle(row.id);
+      },
+    });
+    focusKey(arrow, `expand:${row.id}`);
     const head = h(
       "div",
       {
-        class: row.selected ? "ds-row selected" : "ds-row",
+        class: `ds-row card-row${row.selected ? " selected" : ""}`,
         tabindex: 0,
         role: "button",
         "aria-pressed": String(row.selected),
@@ -329,6 +400,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
           }
         },
       },
+      arrow,
       shown,
       statusDot(row.status),
       h("span", { class: "ds-name" }, row.name),
@@ -374,5 +446,8 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
   const offs = [store.onChange(render), engine.onLayersChanged(render), engine.onSelectionChanged(render), wb.localData.onChange(render), wb.offers.onChange(renderOffers)];
   render();
   renderOffers();
-  return () => offs.forEach((off) => off());
+  return () => {
+    offs.forEach((off) => off());
+    for (const id of [...cards.keys()]) dropCard(id);
+  };
 }

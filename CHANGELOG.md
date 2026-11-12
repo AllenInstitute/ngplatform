@@ -136,6 +136,22 @@ The production polish: the work of an audit of every panel and plugin
   address, which a browser cannot fetch: "Failed to fetch"), and the
   colourmap editor (histogram, stops, shift and compression, window) works
   there too, from the level of the image it holds.
+- Anatomical rendering renders in this browser by default; a render
+  computer is chosen in its Remote card.
+- The light held in the object comes in as its paths gather, so it is never
+  blotchy while it is worked out.
+
+### The Layers panel: a card per dataset
+
+- Each dataset in the scene is a card: its row, and, opened, its settings
+  as sections (Rendering, Source, Annotations, Segments, Schema, as its
+  type has them), each opened and closed on its own (kept for every
+  dataset). Selecting a dataset opens its card; its arrow opens and closes
+  it, and several may be open. The selected layer's controls no longer sit
+  under the list.
+- A new or empty scene's card offers Open a file and Paste a link; the
+  examples are in Open and the palette.
+
 - Cloud Storage is read through its JSON API in the browser (volume view,
   precomputed reads, collections, orientations, time series, plugin
   offers), so buckets without CORS settings read as they do in Neuroglancer.

@@ -1,20 +1,13 @@
 /**
- * The bottom of the Layers panel: the selected dataset's controls, as
- * Neuroglancer's own layer tabs (Display, Source, Segments, Annotations…,
- * whatever its type has), directly editable.  A one-line header names the
- * dataset and, when it is shown through several layers, which one; below
- * it, only when the data is not public (or failed to load), the sign-in
- * the layer reads it with, as in Settings → Sign-in.  The header is drawn
- * again only when what it shows changes, so a move of the views does not
- * close its drop-down.
+ * A dataset's controls in its card in the Layers panel (`datasetBody`), and
+ * the layer selected (`layerTarget`, for the commands that act on it).
  */
 import type { DatasetInfo, LayerInfo } from "../../sdk/types.js";
 import { region } from "../../sdk/dom.js";
 import { h } from "../dom.js";
-import { promptDialog } from "../overlays.js";
 import type { Workbench } from "../workbench.js";
 import { signInControl } from "./auth.js";
-import { kindLabel } from "./format.js";
+import type { SectionsOpen } from "../../engine/inspector/index.js";
 
 export interface LayerTarget {
   dataset: DatasetInfo | undefined;
@@ -32,16 +25,54 @@ export function layerTarget(wb: Workbench): LayerTarget {
   };
 }
 
-export function renderLayerPanel(host: HTMLElement, wb: Workbench): () => void {
+/**
+ * Which sections of the layer controls are open: the same for every
+ * dataset, kept in this browser (Rendering open at first).
+ */
+const SECTIONS_KEY = "ngplatform.layer.sections";
+export const sectionsOpen: SectionsOpen = (() => {
+  let open = new Set(["rendering"]);
+  try {
+    const kept = JSON.parse(localStorage.getItem(SECTIONS_KEY) ?? "null");
+    if (Array.isArray(kept)) open = new Set(kept.filter((x) => typeof x === "string"));
+  } catch {
+    // Storage refused or unreadable: Rendering open.
+  }
+  return {
+    has: (id) => open.has(id),
+    set: (id, on) => {
+      if (on) open.add(id);
+      else open.delete(id);
+      try {
+        localStorage.setItem(SECTIONS_KEY, JSON.stringify([...open]));
+      } catch {
+        // Not kept: as before next time.
+      }
+    },
+  };
+})();
+
+/**
+ * A dataset's card body (./datasets.ts): the controls of the layer it is
+ * shown through (the selected one of its views, else its first), as
+ * sections; above them, only when the data is not public (or failed to
+ * load), the sign-in the layer reads it with, as in Settings → Sign-in.
+ * `update` brings it up to the state; the sign-in is drawn again only when
+ * what it shows changes, so a move of the views does not close its
+ * drop-down.
+ */
+export function datasetBody(wb: Workbench, datasetId: string): { element: HTMLElement; update(): void; dispose(): void } {
   const { engine, store } = wb;
-  const head = region((key: HeadKey | undefined) => (key === undefined ? null : drawHead(key)), { class: "layer-head" });
+  const signIn = region((key: SignInKey | undefined) => {
+    if (key === undefined) return null;
+    const control = signInControl(wb, key.layer, key.ok);
+    return control === null ? null : h("div", { class: "layer-sign-in" }, h("span", {}, "Sign-in"), control);
+  });
   const controls = h("div", { class: "ng-host layer-controls-host" });
-  const empty = h("p", { class: "empty" }, "Select a layer above.");
-  host.append(empty, head, controls);
+  const element = h("div", { class: "ds-body" }, signIn, controls);
 
   let mountedFor: { name: string; token: object | undefined } | undefined;
   let unmount: (() => void) | undefined;
-
   const mount = (name: string | undefined) => {
     const token = name === undefined ? undefined : engine.layerToken(name);
     if (mountedFor?.name === name && mountedFor?.token === token) return;
@@ -49,95 +80,43 @@ export function renderLayerPanel(host: HTMLElement, wb: Workbench): () => void {
     unmount = undefined;
     controls.replaceChildren();
     mountedFor = name === undefined ? undefined : { name, token };
-    if (name !== undefined && token !== undefined) unmount = engine.mountLayerControls(controls, name);
+    if (name !== undefined && token !== undefined) unmount = engine.mountLayerControls(controls, name, sectionsOpen);
   };
 
-  /** Another view of the dataset (the next channel, say), on the tab the one shown now is on. */
-  const pickView = (from: string, to: string) => {
-    const tab = engine.layerSpec(from)?.tab;
-    if (typeof tab === "string" && engine.layerSpec(to)?.tab !== tab) {
-      store.patchState(
-        (ng) => {
-          const target = (ng.layers as { name?: string; tab?: string }[] | undefined)?.find((l) => l.name === to);
-          if (target !== undefined) target.tab = tab;
-        },
-        { quiet: true },
-      );
-    }
-    store.selectLayer(to);
-  };
-
-  /** What the header shows, and what its sign-in drop-down is made from. */
-  interface HeadKey {
-    dataset: { id: string; name: string } | undefined;
+  /** What the sign-in drop-down is made from. */
+  interface SignInKey {
     layer: string;
-    type: string;
-    error: string | undefined;
-    views: string[];
+    ok: boolean;
     source: unknown;
     signIns: unknown;
   }
 
-  const drawHead = (key: HeadKey) => {
-    const signIn = signInControl(wb, key.layer, key.error === undefined);
-    return [
-      h(
-        "button",
-        {
-          class: "title-button",
-          type: "button",
-          title: "Rename the dataset",
-          onclick: async () => {
-            if (key.dataset === undefined) return;
-            const name = await promptDialog("Rename dataset", "Name", key.dataset.name);
-            if (name !== undefined) store.renameDataset(key.dataset.id, name);
+  const update = () => {
+    const entry = store.sceneDatasets().find((d) => d.dataset.id === datasetId);
+    const selected = engine.selectedLayer();
+    const name = entry === undefined ? undefined : selected !== undefined && entry.layers.includes(selected) ? selected : entry.layers[0];
+    const layer = name === undefined ? undefined : engine.layers().find((l) => l.name === name);
+    signIn.update(
+      layer === undefined
+        ? undefined
+        : {
+            layer: layer.name,
+            ok: layer.error === undefined,
+            source: engine.layerSpec(layer.name)?.source,
+            // The sign-ins the drop-down offers: the rules, the Google accounts and the providers.
+            signIns: [wb.rules.list(), wb.google.accounts().map((a) => a.email), wb.google.defaultAccount(), wb.auth.list().map((p) => p.id)],
           },
-        },
-        key.dataset?.name ?? key.layer,
-      ),
-      h("span", { class: "type" }, key.type),
-      key.error !== undefined ? h("p", { class: "empty error" }, key.error) : null,
-      key.views.length > 1
-        ? h(
-            "div",
-            { class: "segmented views" },
-            ...key.views.map((name) =>
-              h("button", { type: "button", "aria-pressed": String(name === key.layer), onclick: () => pickView(key.layer, name) }, name),
-            ),
-          )
-        : null,
-      signIn !== null ? h("div", { class: "layer-sign-in" }, h("span", {}, "Sign-in"), signIn) : null,
-    ];
+    );
+    mount(layer?.name);
   };
 
-  const render = () => {
-    const { dataset, layer } = layerTarget(wb);
-    // Nothing to say with nothing in the scene: the list above says it.
-    empty.hidden = layer !== undefined || store.sceneDatasets().length === 0;
-    head.hidden = layer === undefined;
-    if (layer === undefined) {
-      head.update(undefined);
-      mount(undefined);
-      return;
-    }
-    const views = store.sceneDatasets().find((d) => d.dataset.id === dataset?.id)?.layers ?? [layer.name];
-    head.update({
-      dataset: dataset && { id: dataset.id, name: dataset.name },
-      layer: layer.name,
-      type: kindLabel(layer.type !== "new" ? layer.type : dataset?.kind),
-      error: layer.error,
-      views,
-      source: engine.layerSpec(layer.name)?.source,
-      // The sign-ins the drop-down offers: the rules, the Google accounts and the providers.
-      signIns: [wb.rules.list(), wb.google.accounts().map((a) => a.email), wb.google.defaultAccount(), wb.auth.list().map((p) => p.id)],
-    });
-    mount(layer.name);
-  };
-
-  const offs = [engine.onSelectionChanged(render), engine.onLayersChanged(render), store.onChange(render)];
-  render();
-  return () => {
-    offs.forEach((off) => off());
-    unmount?.();
+  return {
+    element,
+    update,
+    dispose: () => {
+      unmount?.();
+      unmount = undefined;
+      mountedFor = undefined;
+    },
   };
 }

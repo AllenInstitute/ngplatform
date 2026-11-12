@@ -145,7 +145,8 @@ export function readSaved(raw: unknown): Saved {
   const cuts = Array.isArray(s.cuts) && s.cuts.length === 3 ? s.cuts.map((c, i) => ({ ...DEFAULT_CUTS[i], ...c })) : DEFAULT_CUTS.map((c) => ({ ...c }));
   return {
     on: s.on === true,
-    where: s.where === "browser" ? "browser" : "host",
+    // This browser (WebGPU, and the object drawn on this computer's GPU) unless a render computer was chosen in Remote.
+    where: s.where === "host" ? "host" : "browser",
     layer: typeof s.layer === "string" ? s.layer : undefined,
     labels: typeof s.labels === "string" ? s.labels : undefined,
     preset: typeof s.preset === "string" ? s.preset : "",
@@ -1756,7 +1757,7 @@ class AnatomicalRendering {
     ], { class: "row" });
 
     // -------------------------------------------------------------- Remote
-    const where = select([["host", "A computer's GPU (CUDA)"], ["browser", "This browser (WebGPU)"]], saved().where, (v) => {
+    const where = select([["browser", "This browser (WebGPU)"], ["host", "A render computer's GPU (CUDA)"]], saved().where, (v) => {
       this.save((x) => (x.where = v as Saved["where"]));
       this.update();
     }, "Where");

@@ -18,9 +18,9 @@ The app has one theme, a dark one, in Neuroglancer's black and greys with
 square corners; there is no light theme. Its green marks only what is
 selected and what is on.
 
-An empty scene shows a card over the views: the two examples (one click
-each), **Open a file…** and **Paste a link…**; you can also drop files on
-the window.
+An empty scene shows a card over the views: **Open a file…** and **Paste
+a link…**; you can also drop files on the window. The examples are in
+**Open** and in the palette (*Open example*).
 
 Almost everything is also a command: **Commands** (++ctrl+k++) searches them
 all, and **Help → Keyboard and mouse** lists the keys and clicks most used
@@ -127,7 +127,7 @@ take about 0.1 MB rather than 2.3 MB.
 
 | Panel | What it holds |
 |---|---|
-| **Layers** | Above, what the scene shows: one row per dataset with its visibility, load state and where it is (the bucket or host and the file's name; the whole address in its tooltip). A dataset shown through several layers (a tractogram and its track groups, say) lists them beneath it. **+** adds data: a URL, a file or folder on this computer, or a new annotation layer. Datasets that other scenes show are offered in **Open** (and in **Add a dataset**). *Tools for this data* lists up to three plugins that are off but work with this data (the rest under **More…**): click one to turn it on (it opens in the Tools dock), × for "Not now". Pasting a data URL on the window (++ctrl+v++) adds it here; see [Data from a URL](data.md#data-from-a-url). Below, the selected layer's controls (see [Layer controls](#layer-controls)). |
+| **Layers** | What the scene shows: one card per dataset, its row with its visibility, load state and where it is (the bucket or host and the file's name; the whole address in its tooltip). A dataset shown through several layers (a tractogram and its track groups, say) lists them beneath it. **+** adds data: a URL, a file or folder on this computer, or a new annotation layer. Datasets that other scenes show are offered in **Open** (and in **Add a dataset**). *Tools for this data* lists up to three plugins that are off but work with this data (the rest under **More…**): click one to turn it on (it opens in the Tools dock), × for "Not now". Pasting a data URL on the window (++ctrl+v++) adds it here; see [Data from a URL](data.md#data-from-a-url). Selecting a dataset opens its card on its settings (see [Layer controls](#layer-controls)). |
 | **Plugins** | Every plugin, grouped by what it does, with a one-line description, a switch and an *About* guide. Only Zarr Vectors is on by default; a tool turns on at once, and turning one off reloads the page with the same link. **Add** loads a plugin from your computer or a URL. See [Plugins](../plugins/index.md). |
 
 ## 3. The views
@@ -155,16 +155,18 @@ each kept open or closed as you left it.
 
 ## Layer controls
 
-Below the list in the Layers panel, the selected dataset's controls, as
-Neuroglancer's own layer tabs. A header names the dataset and, when it is
-shown through several layers, lets you pick which one. Picking another view
-there (the next channel, say) keeps the tab you are on. A layer opens on
-**Display**. Its sign-in shows only when its data is not public (or did not
-load); otherwise it is in Settings › Sign-in.
+Each dataset in the Layers panel is a card. Selecting a dataset (its row,
+or in the views) opens its card on its settings; the arrow at the left of
+the row opens and closes it, and several cards may be open at once. Its
+settings are its layer's own sections, each opened and closed on its own
+(which are open is kept for every dataset; **Rendering** at first). For a
+dataset shown through several layers, they are those of the view selected
+in its list. Its sign-in shows only when its data is not public (or did
+not load); otherwise it is in Settings › Sign-in.
 
-| Tab | What it holds |
+| Section | What it holds |
 |---|---|
-| **Display** | How it is drawn: resolution, opacity, blending; for images the **Colour map**, then the shader's controls (contrast, with a histogram and Min-Max, 1-99% and 5-95% buttons) above its code; for segmentations the **Lookup table**; for surfaces the **Surface** controls. |
+| **Rendering** | How it is drawn: resolution, opacity, blending; for images the **Colour map**, then the shader's controls (contrast, with a histogram and Min-Max, 1-99% and 5-95% buttons) above its code; for segmentations the **Lookup table**; for surfaces the **Surface** controls. |
 | **Source** | Where the data comes from; under **Details**, its parts (subsources), its **transform** (the matrix that places it in the scene, editable), and an OME-Zarr image's coordinate systems and levels. |
 | **Segments** | For segmentations: search segments by id, label or property, show and hide them, colours. |
 | **Annotations** | The tools that draw points, lines, boxes, ellipsoids and polylines (the one place to draw: the Annotations plugin's **Draw…** opens it), and the list of annotations. |
@@ -172,7 +174,7 @@ load); otherwise it is in Settings › Sign-in.
 
 ### Colour maps
 
-An image layer's **Display → Shader → Colour map** writes the shader for a
+An image layer's **Rendering → Shader → Colour map** writes the shader for a
 colour map, keeping the contrast (the `normalized` range and its histogram):
 grayscale, heat, jet, GE colour, NIH, PET, binary colour, hot, cool, viridis,
 magma, inferno, plasma, cividis, turbo, cubehelix and a diverging red-blue.
@@ -214,7 +216,7 @@ Outlines are drawn by an image layer added just above the segmentation,
 "*name* outlines", which reads the same labels; the segmentation's own 2-D
 opacity is set to 0 meanwhile (its meshes are untouched), and **Filled**
 removes the outline layer and gives the opacity back. The outline layer's
-**Display** tab sets the line width in screen pixels (`outline_width`), the
+**Rendering** section sets the line width in screen pixels (`outline_width`), the
 lines' opacity, and an optional faint fill (`fill_opacity`). It follows the
 segmentation's colours and its shown segments by itself.
 

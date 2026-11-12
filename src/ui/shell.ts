@@ -95,7 +95,7 @@ export class Shell {
   private readonly statusText = h("span", {}, "Starting");
   private readonly statusStrip = h("div", { class: "ng-status", "aria-live": "polite" });
   private readonly sceneTabs = h("div", { class: "scene-tabs", role: "tablist", "aria-label": "Scenes" });
-  /** Over an empty scene's views: the examples, opening a file, pasting a link. */
+  /** Over an empty scene's views: opening a file, pasting a link (the examples are in the Open sheet and the palette). */
   private readonly startCard = h("div", { class: "start-card", hidden: true });
   /** In the Activity dock's head, also while it is collapsed: the running job, else the last message. */
   private readonly activityLine = h("button", { class: "dock-status", type: "button", title: "Show the activity" });
@@ -734,8 +734,6 @@ export class Shell {
     });
     wb.examples.onChange(() => {
       this.registerExampleCommands();
-      this.startCardFor = undefined;
-      this.updateStartCard();
     });
     this.registerExampleCommands();
 
@@ -1079,27 +1077,13 @@ export class Shell {
     }
   }
 
-  /** Which examples the start card was made with (undefined: make it again). */
-  private startCardFor: string | undefined;
-
-  /** The start card: shown over a scene with no layers (not a plugin's kind of scene), made again when the examples change. */
+  /** The start card: shown over a scene with no layers (not a plugin's kind of scene), made once. */
   private updateStartCard(): void {
     const wb = this.wb;
     const scene = activeScene(wb.store.state());
     this.startCard.hidden = wb.engine.layers().length > 0 || scene.kind !== undefined;
-    if (this.startCard.hidden) return;
-    const examples = wb.examples.list().filter((e) => e.listed !== false && !(e.remote && wb.framed));
-    const key = examples.map((e) => e.id).join(",");
-    if (key === this.startCardFor) return;
-    this.startCardFor = key;
+    if (this.startCard.hidden || this.startCard.childElementCount > 0) return;
     this.startCard.replaceChildren(
-      h(
-        "div",
-        { class: "start-examples" },
-        ...examples.map((e) =>
-          h("button", { class: "start-example", type: "button", title: e.description, onclick: () => this.openExample(e.id) }, h("span", { class: "title" }, e.title), h("span", { class: "desc" }, e.description)),
-        ),
-      ),
       h(
         "div",
         { class: "row-actions" },

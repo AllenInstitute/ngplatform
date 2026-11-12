@@ -35,7 +35,7 @@ import {
 import { looksAnatomical, type PanelConvention, panelRotations } from "./anatomical.js";
 import { applyLookupTable, layerLookupSource } from "./lookup_tables.js";
 import { addMomentum } from "./momentum.js";
-import { mountInspector } from "./inspector/index.js";
+import { mountInspector, type SectionsOpen } from "./inspector/index.js";
 import { sizeMemoryLimits } from "./memory.js";
 import { type ChunkSourceStatistics, chunkStatistics, mountViewSettings } from "./view_settings.js";
 import { guardSelectedValues, type SelectedValues } from "./selected_values.js";
@@ -955,10 +955,11 @@ export class Engine {
    * Mounts a layer's settings (Source, Render, Segments, Annotations…,
    * whatever its type offers) into `host`, as the platform's own inspector.
    */
-  mountLayerControls(host: HTMLElement, name: string): Disposer {
+  /** A layer's controls, as sections each opened and closed on its own (`open`: which are). */
+  mountLayerControls(host: HTMLElement, name: string, open: SectionsOpen): Disposer {
     const userLayer = this.managed(name)?.layer;
     if (userLayer == null) return () => {};
-    return mountInspector(host, userLayer);
+    return mountInspector(host, userLayer, open);
   }
 
   // ----------------------------------------------------- segment state

@@ -1,8 +1,8 @@
 /**
  * The core app's own panels on the shared parts: the Layers panel's list
  * (its tick boxes made with checkbox(), drawn again only when what it shows
- * changes, the keyboard kept on the control that had it, and its empty
- * state with an action), the Activity jobs of a runner with nothing to show,
+ * changes, the keyboard kept on the control that had it, its empty state
+ * with an action, and each dataset's card opening on its settings), the Activity jobs of a runner with nothing to show,
  * and a panel that failed, with Retry; against the SDK's stand-in document.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -43,18 +43,28 @@ function fakeWorkbench(datasets: { id: string; name: string; layers: string[] }[
     }),
     setLayerVisible: vi.fn(),
     selectLayer: vi.fn(),
+    ng: () => ({ layers: [] }),
   };
   const off = () => () => {};
+  /** Each layer's settings mounted (in a card), and let go. */
+  const unmount = vi.fn();
   const engine = {
     layers: () => [...layers.values()].map((l) => ({ ...l, type: "image", ready: true, sources: [`https://example.org/${l.name}`] })),
     selectedLayer: () => selected,
     onLayersChanged: off,
     onSelectionChanged: off,
+    layerToken: (name: string) => layers.get(name),
+    layerSpec: () => undefined,
+    mountLayerControls: vi.fn((host: HTMLElement, name: string) => {
+      host.append(Object.assign(document.createElement("div"), { className: "settings", textContent: name }));
+      return unmount;
+    }),
   };
   const localData = { base: "https://app/", parse: () => undefined, list: () => [], restored: false, has: () => false, onChange: off };
   const offers = { list: () => [], onChange: off };
-  const wb = { store, engine, localData, offers, run: vi.fn() } as unknown as Workbench;
-  return { wb, store, changed, layers };
+  const signIns = { rules: { list: () => [] }, google: { accounts: () => [], defaultAccount: () => undefined }, auth: { list: () => [], sourceSignIns: () => [] } };
+  const wb = { store, engine, localData, offers, run: vi.fn(), ...signIns } as unknown as Workbench;
+  return { wb, store, changed, layers, engine, unmount };
 }
 
 describe("Layers panel: the list", () => {
@@ -114,11 +124,11 @@ describe("Layers panel: the list", () => {
     changed();
     expect(inserted).toBe(0);
     expect(rowsOf().every((r, i) => r === before[i])).toBe(true);
-    // Dataset 57 hidden: its row alone is drawn again, in its place.
+    // Dataset 57 hidden: its row alone is drawn again, in its place in its card (the card stays where it is).
     layers.get("layer 57")!.visible = false;
     changed();
     const after = rowsOf();
-    expect(inserted).toBe(1);
+    expect(inserted).toBe(0);
     expect(after.filter((r, i) => r !== before[i])).toEqual([after[57]]);
     expect(dom.find<HTMLInputElement>(after[57], "input").checked).toBe(false);
   });
@@ -151,6 +161,33 @@ describe("Layers panel: the list", () => {
     changed();
     expect(host.querySelector(".empty-state")).toBeNull();
     expect(rowsOf()).toHaveLength(1);
+  });
+
+  it("opens a dataset's card on its settings when it is selected; its arrow closes and opens it, and several may be open", () => {
+    const { wb, changed, engine, unmount } = fakeWorkbench([
+      { id: "a", name: "brain", layers: ["brain"] },
+      { id: "b", name: "tracts", layers: ["tracts"] },
+    ]);
+    const host = dom.host();
+    renderDatasetsPanel(host, wb);
+    const cards = () => host.querySelectorAll(".ds-card");
+    const open = () => [...cards()].filter((c) => c.className.split(" ").includes("open")).flatMap((c) => [...c.querySelectorAll(".settings")].map((e) => e.textContent));
+    expect(open()).toEqual([]);
+    // Selected (a click on its row): its card opens on the layer's settings.
+    host.querySelectorAll<HTMLElement>(".ds-row")[0].click();
+    expect(open()).toEqual(["brain"]);
+    expect(engine.mountLayerControls).toHaveBeenCalledTimes(1);
+    // A change elsewhere: the settings stay as they are, mounted once.
+    changed();
+    expect(engine.mountLayerControls).toHaveBeenCalledTimes(1);
+    // The other's arrow opens it too, without selecting it.
+    dom.find<HTMLElement>(cards()[1], "button.ds-expand").click();
+    expect(open()).toEqual(["brain", "tracts"]);
+    // The first's arrow closes it: its settings let go.
+    dom.find<HTMLElement>(cards()[0], "button.ds-expand").click();
+    expect(open()).toEqual(["tracts"]);
+    expect(unmount).toHaveBeenCalledTimes(1);
+    expect(dom.find<HTMLElement>(cards()[0], "button.ds-expand").getAttribute("aria-expanded")).toBe("false");
   });
 
   it("says when the scene has no data, with the action that adds some", () => {

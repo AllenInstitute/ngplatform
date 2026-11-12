@@ -12,15 +12,17 @@ scatters, so surfaces get soft shadows and depth and translucent tissue
 glows, in the manner of "cinematic rendering". The image is read straight
 from its OME-Zarr store; nothing is converted.
 
-It renders in one of two places:
+It renders in one of two places, chosen in the **Remote** card:
 
+- **In this browser** (the default): on this computer's own GPU, through
+  WebGPU (and WebGL for the object in the 3-D view, so it renders without
+  WebGPU too). It holds a coarser level of the image (64 million voxels by
+  default; **Quality › Object**) and has no region colours.
 - **On a host**: the runner's **render** service, on a computer with an
   NVIDIA GPU (CUDA): this computer, a workstation or a cluster node reached
-  over SSH (see [Jobs on this computer](../guide/local-jobs.md)). Frames come
-  back as they refine; the browser only draws them.
-- **In this browser**: the same path tracer in WebGPU, on this computer's own
-  GPU, for a laptop with a GPU and no host. It holds a coarser level (up to
-  64 million voxels) and has no region colours.
+  over SSH (see [Jobs on this computer](../guide/local-jobs.md)), chosen in
+  **Remote** with its computer. It holds the image at full detail, and
+  renders stills, movies and splats.
 
 ## Starting it
 

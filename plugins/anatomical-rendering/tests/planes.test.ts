@@ -31,6 +31,14 @@ describe("a camera plane", () => {
   });
 });
 
+describe("where it renders", () => {
+  it("is this browser unless a render computer was chosen", () => {
+    expect(readSaved({}).where).toBe("browser");
+    expect(readSaved({ where: "host" }).where).toBe("host");
+    expect(readSaved({ where: "browser" }).where).toBe("browser");
+  });
+});
+
 describe("camera planes saved", () => {
   it("are read back, several of them", () => {
     const planes = [

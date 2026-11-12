@@ -330,6 +330,7 @@ ${COMMON}
 ${TONE}
 uniform highp sampler3D uLight;
 uniform bool uHasLight;
+uniform float uHeldAround;
 uniform mat4 uInvVP;
 uniform mat4 uVP;
 uniform vec4 uViewport;
@@ -384,24 +385,21 @@ void main() {
     vec3 g = grad(v);
     float gm = length(g);
     float edge = 1.0 - exp(-uGradScale * gm);
-    float Tl;
-    vec3 amb;
-    if (uHasLight) {
-      // The light held, half a cell out from a surface (so the tissue beneath it does not shade it).
-      vec4 held = lightAt(v - (gm > 1e-6 ? g / gm : vec3(0.0)) * (0.5 * uCell * edge));
-      Tl = held.a;
-      amb = held.rgb;
-    } else {
-      Tl = clear(w, v, uLightDir, 25.0);
-      // One ray stands for the path tracer's many directions to the surroundings: it shades only in part.
-      amb = albedo * around * (0.35 + 0.65 * clear(w, v, uEnvUp, 13.0));
-    }
+    // The light held, half a cell out from a surface (so the tissue beneath it does not shade it): the
+    // light's share once it has been marched; the surroundings' coming in as paths gather (a few paths a
+    // cell are blotchy), short rays standing in until then.
+    vec4 held = uHasLight ? lightAt(v - (gm > 1e-6 ? g / gm : vec3(0.0)) * (0.5 * uCell * edge)) : vec4(0.0);
+    float Tl = uHasLight ? held.a : clear(w, v, uLightDir, 25.0);
+    // One ray stands for the path tracer's many directions to the surroundings: it shades only in part.
+    vec3 amb = uHeldAround < 1.0 ? albedo * around * (0.35 + 0.65 * clear(w, v, uEnvUp, 13.0)) : vec3(0.0);
+    amb = mix(amb, held.rgb, uHeldAround);
     vec3 col = albedo * (uLightRgb * (hg(dot(dw, uLightDir), uPhaseG) * Tl) + amb);
     if (gm > 1e-6) {
       vec3 n = -normalize(normalFrom * g);
       if (dot(n, dw) > 0.0) n = -n;
       // What is held is the mean over every direction, the tissue's own light among it.
-      vec3 sky = uHasLight ? amb : env(n) * (0.35 + 0.65 * clear(w, v, n, 13.0));
+      vec3 sky = uHeldAround < 1.0 ? env(n) * (0.35 + 0.65 * clear(w, v, n, 13.0)) : vec3(0.0);
+      sky = mix(sky, held.rgb, uHeldAround);
       vec3 surf = brdfCos(n, -dw, uLightDir, albedo) * uLightRgb * Tl + albedo * sky * (1.0 - uSpecular);
       col = mix(col, surf, uShadeMix * edge);
     }
@@ -812,11 +810,13 @@ export class LiveVolume {
       gl.uniform1f(u("uStep"), frame.moving ? 1 : 0.5);
       gl.uniform1f(u("uExposure"), q.exposure);
       gl.uniform2f(u("uBand"), 0, split * (1 - traced));
-      // The light held once it has the light and a path a cell.
+      // The light held: its light once marched (pass 0); its surroundings' coming in over passes 2 to 16.
       gl.activeTexture(gl.TEXTURE4);
       gl.bindTexture(gl.TEXTURE_3D, this.lightRead!);
       gl.uniform1i(u("uLight"), 4);
-      gl.uniform1i(u("uHasLight"), this.canBake && this.held.pass >= 2 ? 1 : 0);
+      const held = this.canBake ? this.held.pass : 0;
+      gl.uniform1i(u("uHasLight"), held >= 1 ? 1 : 0);
+      gl.uniform1f(u("uHeldAround"), Math.min(1, Math.max(0, (held - 2) / 14)));
       gl.bindVertexArray(this.vao!);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }

@@ -90,7 +90,8 @@ export const XYZ: SourceAxes = { names: ["z", "y", "x"], units: ["m", "m", "m"],
 
 export function fakeContext(options: { layers?: LayerInfo[]; axes?: Record<string, SourceAxes>; state?: unknown; settings?: Map<string, unknown>; hosts?: string[] } = {}) {
   let layers = options.layers ?? [];
-  let state: unknown = options.state;
+  // These tests are of rendering on a computer, unless a test says this browser (the plugin's own default).
+  let state: unknown = { where: "host", ...(options.state as object | undefined) };
   const axes = options.axes ?? {};
   const settings = options.settings ?? new Map<string, unknown>();
   const services = new Map((options.hosts ?? ["workstation"]).map((h) => [h, new FakeService(h)]));
