@@ -18,7 +18,7 @@ import { ColourmapEditor, type DataStop, histogramHandles, shifted, type Tuning,
 import { LiveVolume, type LivePreset } from "./live.js";
 import { cameraAxes, LocalRenderer, PRESETS as LOCAL_PRESETS, rowMajor } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
-import { anatomicalSides, type AxisSides, axesCheck, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, metadataBase, omeZarrSource, orientationLooking, safeHref, unitMm, type ViewButton, viewButtons, viewCutPlane, viewForward, viewKey } from "./view.js";
+import { anatomicalSides, type AxisSides, axesCheck, type CameraPlane, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, metadataBase, omeZarrSource, orientationLooking, planeClip, planeFromView, safeHref, unitMm, type ViewButton, viewButtons, viewForward, viewKey } from "./view.js";
 
 /** Where Neuroglancer's 3-D camera was when a keyframe was added: to go back to it. */
 export interface KeyframeCamera {
@@ -79,8 +79,8 @@ export interface Saved {
   lightStyle: string;
   envScale: number;
   lightKey: number;
-  /** A cut facing the camera, `offset` mm past the position, following the view; or `fixed` where it was left (a display plane). */
-  viewCut: { on: boolean; offset: number; fixed: number[] | null };
+  /** Cuts across the view, each fixed where it was set (`CameraPlane`). */
+  planes: CameraPlane[];
   cuts: Cut[];
   regions: boolean;
   labelMix: number;
@@ -117,6 +117,24 @@ const DEFAULT_CUTS: Cut[] = [
   { axis: "y", keep: -1, offset: 0, on: false },
   { axis: "z", keep: -1, offset: 0, on: false },
 ];
+
+/**
+ * The camera planes saved; from a state of before, its one cut facing the camera: fixed where it was
+ * pinned, and one that turned with the camera set from the next frame's view (a zero normal until then).
+ */
+function readPlanes(s: Partial<Saved> & { viewCut?: { on?: boolean; offset?: number; fixed?: number[] | null } }): CameraPlane[] {
+  const vec = (v: unknown): v is [number, number, number] => Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === "number" && Number.isFinite(x));
+  if (Array.isArray(s.planes)) {
+    return s.planes
+      .filter((p) => p && vec(p.normal) && vec(p.point))
+      .map((p, i) => ({ name: String(p.name ?? `Plane ${i + 1}`), on: p.on !== false, normal: p.normal, point: p.point, offset: Number.isFinite(p.offset) ? p.offset : 0 }));
+  }
+  const v = s.viewCut;
+  if (!v?.on) return [];
+  const f = v.fixed;
+  if (Array.isArray(f) && f.length === 4) return [{ name: "Plane 1", on: true, normal: [f[0], f[1], f[2]], point: [-f[3] * f[0], -f[3] * f[1], -f[3] * f[2]], offset: 0 }];
+  return [{ name: "Plane 1", on: true, normal: [0, 0, 0], point: [0, 0, 0], offset: typeof v.offset === "number" ? v.offset : 0 }];
+}
 
 export function readSaved(raw: unknown): Saved {
   const s = (raw ?? {}) as Partial<Saved>;
@@ -157,11 +175,7 @@ export function readSaved(raw: unknown): Saved {
     lightStyle: typeof s.lightStyle === "string" ? s.lightStyle : "",
     envScale: num(s.envScale, 1),
     lightKey: num(s.lightKey, 1),
-    viewCut: {
-      on: s.viewCut?.on === true,
-      offset: num(s.viewCut?.offset, 0),
-      fixed: Array.isArray(s.viewCut?.fixed) && s.viewCut!.fixed.length === 4 ? s.viewCut!.fixed : null,
-    },
+    planes: readPlanes(s),
     cuts,
     regions: s.regions === true,
     labelMix: num(s.labelMix, 0.85),
@@ -1077,8 +1091,8 @@ class AnatomicalRendering {
       environment: s.lightMap ? { map: s.lightMap, rotation: s.lightMapRotation, scale: s.envScale } : { scale: s.envScale },
       clips: [
         ...clipPlanes(s.cuts, frame.position, frame.dimensions),
-        ...(s.viewCut.on ? [s.viewCut.fixed ?? viewCutPlane(frame.invViewProjection, frame.position, s.viewCut.offset, frame.dimensions)] : []),
-      ] as [number, number, number, number][],
+        ...s.planes.filter((p) => p.on && p.normal.some((x) => x !== 0)).map((p) => planeClip(p, frame.dimensions)),
+      ].slice(0, LIMITS.maxClips) as [number, number, number, number][],
       labels: s.regions ? { show: true, mix: s.labelMix, keep: s.keep, hidden: s.hidden } : { show: false },
       background: [0, 0, 0, 0],
       max_samples: s.maxSamples,
@@ -1089,9 +1103,13 @@ class AnatomicalRendering {
 
   private onFrame(frame: Frame3d): void {
     this.lastFrame = frame;
-    const look = JSON.stringify([this.saved.boxes, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.lightStyle, this.saved.envScale, this.saved.lightKey, this.saved.viewCut, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
+    const look = JSON.stringify([this.saved.boxes, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.lightStyle, this.saved.envScale, this.saved.lightKey, this.saved.planes, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
     this.drawer.look = look;
     this.drawer.pictureAtRest = this.saved.restPicture;
+    // A camera plane of before that turned with the view: fixed now, as the view is.
+    if (this.saved.planes.some((p) => p.normal.every((x) => x === 0))) {
+      this.save((x) => (x.planes = x.planes.map((p) => (p.normal.every((v) => v === 0) ? { ...planeFromView(frame.invViewProjection, frame.position, p.name), on: p.on, offset: p.offset } : p))));
+    }
     const local = this.saved.where === "browser" ? this.local : undefined;
     const sid = local ? "local" : this.session?.status === "ready" ? this.session.id : undefined;
     if (sid === undefined || (local && !local.ready)) return;
@@ -1224,6 +1242,30 @@ class AnatomicalRendering {
       orientation: Array.isArray(ng.projectionOrientation) ? (ng.projectionOrientation.slice() as number[]) : [0, 0, 0, 1],
       scale: typeof ng.projectionScale === "number" ? ng.projectionScale : 256,
     };
+  }
+
+  /** A camera plane through the point the cursor was last over (else the view's position), across the view now. */
+  private planeHere(name: string): CameraPlane | undefined {
+    const f = this.lastFrame;
+    if (f === undefined) {
+      this.ctx.ui.toast("Look at the image in the 3-D view first.", "error");
+      return undefined;
+    }
+    return planeFromView(f.invViewProjection, this.lastCursor ?? f.position, name);
+  }
+
+  private addPlane(): void {
+    const names = new Set(this.saved.planes.map((p) => p.name));
+    let k = this.saved.planes.length + 1;
+    while (names.has(`Plane ${k}`)) k++;
+    const p = this.planeHere(`Plane ${k}`);
+    if (p !== undefined && this.saved.planes.length < LIMITS.maxClips) this.save((x) => x.planes.push(p));
+  }
+
+  /** Sets a camera plane again, from the view now. */
+  private setPlaneToView(i: number): void {
+    const p = this.planeHere(this.saved.planes[i].name);
+    if (p !== undefined) this.save((x) => (x.planes[i] = p));
   }
 
   /** A keyframe of the view now (and the look), `at` an index to replace, else added two seconds after the last. */
@@ -1859,22 +1901,36 @@ class AnatomicalRendering {
           const k = names.indexOf(c.axis);
           if (c.on && k >= 0 && k < 3) c.offset = o.axis[k];
         }
-        if (x.viewCut.on) x.viewCut = { ...x.viewCut, offset: o.view, fixed: null };
+        for (const p of x.planes) {
+          if (!p.on || !this.lastCursor) continue;
+          p.point = [this.lastCursor[0], this.lastCursor[1], this.lastCursor[2]];
+          p.offset = 0;
+        }
       });
     });
-    const viewCutOn = checkbox("Camera plane", false, (v) =>
-      this.save((x) => {
-        // Turned on, it starts through the point the cursor was last over.
-        const o = v ? this.cursorOffsets() : undefined;
-        x.viewCut = { ...x.viewCut, on: v, ...(o ? { offset: o.view, fixed: null } : {}) };
-      }), { info: "A clip across the view, keeping what lies beyond it. It turns with the camera; Pin keeps it where it is now (an oblique clip), Follow lets it turn again." });
-    const viewOffset = slider(0, { min: -100, max: 100, step: 0.5, unit: "mm", label: "Camera plane offset", unbounded: true, onchange: (v) => this.save((x) => (x.viewCut = { ...x.viewCut, offset: v, fixed: null })) });
-    const pin = button("Pin", () => {
-      if (this.saved.viewCut.fixed) return this.save((x) => (x.viewCut = { ...x.viewCut, fixed: null }));
-      const f = this.lastFrame;
-      if (!f) return ctx.ui.toast("Render a view first.", "error");
-      this.save((x) => (x.viewCut = { ...x.viewCut, on: true, fixed: viewCutPlane(f.invViewProjection, f.position, x.viewCut.offset, f.dimensions) }));
-    });
+    // Camera planes: each a cut across the view as it was when set, fixed there; set again from the view now.
+    let planeControls: { on: ReturnType<typeof toggle>; name: Settable<HTMLInputElement, string>; offset: Slider }[] = [];
+    const planes = region((count: number) => {
+      planeControls = [];
+      return Array.from({ length: count }, (_, i) => {
+        const p = this.saved.planes[i];
+        const on = toggle(`Plane ${i + 1}`, p.on, (v) => this.save((x) => (x.planes[i].on = v)), { hideLabel: true });
+        const name = el("input", { class: "text-input ar-grow", type: "text", value: p.name, "aria-label": `Name of plane ${i + 1}` }) as Settable<HTMLInputElement, string>;
+        name.onchange = () => this.save((x) => (x.planes[i].name = name.value));
+        name.set = (v) => {
+          if (name.ownerDocument.activeElement !== name && name.value !== v) name.value = v;
+        };
+        const offset = slider(p.offset, { min: -100, max: 100, step: 0.5, unit: "mm", label: `Plane ${i + 1} offset`, unbounded: true, onchange: (v) => this.save((x) => (x.planes[i].offset = v)) });
+        planeControls.push({ on, name, offset });
+        return el("div", { class: "ar-box" },
+          el("div", { class: "row" }, on, name,
+            iconButton("camera", `Set plane ${i + 1} to the view now`, () => this.setPlaneToView(i)),
+            iconButton("trash", `Remove plane ${i + 1}`, () => this.save((x) => x.planes.splice(i, 1)))),
+          field("Offset", offset, { info: "Along the plane's own direction (away from the camera when it was set), from where it was set." }));
+      });
+    }, { class: "stack" });
+    const addPlane = button("Add a camera plane", () => this.addPlane());
+    const clipNote = el("p", { class: "hint" }, `At most ${LIMITS.maxClips} cuts apply at once (camera planes and axis planes that are on): the first ones.`);
     const cutControls = saved().cuts.map((c, i) => {
       const on = checkbox(`Across ${c.axis}`, c.on, (v) =>
         this.save((x) => {
@@ -1914,10 +1970,12 @@ class AnatomicalRendering {
       if (this.saved.boxes.length >= LIMITS.maxBoxes) return;
       this.save((x) => x.boxes.push({ name: `Box ${x.boxes.length + 1}`, on: true, keep: true, lo: [0, 0, 0], hi: [1, 1, 1] }));
     });
-    const crops = card("anatomical.crops", "Crops", { info: `Clips and boxes. A clip turned on starts through the point the cursor was last over in the 3-D view; Move to the cursor moves the clips that are on there. Boxes (up to ${LIMITS.maxBoxes}) are fractions of the volume along x, y and z; what shows is inside any box that keeps and in none that cuts out.` },
+    const crops = card("anatomical.crops", "Crops", { info: `Camera planes, axis planes and boxes. A camera plane is a cut across the view as it is when the plane is added, through the point the cursor was last over in the 3-D view, keeping what lies beyond; it stays fixed as the camera moves, and the camera button sets it again from the view then. An axis plane turned on starts through the point the cursor was last over; Move to the cursor moves the planes that are on there. Boxes (up to ${LIMITS.maxBoxes}) are fractions of the volume along x, y and z; what shows is inside any box that keeps and in none that cuts out.` },
       el("div", { class: "row" }, toCursor),
-      viewCutOn,
-      el("div", { class: "row" }, el("div", { class: "ar-grow" }, viewOffset), pin),
+      el("h4", { class: "section-title" }, "Camera planes"),
+      planes,
+      el("div", { class: "row" }, addPlane),
+      clipNote,
       el("h4", { class: "section-title" }, "Axis planes"),
       ...cutControls.map((c) => c.row),
       el("h4", { class: "section-title" }, "Boxes"),
@@ -2155,9 +2213,15 @@ class AnatomicalRendering {
 
       // Crops.
       crops.hidden = imgs.length === 0;
-      viewCutOn.set(s.viewCut.on);
-      viewOffset.set(s.viewCut.offset);
-      pin.textContent = s.viewCut.fixed ? "Follow" : "Pin";
+      planes.update(s.planes.length);
+      planeControls.forEach((c, i) => {
+        const p = s.planes[i];
+        c.on.set(p.on);
+        c.name.set(p.name);
+        c.offset.set(p.offset);
+      });
+      addPlane.disabled = s.planes.length >= LIMITS.maxClips;
+      clipNote.hidden = s.planes.filter((p) => p.on).length + s.cuts.filter((c) => c.on).length <= LIMITS.maxClips;
       cutControls.forEach((c, i) => {
         c.on.set(s.cuts[i].on);
         c.side.set(String(s.cuts[i].keep));

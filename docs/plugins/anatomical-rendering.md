@@ -132,12 +132,14 @@ takes images with one of each only.
   its inside or cutting it out (fractions of the volume along x, y and z,
   sliders): what shows is inside any crop that keeps and in none that cuts
   out (in this browser's renderer, only the first that keeps).
-- **Camera plane** (Crops): a clip across the view, an offset in mm past the
-  position, keeping what lies beyond it; it turns with the camera, or
-  **Pin** keeps it at the angle it has now (an oblique clip), and
-  **Follow** lets it turn again. A clip turned on starts through the
-  point the cursor was last over in the 3-D view (on the rendered tissue),
-  and **Move to the cursor** moves the clips that are on there.
+- **Camera planes** (Crops): **Add a camera plane** cuts across the view as
+  it is now, through the point the cursor was last over in the 3-D view (on
+  the rendered tissue), keeping what lies beyond it. The plane stays where
+  it was set as the camera moves; its camera button sets it again from the
+  view then. There can be several, each named, on or off, with an offset in
+  mm along its own direction, and removed with its bin. **Move to the
+  cursor** moves the planes (and axis planes) that are on to that point. At
+  most six cuts apply at once (camera planes and axis planes that are on).
 - **Axis planes** (Crops): clips through the current position across x, y or z, keeping
   either side, with an offset in mm (a slider or a number). Regions listed under **Kept whole** (Regions)
   stay whole (vessels through a cut brain, say).

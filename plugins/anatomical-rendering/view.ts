@@ -85,6 +85,31 @@ export function viewCutPlane(inv: ArrayLike<number>, position: ArrayLike<number>
   return [f[0], f[1], f[2], -(f[0] * p[0] + f[1] * p[1] + f[2] * p[2])];
 }
 
+/**
+ * A camera plane: a cut across the view as it was when the plane was set, fixed there since (it does
+ * not turn with the camera). It passes through `point` (display coordinates), moved `offset` mm along
+ * `normal` (the camera's forward direction then), and keeps what lies beyond it.
+ */
+export interface CameraPlane {
+  name: string;
+  on: boolean;
+  normal: [number, number, number];
+  point: [number, number, number];
+  offset: number;
+}
+
+/** A camera plane set from the view now (inverse view-projection, column-major), through `through` (display coordinates). */
+export function planeFromView(inv: ArrayLike<number>, through: ArrayLike<number>, name: string): CameraPlane {
+  return { name, on: true, normal: viewForward(inv), point: [through[0], through[1], through[2]], offset: 0 };
+}
+
+/** A camera plane as the clip the renderers take: [n, d], keeping n·x + d >= 0. */
+export function planeClip(p: CameraPlane, d: Dimensions): [number, number, number, number] {
+  const n = p.normal, u = p.offset / unitMm(d);
+  const q = [p.point[0] + n[0] * u, p.point[1] + n[1] * u, p.point[2] + n[2] * u];
+  return [n[0], n[1], n[2], -(n[0] * q[0] + n[1] * q[1] + n[2] * q[2])];
+}
+
 /** Lighting styles: the light map and how strong it is, and the key light's strength. */
 export const LIGHTING: Record<string, { name: string; map: string; envScale: number; key: number }> = {
   studio: { name: "Studio", map: "photo-studio", envScale: 1.0, key: 1.0 },
