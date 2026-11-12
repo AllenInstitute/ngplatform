@@ -151,6 +151,8 @@ The production polish: the work of an audit of every panel and plugin
   The selected layer's controls no longer sit under the list.
 - The Tools dock shows its tools as tabs (kept together by kind), in
   place of the menu that picked one.
+- On/off switches are round again (a round knob in a round track); the
+  other controls stay square.
 - A new or empty scene's card offers Open a file and Paste a link; the
   examples are in Open and the palette.
 
