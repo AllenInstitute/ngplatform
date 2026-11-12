@@ -15,7 +15,7 @@ import { dropJob, finished, type JobKind, type JobRecord, jobProgress, jobText, 
 import { clampInt, evenSide, LIMITS, movieSettings, retryDelay, stillProblem, windowStep } from "./limits.js";
 import { parsePly, parseSplat, showSplats, type SplatCamera } from "./splatview.js";
 import { ColourmapEditor, type DataStop, histogramHandles, shifted, type Tuning, type WarpPoint, warpInverse } from "./editor.js";
-import { LiveVolume, type LivePreset } from "./live.js";
+import { LIVE_VOXELS, LiveVolume, type LivePreset } from "./live.js";
 import { cameraAxes, LocalRenderer, PRESETS as LOCAL_PRESETS, rowMajor } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
 import { anatomicalSides, type AxisSides, axesCheck, type CameraPlane, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, metadataBase, omeZarrSource, orientationLooking, planeClip, planeFromView, safeHref, unitMm, type ViewButton, viewButtons, viewForward, viewKey } from "./view.js";
@@ -96,6 +96,8 @@ export interface Saved {
   maxSamples: number;
   /** Smooth the first frames after the view changes (the host's denoiser). */
   denoise: boolean;
+  /** The voxels of the image this browser holds and draws as the object (the finest level within them). */
+  objectVoxels: number;
   /** Show the path-traced picture of the view when the camera rests, over the object (else the object alone; the host renders stills, movies and splats). */
   restPicture: boolean;
   keyframes: Keyframe[];
@@ -188,6 +190,7 @@ export function readSaved(raw: unknown): Saved {
     maxSamples: num(s.maxSamples, 512),
     denoise: s.denoise !== false,
     restPicture: s.restPicture === true,
+    objectVoxels: num(s.objectVoxels, LIVE_VOXELS),
     keyframes: Array.isArray(s.keyframes) ? s.keyframes.filter((k) => k && typeof k.time === "number" && k.view && typeof k.view === "object") : [],
     boxes: Array.isArray(s.boxes)
       ? s.boxes.filter((b) => b && Array.isArray(b.lo) && Array.isArray(b.hi)).map((b, i) => ({ name: String(b.name ?? `Crop ${i + 1}`), on: b.on !== false, keep: b.keep !== false, lo: b.lo, hi: b.hi }))
@@ -653,7 +656,7 @@ class AnatomicalRendering {
       this.closeLocal();
       void this.ensureSession(target);
       // The live image reads the image in this browser too: one it could render here (one channel and time point).
-      if (axesCheck(this.ctx.viewer.layerTransform?.(target.name)?.input, true).problem === undefined) void this.live.open(omeZarrSource(target.sources[0])!);
+      if (axesCheck(this.ctx.viewer.layerTransform?.(target.name)?.input, true).problem === undefined) void this.live.open(omeZarrSource(target.sources[0])!, this.saved.objectVoxels);
       else this.live.close();
     }
     this.handle?.redraw();
@@ -881,7 +884,7 @@ class AnatomicalRendering {
 
   private async ensureLocal(target: LayerInfo): Promise<void> {
     const url = omeZarrSource(target.sources[0])!;
-    const key = JSON.stringify([url, this.saved.budget]);
+    const key = JSON.stringify([url, this.saved.objectVoxels]);
     if (key === this.localKey) return;
     this.closeLocal();
     this.localKey = key;
@@ -897,7 +900,7 @@ class AnatomicalRendering {
     try {
       this.localText = "Loading in this browser…";
       this.statusUpdate?.();
-      this.localText = await r.load(url, Math.min(this.saved.budget, 64e6), (msg) => {
+      this.localText = await r.load(url, this.saved.objectVoxels, (msg) => {
         this.localText = msg;
         this.statusUpdate?.();
       });
@@ -908,7 +911,7 @@ class AnatomicalRendering {
       this.localText = "";
       this.problem = `This browser cannot render it: ${(e as Error).message}`;
       // The object needs no WebGPU: it reads the image itself.
-      void this.live.open(url);
+      void this.live.open(url, this.saved.objectVoxels);
     }
     this.statusUpdate?.();
   }
@@ -1851,6 +1854,10 @@ class AnatomicalRendering {
     } });
     const detailField = field("Detail", detailBudget, { info: "The voxels the finer region may hold." });
     const denoise = checkbox("Denoise", true, (v) => this.save((x) => (x.denoise = v)), { info: "Smooths the first frames after the view changes (the computer's denoiser)." });
+    const objectVoxels = slider(64, { min: 8, max: 512, step: 8, unit: "M voxels", label: "Object", onchange: (v) => {
+      this.save((x) => (x.objectVoxels = Math.max(1, v) * 1e6));
+      this.update();
+    } });
     const restPicture = checkbox("Path-traced picture when still", false, (v) => {
       this.lastKey = "";
       this.save((x) => (x.restPicture = v));
@@ -1862,6 +1869,7 @@ class AnatomicalRendering {
       detail,
       detailField,
       denoise,
+      field("Object", objectVoxels, { info: "The voxels of the image this browser holds and draws as the object in the 3-D view: the finest level within this. More is sharper, and takes longer to read and more of this computer's GPU memory." }),
       restPicture,
       field("Samples per pixel", samples, { info: "Where a still view stops refining." }),
       frameReadout,
@@ -2197,6 +2205,7 @@ class AnatomicalRendering {
       detailBudget.set(s.detailBudget / 1e6);
       denoise.set(s.denoise);
       restPicture.set(s.restPicture);
+      objectVoxels.set(s.objectVoxels / 1e6);
       samples.set(s.maxSamples);
 
       // Lighting.

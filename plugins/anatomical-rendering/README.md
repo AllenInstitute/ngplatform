@@ -72,8 +72,8 @@ with a CUDA GPU, the renderer and the service).
 ## The object in the 3-D view
 
 The image is an object in the 3-D view (`live.ts`): one level of it, at
-most 32 M voxels (on a computer's session, read in this browser too; in
-this browser, the path tracer's own), is a 3-D texture ray-marched in
+most **Object** voxels (Quality; 64 M by default; on a computer's session,
+read in this browser too; in this browser, the path tracer's own), is a 3-D texture ray-marched in
 Neuroglancer's pass with each frame's own camera, so it turns, pans and
 zooms with the view and is hidden behind, or hides, the other layers by
 its depth. Its colours and opacities are the preset's at the image's data
@@ -89,6 +89,16 @@ stays fixed to the object as the camera goes round it; changing the
 light, the preset or a cut path-traces it again. Until the first two
 passes are done, short rays toward the light and along the normal stand
 in. The Quality card says how far it has got ("light 12 of 47 passes").
+
+Once the camera has been still for 150 ms, the object is path-traced
+where it is, in the same pass and with the same camera, as the path
+tracer does (`TRACE_FS`: the same light, surface and volume scattering,
+up to four bounces, roulette), a sample a pixel each pass into float
+textures, every second row (up to every eighth while frames are slow) a
+frame; the samples take the object's pixels from 4 samples on and all of
+them by 32, and go on to the view's samples per pixel (at most 1024). It
+starts again when the camera, the light or the look changes. The
+readout says how far ("path-traced, 24 samples").
 
 The view shows the object alone, and the host renders only stills,
 movies and splats, lit as the object is (the light fixed in the world).

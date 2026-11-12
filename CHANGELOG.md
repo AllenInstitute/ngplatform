@@ -125,6 +125,13 @@ The production polish: the work of an audit of every panel and plugin
   the host's stills and movies are lit the same way.
 - Quality › "Path-traced picture when still" (off by default) shows the
   host's full-detail picture of the view when the camera rests.
+- At rest, the object is path-traced where it is, in this browser, as the
+  render computer path-traces (it starts speckled and clears within a second
+  or two), and is drawn quickly again as soon as the camera moves.
+- Quality › Object: how much of the image the object holds (64 million
+  voxels by default, up to 512).
+- Camera planes (Crops) stay where they are set, several of them, each set
+  again from the view by its camera button.
 
 ## 0.2.0 — 2026-10-31
 

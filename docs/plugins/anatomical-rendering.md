@@ -172,11 +172,19 @@ takes images with one of each only.
 - **The image in the 3-D view** is an object in the view's space, drawn
   in this browser with every frame's camera: it turns, pans and zooms with
   the view at once, and meshes, tracts and sections go behind and in front
-  of it as they should. It is one level of the image (up to 32 million
-  voxels), with its light path-traced into it in this browser over a few
-  seconds after the light, preset or cuts change (**Quality** says how far:
-  "light 12 of 47 passes"); until then it is lit more simply. Turning the
-  view does not light it again: the light is the object's.
+  of it as they should. It is one level of the image (**Object**, below),
+  with its light path-traced into it in this browser over a few seconds
+  after the light, preset or cuts change (**Quality** says how far: "light
+  12 of 47 passes"); until then it is lit more simply. Turning the view
+  does not light it again: the light is the object's. When the camera
+  rests, the object is path-traced where it is, as the render computer
+  does, a sample a pixel at a time ("path-traced, 24 samples"): it sharpens
+  into the path tracer's look within a second or two, up to **Samples per
+  pixel**, and is drawn quickly again as soon as the camera moves.
+- **Object** (Quality; 64 million voxels by default, up to 512): how much
+  of the image this browser holds for the object, the finest level within
+  it. More is sharper, and takes longer to read and more of this
+  computer's GPU memory.
 - **Path-traced picture when still** (Quality; off by default): once the
   camera rests, the host's path-traced picture of the view, at the image's
   full detail, comes in over the object, and goes as soon as the camera
