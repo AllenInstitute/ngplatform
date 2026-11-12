@@ -27,6 +27,7 @@ import { type AnnotationJson, regionVoxels, shapeOf } from "./region.js";
 import { COLOURS, coordinateOf, formatTime, freeColour, indexAt, nextIndex, percentChange, percentChangeSpread, RATES, seriesCsv, stepIndex, type TimeAxis, timeAxis, timeOf, timesOf, voxelAt, voxelLabel } from "./series.js";
 import { LayerMap, type Place, placeOf } from "./space.js";
 import { nearestOf, type Parcellation, parcelAt, parcelCourseOf, parcelLabel, parcellationsOf, storePoint, type SurfaceSeries, surfaceAxis, surfaceSeriesOf, vertexLabel, vertexReach, zarrVectorsStore } from "./surface.js";
+import { gcsReadable } from "@ngplatform/sdk/sources";
 
 const STYLE = `
 .dock-pane.ts-host { padding: 0; height: 100%; }
@@ -337,7 +338,7 @@ export class TimeSeries {
   /** A surface store's time series, from its header; the candidates again once read. */
   private readSurfaceHeader(store: string): void {
     this.surfaceHeaders.set(store, "reading");
-    fetch(`${store}headers/surface/zarr.json`)
+    fetch(gcsReadable(`${store}headers/surface/zarr.json`))
       .then((r) => (r.ok ? r.json() : undefined))
       .then(
         (json) => this.surfaceHeaders.set(store, surfaceSeriesOf(json)),

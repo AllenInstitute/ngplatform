@@ -86,17 +86,20 @@ takes images with one of each only.
   percentiles do not suit them. The host guesses the window: from just past
   the medium (seen in a ring inside the scan's sides), on the side of it
   where the tissue is, with the tissue's commonest value at the window's
-  middle. Change the two values if the guess misses; **Guess** goes back to
-  it. Each organ preset also records its tissue's histogram on the scan it
+  middle (in this browser, guessed the same way from the level it holds).
+  Change the two values if the guess misses; **Guess** goes back to it. Each organ preset also records its tissue's histogram on the scan it
   was made on (its percentiles), and on another scan its colours are placed
   at the same percentiles of that scan's tissue (histogram matching): HiP-CT
   values are not calibrated and vary between scans, but an organ's
   histogram keeps its shape (a brain's two peaks, grey and white matter).
   A window set by hand is used as it is. **Hide the jar** renders only a cylinder about the scan's axis, which
   leaves out the jar's wall (as dense as tissue).
-- **Colourmap** (on a host, once the image is open): the image's histogram (grey,
+- **Colourmap** (once the image is open; when rendering in this browser,
+  from the level of the image it holds): the image's histogram (grey,
   log counts) with the preset's colourmap and opacity curve over it, at
-  the image's own values. Drag a control point left or right to move it
+  the image's own values. Use it to window and threshold what is rendered:
+  points with no opacity leave those values out, and the map's colours
+  spread over the values between its points. Drag a control point left or right to move it
   (the stops between its neighbours follow) and up or down to change its
   opacity; double-click it to choose its colour; Ctrl-click to add a point,
   right-click to remove one. **Shift** moves the whole map along the

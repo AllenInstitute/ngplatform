@@ -22,6 +22,7 @@ import {
   saveOfferPrefs,
 } from "../platform/plugin_offers.js";
 import type { Json } from "../core/workspace.js";
+import { gcsReadable } from "../sdk/sources.js";
 import { offer } from "./overlays.js";
 import type { Workbench } from "./workbench.js";
 
@@ -134,7 +135,7 @@ export class PluginOffers {
       json: (url) => {
         let p = this.json.get(url);
         if (p === undefined) {
-          p = fetch(url)
+          p = fetch(gcsReadable(url))
             .then((r) => (r.ok ? r.json() : undefined))
             .catch(() => undefined);
           this.json.set(url, p);

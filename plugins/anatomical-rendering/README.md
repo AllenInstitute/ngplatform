@@ -18,7 +18,7 @@ page with WebGPU (`local/`). The user page is
 | `view.ts` | Pure functions of a frame: physical mm to display coordinates, cut planes, the light's direction, a layer's OME-Zarr source; the view buttons from the image's anatomical orientation (else by axis); what the image's axes allow; links from the host checked |
 | `draw.ts` | The frame in the 3-D view (`draw3d`): colour, and depth where each ray first meets tissue, so other layers are hidden behind it; the live image in its place for any other camera or look |
 | `live.ts` | The image as an object in the 3-D view: one level ray-marched in the view's own pass with each frame's camera, lit from a 3-D texture of light path-traced into it a few layers a frame |
-| `editor.ts` | The colourmap editor: stops over the image's histogram, shift, compression and the histogram's warp |
+| `editor.ts` | The colourmap editor: stops over the image's histogram, shift, compression and the histogram's warp; in this browser the histogram and the preset at the image's values come from the level held (`levelHistogram`, `levelResolved` in `local/local.ts`) |
 | `splatview.ts` | Gaussian splats (`.splat`, `.ply`) read and drawn with WebGL 2 in one of the platform's sheets |
 | `local/pathtrace.wgsl` | The path tracer in WGSL: the same method and parameters as the CUDA kernels |
 | `local/local.ts` | WebGPU in the page: one level of the image (through the volume view's reader), brick bounds (worked out a slab at a time, so the page goes on answering), presets, the progressive loop |

@@ -7,6 +7,7 @@
  */
 import presetsJson from "../../../runner/ngplatform_render/presets/brain.json";
 import params from "../../../runner/ngplatform_render/params.json";
+import { storeHttpUrl } from "../../volume-view/sources.js";
 import { VolumeClient } from "../../volume-view/volume_client.js";
 import type { ViewSpec } from "../client.js";
 import shaderSource from "./pathtrace.wgsl?raw";
@@ -195,6 +196,50 @@ export function transferTable(p: LocalPreset, pct: Map<number, number>, window?:
   return out;
 }
 
+/** A preset with the view's overrides: a "window" one may carry its window (data values); a "data" one's stops are at data values. */
+export type LevelPreset = LocalPreset & { window?: [number, number] | null };
+
+/**
+ * The preset's colours and opacities at TF_SIZE values of the level (0..1
+ * for 0..255): stops at data values (a preset as the host resolves it, or
+ * as tuned) through the reader's window; a "window" preset through its
+ * window at data values, else the window guessed here; percentiles of the
+ * tissue here.
+ */
+export function levelTable(preset: LevelPreset, level: Pick<Level8, "range" | "pct" | "window">): Float32Array {
+  const [lo, hi] = level.range;
+  const to8 = (v: number) => ((v - lo) / (hi - lo || 1)) * 255;
+  if (preset.domain === "data") return transferTable({ ...preset, stops: preset.stops.map((s) => ({ ...s, value: to8(s.value) })) }, level.pct);
+  const w = preset.domain === "window" && preset.window ? ([to8(preset.window[0]), to8(preset.window[1])] as [number, number]) : level.window;
+  return transferTable(preset, level.pct, w);
+}
+
+/**
+ * The preset with its stops at the image's data values ("data" domain), as
+ * the host's `presets.resolved` places them, from the level held here: what
+ * the colourmap editor shows and moves.
+ */
+export function levelResolved(preset: LevelPreset, level: Pick<Level8, "range" | "pct" | "window">): LevelPreset {
+  const [lo, hi] = level.range;
+  const from8 = (v: number) => lo + (v / 255) * (hi - lo);
+  const keys = [...level.pct.keys()].sort((a, b) => a - b);
+  const guess = level.window ?? [0, 255];
+  const at = (v: number): number => {
+    if (preset.domain === "percentile") return from8(interp(v, keys, keys.map((k) => level.pct.get(k)!)));
+    if (preset.domain === "window") return preset.window ? preset.window[0] + v * (preset.window[1] - preset.window[0]) : from8(guess[0] + v * (guess[1] - guess[0]));
+    return v;
+  };
+  return { ...preset, domain: "data", window: null, stops: preset.stops.map((s) => ({ ...s, value: at(s.value) })) };
+}
+
+/** The level's values in 256 bins over its data range (`range`), every 2nd voxel, as the host's histogram for the editor. */
+export function levelHistogram(level: Pick<Level8, "data" | "size" | "range">): { lo: number; hi: number; counts: number[] } {
+  const counts = new Array<number>(256).fill(0);
+  const [nx, ny, nz] = level.size;
+  for (let z = 0; z < nz; z += 2) for (let y = 0; y < ny; y += 2) for (let x = 0, i = (z * ny + y) * nx; x < nx; x += 2, i += 2) counts[level.data[i]]++;
+  return { lo: level.range[0], hi: level.range[1], counts };
+}
+
 // ------------------------------------------------------------------ 4x4 (row-major) helpers
 type M = number[];
 export const mul = (a: M, b: M): M => {
@@ -270,9 +315,14 @@ export interface Level8 {
   path: string;
 }
 
-/** The finest level of the image within `budget` voxels and `maxDim` a side (else the coarsest), read at 8 bits. */
+/**
+ * The finest level of the image within `budget` voxels and `maxDim` a side (else the coarsest), read at 8 bits.
+ * `url` is the store as the host takes it (gs:// and s3:// kept): read here at its http(s) address.
+ */
 export async function readLevel(client: VolumeClient, url: string, budget: number, maxDim: number, progress?: (msg: string) => void): Promise<Level8> {
-  const { levels, window: range } = await client.open([url.endsWith("/") ? url : `${url}/`], undefined);
+  const http = storeHttpUrl(url.endsWith("/") ? url : `${url}/`);
+  if (http === undefined) throw new Error(`${url}: this browser reads stores over http(s), gs:// and s3:// only`);
+  const { levels, window: range } = await client.open([http], undefined);
   const fits = levels.filter((l) => l.size[0] * l.size[1] * l.size[2] <= budget && Math.max(...l.size) <= maxDim);
   const levelIndex = fits.length ? levels.indexOf(fits[0]) : levels.length - 1;
   const level = levels[levelIndex];
@@ -579,7 +629,7 @@ export class LocalRenderer {
           this.resize(W, H);
           const { P, preset } = this.pack(v, W, H);
           device.queue.writeBuffer(this.params!, 0, P);
-          device.queue.writeBuffer(this.tf!, 0, transferTable(preset, this.pct, this.window));
+          device.queue.writeBuffer(this.tf!, 0, levelTable(preset, this.level!));
           device.queue.writeBuffer(this.uni!, 0, new Uint32Array([W, H, 0, 0]));
           const enc = device.createCommandEncoder();
           enc.clearBuffer(this.accum!);

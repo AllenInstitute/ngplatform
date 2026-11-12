@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ViewSpec } from "../client.js";
 import { FADE_MS, PictureDrawer } from "../draw.js";
 import { LIGHT_SIDE, lightGrid, liveParams, type LivePreset, liveTable, occupancy } from "../live.js";
-import { TF_SIZE } from "../local/local.js";
+import { levelHistogram, levelResolved, levelTable, TF_SIZE } from "../local/local.js";
 import { frame3d } from "./fake_context.js";
 
 const preset = (over: Partial<LivePreset>): LivePreset => ({ name: "p", domain: "data", density: 40, stops: [], ...over });
@@ -32,6 +32,38 @@ describe("the live image's colours", () => {
     const mid = 4 * Math.round(0.25 * (TF_SIZE - 1)) + 3;
     expect(own[mid]).toBeCloseTo(0.5, 2);
     expect(guessed[mid]).toBeCloseTo(0.25, 2);
+  });
+});
+
+describe("the colourmap at this image's values, in this browser", () => {
+  // 16-bit values 1000..3000 read as 0..255; the tissue's percentiles at 8-bit values.
+  const level = { range: [1000, 3000] as [number, number], pct: new Map([[0, 51], [50, 102], [100, 204]]), window: [51, 153] as [number, number] };
+  const stops = [{ value: 0, color: [0, 0, 0], opacity: 0 }, { value: 1, color: [1, 1, 1], opacity: 1 }];
+
+  it("places a preset's stops at data values, as the host does", () => {
+    const pct = levelResolved(preset({ domain: "percentile", stops: [{ value: 50, color: [1, 1, 1], opacity: 1 }] }), level);
+    expect(pct.domain).toBe("data");
+    expect(pct.stops[0].value).toBeCloseTo(1000 + (102 / 255) * 2000, 6);
+    // A window preset: through the window guessed here (8-bit), or its own (data values).
+    expect(levelResolved(preset({ domain: "window", stops }), level).stops.map((s) => s.value)).toEqual([1400, 2200]);
+    expect(levelResolved(preset({ domain: "window", stops, window: [1500, 2500] }), level).stops.map((s) => s.value)).toEqual([1500, 2500]);
+  });
+
+  it("draws the same table placed as unplaced", () => {
+    const p = preset({ domain: "window", stops });
+    const a = levelTable(p, level), b = levelTable(levelResolved(p, level), level);
+    for (let i = 0; i < a.length; ++i) expect(b[i]).toBeCloseTo(a[i], 4);
+  });
+
+  it("counts the level's values over its data range, every second voxel", () => {
+    const data = new Uint8Array(4 * 4 * 4).fill(7);
+    data[0] = 200;
+    const h = levelHistogram({ data, size: [4, 4, 4], range: [1000, 3000] });
+    expect(h.lo).toBe(1000);
+    expect(h.hi).toBe(3000);
+    expect(h.counts[200]).toBe(1);
+    expect(h.counts[7]).toBe(7);
+    expect(h.counts.reduce((x, y) => x + y, 0)).toBe(8);
   });
 });
 

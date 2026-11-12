@@ -9,6 +9,7 @@
  */
 import type { Disposer, Frame3d, JobControl, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { button, card, checkbox, downloadBlob, el, emptyState, field, iconButton, info, numberInput, region, select, type Settable, type Slider, slider, statusLine, toggle } from "@ngplatform/sdk/dom";
+import { gcsReadable } from "@ngplatform/sdk/sources";
 import { type Distance, hostLink, type Link, type MovieInfo, type PresetInfo, refusal, RenderService, ServiceError, type ServiceInfo, serviceText, type SessionInfo, type ViewSpec, type VolumeMeta } from "./client.js";
 import { invert4, PictureDrawer } from "./draw.js";
 import { dropJob, finished, type JobKind, type JobRecord, jobProgress, jobText, putJob, readJobs } from "./jobs.js";
@@ -16,7 +17,7 @@ import { clampInt, evenSide, LIMITS, movieSettings, retryDelay, stillProblem, wi
 import { parsePly, parseSplat, showSplats, type SplatCamera } from "./splatview.js";
 import { ColourmapEditor, type DataStop, histogramHandles, shifted, type Tuning, type WarpPoint, warpInverse } from "./editor.js";
 import { LIVE_VOXELS, LiveVolume, type LivePreset } from "./live.js";
-import { cameraAxes, LocalRenderer, PRESETS as LOCAL_PRESETS, rowMajor } from "./local/local.js";
+import { cameraAxes, type Level8, type LevelPreset, levelHistogram, levelResolved, LocalRenderer, PRESETS as LOCAL_PRESETS, rowMajor } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
 import { anatomicalSides, type AxisSides, axesCheck, type CameraPlane, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, metadataBase, omeZarrSource, orientationLooking, planeClip, planeFromView, safeHref, unitMm, type ViewButton, viewButtons, viewForward, viewKey } from "./view.js";
 
@@ -371,6 +372,7 @@ class AnatomicalRendering {
   /** The image as an object in the 3-D view, drawn with each frame's camera. */
   private readonly live = new LiveVolume();
   private fixedLight: { key: string; direction: [number, number, number] } | undefined;
+  private levelShown: Level8 | undefined;
   private lastCursor: number[] | undefined;
 
   /** Offsets (mm from the position) that put the cuts through the last point the cursor was over; undefined when there is none. */
@@ -404,6 +406,12 @@ class AnatomicalRendering {
     this.live.onChange = () => {
       this.handle?.redraw();
       this.statusUpdate?.();
+      // A level read (or let go): the colourmap editor can show its histogram.
+      const level = this.live.heldLevel;
+      if (level !== this.levelShown) {
+        this.levelShown = level;
+        this.panelUpdate?.();
+      }
     };
     this.live.onRedraw = () => this.handle?.redraw();
     this.toggle = ctx.ui.viewToggle({ label: "Render", title: "Path-traced rendering (Anatomical rendering)", value: this.saved.on, onChange: (v) => this.setOn(v) });
@@ -538,7 +546,7 @@ class AnatomicalRendering {
     if (base === undefined || typeof fetch !== "function") return;
     for (const [file, attrs] of [["zarr.json", (j: { attributes?: unknown }) => j.attributes], [".zattrs", (j: unknown) => j]] as const) {
       try {
-        const r = await fetch(`${base}/${file}`, { signal: AbortSignal.timeout(8000) });
+        const r = await fetch(gcsReadable(`${base}/${file}`), { signal: AbortSignal.timeout(8000) });
         if (!r.ok) continue;
         const sides = anatomicalSides(attrs(await r.json()));
         if (sides === undefined) return;
@@ -679,23 +687,41 @@ class AnatomicalRendering {
     return refs.map((r) => ({ title: (r.title ?? "a photograph").replace(/^File:/, ""), page: safeHref(r.page), author: r.author ?? "unknown", licence: r.licence ?? "" }));
   }
 
-  /** The chosen preset at this image's data values, as the host resolves it (its window, histogram matching): what the editor shows. */
+  /**
+   * The chosen preset at this image's data values (its window, percentiles or histogram matching placed):
+   * what the editor shows. On a computer, as the host resolves it; in this browser, from the level held here.
+   */
   private resolved: { key: string; preset: Record<string, unknown> } | undefined;
   private editor: ColourmapEditor | undefined;
+  /** The histogram of the level held in this browser, for the editor. */
+  private levelHist: { level: Level8; hist: { lo: number; hi: number; counts: number[] } } | undefined;
 
   private presetRequest(): { key: string; preset: string | Record<string, unknown>; overrides: Record<string, unknown> } | undefined {
     const s = this.saved;
     const src = this.target() ? omeZarrSource(this.target()!.sources[0]) : undefined;
-    if (this.session?.status !== "ready" || src === undefined) return undefined;
+    const browser = s.where === "browser";
+    const level = this.live.heldLevel;
+    if (src === undefined || (browser ? level === undefined : this.session?.status !== "ready")) return undefined;
     const preset = (s.customPresets.find((p) => p.name === s.preset) as Record<string, unknown> | undefined) ?? (s.preset || "HiP-CT brain");
     const overrides: Record<string, unknown> = s.windows[src] && this.presetDomain() === "window" ? { window: s.windows[src] } : {};
-    return { key: JSON.stringify([this.session.id, preset, overrides]), preset, overrides };
+    const on = browser ? ["browser", src, level!.path] : [this.session!.id];
+    return { key: JSON.stringify([...on, preset, overrides]), preset, overrides };
   }
 
-  /** Ask the host where the chosen preset's stops fall on this image (when that may have changed). */
+  /** Places the chosen preset's stops on this image's values (when that may have changed): the host does, or this browser from its level. */
   private async resolvePreset(): Promise<void> {
     const r = this.presetRequest();
-    if (r === undefined || this.resolved?.key === r.key || !this.service) return;
+    if (r === undefined || this.resolved?.key === r.key) return;
+    const level = this.live.heldLevel;
+    if (this.saved.where === "browser" && level !== undefined) {
+      const base = typeof r.preset === "object" ? r.preset : (LOCAL_PRESETS.find((p) => p.name === r.preset) ?? LOCAL_PRESETS[0]);
+      this.resolved = { key: r.key, preset: levelResolved({ ...base, ...r.overrides } as unknown as LevelPreset, level) as unknown as Record<string, unknown> };
+      this.panelUpdate?.();
+      this.lastKey = "";
+      this.handle?.redraw();
+      return;
+    }
+    if (!this.service) return;
     try {
       const preset = await this.service.resolve(this.session!.id, r.preset, r.overrides);
       this.resolved = { key: r.key, preset };
@@ -727,7 +753,7 @@ class AnatomicalRendering {
     let warp = t?.warp;
     if (!warp) {
       // Not warped yet: handles at the histogram's quantiles over the map's visible range, each where it is.
-      const hist = (this.session?.volume as { histogram?: { lo: number; hi: number; counts: number[] } } | undefined)?.histogram;
+      const hist = this.histogram();
       warp = hist && vis.length ? histogramHandles(hist, vis[0].value, vis[vis.length - 1].value).map((v) => ({ from: v, to: v })) : [];
     }
     return { stops: shown, base: stops, centre, warp, data: shown.map((x) => ({ ...x, value: warpInverse(x.value, warp) })) };
@@ -742,6 +768,15 @@ class AnatomicalRendering {
     // Without what only describes it (photographs, measured colours): it goes with every view.
     const { reference: _r, measured: _m, histogram: _h, design_scan: _d, ...rest } = this.resolved.preset;
     return { ...rest, stops: e.data, domain: "data", window: null, histogram: null };
+  }
+
+  /** The image's histogram for the editor: the host's, or in this browser the level held here's. */
+  private histogram(): { lo: number; hi: number; counts: number[] } | undefined {
+    if (this.saved.where !== "browser") return (this.session?.volume as { histogram?: { lo: number; hi: number; counts: number[] } } | undefined)?.histogram;
+    const level = this.live.heldLevel;
+    if (level === undefined) return undefined;
+    if (this.levelHist?.level !== level) this.levelHist = { level, hist: levelHistogram(level) };
+    return this.levelHist.hist;
   }
 
   /** The editor's canvas and its histogram: shown again from the state (not while a point is dragged). */
@@ -791,12 +826,20 @@ class AnatomicalRendering {
     this.handle?.redraw();
   }
 
-  /** A "window" preset's range for this image, on a computer: the store, the image's values and the step; undefined otherwise. */
+  /** A "window" preset's range for this image: the store, the image's values and the step; undefined otherwise. */
   private windowRange(): { src: string; lo: number; hi: number; step: number; guess?: [number, number] } | undefined {
-    if (this.presetDomain() !== "window" || this.saved.where === "browser") return undefined;
+    if (this.presetDomain() !== "window") return undefined;
     const target = this.target();
     const src = target ? omeZarrSource(target.sources[0]) : undefined;
     if (src === undefined) return undefined;
+    if (this.saved.where === "browser") {
+      // The level held here: its values' range, and the window guessed over them.
+      const level = this.live.heldLevel;
+      if (level === undefined) return undefined;
+      const [lo, hi] = level.range;
+      const g = level.window;
+      return { src, lo, hi, step: windowStep(lo, hi), guess: g ? [lo + (g[0] / 255) * (hi - lo), lo + (g[1] / 255) * (hi - lo)] : undefined };
+    }
     const vol = this.session?.volume as { window?: [number, number] | null; lo?: number; hi?: number; dtype?: string } | undefined;
     const known = vol?.lo !== undefined && vol.hi !== undefined && vol.hi > vol.lo;
     return {
@@ -1186,7 +1229,7 @@ class AnatomicalRendering {
     const view = this.viewSpec(frame, 1);
     if (view === undefined) return undefined;
     const host = this.saved.where !== "browser";
-    const r = host ? this.presetRequest() : undefined;
+    const r = this.presetRequest();
     const resolved = r !== undefined && this.resolved?.key === r.key ? this.resolved.preset : undefined;
     const named = (name: string) => (host ? this.presets.find((p) => p.name === name) : undefined) ?? LOCAL_PRESETS.find((p) => p.name === name);
     const base = typeof view.preset === "object" ? view.preset : (resolved ?? named(view.preset));
@@ -2112,7 +2155,7 @@ class AnatomicalRendering {
     };
     this.editorUpdate = () => {
       const e = this.editedStops();
-      const hist = (this.session?.volume as { histogram?: { lo: number; hi: number; counts: number[] } } | undefined)?.histogram;
+      const hist = this.histogram();
       if (e && this.editor && !this.editor.dragging) this.editor.set(hist, e.stops, e.warp);
     };
     let wasConnected = true;
@@ -2163,7 +2206,8 @@ class AnatomicalRendering {
       imageNote.className = axes.problem !== undefined ? "hint error" : "hint";
       const presetList = s.where === "browser" ? LOCAL_PRESETS.map((p) => ({ name: p.name, modality: p.modality ?? "" })) : this.presets;
       const allPresets = [...presetList, ...s.customPresets.map((p) => ({ name: String(p.name), modality: "from a file" }))];
-      preset.update(allPresets.map((p): [string, string] => [p.name, p.modality ? `${p.name} (${p.modality})` : p.name]), s.preset);
+      // No preset chosen yet is the default one, shown as such.
+      preset.update(allPresets.map((p): [string, string] => [p.name, p.modality ? `${p.name} (${p.modality})` : p.name]), s.preset || "HiP-CT brain");
       preset.disabled = allPresets.length === 0;
       references.update(this.references());
       const w = this.windowRange();
@@ -2172,8 +2216,9 @@ class AnatomicalRendering {
         const now = s.windows[w.src] ?? w.guess;
         if (now) windowSliders.forEach((sl, i) => sl.set(now[i]));
       }
-      // The colourmap editor once the computer has placed the preset on this image's values.
-      const tuning = onHost_ && this.session?.status === "ready" ? this.currentTuning() : undefined;
+      // The colourmap editor once the preset is placed on this image's values: by the computer, or here from the level held.
+      const placeable = onHost_ ? this.session?.status === "ready" : this.live.heldLevel !== undefined;
+      const tuning = placeable ? this.currentTuning() : undefined;
       editorPart.update(tuning !== undefined);
       if (tuning) {
         const width = this.mapWidth();

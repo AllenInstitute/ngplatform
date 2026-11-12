@@ -22,6 +22,7 @@ import { joinBaseUrlAndPath } from "neuroglancer/unstable/kvstore/url.js";
 import { openZarrArray, ShardIndexCache, type ZarrArrayRead, ZarrArrayReader } from "neuroglancer-zarr-vectors/reader";
 import { coalesceRangeReads } from "../zarr-vectors/src/zarr_array.js";
 import { httpJson, PrecomputedScale, readInfo, type Scale } from "@ngplatform/sdk/precomputed";
+import { gcsReadable } from "@ngplatform/sdk/sources";
 import { mergeLevels, parseOmeLevels, scaleLevel, type VolumeLevel } from "./ome.js";
 import { chunkSource, levelKey } from "./shared_chunks.js";
 import { PRECOMPUTED } from "./sources.js";
@@ -315,7 +316,8 @@ export async function storedOrder(read: ZarrArrayRead, path: string, axes: strin
  */
 export function storeRead(storeUrl: string): ZarrArrayRead {
   return coalesceRangeReads(async (path, { signal, byteRange }) => {
-    const url = joinBaseUrlAndPath(storeUrl, path);
+    // Cloud Storage through its JSON API, which answers pages whatever the bucket's CORS settings.
+    const url = gcsReadable(joinBaseUrlAndPath(storeUrl, path));
     let init: RequestInit = { signal };
     if (byteRange !== undefined) {
       const range = "suffixLength" in byteRange ? `bytes=-${byteRange.suffixLength}` : `bytes=${byteRange.offset}-${byteRange.offset + byteRange.length - 1}`;

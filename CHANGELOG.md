@@ -132,6 +132,13 @@ The production polish: the work of an audit of every panel and plugin
   voxels by default, up to 512).
 - Camera planes (Crops) stay where they are set, several of them, each set
   again from the view by its camera button.
+- Rendering in this browser reads `gs://` images (it asked for a `gs://`
+  address, which a browser cannot fetch: "Failed to fetch"), and the
+  colourmap editor (histogram, stops, shift and compression, window) works
+  there too, from the level of the image it holds.
+- Cloud Storage is read through its JSON API in the browser (volume view,
+  precomputed reads, collections, orientations, time series, plugin
+  offers), so buckets without CORS settings read as they do in Neuroglancer.
 
 ## 0.2.0 — 2026-10-31
 

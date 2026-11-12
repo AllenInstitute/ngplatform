@@ -10,6 +10,20 @@ export function precomputedUrl(source: string | undefined): string | undefined {
   return url.endsWith("/") ? url : `${url}/`;
 }
 
+/**
+ * The address a page fetches a Cloud Storage object at: a bucket's own
+ * (`https://storage.googleapis.com/<bucket>/<object>`) as the JSON API's,
+ * which answers pages from any origin, as Neuroglancer reads `gs://`; the
+ * bucket's own address answers only origins its CORS settings name, and a
+ * bucket with none (most) refuses every page ("Failed to fetch"). Other
+ * addresses are unchanged.
+ */
+export function gcsReadable(url: string): string {
+  const m = /^https:\/\/storage\.googleapis\.com\/([^/?#]+)\/([^?#]+)$/.exec(url);
+  if (m === null || m[1] === "storage") return url;
+  return `https://storage.googleapis.com/storage/v1/b/${m[1]}/o/${encodeURIComponent(decodeURIComponent(m[2]))}?alt=media`;
+}
+
 /** A layer's first source as a URL, whatever form its spec gives it in (a string, a list, `{ url }`). */
 export function layerSourceUrl(spec: unknown): string | undefined {
   const source = (spec as { source?: unknown } | undefined)?.source;

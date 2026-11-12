@@ -20,7 +20,7 @@
 import type { Frame3d } from "@ngplatform/sdk";
 import { VolumeClient } from "../volume-view/volume_client.js";
 import type { ViewSpec } from "./client.js";
-import { brickBounds, cameraAxes, invert, type Level8, type LocalPreset, mul, readLevel, rowMajor, TF_SIZE, transferTable } from "./local/local.js";
+import { brickBounds, cameraAxes, invert, type Level8, type LevelPreset, levelTable, mul, readLevel, rowMajor, TF_SIZE } from "./local/local.js";
 
 /** The voxels of the level read for the object by default (Quality › Object); this browser's path tracer shares its own. */
 export const LIVE_VOXELS = 64e6;
@@ -38,26 +38,14 @@ const MAX_TRACED = 1024;
 const ENV = { top: [0.85, 0.9, 1.0], horizon: [0.55, 0.55, 0.6], bottom: [0.12, 0.11, 0.1], scale: 0.6 };
 
 /** A preset as the live image takes it: whole, with the view's overrides; "data" stops at the image's data values. */
-export type LivePreset = LocalPreset & { window?: [number, number] | null };
+export type LivePreset = LevelPreset;
+/** The preset's table at the level's values (`levelTable`). */
+export const liveTable = levelTable;
 
 /** What a frame is drawn with: the view the path tracer would be sent for it, and its preset. */
 export interface LiveLook {
   view: ViewSpec;
   preset: LivePreset;
-}
-
-/**
- * The preset's colours and opacities at TF_SIZE values of the level (0..1
- * for 0..255): stops at data values (a preset as the host resolves it)
- * through the reader's window; a "window" preset through its window at
- * data values, else the window guessed here; percentiles of the tissue here.
- */
-export function liveTable(preset: LivePreset, level: Pick<Level8, "range" | "pct" | "window">): Float32Array {
-  const [lo, hi] = level.range;
-  const to8 = (v: number) => ((v - lo) / (hi - lo || 1)) * 255;
-  if (preset.domain === "data") return transferTable({ ...preset, stops: preset.stops.map((s) => ({ ...s, value: to8(s.value) })) }, level.pct);
-  const w = preset.domain === "window" && preset.window ? ([to8(preset.window[0]), to8(preset.window[1])] as [number, number]) : level.window;
-  return transferTable(preset, level.pct, w);
 }
 
 /**
@@ -725,6 +713,11 @@ export class LiveVolume {
 
   ready(): boolean {
     return this.level !== undefined && !this.failed;
+  }
+
+  /** The level held for the object, once read. */
+  get heldLevel(): Level8 | undefined {
+    return this.level;
   }
 
   /** Draws the frame; `split`: the share of pixels drawn (the rest are the picture's). False when it cannot be drawn. */

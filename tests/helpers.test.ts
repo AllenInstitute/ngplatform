@@ -8,7 +8,7 @@ import { apply4, identity4, invert4, multiply4 } from "../src/core/mat4.js";
 import { crc32, zipStore } from "../src/core/zip.js";
 import { button, downloadBlob, el, safeFileName, select, svgEl } from "../src/sdk/dom.js";
 import { bytesText, csv, csvField, mmText, parseBytes, ticks } from "../src/sdk/format.js";
-import { layerSourceUrl, precomputedUrl } from "../src/sdk/sources.js";
+import { gcsReadable, layerSourceUrl, precomputedUrl } from "../src/sdk/sources.js";
 import { fmt, kindLabel, length, physical, shortSource } from "../src/ui/panels/format.js";
 import { exportKind } from "../src/virtual/out/kinds.js";
 import { zipFiles } from "../src/virtual/out/volume.js";
@@ -69,6 +69,17 @@ describe("sources", () => {
     expect(precomputedUrl("precomputed://https://h/x/")).toBe("https://h/x/");
     expect(precomputedUrl("zarr://https://h/x")).toBeUndefined();
     expect(precomputedUrl(undefined)).toBeUndefined();
+  });
+
+  it("reads Cloud Storage through its JSON API, which answers pages whatever the bucket's CORS settings", () => {
+    expect(gcsReadable("https://storage.googleapis.com/bucket/a b/s.ome.zarr/0/c/0/0/0")).toBe(
+      "https://storage.googleapis.com/storage/v1/b/bucket/o/a%20b%2Fs.ome.zarr%2F0%2Fc%2F0%2F0%2F0?alt=media",
+    );
+    // Already escaped (as a URL joined from a path is): not escaped twice.
+    expect(gcsReadable("https://storage.googleapis.com/bucket/a%20b/zarr.json")).toBe("https://storage.googleapis.com/storage/v1/b/bucket/o/a%20b%2Fzarr.json?alt=media");
+    for (const other of ["https://storage.googleapis.com/storage/v1/b/bucket/o/x?alt=media", "https://storage.googleapis.com/bucket/x?generation=1", "https://h/bucket/x", "/local/1/x"]) {
+      expect(gcsReadable(other)).toBe(other);
+    }
   });
 
   it("reads a layer's first source in any of the spec's forms", () => {
