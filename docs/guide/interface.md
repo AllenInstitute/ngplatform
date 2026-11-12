@@ -159,17 +159,24 @@ each kept open or closed as you left it.
 
 Each dataset in the Layers panel is a card. Selecting a dataset (its row,
 or in the views) opens its card on its settings; the arrow at the left of
-the row opens and closes it, and several cards may be open at once. Its
-settings are its layer's own tabs (Neuroglancer's), the tab chosen kept
-with the layer; a layer opens on **Rendering**. For a dataset shown
-through several layers, they are those of the view selected in its list.
-Its sign-in shows only when its data is not public (or did not load);
-otherwise it is in Settings › Sign-in.
+the row opens and closes it, and several cards may be open at once. Open,
+the card grows to hold them: one box around the dataset's row and its
+settings (the selected dataset's in green), so what you edit is plainly
+that dataset's. For a dataset shown through several layers, they are those
+of the view selected in its list.
+
+At the top of the open card is its **source**: where the data comes from
+(its URL, editable), under **Details** its parts (subsources), its
+**transform** (the matrix that places it in the scene, editable) and an
+OME-Zarr image's coordinate systems and levels, and **Add a data source**.
+Its sign-in follows, only when its data is not public (or did not load);
+otherwise it is in Settings › Sign-in. Below are its layer's own tabs
+(Neuroglancer's, its Source being the part above), the tab chosen kept
+with the layer; a layer opens on **Rendering**.
 
 | Tab | What it holds |
 |---|---|
 | **Rendering** | How it is drawn: resolution, opacity, blending; for images the **Colour map**, then the shader's controls (contrast, with a histogram and Min-Max, 1-99% and 5-95% buttons) above its code; for segmentations the **Lookup table**; for surfaces the **Surface** controls. |
-| **Source** | Where the data comes from; under **Details**, its parts (subsources), its **transform** (the matrix that places it in the scene, editable), and an OME-Zarr image's coordinate systems and levels. |
 | **Segments** | For segmentations: search segments by id, label or property, show and hide them, colours. |
 | **Annotations** | The tools that draw points, lines, boxes, ellipsoids and polylines (the one place to draw: the Annotations plugin's **Draw…** opens it), and the list of annotations. |
 | **Schema** | For annotation layers: the properties each annotation carries. |

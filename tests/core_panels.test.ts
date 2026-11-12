@@ -55,8 +55,12 @@ function fakeWorkbench(datasets: { id: string; name: string; layers: string[] }[
     onSelectionChanged: off,
     layerToken: (name: string) => layers.get(name),
     layerSpec: () => undefined,
-    mountLayerControls: vi.fn((host: HTMLElement, name: string) => {
+    mountLayerControls: vi.fn((host: HTMLElement, name: string, _without?: readonly string[]) => {
       host.append(Object.assign(document.createElement("div"), { className: "settings", textContent: name }));
+      return unmount;
+    }),
+    mountLayerSource: vi.fn((host: HTMLElement, name: string) => {
+      host.append(Object.assign(document.createElement("div"), { className: "source", textContent: name }));
       return unmount;
     }),
   };
@@ -173,10 +177,18 @@ describe("Layers panel: the list", () => {
     const cards = () => host.querySelectorAll(".ds-card");
     const open = () => [...cards()].filter((c) => c.className.split(" ").includes("open")).flatMap((c) => [...c.querySelectorAll(".settings")].map((e) => e.textContent));
     expect(open()).toEqual([]);
-    // Selected (a click on its row): its card opens on the layer's settings.
+    // Selected (a click on its row): its card opens on the layer's settings, its source part of the card above the
+    // tabs (not one of them), the short source line of its row given way to it.
     host.querySelectorAll<HTMLElement>(".ds-row")[0].click();
     expect(open()).toEqual(["brain"]);
     expect(engine.mountLayerControls).toHaveBeenCalledTimes(1);
+    expect(engine.mountLayerControls.mock.calls[0][2]).toEqual(["source"]);
+    const body = dom.find<HTMLElement>(cards()[0], ".ds-body");
+    expect([...body.children].map((e) => e.className)).toEqual(["ng-host layer-source-host", "layer-sign-in-host", "ng-host layer-controls-host"]);
+    expect(dom.text(body.children[0] as HTMLElement)).toBe("brain");
+    expect(cards()[0].className.split(" ")).toEqual(expect.arrayContaining(["open", "selected"]));
+    expect(cards()[0].querySelector(".sub")).toBeNull();
+    expect(cards()[1].querySelector(".sub")).not.toBeNull();
     // A change elsewhere: the settings stay as they are, mounted once.
     changed();
     expect(engine.mountLayerControls).toHaveBeenCalledTimes(1);
@@ -186,7 +198,8 @@ describe("Layers panel: the list", () => {
     // The first's arrow closes it: its settings let go.
     dom.find<HTMLElement>(cards()[0], "button.ds-expand").click();
     expect(open()).toEqual(["tracts"]);
-    expect(unmount).toHaveBeenCalledTimes(1);
+    // Its source and its tabs.
+    expect(unmount).toHaveBeenCalledTimes(2);
     expect(dom.find<HTMLElement>(cards()[0], "button.ds-expand").getAttribute("aria-expanded")).toBe("false");
   });
 

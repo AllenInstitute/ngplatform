@@ -25,13 +25,14 @@ export function layerTarget(wb: Workbench): LayerTarget {
 }
 
 /**
- * A dataset's card body (./datasets.ts): the controls of the layer it is
- * shown through (the selected one of its views, else its first), as the
- * layer's tabs (Rendering, Source, Annotations…); above them, only when the data is not public (or failed to
- * load), the sign-in the layer reads it with, as in Settings → Sign-in.
- * `update` brings it up to the state; the sign-in is drawn again only when
- * what it shows changes, so a move of the views does not close its
- * drop-down.
+ * A dataset's card body (./datasets.ts), for the layer it is shown through
+ * (the selected one of its views, else its first): first its source (the
+ * data's URL, its details, Add a data source), as part of the card; then,
+ * only when the data is not public (or failed to load), the sign-in the
+ * layer reads it with, as in Settings → Sign-in; then the layer's other
+ * controls as its tabs (Rendering, Annotations…).  `update` brings it up to
+ * the state; the sign-in is drawn again only when what it shows changes, so
+ * a move of the views does not close its drop-down.
  */
 export function datasetBody(wb: Workbench, datasetId: string): { element: HTMLElement; update(): void; dispose(): void } {
   const { engine, store } = wb;
@@ -39,9 +40,10 @@ export function datasetBody(wb: Workbench, datasetId: string): { element: HTMLEl
     if (key === undefined) return null;
     const control = signInControl(wb, key.layer, key.ok);
     return control === null ? null : h("div", { class: "layer-sign-in" }, h("span", {}, "Sign-in"), control);
-  });
+  }, { class: "layer-sign-in-host" });
+  const source = h("div", { class: "ng-host layer-source-host" });
   const controls = h("div", { class: "ng-host layer-controls-host" });
-  const element = h("div", { class: "ds-body" }, signIn, controls);
+  const element = h("div", { class: "ds-body" }, source, signIn, controls);
 
   let mountedFor: { name: string; token: object | undefined } | undefined;
   let unmount: (() => void) | undefined;
@@ -50,9 +52,13 @@ export function datasetBody(wb: Workbench, datasetId: string): { element: HTMLEl
     if (mountedFor?.name === name && mountedFor?.token === token) return;
     unmount?.();
     unmount = undefined;
+    source.replaceChildren();
     controls.replaceChildren();
     mountedFor = name === undefined ? undefined : { name, token };
-    if (name !== undefined && token !== undefined) unmount = engine.mountLayerControls(controls, name);
+    if (name !== undefined && token !== undefined) {
+      const offs = [engine.mountLayerSource(source, name), engine.mountLayerControls(controls, name, ["source"])];
+      unmount = () => offs.forEach((off) => off());
+    }
   };
 
   /** What the sign-in drop-down is made from. */

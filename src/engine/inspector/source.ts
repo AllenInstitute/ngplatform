@@ -1,8 +1,9 @@
 /**
- * The Source tab: a layer's data sources, each with its URL (completed as
- * Neuroglancer completes it), whether it loaded, its messages, which of its
- * parts (subsources) are on, and its coordinate transform as an editable
- * table. Sources can be added and removed.
+ * The Source, part of a dataset's card above its tabs: a layer's data
+ * sources, each with its URL (completed as Neuroglancer completes it),
+ * whether it loaded, its messages, which of its parts (subsources) are on,
+ * and its coordinate transform as an editable table. Sources can be added
+ * and removed.
  */
 import { omeBase, summariseOme } from "./ome.js";
 import {

@@ -8,6 +8,8 @@
  * layer first shown here opens on Rendering, unless its tab was chosen. Each tab is built
  * here from the layer's models; a tab this file does not know (a plugin's,
  * or the graph tab of a graphene layer) is shown as Neuroglancer draws it.
+ * A tab shown elsewhere is left out (`without`): in a dataset's card, the
+ * Source is part of the card itself, above the tabs (`mountSource`).
  */
 import { AnnotationUserLayer, SegmentationUserLayer, type UserLayer } from "../neuroglancer.js";
 import { annotationsTab, schemaTab } from "./annotations.js";
@@ -42,7 +44,7 @@ interface TabOption {
 /** Layers shown here already: a layer opens on Display the first time only, so the tab chosen after stays. */
 const seen = new WeakSet<UserLayer>();
 
-export function mountInspector(host: HTMLElement, layer: UserLayer): () => void {
+export function mountInspector(host: HTMLElement, layer: UserLayer, without: readonly string[] = []): () => void {
   const scope = new Scope();
   const options = (layer as any).tabs.options as Map<string, TabOption>;
   const annotationStates = (layer as any).annotationStates as { states: unknown[]; changed: { add(f: () => void): () => void } } | undefined;
@@ -56,7 +58,7 @@ export function mountInspector(host: HTMLElement, layer: UserLayer): () => void 
   /** The tabs shown: the layer's own, in their order, Rendering first (Annotations always, as Neuroglancer shows it). */
   const tabs = () =>
     [...options]
-      .filter(([, o]) => !(o.hidden?.value ?? false))
+      .filter(([id, o]) => !without.includes(id) && !(o.hidden?.value ?? false))
       .sort(([a, x], [b, y]) => (a === "rendering" ? -1 : 0) - (b === "rendering" ? -1 : 0) || (x.order ?? 0) - (y.order ?? 0))
       .map(([id, o]) => ({ id, label: NATIVE[id]?.label ?? o.label }));
   // Neuroglancer opens a layer on Source; here it opens on Rendering, the controls used most,
@@ -73,7 +75,8 @@ export function mountInspector(host: HTMLElement, layer: UserLayer): () => void 
     let id = override !== undefined && list.some((t) => t.id === override) ? override : selected.value;
     if (!list.some((t) => t.id === id)) {
       id = list[0]?.id;
-      if (id !== undefined && selected.value !== id) {
+      // A tab shown elsewhere (Neuroglancer's Source) stays the layer's choice: the first is shown, not chosen.
+      if (id !== undefined && selected.value !== id && !without.includes(selected.value ?? "")) {
         selected.value = id;
         return; // `selected` changed: show() runs again.
       }
@@ -122,6 +125,17 @@ export function mountInspector(host: HTMLElement, layer: UserLayer): () => void 
   for (const o of options.values()) if (o.hidden !== undefined) changed.push(o.hidden);
   scope.watchSoon(changed, show);
 
+  return () => {
+    scope.dispose();
+    root.remove();
+  };
+}
+
+/** A layer's data sources (the Source tab's contents) on their own: in a dataset's card, above its tabs. */
+export function mountSource(host: HTMLElement, layer: UserLayer): () => void {
+  const scope = new Scope();
+  const root = el("div", { class: "ins-root ins-source-part" }, ...sourceTab(scope, layer));
+  host.append(root);
   return () => {
     scope.dispose();
     root.remove();

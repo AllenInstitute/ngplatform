@@ -98,8 +98,8 @@ download it and put it where it belongs.
 
 The tab keeps its collection and chosen system, like any scene, in the
 link. An image's own coordinate systems and transforms (OME-Zarr 0.4 to
-0.6) are also shown in its layer's **Source** tab, under the layer's
-transform.
+0.6) are also shown in the source at the top of its dataset's card, under
+the layer's transform.
 
 ## Notes from users
 

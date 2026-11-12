@@ -35,7 +35,7 @@ import {
 import { looksAnatomical, type PanelConvention, panelRotations, standardView } from "./anatomical.js";
 import { applyLookupTable, layerLookupSource } from "./lookup_tables.js";
 import { addMomentum } from "./momentum.js";
-import { mountInspector } from "./inspector/index.js";
+import { mountInspector, mountSource } from "./inspector/index.js";
 import { sizeMemoryLimits } from "./memory.js";
 import { type ChunkSourceStatistics, chunkStatistics, mountViewSettings } from "./view_settings.js";
 import { guardSelectedValues, type SelectedValues } from "./selected_values.js";
@@ -965,12 +965,20 @@ export class Engine {
 
   /**
    * Mounts a layer's settings (Source, Render, Segments, Annotations…,
-   * whatever its type offers) into `host`, as the platform's own inspector.
+   * whatever its type offers) into `host`, as the platform's own inspector;
+   * the tabs in `without` are left out.
    */
-  mountLayerControls(host: HTMLElement, name: string): Disposer {
+  mountLayerControls(host: HTMLElement, name: string, without: readonly string[] = []): Disposer {
     const userLayer = this.managed(name)?.layer;
     if (userLayer == null) return () => {};
-    return mountInspector(host, userLayer);
+    return mountInspector(host, userLayer, without);
+  }
+
+  /** Mounts a layer's data sources (its Source tab's contents) into `host` on their own. */
+  mountLayerSource(host: HTMLElement, name: string): Disposer {
+    const userLayer = this.managed(name)?.layer;
+    if (userLayer == null) return () => {};
+    return mountSource(host, userLayer);
   }
 
   // ----------------------------------------------------- segment state

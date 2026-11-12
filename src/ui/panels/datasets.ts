@@ -3,9 +3,10 @@
  *
  * One card per dataset: a row with its visibility, load state and where it
  * is (a dataset shown through several layers lists them beneath it), and,
- * opened, the dataset's settings as sections (Rendering, Source,
- * Annotations…; ./layer.ts).  Selecting a dataset opens its card; its
- * arrow opens and closes it, and several may be open.  Datasets that other
+ * opened, the card grown to hold the dataset's settings: its source, then
+ * its layer's tabs (Rendering, Annotations…; ./layer.ts), inside the one
+ * box with its row.  Selecting a dataset opens its card; its arrow opens
+ * and closes it, and several may be open.  Datasets that other
  * scenes show are offered in the Open sheet and the Add a dataset sheet,
  * not here.  Below the list, up to three tools that are off but would serve
  * this data, the rest behind More.
@@ -339,6 +340,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
       }
       // Open: its settings below the row, brought up to the state; closed, let go.
       card.element.classList.toggle("open", row.expanded);
+      card.element.classList.toggle("selected", row.selected);
       if (row.expanded) {
         if (card.body.element.parentNode !== card.element) card.element.append(card.body.element);
         card.body.update();
@@ -412,7 +414,8 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
         }),
         `more:${row.id}`,
       ),
-      h("span", { class: "sub", title: row.url }, row.sub),
+      // Open, the card shows the whole source below; an error stays here.
+      row.expanded && row.status.state !== "err" ? null : h("span", { class: "sub", title: row.url }, row.sub),
     );
     focusKey(head, `row:${row.id}`);
     if (row.views.length === 0) return head;

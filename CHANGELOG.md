@@ -144,8 +144,10 @@ The production polish: the work of an audit of every panel and plugin
 
 ### The Layers panel: a card per dataset
 
-- Each dataset in the scene is a card: its row, and, opened, its settings
-  in the layer's tabs (Rendering, as Display is now called, Source,
+- Each dataset in the scene is a card: its row, and, opened, the card grown
+  to hold its settings in one box with the row (the selected dataset's in
+  green). Its source (URL, details, transform) is part of the card, at its
+  top; below it the layer's tabs (Rendering, as Display is now called,
   Annotations, Segments, Schema, as its type has them). Selecting a dataset
   opens its card; its arrow opens and closes it, and several may be open.
   The selected layer's controls no longer sit under the list.

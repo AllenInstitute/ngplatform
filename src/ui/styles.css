@@ -510,8 +510,13 @@ kbd {
 .layers-list .panel-actions { justify-content: space-between; align-items: center; margin-bottom: var(--sp-2); }
 .layers-list .panel-actions .section-title { margin: 0; }
 .layers-list .ds-row .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ds-card { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); border: 1px solid transparent; border-radius: var(--r); }
-.ds-card.open { border-color: var(--line); padding-bottom: var(--sp-3); }
+/* Open, the card grows to hold the dataset's settings: one box, its row the head (no box of its
+   own), the settings below a line; the selected dataset's card in the selection's colour. */
+.ds-card { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; border: 1px solid transparent; border-radius: var(--r); }
+.ds-card.open { border-color: var(--line-strong); background: var(--ink-1); padding-bottom: var(--sp-4); }
+.ds-card.open.selected { border-color: var(--select); }
+.ds-card.open .ds-row.card-row { border-color: transparent; }
+.ds-card.open.selected .ds-row.card-row { background: var(--select-soft); }
 .ds-row.card-row { grid-template-columns: auto auto auto minmax(0, 1fr) auto auto; }
 .ds-row.card-row .sub { grid-column: 4 / 7; }
 /* The card's arrow, as the cards' (.card-head::before): right closed, down open. */
@@ -520,9 +525,12 @@ kbd {
 .ds-expand[aria-expanded="true"]::before { transform: rotate(45deg); }
 .ds-expand:hover { background: var(--hover); }
 /* Each level as wide as the panel, no wider: the controls shrink with it. */
-.ds-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-3); padding: 0 var(--sp-2); min-width: 0; }
-.ds-body .layer-controls-host { min-width: 0; }
-.layer-controls-host:empty { display: none; }
+.ds-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-4); padding: var(--sp-2) var(--sp-4) 0; border-top: 1px solid var(--line); min-width: 0; }
+.ds-body .layer-controls-host, .ds-body .layer-source-host { min-width: 0; }
+/* The source, part of the card itself: a band above the tabs. */
+.ds-body .layer-source-host { padding-bottom: var(--sp-4); border-bottom: 1px solid var(--line); }
+.ins-source-part { gap: var(--sp-2); }
+.layer-controls-host:empty, .layer-source-host:empty, .layer-sign-in-host:empty { display: none; }
 
 /* plugins, jobs, log */
 .panel-intro { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-5); margin-bottom: 14px; }
