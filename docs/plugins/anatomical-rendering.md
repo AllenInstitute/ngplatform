@@ -78,7 +78,7 @@ takes images with one of each only.
   colour). A preset is a transfer function (colour and opacity from the
   image's values) with material and light; its values are percentiles of
   the tissue, so one preset suits scans of different scaling.
-- **HiP-CT organs**: a preset for each organ in the Human Organ Atlas (brain,
+- **HiP-CT organs** (on a host and in this browser): a preset for each organ in the Human Organ Atlas (brain,
   heart, lung, kidney, liver, spleen, colon, eye, placenta, prostate, testis,
   uterus), its colours measured on photographs of real organs (each preset
   lists them, with their authors and licences). These presets spread their

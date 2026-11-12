@@ -6,6 +6,7 @@
  * parameters, as the service's CUDA kernels (./pathtrace.wgsl).
  */
 import presetsJson from "../../../runner/ngplatform_render/presets/brain.json";
+import organPresetsJson from "../../../runner/ngplatform_render/presets/hipct-organs.json";
 import params from "../../../runner/ngplatform_render/params.json";
 import { storeHttpUrl } from "../../volume-view/sources.js";
 import { VolumeClient } from "../../volume-view/volume_client.js";
@@ -65,7 +66,8 @@ export interface LocalPreset {
   modality?: string;
 }
 
-export const PRESETS: LocalPreset[] = presetsJson as LocalPreset[];
+/** Every preset the host has: the brain set and the HiP-CT organs (window presets, matched to each scan's histogram). */
+export const PRESETS: LocalPreset[] = [...(presetsJson as LocalPreset[]), ...(organPresetsJson as unknown as LocalPreset[])];
 const ENV = { top: [0.85, 0.9, 1.0], horizon: [0.55, 0.55, 0.6], bottom: [0.12, 0.11, 0.1], scale: 0.6 };
 
 /** Data values (0..255 here) at percentiles of the tissue: the values above the background's low peak. */
@@ -196,8 +198,12 @@ export function transferTable(p: LocalPreset, pct: Map<number, number>, window?:
   return out;
 }
 
-/** A preset with the view's overrides: a "window" one may carry its window (data values); a "data" one's stops are at data values. */
-export type LevelPreset = LocalPreset & { window?: [number, number] | null };
+/**
+ * A preset with the view's overrides: a "window" one may carry its window (data values) and the tissue's
+ * histogram on the scan it was made on (its values at percentiles 1..99, as stop values); a "data" one's
+ * stops are at data values.
+ */
+export type LevelPreset = LocalPreset & { window?: [number, number] | null; histogram?: number[] | null };
 
 /**
  * The preset's colours and opacities at TF_SIZE values of the level (0..1
@@ -206,12 +212,11 @@ export type LevelPreset = LocalPreset & { window?: [number, number] | null };
  * window at data values, else the window guessed here; percentiles of the
  * tissue here.
  */
-export function levelTable(preset: LevelPreset, level: Pick<Level8, "range" | "pct" | "window">): Float32Array {
+export function levelTable(preset: LevelPreset, level: Pick<Level8, "range" | "pct" | "window" | "quantiles">): Float32Array {
   const [lo, hi] = level.range;
   const to8 = (v: number) => ((v - lo) / (hi - lo || 1)) * 255;
-  if (preset.domain === "data") return transferTable({ ...preset, stops: preset.stops.map((s) => ({ ...s, value: to8(s.value) })) }, level.pct);
-  const w = preset.domain === "window" && preset.window ? ([to8(preset.window[0]), to8(preset.window[1])] as [number, number]) : level.window;
-  return transferTable(preset, level.pct, w);
+  const placed = preset.domain === "data" ? preset : levelResolved(preset, level);
+  return transferTable({ ...placed, stops: placed.stops.map((s) => ({ ...s, value: to8(s.value) })) }, level.pct);
 }
 
 /**
@@ -219,17 +224,91 @@ export function levelTable(preset: LevelPreset, level: Pick<Level8, "range" | "p
  * the host's `presets.resolved` places them, from the level held here: what
  * the colourmap editor shows and moves.
  */
-export function levelResolved(preset: LevelPreset, level: Pick<Level8, "range" | "pct" | "window">): LevelPreset {
+export function levelResolved(preset: LevelPreset, level: Pick<Level8, "range" | "pct" | "window" | "quantiles">): LevelPreset {
   const [lo, hi] = level.range;
   const from8 = (v: number) => lo + (v / 255) * (hi - lo);
   const keys = [...level.pct.keys()].sort((a, b) => a - b);
   const guess = level.window ?? [0, 255];
+  const [w0, w1] = preset.window ?? [from8(guess[0]), from8(guess[1])];
+  // Histogram matching (presets._to_texture): the stop's quantile on the preset's scan, then this scan's
+  // value there; past either end, the window's scale. Not when the window was set by hand.
+  const ref = preset.histogram, mine = level.quantiles;
+  const matched = !preset.window && ref && mine && ref.length === mine.length && ref.length > 1 ? { ref, mine } : undefined;
   const at = (v: number): number => {
     if (preset.domain === "percentile") return from8(interp(v, keys, keys.map((k) => level.pct.get(k)!)));
-    if (preset.domain === "window") return preset.window ? preset.window[0] + v * (preset.window[1] - preset.window[0]) : from8(guess[0] + v * (guess[1] - guess[0]));
-    return v;
+    if (preset.domain !== "window") return v;
+    if (matched === undefined) return w0 + v * (w1 - w0);
+    const { ref: r, mine: m } = matched;
+    if (v <= r[0]) return m[0] + (v - r[0]) * (w1 - w0);
+    if (v >= r[r.length - 1]) return m[m.length - 1] + (v - r[r.length - 1]) * (w1 - w0);
+    return interp(v, r, m);
   };
-  return { ...preset, domain: "data", window: null, stops: preset.stops.map((s) => ({ ...s, value: at(s.value) })) };
+  return { ...preset, domain: "data", window: null, histogram: null, stops: preset.stops.map((s) => ({ ...s, value: at(s.value) })) };
+}
+
+/**
+ * Which side of the mounting medium the tissue is (volumes.window_side): "above" when the window (data)
+ * starts nearer the medium's value, the commonest value bar the lowest bin, every 4th voxel.
+ */
+export function windowSide(data: Uint8Array, size: readonly number[], range: readonly [number, number], window: readonly [number, number]): "above" | "below" {
+  const [lo, hi] = range;
+  const [nx, ny, nz] = size;
+  const bins = new Float64Array(512);
+  for (let z = 0; z < nz; z += 4) for (let y = 0; y < ny; y += 4) for (let x = 0, i = (z * ny + y) * nx; x < nx; x += 4, i += 4) {
+    const v = lo + ((hi - lo) * data[i]) / 255;
+    bins[Math.min(511, Math.max(0, Math.floor(((v - lo) / (hi - lo || 1)) * 512)))]++;
+  }
+  let k = 1;
+  for (let b = 2; b < 512; ++b) if (bins[b] > bins[k]) k = b;
+  const m = lo + ((k + 0.5) / 512) * (hi - lo);
+  return Math.abs(m - window[0]) <= Math.abs(m - window[1]) ? "above" : "below";
+}
+
+/**
+ * The tissue's values (data) at percentiles 1..99 (volumes.tissue_quantiles): every 2nd voxel within a
+ * ring about the scan's axis, on the tissue's side of the window's edge at the medium, up to three
+ * windows past it; undefined with fewer than 1000 such voxels. The level's values are 8-bit, so it counts
+ * them in 256 bins and interpolates between ranks as numpy's percentile does.
+ */
+export function levelQuantiles(data: Uint8Array, size: readonly number[], range: readonly [number, number], window: readonly [number, number]): number[] | undefined {
+  const [nx, ny, nz] = size;
+  if (Math.min(nx, ny, nz) < 8) return undefined;
+  const [lo, hi] = range;
+  const [w0, w1] = window;
+  const above = windowSide(data, size, range, window) === "above";
+  const value = (b: number) => lo + ((hi - lo) * b) / 255;
+  const keep = new Uint8Array(256);
+  for (let b = 0; b < 256; ++b) {
+    const u = (value(b) - w0) / (w1 - w0 || 1);
+    keep[b] = (above ? u > 0.1 && u < 3 : u < 0.9 && u > -2) ? 1 : 0;
+  }
+  const X = Math.ceil(nx / 2), Y = Math.ceil(ny / 2);
+  const counts = new Float64Array(256);
+  for (let z = 0; z < nz; z += 2) {
+    for (let y = 0; y < ny; y += 2) {
+      const ry = (y / 2 - (Y - 1) / 2) / (Y / 2);
+      for (let x = 0, i = (z * ny + y) * nx; x < nx; x += 2, i += 2) {
+        const rx = (x / 2 - (X - 1) / 2) / (X / 2);
+        if (Math.hypot(ry, rx) < 0.9 && keep[data[i]]) counts[data[i]]++;
+      }
+    }
+  }
+  const n = counts.reduce((a, b) => a + b, 0);
+  if (n < 1000) return undefined;
+  // The value at a rank (0-based) of the voxels kept, sorted.
+  const cum = new Float64Array(256);
+  let acc = 0;
+  for (let b = 0; b < 256; ++b) cum[b] = acc += counts[b];
+  const atRank = (k: number) => {
+    let b = 0;
+    while (b < 255 && cum[b] <= k) b++;
+    return value(b);
+  };
+  return Array.from({ length: 99 }, (_, i) => {
+    const pos = ((i + 1) / 100) * (n - 1);
+    const f = Math.floor(pos);
+    return atRank(f) + (atRank(Math.min(n - 1, f + 1)) - atRank(f)) * (pos - f);
+  });
 }
 
 /** The level's values in 256 bins over its data range (`range`), every 2nd voxel, as the host's histogram for the editor. */
@@ -311,6 +390,8 @@ export interface Level8 {
   /** Values (0..255) at percentiles of the tissue, and the window guessed over it, for presets in those domains. */
   pct: Map<number, number>;
   window: [number, number] | undefined;
+  /** The tissue's values (data) at percentiles 1..99, for matching a window preset's histogram (`levelQuantiles`). */
+  quantiles?: number[];
   /** The level's name in the store. */
   path: string;
 }
@@ -328,7 +409,11 @@ export async function readLevel(client: VolumeClient, url: string, budget: numbe
   const level = levels[levelIndex];
   progress?.(`reading level ${level.path} (${level.size.join(" × ")})`);
   const { data, size } = await client.volume(levelIndex, (d, t) => progress?.(`reading level ${level.path}: ${d}/${t} chunks`));
-  return { data, size, voxelToRas: Array.from(level.voxelToRas), range: range ?? [0, 255], pct: tissuePercentiles(data), window: guessWindow(data, size[0], size[1], size[2]), path: level.path };
+  const span = range ?? [0, 255];
+  const window = guessWindow(data, size[0], size[1], size[2]);
+  const from8 = (v: number) => span[0] + (v / 255) * (span[1] - span[0]);
+  const quantiles = window && levelQuantiles(data, size, span, [from8(window[0]), from8(window[1])]);
+  return { data, size, voxelToRas: Array.from(level.voxelToRas), range: span, pct: tissuePercentiles(data), window, quantiles, path: level.path };
 }
 
 export interface LocalFrame {

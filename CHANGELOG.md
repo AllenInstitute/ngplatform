@@ -158,6 +158,10 @@ The production polish: the work of an audit of every panel and plugin
   (neurological: from behind). Reset the rotation goes back to it.
 - The top bar's Neuroglancer button is back: this scene in Neuroglancer,
   in a new tab.
+- Every preset is offered when rendering in this browser too: the HiP-CT
+  organs (kidney, heart, lung, liver and the rest), their colours placed
+  through each scan's tissue histogram as the render computer places them,
+  with the photographs they come from.
 - A new or empty scene's card offers Open a file and Paste a link; the
   examples are in Open and the palette.
 

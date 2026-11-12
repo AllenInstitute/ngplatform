@@ -682,10 +682,10 @@ class AnatomicalRendering {
     return typeof d === "string" ? d : undefined;
   }
 
-  /** Where a preset's colours came from: the photographs it lists (with their authors and licences); none in this browser. */
+  /** Where a preset's colours came from: the photographs it lists (with their authors and licences). */
   private references(): { title: string; page?: string; author: string; licence: string }[] {
-    if (this.saved.where === "browser") return [];
-    const info = this.presets.find((p) => p.name === this.saved.preset);
+    const list = (this.saved.where === "browser" ? LOCAL_PRESETS : this.presets) as unknown as Record<string, unknown>[];
+    const info = list.find((p) => p.name === this.saved.preset);
     const refs = Array.isArray(info?.reference) ? (info!.reference as { title?: string; page?: string; author?: string; licence?: string }[]) : [];
     return refs.map((r) => ({ title: (r.title ?? "a photograph").replace(/^File:/, ""), page: safeHref(r.page), author: r.author ?? "unknown", licence: r.licence ?? "" }));
   }
