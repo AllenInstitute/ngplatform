@@ -153,6 +153,11 @@ The production polish: the work of an audit of every panel and plugin
   place of the menu that picked one.
 - On/off switches are round again (a round knob in a round track); the
   other controls stay square.
+- The 3-D view starts radiological for anatomy, as the cross-sections do:
+  from the front, superior up, the patient's right on the screen's left
+  (neurological: from behind). Reset the rotation goes back to it.
+- The top bar's Neuroglancer button is back: this scene in Neuroglancer,
+  in a new tab.
 - A new or empty scene's card offers Open a file and Paste a link; the
   examples are in Open and the palette.
 

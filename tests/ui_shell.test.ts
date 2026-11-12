@@ -68,13 +68,14 @@ describe("layout", () => {
 });
 
 describe("the top bar", () => {
-  it("runs Open, Settings, undo, redo and the command search", () => {
+  it("runs Open, Neuroglancer, Settings, undo, redo and the command search", () => {
     byText("Open").click();
+    labelled("Open in Neuroglancer").click();
     labelled("Settings").click();
     labelled("Undo").click();
     labelled("Redo").click();
     labelled("Search commands").click();
-    expect(run.mock.calls.map((c) => c[0])).toEqual(["workspace.open", "settings.open", "edit.undo", "edit.redo", "help.palette"]);
+    expect(run.mock.calls.map((c) => c[0])).toEqual(["workspace.open", "workspace.openInNeuroglancer", "settings.open", "edit.undo", "edit.redo", "help.palette"]);
   });
 
   it("opens the Share menu, whose items copy, save and open the workspace", () => {

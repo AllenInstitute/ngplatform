@@ -79,6 +79,17 @@ export function panelRotations(convention: PanelConvention): Record<NamedPanel, 
 }
 
 /**
+ * The 3-D view's standard orientation in a convention (undefined: as
+ * Neuroglancer starts it): the coronal panel's view, from the front with
+ * superior up, so radiological shows the patient's right on the screen's
+ * left (as one sees a patient facing one), and neurological shows the
+ * patient from behind, right on the right.
+ */
+export function standardView(convention: PanelConvention): [number, number, number, number] | undefined {
+  return convention === "neuroglancer" ? undefined : panelRotations(convention).xz;
+}
+
+/**
  * Whether a coordinate space reads as anatomy in RAS: spatial axes named
  * x, y and z in units of a micrometre or more (MRI, HiP-CT, light-sheet
  * atlases), as against nanometre electron microscopy, where Neuroglancer's

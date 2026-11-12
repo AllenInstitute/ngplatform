@@ -32,7 +32,7 @@ import {
   type Viewer,
   setNamedPanelOrientation,
 } from "./neuroglancer.js";
-import { looksAnatomical, type PanelConvention, panelRotations } from "./anatomical.js";
+import { looksAnatomical, type PanelConvention, panelRotations, standardView } from "./anatomical.js";
 import { applyLookupTable, layerLookupSource } from "./lookup_tables.js";
 import { addMomentum } from "./momentum.js";
 import { mountInspector } from "./inspector/index.js";
@@ -831,9 +831,13 @@ export class Engine {
     check();
   }
 
+  /** Back to the standard views: the panels as their convention shows them, the 3-D view as its standard (`standardView`). */
   resetOrientation(): void {
     this.viewer.navigationState.pose.orientation.reset();
-    this.viewer.perspectiveNavigationState.pose.orientation.reset();
+    const standard = standardView(this.appliedConvention);
+    const orientation = this.viewer.perspectiveNavigationState.pose.orientation;
+    if (standard === undefined) orientation.reset();
+    else orientation.restoreState(standard);
   }
 
   /**
@@ -901,6 +905,14 @@ export class Engine {
           ? "radiological"
           : "neuroglancer";
     if (want === this.appliedConvention) return;
+    // The 3-D view as the convention before left it (not turned since, nor set by a link): this one's standard view.
+    const orientation = this.viewer.perspectiveNavigationState.pose.orientation;
+    const was = standardView(this.appliedConvention) ?? [0, 0, 0, 1];
+    if (Array.from(orientation.orientation).every((v, i) => Math.abs(v - was[i]) < 1e-6)) {
+      const standard = standardView(want);
+      if (standard === undefined) orientation.reset();
+      else orientation.restoreState(standard);
+    }
     this.appliedConvention = want;
     const rotations = panelRotations(want);
     for (const axes of ["xy", "xz", "yz"] as const) {

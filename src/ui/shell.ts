@@ -151,6 +151,13 @@ export class Shell {
           icon("link"),
           h("span", { class: "hide-narrow" }, "Share"),
         ),
+        h(
+          "button",
+          // Named for a screen reader also where a narrow window hides its label.
+          { class: "btn hide-phone", type: "button", title: "Open this scene in Neuroglancer, in a new tab", "aria-label": "Open in Neuroglancer", onclick: () => this.wb.run("workspace.openInNeuroglancer") },
+          icon("external"),
+          h("span", { class: "hide-narrow" }, "Neuroglancer"),
+        ),
       ),
       h("span", { class: "sep hide-narrow" }),
       h("div", { class: "group hide-phone" }, this.undoButton, this.redoButton, this.historyButton),

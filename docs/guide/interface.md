@@ -37,6 +37,7 @@ and cannot export MP4: see
 |---|---|
 | **Open** | Open a file or a folder on your computer, a link or a Neuroglancer state, datasets of the other scenes, or one of two examples: the SRB 2026a template or MICrONS (a new empty scene: **New empty scene** in the palette). Opening replaces the workspace. The app starts as an empty viewer; a link ending `#example=<id>` opens an example (`srb-2026a`, `microns`, and the tractograms `s2146-mni` and `mni-hcp1065`). |
 | **Share** | Copy a link to the whole workspace, copy this scene as a Neuroglancer link or JSON state, or open it in Neuroglancer (Google's, or this site's with Zarr Vectors). It says so when the scene holds data plain Neuroglancer cannot read (Zarr Vectors, files on this computer). |
+| **Neuroglancer** | Open this scene in Google's Neuroglancer, in a new tab (as **Share › Open in Neuroglancer**). |
 | **Undo / Redo** | Undo any change to the workspace: layers, positions, settings, plugin state. |
 | **⋯** (beside redo) | The history of changes, as a tree: go to any earlier state, including ones on branches left by going back and changing something else. See [History of changes](#history-of-changes). |
 | **Scene tabs** | One tab per scene. **+** adds a scene; each tab has a close button (closing the last leaves a blank scene). Rename, duplicate and delete scenes from the command palette. Each scene works as a viewer of its own: the tools (Filtering's groups, Annotations, Luxar and the rest) show that scene's own; a new scene starts with none, a duplicated one with a copy. |

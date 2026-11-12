@@ -28,7 +28,7 @@ there yet.
 | File → Save Screenshot (`-ss`, magnification, auto-trim) | the camera icon → **Picture…**: magnification and trim |
 | File → Save Movie Frames, Save GIF | the camera icon → **Movie: sweep slices or time…** or **Movie: turn the 3-D view…**: a slice or time sweep, or a 3-D turn, as GIF, WebM, MP4 or PNG frames |
 | File → Save Volume As | Layers → the dataset's **⋯** → **Export as…**: NIfTI, `.mgz`/`.mgh` or OME-Zarr |
-| View → Neurological View | Settings › View → **Orientation of the views…**: radiological (as Freeview, the default for anatomy) or neurological |
+| View → Neurological View | Settings › View → **Orientation of the views…**: radiological (as Freeview, the default for anatomy) or neurological. The 3-D view starts in the same convention: radiological from the front, superior up and the patient's right on the left (neurological from behind); **Reset the rotation** goes back to it |
 | Viewport 2 × 2 | four panels: axial, sagittal, coronal and 3-D bottom right |
 | `freeview -v a.nii b.nii` | a link: the address bar holds the whole workspace |
 
