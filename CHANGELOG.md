@@ -114,6 +114,18 @@ The production polish: the work of an audit of every panel and plugin
 - At most six decode workers, and a worker that decoded a very large chunk
   is replaced, so its memory is given back.
 
+### Anatomical rendering as an object in the 3-D view
+
+- The rendered image is an object in the 3-D view, drawn in this browser
+  with every frame's camera: it turns, pans and zooms with the view at once
+  (no picture stuck to the screen while the camera moves), and other layers
+  go behind and in front of it by its depth.
+- Its light is path-traced into it in this browser over a few seconds after
+  the light, preset or cuts change, and stays fixed to it as the view turns;
+  the host's stills and movies are lit the same way.
+- Quality › "Path-traced picture when still" (off by default) shows the
+  host's full-detail picture of the view when the camera rests.
+
 ## 0.2.0 — 2026-10-31
 
 The platform around Neuroglancer: datasets, scenes and plugins around a
