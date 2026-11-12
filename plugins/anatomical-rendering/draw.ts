@@ -185,6 +185,8 @@ export class PictureDrawer implements Drawer3d {
   live: { ready(): boolean; draw(frame: Frame3d, split: number): boolean } | undefined;
   /** The look of the view now, set as each frame begins (in `onFrame`): a picture of another look is not shown. */
   look = "";
+  /** Whether the picture of the view is shown over the live image when the camera rests (else the live image alone). */
+  pictureAtRest = true;
   /** The last frame was the live image alone; then when the picture of the view began to come in over it. */
   private liveAlone = false;
   private coverStart: number | undefined;
@@ -238,7 +240,7 @@ export class PictureDrawer implements Drawer3d {
     this.onFrame?.(frame);
     const pic = this.picture;
     const live = this.live?.ready() ? this.live : undefined;
-    if (live !== undefined && (pic === undefined || !this.isOf(pic, frame)) && live.draw(frame, 1)) {
+    if (live !== undefined && (!this.pictureAtRest || pic === undefined || !this.isOf(pic, frame)) && live.draw(frame, 1)) {
       this.stats.live++;
       this.liveAlone = true;
       this.coverStart = undefined;

@@ -16,7 +16,7 @@ import { clampInt, evenSide, LIMITS, movieSettings, retryDelay, stillProblem, wi
 import { parsePly, parseSplat, showSplats, type SplatCamera } from "./splatview.js";
 import { ColourmapEditor, type DataStop, histogramHandles, shifted, type Tuning, type WarpPoint, warpInverse } from "./editor.js";
 import { LiveVolume, type LivePreset } from "./live.js";
-import { LocalRenderer, PRESETS as LOCAL_PRESETS } from "./local/local.js";
+import { cameraAxes, LocalRenderer, PRESETS as LOCAL_PRESETS, rowMajor } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
 import { anatomicalSides, type AxisSides, axesCheck, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, metadataBase, omeZarrSource, orientationLooking, safeHref, unitMm, type ViewButton, viewButtons, viewCutPlane, viewForward, viewKey } from "./view.js";
 
@@ -96,6 +96,8 @@ export interface Saved {
   maxSamples: number;
   /** Smooth the first frames after the view changes (the host's denoiser). */
   denoise: boolean;
+  /** Show the path-traced picture of the view when the camera rests, over the object (else the object alone; the host renders stills, movies and splats). */
+  restPicture: boolean;
   keyframes: Keyframe[];
   /** Crops: boxes (fractions of the volume along x, y, z), each keeping its inside or cutting it out; what shows is inside any that keeps and in none that cuts out. */
   boxes: Crop[];
@@ -171,6 +173,7 @@ export function readSaved(raw: unknown): Saved {
     jar: s.jar === true,
     maxSamples: num(s.maxSamples, 512),
     denoise: s.denoise !== false,
+    restPicture: s.restPicture === true,
     keyframes: Array.isArray(s.keyframes) ? s.keyframes.filter((k) => k && typeof k.time === "number" && k.view && typeof k.view === "object") : [],
     boxes: Array.isArray(s.boxes)
       ? s.boxes.filter((b) => b && Array.isArray(b.lo) && Array.isArray(b.hi)).map((b, i) => ({ name: String(b.name ?? `Crop ${i + 1}`), on: b.on !== false, keep: b.keep !== false, lo: b.lo, hi: b.hi }))
@@ -348,8 +351,9 @@ class AnatomicalRendering {
   private distance: Distance | undefined;
   /** The camera (inverse view-projection, column-major) and look of each view sent, by the version the host gave it. */
   private views = new Map<number, { camera: number[]; look: string }>();
-  /** The image drawn with each frame's camera while the camera moves and until the picture of the view comes. */
+  /** The image as an object in the 3-D view, drawn with each frame's camera. */
   private readonly live = new LiveVolume();
+  private fixedLight: { key: string; direction: [number, number, number] } | undefined;
   private lastCursor: number[] | undefined;
 
   /** Offsets (mm from the position) that put the cuts through the last point the cursor was over; undefined when there is none. */
@@ -384,6 +388,7 @@ class AnatomicalRendering {
       this.handle?.redraw();
       this.statusUpdate?.();
     };
+    this.live.onRedraw = () => this.handle?.redraw();
     this.toggle = ctx.ui.viewToggle({ label: "Render", title: "Path-traced rendering (Anatomical rendering)", value: this.saved.on, onChange: (v) => this.setOn(v) });
     this.offs.push(
       ctx.viewer.onLayersChanged(() => this.update()),
@@ -888,6 +893,8 @@ class AnatomicalRendering {
     } catch (e) {
       this.localText = "";
       this.problem = `This browser cannot render it: ${(e as Error).message}`;
+      // The object needs no WebGPU: it reads the image itself.
+      void this.live.open(url);
     }
     this.statusUpdate?.();
   }
@@ -1063,7 +1070,10 @@ class AnatomicalRendering {
       preset: tuned ?? (s.customPresets.find((p) => p.name === s.preset) as Record<string, unknown> | undefined) ?? (s.preset || "HiP-CT brain"),
       overrides: tuned ? { exposure: s.exposure, ...(s.density !== undefined ? { density: s.density } : {}) } : overrides,
       boxes: s.boxes.filter((b) => b.on).map((b) => ({ lo: b.lo, hi: b.hi, keep: b.keep })),
-      light: { direction: lightDirection(s.lightAzimuth, s.lightElevation), camera_space: true, rgb: [3.2 * s.lightKey, 3.0 * s.lightKey, 2.8 * s.lightKey] },
+      // With the object drawn, the light is the object's (fixed in the world); else it turns with the camera.
+      light: this.live.ready()
+        ? { direction: this.objectLight(frame), camera_space: false, rgb: [3.2 * s.lightKey, 3.0 * s.lightKey, 2.8 * s.lightKey] }
+        : { direction: lightDirection(s.lightAzimuth, s.lightElevation), camera_space: true, rgb: [3.2 * s.lightKey, 3.0 * s.lightKey, 2.8 * s.lightKey] },
       environment: s.lightMap ? { map: s.lightMap, rotation: s.lightMapRotation, scale: s.envScale } : { scale: s.envScale },
       clips: [
         ...clipPlanes(s.cuts, frame.position, frame.dimensions),
@@ -1081,9 +1091,16 @@ class AnatomicalRendering {
     this.lastFrame = frame;
     const look = JSON.stringify([this.saved.boxes, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.lightStyle, this.saved.envScale, this.saved.lightKey, this.saved.viewCut, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
     this.drawer.look = look;
+    this.drawer.pictureAtRest = this.saved.restPicture;
     const local = this.saved.where === "browser" ? this.local : undefined;
     const sid = local ? "local" : this.session?.status === "ready" ? this.session.id : undefined;
     if (sid === undefined || (local && !local.ready)) return;
+    if (this.live.ready() && !this.saved.restPicture) {
+      // The object is all the view shows: views go to the host only for stills, movies and splats.
+      const spec = this.viewSpec(frame, 1);
+      if (spec !== undefined) this.lastSpec = spec;
+      return;
+    }
     const camera = viewKey(frame.invViewProjection, frame.width, frame.height);
     // Moving: Neuroglancer's drag or wheel, or the camera changing frame after frame without them (the
     // 3-D view's momentum after a drag, keys held down); a single jump (a view button) is not.
@@ -1123,6 +1140,21 @@ class AnatomicalRendering {
     if (spec === undefined) return;
     if (scale === 1) this.lastSpec = spec;
     this.send(sid, spec, look);
+  }
+
+  /**
+   * The key light as the object holds it: fixed in the world, from the camera of the frame when it was
+   * last set (around and up), so it stays put as the view turns about the object.
+   */
+  private objectLight(frame: Frame3d): [number, number, number] {
+    const s = this.saved;
+    const key = JSON.stringify([s.lightAzimuth, s.lightElevation]);
+    if (this.fixedLight?.key !== key) {
+      const [right, up, back] = cameraAxes(rowMajor(frame.invViewProjection));
+      const d = lightDirection(s.lightAzimuth, s.lightElevation);
+      this.fixedLight = { key, direction: [0, 1, 2].map((i) => d[0] * right[i] + d[1] * up[i] + d[2] * back[i]) as [number, number, number] };
+    }
+    return this.fixedLight.direction;
   }
 
   /**
@@ -1608,7 +1640,7 @@ class AnatomicalRendering {
       lines.push(`${s.message}${v.made ? (v.from_cache ? " (made here, from the cache)" : " (made here by downsampling)") : ""}`);
     }
     if (this.saved.where === "browser" && this.local?.ready) lines.push(this.localText);
-    else if (this.saved.where === "host" && this.live.text) lines.push(this.live.text);
+    if (this.live.text) lines.push(this.live.text);
     if (this.frameText) lines.push(this.frameText);
     return lines.join("\n");
   }
@@ -1777,6 +1809,10 @@ class AnatomicalRendering {
     } });
     const detailField = field("Detail", detailBudget, { info: "The voxels the finer region may hold." });
     const denoise = checkbox("Denoise", true, (v) => this.save((x) => (x.denoise = v)), { info: "Smooths the first frames after the view changes (the computer's denoiser)." });
+    const restPicture = checkbox("Path-traced picture when still", false, (v) => {
+      this.lastKey = "";
+      this.save((x) => (x.restPicture = v));
+    }, { info: "Over the object, the path-traced picture of the view (at the image's full detail) once the camera rests. Off, the view shows the object alone, and the render computer renders only stills, movies and splats." });
     const samples = slider(512, { min: 16, max: 4096, step: 16, label: "Samples per pixel", onchange: (v) => this.save((x) => (x.maxSamples = Math.max(1, Math.round(v)))) });
     const frameReadout = el("p", { class: "readout" });
     const quality = card("anatomical.quality", "Quality", {},
@@ -1784,6 +1820,7 @@ class AnatomicalRendering {
       detail,
       detailField,
       denoise,
+      restPicture,
       field("Samples per pixel", samples, { info: "Where a still view stops refining." }),
       frameReadout,
     );
@@ -2101,6 +2138,7 @@ class AnatomicalRendering {
       detailField.hidden = !onHost_ || !s.detail;
       detailBudget.set(s.detailBudget / 1e6);
       denoise.set(s.denoise);
+      restPicture.set(s.restPicture);
       samples.set(s.maxSamples);
 
       // Lighting.

@@ -110,11 +110,12 @@ takes images with one of each only.
 - **Density** (opacity per mm), **Exposure** and the other settings are
   sliders with their numbers beside them (a budget applies when its slider
   is let go); and the key light's direction
-  (relative to the camera, so the light follows as you turn the view).
+  (set relative to the camera; it then stays fixed to the image as you turn
+  the view about it, until you set it again).
 - **Lighting** (on a host): a style, **Studio** (a photographer's studio),
   **Soft** (light from all round, faint shadows), **Hard** (one strong light,
   deep shadows) or **Sky** (daylight), or as set by hand: the key light's
-  direction (around the view and up, sliders; it turns with the camera) and
+  direction (around the view and up, sliders, from the camera when set) and
   the strengths of the key light and of the light from all round.
 - **Light map** (on a host): image-based light from an HDR panorama
   (studio, photo studio, sky; CC0 images from [Poly Haven](https://polyhaven.com),
@@ -166,6 +167,19 @@ takes images with one of each only.
   one has as many samples (up to 24, or 2 s), then fades into it. A view
   that needs no finer level lets the detail go. Stills use the detail held
   for the view; movies use the whole volume's level.
+- **The image in the 3-D view** is an object in the view's space, drawn
+  in this browser with every frame's camera: it turns, pans and zooms with
+  the view at once, and meshes, tracts and sections go behind and in front
+  of it as they should. It is one level of the image (up to 32 million
+  voxels), with its light path-traced into it in this browser over a few
+  seconds after the light, preset or cuts change (**Quality** says how far:
+  "light 12 of 47 passes"); until then it is lit more simply. Turning the
+  view does not light it again: the light is the object's.
+- **Path-traced picture when still** (Quality; off by default): once the
+  camera rests, the host's path-traced picture of the view, at the image's
+  full detail, comes in over the object, and goes as soon as the camera
+  moves. Off, the host renders only stills, movies and splats (lit as the
+  object is), and **Finer detail** (which follows the views sent) is not used.
 - **Samples per pixel**: when a still view stops refining. Under it, the
   level held and the last frame's samples, size and time a pass.
 - **Load…** (beside Preset): a preset (or a list) as JSON, in the form of

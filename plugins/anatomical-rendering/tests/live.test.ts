@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ViewSpec } from "../client.js";
 import { FADE_MS, PictureDrawer } from "../draw.js";
-import { liveParams, type LivePreset, liveTable, occupancy } from "../live.js";
+import { LIGHT_SIDE, lightGrid, liveParams, type LivePreset, liveTable, occupancy } from "../live.js";
 import { TF_SIZE } from "../local/local.js";
 import { frame3d } from "./fake_context.js";
 
@@ -44,6 +44,16 @@ describe("the bricks the live image steps over", () => {
     // The last brick lies just below the opaque values.
     expect(Array.from(occupancy(bounds, table))).toEqual([0, 255, 255, 0]);
     expect(Array.from(occupancy(Float32Array.from([0, 0.4]), table))).toEqual([0]);
+  });
+});
+
+describe("the light held in the object", () => {
+  it("has a cell a voxel for a small level, and at most LIGHT_SIDE cells a side for a large one", () => {
+    expect(lightGrid([64, 40, 20])).toEqual({ cell: 1, grid: [64, 40, 20] });
+    const big = lightGrid([320, 300, 100]);
+    expect(big.cell).toBe(4);
+    expect(big.grid).toEqual([80, 75, 25]);
+    expect(Math.max(...big.grid)).toBeLessThanOrEqual(LIGHT_SIDE);
   });
 });
 
@@ -119,6 +129,18 @@ describe("the drawer with a live image", () => {
     d.draw(here);
     expect(d.stats.live).toBe(2);
     vi.unstubAllGlobals();
+  });
+
+  it("draws the live image alone, even at the picture's camera, when the picture is not wanted at rest", () => {
+    const d = new PictureDrawer();
+    const live = { ready: () => true, draw: vi.fn((_frame: unknown, _split: number) => true) };
+    d.live = live;
+    d.pictureAtRest = false;
+    const here = frame();
+    d.set({ bitmap: bitmap(), camera: Array.from(here.invViewProjection), look: "" });
+    d.draw(here);
+    expect(live.draw).toHaveBeenCalledWith(expect.anything(), 1);
+    expect(d.stats.live).toBe(1);
   });
 
   it("draws the picture as before when the live image cannot be drawn", () => {
