@@ -160,10 +160,27 @@ The production polish: the work of an audit of every panel and plugin
   (neurological: from behind). Reset the rotation goes back to it.
 - The top bar's Neuroglancer button is back: this scene in Neuroglancer,
   in a new tab.
+- The colourmap editor: the colourmap (a bar under the histogram) and
+  the histogram are each dragged to move them and compressed in place
+  (the bar's ends, Shift-drag, or the wheel), not with sliders only; a
+  black-to-white strip of the image's own grey values under the
+  histogram; the view stays put while you tune (Ctrl-wheel zooms,
+  double-click fits); each drag one step to undo. In this browser the
+  image is read over all its values for rendering, as the render
+  computer reads it: the densest tissue was cut off at the 99.5th
+  percentile, so presets fell partly past the histogram's end. The
+  histogram's bins are centred on their values.
 - Every preset is offered when rendering in this browser too: the HiP-CT
   organs (kidney, heart, lung, liver and the rest), their colours placed
   through each scan's tissue histogram as the render computer places them,
   with the photographs they come from.
+- The presets have contrast: the organ presets spread their lightness over
+  each organ's own tissue values (most organs had shown their tissue in one
+  colour), hues as photographed; the brain, histology and translucent
+  presets run from dark to light. New **General** presets suit any scan:
+  greyscale (black to white), greyscale inverted (white to black), anatomy,
+  thermal, viridis, soft tissue and bone, and glass. The Preset box groups
+  them: General, HiP-CT organs, by modality, from a file.
 - A new or empty scene's card offers Open a file and Paste a link; the
   examples are in Open and the palette.
 

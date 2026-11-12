@@ -1,11 +1,12 @@
 /**
- * The presets in this browser: every one the host has (the brain set and
- * the HiP-CT organs), and the organs' colours placed as the host places
+ * The presets in this browser: every one the host has (the brain set, the
+ * general ones and the HiP-CT organs), and the organs' colours placed as the host places
  * them, through each scan's tissue histogram (presets._to_texture,
  * volumes.tissue_quantiles).
  */
 import { describe, expect, it } from "vitest";
 import { type LevelPreset, levelQuantiles, levelResolved, PRESETS, windowSide } from "../local/local.js";
+import { presetChoices } from "../plugin.js";
 
 /** A scan of tissue (values about 160) in a medium (about 60) filling a round jar: z slices of a disc. */
 function scan(n = 48) {
@@ -38,6 +39,43 @@ describe("the presets in this browser", () => {
     const kidney = PRESETS.find((p) => p.name === "HiP-CT organ: kidney") as LevelPreset;
     expect(kidney.domain).toBe("window");
     expect(kidney.histogram).toHaveLength(99);
+  });
+});
+
+describe("the general presets", () => {
+  const lightness = (c: number[]) => {
+    const lin = c.map((x) => (x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4));
+    const y = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+    return y > 0.008856 ? 116 * Math.cbrt(y) - 16 : 903.3 * y;
+  };
+
+  it("are offered for any scan: through the window guessed from it, with no histogram to match", () => {
+    const general = PRESETS.filter((p) => p.name.startsWith("General: ")) as LevelPreset[];
+    expect(general.map((p) => p.name)).toEqual(expect.arrayContaining(["General: greyscale", "General: greyscale, inverted", "General: glass"]));
+    for (const p of general) {
+      expect(p.domain).toBe("window");
+      expect(p.histogram ?? undefined).toBeUndefined();
+    }
+    // Black to white as the values rise; inverted, white to black.
+    const grey = (name: string) => (PRESETS.find((p) => p.name === name) as LevelPreset).stops.filter((s) => s.opacity > 0).map((s) => lightness(s.color));
+    const up = grey("General: greyscale"), down = grey("General: greyscale, inverted");
+    expect(up[up.length - 1] - up[0]).toBeGreaterThan(60);
+    expect(down[0] - down[down.length - 1]).toBeGreaterThan(60);
+  });
+
+  it("are grouped in the Preset box: General, the organs, the rest by modality, then those from a file", () => {
+    const list = [
+      { name: "HiP-CT brain", modality: "HiP-CT" },
+      { name: "HiP-CT organ: kidney", modality: "HiP-CT" },
+      { name: "General: greyscale", modality: "" },
+      { name: "mine", modality: "from a file" },
+    ];
+    expect(presetChoices(list)).toEqual([
+      ["General: greyscale", "Greyscale", "General"],
+      ["HiP-CT organ: kidney", "Kidney", "HiP-CT organs"],
+      ["HiP-CT brain", "HiP-CT brain (HiP-CT)", "By modality"],
+      ["mine", "mine", "From a file"],
+    ]);
   });
 });
 

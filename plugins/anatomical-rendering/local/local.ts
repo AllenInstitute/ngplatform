@@ -7,6 +7,7 @@
  */
 import presetsJson from "../../../runner/ngplatform_render/presets/brain.json";
 import organPresetsJson from "../../../runner/ngplatform_render/presets/hipct-organs.json";
+import generalPresetsJson from "../../../runner/ngplatform_render/presets/general.json";
 import params from "../../../runner/ngplatform_render/params.json";
 import { storeHttpUrl } from "../../volume-view/sources.js";
 import { VolumeClient } from "../../volume-view/volume_client.js";
@@ -67,7 +68,7 @@ export interface LocalPreset {
 }
 
 /** Every preset the host has: the brain set and the HiP-CT organs (window presets, matched to each scan's histogram). */
-export const PRESETS: LocalPreset[] = [...(presetsJson as LocalPreset[]), ...(organPresetsJson as unknown as LocalPreset[])];
+export const PRESETS: LocalPreset[] = [...(presetsJson as LocalPreset[]), ...(organPresetsJson as unknown as LocalPreset[]), ...(generalPresetsJson as LocalPreset[])];
 const ENV = { top: [0.85, 0.9, 1.0], horizon: [0.55, 0.55, 0.6], bottom: [0.12, 0.11, 0.1], scale: 0.6 };
 
 /** Data values (0..255 here) at percentiles of the tissue: the values above the background's low peak. */
@@ -311,12 +312,17 @@ export function levelQuantiles(data: Uint8Array, size: readonly number[], range:
   });
 }
 
-/** The level's values in 256 bins over its data range (`range`), every 2nd voxel, as the host's histogram for the editor. */
+/**
+ * The level's values in 256 bins, one per 8-bit value, every 2nd voxel, as the host's histogram for
+ * the editor: `lo` and `hi` the bins' outer edges, half a step past the data values read as 0 and 255,
+ * so each bin is centred on its value.
+ */
 export function levelHistogram(level: Pick<Level8, "data" | "size" | "range">): { lo: number; hi: number; counts: number[] } {
   const counts = new Array<number>(256).fill(0);
   const [nx, ny, nz] = level.size;
   for (let z = 0; z < nz; z += 2) for (let y = 0; y < ny; y += 2) for (let x = 0, i = (z * ny + y) * nx; x < nx; x += 2, i += 2) counts[level.data[i]]++;
-  return { lo: level.range[0], hi: level.range[1], counts };
+  const half = (level.range[1] - level.range[0]) / 255 / 2;
+  return { lo: level.range[0] - half, hi: level.range[1] + half, counts };
 }
 
 // ------------------------------------------------------------------ 4x4 (row-major) helpers
@@ -403,7 +409,8 @@ export interface Level8 {
 export async function readLevel(client: VolumeClient, url: string, budget: number, maxDim: number, progress?: (msg: string) => void): Promise<Level8> {
   const http = storeHttpUrl(url.endsWith("/") ? url : `${url}/`);
   if (http === undefined) throw new Error(`${url}: this browser reads stores over http(s), gs:// and s3:// only`);
-  const { levels, window: range } = await client.open([http], undefined);
+  // All of the image's values read as 0..255, as the host holds them: the densest tissue not cut off.
+  const { levels, window: range } = await client.open([http], undefined, { full: true });
   const fits = levels.filter((l) => l.size[0] * l.size[1] * l.size[2] <= budget && Math.max(...l.size) <= maxDim);
   const levelIndex = fits.length ? levels.indexOf(fits[0]) : levels.length - 1;
   const level = levels[levelIndex];

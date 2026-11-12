@@ -274,7 +274,12 @@ def test_fast_tracking_is_close_and_passes_stop_for_a_new_view():
     R.set_volume(renderer.Volume(data, np.diag([0.5, 0.5, 0.5, 1.0]), 0.0, 255.0, volumes.tissue_percentiles(data, 0, 255)))
     lo, hi = bounds(np.diag([0.5, 0.5, 0.5, 1.0]), data.shape)
     cam = orbit((lo + hi) / 2, framing_radius(lo, hi, 30), 30, 20)
-    p = presets.builtin()["HiP-CT brain"].with_overrides(density=40.0)
+    # A gentle colour ramp (the HiP-CT brain preset's before its contrast was raised): what is measured is the
+    # tracking, and a steeper ramp turns the collision's small shift in depth into a larger shift in colour.
+    gentle = [{"value": 0, "color": [0.75, 0.70, 0.62], "opacity": 0.0}, {"value": 10, "color": [0.80, 0.74, 0.66], "opacity": 0.0},
+              {"value": 30, "color": [0.88, 0.80, 0.70], "opacity": 0.4}, {"value": 70, "color": [0.95, 0.88, 0.78], "opacity": 0.8},
+              {"value": 99.9, "color": [1.0, 0.97, 0.92], "opacity": 1.0}]
+    p = presets.builtin()["HiP-CT brain"].with_overrides(density=40.0, stops=gentle)
     means = []
     for fast in (0.0, 1.0):
         R.set_view(renderer.RenderState(np.linalg.inv(cam.view_projection(96, 72)), 96, 72, p, fast=fast, denoise=False))
@@ -429,6 +434,36 @@ def test_window_presets_take_the_window():
         p.with_overrides(window=[5, 5])
     organs = [q for q in presets.builtin().values() if q.modality == "HiP-CT" and q.organ]
     assert len(organs) >= 10 and all(q.domain == "window" and q.reference for q in organs)
+
+
+def _lightness(rgb) -> float:
+    lin = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
+    y = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+    return 116 * y ** (1 / 3) - 16 if y > 0.008856 else 903.3 * y
+
+
+def test_general_presets_suit_any_scan():
+    ps = presets.builtin()
+    general = [q for q in ps.values() if q.name.startswith("General: ")]
+    assert {"General: greyscale", "General: greyscale, inverted"} <= {q.name for q in general} and len(general) >= 5
+    # Through the window guessed from the scan: no reference histogram to match.
+    assert all(q.domain == "window" and q.histogram is None for q in general)
+    # Greyscale: black to white as the values rise; inverted, white to black.
+    grey = [_lightness(s.color) for s in ps["General: greyscale"].stops if s.opacity > 0]
+    inverted = [_lightness(s.color) for s in ps["General: greyscale, inverted"].stops if s.opacity > 0]
+    assert grey[-1] - grey[0] > 60 and all(b >= a - 1e-6 for a, b in zip(grey, grey[1:]))
+    assert inverted[0] - inverted[-1] > 60
+
+
+def test_organ_presets_show_their_tissue():
+    """The bulk of each organ's tissue (its design scan's 10th to 90th percentile) spans a range of lightness."""
+    for q in presets.builtin().values():
+        if not q.organ or not q.histogram:
+            continue
+        xs = [s.value for s in q.stops]
+        at = lambda v: [float(np.interp(v, xs, [s.color[k] for s in q.stops])) for k in range(3)]  # noqa: E731
+        span = abs(_lightness(at(q.histogram[89])) - _lightness(at(q.histogram[9])))
+        assert span > 15, f"{q.name}: tissue p10..p90 spans only {span:.1f} L*"
 
 
 def test_hide_the_jar():

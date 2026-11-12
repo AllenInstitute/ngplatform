@@ -533,9 +533,14 @@ export class VolumeReader {
     });
   }
 
-  /** Opens the stores' levels (finest first), placed in `space` where they name it. */
-  async open(stores: string[], space: string | undefined, signal?: AbortSignal): Promise<{ levels: LevelInfo[]; name: string; description?: string; window: [number, number] }> {
-    if (stores.length === 1 && stores[0].startsWith(PRECOMPUTED)) return this.openPrecomputed(stores[0].slice(PRECOMPUTED.length), signal);
+  /**
+   * Opens the stores' levels (finest first), placed in `space` where they name it. Their values are
+   * read as 0..255 through a window: for showing, the bulk of them (0.5th to 99.5th percentile); with
+   * `full`, all of them (lowest to highest, a few far outliers left out), for rendering, where the
+   * densest tissue must not be cut off.
+   */
+  async open(stores: string[], space: string | undefined, signal?: AbortSignal, full = false): Promise<{ levels: LevelInfo[]; name: string; description?: string; window: [number, number] }> {
+    if (stores.length === 1 && stores[0].startsWith(PRECOMPUTED)) return this.openPrecomputed(stores[0].slice(PRECOMPUTED.length), signal, full);
     const pyramids = await Promise.all(
       stores.map(async (store) => {
         const url = store.endsWith("/") ? store : `${store}/`;
@@ -554,14 +559,14 @@ export class VolumeReader {
     this.levels = opened.map((level) => this.adopt(level));
     this.window = [0, 255];
     const coarsest = this.levels[this.levels.length - 1];
-    if (coarsest !== undefined && coarsest.type !== "uint8") this.window = await this.windowOf(coarsest, signal);
+    if (coarsest !== undefined && coarsest.type !== "uint8") this.window = await this.windowOf(coarsest, signal, full);
     return { levels: this.levels.map((l) => l.info), name: pyramids[0]?.name ?? "", description: pyramids.find((p) => p.description)?.description, window: this.window };
   }
 
-  /** The intensities shown 0..255: the 0.5th to 99.5th percentile of a level's values. */
+  /** The intensities shown 0..255: the 0.5th to 99.5th percentile of a level's values (or all of them: `open`). */
   private window: [number, number] = [0, 255];
 
-  private async windowOf(level: OpenLevel, signal?: AbortSignal): Promise<[number, number]> {
+  private async windowOf(level: OpenLevel, signal?: AbortSignal, full = false): Promise<[number, number]> {
     const sample: number[] = [];
     const chunks: number[][] = [];
     for (let a = 0; a < level.grid[0]; ++a) for (let b = 0; b < level.grid[1]; ++b) for (let c = 0; c < level.grid[2]; ++c) chunks.push([a, b, c]);
@@ -577,8 +582,20 @@ export class VolumeReader {
     }
     if (sample.length === 0) return [0, 1];
     sample.sort((x, y) => x - y);
-    const lo = sample[Math.floor(0.005 * (sample.length - 1))];
-    const hi = sample[Math.ceil(0.995 * (sample.length - 1))];
+    const at = (q: number) => sample[Math.round(q * (sample.length - 1))];
+    let lo: number, hi: number;
+    if (full) {
+      // Lowest to highest, but for a few voxels far past the rest (a hot pixel, a bead).
+      [lo, hi] = [sample[0], sample[sample.length - 1]];
+      const [qlo, qhi] = [at(0.0001), at(0.9999)];
+      if (hi - qhi > 0.25 * (qhi - lo)) hi = qhi;
+      if (qlo - lo > 0.25 * (hi - qlo)) lo = qlo;
+      // The coarsest level averages the densest voxels down: room above for finer levels' highest values.
+      hi += 0.1 * (hi - lo);
+    } else {
+      lo = sample[Math.floor(0.005 * (sample.length - 1))];
+      hi = sample[Math.ceil(0.995 * (sample.length - 1))];
+    }
     return hi > lo ? [lo, hi] : [lo, lo + 1];
   }
 
@@ -587,7 +604,7 @@ export class VolumeReader {
    * first ({@link openPrecomputedScale}), an image drawn through the window
    * of its coarsest scale.
    */
-  private async openPrecomputed(url: string, signal?: AbortSignal): Promise<{ levels: LevelInfo[]; name: string; window: [number, number] }> {
+  private async openPrecomputed(url: string, signal?: AbortSignal, full = false): Promise<{ levels: LevelInfo[]; name: string; window: [number, number] }> {
     const info = await readInfo(url, undefined, signal);
     if (info.type !== "image" && info.type !== "segmentation") throw new Error(`${url}: a precomputed ${info.type ?? "source"}, not an image or segmentation`);
     const labels = info.type === "segmentation";
@@ -596,7 +613,7 @@ export class VolumeReader {
     this.levels = info.scales.map((scale) => this.adopt(openPrecomputedScale(url, scale, stored, labels))).sort((a, b) => a.info.voxelSize - b.info.voxelSize);
     this.window = [0, 255];
     const coarsest = this.levels[this.levels.length - 1];
-    if (!labels && coarsest !== undefined && coarsest.type !== "uint8") this.window = await this.windowOf(coarsest, signal);
+    if (!labels && coarsest !== undefined && coarsest.type !== "uint8") this.window = await this.windowOf(coarsest, signal, full);
     return { levels: this.levels.map((l) => l.info), name: url.replace(/\/$/, "").split("/").pop() ?? "", window: this.window };
   }
 

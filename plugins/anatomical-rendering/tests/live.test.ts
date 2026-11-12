@@ -55,12 +55,16 @@ describe("the colourmap at this image's values, in this browser", () => {
     for (let i = 0; i < a.length; ++i) expect(b[i]).toBeCloseTo(a[i], 4);
   });
 
-  it("counts the level's values over its data range, every second voxel", () => {
+  it("counts the level's values over its data range, every second voxel, each bin centred on its value", () => {
     const data = new Uint8Array(4 * 4 * 4).fill(7);
     data[0] = 200;
     const h = levelHistogram({ data, size: [4, 4, 4], range: [1000, 3000] });
-    expect(h.lo).toBe(1000);
-    expect(h.hi).toBe(3000);
+    const step = 2000 / 255;
+    expect(h.lo).toBeCloseTo(1000 - step / 2, 9);
+    expect(h.hi).toBeCloseTo(3000 + step / 2, 9);
+    // The bin of 8-bit value 200 is centred on the data value read as 200.
+    const width = (h.hi - h.lo) / 256;
+    expect(h.lo + (200 + 0.5) * width).toBeCloseTo(1000 + 200 * step, 6);
     expect(h.counts[200]).toBe(1);
     expect(h.counts[7]).toBe(7);
     expect(h.counts.reduce((x, y) => x + y, 0)).toBe(8);

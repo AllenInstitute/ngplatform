@@ -225,7 +225,8 @@ function idsInput(ids: number[], on: (ids: number[]) => void, label: string): Se
 }
 
 /** A select whose options follow the scene (images, presets, computers): `update` puts in new options only when they differ, then shows `value`. */
-type Choices = Settable<HTMLSelectElement, string> & { update(options: [string, string][], value: string): void };
+/** A select drawn again only when its options change: [value, text], or [value, text, group] in groups, in their first order. */
+type Choices = Settable<HTMLSelectElement, string> & { update(options: [string, string, string?][], value: string): void };
 function choices(onchange: (value: string) => void, label: string): Choices {
   const s = select([], "", onchange, label) as Choices;
   let last = "";
@@ -233,12 +234,33 @@ function choices(onchange: (value: string) => void, label: string): Choices {
     const key = JSON.stringify(options);
     if (key !== last) {
       last = key;
-      s.replaceChildren(...options.map(([v, text]) => el("option", { value: v }, text)));
+      const option = ([v, text]: [string, string, string?]) => el("option", { value: v }, text);
+      const groups = [...new Set(options.map((o) => o[2]))];
+      s.replaceChildren(
+        ...(groups.some((g) => g !== undefined)
+          ? groups.map((g) => el("optgroup", { label: g ?? "" }, ...options.filter((o) => o[2] === g).map(option)))
+          : options.map(option)),
+      );
       s.value = value;
     }
     s.set(value);
   };
   return s;
+}
+
+/** The Preset box's options: General (any scan), HiP-CT organs, by modality, from a file; within a group, the name without its prefix. */
+export function presetChoices(list: { name: string; modality: string }[]): [string, string, string][] {
+  const GROUPS: [string, string][] = [["General: ", "General"], ["HiP-CT organ: ", "HiP-CT organs"]];
+  const ORDER = ["General", "HiP-CT organs", "By modality", "From a file"];
+  const one = (p: { name: string; modality: string }): [string, string, string] => {
+    const g = GROUPS.find(([prefix]) => p.name.startsWith(prefix));
+    if (g !== undefined) {
+      const rest = p.name.slice(g[0].length);
+      return [p.name, rest.charAt(0).toUpperCase() + rest.slice(1), g[1]];
+    }
+    return [p.name, p.modality && p.modality !== "from a file" ? `${p.name} (${p.modality})` : p.name, p.modality === "from a file" ? "From a file" : "By modality"];
+  };
+  return list.map(one).sort((a, b) => ORDER.indexOf(a[2]) - ORDER.indexOf(b[2]));
 }
 
 /** A number box kept within bounds (`fix`): it shows the value as kept. */
@@ -256,7 +278,10 @@ const STYLE = `
 .ar-grow { flex: 1 1 140px; min-width: 0; }
 .ar-cut { display: grid; grid-template-columns: 5.5em auto minmax(0, 1fr); align-items: center; gap: var(--sp-3); }
 .ar-cut > select { width: auto; }
-.ar-editor { display: block; width: 100%; cursor: crosshair; border: 1px solid var(--line-strong); }
+.ar-editor-box { display: grid; gap: var(--sp-2); min-width: 0; }
+.ar-editor { display: block; width: 100%; height: 176px; cursor: grab; border: 1px solid var(--line-strong); touch-action: none; }
+.ar-editor:focus-visible { outline: 1px solid var(--line-focus); outline-offset: 1px; }
+.ar-editor-hint { color: var(--faint); font-size: var(--fs-caption); line-height: 1.35; }
 .ar-box { display: grid; gap: var(--sp-3); padding-left: var(--sp-4); border-left: 2px solid var(--line-strong); }
 .ar-box-axes { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: var(--sp-2) var(--sp-3); }
 .ar-box-axes > span { color: var(--muted); font-size: var(--fs-caption); }
@@ -787,18 +812,12 @@ class AnatomicalRendering {
 
   /** The colourmap editor for the image now (made once, kept). */
   private colourmapEditor(): ColourmapEditor {
-    this.editor ??= new ColourmapEditor((stops) => {
+    // Each change shown and rendered while it is made, kept (one undo step) once it is done.
+    this.editor ??= new ColourmapEditor({
       // Edits are kept unshifted, so shift and compression stay apart from them.
-      const c = this.currentTuning();
-      if (!c) return;
-      const e = this.editedStops();
-      const scale = c.tuning.scale || 1;
-      const unshifted = stops.map((x) => ({ ...x, value: (e ? e.centre : 0) + (x.value - c.tuning.shift - (e ? e.centre : 0)) / scale }));
-      this.save((x) => (x.tunings[c.src] = { ...c.tuning, stops: unshifted }));
-    }, (warp) => {
-      // The histogram slid or warped under the map.
-      const c = this.currentTuning();
-      if (c) this.save((x) => (x.tunings[c.src] = { ...c.tuning, warp }));
+      stops: (base, final) => this.tune((n) => (n.stops = base), !final),
+      map: (shift, scale, final) => this.tune((n) => Object.assign(n, { shift, scale }), !final),
+      warp: (warp, final) => this.tune((n) => (n.warp = warp), !final),
     });
     return this.editor;
   }
@@ -1832,11 +1851,11 @@ class AnatomicalRendering {
         { info: "The image values the preset's colours are spread over, low and high. Guess goes back to the computer's guess: from just past the mounting medium, with the commonest tissue value at the middle." });
     });
     const shift = slider(0, { min: -1, max: 1, step: 0.01, label: "Shift", oninput: (v) => this.tune((n) => (n.shift = v * this.mapWidth()), true), onchange: (v) => this.tune((n) => (n.shift = v * this.mapWidth())) });
-    const compress = slider(1, { min: 0.4, max: 2.5, step: 0.01, label: "Compress", oninput: (v) => this.tune((n) => (n.scale = v), true), onchange: (v) => this.tune((n) => (n.scale = v)) });
+    const compress = slider(1, { min: 0.2, max: 4, step: 0.01, label: "Compress", oninput: (v) => this.tune((n) => (n.scale = v), true), onchange: (v) => this.tune((n) => (n.scale = v)) });
     const editorPart = region((on: boolean) =>
       on
         ? [
-            field("Colourmap", this.colourmapEditor().element, { info: "The image's histogram (grey) under the preset's colours and opacity. Drag a point: left and right moves it, up and down its opacity. Double-click to colour it, Ctrl-click to add one, right-click to remove one. The blue triangles under the histogram slide and warp it under the colours." }),
+            field("Colourmap", this.colourmapEditor().element, { info: "The image's histogram (grey bars, log counts) with the opacity curve over it; under it, the image's own grey values, black to white; then the colourmap as a bar (a checker where it is clear). Drag the bar to move the map, an end of the bar to compress or stretch it; drag the histogram to slide it under the map, Shift-drag to compress it (the wheel does either once the editor has been clicked); its blue triangles warp it. A point: drag it (left and right moves it, up and down its opacity), double-click to colour it, Ctrl-click to add one, right-click to remove one. Ctrl-wheel zooms the view; double-click on empty space fits it to the map or the whole histogram." }),
             field("Shift", shift, { info: "Moves the whole map along the values (a fraction of its width)." }),
             field("Compress", compress, { info: "Narrows (below 1) or widens (above 1) the map about its middle." }),
             el("div", { class: "row" },
@@ -2162,8 +2181,16 @@ class AnatomicalRendering {
     };
     this.editorUpdate = () => {
       const e = this.editedStops();
-      const hist = this.histogram();
-      if (e && this.editor && !this.editor.dragging) this.editor.set(hist, e.stops, e.warp);
+      const cur = this.currentTuning();
+      if (cur) {
+        const width = this.mapWidth();
+        shift.set(width ? cur.tuning.shift / width : 0);
+        compress.set(cur.tuning.scale);
+      }
+      if (e && cur && this.editor && !this.editor.dragging) {
+        // The view refitted for another image or preset only.
+        this.editor.set(this.histogram(), { base: e.base, centre: e.centre, shift: cur.tuning.shift, scale: cur.tuning.scale }, e.warp, `${cur.src} ${this.resolved?.key ?? ""}`);
+      }
     };
     let wasConnected = true;
     const sync = () => {
@@ -2213,8 +2240,9 @@ class AnatomicalRendering {
       imageNote.className = axes.problem !== undefined ? "hint error" : "hint";
       const presetList = s.where === "browser" ? LOCAL_PRESETS.map((p) => ({ name: p.name, modality: p.modality ?? "" })) : this.presets;
       const allPresets = [...presetList, ...s.customPresets.map((p) => ({ name: String(p.name), modality: "from a file" }))];
-      // No preset chosen yet is the default one, shown as such.
-      preset.update(allPresets.map((p): [string, string] => [p.name, p.modality ? `${p.name} (${p.modality})` : p.name]), s.preset || "HiP-CT brain");
+      // No preset chosen yet is the default one, shown as such. Grouped: the general looks, the organs, the rest
+      // by modality, those from files.
+      preset.update(presetChoices(allPresets), s.preset || "HiP-CT brain");
       preset.disabled = allPresets.length === 0;
       references.update(this.references());
       const w = this.windowRange();
@@ -2228,9 +2256,6 @@ class AnatomicalRendering {
       const tuning = placeable ? this.currentTuning() : undefined;
       editorPart.update(tuning !== undefined);
       if (tuning) {
-        const width = this.mapWidth();
-        shift.set(width ? tuning.tuning.shift / width : 0);
-        compress.set(tuning.tuning.scale);
         this.editorUpdate?.();
         void this.resolvePreset();
       }

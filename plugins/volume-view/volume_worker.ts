@@ -2,7 +2,7 @@
  * The volume view's worker: a {@link VolumeReader} behind messages, so
  * chunk decoding and resampling stay off the main thread.
  *
- * In:  { type: "open", id, stores, space }
+ * In:  { type: "open", id, stores, space, full? }
  *      { type: "volume", id, level, region?: { lo, hi } }
  *      { type: "cancel", id }
  * Out: { type: "opened", id, levels, name, description, window }
@@ -36,7 +36,7 @@ self.onmessage = (event: MessageEvent) => {
   const progress = (done: number, total: number) => postMessage({ type: "progress", id: msg.id, done, total });
   let work: Promise<void>;
   if (msg.type === "open") {
-    work = reader.open(msg.stores, msg.space, signal).then((r) => postMessage({ type: "opened", id: msg.id, ...r }));
+    work = reader.open(msg.stores, msg.space, signal, msg.full === true).then((r) => postMessage({ type: "opened", id: msg.id, ...r }));
   } else if (msg.type === "volume") {
     work = reader.volume(msg.level, signal, progress, msg.region).then(({ data, size }) => postMessage({ type: "volume", id: msg.id, data, size }, { transfer: [data.buffer] }));
   } else {

@@ -187,10 +187,13 @@ def resolved(preset: Preset, volume) -> Preset:
 
 
 def histogram(q: np.ndarray, lo: float, hi: float, bins: int = 256) -> dict:
-    """Counts of the volume's values (every 2nd voxel) in `bins` bins over its data range, for the page's editor."""
+    """Counts of the volume's values (every 2nd voxel) in `bins` bins over its data range, for the page's editor:
+    `lo` and `hi` the bins' outer edges, half a step of the stored values past the data values stored as 0
+    and as the top, so each bin is centred on the values it counts."""
     top = 255 if q.dtype == np.uint8 else 65535
     h, _ = np.histogram(q[::2, ::2, ::2], bins=bins, range=(0, top + 1))
-    return {"lo": float(lo), "hi": float(hi), "counts": h.tolist()}
+    half = (float(hi) - float(lo)) / top / 2
+    return {"lo": float(lo) - half, "hi": float(hi) + half, "counts": h.tolist()}
 
 
 def material_table(preset: Preset, volume) -> np.ndarray:

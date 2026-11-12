@@ -73,11 +73,25 @@ takes images with one of each only.
 
 ## What you can set
 
-- **Preset**: a look per modality: MR T1, HiP-CT, histology (BigBrain), a
-  translucent one for any image, and **Regions** (each label in its
-  colour). A preset is a transfer function (colour and opacity from the
-  image's values) with material and light; its values are percentiles of
-  the tissue, so one preset suits scans of different scaling.
+- **Preset**, in groups:
+  - **General**, for any scan, over the window guessed from it:
+    **Greyscale** (black to white as the values rise, as a CT slice),
+    **Greyscale, inverted** (white to black), **Anatomy** (dark red-brown
+    through pink to ivory), **Thermal** (black, red, yellow, white: the
+    most contrast between near values), **Viridis** (even steps of
+    lightness, readable by colour-blind eyes), **Soft tissue and bone**
+    (translucent red soft tissue, opaque ivory dense structure) and
+    **Glass** (a faint bulk with the denser structure inside showing
+    through).
+  - **HiP-CT organs**: one for each organ (below).
+  - **By modality**: MR T1, HiP-CT brain, histology (BigBrain), a
+    translucent one for any image, and **Regions** (each label in its
+    colour); their values are percentiles of the tissue, so one preset
+    suits scans of different scaling.
+  - **From a file**: those loaded with **Load…**.
+
+  A preset is a transfer function (colour and opacity from the image's
+  values) with material and light.
 - **HiP-CT organs** (on a host and in this browser): a preset for each organ in the Human Organ Atlas (brain,
   heart, lung, kidney, liver, spleen, colon, eye, placenta, prostate, testis,
   uterus), its colours measured on photographs of real organs (each preset
@@ -97,21 +111,37 @@ takes images with one of each only.
   A window set by hand is used as it is. **Hide the jar** renders only a cylinder about the scan's axis, which
   leaves out the jar's wall (as dense as tissue).
 - **Colourmap** (once the image is open; when rendering in this browser,
-  from the level of the image it holds): the image's histogram (grey,
-  log counts) with the preset's colourmap and opacity curve over it, at
-  the image's own values. Use it to window and threshold what is rendered:
-  points with no opacity leave those values out, and the map's colours
-  spread over the values between its points. Drag a control point left or right to move it
+  from the level of the image it holds, read over all of the image's
+  values as the render computer reads it): the image's histogram (grey
+  bars, log counts) with the preset's opacity curve over it, at the
+  image's own values; under it a strip of the image's own grey values,
+  black at its lowest to white at its highest, which moves with the
+  histogram; and under that the colourmap as a bar (its colours, a
+  checker where it is clear), which moves with the map. Use it to window
+  and threshold what is rendered: points with no opacity leave those
+  values out, and the map's colours spread over the values between its
+  points. Both are moved and compressed in place:
+  - the **colourmap**: drag its bar to move it along the values; drag
+    either end of the bar (the white brackets) to compress or stretch
+    it, the other end staying where it is;
+  - the **histogram**: drag it (anywhere there is no point) to slide it
+    under the map; Shift-drag to compress or stretch it about the
+    pointer. Its blue triangles, at its percentiles, warp it piecewise
+    linearly between them (the image's values are remapped before they
+    are coloured).
+  Once the editor has been clicked, the wheel compresses the map (over
+  its bar) or the histogram (over it) about the pointer, and the arrow
+  keys move the map, + and − compress it. Ctrl-wheel zooms the view, and
+  a double-click on empty space fits it to the map or to the whole
+  histogram in turn; the view otherwise stays as it is while you tune, so
+  you see what moves. A control point: drag it left or right to move it
   (the stops between its neighbours follow) and up or down to change its
   opacity; double-click it to choose its colour; Ctrl-click to add a point,
-  right-click to remove one. **Shift** moves the whole map along the
-  values, **Compress** narrows or widens it about its middle. Under the
-  histogram, blue triangles hold it at its percentiles: drag them to slide
-  and warp the histogram under the colours (the image's values are remapped
-  before they are coloured, piecewise linearly between the triangles). The tuning is
-  kept per image (with the scene), **Reset** returns to the preset, and
-  **Save as a preset file** writes the tuned map (at this image's values)
-  to load again.
+  right-click to remove one. **Shift** and **Compress** do the same to the
+  map as sliders. Each drag is one step to undo. The tuning is kept per
+  image (with the scene), **Reset** returns to the preset, and **Save as a
+  preset file** writes the tuned map (at this image's values) to load
+  again.
 - **Density** (opacity per mm), **Exposure** and the other settings are
   sliders with their numbers beside them (a budget applies when its slider
   is let go); and the key light's direction
@@ -259,7 +289,16 @@ counts once. A tissue then has a dark, a middle and a light shade (the
 25th, 50th and 75th percentiles of its lightness), spread across its band
 of the image's values, and the colour runs smoothly (in Lab) from one
 tissue to the next, so the image's own texture shows as shades of the
-tissue rather than one flat colour. Each colour was then made into a material colour by
+tissue rather than one flat colour. Photographed colours alone left most of
+an organ in one colour (its tissue's values fall in a narrow part of its
+band), so the lightness is then spread over the tissue's own values: 65% of
+it is a ramp over the design scan's tissue percentiles, from L* 24 to 84
+(lighter with density; darker only where the photographs clearly darken
+with it: the lung, its vessels dark in pale parenchyma, and the testis),
+35% the photographs'. The hues stay as photographed, with chroma raised a
+little (less toward white) and kept within what a render can show (a
+surface never darker than the light it reflects, nothing past white).
+Each colour was then made into a material colour by
 rendering a flat slab of tissue under the renders' light (the photo-studio
 map and the key light) and tone curve, and changing the material until the
 slab shows the photograph's colour relative to its white. Multiple

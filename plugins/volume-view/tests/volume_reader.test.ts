@@ -186,6 +186,21 @@ describe("fill values", () => {
   });
 });
 
+describe("the window values are read through", () => {
+  it("is the bulk of them to show, all of them to render: a few dense voxels past the 99.5th percentile are not cut off", async () => {
+    // 2048 voxels: most 1000..1099, the last 8 (under 0.5%) 5000..5070.
+    serve(v2Store(ZYX, [8, 16, 16], [8, 16, 16], ([z, y, x]) => {
+      const i = (z * 16 + y) * 16 + x;
+      return i < 2040 ? 1000 + (i % 100) : 5000 + (i - 2040) * 10;
+    }));
+    const shown = await new VolumeReader().open([BASE], undefined);
+    expect(shown.window[1]).toBeLessThan(1100);
+    const full = await new VolumeReader().open([BASE], undefined, undefined, true);
+    // Lowest to highest, a tenth more room above for the finer levels' highest values.
+    expect(full.window).toEqual([1000, 5070 + 407]);
+  });
+});
+
 describe("a chunk that cannot be read", () => {
   it("fails the read, naming the chunk, starts no more reads, and is read again next time", async () => {
     const files = v2Store(ZYX, [4, 8, 8], [1, 2, 2], ([z, y, x]) => valueAt(x, y, z));

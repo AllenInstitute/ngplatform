@@ -16,9 +16,9 @@ export class VolumeClient {
     return this.rpc.request<T>(message, { signal, progress: (msg) => msg.type === "progress" && progress?.(msg.done, msg.total) });
   }
 
-  /** The image's levels; `window`: the data values read as 0 and 255. */
-  open(stores: string[], space: string | undefined): Promise<{ levels: LevelInfo[]; name: string; description?: string; window: [number, number] }> {
-    return this.request({ type: "open", stores, space });
+  /** The image's levels; `window`: the data values read as 0 and 255 (with `full`, all of the image's values: for rendering). */
+  open(stores: string[], space: string | undefined, options: { full?: boolean } = {}): Promise<{ levels: LevelInfo[]; name: string; description?: string; window: [number, number] }> {
+    return this.request({ type: "open", stores, space, full: options.full === true });
   }
 
   volume(level: number, progress?: (done: number, total: number) => void, signal?: AbortSignal, region?: Region): Promise<{ data: Uint8Array; size: [number, number, number] }> {
