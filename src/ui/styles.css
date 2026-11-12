@@ -2,8 +2,9 @@
    dock) and a resizable activity dock along the bottom.  The views column
    holds Neuroglancer's data panels and nothing else; its status messages sit
    in a strip beneath it.  Neuroglancer's look: black and neutral greys with
-   square corners, colour only as an accent: its green for what is selected
-   and a switch that is on, red and amber (as text and an edge) for states.
+   square corners.  The accent is light grey (what is selected, the primary
+   action, the focus); green only for a switch that is on, red and amber (as
+   text and an edge) for states.
    One theme, dark.  Text in Source Sans 3 with tabular figures; monospace
    only for what a person types or copies (an address, a path, code, a log).
 
@@ -27,8 +28,8 @@
   --text-strong: #fff;
   --muted: #a3a3a3;
   --faint: var(--muted); /* one secondary grey */
-  /* Grey does the work: the primary action, tick boxes, sliders, the chosen
-     tab and progress are light grey, and so is the focus ring. */
+  /* The accent, light grey: the primary action, tick boxes, sliders, the
+     chosen tab, progress and the focus ring. */
   --accent: #d0d0d0;
   --accent-hover: #f0f0f0;
   --accent-ink: #000;
@@ -39,13 +40,13 @@
   --state-hover: rgba(255, 255, 255, 0.08);
   --state-press: rgba(255, 255, 255, 0.12);
   --hover: var(--state-hover);
-  /* Neuroglancer's selected layer: green, as a bar down the left and a tint. */
-  --select: #8c8;
-  --select-strong: #6c6;
-  --select-soft: rgba(136, 204, 136, 0.06);
+  /* What is selected: a light-grey bar down the left and a tint. */
+  --select: #d0d0d0;
+  --select-strong: #fff;
+  --select-soft: rgba(255, 255, 255, 0.06);
   --ok: #5fb37a;
   --ok-line: #2c4a36;
-  /* An on/off switch: its track off and on, and its knob. */
+  /* An on/off switch, grey off and green on (the one green control), and its knob. */
   --off: #5c5c5c;
   --on: #3f9f48;
   --knob: #e6e6e6;
@@ -471,7 +472,7 @@ kbd {
   background: transparent; text-align: left; width: 100%; box-sizing: border-box; color: inherit;
 }
 .ds-row:hover { background: var(--hover); }
-/* Selected: Neuroglancer's green, a bar down the left and a tint. */
+/* Selected: a light-grey bar down the left and a tint. */
 .ds-row.selected { background: var(--select-soft); box-shadow: inset 2px 0 0 var(--select); }
 .ds-row .ds-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .ds-row .sub {
@@ -746,7 +747,7 @@ textarea.py-in {
 .log li { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 10px; padding: 1px 0; }
 .log time { color: var(--faint); font-variant-numeric: tabular-nums; }
 .log .error { color: var(--err); }
-.log .ok { color: var(--ok); }
+.log .ok { color: var(--text); }
 .log .source { color: var(--faint); }
 .log .log-stack summary { color: var(--faint); cursor: pointer; }
 .log .log-stack pre { margin: var(--sp-1) 0 var(--sp-2); white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: var(--fs-caption); color: var(--muted); }
@@ -907,7 +908,7 @@ textarea.ins-grow { display: block; width: 100%; box-sizing: border-box; resize:
 .ins-subsource .ins-check-row { min-height: 22px; }
 .ins-id { font-size: var(--fs-caption); color: var(--text); }
 .ins-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); flex: none; }
-.ins-dot.on { background: var(--ok); }
+.ins-dot.on { background: var(--select); }
 .ins-transform { display: flex; flex-direction: column; gap: var(--sp-2); overflow-x: auto; }
 .ins-tx-grid { display: grid; gap: var(--sp-1); align-items: center; min-width: min-content; }
 .ins-tx-corner { color: var(--faint); font-size: var(--fs-caption); }

@@ -213,12 +213,11 @@ The production polish: the work of an audit of every panel and plugin
 
 ### A quieter look
 
-- Neuroglancer's black and neutral greys, with colour only as an accent:
-  its green marks only what is selected (a bar down the left and a tint)
-  and a switch that is on. The primary button, tick boxes, sliders, the
-  chosen tab, progress and the focus ring are light grey; red and amber
-  appear as words and an edge (a delete is grey with red words until the
-  pointer is on it).
+- Neuroglancer's black and neutral greys with a light-grey accent: what is
+  selected (a bar down the left and a tint), the primary button, tick
+  boxes, sliders, the chosen tab, progress and the focus ring. Green only
+  for an on/off switch that is on; red and amber appear as words and an
+  edge (a delete is grey with red words until the pointer is on it).
 - Source Sans 3 and Source Code Pro (Adobe, SIL OFL) in place of IBM Plex,
   set at one x-height; numbers, units and captions in the UI font with
   tabular figures, monospace only for addresses, paths, code and logs.

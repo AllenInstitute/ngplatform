@@ -81,7 +81,7 @@ export const STYLE = `
 .sg-picker-more { padding: var(--sp-2) var(--sp-3); }
 .sg-dims button { height: 24px; padding: 0 var(--sp-4); font-size: var(--fs-body); }
 .sg-bar .sg-icon.sg-unsaved { color: var(--warn); }
-.sg-bar .sg-icon.sg-accept { color: var(--ok); }
+.sg-bar .sg-icon.sg-accept { color: var(--text); }
 .sg-bar .segmented + .segmented { margin-left: var(--sp-2); }
 .sg-text { height: 24px; padding: 0 var(--sp-4); font: var(--fs-body) var(--ui); color: var(--text); background: var(--ink-2); border: 1px solid var(--line); cursor: pointer; }
 .sg-text:hover { background: var(--ink-4); }
