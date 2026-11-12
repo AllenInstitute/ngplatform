@@ -1,1 +1,0 @@
-const n={"org.ngplatform.zarr-vectors":()=>import("./async_computation-Bq6fzJNx.js").then(function(r){return r.b})};function a(r){try{const t=JSON.parse(r||"{}");return Array.isArray(t.plugins)?t.plugins.map(String):[]}catch{return[]}}for(const r of a(self.name))await n[r]?.();await import("./async_computation.bundle-LSNxz1nC.js");
