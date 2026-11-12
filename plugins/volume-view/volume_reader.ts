@@ -532,7 +532,7 @@ export class VolumeReader {
   }
 
   /** Opens the stores' levels (finest first), placed in `space` where they name it. */
-  async open(stores: string[], space: string | undefined, signal?: AbortSignal): Promise<{ levels: LevelInfo[]; name: string; description?: string }> {
+  async open(stores: string[], space: string | undefined, signal?: AbortSignal): Promise<{ levels: LevelInfo[]; name: string; description?: string; window: [number, number] }> {
     if (stores.length === 1 && stores[0].startsWith(PRECOMPUTED)) return this.openPrecomputed(stores[0].slice(PRECOMPUTED.length), signal);
     const pyramids = await Promise.all(
       stores.map(async (store) => {
@@ -553,7 +553,7 @@ export class VolumeReader {
     this.window = [0, 255];
     const coarsest = this.levels[this.levels.length - 1];
     if (coarsest !== undefined && coarsest.type !== "uint8") this.window = await this.windowOf(coarsest, signal);
-    return { levels: this.levels.map((l) => l.info), name: pyramids[0]?.name ?? "", description: pyramids.find((p) => p.description)?.description };
+    return { levels: this.levels.map((l) => l.info), name: pyramids[0]?.name ?? "", description: pyramids.find((p) => p.description)?.description, window: this.window };
   }
 
   /** The intensities shown 0..255: the 0.5th to 99.5th percentile of a level's values. */
@@ -585,7 +585,7 @@ export class VolumeReader {
    * first ({@link openPrecomputedScale}), an image drawn through the window
    * of its coarsest scale.
    */
-  private async openPrecomputed(url: string, signal?: AbortSignal): Promise<{ levels: LevelInfo[]; name: string }> {
+  private async openPrecomputed(url: string, signal?: AbortSignal): Promise<{ levels: LevelInfo[]; name: string; window: [number, number] }> {
     const info = await readInfo(url, undefined, signal);
     if (info.type !== "image" && info.type !== "segmentation") throw new Error(`${url}: a precomputed ${info.type ?? "source"}, not an image or segmentation`);
     const labels = info.type === "segmentation";
@@ -595,7 +595,7 @@ export class VolumeReader {
     this.window = [0, 255];
     const coarsest = this.levels[this.levels.length - 1];
     if (!labels && coarsest !== undefined && coarsest.type !== "uint8") this.window = await this.windowOf(coarsest, signal);
-    return { levels: this.levels.map((l) => l.info), name: url.replace(/\/$/, "").split("/").pop() ?? "" };
+    return { levels: this.levels.map((l) => l.info), name: url.replace(/\/$/, "").split("/").pop() ?? "", window: this.window };
   }
 
   /** The fill value as drawn: through the image's window to 0..255, as chunks are. */

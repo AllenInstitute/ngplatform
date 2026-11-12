@@ -197,7 +197,7 @@ export function transferTable(p: LocalPreset, pct: Map<number, number>, window?:
 
 // ------------------------------------------------------------------ 4x4 (row-major) helpers
 type M = number[];
-const mul = (a: M, b: M): M => {
+export const mul = (a: M, b: M): M => {
   const o = new Array(16).fill(0);
   for (let r = 0; r < 4; ++r) for (let c = 0; c < 4; ++c) for (let k = 0; k < 4; ++k) o[4 * r + c] += a[4 * r + k] * b[4 * k + c];
   return o;
@@ -228,14 +228,14 @@ export function invert(m: M): M {
   }
   return inv;
 }
-const rowMajor = (cm: ArrayLike<number>): M => {
+export const rowMajor = (cm: ArrayLike<number>): M => {
   const o = new Array(16);
   for (let r = 0; r < 4; ++r) for (let c = 0; c < 4; ++c) o[4 * r + c] = cm[4 * c + r];
   return o;
 };
 
 /** Camera right, up and back (world) from a row-major inverse view-projection. */
-function cameraAxes(inv: M): [number[], number[], number[]] {
+export function cameraAxes(inv: M): [number[], number[], number[]] {
   const un = (x: number, y: number, z: number) => {
     const p = [0, 1, 2, 3].map((r) => inv[4 * r] * x + inv[4 * r + 1] * y + inv[4 * r + 2] * z + inv[4 * r + 3]);
     return [p[0] / p[3], p[1] / p[3], p[2] / p[3]];
@@ -254,8 +254,38 @@ function cameraAxes(inv: M): [number[], number[], number[]] {
   return [r, u, fwd.map((v) => -v)];
 }
 
+/** One level of the image at 8 bits, as both renderers in this browser hold it. */
+export interface Level8 {
+  /** x fastest, then y, then z. */
+  data: Uint8Array;
+  size: [number, number, number];
+  /** Voxel to physical (RAS, mm), row-major. */
+  voxelToRas: number[];
+  /** The data values 0 and 255 stand for (the reader's window). */
+  range: [number, number];
+  /** Values (0..255) at percentiles of the tissue, and the window guessed over it, for presets in those domains. */
+  pct: Map<number, number>;
+  window: [number, number] | undefined;
+  /** The level's name in the store. */
+  path: string;
+}
+
+/** The finest level of the image within `budget` voxels and `maxDim` a side (else the coarsest), read at 8 bits. */
+export async function readLevel(client: VolumeClient, url: string, budget: number, maxDim: number, progress?: (msg: string) => void): Promise<Level8> {
+  const { levels, window: range } = await client.open([url.endsWith("/") ? url : `${url}/`], undefined);
+  const fits = levels.filter((l) => l.size[0] * l.size[1] * l.size[2] <= budget && Math.max(...l.size) <= maxDim);
+  const levelIndex = fits.length ? levels.indexOf(fits[0]) : levels.length - 1;
+  const level = levels[levelIndex];
+  progress?.(`reading level ${level.path} (${level.size.join(" × ")})`);
+  const { data, size } = await client.volume(levelIndex, (d, t) => progress?.(`reading level ${level.path}: ${d}/${t} chunks`));
+  return { data, size, voxelToRas: Array.from(level.voxelToRas), range: range ?? [0, 255], pct: tissuePercentiles(data), window: guessWindow(data, size[0], size[1], size[2]), path: level.path };
+}
+
 export interface LocalFrame {
   bitmap: ImageBitmap;
+  /** The camera of the view it is a picture of (inverse view-projection, column-major), and the tag the view was set with. */
+  camera: number[];
+  tag: string;
   depth?: { width: number; height: number; data: Float32Array; version: number };
   samples: number;
   width: number;
@@ -339,6 +369,8 @@ export class LocalRenderer {
   private H = 0;
   private bind: GPUBindGroup | undefined;
   private view: ViewSpec | undefined;
+  private tag = "";
+  private appliedView: { camera: number[]; tag: string } = { camera: [], tag: "" };
   private version = 0;
   private applied = -1;
   private samples = 0;
@@ -350,6 +382,8 @@ export class LocalRenderer {
   ready = false;
   private client: VolumeClient | undefined;
   adapterName = "";
+  /** The level on the GPU, once loaded. */
+  level: Level8 | undefined;
 
   async load(url: string, budget: number, progress?: (msg: string) => void): Promise<string> {
     const adapter = await webgpuAdapter();
@@ -363,17 +397,13 @@ export class LocalRenderer {
     this.device = device;
     this.client?.dispose();
     this.client = new VolumeClient();
-    const { levels } = await this.client.open([url.endsWith("/") ? url : `${url}/`], undefined);
-    const maxDim = device.limits.maxTextureDimension3D;
-    const fits = levels.filter((l) => l.size[0] * l.size[1] * l.size[2] <= budget && Math.max(...l.size) <= maxDim);
-    const levelIndex = fits.length ? levels.indexOf(fits[0]) : levels.length - 1;
-    const level = levels[levelIndex];
-    progress?.(`reading level ${level.path} (${level.size.join(" × ")})`);
-    const { data, size } = await this.client.volume(levelIndex, (d, t) => progress?.(`reading level ${level.path}: ${d}/${t} chunks`));
+    const level = await readLevel(this.client, url, budget, device.limits.maxTextureDimension3D, progress);
+    const { data, size } = level;
+    this.level = level;
     this.size = size;
-    this.voxelToRas = Array.from(level.voxelToRas);
-    this.pct = tissuePercentiles(data);
-    this.window = guessWindow(data, size[0], size[1], size[2]);
+    this.voxelToRas = level.voxelToRas;
+    this.pct = level.pct;
+    this.window = level.window;
     // The texture (rows padded to 256 bytes for the copy).
     const [nx, ny, nz] = size;
     this.tex = device.createTexture({ size: [nx, ny, nz], dimension: "3d", format: "r8unorm", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
@@ -456,8 +486,10 @@ export class LocalRenderer {
     });
   }
 
-  setView(view: ViewSpec): void {
+  /** The view to render; `tag` comes back with its frames. */
+  setView(view: ViewSpec, tag = ""): void {
     this.view = view;
+    this.tag = tag;
     this.version++;
     this.maxSamples = view.max_samples ?? 256;
     if (!this.running) void this.loop();
@@ -567,6 +599,7 @@ export class LocalRenderer {
           read.destroy();
           void pass;
           this.applied = version;
+          this.appliedView = { camera: v.inv_view_projection, tag: this.tag };
           this.samples = 0;
           lastPublish = 0;
         }
@@ -615,7 +648,7 @@ export class LocalRenderer {
     read.unmap();
     read.destroy();
     const bitmap = await createImageBitmap(new ImageData(px, W, H), { premultiplyAlpha: "none" });
-    this.onFrame?.({ bitmap, depth, samples: this.samples, width: W, height: H, msPerPass: ms, version: this.applied });
+    this.onFrame?.({ bitmap, depth, ...this.appliedView, samples: this.samples, width: W, height: H, msPerPass: ms, version: this.applied });
   }
 
   dispose(): void {

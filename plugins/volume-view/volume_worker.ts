@@ -5,7 +5,7 @@
  * In:  { type: "open", id, stores, space }
  *      { type: "volume", id, level, region?: { lo, hi } }
  *      { type: "cancel", id }
- * Out: { type: "opened", id, levels, name, description }
+ * Out: { type: "opened", id, levels, name, description, window }
  *      { type: "volume", id, data, size: [x, y, z] }
  *      { type: "progress", id, done, total }
  *      { type: "error", id, message }

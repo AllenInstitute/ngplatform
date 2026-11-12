@@ -8,6 +8,11 @@
  * A new frame of the same camera as the one shown (the image refining,
  * finer detail come, the camera just stopped) fades in over FADE_MS rather
  * than replacing it at once.
+ *
+ * With a live image (./live.ts), the picture is shown only at the camera
+ * and look it was rendered with; any other frame is the live image, drawn
+ * with that frame's camera, and the picture of a view comes in over it
+ * pixel by pixel as the camera rests.
  */
 import type { Drawer3d, Frame3d } from "@ngplatform/sdk";
 
@@ -24,6 +29,9 @@ uniform sampler2D uPrevColor;
 uniform sampler2D uPrevAlpha;
 uniform float uPrevHasAlpha;
 uniform float uMix;
+uniform float uSplit;
+// The pixels the picture takes from the live image as it comes in over it (live.ts draws the others).
+bool liveHere() { return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) < uSplit; }
 vec4 premul(sampler2D col, sampler2D al, float hasAlpha, vec2 uv) {
   vec4 c = texture(col, uv);
   if (hasAlpha > 0.5) { float a = texture(al, uv).r; c = vec4(c.rgb * a, a); }
@@ -50,6 +58,7 @@ layout(location = ${o.color}) out vec4 out_color;
 layout(location = ${o.z}) out highp vec4 out_z;
 layout(location = ${o.pick}) out highp vec4 out_pickId;
 void main() {
+  if (liveHere()) discard;
   vec2 uv = (gl_FragCoord.xy - uViewport.xy) / uViewport.zw;
   uv.y = 1.0 - uv.y;
   vec4 c = picture(uv);
@@ -105,7 +114,7 @@ layout(location = ${o.color}) out vec4 out_color;
 layout(location = ${o.z}) out highp vec4 out_z;
 layout(location = ${o.pick}) out highp vec4 out_pickId;
 void main() {
-  if (vValid < 0.999) discard;
+  if (vValid < 0.999 || liveHere()) discard;
   vec4 c = picture(vUv);
   if (c.a < 0.5) discard;
   out_color = vec4(c.rgb / max(c.a, 1e-3), 1.0);
@@ -144,6 +153,9 @@ export interface Picture {
   depth?: { width: number; height: number; data: Float32Array };
   /** The camera it was rendered from (inverse view-projection, column-major) and each pixel's distance to tissue: to draw it moving with the view. */
   view?: { invViewProjection: number[]; distance: { width: number; height: number; data: Float32Array } };
+  /** The camera it was rendered from and the look (preset, light, cuts…) it was rendered with, when known: where it may stand in for the live image. */
+  camera?: ArrayLike<number>;
+  look?: string;
 }
 
 /** The jump in distance (a fraction of it) a triangle may span while the camera is away from the picture's. */
@@ -169,6 +181,14 @@ export class PictureDrawer implements Drawer3d {
   onFrame: ((frame: Frame3d) => void) | undefined;
   /** Called while a frame fades in, after each draw: the view should be drawn again. */
   onFading: (() => void) | undefined;
+  /** The image drawn live with each frame's camera (./live.ts), when there is one. */
+  live: { ready(): boolean; draw(frame: Frame3d, split: number): boolean } | undefined;
+  /** The look of the view now, set as each frame begins (in `onFrame`): a picture of another look is not shown. */
+  look = "";
+  /** The last frame was the live image alone; then when the picture of the view began to come in over it. */
+  private liveAlone = false;
+  private coverStart: number | undefined;
+  private split = 0;
   private prevColor: WebGLTexture | undefined;
   private prevAlpha: WebGLTexture | undefined;
   private prevHasAlpha = false;
@@ -203,7 +223,12 @@ export class PictureDrawer implements Drawer3d {
   }
 
   /** Draws as a surface in space and flat (stuck to the screen), and flat ones while the camera moved: what makes it lag. */
-  readonly stats = { placed: 0, flat: 0, flatMoving: 0 };
+  readonly stats = { placed: 0, flat: 0, flatMoving: 0, live: 0 };
+
+  /** Whether the picture is of this frame's view: its camera and look. */
+  private isOf(pic: Picture, frame: Frame3d): boolean {
+    return pic.camera !== undefined && sameCamera(pic.camera, frame.invViewProjection) && (pic.look === undefined || pic.look === this.look);
+  }
 
   isReady(): boolean {
     return this.picture !== undefined;
@@ -212,7 +237,22 @@ export class PictureDrawer implements Drawer3d {
   draw(frame: Frame3d): void {
     this.onFrame?.(frame);
     const pic = this.picture;
+    const live = this.live?.ready() ? this.live : undefined;
+    if (live !== undefined && (pic === undefined || !this.isOf(pic, frame)) && live.draw(frame, 1)) {
+      this.stats.live++;
+      this.liveAlone = true;
+      this.coverStart = undefined;
+      return;
+    }
     if (pic === undefined) return;
+    if (this.liveAlone) {
+      this.liveAlone = false;
+      this.coverStart = live !== undefined ? performance.now() : undefined;
+    }
+    // The picture of the view comes in over the live image, which keeps the pixels not taken yet.
+    const c = this.coverStart === undefined ? 1 : Math.min(1, (performance.now() - this.coverStart) / FADE_MS);
+    const keep = 1 - c * c * (3 - 2 * c);
+    this.split = keep > 0 && live !== undefined && live.draw(frame, keep) ? keep : 0;
     const gl = frame.gl;
     if (this.gl !== gl) this.reset(gl);
     const program = this.compile(gl, frame.outputs);
@@ -290,6 +330,7 @@ export class PictureDrawer implements Drawer3d {
   private bindMix(gl: WebGL2RenderingContext, program: WebGLProgram): void {
     const t = this.fadeStart === undefined ? 1 : Math.min(1, (performance.now() - this.fadeStart) / FADE_MS);
     gl.uniform1f(gl.getUniformLocation(program, "uMix"), t * t * (3 - 2 * t));
+    gl.uniform1f(gl.getUniformLocation(program, "uSplit"), this.split);
     gl.uniform1f(gl.getUniformLocation(program, "uPrevHasAlpha"), this.prevHasAlpha ? 1 : 0);
     gl.activeTexture(gl.TEXTURE4);
     gl.bindTexture(gl.TEXTURE_2D, this.prevColor!);
@@ -299,11 +340,12 @@ export class PictureDrawer implements Drawer3d {
     gl.uniform1i(gl.getUniformLocation(program, "uPrevAlpha"), 5);
   }
 
-  /** While a frame fades in, asks for the view to be drawn again. */
+  /** While a frame fades in (or comes in over the live image), asks for the view to be drawn again. */
   private fadeOn(): void {
-    if (this.fadeStart === undefined) return;
-    if (performance.now() - this.fadeStart >= FADE_MS) this.fadeStart = undefined;
-    else requestAnimationFrame(() => this.onFading?.());
+    const now = performance.now();
+    if (this.fadeStart !== undefined && now - this.fadeStart >= FADE_MS) this.fadeStart = undefined;
+    if (this.coverStart !== undefined && now - this.coverStart >= FADE_MS) this.coverStart = undefined;
+    if (this.fadeStart !== undefined || this.coverStart !== undefined) requestAnimationFrame(() => this.onFading?.());
   }
 
   /** The picture as a mesh in space, drawn with the camera now; false when it cannot be (then flat). */

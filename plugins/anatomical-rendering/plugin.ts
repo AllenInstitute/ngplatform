@@ -15,6 +15,7 @@ import { dropJob, finished, type JobKind, type JobRecord, jobProgress, jobText, 
 import { clampInt, evenSide, LIMITS, movieSettings, retryDelay, stillProblem, windowStep } from "./limits.js";
 import { parsePly, parseSplat, showSplats, type SplatCamera } from "./splatview.js";
 import { ColourmapEditor, type DataStop, histogramHandles, shifted, type Tuning, type WarpPoint, warpInverse } from "./editor.js";
+import { LiveVolume, type LivePreset } from "./live.js";
 import { LocalRenderer, PRESETS as LOCAL_PRESETS } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
 import { anatomicalSides, type AxisSides, axesCheck, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, metadataBase, omeZarrSource, orientationLooking, safeHref, unitMm, type ViewButton, viewButtons, viewCutPlane, viewForward, viewKey } from "./view.js";
@@ -335,7 +336,7 @@ class AnatomicalRendering {
   private viewRefused = false;
   /** The view being sent, until the host answers with its version. */
   private pendingView: Promise<void> | undefined;
-  private queued: ViewSpec | undefined;
+  private queued: { spec: ViewSpec; look: string } | undefined;
   /** The look (preset, light, cuts…) of the view last sent: a change to it renders at once, moving or not. */
   private lastLook = "";
   /** The camera of the last frame, when it last changed, and whether it was changing frame after frame. */
@@ -345,8 +346,10 @@ class AnatomicalRendering {
   private settle: ReturnType<typeof setTimeout> | undefined;
   private depth: { version: number; width: number; height: number; data: Float32Array } | undefined;
   private distance: Distance | undefined;
-  /** The camera (inverse view-projection, column-major) of each view sent, by the version the host gave it. */
-  private views = new Map<number, number[]>();
+  /** The camera (inverse view-projection, column-major) and look of each view sent, by the version the host gave it. */
+  private views = new Map<number, { camera: number[]; look: string }>();
+  /** The image drawn with each frame's camera while the camera moves and until the picture of the view comes. */
+  private readonly live = new LiveVolume();
   private lastCursor: number[] | undefined;
 
   /** Offsets (mm from the position) that put the cuts through the last point the cursor was over; undefined when there is none. */
@@ -375,6 +378,12 @@ class AnatomicalRendering {
     this.jobs = readJobs(ctx.settings.get(JOBS_KEY));
     this.drawer.onFrame = (frame) => this.onFrame(frame);
     this.drawer.onFading = () => this.handle?.redraw();
+    this.drawer.live = this.live;
+    this.live.look = (frame) => this.liveLook(frame);
+    this.live.onChange = () => {
+      this.handle?.redraw();
+      this.statusUpdate?.();
+    };
     this.toggle = ctx.ui.viewToggle({ label: "Render", title: "Path-traced rendering (Anatomical rendering)", value: this.saved.on, onChange: (v) => this.setOn(v) });
     this.offs.push(
       ctx.viewer.onLayersChanged(() => this.update()),
@@ -398,6 +407,7 @@ class AnatomicalRendering {
         this.panelUpdate?.();
       }),
       () => clearTimeout(this.settle),
+      () => this.live.close(),
     );
     void this.connect();
     // For measuring (the drawer's stats) from the console or a test.
@@ -603,6 +613,7 @@ class AnatomicalRendering {
       if (!this.saved.on || target === undefined) {
         this.closeSession();
         this.closeLocal();
+        this.live.close();
       }
       this.panelUpdate?.();
       return;
@@ -622,6 +633,9 @@ class AnatomicalRendering {
     } else {
       this.closeLocal();
       void this.ensureSession(target);
+      // The live image reads the image in this browser too: one it could render here (one channel and time point).
+      if (axesCheck(this.ctx.viewer.layerTransform?.(target.name)?.input, true).problem === undefined) void this.live.open(omeZarrSource(target.sources[0])!);
+      else this.live.close();
     }
     this.handle?.redraw();
     this.panelUpdate?.();
@@ -856,7 +870,7 @@ class AnatomicalRendering {
     this.local = r;
     r.onFrame = (f) => {
       if (this.local !== r) return;
-      this.drawer.set({ bitmap: f.bitmap, depth: f.depth });
+      this.drawer.set({ bitmap: f.bitmap, depth: f.depth, camera: f.camera, look: f.tag });
       this.frameText = `${f.samples} samples, ${f.width}×${f.height}, ${f.msPerPass.toFixed(0)} ms a pass (this browser)`;
       this.handle?.redraw();
       this.statusUpdate?.();
@@ -868,6 +882,7 @@ class AnatomicalRendering {
         this.localText = msg;
         this.statusUpdate?.();
       });
+      if (r.level !== undefined) this.live.setLevel(r.level, url);
       this.lastKey = "";
       this.handle?.redraw();
     } catch (e) {
@@ -978,11 +993,12 @@ class AnatomicalRendering {
         after = f.number;
         if (f.distance !== undefined) this.distance = f.distance;
         // A frame may come before the answer to the view it was rendered from: wait for that answer.
-        let cam = this.views.get(f.version);
-        if (cam === undefined && this.pendingView !== undefined) {
+        let sent = this.views.get(f.version);
+        if (sent === undefined && this.pendingView !== undefined) {
           await this.pendingView;
-          cam = this.views.get(f.version);
+          sent = this.views.get(f.version);
         }
+        const cam = sent?.camera;
         if (cam !== undefined && this.distance?.version !== f.version) {
           const dist = await service.distance(id).catch(() => undefined);
           if (dist !== undefined) this.distance = dist;
@@ -1002,7 +1018,7 @@ class AnatomicalRendering {
             if (d !== undefined) this.depth = d;
           }
         }
-        this.drawer.set({ bitmap: f.bitmap, alpha: f.alpha ? { width: f.width, height: f.height, data: f.alpha } : undefined, depth: view ? undefined : this.depth, view });
+        this.drawer.set({ bitmap: f.bitmap, alpha: f.alpha ? { width: f.width, height: f.height, data: f.alpha } : undefined, depth: view ? undefined : this.depth, view, camera: cam, look: sent?.look });
         this.frameText = `${f.samples} samples, ${f.width}×${f.height}, ${f.msPerPass.toFixed(0)} ms a pass${f.detail ? `\nDetail: ${f.detail}` : ""}`;
         this.handle?.redraw();
         this.statusUpdate?.();
@@ -1063,10 +1079,11 @@ class AnatomicalRendering {
 
   private onFrame(frame: Frame3d): void {
     this.lastFrame = frame;
+    const look = JSON.stringify([this.saved.boxes, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.lightStyle, this.saved.envScale, this.saved.lightKey, this.saved.viewCut, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
+    this.drawer.look = look;
     const local = this.saved.where === "browser" ? this.local : undefined;
     const sid = local ? "local" : this.session?.status === "ready" ? this.session.id : undefined;
     if (sid === undefined || (local && !local.ready)) return;
-    const look = JSON.stringify([this.saved.boxes, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.lightStyle, this.saved.envScale, this.saved.lightKey, this.saved.viewCut, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
     const camera = viewKey(frame.invViewProjection, frame.width, frame.height);
     // Moving: Neuroglancer's drag or wheel, or the camera changing frame after frame without them (the
     // 3-D view's momentum after a drag, keys held down); a single jump (a view button) is not.
@@ -1094,27 +1111,44 @@ class AnatomicalRendering {
         if (full === undefined) return;
         this.lastScale = 1;
         this.lastSpec = full;
-        this.send(sid, full);
+        this.send(sid, full, this.lastLook);
       }, SETTLE_MS);
     }
-    // While the camera moves, the picture shown stays in space (a surface drawn with the camera now) and
-    // nothing is rendered until it stops; only a view gone far from the picture's gets a quick half-size one.
+    // While the camera moves, the live image follows it and nothing is rendered until it stops. Without
+    // one, the picture shown stays in space (a surface drawn with the camera now); only a view gone far
+    // from the picture's gets a quick half-size one.
     const placed = this.drawer.placed();
-    if (moving && sameLook && placed !== undefined && !farFrom(placed, frame)) return;
+    if (moving && (this.live.ready() || (sameLook && placed !== undefined && !farFrom(placed, frame)))) return;
     const spec = this.viewSpec(frame, scale);
     if (spec === undefined) return;
     if (scale === 1) this.lastSpec = spec;
-    this.send(sid, spec);
+    this.send(sid, spec, look);
   }
 
-  /** One request at a time; the latest view waits for it. */
-  private send(sid: string, spec: ViewSpec): void {
+  /**
+   * The live image's look for a frame: the view the path tracer would be sent, and its preset whole, at
+   * the image's data values as the host resolved it when it has (so the two agree), else as named.
+   */
+  private liveLook(frame: Frame3d): { view: ViewSpec; preset: LivePreset } | undefined {
+    const view = this.viewSpec(frame, 1);
+    if (view === undefined) return undefined;
+    const host = this.saved.where !== "browser";
+    const r = host ? this.presetRequest() : undefined;
+    const resolved = r !== undefined && this.resolved?.key === r.key ? this.resolved.preset : undefined;
+    const named = (name: string) => (host ? this.presets.find((p) => p.name === name) : undefined) ?? LOCAL_PRESETS.find((p) => p.name === name);
+    const base = typeof view.preset === "object" ? view.preset : (resolved ?? named(view.preset));
+    const preset = { ...(base ?? LOCAL_PRESETS[0]), ...(view.overrides ?? {}) } as unknown as LivePreset;
+    return Array.isArray(preset.stops) ? { view, preset } : undefined;
+  }
+
+  /** One request at a time; the latest view waits for it. `look`: what the picture of it is drawn for. */
+  private send(sid: string, spec: ViewSpec, look: string): void {
     if (sid === "local") {
-      this.local?.setView(spec);
+      this.local?.setView(spec, look);
       return;
     }
     if (this.sending) {
-      this.queued = spec;
+      this.queued = { spec, look };
       return;
     }
     this.sending = true;
@@ -1127,7 +1161,7 @@ class AnatomicalRendering {
           this.problem = "";
           this.statusUpdate?.();
         }
-        this.views.set(r.version, spec.inv_view_projection);
+        this.views.set(r.version, { camera: spec.inv_view_projection, look });
         for (const k of this.views.keys()) if (k < r.version - 64) this.views.delete(k);
       })
       .catch((e) => {
@@ -1144,7 +1178,7 @@ class AnatomicalRendering {
         this.queued = undefined;
         // A view queued since is for the session open now (closing one drops what was queued for it).
         const now = this.session?.status === "ready" ? this.session.id : undefined;
-        if (q !== undefined && now !== undefined) this.send(now, q);
+        if (q !== undefined && now !== undefined) this.send(now, q.spec, q.look);
       });
   }
 
@@ -1574,6 +1608,7 @@ class AnatomicalRendering {
       lines.push(`${s.message}${v.made ? (v.from_cache ? " (made here, from the cache)" : " (made here by downsampling)") : ""}`);
     }
     if (this.saved.where === "browser" && this.local?.ready) lines.push(this.localText);
+    else if (this.saved.where === "host" && this.live.text) lines.push(this.live.text);
     if (this.frameText) lines.push(this.frameText);
     return lines.join("\n");
   }

@@ -16,7 +16,8 @@ page with WebGPU (`local/`). The user page is
 | `client.ts` | The service's HTTP API: through a paired host (`ctx.hosts`, `/svc/render/…`) or at an address; frames parsed (JPEG, alpha plane, distances) |
 | `limits.ts` | What one request may ask of the service (sides, samples, fps, boxes, a still's size), and the frame loop's waits after errors |
 | `view.ts` | Pure functions of a frame: physical mm to display coordinates, cut planes, the light's direction, a layer's OME-Zarr source; the view buttons from the image's anatomical orientation (else by axis); what the image's axes allow; links from the host checked |
-| `draw.ts` | The frame in the 3-D view (`draw3d`): colour, and depth where each ray first meets tissue, so other layers are hidden behind it |
+| `draw.ts` | The frame in the 3-D view (`draw3d`): colour, and depth where each ray first meets tissue, so other layers are hidden behind it; the live image in its place for any other camera or look |
+| `live.ts` | The live image: one level of the image ray-marched in the 3-D view's own pass with each frame's camera, so it never lags the view |
 | `editor.ts` | The colourmap editor: stops over the image's histogram, shift, compression and the histogram's warp |
 | `splatview.ts` | Gaussian splats (`.splat`, `.ply`) read and drawn with WebGL 2 in one of the platform's sheets |
 | `local/pathtrace.wgsl` | The path tracer in WGSL: the same method and parameters as the CUDA kernels |
@@ -70,7 +71,21 @@ with a CUDA GPU, the renderer and the service).
 
 ## While the camera moves
 
-A frame comes with the camera it was rendered from and each pixel's
+The image is drawn live in the 3-D view (`live.ts`): one level of it, at
+most 32 M voxels (on a computer's session, read in this browser too; in
+this browser, the path tracer's own), is a 3-D texture ray-marched in
+Neuroglancer's pass with each frame's own camera. Its light is the path
+tracer's first bounce: the preset's colours and opacities (at the image's
+data values as the host resolved them, so the two agree), surface and
+volume shading, the view's light with a short shadow ray toward it, and
+the surroundings. While the view turns, pans or zooms, or a setting is
+dragged, that is what shows; nothing is rendered until the camera has
+been still for 200 ms. The path-traced picture is shown only at the camera
+and look it was rendered with, and comes in over the live image pixel by
+pixel over 250 ms. `drawer.stats.live` counts frames drawn live.
+
+Where there is no live image (the level not read yet, or larger than the
+GPU's 3-D textures) the picture is placed in space as before. A frame comes with the camera it was rendered from and each pixel's
 distance to the tissue, so it is drawn as a surface in space
 (`draw.ts`, a vertex a pixel) with the camera now: while the view turns,
 pans or zooms, the picture stays where the tissue is and moves with it,
