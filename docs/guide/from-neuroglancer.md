@@ -7,7 +7,7 @@ ngplatform moves the controls around the views and adds a workspace.
 | In Neuroglancer | In ngplatform |
 |---|---|
 | The layer bar along the top | the **Layers** panel in the left dock: one row per dataset |
-| The layer side panel | each dataset's card in the **Layers** panel, opened on its settings (Neuroglancer's own Display, Source and other tabs, as sections: Rendering, Source, …) |
+| The layer side panel | each dataset's card in the **Layers** panel, opened on its settings (Neuroglancer's own tabs: Rendering, which is its Display, Source and the others) |
 | The state in the URL | still in the URL, now holding every scene; **Share** copies a plain Neuroglancer link to one scene |
 | One state per tab | several **scenes** in one workspace, as tabs in the top bar |
 | Settings, screenshot, help | the gear (**Settings**), camera (**Capture**) and **?** icons in the top bar |

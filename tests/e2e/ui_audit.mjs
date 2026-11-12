@@ -263,14 +263,6 @@ accessOnly["Menu: Share"] = await access(".menu");
 await shot("4_menu_Share");
 await page.keyboard.press("Escape");
 await page.waitForTimeout(300);
-if (await page.locator(".dock-right .dock-picker").count()) {
-  await page.locator(".dock-right .dock-picker").first().click();
-  await page.waitForTimeout(400);
-  accessOnly["Menu: Tools"] = await access(".menu");
-  await shot("4_menu_Tools");
-  await page.keyboard.press("Escape");
-  await page.waitForTimeout(300);
-}
 // The frame of the app: the top bar, the dock heads and resizers, the status strip (the panels are counted above).
 accessOnly["App frame"] = await access("#app", ".dock-pane, .scrim, .menu");
 

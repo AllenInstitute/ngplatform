@@ -144,8 +144,9 @@ sections, ++ctrl++ + scroll to zoom, drag in 3-D to rotate, and
 
 ## 4. Right dock: Tools
 
-The panel of a tool that is on (a plugin): one at a time, chosen from the
-menu at the top of the dock, where they are listed by what they work on:
+The panel of a tool that is on (a plugin): one at a time, chosen by the
+tabs at the top of the dock (the arrow keys move between them), kept
+together by what they work on:
 *Image* (Filters, Anatomical rendering, Orientations), *Labels*
 (Annotations, Segmentation, Atlas), *Space* (Registration, a collection's
 panel) and *Vectors* (Track filtering, Luxar). Turning a tool on opens it
@@ -158,13 +159,13 @@ each kept open or closed as you left it.
 Each dataset in the Layers panel is a card. Selecting a dataset (its row,
 or in the views) opens its card on its settings; the arrow at the left of
 the row opens and closes it, and several cards may be open at once. Its
-settings are its layer's own sections, each opened and closed on its own
-(which are open is kept for every dataset; **Rendering** at first). For a
-dataset shown through several layers, they are those of the view selected
-in its list. Its sign-in shows only when its data is not public (or did
-not load); otherwise it is in Settings › Sign-in.
+settings are its layer's own tabs (Neuroglancer's), the tab chosen kept
+with the layer; a layer opens on **Rendering**. For a dataset shown
+through several layers, they are those of the view selected in its list.
+Its sign-in shows only when its data is not public (or did not load);
+otherwise it is in Settings › Sign-in.
 
-| Section | What it holds |
+| Tab | What it holds |
 |---|---|
 | **Rendering** | How it is drawn: resolution, opacity, blending; for images the **Colour map**, then the shader's controls (contrast, with a histogram and Min-Max, 1-99% and 5-95% buttons) above its code; for segmentations the **Lookup table**; for surfaces the **Surface** controls. |
 | **Source** | Where the data comes from; under **Details**, its parts (subsources), its **transform** (the matrix that places it in the scene, editable), and an OME-Zarr image's coordinate systems and levels. |
@@ -216,7 +217,7 @@ Outlines are drawn by an image layer added just above the segmentation,
 "*name* outlines", which reads the same labels; the segmentation's own 2-D
 opacity is set to 0 meanwhile (its meshes are untouched), and **Filled**
 removes the outline layer and gives the opacity back. The outline layer's
-**Rendering** section sets the line width in screen pixels (`outline_width`), the
+**Rendering** tab sets the line width in screen pixels (`outline_width`), the
 lines' opacity, and an optional faint fill (`fill_opacity`). It follows the
 segmentation's colours and its shown segments by itself.
 

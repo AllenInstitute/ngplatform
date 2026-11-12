@@ -155,37 +155,30 @@ describe("opening and closing", () => {
 });
 
 describe("the Tools dock", () => {
-  it("is not there with no tool, and picks its tool from a menu grouped by kind", () => {
+  it("is not there with no tool, and shows its tools as tabs, grouped by kind", () => {
     docks.addTab(tab("filtering", "right", { group: "Tractography" }).spec)();
     expect(docks.element("right").hidden).toBe(true);
     expect(root.classList.contains("right-empty")).toBe(true);
     docks.addTab(tab("filtering", "right", { group: "Tractography" }).spec);
     docks.addTab(tab("stats", "right", { group: "Measure" }).spec);
+    docks.addTab(tab("tracks", "right", { group: "Tractography" }).spec);
     expect(docks.element("right").hidden).toBe(false);
-    const picker = docks.element("right").querySelector<HTMLButtonElement>(".dock-picker")!;
-    expect(picker.getAttribute("aria-haspopup")).toBe("menu");
-    expect(picker.textContent).toBe("Filtering");
-
-    picker.click();
-    const items = [...document.querySelectorAll<HTMLButtonElement>(".menu .menu-item")];
-    expect(items.map((b) => b.textContent)).toEqual(["Tractography", "Filtering", "Measure", "Stats"]);
-    expect(items[0].disabled).toBe(true);
-    expect(items[1].getAttribute("aria-current")).toBe("true");
-    items[3].click();
+    const tabs = () => [...docks.element("right").querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    expect(docks.element("right").querySelector('[role="tablist"]')).not.toBeNull();
+    // The kinds together, in the order their first tool came.
+    expect(tabs().map((b) => b.textContent)).toEqual(["Filtering", "Tracks", "Stats"]);
+    expect(tabs()[0].getAttribute("aria-selected")).toBe("true");
+    tabs()[2].click();
     expect(docks.isShowing("stats")).toBe(true);
-    expect(docks.element("right").querySelector(".dock-picker")!.textContent).toBe("Stats");
+    expect(tabs()[2].getAttribute("aria-selected")).toBe("true");
+    expect(tabs()[0].getAttribute("aria-selected")).toBe("false");
   });
 
   it("hides a tool whose when-clause does not hold, choosing another", () => {
     docks.addTab(tab("filtering", "right", { when: "hasTracts" }).spec);
     docks.addTab(tab("stats", "right").spec);
     expect(docks.selected("right")).toBe("stats");
-    const listed = () => {
-      docks.element("right").querySelector<HTMLButtonElement>(".dock-picker")!.click();
-      const titles = [...document.querySelectorAll(".menu .menu-item:not([disabled])")].map((b) => b.textContent);
-      closeMenu();
-      return titles;
-    };
+    const listed = () => [...docks.element("right").querySelectorAll<HTMLButtonElement>('[role="tab"]')].filter((b) => !b.hidden).map((b) => b.textContent);
     expect(listed()).toEqual(["Stats"]);
     context.set("hasTracts", true);
     expect(listed()).toEqual(["Filtering", "Stats"]);

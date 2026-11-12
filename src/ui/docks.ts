@@ -3,8 +3,8 @@
  * platform and plugins contribute.  A tab renders the first time it is
  * shown and stays mounted (Neuroglancer widgets keep their state), unless it
  * is marked transient, in which case it is disposed whenever it is hidden.
- * The right dock (Tools) picks its tab from one grouped menu instead of a
- * row of tabs, and is not there while it has none.  Sizes, open tabs and
+ * Each dock shows its tabs as a row (the right one, Tools, ordered by kind),
+ * and the Tools dock is not there while it has none.  Sizes, open tabs and
  * collapsed docks are remembered per browser; the right and bottom docks
  * start collapsed.
  */
@@ -13,7 +13,6 @@ import type { DockTabSpec } from "../platform/plugin_host.js";
 import type { Disposer, DockSlot } from "../sdk/types.js";
 import { emptyState, type Roving, roving } from "../sdk/dom.js";
 import { h, icon } from "./dom.js";
-import { showMenu } from "./overlays.js";
 
 export const prefs = {
   get(key: string): string | null {
@@ -134,26 +133,21 @@ class Dock {
   readonly el: HTMLElement;
   readonly head = h("div", { class: "dock-head" });
   readonly tabsEl = h("div", { class: "dock-tabs" });
-  /** Left and Right move between the tabs (the Tools dock's one picker has its own keys). */
+  /** Left and Right move between the tabs. */
   readonly keys: Roving;
   readonly body = h("div", { class: "dock-body" });
   readonly tabs = new Map<string, Mounted>();
   selected: string | undefined;
-  /** The Tools dock: one button naming the tab shown, whose menu lists them all by group. */
-  readonly menu: boolean;
 
   constructor(
     readonly slot: DockSlot,
-    private readonly manager: DockManager,
+    manager: DockManager,
   ) {
-    this.menu = slot === "right";
     this.el = h("aside", { class: `dock dock-${slot}`, id: `dock-${slot}`, "aria-label": TITLES[slot] });
-    if (!this.menu) {
-      this.tabsEl.setAttribute("role", "tablist");
-      this.tabsEl.setAttribute("aria-label", TITLES[slot]);
-    }
+    this.tabsEl.setAttribute("role", "tablist");
+    this.tabsEl.setAttribute("aria-label", TITLES[slot]);
     this.keys = roving(this.tabsEl, {
-      items: () => (this.menu ? [] : this.ordered().map((m) => m.button)),
+      items: () => this.ordered().map((m) => m.button),
       orientation: "horizontal",
       tabStop: true,
       current: () => (this.selected !== undefined ? this.tabs.get(this.selected)?.button : undefined),
@@ -176,43 +170,17 @@ class Dock {
     this.el.append(this.head, this.body);
   }
 
+  /** The tabs in their order; the Tools dock's grouped by kind first (the groups in the order their first tool came). */
   ordered(): Mounted[] {
-    return [...this.tabs.values()].sort((a, b) => (a.tab.order ?? 100) - (b.tab.order ?? 100));
+    const byOrder = [...this.tabs.values()].sort((a, b) => (a.tab.order ?? 100) - (b.tab.order ?? 100));
+    if (this.slot !== "right") return byOrder;
+    const groups = [...new Set(byOrder.map((m) => m.tab.group ?? "Other"))];
+    return byOrder.sort((a, b) => groups.indexOf(a.tab.group ?? "Other") - groups.indexOf(b.tab.group ?? "Other"));
   }
 
   layoutTabs(): void {
-    if (!this.menu) {
-      this.tabsEl.replaceChildren(...this.ordered().map((m) => m.button));
-      this.keys.sync();
-      return;
-    }
-    const shown = this.selected !== undefined ? this.tabs.get(this.selected) : undefined;
-    const picker = h(
-      "button",
-      { class: "tab dock-picker", type: "button", "aria-haspopup": "menu", title: "Choose a tool", "aria-label": `Tool: ${shown?.tab.title ?? "none"}. Choose a tool` },
-      shown?.tab.title ?? "Tools",
-      icon("chevron-down"),
-    );
-    const open = () => {
-      const groups = new Map<string, Mounted[]>();
-      for (const m of this.visibleTabs()) groups.set(m.tab.group ?? "Other", [...(groups.get(m.tab.group ?? "Other") ?? []), m]);
-      showMenu(
-        picker,
-        [...groups].flatMap(([group, tabs], i) => [
-          ...(i > 0 ? (["-"] as const) : []),
-          { label: group, muted: true, disabled: true, run: () => {} },
-          ...tabs.map((m) => ({ label: m.tab.title, current: m.tab.id === this.selected, run: () => this.manager.show(m.tab.id) })),
-        ]),
-      );
-    };
-    picker.addEventListener("click", open);
-    // Down or Up opens the menu too, as on any menu button.
-    picker.addEventListener("keydown", (e) => {
-      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-      e.preventDefault();
-      open();
-    });
-    this.tabsEl.replaceChildren(picker);
+    this.tabsEl.replaceChildren(...this.ordered().map((m) => m.button));
+    this.keys.sync();
   }
 
   visibleTabs(): Mounted[] {
@@ -269,16 +237,8 @@ export class DockManager {
   addTab(tab: DockTab): Disposer {
     const dock = this.docks[tab.slot];
     if (this.bySlotOf.has(tab.id)) throw new Error(`dock tab ${tab.id} already exists`);
-    // A tab panel named by its tab; the Tools dock has a picker, not tabs, so its panels are regions named by their titles.
-    const host = h("div", {
-      class: "dock-pane",
-      "data-tab": tab.id,
-      id: `pane-${tab.id}`,
-      role: dock.menu ? "region" : "tabpanel",
-      "aria-labelledby": dock.menu ? undefined : `tab-${tab.id}`,
-      "aria-label": dock.menu ? tab.title : undefined,
-      hidden: true,
-    });
+    // A tab panel named by its tab.
+    const host = h("div", { class: "dock-pane", "data-tab": tab.id, id: `pane-${tab.id}`, role: "tabpanel", "aria-labelledby": `tab-${tab.id}`, hidden: true });
     const button = h(
       "button",
       { class: "tab", type: "button", role: "tab", id: `tab-${tab.id}`, "aria-selected": "false", "aria-controls": `pane-${tab.id}`, onclick: () => this.show(tab.id) },
@@ -360,7 +320,6 @@ export class DockManager {
     mounted.button.setAttribute("aria-selected", "true");
     dock.keys.sync();
     mounted.host.hidden = false;
-    if (dock.menu) dock.layoutTabs();
     if (!dock.el.classList.contains("collapsed")) this.render(mounted);
     if (chosen) prefs.set(`${slot}.tab`, id);
     for (const listener of this.listeners) listener(id);
@@ -407,7 +366,6 @@ export class DockManager {
         const next = dock.visibleTabs()[0];
         if (next !== undefined) this.select(dock.slot, next.tab.id);
       }
-      if (dock.menu) dock.layoutTabs();
     }
     this.applyEmpty();
   }

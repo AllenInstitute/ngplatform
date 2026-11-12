@@ -250,8 +250,6 @@ a.btn { text-decoration: none; }
 .scene-kind-new .scene-tab-name { font-style: italic; }
 .scene-kind-add { gap: var(--sp-2); color: var(--muted); }
 /* The Tools dock's picker: the tool shown, its menu lists them all */
-.dock-picker { display: inline-flex; align-items: center; gap: var(--sp-2); }
-.dock-picker svg { width: 12px; height: 12px; }
 /* The Activity line: the running job, else the last message, also while the dock is collapsed */
 .dock-status { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; border: 0; background: transparent; color: var(--muted); font: var(--fs-body) var(--mono); padding: 0 var(--sp-4); cursor: pointer; }
 .dock-status.err { color: var(--err); }
@@ -378,7 +376,7 @@ kbd {
   font-size: var(--fs-body); letter-spacing: 0.02em; white-space: nowrap;
 }
 .tab:hover { color: var(--text); }
-.tab[aria-selected="true"], .tab.dock-picker { color: var(--text); background: var(--ink-3); }
+.tab[aria-selected="true"] { color: var(--text); background: var(--ink-3); }
 .dock-body { flex: 1; overflow: auto; min-height: 0; }
 .dock-pane { padding: var(--sp-5); min-height: 100%; box-sizing: border-box; }
 .dock.collapsed .dock-body, .dock.collapsed .dock-tabs { display: none; }
@@ -728,13 +726,14 @@ textarea.py-in {
 .stats-detail { color: var(--faint); font: var(--fs-caption)/1.4 var(--mono); overflow: hidden; text-overflow: ellipsis; }
 
 /* ------------------------------------------------------ layer inspector */
-/* Its sections are the panels' .card, its buttons .btn and its fields .text-input
-   (src/engine/inspector/ui.ts); only what they need besides is here. */
-.ins-root.ins-sections { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); min-width: 0; }
-.ins-part.card { margin: 0; min-width: 0; }
-.ins-part > .card-body { display: flex; flex-direction: column; min-width: 0; padding: var(--sp-1) var(--sp-3) var(--sp-3); }
-.ins-part > .card-body > * { min-width: 0; }
-.ins-content { min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+/* Its tabs are the docks' .tab, its buttons .btn and its fields .text-input
+   (src/engine/inspector/ui.ts); only what they need besides is here. In a
+   dataset's card it is as tall as its tab's content (the list scrolls), and
+   as wide as the panel, no wider. */
+.ins-root { display: flex; flex-direction: column; min-width: 0; }
+.ins-tabs { display: flex; flex-wrap: wrap; gap: var(--sp-1); padding-bottom: var(--sp-2); border-bottom: 1px solid var(--line); flex: none; }
+.ins-content { min-width: 0; padding: var(--sp-3) var(--sp-1) var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-2); }
+.ins-content > * { min-width: 0; }
 .ins-section { border-bottom: 1px solid var(--line); padding: var(--sp-4) var(--sp-1) 10px; display: flex; flex-direction: column; gap: var(--sp-2); }
 .ins-section:last-child { border-bottom: 0; }
 .ins-section[hidden], .ins-row[hidden] { display: none; }

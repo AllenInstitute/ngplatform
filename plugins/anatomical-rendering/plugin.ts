@@ -390,6 +390,8 @@ class AnatomicalRendering {
   private local: LocalRenderer | undefined;
   private localKey = "";
   private localText = "";
+  /** Why this browser's WebGPU path tracer could not start (the object is drawn without it). */
+  private noWebGpu = "";
   private readonly toggle: { set(value: boolean): void; dispose(): void };
   /** Brings the panel up to date (in place); `statusUpdate` only its status line and readouts, as each frame comes. */
   private panelUpdate: (() => void) | undefined;
@@ -953,8 +955,10 @@ class AnatomicalRendering {
       this.handle?.redraw();
     } catch (e) {
       this.localText = "";
-      this.problem = `This browser cannot render it: ${(e as Error).message}`;
-      // The object needs no WebGPU: it reads the image itself.
+      // The object needs no WebGPU (it reads the image itself and draws with WebGL): without it only the
+      // path-traced picture at rest is missing, which is an error only when that is asked for.
+      this.noWebGpu = (e as Error).message;
+      if (this.saved.restPicture) this.problem = `This browser cannot path-trace the picture at rest: ${this.noWebGpu}`;
       void this.live.open(url, this.saved.objectVoxels);
     }
     this.statusUpdate?.();
@@ -965,6 +969,7 @@ class AnatomicalRendering {
     this.local = undefined;
     this.localKey = "";
     this.localText = "";
+    this.noWebGpu = "";
   }
 
   /** Closes the session on its host (`keepalive`: as the page closes) and forgets what belonged to it. */
@@ -1729,6 +1734,7 @@ class AnatomicalRendering {
       lines.push(`${s.message}${v.made ? (v.from_cache ? " (made here, from the cache)" : " (made here by downsampling)") : ""}`);
     }
     if (this.saved.where === "browser" && this.local?.ready) lines.push(this.localText);
+    if (this.saved.where === "browser" && this.local !== undefined && !this.local.ready && this.noWebGpu) lines.push(`No WebGPU here (${this.noWebGpu}): the object is drawn and path-traced with WebGL.`);
     if (this.live.text) lines.push(this.live.text);
     if (this.frameText) lines.push(this.frameText);
     return lines.join("\n");

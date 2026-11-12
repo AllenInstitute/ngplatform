@@ -7,7 +7,6 @@ import { region } from "../../sdk/dom.js";
 import { h } from "../dom.js";
 import type { Workbench } from "../workbench.js";
 import { signInControl } from "./auth.js";
-import type { SectionsOpen } from "../../engine/inspector/index.js";
 
 export interface LayerTarget {
   dataset: DatasetInfo | undefined;
@@ -26,36 +25,9 @@ export function layerTarget(wb: Workbench): LayerTarget {
 }
 
 /**
- * Which sections of the layer controls are open: the same for every
- * dataset, kept in this browser (Rendering open at first).
- */
-const SECTIONS_KEY = "ngplatform.layer.sections";
-export const sectionsOpen: SectionsOpen = (() => {
-  let open = new Set(["rendering"]);
-  try {
-    const kept = JSON.parse(localStorage.getItem(SECTIONS_KEY) ?? "null");
-    if (Array.isArray(kept)) open = new Set(kept.filter((x) => typeof x === "string"));
-  } catch {
-    // Storage refused or unreadable: Rendering open.
-  }
-  return {
-    has: (id) => open.has(id),
-    set: (id, on) => {
-      if (on) open.add(id);
-      else open.delete(id);
-      try {
-        localStorage.setItem(SECTIONS_KEY, JSON.stringify([...open]));
-      } catch {
-        // Not kept: as before next time.
-      }
-    },
-  };
-})();
-
-/**
  * A dataset's card body (./datasets.ts): the controls of the layer it is
- * shown through (the selected one of its views, else its first), as
- * sections; above them, only when the data is not public (or failed to
+ * shown through (the selected one of its views, else its first), as the
+ * layer's tabs (Rendering, Source, Annotations…); above them, only when the data is not public (or failed to
  * load), the sign-in the layer reads it with, as in Settings → Sign-in.
  * `update` brings it up to the state; the sign-in is drawn again only when
  * what it shows changes, so a move of the views does not close its
@@ -80,7 +52,7 @@ export function datasetBody(wb: Workbench, datasetId: string): { element: HTMLEl
     unmount = undefined;
     controls.replaceChildren();
     mountedFor = name === undefined ? undefined : { name, token };
-    if (name !== undefined && token !== undefined) unmount = engine.mountLayerControls(controls, name, sectionsOpen);
+    if (name !== undefined && token !== undefined) unmount = engine.mountLayerControls(controls, name);
   };
 
   /** What the sign-in drop-down is made from. */

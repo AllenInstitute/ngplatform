@@ -294,14 +294,15 @@ const chrome = await page.evaluate(() => {
 });
 check(chrome.layerPanel + chrome.sidePanels + chrome.status === 0, `no layer bar, side panels or status inside the views ${JSON.stringify(chrome)}`);
 
-// The Layers panel lists the dataset; selected, its card opens on its settings, the platform's own sections.
+// The Layers panel lists the dataset; selected, its card opens on its settings, the platform's own tabs.
 await until("the dataset in the Layers panel", () => document.querySelectorAll(".datasets .ds-row").length === 1);
 await click(page.locator(".datasets .ds-row").first());
-await until("the layer's settings in its card", () => document.querySelectorAll(".ds-card.open .ins-part").length > 0);
-check(await until("Rendering open, with the layer's sliders", () => document.querySelectorAll('.ins-part[data-section="rendering"][open] .ins-slider').length >= 1), "Rendering shows the layer's sliders");
-await click(page.locator(".ins-part > summary", { hasText: "Source" }));
-await until("the Source section", () => document.querySelector(".ins-url-field textarea") !== null);
+await until("the layer's tabs in its card", () => document.querySelectorAll(".ds-card.open .ins-tabs .tab").length > 0);
+await click(page.locator(".ds-card.open .ins-tabs .tab", { hasText: "Source" }));
+await until("the Source tab", () => document.querySelector(".ins-url-field textarea") !== null);
 check((await page.locator(".ins-url-field textarea").first().inputValue()).includes(fixture.url.replace(/\/$/, "")), "Source shows the data source URL");
+await click(page.locator(".ds-card.open .ins-tabs .tab", { hasText: "Rendering" }));
+check(await until("the Rendering tab's sliders", () => document.querySelectorAll(".ins-content .ins-slider").length >= 1), "Rendering shows the layer's sliders");
 
 // Hide and show the dataset from its row.
 await page.locator(".datasets .ds-row .choice input").first().uncheck({ force: true });

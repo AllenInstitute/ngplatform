@@ -137,18 +137,20 @@ The production polish: the work of an audit of every panel and plugin
   colourmap editor (histogram, stops, shift and compression, window) works
   there too, from the level of the image it holds.
 - Anatomical rendering renders in this browser by default; a render
-  computer is chosen in its Remote card.
+  computer is chosen in its Remote card. A browser without WebGPU still
+  draws and path-traces the object (WebGL), with a note, not an error.
 - The light held in the object comes in as its paths gather, so it is never
   blotchy while it is worked out.
 
 ### The Layers panel: a card per dataset
 
 - Each dataset in the scene is a card: its row, and, opened, its settings
-  as sections (Rendering, Source, Annotations, Segments, Schema, as its
-  type has them), each opened and closed on its own (kept for every
-  dataset). Selecting a dataset opens its card; its arrow opens and closes
-  it, and several may be open. The selected layer's controls no longer sit
-  under the list.
+  in the layer's tabs (Rendering, as Display is now called, Source,
+  Annotations, Segments, Schema, as its type has them). Selecting a dataset
+  opens its card; its arrow opens and closes it, and several may be open.
+  The selected layer's controls no longer sit under the list.
+- The Tools dock shows its tools as tabs (kept together by kind), in
+  place of the menu that picked one.
 - A new or empty scene's card offers Open a file and Paste a link; the
   examples are in Open and the palette.
 

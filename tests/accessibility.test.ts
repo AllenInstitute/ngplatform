@@ -157,25 +157,20 @@ describe("dock tabs", () => {
     expect(tabs.map((t) => t.getAttribute("tabindex"))).toEqual(["0", "-1", "-1"]);
   });
 
-  it("opens the Tools picker's menu with Down", async () => {
+  it("are the Tools dock's tabs too: a tab list, its panels named by them, the arrows moving between them", () => {
     const root = dom.host();
     const docks = new DockManager(root, context);
     root.append(docks.element("right"));
     docks.addTab({ id: "display", title: "Display", slot: "right", group: "Images", render: () => {} });
     docks.addTab({ id: "filters", title: "Filters", slot: "right", group: "Images", render: () => {} });
-    const picker = docks.element("right").querySelector<HTMLElement>(".dock-picker")!;
-    expect(picker.hasAttribute("aria-selected")).toBe(false);
-    picker.focus();
-    key(picker, "ArrowDown");
-    const menu = dom.document.querySelector('[role="menu"]')!;
-    expect(dom.text(active()!)).toBe("Display");
-    key(active()!, "ArrowDown");
-    expect(dom.text(active()!)).toBe("Filters");
-    // Escape closes the menu and gives the keyboard back to the picker.
-    await new Promise((r) => setTimeout(r));
-    key(active()!, "Escape");
-    expect(menu.isConnected).toBe(false);
-    expect(active()).toBe(picker);
+    const dock = docks.element("right");
+    const tabs = all(dock.querySelector('[role="tablist"]')!, '[role="tab"]');
+    expect(tabs.map((t) => dom.text(t))).toEqual(["Display", "Filters"]);
+    expect(dock.querySelector('[role="tabpanel"]')!.getAttribute("aria-labelledby")).toBe(tabs[0].id);
+    tabs[0].focus();
+    key(tabs[0], "ArrowRight");
+    expect(docks.selected("right")).toBe("filters");
+    expect(active()).toBe(tabs[1]);
   });
 
   describe("resizers", () => {
