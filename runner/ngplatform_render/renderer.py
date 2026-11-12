@@ -58,6 +58,7 @@ class Volume:
     percentiles: dict[float, float] = field(default_factory=dict)  # data value at each percentile (of non-background)
     window: tuple[float, float] | None = None  # the guessed window (data values), for "window" presets
     quantiles: list[float] | None = None  # the tissue's values at volumes.QUANTILES, for matching histograms
+    medium: str = ""  # the specimen lies in a mounting medium, the tissue "above" or "below" it (volumes.medium_side)
 
 
 @dataclass

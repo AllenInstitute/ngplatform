@@ -527,6 +527,7 @@ class Loaded:
     channel: int = 0  # the channel and time point read (0 for an image without those axes)
     time: int = 0
     counts: dict[str, Any] = field(default_factory=dict)  # Multiscale.counts(): its axes, channels and time points
+    medium: str = ""  # the specimen lies in a mounting medium, the tissue "above" or "below" it (medium_side); else ""
 
 
 def _order_zyx(a: np.ndarray, ms: Multiscale) -> np.ndarray:
@@ -732,13 +733,11 @@ def window_side(q: np.ndarray, lo: float, hi: float, window: tuple[float, float]
     return "above" if abs(m - w0) <= abs(m - w1) else "below"
 
 
-def guess_window(q: np.ndarray, lo: float, hi: float) -> tuple[float, float] | None:
-    """A window over the tissue of a specimen in a mounting medium (data units): from just past
-    the medium, on the side of it that holds more of the rest (tissue is usually denser), to as
-    far again as the tissue's commonest value, so that value is at the window's middle whatever
-    else (calcium, metal) the scan holds. The medium is the commonest value in a ring about the
-    scan's axis just inside its sides, and only what lies within that ring counts, so what lies
-    outside a round jar (the corners) does not."""
+def _ring_medium(q: np.ndarray) -> tuple[int, int, np.ndarray, float] | None:
+    """What guess_window reads, every 2nd voxel: the commonest value bar 0 in a ring about the scan's axis just
+    inside its sides (r 0.75..0.9 of its half widths), as a bin `m` (of 16 values for 16-bit data), and its band's
+    half-width `w` (bins, to a fifth of its peak); the counts within r 0.9 (bar 0); and the share of the ring in
+    the band, every voxel counted (0 too)."""
     if q.ndim != 3 or min(q.shape) < 8:
         return None
     s = q[::2, ::2, ::2]
@@ -751,6 +750,7 @@ def guess_window(q: np.ndarray, lo: float, hi: float) -> tuple[float, float] | N
     shift = 0 if q.dtype == np.uint8 else 4
     nb = (top >> shift) + 1
     h = np.bincount((ring.ravel() >> shift).astype(np.int64), minlength=nb).astype(np.float64)
+    total = h.sum()
     h[0] = 0
     if h.sum() == 0:
         return None
@@ -765,6 +765,43 @@ def guess_window(q: np.ndarray, lo: float, hi: float) -> tuple[float, float] | N
     w = max(m - j0, j1 - m, 2)
     allh = np.bincount((inside.ravel() >> shift).astype(np.int64), minlength=nb).astype(np.float64)
     allh[0] = 0
+    return m, w, allh, float(h[max(1, m - w): m + w + 1].sum() / total)
+
+
+MEDIUM_SHARE = 0.3  # of the ring the medium's band fills, at least
+MEDIUM_RISE = 5.0  # the medium's value above the scan's 0, in half-widths of its band, at least
+
+
+def medium_side(q: np.ndarray, lo: float, hi: float, window: tuple[float, float] | None) -> str:
+    """Whether the specimen lies in a mounting medium (HiP-CT's ethanol and agar), and on which side of it the
+    tissue is: "above" or "below" (window_side), else "". A medium fills the scan's sides: its band (as
+    guess_window finds it) holds MEDIUM_SHARE of the ring or more, every voxel counted (a masked scan's ring is
+    mostly 0, and what a band of tissue holds of the rest is little: 0.17 at most in the scans tried, against 0.47
+    to 0.95 for HiP-CT organs in their jars); and it is a material, not the background: its value lies
+    MEDIUM_RISE half-widths of its band or more above the scan's 0 (8.7 or more for the jars; the air about an
+    MR head, at 0 with noise as wide as its value, 2.5)."""
+    rm = _ring_medium(q)
+    if rm is None or window is None:
+        return ""
+    m, w, _, share = rm
+    if share < MEDIUM_SHARE or m < MEDIUM_RISE * w:
+        return ""
+    return window_side(q, lo, hi, window)
+
+
+def guess_window(q: np.ndarray, lo: float, hi: float) -> tuple[float, float] | None:
+    """A window over the tissue of a specimen in a mounting medium (data units): from just past
+    the medium, on the side of it that holds more of the rest (tissue is usually denser), to as
+    far again as the tissue's commonest value, so that value is at the window's middle whatever
+    else (calcium, metal) the scan holds. The medium is the commonest value in a ring about the
+    scan's axis just inside its sides, and only what lies within that ring counts, so what lies
+    outside a round jar (the corners) does not."""
+    rm = _ring_medium(q)
+    if rm is None:
+        return None
+    m, w, allh, _ = rm
+    top = 255 if q.dtype == np.uint8 else 65535
+    shift = 0 if q.dtype == np.uint8 else 4
     above, below = allh[m + w:], allh[: max(0, m - w)]
     unit = (hi - lo) / top * (1 << shift)
     at = lambda k: lo + k * unit
@@ -900,7 +937,8 @@ def load(url: str, budget: int = 400_000_000, labels: bool | None = None, level:
     src = tuple(chosen.shape[i] for i in ms.spatial)
     win = None if is_labels else guess_window(q, lo, hi)
     qs = tissue_quantiles(q, lo, hi, win) if win else None
-    return Loaded(q, A, lo, hi, pc, name, vox, src, _time.time() - t0, made, from_cache, win, qs, at_c, at_t, ms.counts())
+    side = medium_side(q, lo, hi, win) if qs else ""
+    return Loaded(q, A, lo, hi, pc, name, vox, src, _time.time() - t0, made, from_cache, win, qs, at_c, at_t, ms.counts(), side)
 
 
 def _cache_put(cache: Path, data: np.ndarray) -> None:

@@ -9,9 +9,9 @@
    {
     "value": 0.0,
     "color": [
-     0.3754,
-     0.2534,
-     0.1696
+     0.3081,
+     0.2157,
+     0.1543
     ],
     "opacity": 0.0,
     "tissue": "grey matter",
@@ -19,23 +19,11 @@
     "roughness": 0.7
    },
    {
-    "value": 0.02,
+    "value": 0.03,
     "color": [
-     0.3808,
-     0.2577,
-     0.174
-    ],
-    "opacity": 0.0,
-    "tissue": "grey matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 0.04,
-    "color": [
-     0.3862,
-     0.2621,
-     0.1786
+     0.3188,
+     0.2239,
+     0.1606
     ],
     "opacity": 0.0,
     "tissue": "grey matter",
@@ -45,9 +33,9 @@
    {
     "value": 0.06,
     "color": [
-     0.3918,
-     0.2665,
-     0.1833
+     0.33,
+     0.2325,
+     0.1672
     ],
     "opacity": 0.0,
     "tissue": "grey matter",
@@ -55,11 +43,11 @@
     "roughness": 0.7
    },
    {
-    "value": 0.08,
+    "value": 0.09,
     "color": [
-     0.3974,
-     0.2711,
-     0.188
+     0.3417,
+     0.2414,
+     0.1741
     ],
     "opacity": 0.0,
     "tissue": "grey matter",
@@ -67,359 +55,347 @@
     "roughness": 0.7
    },
    {
-    "value": 0.1,
+    "value": 0.1117,
     "color": [
-     0.4023,
-     0.2757,
-     0.1929
+     0.3505,
+     0.2482,
+     0.1793
     ],
-    "opacity": 0.0,
+    "opacity": 0.0585,
     "tissue": "grey matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.12,
+    "value": 0.1421,
     "color": [
-     0.407,
-     0.2808,
-     0.1983
+     0.3549,
+     0.2521,
+     0.183
     ],
-    "opacity": 0.1,
+    "opacity": 0.2105,
     "tissue": "grey matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.14,
+    "value": 0.1774,
     "color": [
-     0.4117,
-     0.2859,
-     0.2022
+     0.3594,
+     0.2561,
+     0.1868
     ],
-    "opacity": 0.2,
+    "opacity": 0.387,
     "tissue": "grey matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.16,
+    "value": 0.2124,
     "color": [
-     0.416,
-     0.2906,
-     0.2052
+     0.364,
+     0.2602,
+     0.1907
     ],
-    "opacity": 0.3,
+    "opacity": 0.562,
     "tissue": "grey matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.18,
+    "value": 0.2442,
     "color": [
-     0.4202,
-     0.2952,
-     0.2081
+     0.3686,
+     0.2643,
+     0.1946
     ],
-    "opacity": 0.4,
+    "opacity": 0.721,
     "tissue": "grey matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.2,
+    "value": 0.2726,
     "color": [
-     0.4245,
-     0.2999,
+     0.3733,
+     0.2685,
+     0.1987
+    ],
+    "opacity": 0.7636,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.2983,
+    "color": [
+     0.3781,
+     0.2728,
+     0.202
+    ],
+    "opacity": 0.779,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.322,
+    "color": [
+     0.3829,
+     0.2772,
+     0.2049
+    ],
+    "opacity": 0.7932,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.344,
+    "color": [
+     0.3878,
+     0.2816,
+     0.208
+    ],
+    "opacity": 0.8064,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.3649,
+    "color": [
+     0.3928,
+     0.2861,
      0.2111
     ],
-    "opacity": 0.5,
+    "opacity": 0.8189,
     "tissue": "grey matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.22,
+    "value": 0.3845,
+    "color": [
+     0.3978,
+     0.2907,
+     0.2142
+    ],
+    "opacity": 0.8307,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.4034,
+    "color": [
+     0.4021,
+     0.2954,
+     0.2174
+    ],
+    "opacity": 0.842,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.4213,
+    "color": [
+     0.4058,
+     0.3001,
+     0.2207
+    ],
+    "opacity": 0.8528,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.4387,
+    "color": [
+     0.4096,
+     0.3034,
+     0.224
+    ],
+    "opacity": 0.8632,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.4554,
+    "color": [
+     0.4134,
+     0.3068,
+     0.2274
+    ],
+    "opacity": 0.8732,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.4716,
+    "color": [
+     0.4173,
+     0.3103,
+     0.2309
+    ],
+    "opacity": 0.883,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.4878,
+    "color": [
+     0.4212,
+     0.3138,
+     0.2344
+    ],
+    "opacity": 0.8927,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.5035,
+    "color": [
+     0.4251,
+     0.3174,
+     0.238
+    ],
+    "opacity": 0.9003,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.5191,
     "color": [
      0.4292,
-     0.3036,
-     0.2143
+     0.321,
+     0.2416
     ],
-    "opacity": 0.6,
+    "opacity": 0.9019,
     "tissue": "grey matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.24,
+    "value": 0.535,
     "color": [
-     0.4341,
-     0.3076,
-     0.2178
+     0.4332,
+     0.3247,
+     0.2454
     ],
-    "opacity": 0.7,
+    "opacity": 0.9035,
     "tissue": "grey matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.26,
+    "value": 0.5509,
     "color": [
-     0.4395,
-     0.3119,
-     0.2217
+     0.4374,
+     0.3284,
+     0.2491
     ],
-    "opacity": 0.756,
+    "opacity": 0.9051,
     "tissue": "grey matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.28,
+    "value": 0.5668,
     "color": [
-     0.4455,
-     0.3168,
-     0.226
+     0.4415,
+     0.3322,
+     0.253
     ],
-    "opacity": 0.768,
+    "opacity": 0.9067,
     "tissue": "grey matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.3,
+    "value": 0.5828,
     "color": [
-     0.4536,
-     0.3239,
-     0.2325
+     0.4458,
+     0.3361,
+     0.2569
     ],
-    "opacity": 0.78,
+    "opacity": 0.9083,
     "tissue": "grey matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.32,
+    "value": 0.5992,
     "color": [
-     0.4623,
-     0.3316,
-     0.2395
+     0.4501,
+     0.34,
+     0.2609
     ],
-    "opacity": 0.792,
+    "opacity": 0.9099,
     "tissue": "grey matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.34,
+    "value": 0.6163,
     "color": [
-     0.4718,
-     0.3399,
-     0.2472
+     0.4544,
+     0.344,
+     0.2649
     ],
-    "opacity": 0.804,
+    "opacity": 0.9116,
     "tissue": "grey matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.36,
+    "value": 0.6343,
     "color": [
-     0.4818,
-     0.3489,
-     0.2555
+     0.4588,
+     0.348,
+     0.269
     ],
-    "opacity": 0.816,
+    "opacity": 0.9134,
     "tissue": "grey matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.38,
+    "value": 0.6536,
     "color": [
-     0.4927,
-     0.3586,
-     0.2646
+     0.4632,
+     0.3521,
+     0.2732
     ],
-    "opacity": 0.828,
+    "opacity": 0.9154,
     "tissue": "grey matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.4,
+    "value": 0.6748,
     "color": [
-     0.5033,
-     0.3689,
-     0.2743
+     0.4677,
+     0.3563,
+     0.2774
     ],
-    "opacity": 0.84,
+    "opacity": 0.9175,
     "tissue": "grey matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.42,
+    "value": 0.68045,
     "color": [
-     0.5132,
-     0.3802,
-     0.2849
-    ],
-    "opacity": 0.852,
-    "tissue": "grey matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 0.44,
-    "color": [
-     0.5237,
-     0.3921,
-     0.2964
-    ],
-    "opacity": 0.864,
-    "tissue": "grey matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 0.46,
-    "color": [
-     0.5349,
-     0.4041,
-     0.3068
-    ],
-    "opacity": 0.876,
-    "tissue": "grey matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 0.48,
-    "color": [
-     0.5466,
-     0.415,
-     0.3169
-    ],
-    "opacity": 0.888,
-    "tissue": "grey matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 0.5,
-    "color": [
-     0.5583,
-     0.4258,
-     0.3271
-    ],
-    "opacity": 0.9,
-    "tissue": "grey matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 0.52,
-    "color": [
-     0.5704,
-     0.4371,
-     0.338
-    ],
-    "opacity": 0.902,
-    "tissue": "grey matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 0.54,
-    "color": [
-     0.5827,
-     0.4487,
-     0.3492
-    ],
-    "opacity": 0.904,
-    "tissue": "grey matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 0.56,
-    "color": [
-     0.5953,
-     0.4606,
-     0.3607
-    ],
-    "opacity": 0.906,
-    "tissue": "grey matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 0.58,
-    "color": [
-     0.6074,
-     0.4728,
-     0.3726
-    ],
-    "opacity": 0.908,
-    "tissue": "grey matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 0.6,
-    "color": [
-     0.6193,
-     0.4852,
-     0.3848
-    ],
-    "opacity": 0.91,
-    "tissue": "grey matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 0.62,
-    "color": [
-     0.631,
-     0.4974,
-     0.3969
-    ],
-    "opacity": 0.912,
-    "tissue": "grey matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 0.64,
-    "color": [
-     0.6416,
-     0.5076,
-     0.4073
-    ],
-    "opacity": 0.914,
-    "tissue": "grey matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 0.66,
-    "color": [
-     0.6512,
-     0.517,
-     0.4174
-    ],
-    "opacity": 0.916,
-    "tissue": "grey matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 0.68,
-    "color": [
-     0.66,
-     0.5259,
-     0.4269
+     0.4689,
+     0.3573,
+     0.2785
     ],
     "opacity": 0.918,
     "tissue": "grey matter",
@@ -427,275 +403,335 @@
     "roughness": 0.7
    },
    {
-    "value": 0.7,
+    "value": 0.69215,
     "color": [
-     0.6669,
-     0.5331,
-     0.4374
+     0.4712,
+     0.3594,
+     0.2806
     ],
-    "opacity": 0.92,
+    "opacity": 0.9192,
     "tissue": "grey matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.72,
+    "value": 0.6982,
     "color": [
-     0.6732,
-     0.5397,
+     0.4723,
+     0.3605,
+     0.2817
+    ],
+    "opacity": 0.9198,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.7047,
+    "color": [
+     0.4735,
+     0.3616,
+     0.2828
+    ],
+    "opacity": 0.9205,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.718,
+    "color": [
+     0.4996,
+     0.3897,
+     0.3106
+    ],
+    "opacity": 0.9218,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.7248,
+    "color": [
+     0.5125,
+     0.4036,
+     0.3224
+    ],
+    "opacity": 0.9225,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.7322,
+    "color": [
+     0.5258,
+     0.4153,
+     0.3349
+    ],
+    "opacity": 0.9232,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.7477,
+    "color": [
+     0.5535,
+     0.4404,
+     0.3619
+    ],
+    "opacity": 0.9248,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.7558,
+    "color": [
+     0.5679,
+     0.4537,
+     0.3765
+    ],
+    "opacity": 0.9256,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.76445,
+    "color": [
+     0.5828,
+     0.4675,
+     0.3917
+    ],
+    "opacity": 0.9264,
+    "tissue": "grey matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.7824,
+    "color": [
+     0.6109,
+     0.4967,
+     0.4192
+    ],
+    "opacity": 0.9282,
+    "tissue": "white matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.7917,
+    "color": [
+     0.6236,
+     0.5102,
+     0.433
+    ],
+    "opacity": 0.9292,
+    "tissue": "white matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 0.8018,
+    "color": [
+     0.6366,
+     0.5236,
      0.4474
     ],
-    "opacity": 0.922,
-    "tissue": "grey matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 0.74,
-    "color": [
-     0.6789,
-     0.5459,
-     0.457
-    ],
-    "opacity": 0.924,
-    "tissue": "grey matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 0.76,
-    "color": [
-     0.6839,
-     0.5514,
-     0.4661
-    ],
-    "opacity": 0.926,
-    "tissue": "grey matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 0.78,
-    "color": [
-     0.6885,
-     0.5567,
-     0.475
-    ],
-    "opacity": 0.928,
-    "tissue": "grey matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 0.8,
-    "color": [
-     0.6928,
-     0.5616,
-     0.4835
-    ],
-    "opacity": 0.93,
-    "tissue": "grey matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 0.82,
-    "color": [
-     0.6966,
-     0.5662,
-     0.4918
-    ],
-    "opacity": 0.932,
+    "opacity": 0.9302,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.84,
+    "value": 0.8229,
     "color": [
-     0.7002,
-     0.5705,
-     0.4999
+     0.6637,
+     0.5519,
+     0.4781
     ],
-    "opacity": 0.934,
+    "opacity": 0.9323,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.86,
+    "value": 0.8339,
     "color": [
-     0.7036,
-     0.5747,
-     0.5067
+     0.6777,
+     0.5668,
+     0.4944
     ],
-    "opacity": 0.936,
+    "opacity": 0.9334,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.88,
+    "value": 0.8455,
     "color": [
-     0.7068,
-     0.5789,
-     0.5134
+     0.6922,
+     0.5822,
+     0.5096
     ],
-    "opacity": 0.938,
+    "opacity": 0.9345,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.9,
+    "value": 0.8691,
     "color": [
-     0.71,
-     0.583,
-     0.5202
+     0.7227,
+     0.6127,
+     0.54
     ],
-    "opacity": 0.94,
+    "opacity": 0.9369,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.92,
+    "value": 0.8811,
     "color": [
-     0.7133,
-     0.5872,
-     0.5271
+     0.7387,
+     0.6276,
+     0.556
     ],
-    "opacity": 0.942,
+    "opacity": 0.9381,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.94,
+    "value": 0.8934,
     "color": [
-     0.7179,
-     0.592,
-     0.5316
+     0.755,
+     0.6429,
+     0.5727
     ],
-    "opacity": 0.944,
+    "opacity": 0.9393,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.96,
+    "value": 0.9177,
     "color": [
-     0.7228,
-     0.5972,
-     0.5363
+     0.76,
+     0.6475,
+     0.5775
     ],
-    "opacity": 0.946,
+    "opacity": 0.9418,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 0.98,
+    "value": 0.9297,
     "color": [
-     0.728,
-     0.6023,
-     0.5414
+     0.7624,
+     0.6498,
+     0.5799
     ],
-    "opacity": 0.948,
+    "opacity": 0.943,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 1.0,
+    "value": 0.941,
     "color": [
-     0.7338,
-     0.6077,
-     0.5471
+     0.7649,
+     0.6521,
+     0.5823
     ],
-    "opacity": 0.95,
+    "opacity": 0.9441,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 1.02,
+    "value": 0.9737,
     "color": [
-     0.7401,
-     0.6136,
-     0.5535
+     0.7724,
+     0.6592,
+     0.5897
     ],
-    "opacity": 0.952,
+    "opacity": 0.9474,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 1.04,
+    "value": 1.0104,
     "color": [
-     0.747,
-     0.6199,
-     0.5603
+     0.7825,
+     0.6687,
+     0.5996
     ],
-    "opacity": 0.954,
+    "opacity": 0.951,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 1.06,
+    "value": 1.0422,
     "color": [
-     0.7546,
-     0.627,
-     0.568
+     0.7927,
+     0.6784,
+     0.6076
     ],
-    "opacity": 0.956,
+    "opacity": 0.9542,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 1.08,
+    "value": 1.07,
     "color": [
-     0.7628,
-     0.6346,
-     0.5763
+     0.8028,
+     0.6882,
+     0.6156
     ],
-    "opacity": 0.958,
+    "opacity": 0.957,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 1.1,
+    "value": 1.0949,
     "color": [
-     0.7719,
-     0.6431,
-     0.5855
+     0.812,
+     0.6983,
+     0.6238
     ],
-    "opacity": 0.96,
+    "opacity": 0.9595,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 1.12,
+    "value": 1.1181,
     "color": [
-     0.7814,
-     0.652,
-     0.5953
+     0.8214,
+     0.7077,
+     0.6322
     ],
-    "opacity": 0.962,
+    "opacity": 0.9618,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 1.14,
+    "value": 1.1403,
     "color": [
-     0.7914,
-     0.6615,
-     0.6047
+     0.831,
+     0.7171,
+     0.6407
     ],
     "opacity": 0.964,
     "tissue": "white matter",
@@ -703,227 +739,119 @@
     "roughness": 0.7
    },
    {
-    "value": 1.16,
+    "value": 1.162,
     "color": [
-     0.8017,
-     0.6713,
-     0.6137
+     0.8406,
+     0.7267,
+     0.6493
     ],
-    "opacity": 0.966,
+    "opacity": 0.9662,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 1.18,
+    "value": 1.184,
     "color": [
-     0.8116,
-     0.6811,
-     0.6227
+     0.8504,
+     0.7365,
+     0.6582
     ],
-    "opacity": 0.968,
+    "opacity": 0.9684,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 1.2,
+    "value": 1.2069,
     "color": [
-     0.8213,
-     0.6909,
-     0.6317
+     0.8603,
+     0.7464,
+     0.6672
     ],
-    "opacity": 0.97,
+    "opacity": 0.9707,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 1.22,
+    "value": 1.2315,
     "color": [
-     0.8307,
-     0.7004,
-     0.6404
+     0.8704,
+     0.7565,
+     0.6763
     ],
-    "opacity": 0.972,
+    "opacity": 0.9731,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 1.24,
+    "value": 1.259,
     "color": [
-     0.8395,
-     0.7091,
-     0.6486
+     0.8805,
+     0.7667,
+     0.6857
     ],
-    "opacity": 0.974,
+    "opacity": 0.9759,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 1.26,
+    "value": 1.2925,
     "color": [
-     0.8478,
-     0.7173,
-     0.6564
-    ],
-    "opacity": 0.976,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.28,
-    "color": [
-     0.8551,
-     0.7243,
-     0.6628
-    ],
-    "opacity": 0.978,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.3,
-    "color": [
-     0.8617,
-     0.7306,
-     0.6686
-    ],
-    "opacity": 0.98,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.32,
-    "color": [
-     0.8676,
-     0.7363,
-     0.6736
-    ],
-    "opacity": 0.982,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.34,
-    "color": [
-     0.8728,
-     0.7412,
-     0.678
-    ],
-    "opacity": 0.984,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.36,
-    "color": [
-     0.8772,
-     0.7453,
-     0.6817
-    ],
-    "opacity": 0.986,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.38,
-    "color": [
-     0.8809,
-     0.7487,
-     0.6847
-    ],
-    "opacity": 0.988,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.4,
-    "color": [
-     0.8841,
-     0.7518,
-     0.6872
-    ],
-    "opacity": 0.99,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.42,
-    "color": [
-     0.8878,
-     0.7553,
-     0.6903
-    ],
-    "opacity": 0.992,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.44,
-    "color": [
-     0.8924,
-     0.7596,
-     0.6941
-    ],
-    "opacity": 0.994,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.46,
-    "color": [
-     0.8969,
-     0.7639,
-     0.698
-    ],
-    "opacity": 0.996,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.48,
-    "color": [
-     0.9015,
-     0.7683,
-     0.7017
-    ],
-    "opacity": 0.998,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.5,
-    "color": [
-     0.9059,
-     0.7727,
-     0.7052
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.52,
-    "color": [
-     0.9104,
+     0.8908,
      0.7771,
-     0.7088
+     0.6952
+    ],
+    "opacity": 0.9792,
+    "tissue": "white matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 1.3365,
+    "color": [
+     0.9014,
+     0.7877,
+     0.705
+    ],
+    "opacity": 0.9837,
+    "tissue": "white matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 1.4126,
+    "color": [
+     0.9133,
+     0.7985,
+     0.715
+    ],
+    "opacity": 0.9913,
+    "tissue": "white matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 1.4626,
+    "color": [
+     0.9178,
+     0.8035,
+     0.7204
+    ],
+    "opacity": 0.9963,
+    "tissue": "white matter",
+    "specular": 0.05,
+    "roughness": 0.7
+   },
+   {
+    "value": 1.5626,
+    "color": [
+     0.9268,
+     0.8137,
+     0.7314
     ],
     "opacity": 1.0,
     "tissue": "white matter",
@@ -931,11 +859,11 @@
     "roughness": 0.7
    },
    {
-    "value": 1.54,
+    "value": 1.6626,
     "color": [
-     0.9149,
-     0.7816,
-     0.7124
+     0.9359,
+     0.8241,
+     0.7425
     ],
     "opacity": 1.0,
     "tissue": "white matter",
@@ -943,11 +871,11 @@
     "roughness": 0.7
    },
    {
-    "value": 1.56,
+    "value": 1.7626,
     "color": [
-     0.9195,
-     0.7861,
-     0.716
+     0.945,
+     0.8346,
+     0.7539
     ],
     "opacity": 1.0,
     "tissue": "white matter",
@@ -955,11 +883,11 @@
     "roughness": 0.7
    },
    {
-    "value": 1.58,
+    "value": 1.8626,
     "color": [
-     0.924,
-     0.7906,
-     0.7197
+     0.9492,
+     0.8461,
+     0.7707
     ],
     "opacity": 1.0,
     "tissue": "white matter",
@@ -967,11 +895,11 @@
     "roughness": 0.7
    },
    {
-    "value": 1.6,
+    "value": 1.9626,
     "color": [
-     0.9286,
-     0.7951,
-     0.7233
+     0.9486,
+     0.8587,
+     0.7931
     ],
     "opacity": 1.0,
     "tissue": "white matter",
@@ -979,11 +907,11 @@
     "roughness": 0.7
    },
    {
-    "value": 1.62,
+    "value": 2.0626,
     "color": [
-     0.9324,
-     0.7991,
-     0.7268
+     0.9498,
+     0.8631,
+     0.8001
     ],
     "opacity": 1.0,
     "tissue": "white matter",
@@ -991,11 +919,11 @@
     "roughness": 0.7
    },
    {
-    "value": 1.64,
+    "value": 2.1626,
     "color": [
-     0.9362,
-     0.8026,
-     0.7303
+     0.9498,
+     0.8631,
+     0.8001
     ],
     "opacity": 1.0,
     "tissue": "white matter",
@@ -1003,517 +931,37 @@
     "roughness": 0.7
    },
    {
-    "value": 1.66,
+    "value": 2.2626,
     "color": [
-     0.94,
-     0.8061,
-     0.7338
+     0.9498,
+     0.8631,
+     0.8001
     ],
-    "opacity": 1.0,
+    "opacity": 0.7913,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 1.68,
+    "value": 2.3626,
     "color": [
-     0.9438,
-     0.8096,
-     0.7374
+     0.9498,
+     0.8631,
+     0.8001
     ],
-    "opacity": 1.0,
+    "opacity": 0.458,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
    },
    {
-    "value": 1.7,
+    "value": 2.4626,
     "color": [
-     0.9476,
-     0.8131,
-     0.7409
+     0.9498,
+     0.8631,
+     0.8001
     ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.72,
-    "color": [
-     0.9515,
-     0.8166,
-     0.7445
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.74,
-    "color": [
-     0.9525,
-     0.8208,
-     0.7504
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.76,
-    "color": [
-     0.9535,
-     0.8249,
-     0.7562
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.78,
-    "color": [
-     0.9516,
-     0.8297,
-     0.7645
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.8,
-    "color": [
-     0.9527,
-     0.8339,
-     0.7704
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.82,
-    "color": [
-     0.9537,
-     0.8381,
-     0.7764
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.84,
-    "color": [
-     0.9518,
-     0.843,
-     0.7848
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.86,
-    "color": [
-     0.9529,
-     0.8472,
-     0.7909
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.88,
-    "color": [
-     0.9539,
-     0.8515,
-     0.797
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.9,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.92,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.94,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.96,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 1.98,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.0,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.02,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.04,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.06,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.08,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.1,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.12,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.14,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.16,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.18,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.2,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.22,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 0.9333,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.24,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 0.8667,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.26,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 0.8,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.28,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 0.7333,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.3,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 0.6667,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.32,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 0.6,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.34,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 0.5333,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.36,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 0.4667,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.38,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 0.4,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.4,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 0.3333,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.42,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 0.2667,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.44,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 0.2,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.46,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 0.1333,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.48,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 0.0667,
-    "tissue": "white matter",
-    "specular": 0.05,
-    "roughness": 0.7
-   },
-   {
-    "value": 2.5,
-    "color": [
-     0.9536,
-     0.8545,
-     0.8019
-    ],
-    "opacity": 0.0,
+    "opacity": 0.1247,
     "tissue": "white matter",
     "specular": 0.05,
     "roughness": 0.7
@@ -1834,7 +1282,8 @@
    1.4126
   ],
   "design_scan": "n5://gs://ucl-hip-ct-35a68e99feaae8932b1d44da0358940b/S-21-46/brain/19.57um_complete-organ_bm18/",
-  "contrast": "Lightness spread over the design scan's tissue values (65% a ramp from L* 24 to 84 over its percentiles, 35% the photographs'), lighter with density; chroma x1.12 (less toward white), within what the renders can show. Hues as photographed."
+  "contrast": "Grey and white matter each matched to their own on every scan (classes: 2; split at the design scan's p62.5), a step of +-5 percentiles between them: grey matter L* 34-46, white matter L* 72-84 as a cut shows them; hues as photographed.",
+  "classes": 2
  },
  {
   "name": "HiP-CT organ: brain (fresh frozen)",
@@ -1846,9 +1295,9 @@
    {
     "value": 0.0,
     "color": [
-     0.446,
-     0.1852,
-     0.1688
+     0.3271,
+     0.2041,
+     0.2024
     ],
     "opacity": 0.0,
     "tissue": "grey matter",
@@ -1856,23 +1305,11 @@
     "roughness": 0.4
    },
    {
-    "value": 0.02,
+    "value": 0.03,
     "color": [
-     0.4513,
-     0.19,
-     0.1727
-    ],
-    "opacity": 0.0,
-    "tissue": "grey matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 0.04,
-    "color": [
-     0.4566,
-     0.1948,
-     0.1768
+     0.3392,
+     0.2111,
+     0.2083
     ],
     "opacity": 0.0,
     "tissue": "grey matter",
@@ -1882,9 +1319,9 @@
    {
     "value": 0.06,
     "color": [
-     0.462,
-     0.1997,
-     0.1809
+     0.3518,
+     0.2184,
+     0.2144
     ],
     "opacity": 0.0,
     "tissue": "grey matter",
@@ -1892,11 +1329,11 @@
     "roughness": 0.4
    },
    {
-    "value": 0.08,
+    "value": 0.09,
     "color": [
-     0.4674,
-     0.2032,
-     0.1851
+     0.365,
+     0.226,
+     0.2207
     ],
     "opacity": 0.0,
     "tissue": "grey matter",
@@ -1904,359 +1341,347 @@
     "roughness": 0.4
    },
    {
-    "value": 0.1,
+    "value": 0.1117,
     "color": [
-     0.4729,
-     0.2066,
-     0.1895
+     0.3749,
+     0.2317,
+     0.2255
     ],
-    "opacity": 0.0,
+    "opacity": 0.0585,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.12,
+    "value": 0.1421,
     "color": [
-     0.4789,
-     0.2104,
-     0.1942
+     0.3797,
+     0.2352,
+     0.2285
     ],
-    "opacity": 0.1,
+    "opacity": 0.2105,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.14,
+    "value": 0.1774,
     "color": [
-     0.4849,
-     0.2142,
-     0.199
+     0.3846,
+     0.2387,
+     0.2316
     ],
-    "opacity": 0.2,
+    "opacity": 0.387,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.16,
+    "value": 0.2124,
     "color": [
-     0.4904,
-     0.2177,
-     0.2024
+     0.3895,
+     0.2423,
+     0.2347
     ],
-    "opacity": 0.3,
+    "opacity": 0.562,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.18,
+    "value": 0.2442,
     "color": [
-     0.4958,
-     0.2211,
-     0.2054
+     0.3945,
+     0.246,
+     0.2379
     ],
-    "opacity": 0.4,
+    "opacity": 0.721,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.2,
+    "value": 0.2726,
     "color": [
-     0.501,
-     0.2247,
-     0.2086
+     0.3996,
+     0.2498,
+     0.2412
     ],
-    "opacity": 0.5,
+    "opacity": 0.7636,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.22,
+    "value": 0.2983,
     "color": [
-     0.506,
-     0.2285,
-     0.212
+     0.4036,
+     0.2536,
+     0.2445
     ],
-    "opacity": 0.6,
+    "opacity": 0.779,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.24,
+    "value": 0.322,
     "color": [
-     0.5113,
-     0.2326,
-     0.2156
+     0.4075,
+     0.2574,
+     0.2478
     ],
-    "opacity": 0.7,
+    "opacity": 0.7932,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.26,
+    "value": 0.344,
     "color": [
-     0.517,
-     0.2371,
-     0.2196
+     0.4115,
+     0.2614,
+     0.2513
     ],
-    "opacity": 0.756,
+    "opacity": 0.8064,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.28,
+    "value": 0.3649,
     "color": [
-     0.5234,
-     0.2422,
-     0.2241
+     0.4156,
+     0.2654,
+     0.2547
     ],
-    "opacity": 0.768,
+    "opacity": 0.8189,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.3,
+    "value": 0.3845,
     "color": [
-     0.5311,
-     0.2497,
-     0.2308
+     0.4197,
+     0.2695,
+     0.2583
     ],
-    "opacity": 0.78,
+    "opacity": 0.8307,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.32,
+    "value": 0.4034,
     "color": [
-     0.5394,
-     0.2578,
-     0.238
+     0.4239,
+     0.2736,
+     0.2619
     ],
-    "opacity": 0.792,
+    "opacity": 0.842,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.34,
+    "value": 0.4213,
     "color": [
-     0.5484,
-     0.2666,
-     0.2459
+     0.4281,
+     0.2778,
+     0.2655
     ],
-    "opacity": 0.804,
+    "opacity": 0.8528,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.36,
+    "value": 0.4387,
     "color": [
-     0.5579,
-     0.276,
-     0.2544
+     0.4324,
+     0.2821,
+     0.2692
     ],
-    "opacity": 0.816,
+    "opacity": 0.8632,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.38,
+    "value": 0.4554,
     "color": [
-     0.5682,
-     0.2864,
-     0.2638
+     0.4368,
+     0.2865,
+     0.273
     ],
-    "opacity": 0.828,
+    "opacity": 0.8732,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.4,
+    "value": 0.4716,
     "color": [
-     0.5791,
-     0.2975,
-     0.2738
+     0.4411,
+     0.2909,
+     0.2769
     ],
-    "opacity": 0.84,
+    "opacity": 0.883,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.42,
+    "value": 0.4878,
     "color": [
-     0.5909,
-     0.3069,
+     0.4456,
+     0.2954,
+     0.2808
+    ],
+    "opacity": 0.8927,
+    "tissue": "grey matter",
+    "specular": 0.12,
+    "roughness": 0.4
+   },
+   {
+    "value": 0.5035,
+    "color": [
+     0.4501,
+     0.3,
      0.2847
     ],
-    "opacity": 0.852,
+    "opacity": 0.9003,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.44,
+    "value": 0.5191,
     "color": [
-     0.6029,
-     0.3164,
-     0.2965
+     0.4547,
+     0.3034,
+     0.2887
     ],
-    "opacity": 0.864,
+    "opacity": 0.9019,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.46,
+    "value": 0.535,
     "color": [
-     0.6147,
-     0.3266,
-     0.3069
+     0.4593,
+     0.3068,
+     0.2928
     ],
-    "opacity": 0.876,
+    "opacity": 0.9035,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.48,
+    "value": 0.5509,
     "color": [
-     0.627,
+     0.464,
+     0.3103,
+     0.297
+    ],
+    "opacity": 0.9051,
+    "tissue": "grey matter",
+    "specular": 0.12,
+    "roughness": 0.4
+   },
+   {
+    "value": 0.5668,
+    "color": [
+     0.4687,
+     0.3139,
+     0.3009
+    ],
+    "opacity": 0.9067,
+    "tissue": "grey matter",
+    "specular": 0.12,
+    "roughness": 0.4
+   },
+   {
+    "value": 0.5828,
+    "color": [
+     0.4735,
+     0.3175,
+     0.3042
+    ],
+    "opacity": 0.9083,
+    "tissue": "grey matter",
+    "specular": 0.12,
+    "roughness": 0.4
+   },
+   {
+    "value": 0.5992,
+    "color": [
+     0.4784,
+     0.3212,
+     0.3075
+    ],
+    "opacity": 0.9099,
+    "tissue": "grey matter",
+    "specular": 0.12,
+    "roughness": 0.4
+   },
+   {
+    "value": 0.6163,
+    "color": [
+     0.4833,
+     0.3249,
+     0.3109
+    ],
+    "opacity": 0.9116,
+    "tissue": "grey matter",
+    "specular": 0.12,
+    "roughness": 0.4
+   },
+   {
+    "value": 0.6343,
+    "color": [
+     0.4883,
+     0.3287,
+     0.3143
+    ],
+    "opacity": 0.9134,
+    "tissue": "grey matter",
+    "specular": 0.12,
+    "roughness": 0.4
+   },
+   {
+    "value": 0.6536,
+    "color": [
+     0.4933,
+     0.3325,
+     0.3178
+    ],
+    "opacity": 0.9154,
+    "tissue": "grey matter",
+    "specular": 0.12,
+    "roughness": 0.4
+   },
+   {
+    "value": 0.6748,
+    "color": [
+     0.4984,
+     0.3364,
+     0.3213
+    ],
+    "opacity": 0.9175,
+    "tissue": "grey matter",
+    "specular": 0.12,
+    "roughness": 0.4
+   },
+   {
+    "value": 0.68045,
+    "color": [
+     0.4997,
      0.3374,
-     0.3169
-    ],
-    "opacity": 0.888,
-    "tissue": "grey matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 0.5,
-    "color": [
-     0.6399,
-     0.3494,
-     0.3285
-    ],
-    "opacity": 0.9,
-    "tissue": "grey matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 0.52,
-    "color": [
-     0.6533,
-     0.3621,
-     0.3409
-    ],
-    "opacity": 0.902,
-    "tissue": "grey matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 0.54,
-    "color": [
-     0.667,
-     0.3751,
-     0.3537
-    ],
-    "opacity": 0.904,
-    "tissue": "grey matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 0.56,
-    "color": [
-     0.6808,
-     0.3887,
-     0.3671
-    ],
-    "opacity": 0.906,
-    "tissue": "grey matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 0.58,
-    "color": [
-     0.6948,
-     0.4021,
-     0.3809
-    ],
-    "opacity": 0.908,
-    "tissue": "grey matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 0.6,
-    "color": [
-     0.7081,
-     0.4136,
-     0.3951
-    ],
-    "opacity": 0.91,
-    "tissue": "grey matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 0.62,
-    "color": [
-     0.7206,
-     0.425,
-     0.4075
-    ],
-    "opacity": 0.912,
-    "tissue": "grey matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 0.64,
-    "color": [
-     0.7326,
-     0.4362,
-     0.4189
-    ],
-    "opacity": 0.914,
-    "tissue": "grey matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 0.66,
-    "color": [
-     0.744,
-     0.4472,
-     0.4301
-    ],
-    "opacity": 0.916,
-    "tissue": "grey matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 0.68,
-    "color": [
-     0.7535,
-     0.4581,
-     0.4414
+     0.3222
     ],
     "opacity": 0.918,
     "tissue": "grey matter",
@@ -2264,275 +1689,335 @@
     "roughness": 0.4
    },
    {
-    "value": 0.7,
+    "value": 0.69215,
     "color": [
-     0.7608,
-     0.4668,
-     0.4478
+     0.5018,
+     0.3394,
+     0.324
     ],
-    "opacity": 0.92,
+    "opacity": 0.9192,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.72,
+    "value": 0.6982,
     "color": [
-     0.7675,
-     0.4749,
-     0.4536
+     0.5028,
+     0.3404,
+     0.3249
     ],
-    "opacity": 0.922,
+    "opacity": 0.9198,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.74,
+    "value": 0.7047,
     "color": [
-     0.7736,
-     0.4825,
-     0.4589
+     0.5038,
+     0.3414,
+     0.3258
     ],
-    "opacity": 0.924,
+    "opacity": 0.9205,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.76,
+    "value": 0.718,
     "color": [
-     0.7791,
-     0.4894,
-     0.4635
+     0.5259,
+     0.3687,
+     0.3517
     ],
-    "opacity": 0.926,
+    "opacity": 0.9218,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.78,
+    "value": 0.7248,
     "color": [
-     0.7842,
-     0.496,
-     0.4677
+     0.5374,
+     0.3834,
+     0.3656
     ],
-    "opacity": 0.928,
+    "opacity": 0.9225,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.8,
+    "value": 0.7322,
     "color": [
-     0.7889,
-     0.5017,
-     0.4715
+     0.5492,
+     0.3987,
+     0.3801
     ],
-    "opacity": 0.93,
+    "opacity": 0.9232,
     "tissue": "grey matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.82,
+    "value": 0.7477,
     "color": [
-     0.7933,
-     0.5064,
-     0.4749
+     0.5738,
+     0.425,
+     0.4085
     ],
-    "opacity": 0.932,
+    "opacity": 0.9248,
+    "tissue": "grey matter",
+    "specular": 0.12,
+    "roughness": 0.4
+   },
+   {
+    "value": 0.7558,
+    "color": [
+     0.5866,
+     0.4389,
+     0.421
+    ],
+    "opacity": 0.9256,
+    "tissue": "grey matter",
+    "specular": 0.12,
+    "roughness": 0.4
+   },
+   {
+    "value": 0.76445,
+    "color": [
+     0.5997,
+     0.4533,
+     0.4341
+    ],
+    "opacity": 0.9264,
+    "tissue": "grey matter",
+    "specular": 0.12,
+    "roughness": 0.4
+   },
+   {
+    "value": 0.7824,
+    "color": [
+     0.6249,
+     0.484,
+     0.4618
+    ],
+    "opacity": 0.9282,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.84,
+    "value": 0.7917,
     "color": [
-     0.7974,
-     0.5108,
-     0.4781
+     0.6379,
+     0.5002,
+     0.4766
     ],
-    "opacity": 0.934,
+    "opacity": 0.9292,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.86,
+    "value": 0.8018,
     "color": [
-     0.8013,
-     0.5152,
-     0.4811
+     0.6513,
+     0.5136,
+     0.4919
     ],
-    "opacity": 0.936,
+    "opacity": 0.9302,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.88,
+    "value": 0.8229,
     "color": [
-     0.8049,
-     0.5195,
-     0.4841
+     0.6789,
+     0.542,
+     0.5205
     ],
-    "opacity": 0.938,
+    "opacity": 0.9323,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.9,
+    "value": 0.8339,
     "color": [
-     0.8085,
-     0.5237,
-     0.4869
+     0.6933,
+     0.557,
+     0.5349
     ],
-    "opacity": 0.94,
+    "opacity": 0.9334,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.92,
+    "value": 0.8455,
     "color": [
-     0.8122,
-     0.528,
-     0.4899
+     0.7077,
+     0.5725,
+     0.5499
     ],
-    "opacity": 0.942,
+    "opacity": 0.9345,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.94,
+    "value": 0.8691,
     "color": [
-     0.8165,
-     0.5332,
-     0.496
+     0.7373,
+     0.6045,
+     0.5815
     ],
-    "opacity": 0.944,
+    "opacity": 0.9369,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.96,
+    "value": 0.8811,
     "color": [
-     0.8211,
-     0.5387,
-     0.5018
+     0.7526,
+     0.6195,
+     0.5981
     ],
-    "opacity": 0.946,
+    "opacity": 0.9381,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 0.98,
+    "value": 0.8934,
     "color": [
-     0.826,
-     0.5445,
-     0.5069
+     0.7683,
+     0.635,
+     0.6126
     ],
-    "opacity": 0.948,
+    "opacity": 0.9393,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 1.0,
+    "value": 0.9177,
     "color": [
-     0.8314,
-     0.5509,
-     0.5126
+     0.7728,
+     0.6396,
+     0.6169
     ],
-    "opacity": 0.95,
+    "opacity": 0.9418,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 1.02,
+    "value": 0.9297,
     "color": [
-     0.8373,
-     0.5579,
-     0.5189
+     0.7751,
+     0.642,
+     0.6191
     ],
-    "opacity": 0.952,
+    "opacity": 0.943,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 1.04,
+    "value": 0.941,
     "color": [
-     0.8437,
-     0.5654,
-     0.5256
+     0.7774,
+     0.6443,
+     0.6212
     ],
-    "opacity": 0.954,
+    "opacity": 0.9441,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 1.06,
+    "value": 0.9737,
     "color": [
-     0.8508,
-     0.5737,
-     0.5331
+     0.7844,
+     0.6515,
+     0.6278
     ],
-    "opacity": 0.956,
+    "opacity": 0.9474,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 1.08,
+    "value": 1.0104,
     "color": [
-     0.8584,
-     0.5827,
-     0.5412
+     0.7937,
+     0.6611,
+     0.6366
     ],
-    "opacity": 0.958,
+    "opacity": 0.951,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 1.1,
+    "value": 1.0422,
     "color": [
-     0.8668,
-     0.5925,
-     0.5502
+     0.803,
+     0.671,
+     0.6457
     ],
-    "opacity": 0.96,
+    "opacity": 0.9542,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 1.12,
+    "value": 1.07,
     "color": [
-     0.8757,
-     0.6028,
-     0.5598
+     0.8121,
+     0.681,
+     0.6549
     ],
-    "opacity": 0.962,
+    "opacity": 0.957,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 1.14,
+    "value": 1.0949,
     "color": [
-     0.8849,
-     0.6131,
-     0.5699
+     0.8213,
+     0.6912,
+     0.6642
+    ],
+    "opacity": 0.9595,
+    "tissue": "white matter",
+    "specular": 0.12,
+    "roughness": 0.4
+   },
+   {
+    "value": 1.1181,
+    "color": [
+     0.8306,
+     0.7016,
+     0.6738
+    ],
+    "opacity": 0.9618,
+    "tissue": "white matter",
+    "specular": 0.12,
+    "roughness": 0.4
+   },
+   {
+    "value": 1.1403,
+    "color": [
+     0.84,
+     0.7118,
+     0.6835
     ],
     "opacity": 0.964,
     "tissue": "white matter",
@@ -2540,215 +2025,119 @@
     "roughness": 0.4
    },
    {
-    "value": 1.16,
+    "value": 1.162,
     "color": [
-     0.8945,
-     0.6238,
-     0.5804
+     0.8495,
+     0.7223,
+     0.6934
     ],
-    "opacity": 0.966,
+    "opacity": 0.9662,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 1.18,
+    "value": 1.184,
     "color": [
-     0.9045,
-     0.6346,
-     0.5911
+     0.8592,
+     0.733,
+     0.7032
     ],
-    "opacity": 0.968,
+    "opacity": 0.9684,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 1.2,
+    "value": 1.2069,
     "color": [
-     0.9151,
-     0.6453,
-     0.6015
+     0.8689,
+     0.7438,
+     0.7124
     ],
-    "opacity": 0.97,
+    "opacity": 0.9707,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 1.22,
+    "value": 1.2315,
     "color": [
-     0.9253,
-     0.6559,
-     0.6106
+     0.8788,
+     0.7548,
+     0.7219
     ],
-    "opacity": 0.972,
+    "opacity": 0.9731,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 1.24,
+    "value": 1.259,
     "color": [
-     0.9349,
-     0.6658,
-     0.6192
+     0.8887,
+     0.766,
+     0.7315
     ],
-    "opacity": 0.974,
+    "opacity": 0.9759,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 1.26,
+    "value": 1.2925,
     "color": [
-     0.9438,
-     0.6753,
-     0.6274
+     0.8988,
+     0.7774,
+     0.7412
     ],
-    "opacity": 0.976,
+    "opacity": 0.9792,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 1.28,
+    "value": 1.3365,
     "color": [
-     0.9454,
-     0.6851,
-     0.637
+     0.9087,
+     0.789,
+     0.7512
     ],
-    "opacity": 0.978,
+    "opacity": 0.9837,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 1.3,
+    "value": 1.4126,
     "color": [
-     0.9462,
-     0.6941,
-     0.646
+     0.9187,
+     0.8007,
+     0.7613
     ],
-    "opacity": 0.98,
+    "opacity": 0.9913,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 1.32,
+    "value": 1.4626,
     "color": [
-     0.9462,
-     0.702,
-     0.6544
+     0.922,
+     0.8056,
+     0.7663
     ],
-    "opacity": 0.982,
+    "opacity": 0.9963,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 1.34,
+    "value": 1.5626,
     "color": [
-     0.9455,
-     0.7081,
-     0.6623
-    ],
-    "opacity": 0.984,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.36,
-    "color": [
-     0.9499,
-     0.7122,
-     0.6666
-    ],
-    "opacity": 0.986,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.38,
-    "color": [
-     0.9475,
-     0.717,
-     0.6731
-    ],
-    "opacity": 0.988,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.4,
-    "color": [
-     0.9448,
-     0.7215,
-     0.6792
-    ],
-    "opacity": 0.99,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.42,
-    "color": [
-     0.9485,
-     0.725,
-     0.683
-    ],
-    "opacity": 0.992,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.44,
-    "color": [
-     0.9471,
-     0.7306,
-     0.6904
-    ],
-    "opacity": 0.994,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.46,
-    "color": [
-     0.9458,
-     0.7362,
-     0.6979
-    ],
-    "opacity": 0.996,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.48,
-    "color": [
-     0.9504,
-     0.7405,
-     0.7023
-    ],
-    "opacity": 0.998,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.5,
-    "color": [
-     0.9492,
-     0.7462,
-     0.7092
+     0.9288,
+     0.8156,
+     0.7765
     ],
     "opacity": 1.0,
     "tissue": "white matter",
@@ -2756,11 +2145,11 @@
     "roughness": 0.4
    },
    {
-    "value": 1.52,
+    "value": 1.6626,
     "color": [
-     0.948,
-     0.7519,
-     0.7161
+     0.9356,
+     0.8258,
+     0.7869
     ],
     "opacity": 1.0,
     "tissue": "white matter",
@@ -2768,11 +2157,11 @@
     "roughness": 0.4
    },
    {
-    "value": 1.54,
+    "value": 1.7626,
     "color": [
-     0.9468,
-     0.7576,
-     0.7231
+     0.9424,
+     0.8361,
+     0.7975
     ],
     "opacity": 1.0,
     "tissue": "white matter",
@@ -2780,11 +2169,11 @@
     "roughness": 0.4
    },
    {
-    "value": 1.56,
+    "value": 1.8626,
     "color": [
-     0.9457,
-     0.7633,
-     0.7301
+     0.9493,
+     0.8466,
+     0.8082
     ],
     "opacity": 1.0,
     "tissue": "white matter",
@@ -2792,11 +2181,11 @@
     "roughness": 0.4
    },
    {
-    "value": 1.58,
+    "value": 1.9626,
     "color": [
-     0.9505,
-     0.7678,
-     0.7346
+     0.9541,
+     0.8576,
+     0.8205
     ],
     "opacity": 1.0,
     "tissue": "white matter",
@@ -2804,11 +2193,11 @@
     "roughness": 0.4
    },
    {
-    "value": 1.6,
+    "value": 2.0626,
     "color": [
-     0.9494,
-     0.7736,
-     0.7417
+     0.9526,
+     0.8625,
+     0.8274
     ],
     "opacity": 1.0,
     "tissue": "white matter",
@@ -2816,11 +2205,11 @@
     "roughness": 0.4
    },
    {
-    "value": 1.62,
+    "value": 2.1626,
     "color": [
-     0.9476,
-     0.7783,
-     0.748
+     0.9526,
+     0.8625,
+     0.8274
     ],
     "opacity": 1.0,
     "tissue": "white matter",
@@ -2828,529 +2217,37 @@
     "roughness": 0.4
    },
    {
-    "value": 1.64,
+    "value": 2.2626,
     "color": [
-     0.9458,
-     0.783,
-     0.7542
+     0.9526,
+     0.8625,
+     0.8274
     ],
-    "opacity": 1.0,
+    "opacity": 0.7913,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 1.66,
+    "value": 2.3626,
     "color": [
-     0.9499,
-     0.7865,
-     0.7578
+     0.9526,
+     0.8625,
+     0.8274
     ],
-    "opacity": 1.0,
+    "opacity": 0.458,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
    },
    {
-    "value": 1.68,
+    "value": 2.4626,
     "color": [
-     0.9481,
-     0.7912,
-     0.7641
+     0.9526,
+     0.8625,
+     0.8274
     ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.7,
-    "color": [
-     0.9464,
-     0.796,
-     0.7705
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.72,
-    "color": [
-     0.9505,
-     0.7995,
-     0.7741
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.74,
-    "color": [
-     0.9487,
-     0.8043,
-     0.7806
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.76,
-    "color": [
-     0.947,
-     0.809,
-     0.7871
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.78,
-    "color": [
-     0.9453,
-     0.8138,
-     0.7936
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.8,
-    "color": [
-     0.9494,
-     0.8174,
-     0.7973
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.82,
-    "color": [
-     0.9477,
-     0.8222,
-     0.8036
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.84,
-    "color": [
-     0.946,
-     0.8271,
-     0.8098
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.86,
-    "color": [
-     0.9503,
-     0.8307,
-     0.8133
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.88,
-    "color": [
-     0.9486,
-     0.8356,
-     0.8195
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.9,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.92,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.94,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.96,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 1.98,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.0,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.02,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.04,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.06,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.08,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.1,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.12,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.14,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.16,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.18,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.2,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 1.0,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.22,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 0.9333,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.24,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 0.8667,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.26,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 0.8,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.28,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 0.7333,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.3,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 0.6667,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.32,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 0.6,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.34,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 0.5333,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.36,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 0.4667,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.38,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 0.4,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.4,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 0.3333,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.42,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 0.2667,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.44,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 0.2,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.46,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 0.1333,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.48,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 0.0667,
-    "tissue": "white matter",
-    "specular": 0.12,
-    "roughness": 0.4
-   },
-   {
-    "value": 2.5,
-    "color": [
-     0.9455,
-     0.8392,
-     0.8245
-    ],
-    "opacity": 0.0,
+    "opacity": 0.1247,
     "tissue": "white matter",
     "specular": 0.12,
     "roughness": 0.4
@@ -3619,7 +2516,8 @@
    1.4126
   ],
   "design_scan": "n5://gs://ucl-hip-ct-35a68e99feaae8932b1d44da0358940b/S-21-46/brain/19.57um_complete-organ_bm18/",
-  "contrast": "Lightness spread over the design scan's tissue values (65% a ramp from L* 24 to 84 over its percentiles, 35% the photographs'), lighter with density; chroma x1.12 (less toward white), within what the renders can show. Hues as photographed."
+  "contrast": "Grey and white matter each matched to their own on every scan (classes: 2; split at the design scan's p62.5), a step of +-5 percentiles between them: grey matter L* 34-46, white matter L* 72-84 as a cut shows them; hues as photographed.",
+  "classes": 2
  },
  {
   "name": "HiP-CT organ: heart",

@@ -181,6 +181,17 @@ The production polish: the work of an audit of every panel and plugin
   greyscale (black to white), greyscale inverted (white to black), anatomy,
   thermal, viridis, soft tissue and bone, and glass. The Preset box groups
   them: General, HiP-CT organs, by modality, from a file.
+- Brain presets show grey and white matter apart: each class of the preset
+  is matched to the same class of the scan (found from the scan's own
+  tissue), not one histogram to another, which put most of some brains'
+  white matter in grey matter's colours; and the colours step between the
+  classes. The HiP-CT brain, MR T1, BigBrain and HiP-CT organ brains, on the
+  computer and in this browser alike.
+- Percentile presets (HiP-CT brain, the default; Translucent tissue; MR
+  T1; histology) on a specimen in a mounting medium take percentiles of the
+  tissue alone and are clear outside it, so an organ in its jar is no
+  longer rendered as a block of medium; scans without a medium are placed
+  as before.
 - A new or empty scene's card offers Open a file and Paste a link; the
   examples are in Open and the palette.
 

@@ -87,7 +87,18 @@ takes images with one of each only.
   - **By modality**: MR T1, HiP-CT brain, histology (BigBrain), a
     translucent one for any image, and **Regions** (each label in its
     colour); their values are percentiles of the tissue, so one preset
-    suits scans of different scaling.
+    suits scans of different scaling. On a specimen in a mounting medium
+    (a HiP-CT organ in its jar) they are percentiles of the tissue alone,
+    the medium left out (as for the organ presets' histograms), and the
+    preset is clear outside the tissue: the medium, and from 2.5 windows
+    on, the jar's wall. A scan is taken to have a medium when the
+    commonest value in a ring just inside its sides, with the values about
+    it, fills at least 30% of that ring, and lies at least 5 of its
+    half-widths above 0: all twelve HiP-CT organ scans tried (47% to 95%
+    of the ring, 8.7 half-widths or more), and none of a masked brain (its
+    sides are 0), an MR head (air, at 0 with noise as wide as its value:
+    2.5) or BigBrain with its background 0. Without a medium the
+    percentiles are as before.
   - **From a file**: those loaded with **Load…**.
 
   A preset is a transfer function (colour and opacity from the image's
@@ -108,6 +119,8 @@ takes images with one of each only.
   at the same percentiles of that scan's tissue (histogram matching): HiP-CT
   values are not calibrated and vary between scans, but an organ's
   histogram keeps its shape (a brain's two peaks, grey and white matter).
+  The brain presets match each class to its own (below), since brains
+  differ in how much of them is grey matter.
   A window set by hand is used as it is. **Hide the jar** renders only a cylinder about the scan's axis, which
   leaves out the jar's wall (as dense as tissue).
 - **Colourmap** (once the image is open; when rendering in this browser,
@@ -329,7 +342,35 @@ were given a colour by hand and are marked "not measured".
 | testis | LADAF-2021-17 testis | [Bull testicles Бычий семенник 1.jpg](https://commons.wikimedia.org/wiki/File:Bull_testicles_%D0%91%D1%8B%D1%87%D0%B8%D0%B9_%D1%81%D0%B5%D0%BC%D0%B5%D0%BD%D0%BD%D0%B8%D0%BA_1.jpg) (Jurfeld, CC BY-SA 4.0, fresh) | parenchyma |
 | uterus | AUMC-005 uterus | [Uterus in museum.jpg](https://commons.wikimedia.org/wiki/File:Uterus_in_museum.jpg) (Tiia Monto, CC BY-SA 3.0, fixed/preserved museum specimen (method not stated)) | — |
 
-The brain has two presets. **Brain (fixed)** is a formalin-fixed brain, as
+**Grey and white matter.** A brain's tissue is two classes (three in an MR
+T1: CSF, grey and white matter), and brains differ in how much of each they
+hold. On LADAF-2021-64 grey matter's median is the tissue's 18th percentile
+and white matter's the 69th; on S-21-46, where the presets were made, the
+two meet near the 62nd. Matched as one histogram, the presets would carry the
+62nd percentile to every brain, and most of LADAF's white matter would take
+grey matter's colours. So the brain presets name their classes (`classes`,
+and for a percentile preset the percentiles they meet at, `split`), each
+scan's classes are found from its own tissue (Otsu's thresholds on its
+values at the 5th to 95th percentiles, each of the same weight), and each
+class of the preset is matched to the same class of the scan, piecewise
+between the splits. The colours step between the classes, over ±5
+percentiles of the preset's scan, from darker grey matter in its
+photographed hue to pale white matter (fixed: grey-brown and cream; fresh
+frozen: pinkish grey and pale pink-white), a ΔE2000 of about 33 between the
+two classes' typical voxels as a cut shows them; within a class the
+lightness changes only a little, so the scan's noise does not speckle.
+White matter is brighter than grey matter in every scan checked (HiP-CT
+LADAF-2021-64 and S-21-46, the MNI ICBM152 T1, BigBrain's stain). The HiP-CT
+brain and MR T1 presets use three classes (the lowest: partial volume at
+the surface and CSF, kept clear), the BigBrain and HiP-CT organ brains two.
+On a brain in its jar's medium the medium's cut takes away the lowest
+class (what lies against the medium), and three classes would split grey
+matter in two (on LADAF-2021-64, at its 22nd and 56th percentiles), so
+there a three-class preset's lowest two classes count as one: the HiP-CT
+brain preset on LADAF-2021-64 then shows grey and white matter a ΔE2000
+of 36 apart (4 when its percentiles took in the medium).
+
+The brain has two organ presets. **Brain (fixed)** is a formalin-fixed brain, as
 HiP-CT's are (tan grey matter, cream white matter). **Brain (fresh frozen)**
 shows the same scan as fresh or fresh-frozen tissue looks: pink-tan grey
 matter, pink-white white matter and red vessels. It was measured on the

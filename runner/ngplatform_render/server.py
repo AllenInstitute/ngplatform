@@ -286,7 +286,7 @@ class Session:
                 "percentiles": {str(k): v for k, v in sorted(L.percentiles.items())}, "source_shape": list(L.source_shape),
                 "made": L.made, "from_cache": L.from_cache, "seconds": round(L.seconds, 2),
                 "window": list(L.window) if L.window else None, "cylinder": v.get("cylinder"),
-                "histogram_matched": L.quantiles is not None,
+                "histogram_matched": L.quantiles is not None, "medium": L.medium,
                 "histogram": presets_mod.histogram(L.data, L.lo, L.hi),
                 "tissue_mm": volumes.tissue_box(L.data, L.affine, L.percentiles.get(0.0, L.lo), L.lo, L.hi),
                 # The channel and time point shown, and how many the image has (volume.channel, volume.time).
@@ -332,7 +332,7 @@ class Session:
                     instead_of=(self.reservation, self.need.get("labels", 0)) if self.reservation is not None else None)
             R = renderer.Renderer(self.device)
             self._R = R
-            R.set_volume(renderer.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles), self.vol_share.upload)
+            R.set_volume(renderer.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles, L.medium), self.vol_share.upload)
             if self.closed:
                 return
             self.renderer = R
@@ -997,7 +997,7 @@ class Job:
         L = S.loaded
         R = rmod.Renderer(S.device)
         self._R = R
-        R.set_volume(rmod.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles), self.vol_share.upload if self.vol_share else None)
+        R.set_volume(rmod.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles, L.medium), self.vol_share.upload if self.vol_share else None)
         LB = S.loaded_labels
         if LB is not None:
             R.set_labels(rmod.Labels(LB.data, LB.affine), self.lab_share.upload if self.lab_share else None)
@@ -1773,7 +1773,7 @@ class Handler(BaseHTTPRequestHandler):
                     from . import renderer as rmod
 
                     L = s.loaded
-                    vol = rmod.Volume(L.data[:1, :1, :1], L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles)
+                    vol = rmod.Volume(L.data[:1, :1, :1], L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles, L.medium)
                     self._json(200, presets_mod.resolved(p, vol).to_dict())
                 elif method == "GET" and rest == ["depth"]:
                     d = s.depth
