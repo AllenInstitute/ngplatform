@@ -50,7 +50,7 @@ describe("the Content Security Policy", () => {
     expect(html).not.toMatch(/\son[a-z]+=/i);
     expect(html).not.toMatch(/fonts\.googleapis|fonts\.gstatic/);
     expect(html).toMatch(/<div id="boot" class="boot"/);
-    expect(read("public/fonts/plex.css")).not.toMatch(/https?:/);
+    expect(read("public/fonts/source.css")).not.toMatch(/https?:/);
   });
 });
 
@@ -188,7 +188,7 @@ describe("the app shell kept by the service worker", () => {
     expect(at("./neuroglancer.html", "navigate")).toBe("page");
     expect(at("./assets/main-abc.js")).toBe("asset");
     expect(at("./assets/jxl_decoder-x.wasm")).toBe("asset");
-    expect(at("./fonts/IBMPlexSans-latin.woff2")).toBe("asset");
+    expect(at("./fonts/SourceSans3-latin.woff2")).toBe("asset");
     expect(at("./assets/main-abc.js.map")).toBeUndefined();
     expect(at("./local/abc/brain.nii.gz")).toBeUndefined();
     expect(at("./data/brain.zarr/zarr.json")).toBeUndefined();

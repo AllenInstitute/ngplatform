@@ -25,14 +25,14 @@ import { datasetBody } from "./layer.js";
 import { canExport, exportDataset } from "../export.js";
 import { buildOverview, clearOverview, overviewUrl } from "../overview.js";
 
-/** A tick box that shows or hides a dataset or a view; a click on it does not select its row. */
+/** A tick box that shows or hides a dataset or a view, drawn as Neuroglancer's eye; a click on it does not select its row. */
 function visibility(label: string, visible: boolean, onChange: (value: boolean) => void): OnOff {
   const box = checkbox(label, visible, onChange, { hideLabel: true });
   box.addEventListener("click", (e) => e.stopPropagation());
   return box;
 }
 
-/** The round marker of a dataset's or a view's load state: ready, loading, or failed (its error on hover). */
+/** The mark of a dataset's or a view's load state, after its name: none when ready, a turning ring loading, a red triangle failed (its error on hover). */
 type Status = { state: "ok" | "busy" | "err"; text: string };
 
 function statusOf(layers: LayerInfo[]): Status {
@@ -404,8 +404,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
       },
       arrow,
       shown,
-      statusDot(row.status),
-      h("span", { class: "ds-name" }, row.name),
+      h("span", { class: "ds-name-cell" }, h("span", { class: "ds-name" }, row.name), statusDot(row.status)),
       h("span", { class: "type" }, row.where),
       focusKey(
         iconButton("more", "More actions", (e) => {
@@ -435,8 +434,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
               oncontextmenu: (e: Event) => viewMenu(row.id, view.name, at(e)),
             },
             viewShown,
-            statusDot(view.status),
-            h("span", { class: "ds-name" }, view.name),
+            h("span", { class: "ds-name-cell" }, h("span", { class: "ds-name" }, view.name), statusDot(view.status)),
             h("span", { class: "type" }, view.where),
           ),
           `view:${view.name}`,

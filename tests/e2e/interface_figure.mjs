@@ -75,7 +75,7 @@ await page.evaluate(() => {
   for (const [n, x, y] of marks) {
     const m = document.createElement("div");
     m.textContent = String(n);
-    m.style.cssText = `position:absolute;left:${x - 18}px;top:${y - 18}px;width:36px;height:36px;border-radius:50%;background:#2ecc71;color:#000;border:2px solid #000;box-shadow:0 0 0 2px #2ecc71;font:700 22px/32px "IBM Plex Sans",sans-serif;text-align:center`;
+    m.style.cssText = `position:absolute;left:${x - 18}px;top:${y - 18}px;width:36px;height:36px;border-radius:50%;background:#2ecc71;color:#000;border:2px solid #000;box-shadow:0 0 0 2px #2ecc71;font:700 22px/32px "Source Sans 3",sans-serif;text-align:center`;
     layer.append(m);
   }
   document.body.append(layer);

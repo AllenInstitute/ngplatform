@@ -378,7 +378,7 @@ export class Labels {
     const toCanvas = (p: [number, number]): [number, number] => [(p[0] + base.left - canvasRect.left) * scale, (p[1] + base.top - canvasRect.top) * scale];
     for (const { label, pin, at, fx, fy } of this.layout()) {
       const size = label.size * scale;
-      context.font = `500 ${size}px "IBM Plex Sans", system-ui, sans-serif`;
+      context.font = `500 ${size}px "Source Sans 3", system-ui, sans-serif`;
       const pad = 3 * scale;
       const boxW = context.measureText(label.text).width + 2 * pad;
       const boxH = size * 1.2 + 2 * pad;

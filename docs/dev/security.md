@@ -39,7 +39,7 @@ posting elsewhere.
 | `img-src`, `media-src` | `https:`, `http:`, `data:`, `blob:` | Thumbnails, figures and guides' images from any server; captures and movies made in the page or by the render service. |
 | `worker-src` | `'self'`, `blob:` | Neuroglancer's workers and the plugins' are the app's own files. |
 | `frame-src` | `https:`, `blob:` | Google sign-in, a guide's or a plugin's embedded page, previews made in the page. |
-| `font-src` | `'self'`, `data:` | IBM Plex is served with the app (`public/fonts`). |
+| `font-src` | `'self'`, `data:` | Source Sans 3 and Source Code Pro are served with the app (`public/fonts`). |
 
 A meta policy cannot set `frame-ancestors` (who may frame the app),
 `report-uri` or `sandbox`; a host that can set headers should add

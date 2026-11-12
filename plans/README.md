@@ -27,7 +27,7 @@ Item line numbers are from that commit and move as the code changes.
 
 | | Target |
 |---|---|
-| Type | Four sizes as tokens: 11 (captions, labels), 12 (body), 13 (sheet controls), 15 (sheet titles). Every control in IBM Plex Sans; numbers and paths in Plex Mono. |
+| Type | Five sizes as tokens: 11 (captions, labels), 12 (body), 13 (sheet controls, panel headings), 16 (sheet titles). Every control in Source Sans 3 (IBM Plex Sans until 2026-11-12) with tabular figures; addresses and code in Source Code Pro. |
 | Buttons | Primary, outline, quiet and icon; 24 px in docks, 28 px in sheets; at most one primary per panel. |
 | Fields | One field and one select, as high as the buttons beside them; one slider-with-number control. |
 | Grouping | A panel longer than a screen is cards (`card()`); the first open, the rest remember their state. One uppercase label style inside a card; no private headings. |

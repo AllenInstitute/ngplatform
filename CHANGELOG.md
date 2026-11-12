@@ -211,6 +211,26 @@ The production polish: the work of an audit of every panel and plugin
 - A new or empty scene's card offers Open a file and Paste a link; the
   examples are in Open and the palette.
 
+### A quieter look
+
+- Neuroglancer's black and neutral greys, with colour only as an accent:
+  its green marks only what is selected (a bar down the left and a tint)
+  and a switch that is on. The primary button, tick boxes, sliders, the
+  chosen tab, progress and the focus ring are light grey; red and amber
+  appear as words and an edge (a delete is grey with red words until the
+  pointer is on it).
+- Source Sans 3 and Source Code Pro (Adobe, SIL OFL) in place of IBM Plex,
+  set at one x-height; numbers, units and captions in the UI font with
+  tabular figures, monospace only for addresses, paths, code and logs.
+- Fields are black wells, cards a raised head with no outline, menus,
+  tips, toasts and sheets a step lighter than what they float over; hover
+  and pressed are white layers; the chosen tab is underlined.
+- One heading style in a panel, in sentence case; type, spacing (a 4 px
+  grid) and pointer targets (at least 24 px) as tokens.
+- A dataset's row: an eye shows or hides it, and its state follows its
+  name only when it is not ready (a turning ring loading, a red triangle
+  failed).
+
 - Cloud Storage is read through its JSON API in the browser (volume view,
   precomputed reads, collections, orientations, time series, plugin
   offers), so buckets without CORS settings read as they do in Neuroglancer.
