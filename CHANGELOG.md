@@ -184,9 +184,14 @@ The production polish: the work of an audit of every panel and plugin
 - Brain presets show grey and white matter apart: each class of the preset
   is matched to the same class of the scan (found from the scan's own
   tissue), not one histogram to another, which put most of some brains'
-  white matter in grey matter's colours; and the colours step between the
-  classes. The HiP-CT brain, MR T1, BigBrain and HiP-CT organ brains, on the
-  computer and in this browser alike.
+  white matter in grey matter's colours. The HiP-CT brain, MR T1, BigBrain
+  and HiP-CT organ brains, on the computer and in this browser alike.
+- Brain presets show the tissue's whole spread, not two tones: lightness
+  from a contrast-limited equalisation of the tissue's histogram, hue along
+  the photographed shades, the dense tail in the vessels' hue; and cuts
+  are shaded as cut tissue (less surface shading, no inset, more exposure),
+  so deep nuclei, the internal capsule, cerebellar folia and the cortical
+  ribbon all show on a cut.
 - Percentile presets (HiP-CT brain, the default; Translucent tissue; MR
   T1; histology) on a specimen in a mounting medium take percentiles of the
   tissue alone and are clear outside it, so an organ in its jar is no

@@ -353,12 +353,40 @@ and for a percentile preset the percentiles they meet at, `split`), each
 scan's classes are found from its own tissue (Otsu's thresholds on its
 values at the 5th to 95th percentiles, each of the same weight), and each
 class of the preset is matched to the same class of the scan, piecewise
-between the splits. The colours step between the classes, over ±5
-percentiles of the preset's scan, from darker grey matter in its
-photographed hue to pale white matter (fixed: grey-brown and cream; fresh
-frozen: pinkish grey and pale pink-white), a ΔE2000 of about 33 between the
-two classes' typical voxels as a cut shows them; within a class the
-lightness changes only a little, so the scan's noise does not speckle.
+between the splits.
+
+A brain's histogram is not two separate peaks but one continuous spread
+(grey matter shading into white, deep nuclei, the internal capsule,
+cerebellar folia, vessels), so the brain presets' colours follow it rather
+than stepping between the classes. Their lightness comes from a
+contrast-limited equalisation of the tissue's histogram on the scan each
+preset was made on: the histogram clipped at 4 times its mean height, the
+excess spread evenly over the values, then cumulated, from L* 16 at the
+tissue's 0.5th percentile to 92 at its 99.5th, smoothly. Because each scan's
+values are placed by their ranks (within their classes), this equalises
+every scan's own histogram. The hue runs smoothly by rank through the
+photographed shades (fixed: grey-brown grey matter to cream white matter;
+fresh frozen: pinkish grey to pale pink-white; MR T1: warm grey to pale;
+histology: stain blue to pale blue-grey). The tails read as their own: the
+low end (partial volume, CSF) darker as it fades to clear, the dense end
+(vessels, calcification) in the photographs' vessel hue where they show
+vessels. Grey and white matter's typical voxels end 29 to 32 ΔE2000 apart,
+and the lightness changes within each.
+
+A cut keeps that contrast only if the renderer does not shade it as a
+surface: inside tissue the data's gradient is noise and boundaries, and a
+face lit by it (or coloured from beside the collision, `surface_inset`)
+reads as embossed and flat. On cuts through LADAF-2021-64, S-21-46, the MNI
+T1 and BigBrain, the old brain presets rendered with a rank correlation of
+0.82 to 0.93 between each point's value and its lightness, and their
+lightness range shrank to 0.61 to 0.75 of the map's. The brain presets
+therefore shade cuts as the calibration's uniform slab is shaded (`shade_mix`
+0.3, 0.15 for MR T1; `gradient_scale` 5; `surface_inset` 0) and use an
+exposure of 3.3, so a cut seen head on shows white near white. Their cuts
+now render with a rank correlation of 0.98 to 0.99, keep 0.85 to 0.91 of the
+map's lightness range, and span 45 to 56 L* over the tissue's 5th to 95th
+percentile.
+
 White matter is brighter than grey matter in every scan checked (HiP-CT
 LADAF-2021-64 and S-21-46, the MNI ICBM152 T1, BigBrain's stain). The HiP-CT
 brain and MR T1 presets use three classes (the lowest: partial volume at
@@ -368,7 +396,7 @@ class (what lies against the medium), and three classes would split grey
 matter in two (on LADAF-2021-64, at its 22nd and 56th percentiles), so
 there a three-class preset's lowest two classes count as one: the HiP-CT
 brain preset on LADAF-2021-64 then shows grey and white matter a ΔE2000
-of 36 apart (4 when its percentiles took in the medium).
+of 31 apart (4 when its percentiles took in the medium).
 
 The brain has two organ presets. **Brain (fixed)** is a formalin-fixed brain, as
 HiP-CT's are (tan grey matter, cream white matter). **Brain (fresh frozen)**

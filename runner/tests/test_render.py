@@ -541,6 +541,24 @@ def test_general_presets_suit_any_scan():
     assert inverted[0] - inverted[-1] > 60
 
 
+def test_brain_presets_spread_lightness_over_the_tissue():
+    """The brain presets' lightness follows the tissue's own spread (equalised): it rises with the value over the
+    tissue's core (its 1st to 99th percentile on the scan each preset was made on), smoothly (no step between grey
+    and white matter: at most 4 L* from one stop to the next, a percentile apart or less) and widely (40 L* or more)."""
+    ps = presets.builtin()
+    for name in ("HiP-CT brain", "MR T1 brain", "Histology (BigBrain)", "HiP-CT organ: brain (fixed)", "HiP-CT organ: brain (fresh frozen)"):
+        p = ps[name]
+        lo, hi = (p.histogram[0], p.histogram[-1]) if p.histogram else (1.0, 99.0)
+        core = sorted((s for s in p.stops if lo <= s.value <= hi), key=lambda s: s.value)
+        L = [_lightness(s.color) for s in core]
+        assert all(b >= a - 0.5 for a, b in zip(L, L[1:])), name
+        assert max(b - a for a, b in zip(L, L[1:])) < 4, name
+        assert L[-1] - L[0] > 40, name
+        # Shaded inside a cut as the calibration's uniform slab is (little surface shading from the data's gradient,
+        # no colour taken from beside the collision), so a cut keeps the map's contrast.
+        assert p.shade_mix <= 0.3 and p.gradient_scale <= 5 and p.surface_inset == 0, name
+
+
 def test_organ_presets_show_their_tissue():
     """The bulk of each organ's tissue (its design scan's 10th to 90th percentile) spans a range of lightness."""
     for q in presets.builtin().values():
