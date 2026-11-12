@@ -541,33 +541,30 @@ def test_general_presets_suit_any_scan():
     assert inverted[0] - inverted[-1] > 60
 
 
-def test_brain_presets_spread_lightness_over_the_tissue():
-    """The brain presets' lightness follows the tissue's own spread (equalised): it rises with the value over the
-    tissue's core (its 1st to 99th percentile on the scan each preset was made on), smoothly (no step between grey
-    and white matter: at most 4 L* from one stop to the next, a percentile apart or less) and widely (40 L* or more)."""
+def _lightness_spread(p, lo, hi):
+    """The preset's stops' values and lightness between lo and hi (its tissue's core), in order of value."""
+    core = sorted((s for s in p.stops if lo <= s.value <= hi), key=lambda s: s.value)
+    return [s.value for s in core], [_lightness(s.color) for s in core]
+
+
+def test_presets_spread_lightness_over_the_tissue():
+    """The brain and HiP-CT organ presets' lightness follows the tissue's own spread (equalised): over the tissue's
+    core (its 1st to 99th percentile on the scan each preset was made on) it rises with density, smoothly (no steps:
+    at most 4 L* over any hundredth of the core's values, or between stops closer than that) and widely (40 L* or
+    more). Shaded inside a cut as the calibration's uniform slab is (little surface
+    shading from the data's gradient), so a cut keeps the map's contrast; an inset, where there is one, takes the
+    colour beneath only in a surface's partial volume (kernels: the collision under 0.3 of the opacity beneath)."""
     ps = presets.builtin()
-    for name in ("HiP-CT brain", "MR T1 brain", "Histology (BigBrain)", "HiP-CT organ: brain (fixed)", "HiP-CT organ: brain (fresh frozen)"):
+    names = ["HiP-CT brain", "MR T1 brain", "Histology (BigBrain)"] + [n for n, q in ps.items() if q.organ and q.histogram]
+    assert len(names) >= 16
+    for name in names:
         p = ps[name]
         lo, hi = (p.histogram[0], p.histogram[-1]) if p.histogram else (1.0, 99.0)
-        core = sorted((s for s in p.stops if lo <= s.value <= hi), key=lambda s: s.value)
-        L = [_lightness(s.color) for s in core]
+        v, L = _lightness_spread(p, lo, hi)
         assert all(b >= a - 0.5 for a, b in zip(L, L[1:])), name
-        assert max(b - a for a, b in zip(L, L[1:])) < 4, name
+        assert max((L[i + 1] - L[i]) / max((v[i + 1] - v[i]) / (hi - lo) * 100, 1.0) for i in range(len(L) - 1)) < 4, name
         assert L[-1] - L[0] > 40, name
-        # Shaded inside a cut as the calibration's uniform slab is (little surface shading from the data's gradient,
-        # no colour taken from beside the collision), so a cut keeps the map's contrast.
-        assert p.shade_mix <= 0.3 and p.gradient_scale <= 5 and p.surface_inset == 0, name
-
-
-def test_organ_presets_show_their_tissue():
-    """The bulk of each organ's tissue (its design scan's 10th to 90th percentile) spans a range of lightness."""
-    for q in presets.builtin().values():
-        if not q.organ or not q.histogram:
-            continue
-        xs = [s.value for s in q.stops]
-        at = lambda v: [float(np.interp(v, xs, [s.color[k] for s in q.stops])) for k in range(3)]  # noqa: E731
-        span = abs(_lightness(at(q.histogram[89])) - _lightness(at(q.histogram[9])))
-        assert span > 15, f"{q.name}: tissue p10..p90 spans only {span:.1f} L*"
+        assert p.shade_mix <= 0.3 and p.gradient_scale <= 5, name
 
 
 def test_hide_the_jar():

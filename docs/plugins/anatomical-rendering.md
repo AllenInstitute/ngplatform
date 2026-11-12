@@ -302,16 +302,27 @@ counts once. A tissue then has a dark, a middle and a light shade (the
 25th, 50th and 75th percentiles of its lightness), spread across its band
 of the image's values, and the colour runs smoothly (in Lab) from one
 tissue to the next, so the image's own texture shows as shades of the
-tissue rather than one flat colour. Photographed colours alone left most of
-an organ in one colour (its tissue's values fall in a narrow part of its
-band), so the lightness is then spread over the tissue's own values: 65% of
-it is a ramp over the design scan's tissue percentiles, from L* 24 to 84
-(lighter with density; darker only where the photographs clearly darken
-with it: the lung, its vessels dark in pale parenchyma, and the testis),
-35% the photographs'. The hues stay as photographed, with chroma raised a
-little (less toward white) and kept within what a render can show (a
-surface never darker than the light it reflects, nothing past white).
-Each colour was then made into a material colour by
+tissue rather than one flat colour. The organ presets now take only their
+hues from the photographs; their lightness follows the tissue's own
+histogram, as the brain presets' does (below): a contrast-limited
+equalisation of each organ's tissue histogram on its scan (clipped at 4
+times its mean height, 2 for the lung, whose tissue is a sparse tail),
+from L* 16 at its 0.5th percentile to 92 at its 99.5th, lighter with
+density, smoothly. The hue runs by rank through the photographed tissues'
+shades, each at the rank of its band's middle (a kidney's sinus fat, then
+its parenchyma; a heart's epicardial fat, then myocardium); a photographed
+tissue denser than the tissue's 99.5th percentile (valves, the kidney's
+capsule, calcification, the lens) colours the dense tail. Each organ's cuts
+render with a rank correlation of 0.96 to 0.99 between value and lightness
+(0.84 to 0.97 before, and none for the lung) and span 45 to 62 L* over the
+tissue's 5th to 95th percentile (30 to 48 before), except the lung, whose
+tissue in a plane is mostly thin vessels (35), and the eye, whose wall is
+thin against the clear vitreous (43; its cut also keeps only 0.81 of the
+map's lightness range, as before). Because lightness now
+follows density rather than the photographs, some exteriors are further
+from their photographs than before (a kidney's or prostate's surface
+darker, a liver's lighter); the cuts carry the contrast. Each colour was
+then made into a material colour by
 rendering a flat slab of tissue under the renders' light (the photo-studio
 map and the key light) and tone curve, and changing the material until the
 slab shows the photograph's colour relative to its white. Multiple
@@ -381,11 +392,29 @@ T1 and BigBrain, the old brain presets rendered with a rank correlation of
 0.82 to 0.93 between each point's value and its lightness, and their
 lightness range shrank to 0.61 to 0.75 of the map's. The brain presets
 therefore shade cuts as the calibration's uniform slab is shaded (`shade_mix`
-0.3, 0.15 for MR T1; `gradient_scale` 5; `surface_inset` 0) and use an
-exposure of 3.3, so a cut seen head on shows white near white. Their cuts
-now render with a rank correlation of 0.98 to 0.99, keep 0.85 to 0.91 of the
-map's lightness range, and span 45 to 56 L* over the tissue's 5th to 95th
-percentile.
+0.3, 0.15 for MR T1; `gradient_scale` 5) and use an exposure of 3.3 (3.5 for
+HiP-CT brain), so a cut seen head on shows white near white. Their cuts now render with a rank
+correlation of 0.98 to 0.99, keep 0.85 to 0.91 of the map's lightness range,
+and span 45 to 56 L* over the tissue's 5th to 95th percentile. The organ
+presets are shaded the same way (the colon, eye and uterus with less surface
+shading and more exposure, `shade_mix` 0.05 to 0.15, exposure 3.6 to 4.5).
+
+A surface, unlike a cut, forms on the partial-volume voxels between the
+tissue and its medium, which an equalised map colours with its darkest
+shades: a brain's exterior rendered nearly black-brown (L* 19 on
+LADAF-2021-64, against 68 for the photographed grey matter). Two things
+now give a surface its tissue's colour. Below the rank where a preset's
+opacity reaches its first plateau (where it counts a value as tissue, and
+never above the lowest photographed tissue's band or the 10th percentile),
+the colour holds while the opacity fades; and an inset (`surface_inset`, 3
+voxels for the brains, 1.5 for the organs, 2 for HiP-CT brain) takes the
+colour from beneath a collision that lies in a surface's partial volume
+(less than 0.3 of the opacity beneath it), never inside tissue, so cuts
+keep their colours. The darkest shades are also desaturated (chroma scaled
+down below L* 40). The brains' exteriors render at L* 30 (19 before); they
+stay darker than the photographs because grey matter is dark in a map that
+spends its lightness on contrast. HiP-CT brain's exterior on
+LADAF-2021-64 renders at L* 36 (26 before).
 
 White matter is brighter than grey matter in every scan checked (HiP-CT
 LADAF-2021-64 and S-21-46, the MNI ICBM152 T1, BigBrain's stain). The HiP-CT
@@ -423,10 +452,12 @@ scattering with the gradient as normal or volume scattering with a
 Henyey–Greenstein phase function, chosen by the gradient's magnitude (Kroes
 et al. 2012); a directional key light and a sky-like environment; a thin-lens
 camera; a filmic tone curve. Where a preset asks for it (`surface_inset`, in
-voxels), a collision takes its colour a voxel or two inwards along the
-gradient, on the more opaque side, so a surface shows the tissue beneath it
-rather than the values between it and the medium around it (which would
-otherwise colour a kidney's capsule as fat). Each pass adds one sample per pixel and the
+voxels), a collision that lies in a surface's partial volume (less than 0.3
+of the opacity a voxel or two inwards) takes its colour from there, along
+the gradient on the more opaque side, so a surface shows the tissue beneath
+it rather than the values between it and the medium around it (which would
+otherwise colour a kidney's capsule as fat); a collision inside tissue, as
+on a cut, keeps its own colour. Each pass adds one sample per pixel and the
 image is their mean, so it refines while the view is still. Frames made
 while the camera moves (see below) are half size, and for the first 12
 samples after a change the host smooths the image with an edge-avoiding

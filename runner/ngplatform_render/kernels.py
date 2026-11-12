@@ -533,14 +533,18 @@ extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const 
     float gm = len3(gv);
     float tm = tv(S, det, vg);  // the value the surface's gloss is read at
     if (P[P_INSET] > 0.f && gm > 1e-6f && P[P_HAS_LABELS] <= 0.f) {
-      // The colour a little way along the gradient, on the more opaque side: the tissue beneath a surface.
+      // The colour a little way along the gradient, on the more opaque side: the tissue beneath a surface. Only where
+      // the collision lies in a surface's partial volume (under 0.3 of the opacity of the tissue beneath it), so a cut
+      // through tissue keeps its own colours.
       V3 d = gv * (P[P_INSET] / gm);
       float ta = tv(S, det, vg + d), tb = tv(S, det, vg - d);
       float4 ca = tflookup(S, ta), cb = tflookup(S, tb);
-      bool a = ca.w >= cb.w;
-      float4 c = a ? ca : cb;
-      tm = a ? ta : tb;
-      albedo = v3(c.x, c.y, c.z) * P[P_ALBEDO];
+      if (tflookup(S, tm).w < 0.3f * fmaxf(ca.w, cb.w)) {
+        bool a = ca.w >= cb.w;
+        float4 c = a ? ca : cb;
+        tm = a ? ta : tb;
+        albedo = v3(c.x, c.y, c.z) * P[P_ALBEDO];
+      }
     }
     float psurf = P[P_SHADE_MIX] * (1.f - expf(-P[P_GRAD_SCALE] * gm * (det ? P[P_DETAIL_GSCALE] : 1.f)));
     V3 wo = dw * -1.f;

@@ -192,6 +192,17 @@ The production polish: the work of an audit of every panel and plugin
   are shaded as cut tissue (less surface shading, no inset, more exposure),
   so deep nuclei, the internal capsule, cerebellar folia and the cortical
   ribbon all show on a cut.
+- The HiP-CT organ presets are made the same way: lightness from the
+  organ's own tissue histogram, hue along the photographed tissues, the
+  dense tail (valves, capsule, calcification, lens) in its own hue, and
+  cuts shaded as cut tissue; kidney pyramids, liver lobules, splenic
+  nodules, placental cotyledons and testicular septa show on a cut.
+- Surfaces show their tissue's colour, not the partial volume's: the
+  partial-volume tail holds its colour while it fades, and a preset's
+  inset now applies only where a collision lies in a surface's partial
+  volume (never inside tissue, so cuts keep their colours), on the
+  computer and in this browser alike. Brain exteriors are no longer
+  nearly black.
 - Percentile presets (HiP-CT brain, the default; Translucent tissue; MR
   T1; histology) on a specimen in a mounting medium take percentiles of the
   tissue alone and are clear outside it, so an organ in its jar is no
