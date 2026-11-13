@@ -1064,6 +1064,10 @@ class Job:
         self.gpu_need = rmod.renderer_bytes(width, height, shape)
         if self.detail is not None:
             self.gpu_need += rmod.volume_bytes(self.detail[0].shape, self.detail[0].dtype.itemsize)
+        if session.loaded_objects is not None:
+            # The objects' bricks and tables, uploaded again for the job's renderer (the BVH is shared).
+            _, ob, _ = session.loaded_objects
+            self.gpu_need += int(ob.atlas.nbytes + ob.top.nbytes + ob.sub.nbytes)
         if not self.gpu.budget.fits_ever(self.gpu_need):
             raise BadRequest(f"This {self.kind} needs about {gb(self.gpu_need)} of GPU memory, more than the render computer's "
                              f"budget of {gb(self.gpu.budget.total)}: make it smaller")

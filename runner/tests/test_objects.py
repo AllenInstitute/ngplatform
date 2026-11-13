@@ -205,4 +205,16 @@ def test_a_session_draws_chosen_segments_and_the_image_within_them(tmp_path, mon
         depth = np.frombuffer(zlib.decompress(f.read()), np.float16).reshape(int(f.headers["X-Height"]), int(f.headers["X-Width"]))
     # The sphere in the middle, nothing at the corners (the volume fills the box, but only the sphere is drawn).
     assert depth[32, 32] < 1 and depth[0, 0] == 1 and depth[32, 2] == 1
+    # A still of the view draws the objects too: the tissue in the middle, the background (flattened) at the corners.
+    j = call("POST", f"/sessions/{s['id']}/stills", {"view": view, "width": 64, "height": 64, "samples": 16, "background": [0, 0, 0, 0]})
+    for _ in range(600):
+        info = call("GET", f"/stills/{j['id']}")
+        if info["status"] in ("done", "failed", "cancelled"):
+            break
+        time.sleep(0.1)
+    assert info["status"] == "done", info
+    from PIL import Image
+
+    still = np.asarray(Image.open(info["file"]).convert("RGBA"))
+    assert still[32, 32, :3].mean() > 60 and still[0, 0, :3].max() == 0, (still[32, 32], still[0, 0])
     srv.shutdown()
