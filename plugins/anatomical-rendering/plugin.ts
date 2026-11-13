@@ -10,7 +10,7 @@
 import type { Disposer, Frame3d, JobControl, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
 import { button, card, checkbox, downloadBlob, el, emptyState, field, iconButton, info, numberInput, region, select, type Settable, type Slider, slider, statusLine, toggle } from "@ngplatform/sdk/dom";
 import { gcsReadable } from "@ngplatform/sdk/sources";
-import { type Distance, hostLink, type Link, type MovieInfo, type PresetInfo, refusal, RenderService, ServiceError, type ServiceInfo, serviceText, type SessionInfo, type ViewSpec, type VolumeMeta } from "./client.js";
+import { type Distance, hostLink, type Link, type MovieInfo, type ObjectsSpec, type PresetInfo, refusal, RenderService, ServiceError, type ServiceInfo, serviceText, type SessionInfo, type ViewSpec, type VolumeMeta } from "./client.js";
 import { invert4, PictureDrawer } from "./draw.js";
 import { dropJob, finished, type JobKind, type JobRecord, jobProgress, jobText, putJob, readJobs } from "./jobs.js";
 import { clampInt, evenSide, LIMITS, movieSettings, retryDelay, stillProblem, windowStep } from "./limits.js";
@@ -108,9 +108,18 @@ export interface Saved {
   customPresets: Record<string, unknown>[];
   rotation: { axis: "vertical" | "horizontal"; degrees: number; step: number };
   movie: { fps: number; width: number; height: number; samples: number; easing: "smooth" | "linear" };
+  /**
+   * Objects (on a render computer): a segmentation layer's chosen segments drawn as their meshes, and the image
+   * within them at full resolution where `budget` voxels allow. `surface`: how much the surfaces show (0 clear,
+   * 1 opaque); `image`: the image within them is drawn; `mix`: how much the segment's colour tints it.
+   */
+  objects: { on: boolean; layer: string; surface: number; image: boolean; mix: number; budget: number; lod: number };
   /** Gaussian splats: views path-traced from all round (`cover` degrees about the view's direction; 180: every side), their size (the longer side) and samples, and the fit's steps (0: the views only). */
   splat: { views: number; size: number; samples: number; cover: number; steps: number };
 }
+
+/** The most segments drawn as objects at once (the render computer takes up to 64). */
+const MAX_OBJECTS = 64;
 
 /** What "Hide the jar" keeps: a cylinder of this fraction of the scan's half width (a HiP-CT jar's wall is at about 0.95). */
 const JAR_FRACTION = 0.9;
@@ -203,6 +212,7 @@ export function readSaved(raw: unknown): Saved {
     rotation: { axis: "vertical", degrees: 360, step: 2, ...(s.rotation ?? {}) },
     movie: { fps: 25, width: 1280, height: 720, samples: 128, easing: "smooth", ...(s.movie ?? {}) },
     splat: { views: 256, size: 1024, samples: 512, cover: 180, steps: 30000, ...(s.splat ?? {}) },
+    objects: { on: false, layer: "", surface: 0.3, image: true, mix: 0, budget: 3e8, lod: 1, ...(s.objects ?? {}) },
   };
 }
 
@@ -659,6 +669,7 @@ class AnatomicalRendering {
   }
 
   private update(): void {
+    this.watchObjects();
     const found = this.target();
     const browser = this.saved.where === "browser";
     // An image whose axes it cannot render (2-D; time or channels in this browser) is not opened.
@@ -692,11 +703,51 @@ class AnatomicalRendering {
       this.closeLocal();
       void this.ensureSession(target);
       // The live image reads the image in this browser too: one it could render here (one channel and time point).
-      if (axesCheck(this.ctx.viewer.layerTransform?.(target.name)?.input, true).problem === undefined) void this.live.open(renderSource(target.sources[0])!, this.saved.objectVoxels);
+      // Not while objects are drawn: the computer's picture of them is what the view shows.
+      if (this.objectsSpec() !== undefined) this.live.close();
+      else if (axesCheck(this.ctx.viewer.layerTransform?.(target.name)?.input, true).problem === undefined) void this.live.open(renderSource(target.sources[0])!, this.saved.objectVoxels);
       else this.live.close();
     }
     this.handle?.redraw();
     this.panelUpdate?.();
+  }
+
+  /** The segmentation layer whose chosen segments are the objects: the one named, else the first precomputed one. */
+  private objectsLayer(): LayerInfo | undefined {
+    const segs = this.ctx.viewer.layers().filter((l) => l.type === "segmentation" && /^precomputed:\/\//i.test(l.sources[0]?.trim() ?? ""));
+    return segs.find((l) => l.name === this.saved.objects.layer) ?? segs[0];
+  }
+
+  /** The objects a session is opened with: the objects layer's chosen segments (the first 64), on a render computer; else undefined. */
+  private objectsSpec(): ObjectsSpec | undefined {
+    const o = this.saved.objects;
+    if (!o.on || this.saved.where !== "host") return undefined;
+    const layer = this.objectsLayer();
+    const url = layer ? renderSource(layer.sources[0]) : undefined;
+    if (layer === undefined || url === undefined || !url.startsWith("precomputed://")) return undefined;
+    const seen = this.ctx.viewer.visibleSegments(layer.name);
+    if (seen === undefined || seen.all || seen.size === 0) return undefined;
+    const ids = Array.from(seen.ids().slice(0, MAX_OBJECTS), (x) => x.toString()).sort();
+    return { url, ids, lod: o.lod, budget: o.budget };
+  }
+
+  /** How the objects are drawn in a view: shown, surfaces, the image within them, its tint, and each segment's colour as Neuroglancer colours it. */
+  private objectsView(): ViewSpec["objects"] {
+    const spec = this.objectsSpec();
+    const layer = this.objectsLayer();
+    if (spec === undefined || layer === undefined) return { show: false };
+    const o = this.saved.objects;
+    const colors = Object.fromEntries(spec.ids.map((id): [string, [number, number, number]] => [id, this.ctx.viewer.segmentColour(layer.name, BigInt(id)) ?? [0.85, 0.6, 0.45]]));
+    return { show: true, surface: o.surface, image: o.image, mix: o.mix, colors };
+  }
+
+  /** Follows the objects layer's chosen segments: another choice opens the session again with them. */
+  private objectsWatch: { layer: string; off: () => void } | undefined;
+  private watchObjects(): void {
+    const name = this.saved.objects.on ? this.objectsLayer()?.name : undefined;
+    if (name === this.objectsWatch?.layer) return;
+    this.objectsWatch?.off();
+    this.objectsWatch = name === undefined ? undefined : { layer: name, off: this.ctx.viewer.onSegmentsChanged(name, () => this.update()) };
   }
 
   /** The chosen preset's domain ("percentile", "data" or "window"), as far as the page knows it. */
@@ -900,7 +951,8 @@ class AnatomicalRendering {
     const detailBudget = this.saved.detail ? this.saved.detailBudget : 0;
     // The channel and time point: another of either is another session (the computer cannot change them in place).
     const at = this.volumeAt(target);
-    const key = JSON.stringify([service.link.base, url, labels, this.saved.budget, this.saved.jar, detailBudget, at.channel, at.time]);
+    const objects = this.objectsSpec();
+    const key = JSON.stringify([service.link.base, url, labels, this.saved.budget, this.saved.jar, detailBudget, at.channel, at.time, objects ?? null]);
     if (key === this.sessionKey) return;
     this.closeSession();
     this.sessionKey = key;
@@ -914,7 +966,7 @@ class AnatomicalRendering {
         ...(this.saved.jar ? { cylinder: JAR_FRACTION } : {}),
         ...(at.channel ? { channel: at.channel } : {}),
         ...(at.time ? { time: at.time } : {}),
-      }, labels ? { url: labels } : undefined);
+      }, labels ? { url: labels } : undefined, objects);
       if (abort.signal.aborted) {
         // Another image (or detail) was asked for while this one was opening: it is not wanted.
         void service.close(info.id).catch(() => undefined);
@@ -1169,6 +1221,7 @@ class AnatomicalRendering {
         ...s.planes.filter((p) => p.on && p.normal.some((x) => x !== 0)).map((p) => planeClip(p, frame.dimensions)),
       ].slice(0, LIMITS.maxClips) as [number, number, number, number][],
       labels: s.regions ? { show: true, mix: s.labelMix, keep: s.keep, hidden: s.hidden } : { show: false },
+      objects: this.objectsView(),
       background: [0, 0, 0, 0],
       max_samples: s.maxSamples,
       denoise: s.denoise,
@@ -1178,7 +1231,7 @@ class AnatomicalRendering {
 
   private onFrame(frame: Frame3d): void {
     this.lastFrame = frame;
-    const look = JSON.stringify([this.saved.boxes, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.lightStyle, this.saved.envScale, this.saved.lightKey, this.saved.planes, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
+    const look = JSON.stringify([this.objectsView(), this.saved.boxes, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.lightStyle, this.saved.envScale, this.saved.lightKey, this.saved.planes, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
     this.drawer.look = look;
     this.drawer.pictureAtRest = this.saved.restPicture;
     // A camera plane of before that turned with the view: fixed now, as the view is.
@@ -1915,6 +1968,39 @@ class AnatomicalRendering {
     );
     const regions = card("anatomical.regions", "Regions", {}, regionsEmpty, regionsBody);
 
+    // ------------------------------------------------------------- Objects
+    const objectsEmpty = emptyState("No precomputed segmentation in this scene.", openData);
+    const objectsOn = toggle("Draw objects", false, (v) => {
+      this.save((x) => (x.objects = { ...x.objects, on: v }));
+      this.update();
+    }, { info: "The segmentation's chosen segments drawn as their meshes, and the image within them at full resolution where the budget allows (no box round them: only what lies inside). On the render computer." });
+    const objectsLayer = choices((v) => {
+      this.save((x) => (x.objects = { ...x.objects, layer: v }));
+      this.update();
+    }, "Objects from");
+    const objectsLook = (edit: (o: Saved["objects"]) => void) => (x: Saved) => {
+      x.objects = { ...x.objects };
+      edit(x.objects);
+    };
+    const objectSurface = slider(0.3, { min: 0, max: 1, step: 0.05, label: "Surfaces", oninput: (v) => this.preview(objectsLook((o) => (o.surface = v))), onchange: (v) => this.save(objectsLook((o) => (o.surface = v))) });
+    const objectImage = checkbox("Image within", true, (v) => this.save(objectsLook((o) => (o.image = v))), { info: "The image inside the objects, path-traced as the volume is; off, the surfaces alone." });
+    const objectMix = slider(0, { min: 0, max: 1, step: 0.05, label: "Segment colour", oninput: (v) => this.preview(objectsLook((o) => (o.mix = v))), onchange: (v) => this.save(objectsLook((o) => (o.mix = v))) });
+    const objectBudget = slider(300, { min: 10, max: 4000, step: 10, unit: "M voxels", label: "Image within", onchange: (v) => {
+      this.save(objectsLook((o) => (o.budget = Math.max(1, v) * 1e6)));
+      this.update();
+    } });
+    const objectsNote = el("p", { class: "hint" });
+    const objectsBody = el("div", { class: "stack" },
+      objectsOn,
+      field("Objects from", objectsLayer, { info: "A segmentation with meshes: its chosen segments (up to 64) are the objects." }),
+      field("Surfaces", objectSurface, { info: "0: clear (the image within them alone); 1: opaque." }),
+      objectImage,
+      field("Segment colour", objectMix, { info: "How much each segment's colour tints the image within it." }),
+      field("Image within", objectBudget, { info: "The voxels the image within the objects may take on the GPU: the finest stored level within this." }),
+      objectsNote,
+    );
+    const objectsCard = card("anatomical.objects", "Objects", {}, objectsEmpty, objectsBody);
+
     // ------------------------------------------------------------- Quality
     const budget = slider(400, { min: 10, max: 2000, step: 10, unit: "M voxels", label: "Whole volume", onchange: (v) => this.save((x) => (x.budget = Math.max(1, v) * 1e6)) });
     const detail = onHost(checkbox("Finer detail", true, (v) => {
@@ -2169,7 +2255,7 @@ class AnatomicalRendering {
       empty,
       status,
       views,
-      remote, rendering, regions, quality, lighting, crops, output, movie, splat,
+      remote, rendering, regions, objectsCard, quality, lighting, crops, output, movie, splat,
     );
 
     // --------------------------------------------------------------- sync
@@ -2290,6 +2376,24 @@ class AnatomicalRendering {
       hidden.set(s.hidden);
       keep.set(s.keep);
 
+      // Objects (a computer's renderer only).
+      const objSegs = this.ctx.viewer.layers().filter((l) => l.type === "segmentation" && /^precomputed:\/\//i.test(l.sources[0]?.trim() ?? ""));
+      objectsCard.hidden = !onHost_ || imgs.length === 0;
+      objectsEmpty.hidden = objSegs.length > 0;
+      objectsBody.hidden = objSegs.length === 0;
+      objectsOn.set(s.objects.on);
+      objectsLayer.update(objSegs.map((l) => [l.name, l.name]), this.objectsLayer()?.name ?? "");
+      objectSurface.set(s.objects.surface);
+      objectImage.set(s.objects.image);
+      objectMix.set(s.objects.mix);
+      objectBudget.set(s.objects.budget / 1e6);
+      const seen = s.objects.on && this.objectsLayer() ? this.ctx.viewer.visibleSegments(this.objectsLayer()!.name) : undefined;
+      const om = this.session?.objects;
+      objectsNote.textContent = !s.objects.on ? ""
+        : seen === undefined || seen.all || seen.size === 0 ? "Choose segments in the layer: they are the objects."
+        : om ? `${om.ids.length} segment${om.ids.length === 1 ? "" : "s"}, ${(om.triangles / 1e6).toFixed(1)} M triangles; the image within at ${om.level} (${(om.inside_voxels / 1e6).toFixed(0)} M voxels inside, ${om.bricks} bricks)${seen.size > MAX_OBJECTS ? `; the first ${MAX_OBJECTS} of ${seen.size}` : ""}.`
+        : `${Math.min(seen.size, MAX_OBJECTS)} segment${seen.size === 1 ? "" : "s"}${seen.size > MAX_OBJECTS ? ` (the first ${MAX_OBJECTS} of ${seen.size})` : ""}: read when the computer opens them.`;
+
       // Quality.
       quality.hidden = imgs.length === 0;
       budget.set(s.budget / 1e6);
@@ -2387,6 +2491,7 @@ class AnatomicalRendering {
 
   dispose(): void {
     this.disposed = true;
+    this.objectsWatch?.off();
     this.panelUpdate = this.statusUpdate = this.jobsUpdate = this.editorUpdate = undefined;
     this.closeSession();
     this.closeLocal();

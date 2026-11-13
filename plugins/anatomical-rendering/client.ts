@@ -179,11 +179,21 @@ export interface SessionInfo {
   error: string | null;
   volume: VolumeMeta | Record<string, never>;
   labels: { url: string; values: number[] } | null;
+  /** The objects read (meshes and the image within them), when the session was opened with some. */
+  objects?: { url: string; ids: string[]; triangles: number; level: string; page: number[]; bricks: number; inside_voxels: number } | null;
   samples: number;
   ms_per_pass: number;
 }
 
 /** What a frame is drawn from: the camera (column-major), size, the look. */
+/** Objects for a session: a precomputed segmentation's segments (their meshes), the meshes' level of detail, and the voxels the image within them may take. */
+export interface ObjectsSpec {
+  url: string;
+  ids: string[];
+  lod?: number;
+  budget?: number;
+}
+
 export interface ViewSpec {
   inv_view_projection: number[];
   width: number;
@@ -202,6 +212,8 @@ export interface ViewSpec {
   /** World planes (nx, ny, nz, d), kept where n.x + d >= 0. */
   clips?: [number, number, number, number][];
   labels?: { show?: boolean; mix?: number; hidden?: number[]; keep?: number[]; colors?: Record<string, [number, number, number, number]> };
+  /** The session's objects: shown or not, the chance a path meeting a surface is scattered by it, the image within them, its tint, colours by segment id. */
+  objects?: { show?: boolean; surface?: number; image?: boolean; mix?: number; colors?: Record<string, [number, number, number]> };
   background?: [number, number, number, number];
   /** A clip box: fractions (0..1) of the volume along its x, y, z, low and high. */
   crop_fraction?: [[number, number, number], [number, number, number]];
@@ -293,8 +305,12 @@ export class RenderService {
     return call(this.link, "GET", "/presets");
   }
   /** Opens a session on an image (at a channel and time point, from 0; a new session is needed to change either). */
-  open(volume: { url: string; budget?: number; level?: string; cylinder?: number; detail_budget?: number; channel?: number; time?: number }, labels?: { url: string }): Promise<SessionInfo> {
-    return call(this.link, "POST", "/sessions", { volume, labels });
+  open(
+    volume: { url: string; budget?: number; level?: string; cylinder?: number; detail_budget?: number; channel?: number; time?: number },
+    labels?: { url: string },
+    objects?: ObjectsSpec,
+  ): Promise<SessionInfo> {
+    return call(this.link, "POST", "/sessions", { volume, labels, objects });
   }
   session(id: string): Promise<SessionInfo> {
     return call(this.link, "GET", `/sessions/${id}`);
