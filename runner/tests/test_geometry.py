@@ -19,11 +19,11 @@ from ngplatform_render import geometry  # noqa: E402
 _PRELUDE = geometry.V3_PRELUDE
 
 _TEST = r"""
-extern "C" __global__ void rays(const float* tris, const int* tobj, const float* nodes, const int* kids, int n,
+extern "C" __global__ void rays(const float* tris, const int* gkind, const int* tobj, const float* nodes, const int* kids, int n,
                                 const float* o, const float* d, int m, float* t, int* tri, int* crossings) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= m) return;
-  Geo G; G.tris = tris; G.tobj = tobj; G.nodes = nodes; G.kids = kids; G.n = n;
+  Geo G; G.tris = tris; G.kind = gkind; G.tobj = tobj; G.nodes = nodes; G.kids = kids; G.n = n;
   V3 oo = v3(o[3 * i], o[3 * i + 1], o[3 * i + 2]), dd = v3(d[3 * i], d[3 * i + 1], d[3 * i + 2]);
   int k = -1;
   t[i] = geohit(G, oo, dd, 0.f, 1e30f, &k);
@@ -47,7 +47,7 @@ def _trace(bvh, o, d):
     mod = cp.RawModule(code=_PRELUDE + geometry.GEOMETRY_SOURCE + _TEST)
     m = len(o)
     t, tri, cr = cp.zeros(m, cp.float32), cp.zeros(m, cp.int32), cp.zeros(m, cp.int32)
-    mod.get_function("rays")(((m + 127) // 128,), (128,), (bvh.tris, bvh.tobj, bvh.nodes, bvh.kids, np.int32(bvh.n),
+    mod.get_function("rays")(((m + 127) // 128,), (128,), (bvh.tris, bvh.kind if bvh.kind is not None else np.uintp(0), bvh.tobj, bvh.nodes, bvh.kids, np.int32(bvh.n),
                                                          cp.asarray(o, cp.float32), cp.asarray(d, cp.float32), np.int32(m), t, tri, cr))
     return cp.asnumpy(t), cp.asnumpy(tri), cp.asnumpy(cr)
 
@@ -125,3 +125,48 @@ def test_a_ray_from_outside_crosses_a_closed_mesh_an_even_number_of_times():
     pts = tris.reshape(-1, 3)
     np.testing.assert_allclose(root[:3], pts.min(0), atol=1e-6)
     np.testing.assert_allclose(root[3:], pts.max(0), atol=1e-6)
+
+
+def _cone_brute(a, ra, b, rb, o, d, steps=20000):
+    """The first t where the ray enters the round cone, by marching its distance function (numpy)."""
+    ts = np.linspace(0, 10, steps)
+    p = o + ts[:, None] * d
+    ba = b - a
+    h = np.clip(((p - a) @ ba) / (ba @ ba), 0, 1)
+    # A round cone with equal radii is a capsule: distance to the segment, less the radius.
+    dist = np.linalg.norm(p - (a + h[:, None] * ba), axis=1) - (ra + (rb - ra) * h)
+    inside = np.flatnonzero(dist <= 0)
+    return ts[inside[0]] if len(inside) else -1.0
+
+
+def test_round_cones_and_spheres_are_hit_where_they_are():
+    rng = np.random.default_rng(3)
+    a = rng.uniform(-1, 1, (300, 3))
+    b = a + rng.normal(0, 0.3, (300, 3))
+    caps = geometry.cones(a, b, 0.05)
+    centres = rng.uniform(-1, 1, (200, 3))
+    balls = geometry.spheres(centres, 0.04)
+    prims = np.concatenate([caps, balls])
+    kinds = np.concatenate([np.full(len(caps), geometry.CONE), np.full(len(balls), geometry.SPHERE)])
+    bvh = geometry.build(prims, kinds=kinds)
+    o = rng.uniform(-3, 3, (400, 3))
+    target = rng.uniform(-1, 1, (400, 3))
+    d = target - o
+    d /= np.linalg.norm(d, axis=1, keepdims=True)
+    t, tri, _ = _trace(bvh, o, d)
+    sorted_prims = cp.asnumpy(bvh.tris)
+    sorted_kinds = cp.asnumpy(bvh.kind)
+    checked = 0
+    for i in np.flatnonzero(t > 0)[:60]:
+        p = sorted_prims[tri[i]]
+        if sorted_kinds[tri[i]] == geometry.SPHERE:
+            assert abs(np.linalg.norm(o[i] + t[i] * d[i] - p[:3]) - p[3]) < 1e-4
+        else:
+            want = _cone_brute(p[:3], p[3], p[4:7], p[7], o[i], d[i])
+            assert abs(want - t[i]) < 2e-3, (want, t[i])
+        checked += 1
+    assert checked > 20
+    # A ray along a cone's axis from outside meets its round end first.
+    one = geometry.build(geometry.cones(np.array([[0.0, 0, 0]]), np.array([[1.0, 0, 0]]), 0.1, 0.2), kinds=np.array([geometry.CONE]))
+    t1, _, _ = _trace(one, np.array([[-1.0, 0, 0]]), np.array([[1.0, 0, 0]]))
+    assert abs(t1[0] - 0.9) < 1e-4

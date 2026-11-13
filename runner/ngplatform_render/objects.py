@@ -97,7 +97,7 @@ extern "C" __global__ void inside(const float* tris, const int* tobj, const floa
   V3 dir = v3(dx, dy, dz);
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= m) return;
-  Geo G; G.tris = tris; G.tobj = tobj; G.nodes = nodes; G.kids = kids; G.n = n;
+  Geo G; G.tris = tris; G.kind = 0; G.tobj = tobj; G.nodes = nodes; G.kids = kids; G.n = n;
   V3 o = v3(pts[3 * i], pts[3 * i + 1], pts[3 * i + 2]);
   int c = 0, k;
   float t = 0.f;
@@ -117,7 +117,7 @@ extern "C" __global__ void rowmask(const float* tris, const int* tobj, const flo
   V3 step = v3(sx, sy, sz);
   int r = blockIdx.x * blockDim.x + threadIdx.x;
   if (r >= m) return;
-  Geo G; G.tris = tris; G.tobj = tobj; G.nodes = nodes; G.kids = kids; G.n = n;
+  Geo G; G.tris = tris; G.kind = 0; G.tobj = tobj; G.nodes = nodes; G.kids = kids; G.n = n;
   // From one voxel before the row: voxel k is at t = k + 1.
   V3 o = v3(starts[3 * r], starts[3 * r + 1], starts[3 * r + 2]) - step;
   float near[64];

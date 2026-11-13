@@ -163,7 +163,15 @@ def objects_spec(o: Any) -> dict[str, Any]:
     """A session's objects as asked for: a precomputed segmentation (url), the segments (ids, at most 64), the
     meshes' level of detail, and the voxels the image within them may take."""
     if not isinstance(o, dict) or not o.get("url"):
-        raise BadRequest("objects.url (a precomputed segmentation) is needed")
+        raise BadRequest("objects.url (a precomputed segmentation, or a Zarr Vectors store) is needed")
+    if o.get("store") == "zarr-vectors":
+        # A Zarr Vectors store's geometry, drawn with the volume: the finest level within `vertices`, tubes and points `radius_mm`.
+        vertices = int(number(o.get("vertices", 4_000_000), "objects.vertices"))
+        if not 1_000 <= vertices <= 50_000_000:
+            raise BadRequest("objects.vertices: 1,000 to 50 M")
+        radius = o.get("radius_mm")
+        return {"url": str(o["url"]), "store": "zarr-vectors", "vertices": vertices,
+                **({"radius_mm": float(number(radius, "objects.radius_mm"))} if radius is not None else {})}
     ids = o.get("ids") or []
     if not isinstance(ids, list) or not ids or len(ids) > 64:
         raise BadRequest("objects.ids: 1 to 64 segment ids")
@@ -206,8 +214,13 @@ def session_need(spec: dict[str, Any], gpu: Gpu) -> dict[str, int]:
     out["detail"] = rmod.volume_bytes(_cube(detail), 2) if detail > 0 else 0
     out["frame"] = rmod.renderer_bytes(*SESSION_FRAME, _cube(budget))
     if spec.get("objects"):
-        # The image within the objects (a byte a voxel, within its budget) and their meshes' BVH (a guess).
-        out["objects"] = int(spec["objects"].get("budget") or 300_000_000) + (64 << 20)
+        o = spec["objects"]
+        if o.get("store") == "zarr-vectors":
+            # The BVH: a primitive (36 bytes), its box and two nodes', and its object, about a vertex each.
+            out["objects"] = int(o.get("vertices") or 4_000_000) * 120
+        else:
+            # The image within the objects (a byte a voxel, within its budget) and their meshes' BVH (a guess).
+            out["objects"] = int(o.get("budget") or 300_000_000) + (64 << 20)
     return out
 
 
@@ -254,6 +267,7 @@ class Session:
         self.objects_meta: dict[str, Any] | None = None
         # The image within the objects read again within the whole budget, after a coarse first one: waiting to be taken up.
         self._objects_pending: Any = None
+        self._object_colours: np.ndarray | None = None
         self.cond = threading.Condition()
         self.view: dict[str, Any] | None = None
         self.view_version = 0
@@ -297,6 +311,16 @@ class Session:
         from . import geometry, objects, volumes
         from .meshes import MeshSource
 
+        if spec.get("store") == "zarr-vectors":
+            from . import vectors
+
+            surf = vectors.load(spec["url"], spec["vertices"], spec.get("radius_mm"), progress=self._set_progress)
+            with self.gpu_device():
+                bvh = geometry.build(surf.prims, surf.objects, self.device, kinds=surf.kinds)
+            self.loaded_objects = (bvh, None, list(range(len(surf.colours))))
+            self._object_colours = surf.colours
+            self.objects_meta = {"url": spec["url"], "store": "zarr-vectors", **surf.meta}
+            return
         src = MeshSource(spec["url"])
         parts, ids = [], []
         for k, sid in enumerate(spec["ids"]):
@@ -736,8 +760,12 @@ class Session:
                 R.set_objects(None)
             return
         bvh, ob, ids = self.loaded_objects
-        given = {str(k): v for k, v in (view.get("colors") or {}).items()}
-        colours = np.array([[float(x) for x in given.get(str(i), (0.85, 0.6, 0.45))[:3]] for i in ids], np.float32)
+        if ob is None:
+            # A store's surfaces: their own colours (a streamline's by its direction, others by object).
+            colours = self._object_colours
+        else:
+            given = {str(k): v for k, v in (view.get("colors") or {}).items()}
+            colours = np.array([[float(x) for x in given.get(str(i), (0.85, 0.6, 0.45))[:3]] for i in ids], np.float32)
         if R.objects is None or R.objects.bricks is not ob or not np.array_equal(R.objects.colours, colours):
             R.set_objects(renderer.Objects(bvh, ob, colours, wfp))
         R.objects.world_from_physical = wfp
@@ -1110,7 +1138,7 @@ class Job:
         self.gpu_need = rmod.renderer_bytes(width, height, shape)
         if self.detail is not None:
             self.gpu_need += rmod.volume_bytes(self.detail[0].shape, self.detail[0].dtype.itemsize)
-        if session.loaded_objects is not None:
+        if session.loaded_objects is not None and session.loaded_objects[1] is not None:
             # The objects' bricks and tables, uploaded again for the job's renderer (the BVH is shared).
             _, ob, _ = session.loaded_objects
             self.gpu_need += int(ob.atlas.nbytes + ob.top.nbytes + ob.sub.nbytes)

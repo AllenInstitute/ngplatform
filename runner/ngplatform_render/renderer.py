@@ -82,7 +82,7 @@ class Objects:
     bricks (physical mm), each object's colour, and how they are drawn."""
 
     bvh: Any  # geometry.Bvh
-    bricks: Any  # objects.ObjectBricks
+    bricks: Any  # objects.ObjectBricks, or None: surfaces alone (a tractogram's tubes, points)
     colours: np.ndarray  # (objects, 3) 0..1
     world_from_physical: np.ndarray  # 4x4
     surface: float = 0.35  # the chance a path meeting a surface is scattered by it
@@ -369,10 +369,10 @@ class Renderer:
             if objects is None:
                 return
             b = objects.bricks
-            tex, arr = _tex_for(cp, b.atlas)
+            tex, arr = _tex_for(cp, b.atlas if b is not None else np.zeros((1, 1, 1), np.uint8))
             self._obj_gpu = {
-                "tex": tex, "arr": arr, "top": cp.asarray(np.ascontiguousarray(b.top, np.int32)),
-                "sub": cp.asarray(np.ascontiguousarray(b.sub, np.int32)),
+                "tex": tex, "arr": arr, "top": cp.asarray(np.ascontiguousarray(b.top, np.int32) if b is not None else np.full(1, -1, np.int32)),
+                "sub": cp.asarray(np.ascontiguousarray(b.sub, np.int32) if b is not None else np.full(1, -1, np.int32)),
                 "col": cp.asarray(np.ascontiguousarray(objects.colours, np.float32).ravel() if len(objects.colours) else np.ones(3, np.float32)),
             }
             self.objects = objects
@@ -380,6 +380,8 @@ class Renderer:
     def _objects_volume(self) -> Volume:
         """The volume as a preset is placed on it, with the values inside the objects in place of the whole's."""
         v, b = self.volume, self.objects.bricks
+        if b is None:
+            return v
         to_data = lambda t: v.lo + t * (v.hi - v.lo)  # noqa: E731
         pct = {k: to_data(t) for k, t in b.percentiles.items()} or v.percentiles
         win = (to_data(b.window[0]), to_data(b.window[1])) if b.window else v.window
@@ -451,7 +453,7 @@ class Renderer:
                 n = self._dbmin.size
                 _kernels().get_function("majorant")((-(-n // 256),), (256,), (self._params, self._tf, self._dbmin, self._dbmax, self._dmaj, np.int32(n)))
                 self._dmaj_key = mkey
-            if self.objects is not None:
+            if self.objects is not None and self.objects.bricks is not None:
                 _kernels().get_function("firsthit_obj")((-(-W // 16), -(-H // 8)), (16, 8), self._geo_args() + (self._depth_gpu, np.int32(W), np.int32(H)))
             else:
                 _kernels().get_function("firsthit")((-(-W // 16), -(-H // 8)), (16, 8), self._args() + (self._depth_gpu, np.int32(W), np.int32(H)))
@@ -586,6 +588,21 @@ class Renderer:
         b = ob.bricks
         wfp = np.asarray(ob.world_from_physical, np.float64)
         pfw = np.linalg.inv(wfp)
+        P[O["OBJ"]] = 1
+        P[O["OBJ_PHYS_FROM_WORLD"]:O["OBJ_PHYS_FROM_WORLD"] + 12] = pfw[:3, :4].ravel()
+        P[O["OBJ_SURF"]] = min(max(ob.surface, 0.0), 1.0)
+        # A thousandth of the scene's size, how far past a surface a path goes on (without bricks: their voxel's).
+        span = float(np.linalg.norm(np.asarray(ob.bvh.hi) - np.asarray(ob.bvh.lo))) * abs(np.linalg.det(wfp[:3, :3])) ** (1 / 3)
+        P[O["OBJ_EPS"]] = 1e-6 * max(span, 1e-12)
+        eye = inv @ np.array([0.0, 0.0, -1.0, 1.0])
+        eye = (pfw @ np.append(eye[:3] / eye[3], 1.0))[:3]
+        if b is None:
+            P[O["OBJ_EM"]] = 0.0
+            P[O["OBJ_PAGE"]:O["OBJ_PAGE"] + 3] = (1, 1, 1)
+            P[O["OBJ_TOPDIMS"]:O["OBJ_TOPDIMS"] + 3] = (1, 1, 1)
+            P[O["OBJ_ATLAS"]:O["OBJ_ATLAS"] + 3] = (1, 1, 1)
+            P[O["OBJ_EYE_INSIDE"]] = 0.0
+            return
         wfv = wfp @ np.asarray(b.phys_from_voxel, np.float64)
         vfw = np.linalg.inv(wfv)
         P[O["OBJ"]] = 1
@@ -622,17 +639,24 @@ class Renderer:
             det, dmaj = self._dtex, self._dmaj
         else:
             det, dmaj = self._tex, self._maj  # unused (P_DETAIL is 0), but the kernels take them
-        return (self._params, self._tex, self._tf, self._maj, lab, self._lut, self._lutflags, self._env_tex, det, dmaj)
+        # Surfaces drawn with the volume: objects without an image within them (tubes, spheres, meshes), else none.
+        if self.objects is not None and self.objects.bricks is None:
+            g, o = self.objects.bvh, self._obj_gpu
+            geo = (g.tris, g.kind if g.kind is not None else np.uintp(0), g.tobj, g.nodes, g.kids, np.int32(g.n), o["col"])
+        else:
+            z = np.uintp(0)
+            geo = (z, z, z, z, z, np.int32(0), z)
+        return (self._params, self._tex, self._tf, self._maj, lab, self._lut, self._lutflags, self._env_tex, det, dmaj) + geo
 
     def _geo_args(self):
         g = self.objects.bvh
-        return (self._params, g.tris, g.tobj, g.nodes, g.kids, np.int32(g.n))
+        return (self._params, g.tris, g.kind if g.kind is not None else np.uintp(0), g.tobj, g.nodes, g.kids, np.int32(g.n))
 
     def _obj_args(self):
         g, o = self.objects.bvh, self._obj_gpu
         if self._env_tex is None:
             self._set_env(None)
-        return (self._params, self._tf, self._env_tex, g.tris, g.tobj, g.nodes, g.kids, np.int32(g.n), o["tex"], o["top"], o["sub"], o["col"])
+        return (self._params, self._tf, self._env_tex, g.tris, g.kind if g.kind is not None else np.uintp(0), g.tobj, g.nodes, g.kids, np.int32(g.n), o["tex"], o["top"], o["sub"], o["col"])
 
     def _set_env(self, name: str | None) -> None:
         """The light map on the GPU (a 2 x 1 black one when there is none, so the kernels always have a texture)."""
@@ -666,7 +690,8 @@ class Renderer:
         cp = self.cp
         with self.lock, self.device:
             W, H = s.width, s.height
-            objects = self.objects is not None
+            # Objects with an image within them are drawn alone; surfaces alone are drawn with the volume.
+            objects = self.objects is not None and self.objects.bricks is not None
             f = _kernels().get_function("trace_obj" if objects else "trace")
             O = kernels.OFFSETS["FRAME"]
             for _ in range(n):
