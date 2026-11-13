@@ -88,6 +88,26 @@ void main() {
 }
 
 /**
+ * The shader a store with groups (a taxonomy) starts with: each vertex in its
+ * coarsest group's colour, as the store gives it (0xRRGGBB).  The same text
+ * as the platform's Colour by controls write for that choice
+ * (src/engine/colour_shader.ts), so they show it as theirs.
+ */
+export function groupColourShader(tier: string, attribute: string, colorAttribute: string): string {
+  return `// Colour by: {"by":"group","group":{"tier":${JSON.stringify(tier)},"attribute":${JSON.stringify(attribute)},"colorAttribute":${JSON.stringify(colorAttribute)},"colours":"stored"}}
+vec3 zvPacked(float packed) {
+  // 0xRRGGBB, exact as a float up to 2^24.
+  float v = floor(packed + 0.5);
+  return vec3(floor(v / 65536.0), mod(floor(v / 256.0), 256.0), mod(v, 256.0)) / 255.0;
+}
+void main() {
+  float group = prop_${attribute}();
+  emitRGB(zvPacked(prop_${colorAttribute}()));
+}
+`;
+}
+
+/**
  * The kind a store's arrays hold, from its declared `geometry_types`.
  *
  * A failed `zarr_vectors.composite.add_geometry()` call records a second type

@@ -19,6 +19,7 @@ import { colormapControl } from "./colormap.js";
 import { lookupTableControl } from "./lookup.js";
 import { hasOutlines, setOutlines } from "../outlines.js";
 import { shaderSection } from "./shader.js";
+import { colourBySection } from "./colour_by.js";
 import { surfaceSection } from "./surface.js";
 import {
   button,
@@ -257,6 +258,7 @@ function segmentationRender(scope: Scope, l: SegmentationUserLayer): HTMLElement
       has3d,
     ),
     surfaceSection(scope, l),
+    colourBySection(scope, l),
     section(
       "Segments",
       checkRow(scope, "Hide segment id 0", ds.hideSegmentZero, "Neither show nor select segment id 0"),

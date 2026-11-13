@@ -28,6 +28,7 @@
 
 import type {
   ZarrVectorsGeometryDescription,
+  ZarrVectorsGroup,
   ZarrVectorsSurfaceInfo,
 } from "./base.js";
 import type { ZarrVectorsDenseDisplayState } from "./dense_frontend.js";
@@ -41,6 +42,7 @@ import { ZarrVectorsLazyPropertyMap } from "./frontend.js";
 import { SortedSegmentPropertyMap } from "./sorted_property_map.js";
 import {
   curvatureShader,
+  groupColourShader,
   DIRECTION_SHADER,
   KIND_CAPABILITIES,
 } from "./geometry_kind.js";
@@ -82,6 +84,16 @@ const OBJECT_SUBSOURCE_IDS = new Set(["objects", "meshes"]);
 function denseSource(subsource: LoadedDataSubsource) {
   const { mesh } = subsource.subsourceEntry.subsource;
   return mesh instanceof ZarrVectorsMultiscaleGeometrySource ? mesh : undefined;
+}
+
+/** A dense layer as the Colour by controls see it (`zarrVectorsColourBy`). */
+export interface ZarrVectorsColourByView {
+  attributes: { id: string; name: string; components: number }[];
+  available: string[];
+  groups: ZarrVectorsGroup[];
+  surface: boolean;
+  storeUrl: string;
+  values(id: string): number[];
 }
 
 export class ZarrVectorsSegmentationUserLayer extends SegmentationUserLayer {
@@ -172,6 +184,46 @@ export class ZarrVectorsSegmentationUserLayer extends SegmentationUserLayer {
         },
         picked: (mouseState: unknown) =>
           pickedVertexValues(mouseState as never, renderLayers),
+      };
+    }
+    return undefined;
+  }
+
+  /**
+   * What the platform's Colour by controls colour any dense layer by: the
+   * attributes shown (with their shader ids), every one the store holds,
+   * its groups (a taxonomy's tiers), whether it is a surface (those have
+   * the Surface controls), and the values of an attribute drawn now (for a
+   * control's range).  Undefined before the layer has data.
+   */
+  zarrVectorsColourBy(): ZarrVectorsColourByView | undefined {
+    for (const layer of this.renderLayers) {
+      if (!(layer instanceof PerspectiveViewZarrVectorsDenseLayer)) continue;
+      const dense = layer as any;
+      const source: ZarrVectorsMultiscaleGeometrySource = dense.options.source;
+      const description = source.description;
+      return {
+        attributes: description.attributes
+          .filter((a) => a.objectValue === undefined)
+          .map((a) => ({ id: a.id, name: a.name, components: a.components })),
+        available: description.available ?? description.attributes.map((a) => a.name),
+        groups: description.groups ?? [],
+        surface: description.surface !== undefined,
+        storeUrl: source.levels[0]?.parameters.storeUrl ?? "",
+        values(id: string) {
+          const i = dense.helper.attributes.findIndex((a: { id: string }) => a.id === id);
+          const out: number[] = [];
+          if (i === -1) return out;
+          for (const chunk of dense.drawnChunks as { valueOf(i: number, v: number): number | undefined; numOwnVertices: number }[]) {
+            for (let v = 0; v < chunk.numOwnVertices; ++v) {
+              const value = chunk.valueOf(i, v);
+              if (value === undefined) break;
+              out.push(value);
+            }
+            if (out.length > 200_000) break;
+          }
+          return out;
+        },
       };
     }
     return undefined;
@@ -297,6 +349,14 @@ export class ZarrVectorsSegmentationUserLayer extends SegmentationUserLayer {
         .map((name) => description.attributes.find((a) => a.name === name && a.components === 1))
         .find((a) => a !== undefined);
       if (curvature !== undefined) this.adoptDefaultShader(curvatureShader(curvature.id));
+    }
+    for (const loadedSubsource of dense) {
+      // A taxonomy: the vertices start in their coarsest group's colours (when both its attributes are shown).
+      const { description } = denseSource(loadedSubsource)!;
+      const tier = description.groups?.[0];
+      const index = tier && description.attributes.find((a) => a.name === tier.attribute && a.components === 1);
+      const colour = tier?.colorAttribute && description.attributes.find((a) => a.name === tier.colorAttribute && a.components === 1);
+      if (tier && index && colour) this.adoptDefaultShader(groupColourShader(tier.name, index.id, colour.id));
     }
   }
 

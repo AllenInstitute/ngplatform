@@ -47,6 +47,31 @@ export interface ZarrVectorsGeometryDescription {
   objectValuesPath?: string;
   /** A cortical surface store's header (`headers/surface`), when it has one. */
   surface?: ZarrVectorsSurfaceInfo;
+  /** Every per-vertex attribute the store holds at level 0, shown or not (`#attributes=` shows others), sorted. */
+  available?: string[];
+  /**
+   * Groups the vertices belong to: a taxonomy's tiers (the root's
+   * `taxonomy`), each an index attribute with names and perhaps colours and a
+   * parent tier, coarsest first.
+   */
+  groups?: ZarrVectorsGroup[];
+}
+
+/** One tier of groups: which group each vertex is in (an index attribute, from 0), their names, colours and parents. */
+export interface ZarrVectorsGroup {
+  /** The tier's name ("class", "cluster"). */
+  name: string;
+  /** The attribute holding each vertex's group, an index from 0. */
+  attribute: string;
+  /** The attribute holding each vertex's group colour (0xRRGGBB), when the store has one. */
+  colorAttribute?: string;
+  /** How many groups the tier has. */
+  count: number;
+  /** Each group's name, by index (from the store's headers), when known. */
+  names?: string[];
+  /** The tier above (coarser), and each group's index in it. */
+  parent?: string;
+  parentIndex?: number[];
 }
 
 /** What a surface store's header says beyond its arrays. */

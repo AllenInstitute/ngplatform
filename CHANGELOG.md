@@ -231,6 +231,16 @@ The production polish: the work of an audit of every panel and plugin
   name only when it is not ready (a turning ring loading, a red triangle
   failed).
 
+- Zarr Vectors layers (points, lines, meshes) are coloured by their
+  segments, by a group the vertex belongs to, or by an attribute, in the
+  Display tab's Vertex colour section: a store's taxonomy (its tiers, the
+  groups' names from its AnnData header, the store's colours or a
+  palette) with the groups shown chosen from a searchable list; any of a
+  store's attributes (a gene panel's hundreds: type to search, loaded
+  when chosen) through a colour map between a low and a high control,
+  outside them hidden if asked. A store with a taxonomy opens coloured by
+  its coarsest tier; one with more attributes than load at once says so
+  and loads that tier's.
 - Objects (on a render computer; the first step of
   `plans/path-traced-geometry.md`): a precomputed segmentation's chosen
   segments drawn as their meshes, path traced as exact geometry, and the
