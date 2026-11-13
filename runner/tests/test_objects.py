@@ -229,6 +229,16 @@ def test_a_session_shows_a_coarse_image_within_its_objects_first_then_the_whole_
 
     monkeypatch.setenv("NGP_RENDER_CACHE", str(tmp_path / "cache"))
     monkeypatch.setattr(server, "COARSE_OBJECTS", 20_000)
+    # Each read's budget and level, in order.
+    reads = []
+    real_build = objects.build
+
+    def build(*args, **kw):
+        ob = real_build(*args, **kw)
+        reads.append((args[4], ob.level))
+        return ob
+
+    monkeypatch.setattr(objects, "build", build)
     rng = np.random.default_rng(6)
     fine = rng.integers(120, 255, (48, 48, 48), dtype=np.uint8)
     coarse = fine[::2, ::2, ::2].copy()
@@ -258,7 +268,7 @@ def test_a_session_shows_a_coarse_image_within_its_objects_first_then_the_whole_
             break
         time.sleep(0.05)
     assert info["status"] == "ready", info
-    assert info["objects"]["level"] == "s1"  # the coarse one, within 20,000 voxels
+    assert reads[0] == (20_000, "s1")  # the coarse one first, within 20,000 voxels
     view = {"inv_view_projection": np.eye(4).ravel().tolist(), "width": 32, "height": 32, "max_samples": 4}
     call("PUT", f"/sessions/{s['id']}/view", view)
     for _ in range(400):
@@ -267,6 +277,7 @@ def test_a_session_shows_a_coarse_image_within_its_objects_first_then_the_whole_
             break
         time.sleep(0.05)
     assert info["objects"]["level"] == "s0", info["objects"]
+    assert reads[-1] == (10**7, "s0")
     srv.shutdown()
 
 
