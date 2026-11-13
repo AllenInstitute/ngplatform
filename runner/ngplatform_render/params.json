@@ -260,6 +260,76 @@
    "name": "BOXES",
    "size": 56,
    "about": "8 crops x (lo x, y, z; hi x, y, z, voxel coordinates; mode: 1 keeps the inside, -1 cuts it out)"
+  },
+  {
+   "name": "OBJ",
+   "size": 1,
+   "about": "1: objects are drawn (meshes, and the image within them), in place of the volume (render computer only)"
+  },
+  {
+   "name": "OBJ_PHYS_FROM_WORLD",
+   "size": 12,
+   "about": "world -> the objects' physical mm (3x4 row-major): where the meshes' BVH is"
+  },
+  {
+   "name": "OBJ_VOX_FROM_WORLD",
+   "size": 12,
+   "about": "world -> voxel index coordinates of the level the image within the objects is held at (3x4 row-major)"
+  },
+  {
+   "name": "OBJ_NORMAL",
+   "size": 9,
+   "about": "that level's gradient (voxel space) to a world normal: the transpose of its linear part (3x3 row-major)"
+  },
+  {
+   "name": "OBJ_PAGE",
+   "size": 3,
+   "about": "voxels a page (a brick less its apron) holds, x, y, z"
+  },
+  {
+   "name": "OBJ_ORIGIN",
+   "size": 3,
+   "about": "the page index, x, y, z, of the page table's first page"
+  },
+  {
+   "name": "OBJ_TOPDIMS",
+   "size": 3,
+   "about": "the top table's cells, x, y, z (16 pages a side each)"
+  },
+  {
+   "name": "OBJ_ATLAS",
+   "size": 3,
+   "about": "bricks along x, y, z of the atlas"
+  },
+  {
+   "name": "OBJ_MAJ",
+   "size": 1,
+   "about": "the majorant inside objects: density times the greatest opacity of the values held (per world unit)"
+  },
+  {
+   "name": "OBJ_SURF",
+   "size": 1,
+   "about": "the meshes' surfaces: the chance a path meeting one is scattered by it (0: invisible, 1: opaque)"
+  },
+  {
+   "name": "OBJ_EM",
+   "size": 1,
+   "about": "1: the image within the objects is a medium; 0: only the surfaces"
+  },
+  {
+   "name": "OBJ_MIX",
+   "size": 1,
+   "about": "how much of the object's colour tints the image within it, 0..1"
+  },
+  {
+   "name": "OBJ_EYE_INSIDE",
+   "size": 1,
+   "about": "1: the camera is inside an object"
+  },
+  {
+   "name": "OBJ_EPS",
+   "size": 1,
+   "about": "a small world distance: how far past a surface a path goes on"
   }
  ]
 }

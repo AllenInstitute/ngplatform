@@ -16,16 +16,7 @@ except Exception:  # pragma: no cover - no GPU
 
 from ngplatform_render import geometry  # noqa: E402
 
-_PRELUDE = r"""
-struct V3 { float x, y, z; };
-__device__ __forceinline__ V3 v3(float x, float y, float z) { V3 r; r.x = x; r.y = y; r.z = z; return r; }
-__device__ __forceinline__ V3 operator+(V3 a, V3 b) { return v3(a.x + b.x, a.y + b.y, a.z + b.z); }
-__device__ __forceinline__ V3 operator-(V3 a, V3 b) { return v3(a.x - b.x, a.y - b.y, a.z - b.z); }
-__device__ __forceinline__ V3 operator*(V3 a, float s) { return v3(a.x * s, a.y * s, a.z * s); }
-__device__ __forceinline__ float dot3(V3 a, V3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
-__device__ __forceinline__ V3 cross3(V3 a, V3 b) { return v3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x); }
-__device__ __forceinline__ V3 norm3(V3 a) { float l = sqrtf(dot3(a, a)); return l > 0.f ? a * (1.f / l) : v3(0.f, 0.f, 1.f); }
-"""
+_PRELUDE = geometry.V3_PRELUDE
 
 _TEST = r"""
 extern "C" __global__ void rays(const float* tris, const int* tobj, const float* nodes, const int* kids, int n,
