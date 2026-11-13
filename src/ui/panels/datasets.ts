@@ -68,20 +68,13 @@ interface Row {
 }
 
 /** The Add menu: a dataset by URL, local data, or a new annotation layer. */
-export function showAddMenu(anchor: HTMLElement, wb: Workbench): void {
-  showMenu(anchor, [
-    { label: "Dataset from a URL…", run: () => wb.run("dataset.add") },
-    { label: "Local file or folder…", disabled: !wb.commands.available("dataset.addLocal"), run: () => wb.run("dataset.addLocal") },
-    { label: "New annotation layer", run: () => wb.run("dataset.newAnnotations") },
-  ]);
-}
-
 export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => void {
   const { store, engine } = wb;
   /** "Local" for data on this computer; nothing for data from the web. */
   const where = (url: string) => (wb.localData.parse(url.replace(/^[a-z0-9+]+:\/\/(?=https?:)/, "")) !== undefined ? "Local" : "");
   const list = h("div", { class: "datasets" });
-  const addButton = iconButton("plus", "Add data", () => showAddMenu(addButton, wb), { class: "btn icon", "aria-haspopup": "menu" });
+  // Add data: the Open sheet (a file, a folder, a link, another scene's datasets, an example).
+  const addButton = iconButton("plus", "Add data", () => wb.run("workspace.open"), { class: "btn icon", "aria-haspopup": "dialog" });
   const permission = h(
     "div",
     { class: "note-bar", hidden: true },
@@ -264,7 +257,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
     return { x: m.clientX, y: m.clientY };
   };
 
-  const empty = emptyState("No data in this scene.", { label: "Add data…", run: () => showAddMenu(empty.querySelector("button")!, wb) });
+  const empty = emptyState("No data in this scene.", { label: "Add data…", run: () => wb.run("workspace.open") });
 
   /** The controls of the list that take the keyboard, by a key that names the dataset or view. */
   const focusable = new Map<string, HTMLElement>();

@@ -15,12 +15,14 @@ Open, Settings, Keyboard and mouse, and Capture open as **sheets**: a
 window over the app, closed with **Done**, **Cancel** or ++escape++.
 
 The app has one theme, a dark one, in Neuroglancer's black and greys with
-square corners; there is no light theme. Its green marks only what is
-selected and what is on.
+square corners; there is no light theme. Light grey marks what is
+selected; green only a switch that is on.
 
-An empty scene shows a card over the views: **Open a file…** and **Paste
-a link…**; you can also drop files on the window. The examples are in
-**Open** and in the palette (*Open example*).
+An empty scene is an empty viewer. **+** beside **Data** in the Layers
+panel opens **Open** (a file or a folder, a link, another scene's
+datasets, the examples); you can also drop files on the window or paste
+a link. A new annotation layer is in the palette (*New annotation
+layer*).
 
 Almost everything is also a command: **Commands** (++ctrl+k++) searches them
 all, and **Help → Keyboard and mouse** lists the keys and clicks most used

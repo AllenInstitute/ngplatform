@@ -208,8 +208,9 @@ The production polish: the work of an audit of every panel and plugin
   tissue alone and are clear outside it, so an organ in its jar is no
   longer rendered as a block of medium; scans without a medium are placed
   as before.
-- A new or empty scene's card offers Open a file and Paste a link; the
-  examples are in Open and the palette.
+- An empty scene is an empty viewer, with no card over it; **+** beside
+  Data (and Add data… in an empty list) opens the Open sheet rather than a
+  menu. A new annotation layer is in the palette.
 
 ### A quieter look
 

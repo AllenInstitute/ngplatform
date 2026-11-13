@@ -200,11 +200,13 @@ check((await page.locator(".runner-section").first().innerText()).includes("Runn
 await page.keyboard.press("Escape");
 await noSheet("Escape to close Settings");
 
-// ---------------------------------------------------------- the start card
+// ---------------------------------------------------------- the empty viewer
 
-await until("the start card over the empty scene", () => document.querySelector(".start-card")?.hidden === false);
-check((await page.locator(".start-card .start-example").count()) === 0, "the start card offers no examples (they are in the Open sheet)");
-check((await page.locator(".start-card button", { hasText: "Open a file…" }).count()) === 1 && (await page.locator(".start-card button", { hasText: "Paste a link…" }).count()) === 1, "the start card offers Open a file and Paste a link");
+check((await page.locator(".engine .start-card").count()) === 0, "nothing over the empty viewer");
+await click(page.locator(".panel-actions .btn.icon[aria-label='Add data']"));
+check(await until("the Open sheet from Data's +", () => document.querySelector(".sheet .sheet-title")?.textContent === "Open"), "Data's + opens the Open sheet");
+await page.keyboard.press("Escape");
+await noSheet("Escape to close Open");
 await page.screenshot({ path: `${shots}/1-start.png` });
 
 // ------------------------------------------------------------------ keyboard
@@ -281,7 +283,6 @@ await until("the status to say ready", () => document.querySelector(".topbar .st
 // The chunk is fetched once the views draw it.
 const drew = await Promise.race([fixture.chunkServed.then(() => true), new Promise((r) => setTimeout(() => r(false), STATE_TIMEOUT).unref())]);
 check(drew, "the views fetch the fixture's chunk to draw it");
-check(await page.evaluate(() => document.querySelector(".start-card").hidden), "the start card goes once the scene has data");
 check((await page.evaluate(() => location.hash)).startsWith("#!"), "the address bar holds the state");
 await page.screenshot({ path: `${shots}/3-dataset.png` });
 
@@ -345,7 +346,6 @@ if (await sheetOpen()) await page.keyboard.press("Escape");
 
 await click(page.locator(".scene-add"));
 check(await until("a new scene", () => document.querySelectorAll(".scene-tab").length === 2 && window.engine.layers().length === 0), "New scene adds an empty scene");
-check(await until("the start card in the new scene", () => document.querySelector(".start-card")?.hidden === false), "the start card shows over the new, empty scene");
 await click(page.locator(".scene-tab").first());
 check(await until("Scene 1 again", () => document.querySelector('.scene-tab[aria-selected="true"]')?.textContent.includes("Scene 1") && window.engine.layers().length === 1), "switching back to Scene 1 brings its dataset");
 

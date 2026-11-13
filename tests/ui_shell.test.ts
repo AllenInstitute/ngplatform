@@ -51,12 +51,12 @@ describe("layout", () => {
     expect(root.querySelectorAll(".resizer")).toHaveLength(3);
   });
 
-  it("starts with the Layers dock open and the Tools and Activity docks collapsed, the start card hidden", () => {
+  it("starts with the Layers dock open and the Tools and Activity docks collapsed, and nothing over the views", () => {
     const dock = (slot: string) => root.querySelector(`.dock-${slot}`)!;
     expect(dock("left").classList.contains("collapsed")).toBe(false);
     expect(dock("right").classList.contains("collapsed")).toBe(true);
     expect(dock("bottom").classList.contains("collapsed")).toBe(true);
-    expect(root.querySelector<HTMLElement>(".start-card")!.hidden).toBe(true);
+    expect(root.querySelector(".start-card")).toBeNull();
   });
 
   it("names every icon-only button for a screen reader", () => {

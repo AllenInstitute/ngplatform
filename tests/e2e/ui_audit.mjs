@@ -223,10 +223,9 @@ async function sheet(name, run) {
   await page.waitForTimeout(300);
 }
 
-// An empty workspace: the start card.
+// An empty workspace.
 await open("");
 await shot("00_start");
-panels["Start card"] = await measure(".start-card");
 
 // Images (SRB): the docks, every tool, the sheets and menus.
 await open("#example=srb-2026a");

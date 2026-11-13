@@ -88,8 +88,7 @@ Dapi channel · **1-99%**.
   path ending in `.zarr`, `.n5`, `.nii.gz`, `.trk` and the like); another
   web address is asked about first; a pasted Neuroglancer link or state
   asks whether to open it (it replaces the workspace) or open it as a new
-  scene (`pasteAction` in `src/core/state_io.ts`). The start card over
-  an empty scene says so ("Or drop files here").
+  scene (`pasteAction` in `src/core/state_io.ts`).
 - The Display tab (once Render) shows the shader's controls (contrast, colour) above the
   shader's code, so the contrast is in view without scrolling.
 - Picking another view of a dataset in the Layers tab's header keeps the

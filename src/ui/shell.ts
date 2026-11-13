@@ -96,7 +96,6 @@ export class Shell {
   private readonly statusStrip = h("div", { class: "ng-status", "aria-live": "polite" });
   private readonly sceneTabs = h("div", { class: "scene-tabs", role: "tablist", "aria-label": "Scenes" });
   /** Over an empty scene's views: opening a file, pasting a link (the examples are in the Open sheet and the palette). */
-  private readonly startCard = h("div", { class: "start-card", hidden: true });
   /** In the Activity dock's head, also while it is collapsed: the running job, else the last message. */
   private readonly activityLine = h("button", { class: "dock-status", type: "button", title: "Show the activity" });
   private readonly undoButton = iconButton("undo", "Undo", () => this.wb.run("edit.undo"));
@@ -194,7 +193,7 @@ export class Shell {
         h("kbd", {}, keyLabel("Mod+K")),
       ),
     );
-    const engine = h("section", { class: "engine", "aria-label": "Viewer" }, this.engineHost, this.viewSplit, this.viewArea, this.startCard);
+    const engine = h("section", { class: "engine", "aria-label": "Viewer" }, this.engineHost, this.viewSplit, this.viewArea);
     this.viewSplit.addEventListener("pointerdown", (e) => this.dragViewSplit(e, engine));
     this.viewSplit.addEventListener("keydown", (e) => this.stepViewSplit(e));
     const centre = h("div", { class: "centre" }, engine, this.statusStrip);
@@ -473,7 +472,6 @@ export class Shell {
       this.renderSceneTabs();
       this.showKindPanel();
       this.updateControls();
-      this.updateStartCard();
     };
     // The activity line: a running job and its progress, else the last message.
     let last: { message: string; level: string } | undefined;
@@ -1082,23 +1080,6 @@ export class Shell {
     ]) {
       add({ id: `panel.${tab}`, title: `Show the ${title} panel`, group: "Panels", run: () => this.docks.show(tab) });
     }
-  }
-
-  /** The start card: shown over a scene with no layers (not a plugin's kind of scene), made once. */
-  private updateStartCard(): void {
-    const wb = this.wb;
-    const scene = activeScene(wb.store.state());
-    this.startCard.hidden = wb.engine.layers().length > 0 || scene.kind !== undefined;
-    if (this.startCard.hidden || this.startCard.childElementCount > 0) return;
-    this.startCard.replaceChildren(
-      h(
-        "div",
-        { class: "row-actions" },
-        h("button", { class: "btn primary", type: "button", disabled: !wb.commands.available("dataset.addLocal"), onclick: () => wb.run("dataset.addLocal") }, icon("open"), "Open a file…"),
-        h("button", { class: "btn outline", type: "button", onclick: () => wb.run("workspace.open") }, icon("link"), "Paste a link…"),
-      ),
-      h("p", { class: "note" }, "Or drop files here."),
-    );
   }
 
   private exampleCommands: (() => void)[] = [];

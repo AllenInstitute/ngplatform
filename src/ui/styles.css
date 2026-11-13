@@ -107,8 +107,8 @@
   --r: 0;
   color-scheme: dark;
 }
-/* Sheets, the top bar and the start card are the larger context. */
-.sheet, .topbar, .start-card { --ctl-h: var(--ctl-h-sheet); --ctl-fs: var(--fs-control); font-size: var(--fs-control); }
+/* Sheets and the top bar are the larger context. */
+.sheet, .topbar { --ctl-h: var(--ctl-h-sheet); --ctl-fs: var(--fs-control); font-size: var(--fs-control); }
 
 html, body { height: 100%; margin: 0; }
 body {
@@ -298,10 +298,6 @@ a.btn { text-decoration: none; }
 /* Source details folded */
 .ins-details > summary { cursor: pointer; color: var(--muted); font-size: var(--fs-body); margin: var(--sp-3) 0; }
 /* Over an empty scene */
-.start-card { position: absolute; inset: 0; margin: auto; width: min(460px, calc(100% - 32px)); height: fit-content; display: grid; gap: var(--sp-5); padding: var(--sp-6); background: var(--ink-1); border: 1px solid var(--line); border-radius: var(--r); z-index: 5; }
-.start-card[hidden] { display: none; }
-.start-card .row-actions { margin: 0; }
-.start-card .note { margin: 0; }
 .scene-kind-add svg { width: 11px; height: 11px; }
 .plugin-sheet { display: grid; gap: var(--sp-5); }
 
