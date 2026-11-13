@@ -47,6 +47,10 @@ class ObjectBricks:
     inside_voxels: int
     value_range: tuple[float, float]  # the least and greatest kept value, 0..1
     stats: dict = field(default_factory=dict)
+    # The values inside the objects (0..1, as the texture holds them): their percentiles, and p1..p99 as a window, so
+    # a preset is placed on the objects' own histogram (the image within a cell spans a little of the whole's).
+    percentiles: dict[float, float] = field(default_factory=dict)
+    window: tuple[float, float] | None = None
 
 
 def page_dims(voxel_mm) -> tuple[int, int, int]:
@@ -291,6 +295,7 @@ def build(url: str, ms: volumes.Multiscale, tris_phys: np.ndarray, bvh: geometry
         say(0.8 + 0.15 * min(n, b0 + batch) / n, f"masked {min(n, b0 + batch)}/{n} bricks")
     nz = data[data > 0]
     lo_val, hi_val = (nz.min() / 255.0, nz.max() / 255.0) if nz.size else (0.0, 0.0)
+    pct = {k: v / 255.0 for k, v in volumes.tissue_percentiles(nz, 0.0, 255.0).items()} if nz.size else {}
     del nz
     # Packed into the atlas, bricks in rows along x, then y, then layers along z.
     atlas = data.reshape(az, ay, ax, B[2], B[1], B[0]) if n == ax * ay * az else np.concatenate(
@@ -312,4 +317,5 @@ def build(url: str, ms: volumes.Multiscale, tris_phys: np.ndarray, bvh: geometry
     sub[which.ravel(), loc[:, 2], loc[:, 1], loc[:, 0]] = np.arange(n, dtype=np.int32)
     return ObjectBricks(atlas, (ax, ay, az), tuple(int(v) for v in page), tuple(int(v) for v in origin), top, sub,
                         affine, lv.path, n, inside_total, (float(lo_val), float(max(hi_val, lo_val))),
-                        {"surface_pages": nsurf, "interior_pages": ninner})
+                        {"surface_pages": nsurf, "interior_pages": ninner}, pct,
+                        (pct[1.0], pct[99.0]) if 1.0 in pct and 99.0 in pct and pct[99.0] > pct[1.0] else None)

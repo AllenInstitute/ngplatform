@@ -377,6 +377,14 @@ class Renderer:
             }
             self.objects = objects
 
+    def _objects_volume(self) -> Volume:
+        """The volume as a preset is placed on it, with the values inside the objects in place of the whole's."""
+        v, b = self.volume, self.objects.bricks
+        to_data = lambda t: v.lo + t * (v.hi - v.lo)  # noqa: E731
+        pct = {k: to_data(t) for k, t in b.percentiles.items()} or v.percentiles
+        win = (to_data(b.window[0]), to_data(b.window[1])) if b.window else v.window
+        return Volume(v.data, v.world_from_voxel, v.lo, v.hi, pct, win, None, "")
+
     def set_object_look(self, surface: float, image: bool, mix: float) -> None:
         """How the objects are drawn (surfaces, the image within them, its tint); takes effect at the next set_view."""
         if self.objects is not None:
@@ -419,10 +427,12 @@ class Renderer:
             self._state = state
             packed = self._pack(state)
             self._params = cp.asarray(packed)
-            key = (state.preset.key(), self.volume.lo, self.volume.hi)
+            key = (state.preset.key(), self.volume.lo, self.volume.hi, id(self.objects))
             if key != self._tf_key:
                 # Colour and opacity, then (after TF_SIZE of them) the surface's specular and roughness.
-                self._tf_host = np.concatenate([transfer_table(state.preset, self.volume), material_table(state.preset, self.volume)])
+                # With objects, the preset is placed on the values inside them (their percentiles and window).
+                placed = self._objects_volume() if self.objects is not None else self.volume
+                self._tf_host = np.concatenate([transfer_table(state.preset, placed), material_table(state.preset, placed)])
                 self._tf = cp.asarray(self._tf_host)
                 self._tf_key = key
                 if self.objects is not None:

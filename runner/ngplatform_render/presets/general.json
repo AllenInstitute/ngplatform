@@ -2190,5 +2190,83 @@
     "opacity": 0.6
    }
   ]
+ },
+ {
+  "name": "EM: membranes",
+  "modality": "EM",
+  "description": "Electron microscopy, membranes dark: the darkest few percent (membranes, myelin, dense organelles) opaque, mid greys translucent, cytoplasm nearly clear; placed on the image's own histogram (within objects, on theirs).",
+  "domain": "percentile",
+  "density": 20000.0,
+  "shade_mix": 0.6,
+  "gradient_scale": 8.0,
+  "roughness": 0.5,
+  "specular": 0.1,
+  "albedo": 0.9,
+  "exposure": 1.4,
+  "stops": [
+   {
+    "value": 0.0,
+    "color": [
+     0.16,
+     0.12,
+     0.11
+    ],
+    "opacity": 0.0
+   },
+   {
+    "value": 1.0,
+    "color": [
+     0.16,
+     0.12,
+     0.11
+    ],
+    "opacity": 0.95
+   },
+   {
+    "value": 8.0,
+    "color": [
+     0.3,
+     0.23,
+     0.2
+    ],
+    "opacity": 0.8
+   },
+   {
+    "value": 25.0,
+    "color": [
+     0.55,
+     0.46,
+     0.4
+    ],
+    "opacity": 0.3
+   },
+   {
+    "value": 50.0,
+    "color": [
+     0.78,
+     0.7,
+     0.62
+    ],
+    "opacity": 0.06
+   },
+   {
+    "value": 80.0,
+    "color": [
+     0.9,
+     0.85,
+     0.78
+    ],
+    "opacity": 0.015
+   },
+   {
+    "value": 100.0,
+    "color": [
+     0.95,
+     0.93,
+     0.9
+    ],
+    "opacity": 0.0
+   }
+  ]
  }
 ]
