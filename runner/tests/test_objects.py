@@ -268,3 +268,28 @@ def test_a_session_shows_a_coarse_image_within_its_objects_first_then_the_whole_
         time.sleep(0.05)
     assert info["objects"]["level"] == "s0", info["objects"]
     srv.shutdown()
+
+
+def test_the_image_within_a_segments_labels_is_kept_by_its_labels(tmp_path):
+    """Inside by labels: exactly the voxels whose label is chosen, though the mesh (choosing the pages) is coarser."""
+    rng = np.random.default_rng(8)
+    n = (48, 48, 48)
+    vol = rng.integers(1, 255, n, dtype=np.uint8)
+    zz, yy, xx = np.meshgrid(*(np.arange(k) for k in n), indexing="ij")
+    labels = np.where((xx - 24) ** 2 + (yy - 24) ** 2 + (zz - 24) ** 2 < 12**2, 7, 3).astype(np.uint64)
+    labels[(xx - 24) ** 2 + (yy - 24) ** 2 + (zz - 24) ** 2 < 4**2] = 9  # a hole of another segment inside
+    for name, a, dtype in (("em", vol, "uint8"), ("seg", labels, "uint64")):
+        root = tmp_path / name
+        root.mkdir()
+        (root / "info").write_text(json.dumps({"type": "image" if name == "em" else "segmentation", "data_type": dtype, "num_channels": 1,
+                                               "scales": [{"key": "s0", "size": [48, 48, 48], "resolution": [1000, 1000, 1000],
+                                                           "voxel_offset": [0, 0, 0], "chunk_sizes": [[16, 16, 16]], "encoding": "raw"}]}))
+        _write_unsharded(root, "s0", a, (16, 16, 16), (0, 0, 0))
+    url, seg_url = f"precomputed://{tmp_path / 'em'}", f"precomputed://{tmp_path / 'seg'}"
+    ms, seg_ms = volumes.open_multiscale(url), volumes.open_multiscale(seg_url)
+    A = np.asarray(ms.levels[0].affine)
+    tris = ((_sphere(30).astype(np.float64) * 13 + 24.0).reshape(-1, 3) @ A[:3, :3].T + A[:3, 3]).reshape(-1, 3, 3)
+    bvh = geometry.build(tris.astype(np.float32))
+    ob = objects.build(url, ms, tris, bvh, budget=10**8, to_u8=lambda a: a, labels=(seg_url, seg_ms, [7]))
+    assert ob.stats["inside_by"] == "labels"
+    assert ob.inside_voxels == int((labels == 7).sum())

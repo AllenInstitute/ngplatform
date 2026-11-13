@@ -107,3 +107,44 @@ def test_scales_read_as_levels_with_their_offset_and_resolution(tmp_path):
     np.testing.assert_array_equal(volumes.level_array(url, ms, "16_16_80")[0:10, 0:12, 0:20], coarse)
     # A part across chunks.
     np.testing.assert_array_equal(volumes.level_array(url, ms, "16_16_80")[3:9, 2:11, 5:17], coarse[3:9, 2:11, 5:17])
+
+
+def _encode_compressed_segmentation(a: np.ndarray, block=(4, 4, 2)) -> bytes:
+    """a (z, y, x) uint64 as Neuroglancer's compressed_segmentation (one channel), as its encoder writes it."""
+    sz, sy, sx = a.shape
+    bx, by, bz = block
+    gx, gy, gz = -(-sx // bx), -(-sy // by), -(-sz // bz)
+    headers = np.zeros(2 * gx * gy * gz, np.uint32)
+    body: list[int] = []
+    start = 1 + len(headers)  # words from the channel's start (after the channel offset word)
+    for k in range(gz):
+        for j in range(gy):
+            for i in range(gx):
+                blk = np.zeros((bz, by, bx), np.uint64)
+                part = a[k * bz:(k + 1) * bz, j * by:(j + 1) * by, i * bx:(i + 1) * bx]
+                blk[:part.shape[0], :part.shape[1], :part.shape[2]] = part
+                values, idx = np.unique(blk, return_inverse=True)
+                bits = next(b for b in (0, 1, 2, 4, 8, 16, 32) if len(values) <= (1 << b))
+                n = bx * by * bz
+                packed = np.zeros(-(-n * bits // 32), np.uint32) if bits else np.zeros(0, np.uint32)
+                for v, ix in enumerate(idx.ravel()):
+                    if bits:
+                        packed[(v * bits) // 32] |= np.uint32(int(ix) << ((v * bits) % 32))
+                values_at = start + len(body) - 1
+                body.extend(packed.tolist())
+                table_at = start + len(body) - 1
+                for val in values:
+                    body.extend([int(val) & 0xFFFFFFFF, int(val) >> 32])
+                b = (k * gy + j) * gx + i
+                headers[2 * b] = table_at | (bits << 24)
+                headers[2 * b + 1] = values_at
+    return np.concatenate([[1], headers, np.array(body, np.uint32)]).astype("<u4").tobytes()
+
+
+def test_compressed_segmentation_chunks_read_as_their_labels():
+    rng = np.random.default_rng(7)
+    a = rng.choice(np.array([0, 5, 864691135610744327, 2**40 + 3], np.uint64), size=(5, 7, 9))
+    a[:2] = 5  # a block of one label: no bits
+    raw = _encode_compressed_segmentation(a)
+    got = precomputed.decode_compressed_segmentation(raw, (9, 7, 5), (4, 4, 2), np.uint64)
+    np.testing.assert_array_equal(got, a)

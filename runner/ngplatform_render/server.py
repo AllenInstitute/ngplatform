@@ -174,7 +174,10 @@ def objects_spec(o: Any) -> dict[str, Any]:
     budget = int(number(o.get("budget", 300_000_000), "objects.budget"))
     if not 1_000_000 <= budget <= 4_000_000_000:
         raise BadRequest("objects.budget: 1 M to 4 G voxels")
-    return {"url": str(o["url"]), "ids": ids, "lod": int(number(o.get("lod", 1), "objects.lod")), "budget": budget,
+    inside = str(o.get("inside") or "mesh")
+    if inside not in ("mesh", "labels"):
+        raise BadRequest("objects.inside: mesh or labels")
+    return {"url": str(o["url"]), "ids": ids, "lod": int(number(o.get("lod", 1), "objects.lod")), "budget": budget, "inside": inside,
             **({"level": str(o["level"])} if o.get("level") else {})}
 
 
@@ -320,10 +323,12 @@ class Session:
             return np.clip((a.astype(np.float32) - lo) * (255.0 / max(hi - lo, 1e-12)), 0, 255).astype(np.uint8)
 
         budget = int(spec.get("budget") or 300_000_000)
+        # Inside by the segmentation's own labels (as exact as its voxels), else by the meshes.
+        labels = (spec["url"], volumes.open_multiscale(spec["url"]), ids) if spec.get("inside") == "labels" else None
         # A coarse one first (a few M voxels: seconds), so the objects show while the rest is read; then the whole budget's.
         first = budget if spec.get("level") or budget <= COARSE_OBJECTS else COARSE_OBJECTS
         with self.gpu_device():
-            ob = objects.build(url, ms, tris, bvh, first, to_u8, self._set_progress, closed, spec.get("level"))
+            ob = objects.build(url, ms, tris, bvh, first, to_u8, self._set_progress, closed, spec.get("level"), labels)
         self.loaded_objects = (bvh, ob, ids)
         self.objects_meta = {"url": spec["url"], "ids": [str(i) for i in ids], "triangles": int(len(tris)), "level": ob.level,
                              "page": list(ob.page), "bricks": ob.bricks, "inside_voxels": ob.inside_voxels, **ob.stats}
@@ -332,7 +337,7 @@ class Session:
                 try:
                     with self.gpu_device():
                         fine = objects.build(url, ms, tris, bvh, budget, to_u8,
-                                             lambda f, m: self.objects_meta.__setitem__("reading", m), closed)
+                                             lambda f, m: self.objects_meta.__setitem__("reading", m), closed, None, labels)
                 except Exception as e:  # noqa: BLE001 - the coarse one stays
                     self.objects_meta["reading"] = f"stopped: {e}"
                     return

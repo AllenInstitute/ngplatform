@@ -199,9 +199,13 @@ def _to_vox(level: volumes.Level, phys: np.ndarray) -> np.ndarray:
 
 def build(url: str, ms: volumes.Multiscale, tris_phys: np.ndarray, bvh: geometry.Bvh, budget: int,
           to_u8: Callable[[np.ndarray], np.ndarray], progress: Callable[[float, str], None] | None = None,
-          cancelled: Callable[[], bool] = lambda: False, level: str | None = None) -> ObjectBricks:
+          cancelled: Callable[[], bool] = lambda: False, level: str | None = None,
+          labels: tuple[str, volumes.Multiscale, list[int]] | None = None) -> ObjectBricks:
     """The image within the meshes (tris_phys (n, 3, 3), physical mm; bvh: theirs, in the same space), at the
-    finest level whose bricks fit `budget` voxels (or `level`).  to_u8: a block of the level's values to uint8 (0..255 as 0..1)."""
+    finest level whose bricks fit `budget` voxels (or `level`).  to_u8: a block of the level's values to uint8 (0..255 as 0..1).
+    labels: (a segmentation's URL, its multiscale, the segment ids): a voxel is kept where its label is one of them
+    (the segmentation's level of the same voxel size), not by the meshes, which are simplified from it; the meshes
+    still choose the pages.  Without a level of that size, the meshes decide."""
     import cupy as cp
 
     say = progress or (lambda f, m: None)
@@ -243,6 +247,19 @@ def build(url: str, ms: volumes.Multiscale, tris_phys: np.ndarray, bvh: geometry
     for i, k in enumerate(pages):
         groups.setdefault(tuple(k // 4), []).append(i)
     data = np.zeros((n, B[2], B[1], B[0]), np.uint8)
+    # The segmentation's level of this voxel size, and its voxel index of this level's voxel 0 (a whole shift).
+    seg = None
+    if labels is not None:
+        seg_url, seg_ms, seg_ids = labels
+        A = np.asarray(lv.affine, np.float64)
+        for sl in seg_ms.levels:
+            S = np.asarray(sl.affine, np.float64)
+            if np.allclose(S[:3, :3], A[:3, :3], rtol=1e-6, atol=0):
+                shift = np.linalg.solve(S[:3, :3], A[:3, 3] - S[:3, 3])
+                if np.allclose(shift, np.round(shift), atol=1e-3):
+                    seg = (seg_url, seg_ms, sl, np.round(shift).astype(np.int64), np.asarray(sorted(set(seg_ids)), np.uint64))
+                    break
+    masks = np.zeros((n, B[2], B[1], B[0]), bool) if seg is not None else None
     done = [0]
     lock = threading.Lock()
 
@@ -260,9 +277,23 @@ def build(url: str, ms: volumes.Multiscale, tris_phys: np.ndarray, bvh: geometry
                 raise volumes.Cancelled("closed while loading")
             o = rlo - glo
             region[o[2]:o[2] + got.shape[0], o[1]:o[1] + got.shape[1], o[0]:o[0] + got.shape[2]] = to_u8(got)
+        inside = None
+        if seg is not None:
+            seg_url, seg_ms, sl, shift, ids = seg
+            sshape = np.asarray(sl.shape[::-1], np.int64)
+            slo, shi = np.maximum(glo + shift, 0), np.minimum(ghi + shift, sshape)
+            inside = np.zeros((ghi - glo)[::-1], bool)
+            if (shi > slo).all():
+                lab = detail.read_region(seg_url, seg_ms, sl, tuple(int(v) for v in slo), tuple(int(v) for v in shi), cancelled=cancelled, workers=8)
+                if lab is None:
+                    raise volumes.Cancelled("closed while loading")
+                o = slo - shift - glo
+                inside[o[2]:o[2] + lab.shape[0], o[1]:o[1] + lab.shape[1], o[0]:o[0] + lab.shape[2]] = np.isin(lab.astype(np.uint64, copy=False), ids)
         for i in members:
             a = pages[i] * P - APRON - glo  # the brick's corner in the region
             data[i] = region[a[2]:a[2] + B[2], a[1]:a[1] + B[1], a[0]:a[0] + B[0]]
+            if inside is not None:
+                masks[i] = inside[a[2]:a[2] + B[2], a[1]:a[1] + B[1], a[0]:a[0] + B[0]]
         with lock:
             done[0] += 1
             say(0.05 + 0.75 * done[0] / len(groups), f"read {lv.path}: {done[0]}/{len(groups)} groups of bricks")
@@ -278,7 +309,11 @@ def build(url: str, ms: volumes.Multiscale, tris_phys: np.ndarray, bvh: geometry
     mod = _kernels()
     batch = max(1, (1 << 22) // len(row_off))  # about 4 M rows a launch
     inside_total = 0
-    for b0 in range(0, n, batch):
+    if masks is not None:
+        # By the labels: no rays.
+        data *= masks
+        inside_total = int(masks[:, APRON:-APRON, APRON:-APRON, APRON:-APRON].sum())
+    for b0 in range(0, n if masks is None else 0, batch):
         if cancelled():
             raise volumes.Cancelled("closed while loading")
         idx = np.arange(b0, min(n, b0 + batch))
@@ -317,5 +352,5 @@ def build(url: str, ms: volumes.Multiscale, tris_phys: np.ndarray, bvh: geometry
     sub[which.ravel(), loc[:, 2], loc[:, 1], loc[:, 0]] = np.arange(n, dtype=np.int32)
     return ObjectBricks(atlas, (ax, ay, az), tuple(int(v) for v in page), tuple(int(v) for v in origin), top, sub,
                         affine, lv.path, n, inside_total, (float(lo_val), float(max(hi_val, lo_val))),
-                        {"surface_pages": nsurf, "interior_pages": ninner}, pct,
+                        {"surface_pages": nsurf, "interior_pages": ninner, "inside_by": "labels" if seg is not None else "mesh"}, pct,
                         (pct[1.0], pct[99.0]) if 1.0 in pct and 99.0 in pct and pct[99.0] > pct[1.0] else None)

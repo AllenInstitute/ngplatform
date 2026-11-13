@@ -192,6 +192,8 @@ export interface ObjectsSpec {
   ids: string[];
   lod?: number;
   budget?: number;
+  /** What is inside: the meshes (the default), or the segmentation's own labels (as exact as its voxels). */
+  inside?: "mesh" | "labels";
 }
 
 export interface ViewSpec {

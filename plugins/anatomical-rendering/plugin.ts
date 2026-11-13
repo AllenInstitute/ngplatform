@@ -113,7 +113,7 @@ export interface Saved {
    * within them at full resolution where `budget` voxels allow. `surface`: how much the surfaces show (0 clear,
    * 1 opaque); `image`: the image within them is drawn; `mix`: how much the segment's colour tints it.
    */
-  objects: { on: boolean; layer: string; surface: number; image: boolean; mix: number; budget: number; lod: number };
+  objects: { on: boolean; layer: string; surface: number; image: boolean; mix: number; budget: number; lod: number; inside: "mesh" | "labels" };
   /** Gaussian splats: views path-traced from all round (`cover` degrees about the view's direction; 180: every side), their size (the longer side) and samples, and the fit's steps (0: the views only). */
   splat: { views: number; size: number; samples: number; cover: number; steps: number };
 }
@@ -212,7 +212,7 @@ export function readSaved(raw: unknown): Saved {
     rotation: { axis: "vertical", degrees: 360, step: 2, ...(s.rotation ?? {}) },
     movie: { fps: 25, width: 1280, height: 720, samples: 128, easing: "smooth", ...(s.movie ?? {}) },
     splat: { views: 256, size: 1024, samples: 512, cover: 180, steps: 30000, ...(s.splat ?? {}) },
-    objects: { on: false, layer: "", surface: 0.3, image: true, mix: 0, budget: 3e8, lod: 1, ...(s.objects ?? {}) },
+    objects: { on: false, layer: "", surface: 0.3, image: true, mix: 0, budget: 3e8, lod: 1, inside: "mesh", ...(s.objects ?? {}) },
   };
 }
 
@@ -728,7 +728,7 @@ class AnatomicalRendering {
     const seen = this.ctx.viewer.visibleSegments(layer.name);
     if (seen === undefined || seen.all || seen.size === 0) return undefined;
     const ids = Array.from(seen.ids().slice(0, MAX_OBJECTS), (x) => x.toString()).sort();
-    return { url, ids, lod: o.lod, budget: o.budget };
+    return { url, ids, lod: o.lod, budget: o.budget, inside: o.inside };
   }
 
   /** How the objects are drawn in a view: shown, surfaces, the image within them, its tint, and each segment's colour as Neuroglancer colours it. */
@@ -1989,6 +1989,10 @@ class AnatomicalRendering {
       this.save(objectsLook((o) => (o.budget = Math.max(1, v) * 1e6)));
       this.update();
     } });
+    const objectInside = select([["mesh", "the meshes"], ["labels", "the labels"]], "mesh", (v) => {
+      this.save(objectsLook((o) => (o.inside = v === "labels" ? "labels" : "mesh")));
+      this.update();
+    }, "Inside by");
     const objectsNote = el("p", { class: "hint" });
     const objectsBody = el("div", { class: "stack" },
       objectsOn,
@@ -1997,6 +2001,7 @@ class AnatomicalRendering {
       objectImage,
       field("Segment colour", objectMix, { info: "How much each segment's colour tints the image within it." }),
       field("Image within", objectBudget, { info: "The voxels the image within the objects may take on the GPU: the finest stored level within this." }),
+      field("Inside by", objectInside, { info: "What a voxel is inside: the segments' meshes, or the segmentation's own labels (exact to its voxels; the meshes are simplified from it)." }),
       objectsNote,
     );
     const objectsCard = card("anatomical.objects", "Objects", {}, objectsEmpty, objectsBody);
@@ -2387,6 +2392,7 @@ class AnatomicalRendering {
       objectImage.set(s.objects.image);
       objectMix.set(s.objects.mix);
       objectBudget.set(s.objects.budget / 1e6);
+      objectInside.set(s.objects.inside);
       const seen = s.objects.on && this.objectsLayer() ? this.ctx.viewer.visibleSegments(this.objectsLayer()!.name) : undefined;
       const om = this.session?.objects;
       objectsNote.textContent = !s.objects.on ? ""

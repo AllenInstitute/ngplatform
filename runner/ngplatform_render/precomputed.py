@@ -113,6 +113,35 @@ def compressed_morton(pos: tuple[int, int, int], grid: tuple[int, int, int]) -> 
     return code
 
 
+def decode_compressed_segmentation(raw: bytes, size_xyz: tuple[int, int, int], block_xyz: tuple[int, int, int], dtype) -> np.ndarray:
+    """A chunk in Neuroglancer's compressed_segmentation encoding (one channel), as a (z, y, x) array.
+
+    Blocks of block_xyz voxels: each has a header of two 32-bit words, its lookup table's offset (low 24
+    bits) and its encoded bits (high 8: 0, 1, 2, 4, 8, 16 or 32), then its values' offset; each voxel's
+    index into the table is packed little-endian at those bits, x fastest within the block; the table
+    holds the labels (two 32-bit words each for uint64).  Offsets are in 32-bit words from the channel's
+    start (the first word of the chunk gives it)."""
+    D = np.frombuffer(raw, "<u4")
+    base = int(D[0])
+    sx, sy, sz = size_xyz
+    bx, by, bz = block_xyz
+    gx, gy, gz = -(-sx // bx), -(-sy // by), -(-sz // bz)
+    z, y, x = np.meshgrid(np.arange(sz), np.arange(sy), np.arange(sx), indexing="ij")
+    block = ((z // bz) * gy + (y // by)) * gx + (x // bx)
+    within = ((z % bz) * by + (y % by)) * bx + (x % bx)
+    h0 = D[base + 2 * block].astype(np.int64)
+    h1 = D[base + 2 * block + 1].astype(np.int64)
+    table, bits = h0 & 0xFFFFFF, h0 >> 24
+    bit = within.astype(np.int64) * bits
+    word = D[np.where(bits > 0, base + h1 + (bit >> 5), base)].astype(np.int64)
+    index = np.where(bits > 0, (word >> (bit & 31)) & ((np.int64(1) << np.maximum(bits, 1)) - 1), 0)
+    wide = np.dtype(dtype).itemsize == 8
+    at = base + table + index * (2 if wide else 1)
+    lo = D[at].astype(np.uint64)
+    out = lo | (D[at + 1].astype(np.uint64) << np.uint64(32)) if wide else lo
+    return out.astype(dtype, copy=False)
+
+
 class Shards:
     """A directory of `neuroglancer_uint64_sharded_v1` shards: where a key's chunk is, and its bytes.  Shard
     indices and minishard indices are read once and kept."""
@@ -189,8 +218,9 @@ class PrecomputedArray:
         self.scale = scale
         self.key = scale["key"]
         self.encoding = scale.get("encoding", "raw")
-        if self.encoding not in ("raw", "jpeg"):
-            raise ValueError(f"{url}: the {self.encoding} encoding is not read here (raw and jpeg only)")
+        if self.encoding not in ("raw", "jpeg", "compressed_segmentation"):
+            raise ValueError(f"{url}: the {self.encoding} encoding is not read here (raw, jpeg and compressed_segmentation)")
+        self.block = tuple(int(v) for v in scale.get("compressed_segmentation_block_size", [8, 8, 8]))  # x, y, z
         sx, sy, sz = (int(v) for v in scale["size"])
         cx, cy, cz = (int(v) for v in scale["chunk_sizes"][0])
         self.offset = tuple(int(v) for v in scale.get("voxel_offset", [0, 0, 0]))  # x, y, z
@@ -211,6 +241,8 @@ class PrecomputedArray:
 
             img = np.asarray(Image.open(io.BytesIO(raw)).convert("L"))  # (y * z, x)
             return img.reshape(fz, fy, fx).astype(self.dtype, copy=False)
+        if self.encoding == "compressed_segmentation":
+            return decode_compressed_segmentation(raw, (fx, fy, fz), self.block, self.dtype)
         a = np.frombuffer(raw, self.dtype, count=fx * fy * fz)
         return a.reshape(fz, fy, fx)  # Fortran order x, y, z read as C order z, y, x
 
