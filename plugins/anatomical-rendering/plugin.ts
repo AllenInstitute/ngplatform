@@ -19,7 +19,7 @@ import { ColourmapEditor, type DataStop, histogramHandles, shifted, type Tuning,
 import { LIVE_VOXELS, LiveVolume, type LivePreset } from "./live.js";
 import { cameraAxes, type Level8, type LevelPreset, levelHistogram, levelResolved, LocalRenderer, PRESETS as LOCAL_PRESETS, rowMajor } from "./local/local.js";
 import { RENDER_PANEL } from "./manifest.js";
-import { anatomicalSides, type AxisSides, axesCheck, type CameraPlane, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, metadataBase, omeZarrSource, orientationLooking, planeClip, planeFromView, safeHref, unitMm, type ViewButton, viewButtons, viewForward, viewKey } from "./view.js";
+import { anatomicalSides, type AxisSides, axesCheck, type CameraPlane, clipPlanes, type Cut, displayFromPhysical, LIGHTING, lightDirection, metadataBase, omeZarrSource, orientationLooking, renderSource, planeClip, planeFromView, safeHref, unitMm, type ViewButton, viewButtons, viewForward, viewKey } from "./view.js";
 
 /** Where Neuroglancer's 3-D camera was when a keyframe was added: to go back to it. */
 export interface KeyframeCamera {
@@ -490,9 +490,9 @@ class AnatomicalRendering {
 
   private setOn(on: boolean): void {
     const target = this.target();
-    const problem = target === undefined ? "Anatomical rendering needs an OME-Zarr or N5 image in the scene." : this.axesOf(target).problem;
+    const problem = target === undefined ? "Anatomical rendering needs an OME-Zarr, N5 or precomputed image in the scene." : this.axesOf(target).problem;
     if (on && problem !== undefined) {
-      // Nothing it can read (precomputed EM, meshes, tractograms, a 2-D image): say so rather than switch on to no effect.
+      // Nothing it can read (meshes, tractograms, a 2-D image): say so rather than switch on to no effect.
       this.toggle.set(false);
       this.panelUpdate?.();
       this.ctx.ui.toast(problem, "error");
@@ -510,7 +510,7 @@ class AnatomicalRendering {
   }
 
   private images(): LayerInfo[] {
-    return this.ctx.viewer.layers().filter((l) => l.type === "image" && omeZarrSource(l.sources[0]) !== undefined);
+    return this.ctx.viewer.layers().filter((l) => l.type === "image" && renderSource(l.sources[0]) !== undefined);
   }
 
   private segmentations(): LayerInfo[] {
@@ -535,7 +535,7 @@ class AnatomicalRendering {
   private volumeCounts(layer: LayerInfo): { channels: number; times: number } | undefined {
     if (this.saved.where === "browser") return undefined;
     const axes = this.axesOf(layer);
-    const src = omeZarrSource(layer.sources[0]);
+    const src = renderSource(layer.sources[0]);
     const known = src === undefined ? undefined : this.counts.get(src);
     const counts = known ?? { channels: axes.channels ?? 1, times: axes.times ?? 1 };
     return counts.channels > 1 || counts.times > 1 ? counts : undefined;
@@ -543,7 +543,7 @@ class AnatomicalRendering {
 
   /** The channel and time point to render of the image: as chosen, within what it has. */
   private volumeAt(layer: LayerInfo): { channel: number; time: number } {
-    const src = omeZarrSource(layer.sources[0]);
+    const src = renderSource(layer.sources[0]);
     const at = src === undefined ? undefined : this.saved.volumeAt[src];
     const n = this.volumeCounts(layer);
     if (at === undefined || n === undefined) return { channel: 0, time: 0 };
@@ -552,7 +552,7 @@ class AnatomicalRendering {
 
   /** Renders another channel or time point of the image: one undo step, and a new session (the computer loads one of each per session). */
   private setVolumeAt(layer: LayerInfo, change: Partial<{ channel: number; time: number }>): void {
-    const src = omeZarrSource(layer.sources[0]);
+    const src = renderSource(layer.sources[0]);
     if (src === undefined) return;
     const next = { ...this.volumeAt(layer), ...change };
     this.save((x) => (x.volumeAt[src] = next));
@@ -562,7 +562,7 @@ class AnatomicalRendering {
   /** The buttons that turn the view, by the image's anatomical sides when its metadata gives them, else by axis. */
   private viewButtons(): ViewButton[] {
     const target = this.target();
-    const src = target ? omeZarrSource(target.sources[0]) : undefined;
+    const src = target ? renderSource(target.sources[0]) : undefined;
     if (src !== undefined && !this.sides.has(src)) void this.readSides(src);
     return viewButtons(this.lastFrame?.dimensions.names ?? ["x", "y", "z"], src === undefined ? undefined : (this.sides.get(src) ?? undefined));
   }
@@ -692,7 +692,7 @@ class AnatomicalRendering {
       this.closeLocal();
       void this.ensureSession(target);
       // The live image reads the image in this browser too: one it could render here (one channel and time point).
-      if (axesCheck(this.ctx.viewer.layerTransform?.(target.name)?.input, true).problem === undefined) void this.live.open(omeZarrSource(target.sources[0])!, this.saved.objectVoxels);
+      if (axesCheck(this.ctx.viewer.layerTransform?.(target.name)?.input, true).problem === undefined) void this.live.open(renderSource(target.sources[0])!, this.saved.objectVoxels);
       else this.live.close();
     }
     this.handle?.redraw();
@@ -726,7 +726,7 @@ class AnatomicalRendering {
 
   private presetRequest(): { key: string; preset: string | Record<string, unknown>; overrides: Record<string, unknown> } | undefined {
     const s = this.saved;
-    const src = this.target() ? omeZarrSource(this.target()!.sources[0]) : undefined;
+    const src = this.target() ? renderSource(this.target()!.sources[0]) : undefined;
     const browser = s.where === "browser";
     const level = this.live.heldLevel;
     if (src === undefined || (browser ? level === undefined : this.session?.status !== "ready")) return undefined;
@@ -762,7 +762,7 @@ class AnatomicalRendering {
   }
 
   private currentTuning(): { src: string; tuning: Tuning } | undefined {
-    const src = this.target() ? omeZarrSource(this.target()!.sources[0]) : undefined;
+    const src = this.target() ? renderSource(this.target()!.sources[0]) : undefined;
     if (src === undefined) return undefined;
     return { src, tuning: this.saved.tunings[src] ?? { shift: 0, scale: 1 } };
   }
@@ -852,7 +852,7 @@ class AnatomicalRendering {
   private windowRange(): { src: string; lo: number; hi: number; step: number; guess?: [number, number] } | undefined {
     if (this.presetDomain() !== "window") return undefined;
     const target = this.target();
-    const src = target ? omeZarrSource(target.sources[0]) : undefined;
+    const src = target ? renderSource(target.sources[0]) : undefined;
     if (src === undefined) return undefined;
     if (this.saved.where === "browser") {
       // The level held here: its values' range, and the window guessed over them.
@@ -873,13 +873,17 @@ class AnatomicalRendering {
     };
   }
 
-  private setWindow(src: string, i: 0 | 1, v: number, guess: [number, number] | undefined): void {
-    this.save((x) => {
+  /** Sets one end of the image's window; `preview`: rendered while its slider is dragged, saved when let go. */
+  private setWindow(src: string, i: 0 | 1, v: number, guess: [number, number] | undefined, preview = false): void {
+    const edit = (x: Saved) => {
       const cur = x.windows[src] ?? guess ?? [v, v + 1];
       const next: [number, number] = [cur[0], cur[1]];
       next[i] = v;
-      if (next[1] > next[0]) x.windows[src] = next;
-    });
+      // A new object, so the state saved before (an undo step) keeps its window.
+      if (next[1] > next[0]) x.windows = { ...x.windows, [src]: next };
+    };
+    if (preview) this.preview(edit);
+    else this.save(edit);
   }
 
   private labelsSource(): string | undefined {
@@ -891,7 +895,7 @@ class AnatomicalRendering {
 
   private async ensureSession(target: LayerInfo): Promise<void> {
     const service = this.service!;
-    const url = omeZarrSource(target.sources[0])!;
+    const url = renderSource(target.sources[0])!;
     const labels = this.labelsSource();
     const detailBudget = this.saved.detail ? this.saved.detailBudget : 0;
     // The channel and time point: another of either is another session (the computer cannot change them in place).
@@ -948,7 +952,7 @@ class AnatomicalRendering {
   }
 
   private async ensureLocal(target: LayerInfo): Promise<void> {
-    const url = omeZarrSource(target.sources[0])!;
+    const url = renderSource(target.sources[0])!;
     const key = JSON.stringify([url, this.saved.objectVoxels]);
     if (key === this.localKey) return;
     this.closeLocal();
@@ -1141,7 +1145,7 @@ class AnatomicalRendering {
     const s = this.saved;
     const overrides: Record<string, number | number[]> = { exposure: s.exposure };
     if (s.density !== undefined) overrides.density = s.density;
-    const src = this.target() ? omeZarrSource(this.target()!.sources[0]) : undefined;
+    const src = this.target() ? renderSource(this.target()!.sources[0]) : undefined;
     if (src !== undefined && s.windows[src] && this.presetDomain() === "window") overrides.window = s.windows[src];
     const tuned = this.tunedPreset();
     return {
@@ -1843,7 +1847,7 @@ class AnatomicalRendering {
       windowSliders = undefined;
       if (w === undefined) return null;
       const now = this.saved.windows[w.src] ?? w.guess;
-      const end = (i: 0 | 1, label: string) => slider(now ? now[i] : i, { min: w.lo, max: w.hi, step: w.step, label, onchange: (v) => this.setWindow(w.src, i, v, w.guess) });
+      const end = (i: 0 | 1, label: string) => slider(now ? now[i] : i, { min: w.lo, max: w.hi, step: w.step, label, oninput: (v) => this.setWindow(w.src, i, v, w.guess, true), onchange: (v) => this.setWindow(w.src, i, v, w.guess) });
       windowSliders = [end(0, "Window low"), end(1, "Window high")];
       return field("Window", el("div", { class: "stack" },
         windowSliders[0], windowSliders[1],
@@ -1997,7 +2001,9 @@ class AnatomicalRendering {
         name.set = (v) => {
           if (name.ownerDocument.activeElement !== name && name.value !== v) name.value = v;
         };
-        const offset = slider(p.offset, { min: -100, max: 100, step: 0.5, unit: "mm", label: `Plane ${i + 1} offset`, unbounded: true, onchange: (v) => this.save((x) => (x.planes[i].offset = v)) });
+        // Each edit makes new objects, so the state saved before (an undo step) keeps its planes.
+        const planeOffset = (v: number) => (x: Saved) => void (x.planes = x.planes.map((q, j) => (j === i ? { ...q, offset: v } : q)));
+        const offset = slider(p.offset, { min: -100, max: 100, step: 0.5, unit: "mm", label: `Plane ${i + 1} offset`, unbounded: true, oninput: (v) => this.preview(planeOffset(v)), onchange: (v) => this.save(planeOffset(v)) });
         planeControls.push({ on, name, offset });
         return el("div", { class: "ar-box" },
           el("div", { class: "row" }, on, name,
@@ -2018,7 +2024,8 @@ class AnatomicalRendering {
           if (o && k >= 0 && k < 3) x.cuts[i].offset = o.axis[k];
         }));
       const side = select([["-1", "keep −"], ["1", "keep +"]], String(c.keep), (v) => this.save((x) => (x.cuts[i].keep = Number(v) as 1 | -1)), `Side kept across ${c.axis}`);
-      const offset = slider(c.offset, { min: -100, max: 100, step: 0.5, unit: "mm", label: `Offset across ${c.axis}`, unbounded: true, onchange: (v) => this.save((x) => (x.cuts[i].offset = v)) });
+      const cutOffset = (v: number) => (x: Saved) => void (x.cuts = x.cuts.map((q, j) => (j === i ? { ...q, offset: v } : q)));
+      const offset = slider(c.offset, { min: -100, max: 100, step: 0.5, unit: "mm", label: `Offset across ${c.axis}`, unbounded: true, oninput: (v) => this.preview(cutOffset(v)), onchange: (v) => this.save(cutOffset(v)) });
       return { on, side, offset, row: el("div", { class: "ar-cut" }, on, side, offset) };
     });
     let boxControls: { on: ReturnType<typeof toggle>; name: Settable<HTMLInputElement, string>; keep: Settable<HTMLSelectElement, string>; ends: [Slider, Slider][] }[] = [];
@@ -2033,9 +2040,18 @@ class AnatomicalRendering {
           if (name.ownerDocument.activeElement !== name && name.value !== v) name.value = v;
         };
         const keepIt = select([["keep", "keep inside"], ["cut", "cut out"]], b.keep ? "keep" : "cut", (v) => this.save((x) => (x.boxes[i].keep = v === "keep")), `Box ${i + 1} keeps`);
+        // One end of the box along an axis, kept 0.005 from the other; new objects, as for the planes.
+        const boxEnd = (end: "lo" | "hi", k: number, v: number) => (x: Saved) => {
+          x.boxes = x.boxes.map((q, j) => {
+            if (j !== i) return q;
+            const at: [number, number, number] = [q[end][0], q[end][1], q[end][2]];
+            at[k] = end === "lo" ? Math.min(v, q.hi[k] - 0.005) : Math.max(v, q.lo[k] + 0.005);
+            return { ...q, [end]: at };
+          });
+        };
         const ends = (["x", "y", "z"] as const).map((axis, k): [Slider, Slider] => [
-          slider(b.lo[k], { min: 0, max: 1, step: 0.005, label: `Box ${i + 1} low ${axis}`, onchange: (v) => this.save((x) => (x.boxes[i].lo[k] = Math.min(v, x.boxes[i].hi[k] - 0.005))) }),
-          slider(b.hi[k], { min: 0, max: 1, step: 0.005, label: `Box ${i + 1} high ${axis}`, onchange: (v) => this.save((x) => (x.boxes[i].hi[k] = Math.max(v, x.boxes[i].lo[k] + 0.005))) }),
+          slider(b.lo[k], { min: 0, max: 1, step: 0.005, label: `Box ${i + 1} low ${axis}`, oninput: (v) => this.preview(boxEnd("lo", k, v)), onchange: (v) => this.save(boxEnd("lo", k, v)) }),
+          slider(b.hi[k], { min: 0, max: 1, step: 0.005, label: `Box ${i + 1} high ${axis}`, oninput: (v) => this.preview(boxEnd("hi", k, v)), onchange: (v) => this.save(boxEnd("hi", k, v)) }),
         ]);
         boxControls.push({ on, name, keep: keepIt, ends });
         return el("div", { class: "ar-box" },
