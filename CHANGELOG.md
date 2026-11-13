@@ -231,6 +231,16 @@ The production polish: the work of an audit of every panel and plugin
   name only when it is not ready (a turning ring loading, a red triangle
   failed).
 
+- Objects (on a render computer; the first step of
+  `plans/path-traced-geometry.md`): a precomputed segmentation's chosen
+  segments drawn as their meshes, path traced as exact geometry, and the
+  image within them at the finest stored level within a voxel budget, with
+  no bounding box: only the pages the meshes pass through or enclose are
+  read, each voxel kept by the parity of a ray's crossings, and held as
+  bricks found through a page table. Surfaces from clear to opaque, the
+  image within on or off, tinted by the segment's colour. The Objects
+  card; the meshes' reader (multi-resolution Draco, sharded or not, and
+  legacy) and a BVH built on the GPU.
 - Anatomical rendering reads Neuroglancer precomputed images too (the
   MICrONS EM, `precomputed://gs://iarpa_microns/minnie/minnie65/em`), in
   this browser and on the render computer: raw or JPEG chunks, sharded or

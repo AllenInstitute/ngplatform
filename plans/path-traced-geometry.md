@@ -168,6 +168,27 @@ own checks, merged one at a time. Effort is rough.
 - Budgets in `limits.ts`.
 - Refusals that say what to change.
 
+## Progress
+
+The MVP (2026-11-13): render computer only, triangle meshes of a
+precomputed segmentation, the image within them, no streaming.
+- [x] Mesh reader (`meshes.py`), GPU LBVH and ray–triangle hits (`geometry.py`).
+- [x] The image within objects as sparse bricks (`objects.py`): pages of
+  about 0.5 µm, interior fill along rows, masking by row parity, atlas and
+  two-level page table.
+- [x] Tracer (`kernels.py`: `trace_obj`, `firsthit_obj`), `Renderer.set_objects`.
+- [x] Sessions take `objects`; the Objects card.
+- [ ] Speed: one majorant over all bricks makes close views slow (about
+  0.4 s a pass at 1280 × 960 inside a cell); per-brick majorants, fast
+  tracking while the camera moves.
+- [ ] Stills and movies (jobs) with objects; the browser renderer.
+- [ ] An EM preset among the built-in presets.
+
+Measured on MICrONS (`seg_m1300`, `em`): a cell is 0.8–6 M triangles at
+the finest mesh level (read in 6–13 s), its BVH built in about 1 s; at a
+300 M-voxel budget the image within a 1,100 µm³ cell is read at 32 nm
+(44,567 bricks, 21 M voxels inside) in about 8 minutes from Cloud Storage.
+
 ## Decisions taken
 
 - **Exact geometry, not voxelised:** user, 2026-11-13.
