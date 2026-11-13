@@ -286,6 +286,44 @@ takes images with one of each only.
   nerfstudio's `transforms.json`, `points.ply`) can be fitted later with
   `python -m ngplatform_render.splat.fit FOLDER` or another splat trainer.
 
+## Objects
+
+On a render computer, the **Objects** card draws objects with the
+image, path traced as exact geometry, from either kind of layer.
+
+**A precomputed segmentation's chosen segments** (the first 64), such
+as cells or axons of the MICrONS segmentation:
+
+- **Surfaces**: their meshes. Set from clear (0) to opaque (1).
+- **Image within**: the image inside them only, at the finest stored
+  level within the voxel budget. There is no box round them: only the
+  pages (about 0.5 µm a side) the meshes pass through or enclose are
+  read, each voxel kept if it is inside.
+- **Inside by**: **the meshes** (by ray parity) or **the labels** (the
+  segmentation's own voxels, at its level of the same voxel size). The
+  meshes are simplified from the labels, so the labels are exact.
+- **Segment colour**: tints the image within each segment.
+- **Loading**: a coarse version shows first (within 16 M voxels) while
+  the whole budget's is read; choosing other segments opens them again.
+- **Preset**: the preset is placed on the values inside the objects, not
+  the whole image's. **EM: membranes** suits electron microscopy:
+  membranes dark and opaque, cytoplasm nearly clear.
+
+**A Zarr Vectors layer** (a tractogram, skeletons, points, a mesh) is
+drawn as solid surfaces inside the volume, from the finest level within
+the budget:
+
+- **Streamlines, polylines and lines** are tubes, coloured by their
+  direction (red x, green y, blue z).
+- **Skeletons and graphs** are a tube per edge, using a `radius`
+  attribute where the store has one.
+- **Points** are spheres.
+- **Meshes** are triangles.
+- **Everything else** is coloured by object.
+
+Cuts and crops apply to objects as to the volume. Stills and movies
+draw them too. This browser's renderer does not draw objects yet.
+
 ## The HiP-CT organ presets
 
 Each organ's tissues were given colours measured on openly licensed

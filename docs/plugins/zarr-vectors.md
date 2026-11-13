@@ -15,15 +15,30 @@ so objects can be searched, shown, hidden and coloured like any segments.
 
 - Add a store by URL with the `|zarr-vectors:` suffix, for example
   `https://example.org/tracts.zarrvectors/|zarr-vectors:` (a store ending
-  in `.zarrvectors` is recognised without it), with **+ → Dataset from a
-  URL…** in the Layers panel, or paste it on the window.
+  in `.zarrvectors` is recognised without it): **+** beside Data in the
+  Layers panel opens **Open**, where it can be pasted; or paste it on the
+  window.
 - Open a store folder, or one of the files below, with **Open → Open a
   file…** or **Folder…**, or drop it on the window. A file becomes a
   virtual Zarr Vectors store, made on the fly as the views ask for it:
   nothing is converted or uploaded.
 - Object properties (length, orientation, a neuron's cable length…) appear
   in the layer's **Segments** tab, where they can be searched (`length>50`).
-  Colour by them in the **Display** tab's shader with `prop_<name>()`.
+- **Vertex colour**, in the Display tab, colours the vertices by:
+  - **Segments**.
+  - **A group they belong to**: a tier of the store's taxonomy, such as
+    class or cluster in an ABC atlas store, or the objects' own groups.
+    Each group is drawn in the store's colour or a palette's. The groups
+    shown are picked from a searchable list, and **Within** narrows it
+    to the groups under one group of a coarser tier.
+  - **Any attribute**, vertex or object: type to search, and one the
+    layer does not show yet is loaded. The colour map runs from a low to
+    a high value, and values outside that range can be hidden (a
+    threshold).
+
+  A store with a taxonomy opens coloured by its coarsest tier. The
+  choices are written as the layer's shader, which can also be edited by
+  hand with `prop_<name>()`.
 - Coarser levels load first and finer ones as you zoom in; click an object
   to load it whole.
 
