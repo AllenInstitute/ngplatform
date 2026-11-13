@@ -334,7 +334,8 @@ export function transformTable(scope: Scope, t: WatchableCoordinateSpaceTransfor
       }
     }
     const grid = el("div", { class: "ins-tx-grid" }, ...cells);
-    grid.style.gridTemplateColumns = `minmax(90px, 1.3fr) repeat(${rank + 1}, minmax(52px, 1fr))`;
+    // A column per input dimension and one for the offset (styles.css, .ins-tx-grid[data-cols]).
+    grid.dataset.cols = String(Math.min(rank + 1, 8));
     const id = identity();
     toIdentity.hidden = transform.length === id.length && transform.every((v, k) => v === id[k]);
     toDefault.hidden = t.spec === undefined;

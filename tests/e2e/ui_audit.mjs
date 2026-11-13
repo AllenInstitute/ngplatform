@@ -86,7 +86,8 @@ const measure = (sel) =>
     };
     const text = all.filter((e) => [...e.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim()));
     const buttons = all.filter((e) => e.tagName === "BUTTON");
-    const inputs = all.filter((e) => (e.tagName === "INPUT" && !["checkbox", "radio", "range", "file"].includes(e.type)) || e.tagName === "SELECT" || e.tagName === "TEXTAREA");
+    // (CodeMirror's own hidden text box, in the shader editor, is the editor's, not a field.)
+    const inputs = all.filter((e) => ((e.tagName === "INPUT" && !["checkbox", "radio", "range", "file"].includes(e.type)) || e.tagName === "SELECT" || e.tagName === "TEXTAREA") && !e.closest(".CodeMirror"));
     const checks = all.filter((e) => e.tagName === "INPUT" && e.type === "checkbox");
     const heads = all.filter((e) => /^H[1-6]$/.test(e.tagName) || e.matches(".section-title,.card-title,summary,legend"));
     return {

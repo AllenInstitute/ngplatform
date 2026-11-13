@@ -231,9 +231,13 @@ export function textInput(value: string, commit: (v: string) => void, attrs: Att
 export function growingInput(value: string, commit: (v: string) => void, attrs: Attrs = {}): HTMLTextAreaElement {
   const input = el("textarea", { class: "text-input ins-grow", rows: 1, spellcheck: "false", wrap: "soft", ...attrs }) as HTMLTextAreaElement;
   let committed = value;
+  // As many rows as the value takes (an attribute, not an inline style, as the styles' audit asks).
   const fit = () => {
-    input.style.height = "auto";
-    if (input.scrollHeight > 0) input.style.height = `${input.scrollHeight + 2}px`;
+    input.rows = 1;
+    const c = getComputedStyle(input);
+    const line = parseFloat(c.lineHeight) || 16;
+    const inner = input.scrollHeight - (parseFloat(c.paddingTop) || 0) - (parseFloat(c.paddingBottom) || 0);
+    if (input.scrollHeight > 0) input.rows = Math.max(1, Math.round(inner / line));
   };
   const set = (v: string) => {
     input.value = v;
