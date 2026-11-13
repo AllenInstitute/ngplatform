@@ -16,7 +16,12 @@ import { button, el, note, row, type Scope, section, select, showWhen, type Watc
 
 interface Group {
   name: string;
+  /** The tier above, and each group's index in it. */
+  parent?: string;
+  parentIndex?: number[];
   attribute: string;
+  /** The attribute's shader id, when it is not the name's (an object's group: obj_group). */
+  attributeId?: string;
   colorAttribute?: string;
   count: number;
   names?: string[];
@@ -96,12 +101,19 @@ function build(scope: Scope, l: SegmentationUserLayer, view: ColourByView): HTML
   };
   fillRange();
 
+  // A tier whose groups the store does not count (an object's group): as many as the largest index drawn.
+  for (const g of view.groups) {
+    if (g.count > 0 || g.attributeId === undefined) continue;
+    let top = -1;
+    for (const v of view.values(g.attributeId)) if (Number.isFinite(v) && v > top) top = v;
+    g.count = Math.max(0, Math.round(top) + 1);
+  }
   const changed = [shader];
   const modeOf = (k: ColourByLook) => (custom() ? "custom" : k.by === "group" ? `group:${k.group?.tier ?? ""}` : k.by);
   const tierOf = (name: string) => view.groups.find((g) => g.name === name);
   const groupLook = (g: Group, colours?: "stored" | "palette"): ColourByLook => ({
     by: "group",
-    group: { tier: g.name, attribute: safeId(g.attribute), ...(g.colorAttribute ? { colorAttribute: safeId(g.colorAttribute) } : {}), colours: colours ?? (g.colorAttribute ? "stored" : "palette") },
+    group: { tier: g.name, attribute: g.attributeId ?? safeId(g.attribute), ...(g.colorAttribute ? { colorAttribute: safeId(g.colorAttribute) } : {}), colours: colours ?? (g.colorAttribute ? "stored" : "palette") },
   });
   const rows: HTMLElement[] = [];
   rows.push(
@@ -152,15 +164,49 @@ function build(scope: Scope, l: SegmentationUserLayer, view: ColourByView): HTML
     const k = look();
     if (k.group !== undefined) write({ ...k, group: { ...k.group, shown } });
   };
+  // Within a group of a coarser tier (the clusters of one class): each group's ancestor there, through the parents.
+  const within = el("select", { class: "text-input", "aria-label": "Within" }) as HTMLSelectElement;
+  const ancestors = (g: Group): Group[] => {
+    const out: Group[] = [];
+    for (let p = g.parent ? tierOf(g.parent) : undefined; p !== undefined && out.length < 8; p = p.parent ? tierOf(p.parent) : undefined) out.push(p);
+    return out;
+  };
+  const ancestorOf = (g: Group, i: number, tier: string): number | undefined => {
+    let at: Group | undefined = g;
+    let k: number | undefined = i;
+    while (at !== undefined && k !== undefined && at.name !== tier) {
+      k = at.parentIndex?.[k];
+      at = at.parent ? tierOf(at.parent) : undefined;
+    }
+    return at?.name === tier ? k : undefined;
+  };
+  const fillWithin = () => {
+    const g = look().group ? tierOf(look().group!.tier) : undefined;
+    const up = g ? ancestors(g).filter((p) => p.count > 0) : [];
+    const key = up.map((p) => p.name).join(",");
+    within.hidden = up.length === 0;
+    if (within.dataset.key === key) return;
+    within.dataset.key = key;
+    within.replaceChildren(
+      el("option", { value: "" }, "Any"),
+      ...up.map((p) => el("optgroup", { label: p.name }, ...Array.from({ length: p.count }, (_, i) => el("option", { value: `${p.name}:${i}` }, p.names?.[i] ?? `Group ${i}`)))),
+    );
+  };
+  const inWithin = (g: Group, i: number) => {
+    if (within.value === "") return true;
+    const [tier, index] = [within.value.slice(0, within.value.lastIndexOf(":")), Number(within.value.slice(within.value.lastIndexOf(":") + 1))];
+    return ancestorOf(g, i, tier) === index;
+  };
   const drawList = () => {
     const k = look();
     const g = k.group ? tierOf(k.group.tier) : undefined;
     list.replaceChildren();
+    fillWithin();
     if (g === undefined) return;
     const shown = k.group?.shown === undefined ? undefined : new Set(k.group.shown);
     const q = search.value.trim().toLowerCase();
     const names = Array.from({ length: g.count }, (_, i) => g.names?.[i] ?? `Group ${i}`);
-    const matching = names.map((n, i) => [n, i] as const).filter(([n]) => q === "" || n.toLowerCase().includes(q));
+    const matching = names.map((n, i) => [n, i] as const).filter(([n, i]) => (q === "" || n.toLowerCase().includes(q)) && inWithin(g, i));
     for (const [name, i] of matching.slice(0, LISTED)) {
       const box = el("input", { type: "checkbox" }) as HTMLInputElement;
       box.checked = shown === undefined || shown.has(i);
@@ -180,12 +226,13 @@ function build(scope: Scope, l: SegmentationUserLayer, view: ColourByView): HTML
       (k.group?.shown !== undefined && countRuns(k.group.shown) > MAX_RUNS ? `; too scattered to hide the rest (at most ${MAX_RUNS} runs)` : "");
   };
   search.addEventListener("input", drawList);
+  within.addEventListener("change", drawList);
   scope.watch(shader, drawList);
   const matchingIndices = () => {
     const g = look().group ? tierOf(look().group!.tier) : undefined;
     if (g === undefined) return [];
     const q = search.value.trim().toLowerCase();
-    return Array.from({ length: g.count }, (_, i) => i).filter((i) => q === "" || (g.names?.[i] ?? `Group ${i}`).toLowerCase().includes(q));
+    return Array.from({ length: g.count }, (_, i) => i).filter((i) => (q === "" || (g.names?.[i] ?? `Group ${i}`).toLowerCase().includes(q)) && inWithin(g, i));
   };
   rows.push(
     showWhen(
@@ -193,9 +240,10 @@ function build(scope: Scope, l: SegmentationUserLayer, view: ColourByView): HTML
       row(
         "Groups",
         el("div", { class: "stack" },
+          within,
           search,
           el("div", { class: "row" },
-            button("Show these", () => setShown(search.value.trim() === "" ? undefined : matchingIndices()), "Show the groups listed (all, or those the search finds) and hide the rest"),
+            button("Show these", () => setShown(search.value.trim() === "" && within.value === "" ? undefined : matchingIndices()), "Show the groups listed (all, or those the search finds) and hide the rest"),
             button("Add these", () => {
               const now = look().group?.shown;
               if (now === undefined) return;
@@ -212,7 +260,7 @@ function build(scope: Scope, l: SegmentationUserLayer, view: ColourByView): HTML
           list,
           shownNote,
         ),
-        "Which groups show: tick them, or search and show, add or hide those found",
+        "Which groups show: tick them, or narrow the list (within a group of a coarser tier, by name) and show, add or hide those listed",
       ),
       isGroup,
     ),
@@ -279,8 +327,9 @@ function countRuns(indices: number[]): number {
   return n;
 }
 
-/** An attribute's shader name, as the plugin makes it (`safeAttributeId`, for names without clashes). */
+/** An attribute's shader name, as the plugin makes it (`safeAttributeId`, for names without clashes); `obj:<name>` is obj_<name>. */
 function safeId(name: string): string {
+  if (name.startsWith("obj:")) name = `obj_${name.slice(4)}`;
   let base = name.replace(/[^a-zA-Z0-9_]/g, "_");
   if (!/^[a-z]/.test(base)) base = `a_${base}`;
   return base.replace(/__+/g, "_");

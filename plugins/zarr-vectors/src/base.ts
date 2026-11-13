@@ -49,6 +49,8 @@ export interface ZarrVectorsGeometryDescription {
   surface?: ZarrVectorsSurfaceInfo;
   /** Every per-vertex attribute the store holds at level 0, shown or not (`#attributes=` shows others), sorted. */
   available?: string[];
+  /** Every per-object attribute (level 0's `object_attributes/`), shown or not (`#attributes=obj:<name>` shows others), sorted. */
+  availableObjects?: string[];
   /**
    * Groups the vertices belong to: a taxonomy's tiers (the root's
    * `taxonomy`), each an index attribute with names and perhaps colours and a

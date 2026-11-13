@@ -90,7 +90,7 @@ function denseSource(subsource: LoadedDataSubsource) {
 export interface ZarrVectorsColourByView {
   attributes: { id: string; name: string; components: number }[];
   available: string[];
-  groups: ZarrVectorsGroup[];
+  groups: (ZarrVectorsGroup & { attributeId?: string })[];
   surface: boolean;
   storeUrl: string;
   values(id: string): number[];
@@ -203,11 +203,23 @@ export class ZarrVectorsSegmentationUserLayer extends SegmentationUserLayer {
       const source: ZarrVectorsMultiscaleGeometrySource = dense.options.source;
       const description = source.description;
       return {
-        attributes: description.attributes
-          .filter((a) => a.objectValue === undefined)
-          .map((a) => ({ id: a.id, name: a.name, components: a.components })),
-        available: description.available ?? description.attributes.map((a) => a.name),
-        groups: description.groups ?? [],
+        // Per-object values among them, named as `#attributes=` asks for them (`obj:<name>`).
+        attributes: description.attributes.map((a) => ({
+          id: a.id,
+          name: a.objectValue === undefined ? a.name : `obj:${a.objectValue.column ?? "group"}`,
+          components: a.components,
+        })),
+        available: [
+          ...(description.available ?? description.attributes.filter((a) => a.objectValue === undefined).map((a) => a.name)),
+          ...(description.availableObjects ?? []).map((n) => `obj:${n}`),
+        ],
+        groups: [
+          ...(description.groups ?? []),
+          // The objects' groups (the store's groups/): each object's first group, as obj_group.
+          ...description.attributes
+            .filter((a) => a.objectValue !== undefined && a.objectValue.column === undefined)
+            .map((a) => ({ name: "object group", attribute: "obj:group", attributeId: a.id, count: a.enumLabels?.length ?? 0, names: a.enumLabels })),
+        ],
         surface: description.surface !== undefined,
         storeUrl: source.levels[0]?.parameters.storeUrl ?? "",
         values(id: string) {
