@@ -17,7 +17,6 @@ import {
   loadOfferPrefs,
   offerCandidates,
   type OfferPrefs,
-  offersToToast,
   offWithState,
   saveOfferPrefs,
 } from "../platform/plugin_offers.js";
@@ -54,7 +53,6 @@ export class PluginOffers {
   private readonly json = new Map<string, Promise<unknown>>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private generation = 0;
-  private closeToast: (() => void) | undefined;
   private closeNotice: (() => void) | undefined;
 
   constructor(
@@ -102,7 +100,6 @@ export class PluginOffers {
   setEnabled(on: boolean): void {
     this.prefs = { ...this.prefs, off: !on, dismissed: on ? [] : this.prefs.dismissed };
     saveOfferPrefs(this.prefs);
-    if (!on) this.closeToast?.();
     this.applicable = on ? this.applicable : [];
     this.changed();
     this.schedule(0);
@@ -161,14 +158,11 @@ export class PluginOffers {
     );
     const scene = this.scene();
     const applicable: string[] = [];
-    // Listed only, never toasted, for this data.
-    const listOnly = new Set<string>();
     for (const id of candidates) {
       const entry = this.catalogue.find((e) => e.manifest.id === id)!;
       try {
         const applies = await entry.offer!.applies(scene);
         if (applies) applicable.push(id);
-        if (applies === "list") listOnly.add(id);
       } catch {
         // An offer that cannot tell offers nothing.
       }
@@ -178,8 +172,8 @@ export class PluginOffers {
     this.uses = uses;
     this.applicable = applicable;
     if (JSON.stringify([uses, applicable]) !== before) this.changed();
+    // Only a workspace that uses a tool that is off is said; tools that would suit the data are not recommended.
     this.notice(uses.filter((id) => !this.noticed.has(id)));
-    this.toast(offersToToast(applicable, (id) => !listOnly.has(id) && this.catalogue.find((e) => e.manifest.id === id)?.offer?.toast === true, this.prefs, this.noticed));
   }
 
   private nameOf(id: string): string {
@@ -204,22 +198,4 @@ export class PluginOffers {
     );
   }
 
-  /** One toast for the offers new here; each is toasted once per browser. */
-  private toast(ids: string[]): void {
-    if (ids.length === 0) return;
-    this.prefs = { ...this.prefs, toasted: [...new Set([...this.prefs.toasted, ...ids])] };
-    saveOfferPrefs(this.prefs);
-    this.closeToast?.();
-    const pitch = (id: string) => this.catalogue.find((e) => e.manifest.id === id)?.offer?.pitch ?? "";
-    this.closeToast =
-      ids.length === 1
-        ? offer(`${this.nameOf(ids[0])}: ${pitch(ids[0])}.`, [
-            { label: "Not now", run: () => this.notNow(ids) },
-            { label: "Turn on", primary: true, run: () => this.accept(ids) },
-          ])
-        : offer(`Tools for this data: ${ids.map((id) => `${this.nameOf(id)} (${pitch(id)})`).join("; ")}.`, [
-            { label: "Not now", run: () => this.notNow(ids) },
-            ...ids.map((id) => ({ label: `Turn on ${this.nameOf(id)}`, primary: true, run: () => this.accept([id]) })),
-          ]);
-  }
 }

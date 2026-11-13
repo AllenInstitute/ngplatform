@@ -607,16 +607,6 @@ kbd {
 .plugin-group .section-title { margin-top: 0; }
 .plugin-head .link { font-size: var(--fs-body); }
 
-/* tools that are off, offered for the data in the Datasets tab */
-.ds-offers { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); margin: 10px 0 var(--sp-2); }
-.ds-offers[hidden] { display: none; }
-.ds-offers-title { color: var(--muted); font-size: var(--fs-body); margin-right: var(--sp-1); }
-.offer-chip { display: inline-flex; align-items: center; border: 1px solid var(--line-strong); font-size: var(--fs-body); }
-.offer-on { display: inline-flex; align-items: center; gap: var(--sp-2); padding: 3px var(--sp-3); background: none; border: 0; color: var(--text); cursor: pointer; font: inherit; }
-.offer-on:hover { color: var(--text-strong); background: var(--hover); }
-.offer-on svg { width: 12px; height: 12px; }
-.offer-chip .offer-no { opacity: 0.6; }
-.offer-chip .offer-no:hover { opacity: 1; }
 
 /* sign-in */
 .auth-list { display: grid; gap: var(--sp-4); }

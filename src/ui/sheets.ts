@@ -431,11 +431,6 @@ const SECTION_RENDER: Record<SettingsSection, (host: HTMLElement, wb: Workbench)
   view: (host, wb) => {
     const settings = h("div", { class: "view-settings" });
     const dispose = wb.engine.mountSettings(settings);
-    // Kept in this browser: offers of the plugins that are off (src/ui/plugin_offers.ts).
-    const offers = checkbox("Offer tools that are off when the data suits them", wb.offers.enabled, (v) => wb.offers.setEnabled(v), {
-      info: "Ticking it again brings back the offers you said “Not now” to.",
-    });
-    offers.input.id = "show-offers";
     settings.append(
       h(
         "section",
@@ -449,7 +444,6 @@ const SECTION_RENDER: Record<SettingsSection, (host: HTMLElement, wb: Workbench)
         h(
           "div",
           { class: "options" },
-          offers,
           h("div", { class: "row-actions" }, h("button", { class: "btn outline", type: "button", onclick: () => wb.run("view.panelConvention") }, "Orientation of the views…")),
         ),
       ),

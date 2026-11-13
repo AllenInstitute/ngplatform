@@ -8,8 +8,7 @@
  * box with its row.  Selecting a dataset opens its card; its arrow opens
  * and closes it, and several may be open.  Datasets that other
  * scenes show are offered in the Open sheet and the Add a dataset sheet,
- * not here.  Below the list, up to three tools that are off but would serve
- * this data, the rest behind More.
+ * not here.  Tools are not recommended here (the Plugins panel lists them).
  *
  * Each row is drawn again only when what it shows changes (not on every
  * move of the views, and not when another dataset changes), and the
@@ -17,7 +16,7 @@
  */
 import type { LayerInfo } from "../../engine/engine.js";
 import { checkbox, emptyState, type OnOff } from "../../sdk/dom.js";
-import { clear, h, icon, iconButton } from "../dom.js";
+import { clear, h, iconButton } from "../dom.js";
 import { promptDialog, showMenu } from "../overlays.js";
 import type { Workbench } from "../workbench.js";
 import { sourceName } from "./format.js";
@@ -82,51 +81,8 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
     h("button", { class: "btn small", type: "button", onclick: () => wb.run("dataset.reconnectLocal") }, "Allow access"),
   );
   const gone = h("div", { class: "note-bar", hidden: true });
-  // Tools that are off but would serve this scene's data (src/ui/plugin_offers.ts).
-  const tools = h("div", { class: "ds-offers", hidden: true });
   const actions = h("div", { class: "panel-actions" }, h("span", { class: "section-title" }, "Data"), addButton);
-  host.append(actions, permission, gone, list, tools);
-
-  /** The tools shown as buttons; the rest are behind More. */
-  const SHOWN = 3;
-  const renderOffers = () => {
-    const items = wb.offers.list();
-    tools.hidden = items.length === 0;
-    const more = items.slice(SHOWN);
-    const moreButton: HTMLButtonElement = h(
-      "button",
-      {
-        class: "btn small outline",
-        type: "button",
-        "aria-haspopup": "menu",
-        onclick: () => showMenu(moreButton, more.map((item) => ({ label: `Turn on ${item.name}`, detail: item.pitch, run: () => wb.offers.accept([item.id]) }))),
-      },
-      "More…",
-    ) as HTMLButtonElement;
-    clear(
-      tools,
-      h("span", { class: "ds-offers-title" }, "Tools for this data"),
-      ...items.slice(0, SHOWN).map((item) =>
-        h(
-          "span",
-          { class: "offer-chip" },
-          h(
-            "button",
-            {
-              class: "offer-on",
-              type: "button",
-              title: item.uses ? `This workspace uses ${item.name}, which is off. Turn it on.` : `Turn on ${item.name}: ${item.pitch}`,
-              onclick: () => wb.offers.accept([item.id]),
-            },
-            icon("plus"),
-            item.name,
-          ),
-          item.uses ? null : iconButton("close", `Not now: stop offering ${item.name}`, () => wb.offers.notNow([item.id]), { class: "btn icon offer-no" }),
-        ),
-      ),
-      more.length ? moreButton : null,
-    );
-  };
+  host.append(actions, permission, gone, list);
 
   const render = () => {
     const localBase = `${wb.localData.base}local/`;
@@ -437,9 +393,8 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
     return h("div", { class: "ds-group" }, head, views);
   };
 
-  const offs = [store.onChange(render), engine.onLayersChanged(render), engine.onSelectionChanged(render), wb.localData.onChange(render), wb.offers.onChange(renderOffers)];
+  const offs = [store.onChange(render), engine.onLayersChanged(render), engine.onSelectionChanged(render), wb.localData.onChange(render)];
   render();
-  renderOffers();
   return () => {
     offs.forEach((off) => off());
     for (const id of [...cards.keys()]) dropCard(id);
