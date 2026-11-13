@@ -189,7 +189,12 @@ export interface SessionInfo {
 /** Objects for a session: a precomputed segmentation's segments (their meshes), the meshes' level of detail, and the voxels the image within them may take. */
 export interface ObjectsSpec {
   url: string;
-  ids: string[];
+  /** A precomputed segmentation's segments (the default); or "zarr-vectors": a store's geometry, drawn with the volume. */
+  store?: "zarr-vectors";
+  /** For a store: the finest level within this many vertices, and the radius of its tubes and points (mm). */
+  vertices?: number;
+  radius_mm?: number;
+  ids?: string[];
   lod?: number;
   budget?: number;
   /** What is inside: the meshes (the default), or the segmentation's own labels (as exact as its voxels). */

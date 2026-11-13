@@ -4,7 +4,7 @@
  * camera of before, read into them.
  */
 import { describe, expect, it } from "vitest";
-import { readSaved } from "../plugin.js";
+import { readSaved, zarrVectorsStore } from "../plugin.js";
 import { planeClip, planeFromView } from "../view.js";
 
 // Display coordinates in mm; a camera looking along -z (as frame3d's) and one looking along +x.
@@ -58,5 +58,13 @@ describe("camera planes saved", () => {
     const following = readSaved({ viewCut: { on: true, offset: 3, fixed: null } }).planes;
     expect(following).toEqual([{ name: "Plane 1", on: true, normal: [0, 0, 0], point: [0, 0, 0], offset: 3 }]);
     expect(readSaved({ viewCut: { on: false, offset: 3, fixed: null } }).planes).toEqual([]);
+  });
+});
+
+describe("a Zarr Vectors layer's store, for objects", () => {
+  it("is its source without the format, as the render computer reads it", () => {
+    expect(zarrVectorsStore("https://h/b/t.zarrvectors/|zarr-vectors:")).toBe("https://h/b/t.zarrvectors/");
+    expect(zarrVectorsStore("zarr-vectors://gs://b/t.zv/")).toBe("gs://b/t.zv/");
+    expect(zarrVectorsStore("precomputed://gs://b/seg")).toBeUndefined();
   });
 });

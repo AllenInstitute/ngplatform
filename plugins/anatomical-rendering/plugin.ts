@@ -118,6 +118,13 @@ export interface Saved {
   splat: { views: number; size: number; samples: number; cover: number; steps: number };
 }
 
+/** A Zarr Vectors layer's store (`…|zarr-vectors:`, `zarr-vectors://…`), as the render computer reads it; else undefined. */
+export function zarrVectorsStore(source: string | undefined): string | undefined {
+  const s = source?.trim() ?? "";
+  const m = /^zarr-vectors:\/\/(.+)$/i.exec(s) ?? /^(.+?)\|zarr-vectors:?\s*$/i.exec(s);
+  return m ? m[1].replace(/\|.*$/, "") : undefined;
+}
+
 /** The most segments drawn as objects at once (the render computer takes up to 64). */
 const MAX_OBJECTS = 64;
 
@@ -712,10 +719,15 @@ class AnatomicalRendering {
     this.panelUpdate?.();
   }
 
-  /** The segmentation layer whose chosen segments are the objects: the one named, else the first precomputed one. */
+  /** The layers that can be objects: precomputed segmentations (their chosen segments) and Zarr Vectors stores (their geometry). */
+  private objectLayers(): LayerInfo[] {
+    return this.ctx.viewer.layers().filter((l) => zarrVectorsStore(l.sources[0]) !== undefined || (l.type === "segmentation" && /^precomputed:\/\//i.test(l.sources[0]?.trim() ?? "")));
+  }
+
+  /** The layer whose objects are drawn: the one named, else the first. */
   private objectsLayer(): LayerInfo | undefined {
-    const segs = this.ctx.viewer.layers().filter((l) => l.type === "segmentation" && /^precomputed:\/\//i.test(l.sources[0]?.trim() ?? ""));
-    return segs.find((l) => l.name === this.saved.objects.layer) ?? segs[0];
+    const layers = this.objectLayers();
+    return layers.find((l) => l.name === this.saved.objects.layer) ?? layers[0];
   }
 
   /** The objects a session is opened with: the objects layer's chosen segments (the first 64), on a render computer; else undefined. */
@@ -723,6 +735,8 @@ class AnatomicalRendering {
     const o = this.saved.objects;
     if (!o.on || this.saved.where !== "host") return undefined;
     const layer = this.objectsLayer();
+    const store = layer ? zarrVectorsStore(layer.sources[0]) : undefined;
+    if (store !== undefined) return { url: store, store: "zarr-vectors", vertices: Math.round(o.budget / 75) };
     const url = layer ? renderSource(layer.sources[0]) : undefined;
     if (layer === undefined || url === undefined || !url.startsWith("precomputed://")) return undefined;
     const seen = this.ctx.viewer.visibleSegments(layer.name);
@@ -737,7 +751,8 @@ class AnatomicalRendering {
     const layer = this.objectsLayer();
     if (spec === undefined || layer === undefined) return { show: false };
     const o = this.saved.objects;
-    const colors = Object.fromEntries(spec.ids.map((id): [string, [number, number, number]] => [id, this.ctx.viewer.segmentColour(layer.name, BigInt(id)) ?? [0.85, 0.6, 0.45]]));
+    if (spec.store === "zarr-vectors") return { show: true, surface: 1, image: false, mix: 0 };
+    const colors = Object.fromEntries((spec.ids ?? []).map((id): [string, [number, number, number]] => [id, this.ctx.viewer.segmentColour(layer.name, BigInt(id)) ?? [0.85, 0.6, 0.45]]));
     return { show: true, surface: o.surface, image: o.image, mix: o.mix, colors };
   }
 
@@ -1969,7 +1984,7 @@ class AnatomicalRendering {
     const regions = card("anatomical.regions", "Regions", {}, regionsEmpty, regionsBody);
 
     // ------------------------------------------------------------- Objects
-    const objectsEmpty = emptyState("No precomputed segmentation in this scene.", openData);
+    const objectsEmpty = emptyState("No precomputed segmentation or Zarr Vectors layer in this scene.", openData);
     const objectsOn = toggle("Draw objects", false, (v) => {
       this.save((x) => (x.objects = { ...x.objects, on: v }));
       this.update();
@@ -1994,14 +2009,16 @@ class AnatomicalRendering {
       this.update();
     }, "Inside by");
     const objectsNote = el("p", { class: "hint" });
+    const surfaceField = field("Surfaces", objectSurface, { info: "0: clear (the image within them alone); 1: opaque." });
+    const insideField = field("Inside by", objectInside, { info: "What a voxel is inside: the segments' meshes, or the segmentation's own labels (exact to its voxels; the meshes are simplified from it)." });
     const objectsBody = el("div", { class: "stack" },
       objectsOn,
       field("Objects from", objectsLayer, { info: "A segmentation with meshes: its chosen segments (up to 64) are the objects." }),
-      field("Surfaces", objectSurface, { info: "0: clear (the image within them alone); 1: opaque." }),
+      surfaceField,
       objectImage,
       field("Segment colour", objectMix, { info: "How much each segment's colour tints the image within it." }),
       field("Image within", objectBudget, { info: "The voxels the image within the objects may take on the GPU: the finest stored level within this." }),
-      field("Inside by", objectInside, { info: "What a voxel is inside: the segments' meshes, or the segmentation's own labels (exact to its voxels; the meshes are simplified from it)." }),
+      insideField,
       objectsNote,
     );
     const objectsCard = card("anatomical.objects", "Objects", {}, objectsEmpty, objectsBody);
@@ -2382,7 +2399,7 @@ class AnatomicalRendering {
       keep.set(s.keep);
 
       // Objects (a computer's renderer only).
-      const objSegs = this.ctx.viewer.layers().filter((l) => l.type === "segmentation" && /^precomputed:\/\//i.test(l.sources[0]?.trim() ?? ""));
+      const objSegs = this.objectLayers();
       objectsCard.hidden = !onHost_ || imgs.length === 0;
       objectsEmpty.hidden = objSegs.length > 0;
       objectsBody.hidden = objSegs.length === 0;
@@ -2395,7 +2412,13 @@ class AnatomicalRendering {
       objectInside.set(s.objects.inside);
       const seen = s.objects.on && this.objectsLayer() ? this.ctx.viewer.visibleSegments(this.objectsLayer()!.name) : undefined;
       const om = this.session?.objects;
+      const zvLayer = this.objectsLayer() ? zarrVectorsStore(this.objectsLayer()!.sources[0]) !== undefined : false;
+      // A store's surfaces are solid and hold no image: no Surfaces, Inside by or Image within.
+      surfaceField.hidden = zvLayer;
+      insideField.hidden = zvLayer;
+      objectImage.hidden = zvLayer;
       objectsNote.textContent = !s.objects.on ? ""
+        : zvLayer ? (om ? `The store's ${String((om as Record<string, unknown>).kind ?? "geometry")} (level ${String((om as Record<string, unknown>).level ?? "?")}) as solid surfaces in the volume.` : "The store's geometry, as solid surfaces in the volume: read when the computer opens it.")
         : seen === undefined || seen.all || seen.size === 0 ? "Choose segments in the layer: they are the objects."
         : om ? `${om.ids.length} segment${om.ids.length === 1 ? "" : "s"}, ${(om.triangles / 1e6).toFixed(1)} M triangles; the image within at ${om.level} (${(om.inside_voxels / 1e6).toFixed(0)} M voxels inside, ${om.bricks} bricks)${seen.size > MAX_OBJECTS ? `; the first ${MAX_OBJECTS} of ${seen.size}` : ""}.`
         : `${Math.min(seen.size, MAX_OBJECTS)} segment${seen.size === 1 ? "" : "s"}${seen.size > MAX_OBJECTS ? ` (the first ${MAX_OBJECTS} of ${seen.size})` : ""}: read when the computer opens them.`;
