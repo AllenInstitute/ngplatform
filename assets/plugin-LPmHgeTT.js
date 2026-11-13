@@ -1,4 +1,4 @@
-import{e as y,m as $,i as J,r as H,a as A,f as b,o as z,c as K,j as U,d as Y,n as L,p as q}from"./dom-CEvR2cwn.js";import{a as V}from"./manifest-D8pUAIm1.js";const R=[["gaussian","Gaussian"],["mean","Mean"],["median","Median"],["dog","Difference of Gaussians"],["frangi","Frangi vesselness"],["threshold","Threshold"],["morphology","Morphology (open, close)"],["python","Python (your own)"]],Q=`#halo 0
+import{e as y,m as $,i as J,r as H,a as A,f as b,o as z,c as K,j as U,d as Y,n as L,p as q}from"./dom-SP1g9eJL.js";import{a as V}from"./manifest-D8pUAIm1.js";const R=[["gaussian","Gaussian"],["mean","Mean"],["median","Median"],["dog","Difference of Gaussians"],["frangi","Frangi vesselness"],["threshold","Threshold"],["morphology","Morphology (open, close)"],["python","Python (your own)"]],Q=`#halo 0
 #output float32 image
 # apply gets each block (a NumPy array, z, y, x) with #halo voxels of context
 # on each side, and returns the block computed. numpy is np; scipy and
