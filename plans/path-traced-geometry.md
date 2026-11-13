@@ -178,9 +178,13 @@ precomputed segmentation, the image within them, no streaming.
   two-level page table.
 - [x] Tracer (`kernels.py`: `trace_obj`, `firsthit_obj`), `Renderer.set_objects`.
 - [x] Sessions take `objects`; the Objects card.
-- [ ] Speed: one majorant over all bricks makes close views slow (about
-  0.4 s a pass at 1280 × 960 inside a cell); per-brick majorants, fast
-  tracking while the camera moves.
+- [x] Speed, measured (2026-11-13, a 1,100 µm³ cell at 32 nm, 640 × 480):
+  81 ms a pass with the image within, 17 with surfaces alone; the mesh's
+  detail hardly matters (67 ms with 5% of the triangles). Fast tracking
+  while the camera moves (113 ms) and majorants per 4³ cell (112 ms) were
+  both slower: the EM is dense nearly everywhere inside a cell, so exact
+  tracking already stops after a few steps. Moving frames are half size
+  (about 20 ms).
 - [ ] Stills and movies (jobs) with objects; the browser renderer.
 - [ ] An EM preset among the built-in presets.
 
