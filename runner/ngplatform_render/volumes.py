@@ -52,7 +52,7 @@ def is_n5(url: str) -> bool:
 
 def http_url(url: str) -> str:
     url = url.strip()
-    for p in ("zarr3://", "zarr2://", "zarr://", "n5://"):
+    for p in ("zarr3://", "zarr2://", "zarr://", "n5://", "precomputed://"):
         if url.startswith(p):
             url = url[len(p):]
     url = url.split("|")[0]
@@ -92,6 +92,7 @@ class Multiscale:
     labels: bool = False
     n5: bool = False
     types: list[str] = field(default_factory=list)  # array axes' OME types ("space", "channel", "time", or "")
+    precomputed: dict | None = None  # a Neuroglancer precomputed image's info (precomputed.py)
 
     def channel_axis(self) -> int | None:
         return _axis_of(self, "channel", ("c", "channel", "ch"))
@@ -324,9 +325,13 @@ def _open_n5(url: str) -> Multiscale:
 
 
 def level_array(url: str, ms: Multiscale, path: str):
-    """A level's array: zarr's, or an N5Array."""
+    """A level's array: zarr's, an N5Array, or a precomputed scale's."""
     import zarr
 
+    if ms.precomputed is not None:
+        from .precomputed import level_array as precomputed_level
+
+        return precomputed_level(url, ms, path)
     if ms.n5:
         return N5Array(http_url(url), path)
     return zarr.open_group(store=_store(url), mode="r")[path]
@@ -362,6 +367,10 @@ def _mat_scale_translate(transforms: list[dict], ndim: int) -> np.ndarray:
 def open_multiscale(url: str) -> Multiscale:
     import zarr
 
+    from .precomputed import is_precomputed, open_precomputed
+
+    if is_precomputed(url):
+        return open_precomputed(url)
     if is_n5(url):
         return _open_n5(url)
     store = _store(url)
@@ -460,6 +469,10 @@ def cache_info() -> dict[str, Any]:
 
 
 def _metadata_files(url: str, ms: Multiscale, level: Level) -> list[str]:
+    if ms.precomputed is not None:
+        from .precomputed import base_url
+
+        return [f"{base_url(url)}/info"]
     base = http_url(url)
     if ms.n5:
         return [f"{base}/{level.path}/attributes.json"]
@@ -596,7 +609,7 @@ def _read(url: str, level: Level, ms: Multiscale, progress: Callable[[float, str
     arr = level_array(url, ms, level.path)
     shard = getattr(arr, "shards", None) or arr.chunks
     # A sharded level on a server: whole shards, one GET each (blocks are whole shards, so each is read once).
-    whole = _WholeShards(url, level.path, arr) if (not ms.n5 and getattr(arr, "shards", None) and _remote(url)) else None
+    whole = _WholeShards(url, level.path, arr) if (not ms.n5 and ms.precomputed is None and getattr(arr, "shards", None) and _remote(url)) else None
     zi, yi, xi = ms.spatial[2], ms.spatial[1], ms.spatial[0]
     n = (arr.shape[zi], arr.shape[yi], arr.shape[xi])
     # Blocks: the chunk (or shard) shape, grown to at least 64 MB and to a multiple of the factor.

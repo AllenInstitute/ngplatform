@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { halfToFloat, hostLink } from "../client.js";
 import { invert4 } from "../draw.js";
 import { farFrom, readSaved } from "../plugin.js";
-import { ANATOMICAL_VIEWS, anatomicalSides, axesCheck, clipPlanes, columnMajor, displayFromPhysical, lightDirection, metadataBase, omeZarrSource, orientationLooking, safeHref, unitMm, viewButtons } from "../view.js";
+import { ANATOMICAL_VIEWS, anatomicalSides, axesCheck, clipPlanes, columnMajor, displayFromPhysical, lightDirection, metadataBase, omeZarrSource, orientationLooking, renderSource, safeHref, unitMm, viewButtons } from "../view.js";
 
 const MM = { names: ["x", "y", "z"], scales: [1e-3, 1e-3, 1e-3], units: ["m", "m", "m"] };
 
@@ -41,6 +41,12 @@ describe("anatomical rendering views", () => {
     expect(omeZarrSource("zarr3://https://h/a.ome.zarr/")).toBe("https://h/a.ome.zarr");
     expect(omeZarrSource("gs://b/p.ome.zarr/|zarr3:")).toBe("gs://b/p.ome.zarr");
     expect(omeZarrSource("precomputed://gs://b/p")).toBeUndefined();
+    // Precomputed images render too, named as Neuroglancer names them.
+    expect(renderSource("precomputed://gs://iarpa_microns/minnie/minnie65/em")).toBe("precomputed://gs://iarpa_microns/minnie/minnie65/em");
+    expect(renderSource("precomputed://https://h/em/|neuroglancer-precomputed:")).toBe("precomputed://https://h/em");
+    expect(renderSource("zarr3://gs://b/x.ome.zarr/")).toBe("gs://b/x.ome.zarr");
+    expect(renderSource("precomputed://relative")).toBeUndefined();
+    expect(metadataBase("precomputed://gs://b/em")).toBeUndefined();
   });
 
   it("reads half floats and links", () => {

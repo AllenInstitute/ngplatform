@@ -125,6 +125,20 @@ export function lightDirection(azimuth: number, elevation: number): [number, num
   return [Math.sin(a) * Math.cos(e), Math.sin(e), Math.cos(a) * Math.cos(e)];
 }
 
+/**
+ * The image a layer's source names, as the service and this browser read it: an OME-Zarr or N5 store
+ * (omeZarrSource), or a Neuroglancer precomputed image as `precomputed://<url>` (gs:// and s3:// kept,
+ * no trailing "/"); undefined for other formats.
+ */
+export function renderSource(source: string | undefined): string | undefined {
+  const ome = omeZarrSource(source);
+  if (ome !== undefined) return ome;
+  const m = /^precomputed:\/\/(.+?)(\|.*)?$/i.exec(source?.trim() ?? "");
+  if (m === null) return undefined;
+  const url = m[1].replace(/\/+$/, "");
+  return /^(https?|gs|s3):\/\//.test(url) ? `precomputed://${url}` : undefined;
+}
+
 /** The OME-Zarr store a layer's source names, as the service reads it (http(s), gs:// or s3:// kept); undefined for other formats. */
 export function omeZarrSource(source: string | undefined): string | undefined {
   if (source === undefined) return undefined;
@@ -336,7 +350,7 @@ export function safeHref(url: unknown): string | undefined {
 
 /** Where a page can read a store's metadata (gs:// as Google Cloud Storage's public address); undefined for a host's own paths and s3. */
 export function metadataBase(url: string): string | undefined {
-  if (url.startsWith("n5://")) return undefined;
+  if (url.startsWith("n5://") || url.startsWith("precomputed://")) return undefined;
   if (/^https?:\/\//.test(url)) return url.replace(/\/+$/, "");
   const gs = /^gs:\/\/(.+)$/.exec(url);
   return gs ? `https://storage.googleapis.com/${gs[1].replace(/\/+$/, "")}` : undefined;

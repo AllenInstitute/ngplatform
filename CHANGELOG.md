@@ -231,6 +231,14 @@ The production polish: the work of an audit of every panel and plugin
   name only when it is not ready (a turning ring loading, a red triangle
   failed).
 
+- Anatomical rendering reads Neuroglancer precomputed images too (the
+  MICrONS EM, `precomputed://gs://iarpa_microns/minnie/minnie65/em`), in
+  this browser and on the render computer: raw or JPEG chunks, sharded or
+  not, a scale within the budget.
+- Rendering's window ends, cut and plane offsets and box edges render live
+  (the object at low resolution) while their sliders are dragged, as the
+  colourmap, density and light already did; one undo step when let go.
+
 - Cloud Storage is read through its JSON API in the browser (volume view,
   precomputed reads, collections, orientations, time series, plugin
   offers), so buckets without CORS settings read as they do in Neuroglancer.

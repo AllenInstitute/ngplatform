@@ -10,7 +10,7 @@
  * Kept apart from the plugins' code, which loads only when a plugin is on.
  */
 import { isCollection, parentGroups } from "./collections/collection.js";
-import { omeZarrSource } from "./anatomical-rendering/view.js";
+import { renderSource } from "./anatomical-rendering/view.js";
 import { precomputedUrl } from "@ngplatform/sdk/sources";
 import { omeZarrUrl } from "./volume-view/sources.js";
 
@@ -123,8 +123,8 @@ export const OFFERS: Record<string, Offer> = {
   "org.ngplatform.anatomical-rendering": {
     pitch: "photorealistic, path-traced views on a GPU",
     toast: false,
-    // What it reads: OME-Zarr and N5 images (not precomputed EM).
-    applies: (scene) => images(scene).some((l) => omeZarrSource(l.sources[0]) !== undefined),
+    // What it reads: OME-Zarr, N5 and precomputed images.
+    applies: (scene) => images(scene).some((l) => renderSource(l.sources[0]) !== undefined),
   },
   "org.ngplatform.registration": {
     pitch: "move one image onto another",

@@ -9,7 +9,7 @@ import presetsJson from "../../../runner/ngplatform_render/presets/brain.json";
 import organPresetsJson from "../../../runner/ngplatform_render/presets/hipct-organs.json";
 import generalPresetsJson from "../../../runner/ngplatform_render/presets/general.json";
 import params from "../../../runner/ngplatform_render/params.json";
-import { storeHttpUrl } from "../../volume-view/sources.js";
+import { PRECOMPUTED, precomputedUrl, storeHttpUrl } from "../../volume-view/sources.js";
 import { VolumeClient } from "../../volume-view/volume_client.js";
 import type { ViewSpec } from "../client.js";
 import shaderSource from "./pathtrace.wgsl?raw";
@@ -507,7 +507,9 @@ export interface Level8 {
  * `url` is the store as the host takes it (gs:// and s3:// kept): read here at its http(s) address.
  */
 export async function readLevel(client: VolumeClient, url: string, budget: number, maxDim: number, progress?: (msg: string) => void): Promise<Level8> {
-  const http = storeHttpUrl(url.endsWith("/") ? url : `${url}/`);
+  // A precomputed image (precomputed://…) is read as the volume view reads one: `precomputed:<http url>`.
+  const pre = url.startsWith("precomputed://") ? precomputedUrl(url) : undefined;
+  const http = pre !== undefined ? PRECOMPUTED + pre : storeHttpUrl(url.endsWith("/") ? url : `${url}/`);
   if (http === undefined) throw new Error(`${url}: this browser reads stores over http(s), gs:// and s3:// only`);
   // All of the image's values read as 0..255, as the host holds them: the densest tissue not cut off.
   const { levels, window: range } = await client.open([http], undefined, { full: true });
