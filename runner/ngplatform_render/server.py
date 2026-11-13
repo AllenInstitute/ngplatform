@@ -81,6 +81,8 @@ MAX_STILL_WORK = 8192 * 8192 * 256
 MAX_MOVIE_FRAMES = 18_000
 MAX_MOVIE_PIXELS = 3e10  # its frames' PNGs on disk, about a byte a pixel
 MAX_MOVIE_WORK = 4e12
+#: Voxels of the image within objects read first, so they show while the whole budget's are read.
+COARSE_OBJECTS = 16_000_000
 #: How many finished movies, stills and splats are listed.
 KEEP_FINISHED = 20
 FINISHED = ("done", "failed", "cancelled")
@@ -200,6 +202,9 @@ def session_need(spec: dict[str, Any], gpu: Gpu) -> dict[str, int]:
     detail = float(v.get("detail_budget", 256e6))
     out["detail"] = rmod.volume_bytes(_cube(detail), 2) if detail > 0 else 0
     out["frame"] = rmod.renderer_bytes(*SESSION_FRAME, _cube(budget))
+    if spec.get("objects"):
+        # The image within the objects (a byte a voxel, within its budget) and their meshes' BVH (a guess).
+        out["objects"] = int(spec["objects"].get("budget") or 300_000_000) + (64 << 20)
     return out
 
 
@@ -244,6 +249,8 @@ class Session:
         # Objects (objects.py): their meshes' BVH and the image within them, and what was read.
         self.loaded_objects: tuple[Any, Any, list[int]] | None = None
         self.objects_meta: dict[str, Any] | None = None
+        # The image within the objects read again within the whole budget, after a coarse first one: waiting to be taken up.
+        self._objects_pending: Any = None
         self.cond = threading.Condition()
         self.view: dict[str, Any] | None = None
         self.view_version = 0
@@ -312,11 +319,31 @@ class Session:
                 return a
             return np.clip((a.astype(np.float32) - lo) * (255.0 / max(hi - lo, 1e-12)), 0, 255).astype(np.uint8)
 
+        budget = int(spec.get("budget") or 300_000_000)
+        # A coarse one first (a few M voxels: seconds), so the objects show while the rest is read; then the whole budget's.
+        first = budget if spec.get("level") or budget <= COARSE_OBJECTS else COARSE_OBJECTS
         with self.gpu_device():
-            ob = objects.build(url, ms, tris, bvh, int(spec.get("budget") or 300_000_000), to_u8, self._set_progress, closed, spec.get("level"))
+            ob = objects.build(url, ms, tris, bvh, first, to_u8, self._set_progress, closed, spec.get("level"))
         self.loaded_objects = (bvh, ob, ids)
         self.objects_meta = {"url": spec["url"], "ids": [str(i) for i in ids], "triangles": int(len(tris)), "level": ob.level,
                              "page": list(ob.page), "bricks": ob.bricks, "inside_voxels": ob.inside_voxels, **ob.stats}
+        if first < budget:
+            def finer() -> None:
+                try:
+                    with self.gpu_device():
+                        fine = objects.build(url, ms, tris, bvh, budget, to_u8,
+                                             lambda f, m: self.objects_meta.__setitem__("reading", m), closed)
+                except Exception as e:  # noqa: BLE001 - the coarse one stays
+                    self.objects_meta["reading"] = f"stopped: {e}"
+                    return
+                if self.closed or fine.level == ob.level:
+                    self.objects_meta.pop("reading", None)
+                    return
+                with self.cond:
+                    self._objects_pending = fine
+                    self.cond.notify_all()
+
+            threading.Thread(target=finer, daemon=True).start()
 
     def gpu_device(self):
         import cupy
@@ -681,6 +708,20 @@ class Session:
             unit_mm=float(view.get("unit_mm", 1.0)),
         )
 
+    def _take_objects(self, R) -> bool:
+        """The image within the objects read within the whole budget, in place of the coarse one, when it has come."""
+        with self.cond:
+            fine, self._objects_pending = self._objects_pending, None
+        if fine is None or self.loaded_objects is None:
+            return False
+        bvh, _, ids = self.loaded_objects
+        self.loaded_objects = (bvh, fine, ids)
+        self.objects_meta.pop("reading", None)
+        self.objects_meta.update({"level": fine.level, "page": list(fine.page), "bricks": fine.bricks, "inside_voxels": fine.inside_voxels, **fine.stats})
+        if R.objects is not None:
+            R.set_objects(None)  # placed again, with these bricks, as the view is set
+        return True
+
     def _place_objects(self, R, view: dict[str, Any] | None, wfp: np.ndarray) -> None:
         """The objects on the renderer as the view asks (shown or not, surfaces, the image within them, colours by id)."""
         from . import renderer
@@ -692,7 +733,7 @@ class Session:
         bvh, ob, ids = self.loaded_objects
         given = {str(k): v for k, v in (view.get("colors") or {}).items()}
         colours = np.array([[float(x) for x in given.get(str(i), (0.85, 0.6, 0.45))[:3]] for i in ids], np.float32)
-        if R.objects is None or not np.array_equal(R.objects.colours, colours):
+        if R.objects is None or R.objects.bricks is not ob or not np.array_equal(R.objects.colours, colours):
             R.set_objects(renderer.Objects(bvh, ob, colours, wfp))
         R.objects.world_from_physical = wfp
         R.set_object_look(float(view.get("surface", 0.3)), bool(view.get("image", True)), float(view.get("mix", 0.0)))
@@ -721,14 +762,14 @@ class Session:
         still_fast = False
         while not self.closed:
             with self.cond:
-                while not self.closed and (self._unwatched() or (self._detail_pending is None and (
+                while not self.closed and (self._unwatched() or (self._detail_pending is None and self._objects_pending is None and (
                         self.view is None or (self.applied_version == self.view_version and R.samples >= self.max_samples)))):
                     self.cond.wait(timeout=1.0)
                 if self.closed:
                     return
                 version, view = self.view_version, self.view
             try:
-                swapped = self._take_detail(R)
+                swapped = self._take_detail(R) | self._take_objects(R)
                 if swapped:
                     self.applied_version = -1  # the view starts again, with the detail
                 if view is None:

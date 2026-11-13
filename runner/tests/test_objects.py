@@ -218,3 +218,53 @@ def test_a_session_draws_chosen_segments_and_the_image_within_them(tmp_path, mon
     still = np.asarray(Image.open(info["file"]).convert("RGBA"))
     assert still[32, 32, :3].mean() > 60 and still[0, 0, :3].max() == 0, (still[32, 32], still[0, 0])
     srv.shutdown()
+
+
+def test_a_session_shows_a_coarse_image_within_its_objects_first_then_the_whole_budgets(tmp_path, monkeypatch):
+    import threading
+    import time
+    import urllib.request
+
+    from ngplatform_render import server
+
+    monkeypatch.setenv("NGP_RENDER_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setattr(server, "COARSE_OBJECTS", 20_000)
+    rng = np.random.default_rng(6)
+    fine = rng.integers(120, 255, (48, 48, 48), dtype=np.uint8)
+    coarse = fine[::2, ::2, ::2].copy()
+    em = tmp_path / "em"
+    em.mkdir()
+    (em / "info").write_text(json.dumps({"type": "image", "data_type": "uint8", "num_channels": 1, "scales": [
+        {"key": "s0", "size": [48, 48, 48], "resolution": [1000, 1000, 1000], "voxel_offset": [0, 0, 0], "chunk_sizes": [[16, 16, 16]], "encoding": "raw"},
+        {"key": "s1", "size": [24, 24, 24], "resolution": [2000, 2000, 2000], "voxel_offset": [0, 0, 0], "chunk_sizes": [[8, 8, 8]], "encoding": "raw"}]}))
+    _write_unsharded(em, "s0", fine, (16, 16, 16), (0, 0, 0))
+    _write_unsharded(em, "s1", coarse, (8, 8, 8), (0, 0, 0))
+    _write_legacy_mesh_segmentation(tmp_path / "seg", 7, (_sphere(30).astype(np.float64) * 10 + 24.5) * 1000)
+    srv = server.RenderServer(0, "tok", [tmp_path], 0, tmp_path / "renders")
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_port}"
+
+    def call(method, path, body=None):
+        r = urllib.request.Request(base + path, method=method, data=None if body is None else json.dumps(body).encode(),
+                                   headers={"X-NGP-Service-Token": "tok", "Content-Type": "application/json"})
+        with urllib.request.urlopen(r, timeout=60) as f:
+            return json.loads(f.read() or b"null")
+
+    s = call("POST", "/sessions", {"volume": {"url": f"precomputed://{em}"},
+                                   "objects": {"url": f"precomputed://{tmp_path / 'seg'}", "ids": ["7"], "budget": 10**7}})
+    for _ in range(400):
+        info = call("GET", f"/sessions/{s['id']}")
+        if info["status"] != "loading":
+            break
+        time.sleep(0.05)
+    assert info["status"] == "ready", info
+    assert info["objects"]["level"] == "s1"  # the coarse one, within 20,000 voxels
+    view = {"inv_view_projection": np.eye(4).ravel().tolist(), "width": 32, "height": 32, "max_samples": 4}
+    call("PUT", f"/sessions/{s['id']}/view", view)
+    for _ in range(400):
+        info = call("GET", f"/sessions/{s['id']}")
+        if info["objects"]["level"] == "s0" and "reading" not in info["objects"]:
+            break
+        time.sleep(0.05)
+    assert info["objects"]["level"] == "s0", info["objects"]
+    srv.shutdown()
