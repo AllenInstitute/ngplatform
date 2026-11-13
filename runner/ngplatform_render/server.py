@@ -157,6 +157,25 @@ def _cube(voxels: float) -> tuple[int, int, int]:
     return (n, n, n)
 
 
+def objects_spec(o: Any) -> dict[str, Any]:
+    """A session's objects as asked for: a precomputed segmentation (url), the segments (ids, at most 64), the
+    meshes' level of detail, and the voxels the image within them may take."""
+    if not isinstance(o, dict) or not o.get("url"):
+        raise BadRequest("objects.url (a precomputed segmentation) is needed")
+    ids = o.get("ids") or []
+    if not isinstance(ids, list) or not ids or len(ids) > 64:
+        raise BadRequest("objects.ids: 1 to 64 segment ids")
+    try:
+        ids = [int(str(i)) for i in ids]
+    except ValueError:
+        raise BadRequest("objects.ids: segment ids are integers") from None
+    budget = int(number(o.get("budget", 300_000_000), "objects.budget"))
+    if not 1_000_000 <= budget <= 4_000_000_000:
+        raise BadRequest("objects.budget: 1 M to 4 G voxels")
+    return {"url": str(o["url"]), "ids": ids, "lod": int(number(o.get("lod", 1), "objects.lod")), "budget": budget,
+            **({"level": str(o["level"])} if o.get("level") else {})}
+
+
 def spec_key(part: dict[str, Any], labels: bool = False) -> tuple:
     """What a volume (or labels) is asked for by: sessions asked for alike share what one of them read and uploaded."""
     from .volumes import http_url
@@ -222,6 +241,9 @@ class Session:
         self.renderer = None
         self.loaded = None
         self.loaded_labels = None
+        # Objects (objects.py): their meshes' BVH and the image within them, and what was read.
+        self.loaded_objects: tuple[Any, Any, list[int]] | None = None
+        self.objects_meta: dict[str, Any] | None = None
         self.cond = threading.Condition()
         self.view: dict[str, Any] | None = None
         self.view_version = 0
@@ -258,6 +280,48 @@ class Session:
     # ---------------------------------------------------------------- loading
     def _set_progress(self, p: float, msg: str) -> None:
         self.progress, self.message = p, msg
+
+    def _load_objects(self, spec: dict[str, Any], url: str, L, closed) -> None:
+        """The objects' meshes (a precomputed segmentation's, by segment id), their BVH on the session's GPU, and the
+        image within them at the finest level within spec["budget"] (objects.py)."""
+        from . import geometry, objects, volumes
+        from .meshes import MeshSource
+
+        src = MeshSource(spec["url"])
+        parts, ids = [], []
+        for k, sid in enumerate(spec["ids"]):
+            if closed():
+                return
+            self._set_progress(0.0, f"reading the mesh of {sid} ({k + 1} of {len(spec['ids'])})")
+            m = src.mesh(int(sid), int(spec.get("lod", 1)))
+            if m is None or len(m.faces) == 0:
+                continue
+            parts.append((m.vertices[m.faces] * 1e-6, len(ids)))  # nm -> physical mm
+            ids.append(int(sid))
+        if not parts:
+            raise ValueError("none of the chosen segments has a mesh")
+        tris = np.concatenate([t for t, _ in parts])
+        obj = np.concatenate([np.full(len(t), i, np.int32) for t, i in parts])
+        with self.gpu_device():
+            bvh = geometry.build(tris.astype(np.float32), obj, self.device)
+        ms = volumes.open_multiscale(url)
+        lo, hi = float(L.lo), float(L.hi)
+
+        def to_u8(a: np.ndarray) -> np.ndarray:
+            if a.dtype == np.uint8 and lo == 0 and hi == 255:
+                return a
+            return np.clip((a.astype(np.float32) - lo) * (255.0 / max(hi - lo, 1e-12)), 0, 255).astype(np.uint8)
+
+        with self.gpu_device():
+            ob = objects.build(url, ms, tris, bvh, int(spec.get("budget") or 300_000_000), to_u8, self._set_progress, closed, spec.get("level"))
+        self.loaded_objects = (bvh, ob, ids)
+        self.objects_meta = {"url": spec["url"], "ids": [str(i) for i in ids], "triangles": int(len(tris)), "level": ob.level,
+                             "page": list(ob.page), "bricks": ob.bricks, "inside_voxels": ob.inside_voxels, **ob.stats}
+
+    def gpu_device(self):
+        import cupy
+
+        return cupy.cuda.Device(self.device)
 
     def _load(self) -> None:
         from . import renderer, volumes
@@ -307,6 +371,8 @@ class Session:
                 vals = np.unique(LB.data)
                 self.label_meta = {"url": lab["url"], "level": LB.level, "shape": list(LB.data.shape), "values": [int(x) for x in vals[:4096]],
                                    "affine": LB.affine.T.ravel().tolist()}
+            if self.spec.get("objects"):
+                self._load_objects(self.spec["objects"], url, L, closed)
             if self.closed:
                 self.status, self.message = "failed", "closed while loading"
                 return
@@ -590,6 +656,7 @@ class Session:
                 colors[k] = (c[0], c[1], c[2], 0.0)
             keep = {int(k) for k in lab_spec.get("keep", [])}
             mix = float(lab_spec.get("mix", 1.0))
+        self._place_objects(R, view.get("objects"), wfp)
         light = view.get("light") or {}
         crop = view.get("crop")
         if crop is None and view.get("crop_fraction"):
@@ -613,6 +680,22 @@ class Session:
             aperture=float(view.get("aperture", 0.0)), focus=float(view.get("focus", 0.0)),
             unit_mm=float(view.get("unit_mm", 1.0)),
         )
+
+    def _place_objects(self, R, view: dict[str, Any] | None, wfp: np.ndarray) -> None:
+        """The objects on the renderer as the view asks (shown or not, surfaces, the image within them, colours by id)."""
+        from . import renderer
+
+        if self.loaded_objects is None or R is None or not (view or {}).get("show", True):
+            if R is not None and R.objects is not None:
+                R.set_objects(None)
+            return
+        bvh, ob, ids = self.loaded_objects
+        given = {str(k): v for k, v in (view.get("colors") or {}).items()}
+        colours = np.array([[float(x) for x in given.get(str(i), (0.85, 0.6, 0.45))[:3]] for i in ids], np.float32)
+        if R.objects is None or not np.array_equal(R.objects.colours, colours):
+            R.set_objects(renderer.Objects(bvh, ob, colours, wfp))
+        R.objects.world_from_physical = wfp
+        R.set_object_look(float(view.get("surface", 0.3)), bool(view.get("image", True)), float(view.get("mix", 0.0)))
 
     # ---------------------------------------------------------------- the loop
     def _loop(self) -> None:
@@ -831,7 +914,7 @@ class Session:
         R = self.renderer
         return {
             "id": self.id, "status": self.status, "progress": round(self.progress, 3), "message": self.message, "error": self.error,
-            "volume": self.meta, "labels": self.label_meta, "samples": R.samples if R else 0, "ms_per_pass": round(self.passes_ms, 2),
+            "volume": self.meta, "labels": self.label_meta, "objects": self.objects_meta, "samples": R.samples if R else 0, "ms_per_pass": round(self.passes_ms, 2),
             "view_version": self.view_version, "frame": self.frame[0] if self.frame else 0,
             "detail": {"held": self.detail_meta, "reading": self.detail_loader.status if self.detail_loader else None,
                        "levels": [lv.path for _, lv in self.detail_levels], "text": self.detail_text()},
@@ -1691,9 +1774,11 @@ class Handler(BaseHTTPRequestHandler):
                 spec = self._body()
                 if not (spec.get("volume") or {}).get("url"):
                     raise BadRequest("volume.url is needed")
-                for part in ("volume", "labels"):
+                for part in ("volume", "labels", "objects"):
                     if (spec.get(part) or {}).get("url"):
                         S.check_source(spec[part]["url"])
+                if spec.get("objects"):
+                    spec["objects"] = objects_spec(spec["objects"])
                 for k in ("channel", "time"):
                     spec["volume"][k] = index_of(spec["volume"].get(k), k)
                 # Let in only when what it will hold fits the GPU budget beside the other sessions and jobs: a 503 that

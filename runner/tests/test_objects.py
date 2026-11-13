@@ -24,8 +24,9 @@ from test_precomputed import _write_unsharded  # noqa: E402
 
 def test_page_dims_are_about_cubic_in_space():
     assert objects.page_dims((8e-6, 8e-6, 40e-6)) == (32, 32, 8)
-    assert objects.page_dims((32e-6, 32e-6, 40e-6)) == (32, 32, 32)
-    assert objects.page_dims((1, 1, 1)) == (32, 32, 32)
+    assert objects.page_dims((16e-6, 16e-6, 40e-6)) == (32, 32, 16)
+    assert objects.page_dims((64e-6, 64e-6, 80e-6)) == (8, 8, 8)
+    assert objects.page_dims((1, 1, 1)) == (8, 8, 8)
 
 
 def test_the_image_is_kept_inside_the_mesh_and_nowhere_else(tmp_path):
@@ -48,7 +49,7 @@ def test_the_image_is_kept_inside_the_mesh_and_nowhere_else(tmp_path):
     tris = (tris_vox.reshape(-1, 3) @ A[:3, :3].T + A[:3, 3]).reshape(-1, 3, 3)
     bvh = geometry.build(tris.astype(np.float32))
     ob = objects.build(url, ms, tris, bvh, budget=10**8, to_u8=lambda a: a)
-    assert ob.page == (32, 32, 32)
+    assert ob.page == (8, 8, 8)
     assert ob.stats["surface_pages"] > 0
     # Every voxel of the volume, found through the tables, against the sphere.
     zz, yy, xx = np.meshgrid(np.arange(n[0]), np.arange(n[1]), np.arange(n[2]), indexing="ij")
@@ -132,3 +133,76 @@ def test_objects_render_their_surfaces_and_the_image_within_them(tmp_path):
     assert abs(cov2.mean() - covered.mean()) < 0.05
     assert img2[cov2, 0].mean() > img2[cov2, 2].mean()
     R.close()
+
+
+def _write_legacy_mesh_segmentation(root, sid: int, tris_nm: np.ndarray):
+    """A precomputed segmentation with one segment's legacy mesh (vertices in nm, one fragment)."""
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "info").write_text(json.dumps({"type": "segmentation", "data_type": "uint64", "num_channels": 1, "mesh": "mesh",
+                                           "scales": [{"key": "s0", "size": [1, 1, 1], "resolution": [1000, 1000, 1000],
+                                                       "voxel_offset": [0, 0, 0], "chunk_sizes": [[1, 1, 1]], "encoding": "raw"}]}))
+    (root / "mesh").mkdir()
+    (root / "mesh" / "info").write_text(json.dumps({"@type": "neuroglancer_legacy_mesh"}))
+    (root / "mesh" / f"{sid}:0").write_text(json.dumps({"fragments": [f"{sid}:0:0"]}))
+    v = tris_nm.reshape(-1, 3).astype(np.float32)
+    f = np.arange(len(v), dtype=np.uint32).reshape(-1, 3)
+    (root / "mesh" / f"{sid}:0:0").write_bytes(np.uint32(len(v)).tobytes() + v.tobytes() + f.tobytes())
+
+
+def test_a_session_draws_chosen_segments_and_the_image_within_them(tmp_path, monkeypatch):
+    import threading
+    import time
+    import urllib.request
+
+    from ngplatform_render import server
+    from ngplatform_render.camera import framing_radius, orbit
+    from ngplatform_render.meshes import MeshSource
+
+    monkeypatch.setenv("NGP_RENDER_CACHE", str(tmp_path / "cache"))
+    rng = np.random.default_rng(5)
+    vol = rng.integers(120, 255, (48, 48, 48), dtype=np.uint8)
+    em = tmp_path / "em"
+    em.mkdir()
+    (em / "info").write_text(json.dumps({"type": "image", "data_type": "uint8", "num_channels": 1,
+                                         "scales": [{"key": "s0", "size": [48, 48, 48], "resolution": [1000, 1000, 1000],
+                                                     "voxel_offset": [0, 0, 0], "chunk_sizes": [[16, 16, 16]], "encoding": "raw"}]}))
+    _write_unsharded(em, "s0", vol, (16, 16, 16), (0, 0, 0))
+    # A sphere of radius 10 µm about (24.5, 24.5, 24.5) µm: voxel 24's centre (voxel centres at i + 0.5 µm).
+    tris_nm = (_sphere(30).astype(np.float64) * 10 + 24.5) * 1000
+    _write_legacy_mesh_segmentation(tmp_path / "seg", 7, tris_nm)
+    m = MeshSource(f"precomputed://{tmp_path / 'seg'}").mesh(7)
+    assert m is not None and len(m.faces) == len(tris_nm)
+
+    srv = server.RenderServer(0, "tok", [tmp_path], 0, tmp_path / "renders")
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_port}"
+
+    def call(method, path, body=None):
+        r = urllib.request.Request(base + path, method=method, data=None if body is None else json.dumps(body).encode(),
+                                   headers={"X-NGP-Service-Token": "tok", "Content-Type": "application/json"})
+        with urllib.request.urlopen(r, timeout=60) as f:
+            return json.loads(f.read() or b"null")
+
+    s = call("POST", "/sessions", {"volume": {"url": f"precomputed://{em}"},
+                                   "objects": {"url": f"precomputed://{tmp_path / 'seg'}", "ids": ["7"], "budget": 10**7}})
+    for _ in range(400):
+        info = call("GET", f"/sessions/{s['id']}")
+        if info["status"] != "loading":
+            break
+        time.sleep(0.05)
+    assert info["status"] == "ready", info
+    assert info["objects"]["ids"] == ["7"] and info["objects"]["bricks"] > 0
+    lo, hi = np.zeros(3), np.full(3, 0.048)
+    cam = orbit((lo + hi) / 2, framing_radius(lo, hi, 30), 0, 0)
+    view = {"inv_view_projection": np.linalg.inv(cam.view_projection(64, 64)).T.ravel().tolist(), "width": 64, "height": 64,
+            "max_samples": 8, "preset": "HiP-CT brain", "overrides": {"density": 3000.0}, "objects": {"surface": 0.0, "image": True}}
+    call("PUT", f"/sessions/{s['id']}/view", view)
+    with urllib.request.urlopen(urllib.request.Request(base + f"/sessions/{s['id']}/frame?after=0&timeout=20", headers={"X-NGP-Service-Token": "tok"}), timeout=60) as f:
+        assert int(f.headers["X-Samples"]) >= 1
+    with urllib.request.urlopen(urllib.request.Request(base + f"/sessions/{s['id']}/depth", headers={"X-NGP-Service-Token": "tok"}), timeout=60) as f:
+        import zlib
+
+        depth = np.frombuffer(zlib.decompress(f.read()), np.float16).reshape(int(f.headers["X-Height"]), int(f.headers["X-Width"]))
+    # The sphere in the middle, nothing at the corners (the volume fills the box, but only the sphere is drawn).
+    assert depth[32, 32] < 1 and depth[0, 0] == 1 and depth[32, 2] == 1
+    srv.shutdown()

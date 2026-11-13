@@ -50,12 +50,14 @@ class ObjectBricks:
 
 
 def page_dims(voxel_mm) -> tuple[int, int, int]:
-    """Voxels a page holds along x, y, z: 32 along the finest axis, the others as near the same length as a power of two allows (4..32)."""
+    """Voxels a page holds along x, y, z: about 0.5 µm a side (thin neurites waste little of a page), from 8 to
+    32 voxels along the finest axis, the others as near the same length as a power of two allows (4..32)."""
     s = np.asarray(voxel_mm, np.float64)
     base = s.min()
+    edge = min(max(5e-4, 8 * base), 32 * base)
     out = []
     for v in s:
-        n = 32 * base / v
+        n = edge / v
         out.append(int(min(32, max(4, 2 ** round(math.log2(max(n, 1e-9)))))))
     return tuple(out)  # type: ignore[return-value]
 
