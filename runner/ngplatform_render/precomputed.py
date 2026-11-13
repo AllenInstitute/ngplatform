@@ -113,6 +113,72 @@ def compressed_morton(pos: tuple[int, int, int], grid: tuple[int, int, int]) -> 
     return code
 
 
+class Shards:
+    """A directory of `neuroglancer_uint64_sharded_v1` shards: where a key's chunk is, and its bytes.  Shard
+    indices and minishard indices are read once and kept."""
+
+    def __init__(self, base: str, sharding: dict):
+        self.base, self.sh = base.rstrip("/"), sharding
+        self.mbits, self.sbits = int(sharding["minishard_bits"]), int(sharding["shard_bits"])
+        self.index_bytes = 16 << self.mbits
+        self._shard_index: dict[str, bytes | None] = {}
+        self._minishards: dict[tuple[str, int], dict[int, tuple[int, int]]] = {}
+        self._lock = threading.Lock()
+
+    def locate(self, key: int) -> tuple[str, int, int] | None:
+        """The shard file a key is in, and its chunk's [start, end) bytes there (from the file's start); None when absent."""
+        sh = self.sh
+        h = key >> int(sh["preshift_bits"])
+        if sh.get("hash", "identity") != "identity":
+            h = murmurhash3_x86_128_64(h)
+        minishard = h & ((1 << self.mbits) - 1)
+        shard = (h >> self.mbits) & ((1 << self.sbits) - 1)
+        name = f"{shard:0{-(-self.sbits // 4)}x}.shard" if self.sbits else "0.shard"
+        url = f"{self.base}/{name}"
+        with self._lock:
+            known = name in self._shard_index
+        if not known:
+            idx = _get(url, 0, self.index_bytes)
+            with self._lock:
+                self._shard_index[name] = idx
+        idx = self._shard_index[name]
+        if idx is None:
+            return None
+        mk = (name, minishard)
+        with self._lock:
+            entries = self._minishards.get(mk)
+        if entries is None:
+            a, b = np.frombuffer(idx, "<u8", count=2, offset=16 * minishard)
+            entries = {}
+            if b > a:
+                m = _get(url, self.index_bytes + int(a), self.index_bytes + int(b))
+                if m is None:
+                    return None
+                if sh.get("minishard_index_encoding", "raw") == "gzip":
+                    m = gzip.decompress(m)
+                t = np.frombuffer(m, "<u8").reshape(3, -1).astype(np.uint64)
+                ids = np.cumsum(t[0])
+                starts = np.cumsum(t[1]) + np.concatenate([[0], np.cumsum(t[2])[:-1]]).astype(np.uint64)
+                for i, s0, n in zip(ids.tolist(), starts.tolist(), t[2].tolist()):
+                    entries[int(i)] = (int(s0), int(n))
+            with self._lock:
+                self._minishards[mk] = entries
+        hit = entries.get(key)
+        if hit is None:
+            return None
+        return url, self.index_bytes + hit[0], self.index_bytes + hit[0] + hit[1]
+
+    def read(self, key: int) -> bytes | None:
+        """A key's chunk, its data encoding undone."""
+        at = self.locate(key)
+        if at is None:
+            return None
+        raw = _get(*at)
+        if raw is not None and self.sh.get("data_encoding", "raw") == "gzip":
+            raw = gzip.decompress(raw)
+        return raw
+
+
 class PrecomputedArray:
     """One scale (z, y, x), sliced like a zarr array; missing chunks read as 0."""
 
@@ -135,9 +201,7 @@ class PrecomputedArray:
         self.dtype = np.dtype(data_type)
         self.grid = tuple(-(-s // c) for s, c in zip(self.size_xyz, self.chunk_xyz))
         self.sharding = scale.get("sharding")
-        self._shard_index: dict[str, bytes | None] = {}
-        self._minishards: dict[tuple[str, int], dict[int, tuple[int, int]]] = {}
-        self._lock = threading.Lock()
+        self._shards = Shards(f"{self.base}/{self.key}", self.sharding) if self.sharding else None
 
     # ----------------------------------------------------------------- chunks
     def _decode(self, raw: bytes, full_xyz: tuple[int, int, int]) -> np.ndarray:
@@ -160,53 +224,7 @@ class PrecomputedArray:
         return raw
 
     def _sharded(self, g: tuple[int, int, int]) -> bytes | None:
-        sh = self.sharding
-        cid = compressed_morton(g, self.grid)
-        h = cid >> int(sh["preshift_bits"])
-        if sh.get("hash", "identity") != "identity":
-            h = murmurhash3_x86_128_64(h)
-        mbits, sbits = int(sh["minishard_bits"]), int(sh["shard_bits"])
-        minishard = h & ((1 << mbits) - 1)
-        shard = (h >> mbits) & ((1 << sbits) - 1)
-        name = f"{shard:0{max(1, -(-sbits // 4))}x}.shard" if sbits else "0.shard"
-        url = f"{self.base}/{self.key}/{name}"
-        index_bytes = 16 << mbits
-        with self._lock:
-            known = name in self._shard_index
-        if not known:
-            idx = _get(url, 0, index_bytes)
-            with self._lock:
-                self._shard_index[name] = idx
-        idx = self._shard_index[name]
-        if idx is None:
-            return None
-        mk = (name, minishard)
-        with self._lock:
-            entries = self._minishards.get(mk)
-        if entries is None:
-            a, b = np.frombuffer(idx, "<u8", count=2, offset=16 * minishard)
-            entries = {}
-            if b > a:
-                m = _get(url, index_bytes + int(a), index_bytes + int(b))
-                if m is None:
-                    return None
-                if sh.get("minishard_index_encoding", "raw") == "gzip":
-                    m = gzip.decompress(m)
-                t = np.frombuffer(m, "<u8").reshape(3, -1).astype(np.uint64)
-                ids = np.cumsum(t[0])
-                starts = np.cumsum(t[1]) + np.concatenate([[0], np.cumsum(t[2])[:-1]]).astype(np.uint64)
-                for i, s, n in zip(ids.tolist(), starts.tolist(), t[2].tolist()):
-                    entries[int(i)] = (int(s), int(n))
-            with self._lock:
-                self._minishards[mk] = entries
-        hit = entries.get(cid)
-        if hit is None:
-            return None
-        s, n = hit
-        raw = _get(url, index_bytes + s, index_bytes + s + n)
-        if raw is not None and sh.get("data_encoding", "raw") == "gzip":
-            raw = gzip.decompress(raw)
-        return raw
+        return self._shards.read(compressed_morton(g, self.grid))
 
     def _block(self, bz: int, by: int, bx: int) -> np.ndarray:
         g = (bx, by, bz)
