@@ -120,3 +120,9 @@ two to three weeks, Phase 3 two weeks, Phase 4 a week, Phase 5 one to two
 weeks. Effort per item: S under half a day, M one to three days, L more.
 The render service's GPU budget is a blocker but large, so it is in 3A; until
 then, Phase 1's input limits keep one request from exhausting the GPU.
+
+Later plans, each its own file:
+
+- [Path-traced geometry and images within objects](path-traced-geometry.md)
+  (2026-11-13): any Zarr Vectors dataset path traced as exact geometry, and an
+  image at full resolution within objects through a dynamic Zarr store.
