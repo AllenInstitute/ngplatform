@@ -173,7 +173,16 @@ function urlField(scope: Scope, layer: UserLayer, source: LayerDataSource) {
     line.element.hidden = editing;
     input.hidden = !editing;
   };
-  input.addEventListener("blur", () => setTimeout(() => edit(false)));
+  // Left with Enter or Escape, the keyboard goes back to the line.
+  let byKey = false;
+  input.addEventListener("keydown", (e) => (byKey = e.key === "Enter" || e.key === "Escape"));
+  input.addEventListener("blur", () =>
+    setTimeout(() => {
+      edit(false);
+      if (byKey && !line.element.hidden) line.element.querySelector<HTMLElement>(".source-edit")?.focus();
+      byKey = false;
+    }),
+  );
   const menu = el("ul", { class: "ins-completions", role: "listbox" });
   menu.hidden = true;
   let controller: AbortController | undefined;
@@ -247,13 +256,14 @@ function urlField(scope: Scope, layer: UserLayer, source: LayerDataSource) {
  * A source, compact: the end of its path (the store's name) on one line,
  * under it where it is (schemes and host, quiet) and the path between, cut
  * short at its start; a button to copy the whole address and one to edit
- * it (as a click on the line does).  The whole address is its tooltip.
+ * it (as a click on the text does).  The whole address is its tooltip.
  */
 function sourceLine(url: string, onEdit: () => void): { element: HTMLElement; set(url: string): void } {
   const name = el("span", { class: "source-name" });
   const where = el("span", { class: "source-where" });
   const path = el("span", { class: "source-path" });
-  const text = el("button", { type: "button", class: "source-text", "aria-label": "Edit the data source's address", onclick: onEdit }, name, el("span", { class: "source-at" }, where, path));
+  // A click on the text edits it; from the keyboard, the Edit button does.
+  const text = el("div", { class: "source-text", onclick: onEdit }, name, el("span", { class: "source-at" }, where, path));
   let current = url;
   const copy = iconButton("copy", "Copy the address", () => {
     void navigator.clipboard?.writeText(current).then(
@@ -264,7 +274,7 @@ function sourceLine(url: string, onEdit: () => void): { element: HTMLElement; se
       () => {},
     );
   });
-  const editButton = iconButton("edit", "Edit the address", onEdit);
+  const editButton = iconButton("edit", "Edit the address", onEdit, { class: "btn icon source-edit" });
   const set = (u: string) => {
     current = u;
     const parts = splitAddress(u);

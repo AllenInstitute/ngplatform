@@ -169,7 +169,7 @@ body, body *:not(.ng-host *, .ins-embed *, [class*="neuroglancer-"], [class*="ne
 ::selection { background: var(--selection); color: var(--text-strong); }
 :root { scrollbar-width: thin; scrollbar-color: var(--line-hover) transparent; }
 :where(input, textarea, [contenteditable]) { caret-color: var(--text-strong); }
-::placeholder { color: var(--muted); opacity: 0.75; }
+::placeholder { color: var(--muted); opacity: 0.85; }
 input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
@@ -1361,10 +1361,7 @@ textarea.state-input.tall { min-height: 50vh; }
 /* A layer's data source, compact (src/engine/inspector/source.ts): the store's name, under it
    where it is (quiet) and the path between, cut short at its start; copy and edit beside it. */
 .source-line { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: start; gap: 0 var(--sp-1); }
-.source-text {
-  display: grid; min-width: 0; padding: var(--sp-1) var(--sp-2); margin: 0; border: 1px solid transparent; background: transparent;
-  color: var(--text); text-align: left; cursor: text;
-}
+.source-text { display: grid; min-width: 0; padding: var(--sp-1) var(--sp-2); border: 1px solid transparent; cursor: text; }
 .source-text:hover { border-color: var(--line-hover); background: var(--ink-0); }
 .source-name { font: var(--fs-body)/1.5 var(--mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .source-at { display: flex; min-width: 0; font: var(--fs-caption)/1.4 var(--mono); color: var(--muted); white-space: nowrap; }
