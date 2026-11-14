@@ -13,56 +13,63 @@
    Everything below takes its colours, sizes and spacing from these tokens;
    a plugin's own styles should too. */
 :root {
+  /* Neuroglancer's materials: black panels separated by 1 px lines, not grey fills; white
+     at fixed opacities for text, lines and states; one hue, Neuroglancer's error red, for
+     errors and what deletes.  What is selected or on is inverted (a white fill, black
+     text) or outlined in white; nothing is green. */
   --ink-0: #000;         /* behind the engine, wells: fields, the log */
-  --ink-1: #0c0c0c;      /* bars, an open card */
-  --ink-2: #141414;      /* docks */
-  --ink-3: #1f1f1f;      /* raised: a card's head, a secondary button */
-  --ink-card: #1a1a1a;   /* a card's body: a step above the dock, below its head */
-  --ink-4: #292929;      /* pressed */
-  /* What floats over the rest (menus, tips, toasts, sheets): a step lighter, with --line-strong. */
-  --surface-overlay: #1c1c1c;
-  --line: #242424;       /* between parts */
-  --line-strong: #333;
-  --line-control: #3a3a3a; /* a field's edge; its well and its label mark it too */
-  --line-hover: #666;    /* a field or a split under the pointer */
-  --line-focus: #8a8a8a; /* a field with the focus, a pressed toggle */
-  /* Text: each at least 4.5:1 on the docks (--ink-2) and on raised parts (--ink-3). */
-  --text: #e6e6e6;
+  --ink-1: #000;         /* bars, an open card */
+  --ink-2: #000;         /* docks */
+  --ink-3: #000;         /* raised parts (a card's head, a secondary button): drawn by their lines */
+  --ink-card: #000;      /* a card's body */
+  --ink-4: rgba(255, 255, 255, 0.10); /* pressed */
+  /* What floats over the rest (menus, tips, toasts, sheets, a view's card), with --line-strong. */
+  --surface-overlay: #141414;
+  --line: rgba(255, 255, 255, 0.10);         /* between parts */
+  --line-strong: rgba(255, 255, 255, 0.20);  /* a control's edge, a section's */
+  --line-control: rgba(255, 255, 255, 0.20); /* a field's edge */
+  --line-hover: rgba(255, 255, 255, 0.36);   /* a field or a split under the pointer */
+  --line-focus: rgba(255, 255, 255, 0.92);   /* a field with the focus */
+  /* Text: 92, 64 and 46 % white, each at least 4.5:1 on black and on the overlay grey. */
+  --text: rgba(255, 255, 255, 0.92);
   --text-strong: #fff;
-  --muted: #a3a3a3;
-  --faint: var(--muted); /* one secondary grey */
-  /* The accent, light grey: the primary action, tick boxes, sliders, the
-     chosen tab, progress and the focus ring. */
-  --accent: #d0d0d0;
-  --accent-hover: #f0f0f0;
+  --muted: rgba(255, 255, 255, 0.64);
+  --faint: rgba(255, 255, 255, 0.46);
+  /* What is chosen, on or primary: inverted, a white fill with black text (as Neuroglancer's
+     chosen tab).  Also tick boxes and sliders (the browser's own, in this white). */
+  --accent: #ebebeb;
+  --accent-hover: #fff;
   --accent-ink: #000;
-  --accent-line: #e6e6e6; /* the line under a chosen tab */
-  --accent-soft: rgba(255, 255, 255, 0.07);
-  --focus: #d0d0d0;
+  --accent-line: #fff;
+  --accent-soft: rgba(255, 255, 255, 0.08);
+  /* The focus: a 1 px white outline, 2 px out. */
+  --focus: #fff;
   /* Hover and pressed: white layers over whatever is beneath. */
-  --state-hover: rgba(255, 255, 255, 0.08);
-  --state-press: rgba(255, 255, 255, 0.12);
+  --state-hover: rgba(255, 255, 255, 0.06);
+  --state-press: rgba(255, 255, 255, 0.10);
   --hover: var(--state-hover);
-  /* What is selected: a light-grey bar down the left and a tint. */
-  --select: #d0d0d0;
+  /* What is selected in a list: a white tint and the strong text. */
+  --select: #fff;
   --select-strong: #fff;
-  --select-soft: rgba(255, 255, 255, 0.06);
+  --select-soft: rgba(255, 255, 255, 0.08);
   /* Text selected with the pointer. */
-  --selection: #4d4d4d;
-  --ok: #5fb37a;
-  --ok-line: #2c4a36;
-  /* An on/off switch, grey off and green on (the one green control), and its knob. */
-  --off: #5c5c5c;
-  --on: #3f9f48;
-  --knob: #e6e6e6;
-  --warn: #d9a94a;
-  --err: #e5736c;
-  --err-line: #5c3330;
-  --warn-line: #5c4a26;
-  /* An action that deletes: red words, a red fill under the pointer. */
-  --danger: #8e3a36;
-  --danger-hover: #a64540;
-  --danger-ink: #fff;
+  --selection: rgba(255, 255, 255, 0.30);
+  /* Done and well: the text's own white (a state is told by words and shape, not hue). */
+  --ok: var(--text);
+  --ok-line: var(--line-strong);
+  /* An on/off switch: a quiet track off, white on, its knob the other way. */
+  --off: rgba(255, 255, 255, 0.20);
+  --on: #ebebeb;
+  --knob: rgba(255, 255, 255, 0.92);
+  --warn: var(--text);
+  --warn-line: var(--line-strong);
+  /* The one hue: Neuroglancer's error red, for errors and what deletes (4.9:1 on black). */
+  --err: #db4437;
+  --err-line: rgba(219, 68, 55, 0.6);
+  /* An action that deletes: red words, a red tint under the pointer. */
+  --danger: rgba(219, 68, 55, 0.18);
+  --danger-hover: rgba(219, 68, 55, 0.28);
+  --danger-ink: #db4437;
   /* Direction-encoded colour, as tractography draws x, y and z (the logo). */
   --dec-x: #e0574b;
   --dec-y: #5cb46c;
@@ -72,7 +79,7 @@
      the data floats on it), a layer's bounding box, and the axis labels a step quieter
      than --dec-x/y/z (each at least 5:1 on the margin). */
   --view-margin: #0c0c0c;
-  --view-outline: #666;
+  --view-outline: #666; /* 40 % white */
   --view-x: #ce6e65;
   --view-y: #71af7c;
   --view-z: #6890cb;
@@ -87,8 +94,8 @@
   /* The outline of a colour swatch, and a line struck through quiet text. */
   --swatch-line: rgba(255, 255, 255, 0.25);
   /* Bars in a small plot, and those of the part that is on. */
-  --plot: #737373;
-  --plot-on: #c4c4c4;
+  --plot: rgba(255, 255, 255, 0.18);
+  --plot-on: rgba(255, 255, 255, 0.92);
 
   --ui: "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "Source Code Pro", ui-monospace, "SFMono-Regular", Menlo, monospace;
@@ -147,7 +154,7 @@ body, body *:not(.ng-host *, .ins-embed *, [class*="neuroglancer-"], [class*="ne
 /* Every control in the UI font; addresses and code ask for --mono themselves.
    Without weight, so the field and button rules below set their own size. */
 :where(button, input, textarea, select) { font: inherit; color: inherit; }
-:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+:focus-visible { outline: 1px solid var(--focus); outline-offset: 2px; }
 /* ---------------------------------------------------------- browser surfaces
    What the browser draws for the app, in its greys: selected text, the
    caret, scrollbars (thin; the thumb at 3:1 on the docks), placeholders,
@@ -184,7 +191,7 @@ input[type="checkbox"].switch::after {
   background: var(--knob); box-shadow: var(--shadow-float); transition: transform var(--t-fast) var(--ease-out), background var(--t-fast) var(--ease-out);
 }
 input[type="checkbox"].switch:checked { background: var(--on); }
-input[type="checkbox"].switch:checked::after { transform: translateX(14px); background: var(--text-strong); }
+input[type="checkbox"].switch:checked::after { transform: translateX(14px); background: var(--accent-ink); }
 input[type="checkbox"].switch:disabled { opacity: 0.4; cursor: default; }
 
 .app {
@@ -262,14 +269,14 @@ a.btn { text-decoration: none; }
 .btn:hover:not(:disabled) { background: var(--hover); }
 .btn:active:not(:disabled) { background: var(--state-press); }
 .btn:disabled { color: var(--faint); cursor: default; }
-.btn.outline { background: var(--ink-3); border-color: var(--line-strong); }
-.btn.outline:hover:not(:disabled) { background: var(--ink-4); }
+.btn.outline { background: transparent; border-color: var(--line-strong); }
+.btn.outline:hover:not(:disabled) { background: var(--hover); border-color: var(--line-hover); }
 .btn.primary { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .btn.primary:hover:not(:disabled), .btn.primary:active:not(:disabled) { background: var(--accent-hover); }
 /* A primary or a delete that cannot be used yet: grey, its words quiet. */
-.btn.primary:disabled, .btn.danger:disabled { background: var(--ink-3); border-color: transparent; color: var(--faint); font-weight: 400; }
-.btn.danger { background: var(--ink-3); color: var(--err); border-color: var(--line-strong); }
-.btn.danger:hover:not(:disabled) { background: var(--danger); color: var(--danger-ink); border-color: transparent; }
+.btn.primary:disabled, .btn.danger:disabled { background: transparent; border-color: var(--line); color: var(--faint); font-weight: 400; }
+.btn.danger { background: transparent; color: var(--err); border-color: var(--line-strong); }
+.btn.danger:hover:not(:disabled) { background: var(--danger); color: var(--danger-ink); border-color: var(--err-line); }
 .btn.danger:active:not(:disabled) { background: var(--danger-hover); }
 /* Icons (src/sdk/icons.ts): one set, drawn at 16 px with a 1 px line; inside a line of text, at the text's size. */
 .btn svg, .scene-close svg, .scene-kind-add svg, .palette-trigger svg, .ds-icon svg, .btn.icon.info-btn svg,
@@ -287,9 +294,10 @@ a.btn { text-decoration: none; }
   background: var(--ink-3); color: var(--muted); font-size: var(--ctl-fs); cursor: pointer;
 }
 .segmented button + button { margin-left: -1px; }
-.segmented button:hover { color: var(--text); background: var(--ink-4); }
+.segmented button:hover { color: var(--text); background: var(--hover); border-color: var(--line-hover); position: relative; z-index: 1; }
+/* The pressed one inverted: a white fill, black words. */
 .segmented button[aria-pressed="true"], .segmented button[aria-selected="true"] {
-  background: var(--ink-4); color: var(--text-strong); box-shadow: inset 0 -2px 0 var(--accent-line); position: relative; z-index: 1;
+  background: var(--accent); border-color: var(--accent); color: var(--accent-ink); position: relative; z-index: 2;
 }
 
 /* scene tabs */
@@ -303,7 +311,7 @@ a.btn { text-decoration: none; }
 .scene-tab .scene-tab-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .scene-tab:hover { color: var(--text); background: var(--hover); }
 /* The scene shown: the dock's grey under it, underlined. */
-.scene-tab[aria-selected="true"] { color: var(--text-strong); background: var(--ink-2); box-shadow: inset 0 -2px 0 var(--accent-line); }
+.scene-tab[aria-selected="true"] { color: var(--text-strong); border-color: var(--text); }
 .scene-close {
   display: inline-grid; place-items: center; width: var(--hit); height: var(--hit); flex: none;
   border: 0; padding: 0; background: transparent; color: var(--faint); cursor: pointer; visibility: hidden;
@@ -459,7 +467,10 @@ kbd {
 }
 .tab:hover { color: var(--text); background: var(--hover); }
 /* The chosen tab: a line under it, on the line under the tabs. */
-.tab[aria-selected="true"] { color: var(--text-strong); box-shadow: inset 0 -2px 0 var(--accent-line); }
+/* The chosen tab inverted, as Neuroglancer's; the left column's own two (Layers, Plugins) only in the strong text. */
+.tab[aria-selected="true"] { color: var(--accent-ink); background: var(--accent); }
+.dock-left > .dock-head .tab[aria-selected="true"] { color: var(--text-strong); background: transparent; }
+.dock-left > .dock-head .tab:not([aria-selected="true"]) { color: var(--faint); }
 .dock-body { flex: 1; overflow: auto; min-height: 0; }
 .dock-pane { padding: var(--sp-5); min-height: 100%; box-sizing: border-box; }
 .dock.collapsed .dock-body, .dock.collapsed .dock-tabs { display: none; }
@@ -557,6 +568,13 @@ kbd {
   --eye: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 3l18 18M10.6 5.6A10 10 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-3 3.8M6.3 6.9C3.9 8.6 2.5 12 2.5 12S6 18.5 12 18.5a9.6 9.6 0 0 0 4.4-1.1M9.9 9.9a3 3 0 0 0 4.2 4.2'/%3E%3C/svg%3E");
 }
 :is(.ds-row, .layer-row) > .choice input[type="checkbox"]:focus-visible { outline-offset: 3px; }
+/* A layer's number, as Neuroglancer's layer bar shows it: a small square in the mono face,
+   white while the layer is shown, quiet while it is hidden. */
+.layer-chip {
+  display: inline-grid; place-items: center; flex: none; min-width: 18px; height: 18px; box-sizing: border-box; padding: 0 var(--sp-1);
+  border: 1px solid var(--text); color: var(--text); font: 500 var(--fs-caption)/1 var(--mono); font-variant-numeric: tabular-nums;
+}
+:is(.ds-row, .layer-row):has(> .choice input:not(:checked)) .layer-chip { border-color: var(--line-strong); color: var(--faint); }
 /* Hidden, its name is quiet. */
 :is(.ds-row, .layer-row):has(> .choice input:not(:checked)) .ds-name { color: var(--muted); font-weight: 400; }
 .ds-row:hover .btn.icon, .ds-row.selected .btn.icon { opacity: 1; }
@@ -879,7 +897,7 @@ textarea.py-in {
 .ins-root .num-input.wide { width: 110px; }
 .ins-check { margin: 0; accent-color: var(--accent); width: 14px; height: 14px; flex: none; }
 /* A toggle (Code, Taller) pressed reads as the pressed part of a segmented row. */
-.ins-root .btn.outline[aria-pressed="true"] { background: var(--ink-3); }
+.ins-root .btn.outline[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 /* The small × that removes a link, a range or an annotation: red under the pointer. */
 .btn.icon.ins-remove { height: var(--hit); min-width: var(--hit); color: var(--muted); }
 .btn.ins-remove:hover:not(:disabled) { color: var(--err); }
@@ -1285,16 +1303,16 @@ textarea.state-input.tall { min-height: 50vh; }
 /* No outline: its head is raised, its body on the panel. */
 /* A card is one block, raised off the dock: its head (ink-3) over its body (ink-card), within one
    edge, so an open card's settings read as its own and not the dock's. */
-.card { border-radius: var(--r); margin: 0 0 var(--sp-4); border: 1px solid var(--line-strong); background: var(--ink-card); height: max-content; }
+.card { border-radius: var(--r); margin: 0 0 var(--sp-4); border: 1px solid var(--line); background: var(--ink-card); height: max-content; }
 /* The card title: the panel's heading style. */
 .card > .card-head { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-5); font-weight: 600; font-size: var(--fs-heading); color: var(--text); background: var(--ink-3); cursor: pointer; list-style: none; user-select: none; }
 .card > .card-head::-webkit-details-marker { display: none; }
 .card > .card-head::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform var(--t-fast) var(--ease-out); flex: none; }
 .card[open] > .card-head::before { transform: rotate(45deg); }
-.card > .card-head:hover { background: var(--ink-4); }
+.card > .card-head:hover { background: var(--hover); }
 .card-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-badge { font: 400 var(--fs-caption) var(--ui); font-variant-numeric: tabular-nums; color: var(--muted); }
-.card > .card-body { display: grid; gap: var(--sp-4); padding: var(--sp-5) var(--sp-5) var(--sp-5); border-top: 1px solid var(--line-strong); }
+.card > .card-body { display: grid; gap: var(--sp-4); padding: var(--sp-5) var(--sp-5) var(--sp-5); border-top: 1px solid var(--line); }
 .card .section-title:first-child { margin-top: 0; }
 .card[data-card="compute.this"] .runner-section > .section-head > .section-title { display: none; }
 
@@ -1324,6 +1342,8 @@ textarea.state-input.tall { min-height: 50vh; }
    coordinates over the views, the status line's items, sizes and counts in a
    panel), in Source Code Pro with tabular digits; its unit in the muted grey
    after a thin space. */
+/* Every number in a field, too, in the mono face (as Neuroglancer's). */
+:where(input[type="number"], .num-input, .text-input.num) { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .readout-value { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap; }
 .readout-unit, .readout-value .status-label { color: var(--muted); }
 /* Numbers the app shows in its panels: card counts, sizes in the browser's storage, the resolution histograms' legend. */
