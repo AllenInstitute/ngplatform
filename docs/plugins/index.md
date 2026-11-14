@@ -6,7 +6,7 @@ with a manifest (what the platform shows before loading any code) and its
 code. The **Plugins** panel (left dock) lists them by what they do, each with a one-line
 description, a switch and an *About* guide.
 
-Only Zarr Vectors is on by default. The others stay out of the way until
+Zarr Vectors and the View aids are on by default. The others stay out of the way until
 you need them: open data one works with and it is offered (below), or turn
 it on in the Plugins panel.
 
@@ -26,6 +26,7 @@ it on in the Plugins panel.
 | Plugin | Kind | Offered when you open | What it does |
 |---|---|---|---|
 | [Zarr Vectors](zarr-vectors.md) | data type | (on by default) | Points, streamlines, skeletons, graphs and meshes from Zarr Vectors stores, and local tractograms, meshes, neurons and point tables as virtual stores. |
+| [View aids](view-aids.md) | tool | (on by default) | In the 3-D view: an orientation cube, labels with leader lines for point annotations, Hide graphics, and camera bookmarks. |
 | [Track filtering](track-filtering.md) | tool | a tractogram or Zarr Vectors store | TrackVis-style groups of the objects that pass through regions. |
 | [Annotations](annotations.md) | tool | an annotation layer | Labels on the views for figures, measurements, and statistics in a region. |
 | [Segmentation](segmentation.md) | tool | a segmentation (label volume) | Label volumes drawn by hand, as in WebKnossos: a new segmentation layer on an image's grid or a copy of a segmentation, a tool bar over the views, a segment list, saving as NIfTI or OME-Zarr. |

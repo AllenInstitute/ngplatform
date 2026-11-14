@@ -114,6 +114,20 @@ The production polish: the work of an audit of every panel and plugin
 - At most six decode workers, and a worker that decoded a very large chunk
   is replaced, so its memory is given back.
 
+### View aids in the 3-D view
+
+- A new plugin, on by default, after Siemens' Cinematic Anatomy: an
+  orientation cube in the 3-D view's top right (lettered R/L, A/P, S/I for
+  anatomical data, else by axis; click a face, edge or corner to look from
+  there; Realign to the nearest standard view), labels at the view's sides
+  with leader lines for point annotations that have a description (painted
+  into captures), a Graphics switch that hides the axis lines, the box, the
+  scale bar and the aids and puts back what was on, and camera bookmarks in
+  a strip of thumbnails along the view's bottom edge (fly to one, rename,
+  replace, delete, Play), kept in the scene. Every action is in the command
+  palette. See docs/plugins/view-aids.md.
+- Plugins can ask for a small picture of the 3-D view (`viewer.thumbnail`).
+
 ### Anatomical rendering as an object in the 3-D view
 
 - The rendered image is an object in the 3-D view, drawn in this browser
