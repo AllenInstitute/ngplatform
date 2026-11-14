@@ -16,7 +16,12 @@ export function omeZarrUrl(source: string | undefined): string | undefined {
   if (scheme === null && pipe === null && !/\.ome\.zarr\/?$/i.test(url)) return undefined;
   if (scheme) url = url.slice(scheme[0].length);
   if (pipe) url = url.slice(0, pipe.index);
-  url = url.replace(/^gs:\/\/([^/]+)\//, "https://storage.googleapis.com/$1/").replace(/^s3:\/\/([^/]+)\//, "https://$1.s3.amazonaws.com/");
+  return storeHttpUrl(url);
+}
+
+/** A store's address (http(s), gs:// or s3://, or this app's own path) as the http(s) URL a page reads it at, ending in "/"; undefined for others. */
+export function storeHttpUrl(address: string): string | undefined {
+  const url = address.replace(/^gs:\/\/([^/]+)\//, "https://storage.googleapis.com/$1/").replace(/^s3:\/\/([^/]+)\//, "https://$1.s3.amazonaws.com/");
   if (!/^https?:\/\//.test(url) && !url.startsWith("/")) return undefined;
   return url.endsWith("/") ? url : `${url}/`;
 }

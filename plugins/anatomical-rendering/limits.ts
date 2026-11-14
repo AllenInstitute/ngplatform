@@ -11,6 +11,8 @@ export const LIMITS = {
   maxSamples: 4096,
   maxFps: 120,
   maxBoxes: 8,
+  /** Clips the renderers apply at once: camera planes and axis cuts that are on. */
+  maxClips: 6,
   stillWork: 8192 * 8192 * 256,
 } as const;
 

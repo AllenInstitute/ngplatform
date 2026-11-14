@@ -2,7 +2,7 @@
 
 ![Labels pinned to structures, in 2-D and 3-D](../images/plugins/labels.png)
 
-**Kind:** tool · **Off by default** (offered when you open an annotation layer, and listed under *Tools for this data* for an image; or turn it on in the Plugins panel) · the **Annotations** panel in the Tools dock and the **Annotation table** (Activity dock) ·
+**Kind:** tool · **Off by default** (offered when you open an annotation layer, and listed under *Tools for this data* for an image; or turn it on in the Plugins panel) · the **Annotations** panel in the Tools section and the **Annotation table** (Activity dock) ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/annotations)
 
 Everything you add to annotate a dataset, in one panel with four cards:

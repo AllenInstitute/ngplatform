@@ -14,7 +14,7 @@ Vectors plugin. The user's guide is
 
 | File | What |
 |---|---|
-| `manifest.ts` | The Filtering panel (Tools dock, under Vectors), its commands and keys, its state slice, the guide |
+| `manifest.ts` | The Filtering panel (Tools section, under Vectors), its commands and keys, its state slice, the guide |
 | `plugin.ts` | `TrackGroups`: the groups, their answers, their layers and own stores, saving; the panel, built from the SDK's cards and controls and updated in place; provides the `trackFiltering.groups` service (the volume view draws groups through it) |
 | `filter.ts` | Attribute ranges and tags as a mask, counts and statistics (pure, unit-tested) |
 | `roi.ts` | Region tests on chunks, and combining regions' answers (pure, unit-tested) |

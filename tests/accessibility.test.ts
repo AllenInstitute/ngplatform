@@ -157,25 +157,20 @@ describe("dock tabs", () => {
     expect(tabs.map((t) => t.getAttribute("tabindex"))).toEqual(["0", "-1", "-1"]);
   });
 
-  it("opens the Tools picker's menu with Down", async () => {
+  it("are the Tools section's tabs too: a tab list, its panels named by them, the arrows moving between them", () => {
     const root = dom.host();
     const docks = new DockManager(root, context);
-    root.append(docks.element("right"));
-    docks.addTab({ id: "display", title: "Display", slot: "right", group: "Images", render: () => {} });
-    docks.addTab({ id: "filters", title: "Filters", slot: "right", group: "Images", render: () => {} });
-    const picker = docks.element("right").querySelector<HTMLElement>(".dock-picker")!;
-    expect(picker.hasAttribute("aria-selected")).toBe(false);
-    picker.focus();
-    key(picker, "ArrowDown");
-    const menu = dom.document.querySelector('[role="menu"]')!;
-    expect(dom.text(active()!)).toBe("Display");
-    key(active()!, "ArrowDown");
-    expect(dom.text(active()!)).toBe("Filters");
-    // Escape closes the menu and gives the keyboard back to the picker.
-    await new Promise((r) => setTimeout(r));
-    key(active()!, "Escape");
-    expect(menu.isConnected).toBe(false);
-    expect(active()).toBe(picker);
+    root.append(docks.element("tools"));
+    docks.addTab({ id: "display", title: "Display", slot: "tools", group: "Images", render: () => {} });
+    docks.addTab({ id: "filters", title: "Filters", slot: "tools", group: "Images", render: () => {} });
+    const dock = docks.element("tools");
+    const tabs = all(dock.querySelector('[role="tablist"]')!, '[role="tab"]');
+    expect(tabs.map((t) => dom.text(t))).toEqual(["Display", "Filters"]);
+    expect(dock.querySelector('[role="tabpanel"]')!.getAttribute("aria-labelledby")).toBe(tabs[0].id);
+    tabs[0].focus();
+    key(tabs[0], "ArrowRight");
+    expect(docks.selected("tools")).toBe("filters");
+    expect(active()).toBe(tabs[1]);
   });
 
   describe("resizers", () => {
@@ -194,10 +189,17 @@ describe("dock tabs", () => {
       expect(left.getAttribute("aria-valuenow")).toBe("350");
       key(left, "Home");
       expect(root.style.getPropertyValue("--left")).toBe("160px");
-      // The right dock grows to the left; the bottom one, up.
-      const right = docks.resizer("right");
-      key(right, "ArrowLeft");
-      expect(root.style.getPropertyValue("--right")).toBe("370px");
+      // The Tools section, below the layers in the left column, grows up; so does the bottom dock.
+      root.style.setProperty("--tools", "300px");
+      const tools = docks.resizer("tools");
+      expect(tools.getAttribute("aria-orientation")).toBe("horizontal");
+      expect(tools.getAttribute("aria-label")).toBe("Resize the Tools section");
+      key(tools, "ArrowUp");
+      expect(root.style.getPropertyValue("--tools")).toBe("310px");
+      key(tools, "ArrowDown", { shiftKey: true });
+      expect(root.style.getPropertyValue("--tools")).toBe("270px");
+      key(tools, "Home");
+      expect(root.style.getPropertyValue("--tools")).toBe("96px");
       const bottom = docks.resizer("bottom");
       expect(bottom.getAttribute("aria-orientation")).toBe("horizontal");
       key(bottom, "ArrowUp");

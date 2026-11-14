@@ -19,6 +19,7 @@ import { colormapControl } from "./colormap.js";
 import { lookupTableControl } from "./lookup.js";
 import { hasOutlines, setOutlines } from "../outlines.js";
 import { shaderSection } from "./shader.js";
+import { colourBySection } from "./colour_by.js";
 import { surfaceSection } from "./surface.js";
 import {
   button,
@@ -28,6 +29,7 @@ import {
   embed,
   enumSelect,
   note,
+  removeButton,
   row,
   type Scope,
   section,
@@ -63,7 +65,11 @@ export function signal(s: { add(listener: () => void): () => void }): Watch<unde
 
 function renderScale(scope: Scope, histogram: unknown, target: unknown, Widget: typeof RenderScaleWidget = RenderScaleWidget): HTMLElement {
   const widget = scope.ng.registerDisposer(new Widget(histogram as never, target as never));
-  return embed(widget.element, "ins-render-scale");
+  const host = embed(widget.element, "ins-render-scale");
+  // Not drawn now: marked, so the stylesheet can say so in the theme's words (Neuroglancer writes them in white on its canvas).
+  const visibility = (histogram as { visibility?: Watch<number> & { readonly visible: boolean } }).visibility;
+  if (visibility !== undefined) scope.watch(visibility, () => host.toggleAttribute("data-inactive", !visibility.visible));
+  return host;
 }
 
 export function renderTab(scope: Scope, layer: UserLayer): HTMLElement[] {
@@ -123,7 +129,7 @@ function linkedGroup(scope: Scope, group: any): HTMLElement {
     if (group.linkedLayers.size > 0) {
       host.replaceChildren(
         ...[...group.linkedLayers].map((other: any) =>
-          el("span", { class: "ins-chip" }, other.managedLayer.name, button("×", () => group.getGroup(other).isolate(), "Unlink this layer", "icon ins-remove")),
+          el("span", { class: "ins-chip" }, other.managedLayer.name, removeButton("Unlink this layer", () => group.getGroup(other).isolate())),
         ),
         button("Unlink all", () => group.isolate()),
       );
@@ -257,6 +263,7 @@ function segmentationRender(scope: Scope, l: SegmentationUserLayer): HTMLElement
       has3d,
     ),
     surfaceSection(scope, l),
+    colourBySection(scope, l),
     section(
       "Segments",
       checkRow(scope, "Hide segment id 0", ds.hideSegmentZero, "Neither show nor select segment id 0"),

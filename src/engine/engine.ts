@@ -8,8 +8,9 @@
  * class and shown by the platform, which mounts Neuroglancer's own widgets
  * (layer controls, settings, help, statistics) in its docks and dialogs.
  */
+import { type ColourByLook, layerColourLook } from "./colour_shader.js";
 import { setSurfaceOverlay } from "./inspector/surface.js";
-import type { Drawer3d, VisibleSegments } from "../sdk/types.js";
+import type { Drawer3d, LayerBounds, RenderedLevel, VisibleSegments } from "../sdk/types.js";
 import { draw3d } from "./draw3d.js";
 import {
   addPerspectivePanelToggle,
@@ -32,14 +33,17 @@ import {
   type Viewer,
   setNamedPanelOrientation,
 } from "./neuroglancer.js";
-import { looksAnatomical, type PanelConvention, panelRotations } from "./anatomical.js";
+import { looksAnatomical, type PanelConvention, panelRotations, standardView } from "./anatomical.js";
 import { applyLookupTable, layerLookupSource } from "./lookup_tables.js";
 import { addMomentum } from "./momentum.js";
-import { mountInspector } from "./inspector/index.js";
+import { mountInspector, mountSource } from "./inspector/index.js";
 import { sizeMemoryLimits } from "./memory.js";
+import { VIEW_MARGIN, VIEW_OUTLINE } from "../core/view_defaults.js";
+import { ViewBackgrounds, type ViewGround } from "./backgrounds.js";
 import { type ChunkSourceStatistics, chunkStatistics, mountViewSettings } from "./view_settings.js";
 import { guardSelectedValues, type SelectedValues } from "./selected_values.js";
 import { watchOutlines } from "./outlines.js";
+import { watchSwitchGroups } from "./switch_fold.js";
 import { type CaptureOptions, type CapturePanel, captureDimensions, capturePanels, CaptureSession } from "./capture.js";
 
 export type Json = Record<string, unknown>;
@@ -56,11 +60,22 @@ interface WatchableTransformLike {
   value: {
     rank: number;
     inputSpace: { names: readonly string[]; scales: Float64Array; units: readonly string[]; bounds: { lowerBounds: Float64Array; upperBounds: Float64Array } };
-    outputSpace: { names: readonly string[]; scales: Float64Array; units: readonly string[] };
+    outputSpace: { names: readonly string[]; scales: Float64Array; units: readonly string[]; bounds?: { lowerBounds: Float64Array; upperBounds: Float64Array } };
     transform: Float64Array;
   };
   defaultTransform: { transform: Float64Array; outputSpace?: { names: readonly string[]; scales: Float64Array } };
   transform: Float64Array;
+}
+
+/** What the engine reads of a layer's resolution histogram (Neuroglancer's render_scale_statistics.ts). */
+interface RenderScaleHistogramLike {
+  visibility: { visible: boolean };
+  numBins: number;
+  value: Uint32Array;
+  spatialScales: Map<number, number>;
+  /** The fork's: every level declared or seen, and the last pixel size. */
+  levels?: Set<number>;
+  pixelSize?: number;
 }
 
 interface ProjectionLike {
@@ -262,6 +277,10 @@ function readPanelPreference(): PanelConvention | "auto" {
   return "auto";
 }
 
+function setAttribute(element: HTMLElement, name: string, value: string): void {
+  if (element.getAttribute(name) !== value) element.setAttribute(name, value);
+}
+
 export class Engine {
   readonly viewer: Viewer;
   private readonly disposers: Disposer[] = [];
@@ -294,6 +313,7 @@ export class Engine {
     });
     // GPU and system memory by the computer's memory, not Neuroglancer's 1 GB and 2 GB everywhere.
     sizeMemoryLimits(this.viewer);
+    styleScaleBar(this.viewer);
     guardSelectedValues(this.viewer.layerSelectedValues as unknown as SelectedValues);
     this.viewer.coordinateSpace.changed.add(() => {
       this.preferXyz();
@@ -321,8 +341,16 @@ export class Engine {
       host.removeEventListener("contextmenu", noMenu);
       host.removeEventListener("wheel", noZoom);
     });
+    // The views' grounds, for what is drawn over them: kept on the panels (made afresh with the layout) and the overlays.
+    this.backgrounds = new ViewBackgrounds({ sections: this.viewer.crossSectionBackgroundColor, view3d: this.viewer.perspectiveViewBackgroundColor }, () => this.markViewGround());
+    this.disposers.push(
+      () => this.backgrounds.dispose(),
+      this.viewer.display.updateFinished.add(() => this.markViewGround()),
+    );
     // Segmentations drawn as outlines keep their outline layers' colours in step.
     this.disposers.push(watchOutlines(this));
+    // On a narrow 3-D panel the plugins' switches fold into one View menu beside Sections.
+    this.disposers.push(watchSwitchGroups(host, () => this.toggles.map((t) => ({ label: t.label, title: t.title, get: () => t.value.value, set: (v: boolean) => (t.value.value = v) }))));
     // Segmentation layers whose drawing a plugin hides stay hidden when made afresh.
     const lm = this.viewer.layerManager;
     for (const signal of [lm.layersChanged, lm.readyStateChanged, lm.specificationChanged]) {
@@ -338,10 +366,16 @@ export class Engine {
 
   getState(): Json {
     const ng = this.viewer.state.toJSON() as Json;
-    // The 2-D views' background a plugin set for a while is saved as it was.
-    if (this.background !== undefined) {
-      if (this.background.json === undefined) delete ng.crossSectionBackgroundColor;
-      else ng.crossSectionBackgroundColor = this.background.json;
+    // A background set for a while (by a plugin, or the light ground) is saved as it was.
+    const saved = this.backgrounds.saved();
+    if (saved !== undefined) {
+      for (const [key, json] of [
+        ["crossSectionBackgroundColor", saved.sections],
+        ["perspectiveViewBackgroundColor", saved.view3d],
+      ] as const) {
+        if (json === undefined) delete ng[key];
+        else ng[key] = json as Json[string];
+      }
     }
     // A layer whose drawing a plugin hides is saved as it was.
     if (this.hiddenDrawing.size > 0 && Array.isArray(ng.layers)) {
@@ -364,25 +398,48 @@ export class Engine {
     return ng;
   }
 
-  /** The 2-D views' background as it was while a plugin sets another (its value, and as saved). */
-  private background: { value: Float32Array; json: Json[string]; temporary: Float32Array } | undefined;
+  /** The views' backgrounds, and those shown over them for a while (./backgrounds.ts). */
+  private readonly backgrounds: ViewBackgrounds;
 
   /**
    * Sets the 2-D views' background for a while (Luxar's splats in place of an
    * image need black), or (`undefined`) puts it back: not saved in the link.
+   * Shown over the light theme's ground.
    */
   setTemporaryBackground(rgb: [number, number, number] | undefined): void {
-    const colour = this.viewer.crossSectionBackgroundColor;
-    if (rgb === undefined) {
-      if (this.background === undefined) return;
-      const before = this.background;
-      this.background = undefined;
-      colour.value = before.value as typeof colour.value;
-      return;
+    this.backgrounds.setPlugin(rgb);
+  }
+
+  /**
+   * Shows the views on another ground for a while (`sections` behind the
+   * 2-D views, `view3d` behind the 3-D view: the light theme's), or
+   * (`undefined`) puts back the backgrounds the state has: never saved in
+   * the link, whatever the scene carries.
+   */
+  setViewGround(ground: { sections: [number, number, number]; view3d: [number, number, number] } | undefined): void {
+    this.backgrounds.setGround(ground);
+  }
+
+  /** Whether the 2-D views and the 3-D view are on a dark or a light ground, as shown now. */
+  viewGrounds(): { sections: ViewGround; view3d: ViewGround } {
+    return this.backgrounds.grounds();
+  }
+
+  /** Elements over the views that carry the grounds (the overlays), beside the panels. */
+  private readonly grounded = new Set<HTMLElement>();
+
+  /**
+   * Marks the views with their grounds, for what is drawn over them to read on
+   * (src/ui/styles.css): each panel by its kind, each overlay with both
+   * (data-view-ground for the 2-D views, data-view-ground-3d for elements over the 3-D view).
+   */
+  private markViewGround(): void {
+    const grounds = this.viewGrounds();
+    for (const element of this.grounded) {
+      setAttribute(element, "data-view-ground", grounds.sections);
+      setAttribute(element, "data-view-ground-3d", grounds.view3d);
     }
-    const temporary = Float32Array.from(rgb);
-    this.background = this.background !== undefined ? { ...this.background, temporary } : { value: Float32Array.from(colour.value), json: (this.viewer.state.toJSON() as Json).crossSectionBackgroundColor, temporary };
-    colour.value = temporary as typeof colour.value;
+    for (const panel of this.panels()) setAttribute(panel.element, "data-view-ground", panel.kind === "3d" ? grounds.view3d : grounds.sections);
   }
 
   /**
@@ -476,18 +533,15 @@ export class Engine {
         }),
       };
     }
-    for (const [key, child] of state.children) {
-      if (Object.prototype.hasOwnProperty.call(ng, key) && ng[key] !== undefined) continue;
-      if (key === "layers") child.restoreState([]);
-      else child.reset();
-    }
-    state.restoreState(ng);
-    // A background set for a while stays (the state restored has the one saved).
-    if (this.background !== undefined) {
-      const colour = this.viewer.crossSectionBackgroundColor;
-      this.background = { value: Float32Array.from(colour.value), json: (ng as Json).crossSectionBackgroundColor, temporary: this.background.temporary };
-      colour.value = this.background.temporary as typeof colour.value;
-    }
+    // Backgrounds set for a while stay over the state's own (the state restored has the ones saved).
+    this.backgrounds.under(() => {
+      for (const [key, child] of state.children) {
+        if (Object.prototype.hasOwnProperty.call(ng, key) && ng[key] !== undefined) continue;
+        if (key === "layers") child.restoreState([]);
+        else child.reset();
+      }
+      state.restoreState(ng);
+    });
     // Layers whose drawing a plugin hides stay hidden (their layer objects may be new).
     for (const [name, hidden] of [...this.hiddenDrawing]) {
       const opacity = this.opacityOf(name);
@@ -809,6 +863,21 @@ export class Engine {
     });
   }
 
+  /**
+   * Draws a new image or segmentation layer's bounding box in the view's
+   * outline grey (--view-outline) once it has loaded and its type is known,
+   * unless its annotation colour is set.  For layers the platform adds, not
+   * those a link carries (src/core/view_defaults.ts).
+   */
+  outlineWhenLoaded(name: string): void {
+    this.whenLoaded(name, () => true, () => {
+      const layer = this.managed(name)?.layer;
+      if (!(layer instanceof ImageUserLayer || layer instanceof SegmentationUserLayer)) return;
+      if ((layer.toJSON() as Json).annotationColor !== undefined) return;
+      layer.annotationDisplayState.color.restoreState(VIEW_OUTLINE);
+    });
+  }
+
   /** Runs `run` once layer `name` is ready and `also` holds, if within `timeout` ms. */
   private whenLoaded(name: string, also: () => boolean, run: () => void | Promise<void>, timeout = 120_000): void {
     const v = this.viewer;
@@ -831,9 +900,13 @@ export class Engine {
     check();
   }
 
+  /** Back to the standard views: the panels as their convention shows them, the 3-D view as its standard (`standardView`). */
   resetOrientation(): void {
     this.viewer.navigationState.pose.orientation.reset();
-    this.viewer.perspectiveNavigationState.pose.orientation.reset();
+    const standard = standardView(this.appliedConvention);
+    const orientation = this.viewer.perspectiveNavigationState.pose.orientation;
+    if (standard === undefined) orientation.reset();
+    else orientation.restoreState(standard);
   }
 
   /**
@@ -901,6 +974,14 @@ export class Engine {
           ? "radiological"
           : "neuroglancer";
     if (want === this.appliedConvention) return;
+    // The 3-D view as the convention before left it (not turned since, nor set by a link): this one's standard view.
+    const orientation = this.viewer.perspectiveNavigationState.pose.orientation;
+    const was = standardView(this.appliedConvention) ?? [0, 0, 0, 1];
+    if (Array.from(orientation.orientation).every((v, i) => Math.abs(v - was[i]) < 1e-6)) {
+      const standard = standardView(want);
+      if (standard === undefined) orientation.reset();
+      else orientation.restoreState(standard);
+    }
     this.appliedConvention = want;
     const rotations = panelRotations(want);
     for (const axes of ["xy", "xz", "yz"] as const) {
@@ -939,6 +1020,11 @@ export class Engine {
     return Object.fromEntries(Object.entries(this.viewOptionTrackables()).map(([k, t]) => [k, t.value]));
   }
 
+  /** The views' defaults for a new, empty viewer (src/core/view_defaults.ts): a near-black margin around the sections. */
+  applyViewDefaults(): void {
+    this.backgrounds.under(() => this.viewer.crossSectionBackgroundColor.restoreState(VIEW_MARGIN));
+  }
+
   setViewOption(key: string, value: boolean): void {
     const trackable = (this.viewOptionTrackables() as Record<string, { value: boolean }>)[key];
     if (trackable !== undefined) trackable.value = value;
@@ -953,12 +1039,20 @@ export class Engine {
 
   /**
    * Mounts a layer's settings (Source, Render, Segments, Annotations…,
-   * whatever its type offers) into `host`, as the platform's own inspector.
+   * whatever its type offers) into `host`, as the platform's own inspector;
+   * the tabs in `without` are left out.
    */
-  mountLayerControls(host: HTMLElement, name: string): Disposer {
+  mountLayerControls(host: HTMLElement, name: string, without: readonly string[] = []): Disposer {
     const userLayer = this.managed(name)?.layer;
     if (userLayer == null) return () => {};
-    return mountInspector(host, userLayer);
+    return mountInspector(host, userLayer, without);
+  }
+
+  /** Mounts a layer's data sources (its Source tab's contents) into `host` on their own. */
+  mountLayerSource(host: HTMLElement, name: string): Disposer {
+    const userLayer = this.managed(name)?.layer;
+    if (userLayer == null) return () => {};
+    return mountSource(host, userLayer);
   }
 
   // ----------------------------------------------------- segment state
@@ -1184,6 +1278,18 @@ export class Engine {
   }
 
   /**
+   * A Zarr Vectors layer's Colour by look as it draws now: its shader (the
+   * one in effect, the default a store chose included, which the state
+   * leaves out) and its low and high as last dragged; undefined when it
+   * colours by segment or with a shader of its own.
+   */
+  colourLook(name: string): ColourByLook | undefined {
+    const options = (this.segmentationLayer(name)?.displayState as unknown as { skeletonRenderingOptions?: { shader: { value: string }; shaderControlState: { toJSON(): unknown } } } | undefined)?.skeletonRenderingOptions;
+    if (options === undefined) return undefined;
+    return layerColourLook({ skeletonRendering: { shader: options.shader.value, shaderControls: options.shaderControlState.toJSON() } });
+  }
+
+  /**
    * Calls back when what a segmentation layer shows or how its segments are
    * coloured changes: its segments, a plugin's temporary set, the colours,
    * or the layer made afresh.
@@ -1274,6 +1380,106 @@ export class Engine {
     return (loaded as unknown as { transform?: WatchableTransformLike } | undefined)?.transform;
   }
 
+  /** A layer's resolution histogram for the cross-sections (image and segmentation layers). */
+  private sliceHistogram(name: string): RenderScaleHistogramLike | undefined {
+    const layer = this.managed(name)?.layer as { sliceViewRenderScaleHistogram?: RenderScaleHistogramLike } | null | undefined;
+    return layer?.sliceViewRenderScaleHistogram;
+  }
+
+  /** The levels a histogram knows, finest first. */
+  private static histogramLevels(h: RenderScaleHistogramLike): number[] {
+    return [...(h.levels ?? h.spatialScales.keys())].filter(Number.isFinite).sort((a, b) => a - b);
+  }
+
+  /**
+   * Where a layer lies in the global space, its finest voxel and its
+   * pyramid's levels (see the SDK's ViewerApi.layerBounds).  Read from each
+   * loaded source's transform: its output space's bounds (the source's box
+   * carried through the transform) and the transform's linear part, which
+   * relates physical lengths (a source voxel spans `|M[o, i]| *
+   * inputScale[i]` along output dimension o).
+   */
+  layerBounds(name: string): LayerBounds | undefined {
+    const layer = this.managed(name)?.layer;
+    const space = this.viewer.coordinateSpace.value;
+    if (layer === null || layer === undefined || !space.valid) return undefined;
+    const rank = space.rank;
+    const lower = new Array<number>(rank).fill(Infinity);
+    const upper = new Array<number>(rank).fill(-Infinity);
+    const voxelSize = new Array<number>(rank).fill(Infinity);
+    let found = false;
+    for (const source of layer.dataSources) {
+      const t = (source.loadState as unknown as { transform?: WatchableTransformLike } | undefined)?.transform;
+      if (t === undefined) continue;
+      const { rank: r, inputSpace, outputSpace, transform } = t.value;
+      const bounds = outputSpace.bounds;
+      if (bounds === undefined) continue;
+      for (let o = 0; o < r; ++o) {
+        const g = space.names.indexOf(outputSpace.names[o]);
+        if (g === -1 || outputSpace.units[o] !== space.units[g] || !(space.scales[g] > 0)) continue;
+        const k = outputSpace.scales[o] / space.scales[g];
+        const lo = bounds.lowerBounds[o] * k;
+        const hi = bounds.upperBounds[o] * k;
+        if (!Number.isFinite(lo) || !Number.isFinite(hi)) continue;
+        let step = 0;
+        for (let i = 0; i < r; ++i) step += Math.abs(transform[i * (r + 1) + o]) * (inputSpace.scales[i] ?? 0);
+        lower[g] = Math.min(lower[g], lo);
+        upper[g] = Math.max(upper[g], hi);
+        if (step > 0) voxelSize[g] = Math.min(voxelSize[g], step);
+        found = true;
+      }
+    }
+    if (!found) return undefined;
+    for (let g = 0; g < rank; ++g) {
+      if (lower[g] > upper[g]) {
+        lower[g] = -Infinity;
+        upper[g] = Infinity;
+      }
+      if (!Number.isFinite(voxelSize[g])) voxelSize[g] = NaN;
+    }
+    const h = this.sliceHistogram(name);
+    const levels = h === undefined ? [] : Engine.histogramLevels(h).map((v) => ({ voxelSize: v }));
+    return { lower, upper, voxelSize, units: [...space.units], levels };
+  }
+
+  /**
+   * The level Neuroglancer drew of a layer's pyramid in the cross-sections
+   * in its last frame (see the SDK's ViewerApi.renderedLevel): read from
+   * the layer's resolution histogram, which the sections fill as they draw,
+   * a row per level with the chunks on screen and those still wanted.
+   */
+  renderedLevel(name: string): RenderedLevel | undefined {
+    const managed = this.managed(name);
+    const h = this.sliceHistogram(name);
+    if (managed === undefined || h === undefined || !managed.visible || !h.visibility.visible) return undefined;
+    const levels = Engine.histogramLevels(h);
+    let drawn: number | undefined;
+    let wanted: number | undefined;
+    const { numBins, value } = h;
+    for (const [scale, row] of h.spatialScales) {
+      if (!Number.isFinite(scale)) continue;
+      let present = 0;
+      let missing = 0;
+      const base = row * numBins * 2;
+      for (let i = 0; i < numBins; ++i) {
+        present += value[base + i];
+        missing += value[base + numBins + i];
+      }
+      if (present + missing > 0 && (wanted === undefined || scale < wanted)) wanted = scale;
+      if (present > 0 && (drawn === undefined || scale < drawn)) drawn = scale;
+    }
+    const index = (scale: number | undefined) => {
+      if (scale === undefined) return undefined;
+      const i = levels.findIndex((l) => Math.abs(l - scale) <= 1e-6 * scale);
+      return i === -1 ? undefined : i;
+    };
+    const info = this.viewer.navigationState.displayDimensionRenderInfo.value;
+    // The histogram's pixel size is the last frame's that drew: the view's own when nothing did.
+    const pixelSize = (wanted !== undefined ? h.pixelSize : undefined) ?? this.viewer.crossSectionScale.value * info.canonicalVoxelPhysicalSize;
+    const target = (this.managed(name)?.layer as { sliceViewRenderScaleTarget?: { value: number } } | null | undefined)?.sliceViewRenderScaleTarget?.value ?? 1;
+    return { levels, drawn: index(drawn), wanted: index(wanted), pixelSize, renderScaleTarget: target };
+  }
+
   /** The view panels shown now, 2-D and 3-D. */
   panels(): ViewPanel[] {
     const out: ViewPanel[] = [];
@@ -1307,6 +1513,58 @@ export class Engine {
   /** Calls back after each frame Neuroglancer draws. */
   onRendered(callback: () => void): Disposer {
     return this.viewer.display.updateFinished.add(callback);
+  }
+
+  /**
+   * A small picture of the 3-D view (else the first view; with `view` "3d",
+   * of the 3-D view only), cropped to fill `width` × `height`, once what it
+   * shows has loaded (or after a few seconds): see ViewerApi.thumbnail.
+   */
+  thumbnail(width: number, height: number, view: "3d" | "any" = "any"): Promise<string | undefined> {
+    type Shown = { sliceView?: unknown; element?: HTMLElement; isReady?(): boolean; canvasRelativeClippedLeft: number; canvasRelativeClippedTop: number; renderViewport: { width: number; height: number } };
+    const display = this.viewer.display;
+    const shown = [...display.panels].filter((p) => {
+      const any = p as unknown as Shown;
+      return any.renderViewport !== undefined && any.element?.isConnected === true && "canvasRelativeClippedLeft" in any && any.renderViewport.width > 0;
+    }) as unknown as Shown[];
+    const panel = shown.find((p) => p.sliceView === undefined) ?? (view === "3d" ? undefined : shown[0]);
+    if (panel === undefined) return Promise.resolve(undefined);
+    const begun = performance.now();
+    return new Promise((resolve) => {
+      let wait: ReturnType<typeof setTimeout> | undefined;
+      const off = display.updateFinished.add(() => {
+        // Not until the view has drawn what it shows (a view just shown, or just moved, is still loading).
+        if (panel.isReady?.() === false && performance.now() - begun < 4000) {
+          clearTimeout(wait);
+          wait = setTimeout(() => display.scheduleRedraw(), 100);
+          return;
+        }
+        off();
+        clearTimeout(timer);
+        clearTimeout(wait);
+        // Copied at once, while the drawing buffer still holds the frame just drawn.
+        const { width: w, height: h } = panel.renderViewport;
+        const scale = Math.max(width / w, height / h);
+        const sw = width / scale;
+        const sh = height / scale;
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d");
+        if (context === null) return resolve(undefined);
+        context.fillStyle = "#000";
+        context.fillRect(0, 0, width, height);
+        context.drawImage(display.canvas, panel.canvasRelativeClippedLeft + (w - sw) / 2, panel.canvasRelativeClippedTop + (h - sh) / 2, sw, sh, 0, 0, width, height);
+        const webp = canvas.toDataURL("image/webp", 0.7);
+        resolve(webp.startsWith("data:image/webp") ? webp : canvas.toDataURL("image/png"));
+      });
+      const timer = setTimeout(() => {
+        off();
+        clearTimeout(wait);
+        resolve(undefined);
+      }, 6000);
+      display.scheduleRedraw();
+    });
   }
 
   private readonly screenshotPainters = new Set<(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void>();
@@ -1345,7 +1603,15 @@ export class Engine {
     const element = document.createElement("div");
     element.className = "view-overlay";
     this.host.parentElement!.append(element);
-    return { element, dispose: () => element.remove() };
+    this.grounded.add(element);
+    this.markViewGround();
+    return {
+      element,
+      dispose: () => {
+        this.grounded.delete(element);
+        element.remove();
+      },
+    };
   }
 
   /** A plugin's drawing in the 3-D view, with the layer `name` (see ./draw3d.ts). */
@@ -1353,20 +1619,38 @@ export class Engine {
     return draw3d(this.viewer, name, drawer);
   }
 
-  /** A switch beside "Sections" in the 3-D panels. */
-  viewToggle(spec: { label: string; title?: string; value: boolean; onChange(value: boolean): void }): { set(value: boolean): void; dispose(): void } {
+  private readonly toggles: { label: string; title?: string; value: TrackableBoolean; order: number; seq: number; remove?: () => void }[] = [];
+  private toggleSeq = 0;
+
+  /**
+   * A switch beside "Sections" in the 3-D panels, in `order` (lower first,
+   * 100 when not given): Neuroglancer keeps them in the order added, so
+   * all are added again in order whenever one comes or goes.
+   */
+  viewToggle(spec: { label: string; title?: string; value: boolean; order?: number; onChange(value: boolean): void }): { set(value: boolean): void; dispose(): void } {
     const value = new TrackableBoolean(spec.value, spec.value);
     const off = value.changed.add(() => spec.onChange(value.value));
-    const remove = addPerspectivePanelToggle({ label: spec.label, title: spec.title, value });
+    const toggle: (typeof this.toggles)[number] = { label: spec.label, title: spec.title, value, order: spec.order ?? 100, seq: this.toggleSeq++ };
+    this.toggles.push(toggle);
+    this.placeToggles();
     return {
       set: (v) => {
         value.value = v;
       },
       dispose: () => {
         off();
-        remove();
+        const i = this.toggles.indexOf(toggle);
+        if (i === -1) return;
+        this.toggles.splice(i, 1);
+        toggle.remove?.();
       },
     };
+  }
+
+  private placeToggles(): void {
+    for (const t of this.toggles) t.remove?.();
+    this.toggles.sort((a, b) => a.order - b.order || a.seq - b.seq);
+    for (const t of this.toggles) t.remove = addPerspectivePanelToggle({ label: t.label, title: t.title, value: t.value });
   }
 
   /** Settings › View: the viewer's settings, as the app's fields. */
@@ -1431,4 +1715,26 @@ export class Engine {
     this.disposers.splice(0).forEach((d) => d());
     this.viewer.dispose();
   }
+}
+
+/**
+ * The scale bar in the readouts' face (Source Code Pro), smaller and with a
+ * thinner bar than Neuroglancer's 15 px bold sans-serif.  Neuroglancer draws
+ * it in WebGL from a canvas, always white and bold on a 30 % black box: its
+ * face and sizes are all that can be set.  Not part of a link's state.
+ */
+function styleScaleBar(viewer: Viewer): void {
+  const style = () => {
+    viewer.scaleBarOptions.value = {
+      ...viewer.scaleBarOptions.value,
+      fontName: '"Source Code Pro", ui-monospace, monospace',
+      textHeightInPixels: 12,
+      barHeightInPixels: 3,
+      barTopMarginInPixels: 3,
+      paddingInPixels: 4,
+    };
+  };
+  style();
+  // The canvas draws in whatever face is loaded: again once the readouts' face is.
+  document.fonts?.load('bold 12px "Source Code Pro"').then(style, () => {});
 }

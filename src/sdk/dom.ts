@@ -12,6 +12,8 @@
  * - `slider()` is the one slider, with its number beside it.
  * - `emptyState()` is one line and the action that fills it.
  * - `statusLine()` reports progress and errors, nothing else.
+ * - `readout()` shows a value (a coordinate, a size, a count) in the
+ *   readouts' face: Source Code Pro, tabular digits, its unit quieter.
  * - `region()` and each control's `set()` update a panel in place, so a
  *   change of state does not draw the whole panel again.
  */
@@ -157,6 +159,33 @@ export function button(label: string, onclick: () => void, title?: string, cls =
 /** An icon-only button: `label` is its name, read out and shown on hover. */
 export function iconButton(name: string, label: string, onClick: (e: MouseEvent) => void, extra: Attrs = {}): HTMLButtonElement {
   return el("button", { class: "btn icon", type: "button", title: label, "aria-label": label, ...extra, onclick: onClick as EventListener }, icon(name));
+}
+
+/** What `readout()` shows: a value and, optionally, its unit. */
+export type ReadoutValue = string | number | { value: string | number; unit?: string };
+
+/**
+ * A value as the app shows one it does not let you edit here (the
+ * coordinates over the views, the status line's items, sizes and counts in
+ * a panel): in Source Code Pro with tabular digits, the unit in the muted
+ * grey after a thin space.  `set()` shows another value in place.
+ *
+ *     const size = readout(12.5, "mm");
+ *     size.set({ value: 3, unit: "µm" });
+ */
+export function readout(value: string | number, unit?: string, attrs: Attrs = {}): Settable<HTMLSpanElement, ReadoutValue> {
+  const unitEl = el("span", { class: "readout-unit" });
+  const text = document.createTextNode("");
+  const span = el("span", { ...attrs, class: `readout-value${attrs.class ? ` ${String(attrs.class)}` : ""}` }, text, unitEl) as Settable<HTMLSpanElement, ReadoutValue>;
+  span.set = (v: ReadoutValue) => {
+    const { value, unit } = typeof v === "object" ? v : { value: v, unit: undefined };
+    text.data = typeof value === "number" ? String(value) : value;
+    // A thin space (U+2009) between the value and its unit, part of the unit.
+    unitEl.textContent = unit ? `\u2009${unit}` : "";
+    unitEl.hidden = !unit;
+  };
+  span.set({ value, unit });
+  return span;
 }
 
 /** A select of [value, label] pairs; `set` shows another value. */
@@ -479,6 +508,69 @@ export function statusLine(): StatusLine {
 }
 
 // --------------------------------------------------------------- files
+
+/**
+ * The colours to draw with over a view (a canvas, labels): those that read on
+ * the view's own ground, dark or light, whatever the app's theme
+ * (src/ui/styles.css, the --view-ink-* and --dec-* tokens).  Read from the
+ * element drawn into: a canvas in a view overlay (`ui.overlay()`), with the
+ * class `over-3d` when it is over the 3-D view.
+ *
+ *     const ink = viewInk(canvas);
+ *     context.strokeStyle = ink.line;
+ */
+export interface ViewInk {
+  /** A shape's line, as drawn when not selected. */
+  line: string;
+  /** What is selected, and handles. */
+  accent: string;
+  /** Under the pointer. */
+  hover: string;
+  /** The thin edge that keeps a line apart from the data beneath. */
+  keyline: string;
+  /** Words. */
+  text: string;
+  /** A label's leader line and the box behind its words. */
+  leader: string;
+  label: string;
+  /** A tint under the pointer. */
+  zone: string;
+  /** Three greys, facing the viewer to facing away (the orientation cube's faces). */
+  faces: [string, string, string];
+  /** The direction colours of x, y and z. */
+  axes: [string, string, string];
+}
+
+/** The dark ground's ink: where the stylesheet is not (tests), or an element outside the page. */
+const DARK_INK: ViewInk = {
+  line: "#a3a3a3",
+  accent: "#d0d0d0",
+  hover: "#f0f0f0",
+  keyline: "#000",
+  text: "#e6e6e6",
+  leader: "rgba(208, 208, 208, 0.85)",
+  label: "rgba(0, 0, 0, 0.6)",
+  zone: "rgba(208, 208, 208, 0.45)",
+  faces: ["#333", "#292929", "#1f1f1f"],
+  axes: ["#e0574b", "#5cb46c", "#4f88dc"],
+};
+
+export function viewInk(element: Element): ViewInk {
+  const style = element.isConnected ? getComputedStyle(element) : undefined;
+  const v = (name: string, fallback: string) => style?.getPropertyValue(name).trim() || fallback;
+  return {
+    line: v("--view-ink-line", DARK_INK.line),
+    accent: v("--view-ink-accent", DARK_INK.accent),
+    hover: v("--view-ink-hover", DARK_INK.hover),
+    keyline: v("--view-ink-keyline", DARK_INK.keyline),
+    text: v("--view-ink-text", DARK_INK.text),
+    leader: v("--view-ink-leader", DARK_INK.leader),
+    label: v("--view-ink-label", DARK_INK.label),
+    zone: v("--view-ink-zone", DARK_INK.zone),
+    faces: [v("--view-ink-face-1", DARK_INK.faces[0]), v("--view-ink-face-2", DARK_INK.faces[1]), v("--view-ink-face-3", DARK_INK.faces[2])],
+    axes: [v("--dec-x", DARK_INK.axes[0]), v("--dec-y", DARK_INK.axes[1]), v("--dec-z", DARK_INK.axes[2])],
+  };
+}
 
 /** Saves a blob as a download named `name`. */
 export function downloadBlob(blob: Blob, name: string): void {

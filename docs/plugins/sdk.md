@@ -22,15 +22,16 @@ The types, the manifest check and the parts a panel is built from.
 |---|---|
 | `PluginModule` | What a tool plugin's `plugin.ts` exports: `activate(ctx)`, and `deactivate()` if it needs one. |
 | `Manifest` | What the platform shows before loading a plugin: id, name, kind, `contributes` (commands, panels, scene kinds, state), `guide`. |
-| `PlatformContext` | The `ctx` a tool plugin is given: `commands`, `ui`, `workspace`, `viewer`, `state`, `settings`, `context`, `jobs`, `runner`, `hosts`, `services`, `open`, `log`, `auth` and `subscriptions`. |
-| `WorkspaceApi`, `ViewerApi` | Scenes, datasets and layers; the views, positions, layers' specs and drawing in the 3-D view. |
+| `PlatformContext` | The `ctx` a tool plugin is given: `commands`, `ui`, `workspace`, `viewer`, `views`, `state`, `settings`, `context`, `jobs`, `runner`, `hosts`, `services`, `open`, `log`, `auth` and `subscriptions`. |
+| `WorkspaceApi`, `ViewerApi` | Scenes, datasets and layers; the views, positions, layers' specs and drawing in the 3-D view; a layer's box, voxel size and pyramid levels (`LayerBounds`) and the level drawn (`RenderedLevel`). |
+| `ViewToolsApi`, `ViewShape`, `ViewShapeHandle` | Shapes with handles in the 2-D and 3-D views (`point`, `sphere`, `box`, `plane`): `add` one (its `onChange(value, done)` gets each drag, `done` when let go; its `card` shows over the view while it is selected; a `caption`, an `onClick` that makes it a link, a `minSize` on screen), `select`, `onSelect`, `pick` (clicks in the views as points) and `lookingAt`. See the plugin guide's [In-view tools](https://github.com/AllenInstitute/ngplatform/blob/main/plugins/README.md#in-view-tools). |
 | `RunnerApi`, `HostsApi` | Jobs on this computer, and the computers paired in Settings › Compute. |
 | `AuthProvider`, `AuthService`, `SourceSignIn` | A sign-in method of a plugin's own, listed in Settings › Sign-in. |
 | `VirtualFormat` | A kind of file a data type plugin reads in place. |
 | `Disposer`, `Json`, `DockSlot` | Small shared types. |
 | `checkManifest`, `MANIFEST_SCHEMA` | Checks a manifest (the tests run it on every plugin). |
 | `PLATFORM_CONTEXT_KEYS` | The names on `ctx`, for checks. |
-| `card`, `field`, `slider`, `toggle`, `checkbox`, `info`, `emptyState`, `statusLine`, `region`, `roving`, `icon`, `iconButton`, `el` | The parts of a panel, also in `@ngplatform/sdk/dom` (below). |
+| `card`, `field`, `slider`, `toggle`, `checkbox`, `info`, `emptyState`, `statusLine`, `readout`, `region`, `roving`, `icon`, `iconButton`, `el` | The parts of a panel, also in `@ngplatform/sdk/dom` (below). |
 
 ## `@ngplatform/sdk/dom`
 
@@ -49,9 +50,10 @@ are in [Building a panel](https://github.com/AllenInstitute/ngplatform/blob/main
 | `info` | An explanation behind a small (i) that keyboard and touch reach. |
 | `emptyState` | One line and its action, for a panel with nothing to show. |
 | `statusLine` | Progress and errors, an error with its action (Retry, say). |
+| `readout` | A value shown, not edited (a size, a count, a coordinate): in Source Code Pro with tabular digits, its unit quiet after a thin space; `set()` shows another. |
 | `region` | Part of a panel drawn again only when what it shows changes. |
 | `roving` | Arrow keys, Home, End (and a letter, in menus) within a group of items: a list of tabs, a menu, a picker. |
-| `icon` | One of the app's icons by name (`IconName`). |
+| `icon` | One of the app's icons by name (`IconName`): one set of line drawings at 16 px. |
 | `downloadBlob`, `safeFileName` | Save a file the browser downloads; a file name made safe. |
 
 ## `@ngplatform/sdk/testing`
@@ -60,6 +62,7 @@ are in [Building a panel](https://github.com/AllenInstitute/ngplatform/blob/main
 |---|---|
 | `fakeDocument` | A stand-in document for panel tests in Node: build a panel, read its text, click and type as a person would. |
 | `FakeElement`, `FakeEvent`, `FakeDom` | Its parts and type. |
+| `fakeViewTools`, `FakeViewTools` | A stand-in for `ctx.views`: the shapes a plugin added, dragged (`drag(id, value, done)`) and clicked (`click(at)`, for a picker) as a person would. |
 
 ## `@ngplatform/sdk/workers`, `/worker_rpc` and `/virtual`
 
@@ -73,7 +76,7 @@ are in [Building a panel](https://github.com/AllenInstitute/ngplatform/blob/main
 
 | Module | Main exports | What |
 |---|---|---|
-| `format` | `csv`, `csvField`, `ticks`, `mmText`, `bytesText`, `parseBytes` | Numbers, sizes and tables as text. |
+| `format` | `csv`, `csvField`, `ticks`, `mmText`, `bytesText`, `parseBytes`, `splitAddress` | Numbers, sizes and tables as text; an address as where it is, the path and the store's name. |
 | `mat4` | `Mat4`, `Vec3`, `identity4`, `multiply4`, `apply4`, `invert4` | 4 × 4 matrices. |
 | `ome` | `summariseOme`, `describeTransform` | OME-Zarr metadata and transforms in words. |
 | `sources` | `precomputedUrl`, `layerSourceUrl` | A layer's source as a URL. |

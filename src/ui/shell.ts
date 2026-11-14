@@ -32,6 +32,7 @@ import { ServiceRegistry } from "../platform/services.js";
 import { WorkspaceStore } from "../platform/workspace_store.js";
 import { HistoryKeep, IndexedDbHistoryBackend } from "../platform/history_keep.js";
 import type { HistoryData } from "../core/history.js";
+import { rgbOf, VIEW_GROUND_LIGHT, withViewDefaults } from "../core/view_defaults.js";
 import {
   type Choices,
   defaultsTold,
@@ -50,6 +51,7 @@ import type { CatalogueEntry } from "../../plugins/index.js";
 import { registerBuiltins } from "../builtins/index.js";
 import { contextKeyFor } from "./context.js";
 import { asTool, describeSize, followDrag, type DockTab, DockManager, prefs } from "./docks.js";
+import { addStatusItem, statusItems } from "./statusbar.js";
 import { h, icon, iconButton, isMac, keyLabel, mark } from "./dom.js";
 import { closeSheet, confirmDialog, copyText, formDialog, offer, promptDialog, sheet, sheetIsOpen, showMenu, showPalette, showSheet, toast } from "./overlays.js";
 import { ActivityLog, WARNING_EVENT, warningLine } from "./panels/activity.js";
@@ -59,6 +61,8 @@ import { renderJobsPanel, renderPluginsPanel } from "./panels/misc.js";
 import { CONVENTION_LABELS, type PanelConvention } from "../engine/anatomical.js";
 import { offerOverviews } from "./overview.js";
 import { offerRunnerForLarge, offerSampledTractograms, pairFromLink, runnerApi } from "./runner.js";
+import { pointerReadout } from "./pointer_readout.js";
+import { pageTheme, THEME_CHOICES, type ThemeChoice } from "./theme.js";
 import { openDroppedItems, SETTINGS_SECTIONS, type SettingsSection, showAddDatasetSheet, showEditStateSheet, showLocalSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
 import type { Workbench } from "./workbench.js";
 import { createPlatformApis } from "./apis.js";
@@ -84,6 +88,10 @@ const framed = (() => {
   }
 })();
 
+/** How long a message that is not an error stays on the activity line, and how long it takes to fade (the stylesheet's --t). */
+const MESSAGE_MS = 6000;
+const FADE_MS = 200;
+
 export class Shell {
   // No id: Neuroglancer's stylesheet sizes #neuroglancer-container for a
   // full-page viewer, which would override the layout.
@@ -95,8 +103,7 @@ export class Shell {
   private readonly statusText = h("span", {}, "Starting");
   private readonly statusStrip = h("div", { class: "ng-status", "aria-live": "polite" });
   private readonly sceneTabs = h("div", { class: "scene-tabs", role: "tablist", "aria-label": "Scenes" });
-  /** Over an empty scene's views: the examples, opening a file, pasting a link. */
-  private readonly startCard = h("div", { class: "start-card", hidden: true });
+  /** Over an empty scene's views: opening a file, pasting a link (the examples are in the Open sheet and the palette). */
   /** In the Activity dock's head, also while it is collapsed: the running job, else the last message. */
   private readonly activityLine = h("button", { class: "dock-status", type: "button", title: "Show the activity" });
   private readonly undoButton = iconButton("undo", "Undo", () => this.wb.run("edit.undo"));
@@ -143,13 +150,21 @@ export class Shell {
       h(
         "div",
         { class: "group" },
-        h("button", { class: "btn outline", type: "button", onclick: () => this.wb.run("workspace.open") }, icon("open"), "Open"),
+        // Named for a screen reader also where a phone hides its label.
+        h("button", { class: "btn outline", type: "button", "aria-label": "Open", onclick: () => this.wb.run("workspace.open") }, icon("open"), h("span", { class: "hide-phone" }, "Open")),
         h(
           "button",
           // Named for a screen reader also where a narrow window hides its label.
           { class: "btn", type: "button", "aria-haspopup": "menu", "aria-label": "Share", onclick: (e: Event) => this.showShareMenu(e.currentTarget as HTMLElement) },
           icon("link"),
           h("span", { class: "hide-narrow" }, "Share"),
+        ),
+        h(
+          "button",
+          // Named for a screen reader also where a narrow window hides its label.
+          { class: "btn hide-phone", type: "button", title: "Open this scene in Neuroglancer, in a new tab", "aria-label": "Open in Neuroglancer", onclick: () => this.wb.run("workspace.openInNeuroglancer") },
+          icon("external"),
+          h("span", { class: "hide-narrow" }, "Neuroglancer"),
         ),
       ),
       h("span", { class: "sep hide-narrow" }),
@@ -161,6 +176,8 @@ export class Shell {
       h(
         "div",
         { class: "group" },
+        // On a phone it is in the Help menu.
+        h("a", { class: "btn icon hide-phone", href: REPOSITORY, target: "_blank", rel: "noopener noreferrer", title: "ngplatform on GitHub", "aria-label": "ngplatform on GitHub" }, icon("github")),
         iconButton("camera", "Capture", (e) =>
           showMenu(e.currentTarget as HTMLElement, [
             { label: "Picture…", run: () => this.wb.run("view.capture") },
@@ -174,8 +191,8 @@ export class Shell {
         iconButton("help", "Help", (e) =>
           showMenu(e.currentTarget as HTMLElement, [
             { label: "Keyboard and mouse", run: () => this.wb.run("help.shortcuts") },
-            { label: "Guide ↗", run: () => window.open(GUIDE, "_blank", "noopener") },
-            { label: "ngplatform on GitHub ↗", run: () => window.open(REPOSITORY, "_blank", "noopener") },
+            { label: "Guide", external: true, run: () => window.open(GUIDE, "_blank", "noopener") },
+            { label: "ngplatform on GitHub", external: true, run: () => window.open(REPOSITORY, "_blank", "noopener") },
           ]),
         ),
       ),
@@ -187,29 +204,24 @@ export class Shell {
         h("kbd", {}, keyLabel("Mod+K")),
       ),
     );
-    const engine = h("section", { class: "engine", "aria-label": "Viewer" }, this.engineHost, this.viewSplit, this.viewArea, this.startCard);
+    const engine = h("section", { class: "engine", "aria-label": "Viewer" }, this.engineHost, this.viewSplit, this.viewArea);
+    // The pointer's position after the position bar, with units.
+    pointerReadout(engine);
     this.viewSplit.addEventListener("pointerdown", (e) => this.dragViewSplit(e, engine));
     this.viewSplit.addEventListener("keydown", (e) => this.stepViewSplit(e));
     const centre = h("div", { class: "centre" }, engine, this.statusStrip);
-    const workspace = h(
-      "div",
-      { class: "workspace" },
-      this.docks.element("left"),
-      this.docks.resizer("left"),
-      centre,
-      this.docks.resizer("right"),
-      this.docks.element("right"),
-    );
+    // One column on the left: the layers, and below a divider the tools that are on; the views fill the rest.
+    const side = h("div", { class: "side" }, this.docks.element("left"), this.docks.resizer("tools"), this.docks.element("tools"));
+    const workspace = h("div", { class: "workspace" }, side, this.docks.resizer("left"), centre);
     this.root.append(topbar, workspace, this.docks.resizer("bottom"), this.docks.element("bottom"));
     this.activityLine.addEventListener("click", () => this.docks.show("activity"));
+    // The status line: the activity message on the left, then the items plugins put there (a scale, say).
+    this.docks.addToHead("bottom", statusItems.element);
     this.docks.addToHead("bottom", this.activityLine);
     const narrow = window.matchMedia("(max-width: 520px)");
     this.docks.restore(narrow.matches);
     narrow.addEventListener("change", () => {
-      if (narrow.matches) {
-        this.docks.setCollapsed("left", true, false);
-        this.docks.setCollapsed("right", true, false);
-      }
+      if (narrow.matches) this.docks.setCollapsed("left", true, false);
     });
   }
 
@@ -313,6 +325,11 @@ export class Shell {
       },
     };
     this.wb = wb;
+    // The views on the light ground in the light theme (unless kept black there); as the scene has them otherwise.
+    const theme = pageTheme();
+    const ground = () => engine.setViewGround(theme.lightViews() ? { sections: rgbOf(VIEW_GROUND_LIGHT.sections), view3d: rgbOf(VIEW_GROUND_LIGHT.view3d) } : undefined);
+    theme.onChanged(ground);
+    ground();
     this.switches = { catalogue: plugins.catalogue, choices: plugins.choices, thisTab: plugins.thisTab, resolution: plugins.resolution };
     wb.offers = new PluginOffers(wb, plugins.catalogue, (ids) => this.turnOnPlugins(ids));
     // For debugging from the console, beside window.viewer (in production only with ?debug).
@@ -322,7 +339,7 @@ export class Shell {
       commands,
       keybindings,
       context: this.context,
-      // A plugin's panel in the left slot is a tool: it goes to the Tools dock, under the group its manifest names.
+      // A plugin's panel in the left (or right) slot is a tool: it goes to the Tools section, under the group its manifest names.
       docks: {
         addTab: (tab) => this.docks.addTab(asTool(tab)),
         show: (id) => this.docks.show(id),
@@ -336,6 +353,7 @@ export class Shell {
         viewToggle: (spec) => engine.viewToggle(spec),
         overlay: () => engine.addOverlay(),
         screenshotOverlay: (paint) => engine.addScreenshotOverlay(paint),
+        statusItem: (element, options) => addStatusItem(element, options),
         form: (title, schema, initial) => formDialog(title, schema, initial),
         sheet: (title, render, options) => {
           const body = h("div", { class: "plugin-sheet" });
@@ -349,6 +367,7 @@ export class Shell {
       },
       workspace: apis.workspace,
       viewer: apis.viewer,
+      viewTools: apis.views,
       slices: {
         get: (key, version) => store.rawSlice(key, version),
         set: (key, version, value) => store.setRawSlice(key, version, value),
@@ -466,14 +485,17 @@ export class Shell {
       this.renderSceneTabs();
       this.showKindPanel();
       this.updateControls();
-      this.updateStartCard();
     };
-    // The activity line: a running job and its progress, else the last message.
+    // The activity line: a running job and its progress, else the last message.  A message
+    // that is not an error fades from the line after a few seconds (it stays in Activity);
+    // an error stays until another message takes its place.
     let last: { message: string; level: string } | undefined;
+    let fade: ReturnType<typeof setTimeout> | undefined;
     const line = () => {
       const running = jobs.list().filter((j) => j.state === "running");
       const job = running[0];
       this.activityLine.classList.toggle("err", job === undefined && last?.level === "error");
+      if (job !== undefined) this.activityLine.classList.remove("fading");
       this.activityLine.textContent =
         job !== undefined
           ? `${job.title}${job.progress !== undefined ? ` ${Math.round(job.progress * 100)}%` : "…"}${running.length > 1 ? ` (+${running.length - 1})` : ""}`
@@ -481,7 +503,22 @@ export class Shell {
     };
     log.onAdd((message, level) => {
       last = { message, level };
+      clearTimeout(fade);
+      this.activityLine.classList.remove("fading");
       line();
+      if (level === "error") return;
+      const shown = last;
+      fade = setTimeout(() => {
+        if (last !== shown) return;
+        // Faded out (at once with less motion), then gone from the line.
+        this.activityLine.classList.add("fading");
+        fade = setTimeout(() => {
+          if (last !== shown) return;
+          last = undefined;
+          this.activityLine.classList.remove("fading");
+          line();
+        }, FADE_MS);
+      }, MESSAGE_MS);
     });
     // Data type plugins' warnings about what they read (a newer format, columns left out), each once per store.
     window.addEventListener(WARNING_EVENT, (e) => {
@@ -538,14 +575,17 @@ export class Shell {
       void (async () => {
         const resume = await keep?.find(location.hash);
         await this.openText(link, "the link", false, resume);
-        if (resume !== undefined) log.add("The history of changes kept in this browser for this link is back (the ⋯ beside undo and redo).");
+        if (resume !== undefined) log.add("Undo history for this link restored");
       })();
     } else {
       // An empty viewer, unless the link names an example (`#example=<id>`) or the build a default one.
       const named = /^#example=([\w.-]+)$/.exec(location.hash)?.[1];
       const example = examples.get(named ?? defaultExample);
       if (example !== undefined) this.openExample(example.id);
-      else store.settle();
+      else {
+        engine.applyViewDefaults();
+        store.settle();
+      }
     }
     refresh();
     setTimeout(() => this.checkFormats(), 1500);
@@ -734,8 +774,6 @@ export class Shell {
     });
     wb.examples.onChange(() => {
       this.registerExampleCommands();
-      this.startCardFor = undefined;
-      this.updateStartCard();
     });
     this.registerExampleCommands();
 
@@ -1007,7 +1045,7 @@ export class Shell {
         const { preference } = engine.panelConvention();
         showMenu(
           this.root.querySelector<HTMLElement>('.topbar button[title="Settings"]') ?? { x: window.innerWidth - 320, y: 48 },
-          conventions.map(([id, title]) => ({ label: `${preference === id ? "✓ " : ""}${title}`, current: preference === id, run: () => engine.setPanelConvention(id) })),
+          conventions.map(([id, title]) => ({ label: title, current: preference === id, run: () => engine.setPanelConvention(id) })),
         );
       },
     });
@@ -1026,6 +1064,17 @@ export class Shell {
       run: (args?: { section?: SettingsSection }) => showSettingsSheet(wb, args?.section),
     });
     add({ id: "view.settings", title: "View settings…", group: "View", run: () => showSettingsSheet(wb, "view") });
+    // The theme, kept in this browser (Settings › View).
+    const theme = pageTheme();
+    add({ id: "view.theme.toggle", title: "Theme: switch between dark and light", group: "View", run: () => theme.toggle() });
+    add({
+      id: "view.theme",
+      title: "Theme: dark, light or as the system is",
+      group: "View",
+      args: { type: "object", required: ["theme"], properties: { theme: { type: "string", enum: THEME_CHOICES.map(([id]) => id) } } },
+      run: ({ theme: choice }: { theme: ThemeChoice }) => theme.setChoice(choice),
+    });
+    add({ id: "view.theme.blackViews", title: "Black views in the light theme: on or off", group: "View", run: () => theme.setBlackViews(!theme.blackViews()) });
     add({
       id: "settings.signIn",
       title: "Sign-in settings…",
@@ -1063,11 +1112,11 @@ export class Shell {
       add({ id: `view.toggle.${key}`, title: `Show or hide ${label}`, group: "View", run: () => c.invoke("view.toggleOption", { option: key }) });
     }
     for (const [slot, title] of [
-      ["left", "layers"],
-      ["right", "tools"],
-      ["bottom", "activity"],
+      ["left", "Show or hide the left column"],
+      ["tools", "Fold or unfold the tools"],
+      ["bottom", "Show or hide the activity dock"],
     ] as const) {
-      add({ id: `view.dock.${slot}`, title: `Show or hide the ${title} dock`, group: "View", run: () => this.docks.toggle(slot) });
+      add({ id: `view.dock.${slot}`, title, group: "View", run: () => this.docks.toggle(slot) });
     }
     for (const [tab, title] of [
       ["layers", "Layers"],
@@ -1077,37 +1126,6 @@ export class Shell {
     ]) {
       add({ id: `panel.${tab}`, title: `Show the ${title} panel`, group: "Panels", run: () => this.docks.show(tab) });
     }
-  }
-
-  /** Which examples the start card was made with (undefined: make it again). */
-  private startCardFor: string | undefined;
-
-  /** The start card: shown over a scene with no layers (not a plugin's kind of scene), made again when the examples change. */
-  private updateStartCard(): void {
-    const wb = this.wb;
-    const scene = activeScene(wb.store.state());
-    this.startCard.hidden = wb.engine.layers().length > 0 || scene.kind !== undefined;
-    if (this.startCard.hidden) return;
-    const examples = wb.examples.list().filter((e) => e.listed !== false && !(e.remote && wb.framed));
-    const key = examples.map((e) => e.id).join(",");
-    if (key === this.startCardFor) return;
-    this.startCardFor = key;
-    this.startCard.replaceChildren(
-      h(
-        "div",
-        { class: "start-examples" },
-        ...examples.map((e) =>
-          h("button", { class: "start-example", type: "button", title: e.description, onclick: () => this.openExample(e.id) }, h("span", { class: "title" }, e.title), h("span", { class: "desc" }, e.description)),
-        ),
-      ),
-      h(
-        "div",
-        { class: "row-actions" },
-        h("button", { class: "btn primary", type: "button", disabled: !wb.commands.available("dataset.addLocal"), onclick: () => wb.run("dataset.addLocal") }, icon("open"), "Open a file…"),
-        h("button", { class: "btn outline", type: "button", onclick: () => wb.run("workspace.open") }, icon("link"), "Paste a link…"),
-      ),
-      h("p", { class: "note" }, "Or drop files here."),
-    );
   }
 
   private exampleCommands: (() => void)[] = [];
@@ -1436,7 +1454,9 @@ export class Shell {
     const example = this.wb.examples.get(id);
     if (example === undefined) throw new CommandError(`no example ${id}`);
     this.switchOnForTab(example.plugins ?? []);
-    this.wb.store.open(example.state(), `the example “${example.title}”`);
+    const state = example.state();
+    // The views' defaults where the example says nothing (src/core/view_defaults.ts).
+    this.wb.store.open({ ...state, ng: withViewDefaults(state.ng) }, `the example “${example.title}”`);
   }
 
   /** Opens whatever was pasted or linked; returns whether it worked. */
@@ -1508,8 +1528,8 @@ export class Shell {
       { label: "Copy scene as Neuroglancer link", run: run("workspace.copyPlainLink") },
       { label: "Copy scene as Neuroglancer JSON", run: run("workspace.copyState") },
       "-",
-      { label: "Open in Neuroglancer ↗", run: run("workspace.openInNeuroglancer") },
-      { label: "Open in Neuroglancer with Zarr Vectors ↗", run: run("workspace.openInPlainNeuroglancer") },
+      { label: "Open in Neuroglancer", external: true, run: run("workspace.openInNeuroglancer") },
+      { label: "Open in Neuroglancer with Zarr Vectors", external: true, run: run("workspace.openInPlainNeuroglancer") },
     ]);
   }
 

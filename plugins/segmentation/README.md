@@ -3,7 +3,7 @@
 ![Three segments drawn on SRB 2026a, the tool bar over the views and the segment list](../../docs/images/plugins/segmentation.png)
 
 Label volumes drawn by hand, as WebKnossos's volume annotation: a panel of
-their own in the Tools dock (**Segmentation**) and a tool bar over the views.
+their own in the Tools section (**Segmentation**) and a tool bar over the views.
 
 - **A new segmentation layer**: an empty label volume on the grid of an
   image or a segmentation, at one of its levels (the same voxels and

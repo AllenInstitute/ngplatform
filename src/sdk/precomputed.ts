@@ -14,6 +14,7 @@
 import { decodeChannels } from "neuroglancer/unstable/sliceview/compressed_segmentation/decode_uint64.js";
 import { JpegDecoder } from "neuroglancer/unstable/third_party/jpgjs/jpg.js";
 import { murmurHash3_x86_128Hash64Bits_Bigint } from "neuroglancer/unstable/util/hash.js";
+import { gcsReadable } from "./sources.js";
 
 export interface Sharding {
   "@type": "neuroglancer_uint64_sharded_v1";
@@ -101,7 +102,7 @@ export const httpRead: RangeRead = async (url, range, signal) => {
   const headers: Record<string, string> = {};
   if (range !== undefined) headers.Range = `bytes=${range.offset}-${range.offset + range.length - 1}`;
   // Ranges skip the browser's HTTP cache: Chromium answers cached range reads of one URL (a shard) one at a time.
-  const response = await fetch(url, range === undefined ? { headers, signal } : { headers, signal, cache: "no-store" });
+  const response = await fetch(gcsReadable(url), range === undefined ? { headers, signal } : { headers, signal, cache: "no-store" });
   if (response.status === 404 || response.status === 403) return undefined;
   if (!response.ok) throw new Error(`${url}: ${response.status} ${response.statusText}`);
   const bytes = new Uint8Array(await response.arrayBuffer());
@@ -112,7 +113,7 @@ export const httpRead: RangeRead = async (url, range, signal) => {
 
 /** A JSON file over http(s); undefined when it is missing (404, or 403 as buckets answer). */
 export async function httpJson(url: string, signal?: AbortSignal): Promise<any | undefined> {
-  const response = await fetch(url, { signal });
+  const response = await fetch(gcsReadable(url), { signal });
   if (response.status === 404 || response.status === 403) return undefined;
   if (!response.ok) throw new Error(`${url}: ${response.status} ${response.statusText}`);
   return response.json();

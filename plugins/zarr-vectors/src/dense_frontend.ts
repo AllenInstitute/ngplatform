@@ -60,6 +60,7 @@ import {
   DRAWS_2D,
   DRAWS_3D,
   perChunkLevels,
+  regionDrawn,
   selectDense3dChunks,
   selectDenseLevel,
   setNodePosition,
@@ -294,11 +295,12 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
       this.sequential = data.sequential;
       this.objectPerVertex = data.objectPerVertex;
       this.uploads = data;
-      (source as ZarrVectorsGeometryChunkSource).knownBytes.set(
-        x.id,
-        drawChunkBytes(data).gpu,
-      );
     }
+    // An empty cell is known too, at no size, as the worker counts it.
+    (source as ZarrVectorsGeometryChunkSource).knownBytes.set(
+      x.id,
+      data === undefined ? 0 : drawChunkBytes(data).gpu,
+    );
   }
 
   copyToGPU(gl: GL) {
@@ -1649,8 +1651,9 @@ function DenseRenderLayer<
 
     /**
      * A 3-d view's chunks, a level per chunk (`selectDense3dChunks`): under
-     * each of the coarsest level's chunks, the finer chunks chosen once all
-     * are loaded, else that coarse chunk while they load.
+     * each of the coarsest level's chunks, over each part of it the finest
+     * level loaded (`regionDrawn`), so detail fills in from the top down and
+     * no part is a gap while a coarser chunk over it is loaded.
      */
     private chunksToDraw3d(
       projectionParameters: any,
@@ -1698,20 +1701,15 @@ function DenseRenderLayer<
         return c;
       };
       let ready = true;
-      for (const { root, leaves } of roots) {
-        const found = leaves.map((l) => loaded(l.level, l.position));
-        leaves.forEach((l, i) => {
-          if (found[i] !== undefined) ++count(l.level).present;
+      const chunkSizes = transformed.map((t) => t.chunkLayout.size);
+      for (const region of roots) {
+        for (const l of region.leaves) {
+          if (loaded(l.level, l.position) !== undefined) ++count(l.level).present;
           else ++count(l.level).missing;
-        });
-        if (found.every((c) => c !== undefined)) {
-          chunks.push(...(found as ZarrVectorsDenseChunk[]));
-          continue;
         }
-        ready = false;
-        const standIn = loaded(root.level, root.position);
-        if (standIn !== undefined) chunks.push(standIn);
-        else for (const c of found) if (c !== undefined) chunks.push(c);
+        const { nodes, complete } = regionDrawn(region, chunkSizes, (n) => loaded(n.level, n.position) !== undefined);
+        if (!complete) ready = false;
+        for (const n of nodes) chunks.push(loaded(n.level, n.position)!);
       }
       return { ready, chunks, levels: [...counts.values()] };
     }

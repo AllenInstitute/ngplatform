@@ -253,12 +253,16 @@ fn trace(@builtin(global_invocation_id) gid: vec3u) {
                    texval(v + vec3f(0.0, 0.0, 1.0)) - texval(v - vec3f(0.0, 0.0, 1.0))) * 0.5;
     let gm = length(gv);
     if (P[P_INSET] > 0.0 && gm > 1e-6) {
-      // The colour a little way along the gradient, on the more opaque side: the tissue beneath a surface.
+      // The colour a little way along the gradient, on the more opaque side: the tissue beneath a surface. Only where
+      // the collision lies in a surface's partial volume (under 0.3 of the opacity of the tissue beneath it), so a cut
+      // through tissue keeps its own colours.
       let d = gv * (P[P_INSET] / gm);
       let ca = tflookup(texval(v + d));
       let cb = tflookup(texval(v - d));
-      let c = select(cb, ca, ca.w >= cb.w);
-      albedo = c.rgb * P[P_ALBEDO];
+      if (tflookup(texval(v)).w < 0.3 * max(ca.w, cb.w)) {
+        let c = select(cb, ca, ca.w >= cb.w);
+        albedo = c.rgb * P[P_ALBEDO];
+      }
     }
     let psurf = P[P_SHADE_MIX] * (1.0 - exp(-P[P_GRAD_SCALE] * length(gv)));
     let wo = -dw;

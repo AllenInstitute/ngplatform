@@ -17,6 +17,7 @@
  * page with the same link.
  */
 import type { LookupEntry, LookupTable } from "../core/lookup_table.js";
+import type { ColourByLook } from "../engine/colour_shader.js";
 import type { Schema } from "../core/schema.js";
 
 export type { LookupEntry, LookupTable, Schema };
@@ -116,10 +117,12 @@ export interface Manifest {
     commands?: CommandContribution[];
     keybindings?: { key: string; command: string; args?: unknown; when?: string }[];
     /**
-     * A panel in the `left` slot is a tool: it goes to the Tools dock, listed
-     * under `group` ("Image", "Labels", "Space", "Vectors"; "Other" when not
-     * given).  `minSize`: pixels the dock grows to, at least, when the panel
-     * is shown (not saved as the dock's size).
+     * A panel in the `left` (or `right`) slot is a tool: it goes to the
+     * Tools section of the left column, below the layers, listed under
+     * `group` ("Image", "Labels", "Space", "Vectors"; "Other" when not
+     * given), and is listed while its `when` holds (for the data selected,
+     * say: `selectedLayerType == image`).  `minSize`: pixels the dock grows
+     * to, at least, when the panel is shown (not saved as the dock's size).
      */
     panels?: { id: string; title: string; slot: DockSlot; group?: string; order?: number; when?: string; minSize?: number }[];
     datasetActions?: { command: string; title?: string; when?: string }[];
@@ -382,6 +385,13 @@ export interface ViewerApi {
   /** Calls back when what a segmentation layer shows, or how its segments are coloured, changes. */
   onSegmentsChanged(layer: string, callback: () => void): Disposer;
   /**
+   * A Zarr Vectors layer's Colour by look (Display, Vertex colour) as it
+   * draws now, the default a store chose included (a taxonomy's coarsest
+   * group), for a plugin that draws the layer itself in its colours;
+   * undefined when it colours by segment or with a shader of its own.
+   */
+  colourLook?(layer: string): ColourByLook | undefined;
+  /**
    * Hides a layer's own drawing, or shows it again, for a plugin that draws
    * the layer itself: not saved in the link, and kept hidden through undo
    * and scene switches.  An image layer's opacity is set to 0 (the link
@@ -410,6 +420,15 @@ export interface ViewerApi {
   /** Calls back after each frame the views draw. */
   onRendered(callback: () => void): Disposer;
   /**
+   * A small picture of the 3-D view (else of the first view shown; with
+   * `view` "3d", of the 3-D view only, whatever the layout) once what it
+   * shows has loaded (at most a few seconds), without the platform's
+   * overlays: a data URL (WebP where the browser writes it, else PNG),
+   * `width` × `height` pixels, the view cropped to fill it.  Undefined when
+   * no such view is shown.
+   */
+  thumbnail?(width: number, height: number, view?: "3d" | "any"): Promise<string | undefined>;
+  /**
    * A layer's first data source's transform, from its source space to the
    * global one, and the transform the source itself gives (its default).
    * Matrices are homogeneous, column-major, as Neuroglancer keeps them:
@@ -422,6 +441,19 @@ export interface ViewerApi {
   layerTransform(layer: string): LayerTransform | undefined;
   /** Sets a layer's transform matrix (same form as `layerTransform`'s), as one undo step. */
   setLayerTransform(layer: string, matrix: Float64Array): void;
+  /**
+   * Where a layer's data lies in the global space, how fine it is, and its
+   * pyramid's levels: undefined until it has loaded (or for a layer with
+   * no bounds, such as local annotations).  See LayerBounds.
+   */
+  layerBounds?(layer: string): LayerBounds | undefined;
+  /**
+   * The level of an image or segmentation layer's pyramid Neuroglancer
+   * drew in the cross-sections in its last frame, as its resolution widget
+   * (Resolution (slice)) shows it; undefined while the layer is not drawn
+   * in a section.  See RenderedLevel.
+   */
+  renderedLevel?(layer: string): RenderedLevel | undefined;
   /**
    * Has Neuroglancer read again the chunks it holds from under `url` (an
    * http(s) address): for data a plugin serves and has changed, such as a
@@ -472,6 +504,46 @@ export interface LayerTransform {
   defaultMatrix: Float64Array;
 }
 
+/**
+ * A layer's place and resolution in the global space (ViewerApi.layerBounds).
+ * Lengths are physical, in the global dimension's base unit (metres for
+ * a spatial one): Neuroglancer's own.
+ */
+export interface LayerBounds {
+  /**
+   * Its box in global coordinates (all global dimensions, as `position`
+   * is): the union of its sources' bounds.  A dimension it does not have
+   * is -Infinity to Infinity.
+   */
+  lower: number[];
+  upper: number[];
+  /** Its finest voxel's size along each global dimension (NaN along one it does not have). */
+  voxelSize: number[];
+  /** Each global dimension's unit (as `voxelSize` is given in). */
+  units: string[];
+  /**
+   * Its pyramid's levels, finest first, each one's voxel size as
+   * Neuroglancer's resolution widget gives it (the middle of its sizes
+   * along the displayed dimensions).  Known once the layer has been drawn
+   * in a cross-section; empty before.
+   */
+  levels: { voxelSize: number }[];
+}
+
+/** What Neuroglancer drew of a layer's pyramid in its last frame (ViewerApi.renderedLevel). */
+export interface RenderedLevel {
+  /** The levels' voxel sizes, finest first (as LayerBounds.levels). */
+  levels: number[];
+  /** The finest level drawn with data on screen (an index into `levels`); undefined when none is in view. */
+  drawn?: number;
+  /** The finest level Neuroglancer asked for at this zoom (it may still be loading). */
+  wanted?: number;
+  /** The size of a screen pixel in the cross-sections, in the same unit. */
+  pixelSize: number;
+  /** The layer's Resolution (slice) target: screen pixels per voxel it aims for (1 by default). */
+  renderScaleTarget: number;
+}
+
 export interface ViewPanelInfo {
   kind: "2d" | "3d";
   element: HTMLElement;
@@ -481,6 +553,150 @@ export interface ViewPanelInfo {
    * within its section's thickness).  Undefined behind the camera.
    */
   project(global: ArrayLike<number>): { x: number; y: number; depth: number } | undefined;
+}
+
+// ---------------------------------------------------------- in-view tools
+
+/** What every shape drawn over the views has; see ViewShape. */
+export interface ViewShapeBase {
+  /** Unique among the plugin's shapes; what `selected()` and `onSelect` name. */
+  id: string;
+  /** The floating card's title, unless `title` gives one; a point shows it beside itself (a landmark's number). */
+  label?: string;
+  /** The floating card's heading, when it is not the label ("Pair 1" for a point labelled "1"). */
+  title?: string;
+  /** CSS colour of its lines when not selected (a group's colour); light grey when none. */
+  colour?: string;
+  /** False: drawn and selectable (its card shows), without handles. Default true. */
+  editable?: boolean;
+  /** The views it is drawn in. Default "both". */
+  views?: "2d" | "3d" | "both";
+  /**
+   * A small label at the shape's top left on screen: `text` in the
+   * interface's face, `value` (a size, a count) after it in the readouts'.
+   * Hovering or clicking it is hovering or clicking the shape.
+   */
+  caption?: { text: string; value?: string };
+  /**
+   * A click on the shape (its line, or its caption) calls this instead of
+   * selecting it: a shape that is a link (a zoom box framing its layer).
+   * A click inside it in a 2-D view stays the view's.
+   */
+  onClick?(): void;
+  /** Not drawn in a view where it is smaller than this, in pixels across (its larger side on screen). */
+  minSize?: number;
+  /**
+   * The floating card shown over the view while this shape is selected:
+   * exact values, choices, delete.  Drawn when the shape is selected and
+   * disposed when it is not; it keeps itself up to date meanwhile (an
+   * `update` does not draw it again).
+   */
+  card?: (host: HTMLElement) => Disposer | void;
+}
+
+/**
+ * A shape drawn over Neuroglancer's 2-D and 3-D views, with handles that
+ * drag it.  Coordinates are global (all global dimensions, as
+ * `ViewPanelInfo.project` takes; dimensions not displayed are ignored),
+ * and a sphere's radii and a box's corners are along the global axes.
+ * `onChange` gets each new value: with `done` false while the mouse moves
+ * (keep it out of undo), true when it is let go (one undo step).  The
+ * shape moves as dragged; the plugin's `update` with the value it keeps
+ * (rounded, clamped) puts it there.
+ */
+export type ViewShape = ViewShapeBase &
+  (
+    | { kind: "point"; at: number[]; onChange?(value: { at: number[] }, done: boolean): void }
+    | {
+        kind: "sphere";
+        centre: number[];
+        radii: number[];
+        /** Its radii keep their ratios as one is dragged (a sphere of one radius). */
+        uniform?: boolean;
+        onChange?(value: { centre: number[]; radii: number[] }, done: boolean): void;
+      }
+    | { kind: "box"; lower: number[]; upper: number[]; onChange?(value: { lower: number[]; upper: number[] }, done: boolean): void }
+    | {
+        kind: "plane";
+        point: number[];
+        /** Display coordinates (needs no unit length). */
+        normal: number[];
+        /** The side of the square drawn in the 3-D view and of the line in a 2-D view, in global units; else about 160 pixels. */
+        size?: number;
+        /** False: its handle moves it along its normal, with no ring to turn it. Default true. */
+        turns?: boolean;
+        onChange?(value: { point: number[]; normal: number[] }, done: boolean): void;
+      }
+    | {
+        kind: "frame";
+        /** Its centre. */
+        centre: number[];
+        /** Its three half-edge vectors (global units, any directions): a box turned and sized as a layer's data is placed. */
+        axes: number[][];
+        /** What its ring turns about (Registration's Rotate around); else its centre. */
+        pivot?: number[];
+        /** False: no ring. Default true. */
+        turns?: boolean;
+        onChange?(value: { centre: number[]; axes: number[][]; pivot?: number[]; change: ViewFrameChange }, done: boolean): void;
+      }
+  );
+
+/**
+ * What a drag did to a frame, from the frame as it was when the drag
+ * began (an arrow key: one step): moved by a vector; turned by `angle`
+ * radians (right-handed) about `axis` (a unit vector, display
+ * coordinates: the section's normal) through `about`; or scaled along
+ * each of its own axes by `factors` (about its centre; `uniform`: Shift
+ * held, all three alike).
+ */
+export type ViewFrameChange =
+  | { kind: "move"; by: number[] }
+  | { kind: "turn"; axis: number[]; angle: number; about: number[] }
+  | { kind: "scale"; factors: [number, number, number]; uniform: boolean };
+
+/** A shape over the views, as `ViewToolsApi.add` returns it. */
+export interface ViewShapeHandle {
+  /** Changes the shape (its geometry, label, colour, card…); it is drawn again. */
+  update(patch: Partial<ViewShape>): void;
+  /** Takes it off the views (and out of the selection). */
+  dispose(): void;
+}
+
+/**
+ * Shapes with handles in Neuroglancer's 2-D and 3-D views: regions,
+ * crops, cut planes, landmarks.  Drawn on a canvas over each view (never
+ * into captures); the views' own mouse use is untouched except on a
+ * handle.  Selecting a shape (clicking it) shows its handles and its card;
+ * one is selected at a time, and Escape or a click on an empty part of a
+ * view clears it.  Alt+wheel over a selected sphere or box scales it, and
+ * the arrow keys (Shift: ten times) move it a unit while the mouse is
+ * over a view.
+ */
+export interface ViewToolsApi {
+  add(shape: ViewShape): ViewShapeHandle;
+  /** The selected shape's id, when it is one of this plugin's. */
+  selected(): string | undefined;
+  /** Selects one of this plugin's shapes (its card shows), or clears the selection. */
+  select(id: string | undefined): void;
+  /** Calls back when which of this plugin's shapes is selected changes (undefined: none of them). */
+  onSelect(callback: (id: string | undefined) => void): Disposer;
+  /**
+   * Until disposed, a click in a view that is not on a shape is a point:
+   * `onPick` gets the global position under the mouse (in the 3-D view,
+   * on what is drawn there; nothing when the mouse is over nothing).  The
+   * view's own click still happens.  One picker at a time: a new one
+   * replaces the last.
+   */
+  pick(onPick: (at: number[], view: "2d" | "3d") => void): Disposer;
+  /** Where the user is looking: the place the mouse was last over in a view, while that is still in sight; else the views' centre. */
+  lookingAt(): number[];
+  /**
+   * Hides every plugin's shapes and the card (they are neither drawn nor
+   * clickable) for a clean picture, or shows them again: View aids'
+   * Graphics switch.  Not saved; a plugin's own shapes stay as they are.
+   */
+  setAllHidden(hidden: boolean): void;
+  allHidden(): boolean;
 }
 
 /** One frame of the 3-D view, as a plugin draws into it. */
@@ -723,13 +939,30 @@ export interface PlatformContext {
     toast(message: string, kind?: "info" | "error"): void;
     /**
      * A switch beside "Sections" in the 3-D panel, for something the plugin
-     * draws there; until the disposer is called.
+     * draws there; until the disposer is called.  Switches sit in `order`
+     * (lower first, 100 when not given), so one plugin's stay together.
      */
-    viewToggle(spec: { label: string; title?: string; value: boolean; onChange(value: boolean): void }): { set(value: boolean): void; dispose(): void };
-    /** An element over the views (pointer events pass through it, not its children), until disposed. */
+    viewToggle(spec: { label: string; title?: string; value: boolean; order?: number; onChange(value: boolean): void }): { set(value: boolean): void; dispose(): void };
+    /**
+     * An element over the views (pointer events pass through it, not its
+     * children), until disposed.  Its colour tokens are those of the 2-D
+     * views' ground, dark or light whatever the theme; a child with the
+     * class `over-3d` takes the 3-D view's.  Draw on canvases with
+     * `viewInk()` (`@ngplatform/sdk/dom`), not fixed colours.
+     */
     overlay(): { element: HTMLElement; dispose(): void };
     /** Paints over each screenshot Neuroglancer takes, in its canvas's pixels, until disposed. */
     screenshotOverlay(paint: (context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void): Disposer;
+    /**
+     * An item on the right of the status line, below the views (also while
+     * the Activity dock is collapsed), until the disposer is called: a scale
+     * breadcrumb, the level on screen.  Items are drawn in `order` (lower
+     * first, 100 when not given), in the mono face (a child with the class
+     * `status-label` in the interface's), and cut short with an ellipsis
+     * when the line is full; `label` names it for a screen reader.  Keep
+     * the element's text short and update it in place.
+     */
+    statusItem(element: HTMLElement, options?: { order?: number; label?: string }): Disposer;
     confirm(message: string): Promise<boolean>;
     /** A dialog generated from a schema; resolves undefined on cancel. */
     form<T>(title: string, schema: Schema, initial?: Partial<T>): Promise<T | undefined>;
@@ -742,6 +975,8 @@ export interface PlatformContext {
   };
   workspace: WorkspaceApi;
   viewer: ViewerApi;
+  /** Shapes with handles in the 2-D and 3-D views (regions, crops, cut planes, landmarks); removed when the plugin deactivates. */
+  views: ViewToolsApi;
   /**
    * This plugin's slice of the workspace state: undoable, in the link.
    * State saved by an older version of the plugin (its manifest's

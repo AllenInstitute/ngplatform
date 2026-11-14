@@ -16,8 +16,9 @@ page with WebGPU (`local/`). The user page is
 | `client.ts` | The service's HTTP API: through a paired host (`ctx.hosts`, `/svc/render/…`) or at an address; frames parsed (JPEG, alpha plane, distances) |
 | `limits.ts` | What one request may ask of the service (sides, samples, fps, boxes, a still's size), and the frame loop's waits after errors |
 | `view.ts` | Pure functions of a frame: physical mm to display coordinates, cut planes, the light's direction, a layer's OME-Zarr source; the view buttons from the image's anatomical orientation (else by axis); what the image's axes allow; links from the host checked |
-| `draw.ts` | The frame in the 3-D view (`draw3d`): colour, and depth where each ray first meets tissue, so other layers are hidden behind it |
-| `editor.ts` | The colourmap editor: stops over the image's histogram, shift, compression and the histogram's warp |
+| `draw.ts` | The frame in the 3-D view (`draw3d`): colour, and depth where each ray first meets tissue, so other layers are hidden behind it; the live image in its place for any other camera or look |
+| `live.ts` | The image as an object in the 3-D view: one level ray-marched in the view's own pass with each frame's camera, lit from a 3-D texture of light path-traced into it a few layers a frame |
+| `editor.ts` | The colourmap editor: stops over the image's histogram, shift, compression and the histogram's warp; in this browser the histogram and the preset at the image's values come from the level held (`levelHistogram`, `levelResolved` in `local/local.ts`) |
 | `splatview.ts` | Gaussian splats (`.splat`, `.ply`) read and drawn with WebGL 2 in one of the platform's sheets |
 | `local/pathtrace.wgsl` | The path tracer in WGSL: the same method and parameters as the CUDA kernels |
 | `local/local.ts` | WebGPU in the page: one level of the image (through the volume view's reader), brick bounds (worked out a slab at a time, so the page goes on answering), presets, the progressive loop |
@@ -68,9 +69,47 @@ fit is a toast, with no Retry. Nothing is retried by itself.
 `runner/tests/test_render.py` (levels, made levels, presets, keyframes, and,
 with a CUDA GPU, the renderer and the service).
 
-## While the camera moves
+## The object in the 3-D view
 
-A frame comes with the camera it was rendered from and each pixel's
+The image is an object in the 3-D view (`live.ts`): one level of it, at
+most **Object** voxels (Quality; 64 M by default; on a computer's session,
+read in this browser too; in this browser, the path tracer's own), is a 3-D texture ray-marched in
+Neuroglancer's pass with each frame's own camera, so it turns, pans and
+zooms with the view and is hidden behind, or hides, the other layers by
+its depth. Its colours and opacities are the preset's at the image's data
+values as the host resolved them, so the two agree.
+
+Its light is held in it: a coarser 3-D texture (at most 96 cells a side)
+of how much of the light reaches each cell and of the light arriving there
+from all round, path-traced as the path tracer does (a path from each cell
+scattering up to three times, the light at each scattering, the
+surroundings where it leaves), eight layers a frame over 48 passes. The
+light keeps the direction it had (from the camera) when it was set, so it
+stays fixed to the object as the camera goes round it; changing the
+light, the preset or a cut path-traces it again. Until the first two
+passes are done, short rays toward the light and along the normal stand
+in. The Quality card says how far it has got ("light 12 of 47 passes").
+
+Once the camera has been still for 150 ms, the object is path-traced
+where it is, in the same pass and with the same camera, as the path
+tracer does (`TRACE_FS`: the same light, surface and volume scattering,
+up to four bounces, roulette), a sample a pixel each pass into float
+textures, every second row (up to every eighth while frames are slow) a
+frame; the samples take the object's pixels from 4 samples on and all of
+them by 32, and go on to the view's samples per pixel (at most 1024). It
+starts again when the camera, the light or the look changes. The
+readout says how far ("path-traced, 24 samples").
+
+The view shows the object alone, and the host renders only stills,
+movies and splats, lit as the object is (the light fixed in the world).
+With **Path-traced picture when still** (Quality), the host's picture of
+the view (at the image's full detail) comes in over the object, pixel by
+pixel over 250 ms, once the camera has rested 200 ms; it is shown only at
+the camera and look it was rendered with. `drawer.stats.live` counts
+frames drawn as the object.
+
+Where there is no object (the level not read yet, or larger than the
+GPU's 3-D textures) the picture is placed in space as before. A frame comes with the camera it was rendered from and each pixel's
 distance to the tissue, so it is drawn as a surface in space
 (`draw.ts`, a vertex a pixel) with the camera now: while the view turns,
 pans or zooms, the picture stays where the tissue is and moves with it,

@@ -32,7 +32,7 @@ function services() {
     views: { mount: () => () => {} },
     examples: new ExampleRegistry(),
     open: new OpenHandlerRegistry(),
-    ui: { toast: (m) => logs.push(`toast: ${m}`), confirm: async () => true, form: async () => undefined, viewToggle: () => ({ set: () => {}, dispose: () => {} }), overlay: () => ({ element: {} as HTMLElement, dispose: () => {} }), screenshotOverlay: () => () => {}, sheet: () => () => {} },
+    ui: { toast: (m) => logs.push(`toast: ${m}`), confirm: async () => true, form: async () => undefined, viewToggle: () => ({ set: () => {}, dispose: () => {} }), overlay: () => ({ element: {} as HTMLElement, dispose: () => {} }), screenshotOverlay: () => () => {}, statusItem: () => () => {}, sheet: () => () => {} },
     workspace: {} as WorkspaceApi,
     viewer: {} as ViewerApi,
     slices: {
@@ -142,13 +142,14 @@ describe("tool panels", () => {
     const host = new PluginHost(s);
     host.register(manifest, async () => ({ activate() {} }));
     expect(tabs.map((t) => [t.slot, t.group])).toEqual([["left", "Space"]]);
-    // A left panel goes to the Tools dock under its group, or Other (Python's under Python); bottom panels stay.
+    // A left (or right) panel goes to the Tools section under its group, or Other (Python's under Python); bottom panels stay.
     const { asTool } = await import("../src/ui/docks.js");
     const render = () => {};
-    expect(asTool({ id: "a", title: "A", slot: "left", group: "Space", render })).toMatchObject({ slot: "right", group: "Space" });
-    expect(asTool({ id: "b", title: "B", slot: "left", render })).toMatchObject({ slot: "right", group: "Other" });
-    expect(asTool({ id: "c", title: "C", slot: "left", render }, "Python")).toMatchObject({ slot: "right", group: "Python" });
-    const bottom: DockTabSpec = asTool({ id: "d", title: "D", slot: "bottom", render });
+    expect(asTool({ id: "a", title: "A", slot: "left", group: "Space", render })).toMatchObject({ slot: "tools", group: "Space" });
+    expect(asTool({ id: "b", title: "B", slot: "left", render })).toMatchObject({ slot: "tools", group: "Other" });
+    expect(asTool({ id: "c", title: "C", slot: "left", render }, "Python")).toMatchObject({ slot: "tools", group: "Python" });
+    expect(asTool({ id: "e", title: "E", slot: "right", render })).toMatchObject({ slot: "tools", group: "Other" });
+    const bottom = asTool({ id: "d", title: "D", slot: "bottom", render });
     expect([bottom.slot, bottom.group]).toEqual(["bottom", undefined]);
   });
 });
@@ -311,5 +312,25 @@ describe("handles a plugin disposes itself", () => {
     await host.deactivate(m.id);
     // Only the overlay still held is disposed when the plugin stops.
     expect(disposed).toEqual(["overlay", "toggle", "draw3d", "overlay"]);
+  });
+  it("include the status line's items: one left when the plugin stops goes with it", async () => {
+    const { s } = services();
+    const shown: string[] = [];
+    s.ui.statusItem = (element, options) => {
+      shown.push(`${element.textContent} ${options?.order}`);
+      return () => shown.splice(shown.indexOf(`${element.textContent} ${options?.order}`), 1);
+    };
+    const host = new PluginHost(s);
+    const m: Manifest = { ...manifest, id: "org.example.scale", activation: ["onStartup"], contributes: {} };
+    host.register(m, async () => ({
+      activate(ctx) {
+        ctx.ui.statusItem({ textContent: "S-21-46 › 20 µm" } as HTMLElement, { order: 10 });
+        ctx.ui.statusItem({ textContent: "L3" } as HTMLElement, { order: 20 })();
+      },
+    }));
+    await host.activate(m.id);
+    expect(shown).toEqual(["S-21-46 › 20 µm 10"]);
+    await host.deactivate(m.id);
+    expect(shown).toEqual([]);
   });
 });

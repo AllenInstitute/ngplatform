@@ -165,11 +165,12 @@ export class PreviewOverlay {
     }
   }
 
-  /** Clicks as dots over a view (offset `x`, `y` in the overlay): the app's "on" colour with + wanted, its error colour with − not. */
+  /** Clicks as dots over a view (offset `x`, `y` in the overlay): the "on" colour with + wanted, the error colour with − not, keylined, as the view's ground has them. */
   private drawPoints(g: CanvasRenderingContext2D, ratio: number, x: number, y: number, r: DOMRect, points: PromptPoints, project: (v: Vec3) => { x: number; y: number } | undefined): void {
-    const wanted = token("--on", "#3f9f48");
-    const unwanted = token("--err", "#e0716b");
-    const edge = token("--text-strong", "#fff");
+    // The tokens of the views' ground where the canvas is (dark or light, whatever the theme).
+    const wanted = token(this.canvas, "--on", "#ebebeb");
+    const unwanted = token(this.canvas, "--err", "#db4437");
+    const edge = token(this.canvas, "--view-ink-keyline", "#000");
     g.save();
     g.setTransform(ratio, 0, 0, ratio, 0, 0);
     g.beginPath();
@@ -227,8 +228,8 @@ export class PreviewOverlay {
 
 /** A #rrggbb colour as numbers. */
 /** One of the app's colour tokens as the page has it (`fallback` before its stylesheet is there): a canvas cannot read CSS variables. */
-function token(name: string, fallback: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+function token(at: Element, name: string, fallback: string): string {
+  return getComputedStyle(at).getPropertyValue(name).trim() || fallback;
 }
 
 function rgb(colour: string): [number, number, number] {

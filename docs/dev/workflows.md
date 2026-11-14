@@ -31,7 +31,7 @@ OME-Zarr. The scripts are kept in the session's scratchpad (`d4/flows`).
 
 | # | Task | Before | After | Must know, before |
 |---|---|---:|---:|---|
-| 1 | Open a local `.trk`, keep the streamlines through two spheres, save a `.trk` | 11 | **8** | A region starts at the views' centre: right-click the place first |
+| 1 | Open a local `.trk`, keep the streamlines through two spheres, save a `.trk` | 11 | **8** | — (a region starts where the mouse last was in a view, selected, and is dragged and sized there) |
 | 2 | Open a two-channel OME-Zarr by URL, set each channel's contrast to 1–99 % | 10 | **5** | — |
 | 3 | Copy a link to the current view | 2 | 2 | — |
 | 4 | On an image, mark three points and save them as CSV | 10 | **7** | Annotations is offered only once an annotation layer exists; a new layer's Point tool is on, and picking it turns it off |
@@ -42,6 +42,13 @@ OME-Zarr. The scripts are kept in the session's scratchpad (`d4/flows`).
 | 9 | Smooth an image and threshold it into a mask (a view) | 4 | 4 | — |
 | 10 | Compare two looks of an image: a copy of the scene with another colour map, switch between them | 7 | 7 | Duplicate is in the scene tab's right-click menu |
 | | **All ten** | **71** | **57** | 5 things to know → 1 (task 10) |
+
+Since: regions, crops, cut planes and landmarks have handles in the views
+(the in-view tools, `ctx.views`). A new region starts where the mouse last
+was in a view and is selected, so task 1's "must know" is gone, and its
+radius is dragged or Alt+scrolled in the view; Registration's **Place
+pairs** makes task 6's pairs by clicking, fixed then moving, as BigWarp
+does (the two "Left" ideas for tasks 6 and 1 below are done).
 
 ## Each task
 
@@ -88,8 +95,7 @@ Dapi channel · **1-99%**.
   path ending in `.zarr`, `.n5`, `.nii.gz`, `.trk` and the like); another
   web address is asked about first; a pasted Neuroglancer link or state
   asks whether to open it (it replaces the workspace) or open it as a new
-  scene (`pasteAction` in `src/core/state_io.ts`). The start card over
-  an empty scene says so ("Or drop files here").
+  scene (`pasteAction` in `src/core/state_io.ts`).
 - The Display tab (once Render) shows the shader's controls (contrast, colour) above the
   shader's code, so the contrast is in view without scrolling.
 - Picking another view of a dataset in the Layers tab's header keeps the
@@ -178,7 +184,5 @@ Drop the image · right-click the scene tab · *Duplicate* · Display tab ·
 | Contrast 1–99 % for every channel of a dataset at once (the dataset's ⋯ menu) | 2 | 2 |
 | Two scenes side by side, positions linked, for comparing | 10 | 6 |
 | **+** beside the scene tabs: a menu with *Empty* and *Copy of this scene* | 10 | 0.5 |
-| Landmarks by clicking: a mode where clicks alternate fixed and moving points | 6 | 2 |
-| Track filtering: a region's radius by Alt+wheel over it | 1 | 2 |
 | A key for *Copy workspace link* that clashes with neither Neuroglancer nor browsers | 3 | 0.5 |
 | Count a job on the local runner (needs the runner started in the test) | — | 1 |

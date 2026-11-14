@@ -2,10 +2,12 @@
 /**
  * The docks (src/ui/docks.ts) in a DOM: a tab's panel is made the first
  * time it is shown and stays mounted, a transient one is disposed when it
- * is hidden; the right and bottom docks start collapsed and showing a tab
- * opens its dock; the Tools dock picks its tab from a menu; a dock with no
- * tab is not there; a panel that fails shows Retry; what was open is kept
- * for the next visit.
+ * is hidden; the bottom dock starts collapsed and showing a tab opens its
+ * dock; the Tools section, below the layers in the left column, lists the
+ * tools that are on (and whose `when` holds for the data selected), is not
+ * there with none, folds to its tabs, and opens with its column when a
+ * tool is shown; a panel that fails shows Retry; what was open is kept for
+ * the next visit.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ContextKeys } from "../src/core/when.js";
@@ -21,7 +23,11 @@ beforeEach(() => {
   root = document.body.appendChild(document.createElement("div"));
   context = new ContextKeys();
   docks = new DockManager(root, context);
-  root.append(docks.element("left"), docks.element("right"), docks.element("bottom"));
+  // As the shell lays them out: the left column (layers, the Tools section's divider, the Tools section), then the bottom dock.
+  const side = document.createElement("div");
+  side.className = "side";
+  side.append(docks.element("left"), docks.resizer("tools"), docks.element("tools"));
+  root.append(side, docks.element("bottom"));
   docks.restore(false);
 });
 afterEach(() => {
@@ -49,12 +55,12 @@ const pane = (id: string) => root.querySelector<HTMLElement>(`.dock-pane[data-ta
 const tabButton = (id: string) => root.querySelector<HTMLButtonElement>(`#tab-${id}`)!;
 
 describe("mounting", () => {
-  it("lays out three docks, the right and bottom ones collapsed to start with", () => {
+  it("lays out three docks, the bottom one collapsed to its status line to start with", () => {
     expect(docks.element("left").getAttribute("aria-label")).toBe("Layers");
-    expect(docks.element("right").getAttribute("aria-label")).toBe("Tools");
+    expect(docks.element("tools").getAttribute("aria-label")).toBe("Tools");
     expect(docks.element("bottom").getAttribute("aria-label")).toBe("Activity");
-    expect([docks.isCollapsed("left"), docks.isCollapsed("right"), docks.isCollapsed("bottom")]).toEqual([false, true, true]);
-    expect(root.classList.contains("right-collapsed")).toBe(true);
+    expect([docks.isCollapsed("left"), docks.isCollapsed("tools"), docks.isCollapsed("bottom")]).toEqual([false, false, true]);
+    expect(root.classList.contains("bottom-collapsed")).toBe(true);
   });
 
   it("selects a dock's first tab and renders it once, keeping it mounted while another is shown", () => {
@@ -154,41 +160,106 @@ describe("opening and closing", () => {
   });
 });
 
-describe("the Tools dock", () => {
-  it("is not there with no tool, and picks its tool from a menu grouped by kind", () => {
-    docks.addTab(tab("filtering", "right", { group: "Tractography" }).spec)();
-    expect(docks.element("right").hidden).toBe(true);
-    expect(root.classList.contains("right-empty")).toBe(true);
-    docks.addTab(tab("filtering", "right", { group: "Tractography" }).spec);
-    docks.addTab(tab("stats", "right", { group: "Measure" }).spec);
-    expect(docks.element("right").hidden).toBe(false);
-    const picker = docks.element("right").querySelector<HTMLButtonElement>(".dock-picker")!;
-    expect(picker.getAttribute("aria-haspopup")).toBe("menu");
-    expect(picker.textContent).toBe("Filtering");
+describe("the Tools section", () => {
+  const tools = () => [...docks.element("tools").querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+  const listed = () => tools().filter((b) => !b.hidden).map((b) => b.textContent);
 
-    picker.click();
-    const items = [...document.querySelectorAll<HTMLButtonElement>(".menu .menu-item")];
-    expect(items.map((b) => b.textContent)).toEqual(["Tractography", "Filtering", "Measure", "Stats"]);
-    expect(items[0].disabled).toBe(true);
-    expect(items[1].getAttribute("aria-current")).toBe("true");
-    items[3].click();
+  it("is not there with no tool, and shows its tools as tabs, grouped by kind", () => {
+    docks.addTab(tab("filtering", "tools", { group: "Tractography" }).spec)();
+    expect(docks.element("tools").hidden).toBe(true);
+    expect(root.classList.contains("tools-empty")).toBe(true);
+    docks.addTab(tab("filtering", "tools", { group: "Tractography" }).spec);
+    docks.addTab(tab("stats", "tools", { group: "Measure" }).spec);
+    docks.addTab(tab("tracks", "tools", { group: "Tractography" }).spec);
+    expect(docks.element("tools").hidden).toBe(false);
+    expect(root.classList.contains("tools-empty")).toBe(false);
+    expect(docks.element("tools").querySelector('[role="tablist"]')).not.toBeNull();
+    // The kinds together, in the order their first tool came.
+    expect(tools().map((b) => b.textContent)).toEqual(["Filtering", "Tracks", "Stats"]);
+    expect(tools()[0].getAttribute("aria-selected")).toBe("true");
+    tools()[2].click();
     expect(docks.isShowing("stats")).toBe(true);
-    expect(docks.element("right").querySelector(".dock-picker")!.textContent).toBe("Stats");
+    expect(tools()[2].getAttribute("aria-selected")).toBe("true");
+    expect(tools()[0].getAttribute("aria-selected")).toBe("false");
   });
 
-  it("hides a tool whose when-clause does not hold, choosing another", () => {
-    docks.addTab(tab("filtering", "right", { when: "hasTracts" }).spec);
-    docks.addTab(tab("stats", "right").spec);
-    expect(docks.selected("right")).toBe("stats");
-    const listed = () => {
-      docks.element("right").querySelector<HTMLButtonElement>(".dock-picker")!.click();
-      const titles = [...document.querySelectorAll(".menu .menu-item:not([disabled])")].map((b) => b.textContent);
-      closeMenu();
-      return titles;
-    };
+  it("is below the layers, in the left column, with a divider between them", () => {
+    const side = docks.element("left").parentElement!;
+    expect([...side.children].map((e) => e.className.split(" ").slice(0, 2).join(" "))).toEqual(["dock dock-left", "resizer resizer-tools", "dock dock-tools"]);
+    const divider = side.querySelector(".resizer-tools")!;
+    expect(divider.getAttribute("role")).toBe("separator");
+    expect(divider.getAttribute("aria-orientation")).toBe("horizontal");
+    expect(divider.getAttribute("aria-controls")).toBe("dock-tools");
+  });
+
+  it("takes a plugin's right-slot panel as a tool", () => {
+    docks.addTab(tab("legacy", "right").spec);
+    expect(docks.selected("tools")).toBe("legacy");
+    expect(pane("legacy").closest(".dock-tools")).not.toBeNull();
+  });
+
+  it("lists the tools whose when-clause holds for the data selected, and goes back to the one chosen when it holds again", () => {
+    docks.addTab(tab("filtering", "tools", { when: "datasetKind == tractogram" }).spec);
+    docks.addTab(tab("stats", "tools").spec);
+    expect(docks.selected("tools")).toBe("stats");
     expect(listed()).toEqual(["Stats"]);
-    context.set("hasTracts", true);
+    context.set("datasetKind", "tractogram");
     expect(listed()).toEqual(["Filtering", "Stats"]);
+    docks.show("filtering");
+    // An image selected: Filtering is not for it, so Stats is shown; the tractogram again: Filtering is back.
+    context.set("datasetKind", "image");
+    expect(listed()).toEqual(["Stats"]);
+    expect(docks.selected("tools")).toBe("stats");
+    context.set("datasetKind", "tractogram");
+    expect(docks.selected("tools")).toBe("filtering");
+  });
+
+  it("is not there while no tool is for the data selected", () => {
+    docks.addTab(tab("filtering", "tools", { when: "datasetKind == tractogram" }).spec);
+    expect(docks.element("tools").hidden).toBe(true);
+    context.set("datasetKind", "tractogram");
+    expect(docks.element("tools").hidden).toBe(false);
+    expect(docks.selected("tools")).toBe("filtering");
+  });
+
+  it("folds to its row of tabs, and a tab unfolds it", () => {
+    const filtering = tab("filtering", "tools");
+    docks.addTab(filtering.spec);
+    docks.addTab(tab("stats", "tools").spec);
+    const toggle = docks.element("tools").querySelector<HTMLButtonElement>(".dock-toggle")!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    toggle.click();
+    expect(docks.isCollapsed("tools")).toBe(true);
+    expect(root.classList.contains("tools-collapsed")).toBe(true);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(docks.isShowing("filtering")).toBe(false);
+    tools()[1].click();
+    expect(docks.isCollapsed("tools")).toBe(false);
+    expect(docks.isShowing("stats")).toBe(true);
+  });
+
+  it("goes with its column: collapsed with it, and a tool shown opens both", () => {
+    const stats = tab("stats", "tools", { transient: true });
+    docks.addTab(stats.spec);
+    expect(stats.counts.renders).toBe(1);
+    docks.toggle("left");
+    expect(docks.isShowing("stats")).toBe(false);
+    // A transient tool stops its work while its column is shut, as its dock's own tab would.
+    expect(stats.counts.disposals).toBe(1);
+    docks.setCollapsed("tools", true);
+    docks.show("stats");
+    expect([docks.isCollapsed("left"), docks.isCollapsed("tools")]).toEqual([false, false]);
+    expect(docks.isShowing("stats")).toBe(true);
+    expect(stats.counts.renders).toBe(2);
+  });
+
+  it("does not render a tool while its column is collapsed", () => {
+    docks.setCollapsed("left", true);
+    const stats = tab("stats", "tools");
+    docks.addTab(stats.spec);
+    expect(stats.counts.renders).toBe(0);
+    docks.setCollapsed("left", false);
+    expect(stats.counts.renders).toBe(1);
   });
 });
 
@@ -237,8 +308,24 @@ describe("remembered", () => {
     expect(again.isCollapsed("bottom")).toBe(false);
   });
 
-  it("collapses the side docks on a narrow screen", () => {
+  it("keeps the Tools section's size and its fold for the next visit", () => {
+    docks.addTab(tab("stats", "tools").spec);
+    const divider = docks.element("tools").parentElement!.querySelector<HTMLElement>(".resizer-tools")!;
+    root.style.setProperty("--tools", "300px");
+    divider.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
+    expect(root.style.getPropertyValue("--tools")).toBe("310px");
+    docks.toggle("tools");
+    const again = document.body.appendChild(document.createElement("div"));
+    const next = new DockManager(again, new ContextKeys());
+    next.restore(false);
+    expect(again.style.getPropertyValue("--tools")).toBe("310px");
+    expect(next.isCollapsed("tools")).toBe(true);
+  });
+
+  it("collapses the left column (and with it the tools) on a narrow screen", () => {
     docks.restore(true);
-    expect([docks.isCollapsed("left"), docks.isCollapsed("right"), docks.isCollapsed("bottom")]).toEqual([true, true, true]);
+    expect([docks.isCollapsed("left"), docks.isCollapsed("tools"), docks.isCollapsed("bottom")]).toEqual([true, false, true]);
+    docks.addTab(tab("stats", "tools").spec);
+    expect(docks.isShowing("stats")).toBe(false);
   });
 });

@@ -14,6 +14,7 @@ import {
   transferFunctionLayerControl,
   type UserLayer,
 } from "../neuroglancer.js";
+import { colormapOf, colormapSamples } from "../colormaps.js";
 import { button, checkbox, colour, el, embed, type Scope, select, slider, type Watch } from "./ui.js";
 
 export interface ShaderModels {
@@ -220,11 +221,79 @@ function controlRow(scope: Scope, layer: UserLayer, m: ShaderModels, name: strin
   // transfer functions) or the property picker (property contrast) in the
   // label container: shown beside the control's name.
   const pickers = el("div", { class: "ins-pickers" });
-  const { controlElement } = factory.makeControl(layer as never, scope.ng, {
+  const made = factory.makeControl(layer as never, scope.ng, {
     labelContainer: pickers,
     labelTextContainer: el("div"),
     display: layer.manager.root.display,
     visibility: scope.visibility,
-  } as never);
-  return el("div", { class: "ins-row ins-wide" }, el("div", { class: "ins-label-with-pickers" }, label, pickers), embed(controlElement, "ins-histogram"));
+  } as never) as { controlElement: HTMLElement; control?: unknown };
+  const host = embed(made.controlElement, "ins-histogram");
+  if (control.type === "imageInvlerp" || control.type === "propertyInvlerp") {
+    contrastRamp(scope, host, trackable, m.fragmentMain);
+    rangePreset(scope, made.controlElement, made.control, trackable);
+  }
+  return el("div", { class: "ins-row ins-wide" }, el("div", { class: "ins-label-with-pickers" }, label, pickers), host);
+}
+
+/** An invlerp's range and window, as Neuroglancer keeps them (numbers, or big integers for 64-bit data). */
+interface InvlerpValue {
+  range?: readonly [unknown, unknown];
+  window: readonly [unknown, unknown];
+}
+
+const sameInterval = (a: readonly [unknown, unknown] | null | undefined, b: readonly [unknown, unknown] | null | undefined) =>
+  a != null && b != null && String(a[0]) === String(b[0]) && String(a[1]) === String(b[1]);
+
+/**
+ * The contrast editor's colour bar, drawn in CSS: Neuroglancer draws it with
+ * WebGL into the views' canvas, which the left column is not over.  The
+ * shader's colour map (a known one: ../colormaps.ts) across the range, within
+ * the window, as Neuroglancer's bar shows it; for a shader of its own, no bar.
+ */
+function contrastRamp(scope: Scope, host: HTMLElement, trackable: Watch<InvlerpValue>, shader: Watch<string>): void {
+  scope.watch([trackable, shader], () => {
+    const id = colormapOf(shader.value);
+    const samples = id === undefined ? undefined : colormapSamples(id, 16);
+    const { range, window } = trackable.value;
+    host.classList.toggle("no-ramp", samples === undefined || range === undefined);
+    if (samples === undefined || range === undefined) return host.style.removeProperty("--ins-ramp");
+    const [w0, w1] = [Number(window[0]), Number(window[1])];
+    const at = (v: unknown) => (w1 === w0 ? 0 : ((Number(v) - w0) / (w1 - w0)) * 100);
+    let stops = samples.map((c, i) => ({ colour: `rgb(${c.map((v) => Math.round(v * 255)).join(" ")})`, at: at(range[0]) + ((at(range[1]) - at(range[0])) * i) / (samples.length - 1) }));
+    // A range turned round (high to low) runs the map the other way.
+    if (stops[0].at > stops[stops.length - 1].at) stops = stops.reverse();
+    host.style.setProperty("--ins-ramp", `linear-gradient(90deg, ${stops.map((s) => `${s.colour} ${s.at.toFixed(2)}%`).join(", ")})`);
+  });
+}
+
+/**
+ * Min-Max, 1-99% and 5-95% as one segmented control, the one that applies
+ * pressed: the preset last computed by this editor's range finder, while the
+ * range is still the one it found (moved by hand, or set by a link, none is).
+ * Neuroglancer's range finder keeps which percentiles it last used and what
+ * it found; a new editor (the inspector drawn again) knows of none.
+ */
+function rangePreset(scope: Scope, element: HTMLElement, control: unknown, trackable: Watch<InvlerpValue>): void {
+  interface Finder {
+    autoRangeData?: { inputPercentileBounds: [number, number]; autoComputeInProgress: boolean; finishedLerpRange: readonly [unknown, unknown] | null };
+  }
+  const c = control as { autoRangeFinder?: Finder; invlerpWidget?: { autoRangeFinder?: Finder } } | undefined;
+  const presets = [
+    [0, 1],
+    [0.01, 0.99],
+    [0.05, 0.95],
+  ];
+  const update = () => {
+    const data = (c?.autoRangeFinder ?? c?.invlerpWidget?.autoRangeFinder)?.autoRangeData;
+    const applies =
+      data !== undefined && !data.autoComputeInProgress && sameInterval(data.finishedLerpRange, trackable.value.range)
+        ? presets.findIndex(([lo, hi]) => data.inputPercentileBounds[0] === lo && data.inputPercentileBounds[1] === hi)
+        : -1;
+    element.querySelectorAll(".neuroglancer-invlerp-range-finder-button").forEach((b, i) => b.setAttribute("aria-pressed", String(i === applies)));
+  };
+  // The range finder sets the range a few times while it searches, the last once it has finished: seen again a frame on.
+  scope.watch(trackable, () => {
+    update();
+    requestAnimationFrame(() => !scope.disposed && update());
+  });
 }

@@ -58,6 +58,7 @@ class Volume:
     percentiles: dict[float, float] = field(default_factory=dict)  # data value at each percentile (of non-background)
     window: tuple[float, float] | None = None  # the guessed window (data values), for "window" presets
     quantiles: list[float] | None = None  # the tissue's values at volumes.QUANTILES, for matching histograms
+    medium: str = ""  # the specimen lies in a mounting medium, the tissue "above" or "below" it (volumes.medium_side)
 
 
 @dataclass
@@ -73,6 +74,21 @@ class Detail:
 class Labels:
     data: np.ndarray  # (nz, ny, nx) integer labels
     world_from_voxel: np.ndarray  # 4x4
+
+
+@dataclass
+class Objects:
+    """Meshes drawn as surfaces and the image within them (objects.py), in place of the volume: their BVH and
+    bricks (physical mm), each object's colour, and how they are drawn."""
+
+    bvh: Any  # geometry.Bvh
+    bricks: Any  # objects.ObjectBricks, or None: surfaces alone (a tractogram's tubes, points)
+    colours: np.ndarray  # (objects, 3) 0..1
+    world_from_physical: np.ndarray  # 4x4
+    surface: float = 0.35  # the chance a path meeting a surface is scattered by it
+    image: bool = True  # the image within the objects is a medium
+    mix: float = 0.0  # how much the object's colour tints the image within it
+    hide: np.ndarray | None = None  # (objects,) nonzero: not drawn (surfaces alone: a group not shown, a value outside the window)
 
 
 @dataclass
@@ -311,6 +327,9 @@ class Renderer:
         self._env_tex = None
         self._env_arr = None
         self._env_name: str | None = None
+        self.objects: Objects | None = None
+        self._obj_gpu: dict[str, Any] | None = None
+        self._tf_host: np.ndarray | None = None
 
     # ------------------------------------------------------------ data
     def set_volume(self, volume: Volume, on_gpu: OnGpu | None = None) -> None:
@@ -341,6 +360,39 @@ class Renderer:
             self._dbmin, self._dbmax, self._dgrid = bmin.ravel(), bmax.ravel(), grid
             self._dmaj = cp.zeros(bmin.size, cp.float32)
             self.detail = detail
+
+    def set_objects(self, objects: Objects | None) -> None:
+        """Draw objects (their meshes, and the image within them) in place of the volume, or the volume again
+        (None); takes effect at the next set_view.  The bricks are uploaded here."""
+        cp = self.cp
+        with self.lock, self.device:
+            self.objects, self._obj_gpu = None, None
+            if objects is None:
+                return
+            b = objects.bricks
+            tex, arr = _tex_for(cp, b.atlas if b is not None else np.zeros((1, 1, 1), np.uint8))
+            self._obj_gpu = {
+                "tex": tex, "arr": arr, "top": cp.asarray(np.ascontiguousarray(b.top, np.int32) if b is not None else np.full(1, -1, np.int32)),
+                "sub": cp.asarray(np.ascontiguousarray(b.sub, np.int32) if b is not None else np.full(1, -1, np.int32)),
+                "col": cp.asarray(np.ascontiguousarray(objects.colours, np.float32).ravel() if len(objects.colours) else np.ones(3, np.float32)),
+                "hide": cp.asarray(np.ascontiguousarray(objects.hide, np.uint8)) if objects.hide is not None and objects.hide.any() else None,
+            }
+            self.objects = objects
+
+    def _objects_volume(self) -> Volume:
+        """The volume as a preset is placed on it, with the values inside the objects in place of the whole's."""
+        v, b = self.volume, self.objects.bricks
+        if b is None:
+            return v
+        to_data = lambda t: v.lo + t * (v.hi - v.lo)  # noqa: E731
+        pct = {k: to_data(t) for k, t in b.percentiles.items()} or v.percentiles
+        win = (to_data(b.window[0]), to_data(b.window[1])) if b.window else v.window
+        return Volume(v.data, v.world_from_voxel, v.lo, v.hi, pct, win, None, "")
+
+    def set_object_look(self, surface: float, image: bool, mix: float) -> None:
+        """How the objects are drawn (surfaces, the image within them, its tint); takes effect at the next set_view."""
+        if self.objects is not None:
+            self.objects.surface, self.objects.image, self.objects.mix = float(surface), bool(image), float(mix)
 
     def set_labels(self, labels: Labels | None, on_gpu: LabelsOnGpu | None = None) -> None:
         """The labels to colour by (or none); uploaded here, or `on_gpu`: their upload, shared."""
@@ -379,11 +431,17 @@ class Renderer:
             self._state = state
             packed = self._pack(state)
             self._params = cp.asarray(packed)
-            key = (state.preset.key(), self.volume.lo, self.volume.hi)
+            key = (state.preset.key(), self.volume.lo, self.volume.hi, id(self.objects))
             if key != self._tf_key:
                 # Colour and opacity, then (after TF_SIZE of them) the surface's specular and roughness.
-                self._tf = cp.asarray(np.concatenate([transfer_table(state.preset, self.volume), material_table(state.preset, self.volume)]))
+                # With objects, the preset is placed on the values inside them (their percentiles and window).
+                placed = self._objects_volume() if self.objects is not None else self.volume
+                self._tf_host = np.concatenate([transfer_table(state.preset, placed), material_table(state.preset, placed)])
+                self._tf = cp.asarray(self._tf_host)
                 self._tf_key = key
+                if self.objects is not None:
+                    packed = self._pack(state)
+                    self._params = cp.asarray(packed)
             self._update_lut(state)
             self._set_env(state.preset.environment.get("map") or None)
             # The first opaque point of each pixel: the denoiser's guide, and the depth the page draws with.
@@ -397,7 +455,10 @@ class Renderer:
                 n = self._dbmin.size
                 _kernels().get_function("majorant")((-(-n // 256),), (256,), (self._params, self._tf, self._dbmin, self._dbmax, self._dmaj, np.int32(n)))
                 self._dmaj_key = mkey
-            _kernels().get_function("firsthit")((-(-W // 16), -(-H // 8)), (16, 8), self._args() + (self._depth_gpu, np.int32(W), np.int32(H)))
+            if self.objects is not None and self.objects.bricks is not None:
+                _kernels().get_function("firsthit_obj")((-(-W // 16), -(-H // 8)), (16, 8), self._geo_args() + (self._depth_gpu, np.int32(W), np.int32(H)))
+            else:
+                _kernels().get_function("firsthit")((-(-W // 16), -(-H // 8)), (16, 8), self._args() + (self._depth_gpu, np.int32(W), np.int32(H)))
             self.reset()
 
     def _update_lut(self, state: RenderState) -> None:
@@ -516,7 +577,59 @@ class Renderer:
         P[O["APERTURE"]] = s.aperture
         P[O["FOCUS"]] = s.focus
         P[O["OPAQUE_LIMIT"]] = 0.5
+        if self.objects is not None:
+            self._pack_objects(P, s, inv)
         return P
+
+    def _pack_objects(self, P: np.ndarray, s: RenderState, inv: np.ndarray) -> None:
+        from . import objects as omod
+
+        O = kernels.OFFSETS
+        ob = self.objects
+        assert ob is not None
+        b = ob.bricks
+        wfp = np.asarray(ob.world_from_physical, np.float64)
+        pfw = np.linalg.inv(wfp)
+        P[O["OBJ"]] = 1
+        P[O["OBJ_PHYS_FROM_WORLD"]:O["OBJ_PHYS_FROM_WORLD"] + 12] = pfw[:3, :4].ravel()
+        P[O["OBJ_SURF"]] = min(max(ob.surface, 0.0), 1.0)
+        # A thousandth of the scene's size, how far past a surface a path goes on (without bricks: their voxel's).
+        span = float(np.linalg.norm(np.asarray(ob.bvh.hi) - np.asarray(ob.bvh.lo))) * abs(np.linalg.det(wfp[:3, :3])) ** (1 / 3)
+        P[O["OBJ_EPS"]] = 1e-6 * max(span, 1e-12)
+        eye = inv @ np.array([0.0, 0.0, -1.0, 1.0])
+        eye = (pfw @ np.append(eye[:3] / eye[3], 1.0))[:3]
+        if b is None:
+            P[O["OBJ_EM"]] = 0.0
+            P[O["OBJ_PAGE"]:O["OBJ_PAGE"] + 3] = (1, 1, 1)
+            P[O["OBJ_TOPDIMS"]:O["OBJ_TOPDIMS"] + 3] = (1, 1, 1)
+            P[O["OBJ_ATLAS"]:O["OBJ_ATLAS"] + 3] = (1, 1, 1)
+            P[O["OBJ_EYE_INSIDE"]] = 0.0
+            return
+        wfv = wfp @ np.asarray(b.phys_from_voxel, np.float64)
+        vfw = np.linalg.inv(wfv)
+        P[O["OBJ"]] = 1
+        P[O["OBJ_PHYS_FROM_WORLD"]:O["OBJ_PHYS_FROM_WORLD"] + 12] = pfw[:3, :4].ravel()
+        P[O["OBJ_VOX_FROM_WORLD"]:O["OBJ_VOX_FROM_WORLD"] + 12] = vfw[:3, :4].ravel()
+        P[O["OBJ_NORMAL"]:O["OBJ_NORMAL"] + 9] = vfw[:3, :3].T.ravel()
+        P[O["OBJ_PAGE"]:O["OBJ_PAGE"] + 3] = b.page
+        P[O["OBJ_ORIGIN"]:O["OBJ_ORIGIN"] + 3] = b.origin
+        P[O["OBJ_TOPDIMS"]:O["OBJ_TOPDIMS"] + 3] = b.top.shape[::-1]
+        P[O["OBJ_ATLAS"]:O["OBJ_ATLAS"] + 3] = b.atlas_grid
+        # The majorant: the density times the greatest opacity over the values the bricks hold.
+        tf = self._tf_host
+        lo, hi = b.value_range
+        if tf is not None and hi >= lo:
+            a = int(np.floor(lo * (kernels.TF_SIZE - 1))), int(np.ceil(hi * (kernels.TF_SIZE - 1)))
+            P[O["OBJ_MAJ"]] = P[O["DENSITY"]] * float(tf[4 * a[0] + 3:4 * a[1] + 4:4].max(initial=0.0))
+        P[O["OBJ_SURF"]] = min(max(ob.surface, 0.0), 1.0)
+        P[O["OBJ_EM"]] = 1.0 if ob.image else 0.0
+        P[O["OBJ_MIX"]] = min(max(ob.mix, 0.0), 1.0)
+        vox = abs(np.linalg.det(wfv[:3, :3])) ** (1 / 3)
+        P[O["OBJ_EPS"]] = 1e-3 * vox
+        # Whether the camera is in an object: the parity of a ray's crossings from it.
+        eye = inv @ np.array([0.0, 0.0, -1.0, 1.0])
+        eye = (pfw @ np.append(eye[:3] / eye[3], 1.0))[:3]
+        P[O["OBJ_EYE_INSIDE"]] = 1.0 if bool(omod.inside_points(ob.bvh, eye[None])[0]) else 0.0
 
     # ------------------------------------------------------------ passes
     def _args(self):
@@ -528,7 +641,25 @@ class Renderer:
             det, dmaj = self._dtex, self._dmaj
         else:
             det, dmaj = self._tex, self._maj  # unused (P_DETAIL is 0), but the kernels take them
-        return (self._params, self._tex, self._tf, self._maj, lab, self._lut, self._lutflags, self._env_tex, det, dmaj)
+        # Surfaces drawn with the volume: objects without an image within them (tubes, spheres, meshes), else none.
+        if self.objects is not None and self.objects.bricks is None:
+            g, o = self.objects.bvh, self._obj_gpu
+            geo = (g.tris, g.kind if g.kind is not None else np.uintp(0), g.tobj, g.nodes, g.kids, np.int32(g.n), o["col"],
+                   o["hide"] if o["hide"] is not None else np.uintp(0))
+        else:
+            z = np.uintp(0)
+            geo = (z, z, z, z, z, np.int32(0), z, z)
+        return (self._params, self._tex, self._tf, self._maj, lab, self._lut, self._lutflags, self._env_tex, det, dmaj) + geo
+
+    def _geo_args(self):
+        g = self.objects.bvh
+        return (self._params, g.tris, g.kind if g.kind is not None else np.uintp(0), g.tobj, g.nodes, g.kids, np.int32(g.n))
+
+    def _obj_args(self):
+        g, o = self.objects.bvh, self._obj_gpu
+        if self._env_tex is None:
+            self._set_env(None)
+        return (self._params, self._tf, self._env_tex, g.tris, g.kind if g.kind is not None else np.uintp(0), g.tobj, g.nodes, g.kids, np.int32(g.n), o["tex"], o["top"], o["sub"], o["col"])
 
     def _set_env(self, name: str | None) -> None:
         """The light map on the GPU (a 2 x 1 black one when there is none, so the kernels always have a texture)."""
@@ -562,13 +693,16 @@ class Renderer:
         cp = self.cp
         with self.lock, self.device:
             W, H = s.width, s.height
-            f = _kernels().get_function("trace")
+            # Objects with an image within them are drawn alone; surfaces alone are drawn with the volume.
+            objects = self.objects is not None and self.objects.bricks is not None
+            f = _kernels().get_function("trace_obj" if objects else "trace")
             O = kernels.OFFSETS["FRAME"]
             for _ in range(n):
                 self._frame += 1
                 self._pass += 1
                 self._params[O] = float(self._frame % 16777216)
-                f((-(-W // 16), -(-H // 8)), (16, 8), self._args() + (self._accum, np.int32(W), np.int32(H), self._cut, np.int32(self._pass)))
+                args = self._obj_args() if objects else self._args()
+                f((-(-W // 16), -(-H // 8)), (16, 8), args + (self._accum, np.int32(W), np.int32(H), self._cut, np.int32(self._pass)))
                 if stop is not None:
                     done = cp.cuda.Event(disable_timing=True)
                     done.record()
@@ -653,7 +787,8 @@ class Renderer:
             for k in ("_tex", "_arr", "_bmin", "_bmax", "_maj", "_lab", "_lut", "_lutflags", "_tf", "_accum", "_params",
                       "_dtex", "_darr", "_dmaj", "_dbmin", "_dbmax", "_env_tex", "_env_arr", "_depth_gpu", "_cut"):
                 setattr(self, k, None)
-            self.volume = self.detail = self.labels = None
+            self.volume = self.detail = self.labels = self.objects = None
+            self._obj_gpu = None
             self._state = None
         self._free_host()
 

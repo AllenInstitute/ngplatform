@@ -15,7 +15,7 @@ import { statusLabel } from "../../platform/auth.js";
 import { accountLabel, accountStatus, GOOGLE_SCOPES, type GoogleSignIn } from "../../platform/google_auth.js";
 import type { AuthService, AuthStatus, SourceSignIn } from "../../sdk/types.js";
 import { card, emptyState, field } from "../../sdk/dom.js";
-import { clear, h } from "../dom.js";
+import { clear, externalLink, h, icon } from "../dom.js";
 import { closeSheet, toast } from "../overlays.js";
 import type { Workbench } from "../workbench.js";
 
@@ -316,7 +316,7 @@ export function renderAuthPanel(host: HTMLElement, wb: Workbench): () => void {
           { class: "auth-rule", "data-prefix": rule.prefix },
           h("code", { class: "auth-rule-prefix", title: rule.prefix }, rule.prefix),
           select,
-          h("button", { class: "btn outline small icon", type: "button", title: `Remove the rule for ${rule.prefix}`, "aria-label": `Remove the rule for ${rule.prefix}`, onclick: () => rules.remove(rule.prefix) }, "×"),
+          h("button", { class: "btn outline small icon", type: "button", title: `Remove the rule for ${rule.prefix}`, "aria-label": `Remove the rule for ${rule.prefix}`, onclick: () => rules.remove(rule.prefix) }, icon("close")),
           changes > 0
             ? h(
                 "button",
@@ -667,7 +667,7 @@ function googleSection(wb: Workbench, google: GoogleSignIn): HTMLDetailsElement 
     field("Google OAuth client ID", h("span", { class: "auth-add" }, input, h("button", { class: "btn outline small", type: "button", onclick: save }, "Save")), {
       info: `${google.builtInClientId ? "One is built in; one set here replaces it (empty goes back)." : "None is built in."} Its authorised JavaScript origin is ${location.origin}.`,
     }),
-    h("a", { class: "guide-link", href: SIGNING_IN_GUIDE, target: "_blank", rel: "noopener noreferrer" }, "Signing in guide ↗"),
+    externalLink(SIGNING_IN_GUIDE, "Signing in guide", { class: "guide-link" }),
   );
   return details;
 }

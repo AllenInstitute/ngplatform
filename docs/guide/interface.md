@@ -2,25 +2,54 @@
 
 ![The window, numbered as the sections below](../images/interface-numbered.png)
 
-The window has a top bar (1), the left dock with the **Layers** and
-**Plugins** panels (2), Neuroglancer's views (3), the **Tools** dock on the
-right (4), there only while a tool is on, and the **Activity** dock at the
-bottom (5). The Tools and Activity docks start collapsed: the Activity dock
-is then a single line with the running job or the last message (click it to
-open the dock). Docks can be resized by dragging their edges and collapsed
-with the icon in their head; their sizes, the panel each shows and which
-are collapsed are remembered by your browser.
+The window has a top bar (1), one column on the left with the **Layers**
+and **Plugins** panels (2) and, below them, the **Tools** section (4),
+there only while a tool is on; Neuroglancer's views (3) fill the rest, and
+the **Activity** dock is at the bottom (5). The Activity dock starts
+collapsed to a status line: the running job or the last message on the
+left (click it to open the dock; a message that is not an error fades from
+it after a few seconds and stays in Activity), and on the right what tools
+put there.
+The left column and the Activity dock can be resized by dragging their
+edges and collapsed with the icon in their head; the divider between the
+layers and the tools moves too. The sizes, the panel each shows and what is
+collapsed are remembered by your browser.
 
 Open, Settings, Keyboard and mouse, and Capture open as **sheets**: a
 window over the app, closed with **Done**, **Cancel** or ++escape++.
 
-The app has one theme, a dark one, in Neuroglancer's black and greys with
-square corners; there is no light theme. Its green marks only what is
-selected and what is on.
+The app has two themes, chosen in **Settings › View › Theme**: **Dark**
+(the default), **Light**, or **Match system** (as your computer's setting,
+changing when it does). The choice is kept by your browser, not in the
+workspace or its link; the palette's **Theme: switch between dark and
+light** switches it too. Both are Neuroglancer's materials: panels divided
+by thin lines, type at a few strengths, square corners, numbers in a
+monospaced face; the light theme is the dark one mirrored (white panels,
+black type). What is chosen or on is shown inverted (white with black words
+in the dark, black with white words in the light, as Neuroglancer's chosen
+tab), and the only colour in the interface is red, for errors and what
+deletes: colour on screen is the data's.
 
-An empty scene shows a card over the views: the two examples (one click
-each), **Open a file…** and **Paste a link…**; you can also drop files on
-the window.
+The views take the theme: in the dark theme they are a black stage (a new
+scene draws the margin around the sections near black and a layer's
+bounding box in a dim grey; a link keeps the colours it was shared with, and
+the margin's colour is in Settings › View); in the light theme they are
+white, with the margin the lightest grey. That white is your browser's
+display only: the scene and its link keep their own backgrounds, and the
+dark theme shows them again exactly. **Black views in the light theme**,
+under Theme and off by default, keeps the views black in the light theme
+(images often read best on black). Captures show the views as you see them. What is drawn over the views (the axis labels, the 3-D view's
+switches, the orientation cube, labels, bookmarks, handles and their card)
+follows the views' ground, not the theme: light on black views, dark on
+light ones. Values the
+app shows, such as the coordinates over the views and the status line's
+items, are in a monospaced face with their units in grey.
+
+An empty scene is an empty viewer. **+** beside **Data** in the Layers
+panel opens **Open** (a file or a folder, a link, another scene's
+datasets, the examples); you can also drop files on the window or paste
+a link. A new annotation layer is in the palette (*New annotation
+layer*).
 
 Almost everything is also a command: **Commands** (++ctrl+k++) searches them
 all, and **Help → Keyboard and mouse** lists the keys and clicks most used
@@ -37,11 +66,12 @@ and cannot export MP4: see
 |---|---|
 | **Open** | Open a file or a folder on your computer, a link or a Neuroglancer state, datasets of the other scenes, or one of two examples: the SRB 2026a template or MICrONS (a new empty scene: **New empty scene** in the palette). Opening replaces the workspace. The app starts as an empty viewer; a link ending `#example=<id>` opens an example (`srb-2026a`, `microns`, and the tractograms `s2146-mni` and `mni-hcp1065`). |
 | **Share** | Copy a link to the whole workspace, copy this scene as a Neuroglancer link or JSON state, or open it in Neuroglancer (Google's, or this site's with Zarr Vectors). It says so when the scene holds data plain Neuroglancer cannot read (Zarr Vectors, files on this computer). |
+| **Neuroglancer** | Open this scene in Google's Neuroglancer, in a new tab (as **Share › Open in Neuroglancer**). |
 | **Undo / Redo** | Undo any change to the workspace: layers, positions, settings, plugin state. |
 | **⋯** (beside redo) | The history of changes, as a tree: go to any earlier state, including ones on branches left by going back and changing something else. See [History of changes](#history-of-changes). |
 | **Scene tabs** | One tab per scene. **+** adds a scene; each tab has a close button (closing the last leaves a blank scene). Rename, duplicate and delete scenes from the command palette. Each scene works as a viewer of its own: the tools (Filtering's groups, Annotations, Luxar and the rest) show that scene's own; a new scene starts with none, a duplicated one with a copy. |
 | Camera icon | **Capture**: a picture of the views (magnified, borders trimmed), or a movie (a sweep through slices or time, or a turn of the 3-D view) as GIF, WebM, MP4 or PNG frames; and Neuroglancer's own screenshot dialog. Labels from the Annotations plugin are painted in. See [Capture](#capture). |
-| Gear icon | **Settings**, in five sections: *View* (the views' options, saved with the workspace, their orientation, and whether tools that are off are offered), *Sign-in* (see [Signing in](signing-in.md)), *Compute* (the computers that run jobs and rendering; see [Jobs on this computer](local-jobs.md)), *Storage* (overviews and tractograms kept in this browser) and *Developer* (Neuroglancer's chunk statistics, reloading the layers or the whole page, the state as JSON). |
+| Gear icon | **Settings**, in five sections: *View* (the views' options, saved with the workspace, and their orientation), *Sign-in* (see [Signing in](signing-in.md)), *Compute* (the computers that run jobs and rendering; see [Jobs on this computer](local-jobs.md)), *Storage* (overviews and tractograms kept in this browser) and *Developer* (Neuroglancer's chunk statistics, reloading the layers or the whole page, the state as JSON). |
 | **?** icon | Help: the keyboard and mouse reference, the guide, the code on GitHub. |
 | **Commands** | The command palette (++ctrl+k++). |
 
@@ -123,56 +153,115 @@ path goes first (a branch's end, or the very first step). Steps store what
 they share with other steps once, so 400 steps of the default workspace
 take about 0.1 MB rather than 2.3 MB.
 
-## 2. Left dock: Layers and Plugins
+## 2. Left column: Layers and Plugins
 
 | Panel | What it holds |
 |---|---|
-| **Layers** | Above, what the scene shows: one row per dataset with its visibility, load state and where it is (the bucket or host and the file's name; the whole address in its tooltip). A dataset shown through several layers (a tractogram and its track groups, say) lists them beneath it. **+** adds data: a URL, a file or folder on this computer, or a new annotation layer. Datasets that other scenes show are offered in **Open** (and in **Add a dataset**). *Tools for this data* lists up to three plugins that are off but work with this data (the rest under **More…**): click one to turn it on (it opens in the Tools dock), × for "Not now". Pasting a data URL on the window (++ctrl+v++) adds it here; see [Data from a URL](data.md#data-from-a-url). Below, the selected layer's controls (see [Layer controls](#layer-controls)). |
-| **Plugins** | Every plugin, grouped by what it does, with a one-line description, a switch and an *About* guide. Only Zarr Vectors is on by default; a tool turns on at once, and turning one off reloads the page with the same link. **Add** loads a plugin from your computer or a URL. See [Plugins](../plugins/index.md). |
+| **Layers** | What the scene shows: one card per dataset, its row with its visibility, load state and where it is (the bucket or host and the file's name; the whole address in its tooltip). A dataset shown through several layers (a tractogram and its track groups, say) lists them beneath it. **+** opens **Open**: a file or folder on this computer, a link, another scene's datasets, the examples (a new annotation layer is in the palette). Tools are not recommended for the data; turn them on in **Plugins**. Pasting a data URL on the window (++ctrl+v++) adds it here; see [Data from a URL](data.md#data-from-a-url). Selecting a dataset opens its card on its settings (see [Layer controls](#layer-controls)). |
+| **Plugins** | Every plugin, grouped by what it does, with a one-line description, a switch and an *About* guide. Zarr Vectors, the View aids and the Scale navigator are on by default; a tool turns on at once, and turning one off reloads the page with the same link. **Add** loads a plugin from your computer or a URL. See [Plugins](../plugins/index.md). |
 
 ## 3. The views
 
 Neuroglancer's own views, unchanged: cross-sections and the 3-D view, in
 whichever layout the scene uses. The position (in the scene's units) is at
-the top left; click it to type a position. Each panel has buttons to make
+the top left; click it to type a position. After it, beyond a thin line,
+the pointer's position over the views, each value with its unit. Each panel has buttons to make
 it fill the view or to open it in a new window, and the 3-D panel has
 switches along its bottom: **Sections**, and those of tools that draw there.
+
+The 3-D view also has the [View aids](../plugins/view-aids.md): an
+orientation cube in its top right (click a face, edge or corner to look
+from there; **Realign** to the nearest standard view), labels at its sides
+for point annotations with a description, **Graphics** (off hides the axis
+lines, the box, the scale bar and the aids) and bookmarks of the camera in
+a strip along its bottom edge.
+
+Where an image layer lies inside a coarser one, the [Scale
+navigator](../plugins/scale-navigator.md) draws a grey box in the 2-D and
+3-D views, labelled with its name and voxel size; click its line or label
+to frame that layer (**Zoom boxes** beside **Sections** hides them), and
+++alt+arrow-up++ and ++alt+arrow-down++ step to the coarser or the finer
+layer.
 
 Neuroglancer's mouse controls apply: drag to pan, scroll to move through
 sections, ++ctrl++ + scroll to zoom, drag in 3-D to rotate, and
 ++shift++ + drag to rotate a cross-section to any angle.
 
-## 4. Right dock: Tools
+### Shapes with handles
 
-The panel of a tool that is on (a plugin): one at a time, chosen from the
-menu at the top of the dock, where they are listed by what they work on:
+Tools draw what they edit in the views themselves, with handles to drag:
+Track filtering's regions, Anatomical rendering's crop boxes and cut
+planes, Registration's landmarks. A cross-section shows where its section
+cuts each shape (a sphere's ellipse, a box's rectangle, a plane's line);
+the 3-D view shows them as wireframes.
+
+- **Click** a shape to select it. Its handles show, and a small card over
+  the corner of the view gives its exact values and what else it does
+  (AND, OR or NOT; remove). **Escape**, the card's ×, or a click on an
+  empty part of a view lets it go; that click is still Neuroglancer's.
+- **Drag** the centre handle (a hollow square) to move the shape across
+  the view: in a cross-section within the section, in 3-D across the
+  screen. A box's corners and face centres resize it, a sphere's knobs
+  change its radius, a plane's ring turns it.
+- ++alt++ + scroll over a selected sphere or box scales it; the arrow keys
+  move it one unit (++shift++: ten) while the mouse is over a view.
+- A drag is one undo step, made when you let go.
+
+Everywhere else the mouse is Neuroglancer's as usual. The shapes are
+drawn over the views, not into them, so captures leave them out.
+
+## 4. Tools, below the layers
+
+The panel of a tool that is on (a plugin), in the left column below the
+layers: one at a time, chosen by the tabs in the section's head (the arrow
+keys move between them), kept together by what they work on:
 *Image* (Filters, Anatomical rendering, Orientations), *Labels*
 (Annotations, Segmentation, Atlas), *Space* (Registration, a collection's
-panel) and *Vectors* (Track filtering, Luxar). Turning a tool on opens it
-here; with no tool on, the dock is not there. Long panels are in cards
-that fold away (Registration's Transform, Landmarks…; Settings' sign-ins),
-each kept open or closed as you left it.
+panel) and *Vectors* (Track filtering, Luxar). A tool made for one kind
+of data is listed while that data is selected. Turning a tool on opens it
+here (and the column, if it was collapsed); with no tool on, the section
+is not there and the layers have the whole column. The tabs name the
+tools; the section has no title of its own. Drag the divider above
+the section (or focus it and use the arrow keys) to share the column
+between the layers and the tools; the arrow at the right of its head folds
+it to its tabs. Long panels are in cards that fold away (Registration's
+Transform, Landmarks…; Settings' sign-ins), each kept open or closed as
+you left it. In the left column everything starts on one edge, 12 px in,
+and what belongs to something above it (a dataset's settings and views, a
+card's contents) one step further in.
 
 ## Layer controls
 
-Below the list in the Layers panel, the selected dataset's controls, as
-Neuroglancer's own layer tabs. A header names the dataset and, when it is
-shown through several layers, lets you pick which one. Picking another view
-there (the next channel, say) keeps the tab you are on. A layer opens on
-**Display**. Its sign-in shows only when its data is not public (or did not
-load); otherwise it is in Settings › Sign-in.
+Each dataset in the Layers panel is a card. Its row shows the layer's
+number, its name and, at the right before its buttons, what kind of data
+it is (`image`, `segmentation`, `annotation`, `vectors`; `local` before it
+for data on this computer). Selecting a dataset (its row, or in the views)
+opens its card on its settings and outlines its row; the arrow at the left
+of the row opens and closes it, and several cards may be open at once.
+Open, the card's settings are beneath its row, one step in, so what you
+edit is plainly that dataset's. For a dataset shown through several
+layers, they are those of the view selected in its list.
+
+At the top of the open card is its **source**: where the data comes from
+(its URL, editable), under **Details** its parts (subsources), its
+**transform** (the matrix that places it in the scene, editable) and an
+OME-Zarr image's coordinate systems and levels, and **Add a data source**.
+Its sign-in follows, only when its data is not public (or did not load);
+otherwise it is in Settings › Sign-in. Below are its layer's own tabs
+(Neuroglancer's, its Source being the part above, so where the data comes
+from shows whichever tab is open), the tab chosen kept with the layer; a
+layer opens on **Rendering**.
 
 | Tab | What it holds |
 |---|---|
-| **Display** | How it is drawn: resolution, opacity, blending; for images the **Colour map**, then the shader's controls (contrast, with a histogram and Min-Max, 1-99% and 5-95% buttons) above its code; for segmentations the **Lookup table**; for surfaces the **Surface** controls. |
-| **Source** | Where the data comes from; under **Details**, its parts (subsources), its **transform** (the matrix that places it in the scene, editable), and an OME-Zarr image's coordinate systems and levels. |
+| **Rendering** | How it is drawn: resolution (its histogram says *not drawn* while the layer is hidden or not in a view), opacity, blending; for images the **Colour map**, then the shader's controls (contrast: the colour bar across the range, the range's ends, a histogram, and Min-Max, 1-99% and 5-95% as one control, the one that set the range marked until the range is changed another way) above its code; for segmentations the **Lookup table**; for surfaces the **Surface** controls. |
 | **Segments** | For segmentations: search segments by id, label or property, show and hide them, colours. |
 | **Annotations** | The tools that draw points, lines, boxes, ellipsoids and polylines (the one place to draw: the Annotations plugin's **Draw…** opens it), and the list of annotations. |
 | **Schema** | For annotation layers: the properties each annotation carries. |
 
 ### Colour maps
 
-An image layer's **Display → Shader → Colour map** writes the shader for a
+An image layer's **Rendering → Shader → Colour map** writes the shader for a
 colour map, keeping the contrast (the `normalized` range and its histogram):
 grayscale, heat, jet, GE colour, NIH, PET, binary colour, hot, cool, viridis,
 magma, inferno, plasma, cividis, turbo, cubehelix and a diverging red-blue.
@@ -214,7 +303,7 @@ Outlines are drawn by an image layer added just above the segmentation,
 "*name* outlines", which reads the same labels; the segmentation's own 2-D
 opacity is set to 0 meanwhile (its meshes are untouched), and **Filled**
 removes the outline layer and gives the opacity back. The outline layer's
-**Display** tab sets the line width in screen pixels (`outline_width`), the
+**Rendering** tab sets the line width in screen pixels (`outline_width`), the
 lines' opacity, and an optional faint fill (`fill_opacity`). It follows the
 segmentation's colours and its shown segments by itself.
 
@@ -269,8 +358,20 @@ overlays at once are not there.
 
 ## 5. Activity dock
 
-Collapsed to one line at first: the running job and its progress, else the
-last message. Click the line (or the icon at its end) to open the dock.
+Collapsed to one line at first, the status line: the running job and its
+progress, else the last message, on the left (a message that is not an
+error fades after a few seconds; all of them stay in the dock); on the
+right, what tools put there (in monospace, shortened with … when the line
+is full; the whole text in its tooltip). On a narrow window the message
+gives way first. Click the message (or the icon at its end) to open the
+dock.
+
+With image layers that lie inside one another (a HiP-CT overview and its
+zooms), the [Scale navigator](../plugins/scale-navigator.md) puts two items
+there: the layers holding the position, coarse to fine with their voxel
+sizes (click one to frame it), and the level of the selected layer's
+pyramid Neuroglancer draws at this zoom (`level 4/7 · 323 µm`), in every
+layout (worked out from the zoom, `≈`, when no section draws the layer).
 
 | Panel | What it holds |
 |---|---|

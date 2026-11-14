@@ -2,7 +2,7 @@
 
 ![The Filtering panel with three groups of the S-21-46 tractogram](../images/plugins/track-filtering.png)
 
-**Kind:** tool · **Off by default** (offered when you open a tractogram or Zarr Vectors store; or turn it on in the Plugins panel) · the **Filtering** panel in the Tools dock, under *Vectors* ·
+**Kind:** tool · **Off by default** (offered when you open a tractogram or Zarr Vectors store; or turn it on in the Plugins panel) · the **Filtering** panel in the Tools section, under *Vectors* ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/track-filtering)
 
 TrackVis-style track groups. A group keeps the objects that pass through its
@@ -27,11 +27,22 @@ remembers whether you left it open; the (i) beside a title explains it.
    shows or hides it; rename it with the pencil or by double-clicking its
    name. The count is a quick preview from a coarse level (marked ~), then
    the exact answer.
-3. **Regions**: **+ Sphere**, **+ Box**, **+ Disk** or **+ Mask**, at the
-   centre of the views. Move a region with its sliders, or type a value in
-   the box beside one: it applies when you press Enter or leave the box.
-   **Move here** puts it at the views' centre, **Go to** takes the views to
-   it, and Alt-drag moves it in a view.
+3. **Regions**: **+ Sphere**, **+ Box**, **+ Disk** or **+ Mask**. A new
+   region starts where you are looking (the place the mouse was last over
+   in a view, else the views' centre) and is selected, so you can drag it
+   at once, in any view:
+    - its centre moves it; a box's corners and face centres and a sphere's
+      knobs size it; Alt+wheel over it scales it; the arrow keys move it a
+      millimetre (Shift: ten) while the mouse is over a view;
+    - its card, over the view while it is selected, chooses AND, OR or NOT
+      and what tracks must do in it, gives its exact centre and size, and
+      deletes it;
+    - click a region to select it; Escape, or a click on an empty part of
+      a view, lets it go.
+
+   The sliders in the panel move it too, or type a value in the box beside
+   one: it applies when you press Enter or leave the box. **Move here** puts
+   it at the views' centre and **Go to** takes the views to it.
     - On streamlines and skeletons, a region can ask for *pass through it*,
       *either end in it* or *both ends in it*.
     - **+ Disk** is TrackVis's disk: a flat region across x, y or z that a

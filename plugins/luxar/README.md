@@ -78,7 +78,14 @@ data formats directly:
 - **Colour** by direction (RGB of |tangent|, in the layer's physical x, y,
   z, smoothed across joints), by object (a hashed hue per object id), by a
   vertex attribute through a colormap (viridis, magma, inferno, plasma,
-  turbo, grey; polynomial fits), or one colour.
+  turbo, grey; polynomial fits), one colour, or as the layer is coloured
+  (its Display tab's Colour by, read with `@ngplatform/sdk/colour_by`):
+  by a group, each vertex's object is its group (`scalarOf`: "group:…";
+  `chunk_build` slots vertices by group and keeps each slot's stored
+  colour), so the object table colours and hides groups and a change of
+  the groups chosen only remakes tables; by an attribute, through the
+  layer's own colour map as a 32-colour table (colour map 6, `uLut`)
+  between its low and high, `uHideOutside` dropping what lies outside.
 - **2-D views**: Luxar slices the dimensions it does not show by
   proximity. Here a 2-D view shows the lines within half the slab's
   thickness of its section, fading with distance (the same 1% Gaussian

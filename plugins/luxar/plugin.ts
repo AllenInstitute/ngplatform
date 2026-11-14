@@ -25,6 +25,7 @@
  * a server that refuses says to sign in.
  */
 import type { Disposer, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
+import { type ColourByLook, layerColourLook } from "@ngplatform/sdk/colour_by";
 import { button, card, type Child, el, emptyState, field, numberInput, type OnOff, region, select, type Settable, type Slider, slider, statusLine, toggle } from "@ngplatform/sdk/dom";
 import { meshSourceOf, type SourceSignInNeed } from "@ngplatform/sdk/sources";
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
@@ -159,8 +160,23 @@ export class Luxar {
         this.updateCanDraw();
         this.panelUpdate?.();
       }),
+      // A layer's Colour by changed (its shader, or its low and high dragged): the views drawn as the layer follow.
+      ctx.viewer.onStateChanged(() => {
+        const generation = ctx.viewer.layersGeneration?.();
+        if (generation !== undefined && generation === this.lookGeneration) return;
+        this.lookGeneration = generation;
+        for (const [name, view] of this.views) if (view instanceof LayerView) view.setLook(this.lookOf(name));
+        this.panelUpdate?.();
+      }),
     );
     this.sync();
+  }
+
+  private lookGeneration: number | undefined;
+
+  /** A layer's Colour by look (its Display tab's Vertex colour), as its state has it now. */
+  private lookOf(name: string): ColourByLook | undefined {
+    return this.ctx.viewer.colourLook?.(name) ?? layerColourLook(this.ctx.viewer.layerSpec(name));
   }
 
   /** Whether the selected layer is one this plugin can draw: the toggle command applies (LUXAR_CAN_DRAW). */
@@ -297,6 +313,8 @@ export class Luxar {
     // A segmentation's meshes: each cell in its colour in the layer.
     if (layer !== undefined && this.isMeshLayer(layer)) return { ...DEFAULT_STYLE, on: false, colourBy: "segment" };
     const coloured = spec?.segmentDefaultColor !== undefined || (typeof spec?.segmentColors === "object" && spec.segmentColors !== null && Object.keys(spec.segmentColors).length > 0);
+    // A layer coloured by a group or an attribute (Display, Colour by) is drawn as it is coloured.
+    if (this.lookOf(name) !== undefined) return { ...DEFAULT_STYLE, on: false, colourBy: "layer" };
     return { ...DEFAULT_STYLE, on: false, ...(coloured ? { colourBy: "segment" as const } : {}) };
   }
 
@@ -425,6 +443,7 @@ export class Luxar {
         this.views.set(name, view);
       } else if (view.style !== style) view.setStyle(style);
       view.setVisible(layer.visible);
+      if (view instanceof LayerView) view.setLook(this.lookOf(name));
       const out = this.outgoing.get(name);
       if (out !== undefined) {
         if (out.view.style !== style) out.view.setStyle(style);
@@ -747,6 +766,19 @@ export class Luxar {
         shownWhen(choice("Colormap", COLORMAP_LABELS, () => style().colormap, (colormap) => set({ colormap })), byAttribute),
         shownWhen(field("Range", el("div", { class: "row" }, lo, hi, reset)), byAttribute),
       );
+    }
+    if (!splats) {
+      // As the layer: what its Colour by is, set in its Display tab.
+      const said = el("p", { class: "hint" });
+      syncs.push(() => {
+        const l = this.lookOf(name);
+        said.textContent = l?.by === "group" && l.group !== undefined
+          ? `By ${l.group.tier}, ${l.group.colours === "stored" ? "in the store's colours" : "in a palette"}${l.group.shown === undefined ? "" : `, ${l.group.shown.length} shown`}. Change it in the layer's Display tab (Vertex colour).`
+          : l?.by === "attribute"
+            ? `By ${l.attribute} through ${l.colormap ?? "viridis"}, ${l.low ?? "?"} to ${l.high ?? "?"}${l.hideOutside ? ", outside hidden" : ""}. Change it in the layer's Display tab (Vertex colour).`
+            : "The layer colours by segment: its segment colours. Colour it by a group or an attribute in its Display tab (Vertex colour).";
+      });
+      look.push(shownWhen(said, () => style().colourBy === "layer"));
     }
     look.push(
       shownWhen(colourPicker("Colour"), () => style().colourBy === "solid"),

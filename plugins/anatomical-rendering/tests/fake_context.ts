@@ -5,6 +5,7 @@
  */
 import { vi } from "vitest";
 import type { Drawer3d, Frame3d, LayerInfo, PlatformContext } from "@ngplatform/sdk";
+import { fakeViewTools } from "@ngplatform/sdk/testing";
 import type { SourceAxes } from "../view.js";
 
 /** A request a stand-in service was sent. */
@@ -90,7 +91,8 @@ export const XYZ: SourceAxes = { names: ["z", "y", "x"], units: ["m", "m", "m"],
 
 export function fakeContext(options: { layers?: LayerInfo[]; axes?: Record<string, SourceAxes>; state?: unknown; settings?: Map<string, unknown>; hosts?: string[] } = {}) {
   let layers = options.layers ?? [];
-  let state: unknown = options.state;
+  // These tests are of rendering on a computer, unless a test says this browser (the plugin's own default).
+  let state: unknown = { where: "host", ...(options.state as object | undefined) };
   const axes = options.axes ?? {};
   const settings = options.settings ?? new Map<string, unknown>();
   const services = new Map((options.hosts ?? ["workstation"]).map((h) => [h, new FakeService(h)]));
@@ -105,7 +107,9 @@ export function fakeContext(options: { layers?: LayerInfo[]; axes?: Record<strin
     const s = services.get(name);
     return s && { name, address: `http://${name}:7000`, available: () => true, info: () => hostInfo(name), fetch: (path: string, init?: RequestInit) => s.fetch(path, init) };
   };
+  const views = fakeViewTools();
   const ctx = {
+    views,
     plugin: { id: "org.ngplatform.anatomical-rendering", version: "test", manifest: {} },
     commands: {
       register: () => () => undefined,
@@ -121,6 +125,7 @@ export function fakeContext(options: { layers?: LayerInfo[]; axes?: Record<strin
     viewer: {
       layers: () => layers,
       onLayersChanged: (f: () => void) => (listeners.layers.add(f), () => listeners.layers.delete(f)),
+      onStateChanged: () => () => {},
       onCursorChanged: (f: () => void) => (listeners.cursor.add(f), () => listeners.cursor.delete(f)),
       cursor: () => ({ active: false, position: [], names: [], units: [], values: {} }),
       getState: () => ng,
@@ -155,6 +160,7 @@ export function fakeContext(options: { layers?: LayerInfo[]; axes?: Record<strin
   };
   return {
     ctx: ctx as unknown as PlatformContext,
+    views,
     services,
     panels,
     drawers,

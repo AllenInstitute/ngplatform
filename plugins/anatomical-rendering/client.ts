@@ -179,11 +179,30 @@ export interface SessionInfo {
   error: string | null;
   volume: VolumeMeta | Record<string, never>;
   labels: { url: string; values: number[] } | null;
+  /** The objects read (meshes and the image within them), when the session was opened with some. */
+  objects?: { url: string; ids: string[]; triangles: number; level: string; page: number[]; bricks: number; inside_voxels: number } | null;
   samples: number;
   ms_per_pass: number;
 }
 
 /** What a frame is drawn from: the camera (column-major), size, the look. */
+/** Objects for a session: a precomputed segmentation's segments (their meshes), the meshes' level of detail, and the voxels the image within them may take. */
+export interface ObjectsSpec {
+  url: string;
+  /** A precomputed segmentation's segments (the default); or "zarr-vectors": a store's geometry, drawn with the volume. */
+  store?: "zarr-vectors";
+  /** For a store: the finest level within this many vertices, and the radius of its tubes and points (mm). */
+  vertices?: number;
+  radius_mm?: number;
+  /** For a store: the vertex attributes (shader ids) read with it, that a view's `colour` colours it by. */
+  attributes?: string[];
+  ids?: string[];
+  lod?: number;
+  budget?: number;
+  /** What is inside: the meshes (the default), or the segmentation's own labels (as exact as its voxels). */
+  inside?: "mesh" | "labels";
+}
+
 export interface ViewSpec {
   inv_view_projection: number[];
   width: number;
@@ -202,6 +221,12 @@ export interface ViewSpec {
   /** World planes (nx, ny, nz, d), kept where n.x + d >= 0. */
   clips?: [number, number, number, number][];
   labels?: { show?: boolean; mix?: number; hidden?: number[]; keep?: number[]; colors?: Record<string, [number, number, number, number]> };
+  /** The session's objects: shown or not, the chance a path meeting a surface is scattered by it, the image within them, its tint, colours by segment id. */
+  /**
+   * colour: a store's geometry coloured as its layer is (vectors.colour on the computer): by a group
+   * ({by: "group", group}), or an attribute through a table of colours between low and high.
+   */
+  objects?: { show?: boolean; surface?: number; image?: boolean; mix?: number; colors?: Record<string, [number, number, number]>; colour?: Record<string, unknown> };
   background?: [number, number, number, number];
   /** A clip box: fractions (0..1) of the volume along its x, y, z, low and high. */
   crop_fraction?: [[number, number, number], [number, number, number]];
@@ -293,8 +318,12 @@ export class RenderService {
     return call(this.link, "GET", "/presets");
   }
   /** Opens a session on an image (at a channel and time point, from 0; a new session is needed to change either). */
-  open(volume: { url: string; budget?: number; level?: string; cylinder?: number; detail_budget?: number; channel?: number; time?: number }, labels?: { url: string }): Promise<SessionInfo> {
-    return call(this.link, "POST", "/sessions", { volume, labels });
+  open(
+    volume: { url: string; budget?: number; level?: string; cylinder?: number; detail_budget?: number; channel?: number; time?: number },
+    labels?: { url: string },
+    objects?: ObjectsSpec,
+  ): Promise<SessionInfo> {
+    return call(this.link, "POST", "/sessions", { volume, labels, objects });
   }
   session(id: string): Promise<SessionInfo> {
     return call(this.link, "GET", `/sessions/${id}`);

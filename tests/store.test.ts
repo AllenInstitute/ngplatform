@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { Json } from "../src/core/workspace.js";
+import { VIEW_DEFAULTS } from "../src/core/view_defaults.js";
 import { FakeEngine } from "./fake_engine.js";
 import { WorkspaceStore } from "../src/platform/workspace_store.js";
 
@@ -56,7 +57,7 @@ describe("WorkspaceStore", () => {
     store.noteInput();
     const first = store.state().activeScene;
     const second = store.newScene();
-    expect(engine.ng).toEqual({ layout: "xy" });
+    expect(engine.ng).toEqual({ ...VIEW_DEFAULTS, layout: "xy" });
     const tracts = store.addDataset({ source: TRACTS, name: "tracts" });
     store.switchScene(first);
     expect(engine.layers().map((l) => l.name)).toEqual(["img"]);

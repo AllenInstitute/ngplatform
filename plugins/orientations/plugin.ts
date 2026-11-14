@@ -23,6 +23,7 @@ import { describeVoxel } from "./readout.js";
 import { directionShader } from "./shader.js";
 import { TENSOR_ORDERS, type TensorOrder } from "./tensor.js";
 import { type Box, chooseLevel, layerMove, type SectionPlan, contains, invert4, planesAround, planSection, type Section, sectionOf, type Vec3, applyAffine } from "./view.js";
+import { gcsReadable } from "@ngplatform/sdk/sources";
 
 export interface Saved {
   on: boolean;
@@ -307,8 +308,8 @@ export class Orientations {
     if (p === undefined) {
       p = (async () => {
         // Zarr v3's group metadata, else v2's attributes (OME-Zarr 0.4).
-        let response = await fetch(`${url}zarr.json`);
-        if (!response.ok) response = await fetch(`${url}.zattrs`);
+        let response = await fetch(gcsReadable(`${url}zarr.json`));
+        if (!response.ok) response = await fetch(gcsReadable(`${url}.zattrs`));
         if (!response.ok) return false;
         const { spatialGroup } = await import("./ome4.js");
         spatialGroup(await response.json());

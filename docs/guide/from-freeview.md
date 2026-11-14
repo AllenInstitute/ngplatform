@@ -18,7 +18,7 @@ there yet.
 | Surface outlines on the slices (edge colour) | drawn by default, white yellow, pial red; **2-D outlines** can colour them by the overlay |
 | Vertex info (curvature, overlay, annotation name) | **Display → Surface → Under the mouse** |
 | File → Load Tract | **+ → Local file or folder…**: `.trk`, `.tck`, `.trx` |
-| Layer panel (left) | the **Layers** panel (left dock): the datasets above, the selected one's controls below |
+| Layer panel (left) | the **Layers** panel (left column): the datasets above, the selected one's controls below |
 | Colour map, window/level | the layer's **Display → Shader → Colour map** (grayscale, heat, jet, GE colour, NIH, PET, binary colour and more) and the contrast slider |
 | Lookup table (FreeSurferColorLUT) | the layer's **Display → Colour → Lookup table**: FreeSurfer's and other atlases' tables, or a file |
 | Show as outline (label volumes) | the layer's **Display → 2-D views → Draw: Outlines** |
@@ -28,7 +28,7 @@ there yet.
 | File → Save Screenshot (`-ss`, magnification, auto-trim) | the camera icon → **Picture…**: magnification and trim |
 | File → Save Movie Frames, Save GIF | the camera icon → **Movie: sweep slices or time…** or **Movie: turn the 3-D view…**: a slice or time sweep, or a 3-D turn, as GIF, WebM, MP4 or PNG frames |
 | File → Save Volume As | Layers → the dataset's **⋯** → **Export as…**: NIfTI, `.mgz`/`.mgh` or OME-Zarr |
-| View → Neurological View | Settings › View → **Orientation of the views…**: radiological (as Freeview, the default for anatomy) or neurological |
+| View → Neurological View | Settings › View → **Orientation of the views…**: radiological (as Freeview, the default for anatomy) or neurological. The 3-D view starts in the same convention: radiological from the front, superior up and the patient's right on the left (neurological from behind); **Reset the rotation** goes back to it |
 | Viewport 2 × 2 | four panels: axial, sagittal, coronal and 3-D bottom right |
 | `freeview -v a.nii b.nii` | a link: the address bar holds the whole workspace |
 

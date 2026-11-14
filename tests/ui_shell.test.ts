@@ -2,7 +2,8 @@
 /**
  * The shell's layout (src/ui/shell.ts) in a DOM, before it is attached to
  * an engine: the top bar, the views and the three docks are mounted with
- * their landmarks and names, the docks start as they should, and the top
+ * their landmarks and names (one left column: the layers above the tools),
+ * the docks start as they should, the status line takes items, and the top
  * bar's buttons and menus (Open, Share, Capture, Settings, Help, the
  * command search) run the commands they name.  What attaching wires up
  * (the engine, plugins, keys) is the browser smoke test's
@@ -18,6 +19,7 @@ vi.hoisted(() => {
 
 import { closeMenu } from "../src/ui/overlays.js";
 import { Shell } from "../src/ui/shell.js";
+import { addStatusItem } from "../src/ui/statusbar.js";
 
 let root: HTMLElement;
 let run: ReturnType<typeof vi.fn>;
@@ -51,12 +53,34 @@ describe("layout", () => {
     expect(root.querySelectorAll(".resizer")).toHaveLength(3);
   });
 
-  it("starts with the Layers dock open and the Tools and Activity docks collapsed, the start card hidden", () => {
-    const dock = (slot: string) => root.querySelector(`.dock-${slot}`)!;
+  it("has one column on the left, the layers above the tools, and the views filling the rest", () => {
+    const workspace = root.querySelector(".workspace")!;
+    expect([...workspace.children].map((e) => e.classList[0])).toEqual(["side", "resizer", "centre"]);
+    const side = workspace.querySelector(".side")!;
+    expect([...side.children].map((e) => e.id || e.className)).toEqual(["dock-left", "resizer resizer-tools", "dock-tools"]);
+    // Nothing to the right of the views.
+    expect(workspace.lastElementChild!.classList.contains("centre")).toBe(true);
+    expect(root.querySelector(".dock-right")).toBeNull();
+  });
+
+  it("starts with the left column open, no Tools section (no tool is on), the Activity dock collapsed, and nothing over the views", () => {
+    const dock = (slot: string) => root.querySelector<HTMLElement>(`.dock-${slot}`)!;
     expect(dock("left").classList.contains("collapsed")).toBe(false);
-    expect(dock("right").classList.contains("collapsed")).toBe(true);
+    expect(dock("tools").hidden).toBe(true);
+    expect(root.classList.contains("tools-empty")).toBe(true);
     expect(dock("bottom").classList.contains("collapsed")).toBe(true);
-    expect(root.querySelector<HTMLElement>(".start-card")!.hidden).toBe(true);
+    expect(root.querySelector(".start-card")).toBeNull();
+  });
+
+  it("puts the status items to the right of the activity message, on the status line", () => {
+    const head = root.querySelector(".dock-bottom .dock-head")!;
+    const parts = [...head.children].map((e) => e.classList[0]);
+    expect(parts.indexOf("status-items")).toBe(parts.indexOf("dock-status") + 1);
+    const item = Object.assign(document.createElement("span"), { textContent: "S-21-46 › 20 µm" });
+    const remove = addStatusItem(item, { order: 10, label: "Scale" });
+    expect(head.querySelector(".status-items")!.contains(item)).toBe(true);
+    remove();
+    expect(head.querySelector(".status-items")!.contains(item)).toBe(false);
   });
 
   it("names every icon-only button for a screen reader", () => {
@@ -68,13 +92,14 @@ describe("layout", () => {
 });
 
 describe("the top bar", () => {
-  it("runs Open, Settings, undo, redo and the command search", () => {
+  it("runs Open, Neuroglancer, Settings, undo, redo and the command search", () => {
     byText("Open").click();
+    labelled("Open in Neuroglancer").click();
     labelled("Settings").click();
     labelled("Undo").click();
     labelled("Redo").click();
     labelled("Search commands").click();
-    expect(run.mock.calls.map((c) => c[0])).toEqual(["workspace.open", "settings.open", "edit.undo", "edit.redo", "help.palette"]);
+    expect(run.mock.calls.map((c) => c[0])).toEqual(["workspace.open", "workspace.openInNeuroglancer", "settings.open", "edit.undo", "edit.redo", "help.palette"]);
   });
 
   it("opens the Share menu, whose items copy, save and open the workspace", () => {

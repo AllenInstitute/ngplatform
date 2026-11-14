@@ -8,7 +8,7 @@ cursor with its path, and each region's volume. Off by default.
 
 | File | What |
 |---|---|
-| `manifest.ts` | The Atlas panel, in the Tools dock under *Labels* |
+| `manifest.ts` | The Atlas panel, in the Tools section under *Labels* |
 | `plugin.ts` | The panel (`AtlasPanel`), built from the SDK's cards and drawn once: the layer and its table (Atlas), the region under the cursor and the tree (Regions), the chosen region's actions and Go to (Region), the counts and the CSV (Volumes) |
 | `hierarchy.ts` | The tree a lookup table makes (`Atlas`): paths, descendants, search, totals per region |
 | `labels.ts` | Passes over a label volume chunk by chunk: each label's count, position sums and bounds; a region's voxel nearest a point |

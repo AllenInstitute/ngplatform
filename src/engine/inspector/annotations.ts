@@ -14,7 +14,7 @@ import {
   transformPoint,
 } from "../neuroglancer.js";
 import { signal } from "./render.js";
-import { button, colour, el, fromHex, note, row, type Scope, section, textInput, toHex, type Watch } from "./ui.js";
+import { button, colour, el, fromHex, note, removeButton, row, type Scope, section, textInput, toHex, type Watch } from "./ui.js";
 
 const TOOLS: { id: string; label: string; title: string }[] = [
   { id: "annotatePoint", label: "Point", title: "Click in a view to place a point" },
@@ -202,7 +202,7 @@ function annotationRow(layer: AnnotationUserLayer, state: any, a: Annotation, pr
   }
   const remove = source.readonly
     ? null
-    : button("×", (e) => {
+    : removeButton("Delete this annotation", (e) => {
         e.stopPropagation();
         const ref = source.getReference(a.id);
         try {
@@ -210,7 +210,7 @@ function annotationRow(layer: AnnotationUserLayer, state: any, a: Annotation, pr
         } finally {
           ref.dispose();
         }
-      }, "Delete this annotation", "icon ins-remove");
+      });
   const values = properties.map((p, i) =>
     p.type === "rgb" || p.type === "rgba"
       ? el("span", { class: "ins-faint", title: p.identifier }, `${p.identifier} `, el("span", { class: "ins-swatch-inline", style: `background:${packedHex(a.properties[i])}` }))
@@ -272,10 +272,10 @@ export function schemaTab(scope: Scope, layer: AnnotationUserLayer): HTMLElement
                 const n = Number(v);
                 if (Number.isFinite(n)) update({ default: n });
               }, { class: "text-input mono num", "aria-label": "Default" }),
-        editable ? button("×", () => {
+        editable ? removeButton("Remove this property", () => {
           for (const s of sources()) s.removeProperty(spec.identifier);
           changed();
-        }, "Remove this property", "icon ins-remove") : el("span"),
+        }) : el("span"),
       );
     });
     const add = () => {

@@ -11,6 +11,89 @@ you are using.
 The production polish: the work of an audit of every panel and plugin
 (`plans/`), from the crashes up to the release process.
 
+### One left column, views first
+
+- The Tools dock on the right is gone: the tools that are on are a section
+  of the left column, below Layers and Plugins, behind a divider that drags
+  (or moves with the arrow keys). The views take the width the dock took.
+  The section is there only while a tool is on (and listed for the data
+  selected), folds to its row of tabs, and opens with its column when a
+  tool is turned on.
+- The status line (the collapsed Activity dock) takes items on its right:
+  plugins add one with `ctx.ui.statusItem(element, { order })`.
+
+### One look, Neuroglancer's chrome included
+
+- The views are a black stage: a new scene, an example or a blank viewer
+  draws the margin around the sections near black, and an image's or a
+  segmentation's bounding box in a dim grey rather than yellow; links keep
+  what they carry. Panel frames are 1 px grey (the focused one light grey),
+  the axis labels and the scale bar are captions in the readouts' face.
+  Neuroglancer's axis lines keep their red, green and blue.
+- Greyscale in Neuroglancer's materials: black panels divided by 1 px
+  lines, white at fixed opacities, one hue (Neuroglancer's error red) for
+  errors and what deletes. What is chosen or on is inverted, white with
+  black words; switches that are on are white, no longer green. The focus
+  is a 1 px white outline. The Layers panel numbers its layers as
+  Neuroglancer does.
+- Values are readouts (`readout()` in `@ngplatform/sdk/dom`): Source Code
+  Pro, tabular digits, the unit quiet. A layer's source in the Layers panel
+  is a compact line (the store's name, where it is beneath) with copy and
+  edit buttons, the whole address in the box while editing.
+- What is selected in a list is outlined in 1 px of the text's colour, its
+  words strong, no fill and no bar down the left; the item the keyboard is
+  on in a menu, and the palette's highlighted command, are inverted. One
+  floating style (`float-surface`) for menus, the palette, toasts and tips;
+  motion tokens, none with reduced motion; one 16 px icon set in place of
+  characters (×, ▸, ✓); selected text, scrollbars and number fields in the
+  app's greys.
+
+### The review's fixes
+
+- The left column on one inset: everything 12 px in from either side, one
+  step of 12 px for what is nested (a dataset's settings and views, a
+  card's body); cards and the plugins there are open at their sides.
+- A layer's row tags its kind (`image`, `segmentation`, `vectors`) in the
+  muted mono face; labels in the inspector wrap rather than being cut.
+- The contrast control: its colour bar drawn in CSS from the colour map and
+  range (Neuroglancer draws it in the views' canvas, which the left column
+  is not over), the bounds as readouts, Min-Max, 1-99% and 5-95% as one
+  segmented control with the preset that set the range inverted.
+- A resolution histogram not drawn says so in the theme's words, the
+  target's line kept off them.
+- No title over the tools' tabs; the palette names each group once, above
+  its commands, in sentence case; links and menu items that open a new tab
+  end in the external-link icon instead of ↗.
+- The status line: "Undo history for this link restored" on opening a link
+  whose history was kept; messages that are not errors fade from the line
+  after a few seconds; the level chip stays in every layout, the 3-D view
+  alone included; the pointer's position after the position bar has units.
+- At phone width nothing scrolls sideways: Open is its icon, GitHub is in
+  the Help menu, the scene's tab shrinks, and the level chip stays whole.
+
+### A light theme
+
+- Settings › View › Theme: **Dark** (the default), **Light** or **Match
+  system**, kept in this browser (not in links) and set before the page is
+  first drawn; the palette's **Theme: switch between dark and light** and
+  **Black views in the light theme: on or off** change it too. The light theme mirrors
+  the dark one: white panels, black type at fixed strengths (each at least
+  4.8:1 on its surface), black for what is chosen, the error red a step
+  darker (#c53929).
+- In the light theme the views are white (the section margin the lightest
+  grey), shown in this browser only: never written into the workspace or
+  the link, and the dark theme shows the scene's own backgrounds again.
+  **Black views in the light theme** (off by default) keeps them black.
+- What is drawn over the views follows the views' ground, not the theme:
+  in-view handles and their card, the orientation cube, point labels,
+  bookmarks and switches, Neuroglancer's axis labels and panel frames.
+  Plugins drawing over the views read the colours with `viewInk()` from
+  `@ngplatform/sdk/dom`.
+- Neuroglancer's own panels shown in the app (its tabs, the key reference,
+  dropdowns, completions, tool chips) and the shader editor are covered in
+  both: the editor's syntax in greys, told apart by weight and opacity.
+- `npm run ui:audit` takes `UI_AUDIT_THEME=light` and `UI_AUDIT_BLACK_VIEWS=1`.
+
 ### Fixes that lost data or crashed (Phase 0 and 1)
 
 - The app starts when a plugin fails to load (marked failed in Plugins),
@@ -113,6 +196,248 @@ The production polish: the work of an audit of every panel and plugin
 - Sub-chunks of one shard needed together are read with one request.
 - At most six decode workers, and a worker that decoded a very large chunk
   is replaced, so its memory is given back.
+
+### View aids in the 3-D view
+
+- A new plugin, on by default, after Siemens' Cinematic Anatomy: an
+  orientation cube in the 3-D view's top right (lettered R/L, A/P, S/I for
+  anatomical data, else by axis; click a face, edge or corner to look from
+  there; Realign to the nearest standard view), labels at the view's sides
+  with leader lines for point annotations that have a description (painted
+  into captures), a Graphics switch that hides the axis lines, the box, the
+  scale bar and the aids and puts back what was on, and camera bookmarks in
+  a strip of thumbnails along the view's bottom edge (fly to one, rename,
+  replace, delete, Play), kept in the scene. Every action is in the command
+  palette. See docs/plugins/view-aids.md.
+- Plugins can ask for a small picture of the 3-D view (`viewer.thumbnail`;
+  with `"3d"`, of the 3-D view only, whatever the layout, once what it
+  shows has loaded): a bookmark made in a four-panel layout, or just after
+  the view changed, has its picture; with no 3-D view, its name alone.
+- The orientation cube is drawn turned a little more than the view (12°
+  to the side and from above), so face-on it still reads as a cube; its
+  edges, thin, carry the axis colours.
+- On a 3-D panel narrower than 560 px the switches beside Sections (Cube,
+  Labels, Graphics, Zoom boxes, any plugin's) fold into one View menu, so
+  the row never wraps.
+
+### Scale navigator for nested images
+
+- A new plugin, on by default, for image layers that lie inside one
+  another, as a HiP-CT overview and its zooms do: the status line shows the
+  layers holding the position, coarse to fine with their voxel sizes
+  (click one to frame it), and the level of the selected layer's pyramid
+  Neuroglancer draws at this zoom (`level 4/7 · 323 µm`, read from what it
+  drew; worked out and marked ≈ when no section draws the layer). The
+  views show a grey box, with its name and voxel size, where each finer
+  layer lies; clicking it frames that layer. Alt+↑ and Alt+↓ step to the
+  coarser and the finer layer. See docs/plugins/scale-navigator.md.
+- Plugins can read a layer's box, voxel size and pyramid levels
+  (`viewer.layerBounds`) and the level drawn (`viewer.renderedLevel`);
+  shapes in the views can have a caption, be links (`onClick`) and hide
+  when small (`minSize`); switches beside Sections take an `order`.
+
+### Anatomical rendering as an object in the 3-D view
+
+- The rendered image is an object in the 3-D view, drawn in this browser
+  with every frame's camera: it turns, pans and zooms with the view at once
+  (no picture stuck to the screen while the camera moves), and other layers
+  go behind and in front of it by its depth.
+- Its light is path-traced into it in this browser over a few seconds after
+  the light, preset or cuts change, and stays fixed to it as the view turns;
+  the host's stills and movies are lit the same way.
+- Quality › "Path-traced picture when still" (off by default) shows the
+  host's full-detail picture of the view when the camera rests.
+- At rest, the object is path-traced where it is, in this browser, as the
+  render computer path-traces (it starts speckled and clears within a second
+  or two), and is drawn quickly again as soon as the camera moves.
+- Quality › Object: how much of the image the object holds (64 million
+  voxels by default, up to 512).
+- Camera planes (Crops) stay where they are set, several of them, each set
+  again from the view by its camera button.
+- Rendering in this browser reads `gs://` images (it asked for a `gs://`
+  address, which a browser cannot fetch: "Failed to fetch"), and the
+  colourmap editor (histogram, stops, shift and compression, window) works
+  there too, from the level of the image it holds.
+- Anatomical rendering renders in this browser by default; a render
+  computer is chosen in its Remote card. A browser without WebGPU still
+  draws and path-traces the object (WebGL), with a note, not an error.
+- The light held in the object comes in as its paths gather, so it is never
+  blotchy while it is worked out.
+
+### The Layers panel: a card per dataset
+
+- Each dataset in the scene is a card: its row, and, opened, the card grown
+  to hold its settings in one box with the row (the selected dataset's in
+  green). Its source (URL, details, transform) is part of the card, at its
+  top; below it the layer's tabs (Rendering, as Display is now called,
+  Annotations, Segments, Schema, as its type has them). Selecting a dataset
+  opens its card; its arrow opens and closes it, and several may be open.
+  The selected layer's controls no longer sit under the list.
+- The Tools dock shows its tools as tabs (kept together by kind), in
+  place of the menu that picked one.
+- On/off switches are round again (a round knob in a round track); the
+  other controls stay square.
+- The 3-D view starts radiological for anatomy, as the cross-sections do:
+  from the front, superior up, the patient's right on the screen's left
+  (neurological: from behind). Reset the rotation goes back to it.
+- The top bar's Neuroglancer button is back: this scene in Neuroglancer,
+  in a new tab.
+- The colourmap editor: the colourmap (a bar under the histogram) and
+  the histogram are each dragged to move them and compressed in place
+  (the bar's ends, Shift-drag, or the wheel), not with sliders only; a
+  black-to-white strip of the image's own grey values under the
+  histogram; the view stays put while you tune (Ctrl-wheel zooms,
+  double-click fits); each drag one step to undo. In this browser the
+  image is read over all its values for rendering, as the render
+  computer reads it: the densest tissue was cut off at the 99.5th
+  percentile, so presets fell partly past the histogram's end. The
+  histogram's bins are centred on their values.
+- Every preset is offered when rendering in this browser too: the HiP-CT
+  organs (kidney, heart, lung, liver and the rest), their colours placed
+  through each scan's tissue histogram as the render computer places them,
+  with the photographs they come from.
+- The presets have contrast: the organ presets spread their lightness over
+  each organ's own tissue values (most organs had shown their tissue in one
+  colour), hues as photographed; the brain, histology and translucent
+  presets run from dark to light. New **General** presets suit any scan:
+  greyscale (black to white), greyscale inverted (white to black), anatomy,
+  thermal, viridis, soft tissue and bone, and glass. The Preset box groups
+  them: General, HiP-CT organs, by modality, from a file.
+- Brain presets show grey and white matter apart: each class of the preset
+  is matched to the same class of the scan (found from the scan's own
+  tissue), not one histogram to another, which put most of some brains'
+  white matter in grey matter's colours. The HiP-CT brain, MR T1, BigBrain
+  and HiP-CT organ brains, on the computer and in this browser alike.
+- Brain presets show the tissue's whole spread, not two tones: lightness
+  from a contrast-limited equalisation of the tissue's histogram, hue along
+  the photographed shades, the dense tail in the vessels' hue; and cuts
+  are shaded as cut tissue (less surface shading, no inset, more exposure),
+  so deep nuclei, the internal capsule, cerebellar folia and the cortical
+  ribbon all show on a cut.
+- The HiP-CT organ presets are made the same way: lightness from the
+  organ's own tissue histogram, hue along the photographed tissues, the
+  dense tail (valves, capsule, calcification, lens) in its own hue, and
+  cuts shaded as cut tissue; kidney pyramids, liver lobules, splenic
+  nodules, placental cotyledons and testicular septa show on a cut.
+- Surfaces show their tissue's colour, not the partial volume's: the
+  partial-volume tail holds its colour while it fades, and a preset's
+  inset now applies only where a collision lies in a surface's partial
+  volume (never inside tissue, so cuts keep their colours), on the
+  computer and in this browser alike. Brain exteriors are no longer
+  nearly black.
+- Percentile presets (HiP-CT brain, the default; Translucent tissue; MR
+  T1; histology) on a specimen in a mounting medium take percentiles of the
+  tissue alone and are clear outside it, so an organ in its jar is no
+  longer rendered as a block of medium; scans without a medium are placed
+  as before.
+- Tools are no longer recommended for the data (the Layers panel's Tools
+  for this data, its toasts and their setting are gone); a workspace that
+  uses a tool that is off still says so.
+- An empty scene is an empty viewer, with no card over it; **+** beside
+  Data (and Add data… in an empty list) opens the Open sheet rather than a
+  menu. A new annotation layer is in the palette.
+
+### A quieter look
+
+- Neuroglancer's black and neutral greys with a light-grey accent: what is
+  selected (a bar down the left and a tint), the primary button, tick
+  boxes, sliders, the chosen tab, progress and the focus ring. Green only
+  for an on/off switch that is on; red and amber appear as words and an
+  edge (a delete is grey with red words until the pointer is on it).
+- Source Sans 3 and Source Code Pro (Adobe, SIL OFL) in place of IBM Plex,
+  set at one x-height; numbers, units and captions in the UI font with
+  tabular figures, monospace only for addresses, paths, code and logs.
+- Fields are black wells, cards a raised head with no outline, menus,
+  tips, toasts and sheets a step lighter than what they float over; hover
+  and pressed are white layers; the chosen tab is underlined.
+- One heading style in a panel, in sentence case; type, spacing (a 4 px
+  grid) and pointer targets (at least 24 px) as tokens.
+- A dataset's row: an eye shows or hides it, and its state follows its
+  name only when it is not ready (a turning ring loading, a red triangle
+  failed).
+
+- Zarr Vectors layers (points, lines, meshes) are coloured by their
+  segments, by a group the vertex belongs to, or by an attribute, in the
+  Display tab's Vertex colour section: a store's taxonomy (its tiers, the
+  groups' names from its AnnData header, the store's colours or a
+  palette) with the groups shown chosen from a searchable list; any of a
+  store's attributes (a gene panel's hundreds: type to search, loaded
+  when chosen) through a colour map between a low and a high control,
+  outside them hidden if asked. A store with a taxonomy opens coloured by
+  its coarsest tier; one with more attributes than load at once says so
+  and loads that tier's.
+- Objects (on a render computer; the first step of
+  `plans/path-traced-geometry.md`): a precomputed segmentation's chosen
+  segments drawn as their meshes, path traced as exact geometry, and the
+  image within them at the finest stored level within a voxel budget, with
+  no bounding box: only the pages the meshes pass through or enclose are
+  read, each voxel kept by the parity of a ray's crossings, and held as
+  bricks found through a page table. Surfaces from clear to opaque, the
+  image within on or off, tinted by the segment's colour. The Objects
+  card; the meshes' reader (multi-resolution Draco, sharded or not, and
+  legacy) and a BVH built on the GPU.
+- Anatomical rendering reads Neuroglancer precomputed images too (the
+  MICrONS EM, `precomputed://gs://iarpa_microns/minnie/minnie65/em`), in
+  this browser and on the render computer: raw or JPEG chunks, sharded or
+  not, a scale within the budget.
+- Rendering's window ends, cut and plane offsets and box edges render live
+  (the object at low resolution) while their sliders are dragged, as the
+  colourmap, density and light already did; one undo step when let go.
+- Luxar and Anatomical rendering colour a Zarr Vectors layer as the layer
+  is coloured (its Vertex colour): by a group, in the store's colours or a
+  palette's, the groups not chosen hidden; or by an attribute through the
+  layer's colour map between its low and high, outside hidden if asked.
+  The store's default (a cell atlas's coarsest tier) counts too. Luxar's
+  Colour *As the layer*; the render computer reads only the attributes the
+  colouring needs and re-colours a view without reading again.
+- Anatomical rendering of a Zarr Vectors layer alone (points, lines or a
+  surface in a scene with no image), on a render computer: the layer is
+  the scene, in an empty volume about it.
+- 3-D views of a store whose coarsest level is sparse (the ABC atlas's 913
+  cells) load evenly: a region under an empty coarsest cell is refined
+  like any other, where it stayed at the near-empty stand-in (dense
+  patches beside holes); a sparse stand-in no longer sets its region's
+  estimated size, and thousands of chunks are chosen in a heap.
+
+- Cloud Storage is read through its JSON API in the browser (volume view,
+  precomputed reads, collections, orientations, time series, plugin
+  offers), so buckets without CORS settings read as they do in Neuroglancer.
+
+### Tools in the views
+
+- Plugins put shapes with handles in Neuroglancer's 2-D and 3-D views
+  (`ctx.views`: points, spheres, boxes, planes): a cross-section shows
+  where it cuts each, the 3-D view a wireframe. Click one to select it;
+  drag its centre to move it, a box's corners and faces or a sphere's
+  knobs to size it, a plane's ring to turn it; Alt+scroll scales, arrow
+  keys nudge, Escape lets go. A small card over the view's corner, shown
+  only while a shape is selected, holds its exact values and actions.
+  Drawn over the views with their own canvas, so captures leave them out;
+  Neuroglancer's own mouse use is untouched off the handles.
+- Track filtering: regions are dragged and sized in any view, their card
+  sets AND, OR or NOT, what tracks must do, exact numbers, and deletes; a
+  new region starts where the mouse last was in a view, selected.
+- Anatomical rendering: crop boxes have corner and face handles, camera
+  planes a centre that moves them along their normal and a ring that
+  turns them, axis planes a centre; a new camera plane starts at the
+  tissue's centre, facing the camera, selected.
+- Registration: **Place pairs**, clicks in the views alternating fixed
+  and moving landmarks (as BigWarp); landmarks show as numbered points
+  that drag. A landmark's card is headed *Pair 1* and shows both points
+  and the pair's error after the fit as readouts.
+- Registration moves the layer in the views: its box in each 2-D view
+  drags to translate it in the section's plane, a ring about the *Rotate
+  around* point turns it about the section's normal, and the corners scale
+  it (Shift: alike); the same transform the sliders set, one undo step a
+  drag. Selected, its card gives the rotation, translation and scale as
+  readouts, with Flip and Restore. The panel leads with the moving layer,
+  the landmarks (pair count, Place pairs, Save LTA) and Edit in views; the
+  sliders are in the Transform section, closed at first.
+- Shapes in the views can be frames (`kind: "frame"`: a box turned any
+  way, with a ring about a pivot and corner knobs, its drags reported as a
+  move, a turn or a scale) and have a card heading apart from their label
+  (`title`). The card floats on the overlay grey, 8 px right of the axis
+  labels, its values as rows of readouts.
 
 ## 0.2.0 — 2026-10-31
 

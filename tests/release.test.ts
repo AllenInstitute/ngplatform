@@ -45,12 +45,13 @@ describe("the Content Security Policy", () => {
 
   it("governs a page with no inline script, no remote style or font, and a loading screen", () => {
     const html = read("index.html");
-    // The one script is the entry module, by its file.
-    expect([...html.matchAll(/<script\b[^>]*>/g)].map((m) => m[0])).toEqual(['<script type="module" src="./src/main.ts">']);
+    // The scripts are files: the theme's, before the page is drawn, and the entry module.
+    expect([...html.matchAll(/<script\b[^>]*>/g)].map((m) => m[0])).toEqual(['<script src="./theme.js">', '<script type="module" src="./src/main.ts">']);
+    expect(read("public/theme.js")).toMatch(/ngplatform\.theme/);
     expect(html).not.toMatch(/\son[a-z]+=/i);
     expect(html).not.toMatch(/fonts\.googleapis|fonts\.gstatic/);
     expect(html).toMatch(/<div id="boot" class="boot"/);
-    expect(read("public/fonts/plex.css")).not.toMatch(/https?:/);
+    expect(read("public/fonts/source.css")).not.toMatch(/https?:/);
   });
 });
 
@@ -188,7 +189,8 @@ describe("the app shell kept by the service worker", () => {
     expect(at("./neuroglancer.html", "navigate")).toBe("page");
     expect(at("./assets/main-abc.js")).toBe("asset");
     expect(at("./assets/jxl_decoder-x.wasm")).toBe("asset");
-    expect(at("./fonts/IBMPlexSans-latin.woff2")).toBe("asset");
+    expect(at("./fonts/SourceSans3-latin.woff2")).toBe("asset");
+    expect(at("./theme.js")).toBe("asset");
     expect(at("./assets/main-abc.js.map")).toBeUndefined();
     expect(at("./local/abc/brain.nii.gz")).toBeUndefined();
     expect(at("./data/brain.zarr/zarr.json")).toBeUndefined();

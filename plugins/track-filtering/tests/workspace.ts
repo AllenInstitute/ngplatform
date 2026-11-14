@@ -4,6 +4,7 @@
  * along x, 1 mm voxels.
  */
 import type { Json, PlatformContext } from "@ngplatform/sdk";
+import { fakeViewTools } from "@ngplatform/sdk/testing";
 import { WorkspaceStore } from "../../../src/platform/workspace_store.js";
 import { FakeEngine } from "../../../tests/fake_engine.js";
 import { FILTERING_STATE_KEY } from "../manifest.js";
@@ -34,6 +35,7 @@ export function workspace() {
   const layers = () => engine.layers().map((l) => ({ ...l, sources: sourcesOf(engine.layerSpec(l.name)) }));
   const none = () => () => {};
   const ctx = {
+    views: fakeViewTools({ centre: () => (store.ng().position as number[] | undefined) ?? [0, 0, 0] }),
     state: {
       get: () => store.rawSlice(FILTERING_STATE_KEY, 2),
       set: (value: unknown) => store.setRawSlice(FILTERING_STATE_KEY, 2, value),

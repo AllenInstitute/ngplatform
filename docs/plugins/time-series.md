@@ -87,7 +87,7 @@ plotted. **Pin** (or **Alt+P**) keeps the vertex, **Save CSV** saves the
 plotted vertices, and **% change** works as for voxels; pins are kept in
 the link with the surface and the vertex number. A vertex on the medial
 wall has no values in the file: the legend says so and nothing is drawn.
-The surface layer may be moved (Registration, the Source tab's transform):
+The surface layer may be moved (Registration, the transform in its card's source):
 the vertex is the one shown under the mouse.
 
 ### Parcels

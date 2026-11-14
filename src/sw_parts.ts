@@ -44,12 +44,25 @@ export function parseRange(header: string | null): Range | undefined {
 /** What the worker's caches are named by: this, then its version. */
 export const CACHE_PREFIX = "ngplatform-sw-";
 
-/** The cache this version of the worker keeps. */
-export const cacheName = (version: string): string => `${CACHE_PREFIX}${version}`;
+/** The part of a cache's name that says which folder's worker kept it (a site can hold the app twice, e.g. at / and /dev/). */
+const scopeKey = (scope: string): string => (scope === "" ? "" : `${new URL(scope).pathname}|`);
 
-/** The caches of other versions of the worker, to drop once this one is active (others' caches are left alone). */
-export function staleCaches(names: string[], version: string): string[] {
-  return names.filter((name) => name.startsWith(CACHE_PREFIX) && name !== cacheName(version));
+/** The cache this version of the worker, at this scope, keeps. */
+export const cacheName = (version: string, scope = ""): string => `${CACHE_PREFIX}${scopeKey(scope)}${version}`;
+
+/**
+ * The caches of other versions of this folder's worker, to drop once this
+ * one is active, and those of workers from before caches named their
+ * folder; another folder's worker's caches and anyone else's are left alone.
+ */
+export function staleCaches(names: string[], version: string, scope = ""): string[] {
+  const own = `${CACHE_PREFIX}${scopeKey(scope)}`;
+  const current = cacheName(version, scope);
+  return names.filter((name) => {
+    if (!name.startsWith(CACHE_PREFIX) || name === current) return false;
+    const unscoped = !name.slice(CACHE_PREFIX.length).includes("|");
+    return unscoped || (own !== CACHE_PREFIX && name.startsWith(own));
+  });
 }
 
 /**
@@ -82,8 +95,9 @@ export type ShellRequest = "page" | "asset";
  * Whether a request is for the app itself, kept so it opens offline: its
  * page (`./`, `./index.html`, `./neuroglancer.html`; fetched from the
  * network first, the copy kept used when that fails) or a file the build
- * named by its contents (`./assets/…`, the fonts, the icon; never changed
- * under a name, so a kept copy is used first).  Anything else (data, the
+ * named by its contents (`./assets/…`, the fonts, the icon, the theme's
+ * first script; none changed within a build, whose worker starts afresh, so
+ * a kept copy is used first).  Anything else (data, the
  * worker's own jobs, the dev server's modules) is left to the network.
  */
 export function shellRequest(url: URL, scope: string, mode: string): ShellRequest | undefined {
@@ -92,7 +106,7 @@ export function shellRequest(url: URL, scope: string, mode: string): ShellReques
   const rest = url.pathname.slice(base.pathname.length);
   if (mode === "navigate") return rest === "" || rest === "index.html" || rest === "neuroglancer.html" ? "page" : undefined;
   if (/^assets\/[^/]+$/.test(rest) && !rest.endsWith(".map")) return "asset";
-  if (/^fonts\/[^/]+$/.test(rest) || rest === "favicon.svg") return "asset";
+  if (/^fonts\/[^/]+$/.test(rest) || rest === "favicon.svg" || rest === "theme.js") return "asset";
   return undefined;
 }
 

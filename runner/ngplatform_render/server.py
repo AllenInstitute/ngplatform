@@ -81,6 +81,8 @@ MAX_STILL_WORK = 8192 * 8192 * 256
 MAX_MOVIE_FRAMES = 18_000
 MAX_MOVIE_PIXELS = 3e10  # its frames' PNGs on disk, about a byte a pixel
 MAX_MOVIE_WORK = 4e12
+#: Voxels of the image within objects read first, so they show while the whole budget's are read.
+COARSE_OBJECTS = 16_000_000
 #: How many finished movies, stills and splats are listed.
 KEEP_FINISHED = 20
 FINISHED = ("done", "failed", "cancelled")
@@ -157,6 +159,50 @@ def _cube(voxels: float) -> tuple[int, int, int]:
     return (n, n, n)
 
 
+#: A volume url naming no image: the objects alone (a Zarr Vectors store's), in an empty volume about them.
+OBJECTS_ONLY = "objects:"
+
+
+def objects_only(spec: dict[str, Any]) -> bool:
+    """Whether a session draws its objects alone (no image): its volume is OBJECTS_ONLY and the objects' store."""
+    return str((spec.get("volume") or {}).get("url") or "").startswith(OBJECTS_ONLY)
+
+
+def objects_spec(o: Any) -> dict[str, Any]:
+    """A session's objects as asked for: a precomputed segmentation (url), the segments (ids, at most 64), the
+    meshes' level of detail, and the voxels the image within them may take."""
+    if not isinstance(o, dict) or not o.get("url"):
+        raise BadRequest("objects.url (a precomputed segmentation, or a Zarr Vectors store) is needed")
+    if o.get("store") == "zarr-vectors":
+        # A Zarr Vectors store's geometry, drawn with the volume: the finest level within `vertices`, tubes and points `radius_mm`.
+        vertices = int(number(o.get("vertices", 4_000_000), "objects.vertices"))
+        if not 1_000 <= vertices <= 50_000_000:
+            raise BadRequest("objects.vertices: 1,000 to 50 M")
+        radius = o.get("radius_mm")
+        # The vertex attributes the layer is coloured by (shader ids), read beside the geometry.
+        attrs = o.get("attributes") or []
+        if not isinstance(attrs, list) or len(attrs) > 8 or not all(isinstance(a, str) and re.fullmatch(r"[A-Za-z0-9_]{1,200}", a) for a in attrs):
+            raise BadRequest("objects.attributes: at most 8 attribute ids")
+        return {"url": str(o["url"]), "store": "zarr-vectors", "vertices": vertices,
+                **({"radius_mm": float(number(radius, "objects.radius_mm"))} if radius is not None else {}),
+                **({"attributes": sorted(set(attrs))} if attrs else {})}
+    ids = o.get("ids") or []
+    if not isinstance(ids, list) or not ids or len(ids) > 64:
+        raise BadRequest("objects.ids: 1 to 64 segment ids")
+    try:
+        ids = [int(str(i)) for i in ids]
+    except ValueError:
+        raise BadRequest("objects.ids: segment ids are integers") from None
+    budget = int(number(o.get("budget", 300_000_000), "objects.budget"))
+    if not 1_000_000 <= budget <= 4_000_000_000:
+        raise BadRequest("objects.budget: 1 M to 4 G voxels")
+    inside = str(o.get("inside") or "mesh")
+    if inside not in ("mesh", "labels"):
+        raise BadRequest("objects.inside: mesh or labels")
+    return {"url": str(o["url"]), "ids": ids, "lod": int(number(o.get("lod", 1), "objects.lod")), "budget": budget, "inside": inside,
+            **({"level": str(o["level"])} if o.get("level") else {})}
+
+
 def spec_key(part: dict[str, Any], labels: bool = False) -> tuple:
     """What a volume (or labels) is asked for by: sessions asked for alike share what one of them read and uploaded."""
     from .volumes import http_url
@@ -172,15 +218,26 @@ def session_need(spec: dict[str, Any], gpu: Gpu) -> dict[str, int]:
 
     v = spec["volume"]
     budget = int(v.get("budget") or 400_000_000)
+    if objects_only(spec):
+        # An empty volume of 2 x 2 x 2 voxels, and no finer detail: the objects are what it holds.
+        budget = 8
     shared = gpu.textures.find(spec_key(v)) is not None
     out = {"volume": 0 if shared else rmod.volume_bytes(_cube(budget), 2)}
     lab = spec.get("labels") or {}
     if lab.get("url"):
         lab = {**lab, "budget": lab.get("budget") or budget}
         out["labels"] = 0 if gpu.textures.find(spec_key(lab, True)) is not None else rmod.labels_bytes(_cube(int(lab["budget"])))
-    detail = float(v.get("detail_budget", 256e6))
+    detail = 0.0 if objects_only(spec) else float(v.get("detail_budget", 256e6))
     out["detail"] = rmod.volume_bytes(_cube(detail), 2) if detail > 0 else 0
     out["frame"] = rmod.renderer_bytes(*SESSION_FRAME, _cube(budget))
+    if spec.get("objects"):
+        o = spec["objects"]
+        if o.get("store") == "zarr-vectors":
+            # The BVH: a primitive (36 bytes), its box and two nodes', and its object, about a vertex each.
+            out["objects"] = int(o.get("vertices") or 4_000_000) * 120
+        else:
+            # The image within the objects (a byte a voxel, within its budget) and their meshes' BVH (a guess).
+            out["objects"] = int(o.get("budget") or 300_000_000) + (64 << 20)
     return out
 
 
@@ -222,6 +279,15 @@ class Session:
         self.renderer = None
         self.loaded = None
         self.loaded_labels = None
+        # Objects (objects.py): their meshes' BVH and the image within them, and what was read.
+        self.loaded_objects: tuple[Any, Any, list[int]] | None = None
+        self.objects_meta: dict[str, Any] | None = None
+        # The image within the objects read again within the whole budget, after a coarse first one: waiting to be taken up.
+        self._objects_pending: Any = None
+        self._object_colours: np.ndarray | None = None
+        # A store's surfaces (vectors.Surfaces), coloured afresh as a view's look asks; the last look and its colours.
+        self._surfaces: Any = None
+        self._coloured: tuple[str, np.ndarray, np.ndarray | None] | None = None
         self.cond = threading.Condition()
         self.view: dict[str, Any] | None = None
         self.view_version = 0
@@ -259,6 +325,82 @@ class Session:
     def _set_progress(self, p: float, msg: str) -> None:
         self.progress, self.message = p, msg
 
+    def _load_objects(self, spec: dict[str, Any], url: str, L, closed) -> None:
+        """The objects' meshes (a precomputed segmentation's, by segment id), their BVH on the session's GPU, and the
+        image within them at the finest level within spec["budget"] (objects.py)."""
+        from . import geometry, objects, volumes
+        from .meshes import MeshSource
+
+        if spec.get("store") == "zarr-vectors":
+            from . import vectors
+
+            surf = vectors.load(spec["url"], spec["vertices"], spec.get("radius_mm"), progress=self._set_progress,
+                                attributes=spec.get("attributes"))
+            with self.gpu_device():
+                # Each primitive its own object, so a look colours (and hides) any of them.
+                bvh = geometry.build(surf.prims, np.arange(len(surf.prims), dtype=np.int32), self.device, kinds=surf.kinds)
+            self.loaded_objects = (bvh, None, [])
+            self._surfaces = surf
+            self.objects_meta = {"url": spec["url"], "store": "zarr-vectors", **surf.meta}
+            return
+        src = MeshSource(spec["url"])
+        parts, ids = [], []
+        for k, sid in enumerate(spec["ids"]):
+            if closed():
+                return
+            self._set_progress(0.0, f"reading the mesh of {sid} ({k + 1} of {len(spec['ids'])})")
+            m = src.mesh(int(sid), int(spec.get("lod", 1)))
+            if m is None or len(m.faces) == 0:
+                continue
+            parts.append((m.vertices[m.faces] * 1e-6, len(ids)))  # nm -> physical mm
+            ids.append(int(sid))
+        if not parts:
+            raise ValueError("none of the chosen segments has a mesh")
+        tris = np.concatenate([t for t, _ in parts])
+        obj = np.concatenate([np.full(len(t), i, np.int32) for t, i in parts])
+        with self.gpu_device():
+            bvh = geometry.build(tris.astype(np.float32), obj, self.device)
+        ms = volumes.open_multiscale(url)
+        lo, hi = float(L.lo), float(L.hi)
+
+        def to_u8(a: np.ndarray) -> np.ndarray:
+            if a.dtype == np.uint8 and lo == 0 and hi == 255:
+                return a
+            return np.clip((a.astype(np.float32) - lo) * (255.0 / max(hi - lo, 1e-12)), 0, 255).astype(np.uint8)
+
+        budget = int(spec.get("budget") or 300_000_000)
+        # Inside by the segmentation's own labels (as exact as its voxels), else by the meshes.
+        labels = (spec["url"], volumes.open_multiscale(spec["url"]), ids) if spec.get("inside") == "labels" else None
+        # A coarse one first (a few M voxels: seconds), so the objects show while the rest is read; then the whole budget's.
+        first = budget if spec.get("level") or budget <= COARSE_OBJECTS else COARSE_OBJECTS
+        with self.gpu_device():
+            ob = objects.build(url, ms, tris, bvh, first, to_u8, self._set_progress, closed, spec.get("level"), labels)
+        self.loaded_objects = (bvh, ob, ids)
+        self.objects_meta = {"url": spec["url"], "ids": [str(i) for i in ids], "triangles": int(len(tris)), "level": ob.level,
+                             "page": list(ob.page), "bricks": ob.bricks, "inside_voxels": ob.inside_voxels, **ob.stats}
+        if first < budget:
+            def finer() -> None:
+                try:
+                    with self.gpu_device():
+                        fine = objects.build(url, ms, tris, bvh, budget, to_u8,
+                                             lambda f, m: self.objects_meta.__setitem__("reading", m), closed, None, labels)
+                except Exception as e:  # noqa: BLE001 - the coarse one stays
+                    self.objects_meta["reading"] = f"stopped: {e}"
+                    return
+                if self.closed or fine.level == ob.level:
+                    self.objects_meta.pop("reading", None)
+                    return
+                with self.cond:
+                    self._objects_pending = fine
+                    self.cond.notify_all()
+
+            threading.Thread(target=finer, daemon=True).start()
+
+    def gpu_device(self):
+        import cupy
+
+        return cupy.cuda.Device(self.device)
+
     def _load(self) -> None:
         from . import renderer, volumes
 
@@ -269,7 +411,13 @@ class Session:
             budget = int(v.get("budget") or 400_000_000)
             closed = lambda: self.closed  # noqa: E731 - a session closed while it loads stops reading
             shared = self.gpu.textures.find(spec_key(v))
-            if shared is not None and shared.loaded is not None:
+            alone = objects_only(self.spec)
+            if alone:
+                # No image: the objects alone, in an empty volume about them.
+                self._load_objects(self.spec["objects"], url, None, closed)
+                b = self.loaded_objects[0]
+                L = volumes.empty(b.lo, b.hi)
+            elif shared is not None and shared.loaded is not None:
                 # Another session shows the same image, asked for alike: its volume, not read again.
                 L = shared.loaded
                 self._set_progress(1.0, "shared with another view of this image")
@@ -286,7 +434,7 @@ class Session:
                 "percentiles": {str(k): v for k, v in sorted(L.percentiles.items())}, "source_shape": list(L.source_shape),
                 "made": L.made, "from_cache": L.from_cache, "seconds": round(L.seconds, 2),
                 "window": list(L.window) if L.window else None, "cylinder": v.get("cylinder"),
-                "histogram_matched": L.quantiles is not None,
+                "histogram_matched": L.quantiles is not None, "medium": L.medium,
                 "histogram": presets_mod.histogram(L.data, L.lo, L.hi),
                 "tissue_mm": volumes.tissue_box(L.data, L.affine, L.percentiles.get(0.0, L.lo), L.lo, L.hi),
                 # The channel and time point shown, and how many the image has (volume.channel, volume.time).
@@ -307,10 +455,13 @@ class Session:
                 vals = np.unique(LB.data)
                 self.label_meta = {"url": lab["url"], "level": LB.level, "shape": list(LB.data.shape), "values": [int(x) for x in vals[:4096]],
                                    "affine": LB.affine.T.ravel().tolist()}
+            if self.spec.get("objects") and not alone:
+                self._load_objects(self.spec["objects"], url, L, closed)
             if self.closed:
                 self.status, self.message = "failed", "closed while loading"
                 return
-            self._start_detail(url, L, float(v.get("detail_budget", 256e6)), v.get("channel"), v.get("time"))
+            if not alone:
+                self._start_detail(url, L, float(v.get("detail_budget", 256e6)), v.get("channel"), v.get("time"))
             if self.detail_loader is None and self.need.get("detail") and self.reservation is not None:
                 # No finer levels (or no detail asked for): the memory counted for them is given back.
                 self.reservation.resize(max(0, self.reservation.bytes - self.need["detail"]))
@@ -332,7 +483,7 @@ class Session:
                     instead_of=(self.reservation, self.need.get("labels", 0)) if self.reservation is not None else None)
             R = renderer.Renderer(self.device)
             self._R = R
-            R.set_volume(renderer.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles), self.vol_share.upload)
+            R.set_volume(renderer.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles, L.medium), self.vol_share.upload)
             if self.closed:
                 return
             self.renderer = R
@@ -555,6 +706,9 @@ class Session:
             preset = Preset.from_dict(pr)
         if view.get("overrides"):
             preset = preset.with_overrides(**view["overrides"])
+        if objects_only(self.spec):
+            # No image: the empty volume about the objects stays clear, whatever the preset makes of its zeros.
+            preset = preset.with_overrides(density=0.0)
         if view.get("environment"):
             # The light: a light map by name ("" for the preset's sky colours), its turn and strength.
             env = {**preset.environment, **view["environment"]}
@@ -590,6 +744,7 @@ class Session:
                 colors[k] = (c[0], c[1], c[2], 0.0)
             keep = {int(k) for k in lab_spec.get("keep", [])}
             mix = float(lab_spec.get("mix", 1.0))
+        self._place_objects(R, view.get("objects"), wfp)
         light = view.get("light") or {}
         crop = view.get("crop")
         if crop is None and view.get("crop_fraction"):
@@ -613,6 +768,50 @@ class Session:
             aperture=float(view.get("aperture", 0.0)), focus=float(view.get("focus", 0.0)),
             unit_mm=float(view.get("unit_mm", 1.0)),
         )
+
+    def _take_objects(self, R) -> bool:
+        """The image within the objects read within the whole budget, in place of the coarse one, when it has come."""
+        with self.cond:
+            fine, self._objects_pending = self._objects_pending, None
+        if fine is None or self.loaded_objects is None:
+            return False
+        bvh, _, ids = self.loaded_objects
+        self.loaded_objects = (bvh, fine, ids)
+        self.objects_meta.pop("reading", None)
+        self.objects_meta.update({"level": fine.level, "page": list(fine.page), "bricks": fine.bricks, "inside_voxels": fine.inside_voxels, **fine.stats})
+        if R.objects is not None:
+            R.set_objects(None)  # placed again, with these bricks, as the view is set
+        return True
+
+    def _place_objects(self, R, view: dict[str, Any] | None, wfp: np.ndarray) -> None:
+        """The objects on the renderer as the view asks (shown or not, surfaces, the image within them, colours by id)."""
+        from . import renderer
+
+        if self.loaded_objects is None or R is None or not (view or {}).get("show", True):
+            if R is not None and R.objects is not None:
+                R.set_objects(None)
+            return
+        bvh, ob, ids = self.loaded_objects
+        hide = None
+        if ob is None and self._surfaces is not None:
+            # A store's surfaces, each primitive coloured as the view's look asks (as the layer is coloured), else
+            # in their own colours (a streamline's by its direction, others by object); made again only for another look.
+            from . import vectors
+
+            look = (view or {}).get("colour")
+            key = json.dumps(look, sort_keys=True)
+            if self._coloured is None or self._coloured[0] != key:
+                self._coloured = (key, *vectors.colour(self._surfaces, look))
+            _, colours, hide = self._coloured
+        elif ob is None:
+            colours = self._object_colours
+        else:
+            given = {str(k): v for k, v in (view.get("colors") or {}).items()}
+            colours = np.array([[float(x) for x in given.get(str(i), (0.85, 0.6, 0.45))[:3]] for i in ids], np.float32)
+        if R.objects is None or R.objects.bricks is not ob or (R.objects.colours is not colours and not np.array_equal(R.objects.colours, colours)) or R.objects.hide is not hide:
+            R.set_objects(renderer.Objects(bvh, ob, colours, wfp, hide=hide))
+        R.objects.world_from_physical = wfp
+        R.set_object_look(float(view.get("surface", 0.3)), bool(view.get("image", True)), float(view.get("mix", 0.0)))
 
     # ---------------------------------------------------------------- the loop
     def _loop(self) -> None:
@@ -638,14 +837,14 @@ class Session:
         still_fast = False
         while not self.closed:
             with self.cond:
-                while not self.closed and (self._unwatched() or (self._detail_pending is None and (
+                while not self.closed and (self._unwatched() or (self._detail_pending is None and self._objects_pending is None and (
                         self.view is None or (self.applied_version == self.view_version and R.samples >= self.max_samples)))):
                     self.cond.wait(timeout=1.0)
                 if self.closed:
                     return
                 version, view = self.view_version, self.view
             try:
-                swapped = self._take_detail(R)
+                swapped = self._take_detail(R) | self._take_objects(R)
                 if swapped:
                     self.applied_version = -1  # the view starts again, with the detail
                 if view is None:
@@ -831,7 +1030,7 @@ class Session:
         R = self.renderer
         return {
             "id": self.id, "status": self.status, "progress": round(self.progress, 3), "message": self.message, "error": self.error,
-            "volume": self.meta, "labels": self.label_meta, "samples": R.samples if R else 0, "ms_per_pass": round(self.passes_ms, 2),
+            "volume": self.meta, "labels": self.label_meta, "objects": self.objects_meta, "samples": R.samples if R else 0, "ms_per_pass": round(self.passes_ms, 2),
             "view_version": self.view_version, "frame": self.frame[0] if self.frame else 0,
             "detail": {"held": self.detail_meta, "reading": self.detail_loader.status if self.detail_loader else None,
                        "levels": [lv.path for _, lv in self.detail_levels], "text": self.detail_text()},
@@ -981,6 +1180,10 @@ class Job:
         self.gpu_need = rmod.renderer_bytes(width, height, shape)
         if self.detail is not None:
             self.gpu_need += rmod.volume_bytes(self.detail[0].shape, self.detail[0].dtype.itemsize)
+        if session.loaded_objects is not None and session.loaded_objects[1] is not None:
+            # The objects' bricks and tables, uploaded again for the job's renderer (the BVH is shared).
+            _, ob, _ = session.loaded_objects
+            self.gpu_need += int(ob.atlas.nbytes + ob.top.nbytes + ob.sub.nbytes)
         if not self.gpu.budget.fits_ever(self.gpu_need):
             raise BadRequest(f"This {self.kind} needs about {gb(self.gpu_need)} of GPU memory, more than the render computer's "
                              f"budget of {gb(self.gpu.budget.total)}: make it smaller")
@@ -997,7 +1200,7 @@ class Job:
         L = S.loaded
         R = rmod.Renderer(S.device)
         self._R = R
-        R.set_volume(rmod.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles), self.vol_share.upload if self.vol_share else None)
+        R.set_volume(rmod.Volume(L.data, L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles, L.medium), self.vol_share.upload if self.vol_share else None)
         LB = S.loaded_labels
         if LB is not None:
             R.set_labels(rmod.Labels(LB.data, LB.affine), self.lab_share.upload if self.lab_share else None)
@@ -1691,9 +1894,17 @@ class Handler(BaseHTTPRequestHandler):
                 spec = self._body()
                 if not (spec.get("volume") or {}).get("url"):
                     raise BadRequest("volume.url is needed")
-                for part in ("volume", "labels"):
-                    if (spec.get(part) or {}).get("url"):
+                if objects_only(spec):
+                    # No image: the objects alone, a Zarr Vectors store's (the volume named by it, so sessions of
+                    # other stores do not share one empty volume).
+                    if (spec.get("objects") or {}).get("store") != "zarr-vectors" or not spec["objects"].get("url"):
+                        raise BadRequest("a volume of objects alone needs objects from a Zarr Vectors store")
+                    spec["volume"] = {"url": OBJECTS_ONLY + str(spec["objects"]["url"])}
+                for part in ("volume", "labels", "objects"):
+                    if (spec.get(part) or {}).get("url") and not (part == "volume" and objects_only(spec)):
                         S.check_source(spec[part]["url"])
+                if spec.get("objects"):
+                    spec["objects"] = objects_spec(spec["objects"])
                 for k in ("channel", "time"):
                     spec["volume"][k] = index_of(spec["volume"].get(k), k)
                 # Let in only when what it will hold fits the GPU budget beside the other sessions and jobs: a 503 that
@@ -1773,7 +1984,7 @@ class Handler(BaseHTTPRequestHandler):
                     from . import renderer as rmod
 
                     L = s.loaded
-                    vol = rmod.Volume(L.data[:1, :1, :1], L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles)
+                    vol = rmod.Volume(L.data[:1, :1, :1], L.affine, L.lo, L.hi, L.percentiles, L.window, L.quantiles, L.medium)
                     self._json(200, presets_mod.resolved(p, vol).to_dict())
                 elif method == "GET" and rest == ["depth"]:
                     d = s.depth

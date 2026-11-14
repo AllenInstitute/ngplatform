@@ -45,6 +45,7 @@ import {
 import example from "./examples/srb_gallery.json";
 import { GRAPH, type GraphBox, layoutGraph, looseHeading, nextBox } from "./graph_view.js";
 import { ADD_COLLECTION, COLLECTION_KIND, COLLECTIONS_PANEL } from "./manifest.js";
+import { gcsReadable } from "@ngplatform/sdk/sources";
 
 const SVG = "http://www.w3.org/2000/svg";
 function svg<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...children: (SVGElement | string)[]): SVGElementTagNameMap[K] {
@@ -68,7 +69,7 @@ export const READ_TIMEOUT = 15_000;
  */
 async function readJson(url: string, missing: "undefined" | "throw" = "undefined"): Promise<unknown> {
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(READ_TIMEOUT) });
+    const response = await fetch(gcsReadable(url), { signal: AbortSignal.timeout(READ_TIMEOUT) });
     if (!response.ok) {
       if (missing === "throw") throw new Error(`${response.status} ${response.statusText}`.trim());
       return undefined;

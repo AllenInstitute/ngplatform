@@ -12,6 +12,7 @@ import time
 import urllib.request
 import zlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -274,7 +275,12 @@ def test_fast_tracking_is_close_and_passes_stop_for_a_new_view():
     R.set_volume(renderer.Volume(data, np.diag([0.5, 0.5, 0.5, 1.0]), 0.0, 255.0, volumes.tissue_percentiles(data, 0, 255)))
     lo, hi = bounds(np.diag([0.5, 0.5, 0.5, 1.0]), data.shape)
     cam = orbit((lo + hi) / 2, framing_radius(lo, hi, 30), 30, 20)
-    p = presets.builtin()["HiP-CT brain"].with_overrides(density=40.0)
+    # A gentle colour ramp (the HiP-CT brain preset's before its contrast was raised): what is measured is the
+    # tracking, and a steeper ramp turns the collision's small shift in depth into a larger shift in colour.
+    gentle = [{"value": 0, "color": [0.75, 0.70, 0.62], "opacity": 0.0}, {"value": 10, "color": [0.80, 0.74, 0.66], "opacity": 0.0},
+              {"value": 30, "color": [0.88, 0.80, 0.70], "opacity": 0.4}, {"value": 70, "color": [0.95, 0.88, 0.78], "opacity": 0.8},
+              {"value": 99.9, "color": [1.0, 0.97, 0.92], "opacity": 1.0}]
+    p = presets.builtin()["HiP-CT brain"].with_overrides(density=40.0, stops=gentle)
     means = []
     for fast in (0.0, 1.0):
         R.set_view(renderer.RenderState(np.linalg.inv(cam.view_projection(96, 72)), 96, 72, p, fast=fast, denoise=False))
@@ -429,6 +435,136 @@ def test_window_presets_take_the_window():
         p.with_overrides(window=[5, 5])
     organs = [q for q in presets.builtin().values() if q.modality == "HiP-CT" and q.organ]
     assert len(organs) >= 10 and all(q.domain == "window" and q.reference for q in organs)
+
+
+def test_two_classes_are_matched_each_to_its_own():
+    """Grey and white matter: each class's percentiles to its own on another scan, the step between them at each
+    scan's split. The vector is shared with the browser's test (presets.test.ts), which must give the same values."""
+    v = json.loads((Path(__file__).parent / "class_matching.json").read_text())
+    pct = {float(k): x for k, x in v["pct"].items()}
+    vol = SimpleNamespace(lo=v["range"][0], hi=v["range"][1], percentiles=pct, window=tuple(v["window"]), quantiles=v["quantiles"])
+    w = v["window_preset"]
+    assert presets.class_splits(w["histogram"]) == [v["design_split"]] and presets.class_splits(v["quantiles"]) == [v["scan_split"]]
+
+    def resolved(domain, stops, classes=2, **kw):
+        p = presets.Preset.from_dict({"name": "t", "domain": domain, "classes": classes, "stops": [{"value": x, "color": [1, 1, 1], "opacity": 1} for x in stops], **kw})
+        return [s.value for s in presets.resolved(p, vol).stops]
+
+    assert resolved("window", w["stops"], histogram=w["histogram"]) == pytest.approx(w["expected"], abs=1e-9)
+    pp, p3 = v["percentile_preset"], v["three_classes"]
+    assert resolved("percentile", pp["stops"], split=pp["split"]) == pytest.approx(pp["expected"], abs=1e-9)
+    # Three classes (CSF, grey and white matter): two splits each way.
+    ks = sorted(pct)
+    assert presets.class_splits(np.interp(np.arange(1, 100), ks, [pct[k] for k in ks]), 3) == p3["scan_splits"]
+    assert resolved("percentile", p3["stops"], classes=3, split=p3["split"]) == pytest.approx(p3["expected"], abs=1e-9)
+    # The design scan's split lands on this scan's: matched whole, it would land where this scan's p62 is.
+    ranks = np.arange(1, 100)
+    at_split = float(np.interp(v["design_split"], ranks, w["histogram"]))
+    assert resolved("window", [at_split], histogram=w["histogram"])[0] == pytest.approx(np.interp(v["scan_split"], ranks, v["quantiles"]))
+    with pytest.raises(ValueError):
+        presets.Preset.from_dict({"name": "x", "classes": 4})
+    with pytest.raises(ValueError):
+        presets.Preset.from_dict({"name": "x", "classes": 3, "split": [60, 20]})
+    # A specimen in a mounting medium: the tissue's percentiles alone (its quantiles), a three-class preset's
+    # lowest two classes as one, clear outside the tissue.
+    m = v["medium"]
+    mvol = SimpleNamespace(**vars(vol), medium=m["medium"])
+    for classes, split, case in ((3, m["three_classes"]["split"], m["three_classes"]), (1, None, m["one_class"])):
+        p = presets.Preset.from_dict({"name": "t", "domain": "percentile", "classes": classes, "stops": m["stops"], **({"split": split} if split else {})})
+        got = presets.resolved(p, mvol).stops
+        assert len(got) == len(case["expected"])
+        for s, e in zip(got, case["expected"]):
+            assert s.value == pytest.approx(e["value"], abs=1e-9) and s.opacity == pytest.approx(e["opacity"], abs=1e-9)
+            assert list(s.color) == pytest.approx(e["color"], abs=1e-9)
+
+
+def _medium_phantom(kind: str) -> np.ndarray:
+    """A 40^3 scan (8-bit, z y x) of a ball of tissue (about 150): in a jar of medium (about 60, 0 outside the
+    jar); in 0 (masked); or in air (an MR head's: 0 to 9, noise as wide as its value). The browser's test
+    (presets.test.ts) makes the same."""
+    n = 40
+    z, y, x = np.mgrid[:n, :n, :n]
+    r = np.hypot(x - n / 2, y - n / 2) / (n / 2)
+    ball = np.hypot(r * (n / 2), z - n / 2) < 12
+    tissue = 140 + (x * 7 + y * 3 + z * 5) % 21
+    around = {"jar": np.where(r < 0.95, 58 + (x + 2 * y + 3 * z) % 5, 0), "masked": np.zeros_like(x), "air": (x * 3 + y * 5 + z * 7) % 10}[kind]
+    return np.where(ball, tissue, around).astype(np.uint8)
+
+
+def test_a_mounting_medium_is_told_from_a_background():
+    """volumes.medium_side: the medium fills the scan's sides and lies well above its 0; a masked scan's sides are
+    0, an MR head's are air at 0. On real scans (8-bit copies, runner/tests/data): LADAF-2021-64's brain in its
+    jar, and none for MNI ICBM152 T1, S-21-46 masked and BigBrain (its background 0), whose percentile presets
+    are placed as before."""
+    import gzip
+
+    for kind, side in (("jar", "above"), ("masked", ""), ("air", "")):
+        q = _medium_phantom(kind)
+        assert volumes.medium_side(q, 0.0, 255.0, volumes.guess_window(q, 0.0, 255.0)) == side, kind
+    data = Path(__file__).parent / "data"
+    index = json.loads((data / "medium_scans.json").read_text())["scans"]
+    brain = [p for p in presets.builtin().values() if p.domain == "percentile" and p.modality != "labels"]
+    for name, info in index.items():
+        nx, ny, nz = info["size"]
+        q = np.frombuffer(gzip.decompress((data / f"{name}.u8.gz").read_bytes()), np.uint8).reshape(nz, ny, nx)
+        w = volumes.guess_window(q, 0.0, 255.0)
+        side = volumes.medium_side(q, 0.0, 255.0, w)
+        assert side == info["medium"] == ("above" if name == "ladaf_brain" else ""), name
+        qs = volumes.tissue_quantiles(q, 0.0, 255.0, w) if w else None
+        vol = SimpleNamespace(lo=0.0, hi=255.0, percentiles=volumes.tissue_percentiles(q, 0.0, 255.0), window=w, quantiles=qs, medium=side)
+        for p in brain:
+            placed = [s.value for s in presets.resolved(p, vol).stops]
+            if side:
+                # The jar: nothing past 2.5 windows from the medium, and the tissue only above it.
+                assert min(placed) >= w[0] - 1e-9 and max(placed) <= w[0] + 2.5 * (w[1] - w[0]) + 1e-9
+            else:
+                # No medium: as the percentiles of everything above the background place them (as before).
+                assert placed == [s.value for s in presets.resolved(p, SimpleNamespace(**{**vars(vol), "medium": ""})).stops]
+
+
+def _lightness(rgb) -> float:
+    lin = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
+    y = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+    return 116 * y ** (1 / 3) - 16 if y > 0.008856 else 903.3 * y
+
+
+def test_general_presets_suit_any_scan():
+    ps = presets.builtin()
+    general = [q for q in ps.values() if q.name.startswith("General: ")]
+    assert {"General: greyscale", "General: greyscale, inverted"} <= {q.name for q in general} and len(general) >= 5
+    # Through the window guessed from the scan: no reference histogram to match.
+    assert all(q.domain == "window" and q.histogram is None for q in general)
+    # Greyscale: black to white as the values rise; inverted, white to black.
+    grey = [_lightness(s.color) for s in ps["General: greyscale"].stops if s.opacity > 0]
+    inverted = [_lightness(s.color) for s in ps["General: greyscale, inverted"].stops if s.opacity > 0]
+    assert grey[-1] - grey[0] > 60 and all(b >= a - 1e-6 for a, b in zip(grey, grey[1:]))
+    assert inverted[0] - inverted[-1] > 60
+
+
+def _lightness_spread(p, lo, hi):
+    """The preset's stops' values and lightness between lo and hi (its tissue's core), in order of value."""
+    core = sorted((s for s in p.stops if lo <= s.value <= hi), key=lambda s: s.value)
+    return [s.value for s in core], [_lightness(s.color) for s in core]
+
+
+def test_presets_spread_lightness_over_the_tissue():
+    """The brain and HiP-CT organ presets' lightness follows the tissue's own spread (equalised): over the tissue's
+    core (its 1st to 99th percentile on the scan each preset was made on) it rises with density, smoothly (no steps:
+    at most 4 L* over any hundredth of the core's values, or between stops closer than that) and widely (40 L* or
+    more). Shaded inside a cut as the calibration's uniform slab is (little surface
+    shading from the data's gradient), so a cut keeps the map's contrast; an inset, where there is one, takes the
+    colour beneath only in a surface's partial volume (kernels: the collision under 0.3 of the opacity beneath)."""
+    ps = presets.builtin()
+    names = ["HiP-CT brain", "MR T1 brain", "Histology (BigBrain)"] + [n for n, q in ps.items() if q.organ and q.histogram]
+    assert len(names) >= 16
+    for name in names:
+        p = ps[name]
+        lo, hi = (p.histogram[0], p.histogram[-1]) if p.histogram else (1.0, 99.0)
+        v, L = _lightness_spread(p, lo, hi)
+        assert all(b >= a - 0.5 for a, b in zip(L, L[1:])), name
+        assert max((L[i + 1] - L[i]) / max((v[i + 1] - v[i]) / (hi - lo) * 100, 1.0) for i in range(len(L) - 1)) < 4, name
+        assert L[-1] - L[0] > 40, name
+        assert p.shade_mix <= 0.3 and p.gradient_scale <= 5, name
 
 
 def test_hide_the_jar():

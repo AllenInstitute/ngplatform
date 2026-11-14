@@ -20,6 +20,7 @@ import { CATALOGUE } from "../plugins/index.js";
 import { ErrorReporting } from "./ui/error_reporting.js";
 import { toast } from "./ui/overlays.js";
 import { Shell } from "./ui/shell.js";
+import { pageTheme } from "./ui/theme.js";
 import "./ui/styles.css";
 
 let tabStorage: Storage | undefined;
@@ -38,6 +39,8 @@ const reloadForStaleChunk = (error: unknown): boolean => {
   reloading = isStaleChunkError(error) && reloadOnceForStaleChunk(tabStorage, import.meta.url, () => location.reload());
   return reloading;
 };
+// The theme (Settings › View): public/theme.js set it before the page was drawn; this follows its changes.
+pageTheme();
 const errors = new ErrorReporting(window, reloadForStaleChunk);
 
 // A hard reset (View → Hard reset) asked for every file to be checked with

@@ -132,14 +132,6 @@ describe("Settings", () => {
     expect(sheetIsOpen()).toBe(false);
     expect(panels.disposed).toEqual(["sign-in", "compute"]);
   });
-
-  it("keeps the offers choice in the View section", () => {
-    showSettingsSheet(wb);
-    const box = document.querySelector<HTMLInputElement>("#show-offers")!;
-    expect(box.checked).toBe(true);
-    box.click();
-    expect(wb.offers.setEnabled).toHaveBeenCalledWith(false);
-  });
 });
 
 describe("Open", () => {

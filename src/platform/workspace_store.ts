@@ -62,6 +62,8 @@ export interface EngineLike {
   fitWhenLoaded?(name: string): void;
   /** Takes an image layer's contrast from its source's channel metadata once loaded. */
   contrastWhenLoaded?(name: string): void;
+  /** Draws a new layer's bounding box in the views' outline grey once loaded (src/core/view_defaults.ts). */
+  outlineWhenLoaded?(name: string): void;
 }
 
 export interface StoreOptions {
@@ -492,6 +494,7 @@ export class WorkspaceStore {
     // The first data in a scene sets its coordinate space; the view then fits it.
     if (layersOf(ng).length === 0) this.engine.fitWhenLoaded?.(name);
     this.engine.contrastWhenLoaded?.(name);
+    this.engine.outlineWhenLoaded?.(name);
     this.amend = options.quiet === true;
     this.settle();
     this.options.log(`Added “${dataset.name}” to the scene.`, "ok");

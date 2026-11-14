@@ -345,6 +345,11 @@ async function buildDataSource(
   // `obj_<name>` / `obj_group`, after the vertex attributes.
   const description = { ...store.description };
   if (description.hasObjects) {
+    // Every object attribute, for the platform's Colour by picker.
+    description.availableObjects = await access
+      .listDirectories(`${store.levels[0].path}/object_attributes`, signal)
+      .then((names) => names.filter((n) => n !== "segment_id").sort())
+      .catch(() => []);
     const requested = selectedAttributes
       ?.filter((n) => n.startsWith(OBJECT_ATTRIBUTE_PREFIX))
       .map((n) => n.slice(OBJECT_ATTRIBUTE_PREFIX.length));

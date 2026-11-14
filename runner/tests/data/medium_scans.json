@@ -1,0 +1,37 @@
+{
+ "about": "8-bit copies of real scans (block means, at most 48 a side; size x, y, z; x fastest), for the medium test: LADAF-2021-64's brain lies in its jar's medium; MNI ICBM152 T1, S-21-46 masked and BigBrain (its background made 0) lie in none.",
+ "scans": {
+  "ladaf_brain": {
+   "size": [
+    40,
+    40,
+    46
+   ],
+   "medium": "above"
+  },
+  "mni_t1": {
+   "size": [
+    39,
+    46,
+    37
+   ],
+   "medium": ""
+  },
+  "s2146_masked": {
+   "size": [
+    42,
+    42,
+    42
+   ],
+   "medium": ""
+  },
+  "bigbrain_masked": {
+   "size": [
+    41,
+    35,
+    46
+   ],
+   "medium": ""
+  }
+ }
+}

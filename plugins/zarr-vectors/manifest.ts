@@ -35,6 +35,7 @@ An SWC file opens as skeletons, one object per tree, in micrometres, with each n
 - **Overview**: every object, drawn from the spatial chunks at the level of detail the view needs. With no segments selected, all objects show.
 - **Selected objects**: click an object (or tick it in the Segments tab) to load it whole, at full resolution.
 - **Attributes**: object attributes are segment properties: filter and sort them in the Segments tab, or colour by them in the Display tab's shader with \`prop_<name>()\` and \`obj_<name>\`.
+- **Colour by**: the Display tab's Vertex colour section colours the vertices by a group (a store's taxonomy: its tiers, names and colours) or by any attribute through a colour map, low and high controls hiding what lies outside if asked; an attribute not loaded yet is loaded when chosen.
 - **Levels**: "Resolution (slice)" and "Resolution (mesh)" in the Display tab trade detail for speed.
 
 ## Writing stores

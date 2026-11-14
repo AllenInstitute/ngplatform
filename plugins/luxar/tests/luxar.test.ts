@@ -229,6 +229,42 @@ describe("a layer's chosen segments", () => {
   });
 });
 
+describe("drawn as the layer is coloured", () => {
+  // Four points of two cells' groups: groups 3 and 5, stored colours red and blue.
+  const input = {
+    numVertices: 4,
+    numOwnVertices: 4,
+    positions: new Float32Array(12),
+    segmentIds: new Uint32Array([1, 0, 2, 0, 3, 0, 4, 0]),
+    edges: new Uint32Array(0),
+    attributes: [new Float32Array([3, 5, 3, 5]), new Float32Array([0xff0000, 0x0000ff, 0xff0000, 0x0000ff]), new Float32Array([0, 1, 2, 3])],
+  };
+
+  it("reads the layer's group, or its attribute, as the vertex's value", () => {
+    const style = { ...DEFAULT_STYLE, colourBy: "layer" as const };
+    const group = { tier: "class", attribute: "class_index", colorAttribute: "class_color", colours: "stored" as const };
+    expect(scalarOf(style, { by: "group", group })).toBe("group:class_index:class_color");
+    expect(scalarOf(style, { by: "group", group: { ...group, colours: "palette" } })).toBe("group:class_index");
+    expect(scalarOf(style, { by: "attribute", attribute: "gene_A" })).toBe("attribute:gene_A");
+    // Coloured by segment in the layer: each object's colour key, as "segment" draws it.
+    expect(scalarOf(style, undefined)).toBe("object");
+  });
+
+  it("makes each vertex's object its group, each in the store's colour for it", () => {
+    const c = buildChunk(input, { kind: "group", index: 0, colour: 1 });
+    expect(Array.from(c.objectIds)).toEqual([3, 0, 5, 0]);
+    expect(Array.from(c.slots.slice(0, 4))).toEqual([0, 1, 0, 1]);
+    expect(Array.from(c.slotColours!)).toEqual([0xff0000, 0x0000ff]);
+    expect(c.vertices[3]).toBe(3);
+    // The distinct objects counted are still the cells.
+    expect(c.objects).toBe(4);
+    // The groups chosen show (5 alone), in the chunk's colours.
+    const t = objectTable(c.objectIds, c.objectWeight, { version: 1, all: false, has: (id) => id === 5n, slotColours: true }, c.slotColours);
+    expect(Array.from(t.table.slice(0, 8))).toEqual([0, 0, 0, 0, 0, 0, 255, 255]);
+    expect(needsTable({ version: 1, all: true, has: () => true, slotColours: true })).toBe(true);
+  });
+});
+
 describe("which sources a layer draws", () => {
   it("leaves out a source with its parts off, as a track-filtering group keeps its dataset beside its own store", () => {
     const base = "https://host/a.zarrvectors/|zarr-vectors:";

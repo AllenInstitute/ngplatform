@@ -1,15 +1,17 @@
 # Plugins
 
 Each plugin is a folder here. The app ships what [`index.ts`](index.ts)
-lists, and the **Plugins** panel (left dock) switches each on or off. Only Zarr
-Vectors is on by default; the others are offered when data they work with is
-opened (below).
+lists, and the **Plugins** panel (left column) switches each on or off. Zarr
+Vectors, the view aids and the scale navigator are on by default; the others
+are offered when data they work with is opened (below).
 
 ```
 plugins/
   index.ts             one entry per plugin: its manifest, and how to load its code
   workers.ts           the worker modules of data-type plugins, by plugin id
   zarr-vectors/        a data type: Zarr Vectors stores in Neuroglancer (an npm package)
+  view-aids/           a tool, on by default: orientation cube, labels, Hide graphics and bookmarks in the 3-D view
+  scale-navigator/     a tool, on by default: breadcrumb, pyramid level and zoom boxes for image layers nested in space (HiP-CT zooms)
   track-filtering/     a tool: TrackVis-style track groups, saved as .trk
   volume-view/         not a plugin: volume readers (OME-Zarr, precomputed, NIfTI) the tools share
   luxar/               a tool: chosen Zarr Vectors layers drawn as Luxar draws lines, in the 2-D and 3-D views
@@ -26,7 +28,7 @@ scene's state):
 |---|---|---|
 | [`starter_ts/`](starter_ts/) | A TypeScript plugin built into the app | Copy the folder, rename it and its ids, list it in `index.ts` (below) |
 | [`starter_ts/starter.mjs`](starter_ts/starter.mjs) | The same as one JavaScript file, no build | Plugins → **Add**, then **Reload** after each edit |
-| [`starter_py/`](starter_py/) | Python, in the page's Python (Pyodide): only `.py` files and a README | Plugins → **Add** its `starter.py`; `@ngp.command` adds a command (its id `python.<plugin>.<function>`), `@ngp.panel` a panel in the Tools dock; what it prints goes to the Python panel, or the Activity log when that is closed |
+| [`starter_py/`](starter_py/) | Python, in the page's Python (Pyodide): only `.py` files and a README | Plugins → **Add** its `starter.py`; `@ngp.command` adds a command (its id `python.<plugin>.<function>`), `@ngp.panel` a panel in the Tools section; what it prints goes to the Python panel, or the Activity log when that is closed |
 
 ## Adding a plugin
 
@@ -80,7 +82,7 @@ module (one file, bundled) exporting `manifest` (a tool) and `plugin`, or a
 folder with `manifest.json` and the module it names as `main`; or a Python
 file, run in the Python panel's interpreter, where `@ngp.command("Title")`
 adds a function to the command palette and `@ngp.panel("Title")` a panel
-in the Tools dock, under *Python* or `group="…"` (drawn by a function given
+in the Tools section, under *Python* or `group="…"` (drawn by a function given
 the panel's element, when shown and whenever the workspace changes; the
 page's DOM is reachable through Pyodide's `js`). **Reload** reads it again after an
 edit. In Chrome and Edge the file is remembered between visits.
@@ -99,7 +101,7 @@ that folder plus one line in `index.ts`.
 
 ## Switching plugins on and off
 
-Only Zarr Vectors is on by default (`enabledByDefault`); every other plugin
+Zarr Vectors, the view aids and the scale navigator are on by default (`enabledByDefault`); every other plugin
 is off until someone turns it on, from the Plugins panel or from an offer.
 The choice is kept in this browser.
 
@@ -138,7 +140,7 @@ built with the app.
 | Kind | What it does | Its code | Example |
 |---|---|---|---|
 | **Data type** (`kind: "datatype"`) | Teaches Neuroglancer a format: a data source, with code in Neuroglancer's workers | A Neuroglancer plugin package: a main-thread module (registers the data source) and worker modules | [`zarr-vectors/`](zarr-vectors/) |
-| **Tool** (`kind: "tool"`) | Adds to the workspace around the viewer: a panel in the Tools dock, commands, a view beside Neuroglancer's, analyses | A platform module with `activate(ctx)`, using only the `PlatformContext` | [`track-filtering/`](track-filtering/) (requires Zarr Vectors), [`filters/`](filters/) |
+| **Tool** (`kind: "tool"`) | Adds to the workspace around the viewer: a panel in the Tools section, commands, a view beside Neuroglancer's, analyses | A platform module with `activate(ctx)`, using only the `PlatformContext` | [`track-filtering/`](track-filtering/) (requires Zarr Vectors), [`filters/`](filters/) |
 
 A data type plugin has no platform code and contributes no commands or
 panels; tools that work on its data are separate tool plugins that declare
@@ -246,9 +248,11 @@ export const MANIFEST: Manifest = {
   events (`onStartup`, `onCommand:<id>`, `onView:<panel>`,
   `onDatasetKind:<kind>`, `onOpen:<regex>`) load it earlier.
 - **Panels** (`contributes.panels`): a panel in a dock, in `order`. A tool's
-  panel (`left`) goes to the Tools dock, listed under its `group`: `Image`,
-  `Labels`, `Space`, `Vectors`, or `Other` when it names none; `bottom`
-  keeps it in the Activity dock at the bottom; `minSize` (pixels) grows the dock to at least that
+  panel (`left`, or `right` as before) goes to the Tools section, in the left
+  column below the layers, listed under its `group`: `Image`, `Labels`,
+  `Space`, `Vectors`, or `Other` when it names none, and only while its
+  `when` holds (`when: "selectedLayerType == image"` lists it while an image
+  is selected); `bottom` keeps it in the Activity dock at the bottom; `minSize` (pixels) grows the dock to at least that
   while the panel is shown (the annotation table asks for 300), without
   changing the size the person set.
 - **Scene kinds** (`contributes.sceneKinds: [{kind, title, panel}]`): a
@@ -293,13 +297,15 @@ it is deactivated. Subscriptions a plugin makes itself go in
 | Part | For |
 |---|---|
 | `commands.register / invoke` | Supply declared commands; call any command with arguments (validated against the declared schema, defaults filled in). |
-| `ui.panel / showPanel` | Render declared panels; return a disposer for cleanup. A panel declared in the `left` slot is a tool: it shows in the Tools dock on the right, chosen from its menu under its `group` (`bottom` panels stay in the Activity dock). Build it from the SDK's parts: see [Building a panel](#building-a-panel). |
+| `ui.panel / showPanel` | Render declared panels; return a disposer for cleanup. A panel declared in the `left` slot is a tool: it shows in the Tools section of the left column, below the layers, under its `group` (`bottom` panels stay in the Activity dock). Build it from the SDK's parts: see [Building a panel](#building-a-panel). |
 | `ui.view` | Show a view beside Neuroglancer's, where its 3-D panel would be; one at a time, with a draggable divider. |
-| `ui.viewToggle` | A switch beside "Sections" in the 3-D panel (volume rendering's "Volume"). |
+| `ui.viewToggle` | A switch beside "Sections" in the 3-D panel (volume rendering's "Volume"); `order` (lower first, 100 when not given) keeps one plugin's switches together. On a 3-D panel narrower than 560 px they fold into one View menu before Sections. |
 | `ui.overlay / screenshotOverlay` | An element over the views, and painting into Neuroglancer's screenshots (labels use both). |
+| `ui.statusItem` | An element on the right of the status line below the views (also while the Activity dock is collapsed), `{ order, label }`, until its disposer is called or the plugin stops: a short value kept up to date in place, such as a scale breadcrumb or the level on screen. Drawn in the mono face (a child with the class `status-label` in the interface's), lower `order` further left, and shortened with … when the line is full. |
+| `views` | Shapes with handles in the 2-D and 3-D views (points, spheres, boxes, planes, frames), dragged in place, and a floating card while one is selected; a picker for clicks in the views. See [In-view tools](#in-view-tools). |
 | `ui.toast / confirm / form / sheet` | Messages, confirmation, a dialog generated from a schema, and a sheet whose body the plugin draws. |
 | `workspace` | Scenes, datasets, layers and the selection; add datasets and derived layers, remove layers. `undoSteps` gives the change the workspace's undo and redo would take, with when it was made (Segmentation undoes strokes and workspace changes as one history with it). |
-| `viewer` | The active scene's Neuroglancer state as JSON (`patchState` applies only what changed, as one undo step), layers, the pointer, the position, a segmentation layer's segment properties, and a temporary set of visible segments (not saved in the link). `draw3d` draws in the 3-D view with a layer (raw WebGL2, Neuroglancer's camera and depth; volume rendering uses it); `panels` and `onRendered` place things over the views; `layerTransform` and `setLayerTransform` read and set a layer's transform (registration); `reloadData` has Neuroglancer read again what it holds from a URL (data a plugin serves and changed: Segmentation's label volumes). `lookupTables` lists the lookup tables that come with the app, reads one, and reads or sets a segmentation layer's (Atlas). |
+| `viewer` | The active scene's Neuroglancer state as JSON (`patchState` applies only what changed, as one undo step), layers, the pointer, the position, a segmentation layer's segment properties, and a temporary set of visible segments (not saved in the link). `draw3d` draws in the 3-D view with a layer (raw WebGL2, Neuroglancer's camera and depth; volume rendering uses it); `panels` and `onRendered` place things over the views; `layerTransform` and `setLayerTransform` read and set a layer's transform (registration); `thumbnail(w, h, "3d")` a small picture of the 3-D view once loaded (bookmarks); `layerBounds` gives a layer's box in global coordinates, its finest voxel and its pyramid's levels, and `renderedLevel` the level Neuroglancer drew in the sections in its last frame (the scale navigator); `reloadData` has Neuroglancer read again what it holds from a URL (data a plugin serves and changed: Segmentation's label volumes). `lookupTables` lists the lookup tables that come with the app, reads one, and reads or sets a segmentation layer's (Atlas). |
 | `workspace.local` | Files of data opened from this computer: whether a URL is one, writing into it (track filtering saves groups this way), and opening a file the plugin made in the page as data (track filtering's density maps). |
 | `state` | The plugin's slice of the workspace state: in the link, undoable, versioned. |
 | `settings` | Per-user settings kept in this browser, never in the link. |
@@ -309,6 +315,103 @@ it is deactivated. Subscriptions a plugin makes itself go in
 | `open.handler` | Handle pasted text matching a declared pattern. |
 | `log` | Lines in the Activity log, tagged with the plugin. |
 | `auth.register` | Add a sign-in method to Settings → Sign-in (see below). |
+
+### In-view tools
+
+`ctx.views` puts shapes over Neuroglancer's views, with handles that drag
+them: what a region, a crop, a cut plane or a landmark is edited with,
+where it is, instead of sliders in a dock. Each shape is drawn on a canvas
+over each view (never into captures) after every frame: in a 2-D view where
+the section cuts it (a sphere's ellipse, a box's rectangle, a plane's
+line), in the 3-D view as a wireframe (a box's edges, a sphere's three
+circles, a plane's square). Coordinates are global, all global dimensions
+as `ViewPanelInfo.project` takes them.
+
+```ts
+const region = ctx.views.add({
+  id: "r1",
+  kind: "sphere",                 // or "point", "box", "plane"
+  centre: [10, 20, 30],
+  radii: [5, 5, 5],
+  uniform: true,                  // one radius: its knobs scale all three
+  label: "Sphere 1",              // the card's title (a point shows it beside itself)
+  colour: "#e4572e",              // its lines when not selected
+  onChange: ({ centre, radii }, done) => save({ centre, radius: radii[0] }, { quiet: !done }),
+  card: (host) => {               // shown over the view while it is selected
+    host.append(numberInput(radius, setRadius, { "aria-label": "Radius" }));
+  },
+});
+region.update({ centre: [11, 20, 30] });   // when the plugin's own state changes
+ctx.views.select("r1");                   // a new shape, ready to drag
+```
+
+A **frame** is a box turned any way: a layer's data as it is placed
+(Registration's moving layer). Its drags are reported as what they did,
+from the frame as the drag found it, so the plugin applies them to its own
+transform:
+
+```ts
+ctx.views.add({
+  id: "frame",
+  kind: "frame",
+  views: "2d",
+  centre,                          // global
+  axes: [a0, a1, a2],              // half-edge vectors, global units
+  pivot,                           // what its ring turns about (else its centre)
+  title: "brain",                  // the card's heading (else the label)
+  onChange: ({ change }, done) => {
+    // { kind: "move", by } | { kind: "turn", axis, angle, about } | { kind: "scale", factors, uniform }
+    apply(change, done);
+  },
+});
+```
+
+In a 2-D view a frame is its outline where the section cuts it: a drag
+inside it (once selected) or on its edge moves it in the section's plane,
+its ring (taken on its rim) turns it about the section's normal through
+the pivot, and the knobs at the outline's corners scale its axes (Shift:
+all three alike). In the 3-D view it is a wireframe that moves. Until it
+is selected its inside is the view's, so a click there is Neuroglancer's.
+
+- **Handles.** Clicking a shape selects it (one at a time; Escape or a
+  click on an empty part of a view clears it, and that click still reaches
+  Neuroglancer). A selected shape shows its handles: its centre moves it in
+  the view's plane (the section, or the plane facing the camera in 3-D); a
+  box's corners and face centres resize it along their axes; a sphere's
+  knobs, one each way along each axis shown, change its radii; a plane's
+  centre moves it along its normal and its ring turns it (`turns: false`
+  for one that only moves). Alt+wheel over a selected sphere or box
+  scales it; the arrow keys move it a unit (Shift: ten) while the mouse is
+  over a view and nothing else has the keyboard. A press anywhere else is
+  Neuroglancer's.
+- **`onChange(value, done)`** gets each new value: `done` is false while
+  the mouse moves and true when it is let go, so a plugin keeps the moves
+  out of undo and writes its state once per drag (as a slider's `oninput`
+  and `onchange` do). The shape follows the mouse by itself; `update` with
+  the value the plugin kept (rounded or clamped) puts it there.
+- **The card** is the one panel that floats: at the top left of the view
+  the shape was selected in, 8 px in from the top and 8 px right of
+  Neuroglancer's axis labels, only while the shape is selected. Its
+  heading is the shape's `title` (else its `label`: give a point labelled
+  "1" the title "Pair 1"). It holds what the handles do not: exact
+  numbers (shown ones as `readout()`s, in rows under the axes' names in a
+  `view-card-values` grid), choices (AND, OR, NOT), delete. The dock's controls for the same
+  things keep working; both edit the same state.
+- **Links and captions.** `caption: { text, value }` puts a small label at
+  a shape's top left on screen (the name in the interface's face, the value
+  in the readouts'); `onClick` makes the shape a link: a click on its line
+  or caption calls it instead of selecting it (with `editable: false`, the
+  scale navigator's zoom boxes); `minSize` leaves it out of a view where it
+  is fewer pixels across.
+- **`pick(onPick)`** turns clicks in the views into points until disposed:
+  a click not on a shape gives the global position under the mouse
+  (Registration's Place pairs). `lookingAt()` is where the user is
+  looking: the place the mouse was last over in a view while it is still
+  in sight, else the views' centre; a new shape starts there.
+
+In tests, `fakeViewTools()` from `@ngplatform/sdk/testing` keeps the shapes a
+plugin adds and drags them as a person would (`drag(id, value, done)`,
+`click(at)` for a picker).
 
 ### Building a panel
 
@@ -331,14 +434,26 @@ element to append; the controls also have `set(value)`.
 | `info(text, label)` | An explanation behind a small (i): shown on click, Enter or Space and on hover, read by screen readers. Use it rather than `title`, which keyboard and touch cannot reach. |
 | `emptyState(text, {label, run})` | What a panel shows with nothing to work on: one line and the action that supplies it ("Open data…"). |
 | `statusLine()` | `progress(text)`, `error(text, {label, run})` and `clear()`: progress and errors only, hidden otherwise. |
+| `readout(value, unit, attrs)` | A value shown, not edited (a size, a count, a coordinate, a status line item): Source Code Pro with tabular digits, the unit in the muted grey after a thin space. `set(value)` or `set({value, unit})` shows another. |
 | `region(render, attrs)` | A part drawn again only when its key changes: `update(key)`. |
 
 Shared classes, in the app's stylesheet: `row` (controls on a line),
 `stack`, `grid-2`, `spacer`, `muted`, `faint`, `hint` (a short note),
-`readout` (a changing number or path), `list`, `empty`.
+`readout` (a caption line of changing numbers or a path), `list`, `empty`,
+and `float-surface` (anything that floats over the views or the page
+without dimming it, such as a card beside a handle in a view: the overlay
+grey, a 1 px line, the one floating shadow).
+
+**Colours.** A panel's chrome is black and white at the stylesheet's
+opacities (`--text`, `--muted`, `--faint`, `--line`, `--line-strong`); the
+one hue is `--err`, for errors and what deletes. What is chosen or on is
+inverted (`--accent` fill, `--accent-ink` words) or outlined in white, never
+green. Colour on screen is the data's.
 
 The rules the parts keep:
 - A switch turns a feature on; a checkbox picks items or options.
+- Icons come from `icon()`, never a character (×, ⋯, ▸, ✓) standing in for one; an icon-only button has a name (`iconButton()`).
+- A value shown and not edited is a `readout()`.
 - A control has a label (`field()`, or the label of `toggle()` and `checkbox()`).
 - Explanations go behind an `info()`, not in the panel or in `title`.
 - An empty state is one line plus its action.

@@ -1,19 +1,22 @@
 /**
- * The docks: named slots (left, right, bottom) holding tabs that the
+ * The docks: named places (left, tools, bottom) holding tabs that the
  * platform and plugins contribute.  A tab renders the first time it is
  * shown and stays mounted (Neuroglancer widgets keep their state), unless it
  * is marked transient, in which case it is disposed whenever it is hidden.
- * The right dock (Tools) picks its tab from one grouped menu instead of a
- * row of tabs, and is not there while it has none.  Sizes, open tabs and
- * collapsed docks are remembered per browser; the right and bottom docks
- * start collapsed.
+ *
+ * The left column holds two of them, one above the other: Layers and
+ * Plugins on top, and below a divider the Tools section, the tools that
+ * are on (ordered by kind), which is not there while it has none.  The
+ * Tools section belongs to the left column: collapsing the column hides it
+ * too, and showing a tool opens both.  Each dock shows its tabs as a row.
+ * Sizes, open tabs and collapsed docks are remembered per browser; the
+ * bottom dock starts collapsed to its status line.
  */
 import type { ContextKeys } from "../core/when.js";
 import type { DockTabSpec } from "../platform/plugin_host.js";
 import type { Disposer, DockSlot } from "../sdk/types.js";
 import { emptyState, type Roving, roving } from "../sdk/dom.js";
 import { h, icon } from "./dom.js";
-import { showMenu } from "./overlays.js";
 
 export const prefs = {
   get(key: string): string | null {
@@ -32,18 +35,31 @@ export const prefs = {
   },
 };
 
-export interface DockTab extends DockTabSpec {
+/**
+ * Where a dock is: the left column's top (Layers, Plugins), the left
+ * column's Tools section below it, or the bottom (Activity).
+ */
+export type DockPlace = "left" | "tools" | "bottom";
+
+export interface DockTab extends Omit<DockTabSpec, "slot"> {
+  /** A plugin's `right` slot is the Tools section (`tools`), as `asTool` places it. */
+  slot: DockSlot | "tools";
   /** Disposed when hidden, rendered again when shown (e.g. polling views). */
   transient?: boolean;
 }
 
+/** The dock a tab's slot is: the old right dock is the Tools section. */
+function placeOf(slot: DockTab["slot"]): DockPlace {
+  return slot === "right" ? "tools" : slot;
+}
+
 /**
- * Where a plugin's panel goes, TypeScript or Python: one in the left slot
- * is a tool, so it goes to the Tools dock under its group (`fallback` when
- * it names none); the bottom slot keeps its own.
+ * Where a plugin's panel goes, TypeScript or Python: one in the left (or
+ * right) slot is a tool, so it goes to the Tools section under its group
+ * (`fallback` when it names none); the bottom slot keeps its own.
  */
-export function asTool<T extends DockTab>(tab: T, fallback = "Other"): T {
-  return tab.slot === "left" || tab.slot === "right" ? { ...tab, slot: "right", group: tab.group ?? fallback } : tab;
+export function asTool(tab: DockTab | DockTabSpec, fallback = "Other"): DockTab {
+  return tab.slot === "left" || tab.slot === "right" || tab.slot === "tools" ? { ...tab, slot: "tools", group: tab.group ?? fallback } : (tab as DockTab);
 }
 
 interface Mounted {
@@ -101,10 +117,14 @@ export function renderPanel(
   }
 }
 
-const TITLES: Record<DockSlot, string> = { left: "Layers", right: "Tools", bottom: "Activity" };
-const DEFAULT_SIZE: Record<DockSlot, string> = { left: "300px", right: "360px", bottom: "190px" };
-/** Collapsed until the person opens them. */
-const START_COLLAPSED: Record<DockSlot, boolean> = { left: false, right: true, bottom: true };
+const TITLES: Record<DockPlace, string> = { left: "Layers", tools: "Tools", bottom: "Activity" };
+/** The left column's width, the Tools section's height (a share of the column until dragged) and the bottom dock's height. */
+const DEFAULT_SIZE: Record<DockPlace, string> = { left: "300px", tools: "50%", bottom: "190px" };
+/** Collapsed until the person opens them: the bottom dock (to its status line). */
+const START_COLLAPSED: Record<DockPlace, boolean> = { left: false, tools: false, bottom: true };
+/** Room the Layers part keeps above the Tools section, and the least the Tools section takes. */
+const LAYERS_MIN = 120;
+const TOOLS_MIN = 96;
 
 /**
  * Follows a drag on `target` until it ends, however it ends: let go, or
@@ -134,41 +154,38 @@ class Dock {
   readonly el: HTMLElement;
   readonly head = h("div", { class: "dock-head" });
   readonly tabsEl = h("div", { class: "dock-tabs" });
-  /** Left and Right move between the tabs (the Tools dock's one picker has its own keys). */
+  /** Left and Right move between the tabs. */
   readonly keys: Roving;
   readonly body = h("div", { class: "dock-body" });
   readonly tabs = new Map<string, Mounted>();
   selected: string | undefined;
-  /** The Tools dock: one button naming the tab shown, whose menu lists them all by group. */
-  readonly menu: boolean;
 
   constructor(
-    readonly slot: DockSlot,
-    private readonly manager: DockManager,
+    readonly slot: DockPlace,
+    manager: DockManager,
   ) {
-    this.menu = slot === "right";
     this.el = h("aside", { class: `dock dock-${slot}`, id: `dock-${slot}`, "aria-label": TITLES[slot] });
-    if (!this.menu) {
-      this.tabsEl.setAttribute("role", "tablist");
-      this.tabsEl.setAttribute("aria-label", TITLES[slot]);
-    }
+    this.tabsEl.setAttribute("role", "tablist");
+    this.tabsEl.setAttribute("aria-label", TITLES[slot]);
     this.keys = roving(this.tabsEl, {
-      items: () => (this.menu ? [] : this.ordered().map((m) => m.button)),
+      items: () => this.ordered().map((m) => m.button),
       orientation: "horizontal",
       tabStop: true,
       current: () => (this.selected !== undefined ? this.tabs.get(this.selected)?.button : undefined),
       onMove: (button) => button.click(),
     });
+    // The Tools section folds to its row of tabs; the docks collapse to a rail or a line.
     const toggle = h(
       "button",
       {
         class: "btn icon dock-toggle",
         type: "button",
-        title: `Show or hide the ${TITLES[slot].toLowerCase()} dock`,
-        "aria-label": `Toggle ${TITLES[slot].toLowerCase()} dock`,
+        title: slot === "tools" ? "Fold or unfold the tools" : `Show or hide the ${TITLES[slot].toLowerCase()} dock`,
+        "aria-label": slot === "tools" ? "Toggle tools" : `Toggle ${TITLES[slot].toLowerCase()} dock`,
+        "aria-controls": `dock-${slot}`,
         onclick: () => manager.toggle(slot),
       },
-      icon(slot === "left" ? "panel-left" : slot === "right" ? "panel-right" : "panel-bottom"),
+      icon(slot === "left" ? "panel-left" : slot === "tools" ? "chevron-down" : "panel-bottom"),
     );
     const rail = h("span", { class: "rail-title" }, TITLES[slot]);
     if (slot === "left") this.head.append(toggle, this.tabsEl, rail);
@@ -176,43 +193,17 @@ class Dock {
     this.el.append(this.head, this.body);
   }
 
+  /** The tabs in their order; the Tools section's grouped by kind first (the groups in the order their first tool came). */
   ordered(): Mounted[] {
-    return [...this.tabs.values()].sort((a, b) => (a.tab.order ?? 100) - (b.tab.order ?? 100));
+    const byOrder = [...this.tabs.values()].sort((a, b) => (a.tab.order ?? 100) - (b.tab.order ?? 100));
+    if (this.slot !== "tools") return byOrder;
+    const groups = [...new Set(byOrder.map((m) => m.tab.group ?? "Other"))];
+    return byOrder.sort((a, b) => groups.indexOf(a.tab.group ?? "Other") - groups.indexOf(b.tab.group ?? "Other"));
   }
 
   layoutTabs(): void {
-    if (!this.menu) {
-      this.tabsEl.replaceChildren(...this.ordered().map((m) => m.button));
-      this.keys.sync();
-      return;
-    }
-    const shown = this.selected !== undefined ? this.tabs.get(this.selected) : undefined;
-    const picker = h(
-      "button",
-      { class: "tab dock-picker", type: "button", "aria-haspopup": "menu", title: "Choose a tool", "aria-label": `Tool: ${shown?.tab.title ?? "none"}. Choose a tool` },
-      shown?.tab.title ?? "Tools",
-      icon("chevron-down"),
-    );
-    const open = () => {
-      const groups = new Map<string, Mounted[]>();
-      for (const m of this.visibleTabs()) groups.set(m.tab.group ?? "Other", [...(groups.get(m.tab.group ?? "Other") ?? []), m]);
-      showMenu(
-        picker,
-        [...groups].flatMap(([group, tabs], i) => [
-          ...(i > 0 ? (["-"] as const) : []),
-          { label: group, muted: true, disabled: true, run: () => {} },
-          ...tabs.map((m) => ({ label: m.tab.title, current: m.tab.id === this.selected, run: () => this.manager.show(m.tab.id) })),
-        ]),
-      );
-    };
-    picker.addEventListener("click", open);
-    // Down or Up opens the menu too, as on any menu button.
-    picker.addEventListener("keydown", (e) => {
-      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-      e.preventDefault();
-      open();
-    });
-    this.tabsEl.replaceChildren(picker);
+    this.tabsEl.replaceChildren(...this.ordered().map((m) => m.button));
+    this.keys.sync();
   }
 
   visibleTabs(): Mounted[] {
@@ -221,8 +212,8 @@ class Dock {
 }
 
 export class DockManager {
-  private readonly docks: Record<DockSlot, Dock>;
-  private readonly bySlotOf = new Map<string, DockSlot>();
+  private readonly docks: Record<DockPlace, Dock>;
+  private readonly bySlotOf = new Map<string, DockPlace>();
   private readonly listeners = new Set<(id: string) => void>();
   /** Tabs that moved (Datasets into Layers, Auth into Settings): what showing one does now. */
   private readonly redirects = new Map<string, () => void>();
@@ -231,11 +222,13 @@ export class DockManager {
     private readonly root: HTMLElement,
     private readonly context: ContextKeys,
   ) {
-    this.docks = { left: new Dock("left", this), right: new Dock("right", this), bottom: new Dock("bottom", this) };
+    this.docks = { left: new Dock("left", this), tools: new Dock("tools", this), bottom: new Dock("bottom", this) };
     context.onChange(() => this.applyWhen());
+    // None has a tab yet: the Tools section is not there until a tool is on.
+    this.applyEmpty();
   }
 
-  element(slot: DockSlot): HTMLElement {
+  element(slot: DockPlace): HTMLElement {
     return this.docks[slot].el;
   }
 
@@ -252,12 +245,12 @@ export class DockManager {
   }
 
   /** An element in a dock's head, after its tabs (the Activity dock's status line). */
-  addToHead(slot: DockSlot, element: HTMLElement): void {
+  addToHead(slot: DockPlace, element: HTMLElement): void {
     const dock = this.docks[slot];
     dock.head.insertBefore(element, dock.tabsEl.nextSibling);
   }
 
-  /** A dock with no tab to show is not there at all (the Tools dock with no tool on). */
+  /** A dock with no tab to show is not there at all (the Tools section with no tool on, or none for the data selected). */
   private applyEmpty(): void {
     for (const dock of Object.values(this.docks)) {
       const empty = dock.visibleTabs().length === 0;
@@ -267,18 +260,11 @@ export class DockManager {
   }
 
   addTab(tab: DockTab): Disposer {
-    const dock = this.docks[tab.slot];
+    const slot = placeOf(tab.slot);
+    const dock = this.docks[slot];
     if (this.bySlotOf.has(tab.id)) throw new Error(`dock tab ${tab.id} already exists`);
-    // A tab panel named by its tab; the Tools dock has a picker, not tabs, so its panels are regions named by their titles.
-    const host = h("div", {
-      class: "dock-pane",
-      "data-tab": tab.id,
-      id: `pane-${tab.id}`,
-      role: dock.menu ? "region" : "tabpanel",
-      "aria-labelledby": dock.menu ? undefined : `tab-${tab.id}`,
-      "aria-label": dock.menu ? tab.title : undefined,
-      hidden: true,
-    });
+    // A tab panel named by its tab.
+    const host = h("div", { class: "dock-pane", "data-tab": tab.id, id: `pane-${tab.id}`, role: "tabpanel", "aria-labelledby": `tab-${tab.id}`, hidden: true });
     const button = h(
       "button",
       { class: "tab", type: "button", role: "tab", id: `tab-${tab.id}`, "aria-selected": "false", "aria-controls": `pane-${tab.id}`, onclick: () => this.show(tab.id) },
@@ -286,13 +272,13 @@ export class DockManager {
     );
     const mounted: Mounted = { tab, button, host, rendered: false, renders: 0 };
     dock.tabs.set(tab.id, mounted);
-    this.bySlotOf.set(tab.id, tab.slot);
+    this.bySlotOf.set(tab.id, slot);
     dock.body.append(host);
     dock.layoutTabs();
     this.applyWhen();
     // The tab last chosen in this dock (on this visit or an earlier one), whichever tabs are added before it.
-    const remembered = prefs.get(`${tab.slot}.tab`);
-    if (dock.selected === undefined || remembered === tab.id) this.select(tab.slot, tab.id);
+    const remembered = prefs.get(`${slot}.tab`);
+    if (!button.hidden && (dock.selected === undefined || remembered === tab.id)) this.select(slot, tab.id);
     return () => this.removeTab(tab.id);
   }
 
@@ -340,13 +326,18 @@ export class DockManager {
     renderPanel(mounted, (message) => this.failed(mounted, message));
   }
 
+  /** Whether a dock's panel is on screen: not collapsed, and for the Tools section, its column not collapsed either. */
+  private isOpen(slot: DockPlace): boolean {
+    return !this.isCollapsed(slot) && (slot !== "tools" || !this.isCollapsed("left"));
+  }
+
   /**
    * Shows `id` in its dock.  Only a tab the person chose (`chosen`) is kept
    * as the one to show next visit: a tab selected because it came first,
    * or because the one shown went, is not, so it does not replace the
    * remembered tab before that tab is added.
    */
-  private select(slot: DockSlot, id: string, chosen = false): void {
+  private select(slot: DockPlace, id: string, chosen = false): void {
     const dock = this.docks[slot];
     const mounted = dock.tabs.get(id);
     if (mounted === undefined) return;
@@ -360,13 +351,15 @@ export class DockManager {
     mounted.button.setAttribute("aria-selected", "true");
     dock.keys.sync();
     mounted.host.hidden = false;
-    if (dock.menu) dock.layoutTabs();
-    if (!dock.el.classList.contains("collapsed")) this.render(mounted);
+    if (this.isOpen(slot)) this.render(mounted);
     if (chosen) prefs.set(`${slot}.tab`, id);
     for (const listener of this.listeners) listener(id);
   }
 
-  /** Shows a tab: selects it and opens its dock. */
+  /**
+   * Shows a tab: selects it and opens its dock.  A tool opens the left
+   * column and the Tools section too, and is scrolled into view.
+   */
   show(id: string): void {
     const redirect = this.redirects.get(id);
     if (redirect !== undefined) return redirect();
@@ -375,24 +368,30 @@ export class DockManager {
     if (slot === undefined) return;
     // Selected before the dock opens, so opening it renders this tab and not the one shown before.
     this.select(slot, id, true);
+    if (slot === "tools") this.setCollapsed("left", false);
     this.setCollapsed(slot, false);
+    const mounted = this.docks[slot].tabs.get(id)!;
+    if (slot === "tools") {
+      // A tab on a second row, or a column floating over the views on a phone: brought into view.
+      mounted.button.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+      this.docks.tools.body.scrollTop = 0;
+    }
     // A panel that needs room grows its dock for now; the size the person set stays saved.
-    const min = this.docks[slot].tabs.get(id)?.tab.minSize;
+    const min = mounted.tab.minSize;
     if (min !== undefined) {
-      const rect = this.docks[slot].el.getBoundingClientRect();
-      const now = slot === "bottom" ? rect.height : rect.width;
-      const limit = slot === "bottom" ? window.innerHeight * 0.6 : window.innerWidth * 0.5;
+      const now = this.sizeOf(slot);
+      const limit = this.limits(slot)[1];
       if (now > 0 && now < min) this.root.style.setProperty(`--${slot}`, `${Math.round(Math.min(min, limit))}px`);
     }
   }
 
-  selected(slot: DockSlot): string | undefined {
+  selected(slot: DockPlace): string | undefined {
     return this.docks[slot].selected;
   }
 
   isShowing(id: string): boolean {
     const slot = this.bySlotOf.get(this.alias(id));
-    return slot !== undefined && this.docks[slot].selected === id && !this.docks[slot].el.classList.contains("collapsed");
+    return slot !== undefined && this.docks[slot].selected === id && this.isOpen(slot);
   }
 
   onSelect(listener: (id: string) => void): Disposer {
@@ -400,57 +399,83 @@ export class DockManager {
     return () => this.listeners.delete(listener);
   }
 
+  /**
+   * Lists the tabs whose `when` holds (a tool for the data selected, say).
+   * A dock whose tab went shows another; the tab last chosen comes back
+   * when it holds again (the selection moved back to its data).
+   */
   private applyWhen(): void {
     for (const dock of Object.values(this.docks)) {
       for (const m of dock.tabs.values()) m.button.hidden = !this.context.matches(m.tab.when);
-      if (dock.selected !== undefined && dock.tabs.get(dock.selected)?.button.hidden) {
+      dock.keys.sync();
+      const remembered = prefs.get(`${dock.slot}.tab`);
+      const back = remembered !== null ? dock.tabs.get(remembered) : undefined;
+      if (back !== undefined && !back.button.hidden && dock.selected !== remembered) this.select(dock.slot, remembered!);
+      else if (dock.selected === undefined || dock.tabs.get(dock.selected)?.button.hidden) {
         const next = dock.visibleTabs()[0];
         if (next !== undefined) this.select(dock.slot, next.tab.id);
       }
-      if (dock.menu) dock.layoutTabs();
     }
     this.applyEmpty();
   }
 
   // ------------------------------------------------------------- sizing
 
-  isCollapsed(slot: DockSlot): boolean {
+  isCollapsed(slot: DockPlace): boolean {
     return this.docks[slot].el.classList.contains("collapsed");
   }
 
-  setCollapsed(slot: DockSlot, collapsed: boolean, remember = true): void {
+  setCollapsed(slot: DockPlace, collapsed: boolean, remember = true): void {
     const dock = this.docks[slot];
     dock.el.classList.toggle("collapsed", collapsed);
+    dock.el.querySelector(".dock-toggle")?.setAttribute("aria-expanded", String(!collapsed));
     this.root.classList.toggle(`${slot}-collapsed`, collapsed);
-    if (!collapsed && dock.selected !== undefined) this.render(dock.tabs.get(dock.selected)!);
-    // A transient tab (Chunk statistics) stops its work while its dock is shut, as when another tab is chosen.
-    const shown = dock.selected !== undefined ? dock.tabs.get(dock.selected) : undefined;
-    if (collapsed && shown?.tab.transient) this.unrender(shown);
     if (remember) prefs.set(`${slot}.collapsed`, collapsed ? "1" : "0");
+    this.applyOpen(slot);
+    // The Tools section is in the left column: it opens and shuts with it.
+    if (slot === "left") this.applyOpen("tools");
   }
 
-  toggle(slot: DockSlot): void {
+  /**
+   * Renders a dock's tab once it is on screen; a transient tab (Chunk
+   * statistics) stops its work while its dock is shut, as when another tab
+   * is chosen.
+   */
+  private applyOpen(slot: DockPlace): void {
+    const dock = this.docks[slot];
+    const shown = dock.selected !== undefined ? dock.tabs.get(dock.selected) : undefined;
+    if (shown === undefined) return;
+    if (this.isOpen(slot)) this.render(shown);
+    else if (shown.tab.transient) this.unrender(shown);
+  }
+
+  toggle(slot: DockPlace): void {
     this.setCollapsed(slot, !this.isCollapsed(slot));
   }
 
-  /** Restores remembered sizes and collapsed docks. */
+  /** Restores remembered sizes and collapsed docks; a narrow window starts with the left column collapsed. */
   restore(narrow: boolean): void {
-    for (const slot of ["left", "right", "bottom"] as const) {
+    for (const slot of ["left", "tools", "bottom"] as const) {
       this.root.style.setProperty(`--${slot}`, prefs.get(`${slot}.size`) || DEFAULT_SIZE[slot]);
       const kept = prefs.get(`${slot}.collapsed`);
-      const collapsed = (kept === null ? START_COLLAPSED[slot] : kept === "1") || (narrow && slot !== "bottom");
+      const collapsed = (kept === null ? START_COLLAPSED[slot] : kept === "1") || (narrow && slot === "left");
       this.setCollapsed(slot, collapsed, false);
     }
   }
 
   /** The smallest and largest a dock may be, in pixels, in this window. */
-  private limits(slot: DockSlot): [number, number] {
+  private limits(slot: DockPlace): [number, number] {
     if (slot === "bottom") return [90, window.innerHeight * 0.6];
+    if (slot === "tools") {
+      // Within the left column, leaving the Layers part some room.
+      const column = this.docks.tools.el.parentElement?.getBoundingClientRect().height || window.innerHeight * 0.8;
+      return [TOOLS_MIN, Math.max(TOOLS_MIN, column - LAYERS_MIN)];
+    }
     return [160, window.innerWidth * (window.innerWidth <= 760 ? 0.34 : 0.5)];
   }
 
   /** Sets a dock's size (within its limits) and says so on its resizer; returns the size set. */
-  private resize(slot: DockSlot, size: number, handle: HTMLElement): number {
+  private resize(slot: DockPlace, size: number, handle: HTMLElement): number {
     const [min, max] = this.limits(slot);
     const px = Math.round(Math.max(min, Math.min(max, size)));
     this.root.style.setProperty(`--${slot}`, `${px}px`);
@@ -459,34 +484,38 @@ export class DockManager {
   }
 
   /** The size a dock is now: as drawn, or as set. */
-  private sizeOf(slot: DockSlot): number {
+  private sizeOf(slot: DockPlace): number {
     const rect = this.docks[slot].el.getBoundingClientRect();
-    const drawn = slot === "bottom" ? rect.height : rect.width;
-    return drawn > 0 ? drawn : parseFloat(this.root.style.getPropertyValue(`--${slot}`)) || parseFloat(DEFAULT_SIZE[slot]);
+    const drawn = slot === "left" ? rect.width : rect.height;
+    if (drawn > 0) return drawn;
+    const set = this.root.style.getPropertyValue(`--${slot}`) || DEFAULT_SIZE[slot];
+    // A share of the column (the Tools section until it is dragged): in pixels of the column.
+    return set.endsWith("%") ? (parseFloat(set) / 100) * (this.limits(slot)[1] + LAYERS_MIN) : parseFloat(set);
   }
 
   /**
    * A handle that resizes `slot`: dragged, or with the keyboard, as a
    * separator a screen reader reads with its size.  The arrows move it 10
    * px (40 with Shift), Home and End to the smallest and largest.  The size
-   * is kept when a drag ends, or at each key.
+   * is kept when a drag ends, or at each key.  The left column's handle is
+   * at its right edge; the Tools section's and the bottom dock's above them.
    */
-  resizer(slot: DockSlot): HTMLElement {
-    const vertical = slot === "bottom";
+  resizer(slot: DockPlace): HTMLElement {
+    const vertical = slot !== "left";
     const el = h("div", {
       class: `resizer resizer-${slot}`,
       role: "separator",
       tabindex: 0,
       "aria-orientation": vertical ? "horizontal" : "vertical",
-      "aria-label": `Resize the ${TITLES[slot]} dock`,
+      "aria-label": slot === "tools" ? "Resize the Tools section" : `Resize the ${TITLES[slot]} dock`,
       "aria-controls": `dock-${slot}`,
       title: "Drag to resize",
     });
     describeSize(el, this.sizeOf(slot), ...this.limits(slot));
     const keep = () => prefs.set(`${slot}.size`, this.root.style.getPropertyValue(`--${slot}`));
-    // Which way grows the dock: right for the left dock, left for the right, up for the bottom.
-    const grow = slot === "left" ? "ArrowRight" : slot === "right" ? "ArrowLeft" : "ArrowUp";
-    const shrink = slot === "left" ? "ArrowLeft" : slot === "right" ? "ArrowRight" : "ArrowDown";
+    // Which way grows the dock: right for the left column, up for the Tools section and the bottom dock.
+    const grow = vertical ? "ArrowUp" : "ArrowRight";
+    const shrink = vertical ? "ArrowDown" : "ArrowLeft";
     el.addEventListener("keydown", (e) => {
       const step = e.shiftKey ? 40 : 10;
       const [min, max] = this.limits(slot);

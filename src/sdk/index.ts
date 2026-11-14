@@ -24,6 +24,8 @@ export {
   info,
   type OnOff,
   type OnOffOptions,
+  readout,
+  type ReadoutValue,
   region,
   roving,
   type Roving,

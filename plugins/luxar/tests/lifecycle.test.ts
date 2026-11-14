@@ -29,6 +29,7 @@ function context() {
       visibleSegments: () => shown,
       onSegmentsChanged: () => () => {},
       onLayersChanged: () => () => {},
+      onStateChanged: () => () => {},
       hideLayerDrawing: (name: string, hidden: boolean) => void done.hidden.push([name, hidden]),
       setTemporaryBackground: () => {},
       draw3d: () => {

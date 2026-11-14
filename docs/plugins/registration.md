@@ -3,7 +3,7 @@
 ![Registration: rotating a template by hand, and the saved image overlaid](../images/plugins/registration.png)
 
 **Kind:** tool · **Off by default** (offered when you open two images; or turn it on in the Plugins panel) · the
-**Registration** panel in the Tools dock ·
+**Registration** panel in the Tools section ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/registration)
 
 Places a moving layer onto the others: by hand, as Freeview's Transform
@@ -20,9 +20,23 @@ why ("“movie” is 4-D").
   images or more: a scan opened onto a template opened first, say). The
   first change you make keeps it chosen. The file formats you pick for
   saving are remembered in this browser.
-- **By hand:** the Rotate, Translate, Scale and Flip tabs, along X (L-R),
-  Y (P-A) and Z (I-S), each a slider and a typed value. The layer moves as
-  you drag. Rotate about the volume's centre or the cursor (the views' centre); **Move centre to
+- **The panel** starts with the moving layer, the landmarks (the number
+  of pairs, **Place pairs**, **Save LTA**) and **Edit in views**; the
+  sections below (Transform, Straighten, Pairs, Transform file, Image) open
+  for the rest.
+- **In the views:** the moving layer's box is drawn in each 2-D view. Drag
+  inside it or on its edge to move the layer in the section's plane; drag
+  the ring about the *Rotate around* point to turn it about the section's
+  normal; drag a corner to scale it along its own axes (hold Shift for all
+  three alike). The layer follows the mouse, and each drag is one undo
+  step. Click its edge (or **Edit in views**) to select it: a card over
+  the view gives the rotation (°), translation (mm) and scale as readouts,
+  **Flip** along each axis and **Restore**. While placing pairs the box is
+  not drawn, so a click inside it is a landmark.
+- **By hand, exactly:** the Transform section (closed at first) has the
+  Rotate, Translate, Scale and Flip tabs, along X (L-R), Y (P-A) and Z
+  (I-S), each a slider and a typed value: the same transform the box sets.
+  The layer moves as you drag. Rotate about the volume's centre or the cursor (the views' centre); **Move centre to
   cursor**; **Restore to original**. **Apply to all visible volumes** moves
   every other visible image and segmentation with it (clear it to put them
   back).
@@ -31,12 +45,19 @@ why ("“movie” is 4-D").
   go, then **Straighten**: the line #1 → #2 is turned onto an axis (the AC
   to the PC onto P → A, say) and #3 → #4 as near another as it can, about
   the volume's centre.
-- **Landmarks:** ++alt+f++ places a fixed point and ++alt+m++ the matching
-  moving point. Fit as translation, rigid, similarity or affine, with the
+- **Landmarks:** **Place pairs** (as BigWarp's landmark mode): each click in
+  a view places a landmark, a fixed point and then the same feature in
+  the moving layer, until **Stop placing**; the panel says which comes
+  next. Or ++alt+f++ places a fixed point at the mouse and ++alt+m++ the
+  matching moving point. Landmarks show in the views as numbered points
+  (fixed ones in Neuroglancer's annotation yellow, moving ones in its cyan, where the layer puts them): drag
+  one to move it, and its pair is fitted again; its card (*Pair 1*) shows
+  both points and, once fitted, the pair's error, and goes to the pair or
+  removes it. Fit as translation, rigid, similarity or affine, with the
   residual of each pair; with **Live** the layer moves with each pair,
   otherwise **Apply**. Each pair has a button that goes to it, and a point
   dragged in the *landmarks (fixed)* or *landmarks (moving)* layer moves
-  its pair.
+  its pair too.
 - **Warp through the pairs:** a new layer of the moving image bent so each
   fixed point lands exactly on its pair and smoothly between (a thin-plate
   spline; four pairs or more, not all in one plane). It is computed as you

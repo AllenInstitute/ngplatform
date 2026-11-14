@@ -1,6 +1,6 @@
 import { quat, vec3 } from "neuroglancer/unstable/util/geom.js";
 import { describe, expect, it } from "vitest";
-import { looksAnatomical, panelRotations, screenQuaternion } from "../src/engine/anatomical.js";
+import { looksAnatomical, panelRotations, screenQuaternion, standardView } from "../src/engine/anatomical.js";
 
 const screen = (q: number[] | undefined) => {
   const r = q === undefined ? quat.create() : quat.fromValues(q[0], q[1], q[2], q[3]);
@@ -26,6 +26,17 @@ describe("panel conventions", () => {
     expect(screen(p.xz)).toEqual({ right: [-1, 0, 0], down: [0, 0, -1] });
     // Sagittal: right is posterior (-y), so anterior is on the left; down is inferior.
     expect(screen(p.yz)).toEqual({ right: [0, -1, 0], down: [0, 0, -1] });
+  });
+
+  it("starts the 3-D view from the front when radiological: superior up, the patient's right on the screen's left", () => {
+    const front = screen(standardView("radiological"));
+    expect(front).toEqual({ right: [-1, 0, 0], down: [0, 0, -1] });
+    // Looking from the front (+y) towards the back: into the screen is -y.
+    const into = [front.right[1] * front.down[2] - front.right[2] * front.down[1], front.right[2] * front.down[0] - front.right[0] * front.down[2], front.right[0] * front.down[1] - front.right[1] * front.down[0]];
+    expect(into.map((x) => x + 0)).toEqual([0, -1, 0]);
+    // Neurological from behind, right on the right; Neuroglancer's own as it starts.
+    expect(screen(standardView("neurological"))).toEqual({ right: [1, 0, 0], down: [0, 0, -1] });
+    expect(standardView("neuroglancer")).toBeUndefined();
   });
 
   it("neurological keeps the patient's right on the right", () => {

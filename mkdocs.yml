@@ -48,6 +48,8 @@ nav:
   - Plugins:
       - plugins/index.md
       - Zarr Vectors: plugins/zarr-vectors.md
+      - View aids: plugins/view-aids.md
+      - Scale navigator: plugins/scale-navigator.md
       - Track filtering: plugins/track-filtering.md
       - Annotations: plugins/annotations.md
       - Segmentation: plugins/segmentation.md

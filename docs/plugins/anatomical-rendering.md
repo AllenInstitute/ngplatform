@@ -3,7 +3,7 @@
 ![S-21-46 (HiP-CT, 100 µm) path-traced on a workstation's GPU and drawn in the 3-D view](../images/plugins/anatomical-rendering.png)
 
 **Kind:** tool · **Off by default** (offered when you open an OME-Zarr or N5 image; or turn it on in the Plugins panel) · a
-**Render** switch beside **Sections** in the 3-D view, and the **Anatomical** panel in the Tools dock ·
+**Render** switch beside **Sections** in the 3-D view, and the **Anatomical** panel in the Tools section ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/anatomical-rendering)
 
 Photorealistic views of an OME-Zarr or N5 image (not precomputed volumes such as EM), path-traced on a GPU and drawn in
@@ -12,15 +12,17 @@ scatters, so surfaces get soft shadows and depth and translucent tissue
 glows, in the manner of "cinematic rendering". The image is read straight
 from its OME-Zarr store; nothing is converted.
 
-It renders in one of two places:
+It renders in one of two places, chosen in the **Remote** card:
 
+- **In this browser** (the default): on this computer's own GPU, through
+  WebGPU (and WebGL for the object in the 3-D view, so it renders without
+  WebGPU too). It holds a coarser level of the image (64 million voxels by
+  default; **Quality › Object**) and has no region colours.
 - **On a host**: the runner's **render** service, on a computer with an
   NVIDIA GPU (CUDA): this computer, a workstation or a cluster node reached
-  over SSH (see [Jobs on this computer](../guide/local-jobs.md)). Frames come
-  back as they refine; the browser only draws them.
-- **In this browser**: the same path tracer in WebGPU, on this computer's own
-  GPU, for a laptop with a GPU and no host. It holds a coarser level (up to
-  64 million voxels) and has no region colours.
+  over SSH (see [Jobs on this computer](../guide/local-jobs.md)), chosen in
+  **Remote** with its computer. It holds the image at full detail, and
+  renders stills, movies and splats.
 
 ## Starting it
 
@@ -43,7 +45,7 @@ Organ Atlas serves most of its scans; on a host).
    (**This computer**, or **Add a computer (SSH)…**; **Pair a computer…** in
    the panel's **Remote** card opens it). Addresses and tokens are kept
    there, for every function, not per image.
-3. Turn the plugin on and open the **Anatomical** panel in the Tools dock. Switch on
+3. Turn the plugin on and open the **Anatomical** panel in the Tools section. Switch on
    **Render** at the top (also beside **Sections** in the 3-D view); the
    line under it shows work under way (the image loading), or the
    error when something has gone wrong, with **Retry**. **Remote** picks the **Computer**:
@@ -71,12 +73,37 @@ takes images with one of each only.
 
 ## What you can set
 
-- **Preset**: a look per modality: MR T1, HiP-CT, histology (BigBrain), a
-  translucent one for any image, and **Regions** (each label in its
-  colour). A preset is a transfer function (colour and opacity from the
-  image's values) with material and light; its values are percentiles of
-  the tissue, so one preset suits scans of different scaling.
-- **HiP-CT organs**: a preset for each organ in the Human Organ Atlas (brain,
+- **Preset**, in groups:
+  - **General**, for any scan, over the window guessed from it:
+    **Greyscale** (black to white as the values rise, as a CT slice),
+    **Greyscale, inverted** (white to black), **Anatomy** (dark red-brown
+    through pink to ivory), **Thermal** (black, red, yellow, white: the
+    most contrast between near values), **Viridis** (even steps of
+    lightness, readable by colour-blind eyes), **Soft tissue and bone**
+    (translucent red soft tissue, opaque ivory dense structure) and
+    **Glass** (a faint bulk with the denser structure inside showing
+    through).
+  - **HiP-CT organs**: one for each organ (below).
+  - **By modality**: MR T1, HiP-CT brain, histology (BigBrain), a
+    translucent one for any image, and **Regions** (each label in its
+    colour); their values are percentiles of the tissue, so one preset
+    suits scans of different scaling. On a specimen in a mounting medium
+    (a HiP-CT organ in its jar) they are percentiles of the tissue alone,
+    the medium left out (as for the organ presets' histograms), and the
+    preset is clear outside the tissue: the medium, and from 2.5 windows
+    on, the jar's wall. A scan is taken to have a medium when the
+    commonest value in a ring just inside its sides, with the values about
+    it, fills at least 30% of that ring, and lies at least 5 of its
+    half-widths above 0: all twelve HiP-CT organ scans tried (47% to 95%
+    of the ring, 8.7 half-widths or more), and none of a masked brain (its
+    sides are 0), an MR head (air, at 0 with noise as wide as its value:
+    2.5) or BigBrain with its background 0. Without a medium the
+    percentiles are as before.
+  - **From a file**: those loaded with **Load…**.
+
+  A preset is a transfer function (colour and opacity from the image's
+  values) with material and light.
+- **HiP-CT organs** (on a host and in this browser): a preset for each organ in the Human Organ Atlas (brain,
   heart, lung, kidney, liver, spleen, colon, eye, placenta, prostate, testis,
   uterus), its colours measured on photographs of real organs (each preset
   lists them, with their authors and licences). These presets spread their
@@ -86,35 +113,57 @@ takes images with one of each only.
   percentiles do not suit them. The host guesses the window: from just past
   the medium (seen in a ring inside the scan's sides), on the side of it
   where the tissue is, with the tissue's commonest value at the window's
-  middle. Change the two values if the guess misses; **Guess** goes back to
-  it. Each organ preset also records its tissue's histogram on the scan it
+  middle (in this browser, guessed the same way from the level it holds).
+  Change the two values if the guess misses; **Guess** goes back to it. Each organ preset also records its tissue's histogram on the scan it
   was made on (its percentiles), and on another scan its colours are placed
   at the same percentiles of that scan's tissue (histogram matching): HiP-CT
   values are not calibrated and vary between scans, but an organ's
   histogram keeps its shape (a brain's two peaks, grey and white matter).
+  The brain presets match each class to its own (below), since brains
+  differ in how much of them is grey matter.
   A window set by hand is used as it is. **Hide the jar** renders only a cylinder about the scan's axis, which
   leaves out the jar's wall (as dense as tissue).
-- **Colourmap** (on a host, once the image is open): the image's histogram (grey,
-  log counts) with the preset's colourmap and opacity curve over it, at
-  the image's own values. Drag a control point left or right to move it
+- **Colourmap** (once the image is open; when rendering in this browser,
+  from the level of the image it holds, read over all of the image's
+  values as the render computer reads it): the image's histogram (grey
+  bars, log counts) with the preset's opacity curve over it, at the
+  image's own values; under it a strip of the image's own grey values,
+  black at its lowest to white at its highest, which moves with the
+  histogram; and under that the colourmap as a bar (its colours, a
+  checker where it is clear), which moves with the map. Use it to window
+  and threshold what is rendered: points with no opacity leave those
+  values out, and the map's colours spread over the values between its
+  points. Both are moved and compressed in place:
+  - the **colourmap**: drag its bar to move it along the values; drag
+    either end of the bar (the white brackets) to compress or stretch
+    it, the other end staying where it is;
+  - the **histogram**: drag it (anywhere there is no point) to slide it
+    under the map; Shift-drag to compress or stretch it about the
+    pointer. Its blue triangles, at its percentiles, warp it piecewise
+    linearly between them (the image's values are remapped before they
+    are coloured).
+  Once the editor has been clicked, the wheel compresses the map (over
+  its bar) or the histogram (over it) about the pointer, and the arrow
+  keys move the map, + and − compress it. Ctrl-wheel zooms the view, and
+  a double-click on empty space fits it to the map or to the whole
+  histogram in turn; the view otherwise stays as it is while you tune, so
+  you see what moves. A control point: drag it left or right to move it
   (the stops between its neighbours follow) and up or down to change its
   opacity; double-click it to choose its colour; Ctrl-click to add a point,
-  right-click to remove one. **Shift** moves the whole map along the
-  values, **Compress** narrows or widens it about its middle. Under the
-  histogram, blue triangles hold it at its percentiles: drag them to slide
-  and warp the histogram under the colours (the image's values are remapped
-  before they are coloured, piecewise linearly between the triangles). The tuning is
-  kept per image (with the scene), **Reset** returns to the preset, and
-  **Save as a preset file** writes the tuned map (at this image's values)
-  to load again.
+  right-click to remove one. **Shift** and **Compress** do the same to the
+  map as sliders. Each drag is one step to undo. The tuning is kept per
+  image (with the scene), **Reset** returns to the preset, and **Save as a
+  preset file** writes the tuned map (at this image's values) to load
+  again.
 - **Density** (opacity per mm), **Exposure** and the other settings are
   sliders with their numbers beside them (a budget applies when its slider
   is let go); and the key light's direction
-  (relative to the camera, so the light follows as you turn the view).
+  (set relative to the camera; it then stays fixed to the image as you turn
+  the view about it, until you set it again).
 - **Lighting** (on a host): a style, **Studio** (a photographer's studio),
   **Soft** (light from all round, faint shadows), **Hard** (one strong light,
   deep shadows) or **Sky** (daylight), or as set by hand: the key light's
-  direction (around the view and up, sliders; it turns with the camera) and
+  direction (around the view and up, sliders, from the camera when set) and
   the strengths of the key light and of the light from all round.
 - **Light map** (on a host): image-based light from an HDR panorama
   (studio, photo studio, sky; CC0 images from [Poly Haven](https://polyhaven.com),
@@ -131,15 +180,27 @@ takes images with one of each only.
   its inside or cutting it out (fractions of the volume along x, y and z,
   sliders): what shows is inside any crop that keeps and in none that cuts
   out (in this browser's renderer, only the first that keeps).
-- **Camera plane** (Crops): a clip across the view, an offset in mm past the
-  position, keeping what lies beyond it; it turns with the camera, or
-  **Pin** keeps it at the angle it has now (an oblique clip), and
-  **Follow** lets it turn again. A clip turned on starts through the
-  point the cursor was last over in the 3-D view (on the rendered tissue),
-  and **Move to the cursor** moves the clips that are on there.
+- **Camera planes** (Crops): **Add a camera plane** cuts across the view as
+  it is now, through the tissue's centre, keeping what lies beyond it, and
+  selects it so it can be dragged at once. The plane stays where it was
+  set as the camera moves; its camera button sets it again from the view
+  then. There can be several, each named, on or off, with an offset in mm
+  along its own direction, and removed with its bin. **Move to the cursor**
+  moves the planes (and axis planes) that are on to the point the cursor
+  was last over in the 3-D view. At most six cuts apply at once (camera
+  planes and axis planes that are on).
 - **Axis planes** (Crops): clips through the current position across x, y or z, keeping
   either side, with an offset in mm (a slider or a number). Regions listed under **Kept whole** (Regions)
   stay whole (vessels through a cut brain, say).
+- **In the views**: while rendering, the boxes and planes that are on are
+  drawn in the 3-D and 2-D views with handles (a box once the image's
+  level is held in this browser, and when the image's axes are not turned
+  against the view's). Click one to select it: a box's corners and face
+  centres resize it, its centre moves it; a plane's centre moves it along
+  its normal and its ring turns it (an axis plane only moves). The card
+  over the view gives the exact values (a box's ends as fractions of the
+  volume, a plane's offset in mm), what it keeps, and removes it. Dragging
+  renders live and is one undo step when let go, as the sliders are.
 - **Regions** (on a host): **Colour by region** with a co-registered OME-Zarr segmentation (its labels'
   FreeSurfer colours), how much of the region's colour to use, regions
   to hide, and regions kept whole through crops. This browser's renderer has no region colours, so the card is hidden there.
@@ -166,6 +227,27 @@ takes images with one of each only.
   one has as many samples (up to 24, or 2 s), then fades into it. A view
   that needs no finer level lets the detail go. Stills use the detail held
   for the view; movies use the whole volume's level.
+- **The image in the 3-D view** is an object in the view's space, drawn
+  in this browser with every frame's camera: it turns, pans and zooms with
+  the view at once, and meshes, tracts and sections go behind and in front
+  of it as they should. It is one level of the image (**Object**, below),
+  with its light path-traced into it in this browser over a few seconds
+  after the light, preset or cuts change (**Quality** says how far: "light
+  12 of 47 passes"); until then it is lit more simply. Turning the view
+  does not light it again: the light is the object's. When the camera
+  rests, the object is path-traced where it is, as the render computer
+  does, a sample a pixel at a time ("path-traced, 24 samples"): it sharpens
+  into the path tracer's look within a second or two, up to **Samples per
+  pixel**, and is drawn quickly again as soon as the camera moves.
+- **Object** (Quality; 64 million voxels by default, up to 512): how much
+  of the image this browser holds for the object, the finest level within
+  it. More is sharper, and takes longer to read and more of this
+  computer's GPU memory.
+- **Path-traced picture when still** (Quality; off by default): once the
+  camera rests, the host's path-traced picture of the view, at the image's
+  full detail, comes in over the object, and goes as soon as the camera
+  moves. Off, the host renders only stills, movies and splats (lit as the
+  object is), and **Finer detail** (which follows the views sent) is not used.
 - **Samples per pixel**: when a still view stops refining. Under it, the
   level held and the last frame's samples, size and time a pass.
 - **Load…** (beside Preset): a preset (or a list) as JSON, in the form of
@@ -214,6 +296,59 @@ takes images with one of each only.
   nerfstudio's `transforms.json`, `points.ply`) can be fitted later with
   `python -m ngplatform_render.splat.fit FOLDER` or another splat trainer.
 
+## Objects
+
+On a render computer, the **Objects** card draws objects with the
+image, path traced as exact geometry, from either kind of layer.
+
+**A precomputed segmentation's chosen segments** (the first 64), such
+as cells or axons of the MICrONS segmentation:
+
+- **Surfaces**: their meshes. Set from clear (0) to opaque (1).
+- **Image within**: the image inside them only, at the finest stored
+  level within the voxel budget. There is no box round them: only the
+  pages (about 0.5 µm a side) the meshes pass through or enclose are
+  read, each voxel kept if it is inside.
+- **Inside by**: **the meshes** (by ray parity) or **the labels** (the
+  segmentation's own voxels, at its level of the same voxel size). The
+  meshes are simplified from the labels, so the labels are exact.
+- **Segment colour**: tints the image within each segment.
+- **Loading**: a coarse version shows first (within 16 M voxels) while
+  the whole budget's is read; choosing other segments opens them again.
+- **Preset**: the preset is placed on the values inside the objects, not
+  the whole image's. **EM: membranes** suits electron microscopy:
+  membranes dark and opaque, cytoplasm nearly clear.
+
+**A Zarr Vectors layer** (a tractogram, skeletons, points, a mesh) is
+drawn as solid surfaces inside the volume, from the finest level within
+the budget:
+
+- **Streamlines, polylines and lines** are tubes, coloured by their
+  direction (red x, green y, blue z).
+- **Skeletons and graphs** are a tube per edge, using a `radius`
+  attribute where the store has one.
+- **Points** are spheres.
+- **Meshes** are triangles.
+- **Everything else** is coloured by object.
+- **Coloured as the layer**, when its **Vertex colour** (Display tab)
+  colours by a group or an attribute: each tube, sphere or triangle in its
+  group's colour (the store's, or a palette's), the groups not chosen
+  left out; or by the attribute through the layer's colour map between
+  its low and high, values outside hidden when the layer hides them.
+  Only the attributes the colouring needs are read with the geometry (a
+  cell atlas holds hundreds); dragging low and high or choosing groups
+  re-colours the render as it is, another attribute opens it again.
+
+**A Zarr Vectors layer alone**, in a scene with no image (points of a
+cell atlas, a tractogram, a surface), is rendered by itself: it is the
+scene, in an empty volume about it, with the panel's lighting, quality,
+crops, stills and movies. The image's own settings (its choice, density,
+window, the colourmap editor, the jar, regions) are hidden. It needs a
+render computer.
+
+Cuts and crops apply to objects as to the volume. Stills and movies
+draw them too. This browser's renderer does not draw objects yet.
+
 ## The HiP-CT organ presets
 
 Each organ's tissues were given colours measured on openly licensed
@@ -230,7 +365,27 @@ counts once. A tissue then has a dark, a middle and a light shade (the
 25th, 50th and 75th percentiles of its lightness), spread across its band
 of the image's values, and the colour runs smoothly (in Lab) from one
 tissue to the next, so the image's own texture shows as shades of the
-tissue rather than one flat colour. Each colour was then made into a material colour by
+tissue rather than one flat colour. The organ presets now take only their
+hues from the photographs; their lightness follows the tissue's own
+histogram, as the brain presets' does (below): a contrast-limited
+equalisation of each organ's tissue histogram on its scan (clipped at 4
+times its mean height, 2 for the lung, whose tissue is a sparse tail),
+from L* 16 at its 0.5th percentile to 92 at its 99.5th, lighter with
+density, smoothly. The hue runs by rank through the photographed tissues'
+shades, each at the rank of its band's middle (a kidney's sinus fat, then
+its parenchyma; a heart's epicardial fat, then myocardium); a photographed
+tissue denser than the tissue's 99.5th percentile (valves, the kidney's
+capsule, calcification, the lens) colours the dense tail. Each organ's cuts
+render with a rank correlation of 0.96 to 0.99 between value and lightness
+(0.84 to 0.97 before, and none for the lung) and span 45 to 62 L* over the
+tissue's 5th to 95th percentile (30 to 48 before), except the lung, whose
+tissue in a plane is mostly thin vessels (35), and the eye, whose wall is
+thin against the clear vitreous (43; its cut also keeps only 0.81 of the
+map's lightness range, as before). Because lightness now
+follows density rather than the photographs, some exteriors are further
+from their photographs than before (a kidney's or prostate's surface
+darker, a liver's lighter); the cuts carry the contrast. Each colour was
+then made into a material colour by
 rendering a flat slab of tissue under the renders' light (the photo-studio
 map and the key light) and tone curve, and changing the material until the
 slab shows the photograph's colour relative to its white. Multiple
@@ -261,7 +416,81 @@ were given a colour by hand and are marked "not measured".
 | testis | LADAF-2021-17 testis | [Bull testicles Бычий семенник 1.jpg](https://commons.wikimedia.org/wiki/File:Bull_testicles_%D0%91%D1%8B%D1%87%D0%B8%D0%B9_%D1%81%D0%B5%D0%BC%D0%B5%D0%BD%D0%BD%D0%B8%D0%BA_1.jpg) (Jurfeld, CC BY-SA 4.0, fresh) | parenchyma |
 | uterus | AUMC-005 uterus | [Uterus in museum.jpg](https://commons.wikimedia.org/wiki/File:Uterus_in_museum.jpg) (Tiia Monto, CC BY-SA 3.0, fixed/preserved museum specimen (method not stated)) | — |
 
-The brain has two presets. **Brain (fixed)** is a formalin-fixed brain, as
+**Grey and white matter.** A brain's tissue is two classes (three in an MR
+T1: CSF, grey and white matter), and brains differ in how much of each they
+hold. On LADAF-2021-64 grey matter's median is the tissue's 18th percentile
+and white matter's the 69th; on S-21-46, where the presets were made, the
+two meet near the 62nd. Matched as one histogram, the presets would carry the
+62nd percentile to every brain, and most of LADAF's white matter would take
+grey matter's colours. So the brain presets name their classes (`classes`,
+and for a percentile preset the percentiles they meet at, `split`), each
+scan's classes are found from its own tissue (Otsu's thresholds on its
+values at the 5th to 95th percentiles, each of the same weight), and each
+class of the preset is matched to the same class of the scan, piecewise
+between the splits.
+
+A brain's histogram is not two separate peaks but one continuous spread
+(grey matter shading into white, deep nuclei, the internal capsule,
+cerebellar folia, vessels), so the brain presets' colours follow it rather
+than stepping between the classes. Their lightness comes from a
+contrast-limited equalisation of the tissue's histogram on the scan each
+preset was made on: the histogram clipped at 4 times its mean height, the
+excess spread evenly over the values, then cumulated, from L* 16 at the
+tissue's 0.5th percentile to 92 at its 99.5th, smoothly. Because each scan's
+values are placed by their ranks (within their classes), this equalises
+every scan's own histogram. The hue runs smoothly by rank through the
+photographed shades (fixed: grey-brown grey matter to cream white matter;
+fresh frozen: pinkish grey to pale pink-white; MR T1: warm grey to pale;
+histology: stain blue to pale blue-grey). The tails read as their own: the
+low end (partial volume, CSF) darker as it fades to clear, the dense end
+(vessels, calcification) in the photographs' vessel hue where they show
+vessels. Grey and white matter's typical voxels end 29 to 32 ΔE2000 apart,
+and the lightness changes within each.
+
+A cut keeps that contrast only if the renderer does not shade it as a
+surface: inside tissue the data's gradient is noise and boundaries, and a
+face lit by it (or coloured from beside the collision, `surface_inset`)
+reads as embossed and flat. On cuts through LADAF-2021-64, S-21-46, the MNI
+T1 and BigBrain, the old brain presets rendered with a rank correlation of
+0.82 to 0.93 between each point's value and its lightness, and their
+lightness range shrank to 0.61 to 0.75 of the map's. The brain presets
+therefore shade cuts as the calibration's uniform slab is shaded (`shade_mix`
+0.3, 0.15 for MR T1; `gradient_scale` 5) and use an exposure of 3.3 (3.5 for
+HiP-CT brain), so a cut seen head on shows white near white. Their cuts now render with a rank
+correlation of 0.98 to 0.99, keep 0.85 to 0.91 of the map's lightness range,
+and span 45 to 56 L* over the tissue's 5th to 95th percentile. The organ
+presets are shaded the same way (the colon, eye and uterus with less surface
+shading and more exposure, `shade_mix` 0.05 to 0.15, exposure 3.6 to 4.5).
+
+A surface, unlike a cut, forms on the partial-volume voxels between the
+tissue and its medium, which an equalised map colours with its darkest
+shades: a brain's exterior rendered nearly black-brown (L* 19 on
+LADAF-2021-64, against 68 for the photographed grey matter). Two things
+now give a surface its tissue's colour. Below the rank where a preset's
+opacity reaches its first plateau (where it counts a value as tissue, and
+never above the lowest photographed tissue's band or the 10th percentile),
+the colour holds while the opacity fades; and an inset (`surface_inset`, 3
+voxels for the brains, 1.5 for the organs, 2 for HiP-CT brain) takes the
+colour from beneath a collision that lies in a surface's partial volume
+(less than 0.3 of the opacity beneath it), never inside tissue, so cuts
+keep their colours. The darkest shades are also desaturated (chroma scaled
+down below L* 40). The brains' exteriors render at L* 30 (19 before); they
+stay darker than the photographs because grey matter is dark in a map that
+spends its lightness on contrast. HiP-CT brain's exterior on
+LADAF-2021-64 renders at L* 36 (26 before).
+
+White matter is brighter than grey matter in every scan checked (HiP-CT
+LADAF-2021-64 and S-21-46, the MNI ICBM152 T1, BigBrain's stain). The HiP-CT
+brain and MR T1 presets use three classes (the lowest: partial volume at
+the surface and CSF, kept clear), the BigBrain and HiP-CT organ brains two.
+On a brain in its jar's medium the medium's cut takes away the lowest
+class (what lies against the medium), and three classes would split grey
+matter in two (on LADAF-2021-64, at its 22nd and 56th percentiles), so
+there a three-class preset's lowest two classes count as one: the HiP-CT
+brain preset on LADAF-2021-64 then shows grey and white matter a ΔE2000
+of 31 apart (4 when its percentiles took in the medium).
+
+The brain has two organ presets. **Brain (fixed)** is a formalin-fixed brain, as
 HiP-CT's are (tan grey matter, cream white matter). **Brain (fresh frozen)**
 shows the same scan as fresh or fresh-frozen tissue looks: pink-tan grey
 matter, pink-white white matter and red vessels. It was measured on the
@@ -286,10 +515,12 @@ scattering with the gradient as normal or volume scattering with a
 Henyey–Greenstein phase function, chosen by the gradient's magnitude (Kroes
 et al. 2012); a directional key light and a sky-like environment; a thin-lens
 camera; a filmic tone curve. Where a preset asks for it (`surface_inset`, in
-voxels), a collision takes its colour a voxel or two inwards along the
-gradient, on the more opaque side, so a surface shows the tissue beneath it
-rather than the values between it and the medium around it (which would
-otherwise colour a kidney's capsule as fat). Each pass adds one sample per pixel and the
+voxels), a collision that lies in a surface's partial volume (less than 0.3
+of the opacity a voxel or two inwards) takes its colour from there, along
+the gradient on the more opaque side, so a surface shows the tissue beneath
+it rather than the values between it and the medium around it (which would
+otherwise colour a kidney's capsule as fat); a collision inside tissue, as
+on a cut, keeps its own colour. Each pass adds one sample per pixel and the
 image is their mean, so it refines while the view is still. Frames made
 while the camera moves (see below) are half size, and for the first 12
 samples after a change the host smooths the image with an edge-avoiding

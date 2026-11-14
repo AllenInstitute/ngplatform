@@ -6,7 +6,7 @@
  * as CSV, and CSV read into the layers.
  */
 import type { Disposer, PlatformContext } from "@ngplatform/sdk";
-import { button, downloadBlob, el, emptyState, iconButton, select } from "@ngplatform/sdk/dom";
+import { button, downloadBlob, el, emptyState, icon, iconButton, select } from "@ngplatform/sdk/dom";
 import { csv } from "@ngplatform/sdk/format";
 import type { Annotate, Selected } from "./annotate.js";
 import { groupOf, groupsOf, groupTree, setGroup, addGroup, writeGroups } from "./groups.js";
@@ -15,6 +15,18 @@ import { BUILTIN_COLUMNS, type Column, fieldColumns, importCsv, matches, parseQu
 import { ANNOTATIONS_PANEL } from "./manifest.js";
 import { fileName, physical } from "./ui.js";
 import { type Field, fieldsOf, readValue, setValue, valueText } from "./values.js";
+
+/** A line icon inside a heading's text, at its size; `label` names it where it stands for a word. */
+function inline(name: string, label?: string): SVGSVGElement {
+  const mark = icon(name);
+  mark.classList.add("inline-icon");
+  if (label !== undefined) {
+    mark.removeAttribute("aria-hidden");
+    mark.setAttribute("role", "img");
+    mark.setAttribute("aria-label", label);
+  }
+  return mark;
+}
 
 /** Rows drawn at once; a query finds the others. */
 const MAX_ROWS = 500;
@@ -168,8 +180,8 @@ export class TablePanel {
               redraw();
             },
           },
-          c.key === "comments" ? "💬" : c.title,
-          on ? (this.sort!.descending ? " ▾" : " ▴") : "",
+          c.key === "comments" ? inline("comment", c.title) : c.title,
+          on ? inline(this.sort!.descending ? "arrow-down" : "arrow-up") : "",
         );
       }),
     );

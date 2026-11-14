@@ -36,7 +36,7 @@ export const CSP_DIRECTIVES: Record<string, { sources: string[]; why: string }> 
       "Tool plugins add their styles as <style> elements (nine of the built-in ones do, and a plugin from a URL may), Neuroglancer's widgets set style attributes in markup they build, " +
       "and the page's loading screen is an inline <style>.  Styles cannot run code; the risk left is an injected style that changes how the page looks.",
   },
-  "font-src": { sources: ["'self'", "data:"], why: "IBM Plex served with the app (public/fonts); data: for fonts some readers embed." },
+  "font-src": { sources: ["'self'", "data:"], why: "Source Sans 3 and Source Code Pro served with the app (public/fonts); data: for fonts some readers embed." },
   "img-src": {
     sources: ["'self'", "data:", "blob:", "https:", "http:"],
     why: "Thumbnails, figures, icons and the images in Markdown guides from any server; blob: and data: for captures; http: for the runner and render service on this computer.",

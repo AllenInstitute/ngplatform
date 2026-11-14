@@ -6,6 +6,7 @@
  */
 import { vi } from "vitest";
 import type { Json, LayerInfo, PlatformContext, RunnerJob, SegmentProperties } from "@ngplatform/sdk";
+import { type FakeViewTools, fakeViewTools } from "@ngplatform/sdk/testing";
 import type { LabelsEngine } from "../labels_client.js";
 import type { Engines, Saved } from "../plugin.js";
 import type { RoiGeometry } from "../roi.js";
@@ -162,6 +163,8 @@ export interface World {
   visible: Map<string, BigUint64Array>;
   addLayer: ReturnType<typeof vi.fn>;
   jobs: { kind: string; args: Record<string, unknown> }[];
+  /** The in-view tools: the regions' shapes, dragged as a person would. */
+  views: FakeViewTools;
   setState(saved: unknown): void;
   /** Tells the plugin a layer's segment properties changed (a layer replaced: undo). */
   propertiesChanged(layer: string): void;
@@ -220,7 +223,9 @@ export function world(saved: Partial<Saved> = {}, options: { tags?: boolean; hol
     queueMicrotask(() => listeners.workspace.forEach((f) => f()));
     return name;
   });
+  const views = fakeViewTools({ centre: () => ng.position as number[] });
   const ctx = {
+    views,
     state: {
       get: () => state,
       set: (value: unknown) => {
@@ -318,6 +323,7 @@ export function world(saved: Partial<Saved> = {}, options: { tags?: boolean; hol
     visible,
     addLayer,
     jobs,
+    views,
     setState(next) {
       state = next;
       listeners.state.forEach((f) => f());

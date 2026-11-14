@@ -38,6 +38,14 @@ describe("the service worker's versions", () => {
     expect(staleCaches(names, "0.2.0-b")).toEqual([cacheName("0.2.0-a"), cacheName("0.1.0-z")]);
     expect(staleCaches([cacheName("0.2.0-b")], "0.2.0-b")).toEqual([]);
   });
+
+  it("keeps another folder's caches: the app at / and at /dev/ on one site", () => {
+    const root = "https://x.github.io/ngplatform/";
+    const dev = "https://x.github.io/ngplatform/dev/";
+    const names = [cacheName("1", root), cacheName("2", root), cacheName("1", dev), cacheName("2", dev), cacheName("0-old"), "some-other-cache"];
+    expect(staleCaches(names, "2", root)).toEqual([cacheName("1", root), cacheName("0-old")]);
+    expect(staleCaches(names, "2", dev)).toEqual([cacheName("1", dev), cacheName("0-old")]);
+  });
 });
 
 describe("asking a page", () => {

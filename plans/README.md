@@ -19,7 +19,7 @@ Item line numbers are from that commit and move as the code changes.
 | Corners | Square everywhere (`--r: 0`); pills only for status chips. |
 | CI | As few runs as possible: on pull requests and by hand, `[skip ci]` on work-in-progress pushes. |
 | Errors | Kept locally: in Activity, and a log Settings › Developer can save. No remote reporter. |
-| Theme | Dark only. |
+| Theme | Dark (default), Light or Match system, kept per browser (Settings › View); light mirrors dark. The views are white in the light theme (display only, never saved) unless Black views in the light theme is on. Decided 2026-11-14, replacing "Dark only". |
 | Splats | Shown, marked *In progress*, until a fit has run end to end. |
 | Browsers | Chrome and Edge fully; Firefox and Safari work, without folder access. |
 
@@ -27,7 +27,7 @@ Item line numbers are from that commit and move as the code changes.
 
 | | Target |
 |---|---|
-| Type | Four sizes as tokens: 11 (captions, labels), 12 (body), 13 (sheet controls), 15 (sheet titles). Every control in IBM Plex Sans; numbers and paths in Plex Mono. |
+| Type | Five sizes as tokens: 11 (captions, labels), 12 (body), 13 (sheet controls, panel headings), 16 (sheet titles). Every control in Source Sans 3 (IBM Plex Sans until 2026-11-12) with tabular figures; addresses and code in Source Code Pro. |
 | Buttons | Primary, outline, quiet and icon; 24 px in docks, 28 px in sheets; at most one primary per panel. |
 | Fields | One field and one select, as high as the buttons beside them; one slider-with-number control. |
 | Grouping | A panel longer than a screen is cards (`card()`); the first open, the rest remember their state. One uppercase label style inside a card; no private headings. |
@@ -120,3 +120,9 @@ two to three weeks, Phase 3 two weeks, Phase 4 a week, Phase 5 one to two
 weeks. Effort per item: S under half a day, M one to three days, L more.
 The render service's GPU budget is a blocker but large, so it is in 3A; until
 then, Phase 1's input limits keep one request from exhausting the GPU.
+
+Later plans, each its own file:
+
+- [Path-traced geometry and images within objects](path-traced-geometry.md)
+  (2026-11-13): any Zarr Vectors dataset path traced as exact geometry, and an
+  image at full resolution within objects through a dynamic Zarr store.

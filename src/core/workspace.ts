@@ -17,6 +17,7 @@
  * a viewer.
  */
 import { withoutSignIn } from "./source_auth.js";
+import { VIEW_DEFAULTS } from "./view_defaults.js";
 
 export type Json = Record<string, unknown>;
 
@@ -299,9 +300,9 @@ export function activeScene(p: PlatformState): SceneRecord {
   return p.scenes.find((s) => s.id === p.activeScene) ?? p.scenes[0];
 }
 
-/** The parts of a scene a new, empty scene inherits: the layout. */
+/** A new, empty scene: the views' defaults (./view_defaults.ts) and, from the scene it is made beside, the layout. */
 export function emptySceneFrom(ng: Json): Json {
-  const out: Json = {};
+  const out: Json = { ...VIEW_DEFAULTS };
   // Not the dimensions: the first data added sets them, in its own units (an
   // EM volume in nanometres, a TIFF stack in micrometres), and the zoom fits it.
   if (ng.layout !== undefined) out.layout = ng.layout;

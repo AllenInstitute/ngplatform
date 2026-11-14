@@ -26,6 +26,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .geometry import GEOMETRY_SOURCE
+
 # Names of the float parameters, in order.  Vectors take consecutive slots.
 _FIELDS: list[tuple[str, int]] = [(f["name"], f["size"]) for f in json.loads((Path(__file__).parent / "params.json").read_text())["fields"]]
 
@@ -39,6 +41,242 @@ NPARAMS = _o
 TF_SIZE = 1024
 
 _DEFINES = "\n".join(f"#define P_{k} {v}" for k, v in OFFSETS.items())
+
+
+# Objects (objects.py, geometry.py): meshes path traced as surfaces, and the image within them as the
+# medium, in place of the volume.  A path is inside or outside the meshes, and changes at each crossing
+# (the meshes are closed): inside, it is tracked through the image within them (held as bricks found
+# through a page table) with one majorant; at a crossing it is scattered by the surface with the chance
+# OBJ_SURF (diffuse, the object's colour), else goes on through.
+OBJECTS_SOURCE = r"""
+struct Obj {
+  Geo G;
+  cudaTextureObject_t atlas;  // the bricks, values 0..1, linear filtering
+  const int* top;             // the top table: a cell's sub-table, or -1
+  const int* sub;             // the sub-tables: a page's brick, or -1
+  const float* col;           // per object: r, g, b
+};
+
+// The image within the objects at q (voxel index coordinates of its level): 0 outside every brick.
+__device__ __forceinline__ float objval(const float* P, const Obj& O, V3 q) {
+  float px = P[P_OBJ_PAGE], py = P[P_OBJ_PAGE + 1], pz = P[P_OBJ_PAGE + 2];
+  int gx = (int)floorf((q.x + 0.5f) / px), gy = (int)floorf((q.y + 0.5f) / py), gz = (int)floorf((q.z + 0.5f) / pz);
+  int rx = gx - (int)P[P_OBJ_ORIGIN], ry = gy - (int)P[P_OBJ_ORIGIN + 1], rz = gz - (int)P[P_OBJ_ORIGIN + 2];
+  if (rx < 0 || ry < 0 || rz < 0) return 0.f;
+  int cx = rx >> 4, cy = ry >> 4, cz = rz >> 4;
+  int tx = (int)P[P_OBJ_TOPDIMS], ty = (int)P[P_OBJ_TOPDIMS + 1], tz = (int)P[P_OBJ_TOPDIMS + 2];
+  if (cx >= tx || cy >= ty || cz >= tz) return 0.f;
+  int c = O.top[((u64)cz * ty + cy) * tx + cx];
+  if (c < 0) return 0.f;
+  int b = O.sub[(((u64)c * 16 + (rz & 15)) * 16 + (ry & 15)) * 16 + (rx & 15)];
+  if (b < 0) return 0.f;
+  int ax = (int)P[P_OBJ_ATLAS], ay = (int)P[P_OBJ_ATLAS + 1];
+  int bx = b % ax, by = (b / ax) % ay, bz = b / (ax * ay);
+  // Within the brick (its apron of one voxel first); texture centres at i + 0.5.
+  float lx = q.x - gx * px + 1.f, ly = q.y - gy * py + 1.f, lz = q.z - gz * pz + 1.f;
+  return tex3D<float>(O.atlas, bx * (px + 2.f) + lx + 0.5f, by * (py + 2.f) + ly + 0.5f, bz * (pz + 2.f) + lz + 0.5f);
+}
+
+// The medium inside the objects at world point w: extinction, and colour in rgb (when asked).
+__device__ __forceinline__ float objmedium(const Scene& S, const Obj& O, V3 w, V3* rgb) {
+  const float* P = S.P;
+  float t = objval(P, O, aff(P + P_OBJ_VOX_FROM_WORLD, w));
+  float4 c = tflookup(S, t);
+  if (rgb) *rgb = v3(c.x, c.y, c.z);
+  if (cut(P, w, aff(P + P_VOX_FROM_WORLD, w))) return 0.f;
+  return P[P_DENSITY] * c.w * P[P_OBJ_EM];
+}
+
+// The nearest crossing of a mesh along the ray after t (world distance), or -1; the triangle in *tri.
+__device__ __forceinline__ float objhit(const float* P, const Obj& O, V3 ow, V3 dw, float t, int* tri) {
+  V3 o = aff(P + P_OBJ_PHYS_FROM_WORLD, ow), d = lin(P + P_OBJ_PHYS_FROM_WORLD, dw);
+  return geohit(O.G, o, d, t, 1e30f, tri);
+}
+
+// Inside an object, from ta to tb with one majorant: delta tracking (mode 0: the collision, or -1) or
+// ratio tracking (mode 1: the transmittance, multiplied into *T).
+__device__ float objtrack(const Scene& S, const Obj& O, V3 ow, V3 dw, float ta, float tb, Rng& rng, int mode, float* T) {
+  float M = S.P[P_OBJ_MAJ] * S.P[P_OBJ_EM];
+  if (M <= 0.f) return -1.f;
+  float t = ta;
+  for (int k = 0; k < 65536; ++k) {
+    t -= logf(1.f - rnd(rng)) / M;
+    if (t >= tb) break;
+    float s = objmedium(S, O, ow + dw * t, 0);
+    if (mode == 0) {
+      if (rnd(rng) * M < s) return t;
+    } else {
+      *T *= fmaxf(0.f, 1.f - s / M);
+      if (*T < 0.05f) {
+        if (rnd(rng) < 0.5f) { *T = 0.f; return -1.f; }
+        *T *= 2.f;
+      }
+    }
+  }
+  return -1.f;
+}
+
+// The transmittance from ow along dw (inside: whether ow is inside an object): the image within the
+// objects, and each surface crossed lets through 1 - OBJ_SURF.
+__device__ float objtrans(const Scene& S, const Obj& O, V3 ow, V3 dw, bool inside, Rng& rng) {
+  const float* P = S.P;
+  float T = 1.f, t = 0.f;
+  for (int g = 0; g < 256; ++g) {
+    int tri;
+    float th = objhit(P, O, ow, dw, t, &tri);
+    if (inside) objtrack(S, O, ow, dw, t, th < 0.f ? t : th, rng, 1, &T);
+    if (T <= 0.f || th < 0.f) break;
+    V3 w = ow + dw * th;
+    if (!cut(P, w, aff(P + P_VOX_FROM_WORLD, w))) T *= geokind(O.G, tri) != GEO_TRIANGLE ? 0.f : 1.f - P[P_OBJ_SURF];
+    if (T <= 0.f) break;
+    inside = !inside;
+    t = th + P[P_OBJ_EPS];
+  }
+  return T;
+}
+
+extern "C" __global__ void trace_obj(const float* P, const float* tf, cudaTextureObject_t env, const float* tris, const int* gkind, const int* tobj,
+                                     const float* nodes, const int* kids, int ntri, cudaTextureObject_t atlas, const int* top,
+                                     const int* sub, const float* col, float4* accum, int W, int H, const volatile int* cutp, int pass) {
+  __shared__ int stop;
+  if (threadIdx.x == 0 && threadIdx.y == 0) stop = *cutp >= pass;
+  __syncthreads();
+  if (stop) return;
+  int x = blockIdx.x * blockDim.x + threadIdx.x, y = blockIdx.y * blockDim.y + threadIdx.y;
+  if (x >= W || y >= H) return;
+  Scene S; S.P = P; S.tf = tf; S.env = env; S.lab = 0; S.lut = 0; S.lutflags = 0; S.maj = 0; S.dmaj = 0;
+  Obj O; O.G.tris = tris; O.G.kind = gkind; O.G.tobj = tobj; O.G.nodes = nodes; O.G.kids = kids; O.G.n = ntri;
+  O.atlas = atlas; O.top = top; O.sub = sub; O.col = col;
+  Rng rng; rng.s = pcg((u32)(y * W + x) ^ pcg((u32)P[P_FRAME] * 9781u + 1u));
+  V3 ow, dw;
+  ray(P, x, y, W, H, rnd(rng), rnd(rng), rng, &ow, &dw, true);
+  V3 L = v3(0.f, 0.f, 0.f), thr = v3(1.f, 1.f, 1.f);
+  float alpha = 0.f;
+  bool inside = P[P_OBJ_EYE_INSIDE] > 0.f;
+  int obj = -1;  // the object the path is in (its colour tints the image there)
+  int maxb = (int)P[P_MAX_BOUNCES];
+  V3 ldir = pv(P, P_LIGHT_DIR), lrgb = pv(P, P_LIGHT_RGB);
+  for (int bounce = 0; bounce <= maxb; ++bounce) {
+    // The next event along the ray: a collision in the image within an object, a surface, or leaving.
+    float t = 0.f, tc = -1.f;
+    int hit = -1;
+    for (int g = 0; g < 256; ++g) {
+      int tri;
+      float th = objhit(P, O, ow, dw, t, &tri);
+      if (inside) {
+        float r = objtrack(S, O, ow, dw, t, th < 0.f ? t : th, rng, 0, 0);
+        if (r >= 0.f) { tc = r; break; }
+      }
+      if (th < 0.f) break;
+      V3 w = ow + dw * th;
+      // A tube or a sphere (a streamline's, a skeleton's, a point's) is an opaque surface; a mesh scatters with OBJ_SURF.
+      bool solid = geokind(O.G, tri) != GEO_TRIANGLE;
+      if (!cut(P, w, aff(P + P_VOX_FROM_WORLD, w)) && (solid || rnd(rng) < P[P_OBJ_SURF])) { tc = th; hit = tri; break; }
+      inside = !inside;
+      if (inside) obj = O.G.tobj[tri];
+      t = th + P[P_OBJ_EPS];
+    }
+    if (tc < 0.f) {
+      if (bounce == 0) {
+        L = pv(P, P_BG) * P[P_BG + 3];
+        alpha = P[P_BG + 3];
+      } else {
+        L = L + thr * envlight(S, dw);
+      }
+      break;
+    }
+    if (bounce == 0) alpha = 1.f;
+    V3 w = ow + dw * tc;
+    V3 wo = dw * -1.f;
+    if (hit >= 0) {
+      // A surface: diffuse in the object's colour, a little gloss, lit from the side the path came.
+      int ob = O.G.tobj[hit];
+      V3 albedo = v3(O.col[3 * ob], O.col[3 * ob + 1], O.col[3 * ob + 2]) * P[P_ALBEDO];
+      // The triangle's normal in world: its physical normal through the transpose of phys_from_world's linear part.
+      V3 np = geonormal(O.G, hit, aff(P + P_OBJ_PHYS_FROM_WORLD, w));
+      const float* A = P + P_OBJ_PHYS_FROM_WORLD;
+      V3 nw = norm3(v3(A[0] * np.x + A[4] * np.y + A[8] * np.z, A[1] * np.x + A[5] * np.y + A[9] * np.z, A[2] * np.x + A[6] * np.y + A[10] * np.z));
+      if (dot3(nw, wo) < 0.f) nw = nw * -1.f;
+      V3 sw = w + nw * P[P_OBJ_EPS];
+      // The light reaches the surface on the path's side: inside or not as the path was there.
+      float Tl = dot3(nw, ldir) > 0.f ? objtrans(S, O, sw, ldir, inside, rng) : 0.f;
+      if (Tl > 0.f) L = L + thr * brdf_cos(nw, wo, ldir, albedo, 0.08f, 0.45f) * lrgb * Tl;
+      thr = thr * albedo;
+      dw = cosdir(nw, rng);
+      ow = sw;
+    } else {
+      // In the image within an object, as the volume's collisions are: a surface of its own (by the
+      // gradient) or the medium.
+      V3 col;
+      objmedium(S, O, w, &col);
+      if (obj >= 0 && P[P_OBJ_MIX] > 0.f) {
+        float m = P[P_OBJ_MIX];
+        col = col * (1.f - m) + v3(O.col[3 * obj], O.col[3 * obj + 1], O.col[3 * obj + 2]) * m;
+      }
+      V3 albedo = col * P[P_ALBEDO];
+      V3 q = aff(P + P_OBJ_VOX_FROM_WORLD, w);
+      V3 gv = v3(objval(P, O, q + v3(1.f, 0.f, 0.f)) - objval(P, O, q - v3(1.f, 0.f, 0.f)),
+                 objval(P, O, q + v3(0.f, 1.f, 0.f)) - objval(P, O, q - v3(0.f, 1.f, 0.f)),
+                 objval(P, O, q + v3(0.f, 0.f, 1.f)) - objval(P, O, q - v3(0.f, 0.f, 1.f))) * 0.5f;
+      float gm = len3(gv);
+      float tm = objval(P, O, q);
+      float psurf = P[P_SHADE_MIX] * (1.f - expf(-P[P_GRAD_SCALE] * gm));
+      float Tl = objtrans(S, O, w, ldir, true, rng);
+      if (rnd(rng) < psurf) {
+        V3 n = norm3(lin3(P + P_OBJ_NORMAL, gv)) * -1.f;
+        if (dot3(n, wo) < 0.f) n = n * -1.f;
+        float spec = tfmat(S, tm, 0), rough = tfmat(S, tm, 1);
+        if (Tl > 0.f) L = L + thr * brdf_cos(n, wo, ldir, albedo, spec, rough) * lrgb * Tl;
+        dw = cosdir(n, rng);
+        thr = thr * albedo;
+      } else {
+        float gg = P[P_PHASE_G];
+        if (Tl > 0.f) L = L + thr * albedo * lrgb * (hg(dot3(dw, ldir), gg) * Tl);
+        thr = thr * albedo;
+        dw = hgdir(dw, gg, rng);
+      }
+      ow = w;
+      inside = true;
+    }
+    if (bounce >= 2) {
+      float qq = fminf(0.95f, fmaxf(thr.x, fmaxf(thr.y, thr.z)));
+      if (rnd(rng) > qq) break;
+      thr = thr * (1.f / qq);
+    }
+  }
+  int i = y * W + x;
+  float4 a = accum[i];
+  accum[i] = make_float4(a.x + L.x, a.y + L.y, a.z + L.z, a.w + alpha);
+}
+
+// The first surface each pixel's ray meets (not cut away): GL depth (0..1) and the world distance, or 1 / -1.
+extern "C" __global__ void firsthit_obj(const float* P, const float* tris, const int* gkind, const int* tobj, const float* nodes, const int* kids,
+                                        int ntri, float* depth, int W, int H) {
+  int x = blockIdx.x * blockDim.x + threadIdx.x, y = blockIdx.y * blockDim.y + threadIdx.y;
+  if (x >= W || y >= H) return;
+  Obj O; O.G.tris = tris; O.G.kind = gkind; O.G.tobj = tobj; O.G.nodes = nodes; O.G.kids = kids; O.G.n = ntri;
+  Rng rng; rng.s = 1u;
+  V3 ow, dw;
+  ray(P, x, y, W, H, 0.5f, 0.5f, rng, &ow, &dw, false);
+  float out = 1.f, dist = -1.f, t = 0.f;
+  for (int g = 0; g < 64; ++g) {
+    int tri;
+    float th = objhit(P, O, ow, dw, t, &tri);
+    if (th < 0.f) break;
+    V3 w = ow + dw * th;
+    if (!cut(P, w, aff(P + P_VOX_FROM_WORLD, w))) {
+      float c[4];
+      mul4(P + P_VP, w.x, w.y, w.z, 1.f, c);
+      out = fminf(fmaxf((c[2] / c[3]) * 0.5f + 0.5f, 0.f), 1.f);
+      dist = th;
+      break;
+    }
+    t = th + P[P_OBJ_EPS];
+  }
+  depth[2 * (y * W + x)] = out;
+  depth[2 * (y * W + x) + 1] = dist;
+}
+"""
 
 SOURCE = (
     "#define TF_SIZE %d\n" % TF_SIZE
@@ -95,7 +333,10 @@ struct Scene {
   cudaTextureObject_t env;   // light map (latitude-longitude, rgba float), when P[P_ENVMAP] > 0
   cudaTextureObject_t det;   // the detail: a finer level's region (as vol), when P[P_DETAIL] > 0
   const float* dmaj;         // the detail's majorant per brick
+  Geo G;                     // surfaces drawn with the volume (tubes, spheres, meshes; G.n 0: none), in physical space
+  const float* gcol;         // each surface object's colour
 };
+
 
 __device__ __forceinline__ float texval(const Scene& S, V3 v) {
   // v: voxel index coordinates (centre of voxel i at i); texture centres are at i + 0.5.
@@ -206,6 +447,22 @@ __device__ __forceinline__ float medium(const Scene& S, V3 w, V3 v, V3* rgb) {
   if (!keep && cut(P, w, v)) sigma = 0.f;
   if (rgb) *rgb = col;
   return sigma;
+}
+
+// The nearest surface drawn with the volume along the ray from t (world), not cut away: its distance and
+// primitive, or -1.
+__device__ float surfacehit(const Scene& S, V3 ow, V3 dw, float t, int* tri) {
+  const float* P = S.P;
+  if (S.G.n <= 0) return -1.f;
+  V3 o = aff(P + P_OBJ_PHYS_FROM_WORLD, ow), d = lin(P + P_OBJ_PHYS_FROM_WORLD, dw);
+  for (int g = 0; g < 16; ++g) {
+    float th = geohit(S.G, o, d, t, 1e30f, tri);
+    if (th < 0.f) return -1.f;
+    V3 w = ow + dw * th;
+    if (!cut(P, w, aff(P + P_VOX_FROM_WORLD, w))) return th;
+    t = th + P[P_OBJ_EPS];
+  }
+  return -1.f;
 }
 
 // The ray's interval inside the volume's box [-0.5, n - 0.5] (voxel coordinates), as world distances.
@@ -483,8 +740,9 @@ __device__ __forceinline__ void ray(const float* P, int x, int y, int W, int H, 
 
 extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const float* tf, const float* maj,
                                  const unsigned short* lab, const float* lut, const float* lutflags, cudaTextureObject_t env,
-                                 cudaTextureObject_t det, const float* dmaj, float4* accum, int W, int H,
-                                 const volatile int* cut, int pass) {
+                                 cudaTextureObject_t det, const float* dmaj, const float* gtris, const int* gkind,
+                                 const int* gtobj, const float* gnodes, const int* gkids, int gn, const float* gcol,
+                                 const unsigned char* ghide, float4* accum, int W, int H, const volatile int* cut, int pass) {
   // A pass is cut short (a new view came) when the host writes its number to `cut` (host memory the GPU
   // reads): blocks that have not started then return at once. Read once a block, not once a thread.
   __shared__ int stop;
@@ -495,6 +753,7 @@ extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const 
   if (x >= W || y >= H) return;
   Scene S; S.P = P; S.vol = vol; S.tf = tf; S.maj = maj; S.lab = lab; S.lut = lut; S.lutflags = lutflags; S.env = env;
   S.det = det; S.dmaj = dmaj;
+  S.G.tris = gtris; S.G.kind = gkind; S.G.tobj = gtobj; S.G.nodes = gnodes; S.G.kids = gkids; S.G.n = gn; S.G.hide = ghide; S.gcol = gcol;
   Rng rng; rng.s = pcg((u32)(y * W + x) ^ pcg((u32)P[P_FRAME] * 9781u + 1u));
   V3 ow, dw;
   ray(P, x, y, W, H, rnd(rng), rnd(rng), rng, &ow, &dw, true);
@@ -506,7 +765,39 @@ extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const 
   for (int bounce = 0; bounce <= maxb; ++bounce) {
     V3 ov = aff(A, ow), dv = lin(A, dw);
     float t0, t1, tc = -1.f;
-    if (boxhit(P, ov, dv, &t0, &t1)) tc = track(S, ow, dw, ov, dv, t0, t1, rng, 0);
+    // The nearest surface drawn with the volume: the volume is tracked up to it.
+    int stri = -1;
+    float ts = surfacehit(S, ow, dw, 0.f, &stri);
+    if (boxhit(P, ov, dv, &t0, &t1)) tc = track(S, ow, dw, ov, dv, t0, ts > 0.f ? fminf(t1, ts) : t1, rng, 0);
+    if (tc < 0.f && ts > 0.f) {
+      // The surface: diffuse in its object's colour, a little gloss; it blocks the light behind it.
+      if (bounce == 0) alpha = 1.f;
+      V3 w = ow + dw * ts, wo = dw * -1.f;
+      V3 np = geonormal(S.G, stri, aff(P + P_OBJ_PHYS_FROM_WORLD, w));
+      const float* B = P + P_OBJ_PHYS_FROM_WORLD;
+      V3 nw = norm3(v3(B[0] * np.x + B[4] * np.y + B[8] * np.z, B[1] * np.x + B[5] * np.y + B[9] * np.z, B[2] * np.x + B[6] * np.y + B[10] * np.z));
+      if (dot3(nw, wo) < 0.f) nw = nw * -1.f;
+      int ob = S.G.tobj[stri];
+      V3 albedo = v3(S.gcol[3 * ob], S.gcol[3 * ob + 1], S.gcol[3 * ob + 2]) * P[P_ALBEDO];
+      V3 sw = w + nw * P[P_OBJ_EPS];
+      if (dot3(nw, ldir) > 0.f) {
+        int sb;
+        float Tl = surfacehit(S, sw, ldir, 0.f, &sb) > 0.f ? 0.f : 1.f;
+        V3 lvo = aff(A, sw), lvd = lin(A, ldir);
+        float s0, s1;
+        if (Tl > 0.f && boxhit(P, lvo, lvd, &s0, &s1)) Tl = track(S, sw, ldir, lvo, lvd, fmaxf(s0, 0.f), s1, rng, 1);
+        if (Tl > 0.f) L = L + thr * brdf_cos(nw, wo, ldir, albedo, 0.08f, 0.45f) * lrgb * Tl;
+      }
+      thr = thr * albedo;
+      dw = cosdir(nw, rng);
+      ow = sw;
+      if (bounce >= 2) {
+        float q = fminf(0.95f, fmaxf(thr.x, fmaxf(thr.y, thr.z)));
+        if (rnd(rng) > q) break;
+        thr = thr * (1.f / q);
+      }
+      continue;
+    }
     if (tc < 0.f) {
       if (bounce == 0) {
         L = pv(P, P_BG) * P[P_BG + 3];
@@ -533,14 +824,18 @@ extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const 
     float gm = len3(gv);
     float tm = tv(S, det, vg);  // the value the surface's gloss is read at
     if (P[P_INSET] > 0.f && gm > 1e-6f && P[P_HAS_LABELS] <= 0.f) {
-      // The colour a little way along the gradient, on the more opaque side: the tissue beneath a surface.
+      // The colour a little way along the gradient, on the more opaque side: the tissue beneath a surface. Only where
+      // the collision lies in a surface's partial volume (under 0.3 of the opacity of the tissue beneath it), so a cut
+      // through tissue keeps its own colours.
       V3 d = gv * (P[P_INSET] / gm);
       float ta = tv(S, det, vg + d), tb = tv(S, det, vg - d);
       float4 ca = tflookup(S, ta), cb = tflookup(S, tb);
-      bool a = ca.w >= cb.w;
-      float4 c = a ? ca : cb;
-      tm = a ? ta : tb;
-      albedo = v3(c.x, c.y, c.z) * P[P_ALBEDO];
+      if (tflookup(S, tm).w < 0.3f * fmaxf(ca.w, cb.w)) {
+        bool a = ca.w >= cb.w;
+        float4 c = a ? ca : cb;
+        tm = a ? ta : tb;
+        albedo = v3(c.x, c.y, c.z) * P[P_ALBEDO];
+      }
     }
     float psurf = P[P_SHADE_MIX] * (1.f - expf(-P[P_GRAD_SCALE] * gm * (det ? P[P_DETAIL_GSCALE] : 1.f)));
     V3 wo = dw * -1.f;
@@ -549,6 +844,8 @@ extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const 
     V3 lvo = aff(A, sw), lvd = lin(A, ldir);
     float s0, s1, Tl = 1.f;
     if (boxhit(P, lvo, lvd, &s0, &s1)) Tl = track(S, sw, ldir, lvo, lvd, fmaxf(s0, 0.f), s1, rng, 1);
+    int sb;
+    if (Tl > 0.f && surfacehit(S, sw, ldir, 0.f, &sb) > 0.f) Tl = 0.f;  // a surface shades it
     if (rnd(rng) < psurf) {
       V3 n = norm3(lin3(P + (det ? P_DETAIL_NORMAL : P_WORLD_NORMAL), gv)) * -1.f;  // pointing from high values to low
       if (dot3(n, wo) < 0.f) n = n * -1.f;
@@ -589,11 +886,14 @@ extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const 
 // Where each pixel's ray first becomes mostly opaque: GL depth (0..1) and the world distance, or 1 / -1.
 extern "C" __global__ void firsthit(const float* P, cudaTextureObject_t vol, const float* tf, const float* maj,
                                     const unsigned short* lab, const float* lut, const float* lutflags, cudaTextureObject_t env,
-                                    cudaTextureObject_t det, const float* dmaj, float* depth, int W, int H) {
+                                    cudaTextureObject_t det, const float* dmaj, const float* gtris, const int* gkind,
+                                    const int* gtobj, const float* gnodes, const int* gkids, int gn, const float* gcol,
+                                    const unsigned char* ghide, float* depth, int W, int H) {
   int x = blockIdx.x * blockDim.x + threadIdx.x, y = blockIdx.y * blockDim.y + threadIdx.y;
   if (x >= W || y >= H) return;
   Scene S; S.P = P; S.vol = vol; S.tf = tf; S.maj = maj; S.lab = lab; S.lut = lut; S.lutflags = lutflags;
   S.env = env; S.det = det; S.dmaj = dmaj;
+  S.G.tris = gtris; S.G.kind = gkind; S.G.tobj = gtobj; S.G.nodes = gnodes; S.G.kids = gkids; S.G.n = gn; S.G.hide = ghide; S.gcol = gcol;
   Rng rng; rng.s = 1u;
   V3 ow, dw;
   ray(P, x, y, W, H, 0.5f, 0.5f, rng, &ow, &dw, false);
@@ -618,6 +918,16 @@ extern "C" __global__ void firsthit(const float* P, cudaTextureObject_t vol, con
         break;
       }
     }
+  }
+  // A surface nearer than the volume's first opaque point.
+  int stri;
+  float ts = surfacehit(S, ow, dw, 0.f, &stri);
+  if (ts > 0.f && (dist < 0.f || ts < dist)) {
+    V3 w = ow + dw * ts;
+    float c[4];
+    mul4(P + P_VP, w.x, w.y, w.z, 1.f, c);
+    out = fminf(fmaxf((c[2] / c[3]) * 0.5f + 0.5f, 0.f), 1.f);
+    dist = ts;
   }
   depth[2 * (y * W + x)] = out;
   depth[2 * (y * W + x) + 1] = dist;
@@ -687,4 +997,7 @@ extern "C" __global__ void tonemap(const float4* accum, float inv_n, float expos
   rgba[o + 3] = (unsigned char)(fminf(fmaxf(a.w * inv_n, 0.f), 1.f) * 255.f + 0.5f);
 }
 """
+    + OBJECTS_SOURCE
 )
+# The geometry's device code before the scene, which holds the surfaces drawn with the volume.
+SOURCE = SOURCE.replace("struct Scene {", GEOMETRY_SOURCE + "\nstruct Scene {", 1)

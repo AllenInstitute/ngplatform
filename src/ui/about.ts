@@ -72,7 +72,7 @@ export function renderAbout(host: HTMLElement, wb: Workbench): () => void {
         { class: "note" },
         "What changed in each version: ",
         h("a", { href: `${REPOSITORY}/blob/main/CHANGELOG.md`, target: "_blank", rel: "noopener" }, "the changelog"),
-        ". The fonts are IBM Plex (SIL Open Font License); Python runs Pyodide, loaded from cdn.jsdelivr.net when the Python panel first opens.",
+        ". The fonts are Source Sans 3 and Source Code Pro (SIL Open Font License); Python runs Pyodide, loaded from cdn.jsdelivr.net when the Python panel first opens.",
       ),
     ),
   );

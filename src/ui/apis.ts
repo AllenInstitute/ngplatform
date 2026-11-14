@@ -6,9 +6,11 @@
 import { catalogueUrl, loadLookupTable, LOOKUP_TABLES, lookupTitle } from "../engine/lookup_tables.js";
 import type { DatasetInfo, Json, LayerInfo, SceneDatasetInfo, ViewerApi, WorkspaceApi } from "../sdk/types.js";
 import { allow, decodePipeline, engineSource, ownPython, pipelineCode } from "../virtual/computed.js";
+import { exposeForDebugging } from "../platform/debug.js";
+import { ViewTools } from "./view_tools.js";
 import type { Workbench } from "./workbench.js";
 
-export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; viewer: ViewerApi } {
+export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; viewer: ViewerApi; views: ViewTools } {
   const { store, engine } = wb;
   const info = (d: { id: string; name: string; source: unknown; kind: string }): DatasetInfo => ({
     id: d.id,
@@ -118,6 +120,7 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
     setTemporaryVisibleSegments: (layer, ids) => engine.setTemporaryVisibleSegments(layer, ids),
     visibleSegments: (layer) => engine.visibleSegments(layer),
     segmentColour: (layer, id) => engine.segmentColour(layer, id),
+    colourLook: (layer) => engine.colourLook(layer),
     onSegmentsChanged: (layer, callback) => engine.onSegmentsChanged(layer, callback),
     hideLayerDrawing: (layer, hidden) => engine.hideDrawing(layer, hidden),
     annotationInProgress: () => engine.annotationInProgress(),
@@ -126,11 +129,14 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
     draw3d: (layer, drawer) => engine.draw3d(layer, drawer),
     panels: () => engine.panels(),
     layerTransform: (layer) => engine.layerTransform(layer),
+    layerBounds: (layer) => engine.layerBounds(layer),
+    renderedLevel: (layer) => engine.renderedLevel(layer),
     setLayerTransform: (layer, matrix) => {
       engine.setLayerTransform(layer, matrix);
       store.scheduleSettle();
     },
     onRendered: (callback) => engine.onRendered(callback),
+    thumbnail: (width, height, view) => engine.thumbnail(width, height, view),
     reloadData: (url) => {
       // Every chunk source Neuroglancer has made is in its chunk manager's
       // memo, keyed by its options, which name the store's URL; a volume's
@@ -158,5 +164,20 @@ export function createPlatformApis(wb: Workbench): { workspace: WorkspaceApi; vi
     },
   };
 
-  return { workspace, viewer };
+  // Shapes with handles over the views, for every plugin (each sees its own through `views.api`).
+  const views = new ViewTools({
+    overlay: () => engine.addOverlay(),
+    panels: () => engine.panels(),
+    onRendered: (callback) => engine.onRendered(callback),
+    position: () => Array.from(engine.viewer.position.value),
+    mouse: () => {
+      const m = engine.viewer.mouseState;
+      return m.active ? Array.from(m.position) : undefined;
+    },
+  });
+
+  // For debugging from the console and the browser checks, beside window.workbench.
+  exposeForDebugging("viewTools", views);
+
+  return { workspace, viewer, views };
 }

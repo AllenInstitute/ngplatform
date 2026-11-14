@@ -5,7 +5,7 @@
  * watchable values (so a change made anywhere, in the views, by undo or
  * by a link, shows here at once, and a change here applies at once).
  */
-import { type Attrs, type Child, el } from "../../sdk/dom.js";
+import { type Attrs, type Child, el, icon } from "../../sdk/dom.js";
 import { RefCounted, WatchableVisibilityPriority } from "../neuroglancer.js";
 
 /** One of Neuroglancer's watchable values, as far as the inspector needs it. */
@@ -102,7 +102,12 @@ export function note(text: string, className = ""): HTMLElement {
   return el("p", { class: `ins-note ${className}`.trim() }, text);
 }
 
-/** An outline button; with `className` "icon ins-remove", the small × that removes something. */
+/** The small remove button (a cross icon) beside a link, a range, an annotation or a property; `label` names it. */
+export function removeButton(label: string, onclick: (e: MouseEvent) => void): HTMLButtonElement {
+  return el("button", { type: "button", class: "btn icon ins-remove", title: label, "aria-label": label, onclick }, icon("close"));
+}
+
+/** An outline button. */
 export function button(label: string, onclick: (e: MouseEvent) => void, title?: string, className = "outline"): HTMLButtonElement {
   return el("button", { type: "button", class: `btn ${className}`.trim(), title, onclick }, label);
 }
@@ -226,19 +231,35 @@ export function textInput(value: string, commit: (v: string) => void, attrs: Att
 
 /**
  * A one-line box that grows to show all of a long value (a URL) instead of
- * scrolling within itself.  Enter commits; Escape reverts.
+ * scrolling within itself.  Enter commits; Escape reverts.  With
+ * `maxRows`, it shows at most that many rows while it does not have the
+ * focus (the end of the last faded, the whole value in its tooltip), and
+ * all of it while it is edited.
  */
-export function growingInput(value: string, commit: (v: string) => void, attrs: Attrs = {}): HTMLTextAreaElement {
+export function growingInput(value: string, commit: (v: string) => void, attrs: Attrs = {}, maxRows?: number): HTMLTextAreaElement {
   const input = el("textarea", { class: "text-input ins-grow", rows: 1, spellcheck: "false", wrap: "soft", ...attrs }) as HTMLTextAreaElement;
   let committed = value;
+  // As many rows as the value takes (an attribute, not an inline style, as the styles' audit asks).
   const fit = () => {
-    input.style.height = "auto";
-    if (input.scrollHeight > 0) input.style.height = `${input.scrollHeight + 2}px`;
+    input.rows = 1;
+    const c = getComputedStyle(input);
+    const line = parseFloat(c.lineHeight) || 16;
+    const inner = input.scrollHeight - (parseFloat(c.paddingTop) || 0) - (parseFloat(c.paddingBottom) || 0);
+    if (input.scrollHeight <= 0) return;
+    const rows = Math.max(1, Math.round(inner / line));
+    const clip = maxRows !== undefined && rows > maxRows && input.ownerDocument.activeElement !== input;
+    input.rows = clip ? maxRows : rows;
+    input.classList.toggle("ins-clipped", clip);
   };
   const set = (v: string) => {
     input.value = v;
+    if (maxRows !== undefined) input.title = v;
     requestAnimationFrame(fit);
   };
+  if (maxRows !== undefined) {
+    input.addEventListener("focus", fit);
+    input.addEventListener("blur", () => requestAnimationFrame(fit));
+  }
   set(value);
   const done = () => {
     if (input.value === committed) return;

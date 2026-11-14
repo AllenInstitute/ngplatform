@@ -15,9 +15,11 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { mat4 } from "neuroglancer/unstable/util/geom.js";
 import {
   denseLayerDraws,
   levelDensities,
+  selectDenseLevel,
 } from "./dense_lod.js";
 import {
   rangeSpans,
@@ -195,5 +197,32 @@ describe("rowSpans", () => {
       [0, 0],
       [10000, 20000],
     ]);
+  });
+});
+
+describe("a cross-section's level", () => {
+  // The ABC atlas: 3.74 M points in 12.6 x 8 x 10.5 mm, 0.5 mm chunks at five levels.
+  const densities = Array.from({ length: 5 }, (_, l) => 3.74e6 / 8 ** l / (12.6 * 8 * 10.5));
+  const sources = Array.from({ length: 5 }, () => ({
+    chunkLayout: { detTransform: 1, size: [0.5, 0.5, 0.5] },
+    lowerClipDisplayBound: [0, 0, 0],
+    upperClipDisplayBound: [12.6, 8, 10.5],
+    source: { spec: { chunkDataSize: [0.5, 0.5, 0.5] } },
+  })) as any;
+  /** A 600 x 600 pixel cross-section `mmPerPixel` across, showing `depthPixels` either side of the plane. */
+  const section = (mmPerPixel: number, depthPixels: number) => {
+    const projectionMat = mat4.ortho(mat4.create(), -300, 300, 300, -300, -depthPixels, depthPixels);
+    const viewMatrix = mat4.fromScaling(mat4.create(), [1 / mmPerPixel, 1 / mmPerPixel, 1 / mmPerPixel]);
+    return { projectionMat, viewMatrix, width: 600, height: 600 } as any;
+  };
+
+  it("is coarser for a deep slab than for a thin one, as it loads and draws that depth", () => {
+    // The whole brain in view, 10 pixels either side (Neuroglancer's default): 0.4 mm each side.
+    const whole = selectDenseLevel(section(0.04, 10), sources, densities, 1, true);
+    // As deep as the brain is: coarser still, rather than all of it at a fine level.
+    const deep = selectDenseLevel(section(0.04, 300), sources, densities, 1, true);
+    expect(deep).toBeGreaterThan(whole);
+    // Zoomed in to cells (5 um a pixel), a thin slab: the finest.
+    expect(selectDenseLevel(section(0.005, 10), sources, densities, 1, true)).toBe(0);
   });
 });

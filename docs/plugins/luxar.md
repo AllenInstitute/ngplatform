@@ -3,7 +3,7 @@
 ![The HCP-1065 tractogram drawn Luxar-style over the SRB 2026a template, in a 2-D section and inside a volume-rendered solid](../images/plugins/luxar.png)
 
 **Kind:** tool · **Off by default** (offered when you open a tractogram or Zarr Vectors store; or turn it on in Plugins) · a
-**Luxar** panel in the Tools dock (under Vectors), and a command ·
+**Luxar** panel in the Tools section (under Vectors), and a command ·
 [Source and developer README](https://github.com/AllenInstitute/ngplatform/tree/main/plugins/luxar)
 
 Draws a Zarr Vectors layer (a tractogram, skeletons, a point cloud, a mesh, or a
@@ -28,8 +28,16 @@ is converted.
   *Emission and absorption* also darkens what is behind dense bundles;
   *Solid tubes* draws opaque, shaded lines.
 - **Colour**: by direction (x red, y green, z blue), each streamline its own
-  colour, a vertex attribute through a colormap (with its range), or one
-  colour.
+  colour, a vertex attribute through a colormap (with its range), one
+  colour, or **as the layer** is coloured: its **Vertex colour** (Display
+  tab, see [Zarr Vectors](zarr-vectors.md)). As the layer, a group colours
+  each vertex in the store's colour for it or a palette's, the groups not
+  chosen hidden; an attribute goes through the layer's colour map between
+  its low and high, what lies outside hidden when the layer hides it. The
+  store's own default (a cell atlas's coarsest group) counts too. Dragging
+  the layer's low and high, or choosing groups, redraws at once; another
+  attribute reads the store again. A layer coloured by a group or an
+  attribute starts as the layer.
 - **Width** in pixels, **Brightness** in stops, **Sharpness** (soft glow to
   hard edge) and the **Tone map**. **Automatic brightness** dims lines where
   many crowd the view, so a whole brain glows rather than turning white and

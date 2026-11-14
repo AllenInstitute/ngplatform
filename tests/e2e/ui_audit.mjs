@@ -8,7 +8,10 @@
 // Writes <out-dir>/report.json (per panel), <out-dir>/report.md (the
 // measures against the baseline) and the screenshots; exits 1 when a
 // measure is worse than the baseline.  UI_AUDIT_BASELINE=1 records this run
-// as the baseline instead.  NGP_RUNNER="<address> <token>" pairs a runner,
+// as the baseline instead.  UI_AUDIT_THEME=light (or dark, system) audits
+// that theme, and UI_AUDIT_BLACK_VIEWS=1 with Black views in the light theme on (the
+// choices of Settings › View); the baseline is the dark theme's.
+// NGP_RUNNER="<address> <token>" pairs a runner,
 // so the tools that need one show their full panels.  CHROME and
 // SWIFTSHADER as for smoke.mjs.
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
@@ -23,6 +26,7 @@ try {
   ({ chromium } = require("playwright-core"));
 }
 
+if (process.env.UI_AUDIT_BASELINE && (process.env.UI_AUDIT_THEME ?? "dark") !== "dark") throw new Error("The baseline is recorded in the dark theme: leave UI_AUDIT_THEME unset.");
 const base = process.argv[2] ?? "http://localhost:4174/";
 const out = process.argv[3] ?? "tests/e2e/ui-audit";
 const baselineFile = new URL("../../plans/ui-audit-baseline.json", import.meta.url);
@@ -49,12 +53,14 @@ await page.waitForFunction(() => window.workbench !== undefined, null, { timeout
 const plugins = await page.evaluate(() => window.workbench.pluginSwitches.manifests.map((m) => m.id));
 const runner = process.env.NGP_RUNNER?.split(/\s+/);
 await page.evaluate(
-  ({ plugins, runner }) => {
+  ({ plugins, runner, theme, blackViews }) => {
     localStorage.clear();
     localStorage.setItem("ngplatform.plugins.enabled", JSON.stringify(Object.fromEntries(plugins.map((id) => [id, true]))));
     if (runner) localStorage.setItem("ngplatform.runner", JSON.stringify({ address: runner[0], token: runner[1] }));
+    if (theme) localStorage.setItem("ngplatform.theme", theme);
+    if (blackViews) localStorage.setItem("ngplatform.blackViews", "1");
   },
-  { plugins, runner },
+  { plugins, runner, theme: process.env.UI_AUDIT_THEME, blackViews: process.env.UI_AUDIT_BLACK_VIEWS === "1" },
 );
 
 const shots = [];
@@ -86,7 +92,8 @@ const measure = (sel) =>
     };
     const text = all.filter((e) => [...e.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim()));
     const buttons = all.filter((e) => e.tagName === "BUTTON");
-    const inputs = all.filter((e) => (e.tagName === "INPUT" && !["checkbox", "radio", "range", "file"].includes(e.type)) || e.tagName === "SELECT" || e.tagName === "TEXTAREA");
+    // (CodeMirror's own hidden text box, in the shader editor, is the editor's, not a field.)
+    const inputs = all.filter((e) => ((e.tagName === "INPUT" && !["checkbox", "radio", "range", "file"].includes(e.type)) || e.tagName === "SELECT" || e.tagName === "TEXTAREA") && !e.closest(".CodeMirror"));
     const checks = all.filter((e) => e.tagName === "INPUT" && e.type === "checkbox");
     const heads = all.filter((e) => /^H[1-6]$/.test(e.tagName) || e.matches(".section-title,.card-title,summary,legend"));
     return {
@@ -223,10 +230,9 @@ async function sheet(name, run) {
   await page.waitForTimeout(300);
 }
 
-// An empty workspace: the start card.
+// An empty workspace.
 await open("");
 await shot("00_start");
-panels["Start card"] = await measure(".start-card");
 
 // Images (SRB): the docks, every tool, the sheets and menus.
 await open("#example=srb-2026a");
@@ -263,14 +269,6 @@ accessOnly["Menu: Share"] = await access(".menu");
 await shot("4_menu_Share");
 await page.keyboard.press("Escape");
 await page.waitForTimeout(300);
-if (await page.locator(".dock-right .dock-picker").count()) {
-  await page.locator(".dock-right .dock-picker").first().click();
-  await page.waitForTimeout(400);
-  accessOnly["Menu: Tools"] = await access(".menu");
-  await shot("4_menu_Tools");
-  await page.keyboard.press("Escape");
-  await page.waitForTimeout(300);
-}
 // The frame of the app: the top bar, the dock heads and resizers, the status strip (the panels are counted above).
 accessOnly["App frame"] = await access("#app", ".dock-pane, .scrim, .menu");
 

@@ -23,6 +23,7 @@
 import { DENSE_MANIFESTS_LAYOUT } from "./dense_manifests.js";
 import type {
   ZarrVectorsGeometryDescription,
+  ZarrVectorsGroup,
   ZarrVectorsSurfaceInfo,
 } from "./base.js";
 import type { ElementType } from "./dtype.js";
@@ -566,8 +567,9 @@ async function selectAttributes(
   warnings: string[],
   signal?: AbortSignal,
   surface?: ZarrVectorsSurfaceInfo,
-): Promise<{ attributes: ZarrVectorsAttribute[]; json: any[] }> {
+): Promise<{ attributes: ZarrVectorsAttribute[]; json: any[]; available: string[] }> {
   let names: string[];
+  let available: string[] = [];
   // Declared in the root's attribute_specs but perhaps not written yet:
   // dropped quietly if absent, unlike a listed or chosen name.
   let declaredOnly = new Set<string>();
@@ -577,6 +579,12 @@ async function selectAttributes(
       throw new Error(
         `#attributes names more than ${MAX_ATTRIBUTES} attributes`,
       );
+    }
+    // The others, for a picker: listed as when none are chosen, quietly.
+    try {
+      available = [...new Set([...(await access.listDirectories(`${levelPath}/vertex_attributes`, signal)), ...names])].sort();
+    } catch {
+      available = [...names].sort();
     }
   } else {
     const declared = new Set(Object.keys(zv?.attribute_specs?.vertex ?? {}));
@@ -608,6 +616,7 @@ async function selectAttributes(
     // Where the renderer synthesises `tangent`, a stored one would shadow it.
     if (synthesisesTangent) found.delete("tangent");
     names = [...found].sort();
+    available = names.slice();
     if (names.length > DEFAULT_ATTRIBUTE_LIMIT && surface !== undefined) {
       // A surface's maps: the ones a surface is first looked at with, the
       // rest offered by name (the platform's Surface controls load them).
@@ -619,12 +628,16 @@ async function selectAttributes(
       );
       names = kept;
     } else if (names.length > DEFAULT_ATTRIBUTE_LIMIT) {
-      // A gene panel would fetch that many cells per chunk; let the user choose.
+      // A gene panel would fetch that many cells per chunk; let the user choose. A taxonomy's coarsest
+      // tier (its groups and their colours) is shown first, so the cells start coloured by type.
+      const tier = defaultTier(zv?.taxonomy);
+      const first = tier === undefined ? [] : [tier.attribute, tier.color_attribute].filter((n): n is string => typeof n === "string" && found.has(n));
       warnings.push(
-        `store has ${names.length} vertex attributes; none load by default. ` +
-          `Append #attributes=a,b,c to the source URL (up to ${MAX_ATTRIBUTES})`,
+        `store has ${names.length} vertex attributes; ` +
+          (first.length ? `showing ${first.join(", ")}` : "none load by default") +
+          `. Choose others in Colour by, or append #attributes=a,b,c to the source URL (up to ${MAX_ATTRIBUTES})`,
       );
-      names = [];
+      names = first;
       declaredOnly = new Set();
     }
   }
@@ -696,7 +709,44 @@ async function selectAttributes(
   return {
     attributes: kept.map((r) => r.attribute!),
     json: kept.map((r) => r.json),
+    available,
   };
+}
+
+/** A taxonomy's tier shown first: the first of its depth order (the coarsest), else its first tier. */
+function defaultTier(taxonomy: any): { attribute?: unknown; color_attribute?: unknown } | undefined {
+  const tiers: any[] = Array.isArray(taxonomy?.tiers) ? taxonomy.tiers : [];
+  const first = Array.isArray(taxonomy?.depth_order) ? taxonomy.depth_order[0] : undefined;
+  return tiers.find((t) => t?.name === first) ?? tiers[0];
+}
+
+/**
+ * A store's groups: its taxonomy's tiers (the root's `zarr_vectors.taxonomy`), coarsest first as its
+ * depth order lists them (others after), each with its names from an AnnData header's categories
+ * (`headers/h5ad`, by tier name) when the store has one.
+ */
+export function taxonomyGroups(taxonomy: any, categories: Record<string, unknown> | undefined): ZarrVectorsGroup[] {
+  const tiers: any[] = Array.isArray(taxonomy?.tiers) ? taxonomy.tiers : [];
+  const order: string[] = Array.isArray(taxonomy?.depth_order) ? taxonomy.depth_order.map(String) : [];
+  const rank = (name: string) => {
+    const i = order.indexOf(name);
+    return i === -1 ? order.length : i;
+  };
+  return tiers
+    .filter((t) => typeof t?.name === "string" && typeof t?.attribute === "string")
+    .sort((a, b) => rank(a.name) - rank(b.name))
+    .map((t) => {
+      const names = categories?.[t.name];
+      return {
+        name: t.name,
+        attribute: t.attribute,
+        ...(typeof t.color_attribute === "string" ? { colorAttribute: t.color_attribute } : {}),
+        count: Number.isInteger(t.count) ? t.count : Array.isArray(names) ? names.length : 0,
+        ...(Array.isArray(names) ? { names: names.map(String) } : {}),
+        ...(typeof t.parent_tier === "string" ? { parent: t.parent_tier } : {}),
+        ...(Array.isArray(t.parent_index) ? { parentIndex: t.parent_index.map(Number) } : {}),
+      };
+    });
 }
 
 // -------------------------------------------------------------- skeletons
@@ -968,7 +1018,7 @@ export async function openZarrVectorsStore(
           ),
         )
       : undefined;
-  const { attributes, json } = await selectAttributes(
+  const { attributes, json, available } = await selectAttributes(
     access,
     paths[0],
     level0Vertices,
@@ -1017,6 +1067,13 @@ export async function openZarrVectorsStore(
     throw new Error("the store has no level this viewer can read");
   }
 
+  // Groups (a taxonomy), with their names from an AnnData header when there is one.
+  const groups = zv?.taxonomy
+    ? taxonomyGroups(
+        zv.taxonomy,
+        (await readJson(read, "headers/h5ad/zarr.json", signal).catch(() => undefined))?.attributes?.categories,
+      )
+    : [];
   const axes: any[] = root.attributes.multiscales?.[0]?.axes ?? [];
   const hints = root.attributes.neuroglancer?.coordinate_space;
   const units = [0, 1, 2].map((i) =>
@@ -1044,6 +1101,8 @@ export async function openZarrVectorsStore(
       attributes,
       hasObjects,
       ...(surface !== undefined ? { surface } : {}),
+      available,
+      ...(groups.length ? { groups } : {}),
     },
     lowerBounds: lower.map(Number),
     upperBounds: upper.map(Number),

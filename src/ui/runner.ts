@@ -12,7 +12,7 @@ import { isActive, normaliseAddress, pairingFromHash, type RunnerEntry, RunnerEr
 import { bytesText } from "../sdk/format.js";
 import type { RunnerApi, RunnerJob, RunnerOutput } from "../sdk/types.js";
 import { emptyState, field, info } from "../sdk/dom.js";
-import { clear, h, iconButton } from "./dom.js";
+import { clear, externalLink, h, icon, iconButton } from "./dom.js";
 import { diskBudget, type SpillPlan, spillPlan, storageEstimate } from "../virtual/vectors/spill.js";
 import { tractogramDiskGigabytes } from "../virtual/vectors/formats.js";
 import { closeSheet, confirmDialog, offer, sheet, showSheet, toast } from "./overlays.js";
@@ -120,7 +120,7 @@ function pairForm(runner: RunnerService, note?: string, where = "this computer")
       "Start it with ",
       h("code", {}, START_COMMAND),
       ", then open the link it prints or enter its address and token. ",
-      h("a", { href: LOCAL_JOBS_GUIDE, target: "_blank", rel: "noopener" }, "Guide ↗"),
+      externalLink(LOCAL_JOBS_GUIDE, "Guide"),
       info("The runner runs long jobs (converting, filtering, density maps) as Python on this computer: start it in the Python that has zarr-vectors-tools.", "About the runner"),
     ),
   );
@@ -362,7 +362,7 @@ export function addHostDialog(wb: Workbench): void {
         field("On this computer, run", h("code", { class: "readout host-command" }, TUNNEL_COMMAND), {
           info: "A runner on another computer (a workstation, a cluster node), reached through an SSH tunnel. The command opens the tunnel and prints a link that pairs this browser; or enter what it prints below.",
         }),
-        h("a", { class: "guide-link", href: `${LOCAL_JOBS_GUIDE}#a-gpu-on-another-computer`, target: "_blank", rel: "noopener" }, "Guide ↗"),
+        externalLink(`${LOCAL_JOBS_GUIDE}#a-gpu-on-another-computer`, "Guide", { class: "guide-link" }),
         h("label", { class: "field" }, h("span", {}, "Name"), name),
         h("label", { class: "field" }, h("span", {}, "Address"), address),
         h("label", { class: "field" }, h("span", {}, "Token"), token),
@@ -421,7 +421,7 @@ export function choosePath(runner: RunnerService, options: Parameters<RunnerApi[
         picked = undefined;
         crumbs.textContent = folder === "" ? "The runner's folders" : folder;
         const rows: HTMLElement[] = [];
-        if (folder !== "") rows.push(h("li", { class: "runner-up" }, h("button", { class: "link", type: "button", onclick: () => void go(listing.parent ?? "") }, "↑ Up")));
+        if (folder !== "") rows.push(h("li", { class: "runner-up" }, h("button", { class: "link runner-up-button", type: "button", onclick: () => void go(listing.parent ?? "") }, icon("arrow-up"), "Up")));
         for (const entry of listing.entries) {
           const label = `${entry.name}${entry.type === "dir" ? "/" : ""}`;
           const row = h("li", { class: `runner-entry ${entry.type}`, "data-path": entry.path });

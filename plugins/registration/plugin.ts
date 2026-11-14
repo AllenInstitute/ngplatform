@@ -12,7 +12,7 @@
  * layers, the moving ones where the moving layer now puts them, with a line
  * to their fixed partner.
  */
-import type { Json, LayerTransform, PlatformContext, PluginModule } from "@ngplatform/sdk";
+import type { Disposer, Json, LayerTransform, PlatformContext, PluginModule, ViewFrameChange, ViewShape, ViewShapeHandle } from "@ngplatform/sdk";
 import {
   type Action,
   button,
@@ -22,9 +22,11 @@ import {
   el,
   emptyState,
   field,
+  icon,
   iconButton,
   info,
   type OnOff,
+  readout,
   region,
   roving,
   safeFileName,
@@ -41,7 +43,22 @@ import { WorkerRpc } from "@ngplatform/sdk/worker_rpc";
 import { storeOf } from "../volume-view/sources.js";
 import { apply4, describe, fit, type Fit, identity4, invert4, type Mat4, MINIMUM, type Model, multiply4, type Vec3 } from "./fit.js";
 import { needsGeometry, readTransformFile, type VolumeGeometry, writeItk, writeLta, writePlain } from "./formats.js";
-import { axisOrder, identityManual, isIdentityManual, type Manual, manualMatrix, permute, readManual, translationStep, turned, unpermute } from "./manual.js";
+import {
+  axisOrder,
+  identityManual,
+  isIdentityManual,
+  type Manual,
+  manualMatrix,
+  moveManual,
+  permute,
+  readManual,
+  scaleManual,
+  shownPivot,
+  translationStep,
+  turned,
+  turnManual,
+  unpermute,
+} from "./manual.js";
 import { REGISTRATION_PANEL } from "./manifest.js";
 import type { SaveRequest } from "./save_worker.js";
 import { DIRECTIONS, type Direction, straighten } from "./straighten.js";
@@ -101,6 +118,13 @@ export function defaultMoving(candidates: string[], images: string[]): string | 
 }
 
 const FIXED_LAYER = "landmarks (fixed)";
+/**
+ * The landmarks' colours, as their annotation layers draw them:
+ * Neuroglancer's own, its default annotation yellow for fixed points and the
+ * cyan it highlights with for moving ones.
+ */
+const FIXED_COLOUR = "#ffff00";
+const MOVING_COLOUR = "#00ffff";
 const MOVING_LAYER = "landmarks (moving)";
 
 const mm = (scale: number, unit: string) => (unit === "m" ? scale * 1000 : scale);
@@ -203,6 +227,18 @@ export class Registration {
   private client: SaveWorker | undefined;
   /** The landmarks' points (global, as written into their annotation layers) by annotation id, to tell a dragged one. */
   private written = new Map<string, number[]>();
+  /** The landmarks as point shapes in the views (`f<id>`, `m<id>`), and what each was made from. */
+  private readonly shapes = new Map<string, { handle: ViewShapeHandle; key: string }>();
+  /** While on, a click in a view places a landmark: fixed, then its moving partner (Place pairs). */
+  private placing: Disposer | undefined;
+  /** Sets the selected landmark's card in place. */
+  private cardSync: (() => void) | undefined;
+  /** The moving layer's box in the 2-D views (`frame`), with handles that move, turn and scale it; and what it was made from. */
+  private frame: { handle: ViewShapeHandle; key: string } | undefined;
+  /** The hand-made transform when the box's drag began (each step of a drag is from it). */
+  private frameBase: Manual | undefined;
+  /** Sets the box's card in place. */
+  private frameCardSync: (() => void) | undefined;
 
   constructor(
     private readonly ctx: PlatformContext,
@@ -226,7 +262,11 @@ export class Registration {
         this.refit(false);
         this.panelUpdate?.();
       }),
-      ctx.viewer.onLayersChanged(() => this.panelUpdate?.()),
+      ctx.views.onSelect(() => this.panelUpdate?.()),
+      ctx.viewer.onLayersChanged(() => {
+        this.syncFrame();
+        this.panelUpdate?.();
+      }),
       // A landmark dragged in its annotation layer is read back into its pair, once the drag rests.
       ctx.viewer.onStateChanged(() => {
         clearTimeout(readBack);
@@ -236,6 +276,9 @@ export class Registration {
         clearTimeout(readBack);
         this.saving?.abort();
         this.client?.dispose();
+        this.placing?.();
+        for (const { handle } of this.shapes.values()) handle.dispose();
+        this.frame?.handle.dispose();
       },
     );
     this.refit(false);
@@ -286,11 +329,16 @@ export class Registration {
 
   /** The mouse's (or else the views' centre's) position, in mm along the moving layer's output dimensions. */
   private here(t: LayerTransform, mouse = true): Vec3 | undefined {
-    const ng = this.ctx.viewer.getState() as { dimensions?: Record<string, [number, string]>; position?: number[] };
+    const ng = this.ctx.viewer.getState() as { position?: number[] };
     const cursor = this.ctx.viewer.cursor();
     const position = mouse && cursor.active ? cursor.position : ng.position;
+    return position === undefined ? undefined : this.mmAt(t, position);
+  }
+
+  /** A global position in mm along the layer's output dimensions. */
+  private mmAt(t: LayerTransform, position: ArrayLike<number>): Vec3 | undefined {
+    const ng = this.ctx.viewer.getState() as { dimensions?: Record<string, [number, string]> };
     const dims = Object.entries(ng.dimensions ?? {});
-    if (position === undefined) return undefined;
     const out = t.output.names.map((name) => {
       const i = dims.findIndex(([n]) => n === name);
       return i === -1 ? NaN : position[i] * mm(dims[i][1][0], dims[i][1][1]);
@@ -311,7 +359,8 @@ export class Registration {
     return out;
   }
 
-  mark(role: "fixed" | "moving"): void {
+  /** A landmark of `role` at the mouse (else the views' centre), or at `position` (global): it completes the first pair without one. */
+  mark(role: "fixed" | "moving", position?: number[]): void {
     const name = this.layer();
     const t = name && this.ctx.viewer.layerTransform(name);
     if (!name || !t) {
@@ -320,7 +369,7 @@ export class Registration {
       return;
     }
     const p = physical(t);
-    const at = this.here(t);
+    const at = position === undefined ? this.here(t) : this.mmAt(t, position);
     if (p === undefined || at === undefined) {
       this.ctx.ui.toast("This layer's space is not one Registration can work in (it needs x, y and z).", "error");
       return;
@@ -454,7 +503,8 @@ export class Registration {
     if (persist) {
       this.save({});
       this.showLandmarks();
-    }
+    } else this.syncFrame();
+    this.frameCardSync?.();
     return m;
   }
 
@@ -756,6 +806,7 @@ export class Registration {
 
   /** The landmarks in two annotation layers: fixed ones, and moving ones where the layer now puts them, with lines. */
   private showLandmarks(): void {
+    this.syncShapes();
     const name = this.layer();
     const t = name && this.ctx.viewer.layerTransform(name);
     const p = t ? physical(t) : undefined;
@@ -778,8 +829,8 @@ export class Registration {
     this.ctx.viewer.patchState((ng) => {
       const layers = ((ng.layers as Json[] | undefined) ?? []).filter((l) => l.name !== FIXED_LAYER && l.name !== MOVING_LAYER);
       if (wanted) {
-        layers.push({ type: "annotation", source: "local://annotations", name: FIXED_LAYER, annotationColor: "#ffcc00", annotations: fixed });
-        layers.push({ type: "annotation", source: "local://annotations", name: MOVING_LAYER, annotationColor: "#3fd3ff", annotations: moving });
+        layers.push({ type: "annotation", source: "local://annotations", name: FIXED_LAYER, annotationColor: FIXED_COLOUR, annotations: fixed });
+        layers.push({ type: "annotation", source: "local://annotations", name: MOVING_LAYER, annotationColor: MOVING_COLOUR, annotations: moving });
       }
       ng.layers = layers;
     });
@@ -793,6 +844,8 @@ export class Registration {
    * floats, changes nothing).
    */
   readBack(): void {
+    // The views' centre may have moved: the box's ring (about the cursor) with it.
+    this.syncFrame();
     const name = this.layer();
     const t = name && this.ctx.viewer.layerTransform(name);
     const p = t ? physical(t) : undefined;
@@ -837,6 +890,306 @@ export class Registration {
     this.refit(true);
   }
 
+  /** The role the next click of Place pairs takes: the moving partner of a pair with a fixed point only, else a fixed point. */
+  private nextRole(): "fixed" | "moving" {
+    const open = this.saved.pairs.find((q) => q.fixed === undefined || q.moving === undefined);
+    return open !== undefined && open.fixed !== undefined ? "moving" : "fixed";
+  }
+
+  /** Place pairs (as BigWarp's landmark mode): clicks in the views alternate fixed points and their moving partners. */
+  setPlacing(on: boolean): void {
+    if (on === (this.placing !== undefined)) return;
+    if (!on) {
+      this.placing?.();
+      this.placing = undefined;
+    } else {
+      this.placing = this.ctx.views.pick((at) => this.mark(this.nextRole(), at));
+    }
+    // While placing, a click inside the moving layer's box is a landmark: the box is not shown.
+    this.syncFrame();
+    this.panelUpdate?.();
+  }
+
+  /**
+   * The landmarks as numbered points in the views, fixed ones in the fixed
+   * layer's colour and moving ones where the layer puts them: dragging one
+   * moves it (a moving one in the layer's own space), and the pairs are
+   * fitted again.
+   */
+  private syncShapes(): void {
+    const name = this.layer();
+    const t = name && this.ctx.viewer.layerTransform(name);
+    const p = t ? physical(t) : undefined;
+    const want = new Map<string, { shape: ViewShape; key: string }>();
+    if (t && p) {
+      this.saved.pairs.forEach((q, i) => {
+        const point = (role: "fixed" | "moving", mm: Vec3) => {
+          const at = this.toGlobal(t, role === "fixed" ? mm : apply4(p, mm));
+          if (at === undefined) return;
+          const id = `${role === "fixed" ? "f" : "m"}${q.id}`;
+          want.set(id, {
+            key: JSON.stringify([i, role, at, q.on]),
+            shape: {
+              id,
+              kind: "point",
+              at,
+              label: String(i + 1),
+              title: `Pair ${i + 1}`,
+              colour: role === "fixed" ? FIXED_COLOUR : MOVING_COLOUR,
+              card: (host) => this.landmarkCard(host, q.id, role),
+              onChange: ({ at: moved }, done) => {
+                if (!done) return;
+                const now = this.mmAt(t, moved);
+                if (now === undefined) return;
+                const value = role === "fixed" ? now : apply4(invert4(p), now);
+                this.save({ pairs: this.saved.pairs.map((x) => (x.id === q.id ? { ...x, [role]: value } : x)) });
+                this.refit(true);
+              },
+            },
+          });
+        };
+        if (q.fixed) point("fixed", q.fixed);
+        if (q.moving) point("moving", q.moving);
+      });
+    }
+    for (const [id, { handle }] of this.shapes) {
+      if (want.has(id)) continue;
+      handle.dispose();
+      this.shapes.delete(id);
+    }
+    for (const [id, { shape, key }] of want) {
+      const had = this.shapes.get(id);
+      if (had?.key === key) continue;
+      if (had !== undefined) {
+        had.handle.update(shape);
+        had.key = key;
+      } else this.shapes.set(id, { handle: this.ctx.views.add(shape), key });
+    }
+    this.cardSync?.();
+    this.syncFrame();
+  }
+
+  /** Each pair's distance after the fit (mm), where it is fitted; undefined for the others. */
+  private pairErrors(): (number | undefined)[] {
+    const r = this.result;
+    const residuals = r !== undefined && !("error" in r) ? r.residuals : [];
+    let k = 0;
+    return this.saved.pairs.map((q) => (q.on && q.fixed && q.moving ? residuals[k++] : undefined));
+  }
+
+  /** The moving layer's output dimensions' names in x, y, z order (or their own), and that order. */
+  private axisNames(): { names: string[]; order: number[] } {
+    const name = this.layer();
+    const names = (name && this.ctx.viewer.layerTransform(name)?.output.names) || ["x", "y", "z"];
+    return { names, order: [0, 1, 2].sort((a, b) => (names[a] ?? "").localeCompare(names[b] ?? "")) };
+  }
+
+  /** A landmark's floating card ("Pair 1"): both its points as readouts, the pair's error after the fit, go to it, remove it. */
+  private landmarkCard(host: HTMLElement, id: string, role: "fixed" | "moving"): Disposer {
+    const pair = () => this.saved.pairs.find((q) => q.id === id);
+    const { names, order } = this.axisNames();
+    const values = readoutRows(
+      order.map((k) => names[k]),
+      [
+        { label: "Fixed", unit: "mm", chosen: role === "fixed" },
+        { label: "Moving", unit: "mm", chosen: role === "moving" },
+        { label: "Error", unit: "mm", wide: true },
+      ],
+    );
+    const sync = () => {
+      const q = pair();
+      const i = this.saved.pairs.findIndex((x) => x.id === id);
+      const at = (v?: Vec3) => (v ? order.map((k) => v[k].toFixed(1)) : ["—", "—", "—"]);
+      values.set(0, at(q?.fixed));
+      values.set(1, at(q?.moving));
+      const error = i === -1 ? undefined : this.pairErrors()[i];
+      values.set(2, error === undefined ? undefined : [fmt(error)]);
+    };
+    sync();
+    host.append(
+      values.element,
+      el(
+        "div",
+        { class: "row" },
+        button("Go to", () => {
+          const q = pair();
+          if (q) this.goTo(q);
+        }, "Move the views to its pair"),
+        el("span", { class: "spacer" }),
+        button("Remove pair", () => {
+          this.save({ pairs: this.saved.pairs.filter((x) => x.id !== id) });
+          this.refit(true);
+        }, "Remove this pair", "btn small danger"),
+      ),
+    );
+    this.cardSync = sync;
+    return () => {
+      if (this.cardSync === sync) this.cardSync = undefined;
+    };
+  }
+
+  // ------------------------------------------------ the box in the views
+
+  /** A vector in mm along the layer's output dimensions as one in global coordinates (all dimensions). */
+  private globalVector(t: LayerTransform, v: ArrayLike<number>): number[] | undefined {
+    const ng = this.ctx.viewer.getState() as { dimensions?: Record<string, [number, string]> };
+    const dims = Object.entries(ng.dimensions ?? {});
+    const out = dims.map(() => 0);
+    for (let r = 0; r < 3; ++r) {
+      const i = dims.findIndex(([n]) => n === t.output.names[r]);
+      if (i === -1) return undefined;
+      out[i] = v[r] / mm(dims[i][1][0], dims[i][1][1]);
+    }
+    return out;
+  }
+
+  /** A vector in global coordinates as one in mm along the layer's output dimensions. */
+  private mmVector(t: LayerTransform, g: ArrayLike<number>): Vec3 | undefined {
+    const ng = this.ctx.viewer.getState() as { dimensions?: Record<string, [number, string]> };
+    const dims = Object.entries(ng.dimensions ?? {});
+    const out = t.output.names.map((name) => {
+      const i = dims.findIndex(([n]) => n === name);
+      return i === -1 ? NaN : (g[i] ?? 0) * mm(dims[i][1][0], dims[i][1][1]);
+    });
+    return out.some((v) => !Number.isFinite(v)) ? undefined : (out as Vec3);
+  }
+
+  /** The hand-made transform's centre and the cursor, mm along x, y, z, as applyManual takes them. */
+  private manualFrame(t: LayerTransform): { order: [number, number, number]; centre: Vec3; cursor: Vec3; start: number[] } {
+    const start = this.saved.start ?? Array.from(t.matrix);
+    const order = axisOrder(t.output.names);
+    const toXyz = (v: ArrayLike<number>): Vec3 => [v[order[0]], v[order[1]], v[order[2]]];
+    const centre = toXyz(this.volumeCentre(t, start) ?? [0, 0, 0]);
+    return { order, centre, cursor: toXyz(this.here(t, false) ?? centre), start };
+  }
+
+  /**
+   * The moving layer's box as it is placed now, for the 2-D views: its
+   * outline (drag inside or on it to move the layer in the section's
+   * plane), a ring about Rotate around's point (turns it about the
+   * section's normal) and its corners (scale it; Shift, alike).  Not while
+   * pairs are placed (a click inside it is then a landmark).
+   */
+  private frameShape(): ViewShape | undefined {
+    const name = this.layer();
+    const t = name ? this.ctx.viewer.layerTransform(name) : undefined;
+    const b = t?.input.bounds;
+    const p = t && physical(t);
+    if (!name || !t || !b || !p || this.placing !== undefined) return undefined;
+    const half = [0, 1, 2].map((k) => ((b.upper[k] - b.lower[k]) / 2) * mm(t.input.scales[k], t.input.units[k]));
+    const axes = [0, 1, 2].map((k) => this.globalVector(t, [0, 1, 2].map((r) => p[4 * r + k] * half[k])));
+    const centreMm = this.volumeCentre(t, t.matrix);
+    const centre = centreMm && this.toGlobal(t, centreMm);
+    const { order, centre: c0, cursor } = this.manualFrame(t);
+    const v = shownPivot(this.saved.manual, c0, cursor);
+    const out: number[] = [];
+    order.forEach((r, k) => (out[r] = v[k]));
+    const pivot = this.toGlobal(t, out as Vec3);
+    if (!centre || !pivot || axes.some((a) => a === undefined)) return undefined;
+    return {
+      id: "frame",
+      kind: "frame",
+      views: "2d",
+      title: name,
+      centre,
+      axes: axes as number[][],
+      pivot,
+      card: (host) => this.frameCard(host),
+      onChange: ({ change }, done) => this.frameChanged(change, done),
+    };
+  }
+
+  /** Keeps the box in the views up to date with the layer's placement. */
+  private syncFrame(): void {
+    const shape = this.frameShape();
+    if (shape === undefined || shape.kind !== "frame") {
+      this.frame?.handle.dispose();
+      this.frame = undefined;
+      return;
+    }
+    const key = JSON.stringify([shape.title, shape.centre, shape.axes, shape.pivot]);
+    if (this.frame?.key === key) return;
+    if (this.frame === undefined) this.frame = { handle: this.ctx.views.add(shape), key };
+    else {
+      this.frame.handle.update(shape);
+      this.frame.key = key;
+    }
+  }
+
+  /**
+   * The box dragged: the same hand-made transform the sliders set, from
+   * where it was when the drag began, moved while dragging and saved (one
+   * undo step) when let go.
+   */
+  private frameChanged(change: ViewFrameChange, done: boolean): void {
+    const name = this.layer();
+    const t = name ? this.ctx.viewer.layerTransform(name) : undefined;
+    if (!name || !t) return;
+    const base = (this.frameBase ??= this.saved.manual);
+    const { order, centre, cursor, start } = this.manualFrame(t);
+    const toXyz = (v: ArrayLike<number>): Vec3 => [v[order[0]], v[order[1]], v[order[2]]];
+    let m: Manual | undefined;
+    if (change.kind === "move") {
+      const by = this.mmVector(t, change.by);
+      m = by && moveManual(base, toXyz(by));
+    } else if (change.kind === "turn") {
+      const axis = this.mmVector(t, change.axis);
+      m = axis && turnManual(base, toXyz(axis), (change.angle * 180) / Math.PI, base.pivot ?? (base.around === "cursor" ? cursor : centre));
+    } else {
+      // Each of the box's axes (the layer's own) is scaled along the world axis its data lies along as first placed.
+      const p = physical(t, start);
+      if (p) {
+        const factors: Vec3 = [1, 1, 1];
+        for (let k = 0; k < 3; ++k) {
+          const along = [0, 1, 2].map((j) => Math.abs(p[4 * order[j] + k]));
+          factors[along.indexOf(Math.max(...along))] = change.factors[k];
+        }
+        m = scaleManual(base, factors);
+      }
+    }
+    if (m !== undefined) this.applyManual(m, done);
+    if (done) this.frameBase = undefined;
+  }
+
+  /** The box's card: the hand-made transform's numbers as readouts, Flip along each axis, Restore. */
+  private frameCard(host: HTMLElement): Disposer {
+    const name = this.layer();
+    const t = name ? this.ctx.viewer.layerTransform(name) : undefined;
+    const named = t !== undefined && ["x", "y", "z"].every((n) => t.output.names.includes(n));
+    const axes = named ? ["x", "y", "z"] : (t?.output.names ?? ["x", "y", "z"]);
+    const values = readoutRows(axes, [
+      { label: "Rotation", unit: "°" },
+      { label: "Translation", unit: "mm" },
+      { label: "Scale", unit: "×" },
+    ]);
+    const flips = [0, 1, 2].map((k) =>
+      el("button", {
+        type: "button",
+        "aria-pressed": "false",
+        "aria-label": `Flip along ${axes[k]}`,
+        onclick: () => this.applyManual({ ...this.saved.manual, flip: this.saved.manual.flip.map((f, i) => (i === k ? !f : f)) as Manual["flip"] }, true),
+      }, axes[k].toUpperCase()),
+    );
+    const restore = button("Restore", () => this.restore(), "Put the layer back where it was before registering", "btn small");
+    const sync = () => {
+      const m = this.saved.manual;
+      values.set(0, m.rotate.map((v) => v.toFixed(1)));
+      values.set(1, m.translate.map(fmt));
+      values.set(2, m.scale.map((v) => v.toFixed(3)));
+      flips.forEach((b, k) => b.setAttribute("aria-pressed", String(m.flip[k])));
+      restore.disabled = this.saved.base === undefined && this.saved.start === undefined;
+    };
+    sync();
+    host.append(
+      values.element,
+      el("div", { class: "row" }, el("span", { class: "muted" }, "Flip"), el("div", { class: "segmented", role: "group", "aria-label": "Flip" }, ...flips), el("span", { class: "spacer" }), restore),
+    );
+    this.frameCardSync = sync;
+    return () => {
+      if (this.frameCardSync === sync) this.frameCardSync = undefined;
+    };
+  }
+
   /** Moves the views to a pair: its fixed point, else where the moving layer puts its moving one. */
   private goTo(q: Pair): void {
     const name = this.layer();
@@ -871,7 +1224,7 @@ export class Registration {
       for (const s of Object.values(lines)) s.clear();
       this.save({ layer: v || undefined, base: undefined, pairs: [], marks: undefined, start: undefined, manual: identityManual(this.saved.manual.around) });
     }, "Moving layer");
-    const skipped = region((text: string) => (text ? el("p", { class: "hint" }, `Only 3-D layers can be moved: ${text}.`) : null));
+    const skipped = region((text: string) => (text ? el("p", { class: "hint" }, `Only 3-D layers can be moved: ${text}.`) : null), { class: "rg-wide" });
 
     // ---- Transform: Freeview's Transform Volume, a tab for each of rotate, translate, scale and flip.
     const tabButtons = (
@@ -991,9 +1344,13 @@ export class Registration {
     const straighten = button("Straighten", () => this.straightenNow(), undefined, "btn small");
 
     // ---- Landmark pairs.
-    const pairsBadge = el("span");
+    const pairCount = readout(0, "pairs");
+    const saveLta = button("Save LTA", () => void this.exportFile("lta"), "The layer's new placement as a FreeSurfer LTA (Transform file has the other formats)");
+    const editInViews = button("Edit in views", () => this.ctx.views.select(this.ctx.views.selected() === "frame" ? undefined : "frame"), "The layer's box in the 2-D views: drag it to move the layer, its ring to turn it, its corners to scale it (Shift: alike)");
     const fixedHere = button("Fixed here", () => this.mark("fixed"));
     const movingHere = button("Moving here", () => this.mark("moving"));
+    const placePairs = button("Place pairs", () => this.setPlacing(this.placing === undefined), "Clicks in the views place landmarks: a fixed point, then its partner in the moving layer");
+    const placeHint = el("p", { class: "hint rg-wide" });
     const pairs = region((key: { pairs: Pair[]; errors: (number | undefined)[]; names: string[] }) => {
       if (key.pairs.length === 0) return null;
       // In x, y, z order (or the layer's own names'), whatever order the layer keeps its dimensions in.
@@ -1110,11 +1467,25 @@ export class Registration {
     const main = el(
       "div",
       { class: "stack" },
-      el("div", { class: "stack" }, field("Moving layer", layer), skipped),
+      // The tools first, as one reads them: what moves, its landmarks, its box in the views.
+      el(
+        "div",
+        { class: "rg-lead" },
+        el("span", { class: "rg-label" }, "Moving layer"),
+        layer,
+        skipped,
+        el("span", { class: "rg-label" }, "Landmarks"),
+        pairCount,
+        el("span"),
+        el("div", { class: "row" }, placePairs, saveLta),
+        placeHint,
+        el("span", { class: "rg-label" }, "Transform"),
+        el("div", { class: "row" }, editInViews),
+      ),
       card(
         "registration.transform",
         "Transform",
-        { open: true },
+        { open: false, info: "Exact values: the same transform the layer's box in the views moves, turns and scales." },
         tabList,
         transform,
         el("div", { class: "row" }, restore),
@@ -1131,9 +1502,10 @@ export class Registration {
       ),
       card(
         "registration.landmarks",
-        "Landmarks",
-        { badge: pairsBadge, info: "A fixed point at the mouse: Alt+F. Its match in the moving layer: Alt+M. Drag a point in its annotation layer to move it." },
+        "Pairs",
+        { info: "Place pairs: each click in a view is a landmark, a fixed point then its match in the moving layer. Or a fixed point at the mouse: Alt+F, its match: Alt+M. Drag a numbered point in a view to move it." },
         el("div", { class: "row" }, fixedHere, movingHere),
+        placeHint,
         pairs,
         field("Model", model),
         live,
@@ -1214,7 +1586,16 @@ export class Registration {
 
       // Straighten.
       marks.forEach((b, i) => {
-        b.textContent = saved.marks?.[i] ? `#${i + 1} ✓` : `#${i + 1} here`;
+        // Marked: the number and a check icon (its accessible name says so); not yet: "here".
+        if (saved.marks?.[i]) {
+          const mark = icon("check");
+          mark.setAttribute("aria-hidden", "true");
+          b.replaceChildren(`#${i + 1} `, mark);
+          b.setAttribute("aria-label", `#${i + 1}, marked; mark again here`);
+        } else {
+          b.replaceChildren(`#${i + 1} here`);
+          b.removeAttribute("aria-label");
+        }
         b.disabled = !has;
       });
       directions.forEach((d, k) => d.set((saved.lines ?? ["P→A", "I→S"])[k]));
@@ -1222,12 +1603,17 @@ export class Registration {
 
       // Landmarks.
       const r = this.result;
-      const residuals = r !== undefined && !("error" in r) ? r.residuals : [];
-      let k = 0;
-      const errors = saved.pairs.map((q) => (q.on && q.fixed && q.moving ? residuals[k++] : undefined));
-      pairs.update({ pairs: saved.pairs, errors, names: t?.output.names ?? ["x", "y", "z"] });
-      pairsBadge.textContent = saved.pairs.length ? `${saved.pairs.length} pair${saved.pairs.length === 1 ? "" : "s"}` : "";
-      fixedHere.disabled = movingHere.disabled = !has;
+      pairs.update({ pairs: saved.pairs, errors: this.pairErrors(), names: t?.output.names ?? ["x", "y", "z"] });
+      pairCount.set({ value: saved.pairs.length, unit: saved.pairs.length === 1 ? "pair" : "pairs" });
+      fixedHere.disabled = movingHere.disabled = placePairs.disabled = !has;
+      saveLta.disabled = !has;
+      editInViews.disabled = !has || this.frame === undefined;
+      editInViews.setAttribute("aria-pressed", String(ctx.views.selected() === "frame"));
+      if (!has && this.placing !== undefined) this.setPlacing(false);
+      placePairs.setAttribute("aria-pressed", String(this.placing !== undefined));
+      placePairs.textContent = this.placing !== undefined ? "Stop placing" : "Place pairs";
+      placeHint.hidden = this.placing === undefined;
+      placeHint.textContent = this.nextRole() === "fixed" ? "Click a feature in the fixed data." : "Click the same feature in the moving layer.";
       model.set(saved.model);
       live.set(saved.live);
       stats.update(
@@ -1268,6 +1654,30 @@ export class Registration {
   }
 }
 
+/**
+ * Rows of values shown in a card: a muted label, then x, y and z as
+ * readouts under their names, the unit muted after them (`wide`: one value
+ * across the three).  `set(row, values)` shows others; undefined hides the row.
+ */
+function readoutRows(axes: string[], rows: { label: string; unit: string; chosen?: boolean; wide?: boolean }[]): { element: HTMLElement; set(row: number, values: string[] | undefined): void } {
+  const element = el("div", { class: "view-card-values" }, el("span"), ...axes.map((a) => el("span", { class: "view-card-axis" }, a)), el("span"));
+  const parts = rows.map((r) => {
+    const label = el("span", { class: `view-card-label${r.chosen ? " chosen" : ""}` }, r.label);
+    const cells = (r.wide ? [0] : [0, 1, 2]).map(() => readout("", undefined, r.wide ? { class: "view-card-wide" } : {}));
+    const unit = el("span", { class: "readout-unit" }, r.unit);
+    element.append(label, ...cells, unit);
+    return { all: [label, ...cells, unit], cells };
+  });
+  return {
+    element,
+    set(row, values) {
+      const part = parts[row];
+      part.all.forEach((e) => (e.hidden = values === undefined));
+      part.cells.forEach((c, i) => c.set(values?.[i] ?? ""));
+    },
+  };
+}
+
 /** A select's options, replaced only when they change (so an open select stays open), and its value. */
 function setOptions(s: Settable<HTMLSelectElement, string>, options: [string, string][], value: string): void {
   const key = JSON.stringify(options);
@@ -1281,6 +1691,10 @@ function setOptions(s: Settable<HTMLSelectElement, string>, options: [string, st
 
 const STYLE = `
 .rg { display: grid; gap: var(--sp-4); }
+.rg-lead { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: center; gap: var(--sp-2) var(--sp-4); }
+.rg-lead > .rg-label { color: var(--muted); white-space: nowrap; }
+.rg-lead > .rg-wide { grid-column: 1 / -1; }
+.rg-lead > .rg-wide:empty, .rg-lead > [hidden] { display: none; }
 .rg-axis { display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: var(--sp-3); }
 .rg-axis > span { color: var(--muted); font-size: var(--fs-body); white-space: nowrap; }
 .rg-pairs { width: 100%; border-collapse: collapse; font-size: var(--fs-body); }

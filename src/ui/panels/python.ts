@@ -384,7 +384,7 @@ export function loadPython(wb: Workbench): Promise<Pyodide> {
         const tab = `python.${owner}.${id}`.replace(/[^A-Za-z0-9_.-]/g, "_");
         own.get(tab)?.();
         const kept = fn.copy?.() ?? fn;
-        // Where a plugin's panel goes: a tool in the Tools dock, under its group.
+        // Where a plugin's panel goes: a tool in the Tools section, under its group.
         const off = wb.docks.addTab(asTool({
           id: tab,
           title,

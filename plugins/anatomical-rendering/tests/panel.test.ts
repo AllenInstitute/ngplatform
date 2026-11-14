@@ -60,7 +60,7 @@ describe("the Anatomical panel", () => {
     const f = fakeContext({ layers: [IMAGE], axes: { brain: XYZ } });
     const { host } = await open(dom, f);
     const titles = [...host.querySelectorAll("details")].map((d) => dom.text(d.querySelector(".card-title")!));
-    expect(titles).toEqual(["Remote", "Rendering", "Regions", "Quality", "Lighting", "Crops", "Output", "Movie", "Splat"]);
+    expect(titles).toEqual(["Remote", "Rendering", "Regions", "Objects", "Quality", "Lighting", "Crops", "Output", "Movie", "Splat"]);
     const boxes = host.querySelectorAll<HTMLInputElement>("input[type=checkbox]");
     expect(boxes.length).toBeGreaterThan(5);
     for (const b of boxes) {

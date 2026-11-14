@@ -6,7 +6,10 @@
  * parameters, as the service's CUDA kernels (./pathtrace.wgsl).
  */
 import presetsJson from "../../../runner/ngplatform_render/presets/brain.json";
+import organPresetsJson from "../../../runner/ngplatform_render/presets/hipct-organs.json";
+import generalPresetsJson from "../../../runner/ngplatform_render/presets/general.json";
 import params from "../../../runner/ngplatform_render/params.json";
+import { PRECOMPUTED, precomputedUrl, storeHttpUrl } from "../../volume-view/sources.js";
 import { VolumeClient } from "../../volume-view/volume_client.js";
 import type { ViewSpec } from "../client.js";
 import shaderSource from "./pathtrace.wgsl?raw";
@@ -64,7 +67,8 @@ export interface LocalPreset {
   modality?: string;
 }
 
-export const PRESETS: LocalPreset[] = presetsJson as LocalPreset[];
+/** Every preset the host has: the brain set and the HiP-CT organs (window presets, matched to each scan's histogram). */
+export const PRESETS: LocalPreset[] = [...(presetsJson as LocalPreset[]), ...(organPresetsJson as unknown as LocalPreset[]), ...(generalPresetsJson as LocalPreset[])];
 const ENV = { top: [0.85, 0.9, 1.0], horizon: [0.55, 0.55, 0.6], bottom: [0.12, 0.11, 0.1], scale: 0.6 };
 
 /** Data values (0..255 here) at percentiles of the tissue: the values above the background's low peak. */
@@ -94,12 +98,11 @@ export function tissuePercentiles(data: Uint8Array): Map<number, number> {
 }
 
 /**
- * A window (0..255 here) over the tissue of a specimen in a mounting medium, as the host guesses
- * it (volumes.guess_window): the medium is the commonest value in a ring about the scan's axis,
- * and the window runs from just past it, on the side holding more of what lies inside the ring,
- * to as far again as the tissue's commonest value (which is then at its middle).
+ * What guessWindow reads, every 2nd voxel: the commonest value bar 0 in a ring about the scan's axis just
+ * inside its sides (r 0.75..0.9), `m`, and its band's half-width `w` (to a fifth of its peak); the counts
+ * within r 0.9 (bar 0); and the ring's counts (0 too).
  */
-export function guessWindow(data: Uint8Array, nx: number, ny: number, nz: number): [number, number] | undefined {
+function ringMedium(data: Uint8Array, nx: number, ny: number, nz: number): { m: number; w: number; inside: Float64Array; ring: Float64Array } | undefined {
   if (Math.min(nx, ny, nz) < 8) return undefined;
   const ring = new Float64Array(256);
   const inside = new Float64Array(256);
@@ -115,11 +118,10 @@ export function guessWindow(data: Uint8Array, nx: number, ny: number, nz: number
       }
     }
   }
-  ring[0] = 0;
   inside[0] = 0;
   const hs = ring.map((_, i) => {
     let a = 0;
-    for (let k = i - 2; k <= i + 2; ++k) if (k >= 0 && k < 256) a += ring[k];
+    for (let k = i - 2; k <= i + 2; ++k) if (k >= 1 && k < 256) a += ring[k];
     return a / 5;
   });
   let m = 0;
@@ -129,7 +131,38 @@ export function guessWindow(data: Uint8Array, nx: number, ny: number, nz: number
   while (j0 > 0 && hs[j0] > 0.2 * hs[m]) j0--;
   let j1 = m;
   while (j1 < 255 && hs[j1] > 0.2 * hs[m]) j1++;
-  const w = Math.max(m - j0, j1 - m, 1);
+  return { m, w: Math.max(m - j0, j1 - m, 1), inside, ring };
+}
+
+/**
+ * Whether the specimen lies in a mounting medium, and which side of it the tissue is on
+ * (volumes.medium_side): the medium's band (to at least 2 values each side, as the host's on 8-bit
+ * data) holds 0.3 of the ring or more, every voxel counted, and its value is 5 half-widths or more
+ * above 0 (a material, not a background of air).
+ */
+export function mediumSide(data: Uint8Array, size: readonly number[], range: readonly [number, number], window: readonly [number, number] | undefined): "above" | "below" | undefined {
+  const rm = ringMedium(data, size[0], size[1], size[2]);
+  if (rm === undefined || window === undefined) return undefined;
+  const w = Math.max(rm.w, 2);
+  let band = 0, total = 0;
+  for (let i = 0; i < 256; ++i) {
+    total += rm.ring[i];
+    if (i >= Math.max(1, rm.m - w) && i <= rm.m + w) band += rm.ring[i];
+  }
+  if (band < 0.3 * total || rm.m < 5 * w) return undefined;
+  return windowSide(data, size, range, window);
+}
+
+/**
+ * A window (0..255 here) over the tissue of a specimen in a mounting medium, as the host guesses
+ * it (volumes.guess_window): the medium is the commonest value in a ring about the scan's axis,
+ * and the window runs from just past it, on the side holding more of what lies inside the ring,
+ * to as far again as the tissue's commonest value (which is then at its middle).
+ */
+export function guessWindow(data: Uint8Array, nx: number, ny: number, nz: number): [number, number] | undefined {
+  const rm = ringMedium(data, nx, ny, nz);
+  if (rm === undefined) return undefined;
+  const { m, w, inside } = rm;
   let above = 0;
   let below = 0;
   for (let i = m + w; i < 256; ++i) above += inside[i];
@@ -195,9 +228,204 @@ export function transferTable(p: LocalPreset, pct: Map<number, number>, window?:
   return out;
 }
 
+/**
+ * A preset with the view's overrides: a "window" one may carry its window (data values) and the tissue's
+ * histogram on the scan it was made on (its values at percentiles 1..99, as stop values); a "data" one's
+ * stops are at data values.
+ */
+export type LevelPreset = LocalPreset & { window?: [number, number] | null; histogram?: number[] | null; classes?: number; split?: number | number[] | null };
+
+/**
+ * Where a tissue's values split into classes (presets.class_splits; 2: grey and white matter, 3: CSF too):
+ * Otsu's thresholds on its values at percentiles 1..99, each of the same weight, over the 5th to the 95th,
+ * each as the percentile between its two classes' nearest quantiles. The same sums as the host's, in the
+ * same order, so the two agree.
+ */
+export function classSplits(q: readonly number[], classes = 2): number[] {
+  const t = q.slice(4, 95);
+  const n = t.length;
+  const c = [0];
+  for (const x of t) c.push(c[c.length - 1] + x);
+  const part = (a: number, b: number) => ((c[b] - c[a]) * (c[b] - c[a])) / (b - a);
+  let best = -1, out = [3];
+  if (classes === 2) {
+    for (let i = 3; i < n - 2; ++i) {
+      const s = part(0, i) + part(i, n);
+      if (s > best) [best, out] = [s, [i]];
+    }
+  } else {
+    for (let i = 3; i < n - 5; ++i)
+      for (let j = i + 3; j < n - 2; ++j) {
+        const s = part(0, i) + part(i, j) + part(j, n);
+        if (s > best) [best, out] = [s, [i, j]];
+      }
+  }
+  return out.map((k) => k + 4.5);
+}
+
+/** A percentile on the preset's scan as the same place in its class here (presets.class_rank). */
+export function classRank(r: number, design: readonly number[], scan: readonly number[], lo: number, hi: number): number {
+  return interp(r, [lo, ...design, hi], [lo, ...scan, hi]);
+}
+
+const RANKS = Array.from({ length: 99 }, (_, i) => i + 1);
+
+/**
+ * The preset's colours and opacities at TF_SIZE values of the level (0..1
+ * for 0..255): stops at data values (a preset as the host resolves it, or
+ * as tuned) through the reader's window; a "window" preset through its
+ * window at data values, else the window guessed here; percentiles of the
+ * tissue here.
+ */
+export function levelTable(preset: LevelPreset, level: Pick<Level8, "range" | "pct" | "window" | "quantiles" | "medium">): Float32Array {
+  const [lo, hi] = level.range;
+  const to8 = (v: number) => ((v - lo) / (hi - lo || 1)) * 255;
+  const placed = preset.domain === "data" ? preset : levelResolved(preset, level);
+  return transferTable({ ...placed, stops: placed.stops.map((s) => ({ ...s, value: to8(s.value) })) }, level.pct);
+}
+
+/**
+ * The preset with its stops at the image's data values ("data" domain), as
+ * the host's `presets.resolved` places them, from the level held here: what
+ * the colourmap editor shows and moves.
+ */
+export function levelResolved(preset: LevelPreset, level: Pick<Level8, "range" | "pct" | "window" | "quantiles" | "medium">): LevelPreset {
+  const [lo, hi] = level.range;
+  const from8 = (v: number) => lo + (v / 255) * (hi - lo);
+  const keys = [...level.pct.keys()].sort((a, b) => a - b);
+  const guess = level.window ?? [0, 255];
+  const [w0, w1] = preset.window ?? [from8(guess[0]), from8(guess[1])];
+  // Histogram matching (presets._to_texture): the stop's quantile on the preset's scan, then this scan's
+  // value there; past either end, the window's scale. Not when the window was set by hand.
+  const ref = preset.histogram, mine = level.quantiles;
+  const matched = !preset.window && ref && mine && ref.length === mine.length && ref.length > 1 ? { ref, mine } : undefined;
+  // Two classes (grey and white matter): each matched to its own, the step between them at each scan's split.
+  const pv = keys.map((k) => level.pct.get(k)!);
+  const n = preset.classes ?? 1;
+  const design = preset.split == null ? undefined : Array.isArray(preset.split) ? preset.split : [preset.split];
+  const pctSplit = n > 1 && preset.domain === "percentile" && design ? [design, classSplits(RANKS.map((r) => interp(r, keys, pv)), n)] : undefined;
+  const histSplit = n > 1 && matched !== undefined && matched.ref.length === 99 ? [design ?? classSplits(matched.ref, n), classSplits(matched.mine, n)] : undefined;
+  // A specimen in a mounting medium (presets._tissue_percentile): percentiles of the tissue alone, its values at
+  // 1..99 (the medium left out), past them at their ends' slopes; the medium's cut takes away what lies against it,
+  // so a three-class preset's lowest two classes count as one.
+  const tissue = preset.domain === "percentile" && level.medium && mine && mine.length === 99 ? mine : undefined;
+  const tissueDesign = design && n > 1 ? (n === 3 ? design.slice(1) : design) : undefined;
+  const tissueSplit = tissue && tissueDesign ? classSplits(tissue, tissueDesign.length + 1) : undefined;
+  const ofTissue = (t: number[], p: number): number => {
+    if (tissueDesign && tissueSplit) p = classRank(p, tissueDesign, tissueSplit, 0, 100);
+    if (p <= 1) return t[0] - (1 - p) * (t[1] - t[0]);
+    if (p >= 99) return t[98] + (p - 99) * (t[98] - t[97]);
+    return interp(p, RANKS, t);
+  };
+  const at = (v: number): number => {
+    if (tissue) return ofTissue(tissue, v);
+    if (preset.domain === "percentile") return from8(interp(pctSplit ? classRank(v, pctSplit[0], pctSplit[1], 0, 100) : v, keys, pv));
+    if (preset.domain !== "window") return v;
+    if (matched === undefined) return w0 + v * (w1 - w0);
+    const { ref: r, mine: m } = matched;
+    if (v <= r[0]) return m[0] + (v - r[0]) * (w1 - w0);
+    if (v >= r[r.length - 1]) return m[m.length - 1] + (v - r[r.length - 1]) * (w1 - w0);
+    if (histSplit) return interp(classRank(interp(v, r, RANKS), histSplit[0], histSplit[1], 1, 99), RANKS, m);
+    return interp(v, r, m);
+  };
+  const placed = preset.stops.map((s) => ({ ...s, value: at(s.value) }));
+  const out = { ...preset, domain: "data", window: null, histogram: null, classes: 1, split: null, stops: placed };
+  if (!tissue || placed.length === 0) return out;
+  // Clear outside the tissue (presets._placed), as the organ presets are: from the medium's edge of the window to
+  // 2.5 windows from it (the jar's wall), closed at each end by a stop of opacity 0 after one holding the map's
+  // colour and opacity a tenth of a window (at the medium) or 0.3 (at the far end) inside.
+  const sorted = [...placed].sort((a, b) => a.value - b.value);
+  const xs = sorted.map((s) => s.value);
+  const W = w1 - w0;
+  const [[e0, i0], [e1, i1]] = level.medium === "above" ? [[w0, w0 + 0.1 * W], [w0 + 2.5 * W, w0 + 2.2 * W]] : [[w1 - 2.5 * W, w1 - 2.2 * W], [w1, w1 - 0.1 * W]];
+  const stop = (x: number, opacity?: number) => {
+    const near = sorted.reduce((a, b) => (Math.abs(b.value - x) < Math.abs(a.value - x) ? b : a));
+    return { ...near, value: x, color: [0, 1, 2].map((c) => interp(x, xs, sorted.map((s) => s.color[c]))), opacity: opacity ?? interp(x, xs, sorted.map((s) => s.opacity)) };
+  };
+  return { ...out, stops: [stop(e0, 0), stop(i0), ...sorted.filter((s) => s.value > i0 && s.value < i1), stop(i1), stop(e1, 0)] };
+}
+
+/**
+ * Which side of the mounting medium the tissue is (volumes.window_side): "above" when the window (data)
+ * starts nearer the medium's value, the commonest value bar the lowest bin, every 4th voxel.
+ */
+export function windowSide(data: Uint8Array, size: readonly number[], range: readonly [number, number], window: readonly [number, number]): "above" | "below" {
+  const [lo, hi] = range;
+  const [nx, ny, nz] = size;
+  const bins = new Float64Array(512);
+  for (let z = 0; z < nz; z += 4) for (let y = 0; y < ny; y += 4) for (let x = 0, i = (z * ny + y) * nx; x < nx; x += 4, i += 4) {
+    const v = lo + ((hi - lo) * data[i]) / 255;
+    bins[Math.min(511, Math.max(0, Math.floor(((v - lo) / (hi - lo || 1)) * 512)))]++;
+  }
+  let k = 1;
+  for (let b = 2; b < 512; ++b) if (bins[b] > bins[k]) k = b;
+  const m = lo + ((k + 0.5) / 512) * (hi - lo);
+  return Math.abs(m - window[0]) <= Math.abs(m - window[1]) ? "above" : "below";
+}
+
+/**
+ * The tissue's values (data) at percentiles 1..99 (volumes.tissue_quantiles): every 2nd voxel within a
+ * ring about the scan's axis, on the tissue's side of the window's edge at the medium, up to three
+ * windows past it; undefined with fewer than 1000 such voxels. The level's values are 8-bit, so it counts
+ * them in 256 bins and interpolates between ranks as numpy's percentile does.
+ */
+export function levelQuantiles(data: Uint8Array, size: readonly number[], range: readonly [number, number], window: readonly [number, number]): number[] | undefined {
+  const [nx, ny, nz] = size;
+  if (Math.min(nx, ny, nz) < 8) return undefined;
+  const [lo, hi] = range;
+  const [w0, w1] = window;
+  const above = windowSide(data, size, range, window) === "above";
+  const value = (b: number) => lo + ((hi - lo) * b) / 255;
+  const keep = new Uint8Array(256);
+  for (let b = 0; b < 256; ++b) {
+    const u = (value(b) - w0) / (w1 - w0 || 1);
+    keep[b] = (above ? u > 0.1 && u < 3 : u < 0.9 && u > -2) ? 1 : 0;
+  }
+  const X = Math.ceil(nx / 2), Y = Math.ceil(ny / 2);
+  const counts = new Float64Array(256);
+  for (let z = 0; z < nz; z += 2) {
+    for (let y = 0; y < ny; y += 2) {
+      const ry = (y / 2 - (Y - 1) / 2) / (Y / 2);
+      for (let x = 0, i = (z * ny + y) * nx; x < nx; x += 2, i += 2) {
+        const rx = (x / 2 - (X - 1) / 2) / (X / 2);
+        if (Math.hypot(ry, rx) < 0.9 && keep[data[i]]) counts[data[i]]++;
+      }
+    }
+  }
+  const n = counts.reduce((a, b) => a + b, 0);
+  if (n < 1000) return undefined;
+  // The value at a rank (0-based) of the voxels kept, sorted.
+  const cum = new Float64Array(256);
+  let acc = 0;
+  for (let b = 0; b < 256; ++b) cum[b] = acc += counts[b];
+  const atRank = (k: number) => {
+    let b = 0;
+    while (b < 255 && cum[b] <= k) b++;
+    return value(b);
+  };
+  return Array.from({ length: 99 }, (_, i) => {
+    const pos = ((i + 1) / 100) * (n - 1);
+    const f = Math.floor(pos);
+    return atRank(f) + (atRank(Math.min(n - 1, f + 1)) - atRank(f)) * (pos - f);
+  });
+}
+
+/**
+ * The level's values in 256 bins, one per 8-bit value, every 2nd voxel, as the host's histogram for
+ * the editor: `lo` and `hi` the bins' outer edges, half a step past the data values read as 0 and 255,
+ * so each bin is centred on its value.
+ */
+export function levelHistogram(level: Pick<Level8, "data" | "size" | "range">): { lo: number; hi: number; counts: number[] } {
+  const counts = new Array<number>(256).fill(0);
+  const [nx, ny, nz] = level.size;
+  for (let z = 0; z < nz; z += 2) for (let y = 0; y < ny; y += 2) for (let x = 0, i = (z * ny + y) * nx; x < nx; x += 2, i += 2) counts[level.data[i]]++;
+  const half = (level.range[1] - level.range[0]) / 255 / 2;
+  return { lo: level.range[0] - half, hi: level.range[1] + half, counts };
+}
+
 // ------------------------------------------------------------------ 4x4 (row-major) helpers
 type M = number[];
-const mul = (a: M, b: M): M => {
+export const mul = (a: M, b: M): M => {
   const o = new Array(16).fill(0);
   for (let r = 0; r < 4; ++r) for (let c = 0; c < 4; ++c) for (let k = 0; k < 4; ++k) o[4 * r + c] += a[4 * r + k] * b[4 * k + c];
   return o;
@@ -228,14 +456,14 @@ export function invert(m: M): M {
   }
   return inv;
 }
-const rowMajor = (cm: ArrayLike<number>): M => {
+export const rowMajor = (cm: ArrayLike<number>): M => {
   const o = new Array(16);
   for (let r = 0; r < 4; ++r) for (let c = 0; c < 4; ++c) o[4 * r + c] = cm[4 * c + r];
   return o;
 };
 
 /** Camera right, up and back (world) from a row-major inverse view-projection. */
-function cameraAxes(inv: M): [number[], number[], number[]] {
+export function cameraAxes(inv: M): [number[], number[], number[]] {
   const un = (x: number, y: number, z: number) => {
     const p = [0, 1, 2, 3].map((r) => inv[4 * r] * x + inv[4 * r + 1] * y + inv[4 * r + 2] * z + inv[4 * r + 3]);
     return [p[0] / p[3], p[1] / p[3], p[2] / p[3]];
@@ -254,8 +482,55 @@ function cameraAxes(inv: M): [number[], number[], number[]] {
   return [r, u, fwd.map((v) => -v)];
 }
 
+/** One level of the image at 8 bits, as both renderers in this browser hold it. */
+export interface Level8 {
+  /** x fastest, then y, then z. */
+  data: Uint8Array;
+  size: [number, number, number];
+  /** Voxel to physical (RAS, mm), row-major. */
+  voxelToRas: number[];
+  /** The data values 0 and 255 stand for (the reader's window). */
+  range: [number, number];
+  /** Values (0..255) at percentiles of the tissue, and the window guessed over it, for presets in those domains. */
+  pct: Map<number, number>;
+  window: [number, number] | undefined;
+  /** The tissue's values (data) at percentiles 1..99, for matching a window preset's histogram (`levelQuantiles`). */
+  quantiles?: number[];
+  /** The specimen lies in a mounting medium, the tissue above or below it (`mediumSide`): percentile presets then take the tissue alone. */
+  medium?: "above" | "below";
+  /** The level's name in the store. */
+  path: string;
+}
+
+/**
+ * The finest level of the image within `budget` voxels and `maxDim` a side (else the coarsest), read at 8 bits.
+ * `url` is the store as the host takes it (gs:// and s3:// kept): read here at its http(s) address.
+ */
+export async function readLevel(client: VolumeClient, url: string, budget: number, maxDim: number, progress?: (msg: string) => void): Promise<Level8> {
+  // A precomputed image (precomputed://…) is read as the volume view reads one: `precomputed:<http url>`.
+  const pre = url.startsWith("precomputed://") ? precomputedUrl(url) : undefined;
+  const http = pre !== undefined ? PRECOMPUTED + pre : storeHttpUrl(url.endsWith("/") ? url : `${url}/`);
+  if (http === undefined) throw new Error(`${url}: this browser reads stores over http(s), gs:// and s3:// only`);
+  // All of the image's values read as 0..255, as the host holds them: the densest tissue not cut off.
+  const { levels, window: range } = await client.open([http], undefined, { full: true });
+  const fits = levels.filter((l) => l.size[0] * l.size[1] * l.size[2] <= budget && Math.max(...l.size) <= maxDim);
+  const levelIndex = fits.length ? levels.indexOf(fits[0]) : levels.length - 1;
+  const level = levels[levelIndex];
+  progress?.(`reading level ${level.path} (${level.size.join(" × ")})`);
+  const { data, size } = await client.volume(levelIndex, (d, t) => progress?.(`reading level ${level.path}: ${d}/${t} chunks`));
+  const span = range ?? [0, 255];
+  const window = guessWindow(data, size[0], size[1], size[2]);
+  const from8 = (v: number) => span[0] + (v / 255) * (span[1] - span[0]);
+  const quantiles = window && levelQuantiles(data, size, span, [from8(window[0]), from8(window[1])]);
+  const medium = quantiles ? mediumSide(data, size, span, [from8(window[0]), from8(window[1])]) : undefined;
+  return { data, size, voxelToRas: Array.from(level.voxelToRas), range: span, pct: tissuePercentiles(data), window, quantiles, medium, path: level.path };
+}
+
 export interface LocalFrame {
   bitmap: ImageBitmap;
+  /** The camera of the view it is a picture of (inverse view-projection, column-major), and the tag the view was set with. */
+  camera: number[];
+  tag: string;
   depth?: { width: number; height: number; data: Float32Array; version: number };
   samples: number;
   width: number;
@@ -339,6 +614,8 @@ export class LocalRenderer {
   private H = 0;
   private bind: GPUBindGroup | undefined;
   private view: ViewSpec | undefined;
+  private tag = "";
+  private appliedView: { camera: number[]; tag: string } = { camera: [], tag: "" };
   private version = 0;
   private applied = -1;
   private samples = 0;
@@ -350,6 +627,8 @@ export class LocalRenderer {
   ready = false;
   private client: VolumeClient | undefined;
   adapterName = "";
+  /** The level on the GPU, once loaded. */
+  level: Level8 | undefined;
 
   async load(url: string, budget: number, progress?: (msg: string) => void): Promise<string> {
     const adapter = await webgpuAdapter();
@@ -363,17 +642,13 @@ export class LocalRenderer {
     this.device = device;
     this.client?.dispose();
     this.client = new VolumeClient();
-    const { levels } = await this.client.open([url.endsWith("/") ? url : `${url}/`], undefined);
-    const maxDim = device.limits.maxTextureDimension3D;
-    const fits = levels.filter((l) => l.size[0] * l.size[1] * l.size[2] <= budget && Math.max(...l.size) <= maxDim);
-    const levelIndex = fits.length ? levels.indexOf(fits[0]) : levels.length - 1;
-    const level = levels[levelIndex];
-    progress?.(`reading level ${level.path} (${level.size.join(" × ")})`);
-    const { data, size } = await this.client.volume(levelIndex, (d, t) => progress?.(`reading level ${level.path}: ${d}/${t} chunks`));
+    const level = await readLevel(this.client, url, budget, device.limits.maxTextureDimension3D, progress);
+    const { data, size } = level;
+    this.level = level;
     this.size = size;
-    this.voxelToRas = Array.from(level.voxelToRas);
-    this.pct = tissuePercentiles(data);
-    this.window = guessWindow(data, size[0], size[1], size[2]);
+    this.voxelToRas = level.voxelToRas;
+    this.pct = level.pct;
+    this.window = level.window;
     // The texture (rows padded to 256 bytes for the copy).
     const [nx, ny, nz] = size;
     this.tex = device.createTexture({ size: [nx, ny, nz], dimension: "3d", format: "r8unorm", usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
@@ -456,8 +731,10 @@ export class LocalRenderer {
     });
   }
 
-  setView(view: ViewSpec): void {
+  /** The view to render; `tag` comes back with its frames. */
+  setView(view: ViewSpec, tag = ""): void {
     this.view = view;
+    this.tag = tag;
     this.version++;
     this.maxSamples = view.max_samples ?? 256;
     if (!this.running) void this.loop();
@@ -547,7 +824,7 @@ export class LocalRenderer {
           this.resize(W, H);
           const { P, preset } = this.pack(v, W, H);
           device.queue.writeBuffer(this.params!, 0, P);
-          device.queue.writeBuffer(this.tf!, 0, transferTable(preset, this.pct, this.window));
+          device.queue.writeBuffer(this.tf!, 0, levelTable(preset, this.level!));
           device.queue.writeBuffer(this.uni!, 0, new Uint32Array([W, H, 0, 0]));
           const enc = device.createCommandEncoder();
           enc.clearBuffer(this.accum!);
@@ -567,6 +844,7 @@ export class LocalRenderer {
           read.destroy();
           void pass;
           this.applied = version;
+          this.appliedView = { camera: v.inv_view_projection, tag: this.tag };
           this.samples = 0;
           lastPublish = 0;
         }
@@ -615,7 +893,7 @@ export class LocalRenderer {
     read.unmap();
     read.destroy();
     const bitmap = await createImageBitmap(new ImageData(px, W, H), { premultiplyAlpha: "none" });
-    this.onFrame?.({ bitmap, depth, samples: this.samples, width: W, height: H, msPerPass: ms, version: this.applied });
+    this.onFrame?.({ bitmap, depth, ...this.appliedView, samples: this.samples, width: W, height: H, msPerPass: ms, version: this.applied });
   }
 
   dispose(): void {

@@ -57,16 +57,16 @@ describe("which plugins are on", () => {
 describe("the app's defaults", () => {
   const manifests = CATALOGUE.map((e) => e.manifest);
 
-  it("has only Zarr Vectors on in a browser that chose nothing", () => {
-    expect([...resolveEnabled(manifests, {}).enabled]).toEqual(["org.ngplatform.zarr-vectors"]);
+  it("has only Zarr Vectors and the view aids on in a browser that chose nothing", () => {
+    expect([...resolveEnabled(manifests, {}).enabled].sort()).toEqual(["org.ngplatform.view-aids", "org.ngplatform.zarr-vectors"]);
   });
 
   it("keeps what a browser chose: on stays on, off stays off", () => {
     const choices = { "org.ngplatform.track-filtering": true, "org.ngplatform.annotations": false, "org.ngplatform.filters": true };
-    expect([...resolveEnabled(manifests, choices).enabled].sort()).toEqual(["org.ngplatform.filters", "org.ngplatform.track-filtering", "org.ngplatform.zarr-vectors"]);
+    expect([...resolveEnabled(manifests, choices).enabled].sort()).toEqual(["org.ngplatform.filters", "org.ngplatform.track-filtering", "org.ngplatform.view-aids", "org.ngplatform.zarr-vectors"]);
     // Zarr Vectors chosen off takes Track filtering and Luxar with it.
     const off = resolveEnabled(manifests, { "org.ngplatform.zarr-vectors": false, "org.ngplatform.track-filtering": true });
-    expect(off.enabled.size).toBe(0);
+    expect([...off.enabled]).toEqual(["org.ngplatform.view-aids"]);
     expect(off.blocked.get("org.ngplatform.track-filtering")).toEqual(["org.ngplatform.zarr-vectors"]);
   });
 

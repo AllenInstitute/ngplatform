@@ -52,7 +52,7 @@ def is_n5(url: str) -> bool:
 
 def http_url(url: str) -> str:
     url = url.strip()
-    for p in ("zarr3://", "zarr2://", "zarr://", "n5://"):
+    for p in ("zarr3://", "zarr2://", "zarr://", "n5://", "precomputed://"):
         if url.startswith(p):
             url = url[len(p):]
     url = url.split("|")[0]
@@ -92,6 +92,7 @@ class Multiscale:
     labels: bool = False
     n5: bool = False
     types: list[str] = field(default_factory=list)  # array axes' OME types ("space", "channel", "time", or "")
+    precomputed: dict | None = None  # a Neuroglancer precomputed image's info (precomputed.py)
 
     def channel_axis(self) -> int | None:
         return _axis_of(self, "channel", ("c", "channel", "ch"))
@@ -324,9 +325,13 @@ def _open_n5(url: str) -> Multiscale:
 
 
 def level_array(url: str, ms: Multiscale, path: str):
-    """A level's array: zarr's, or an N5Array."""
+    """A level's array: zarr's, an N5Array, or a precomputed scale's."""
     import zarr
 
+    if ms.precomputed is not None:
+        from .precomputed import level_array as precomputed_level
+
+        return precomputed_level(url, ms, path)
     if ms.n5:
         return N5Array(http_url(url), path)
     return zarr.open_group(store=_store(url), mode="r")[path]
@@ -362,6 +367,10 @@ def _mat_scale_translate(transforms: list[dict], ndim: int) -> np.ndarray:
 def open_multiscale(url: str) -> Multiscale:
     import zarr
 
+    from .precomputed import is_precomputed, open_precomputed
+
+    if is_precomputed(url):
+        return open_precomputed(url)
     if is_n5(url):
         return _open_n5(url)
     store = _store(url)
@@ -460,6 +469,10 @@ def cache_info() -> dict[str, Any]:
 
 
 def _metadata_files(url: str, ms: Multiscale, level: Level) -> list[str]:
+    if ms.precomputed is not None:
+        from .precomputed import base_url
+
+        return [f"{base_url(url)}/info"]
     base = http_url(url)
     if ms.n5:
         return [f"{base}/{level.path}/attributes.json"]
@@ -527,6 +540,21 @@ class Loaded:
     channel: int = 0  # the channel and time point read (0 for an image without those axes)
     time: int = 0
     counts: dict[str, Any] = field(default_factory=dict)  # Multiscale.counts(): its axes, channels and time points
+    medium: str = ""  # the specimen lies in a mounting medium, the tissue "above" or "below" it (medium_side); else ""
+
+
+def empty(lo, hi) -> Loaded:
+    """An empty volume (2 x 2 x 2 voxels of 0) over the box lo..hi (physical mm, x y z), a little beyond it: what
+    a scene of objects alone renders in (its camera, crops and depth placed as an image's would be)."""
+    lo, hi = np.asarray(lo, np.float64), np.asarray(hi, np.float64)
+    pad = 0.02 * max(float(np.max(hi - lo)), 1e-6)
+    lo, hi = lo - pad, hi + pad
+    voxel = (hi - lo) / 2
+    affine = np.eye(4)
+    affine[:3, :3] = np.diag(voxel)
+    affine[:3, 3] = lo + voxel / 2
+    return Loaded(np.zeros((2, 2, 2), np.uint8), affine, 0.0, 1.0, {p: 0.0 for p in PERCENTILES}, "objects",
+                  tuple(float(x) for x in voxel), (2, 2, 2))
 
 
 def _order_zyx(a: np.ndarray, ms: Multiscale) -> np.ndarray:
@@ -595,7 +623,7 @@ def _read(url: str, level: Level, ms: Multiscale, progress: Callable[[float, str
     arr = level_array(url, ms, level.path)
     shard = getattr(arr, "shards", None) or arr.chunks
     # A sharded level on a server: whole shards, one GET each (blocks are whole shards, so each is read once).
-    whole = _WholeShards(url, level.path, arr) if (not ms.n5 and getattr(arr, "shards", None) and _remote(url)) else None
+    whole = _WholeShards(url, level.path, arr) if (not ms.n5 and ms.precomputed is None and getattr(arr, "shards", None) and _remote(url)) else None
     zi, yi, xi = ms.spatial[2], ms.spatial[1], ms.spatial[0]
     n = (arr.shape[zi], arr.shape[yi], arr.shape[xi])
     # Blocks: the chunk (or shard) shape, grown to at least 64 MB and to a multiple of the factor.
@@ -732,13 +760,11 @@ def window_side(q: np.ndarray, lo: float, hi: float, window: tuple[float, float]
     return "above" if abs(m - w0) <= abs(m - w1) else "below"
 
 
-def guess_window(q: np.ndarray, lo: float, hi: float) -> tuple[float, float] | None:
-    """A window over the tissue of a specimen in a mounting medium (data units): from just past
-    the medium, on the side of it that holds more of the rest (tissue is usually denser), to as
-    far again as the tissue's commonest value, so that value is at the window's middle whatever
-    else (calcium, metal) the scan holds. The medium is the commonest value in a ring about the
-    scan's axis just inside its sides, and only what lies within that ring counts, so what lies
-    outside a round jar (the corners) does not."""
+def _ring_medium(q: np.ndarray) -> tuple[int, int, np.ndarray, float] | None:
+    """What guess_window reads, every 2nd voxel: the commonest value bar 0 in a ring about the scan's axis just
+    inside its sides (r 0.75..0.9 of its half widths), as a bin `m` (of 16 values for 16-bit data), and its band's
+    half-width `w` (bins, to a fifth of its peak); the counts within r 0.9 (bar 0); and the share of the ring in
+    the band, every voxel counted (0 too)."""
     if q.ndim != 3 or min(q.shape) < 8:
         return None
     s = q[::2, ::2, ::2]
@@ -751,6 +777,7 @@ def guess_window(q: np.ndarray, lo: float, hi: float) -> tuple[float, float] | N
     shift = 0 if q.dtype == np.uint8 else 4
     nb = (top >> shift) + 1
     h = np.bincount((ring.ravel() >> shift).astype(np.int64), minlength=nb).astype(np.float64)
+    total = h.sum()
     h[0] = 0
     if h.sum() == 0:
         return None
@@ -765,6 +792,43 @@ def guess_window(q: np.ndarray, lo: float, hi: float) -> tuple[float, float] | N
     w = max(m - j0, j1 - m, 2)
     allh = np.bincount((inside.ravel() >> shift).astype(np.int64), minlength=nb).astype(np.float64)
     allh[0] = 0
+    return m, w, allh, float(h[max(1, m - w): m + w + 1].sum() / total)
+
+
+MEDIUM_SHARE = 0.3  # of the ring the medium's band fills, at least
+MEDIUM_RISE = 5.0  # the medium's value above the scan's 0, in half-widths of its band, at least
+
+
+def medium_side(q: np.ndarray, lo: float, hi: float, window: tuple[float, float] | None) -> str:
+    """Whether the specimen lies in a mounting medium (HiP-CT's ethanol and agar), and on which side of it the
+    tissue is: "above" or "below" (window_side), else "". A medium fills the scan's sides: its band (as
+    guess_window finds it) holds MEDIUM_SHARE of the ring or more, every voxel counted (a masked scan's ring is
+    mostly 0, and what a band of tissue holds of the rest is little: 0.17 at most in the scans tried, against 0.47
+    to 0.95 for HiP-CT organs in their jars); and it is a material, not the background: its value lies
+    MEDIUM_RISE half-widths of its band or more above the scan's 0 (8.7 or more for the jars; the air about an
+    MR head, at 0 with noise as wide as its value, 2.5)."""
+    rm = _ring_medium(q)
+    if rm is None or window is None:
+        return ""
+    m, w, _, share = rm
+    if share < MEDIUM_SHARE or m < MEDIUM_RISE * w:
+        return ""
+    return window_side(q, lo, hi, window)
+
+
+def guess_window(q: np.ndarray, lo: float, hi: float) -> tuple[float, float] | None:
+    """A window over the tissue of a specimen in a mounting medium (data units): from just past
+    the medium, on the side of it that holds more of the rest (tissue is usually denser), to as
+    far again as the tissue's commonest value, so that value is at the window's middle whatever
+    else (calcium, metal) the scan holds. The medium is the commonest value in a ring about the
+    scan's axis just inside its sides, and only what lies within that ring counts, so what lies
+    outside a round jar (the corners) does not."""
+    rm = _ring_medium(q)
+    if rm is None:
+        return None
+    m, w, allh, _ = rm
+    top = 255 if q.dtype == np.uint8 else 65535
+    shift = 0 if q.dtype == np.uint8 else 4
     above, below = allh[m + w:], allh[: max(0, m - w)]
     unit = (hi - lo) / top * (1 << shift)
     at = lambda k: lo + k * unit
@@ -900,7 +964,8 @@ def load(url: str, budget: int = 400_000_000, labels: bool | None = None, level:
     src = tuple(chosen.shape[i] for i in ms.spatial)
     win = None if is_labels else guess_window(q, lo, hi)
     qs = tissue_quantiles(q, lo, hi, win) if win else None
-    return Loaded(q, A, lo, hi, pc, name, vox, src, _time.time() - t0, made, from_cache, win, qs, at_c, at_t, ms.counts())
+    side = medium_side(q, lo, hi, win) if qs else ""
+    return Loaded(q, A, lo, hi, pc, name, vox, src, _time.time() - t0, made, from_cache, win, qs, at_c, at_t, ms.counts(), side)
 
 
 def _cache_put(cache: Path, data: np.ndarray) -> None:

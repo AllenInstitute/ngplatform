@@ -3,8 +3,8 @@
  *
  * Every plugin the app ships is in the catalogue (plugins/index.ts).
  * Whether each is on is this browser's choice, kept in local storage and
- * defaulting to the manifest's `enabledByDefault` (only Zarr Vectors is on
- * by default).  An example can switch a plugin on for this tab only (kept
+ * defaulting to the manifest's `enabledByDefault` (Zarr Vectors and the
+ * view aids are on by default).  An example can switch a plugin on for this tab only (kept
  * in session storage), unless this browser chose it off.  A plugin whose
  * required plugins are not all on is off, whatever was chosen.
  *
@@ -180,7 +180,7 @@ export function noteDefaultsTold(): void {
  */
 export function returningVisitor(): boolean {
   try {
-    return ["left", "right", "bottom"].some((slot) => localStorage.getItem(`ngplatform.${slot}.tab`) !== null);
+    return ["left", "tools", "right", "bottom"].some((slot) => localStorage.getItem(`ngplatform.${slot}.tab`) !== null);
   } catch {
     return false;
   }

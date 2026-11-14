@@ -115,6 +115,7 @@ function fakeContext(layers: LayerInfo[], saved: unknown) {
         return () => set.delete(f);
       },
       onLayersChanged: (f: () => void) => (layerListeners.add(f), () => layerListeners.delete(f)),
+      onStateChanged: () => () => {},
       onRendered: () => () => {},
       hideLayerDrawing: () => {},
       setTemporaryBackground: () => {},
