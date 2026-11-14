@@ -1,7 +1,7 @@
 /**
  * The views' backgrounds, and others shown over them for a while: a
  * plugin's for the 2-D views (Luxar's splats need black), and the light
- * ground of Views follow theme (src/ui/theme.ts) for the 2-D and 3-D views.
+ * ground of the light theme (src/ui/theme.ts) for the 2-D and 3-D views.
  * What is shown for a while is never saved: the state keeps the backgrounds
  * it has (a link's own, or the defaults), and `saved()` says what they are
  * while others are shown.  A background the person changes meanwhile
@@ -63,7 +63,7 @@ export class ViewBackgrounds {
     this.apply();
   }
 
-  /** The ground shown for a while (the light ground of Views follow theme), or none. */
+  /** The ground shown for a while (the light theme's ground), or none. */
   setGround(ground: Record<Which, Rgb> | undefined): void {
     this.ground = ground === undefined ? undefined : { sections: Float32Array.from(ground.sections), view3d: Float32Array.from(ground.view3d) };
     this.own.clear();

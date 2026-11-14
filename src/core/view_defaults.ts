@@ -38,9 +38,10 @@ export function withViewDefaults(ng: Json): Json {
 }
 
 /**
- * The light ground the views show while Views follow theme is on in the
- * light theme (Settings › View): behind the sections --view-margin's light
- * value, the 3-D view white.  Shown, never saved: a link keeps its own.
+ * The light ground the views show in the light theme (unless Settings ›
+ * View › Black views in the light theme is on): behind the sections
+ * --view-margin's light value, the 3-D view white.  Shown, never saved: a
+ * link keeps its own.
  */
 export const VIEW_GROUND_LIGHT = { sections: "#f3f3f3", view3d: "#ffffff" } as const;
 

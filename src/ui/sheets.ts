@@ -429,7 +429,7 @@ export function showSettingsSheet(wb: Workbench, section: SettingsSection = "vie
 }
 
 /**
- * Theme: dark, light or as the system is, and whether the views follow it
+ * Theme: dark, light or as the system is, and whether the views stay black in the light one
  * (src/ui/theme.ts).  Kept in this browser; the choice shows at once.
  */
 function themeSettings(): HTMLElement {
@@ -437,8 +437,8 @@ function themeSettings(): HTMLElement {
   const buttons = THEME_CHOICES.map(([id, label]) =>
     h("button", { type: "button", "data-theme-choice": id, "aria-pressed": String(theme.choice() === id), onclick: () => choose(id) }, label),
   );
-  const follow = toggle("Views follow theme", theme.viewsFollow(), (on) => theme.setViewsFollow(on), {
-    info: "Off: the views stay black in both themes, as images read best on black. On: in the light theme the views are on a light ground too, in this browser only; a link keeps its own backgrounds.",
+  const black = toggle("Black views in the light theme", theme.blackViews(), (on) => theme.setBlackViews(on), {
+    info: "Off: in the light theme the views are white too. On: they stay black, as in the dark theme (images read best on black). Either way only this browser's display: the scene and its link keep their own backgrounds.",
   });
   const choose = (id: ThemeChoice) => {
     theme.setChoice(id);
@@ -448,7 +448,7 @@ function themeSettings(): HTMLElement {
     "div",
     { class: "options theme-options" },
     h("div", { class: "field" }, h("span", { id: "theme-label" }, "Theme"), h("div", { class: "segmented", role: "group", "aria-labelledby": "theme-label" }, ...buttons)),
-    follow,
+    black,
   );
 }
 

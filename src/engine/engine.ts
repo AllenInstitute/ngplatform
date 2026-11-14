@@ -390,7 +390,7 @@ export class Engine {
   /**
    * Sets the 2-D views' background for a while (Luxar's splats in place of an
    * image need black), or (`undefined`) puts it back: not saved in the link.
-   * Shown over the ground of Views follow theme.
+   * Shown over the light theme's ground.
    */
   setTemporaryBackground(rgb: [number, number, number] | undefined): void {
     this.backgrounds.setPlugin(rgb);
@@ -398,7 +398,7 @@ export class Engine {
 
   /**
    * Shows the views on another ground for a while (`sections` behind the
-   * 2-D views, `view3d` behind the 3-D view: Views follow theme), or
+   * 2-D views, `view3d` behind the 3-D view: the light theme's), or
    * (`undefined`) puts back the backgrounds the state has: never saved in
    * the link, whatever the scene carries.
    */

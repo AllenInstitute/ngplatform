@@ -9,7 +9,7 @@
 // measures against the baseline) and the screenshots; exits 1 when a
 // measure is worse than the baseline.  UI_AUDIT_BASELINE=1 records this run
 // as the baseline instead.  UI_AUDIT_THEME=light (or dark, system) audits
-// that theme, and UI_AUDIT_VIEWS_FOLLOW=1 with Views follow theme on (the
+// that theme, and UI_AUDIT_BLACK_VIEWS=1 with Black views in the light theme on (the
 // choices of Settings › View); the baseline is the dark theme's.
 // NGP_RUNNER="<address> <token>" pairs a runner,
 // so the tools that need one show their full panels.  CHROME and
@@ -53,14 +53,14 @@ await page.waitForFunction(() => window.workbench !== undefined, null, { timeout
 const plugins = await page.evaluate(() => window.workbench.pluginSwitches.manifests.map((m) => m.id));
 const runner = process.env.NGP_RUNNER?.split(/\s+/);
 await page.evaluate(
-  ({ plugins, runner, theme, viewsFollow }) => {
+  ({ plugins, runner, theme, blackViews }) => {
     localStorage.clear();
     localStorage.setItem("ngplatform.plugins.enabled", JSON.stringify(Object.fromEntries(plugins.map((id) => [id, true]))));
     if (runner) localStorage.setItem("ngplatform.runner", JSON.stringify({ address: runner[0], token: runner[1] }));
     if (theme) localStorage.setItem("ngplatform.theme", theme);
-    if (viewsFollow) localStorage.setItem("ngplatform.viewsFollowTheme", "1");
+    if (blackViews) localStorage.setItem("ngplatform.blackViews", "1");
   },
-  { plugins, runner, theme: process.env.UI_AUDIT_THEME, viewsFollow: process.env.UI_AUDIT_VIEWS_FOLLOW === "1" },
+  { plugins, runner, theme: process.env.UI_AUDIT_THEME, blackViews: process.env.UI_AUDIT_BLACK_VIEWS === "1" },
 );
 
 const shots = [];

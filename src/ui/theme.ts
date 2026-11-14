@@ -7,8 +7,9 @@
  * page never shows the other theme first; this keeps it after, as the
  * choice or the system's setting changes.
  *
- * The views stay black in both themes (images read on black); Views follow
- * theme, off by default, shows them on a light ground in the light theme.
+ * The views take the theme's ground: black in the dark, white in the light
+ * (shown, never saved: a scene keeps the backgrounds it carries).  Black
+ * views in the light theme, off by default, keeps them black there.
  */
 
 export type ThemeChoice = "dark" | "light" | "system";
@@ -16,7 +17,7 @@ export type ResolvedTheme = "dark" | "light";
 
 /** Where the choices are kept (public/theme.js reads the first). */
 export const THEME_KEY = "ngplatform.theme";
-export const VIEWS_FOLLOW_KEY = "ngplatform.viewsFollowTheme";
+export const BLACK_VIEWS_KEY = "ngplatform.blackViews";
 
 /** The choices, in Settings' order, with their names. */
 export const THEME_CHOICES: readonly [ThemeChoice, string][] = [
@@ -70,22 +71,22 @@ export class Theme {
     this.setChoice(this.resolved() === "dark" ? "light" : "dark");
   }
 
-  /** Whether the views take the theme's ground (off: they stay black). */
-  viewsFollow(): boolean {
-    return this.read(VIEWS_FOLLOW_KEY) === "1";
+  /** Whether the views stay black in the light theme (off: they are white there, as the theme). */
+  blackViews(): boolean {
+    return this.read(BLACK_VIEWS_KEY) === "1";
   }
 
-  setViewsFollow(on: boolean): void {
-    this.write(VIEWS_FOLLOW_KEY, on ? "1" : "0");
+  setBlackViews(on: boolean): void {
+    this.write(BLACK_VIEWS_KEY, on ? "1" : "0");
     this.apply(true);
   }
 
-  /** Whether the views show the light ground now: the light theme, with Views follow theme on. */
+  /** Whether the views show the light ground now: the light theme, unless Black views in the light theme is on. */
   lightViews(): boolean {
-    return this.viewsFollow() && this.resolved() === "light";
+    return this.resolved() === "light" && !this.blackViews();
   }
 
-  /** Calls back when the theme shown or Views follow theme changes; returns the undo. */
+  /** Calls back when the theme shown or Black views in the light theme changes; returns the undo. */
   onChanged(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

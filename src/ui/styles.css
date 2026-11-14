@@ -7,8 +7,8 @@
    lines, white at fixed opacities, square corners.  What is chosen or on is
    inverted (white, black words) or outlined in white; the one hue is
    Neuroglancer's error red, for errors and what deletes (DESIGN.md).
-   Two themes, dark (the default) and light; the views stay black in both
-   unless Views follow theme is on.  Text in Source Sans 3 with tabular figures; monospace
+   Two themes, dark (the default) and light; the views take the theme's
+   ground (white in the light unless kept black).  Text in Source Sans 3 with tabular figures; monospace
    only for what a person types or copies (an address, a path, code, a log).
 
    Everything below takes its colours, sizes and spacing from these tokens;
@@ -166,7 +166,7 @@
   --dec-x: #c0463a;
   --dec-y: #3a8a4a;
   --dec-z: #3d72c4;
-  /* A light ground for the views (Settings › View › Views follow theme): the margin, a
+  /* A light ground for the views (the light theme, unless Settings › View keeps the views black): the margin, a
      layer's bounding box (3.6:1 on it), the axis labels at least 5.4:1. */
   --view-margin: #f3f3f3;
   --view-outline: #808080;

@@ -316,7 +316,7 @@ export class Shell {
       },
     };
     this.wb = wb;
-    // The views on the light ground while Views follow theme is on in the light theme; black otherwise.
+    // The views on the light ground in the light theme (unless kept black there); as the scene has them otherwise.
     const theme = pageTheme();
     const ground = () => engine.setViewGround(theme.lightViews() ? { sections: rgbOf(VIEW_GROUND_LIGHT.sections), view3d: rgbOf(VIEW_GROUND_LIGHT.view3d) } : undefined);
     theme.onChanged(ground);
@@ -1046,7 +1046,7 @@ export class Shell {
       args: { type: "object", required: ["theme"], properties: { theme: { type: "string", enum: THEME_CHOICES.map(([id]) => id) } } },
       run: ({ theme: choice }: { theme: ThemeChoice }) => theme.setChoice(choice),
     });
-    add({ id: "view.theme.viewsFollow", title: "Views follow theme: on or off", group: "View", run: () => theme.setViewsFollow(!theme.viewsFollow()) });
+    add({ id: "view.theme.blackViews", title: "Black views in the light theme: on or off", group: "View", run: () => theme.setBlackViews(!theme.blackViews()) });
     add({
       id: "settings.signIn",
       title: "Sign-in settings…",

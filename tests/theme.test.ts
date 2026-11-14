@@ -5,7 +5,7 @@
  * Match system; the views' light ground shown for a while and never saved.
  */
 import { describe, expect, it, vi } from "vitest";
-import { Theme, THEME_KEY, VIEWS_FOLLOW_KEY } from "../src/ui/theme.js";
+import { BLACK_VIEWS_KEY, Theme, THEME_KEY } from "../src/ui/theme.js";
 import { type BackgroundColour, groundOf, ViewBackgrounds } from "../src/engine/backgrounds.js";
 import { rgbOf, VIEW_GROUND_LIGHT, VIEW_MARGIN } from "../src/core/view_defaults.js";
 
@@ -68,15 +68,19 @@ describe("the theme", () => {
     expect(theme.choice()).toBe("light");
   });
 
-  it("shows the views light only in the light theme with Views follow theme on", () => {
+  it("shows the views light in the light theme, unless they are kept black", () => {
     const kept = storage();
     const theme = new Theme({ storage: kept, root: document.createElement("html"), systemLight: undefined });
-    expect(theme.viewsFollow()).toBe(false);
-    theme.setViewsFollow(true);
-    expect(kept.map.get(VIEWS_FOLLOW_KEY)).toBe("1");
+    const changed = vi.fn();
+    theme.onChanged(changed);
     expect(theme.lightViews()).toBe(false);
     theme.setChoice("light");
     expect(theme.lightViews()).toBe(true);
+    expect(theme.blackViews()).toBe(false);
+    theme.setBlackViews(true);
+    expect(kept.map.get(BLACK_VIEWS_KEY)).toBe("1");
+    expect(theme.lightViews()).toBe(false);
+    expect(changed).toHaveBeenCalledTimes(2);
   });
 
   it("holds a choice for the page when storage refuses it", () => {
