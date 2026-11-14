@@ -28,13 +28,15 @@ in the dark, black with white words in the light, as Neuroglancer's chosen
 tab), and the only colour in the interface is red, for errors and what
 deletes: colour on screen is the data's.
 
-The views are a black stage in both themes, as images read best on black:
-a new scene draws the margin around the sections near black and a layer's
-bounding box in a dim grey (a link keeps the colours it was shared with;
-the margin's colour is in Settings › View). **Views follow theme**, under
-Theme and off by default, puts the views on a light ground too in the light
-theme, in your browser only: the scene and its link keep their own
-backgrounds. What is drawn over the views (the axis labels, the 3-D view's
+The views take the theme: in the dark theme they are a black stage (a new
+scene draws the margin around the sections near black and a layer's
+bounding box in a dim grey; a link keeps the colours it was shared with, and
+the margin's colour is in Settings › View); in the light theme they are
+white, with the margin the lightest grey. That white is your browser's
+display only: the scene and its link keep their own backgrounds, and the
+dark theme shows them again exactly. **Black views in the light theme**,
+under Theme and off by default, keeps the views black in the light theme
+(images often read best on black). Captures show the views as you see them. What is drawn over the views (the axis labels, the 3-D view's
 switches, the orientation cube, labels, bookmarks, handles and their card)
 follows the views' ground, not the theme: light on black views, dark on
 light ones. Values the

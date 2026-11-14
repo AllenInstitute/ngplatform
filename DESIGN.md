@@ -198,8 +198,10 @@ There are two themes, dark (the default, as Neuroglancer is) and light,
 chosen in Settings › View (or as the system is) and kept in the browser,
 never in a link. The light theme is the same system mirrored, not another
 look: white panels, black at the opacities white has in the dark. The views
-stay black in both: images read on black, as in Neuroglancer and radiology
-viewers; Views follow theme puts them on a light ground too. Density is a feature: docks hold sections of
+take the theme's ground: black in the dark, white in the light (shown in
+this browser, never saved in the scene or its link); Black views in the
+light theme keeps them black there, as Neuroglancer and radiology viewers
+show images. Density is a feature: docks hold sections of
 small controls at one control height (24 px), on a 4 px grid. Hierarchy
 comes from white at a few opacities, weight, position and 1 px lines, not
 from grey fills or colour.
@@ -249,7 +251,7 @@ Neuroglancer's own parts over and in the views, in this system.
 - **Coordinates**: the position bar and the pointer's position in the mono face, names and units muted.
 - **Scale bar**: Source Code Pro, 12 px, a 3 px bar.
 - **Resolution histograms**: Neuroglancer's red and orange bars shown in greys (a CSS filter).
-- Not changeable without changing Neuroglancer (WebGL with fixed colours): the axis lines (red, green, blue at half strength), and the scale bar's white, bold type on its 30 % black box. On a light ground the scale bar is the one part that does not follow it (white on its grey box, about 2.3:1).
+- Not changeable without changing Neuroglancer (WebGL with fixed colours): the axis lines (red, green, blue at half strength), and the scale bar's white, bold type on its 30 % black box. On the light ground these read poorly and do not follow it: the scale bar's white words on its box (then #aaa on the sections' grey, #b2b2b2 on white), 2.3 and 2.1:1; the axis lines, pure red, green and blue at half strength, 2.4, 1.3 and 3.3:1 on white (green all but gone). The bounding boxes (#666, the platform's default) are 5.7:1 on white.
 
 ### Light theme
 The dark set mirrored (`colors-light`, `:root[data-theme="light"]` in `src/ui/styles.css`): what is white at an opacity in the dark is black at about the same one in the light.
@@ -261,7 +263,7 @@ The dark set mirrored (`colors-light`, `:root[data-theme="light"]` in `src/ui/st
 - Scrollbars, the caret, placeholders, ranges and tick boxes follow (the browser draws them in the light scheme, in the accent).
 
 ### Views and their ground
-The views have a ground of their own: black by default in both themes (the margin #0c0c0c, the 3-D view black); with Views follow theme on in the light theme, the light ground (the margin #f3f3f3, the 3-D view white), shown but never saved: a link keeps the backgrounds it carries, and a background set in Settings › View meanwhile is kept and saved. Each of Neuroglancer's view panels and each overlay over them carries its ground (`data-view-ground`, `data-view-ground-3d` with `.over-3d` for what is over the 3-D view), and the tokens there are the set for that ground, whatever the theme: the frames, axis labels, the 3-D view's switches, the layout buttons, the floating card, the view aids' cube, labels and bookmarks. What is drawn on canvases over the views takes its colours from the same tokens (`viewInk()` in `@ngplatform/sdk/dom`: `--view-ink-*` and the direction colours): on a dark ground light grey lines with a black keyline, on a light one dark grey lines with a white keyline; the direction colours a step darker on a light ground (at least 3.8:1 as lines) and the axis labels at least 5.4:1.
+The views have a ground of their own. In the dark theme it is the scene's (a new scene's margin #0c0c0c, the 3-D view black). In the light theme the views are shown on the light ground (the margin the lightest grey, #f3f3f3, the 3-D view white), unless Settings › View › Black views in the light theme is on: shown in this browser only, never written into the workspace or its link, and switching to the dark theme (or keeping the views black) puts back exactly the backgrounds the scene carries. A background set in Settings › View meanwhile is the person's: shown and saved. Captures show what is on screen, the white included. A plugin's background for a while (Luxar's black behind splats) is shown over the light ground. Each of Neuroglancer's view panels and each overlay over them carries its ground (`data-view-ground`, `data-view-ground-3d` with `.over-3d` for what is over the 3-D view), and the tokens there are the set for that ground, whatever the theme: the frames, axis labels, the 3-D view's switches, the layout buttons, the floating card, the view aids' cube, labels and bookmarks. What is drawn on canvases over the views takes its colours from the same tokens (`viewInk()` in `@ngplatform/sdk/dom`: `--view-ink-*` and the direction colours): on a dark ground light grey lines with a black keyline, on a light one dark grey lines with a white keyline; the direction colours a step darker on a light ground (at least 3.8:1 as lines) and the axis labels at least 5.4:1.
 
 ### Named Rules
 **The Ground Rule.** The chrome follows the theme; the views, and what is drawn over them, follow the view's ground.
