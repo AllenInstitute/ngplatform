@@ -36,3 +36,16 @@ export function withViewDefaults(ng: Json): Json {
   if (Array.isArray(ng.layers)) out.layers = ng.layers.map((l) => (l !== null && typeof l === "object" ? withLayerDefaults(l as Json) : l));
   return out;
 }
+
+/**
+ * The light ground the views show while Views follow theme is on in the
+ * light theme (Settings › View): behind the sections --view-margin's light
+ * value, the 3-D view white.  Shown, never saved: a link keeps its own.
+ */
+export const VIEW_GROUND_LIGHT = { sections: "#f3f3f3", view3d: "#ffffff" } as const;
+
+/** A colour #rrggbb as Neuroglancer's 0–1 RGB. */
+export function rgbOf(hex: string): [number, number, number] {
+  const n = parseInt(hex.slice(1), 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
