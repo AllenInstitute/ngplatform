@@ -88,6 +88,7 @@ class Objects:
     surface: float = 0.35  # the chance a path meeting a surface is scattered by it
     image: bool = True  # the image within the objects is a medium
     mix: float = 0.0  # how much the object's colour tints the image within it
+    hide: np.ndarray | None = None  # (objects,) nonzero: not drawn (surfaces alone: a group not shown, a value outside the window)
 
 
 @dataclass
@@ -374,6 +375,7 @@ class Renderer:
                 "tex": tex, "arr": arr, "top": cp.asarray(np.ascontiguousarray(b.top, np.int32) if b is not None else np.full(1, -1, np.int32)),
                 "sub": cp.asarray(np.ascontiguousarray(b.sub, np.int32) if b is not None else np.full(1, -1, np.int32)),
                 "col": cp.asarray(np.ascontiguousarray(objects.colours, np.float32).ravel() if len(objects.colours) else np.ones(3, np.float32)),
+                "hide": cp.asarray(np.ascontiguousarray(objects.hide, np.uint8)) if objects.hide is not None and objects.hide.any() else None,
             }
             self.objects = objects
 
@@ -642,10 +644,11 @@ class Renderer:
         # Surfaces drawn with the volume: objects without an image within them (tubes, spheres, meshes), else none.
         if self.objects is not None and self.objects.bricks is None:
             g, o = self.objects.bvh, self._obj_gpu
-            geo = (g.tris, g.kind if g.kind is not None else np.uintp(0), g.tobj, g.nodes, g.kids, np.int32(g.n), o["col"])
+            geo = (g.tris, g.kind if g.kind is not None else np.uintp(0), g.tobj, g.nodes, g.kids, np.int32(g.n), o["col"],
+                   o["hide"] if o["hide"] is not None else np.uintp(0))
         else:
             z = np.uintp(0)
-            geo = (z, z, z, z, z, np.int32(0), z)
+            geo = (z, z, z, z, z, np.int32(0), z, z)
         return (self._params, self._tex, self._tf, self._maj, lab, self._lut, self._lutflags, self._env_tex, det, dmaj) + geo
 
     def _geo_args(self):

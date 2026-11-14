@@ -10,7 +10,7 @@
  * show yet (a store with hundreds, a gene panel) is asked for by name in
  * the source (`#attributes=`), which reloads the layer.
  */
-import { attributeRange, type ColourByLook, colourLookOf, colourShader, COLOUR_BY_COLORMAPS, MAX_RUNS } from "../colour_shader.js";
+import { attributeRange, attributeShaderId as safeId, type ColourByLook, colourLookOf, colourShader, COLOUR_BY_COLORMAPS, MAX_RUNS } from "../colour_shader.js";
 import type { SegmentationUserLayer } from "../neuroglancer.js";
 import { button, el, note, row, type Scope, section, select, showWhen, type Watch } from "./ui.js";
 
@@ -327,10 +327,3 @@ function countRuns(indices: number[]): number {
   return n;
 }
 
-/** An attribute's shader name, as the plugin makes it (`safeAttributeId`, for names without clashes); `obj:<name>` is obj_<name>. */
-function safeId(name: string): string {
-  if (name.startsWith("obj:")) name = `obj_${name.slice(4)}`;
-  let base = name.replace(/[^a-zA-Z0-9_]/g, "_");
-  if (!/^[a-z]/.test(base)) base = `a_${base}`;
-  return base.replace(/__+/g, "_");
-}

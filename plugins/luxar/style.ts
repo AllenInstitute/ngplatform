@@ -3,6 +3,7 @@
  * plugin's state): one entry per layer that has it on.  Pure data and
  * small helpers, so they can be tested without a page.
  */
+import type { ColourByLook } from "@ngplatform/sdk/colour_by";
 
 /**
  * How the light of overlapping lines combines:
@@ -15,11 +16,14 @@ export type Blending = "glow" | "glow-through" | "emission" | "solid";
 
 /**
  * What colours a line: its direction (RGB of |tangent|), its object, a
- * vertex attribute through a colormap, one colour, or its segment's colour
+ * vertex attribute through a colormap, one colour, its segment's colour
  * in the layer (as Neuroglancer colours it: a colour chosen for it, the
- * layer's default colour, or the layer's hash of its id).
+ * layer's default colour, or the layer's hash of its id), or as the layer
+ * is coloured (its Display tab's Colour by: a group, each in the store's
+ * colour or a palette's and those not chosen hidden, or an attribute
+ * through the layer's colour map and window; else its segments' colours).
  */
-export type ColourBy = "direction" | "object" | "attribute" | "solid" | "segment";
+export type ColourBy = "direction" | "object" | "attribute" | "solid" | "segment" | "layer";
 
 export type Colormap = "viridis" | "magma" | "inferno" | "plasma" | "turbo" | "grey";
 
@@ -83,7 +87,7 @@ export const DEFAULT_STYLE: LayerStyle = {
 };
 
 const BLENDINGS: Blending[] = ["glow", "glow-through", "emission", "solid"];
-const COLOUR_BY: ColourBy[] = ["direction", "object", "attribute", "solid", "segment"];
+const COLOUR_BY: ColourBy[] = ["direction", "object", "attribute", "solid", "segment", "layer"];
 const COLORMAPS: Colormap[] = ["viridis", "magma", "inferno", "plasma", "turbo", "grey"];
 const TONE_MAPS: ToneMap[] = ["aces-hue", "aces", "reinhard", "clamp"];
 
@@ -99,6 +103,7 @@ export const COLOUR_LABELS: [ColourBy, string][] = [
   ["attribute", "An attribute, through a colormap"],
   ["solid", "One colour"],
   ["segment", "The layer's segment colours"],
+  ["layer", "As the layer (its Colour by)"],
 ];
 export const COLORMAP_LABELS: [Colormap, string][] = COLORMAPS.map((c) => [c, c === "grey" ? "Grey" : c[0].toUpperCase() + c.slice(1)]);
 export const TONE_LABELS: [ToneMap, string][] = [
@@ -239,13 +244,22 @@ export function rgbOf(hex: string): [number, number, number] {
 
 export const COLORMAP_INDEX: Record<Colormap, number> = { viridis: 0, magma: 1, inferno: 2, plasma: 3, turbo: 4, grey: 5 };
 export const TONE_INDEX: Record<ToneMap, number> = { aces: 0, reinhard: 1, clamp: 2, "aces-hue": 3 };
-export const COLOUR_INDEX: Record<ColourBy, number> = { direction: 0, object: 1, attribute: 2, solid: 3, segment: 4 };
+/** "layer" is drawn as "segment" (its table's colours) or "attribute" (layer_view.ts resolves it). */
+export const COLOUR_INDEX: Record<ColourBy, number> = { direction: 0, object: 1, attribute: 2, solid: 3, segment: 4, layer: 4 };
 
 /**
  * What the worker puts in each vertex's fourth value, for a style: an
- * attribute's value, or an object's hashed hue.
+ * attribute's value, the vertex's group (coloured as the layer, `look`,
+ * colours by group: "group:<attribute>[:<colour attribute>]"), or an
+ * object's hashed hue.
  */
-export function scalarOf(style: LayerStyle): string {
+export function scalarOf(style: LayerStyle, look?: ColourByLook): string {
+  if (style.colourBy === "layer") {
+    const g = look?.by === "group" ? look.group : undefined;
+    if (g !== undefined) return `group:${g.attribute}${g.colours === "stored" && g.colorAttribute ? `:${g.colorAttribute}` : ""}`;
+    if (look?.by === "attribute" && look.attribute !== undefined) return `attribute:${look.attribute}`;
+    return "object";
+  }
   if (style.colourBy === "attribute" && style.attribute !== undefined) return `attribute:${style.attribute}`;
   // Otherwise each object's colour key: what "object" needs, and what points coloured "by direction" use (a point has none).
   return "object";

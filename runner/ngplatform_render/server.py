@@ -159,6 +159,15 @@ def _cube(voxels: float) -> tuple[int, int, int]:
     return (n, n, n)
 
 
+#: A volume url naming no image: the objects alone (a Zarr Vectors store's), in an empty volume about them.
+OBJECTS_ONLY = "objects:"
+
+
+def objects_only(spec: dict[str, Any]) -> bool:
+    """Whether a session draws its objects alone (no image): its volume is OBJECTS_ONLY and the objects' store."""
+    return str((spec.get("volume") or {}).get("url") or "").startswith(OBJECTS_ONLY)
+
+
 def objects_spec(o: Any) -> dict[str, Any]:
     """A session's objects as asked for: a precomputed segmentation (url), the segments (ids, at most 64), the
     meshes' level of detail, and the voxels the image within them may take."""
@@ -170,8 +179,13 @@ def objects_spec(o: Any) -> dict[str, Any]:
         if not 1_000 <= vertices <= 50_000_000:
             raise BadRequest("objects.vertices: 1,000 to 50 M")
         radius = o.get("radius_mm")
+        # The vertex attributes the layer is coloured by (shader ids), read beside the geometry.
+        attrs = o.get("attributes") or []
+        if not isinstance(attrs, list) or len(attrs) > 8 or not all(isinstance(a, str) and re.fullmatch(r"[A-Za-z0-9_]{1,200}", a) for a in attrs):
+            raise BadRequest("objects.attributes: at most 8 attribute ids")
         return {"url": str(o["url"]), "store": "zarr-vectors", "vertices": vertices,
-                **({"radius_mm": float(number(radius, "objects.radius_mm"))} if radius is not None else {})}
+                **({"radius_mm": float(number(radius, "objects.radius_mm"))} if radius is not None else {}),
+                **({"attributes": sorted(set(attrs))} if attrs else {})}
     ids = o.get("ids") or []
     if not isinstance(ids, list) or not ids or len(ids) > 64:
         raise BadRequest("objects.ids: 1 to 64 segment ids")
@@ -204,13 +218,16 @@ def session_need(spec: dict[str, Any], gpu: Gpu) -> dict[str, int]:
 
     v = spec["volume"]
     budget = int(v.get("budget") or 400_000_000)
+    if objects_only(spec):
+        # An empty volume of 2 x 2 x 2 voxels, and no finer detail: the objects are what it holds.
+        budget = 8
     shared = gpu.textures.find(spec_key(v)) is not None
     out = {"volume": 0 if shared else rmod.volume_bytes(_cube(budget), 2)}
     lab = spec.get("labels") or {}
     if lab.get("url"):
         lab = {**lab, "budget": lab.get("budget") or budget}
         out["labels"] = 0 if gpu.textures.find(spec_key(lab, True)) is not None else rmod.labels_bytes(_cube(int(lab["budget"])))
-    detail = float(v.get("detail_budget", 256e6))
+    detail = 0.0 if objects_only(spec) else float(v.get("detail_budget", 256e6))
     out["detail"] = rmod.volume_bytes(_cube(detail), 2) if detail > 0 else 0
     out["frame"] = rmod.renderer_bytes(*SESSION_FRAME, _cube(budget))
     if spec.get("objects"):
@@ -268,6 +285,9 @@ class Session:
         # The image within the objects read again within the whole budget, after a coarse first one: waiting to be taken up.
         self._objects_pending: Any = None
         self._object_colours: np.ndarray | None = None
+        # A store's surfaces (vectors.Surfaces), coloured afresh as a view's look asks; the last look and its colours.
+        self._surfaces: Any = None
+        self._coloured: tuple[str, np.ndarray, np.ndarray | None] | None = None
         self.cond = threading.Condition()
         self.view: dict[str, Any] | None = None
         self.view_version = 0
@@ -314,11 +334,13 @@ class Session:
         if spec.get("store") == "zarr-vectors":
             from . import vectors
 
-            surf = vectors.load(spec["url"], spec["vertices"], spec.get("radius_mm"), progress=self._set_progress)
+            surf = vectors.load(spec["url"], spec["vertices"], spec.get("radius_mm"), progress=self._set_progress,
+                                attributes=spec.get("attributes"))
             with self.gpu_device():
-                bvh = geometry.build(surf.prims, surf.objects, self.device, kinds=surf.kinds)
-            self.loaded_objects = (bvh, None, list(range(len(surf.colours))))
-            self._object_colours = surf.colours
+                # Each primitive its own object, so a look colours (and hides) any of them.
+                bvh = geometry.build(surf.prims, np.arange(len(surf.prims), dtype=np.int32), self.device, kinds=surf.kinds)
+            self.loaded_objects = (bvh, None, [])
+            self._surfaces = surf
             self.objects_meta = {"url": spec["url"], "store": "zarr-vectors", **surf.meta}
             return
         src = MeshSource(spec["url"])
@@ -389,7 +411,13 @@ class Session:
             budget = int(v.get("budget") or 400_000_000)
             closed = lambda: self.closed  # noqa: E731 - a session closed while it loads stops reading
             shared = self.gpu.textures.find(spec_key(v))
-            if shared is not None and shared.loaded is not None:
+            alone = objects_only(self.spec)
+            if alone:
+                # No image: the objects alone, in an empty volume about them.
+                self._load_objects(self.spec["objects"], url, None, closed)
+                b = self.loaded_objects[0]
+                L = volumes.empty(b.lo, b.hi)
+            elif shared is not None and shared.loaded is not None:
                 # Another session shows the same image, asked for alike: its volume, not read again.
                 L = shared.loaded
                 self._set_progress(1.0, "shared with another view of this image")
@@ -427,12 +455,13 @@ class Session:
                 vals = np.unique(LB.data)
                 self.label_meta = {"url": lab["url"], "level": LB.level, "shape": list(LB.data.shape), "values": [int(x) for x in vals[:4096]],
                                    "affine": LB.affine.T.ravel().tolist()}
-            if self.spec.get("objects"):
+            if self.spec.get("objects") and not alone:
                 self._load_objects(self.spec["objects"], url, L, closed)
             if self.closed:
                 self.status, self.message = "failed", "closed while loading"
                 return
-            self._start_detail(url, L, float(v.get("detail_budget", 256e6)), v.get("channel"), v.get("time"))
+            if not alone:
+                self._start_detail(url, L, float(v.get("detail_budget", 256e6)), v.get("channel"), v.get("time"))
             if self.detail_loader is None and self.need.get("detail") and self.reservation is not None:
                 # No finer levels (or no detail asked for): the memory counted for them is given back.
                 self.reservation.resize(max(0, self.reservation.bytes - self.need["detail"]))
@@ -677,6 +706,9 @@ class Session:
             preset = Preset.from_dict(pr)
         if view.get("overrides"):
             preset = preset.with_overrides(**view["overrides"])
+        if objects_only(self.spec):
+            # No image: the empty volume about the objects stays clear, whatever the preset makes of its zeros.
+            preset = preset.with_overrides(density=0.0)
         if view.get("environment"):
             # The light: a light map by name ("" for the preset's sky colours), its turn and strength.
             env = {**preset.environment, **view["environment"]}
@@ -760,14 +792,24 @@ class Session:
                 R.set_objects(None)
             return
         bvh, ob, ids = self.loaded_objects
-        if ob is None:
-            # A store's surfaces: their own colours (a streamline's by its direction, others by object).
+        hide = None
+        if ob is None and self._surfaces is not None:
+            # A store's surfaces, each primitive coloured as the view's look asks (as the layer is coloured), else
+            # in their own colours (a streamline's by its direction, others by object); made again only for another look.
+            from . import vectors
+
+            look = (view or {}).get("colour")
+            key = json.dumps(look, sort_keys=True)
+            if self._coloured is None or self._coloured[0] != key:
+                self._coloured = (key, *vectors.colour(self._surfaces, look))
+            _, colours, hide = self._coloured
+        elif ob is None:
             colours = self._object_colours
         else:
             given = {str(k): v for k, v in (view.get("colors") or {}).items()}
             colours = np.array([[float(x) for x in given.get(str(i), (0.85, 0.6, 0.45))[:3]] for i in ids], np.float32)
-        if R.objects is None or R.objects.bricks is not ob or not np.array_equal(R.objects.colours, colours):
-            R.set_objects(renderer.Objects(bvh, ob, colours, wfp))
+        if R.objects is None or R.objects.bricks is not ob or (R.objects.colours is not colours and not np.array_equal(R.objects.colours, colours)) or R.objects.hide is not hide:
+            R.set_objects(renderer.Objects(bvh, ob, colours, wfp, hide=hide))
         R.objects.world_from_physical = wfp
         R.set_object_look(float(view.get("surface", 0.3)), bool(view.get("image", True)), float(view.get("mix", 0.0)))
 
@@ -1852,8 +1894,14 @@ class Handler(BaseHTTPRequestHandler):
                 spec = self._body()
                 if not (spec.get("volume") or {}).get("url"):
                     raise BadRequest("volume.url is needed")
+                if objects_only(spec):
+                    # No image: the objects alone, a Zarr Vectors store's (the volume named by it, so sessions of
+                    # other stores do not share one empty volume).
+                    if (spec.get("objects") or {}).get("store") != "zarr-vectors" or not spec["objects"].get("url"):
+                        raise BadRequest("a volume of objects alone needs objects from a Zarr Vectors store")
+                    spec["volume"] = {"url": OBJECTS_ONLY + str(spec["objects"]["url"])}
                 for part in ("volume", "labels", "objects"):
-                    if (spec.get(part) or {}).get("url"):
+                    if (spec.get(part) or {}).get("url") and not (part == "volume" and objects_only(spec)):
                         S.check_source(spec[part]["url"])
                 if spec.get("objects"):
                     spec["objects"] = objects_spec(spec["objects"])

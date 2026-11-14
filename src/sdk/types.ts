@@ -17,6 +17,7 @@
  * page with the same link.
  */
 import type { LookupEntry, LookupTable } from "../core/lookup_table.js";
+import type { ColourByLook } from "../engine/colour_shader.js";
 import type { Schema } from "../core/schema.js";
 
 export type { LookupEntry, LookupTable, Schema };
@@ -381,6 +382,13 @@ export interface ViewerApi {
   segmentColour(layer: string, id: bigint): [number, number, number] | undefined;
   /** Calls back when what a segmentation layer shows, or how its segments are coloured, changes. */
   onSegmentsChanged(layer: string, callback: () => void): Disposer;
+  /**
+   * A Zarr Vectors layer's Colour by look (Display, Vertex colour) as it
+   * draws now, the default a store chose included (a taxonomy's coarsest
+   * group), for a plugin that draws the layer itself in its colours;
+   * undefined when it colours by segment or with a shader of its own.
+   */
+  colourLook?(layer: string): ColourByLook | undefined;
   /**
    * Hides a layer's own drawing, or shows it again, for a plugin that draws
    * the layer itself: not saved in the link, and kept hidden through undo

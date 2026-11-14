@@ -194,6 +194,8 @@ export interface ObjectsSpec {
   /** For a store: the finest level within this many vertices, and the radius of its tubes and points (mm). */
   vertices?: number;
   radius_mm?: number;
+  /** For a store: the vertex attributes (shader ids) read with it, that a view's `colour` colours it by. */
+  attributes?: string[];
   ids?: string[];
   lod?: number;
   budget?: number;
@@ -220,7 +222,11 @@ export interface ViewSpec {
   clips?: [number, number, number, number][];
   labels?: { show?: boolean; mix?: number; hidden?: number[]; keep?: number[]; colors?: Record<string, [number, number, number, number]> };
   /** The session's objects: shown or not, the chance a path meeting a surface is scattered by it, the image within them, its tint, colours by segment id. */
-  objects?: { show?: boolean; surface?: number; image?: boolean; mix?: number; colors?: Record<string, [number, number, number]> };
+  /**
+   * colour: a store's geometry coloured as its layer is (vectors.colour on the computer): by a group
+   * ({by: "group", group}), or an attribute through a table of colours between low and high.
+   */
+  objects?: { show?: boolean; surface?: number; image?: boolean; mix?: number; colors?: Record<string, [number, number, number]>; colour?: Record<string, unknown> };
   background?: [number, number, number, number];
   /** A clip box: fractions (0..1) of the volume along its x, y, z, low and high. */
   crop_fraction?: [[number, number, number], [number, number, number]];

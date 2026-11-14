@@ -50,6 +50,10 @@ export interface DrawUniforms {
   colour: [number, number, number];
   colormap: number;
   range: [number, number];
+  /** Colour map LUT_COLORMAP's colours (LUT_SIZE RGB triples). */
+  lut?: Float32Array;
+  /** Values outside `range` are not drawn. */
+  hideOutside?: boolean;
   /** Light per line before tone mapping, and how much it absorbs (emission). */
   gain: number;
   absorption: number;
@@ -87,6 +91,8 @@ export interface GpuChunk {
   /** The chunk's objects (ids as word pairs) and weights, for its table. */
   objectIds: Uint32Array;
   objectWeight: Float32Array;
+  /** Per object, the store's colour for it (its objects being groups: BuiltChunk.slotColours). */
+  slotColours?: Uint32Array;
   /** Per object, its colour and whether it shows (RGBA8), made for `tableVersion`. */
   objects: WebGLTexture | undefined;
   tableVersion: number;
@@ -108,11 +114,22 @@ export interface GpuChunk {
   cutVao: WebGLVertexArrayObject | undefined;
 }
 
+/** Colour map 6: the table `uLut` holds (a layer's own map, LUT_SIZE colours evenly over 0..1). */
+export const LUT_COLORMAP = 6;
+export const LUT_SIZE = 32;
+
 /** The colormaps as GLSL: `vec3 colormap(int which, float t)` (shared with the splats' shader). */
-export const COLORMAP_GLSL = `// Colormaps as polynomial fits (viridis, magma, inferno and plasma after
-// Matt Zucker's fits of matplotlib's, CC0; turbo after Google's).
+export const COLORMAP_GLSL = `uniform vec3 uLut[${LUT_SIZE}];
+
+// Colormaps as polynomial fits (viridis, magma, inferno and plasma after
+// Matt Zucker's fits of matplotlib's, CC0; turbo after Google's); 6, a table.
 vec3 colormap(int which, float t) {
   t = clamp(t, 0.0, 1.0);
+  if (which == ${LUT_COLORMAP}) {
+    float s = t * ${LUT_SIZE - 1}.0;
+    int i = int(min(floor(s), ${LUT_SIZE - 2}.0));
+    return mix(uLut[i], uLut[i + 1], s - float(i));
+  }
   if (which == 5) return vec3(t);
   if (which == 4) {
     const vec4 kr = vec4(0.13572138, 4.61539260, -42.66032258, 132.13108234);
@@ -177,6 +194,8 @@ uniform float uSlab;
 uniform highp usampler2D uSlots;
 uniform lowp sampler2D uObjects;
 uniform bool uObjectTable;
+// Coloured by a value: those outside uRange are not drawn (a layer's window, its outside hidden).
+uniform bool uHideOutside;
 // Drawn opaque (solid): an object drawn faintly (the layer's notSelectedAlpha) is left out.
 uniform bool uOpaque;
 
@@ -191,9 +210,16 @@ bool hidden(vec4 object) {
 
 // A vertex's object: its colour (as the layer colours segments) and how strongly it is drawn (alpha; 0 not at all).
 vec4 objectAt(uint i) {
-  if (!uObjectTable) return vec4(1.0);
-  uint slot = texelFetch(uSlots, ivec2(int(i % ${TEXTURE_WIDTH}u), int(i / ${TEXTURE_WIDTH}u)), 0).r;
-  return texelFetch(uObjects, ivec2(int(slot % ${TEXTURE_WIDTH}u), int(slot / ${TEXTURE_WIDTH}u)), 0);
+  vec4 object = vec4(1.0);
+  if (uObjectTable) {
+    uint slot = texelFetch(uSlots, ivec2(int(i % ${TEXTURE_WIDTH}u), int(i / ${TEXTURE_WIDTH}u)), 0).r;
+    object = texelFetch(uObjects, ivec2(int(slot % ${TEXTURE_WIDTH}u), int(slot / ${TEXTURE_WIDTH}u)), 0);
+  }
+  if (uHideOutside) {
+    float w = vertexAt(i).w;
+    if (!(w >= uRange.x && w <= uRange.y)) object.a = 0.0;
+  }
+  return object;
 }
 
 ${COLORMAP_GLSL}
@@ -626,6 +652,7 @@ export class Renderer {
       slots,
       objectIds: chunk.objectIds,
       objectWeight: chunk.objectWeight,
+      slotColours: chunk.slotColours,
       objects: undefined,
       tableVersion: -1,
       shown: 1,
@@ -654,7 +681,7 @@ export class Renderer {
       return;
     }
     const { gl } = this;
-    const { table, rows, shown, light } = objectTable(chunk.objectIds, chunk.objectWeight, shading);
+    const { table, rows, shown, light } = objectTable(chunk.objectIds, chunk.objectWeight, shading, chunk.slotColours);
     chunk.shown = shown;
     chunk.light = light;
     chunk.objects ??= gl.createTexture()!;
@@ -709,6 +736,8 @@ export class Renderer {
       gl.uniform3fv(this.uniform(p, "uColour"), u.colour);
       gl.uniform1i(this.uniform(p, "uColormap"), u.colormap);
       gl.uniform2f(this.uniform(p, "uRange"), u.range[0], u.range[1]);
+      if (u.lut !== undefined) gl.uniform3fv(this.uniform(p, "uLut"), u.lut);
+      gl.uniform1i(this.uniform(p, "uHideOutside"), u.hideOutside ? 1 : 0);
       gl.uniform4fv(this.uniform(p, "uPlane"), u.plane);
       gl.uniform1f(this.uniform(p, "uSlab"), u.slab);
       gl.uniform1f(this.uniform(p, "uSharpness"), u.sharpness);

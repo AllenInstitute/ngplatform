@@ -320,6 +320,21 @@ the budget:
 - **Points** are spheres.
 - **Meshes** are triangles.
 - **Everything else** is coloured by object.
+- **Coloured as the layer**, when its **Vertex colour** (Display tab)
+  colours by a group or an attribute: each tube, sphere or triangle in its
+  group's colour (the store's, or a palette's), the groups not chosen
+  left out; or by the attribute through the layer's colour map between
+  its low and high, values outside hidden when the layer hides them.
+  Only the attributes the colouring needs are read with the geometry (a
+  cell atlas holds hundreds); dragging low and high or choosing groups
+  re-colours the render as it is, another attribute opens it again.
+
+**A Zarr Vectors layer alone**, in a scene with no image (points of a
+cell atlas, a tractogram, a surface), is rendered by itself: it is the
+scene, in an empty volume about it, with the panel's lighting, quality,
+crops, stills and movies. The image's own settings (its choice, density,
+window, the colourmap editor, the jar, regions) are hidden. It needs a
+render computer.
 
 Cuts and crops apply to objects as to the volume. Stills and movies
 draw them too. This browser's renderer does not draw objects yet.

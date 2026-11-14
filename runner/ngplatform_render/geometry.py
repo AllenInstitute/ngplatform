@@ -130,6 +130,7 @@ struct Geo {
   const float* nodes;  // boxes, 6 floats a node
   const int* kids;     // internal nodes' children
   int n;               // triangles (0: none)
+  const unsigned char* hide = 0;  // per object: nonzero, its primitives are not met (null: every one is)
 };
 
 // Möller-Trumbore: the distance along the ray to triangle i, or -1.
@@ -231,6 +232,7 @@ __device__ float geohit(const Geo& G, V3 o, V3 d, float tmin, float tmax, int* t
   int n = G.n;
   float tin;
   if (n == 1) {
+    if (G.hide && G.hide[G.tobj[0]]) return -1.f;
     float t = primhit(G, 0, o, d);
     if (t > tmin && t < best) { *tri = 0; return t; }
     return -1.f;
@@ -241,6 +243,7 @@ __device__ float geohit(const Geo& G, V3 o, V3 d, float tmin, float tmax, int* t
     int k = stack[--sp];
     if (k >= n - 1) {
       int i = k - (n - 1);
+      if (G.hide && G.hide[G.tobj[i]]) continue;
       float t = primhit(G, i, o, d);
       if (t > tmin && t < best) { best = t; hit = i; }
       continue;

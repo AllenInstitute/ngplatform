@@ -742,7 +742,7 @@ extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const 
                                  const unsigned short* lab, const float* lut, const float* lutflags, cudaTextureObject_t env,
                                  cudaTextureObject_t det, const float* dmaj, const float* gtris, const int* gkind,
                                  const int* gtobj, const float* gnodes, const int* gkids, int gn, const float* gcol,
-                                 float4* accum, int W, int H, const volatile int* cut, int pass) {
+                                 const unsigned char* ghide, float4* accum, int W, int H, const volatile int* cut, int pass) {
   // A pass is cut short (a new view came) when the host writes its number to `cut` (host memory the GPU
   // reads): blocks that have not started then return at once. Read once a block, not once a thread.
   __shared__ int stop;
@@ -753,7 +753,7 @@ extern "C" __global__ void trace(const float* P, cudaTextureObject_t vol, const 
   if (x >= W || y >= H) return;
   Scene S; S.P = P; S.vol = vol; S.tf = tf; S.maj = maj; S.lab = lab; S.lut = lut; S.lutflags = lutflags; S.env = env;
   S.det = det; S.dmaj = dmaj;
-  S.G.tris = gtris; S.G.kind = gkind; S.G.tobj = gtobj; S.G.nodes = gnodes; S.G.kids = gkids; S.G.n = gn; S.gcol = gcol;
+  S.G.tris = gtris; S.G.kind = gkind; S.G.tobj = gtobj; S.G.nodes = gnodes; S.G.kids = gkids; S.G.n = gn; S.G.hide = ghide; S.gcol = gcol;
   Rng rng; rng.s = pcg((u32)(y * W + x) ^ pcg((u32)P[P_FRAME] * 9781u + 1u));
   V3 ow, dw;
   ray(P, x, y, W, H, rnd(rng), rnd(rng), rng, &ow, &dw, true);
@@ -888,12 +888,12 @@ extern "C" __global__ void firsthit(const float* P, cudaTextureObject_t vol, con
                                     const unsigned short* lab, const float* lut, const float* lutflags, cudaTextureObject_t env,
                                     cudaTextureObject_t det, const float* dmaj, const float* gtris, const int* gkind,
                                     const int* gtobj, const float* gnodes, const int* gkids, int gn, const float* gcol,
-                                    float* depth, int W, int H) {
+                                    const unsigned char* ghide, float* depth, int W, int H) {
   int x = blockIdx.x * blockDim.x + threadIdx.x, y = blockIdx.y * blockDim.y + threadIdx.y;
   if (x >= W || y >= H) return;
   Scene S; S.P = P; S.vol = vol; S.tf = tf; S.maj = maj; S.lab = lab; S.lut = lut; S.lutflags = lutflags;
   S.env = env; S.det = det; S.dmaj = dmaj;
-  S.G.tris = gtris; S.G.kind = gkind; S.G.tobj = gtobj; S.G.nodes = gnodes; S.G.kids = gkids; S.G.n = gn; S.gcol = gcol;
+  S.G.tris = gtris; S.G.kind = gkind; S.G.tobj = gtobj; S.G.nodes = gnodes; S.G.kids = gkids; S.G.n = gn; S.G.hide = ghide; S.gcol = gcol;
   Rng rng; rng.s = 1u;
   V3 ow, dw;
   ray(P, x, y, W, H, 0.5f, 0.5f, rng, &ow, &dw, false);

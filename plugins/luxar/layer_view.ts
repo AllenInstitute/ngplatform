@@ -9,10 +9,11 @@
 /** Tables made by any layer view: each new shading gets a new version. */
 let shadingVersions = 0;
 import type { Disposer, LayerTransform, PlatformContext } from "@ngplatform/sdk";
+import { type ColourByLook, colormapSamples, groupPalette } from "@ngplatform/sdk/colour_by";
 import type { Selection } from "./chunks.js";
 import { StoreClient } from "./client.js";
 import { type ObjectPlan, objectPlan } from "./objects.js";
-import type { DrawUniforms } from "./render_gl.js";
+import { type DrawUniforms, LUT_COLORMAP, LUT_SIZE } from "./render_gl.js";
 import type { AuthHeader } from "./precomputed_meshes.js";
 import { needsTable, type ObjectShading } from "./segments.js";
 import { COLORMAP_INDEX, COLOUR_INDEX, type LayerStyle, rgbOf, scalarOf, TONE_INDEX } from "./style.js";
@@ -48,6 +49,10 @@ export class LayerView {
   private readonly offs: Disposer[] = [];
   private current: (LayerDrawing & { key: string }) | undefined;
   private readonly colours = new Map<bigint, [number, number, number]>();
+  /** The layer's Colour by look (its shader's), drawn when the style colours "as the layer". */
+  private look: ColourByLook | undefined;
+  /** The look's colour map as a table, for the shaders (made when the map changes). */
+  private lut: { id: string; table: Float32Array } | undefined;
   /** Per view, the share of what it last drew that showed (a layer's chosen segments). */
   private readonly shares = new Map<string, { version: number; share: number }>();
   /** Per view, how many samples of the chosen objects read whole it draws. */
@@ -75,7 +80,7 @@ export class LayerView {
   ) {
     this.headers = options.headers ?? [];
     this.client = new StoreClient(storeUrl, { adopt: options.adopt?.client, headers: this.headers });
-    this.client.setScalar(scalarOf(this.drawnStyle(style)));
+    this.client.setScalar(scalarOf(this.drawnStyle(style), this.look));
     this.view3d = new View3d(this);
     this.view2d = new View2d(this);
     this.handle = ctx.viewer.draw3d(name, {
@@ -101,7 +106,7 @@ export class LayerView {
     void this.client.ready.then(
       () => {
         if (this.disposed) return;
-        this.client.setScalar(scalarOf(this.drawnStyle(this.style)));
+        this.client.setScalar(scalarOf(this.drawnStyle(this.style), this.look));
         this.redraw();
         this.onStatus?.();
       },
@@ -113,8 +118,24 @@ export class LayerView {
 
   setStyle(style: LayerStyle): void {
     this.style = style;
-    this.client.setScalar(scalarOf(this.drawnStyle(style)));
+    this.client.setScalar(scalarOf(this.drawnStyle(style), this.look));
     this.redraw();
+  }
+
+  /** The layer's Colour by look, as its state has it now (undefined: by segment, or a shader of its own). */
+  setLook(look: ColourByLook | undefined): void {
+    if (JSON.stringify(look) === JSON.stringify(this.look)) return;
+    this.look = look;
+    if (this.style.colourBy !== "layer") return;
+    this.client.setScalar(scalarOf(this.drawnStyle(this.style), look));
+    this.current = undefined;
+    this.redraw();
+    this.onStatus?.();
+  }
+
+  /** The look drawn: the layer's, when the style colours as the layer does. */
+  private layerLook(): ColourByLook | undefined {
+    return this.style.colourBy === "layer" ? this.look : undefined;
   }
 
   /**
@@ -153,12 +174,32 @@ export class LayerView {
    * pick out what shows.
    */
   drawing(): LayerDrawing {
-    const segmentColours = this.style.colourBy === "segment";
+    const look = this.layerLook();
+    const groups = look?.by === "group" ? look.group : undefined;
+    // As the layer, coloured by segment (its look not one of Colour by's groups or attributes): its segment colours.
+    const segmentColours = this.style.colourBy === "segment" || (this.style.colourBy === "layer" && look === undefined);
     // Made again also once the chosen objects read whole can be measured (objectPlan).
     const measured = this.client.objects.measured();
-    const key = `${segmentColours}|${this.style.detail}|${this.client.scalarName}|${this.client.info !== undefined}|${measured !== undefined}`;
+    const key = `${segmentColours}|${this.style.detail}|${this.client.scalarName}|${this.client.info !== undefined}|${measured !== undefined}|${groups === undefined ? "" : JSON.stringify(groups)}`;
     if (this.current !== undefined && (this.current.key === key || this.frozen)) {
       if (this.chosen?.drawing === this.current) this.chosen.at = performance.now();
+      return this.current;
+    }
+    if (groups !== undefined) {
+      // Each vertex's object is its group (scalarOf): the groups chosen show, in the store's colours or the palette's.
+      const shown = groups.shown === undefined ? undefined : new Set(groups.shown);
+      const stored = groups.colours === "stored" && groups.colorAttribute !== undefined;
+      const chunks: ObjectShading = {
+        version: ++shadingVersions,
+        all: shown === undefined,
+        has: (id) => shown === undefined || shown.has(Number(id)),
+        colour: stored ? undefined : (id) => groupPalette(Number(id)),
+        slotColours: stored,
+        chosenAlpha: 1,
+        othersAlpha: 0,
+      };
+      this.client.objects.want(undefined, undefined, this.client.scalarName);
+      this.current = { key, version: chunks.version, chunks, sets: undefined, size: 0, plan: undefined, others: 0, table: true };
       return this.current;
     }
     const visible = this.ctx.viewer.visibleSegments(this.name);
@@ -241,17 +282,35 @@ export class LayerView {
     const transform = this.transform();
     const density = style.autoBrightness ? autoGain(cover) : 1;
     const gain = 2 ** style.exposure * density;
-    const range = style.range ?? this.client.valueRange ?? [0, 1];
+    let range = style.range ?? this.client.valueRange ?? [0, 1];
+    let colourBy = COLOUR_INDEX[style.colourBy];
+    let colormap = COLORMAP_INDEX[style.colormap];
+    let lut: Float32Array | undefined;
+    let hideOutside = false;
+    const look = this.layerLook();
+    if (look?.by === "attribute") {
+      // The layer's colour map between its low and high, what lies outside hidden if it hides it.
+      const id = look.colormap ?? "viridis";
+      if (this.lut?.id !== id) this.lut = { id, table: Float32Array.from((colormapSamples(id, LUT_SIZE) ?? colormapSamples("viridis", LUT_SIZE)!).flat()) };
+      const [lo, hi] = look.range ?? this.client.valueRange ?? [0, 1];
+      range = [look.low ?? lo, look.high ?? hi];
+      colourBy = COLOUR_INDEX.attribute;
+      colormap = LUT_COLORMAP;
+      lut = this.lut.table;
+      hideOutside = look.hideOutside === true;
+    }
     return {
       modelToClip,
       directions: transform ? directionMatrix(transform) : new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
       viewport,
       halfWidth: this.halfWidth,
       sharpness: style.sharpness,
-      colourBy: COLOUR_INDEX[style.colourBy],
+      colourBy,
       colour: rgbOf(style.colour),
-      colormap: COLORMAP_INDEX[style.colormap],
+      colormap,
       range,
+      lut,
+      hideOutside,
       gain,
       absorption: style.blending === "emission" ? style.absorption * density : 0,
       plane: [0, 0, 0, 0],

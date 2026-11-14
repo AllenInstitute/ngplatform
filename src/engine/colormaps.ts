@@ -87,6 +87,15 @@ const SAMPLED = {
 // ColorBrewer RdBu, 11 classes, blue (low) to red (high).
 const RED_BLUE = ["#053061", "#2166ac", "#4393c3", "#92c5de", "#d1e5f0", "#f7f7f7", "#fddbc7", "#f4a582", "#d6604d", "#b2182b", "#67001f"].map(hex).join(", ");
 
+/** Each piecewise map's nodes, "r g b, r g b, …" evenly spaced over 0..1. */
+const NODES: Record<string, string> = {
+  ...SAMPLED,
+  ge: "0 0 0, 0 0.471 0.471, 0.490 0 0.980, 1 0.502 0, 1 1 1",
+  nih: "0 0 0, 0.333 0 0.550, 0 0 0.900, 0 0.750 0.250, 0.900 0.900 0, 1 0.500 0, 1 0 0",
+  pet: "0 0 0, 0 0 0.500, 0.500 0 0.500, 1 0 0, 1 0.650 0, 1 1 1",
+  redblue: RED_BLUE,
+};
+
 export const COLORMAPS: Colormap[] = [
   {
     id: "grayscale",
@@ -139,9 +148,9 @@ void main() {
   return clamp(vec3(1.5) - abs(4.0 * x - vec3(3.0, 2.0, 1.0)), 0.0, 1.0);
 }`,
   ),
-  mapped("ge", "GE colour", piecewise("colormap", "0 0 0, 0 0.471 0.471, 0.490 0 0.980, 1 0.502 0, 1 1 1")),
-  mapped("nih", "NIH", piecewise("colormap", "0 0 0, 0.333 0 0.550, 0 0 0.900, 0 0.750 0.250, 0.900 0.900 0, 1 0.500 0, 1 0 0")),
-  mapped("pet", "PET", piecewise("colormap", "0 0 0, 0 0 0.500, 0.500 0 0.500, 1 0 0, 1 0.650 0, 1 1 1")),
+  mapped("ge", "GE colour", piecewise("colormap", NODES.ge)),
+  mapped("nih", "NIH", piecewise("colormap", NODES.nih)),
+  mapped("pet", "PET", piecewise("colormap", NODES.pet)),
   {
     id: "binary",
     label: "Binary colour",
@@ -195,7 +204,7 @@ void main() {
   return clamp(x + amp * vec3(-0.14861 * c + 1.78277 * s, -0.29227 * c - 0.90649 * s, 1.97294 * c), 0.0, 1.0);
 }`,
   ),
-  mapped("redblue", "Red-blue (diverging)", piecewise("colormap", RED_BLUE)),
+  mapped("redblue", "Red-blue (diverging)", piecewise("colormap", NODES.redblue)),
 ];
 
 /** The contrast directive Neuroglancer writes for a new image layer. */
@@ -239,4 +248,44 @@ export function colormapOf(shader: string, options: ColormapOptions = {}): strin
     if (normalise(own) === text) return map.id;
   }
   return undefined;
+}
+
+/** The maps that are one function as functions here (the GLSL definitions' twins), for drawing them outside a shader. */
+const FORMULAS: Record<string, (x: number) => [number, number, number]> = {
+  grayscale: (x) => [x, x, x],
+  jet: (x) => [0, 1, 2].map((k) => clamp01(1.5 - Math.abs(4 * x - (3 - k)))) as [number, number, number],
+  hot: (x) => [clamp01(3 * x), clamp01(3 * x - 1), clamp01(3 * x - 2)],
+  cool: (x) => [x, 1 - x, 1],
+  cubehelix: (x) => {
+    const angle = 6.2831853 * (0.5 / 3 + 1 - 1.5 * x);
+    const amp = (x * (1 - x)) / 2;
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    return [clamp01(x + amp * (-0.14861 * c + 1.78277 * s)), clamp01(x + amp * (-0.29227 * c - 0.90649 * s)), clamp01(x + amp * (1.97294 * c))];
+  },
+};
+
+function clamp01(v: number): number {
+  return Math.min(1, Math.max(0, v));
+}
+
+/**
+ * A map's colours at `n` evenly spaced points over 0..1 (RGB 0 to 1), for a
+ * renderer that draws it as a table (Luxar, the render computer); undefined
+ * for a map that is not one function (heat, binary).
+ */
+export function colormapSamples(id: string, n = 32): [number, number, number][] | undefined {
+  const text = NODES[id];
+  const xs = Array.from({ length: n }, (_, i) => (n === 1 ? 0 : i / (n - 1)));
+  if (text !== undefined) {
+    const nodes = text.split(",").map((c) => c.trim().split(/\s+/).map(Number));
+    return xs.map((x) => {
+      const s = clamp01(x) * (nodes.length - 1);
+      const i = Math.min(Math.floor(s), nodes.length - 2);
+      const f = s - i;
+      return [0, 1, 2].map((k) => nodes[i][k] + (nodes[i + 1][k] - nodes[i][k]) * f) as [number, number, number];
+    });
+  }
+  const formula = FORMULAS[id];
+  return formula === undefined ? undefined : xs.map((x) => formula(x));
 }

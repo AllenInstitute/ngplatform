@@ -543,6 +543,20 @@ class Loaded:
     medium: str = ""  # the specimen lies in a mounting medium, the tissue "above" or "below" it (medium_side); else ""
 
 
+def empty(lo, hi) -> Loaded:
+    """An empty volume (2 x 2 x 2 voxels of 0) over the box lo..hi (physical mm, x y z), a little beyond it: what
+    a scene of objects alone renders in (its camera, crops and depth placed as an image's would be)."""
+    lo, hi = np.asarray(lo, np.float64), np.asarray(hi, np.float64)
+    pad = 0.02 * max(float(np.max(hi - lo)), 1e-6)
+    lo, hi = lo - pad, hi + pad
+    voxel = (hi - lo) / 2
+    affine = np.eye(4)
+    affine[:3, :3] = np.diag(voxel)
+    affine[:3, 3] = lo + voxel / 2
+    return Loaded(np.zeros((2, 2, 2), np.uint8), affine, 0.0, 1.0, {p: 0.0 for p in PERCENTILES}, "objects",
+                  tuple(float(x) for x in voxel), (2, 2, 2))
+
+
 def _order_zyx(a: np.ndarray, ms: Multiscale) -> np.ndarray:
     """Array of the spatial axes (in array order) transposed to z, y, x."""
     kept = [i for i in range(len(ms.axes)) if i in ms.spatial]

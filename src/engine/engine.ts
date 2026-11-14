@@ -8,6 +8,7 @@
  * class and shown by the platform, which mounts Neuroglancer's own widgets
  * (layer controls, settings, help, statistics) in its docks and dialogs.
  */
+import { type ColourByLook, layerColourLook } from "./colour_shader.js";
 import { setSurfaceOverlay } from "./inspector/surface.js";
 import type { Drawer3d, VisibleSegments } from "../sdk/types.js";
 import { draw3d } from "./draw3d.js";
@@ -1201,6 +1202,18 @@ export class Engine {
     const c = getBaseObjectColor(ds as unknown as Parameters<typeof getBaseObjectColor>[0], id, segmentColourScratch);
     const s = ds.saturation.value;
     return [c[0] * s + 1 - s, c[1] * s + 1 - s, c[2] * s + 1 - s];
+  }
+
+  /**
+   * A Zarr Vectors layer's Colour by look as it draws now: its shader (the
+   * one in effect, the default a store chose included, which the state
+   * leaves out) and its low and high as last dragged; undefined when it
+   * colours by segment or with a shader of its own.
+   */
+  colourLook(name: string): ColourByLook | undefined {
+    const options = (this.segmentationLayer(name)?.displayState as unknown as { skeletonRenderingOptions?: { shader: { value: string }; shaderControlState: { toJSON(): unknown } } } | undefined)?.skeletonRenderingOptions;
+    if (options === undefined) return undefined;
+    return layerColourLook({ skeletonRendering: { shader: options.shader.value, shaderControls: options.shaderControlState.toJSON() } });
   }
 
   /**

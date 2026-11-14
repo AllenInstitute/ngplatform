@@ -261,6 +261,21 @@ The production polish: the work of an audit of every panel and plugin
 - Rendering's window ends, cut and plane offsets and box edges render live
   (the object at low resolution) while their sliders are dragged, as the
   colourmap, density and light already did; one undo step when let go.
+- Luxar and Anatomical rendering colour a Zarr Vectors layer as the layer
+  is coloured (its Vertex colour): by a group, in the store's colours or a
+  palette's, the groups not chosen hidden; or by an attribute through the
+  layer's colour map between its low and high, outside hidden if asked.
+  The store's default (a cell atlas's coarsest tier) counts too. Luxar's
+  Colour *As the layer*; the render computer reads only the attributes the
+  colouring needs and re-colours a view without reading again.
+- Anatomical rendering of a Zarr Vectors layer alone (points, lines or a
+  surface in a scene with no image), on a render computer: the layer is
+  the scene, in an empty volume about it.
+- 3-D views of a store whose coarsest level is sparse (the ABC atlas's 913
+  cells) load evenly: a region under an empty coarsest cell is refined
+  like any other, where it stayed at the near-empty stand-in (dense
+  patches beside holes); a sparse stand-in no longer sets its region's
+  estimated size, and thousands of chunks are chosen in a heap.
 
 - Cloud Storage is read through its JSON API in the browser (volume view,
   precomputed reads, collections, orientations, time series, plugin

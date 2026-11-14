@@ -117,6 +117,14 @@ function scalarSource(name: string): ScalarSource {
     const index = store.description.attributes.findIndex((a) => a.id === id);
     if (index >= 0) return { kind: "attribute", index, components: store.description.attributes[index].components };
   }
+  if (name.startsWith("group:") && store !== undefined) {
+    // "group:<attribute>[:<colour attribute>]": the vertex's group, and the store's colour for it.
+    const [id, colour] = name.slice("group:".length).split(":");
+    const at = (x: string | undefined) => (x === undefined ? -1 : store!.description.attributes.findIndex((a) => a.id === x));
+    const index = at(id);
+    const c = at(colour);
+    if (index >= 0) return { kind: "group", index, ...(c >= 0 ? { colour: c } : {}) };
+  }
   return { kind: "none" };
 }
 

@@ -122,6 +122,7 @@ export function fakeContext(options: { layers?: LayerInfo[]; axes?: Record<strin
     viewer: {
       layers: () => layers,
       onLayersChanged: (f: () => void) => (listeners.layers.add(f), () => listeners.layers.delete(f)),
+      onStateChanged: () => () => {},
       onCursorChanged: (f: () => void) => (listeners.cursor.add(f), () => listeners.cursor.delete(f)),
       cursor: () => ({ active: false, position: [], names: [], units: [], values: {} }),
       getState: () => ng,

@@ -28,8 +28,16 @@ is converted.
   *Emission and absorption* also darkens what is behind dense bundles;
   *Solid tubes* draws opaque, shaded lines.
 - **Colour**: by direction (x red, y green, z blue), each streamline its own
-  colour, a vertex attribute through a colormap (with its range), or one
-  colour.
+  colour, a vertex attribute through a colormap (with its range), one
+  colour, or **as the layer** is coloured: its **Vertex colour** (Display
+  tab, see [Zarr Vectors](zarr-vectors.md)). As the layer, a group colours
+  each vertex in the store's colour for it or a palette's, the groups not
+  chosen hidden; an attribute goes through the layer's colour map between
+  its low and high, what lies outside hidden when the layer hides it. The
+  store's own default (a cell atlas's coarsest group) counts too. Dragging
+  the layer's low and high, or choosing groups, redraws at once; another
+  attribute reads the store again. A layer coloured by a group or an
+  attribute starts as the layer.
 - **Width** in pixels, **Brightness** in stops, **Sharpness** (soft glow to
   hard edge) and the **Tone map**. **Automatic brightness** dims lines where
   many crowd the view, so a whole brain glows rather than turning white and

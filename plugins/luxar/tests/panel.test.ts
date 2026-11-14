@@ -95,6 +95,7 @@ function fakeContext(layers: LayerInfo[], saved?: unknown) {
       visibleSegments: () => shown,
       onSegmentsChanged: () => () => {},
       onLayersChanged: () => () => {},
+      onStateChanged: () => () => {},
       onRendered: () => () => {},
       hideLayerDrawing: () => {},
       setTemporaryBackground: () => {},

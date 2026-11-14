@@ -145,3 +145,56 @@ export function attributeRange(values: ArrayLike<number>): Pick<ColourByLook, "r
   const hi = finite[finite.length - 1] === lo ? lo + 1 : finite[finite.length - 1];
   return { range: [lo, hi], low: at(0.02), high: Math.max(at(0.98), at(0.02)) };
 }
+
+/** An attribute's shader id, as the Zarr Vectors plugin makes it (`safeAttributeId`, for names without clashes); `obj:<name>` is obj_<name>. */
+export function attributeShaderId(name: string): string {
+  if (name.startsWith("obj:")) name = `obj_${name.slice(4)}`;
+  let base = name.replace(/[^a-zA-Z0-9_]/g, "_");
+  if (!/^[a-z]/.test(base)) base = `a_${base}`;
+  return base.replace(/__+/g, "_");
+}
+
+/**
+ * A layer's look as it is drawn now, from its state (`skeletonRendering`:
+ * the shader, and its controls, where the low and high are as last
+ * dragged); undefined when it colours by segment or its shader is not one
+ * the Colour by controls wrote.  For the plugins that draw a layer
+ * themselves (Luxar, Anatomical rendering) in the layer's colours.
+ */
+export function layerColourLook(spec: unknown): ColourByLook | undefined {
+  const rendering = (spec as { skeletonRendering?: { shader?: unknown; shaderControls?: Record<string, unknown> } } | undefined)?.skeletonRendering;
+  const look = typeof rendering?.shader === "string" ? colourLookOf(rendering.shader) : undefined;
+  if (look === undefined || look.by === "segment") return undefined;
+  if (look.by === "group") return look.group === undefined ? undefined : look;
+  if (look.attribute === undefined) return undefined;
+  const control = (k: "low" | "high") => {
+    const v = rendering?.shaderControls?.[k];
+    return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+  };
+  return { ...look, low: control("low") ?? look.low, high: control("high") ?? look.high };
+}
+
+/** The attributes (shader ids) a look reads. */
+export function lookAttributes(look: ColourByLook | undefined): string[] {
+  if (look?.by === "group" && look.group !== undefined) return [look.group.attribute, ...(look.group.colours === "stored" && look.group.colorAttribute ? [look.group.colorAttribute] : [])];
+  if (look?.by === "attribute" && look.attribute !== undefined) return [look.attribute];
+  return [];
+}
+
+/** A group's palette colour (RGB 0 to 1), as the shader's zvPalette draws it. */
+export function groupPalette(group: number): [number, number, number] {
+  const k = Math.floor(group + 0.5);
+  const h = (((k * 0.61803398875) % 1) + 1) % 1;
+  const lightness = ((k % 2) + 2) % 2 < 1 ? 0.75 : 0.55;
+  const dim = ((Math.floor(k / 2) % 2) + 2) % 2 < 1 ? 1 : 0.8;
+  return [0, 4, 2].map((o) => {
+    const c = Math.min(1, Math.max(0, Math.abs((((h * 6 + o) % 6) + 6) % 6 - 3) - 1));
+    return (1 + (c - 1) * lightness) * dim;
+  }) as [number, number, number];
+}
+
+/** A stored colour (0xRRGGBB as a number) as RGB 0 to 1, as the shader's zvPacked reads it. */
+export function unpackRgb(packed: number): [number, number, number] {
+  const v = Math.floor(packed + 0.5);
+  return [Math.floor(v / 65536) % 256, Math.floor(v / 256) % 256, v % 256].map((c) => c / 255) as [number, number, number];
+}

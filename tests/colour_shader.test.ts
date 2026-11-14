@@ -8,7 +8,8 @@
 import { describe, expect, it } from "vitest";
 import { groupColourShader } from "../plugins/zarr-vectors/src/geometry_kind.js";
 import { taxonomyGroups } from "../plugins/zarr-vectors/src/store.js";
-import { attributeRange, colourLookOf, colourShader, MAX_RUNS, runs } from "../src/engine/colour_shader.js";
+import { attributeRange, attributeShaderId, colourLookOf, colourShader, groupPalette, layerColourLook, lookAttributes, MAX_RUNS, runs, unpackRgb } from "../src/engine/colour_shader.js";
+import { colormapSamples } from "../src/engine/colormaps.js";
 
 describe("colour by shader", () => {
   it("draws segments in the layer's own colours", () => {
@@ -80,5 +81,40 @@ describe("a store's taxonomy as groups", () => {
     expect(groups[0]).toEqual({ name: "class", attribute: "class_index", colorAttribute: "class_color", count: 2, names: ["01 IT-ET Glut", "02 NP-CT-L6b Glut"] });
     expect(groups[1]).toEqual({ name: "subclass", attribute: "subclass_index", count: 3, parent: "class", parentIndex: [0, 0, 1] });
     expect(taxonomyGroups(undefined, undefined)).toEqual([]);
+  });
+});
+
+describe("a layer's look, for the plugins that draw it themselves", () => {
+  it("reads the look from the layer's state, its low and high as last dragged", () => {
+    const look = { by: "attribute" as const, attribute: "gene_A", colormap: "magma", range: [0, 8] as [number, number], low: 0.5, high: 6, hideOutside: true };
+    const spec = { skeletonRendering: { shader: colourShader(look), shaderControls: { low: 1.5, high: 4 } } };
+    expect(layerColourLook(spec)).toEqual({ ...look, low: 1.5, high: 4 });
+    expect(layerColourLook({ skeletonRendering: { shader: colourShader(look) } })).toEqual(look);
+    // By segment, a shader of its own, or none: no look.
+    expect(layerColourLook({ skeletonRendering: { shader: colourShader({ by: "segment" }) } })).toBeUndefined();
+    expect(layerColourLook({ skeletonRendering: { shader: "void main() { emitDefault(); }" } })).toBeUndefined();
+    expect(layerColourLook(undefined)).toBeUndefined();
+    expect(lookAttributes(look)).toEqual(["gene_A"]);
+    const group = { tier: "class", attribute: "class_index", colorAttribute: "class_color", colours: "stored" as const };
+    expect(lookAttributes({ by: "group", group })).toEqual(["class_index", "class_color"]);
+    expect(lookAttributes({ by: "group", group: { ...group, colours: "palette" } })).toEqual(["class_index"]);
+  });
+
+  it("colours as the shader does: a group's palette colour, a stored colour, an attribute's id", () => {
+    // Group 0: hue 0 at 0.75; group 1: lighter by 0.55; groups 2 and 3 dimmed to 0.8.
+    expect(groupPalette(0)).toEqual([1, 0.25, 0.25]);
+    expect(groupPalette(2)[0]).toBeLessThanOrEqual(0.8 + 1e-9);
+    expect(unpackRgb(0xff8000)).toEqual([1, 128 / 255, 0]);
+    expect(attributeShaderId("obj:group")).toBe("obj_group");
+    expect(attributeShaderId("2900052N01Rik")).toBe("a_2900052N01Rik");
+  });
+
+  it("samples a colour map as a table", () => {
+    const v = colormapSamples("viridis", 33)!;
+    expect(v[0][0]).toBeCloseTo(0.267, 3);
+    expect(v[32][1]).toBeCloseTo(0.906, 3);
+    expect(colormapSamples("jet", 3)).toEqual([[0, 0, 0.5], [0.5, 1, 0.5], [0.5, 0, 0]]);
+    expect(colormapSamples("grayscale", 2)).toEqual([[0, 0, 0], [1, 1, 1]]);
+    expect(colormapSamples("heat")).toBeUndefined();
   });
 });

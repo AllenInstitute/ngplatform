@@ -30,8 +30,15 @@ export interface ChunkInput {
   faces?: Uint32Array;
 }
 
-/** What each vertex's fourth value holds. */
-export type ScalarSource = { kind: "none" } | { kind: "object" } | { kind: "attribute"; index: number; components: number };
+/**
+ * What each vertex's fourth value holds: nothing, its object's colour key,
+ * an attribute's value, or the group it belongs to (an attribute holding
+ * a group's index, as a layer coloured by group reads it): then each
+ * vertex's "object" is its group, so the chunk's table colours and hides
+ * groups, each in the store's colour for it when `colour` (an attribute
+ * holding 0xRRGGBB) is given.
+ */
+export type ScalarSource = { kind: "none" } | { kind: "object" } | { kind: "attribute"; index: number; components: number } | { kind: "group"; index: number; colour?: number };
 
 export interface BuiltChunk {
   /** x, y, z (store coordinates) and the value, per vertex, padded to whole texture rows. */
@@ -57,6 +64,8 @@ export interface BuiltChunk {
   objectIds: Uint32Array;
   /** Per slot, how much of the chunk the object is: its segments' length, its triangles' area, or (points) its own vertices. */
   objectWeight: Float32Array;
+  /** Per slot, the store's colour for it (0xRRGGBB), when the vertices' objects are their groups and the store colours them. */
+  slotColours?: Uint32Array;
   /** A mesh's triangles, three vertex indices each (empty for lines and points). */
   triangles: Uint32Array;
   triangleCount: number;
@@ -107,7 +116,9 @@ export function buildChunk(input: ChunkInput, scalar: ScalarSource): BuiltChunk 
   const lower: [number, number, number] = [Infinity, Infinity, Infinity];
   const upper: [number, number, number] = [-Infinity, -Infinity, -Infinity];
   const { positions, segmentIds } = input;
-  const attribute = scalar.kind === "attribute" ? input.attributes[scalar.index] : undefined;
+  const attribute = scalar.kind === "attribute" || scalar.kind === "group" ? input.attributes[scalar.index] : undefined;
+  const stored = scalar.kind === "group" && scalar.colour !== undefined ? input.attributes[scalar.colour] : undefined;
+  const slotColours: number[] = [];
   const objects = new Set<number>();
   const slots = new Uint32Array(rows * TEXTURE_WIDTH);
   // Slots by id: the low word alone for the usual ids, both words otherwise.
@@ -120,19 +131,27 @@ export function buildChunk(input: ChunkInput, scalar: ScalarSource): BuiltChunk 
       if (p < lower[k]) lower[k] = p;
       if (p > upper[k]) upper[k] = p;
     }
-    const lo = segmentIds[2 * v] ?? 0;
-    const hi = segmentIds[2 * v + 1] ?? 0;
+    let lo = segmentIds[2 * v] ?? 0;
+    let hi = segmentIds[2 * v + 1] ?? 0;
     if (v < own && hi === 0) objects.add(lo);
+    if (scalar.kind === "group") {
+      // The vertex's group in place of its object (no group: the largest id, which no group has).
+      const g = attribute === undefined ? NaN : Math.round(attribute[v]);
+      lo = Number.isFinite(g) && g >= 0 ? g >>> 0 : 0xffffffff;
+      hi = 0;
+    }
     const key = hi === 0 ? lo : `${hi}:${lo}`;
     let slot = slotOf.get(key);
     if (slot === undefined) {
       slot = ids.length / 2;
       slotOf.set(key, slot);
       ids.push(lo, hi);
+      if (stored !== undefined) slotColours.push(Math.max(0, Math.round(stored[v])) >>> 0);
     }
     slots[v] = slot;
     let value = 0;
     if (scalar.kind === "object") value = objectKey(lo, hi);
+    else if (scalar.kind === "group") value = lo;
     else if (attribute !== undefined && scalar.kind === "attribute") {
       const c = scalar.components;
       if (c === 1) value = attribute[v];
@@ -252,6 +271,7 @@ export function buildChunk(input: ChunkInput, scalar: ScalarSource): BuiltChunk 
     slots,
     objectIds: Uint32Array.from(ids),
     objectWeight,
+    ...(stored !== undefined ? { slotColours: Uint32Array.from(slotColours) } : {}),
     triangles: triangleCount * 3 === triangles.length ? triangles : triangles.slice(0, triangleCount * 3),
     triangleCount,
     normals,
