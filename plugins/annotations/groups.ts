@@ -8,12 +8,13 @@
  * shader of the user's own is not taken for it).  Pure functions.
  */
 import type { AnnotationJson } from "./measure.js";
+import { DATA_COLOURS, dataColour } from "@ngplatform/sdk/palette";
 import { type Field, GROUP, type Group, type LayerMeta, type LayerSpec, propsOf, replaceProperty, type PropertySpec } from "./values.js";
 
-/** Distinct colours for groups and list values, in order. */
-export const PALETTE = ["#e4572e", "#3fb6c9", "#f3a712", "#8cb369", "#a06cd5", "#ef798a", "#4c8bf5", "#c5d86d", "#ff9f1c", "#2ec4b6", "#d4a5a5", "#9b5de5"];
+/** Distinct colours for groups and list values, in order: the data palette. */
+export const PALETTE = DATA_COLOURS;
 
-export const paletteColour = (i: number) => PALETTE[((i % PALETTE.length) + PALETTE.length) % PALETTE.length];
+export const paletteColour = (i: number) => dataColour(i);
 
 /** The first line of a shader written here. */
 export const SHADER_MARK = "// Annotations tab: colours and hidden groups (rewritten when they change).";

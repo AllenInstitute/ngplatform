@@ -73,6 +73,18 @@
   --view-x: #ce6e65;
   --view-y: #71af7c;
   --view-z: #6890cb;
+  /* The data palette (src/sdk/palette.ts, dataColour()): eight categorical colours for what
+     the user makes (track groups, label and annotation groups, landmark pairs, plotted
+     series), colour-blind safe (Okabe and Ito's, adapted) and at least 5:1 on black.
+     Data only: the interface never uses them. */
+  --data-1: #e69f00;
+  --data-2: #56b4e9;
+  --data-3: #009e73;
+  --data-4: #cc79a7;
+  --data-5: #f0e442;
+  --data-6: #2f7fd0;
+  --data-7: #d55e00;
+  --data-8: #99ddbb;
   /* Overlays: the dimmed page behind a sheet, and the shadows that lift things off it. */
   --scrim: rgba(0, 0, 0, 0.6);
   --shadow-sheet: 0 20px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(0, 0, 0, 0.4);

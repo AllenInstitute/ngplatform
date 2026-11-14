@@ -8,6 +8,7 @@
 import type { Disposer, Json, PlatformContext } from "@ngplatform/sdk";
 import { button, downloadBlob, el, emptyState, field, info, region, select, statusLine } from "@ngplatform/sdk/dom";
 import { csv } from "@ngplatform/sdk/format";
+import { dataColour } from "@ngplatform/sdk/palette";
 import { toVoxel } from "./geometry.js";
 import { type Measurement, measureAll, powerOf, samplePath, sampleCount } from "./measure.js";
 import { linePlot } from "./plot.js";
@@ -303,7 +304,7 @@ export function useMeasureTool(ctx: PlatformContext, tool: string): void {
     const layers = ((ng.layers as Json[] | undefined) ?? []).slice();
     let layer = layers.find((l) => l.name === LAYER);
     if (layer === undefined) {
-      layer = { type: "annotation", source: "local://annotations", name: LAYER, annotationColor: "#ffd166", annotations: [] };
+      layer = { type: "annotation", source: "local://annotations", name: LAYER, annotationColor: dataColour(4), annotations: [] };
       layers.push(layer);
     }
     if (current === tool) delete layer.tool;

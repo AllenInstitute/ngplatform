@@ -5,6 +5,7 @@
  * one streams public data.
  */
 import type { ExampleSpec } from "../platform/plugin_host.js";
+import { dataColour } from "../sdk/palette.js";
 
 const BUCKET = "https://storage.googleapis.com/hip_ct_zarr_vector_03987646472fethdsvdvdfg/zarr_vectors_test";
 
@@ -41,7 +42,7 @@ const mniGroups = (store: string) => {
         {
           id: "cc",
           name: "Corpus callosum",
-          colour: "#e4572e",
+          colour: dataColour(0),
           // A thin slab across the midline, over the body of the callosum.
           rois: [{ id: "cc-1", shape: "box", center: [0, -5, 21], radius: 5, size: [4, 70, 16], op: "and" }],
           filter: { ranges: {}, includeTags: [], excludeTags: [] },
@@ -50,7 +51,7 @@ const mniGroups = (store: string) => {
         {
           id: "cst-l",
           name: "Left corticospinal",
-          colour: "#3fb6c9",
+          colour: dataColour(1),
           // Posterior limb of the internal capsule, then the pons.
           rois: [sphere("cst-l-1", [-24, -15, 8], 6), sphere("cst-l-2", [-10, -27, -30], 6)],
           filter: { ranges: {}, includeTags: [], excludeTags: [] },
@@ -59,7 +60,7 @@ const mniGroups = (store: string) => {
         {
           id: "cst-r",
           name: "Right corticospinal",
-          colour: "#d4a72c",
+          colour: dataColour(2),
           rois: [sphere("cst-r-1", [24, -15, 8], 6), sphere("cst-r-2", [10, -27, -30], 6)],
           filter: { ranges: {}, includeTags: [], excludeTags: [] },
           source,

@@ -4,6 +4,7 @@
  * series as CSV.  Plain code, without the page.
  */
 import { csvField } from "@ngplatform/sdk/format";
+import { DATA_COLOURS } from "@ngplatform/sdk/palette";
 import type { SeriesInfo } from "./reader.js";
 import type { LayerMap } from "./space.js";
 
@@ -152,7 +153,7 @@ export const RATES = [0.5, 1, 2, 5, 10, 20, 30];
  * Pinned series' colours, in the order they are given (on the docks' dark
  * ground); a pin keeps its colour, and there are no more pins than colours.
  */
-export const COLOURS = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"];
+export const COLOURS = DATA_COLOURS;
 
 /** The first colour no pin has; undefined when all are taken. */
 export function freeColour(used: number[]): number | undefined {
