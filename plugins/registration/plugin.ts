@@ -938,7 +938,11 @@ export class Registration {
       const q = pair();
       const i = this.saved.pairs.findIndex((x) => x.id === id);
       const v = q?.[role];
-      where.textContent = v ? `${role === "fixed" ? "Fixed" : "Moving"} ${v.map((x) => x.toFixed(1)).join(", ")} mm${role === "moving" ? " (in its own space)" : ""} · pair ${i + 1}` : "";
+      // In x, y, z order (or the layer's own names'), as the panel's table.
+      const name = this.layer();
+      const names = (name && this.ctx.viewer.layerTransform(name)?.output.names) || ["x", "y", "z"];
+      const order = [0, 1, 2].sort((a, b) => (names[a] ?? "").localeCompare(names[b] ?? ""));
+      where.textContent = v ? `Pair ${i + 1}, ${role} point: ${order.map((k) => names[k]).join(", ")} ${order.map((k) => v[k].toFixed(1)).join(", ")} mm${role === "moving" ? " (in its own space)" : ""}` : "";
     };
     sync();
     host.append(
