@@ -1498,6 +1498,28 @@ textarea.state-input.tall { min-height: 50vh; }
 .view-card-values > .readout-unit { font: var(--fs-caption) var(--mono); }
 .view-card .row { flex-wrap: nowrap; }
 
+/* The 3-D view's switches on a narrow panel (engine/switch_fold.ts): below
+   560 px the plugins' switches fold into one View button, before Sections,
+   whose menu (the floating surface) lists them; the row never wraps. */
+.engine .view-switches-more { display: none; }
+.engine div.perspective-panel-show-slice-views[data-folded] { flex-wrap: nowrap; white-space: nowrap; }
+.engine div.perspective-panel-show-slice-views[data-folded] > label.perspective-panel-toggle:not(:last-of-type) { display: none; }
+.engine div.perspective-panel-show-slice-views[data-folded] > .view-switches-more {
+  display: inline-flex; align-items: center; gap: var(--sp-2); height: 22px; margin: 0; padding: 0 var(--sp-3) 0 var(--sp-4);
+  border: 0; border-radius: 0; background: none; color: var(--text); font: inherit; pointer-events: auto; cursor: pointer;
+}
+.engine div.perspective-panel-show-slice-views[data-folded] > .view-switches-more:hover { background: var(--hover); }
+.engine div.perspective-panel-show-slice-views[data-folded] > .view-switches-more[aria-expanded="true"] { background: var(--accent); color: var(--accent-ink); }
+.engine .view-switches-more svg { width: 12px; height: 12px; }
+.engine .view-switches-more:focus-visible { outline: 1px solid var(--focus); outline-offset: 2px; }
+.engine .view-switches-menu {
+  position: absolute; right: -1px; bottom: calc(100% + var(--sp-2)); display: grid; min-width: 132px; padding: var(--sp-1) 0;
+  pointer-events: auto; font: var(--fs-caption)/1 var(--ui); color: var(--text);
+}
+.engine .view-switches-item { display: flex; align-items: center; gap: var(--sp-3); height: 24px; padding: 0 var(--sp-4); cursor: pointer; white-space: nowrap; }
+.engine .view-switches-item:hover { background: var(--hover); }
+.engine .view-switches-item input { margin: 0; cursor: pointer; }
+
 /* Files dragged over the window. */
 .drop-hint {
   position: fixed; inset: 0; z-index: 200; pointer-events: none;

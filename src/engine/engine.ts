@@ -43,6 +43,7 @@ import { ViewBackgrounds, type ViewGround } from "./backgrounds.js";
 import { type ChunkSourceStatistics, chunkStatistics, mountViewSettings } from "./view_settings.js";
 import { guardSelectedValues, type SelectedValues } from "./selected_values.js";
 import { watchOutlines } from "./outlines.js";
+import { watchSwitchGroups } from "./switch_fold.js";
 import { type CaptureOptions, type CapturePanel, captureDimensions, capturePanels, CaptureSession } from "./capture.js";
 
 export type Json = Record<string, unknown>;
@@ -348,6 +349,8 @@ export class Engine {
     );
     // Segmentations drawn as outlines keep their outline layers' colours in step.
     this.disposers.push(watchOutlines(this));
+    // On a narrow 3-D panel the plugins' switches fold into one View menu beside Sections.
+    this.disposers.push(watchSwitchGroups(host, () => this.toggles.map((t) => ({ label: t.label, title: t.title, get: () => t.value.value, set: (v: boolean) => (t.value.value = v) }))));
     // Segmentation layers whose drawing a plugin hides stay hidden when made afresh.
     const lm = this.viewer.layerManager;
     for (const signal of [lm.layersChanged, lm.readyStateChanged, lm.specificationChanged]) {
