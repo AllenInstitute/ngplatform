@@ -89,8 +89,10 @@
   /* Overlays: the dimmed page behind a sheet, and the shadows that lift things off it. */
   --scrim: rgba(0, 0, 0, 0.6);
   --shadow-sheet: 0 20px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(0, 0, 0, 0.4);
-  --shadow-menu: 0 10px 28px rgba(0, 0, 0, 0.45);
-  --shadow-float: 0 6px 18px rgba(0, 0, 0, 0.35);
+  /* What floats over the page without dimming it (menus, the command palette, toasts, tips,
+     a view's floating card): one shadow; --shadow-menu is the same, for the plugins that name it. */
+  --shadow-float: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-menu: var(--shadow-float);
   --shadow-dock: 0 0 40px rgba(0, 0, 0, 0.6);
   /* The outline of a colour swatch, and a line struck through quiet text. */
   --swatch-line: rgba(255, 255, 255, 0.25);
@@ -130,6 +132,11 @@
   --ctl-h: var(--ctl-h-panel);
   --ctl-fs: var(--fs-body);
   --r: 0;
+  /* Motion: only to show a change of state, briefly, easing out; none at all when the
+     system asks for less motion (below). */
+  --t-fast: 120ms;       /* a control's own change: a switch, a chevron */
+  --t: 200ms;            /* a part that grows or moves: a progress bar */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
   color-scheme: dark;
 }
 /* Sheets and the top bar are the larger context. */
@@ -163,11 +170,11 @@ input[type="checkbox"].switch {
   appearance: none; -webkit-appearance: none; flex: none; margin: 0;
   width: 34px; height: 20px; border-radius: 10px; position: relative; vertical-align: middle;
   background: var(--off); border: 0; cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--t-fast) var(--ease-out);
 }
 input[type="checkbox"].switch::after {
   content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
-  background: var(--knob); box-shadow: var(--shadow-float); transition: transform 0.15s, background 0.15s;
+  background: var(--knob); box-shadow: var(--shadow-float); transition: transform var(--t-fast) var(--ease-out), background var(--t-fast) var(--ease-out);
 }
 input[type="checkbox"].switch:checked { background: var(--on); }
 input[type="checkbox"].switch:checked::after { transform: translateX(14px); background: var(--text-strong); }
@@ -366,6 +373,7 @@ kbd {
  * still at half strength rather than sweeping.
  */
 @media (prefers-reduced-motion: reduce) {
+  :root { --t-fast: 0s; --t: 0s; }
   *, *::before, *::after { transition-duration: 0s !important; transition-delay: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
   .dot.busy { animation: none; }
   .job .bar.indeterminate .fill { animation: none; width: 100% !important; transform: none; opacity: 0.45; }
@@ -459,7 +467,7 @@ kbd {
   display: block; order: -1; writing-mode: horizontal-tb; transform: none; margin: 0 var(--sp-3) 0 var(--sp-1);
   font-size: var(--fs-caption); line-height: var(--ctl-h); text-transform: uppercase; letter-spacing: var(--label-spacing); color: var(--muted);
 }
-.dock-tools .dock-toggle svg { transition: transform 0.12s; }
+.dock-tools .dock-toggle svg { transition: transform var(--t-fast) var(--ease-out); }
 .dock-tools.collapsed .dock-toggle svg { transform: rotate(-90deg); }
 
 .resizer { background: transparent; position: relative; z-index: 2; }
@@ -625,7 +633,7 @@ kbd {
 .ds-row.card-row .sub { grid-column: 3 / 6; }
 /* The card's arrow, as the cards' (.card-head::before): right closed, down open. */
 .ds-expand { width: var(--hit); height: var(--hit); padding: 0; border: 0; background: none; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; border-radius: var(--r); }
-.ds-expand::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform 0.12s; }
+.ds-expand::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform var(--t-fast) var(--ease-out); }
 .ds-expand[aria-expanded="true"]::before { transform: rotate(45deg); }
 .ds-expand:hover { background: var(--hover); }
 /* Each level as wide as the panel, no wider: the controls shrink with it. */
@@ -735,7 +743,7 @@ kbd {
 .jobs { display: grid; gap: var(--sp-4); }
 .job { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--sp-2) var(--sp-5); }
 .job .bar { grid-column: 1 / -1; height: 4px; background: var(--ink-3); border-radius: 0; overflow: hidden; }
-.job .fill { height: 100%; background: var(--accent); transition: width 0.2s; }
+.job .fill { height: 100%; background: var(--accent); transition: width var(--t) var(--ease-out); }
 .job.failed .fill { background: var(--err); }
 .job.done .fill { background: var(--plot-on); }
 .job .bar.indeterminate .fill { width: 30% !important; animation: slide 1.2s ease-in-out infinite; }
@@ -946,7 +954,6 @@ textarea.ins-grow.ins-clipped {
 }
 .ins-completions {
   position: absolute; z-index: 30; left: 0; right: 0; top: 100%; max-height: 240px; overflow: auto; margin: 0; padding: 0; list-style: none;
-  background: var(--surface-overlay); border: 1px solid var(--line-strong); box-shadow: var(--shadow-float);
 }
 .ins-completions[hidden] { display: none; }
 .ins-completion { display: flex; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-2) var(--sp-4); cursor: pointer; font: var(--fs-body)/1.3 var(--mono); }
@@ -1026,6 +1033,16 @@ textarea.ins-grow.ins-clipped {
 .boot-failed p { margin: 0; }
 
 /* --------------------------------------------------------------- overlays */
+/* The floating surface: whatever floats over the page without dimming it, one style.  The
+   menus, the command palette, toasts, tips, completions, Neuroglancer's dropdowns over the
+   views, and a view's floating card (class float-surface, for plugins and in-view tools):
+   the overlay grey, a 1 px strong line, square, one shadow. */
+.float-surface, .menu, .toast, .info-tip, .ins-completions,
+.engine :is(.neuroglancer-position-dimension-dropdown, .neuroglancer-position-dimension-coordinate-dropdown) {
+  background: var(--surface-overlay); border: 1px solid var(--line-strong); border-radius: 0; box-shadow: var(--shadow-float);
+}
+/* The command palette is a sheet over the dimmed page that floats like a menu. */
+.sheet.float-surface { box-shadow: var(--shadow-float); }
 .scrim {
   position: fixed; inset: 0; z-index: 100;
   background: var(--scrim);
@@ -1082,9 +1099,7 @@ textarea.state-input.tall { min-height: 50vh; }
 .result.unavailable { opacity: 0.45; }
 
 .menu {
-  position: fixed; z-index: 130; min-width: 190px; padding: var(--sp-2);
-  background: var(--surface-overlay); border: 1px solid var(--line-strong); border-radius: var(--r);
-  box-shadow: var(--shadow-menu); display: grid;
+  position: fixed; z-index: 130; min-width: 190px; padding: var(--sp-2); display: grid;
 }
 .menu-item {
   text-align: left; height: 30px; padding: 0 10px; border: 0; border-radius: 0;
@@ -1133,9 +1148,7 @@ textarea.state-input.tall { min-height: 50vh; }
   display: grid; gap: var(--sp-4); justify-items: end;
 }
 .toast {
-  background: var(--surface-overlay); border: 1px solid var(--line-strong); border-radius: var(--r);
   padding: var(--sp-4) var(--sp-5); max-width: min(380px, calc(100vw - 32px));
-  box-shadow: var(--shadow-float);
 }
 /* An error: red words in a red edge. */
 .toast.error { border-color: var(--err-line); color: var(--err); }
@@ -1265,7 +1278,7 @@ textarea.state-input.tall { min-height: 50vh; }
 /* The card title: the panel's heading style. */
 .card > .card-head { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-5); font-weight: 600; font-size: var(--fs-heading); color: var(--text); background: var(--ink-3); cursor: pointer; list-style: none; user-select: none; }
 .card > .card-head::-webkit-details-marker { display: none; }
-.card > .card-head::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform 0.12s; flex: none; }
+.card > .card-head::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform var(--t-fast) var(--ease-out); flex: none; }
 .card[open] > .card-head::before { transform: rotate(45deg); }
 .card > .card-head:hover { background: var(--ink-4); }
 .card-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1353,7 +1366,6 @@ textarea.state-input.tall { min-height: 50vh; }
 .btn.icon.info-btn:hover, .btn.icon.info-btn[aria-expanded="true"] { color: var(--text); }
 .info-tip {
   position: fixed; z-index: 140; max-width: 260px; padding: var(--sp-3) var(--sp-4);
-  background: var(--surface-overlay); border: 1px solid var(--line-strong); box-shadow: var(--shadow-float);
   color: var(--text); font: 400 var(--fs-body)/1.45 var(--ui); text-transform: none; letter-spacing: 0; white-space: normal; cursor: auto;
 }
 .info-tip[hidden] { display: none; }

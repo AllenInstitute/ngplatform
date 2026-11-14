@@ -150,7 +150,7 @@ export function showPalette(
     "aria-autocomplete": "list",
   });
   const results = h("ul", { class: "results", role: "listbox", id: "palette-results", "aria-label": "Commands" });
-  const box = h("div", { class: "sheet", role: "dialog", "aria-label": "Commands" }, input, results);
+  const box = h("div", { class: "sheet float-surface", role: "dialog", "aria-label": "Commands" }, input, results);
   let matches: Command[] = [];
   let index = 0;
 
