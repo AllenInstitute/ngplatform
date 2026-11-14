@@ -839,7 +839,13 @@ export interface PlatformContext {
      * draws there; until the disposer is called.
      */
     viewToggle(spec: { label: string; title?: string; value: boolean; onChange(value: boolean): void }): { set(value: boolean): void; dispose(): void };
-    /** An element over the views (pointer events pass through it, not its children), until disposed. */
+    /**
+     * An element over the views (pointer events pass through it, not its
+     * children), until disposed.  Its colour tokens are those of the 2-D
+     * views' ground, dark or light whatever the theme; a child with the
+     * class `over-3d` takes the 3-D view's.  Draw on canvases with
+     * `viewInk()` (`@ngplatform/sdk/dom`), not fixed colours.
+     */
     overlay(): { element: HTMLElement; dispose(): void };
     /** Paints over each screenshot Neuroglancer takes, in its canvas's pixels, until disposed. */
     screenshotOverlay(paint: (context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void): Disposer;

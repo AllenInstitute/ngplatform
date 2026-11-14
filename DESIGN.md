@@ -39,6 +39,55 @@ colors:
   view-x: "#ce6e65"
   view-y: "#71af7c"
   view-z: "#6890cb"
+  view-frame: "#333"
+  view-ink-line: "#a3a3a3"
+  view-ink-accent: "#d0d0d0"
+  view-ink-keyline: "#000"
+  view-ink-text: "#e6e6e6"
+colors-light:
+  ink-0: "#fff"
+  ink-1: "#fff"
+  ink-2: "#fff"
+  ink-3: "#fff"
+  ink-card: "#fff"
+  ink-4: "rgba(0, 0, 0, 0.10)"
+  surface-overlay: "#f4f4f4"
+  line: "rgba(0, 0, 0, 0.10)"
+  line-strong: "rgba(0, 0, 0, 0.20)"
+  line-control: "rgba(0, 0, 0, 0.20)"
+  line-hover: "rgba(0, 0, 0, 0.36)"
+  line-focus: "rgba(0, 0, 0, 0.88)"
+  text: "rgba(0, 0, 0, 0.88)"
+  text-strong: "#000"
+  muted: "rgba(0, 0, 0, 0.62)"
+  faint: "rgba(0, 0, 0, 0.56)"
+  hover: "rgba(0, 0, 0, 0.06)"
+  select-soft: "rgba(0, 0, 0, 0.08)"
+  selection: "rgba(0, 0, 0, 0.22)"
+  accent: "#141414"
+  accent-hover: "#000"
+  accent-ink: "#fff"
+  focus: "#000"
+  on: "#141414"
+  off: "rgba(0, 0, 0, 0.20)"
+  knob: "rgba(0, 0, 0, 0.88)"
+  err: "#c53929"
+  err-line: "rgba(197, 57, 41, 0.6)"
+  danger: "rgba(197, 57, 41, 0.12)"
+  dec-x: "#c0463a"
+  dec-y: "#3a8a4a"
+  dec-z: "#3d72c4"
+  view-margin: "#f3f3f3"
+  view-3d: "#fff"
+  view-outline: "#808080"
+  view-x: "#b03a2e"
+  view-y: "#2b7039"
+  view-z: "#2c5fae"
+  view-frame: "#c8c8c8"
+  view-ink-line: "#5c5c5c"
+  view-ink-accent: "#262626"
+  view-ink-keyline: "#fff"
+  view-ink-text: "#1a1a1a"
 typography:
   title:
     fontFamily: "Source Sans 3, system-ui, sans-serif"
@@ -145,7 +194,12 @@ someone who knows Neuroglancer recognises its parts (the numbered layer
 chips, the Source, Rendering and Annotations tabs, Min–Max, 1–99 % and
 5–95 %, its tick boxes and sliders), restyled, not reinvented.
 
-The interface is dark only. Density is a feature: docks hold sections of
+There are two themes, dark (the default, as Neuroglancer is) and light,
+chosen in Settings › View (or as the system is) and kept in the browser,
+never in a link. The light theme is the same system mirrored, not another
+look: white panels, black at the opacities white has in the dark. The views
+stay black in both: images read on black, as in Neuroglancer and radiology
+viewers; Views follow theme puts them on a light ground too. Density is a feature: docks hold sections of
 small controls at one control height (24 px), on a 4 px grid. Hierarchy
 comes from white at a few opacities, weight, position and 1 px lines, not
 from grey fills or colour.
@@ -156,7 +210,7 @@ gradients, rounded cards, invented control shapes, decorative motion, "AI"
 styling.
 
 **Key Characteristics:**
-- Black panels separated by 1 px lines; menus, sheets and floating cards a step up (#141414).
+- Black panels separated by 1 px lines; menus, sheets and floating cards a step up (#141414). In the light theme the mirror: white panels, what floats a step down (#f4f4f4).
 - White at fixed opacities: text 92, 64 and 46 %; lines 10, 20 and 36 %; hover 6 %.
 - One hue in the chrome: Neuroglancer's error red, for errors and what deletes.
 - What is chosen or on is inverted (a white fill, black words) or outlined in 1 px white; nothing is green.
@@ -195,12 +249,26 @@ Neuroglancer's own parts over and in the views, in this system.
 - **Coordinates**: the position bar and the pointer's position in the mono face, names and units muted.
 - **Scale bar**: Source Code Pro, 12 px, a 3 px bar.
 - **Resolution histograms**: Neuroglancer's red and orange bars shown in greys (a CSS filter).
-- Not changeable without changing Neuroglancer (WebGL with fixed colours): the axis lines (red, green, blue at half strength), and the scale bar's white, bold type on its 30 % black box.
+- Not changeable without changing Neuroglancer (WebGL with fixed colours): the axis lines (red, green, blue at half strength), and the scale bar's white, bold type on its 30 % black box. On a light ground the scale bar is the one part that does not follow it (white on its grey box, about 2.3:1).
+
+### Light theme
+The dark set mirrored (`colors-light`, `:root[data-theme="light"]` in `src/ui/styles.css`): what is white at an opacity in the dark is black at about the same one in the light.
+- **White** (#fff, ink-0 … ink-card) for panels, wells and bars; **Overlay** (#f4f4f4) for what floats, with its 1 px line-strong edge and a lighter shadow.
+- **Text** black 88 %, **Muted** 62 %, **Faint** 56 % (not 46 %: black at 46 % is 3.4:1 on white). Every level at least 4.8:1 on white and on the overlay grey: text 16.5 and 15.3, muted 6.2 and 6.0, faint 4.95 and 4.85.
+- **Lines** black 10, 20 and 36 %, the focus's field 88 %; **Hover** 6 %, **Pressed** 10 %, **Selected row** 8 %, **Selected text** 22 %.
+- **Inverted** is a black fill (#141414) with white words; **Outlined** a 1 px black line; **Focus** a 1 px black outline, 2 px out.
+- **Error red** a step darker, #c53929: 5.3:1 on white, 4.8:1 on the overlay grey (#db4437 there would be 4.3 and 3.9). In the dark #db4437 is 4.9:1 on black and 4.3:1 on the overlay grey.
+- Scrollbars, the caret, placeholders, ranges and tick boxes follow (the browser draws them in the light scheme, in the accent).
+
+### Views and their ground
+The views have a ground of their own: black by default in both themes (the margin #0c0c0c, the 3-D view black); with Views follow theme on in the light theme, the light ground (the margin #f3f3f3, the 3-D view white), shown but never saved: a link keeps the backgrounds it carries, and a background set in Settings › View meanwhile is kept and saved. Each of Neuroglancer's view panels and each overlay over them carries its ground (`data-view-ground`, `data-view-ground-3d` with `.over-3d` for what is over the 3-D view), and the tokens there are the set for that ground, whatever the theme: the frames, axis labels, the 3-D view's switches, the layout buttons, the floating card, the view aids' cube, labels and bookmarks. What is drawn on canvases over the views takes its colours from the same tokens (`viewInk()` in `@ngplatform/sdk/dom`: `--view-ink-*` and the direction colours): on a dark ground light grey lines with a black keyline, on a light one dark grey lines with a white keyline; the direction colours a step darker on a light ground (at least 3.8:1 as lines) and the axis labels at least 5.4:1.
 
 ### Named Rules
+**The Ground Rule.** The chrome follows the theme; the views, and what is drawn over them, follow the view's ground.
+
 **The Greyscale Rule.** The chrome is black and white at the opacities above. A hue in it is either the error red or an axis colour naming an axis in the views; nothing else.
 
-**The Inversion Rule.** Chosen or on is shown by inversion or a 1 px white outline. No green, no coloured bar down the side of a row, no coloured edge wider than 1 px.
+**The Inversion Rule.** Chosen or on is shown by inversion or a 1 px white outline (black in the light theme). No green, no coloured bar down the side of a row, no coloured edge wider than 1 px.
 
 ## Typography
 
@@ -261,14 +329,16 @@ sheets alike. The one round shape is the on/off switch.
 - **Layer chips**: a layer's number (Neuroglancer's, in draw order) in a small square, mono: white while shown, faint while hidden.
 - **Selection**: the white 8 % tint and the strong text; no bar down the left.
 - **Icons**: one set of line drawings (`src/sdk/icons.ts`), 16 px with a 1 px line; inside a line of text, at the text's size. Never a character (×, ⋯, ▸, ✓) in an icon's place; an icon-only button has a name.
-- **Browser surfaces**: selected text on white 30 %; a white caret; thin scrollbars with a 36 % thumb; placeholders a quieter white; ranges and tick boxes the browser's own in white.
+- **Browser surfaces**: selected text on white 30 % (black 22 % in the light); a caret in the strong text; thin scrollbars with a 36 % thumb; placeholders a quieter text; ranges and tick boxes the browser's own in the accent.
+- **Shader editor** (CodeMirror): greyscale in both themes, the syntax told by weight and opacity, not hue: keywords and types in the strong text at 600, names and numbers in the text, punctuation muted, comments faint, an error red; selected text and the matching bracket in the selection tints.
 
 ## Do's and Don'ts
 
 - **Do** keep the chrome black and white and let the data carry colour.
 - **Do** keep Neuroglancer's conventions recognisable: restyle its parts, don't reinvent their shapes.
 - **Do** use the tokens in `src/ui/styles.css`; `npm run ui:audit` counts font sizes, button styles, radii and inline styles against `plans/ui-audit-baseline.json`.
-- **Don't** add a hue to the chrome, a grey fill to tell parts apart, a gradient, a rounded card or a light theme.
+- **Don't** add a hue to the chrome, a grey fill to tell parts apart, a gradient or a rounded card; the light theme is the dark one mirrored, not a look of its own.
+- **Don't** colour what is drawn over the views with fixed values: read the view's ink (`viewInk()`, the `--view-ink-*` tokens), so it reads on either ground.
 - **Don't** use green, or any colour, for on or selected: invert or outline in white.
 - **Don't** put a character where an icon belongs, or a coloured bar down the side of a selected row.
 - **Don't** animate for decoration: motion only shows a change of state, briefly.

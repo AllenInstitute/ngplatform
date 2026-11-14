@@ -46,6 +46,28 @@ The production polish: the work of an audit of every panel and plugin
   characters (×, ▸, ✓); selected text, scrollbars and number fields in the
   app's greys.
 
+### A light theme
+
+- Settings › View › Theme: **Dark** (the default), **Light** or **Match
+  system**, kept in this browser (not in links) and set before the page is
+  first drawn; the palette's **Theme: switch between dark and light** and
+  **Views follow theme: on or off** change it too. The light theme mirrors
+  the dark one: white panels, black type at fixed strengths (each at least
+  4.8:1 on its surface), black for what is chosen, the error red a step
+  darker (#c53929).
+- The views stay black in both themes. **Views follow theme** (off by
+  default) shows them on a light ground in the light theme, never saved: a
+  link keeps the backgrounds it carries.
+- What is drawn over the views follows the views' ground, not the theme:
+  in-view handles and their card, the orientation cube, point labels,
+  bookmarks and switches, Neuroglancer's axis labels and panel frames.
+  Plugins drawing over the views read the colours with `viewInk()` from
+  `@ngplatform/sdk/dom`.
+- Neuroglancer's own panels shown in the app (its tabs, the key reference,
+  dropdowns, completions, tool chips) and the shader editor are covered in
+  both: the editor's syntax in greys, told apart by weight and opacity.
+- `npm run ui:audit` takes `UI_AUDIT_THEME=light` and `UI_AUDIT_VIEWS_FOLLOW=1`.
+
 ### Fixes that lost data or crashed (Phase 0 and 1)
 
 - The app starts when a plugin fails to load (marked failed in Plugins),
