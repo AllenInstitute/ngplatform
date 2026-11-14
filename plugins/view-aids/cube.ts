@@ -5,21 +5,15 @@
  * up; a click turns the view to look at it.  Below it, Realign (to the
  * nearest standard view) and Bookmark.
  */
-import { el, iconButton } from "@ngplatform/sdk/dom";
+import { el, iconButton, viewInk } from "@ngplatform/sdk/dom";
 import { type Axes, letterBasis, pickCube, type Quat, targetLetters, targetWords, toView, type Vec3, visibleFaces, zoneOnFace } from "./geometry.js";
 
 /** The cube's picture, CSS pixels square, and its half-size in it. */
 export const CUBE_SIZE = 64;
 const HALF = 18;
 
-/** The direction colours (DESIGN.md dec-x, dec-y, dec-z), by display axis. */
-const AXIS_COLOURS = ["#e0574b", "#5cb46c", "#4f88dc"];
-/** Faces in the grey steps: lighter as they face the viewer. */
-const FACE_GREYS: [number, string][] = [
-  [0.8, "#333"],
-  [0.45, "#292929"],
-  [0, "#1f1f1f"],
-];
+/** How much a face faces the viewer for each of the ink's three greys (`viewInk(…).faces`): lighter as it does on a dark view. */
+const FACE_STEPS = [0.8, 0.45, 0];
 
 export interface CubeActions {
   pick(target: Vec3): void;
@@ -41,7 +35,7 @@ export class OrientationCube {
     this.canvas.style.height = `${CUBE_SIZE}px`;
     this.element = el(
       "div",
-      { class: "view-aids-cube view-aids-control" },
+      { class: "view-aids-cube view-aids-control over-3d" },
       this.canvas,
       el(
         "div",
@@ -86,7 +80,9 @@ export class OrientationCube {
     const axes = this.axes;
     if (axes === undefined) return;
     const dpr = Math.max(1, Math.min(3, globalThis.devicePixelRatio || 1));
-    const key = JSON.stringify([this.q.map((v) => v.toFixed(5)), axes.ends, this.hover, dpr]);
+    // The colours that read on the 3-D view's ground (src/ui/styles.css): the direction colours, greys and words.
+    const ink = viewInk(this.canvas);
+    const key = JSON.stringify([this.q.map((v) => v.toFixed(5)), axes.ends, this.hover, dpr, ink]);
     if (key === this.drawn) return;
     this.drawn = key;
     const size = Math.round(CUBE_SIZE * dpr);
@@ -114,12 +110,12 @@ export class OrientationCube {
     const faces = visibleFaces(this.q);
     for (const face of faces) {
       path(face.corners);
-      context.fillStyle = FACE_GREYS.find(([min]) => face.facing >= min)![1];
+      context.fillStyle = ink.faces[FACE_STEPS.findIndex((min) => face.facing >= min)];
       context.fill();
       const zone = this.hover && zoneOnFace(face.normal, this.hover);
       if (zone) {
         path(zone);
-        context.fillStyle = "rgba(208, 208, 208, 0.45)";
+        context.fillStyle = ink.zone;
         context.fill();
       }
     }
@@ -142,7 +138,7 @@ export class OrientationCube {
       context.save();
       context.setTransform(dpr * r[0], dpr * r[1], dpr * d[0], dpr * d[1], dpr * ox, dpr * oy);
       context.globalAlpha = Math.min(1, (face.facing - 0.2) / 0.3);
-      context.fillStyle = "#e6e6e6";
+      context.fillStyle = ink.text;
       context.font = `600 ${letter.length > 2 ? 11 : 13}px "Source Sans 3", system-ui, sans-serif`;
       context.textAlign = "center";
       context.textBaseline = "middle";
@@ -157,7 +153,7 @@ export class OrientationCube {
         const a = corners[i];
         const b = corners[(i + 1) % 4];
         const axis = [0, 1, 2].find((j) => a[j] !== b[j])!;
-        context.strokeStyle = AXIS_COLOURS[axis];
+        context.strokeStyle = ink.axes[axis];
         context.beginPath();
         context.moveTo(...at(a));
         context.lineTo(...at(b));

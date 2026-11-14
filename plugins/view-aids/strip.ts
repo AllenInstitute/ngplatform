@@ -27,7 +27,7 @@ export class BookmarkStrip {
   constructor(private readonly actions: StripActions) {
     this.list = el("div", { class: "view-aids-strip-list", role: "toolbar", "aria-label": "Bookmarks" });
     this.playButton = iconButton("play", "Play the bookmarks in order", () => actions.play());
-    this.element = el("div", { class: "view-aids-strip view-aids-control" }, this.list, this.playButton);
+    this.element = el("div", { class: "view-aids-strip view-aids-control over-3d" }, this.list, this.playButton);
     roving(this.list, { items: () => [...this.list.querySelectorAll<HTMLElement>("button")], orientation: "horizontal", tabStop: true });
   }
 

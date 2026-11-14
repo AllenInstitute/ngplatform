@@ -235,7 +235,7 @@ class ViewAids {
     const cube = make("Cube", "The orientation cube", (v) => this.write({ cube: v }));
     const labels = make("Labels", "Point annotations' descriptions, at the sides", (v) => this.write({ labels: v }));
     const graphics = make("Graphics", "Off hides the axis lines, the box, the scale bar and the view aids", (v) => this.setGraphics(v));
-    const element = el("div", { class: "view-aids-switches view-aids-control" }, cube.label, labels.label, graphics.label);
+    const element = el("div", { class: "view-aids-switches view-aids-control over-3d" }, cube.label, labels.label, graphics.label);
     element.hidden = true;
     return { element, inputs: { cube: cube.input, labels: labels.input, graphics: graphics.input } };
   }

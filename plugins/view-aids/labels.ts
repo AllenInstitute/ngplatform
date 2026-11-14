@@ -10,6 +10,7 @@
  */
 import type { Json, LayerTransform, PlatformContext } from "@ngplatform/sdk";
 import { type LabelPoint, placeLabels } from "./placement.js";
+import { viewInk } from "@ngplatform/sdk/dom";
 
 const FONT = `500 12px "Source Sans 3", system-ui, sans-serif`;
 const LABEL_HEIGHT = 18;
@@ -89,7 +90,7 @@ export class PointLabels {
 
   constructor(private readonly ctx: PlatformContext) {
     this.canvas = document.createElement("canvas");
-    this.canvas.className = "view-aids-labels";
+    this.canvas.className = "view-aids-labels over-3d";
   }
 
   /** Reads the labelled points again when a layer or the dimensions changed. */
@@ -170,6 +171,8 @@ export class PointLabels {
   /** Draws the labels as last laid out, in the view's CSS pixels (the context set to them). */
   draw(context: CanvasRenderingContext2D): void {
     const maxWidth = Math.max(60, this.size.width * 0.4);
+    // The colours that read on the 3-D view's ground (src/ui/styles.css).
+    const ink = viewInk(this.canvas);
     context.font = FONT;
     context.textBaseline = "middle";
     for (const label of this.laid) {
@@ -183,7 +186,7 @@ export class PointLabels {
       const top = label.labelY - LABEL_HEIGHT / 2;
       const endX = label.side === "left" ? left + w : left;
       // The leader line, then the dot on the point, then the label.
-      context.strokeStyle = "rgba(208, 208, 208, 0.85)";
+      context.strokeStyle = ink.leader;
       context.lineWidth = 1;
       context.beginPath();
       context.moveTo(label.x, label.y);
@@ -191,13 +194,13 @@ export class PointLabels {
       context.stroke();
       context.beginPath();
       context.arc(label.x, label.y, 2.5, 0, 2 * Math.PI);
-      context.fillStyle = "#e6e6e6";
+      context.fillStyle = ink.text;
       context.fill();
-      context.strokeStyle = "#000";
+      context.strokeStyle = ink.keyline;
       context.stroke();
-      context.fillStyle = "rgba(0, 0, 0, 0.6)";
+      context.fillStyle = ink.label;
       context.fillRect(left, top, w, LABEL_HEIGHT);
-      context.fillStyle = "#e6e6e6";
+      context.fillStyle = ink.text;
       context.fillText(text, left + PAD_X, label.labelY + 0.5);
     }
   }
