@@ -50,7 +50,7 @@ why ("“movie” is 4-D").
   the moving layer, until **Stop placing**; the panel says which comes
   next. Or ++alt+f++ places a fixed point at the mouse and ++alt+m++ the
   matching moving point. Landmarks show in the views as numbered points
-  (fixed ones yellow, moving ones cyan where the layer puts them): drag
+  (fixed ones in Neuroglancer's annotation yellow, moving ones in its cyan, where the layer puts them): drag
   one to move it, and its pair is fitted again; its card (*Pair 1*) shows
   both points and, once fitted, the pair's error, and goes to the pair or
   removes it. Fit as translation, rigid, similarity or affine, with the

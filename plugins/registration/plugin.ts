@@ -118,9 +118,13 @@ export function defaultMoving(candidates: string[], images: string[]): string | 
 }
 
 const FIXED_LAYER = "landmarks (fixed)";
-/** The landmarks' colours, as their annotation layers draw them. */
-const FIXED_COLOUR = "#ffcc00";
-const MOVING_COLOUR = "#3fd3ff";
+/**
+ * The landmarks' colours, as their annotation layers draw them:
+ * Neuroglancer's own, its default annotation yellow for fixed points and the
+ * cyan it highlights with for moving ones.
+ */
+const FIXED_COLOUR = "#ffff00";
+const MOVING_COLOUR = "#00ffff";
 const MOVING_LAYER = "landmarks (moving)";
 
 const mm = (scale: number, unit: string) => (unit === "m" ? scale * 1000 : scale);

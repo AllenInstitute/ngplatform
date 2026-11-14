@@ -178,6 +178,8 @@ export default defineConfig({
       "neuroglancer/datasource:none_by_default",
       "neuroglancer/datasource/zarr:enabled",
       "neuroglancer/datasource/nifti:enabled",
+      // N5: the Human Organ Atlas's whole-organ HiP-CT (e.g. S-21-46) is published as N5.
+      "neuroglancer/datasource/n5:enabled",
       "neuroglancer/datasource/precomputed:enabled",
     ],
   },
