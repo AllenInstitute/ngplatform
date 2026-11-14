@@ -445,6 +445,9 @@ a.btn { text-decoration: none; }
 /* The Activity line: the running job, else the last message, also while the dock is collapsed */
 .dock-status { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; border: 0; background: transparent; color: var(--muted); font: var(--fs-body) var(--ui); font-variant-numeric: tabular-nums; padding: 0 var(--sp-4); cursor: pointer; }
 .dock-status.err { color: var(--err); }
+/* A message that is not an error fades from the line after a few seconds (src/ui/shell.ts); it stays in Activity. */
+.dock-status { transition: opacity var(--t) var(--ease-out); }
+.dock-status.fading { opacity: 0; }
 .dock-status:empty { visibility: hidden; }
 .dock.collapsed .dock-status { display: block; }
 /* Open, the dock shows the jobs and the log themselves */
@@ -1625,8 +1628,14 @@ textarea.state-input.tall { min-height: 50vh; }
 .engine .neuroglancer-position-dimension + .neuroglancer-position-dimension { margin-left: var(--sp-5); }
 .engine :is(.neuroglancer-position-dimension:focus-within, .neuroglancer-position-dimension[data-dropdown-visible="true"]) { border-color: var(--line-focus); background: var(--ink-0); }
 .engine :is(.neuroglancer-dimension-dropdown-coordinate-label, .neuroglancer-position-dimension-coordinate-label) { color: var(--muted); }
-/* The pointer's position after it (one line of text, names and values together): a readout, quieter than the view's. */
-.engine .neuroglancer-mouse-position-widget { margin-left: var(--sp-6); font: var(--fs-body)/1.7 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+/* The pointer's position after it: Neuroglancer's line of text (names and values, no units) is
+   hidden and followed by readouts with units (src/ui/pointer_readout.ts), after a 1 px line;
+   quieter than the view's position. */
+.engine .neuroglancer-mouse-position-widget { display: none; }
+.engine .pointer-readout { display: flex; align-items: center; gap: var(--sp-5); margin-left: var(--sp-5); padding-left: var(--sp-5); border-left: 1px solid var(--line-strong); font: var(--fs-body)/1.7 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+.engine .pointer-readout:empty { display: none; }
+.engine .pointer-name { color: var(--faint); }
+.engine .pointer-readout .readout-unit { color: var(--faint); }
 .engine .neuroglancer-dimension-dropdown-coordinate-entry:hover { background: var(--hover); }
 
 /* A layer's data source, compact (src/engine/inspector/source.ts): the store's name, under it

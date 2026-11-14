@@ -61,6 +61,7 @@ import { renderJobsPanel, renderPluginsPanel } from "./panels/misc.js";
 import { CONVENTION_LABELS, type PanelConvention } from "../engine/anatomical.js";
 import { offerOverviews } from "./overview.js";
 import { offerRunnerForLarge, offerSampledTractograms, pairFromLink, runnerApi } from "./runner.js";
+import { pointerReadout } from "./pointer_readout.js";
 import { pageTheme, THEME_CHOICES, type ThemeChoice } from "./theme.js";
 import { openDroppedItems, SETTINGS_SECTIONS, type SettingsSection, showAddDatasetSheet, showEditStateSheet, showLocalSheet, showOpenSheet, showSettingsSheet, showShortcutsSheet } from "./sheets.js";
 import type { Workbench } from "./workbench.js";
@@ -86,6 +87,10 @@ const framed = (() => {
     return true;
   }
 })();
+
+/** How long a message that is not an error stays on the activity line, and how long it takes to fade (the stylesheet's --t). */
+const MESSAGE_MS = 6000;
+const FADE_MS = 200;
 
 export class Shell {
   // No id: Neuroglancer's stylesheet sizes #neuroglancer-container for a
@@ -198,6 +203,8 @@ export class Shell {
       ),
     );
     const engine = h("section", { class: "engine", "aria-label": "Viewer" }, this.engineHost, this.viewSplit, this.viewArea);
+    // The pointer's position after the position bar, with units.
+    pointerReadout(engine);
     this.viewSplit.addEventListener("pointerdown", (e) => this.dragViewSplit(e, engine));
     this.viewSplit.addEventListener("keydown", (e) => this.stepViewSplit(e));
     const centre = h("div", { class: "centre" }, engine, this.statusStrip);
@@ -477,12 +484,16 @@ export class Shell {
       this.showKindPanel();
       this.updateControls();
     };
-    // The activity line: a running job and its progress, else the last message.
+    // The activity line: a running job and its progress, else the last message.  A message
+    // that is not an error fades from the line after a few seconds (it stays in Activity);
+    // an error stays until another message takes its place.
     let last: { message: string; level: string } | undefined;
+    let fade: ReturnType<typeof setTimeout> | undefined;
     const line = () => {
       const running = jobs.list().filter((j) => j.state === "running");
       const job = running[0];
       this.activityLine.classList.toggle("err", job === undefined && last?.level === "error");
+      if (job !== undefined) this.activityLine.classList.remove("fading");
       this.activityLine.textContent =
         job !== undefined
           ? `${job.title}${job.progress !== undefined ? ` ${Math.round(job.progress * 100)}%` : "…"}${running.length > 1 ? ` (+${running.length - 1})` : ""}`
@@ -490,7 +501,22 @@ export class Shell {
     };
     log.onAdd((message, level) => {
       last = { message, level };
+      clearTimeout(fade);
+      this.activityLine.classList.remove("fading");
       line();
+      if (level === "error") return;
+      const shown = last;
+      fade = setTimeout(() => {
+        if (last !== shown) return;
+        // Faded out (at once with less motion), then gone from the line.
+        this.activityLine.classList.add("fading");
+        fade = setTimeout(() => {
+          if (last !== shown) return;
+          last = undefined;
+          this.activityLine.classList.remove("fading");
+          line();
+        }, FADE_MS);
+      }, MESSAGE_MS);
     });
     // Data type plugins' warnings about what they read (a newer format, columns left out), each once per store.
     window.addEventListener(WARNING_EVENT, (e) => {
@@ -547,7 +573,7 @@ export class Shell {
       void (async () => {
         const resume = await keep?.find(location.hash);
         await this.openText(link, "the link", false, resume);
-        if (resume !== undefined) log.add("The history of changes kept in this browser for this link is back (the ⋯ beside undo and redo).");
+        if (resume !== undefined) log.add("Undo history for this link restored");
       })();
     } else {
       // An empty viewer, unless the link names an example (`#example=<id>`) or the build a default one.
