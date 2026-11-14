@@ -1395,6 +1395,13 @@ textarea.state-input.tall { min-height: 50vh; }
   .hide-phone { display: none !important; }
   .topbar { gap: var(--sp-3); padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); }
   .scene-tabs { min-width: 64px; }
+  /* The scene's tab shrinks (its name cut short) rather than being cut off. */
+  .scene-tab { flex: 0 1 auto; min-width: 48px; }
+  /* The status line: the items whole as far as they go (the breadcrumb cuts itself short at its
+     left, the level chip never), the activity message in what is left, so it is the first to go;
+     the dock's name too (its button keeps it). */
+  .status-items { max-width: none; padding: 0 var(--sp-2); }
+  .dock-bottom.collapsed .rail-title { display: none; }
   .app { --lw: 34px; }
   .resizer-left { display: none; }
   /* On a phone the open left column floats over the views instead of squeezing them. */

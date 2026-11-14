@@ -150,7 +150,8 @@ export class Shell {
       h(
         "div",
         { class: "group" },
-        h("button", { class: "btn outline", type: "button", onclick: () => this.wb.run("workspace.open") }, icon("open"), "Open"),
+        // Named for a screen reader also where a phone hides its label.
+        h("button", { class: "btn outline", type: "button", "aria-label": "Open", onclick: () => this.wb.run("workspace.open") }, icon("open"), h("span", { class: "hide-phone" }, "Open")),
         h(
           "button",
           // Named for a screen reader also where a narrow window hides its label.
@@ -175,7 +176,8 @@ export class Shell {
       h(
         "div",
         { class: "group" },
-        h("a", { class: "btn icon", href: REPOSITORY, target: "_blank", rel: "noopener noreferrer", title: "ngplatform on GitHub", "aria-label": "ngplatform on GitHub" }, icon("github")),
+        // On a phone it is in the Help menu.
+        h("a", { class: "btn icon hide-phone", href: REPOSITORY, target: "_blank", rel: "noopener noreferrer", title: "ngplatform on GitHub", "aria-label": "ngplatform on GitHub" }, icon("github")),
         iconButton("camera", "Capture", (e) =>
           showMenu(e.currentTarget as HTMLElement, [
             { label: "Picture…", run: () => this.wb.run("view.capture") },
