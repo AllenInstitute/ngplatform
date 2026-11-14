@@ -1,0 +1,28 @@
+const e=`# Harvard-Oxford subcortical structural atlas (maximum-probability labels, values 1 to 21).
+# Names: Harvard Center for Morphometric Analysis, as released with FSL under CC BY-SA 4.0; this file is CC BY-SA 4.0.
+# Colours: FSLeyes (fsleyes/assets/luts), Copyright 2016-2023 University of Oxford, Apache-2.0.
+# Converted to FreeSurfer's format, names with underscores. Desikan et al. (2006); Makris et al. (2006); Frazier et al. (2005); Goldstein et al. (2007).
+#  No.  Label Name:                    R   G   B   A
+     0  Background                     0   0   0   0
+     1  Left_Cerebral_White_Matter   205  62  78   0
+     2  Left_Cerebral_Cortex         245 245 245   0
+     3  Left_Lateral_Ventricle       205  62  78   0
+     4  Left_Thalamus                120  18 134   0
+     5  Left_Caudate                 196  58 250   0
+     6  Left_Putamen                   0 148   0   0
+     7  Left_Pallidum                220 248 164   0
+     8  Brainstem                    230 148  34   0
+     9  Left_Hippocampus               0 118  14   0
+    10  Left_Amygdala                  0 118  14   0
+    11  Left_Accumbens               122 186 220   0
+    12  Right_Cerebral_White_Matter  236  13 176   0
+    13  Right_Cerebral_Cortex         12  48 255   0
+    14  Right_Lateral_Ventricle      204 182 142   0
+    15  Right_Thalamus                42 204 164   0
+    16  Right_Caudate                119 159 176   0
+    17  Right_Putamen                220 216  20   0
+    18  Right_Pallidum               103 255 255   0
+    19  Right_Hippocampus             80 196  98   0
+    20  Right_Amygdala                60  58 210   0
+    21  Right_Accumbens               60  58 210   0
+`;export{e as default};

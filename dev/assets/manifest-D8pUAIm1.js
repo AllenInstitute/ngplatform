@@ -1,0 +1,17 @@
+const e="filters.panel",a={id:"org.ngplatform.filters",name:"Filters",version:"0.1.0",kind:"tool",enabledByDefault:!1,description:"Any image filtered as it is viewed (Gaussian, mean, median, difference of Gaussians, Frangi vesselness, threshold, morphology), run by chunkmirage's engine in the page, as a layer of its own.",guide:`A filtered image is computed as it is viewed, by [chunkmirage](https://github.com/JaneliaSciComp/chunkmirage)'s browser engine: each chunk Neuroglancer asks for is the pipeline run on the image's voxels around it, at the level shown, so nothing is written and zooming in computes only what is in view. Sizes are in voxels of the level computed, so a zoomed-out view is a preview of the full-resolution result. Chunks the viewer stops waiting for are dropped.
+
+## Steps
+- **Gaussian** (sigma) and **Mean** (radius): smoothing.
+- **Median** (radius): smoothing that keeps edges and removes speckle.
+- **Difference of Gaussians** (sigma): blobs and edges about that size.
+- **Frangi vesselness** (sigma from, to): how much each voxel looks like part of a tube (a vessel, a fibre, an axon) brighter (or darker) than around it, 0 to 1.
+- **Threshold** (from, below): a mask, shown as a segmentation.
+- **Morphology** (open or close, radius): cleans a mask.
+- **Python (your own)**: code with \`apply(block)\`, run on each block (a NumPy array, z, y, x); its \`#halo\` and \`#output\` lines say the context it needs and what it returns.
+
+Sigma goes up to 10 voxels (6 for a difference of Gaussians) and a radius to 15, so no step reads more than half a chunk around each chunk.
+
+Median and Frangi run Python (SciPy, scikit-image) in the page, loaded the first time one is viewed.
+
+## Using it
+Choose an image (any 3-D image layer, with one channel and one time point: a file on this computer, or an OME-Zarr, N5 or precomputed volume at a URL), add steps, then **Add filtered view**: a new layer, whose link carries the whole pipeline. Select a filtered layer to tune it: the panel shows its steps, and **Update the view** changes that layer in place.`,license:"Apache-2.0",activation:["onStartup"],contributes:{panels:[{id:e,title:"Filters",slot:"left",group:"Image",order:80}],appState:{key:"filters",version:1}}};export{a as F,e as a};
