@@ -37,7 +37,6 @@ import {
   toggle,
 } from "@ngplatform/sdk/dom";
 import { layerSourceUrl } from "@ngplatform/sdk/sources";
-import { dataColour } from "@ngplatform/sdk/palette";
 import { WorkerRpc } from "@ngplatform/sdk/worker_rpc";
 import { storeOf } from "../volume-view/sources.js";
 import { apply4, describe, fit, type Fit, identity4, invert4, type Mat4, MINIMUM, type Model, multiply4, type Vec3 } from "./fit.js";
@@ -779,8 +778,8 @@ export class Registration {
     this.ctx.viewer.patchState((ng) => {
       const layers = ((ng.layers as Json[] | undefined) ?? []).filter((l) => l.name !== FIXED_LAYER && l.name !== MOVING_LAYER);
       if (wanted) {
-        layers.push({ type: "annotation", source: "local://annotations", name: FIXED_LAYER, annotationColor: dataColour(0), annotations: fixed });
-        layers.push({ type: "annotation", source: "local://annotations", name: MOVING_LAYER, annotationColor: dataColour(1), annotations: moving });
+        layers.push({ type: "annotation", source: "local://annotations", name: FIXED_LAYER, annotationColor: "#ffcc00", annotations: fixed });
+        layers.push({ type: "annotation", source: "local://annotations", name: MOVING_LAYER, annotationColor: "#3fd3ff", annotations: moving });
       }
       ng.layers = layers;
     });

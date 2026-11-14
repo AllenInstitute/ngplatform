@@ -25,7 +25,6 @@
  * It uses only the plugin API and the Zarr Vectors package's reader.
  */
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
-import { DATA_COLOURS, dataColour } from "@ngplatform/sdk/palette";
 import type { DatasetInfo, Disposer, Json, PlatformContext, PluginModule, RunnerJob, SegmentProperties } from "@ngplatform/sdk";
 import { type Attrs, button, card, checkbox, type Child, downloadBlob, el, emptyState, field, iconButton, info, numberInput, region, select, slider, statusLine } from "@ngplatform/sdk/dom";
 import { precomputedUrl } from "@ngplatform/sdk/sources";
@@ -137,8 +136,7 @@ void main() {
   emitRGBA(getDataValue() > 0.0 ? vec4(colormapJet(clamp(v, 0.0, 1.0)), opacity) : vec4(0.0));
 }
 `;
-/** Groups take the data palette's colours in turn. */
-const PALETTE = DATA_COLOURS;
+const PALETTE = ["#e4572e", "#3fb6c9", "#d4a72c", "#8fd14f", "#b07cd8", "#f08bb3", "#5c8de8", "#e8b05c"];
 const BINS = 40;
 /** How long a region must stay put before the exact answer is computed. */
 const EXACT_DELAY_MS = 150;
@@ -1047,7 +1045,7 @@ export class TrackGroups {
         type: "annotation",
         name,
         source: { url: "local://annotations", transform: { outputDimensions: dims } },
-        annotationProperties: [{ id: "color", type: "rgb", default: dataColour(0) }],
+        annotationProperties: [{ id: "color", type: "rgb", default: "#e3a95e" }],
         shader: "void main() {\n  setColor(prop_color());\n}\n",
         annotations: desired,
       });

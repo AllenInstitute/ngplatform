@@ -8,8 +8,6 @@
  */
 export * from "./types.js";
 export { checkManifest, MANIFEST_SCHEMA, PLATFORM_CONTEXT_KEYS } from "./manifest.js";
-// The data palette: the colours a plugin gives what the user makes (never the interface).
-export { DATA_COLOURS, dataColour, nextDataColour } from "./palette.js";
 // The parts every panel is built from (plugins/README.md, "Building a panel").
 export {
   type Action,

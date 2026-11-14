@@ -15,7 +15,6 @@
  */
 import type { Disposer, Json, PlatformContext } from "@ngplatform/sdk";
 import { el } from "@ngplatform/sdk/dom";
-import { dataColour } from "@ngplatform/sdk/palette";
 import { TABLE_PANEL } from "./manifest.js";
 import { measure, type AnnotationJson } from "./measure.js";
 import { lookupTerms, type Term } from "./ontology.js";
@@ -305,7 +304,7 @@ export class Annotate {
         type: "annotation",
         source: dimensions ? { url: "local://annotations", transform: { outputDimensions: dimensions } } : "local://annotations",
         name: unique,
-        annotationColor: dataColour(4),
+        annotationColor: "#ffd166",
         annotations: [],
       });
       ng.layers = layers;

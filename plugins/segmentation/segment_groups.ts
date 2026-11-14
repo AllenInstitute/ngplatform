@@ -9,7 +9,6 @@
  * link and undo with the workspace's other changes.  A segment is in one
  * group at most; one in none is listed under "No group".
  */
-import { DATA_COLOURS } from "@ngplatform/sdk/palette";
 
 export interface SegmentGroup {
   id: string;
@@ -34,8 +33,8 @@ export interface SegmentationSaved {
   hidden?: Record<string, number[]>;
 }
 
-/** Colours for new groups: the data palette. */
-const GROUP_COLOURS = DATA_COLOURS;
+/** Colours for new groups, distinct from the segment palette's first ones. */
+const GROUP_COLOURS = ["#ff9f1c", "#2ec4b6", "#e71d36", "#9b5de5", "#00bbf9", "#f15bb5", "#fee440", "#00f5d4"];
 
 export const noGroups = (): VolumeGroups => ({ groups: [], of: {} });
 
