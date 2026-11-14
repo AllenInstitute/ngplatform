@@ -25,7 +25,7 @@
  * It uses only the plugin API and the Zarr Vectors package's reader.
  */
 import { storeUrlOfSource } from "neuroglancer-zarr-vectors/source-url";
-import type { DatasetInfo, Disposer, Json, PlatformContext, PluginModule, RunnerJob, SegmentProperties } from "@ngplatform/sdk";
+import type { DatasetInfo, Disposer, Json, PlatformContext, PluginModule, RunnerJob, SegmentProperties, ViewShape, ViewShapeHandle } from "@ngplatform/sdk";
 import { type Attrs, button, card, checkbox, type Child, downloadBlob, el, emptyState, field, iconButton, info, numberInput, region, select, slider, statusLine } from "@ngplatform/sdk/dom";
 import { precomputedUrl } from "@ngplatform/sdk/sources";
 import { annotationGeometry, annotationMeets } from "./annotation_regions.js";
@@ -309,7 +309,7 @@ const STYLE = `
 
 /** What the Regions card's (i) says. */
 const REGIONS_INFO =
-  "A region starts at the centre of the views; Alt+Shift+S puts a sphere at the mouse, Alt+Shift+B a box. Alt-drag it in a view to move it. " +
+  "A new region starts where you are looking (the place the mouse was last over in a view), selected: drag its handles in any view; its card there sets AND, OR or NOT and exact values. Alt+Shift+S puts a sphere at the mouse, Alt+Shift+B a box. " +
   "AND: tracks must pass through it. OR: through at least one OR region. NOT: must not.";
 
 // --------------------------------------------------------------- results
@@ -456,6 +456,10 @@ export class TrackGroups {
   private renaming: string | undefined;
   private readonly offs: Disposer[] = [];
   private updateTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Each shown region's shape over the views, and what it was made from (to tell a change). */
+  private readonly shapes = new Map<string, { handle: ViewShapeHandle; key: string }>();
+  /** Sets the selected region's card in place (its numbers as it is dragged). */
+  private cardSync: (() => void) | undefined;
 
   constructor(
     private readonly ctx: PlatformContext,
@@ -498,6 +502,8 @@ export class TrackGroups {
 
   dispose(): void {
     this.offs.forEach((off) => off());
+    for (const { handle } of this.shapes.values()) handle.dispose();
+    this.shapes.clear();
     this.propsOff?.();
     for (const off of this.layerWatches.values()) off();
     for (const t of this.exactTimers.values()) clearTimeout(t);
@@ -635,6 +641,11 @@ export class TrackGroups {
 
   private dims(): Dimensions | undefined {
     return this.ctx.viewer.getState().dimensions as Dimensions | undefined;
+  }
+
+  private lookingAt(): [number, number, number] {
+    const p = this.ctx.views.lookingAt();
+    return p.length >= 3 && p.slice(0, 3).every(Number.isFinite) ? [p[0], p[1], p[2]] : this.viewCentre();
   }
 
   private viewCentre(): [number, number, number] {
@@ -921,7 +932,8 @@ export class TrackGroups {
 
   // ------------------------------------------------------------- regions
 
-  private addRoi(shape: RoiShape, center = this.viewCentre()): void {
+  /** A new region where the user is looking (the place the mouse was last over in a view, else the views' centre), selected so it can be dragged at once. */
+  private addRoi(shape: RoiShape, center = this.lookingAt()): void {
     // A mask needs an image to be one: the label volume added last, else the image added last.
     const image = shape === "mask" ? (readableImages(this.ctx, ["segmentation"]).at(-1) ?? readableImages(this.ctx).at(-1)) : undefined;
     if (shape === "mask" && image === undefined) {
@@ -962,6 +974,7 @@ export class TrackGroups {
     this.writeAnnotations();
     this.evaluateGroup(this.editing()!);
     this.sync();
+    if (shape !== "mask") this.ctx.views.select(roi.id);
   }
 
   private updateRoi(group: Group, roiId: string, patch: Partial<Roi>, soon = false): void {
@@ -976,6 +989,177 @@ export class TrackGroups {
     this.evaluateGroup(this.saved.groups.find((g) => g.id === group.id)!);
   }
 
+  // ------------------------------------------ regions as shapes in the views
+
+  /** The groups whose regions show in the views: the one being edited, and those whose layer is visible. */
+  private shownGroups(): Group[] {
+    return this.groups().filter((group) => group.id === this.saved.editing || this.layerInfo(group.layer)?.visible === true);
+  }
+
+  private regionName(roi: Roi, index: number): string {
+    return `${roi.shape === "sphere" ? "Sphere" : roi.shape === "disk" ? "Disk" : roi.shape === "mask" ? "Mask" : "Box"} ${index + 1}`;
+  }
+
+  /**
+   * Puts each shown region in the views as a shape with handles (a mask is
+   * its image's voxels, shown by its own layer): dragging one writes what
+   * its sliders write.
+   */
+  private syncShapes(): void {
+    const dims = this.dims();
+    const want = new Map<string, { shape: ViewShape; key: string }>();
+    if (this.currentDataset !== undefined && dims !== undefined) {
+      const scales = Object.values(dims)
+        .slice(0, 3)
+        .map(([scale]) => scale);
+      for (const group of this.shownGroups()) {
+        group.rois.forEach((roi, i) => {
+          if (roi.shape === "mask") return;
+          const shape = this.roiShape(group, roi, i, scales);
+          want.set(roi.id, { shape, key: JSON.stringify([group.id, group.name, group.colour, i, roi.shape, roi.center, roi.radius, roi.size, roi.axis, scales]) });
+        });
+      }
+    }
+    for (const [id, { handle }] of this.shapes) {
+      if (want.has(id)) continue;
+      handle.dispose();
+      this.shapes.delete(id);
+    }
+    for (const [id, { shape, key }] of want) {
+      const had = this.shapes.get(id);
+      if (had?.key === key) continue;
+      if (had !== undefined) {
+        had.handle.update(shape);
+        had.key = key;
+      } else this.shapes.set(id, { handle: this.ctx.views.add(shape), key });
+    }
+    this.cardSync?.();
+  }
+
+  /** A region as a shape: a sphere (a disk as a flat one) or a box, in its group's colour. */
+  private roiShape(group: Group, roi: Roi, index: number, scales: number[]): ViewShape {
+    const base = {
+      id: roi.id,
+      label: `${this.regionName(roi, index)} · ${group.name}`,
+      colour: group.colour,
+      card: (host: HTMLElement) => this.regionCard(host, group.id, roi.id),
+    };
+    // While dragged, a preview and no undo step; let go, one undo step.
+    const edit = (patch: Partial<Roi>, done: boolean) => {
+      const g = this.saved.groups.find((x) => x.id === group.id);
+      if (g !== undefined) this.updateRoi(g, roi.id, patch, !done);
+    };
+    if (roi.shape === "box") {
+      const half = roi.size.map((s) => Math.abs(s) / 2);
+      return {
+        ...base,
+        kind: "box",
+        lower: roi.center.map((c, k) => c - half[k]),
+        upper: roi.center.map((c, k) => c + half[k]),
+        onChange: ({ lower, upper }, done) =>
+          edit({ center: [0, 1, 2].map((k) => (lower[k] + upper[k]) / 2) as Roi["center"], size: [0, 1, 2].map((k) => Math.max(0.1, Math.abs(upper[k] - lower[k]))) as Roi["size"] }, done),
+      };
+    }
+    // The radius is in units of the first axis: as many of each axis's units.
+    const per = (k: number) => (scales[0] > 0 && scales[k] > 0 ? scales[0] / scales[k] : 1);
+    const flat = roi.shape === "disk" ? (roi.axis ?? 2) : -1;
+    const across = flat === 0 ? 1 : 0;
+    return {
+      ...base,
+      kind: "sphere",
+      centre: [...roi.center],
+      radii: [0, 1, 2].map((k) => roi.radius * per(k) * (k === flat ? DISK_THICKNESS : 1)),
+      uniform: true,
+      onChange: ({ centre, radii }, done) => edit({ center: [centre[0], centre[1], centre[2]], radius: Math.max(0.1, radii[across] / per(across)) }, done),
+    };
+  }
+
+  /** The floating card of a region selected in a view: what it asks of tracks, its exact place and size, delete. */
+  private regionCard(host: HTMLElement, groupId: string, roiId: string): Disposer {
+    const current = () => {
+      const group = this.saved.groups.find((g) => g.id === groupId);
+      const roi = group?.rois.find((r) => r.id === roiId);
+      return group && roi ? { group, roi } : undefined;
+    };
+    const first = current();
+    if (first === undefined) return () => {};
+    const { roi } = first;
+    const set = (patch: (r: Roi) => Partial<Roi>) => {
+      const c = current();
+      if (c !== undefined) this.updateRoi(c.group, roiId, patch(c.roi));
+    };
+    const updates: (() => void)[] = [];
+    const op = select(
+      [
+        ["and", "AND: must pass through"],
+        ["or", "OR: through one of these"],
+        ["not", "NOT: must not"],
+      ],
+      roi.op,
+      (v) => set(() => ({ op: v as RoiOp })),
+      "Operator",
+    );
+    updates.push(() => op.set(current()?.roi.op ?? "and"));
+    const lines = this.kind() === "zarr-vectors" && /^(streamline|polyline|line|skeleton|graph)s?$/.test(this.info?.geometry ?? "");
+    let ends: HTMLElement | null = null;
+    if (lines && roi.shape !== "disk") {
+      const e = select(
+        [
+          ["", "Passes through it"],
+          ["either", "Either end in it"],
+          ["both", "Both ends in it"],
+        ],
+        roi.ends ?? "",
+        (v) => set(() => ({ ends: (v || undefined) as RoiEnds | undefined })),
+        "What must be in the region",
+      );
+      updates.push(() => e.set(current()?.roi.ends ?? ""));
+      ends = e;
+    }
+    const round = (v: number) => Math.round(v * 100) / 100;
+    const value = (label: string, get: (r: Roi) => number, patch: (r: Roi, v: number) => Partial<Roi>) => {
+      const input = numberInput(round(get(roi)), (v) => set((r) => patch(r, v)), { "aria-label": label, step: "0.5" });
+      updates.push(() => {
+        const c = current();
+        if (c !== undefined) input.set(round(get(c.roi)));
+      });
+      return [el("span", { class: "muted" }, label), input];
+    };
+    const centre = (k: number) => (r: Roi, v: number) => ({ center: r.center.map((c, i) => (i === k ? v : c)) as Roi["center"] });
+    const size = (k: number) => (r: Roi, v: number) => ({ size: r.size.map((c, i) => (i === k ? Math.max(0.1, v) : c)) as Roi["size"] });
+    const values = [
+      ...value("x", (r) => r.center[0], centre(0)),
+      ...value("y", (r) => r.center[1], centre(1)),
+      ...value("z", (r) => r.center[2], centre(2)),
+      ...(roi.shape === "box"
+        ? [...value("Width", (r) => r.size[0], size(0)), ...value("Height", (r) => r.size[1], size(1)), ...value("Depth", (r) => r.size[2], size(2))]
+        : value("Radius", (r) => r.radius, (_r, v) => ({ radius: Math.max(0.1, v) }))),
+    ];
+    host.append(
+      op,
+      ends ?? "",
+      el("div", { class: "view-card-grid" }, ...values),
+      el(
+        "div",
+        { class: "row" },
+        button("Go to", () => {
+          const c = current();
+          if (c !== undefined) this.ctx.viewer.setPosition([...c.roi.center]);
+        }, "Move the views to it"),
+        el("span", { class: "spacer" }),
+        button("Delete", () => {
+          const c = current();
+          if (c !== undefined) this.removeRoi(c.group, roiId);
+        }, "Delete this region", "btn small danger"),
+      ),
+    );
+    const sync = () => updates.forEach((u) => u());
+    this.cardSync = sync;
+    return () => {
+      if (this.cardSync === sync) this.cardSync = undefined;
+    };
+  }
+
   // -------------------------------------------- regions in the viewer
 
   private roiLayerName(dataset: DatasetInfo): string {
@@ -985,9 +1169,7 @@ export class TrackGroups {
   /** The annotations the regions layer should hold: the shown groups' regions, in their colours. */
   private desiredAnnotations(): Json[] {
     const out: Json[] = [];
-    for (const group of this.groups()) {
-      const shown = group.id === this.saved.editing || this.layerInfo(group.layer)?.visible === true;
-      if (!shown) continue;
+    for (const group of this.shownGroups()) {
       group.rois.forEach((roi, i) => {
         // A mask is its image's voxels, shown by its own layer.
         if (roi.shape === "mask") return;
@@ -1016,6 +1198,7 @@ export class TrackGroups {
 
   /** Writes the regions into their annotation layer, making it when needed. */
   private writeAnnotations(): void {
+    this.syncShapes();
     const dataset = this.dataset();
     const dims = this.dims();
     if (dataset === undefined || dims === undefined) return;
@@ -2254,6 +2437,7 @@ export class TrackGroups {
 
   /** Brings the panel up to date with the groups and the scene: the parts whose key changed are drawn again, the rest set in place. */
   private sync(): void {
+    this.syncShapes();
     this.panelSync?.();
   }
 
@@ -2748,7 +2932,7 @@ export class TrackGroups {
       status.textContent = this.roiStatus.get(roi.id) ?? "";
       status.hidden = status.textContent === "";
     });
-    const name = `${roi.shape === "sphere" ? "Sphere" : roi.shape === "disk" ? "Disk" : roi.shape === "mask" ? "Mask" : "Box"} ${index + 1}`;
+    const name = this.regionName(roi, index);
     const remove = iconButton("close", `Remove ${name}`, () => this.removeRoi(group, roi.id));
     if (roi.shape === "mask") return this.maskRow(group, roi, name, op, remove, status, on);
 

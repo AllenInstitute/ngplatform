@@ -27,6 +27,7 @@ import type {
   PluginModule,
   RunnerApi,
   ViewerApi,
+  ViewToolsApi,
   WorkspaceApi,
 } from "../sdk/types.js";
 import type { ServiceRegistry } from "./services.js";
@@ -89,6 +90,26 @@ const NO_HOSTS: HostsApi = {
   pick: () => undefined,
 };
 
+/** In-view tools where the host has none (tests): shapes are taken and not drawn. */
+function noViewTools(): ViewToolsApi {
+  let selected: string | undefined;
+  const listeners = new Set<(id: string | undefined) => void>();
+  return {
+    add: () => ({ update: () => {}, dispose: () => {} }),
+    selected: () => selected,
+    select: (id) => {
+      selected = id;
+      listeners.forEach((l) => l(id));
+    },
+    onSelect: (callback) => {
+      listeners.add(callback);
+      return () => listeners.delete(callback);
+    },
+    pick: () => () => {},
+    lookingAt: () => [0, 0, 0],
+  };
+}
+
 /** What the platform gives the host; the shell supplies it, tests fake it. */
 export interface HostServices {
   commands: CommandRegistry;
@@ -111,6 +132,8 @@ export interface HostServices {
   };
   workspace: WorkspaceApi;
   viewer: ViewerApi;
+  /** Shapes with handles over the views (../ui/view_tools.ts): one plugin's API, its disposers owned by it; none (tests): not drawn. */
+  viewTools?: { api(owner: string, own: (dispose: Disposer) => Disposer): ViewToolsApi };
   slices: {
     /** The data stored under `key`; undefined when none, or when stored by a version newer than `version`. */
     get(key: string, version: number): unknown;
@@ -491,6 +514,7 @@ export class PluginHost {
           return { ...handle, dispose: own(handle.dispose) };
         },
       },
+      views: s.viewTools === undefined ? noViewTools() : s.viewTools.api(owner, own),
       state: {
         get: <T>() => {
           if (slice === undefined) throw new PluginError(`${owner} declares no appState`);

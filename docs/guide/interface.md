@@ -154,6 +154,29 @@ Neuroglancer's mouse controls apply: drag to pan, scroll to move through
 sections, ++ctrl++ + scroll to zoom, drag in 3-D to rotate, and
 ++shift++ + drag to rotate a cross-section to any angle.
 
+### Shapes with handles
+
+Tools draw what they edit in the views themselves, with handles to drag:
+Track filtering's regions, Anatomical rendering's crop boxes and cut
+planes, Registration's landmarks. A cross-section shows where its section
+cuts each shape (a sphere's ellipse, a box's rectangle, a plane's line);
+the 3-D view shows them as wireframes.
+
+- **Click** a shape to select it. Its handles show, and a small card over
+  the corner of the view gives its exact values and what else it does
+  (AND, OR or NOT; remove). **Escape**, the card's ×, or a click on an
+  empty part of a view lets it go; that click is still Neuroglancer's.
+- **Drag** the centre handle (a hollow square) to move the shape across
+  the view: in a cross-section within the section, in 3-D across the
+  screen. A box's corners and face centres resize it, a sphere's knobs
+  change its radius, a plane's ring turns it.
+- ++alt++ + scroll over a selected sphere or box scales it; the arrow keys
+  move it one unit (++shift++: ten) while the mouse is over a view.
+- A drag is one undo step, made when you let go.
+
+Everywhere else the mouse is Neuroglancer's as usual. The shapes are
+drawn over the views, not into them, so captures leave them out.
+
 ## 4. Tools, below the layers
 
 The panel of a tool that is on (a plugin), in the left column below the

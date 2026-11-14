@@ -5,6 +5,7 @@
  */
 import { vi } from "vitest";
 import type { Drawer3d, Frame3d, LayerInfo, PlatformContext } from "@ngplatform/sdk";
+import { fakeViewTools } from "@ngplatform/sdk/testing";
 import type { SourceAxes } from "../view.js";
 
 /** A request a stand-in service was sent. */
@@ -106,7 +107,9 @@ export function fakeContext(options: { layers?: LayerInfo[]; axes?: Record<strin
     const s = services.get(name);
     return s && { name, address: `http://${name}:7000`, available: () => true, info: () => hostInfo(name), fetch: (path: string, init?: RequestInit) => s.fetch(path, init) };
   };
+  const views = fakeViewTools();
   const ctx = {
+    views,
     plugin: { id: "org.ngplatform.anatomical-rendering", version: "test", manifest: {} },
     commands: {
       register: () => () => undefined,
@@ -157,6 +160,7 @@ export function fakeContext(options: { layers?: LayerInfo[]; axes?: Record<strin
   };
   return {
     ctx: ctx as unknown as PlatformContext,
+    views,
     services,
     panels,
     drawers,

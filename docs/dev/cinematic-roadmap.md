@@ -149,7 +149,8 @@ Several features need the same groundwork, so it comes first.
 
 ## Phase 2: interaction in the view (about two weeks)
 
-**2.1 Handles for crops and cuts (M).** On the overlay (0.3):
+**2.1 Handles for crops and cuts (M).** Done with the platform's in-view
+tools (`ctx.views`, src/ui/view_tools.ts) rather than a plugin overlay. On the overlay (0.3):
 - Each crop box gets corner and face handles.
 - A cut plane gets a centre handle that moves it along its normal, and a
   ring that turns it.

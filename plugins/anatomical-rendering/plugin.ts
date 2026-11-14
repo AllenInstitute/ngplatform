@@ -7,7 +7,7 @@
  * (at half size while the camera moves), and draws the frames it sends
  * back as they refine (./draw.ts).
  */
-import type { Disposer, Frame3d, JobControl, LayerInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
+import type { Disposer, Frame3d, JobControl, LayerInfo, PlatformContext, PluginModule, ViewShape, ViewShapeHandle } from "@ngplatform/sdk";
 import { button, card, checkbox, downloadBlob, el, emptyState, field, iconButton, info, numberInput, region, select, type Settable, type Slider, slider, statusLine, toggle } from "@ngplatform/sdk/dom";
 import { type ColourByLook, colormapSamples, layerColourLook, lookAttributes } from "@ngplatform/sdk/colour_by";
 import { gcsReadable } from "@ngplatform/sdk/sources";
@@ -16,6 +16,7 @@ import { invert4, PictureDrawer } from "./draw.js";
 import { dropJob, finished, type JobKind, type JobRecord, jobProgress, jobText, putJob, readJobs } from "./jobs.js";
 import { clampInt, evenSide, LIMITS, movieSettings, retryDelay, stillProblem, windowStep } from "./limits.js";
 import { parsePly, parseSplat, showSplats, type SplatCamera } from "./splatview.js";
+import { cropToDisplay, cutOffset, cutShape, displayToCrop, levelAxes, planeFromShape, planeShape } from "./handles.js";
 import { ColourmapEditor, type DataStop, histogramHandles, shifted, type Tuning, type WarpPoint, warpInverse } from "./editor.js";
 import { LIVE_VOXELS, LiveVolume, type LivePreset } from "./live.js";
 import { cameraAxes, type Level8, type LevelPreset, levelHistogram, levelResolved, LocalRenderer, PRESETS as LOCAL_PRESETS, rowMajor } from "./local/local.js";
@@ -421,6 +422,10 @@ class AnatomicalRendering {
   private fixedLight: { key: string; direction: [number, number, number] } | undefined;
   private levelShown: Level8 | undefined;
   private lastCursor: number[] | undefined;
+  /** Crops and cuts as shapes with handles in the views, by id (`box0`, `plane0`, `cut0`), and what each was made from. */
+  private readonly shapes = new Map<string, { handle: ViewShapeHandle; key: string }>();
+  /** Sets the selected crop's or cut's card in place, as it is dragged. */
+  private cardSync: (() => void) | undefined;
 
   /** Offsets (mm from the position) that put the cuts through the last point the cursor was over; undefined when there is none. */
   private cursorOffsets(): { axis: number[]; view: number } | undefined {
@@ -723,6 +728,7 @@ class AnatomicalRendering {
     // An image whose axes it cannot render (2-D; time or channels in this browser) is not opened.
     const target = found !== undefined && this.axesOf(found).problem === undefined ? found : undefined;
     if (!this.saved.on || target === undefined || (!browser && this.serviceInfo === undefined)) {
+      this.syncShapes();
       this.handle?.dispose();
       this.handle = undefined;
       this.handleLayer = undefined;
@@ -974,6 +980,232 @@ class AnatomicalRendering {
   private preview(edit: (s: Saved) => void): void {
     edit(this.saved);
     this.handle?.redraw();
+    this.syncShapes();
+  }
+
+  // ------------------------------------------------- crops and cuts in the views
+
+  /**
+   * A point in display coordinates (the 3-D view's dimensions) in global ones, the other dimensions at
+   * the position; or a direction (`vector`), 0 along the others.
+   */
+  private toGlobal(d: ArrayLike<number>, names: readonly string[], vector = false): number[] {
+    const ng = this.ctx.viewer.getState() as { dimensions?: Record<string, unknown>; position?: number[] };
+    const global = Object.keys(ng.dimensions ?? {});
+    const out = vector ? global.map(() => 0) : (ng.position ?? []).slice();
+    names.forEach((n, i) => {
+      const k = global.indexOf(n);
+      if (k >= 0 && i < 3) out[k] = d[i];
+    });
+    return out;
+  }
+
+  private toDisplay(g: ArrayLike<number>, names: readonly string[]): [number, number, number] {
+    const ng = this.ctx.viewer.getState() as { dimensions?: Record<string, unknown> };
+    const global = Object.keys(ng.dimensions ?? {});
+    return [0, 1, 2].map((i) => g[global.indexOf(names[i])] ?? 0) as [number, number, number];
+  }
+
+  /** The held level's voxel axes in display coordinates, and its size; undefined without a level, or with turned axes. */
+  private levelFrame(frame: Frame3d): { axes: NonNullable<ReturnType<typeof levelAxes>>; size: [number, number, number] } | undefined {
+    const level = this.live.heldLevel;
+    const d = displayFromPhysical(frame.dimensions);
+    const axes = level && d && levelAxes(d, level.voxelToRas);
+    return axes && level ? { axes, size: level.size } : undefined;
+  }
+
+  /** The tissue's centre in display coordinates: the held level's middle, else the host's tissue box's, else undefined. */
+  private tissueCentre(frame: Frame3d): number[] | undefined {
+    const held = this.levelFrame(frame);
+    if (held !== undefined) {
+      const box = cropToDisplay({ lo: [0, 0, 0], hi: [1, 1, 1] }, held.size, held.axes);
+      return box.lower.map((v, i) => (v + box.upper[i]) / 2);
+    }
+    const tissue = (this.session?.volume as { tissue_mm?: [number[], number[]] | null } | undefined)?.tissue_mm;
+    const m = displayFromPhysical(frame.dimensions);
+    if (!tissue || m === undefined) return undefined;
+    const toDisplay = (p: number[]) => [0, 1, 2].map((r) => m[r] * p[0] + m[4 + r] * p[1] + m[8 + r] * p[2] + m[12 + r]);
+    const a = toDisplay(tissue[0]);
+    const b = toDisplay(tissue[1]);
+    return a.map((v, i) => (v + b[i]) / 2);
+  }
+
+  /**
+   * Puts the crops and cuts that are on in the views as shapes with handles
+   * (while rendering, once the 3-D view has drawn): a box's corners and
+   * faces, a camera plane's centre (along its normal) and ring (turning
+   * it), an axis plane's centre.  Dragging one writes what its sliders do.
+   */
+  private syncShapes(): void {
+    const frame = this.lastFrame;
+    const want = new Map<string, { shape: ViewShape; key: string }>();
+    if (this.saved.on && this.handle !== undefined && frame !== undefined) {
+      const names = frame.dimensions.names;
+      const mm = unitMm(frame.dimensions);
+      const held = this.levelFrame(frame);
+      // The volume's longest side: how large a plane is drawn.
+      const whole = held && cropToDisplay({ lo: [0, 0, 0], hi: [1, 1, 1] }, held.size, held.axes);
+      const size = whole ? Math.max(...whole.upper.map((v, i) => v - whole.lower[i])) : undefined;
+      const g = (d: ArrayLike<number>) => this.toGlobal(d, names);
+      const dsp = (v: ArrayLike<number>) => this.toDisplay(v, names);
+      if (held !== undefined) {
+        this.saved.boxes.forEach((b, i) => {
+          if (!b.on) return;
+          const box = cropToDisplay(b, held.size, held.axes);
+          const edit = (lower: number[], upper: number[], done: boolean) => {
+            const crop = displayToCrop(dsp(lower), dsp(upper), held.size, held.axes);
+            const change = (x: Saved) => void (x.boxes = x.boxes.map((q, j) => (j === i ? { ...q, lo: crop.lo, hi: crop.hi } : q)));
+            if (done) this.save(change);
+            else this.preview(change);
+          };
+          want.set(`box${i}`, {
+            key: JSON.stringify(["box", b, held.size, held.axes, names]),
+            shape: { id: `box${i}`, kind: "box", label: b.name, lower: g(box.lower), upper: g(box.upper), card: (host) => this.boxCard(host, i), onChange: ({ lower, upper }, done) => edit(lower, upper, done) },
+          });
+        });
+      }
+      this.saved.planes.forEach((p, i) => {
+        if (!p.on || p.normal.every((v) => v === 0)) return;
+        const at = planeShape(p, mm);
+        want.set(`plane${i}`, {
+          key: JSON.stringify(["plane", p, size, names, mm]),
+          shape: {
+            id: `plane${i}`,
+            kind: "plane",
+            label: p.name,
+            point: g(at.point),
+            normal: this.toGlobal(at.normal, names, true),
+            ...(size !== undefined ? { size } : {}),
+            card: (host) => this.planeCard(host, i),
+            onChange: ({ point, normal }, done) => {
+              const change = (x: Saved) => void (x.planes = x.planes.map((q, j) => (j === i ? planeFromShape(q, dsp(point), dsp(normal), mm) : q)));
+              if (done) this.save(change);
+              else this.preview(change);
+            },
+          },
+        });
+      });
+      this.saved.cuts.forEach((c, i) => {
+        const k = names.indexOf(c.axis);
+        if (!c.on || k < 0 || k > 2) return;
+        const at = cutShape(c, k, frame.position, mm);
+        const normal = [0, 0, 0];
+        normal[k] = c.keep;
+        want.set(`cut${i}`, {
+          key: JSON.stringify(["cut", c, size, names, mm, Array.from(frame.position)]),
+          shape: {
+            id: `cut${i}`,
+            kind: "plane",
+            label: `Across ${c.axis}`,
+            point: g(at.point),
+            normal: this.toGlobal(normal, names, true),
+            turns: false,
+            ...(size !== undefined ? { size } : {}),
+            card: (host) => this.cutCard(host, i),
+            onChange: ({ point }, done) => {
+              const offset = Math.round(cutOffset(dsp(point), k, this.lastFrame?.position ?? frame.position, mm) * 100) / 100;
+              const change = (x: Saved) => void (x.cuts = x.cuts.map((q, j) => (j === i ? { ...q, offset } : q)));
+              if (done) this.save(change);
+              else this.preview(change);
+            },
+          },
+        });
+      });
+    }
+    for (const [id, { handle }] of this.shapes) {
+      if (want.has(id)) continue;
+      handle.dispose();
+      this.shapes.delete(id);
+    }
+    for (const [id, { shape, key }] of want) {
+      const had = this.shapes.get(id);
+      if (had?.key === key) continue;
+      if (had !== undefined) {
+        had.handle.update(shape);
+        had.key = key;
+      } else this.shapes.set(id, { handle: this.ctx.views.add(shape), key });
+    }
+    this.cardSync?.();
+  }
+
+  /** A card's number box that sets itself from the state as it changes (a drag). */
+  private cardNumber(label: string, get: () => number | undefined, set: (v: number) => void, updates: (() => void)[], attrs: Record<string, string> = {}): HTMLElement[] {
+    const round = (v: number) => Math.round(v * 1000) / 1000;
+    const input = numberInput(round(get() ?? 0), set, { "aria-label": label, ...attrs });
+    updates.push(() => {
+      const v = get();
+      if (v !== undefined) input.set(round(v));
+    });
+    return [el("span", { class: "muted" }, label), input];
+  }
+
+  private cardDone(updates: (() => void)[]): Disposer {
+    const sync = () => updates.forEach((u) => u());
+    this.cardSync = sync;
+    return () => {
+      if (this.cardSync === sync) this.cardSync = undefined;
+    };
+  }
+
+  /** A crop box's card: keeps or cuts out, its ends as fractions of the volume, remove. */
+  private boxCard(host: HTMLElement, i: number): Disposer {
+    const updates: (() => void)[] = [];
+    const b = () => this.saved.boxes[i];
+    const keep = select([["keep", "Keeps its inside"], ["cut", "Cuts its inside out"]], b()?.keep === false ? "cut" : "keep", (v) => this.save((x) => (x.boxes[i].keep = v === "keep")), "What the box does");
+    updates.push(() => keep.set(b()?.keep === false ? "cut" : "keep"));
+    const end = (which: "lo" | "hi", k: number) => (v: number) =>
+      this.save((x) => {
+        x.boxes = x.boxes.map((q, j) => {
+          if (j !== i) return q;
+          const at: [number, number, number] = [q[which][0], q[which][1], q[which][2]];
+          at[k] = which === "lo" ? Math.max(0, Math.min(v, q.hi[k] - 0.005)) : Math.min(1, Math.max(v, q.lo[k] + 0.005));
+          return { ...q, [which]: at };
+        });
+      });
+    const values = (["x", "y", "z"] as const).flatMap((axis, k) => [
+      ...this.cardNumber(`${axis} from`, () => b()?.lo[k], end("lo", k), updates, { step: "0.005", min: "0", max: "1" }),
+      ...this.cardNumber("to", () => b()?.hi[k], end("hi", k), updates, { step: "0.005", min: "0", max: "1" }),
+    ]);
+    host.append(
+      keep,
+      el("div", { class: "view-card-grid" }, ...values),
+      el("p", { class: "hint" }, "Fractions of the volume along its axes."),
+      el("div", { class: "row" }, el("span", { class: "spacer" }), button("Remove", () => this.save((x) => x.boxes.splice(i, 1)), "Remove this box", "btn small danger")),
+    );
+    return this.cardDone(updates);
+  }
+
+  /** A camera plane's card: its offset in mm, set again from the view, remove. */
+  private planeCard(host: HTMLElement, i: number): Disposer {
+    const updates: (() => void)[] = [];
+    const offset = this.cardNumber("Offset (mm)", () => this.saved.planes[i]?.offset, (v) => this.save((x) => (x.planes = x.planes.map((q, j) => (j === i ? { ...q, offset: v } : q)))), updates, { step: "0.5" });
+    host.append(
+      el("div", { class: "view-card-grid" }, ...offset),
+      el("p", { class: "hint" }, "Drag its centre along its normal; drag the ring to turn it."),
+      el(
+        "div",
+        { class: "row" },
+        button("Face the camera", () => this.setPlaneToView(i), "Set it across the view as it is now"),
+        el("span", { class: "spacer" }),
+        button("Remove", () => this.save((x) => x.planes.splice(i, 1)), "Remove this plane", "btn small danger"),
+      ),
+    );
+    return this.cardDone(updates);
+  }
+
+  /** An axis plane's card: the side it keeps, its offset in mm, off. */
+  private cutCard(host: HTMLElement, i: number): Disposer {
+    const updates: (() => void)[] = [];
+    const c = () => this.saved.cuts[i];
+    const side = select([["-1", "Keeps the − side"], ["1", "Keeps the + side"]], String(c()?.keep ?? -1), (v) => this.save((x) => (x.cuts[i].keep = Number(v) as 1 | -1)), "Side kept");
+    updates.push(() => side.set(String(c()?.keep ?? -1)));
+    const offset = this.cardNumber("Offset (mm)", () => c()?.offset, (v) => this.save((x) => (x.cuts = x.cuts.map((q, j) => (j === i ? { ...q, offset: v } : q)))), updates, { step: "0.5" });
+    host.append(
+      side,
+      el("div", { class: "view-card-grid" }, ...offset),
+      el("div", { class: "row" }, el("span", { class: "spacer" }), button("Turn off", () => this.save((x) => (x.cuts[i].on = false)), "Turn this axis plane off")),
+    );
+    return this.cardDone(updates);
   }
 
   /** A "window" preset's range for this image: the store, the image's values and the step; undefined otherwise. */
@@ -1309,6 +1541,7 @@ class AnatomicalRendering {
 
   private onFrame(frame: Frame3d): void {
     this.lastFrame = frame;
+    this.syncShapes();
     const look = JSON.stringify([this.objectsView(), this.saved.boxes, this.saved.customPresets.length, this.saved.preset, this.saved.density, this.saved.exposure, this.saved.windows, this.saved.tunings, this.resolved?.key, this.saved.lightAzimuth, this.saved.lightElevation, this.saved.lightMap, this.saved.lightMapRotation, this.saved.lightStyle, this.saved.envScale, this.saved.lightKey, this.saved.planes, this.saved.cuts, this.saved.regions, this.saved.labelMix, this.saved.keep, this.saved.hidden, this.saved.maxSamples, this.saved.denoise, frame.position]);
     this.drawer.look = look;
     this.drawer.pictureAtRest = this.saved.restPicture;
@@ -1460,12 +1693,18 @@ class AnatomicalRendering {
     return planeFromView(f.invViewProjection, this.lastCursor ?? f.position, name);
   }
 
+  /** A new camera plane through the tissue's centre, facing the camera, selected so its handles can move it at once. */
   private addPlane(): void {
     const names = new Set(this.saved.planes.map((p) => p.name));
     let k = this.saved.planes.length + 1;
     while (names.has(`Plane ${k}`)) k++;
-    const p = this.planeHere(`Plane ${k}`);
-    if (p !== undefined && this.saved.planes.length < LIMITS.maxClips) this.save((x) => x.planes.push(p));
+    const f = this.lastFrame;
+    const centre = f && this.tissueCentre(f);
+    const p = f && centre ? planeFromView(f.invViewProjection, centre, `Plane ${k}`) : this.planeHere(`Plane ${k}`);
+    if (p === undefined || this.saved.planes.length >= LIMITS.maxClips) return;
+    this.save((x) => x.planes.push(p));
+    this.syncShapes();
+    this.ctx.views.select(`plane${this.saved.planes.length - 1}`);
   }
 
   /** Sets a camera plane again, from the view now. */
@@ -2236,6 +2475,9 @@ class AnatomicalRendering {
     const addBox = button("Add a box", () => {
       if (this.saved.boxes.length >= LIMITS.maxBoxes) return;
       this.save((x) => x.boxes.push({ name: `Box ${x.boxes.length + 1}`, on: true, keep: true, lo: [0, 0, 0], hi: [1, 1, 1] }));
+      // Selected, so its handles show at once (when the image's level is held here to place it).
+      this.syncShapes();
+      this.ctx.views.select(`box${this.saved.boxes.length - 1}`);
     });
     const crops = card("anatomical.crops", "Crops", { info: `Camera planes, axis planes and boxes. A camera plane is a cut across the view as it is when the plane is added, through the point the cursor was last over in the 3-D view, keeping what lies beyond; it stays fixed as the camera moves, and the camera button sets it again from the view then. An axis plane turned on starts through the point the cursor was last over; Move to the cursor moves the planes that are on there. Boxes (up to ${LIMITS.maxBoxes}) are fractions of the volume along x, y and z; what shows is inside any box that keeps and in none that cuts out.` },
       el("div", { class: "row" }, toCursor),
@@ -2600,6 +2842,8 @@ class AnatomicalRendering {
     this.closeLocal();
     clearTimeout(this.settle);
     this.handle?.dispose();
+    for (const { handle } of this.shapes.values()) handle.dispose();
+    this.shapes.clear();
     this.drawer.dispose();
     this.toggle.dispose();
     for (const off of this.offs) off();

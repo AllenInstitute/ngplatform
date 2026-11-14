@@ -351,6 +351,7 @@ export class Shell {
       },
       workspace: apis.workspace,
       viewer: apis.viewer,
+      viewTools: apis.views,
       slices: {
         get: (key, version) => store.rawSlice(key, version),
         set: (key, version, value) => store.setRawSlice(key, version, value),

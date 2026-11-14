@@ -15,7 +15,8 @@ export const TRACK_FILTERING_MANIFEST: Manifest = {
 
 ## Making a group
 - **+ New group** in the Filtering panel (the Tools dock, under Vectors), then add regions: **spheres**, **boxes**, **disks** and **masks**, each **AND** (must pass through), **OR** (through one of the OR regions) or **NOT** (must not). With no group, the first region makes one. Alt+Shift+S puts a sphere at the mouse, Alt+Shift+B a box.
-- Move a region with its sliders, or type a value in a box beside one: it applies on Enter or on leaving the box. **Move here** puts it at the views' centre, **Go to** takes the views to it; Alt-drag it in a view.
+- A new region starts where you are looking (the place the mouse was last over in a view, else the views' centre), selected: drag it in any view. Its centre moves it; a box's corners and faces and a sphere's knobs size it; Alt+wheel over it scales it, the arrow keys move it. Its card over the view sets AND, OR or NOT, what tracks must do, its exact place and size, and deletes it. Click a region to select it; Escape or a click on an empty part of the view lets it go.
+- Its sliders in the panel move it too, or type a value in a box beside one: it applies on Enter or on leaving the box. **Move here** puts it at the views' centre, **Go to** takes the views to it.
 - On streamlines and skeletons a region can instead ask for **either end** or **both ends** of a track in it (TrackVis's endpoint modes).
 - **Attributes** (length, FA, …): a minimum and a maximum each, over its histogram.
 - **Stored groups** (the store's own groups and categories, as tags): **Keep** keeps only the objects in at least one kept group; **Leave out** drops those in any left-out group.

@@ -1183,6 +1183,30 @@ textarea.state-input.tall { min-height: 50vh; }
 .ins-pickers select, .ins-pickers input { background: var(--ink-0); color: var(--text); border: 1px solid var(--line); border-radius: 0; font: inherit; }
 .view-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 4; overflow: hidden; }
 
+/* In-view tools (view_tools.ts): a canvas over each view for shapes and
+   their handles, and the one floating card, shown while a shape is
+   selected, at the top left of its view (right of Neuroglancer's axis
+   labels).  The canvas never takes the mouse; the card does. */
+.view-tools-canvas { position: absolute; pointer-events: none; }
+.view-tools-canvas[hidden] { display: none; }
+.view-card {
+  position: absolute; pointer-events: auto; z-index: 1;
+  width: 248px; max-width: calc(100% - 48px); max-height: calc(100% - 16px); overflow: auto;
+  background: var(--ink-card); border: 1px solid var(--line-strong); border-radius: var(--r);
+  box-shadow: var(--shadow-float); font-size: var(--fs-body);
+}
+.view-card-head {
+  display: flex; align-items: center; gap: var(--sp-2); min-height: var(--ctl-h);
+  padding: 0 var(--sp-1) 0 var(--sp-4); background: var(--ink-3);
+}
+.view-card-title { flex: 1; min-width: 0; font-weight: 600; font-size: var(--fs-heading); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.view-card-head .btn.icon { color: var(--muted); }
+.view-card-body { display: grid; gap: var(--sp-3); padding: var(--sp-4); }
+/* Label and value pairs: exact numbers. */
+.view-card-grid { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: var(--sp-2) var(--sp-3); }
+.view-card-grid > .muted { font-size: var(--fs-caption); }
+.view-card-grid .num-input { width: 100%; }
+
 /* Files dragged over the window. */
 .drop-hint {
   position: fixed; inset: 0; z-index: 200; pointer-events: none;

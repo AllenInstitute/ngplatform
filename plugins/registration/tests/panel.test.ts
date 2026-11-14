@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Json, LayerTransform, PlatformContext } from "@ngplatform/sdk";
-import { type FakeDom, fakeDocument } from "@ngplatform/sdk/testing";
+import { type FakeDom, fakeDocument, fakeViewTools } from "@ngplatform/sdk/testing";
 import { notOffered, Registration, type Saved, type SaveWorker } from "../plugin.js";
 import { finestThatFits, saveBytes } from "../volume_io.js";
 
@@ -51,7 +51,9 @@ function fakeContext() {
   const commands = new Map<string, () => unknown>();
   const invoked: string[] = [];
   const subscriptions: (() => void)[] = [];
+  const views = fakeViewTools({ centre: () => ng.position });
   const ctx = {
+    views,
     viewer: {
       layers: () => layers.map((l) => ({ name: l.name, type: l.type, visible: l.visible })),
       layerTransform: (name: string) => {
@@ -100,6 +102,7 @@ function fakeContext() {
     ctx: ctx as unknown as PlatformContext,
     raw: ctx,
     ng,
+    views,
     panels,
     commands,
     invoked,
@@ -362,6 +365,45 @@ describe("the Registration panel", () => {
     f.raw.viewer.patchState(() => {});
     vi.advanceTimersByTime(300);
     expect(f.saved().pairs[0].fixed).toEqual([10, 20, 35]);
+  });
+
+  it("places pairs by clicking in the views, fixed then moving, as numbered points that drag", async () => {
+    const f = fakeContext();
+    f.add("brain");
+    const { host } = await open(f);
+    dom.find<HTMLSelectElement>(host, "select[aria-label=Model]").value = "translation";
+    dom.fire(dom.find(host, "select[aria-label=Model]"), "change");
+    button(host, "Place pairs").click();
+    expect(dom.text(host)).toContain("Click a feature in the fixed data.");
+    f.views.click([10, 20, 30]);
+    expect(dom.text(host)).toContain("Click the same feature in the moving layer.");
+    f.views.click([12, 20, 30]);
+    f.views.click([40, 40, 40]);
+    expect(f.saved().pairs.map((q) => [q.fixed, q.moving])).toEqual([
+      [
+        [10, 20, 30],
+        [12, 20, 30],
+      ],
+      [[40, 40, 40], undefined],
+    ]);
+    // Numbered points in the views: the moving one where the fitted layer puts it.
+    const id = f.saved().pairs[0].id;
+    expect(f.views.shapes.get(`f${id}`)).toMatchObject({ kind: "point", at: [10, 20, 30], label: "1" });
+    expect(f.views.shapes.get(`m${id}`)).toMatchObject({ kind: "point", label: "1" });
+    expect((f.views.shapes.get(`m${id}`) as { at: number[] }).at.map((v) => Math.round(v))).toEqual([10, 20, 30]);
+    // Dragging a fixed one moves it, and the pair is fitted again.
+    f.views.drag(`f${id}`, { at: [10, 20, 35] }, true);
+    expect(f.saved().pairs[0].fixed).toEqual([10, 20, 35]);
+    expect(f.matrix("brain")[14]).toBeCloseTo(5, 9);
+    // Its card removes the pair.
+    const cardHost = dom.host();
+    f.views.shapes.get(`f${id}`)!.card!(cardHost);
+    button(cardHost, "Remove pair").click();
+    expect(f.saved().pairs).toHaveLength(1);
+    expect(f.views.shapes.has(`f${id}`)).toBe(false);
+    button(host, "Stop placing").click();
+    f.views.click([1, 1, 1]);
+    expect(f.saved().pairs).toHaveLength(1);
   });
 
   it("warps through four pairs or more, and says when there are too few", async () => {

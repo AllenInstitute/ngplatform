@@ -181,16 +181,26 @@ takes images with one of each only.
   sliders): what shows is inside any crop that keeps and in none that cuts
   out (in this browser's renderer, only the first that keeps).
 - **Camera planes** (Crops): **Add a camera plane** cuts across the view as
-  it is now, through the point the cursor was last over in the 3-D view (on
-  the rendered tissue), keeping what lies beyond it. The plane stays where
-  it was set as the camera moves; its camera button sets it again from the
-  view then. There can be several, each named, on or off, with an offset in
-  mm along its own direction, and removed with its bin. **Move to the
-  cursor** moves the planes (and axis planes) that are on to that point. At
-  most six cuts apply at once (camera planes and axis planes that are on).
+  it is now, through the tissue's centre, keeping what lies beyond it, and
+  selects it so it can be dragged at once. The plane stays where it was
+  set as the camera moves; its camera button sets it again from the view
+  then. There can be several, each named, on or off, with an offset in mm
+  along its own direction, and removed with its bin. **Move to the cursor**
+  moves the planes (and axis planes) that are on to the point the cursor
+  was last over in the 3-D view. At most six cuts apply at once (camera
+  planes and axis planes that are on).
 - **Axis planes** (Crops): clips through the current position across x, y or z, keeping
   either side, with an offset in mm (a slider or a number). Regions listed under **Kept whole** (Regions)
   stay whole (vessels through a cut brain, say).
+- **In the views**: while rendering, the boxes and planes that are on are
+  drawn in the 3-D and 2-D views with handles (a box once the image's
+  level is held in this browser, and when the image's axes are not turned
+  against the view's). Click one to select it: a box's corners and face
+  centres resize it, its centre moves it; a plane's centre moves it along
+  its normal and its ring turns it (an axis plane only moves). The card
+  over the view gives the exact values (a box's ends as fractions of the
+  volume, a plane's offset in mm), what it keeps, and removes it. Dragging
+  renders live and is one undo step when let go, as the sliders are.
 - **Regions** (on a host): **Colour by region** with a co-registered OME-Zarr segmentation (its labels'
   FreeSurfer colours), how much of the region's colour to use, regions
   to hide, and regions kept whole through crops. This browser's renderer has no region colours, so the card is hidden there.

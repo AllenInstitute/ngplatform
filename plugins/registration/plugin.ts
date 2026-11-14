@@ -12,7 +12,7 @@
  * layers, the moving ones where the moving layer now puts them, with a line
  * to their fixed partner.
  */
-import type { Json, LayerTransform, PlatformContext, PluginModule } from "@ngplatform/sdk";
+import type { Disposer, Json, LayerTransform, PlatformContext, PluginModule, ViewShape, ViewShapeHandle } from "@ngplatform/sdk";
 import {
   type Action,
   button,
@@ -101,6 +101,9 @@ export function defaultMoving(candidates: string[], images: string[]): string | 
 }
 
 const FIXED_LAYER = "landmarks (fixed)";
+/** The landmarks' colours, as their annotation layers draw them. */
+const FIXED_COLOUR = "#ffcc00";
+const MOVING_COLOUR = "#3fd3ff";
 const MOVING_LAYER = "landmarks (moving)";
 
 const mm = (scale: number, unit: string) => (unit === "m" ? scale * 1000 : scale);
@@ -203,6 +206,12 @@ export class Registration {
   private client: SaveWorker | undefined;
   /** The landmarks' points (global, as written into their annotation layers) by annotation id, to tell a dragged one. */
   private written = new Map<string, number[]>();
+  /** The landmarks as point shapes in the views (`f<id>`, `m<id>`), and what each was made from. */
+  private readonly shapes = new Map<string, { handle: ViewShapeHandle; key: string }>();
+  /** While on, a click in a view places a landmark: fixed, then its moving partner (Place pairs). */
+  private placing: Disposer | undefined;
+  /** Sets the selected landmark's card in place. */
+  private cardSync: (() => void) | undefined;
 
   constructor(
     private readonly ctx: PlatformContext,
@@ -236,6 +245,8 @@ export class Registration {
         clearTimeout(readBack);
         this.saving?.abort();
         this.client?.dispose();
+        this.placing?.();
+        for (const { handle } of this.shapes.values()) handle.dispose();
       },
     );
     this.refit(false);
@@ -286,11 +297,16 @@ export class Registration {
 
   /** The mouse's (or else the views' centre's) position, in mm along the moving layer's output dimensions. */
   private here(t: LayerTransform, mouse = true): Vec3 | undefined {
-    const ng = this.ctx.viewer.getState() as { dimensions?: Record<string, [number, string]>; position?: number[] };
+    const ng = this.ctx.viewer.getState() as { position?: number[] };
     const cursor = this.ctx.viewer.cursor();
     const position = mouse && cursor.active ? cursor.position : ng.position;
+    return position === undefined ? undefined : this.mmAt(t, position);
+  }
+
+  /** A global position in mm along the layer's output dimensions. */
+  private mmAt(t: LayerTransform, position: ArrayLike<number>): Vec3 | undefined {
+    const ng = this.ctx.viewer.getState() as { dimensions?: Record<string, [number, string]> };
     const dims = Object.entries(ng.dimensions ?? {});
-    if (position === undefined) return undefined;
     const out = t.output.names.map((name) => {
       const i = dims.findIndex(([n]) => n === name);
       return i === -1 ? NaN : position[i] * mm(dims[i][1][0], dims[i][1][1]);
@@ -311,7 +327,8 @@ export class Registration {
     return out;
   }
 
-  mark(role: "fixed" | "moving"): void {
+  /** A landmark of `role` at the mouse (else the views' centre), or at `position` (global): it completes the first pair without one. */
+  mark(role: "fixed" | "moving", position?: number[]): void {
     const name = this.layer();
     const t = name && this.ctx.viewer.layerTransform(name);
     if (!name || !t) {
@@ -320,7 +337,7 @@ export class Registration {
       return;
     }
     const p = physical(t);
-    const at = this.here(t);
+    const at = position === undefined ? this.here(t) : this.mmAt(t, position);
     if (p === undefined || at === undefined) {
       this.ctx.ui.toast("This layer's space is not one Registration can work in (it needs x, y and z).", "error");
       return;
@@ -756,6 +773,7 @@ export class Registration {
 
   /** The landmarks in two annotation layers: fixed ones, and moving ones where the layer now puts them, with lines. */
   private showLandmarks(): void {
+    this.syncShapes();
     const name = this.layer();
     const t = name && this.ctx.viewer.layerTransform(name);
     const p = t ? physical(t) : undefined;
@@ -778,8 +796,8 @@ export class Registration {
     this.ctx.viewer.patchState((ng) => {
       const layers = ((ng.layers as Json[] | undefined) ?? []).filter((l) => l.name !== FIXED_LAYER && l.name !== MOVING_LAYER);
       if (wanted) {
-        layers.push({ type: "annotation", source: "local://annotations", name: FIXED_LAYER, annotationColor: "#ffcc00", annotations: fixed });
-        layers.push({ type: "annotation", source: "local://annotations", name: MOVING_LAYER, annotationColor: "#3fd3ff", annotations: moving });
+        layers.push({ type: "annotation", source: "local://annotations", name: FIXED_LAYER, annotationColor: FIXED_COLOUR, annotations: fixed });
+        layers.push({ type: "annotation", source: "local://annotations", name: MOVING_LAYER, annotationColor: MOVING_COLOUR, annotations: moving });
       }
       ng.layers = layers;
     });
@@ -835,6 +853,118 @@ export class Registration {
     if (!changed) return;
     this.save({ pairs });
     this.refit(true);
+  }
+
+  /** The role the next click of Place pairs takes: the moving partner of a pair with a fixed point only, else a fixed point. */
+  private nextRole(): "fixed" | "moving" {
+    const open = this.saved.pairs.find((q) => q.fixed === undefined || q.moving === undefined);
+    return open !== undefined && open.fixed !== undefined ? "moving" : "fixed";
+  }
+
+  /** Place pairs (as BigWarp's landmark mode): clicks in the views alternate fixed points and their moving partners. */
+  setPlacing(on: boolean): void {
+    if (on === (this.placing !== undefined)) return;
+    if (!on) {
+      this.placing?.();
+      this.placing = undefined;
+    } else {
+      this.placing = this.ctx.views.pick((at) => this.mark(this.nextRole(), at));
+    }
+    this.panelUpdate?.();
+  }
+
+  /**
+   * The landmarks as numbered points in the views, fixed ones in the fixed
+   * layer's colour and moving ones where the layer puts them: dragging one
+   * moves it (a moving one in the layer's own space), and the pairs are
+   * fitted again.
+   */
+  private syncShapes(): void {
+    const name = this.layer();
+    const t = name && this.ctx.viewer.layerTransform(name);
+    const p = t ? physical(t) : undefined;
+    const want = new Map<string, { shape: ViewShape; key: string }>();
+    if (t && p) {
+      this.saved.pairs.forEach((q, i) => {
+        const point = (role: "fixed" | "moving", mm: Vec3) => {
+          const at = this.toGlobal(t, role === "fixed" ? mm : apply4(p, mm));
+          if (at === undefined) return;
+          const id = `${role === "fixed" ? "f" : "m"}${q.id}`;
+          want.set(id, {
+            key: JSON.stringify([i, role, at, q.on]),
+            shape: {
+              id,
+              kind: "point",
+              at,
+              label: String(i + 1),
+              colour: role === "fixed" ? FIXED_COLOUR : MOVING_COLOUR,
+              card: (host) => this.landmarkCard(host, q.id, role),
+              onChange: ({ at: moved }, done) => {
+                if (!done) return;
+                const now = this.mmAt(t, moved);
+                if (now === undefined) return;
+                const value = role === "fixed" ? now : apply4(invert4(p), now);
+                this.save({ pairs: this.saved.pairs.map((x) => (x.id === q.id ? { ...x, [role]: value } : x)) });
+                this.refit(true);
+              },
+            },
+          });
+        };
+        if (q.fixed) point("fixed", q.fixed);
+        if (q.moving) point("moving", q.moving);
+      });
+    }
+    for (const [id, { handle }] of this.shapes) {
+      if (want.has(id)) continue;
+      handle.dispose();
+      this.shapes.delete(id);
+    }
+    for (const [id, { shape, key }] of want) {
+      const had = this.shapes.get(id);
+      if (had?.key === key) continue;
+      if (had !== undefined) {
+        had.handle.update(shape);
+        had.key = key;
+      } else this.shapes.set(id, { handle: this.ctx.views.add(shape), key });
+    }
+    this.cardSync?.();
+  }
+
+  /** A landmark's floating card: its point in mm, go to it, remove its pair. */
+  private landmarkCard(host: HTMLElement, id: string, role: "fixed" | "moving"): Disposer {
+    const pair = () => this.saved.pairs.find((q) => q.id === id);
+    const where = el("p", { class: "readout" });
+    const sync = () => {
+      const q = pair();
+      const i = this.saved.pairs.findIndex((x) => x.id === id);
+      const v = q?.[role];
+      // In x, y, z order (or the layer's own names'), as the panel's table.
+      const name = this.layer();
+      const names = (name && this.ctx.viewer.layerTransform(name)?.output.names) || ["x", "y", "z"];
+      const order = [0, 1, 2].sort((a, b) => (names[a] ?? "").localeCompare(names[b] ?? ""));
+      where.textContent = v ? `Pair ${i + 1}, ${role} point: ${order.map((k) => names[k]).join(", ")} ${order.map((k) => v[k].toFixed(1)).join(", ")} mm${role === "moving" ? " (in its own space)" : ""}` : "";
+    };
+    sync();
+    host.append(
+      where,
+      el(
+        "div",
+        { class: "row" },
+        button("Go to", () => {
+          const q = pair();
+          if (q) this.goTo(q);
+        }, "Move the views to its pair"),
+        el("span", { class: "spacer" }),
+        button("Remove pair", () => {
+          this.save({ pairs: this.saved.pairs.filter((x) => x.id !== id) });
+          this.refit(true);
+        }, "Remove this pair", "btn small danger"),
+      ),
+    );
+    this.cardSync = sync;
+    return () => {
+      if (this.cardSync === sync) this.cardSync = undefined;
+    };
   }
 
   /** Moves the views to a pair: its fixed point, else where the moving layer puts its moving one. */
@@ -994,6 +1124,8 @@ export class Registration {
     const pairsBadge = el("span");
     const fixedHere = button("Fixed here", () => this.mark("fixed"));
     const movingHere = button("Moving here", () => this.mark("moving"));
+    const placePairs = button("Place pairs", () => this.setPlacing(this.placing === undefined), "Clicks in the views place landmarks: a fixed point, then its partner in the moving layer");
+    const placeHint = el("p", { class: "hint" });
     const pairs = region((key: { pairs: Pair[]; errors: (number | undefined)[]; names: string[] }) => {
       if (key.pairs.length === 0) return null;
       // In x, y, z order (or the layer's own names'), whatever order the layer keeps its dimensions in.
@@ -1132,8 +1264,9 @@ export class Registration {
       card(
         "registration.landmarks",
         "Landmarks",
-        { badge: pairsBadge, info: "A fixed point at the mouse: Alt+F. Its match in the moving layer: Alt+M. Drag a point in its annotation layer to move it." },
-        el("div", { class: "row" }, fixedHere, movingHere),
+        { badge: pairsBadge, info: "Place pairs: each click in a view is a landmark, a fixed point then its match in the moving layer. Or a fixed point at the mouse: Alt+F, its match: Alt+M. Drag a numbered point in a view to move it." },
+        el("div", { class: "row" }, placePairs, fixedHere, movingHere),
+        placeHint,
         pairs,
         field("Model", model),
         live,
@@ -1227,7 +1360,12 @@ export class Registration {
       const errors = saved.pairs.map((q) => (q.on && q.fixed && q.moving ? residuals[k++] : undefined));
       pairs.update({ pairs: saved.pairs, errors, names: t?.output.names ?? ["x", "y", "z"] });
       pairsBadge.textContent = saved.pairs.length ? `${saved.pairs.length} pair${saved.pairs.length === 1 ? "" : "s"}` : "";
-      fixedHere.disabled = movingHere.disabled = !has;
+      fixedHere.disabled = movingHere.disabled = placePairs.disabled = !has;
+      if (!has && this.placing !== undefined) this.setPlacing(false);
+      placePairs.setAttribute("aria-pressed", String(this.placing !== undefined));
+      placePairs.textContent = this.placing !== undefined ? "Stop placing" : "Place pairs";
+      placeHint.hidden = this.placing === undefined;
+      placeHint.textContent = this.nextRole() === "fixed" ? "Click a feature in the fixed data." : "Click the same feature in the moving layer.";
       model.set(saved.model);
       live.set(saved.live);
       stats.update(

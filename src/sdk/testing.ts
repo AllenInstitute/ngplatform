@@ -13,6 +13,8 @@
  *     dom.find(host, "button", "Add one").click();
  */
 
+import type { ViewShape, ViewToolsApi } from "./types.js";
+
 type Listener = (e: FakeEvent) => void;
 
 /** What else a keyboard event carries: the keys held down with it. */
@@ -413,4 +415,78 @@ export function fakeDocument(): FakeDom {
       g.window = saved.window;
     },
   };
+}
+
+/** What `fakeViewTools()` gives a test: the views API, and what a person would do with the shapes in the views. */
+export interface FakeViewTools extends ViewToolsApi {
+  /** The shapes over the views now, by id, as last added or updated. */
+  readonly shapes: Map<string, ViewShape>;
+  /** Drags a shape to `value` (as its handles would): `done` false while moving, true when let go. */
+  drag(id: string, value: Record<string, number[]>, done?: boolean): void;
+  /** Clicks a view where nothing is drawn, at `at` (global), while a picker is on. */
+  click(at: number[], view?: "2d" | "3d"): void;
+  /** What `lookingAt()` answers; when unset, the views' centre (`options.centre`, else the origin). */
+  looking: number[] | undefined;
+}
+
+/**
+ * A stand-in for `ctx.views` (in-view tools) in a plugin's tests: it keeps
+ * the shapes a plugin adds, and drives their `onChange` and the picker.
+ */
+export function fakeViewTools(options: { centre?: () => number[] } = {}): FakeViewTools {
+  const shapes = new Map<string, ViewShape>();
+  const owners = new Map<string, object>();
+  const listeners = new Set<(id: string | undefined) => void>();
+  let selected: string | undefined;
+  let picker: ((at: number[], view: "2d" | "3d") => void) | undefined;
+  const select = (id: string | undefined) => {
+    if (id !== undefined && !shapes.has(id)) id = undefined;
+    if (id === selected) return;
+    selected = id;
+    listeners.forEach((l) => l(id));
+  };
+  const fake: FakeViewTools = {
+    shapes,
+    looking: undefined,
+    add(shape) {
+      const id = shape.id;
+      const token = {};
+      shapes.set(id, shape);
+      owners.set(id, token);
+      return {
+        update(patch) {
+          if (owners.get(id) === token) shapes.set(id, { ...shapes.get(id)!, ...patch } as ViewShape);
+        },
+        dispose() {
+          if (owners.get(id) !== token) return;
+          shapes.delete(id);
+          owners.delete(id);
+          if (selected === id) select(undefined);
+        },
+      };
+    },
+    selected: () => selected,
+    select,
+    onSelect(callback) {
+      listeners.add(callback);
+      return () => listeners.delete(callback);
+    },
+    pick(onPick) {
+      picker = onPick;
+      return () => {
+        if (picker === onPick) picker = undefined;
+      };
+    },
+    lookingAt: () => (fake.looking ?? options.centre?.() ?? [0, 0, 0]).slice(),
+    drag(id, value, done = true) {
+      const shape = shapes.get(id);
+      if (shape === undefined) throw new Error(`no shape ${id}`);
+      shapes.set(id, { ...shape, ...value } as ViewShape);
+      (shape.onChange as ((v: unknown, done: boolean) => void) | undefined)?.(value, done);
+    },
+    click(at, view = "2d") {
+      picker?.(at, view);
+    },
+  };
+  return fake;
 }

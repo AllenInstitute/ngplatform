@@ -306,6 +306,28 @@ The production polish: the work of an audit of every panel and plugin
   precomputed reads, collections, orientations, time series, plugin
   offers), so buckets without CORS settings read as they do in Neuroglancer.
 
+### Tools in the views
+
+- Plugins put shapes with handles in Neuroglancer's 2-D and 3-D views
+  (`ctx.views`: points, spheres, boxes, planes): a cross-section shows
+  where it cuts each, the 3-D view a wireframe. Click one to select it;
+  drag its centre to move it, a box's corners and faces or a sphere's
+  knobs to size it, a plane's ring to turn it; Alt+scroll scales, arrow
+  keys nudge, Escape lets go. A small card over the view's corner, shown
+  only while a shape is selected, holds its exact values and actions.
+  Drawn over the views with their own canvas, so captures leave them out;
+  Neuroglancer's own mouse use is untouched off the handles.
+- Track filtering: regions are dragged and sized in any view, their card
+  sets AND, OR or NOT, what tracks must do, exact numbers, and deletes; a
+  new region starts where the mouse last was in a view, selected.
+- Anatomical rendering: crop boxes have corner and face handles, camera
+  planes a centre that moves them along their normal and a ring that
+  turns them, axis planes a centre; a new camera plane starts at the
+  tissue's centre, facing the camera, selected.
+- Registration: **Place pairs**, clicks in the views alternating fixed
+  and moving landmarks (as BigWarp); landmarks show as numbered points
+  that drag.
+
 ## 0.2.0 — 2026-10-31
 
 The platform around Neuroglancer: datasets, scenes and plugins around a

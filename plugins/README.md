@@ -301,6 +301,7 @@ it is deactivated. Subscriptions a plugin makes itself go in
 | `ui.viewToggle` | A switch beside "Sections" in the 3-D panel (volume rendering's "Volume"). |
 | `ui.overlay / screenshotOverlay` | An element over the views, and painting into Neuroglancer's screenshots (labels use both). |
 | `ui.statusItem` | An element on the right of the status line below the views (also while the Activity dock is collapsed), `{ order, label }`, until its disposer is called or the plugin stops: a short value kept up to date in place, such as a scale breadcrumb or the level on screen. Drawn in the mono face (a child with the class `status-label` in the interface's), lower `order` further left, and shortened with … when the line is full. |
+| `views` | Shapes with handles in the 2-D and 3-D views (points, spheres, boxes, planes), dragged in place, and a floating card while one is selected; a picker for clicks in the views. See [In-view tools](#in-view-tools). |
 | `ui.toast / confirm / form / sheet` | Messages, confirmation, a dialog generated from a schema, and a sheet whose body the plugin draws. |
 | `workspace` | Scenes, datasets, layers and the selection; add datasets and derived layers, remove layers. `undoSteps` gives the change the workspace's undo and redo would take, with when it was made (Segmentation undoes strokes and workspace changes as one history with it). |
 | `viewer` | The active scene's Neuroglancer state as JSON (`patchState` applies only what changed, as one undo step), layers, the pointer, the position, a segmentation layer's segment properties, and a temporary set of visible segments (not saved in the link). `draw3d` draws in the 3-D view with a layer (raw WebGL2, Neuroglancer's camera and depth; volume rendering uses it); `panels` and `onRendered` place things over the views; `layerTransform` and `setLayerTransform` read and set a layer's transform (registration); `reloadData` has Neuroglancer read again what it holds from a URL (data a plugin serves and changed: Segmentation's label volumes). `lookupTables` lists the lookup tables that come with the app, reads one, and reads or sets a segmentation layer's (Atlas). |
@@ -313,6 +314,66 @@ it is deactivated. Subscriptions a plugin makes itself go in
 | `open.handler` | Handle pasted text matching a declared pattern. |
 | `log` | Lines in the Activity log, tagged with the plugin. |
 | `auth.register` | Add a sign-in method to Settings → Sign-in (see below). |
+
+### In-view tools
+
+`ctx.views` puts shapes over Neuroglancer's views, with handles that drag
+them: what a region, a crop, a cut plane or a landmark is edited with,
+where it is, instead of sliders in a dock. Each shape is drawn on a canvas
+over each view (never into captures) after every frame: in a 2-D view where
+the section cuts it (a sphere's ellipse, a box's rectangle, a plane's
+line), in the 3-D view as a wireframe (a box's edges, a sphere's three
+circles, a plane's square). Coordinates are global, all global dimensions
+as `ViewPanelInfo.project` takes them.
+
+```ts
+const region = ctx.views.add({
+  id: "r1",
+  kind: "sphere",                 // or "point", "box", "plane"
+  centre: [10, 20, 30],
+  radii: [5, 5, 5],
+  uniform: true,                  // one radius: its knobs scale all three
+  label: "Sphere 1",              // the card's title (a point shows it beside itself)
+  colour: "#e4572e",              // its lines when not selected
+  onChange: ({ centre, radii }, done) => save({ centre, radius: radii[0] }, { quiet: !done }),
+  card: (host) => {               // shown over the view while it is selected
+    host.append(numberInput(radius, setRadius, { "aria-label": "Radius" }));
+  },
+});
+region.update({ centre: [11, 20, 30] });   // when the plugin's own state changes
+ctx.views.select("r1");                   // a new shape, ready to drag
+```
+
+- **Handles.** Clicking a shape selects it (one at a time; Escape or a
+  click on an empty part of a view clears it, and that click still reaches
+  Neuroglancer). A selected shape shows its handles: its centre moves it in
+  the view's plane (the section, or the plane facing the camera in 3-D); a
+  box's corners and face centres resize it along their axes; a sphere's
+  knobs, one each way along each axis shown, change its radii; a plane's
+  centre moves it along its normal and its ring turns it (`turns: false`
+  for one that only moves). Alt+wheel over a selected sphere or box
+  scales it; the arrow keys move it a unit (Shift: ten) while the mouse is
+  over a view and nothing else has the keyboard. A press anywhere else is
+  Neuroglancer's.
+- **`onChange(value, done)`** gets each new value: `done` is false while
+  the mouse moves and true when it is let go, so a plugin keeps the moves
+  out of undo and writes its state once per drag (as a slider's `oninput`
+  and `onchange` do). The shape follows the mouse by itself; `update` with
+  the value the plugin kept (rounded or clamped) puts it there.
+- **The card** is the one panel that floats: at the top left of the view
+  the shape was selected in, right of Neuroglancer's axis labels, only
+  while the shape is selected. It holds what the handles do not: exact
+  numbers, choices (AND, OR, NOT), delete. The dock's controls for the same
+  things keep working; both edit the same state.
+- **`pick(onPick)`** turns clicks in the views into points until disposed:
+  a click not on a shape gives the global position under the mouse
+  (Registration's Place pairs). `lookingAt()` is where the user is
+  looking: the place the mouse was last over in a view while it is still
+  in sight, else the views' centre; a new shape starts there.
+
+In tests, `fakeViewTools()` from `@ngplatform/sdk/testing` keeps the shapes a
+plugin adds and drags them as a person would (`drag(id, value, done)`,
+`click(at)` for a picker).
 
 ### Building a panel
 
