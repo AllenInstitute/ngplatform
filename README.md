@@ -4,8 +4,7 @@
 
 A workspace around [Neuroglancer](https://github.com/google/neuroglancer),
 extended by plugins. Live at https://alleninstitute.github.io/ngplatform/.
-The development build, with the redesign in progress (one left column,
-tools in the views, view aids in 3-D, greyscale interface), is at
+Work ahead of a release is tried first at
 https://alleninstitute.github.io/ngplatform/dev/.
 
 ngplatform hosts domain-specific tools for Zarr, OME-Zarr and Zarr Vectors
