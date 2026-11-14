@@ -91,13 +91,13 @@ describe("the theme", () => {
 function colour(initial: string | undefined, fallback = "#000000") {
   const listeners = new Set<() => void>();
   const defaultValue = Float32Array.from(rgbOf(fallback));
-  let value = Float32Array.from(rgbOf(initial ?? fallback));
+  let value: ArrayLike<number> = Float32Array.from(rgbOf(initial ?? fallback));
   const toHex = (v: ArrayLike<number>) => "#" + Array.from(v, (c) => Math.round(c * 255).toString(16).padStart(2, "0")).join("");
-  const c: BackgroundColour & { value: Float32Array } = {
+  const c: BackgroundColour & { value: ArrayLike<number> } = {
     get value() {
       return value;
     },
-    set value(v: Float32Array) {
+    set value(v: ArrayLike<number>) {
       value = v;
       for (const l of listeners) l();
     },
