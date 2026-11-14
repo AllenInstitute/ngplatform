@@ -42,6 +42,15 @@ and **Export CSV** (the group's objects and their properties). Under
 **Statistics**, **Export CSV** writes each group's count and each property's
 mean, SD, median and range.
 
+A tractogram on this computer past the storage limit opens as a sample
+(1 in 10, 100 …; see [Large tractograms](../guide/data.md#large-tractograms-and-meshes)).
+Then a group's count is within the sample ("84,438 of 1,699,274 in the
+sample (1 in 10 of 17,000,000)"), and **Save .trk** and density maps hold
+only sampled streamlines; the buttons' titles and the messages after say
+so. A group of attributes only is tested on every streamline's columns, so
+its count is of the whole file. **Run on this computer** filters every
+streamline.
+
 ## Speed
 
 The first exact answer in a new area takes seconds (the download); moving a

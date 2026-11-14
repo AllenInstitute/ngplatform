@@ -9,7 +9,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { NiftiStore, openNifti } from "../src/virtual/images/nifti.js";
-import { type Box, boxVoxels, chunkFromSlab, chunksOf, finerSlabs, type Grid, levelSlabs, Reducer, type Slab, slabFromChunks, slabOf, slabWidth } from "../src/virtual/images/slabs.js";
+import { setReducePool } from "../src/virtual/images/reduce_pool.js";
+import { type Box, boxVoxels, chunkFromSlab, chunksOf, coarseBoxOf, finerSlabs, type Grid, levelSlabs, pasteSlab, type ReduceJob, Reducer, reducePiece, runJob, type Slab, slabFromChunks, slabOf, slabWidth } from "../src/virtual/images/slabs.js";
 
 const grid = (size: number[], chunk: number[], step = [2, 2, 2]): Grid => ({ size, chunk: chunk.map((c, a) => Math.min(c, size[a])), step });
 
@@ -119,6 +120,31 @@ describe("slab arithmetic", () => {
     }
   });
 
+  it("reduces a finer slab on its own into the part of the coarser slab it makes whole", () => {
+    for (const [size, chunk, step] of [
+      [[301, 77, 33], [64, 64, 64], [2, 2, 2]],
+      [[130, 131, 20], [32, 32, 32], [2, 2, 1]],
+    ] as [number[], number[], number[]][]) {
+      const fine = grid(size, chunk, [1, 1, 1]);
+      const coarse = grid(size.map((n, a) => Math.ceil(n / step[a])), chunk, step);
+      const f = (x: number, y: number, z: number) => (x * 31 + y * 17 + z * 7) % 101;
+      for (const box of levelSlabs(coarse, 64)) {
+        const whole = new Reducer(coarse, fine, box, 1, "mean", (n) => new Float64Array(n));
+        const pieced: Slab = { box, slots: 1, data: new Float64Array(boxVoxels(box)) };
+        for (const b of finerSlabs(coarse, fine, box, 64)) {
+          const slab = slabOfValues(b, 1, f);
+          whole.add(slab);
+          const part = coarseBoxOf(coarse, fine, b)!;
+          expect(part).toBeDefined();
+          pasteSlab(pieced, reducePiece({ grid: coarse, finer: fine, box: part, mode: "mean", slab }));
+        }
+        expect([...pieced.data]).toEqual([...whole.finish().data]);
+      }
+    }
+    // Odd chunk sizes: a finer slab off the halving makes no coarse voxel whole.
+    expect(coarseBoxOf(grid([301, 77, 33], [55, 55, 55]), grid([301, 77, 33], [55, 55, 55], [1, 1, 1]), { lo: [55, 0, 0], hi: [110, 55, 33] })).toBeUndefined();
+  });
+
   it("rounds integer means, summing 16-bit voxels exactly", () => {
     const fine = grid([4, 2, 2], [4, 2, 2], [1, 1, 1]);
     const coarse = grid([2, 1, 1], [4, 2, 2]);
@@ -210,6 +236,56 @@ describe("coarser levels from slabs", () => {
     const whole = await openNifti(new Blob([bytes]), "w");
     const pieces = new NiftiStore(whole.header, () => Promise.resolve({ size: bytes.byteLength, read: async (s, e) => bytes.subarray(s, e) }), "p", { slabBytes: 64 * 64 * 64 });
     for (const key of await keys(whole)) expect(same(await pieces.get(key), await whole.get(key))).toBe(true);
+  });
+
+  it("makes the same levels with the finer slabs reduced one by one elsewhere (the reduce workers)", async () => {
+    // Each job's slab handed over as postMessage would (transferred: unusable after), reduced, and handed
+    // back after a while (so out of order).
+    let jobs = 0;
+    let stored = 0;
+    const elsewhere = {
+      size: 3,
+      async run(job: ReduceJob) {
+        ++jobs;
+        if (job.stored !== undefined) ++stored;
+        const moved = job.slab === undefined ? job : structuredClone(job, { transfer: [job.slab.data.buffer as ArrayBuffer] });
+        await new Promise((r) => setTimeout(r, jobs % 3));
+        return runJob(moved);
+      },
+    };
+    try {
+      for (const [d, v, datatype, slabBytes] of [
+        [[150, 140, 133], value, 4, undefined],
+        [[300, 70, 71], (i: number) => i % 251, 2, 64 * 64 * 64],
+      ] as [number[], (i: number) => number, number, number | undefined][]) {
+        const bytes = nifti(d, v, datatype);
+        const source = () => Promise.resolve({ size: bytes.byteLength, read: async (s: number, e: number) => bytes.subarray(s, e) });
+        setReducePool(null);
+        const here = await openNifti(new Blob([bytes]), "here");
+        const all = await keys(here);
+        const expected = new Map<string, Uint8Array>();
+        for (const key of all) expected.set(key, (await here.get(key))!);
+        setReducePool(elsewhere);
+        const before = jobs;
+        const store = new NiftiStore(here.header, source, "elsewhere", { slabBytes });
+        for (const key of [...all].reverse()) expect(same(await store.get(key), expected.get(key))).toBe(true);
+        expect(jobs).toBeGreaterThan(before);
+        // Read by the worker from where the file holds the slab (a Blob), the same voxels.
+        const fromBlob = await openNifti(new Blob([bytes]), "blob");
+        const storedBefore = stored;
+        for (const key of all) expect(same(await fromBlob.get(key), expected.get(key))).toBe(true);
+        expect(stored).toBeGreaterThan(storedBefore);
+        // Export's one pass too.
+        const written = new Map<string, Uint8Array>();
+        await new NiftiStore(here.header, source, "export", { slabBytes }).eachChunk(async (key, chunk) => void written.set(key, chunk), { progress: () => {}, cancelled: false });
+        for (const key of all) if (expected.get(key)!.some((x) => x !== 0)) expect(same(written.get(key), expected.get(key))).toBe(true);
+        written.clear();
+        await (await openNifti(new Blob([bytes]), "export")).eachChunk(async (key, chunk) => void written.set(key, chunk), { progress: () => {}, cancelled: false });
+        for (const key of all) if (expected.get(key)!.some((x) => x !== 0)) expect(same(written.get(key), expected.get(key))).toBe(true);
+      }
+    } finally {
+      setReducePool(undefined);
+    }
   });
 
   it("says so when there is no overview cache to build into", async () => {

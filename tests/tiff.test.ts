@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { splitVirtual, TIFF_FORMAT } from "../src/virtual/local_data.js";
-import { lzwDecode, openTiff, packBitsDecode, readTiffStack, tiffLayout, tiffSpacing } from "../src/virtual/images/tiff.js";
+import { lzwDecode, openTiff, packBitsDecode, readTiffStack, tiffLayout, tiffSource, tiffSpacing } from "../src/virtual/images/tiff.js";
 
 const DIR = new URL("./testdata/tiff/", import.meta.url);
 const expected: Record<string, { dim: number[]; size: number[]; sha256: string }> = JSON.parse(readFileSync(new URL("expected.json", DIR), "utf8"));
@@ -40,6 +40,27 @@ describe("TIFF stacks", () => {
       expect(createHash("sha256").update(all).digest("hex")).toBe(want.sha256);
     });
   }
+
+  it("says where the file holds the voxels as they are served (uncompressed strips), the same bytes", async () => {
+    const found: string[] = [];
+    for (const name of Object.keys(expected)) {
+      const file = blob(name);
+      const stack = await readTiffStack(file);
+      const layout = tiffLayout(stack);
+      const source = tiffSource(file, stack, (p) => p, layout.z * layout.c * layout.t);
+      for (const [a, b] of [[0, source.size], [7, source.size - 5], [Math.floor(source.size / 3), Math.floor(source.size / 2)]]) {
+        const where = source.stored!(a, b);
+        if (where === undefined) continue;
+        found.push(name);
+        const parts = [];
+        for (let i = 0; i < where.pieces.length; i += 2) parts.push(new Uint8Array(await file.slice(where.pieces[i], where.pieces[i] + where.pieces[i + 1]).arrayBuffer()));
+        const bytes = new Uint8Array(await new Blob(parts).arrayBuffer());
+        expect(Buffer.from(bytes).equals(Buffer.from(await source.read(a, b)))).toBe(true);
+      }
+    }
+    // Uncompressed little-endian strips only: not LZW, deflate, PackBits, tiles, RGB or a predictor.
+    expect([...new Set(found)].sort()).toEqual(["bigtiff_f32.tif", "imagej_channels.tif", "ome_time.ome.tif", "strips_u16.tif", "with_thumbnail.tif"]);
+  });
 
   it("takes ImageJ's and OME's layouts and sizes", async () => {
     const ij = await readTiffStack(blob("imagej_channels.tif"));

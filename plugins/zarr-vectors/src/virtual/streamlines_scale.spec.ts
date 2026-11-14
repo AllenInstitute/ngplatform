@@ -11,7 +11,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ObjectReader, openZarrVectorsStore, ShardIndexCache, LevelPipeline } from "../reader.js";
 import { cacheBudget, diskBudget, MemorySpill, setSpillSettings, type Spill, spillPlan } from "../../../../src/virtual/vectors/spill.js";
-import { CHECKPOINT, cellSize, sampleDepth, sampleLevels, StreamlineStore } from "../../../../src/virtual/vectors/streamlines.js";
+import { CHECKPOINT, cellSize, localBinTarget, sampleDepth, sampleLevels, StreamlineStore } from "../../../../src/virtual/vectors/streamlines.js";
 import { parseTckHeader, readTck, readTckStreamlines } from "../../../../src/virtual/vectors/tck.js";
 import { openTractogram } from "../../../../src/virtual/vectors/tractograms.js";
 import { parseTrkHeader, readTrk, readTrkStreamlines, TRK_HEADER_SIZE, type TrkBatch } from "../../../../src/virtual/vectors/trk.js";
@@ -210,6 +210,71 @@ describe("the spill and the index", () => {
       expect(got).toEqual(lines[Number(id)].flat());
     });
     store.close();
+  });
+
+  it("bins in several binners (as the bin workers do), merged by cell: the same lines, bridges and manifests", async () => {
+    const lines = synthetic(25_000, 11);
+    const input = (per: number) => ({
+      scalarNames: [],
+      propertyNames: [],
+      expectedCount: lines.length,
+      extent: 120,
+      bytes: 64 * 2 ** 20,
+      name: "s",
+      async read(onBatch: (batch: TrkBatch) => void | Promise<void>) {
+        for (let first = 0; first < lines.length; first += per) {
+          const part = lines.slice(first, first + per);
+          const offsets = new Uint32Array(part.length + 1);
+          part.forEach((l, i) => (offsets[i + 1] = offsets[i] + l.length));
+          await onBatch({ points: Float32Array.from(part.flat(2)), offsets, scalars: new Float32Array(0), properties: new Float32Array(0) });
+        }
+        return lines.length;
+      },
+    });
+    const one = await StreamlineStore.build(input(1000));
+    // Three binners, each with a spill of its own; batches of 701 dealt to them in turn, as to the bin workers.
+    let binners = 0;
+    const three = await StreamlineStore.build(input(701), {
+      bins: async (config) => Array.from({ length: 3 }, () => (++binners, localBinTarget(new MemorySpill(), { ...config, pendingBytes: 64 * 1024 }))),
+    });
+    expect(binners).toBe(3);
+    expect(three.stats().levels).toEqual(one.stats().levels);
+    expect(three.stats().levels.length).toBeGreaterThan(1);
+    // Each level's segments, as the viewer draws them (bridges included): the same lines between the same points.
+    const segments = async (store: StreamlineStore, level: number) => {
+      const a = access(store);
+      const zv = await openZarrVectorsStore(a as never, []);
+      const pipeline = new LevelPipeline(a as never, zv.description, zv.levels[level]);
+      const root = JSON.parse(new TextDecoder().decode((await store.get(`${level}/vertices/zarr.json`))!));
+      const out: string[] = [];
+      for (const key of root.attributes.nonempty_chunks as string[]) {
+        const d = (await pipeline.download(key.split(".").map(Number), signal, { bridges: true }))!;
+        const p = (v: number) => Array.from(d.positions.subarray(3 * v, 3 * v + 3)).join(",");
+        for (let e = 0; e < d.edges.length; e += 2) out.push(`${d.segmentIds[2 * d.edges[e]]}:${p(d.edges[e])}>${p(d.edges[e + 1])}`);
+      }
+      return out.sort();
+    };
+    for (let level = 0; level < one.stats().levels.length; ++level) {
+      const [a, b] = await Promise.all([segments(one, level), segments(three, level)]);
+      expect(b.length).toBe(a.length);
+      expect(b).toEqual(a);
+    }
+    // Whole streamlines from the manifests, at level 0 and 1.
+    for (const level of [0, 1]) {
+      const curves = async (store: StreamlineStore) => {
+        const a = access(store);
+        const zv = await openZarrVectorsStore(a as never, []);
+        return new ObjectReader(a as never, zv.description, zv.levels[level]).readCurves(Array.from({ length: 250 }, (_, i) => BigInt(i * 97)), signal);
+      };
+      const [a, b] = await Promise.all([curves(one), curves(three)]);
+      expect(Array.from(b.offsets)).toEqual(Array.from(a.offsets));
+      expect(Array.from(b.positions)).toEqual(Array.from(a.positions));
+      if (level === 0) for (let i = 0; i < 250; ++i) expect(Array.from(b.positions.subarray(3 * b.offsets[i], 3 * b.offsets[i + 1]))).toEqual(lines[i * 97].flat());
+    }
+    // The columns: the same lengths.
+    expect(await three.get("0/object_attributes/length/c/0")).toEqual(await one.get("0/object_attributes/length/c/0"));
+    one.close();
+    three.close();
   });
 
   it("keeps a run too long for a one-word header (5,000 points in one cell), with its values", async () => {

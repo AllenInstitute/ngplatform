@@ -4,6 +4,7 @@
  * spill file in the origin's private file system (./spill.ts), so memory
  * holds only an index; whole streamlines by id are read from the file.
  */
+import { binWorkerCount, binWorkers } from "./bin_workers.js";
 import { currentSpillPlan, NeedsRunner, OpfsSpill, type SpillPlan } from "./spill.js";
 import { CHECKPOINT, type StreamlineInput, StreamlineStore } from "./streamlines.js";
 import { parseTckHeader, readTck, readTckStreamlines } from "./tck.js";
@@ -26,7 +27,9 @@ async function build(input: StreamlineInput, bytes: number): Promise<StreamlineS
     throw new NeedsRunner(`${input.name} would need about ${gb(plan.wholeBytes)} of this browser's storage to be read here, and even one streamline in 10,000 is past the ${gb(plan.budget)} allowed (View settings)`);
   }
   const spill = plan.place === "disk" ? await OpfsSpill.create() : undefined;
-  return StreamlineStore.build(input, { spill, sampleEvery: plan.every, plan });
+  // On disk (a large file): binned in bin workers, each into a spill of its own.
+  const workers = spill === undefined ? 0 : binWorkerCount();
+  return StreamlineStore.build(input, { spill, sampleEvery: plan.every, plan, ...(workers > 0 ? { bins: (config) => binWorkers(workers, config) } : {}) });
 }
 
 /** Reports how much of the file has been read, 0 to 1. */
