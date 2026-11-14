@@ -3,7 +3,7 @@ import { type Command, matchCommands } from "../core/commands.js";
 import type { Schema } from "../core/schema.js";
 import { validate, withDefaults } from "../core/schema.js";
 import { SheetStack, type StackedSheet } from "../core/sheet_stack.js";
-import { checkbox, roving } from "../sdk/dom.js";
+import { checkbox, icon, roving } from "../sdk/dom.js";
 import { h, keyLabel } from "./dom.js";
 
 interface OpenSheet extends StackedSheet {
@@ -379,10 +379,19 @@ export interface MenuItem {
   muted?: boolean;
   /** Marked as where things stand; the menu opens scrolled to it. */
   current?: boolean;
+  /** Opens a page in a new tab: the external-link icon after its label. */
+  external?: boolean;
   run: () => void;
 }
 
 let openMenu: HTMLElement | null = null;
+
+/** The external-link icon after a menu item's label, at the text's size. */
+function externalMark(): SVGSVGElement {
+  const mark = icon("external");
+  mark.classList.add("inline-icon");
+  return mark;
+}
 
 /** Removes the open menu's document listeners. */
 let menuListeners: (() => void) | null = null;
@@ -432,6 +441,7 @@ export function showMenu(anchor: HTMLElement | { x: number; y: number }, items: 
           },
         },
         ...(item.detail === undefined ? [item.label] : [h("span", { class: "menu-label" }, item.label), h("span", { class: "menu-detail" }, item.detail)]),
+        ...(item.external ? [" ", externalMark()] : []),
       ),
     );
   }

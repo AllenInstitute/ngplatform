@@ -599,11 +599,9 @@ kbd {
 .dock.collapsed .rail-title { display: block; }
 /* The Tools section's head: its name, then its row of tabs, also folded; its chevron points right while folded. */
 .dock-tools.collapsed .dock-tabs { display: flex; }
-.dock-tools.collapsed .dock-head { flex-direction: row; padding: 5px var(--sp-2) 0 var(--sp-3); border-bottom: 0; }
-.dock-tools .rail-title, .dock-tools.collapsed .rail-title {
-  display: block; order: -1; writing-mode: horizontal-tb; transform: none; margin: 0 var(--sp-3) 0 var(--sp-1);
-  font-size: var(--fs-caption); line-height: var(--ctl-h); text-transform: uppercase; letter-spacing: var(--label-spacing); color: var(--muted);
-}
+.dock-tools.collapsed .dock-head { flex-direction: row; padding: 5px var(--sp-5) 0; border-bottom: 0; }
+/* Its tabs name themselves: no title over them (the section and its tab list are named "Tools" for a screen reader). */
+.dock-tools .rail-title, .dock-tools.collapsed .rail-title { display: none; }
 .dock-tools .dock-toggle svg { transition: transform var(--t-fast) var(--ease-out); }
 .dock-tools.collapsed .dock-toggle svg { transform: rotate(-90deg); }
 

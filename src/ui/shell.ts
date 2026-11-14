@@ -184,8 +184,8 @@ export class Shell {
         iconButton("help", "Help", (e) =>
           showMenu(e.currentTarget as HTMLElement, [
             { label: "Keyboard and mouse", run: () => this.wb.run("help.shortcuts") },
-            { label: "Guide ↗", run: () => window.open(GUIDE, "_blank", "noopener") },
-            { label: "ngplatform on GitHub ↗", run: () => window.open(REPOSITORY, "_blank", "noopener") },
+            { label: "Guide", external: true, run: () => window.open(GUIDE, "_blank", "noopener") },
+            { label: "ngplatform on GitHub", external: true, run: () => window.open(REPOSITORY, "_blank", "noopener") },
           ]),
         ),
       ),
@@ -1500,8 +1500,8 @@ export class Shell {
       { label: "Copy scene as Neuroglancer link", run: run("workspace.copyPlainLink") },
       { label: "Copy scene as Neuroglancer JSON", run: run("workspace.copyState") },
       "-",
-      { label: "Open in Neuroglancer ↗", run: run("workspace.openInNeuroglancer") },
-      { label: "Open in Neuroglancer with Zarr Vectors ↗", run: run("workspace.openInPlainNeuroglancer") },
+      { label: "Open in Neuroglancer", external: true, run: run("workspace.openInNeuroglancer") },
+      { label: "Open in Neuroglancer with Zarr Vectors", external: true, run: run("workspace.openInPlainNeuroglancer") },
     ]);
   }
 
