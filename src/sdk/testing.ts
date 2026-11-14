@@ -421,8 +421,8 @@ export function fakeDocument(): FakeDom {
 export interface FakeViewTools extends ViewToolsApi {
   /** The shapes over the views now, by id, as last added or updated. */
   readonly shapes: Map<string, ViewShape>;
-  /** Drags a shape to `value` (as its handles would): `done` false while moving, true when let go. */
-  drag(id: string, value: Record<string, number[]>, done?: boolean): void;
+  /** Drags a shape to `value` (as its handles would; a frame's with the `change` it made): `done` false while moving, true when let go. */
+  drag(id: string, value: Record<string, unknown>, done?: boolean): void;
   /** Clicks a view where nothing is drawn, at `at` (global), while a picker is on. */
   click(at: number[], view?: "2d" | "3d"): void;
   /** What `lookingAt()` answers; when unset, the views' centre (`options.centre`, else the origin). */
@@ -488,7 +488,8 @@ export function fakeViewTools(options: { centre?: () => number[] } = {}): FakeVi
     drag(id, value, done = true) {
       const shape = shapes.get(id);
       if (shape === undefined) throw new Error(`no shape ${id}`);
-      shapes.set(id, { ...shape, ...value } as ViewShape);
+      const { change: _change, ...geometry } = value;
+      shapes.set(id, { ...shape, ...geometry } as ViewShape);
       (shape.onChange as ((v: unknown, done: boolean) => void) | undefined)?.(value, done);
     },
     click(at, view = "2d") {

@@ -3,10 +3,14 @@ import {
   arcball,
   axisDelta,
   boxSection,
+  changedFrame,
   convexOrder,
+  cornersSection,
   ellipsePoints,
   ellipseReach,
   ellipsoidSection,
+  frameCorners,
+  frameScale,
   insidePolygon,
   jacobian,
   planeDelta,
@@ -15,6 +19,7 @@ import {
   type Project3,
   rotate,
   screenOf,
+  screenTurn,
   sectionDistance,
   sectionOf,
   segmentDistance,
@@ -190,5 +195,68 @@ describe("hits", () => {
     ];
     expect(insidePolygon([5, 5], square)).toBe(true);
     expect(insidePolygon([15, 5], square)).toBe(false);
+  });
+});
+
+describe("frames (a box turned any way: a layer's data as placed)", () => {
+  const section = (project: Project3, origin: Vec3) => {
+    const j = jacobian(project, origin)!;
+    const o = project(origin)!;
+    return sectionOf(j, origin, [o.x, o.y]);
+  };
+  const a: [Vec3, Vec3, Vec3] = [
+    [Math.SQRT1_2 * 2, Math.SQRT1_2 * 2, 0],
+    [-Math.SQRT1_2 * 3, Math.SQRT1_2 * 3, 0],
+    [0, 0, 4],
+  ];
+
+  it("has its corners as a box's, and meets a section where its edges cross it", () => {
+    const corners = frameCorners([1, 2, 3], [[2, 0, 0], [0, 3, 0], [0, 0, 4]]);
+    expect(corners).toHaveLength(8);
+    close(corners[0], [-1, -1, -1]);
+    close(corners[7], [3, 5, 7]);
+    // Turned 45° about z: its cut by z = 0 is the turned rectangle.
+    const s = section(axial(0), [0, 0, 0]);
+    const cut = cornersSection(frameCorners([0, 0, 0], a), s);
+    const screen = convexOrder(cut.map((p) => [100 + 4 * p[0], 50 + 4 * p[1]] as Vec2));
+    expect(screen).toHaveLength(4);
+    for (const p of screen) expect(Math.hypot(p[0] - 100, p[1] - 50)).toBeCloseTo(4 * Math.hypot(2, 3), 6);
+    expect(cornersSection(frameCorners([0, 0, 10], a), s)).toHaveLength(0);
+  });
+
+  it("turns clockwise on screen as a positive angle, wrapped to a half turn", () => {
+    expect(screenTurn([0, 0], [10, 0], [0, 10])).toBeCloseTo(Math.PI / 2);
+    expect(screenTurn([0, 0], [10, 0], [0, -10])).toBeCloseTo(-Math.PI / 2);
+    // Across the left: a small turn, not nearly a whole one.
+    expect(screenTurn([0, 0], [-10, 1], [-10, -1])).toBeCloseTo(0.2, 1);
+  });
+
+  it("scales the axes a dragged corner pulls, and keeps the one along the normal", () => {
+    const box: [Vec3, Vec3, Vec3] = [[2, 0, 0], [0, 3, 0], [0, 0, 4]];
+    // The corner (+2, +3) on the section z = 1 dragged 2 right and 3 down: both in-plane axes double.
+    close(frameScale(box, [2, 3, 1], [2, 3, 0], [0, 0, 1]), [2, 2, 1]);
+    // Dragged inwards past the centre: never below 1 %.
+    close(frameScale(box, [2, 3, 1], [-5, 0, 0], [0, 0, 1]), [0.01, 1, 1]);
+    // Shift: all three alike, by how far the corner moved out from the centre.
+    close(frameScale(box, [2, 3, 1], [2, 3, 0], [0, 0, 1], true), [2, 2, 2]);
+    // A turned frame: along its own axes (its corner +a0 +a1, pulled out along a0 by |a0|).
+    const corner: Vec3 = [a[0][0] + a[1][0], a[0][1] + a[1][1], 0];
+    close(frameScale(a, corner, a[0], [0, 0, 1]), [2, 1, 1]);
+  });
+
+  it("is moved (its pivot too), turned about a point, or scaled about its centre", () => {
+    const g = { c: [1, 0, 0] as Vec3, a: [[1, 0, 0], [0, 2, 0], [0, 0, 3]] as [Vec3, Vec3, Vec3], pivot: [0, 0, 0] as Vec3 };
+    const moved = changedFrame(g, { kind: "move", by: [0, 5, 0] });
+    close(moved.c, [1, 5, 0]);
+    close(moved.pivot, [0, 5, 0]);
+    const turned = changedFrame(g, { kind: "turn", axis: [0, 0, 1], angle: Math.PI / 2, about: [0, 0, 0] });
+    close(turned.c, [0, 1, 0]);
+    close(turned.a[0], [0, 1, 0]);
+    close(turned.a[1], [-2, 0, 0]);
+    close(turned.pivot, [0, 0, 0]);
+    const scaled = changedFrame(g, { kind: "scale", factors: [2, 1, 0.5], uniform: false });
+    close(scaled.c, [1, 0, 0]);
+    close(scaled.a[0], [2, 0, 0]);
+    close(scaled.a[2], [0, 0, 1.5]);
   });
 });

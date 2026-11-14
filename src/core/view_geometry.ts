@@ -252,7 +252,20 @@ export const BOX_EDGES: [number, number][] = (() => {
 
 /** Where a box meets a section: the points where its edges cross it (unordered; empty when they do not meet). */
 export function boxSection(lower: Vec3, upper: Vec3, s: Section): Vec3[] {
-  const corners = boxCorners(lower, upper);
+  return cornersSection(boxCorners(lower, upper), s);
+}
+
+/**
+ * The corners of a box turned any way (a frame): centre `c` and half-edge
+ * vectors `a`, index bits 0, 1 and 2 choosing + along a[0], a[1] and a[2]
+ * (as boxCorners, so BOX_EDGES are its edges too).
+ */
+export function frameCorners(c: Vec3, a: [Vec3, Vec3, Vec3]): Vec3[] {
+  return Array.from({ length: 8 }, (_, i) => [0, 1, 2].reduce((p, k) => add(p, scale(a[k], (i >> k) & 1 ? 1 : -1)), c));
+}
+
+/** Where the edges (BOX_EDGES) of a box with these eight corners cross a section (unordered; empty when they do not meet). */
+export function cornersSection(corners: Vec3[], s: Section): Vec3[] {
   const d = corners.map((c) => sectionDistance(s, c));
   const out: Vec3[] = [];
   for (const [i, j] of BOX_EDGES) {
@@ -352,4 +365,59 @@ export function insidePolygon(p: Vec2, poly: Vec2[]): boolean {
     if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside;
   }
   return inside;
+}
+
+/** The signed turn (radians) from `from` to `to` about `centre`, screen pixels: positive clockwise on screen (y down), in (−π, π]. */
+export function screenTurn(centre: Vec2, from: Vec2, to: Vec2): number {
+  const a = Math.atan2(from[1] - centre[1], from[0] - centre[0]);
+  const b = Math.atan2(to[1] - centre[1], to[0] - centre[0]);
+  let t = b - a;
+  while (t <= -Math.PI) t += 2 * Math.PI;
+  while (t > Math.PI) t -= 2 * Math.PI;
+  return t;
+}
+
+/**
+ * A frame's corner (on a section) dragged by `d` (a world step within the
+ * section, normal `n`): how much each of its axes `a` grows, as factors.
+ * `rel` is the corner from the frame's centre.  An axis that lies mostly
+ * along the normal (less than 0.3 of it within the section) keeps its
+ * size; `uniform` grows all three alike, by how far the corner moved away
+ * from the centre within the section.  Factors are at least 0.01.
+ */
+export function frameScale(a: [Vec3, Vec3, Vec3], rel: Vec3, d: Vec3, n: Vec3, uniform = false): Vec3 {
+  const nn = unit(n);
+  const inPlane = (v: Vec3) => sub(v, scale(nn, dot(v, nn)));
+  const least = (f: number) => (Number.isFinite(f) ? Math.max(0.01, f) : 1);
+  if (uniform) {
+    const r = inPlane(rel);
+    const r2 = dot(r, r);
+    const f = r2 > 0 ? least(dot(add(r, inPlane(d)), r) / r2) : 1;
+    return [f, f, f];
+  }
+  return a.map((ak) => {
+    const u = unit(ak);
+    if (norm(u) === 0 || norm(inPlane(u)) < 0.3) return 1;
+    const base = dot(rel, u);
+    if (Math.abs(base) <= 1e-9 * norm(ak)) return 1;
+    return least((base + dot(d, u)) / base);
+  }) as Vec3;
+}
+
+/** A frame: centre, half-edge vectors, and the point its ring turns about. */
+export interface Frame {
+  c: Vec3;
+  a: [Vec3, Vec3, Vec3];
+  pivot: Vec3;
+}
+
+/** What a drag did to a frame, in display coordinates (ViewFrameChange in ../sdk/types.ts). */
+export type FrameChange = { kind: "move"; by: Vec3 } | { kind: "turn"; axis: Vec3; angle: number; about: Vec3 } | { kind: "scale"; factors: Vec3; uniform: boolean };
+
+/** A frame after a change: moved (its pivot too), turned about `about` (the unit `axis`, right-handed), or its axes scaled. */
+export function changedFrame(g: Frame, change: FrameChange): Frame {
+  if (change.kind === "move") return { c: add(g.c, change.by), a: g.a, pivot: add(g.pivot, change.by) };
+  if (change.kind === "scale") return { c: g.c, a: g.a.map((v, k) => scale(v, change.factors[k])) as [Vec3, Vec3, Vec3], pivot: g.pivot };
+  const turn = (v: Vec3) => rotate(v, change.axis, change.angle);
+  return { c: add(change.about, turn(sub(g.c, change.about))), a: g.a.map(turn) as [Vec3, Vec3, Vec3], pivot: g.pivot };
 }
