@@ -93,6 +93,11 @@ export const OFFERS: Record<string, Offer> = {
     toast: false,
     applies: (scene) => scene.layers.length > 0 && "list",
   },
+  "org.ngplatform.scale-navigator": {
+    pitch: "move between image layers that lie inside one another (an overview and its zooms)",
+    toast: false,
+    applies: (scene) => images(scene).length > 1 && "list",
+  },
   "org.ngplatform.track-filtering": {
     pitch: "select streamlines through regions",
     toast: true,
