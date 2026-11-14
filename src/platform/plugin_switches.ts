@@ -180,7 +180,7 @@ export function noteDefaultsTold(): void {
  */
 export function returningVisitor(): boolean {
   try {
-    return ["left", "right", "bottom"].some((slot) => localStorage.getItem(`ngplatform.${slot}.tab`) !== null);
+    return ["left", "tools", "right", "bottom"].some((slot) => localStorage.getItem(`ngplatform.${slot}.tab`) !== null);
   } catch {
     return false;
   }

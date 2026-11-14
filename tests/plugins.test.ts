@@ -142,13 +142,14 @@ describe("tool panels", () => {
     const host = new PluginHost(s);
     host.register(manifest, async () => ({ activate() {} }));
     expect(tabs.map((t) => [t.slot, t.group])).toEqual([["left", "Space"]]);
-    // A left panel goes to the Tools dock under its group, or Other (Python's under Python); bottom panels stay.
+    // A left (or right) panel goes to the Tools section under its group, or Other (Python's under Python); bottom panels stay.
     const { asTool } = await import("../src/ui/docks.js");
     const render = () => {};
-    expect(asTool({ id: "a", title: "A", slot: "left", group: "Space", render })).toMatchObject({ slot: "right", group: "Space" });
-    expect(asTool({ id: "b", title: "B", slot: "left", render })).toMatchObject({ slot: "right", group: "Other" });
-    expect(asTool({ id: "c", title: "C", slot: "left", render }, "Python")).toMatchObject({ slot: "right", group: "Python" });
-    const bottom: DockTabSpec = asTool({ id: "d", title: "D", slot: "bottom", render });
+    expect(asTool({ id: "a", title: "A", slot: "left", group: "Space", render })).toMatchObject({ slot: "tools", group: "Space" });
+    expect(asTool({ id: "b", title: "B", slot: "left", render })).toMatchObject({ slot: "tools", group: "Other" });
+    expect(asTool({ id: "c", title: "C", slot: "left", render }, "Python")).toMatchObject({ slot: "tools", group: "Python" });
+    expect(asTool({ id: "e", title: "E", slot: "right", render })).toMatchObject({ slot: "tools", group: "Other" });
+    const bottom = asTool({ id: "d", title: "D", slot: "bottom", render });
     expect([bottom.slot, bottom.group]).toEqual(["bottom", undefined]);
   });
 });

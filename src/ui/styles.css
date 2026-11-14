@@ -1,7 +1,9 @@
-/* Layout: a top bar over three columns (workspace dock | views | inspector
-   dock) and a resizable activity dock along the bottom.  The views column
-   holds Neuroglancer's data panels and nothing else; its status messages sit
-   in a strip beneath it.  Neuroglancer's look: black and neutral greys with
+/* Layout: a top bar over two columns (the left column | views) and a
+   resizable activity dock along the bottom, collapsed to a status line.
+   The left column holds the layers (Layers, Plugins) and, below a divider,
+   the Tools section while a tool is on.  The views column holds
+   Neuroglancer's data panels and nothing else; its status messages sit in a
+   strip beneath it.  Neuroglancer's look: black and neutral greys with
    square corners.  The accent is light grey (what is selected, the primary
    action, the focus); green only for a switch that is on, red and amber (as
    text and an edge) for states.
@@ -151,18 +153,13 @@ input[type="checkbox"].switch:disabled { opacity: 0.4; cursor: default; }
 
 .app {
   --lw: var(--left, 300px);
-  --rw: var(--right, 360px);
   --bh: var(--bottom, 190px);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
   height: 100%;
 }
 .app.left-collapsed { --lw: 34px; }
-.app.right-collapsed { --rw: 34px; }
 .app.bottom-collapsed { --bh: 34px; }
-/* The Tools dock with no tool on is not there */
-.app.right-empty { --rw: 0px; }
-.app.right-empty .dock-right, .app.right-empty .resizer-right { display: none; }
 
 /* ---------------------------------------------------------------- top bar */
 .topbar {
@@ -346,16 +343,22 @@ kbd {
 .workspace {
   position: relative;
   display: grid;
-  grid-template-columns: var(--lw) auto minmax(0, 1fr) auto var(--rw);
+  grid-template-columns: var(--lw) auto minmax(0, 1fr);
   min-height: 0;
 }
 .workspace > * { grid-row: 1; min-height: 0; }
-/* Every child pinned to its column, so a hidden resizer or a floating dock never shifts the rest. */
-.workspace > .dock-left { grid-column: 1; }
+/* Every child pinned to its column, so a hidden resizer or a floating column never shifts the rest. */
+.workspace > .side { grid-column: 1; }
 .workspace > .resizer-left { grid-column: 2; }
 .workspace > .centre { grid-column: 3; }
-.workspace > .resizer-right { grid-column: 4; }
-.workspace > .dock-right { grid-column: 5; }
+/* The left column: the layers on top, the Tools section (while a tool is on) below its divider. */
+.side { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--ink-2); border-right: 1px solid var(--line); }
+.side > .dock-left { flex: 1 1 0; min-height: 120px; }
+.side > .dock-tools { flex: 0 1 var(--tools, 50%); min-height: 96px; max-height: calc(100% - 120px); border-top: 1px solid var(--line-strong); }
+.side > .dock-tools.collapsed { flex: none; min-height: 0; }
+.app.tools-empty .dock-tools, .app.tools-empty .resizer-tools,
+.app.tools-collapsed .resizer-tools,
+.app.left-collapsed .side > :not(.dock-left) { display: none; }
 .centre { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
 
 /* The views.  Neuroglancer's DisplayContext makes the host position:relative,
@@ -392,8 +395,6 @@ kbd {
   overflow: hidden;
   background: var(--ink-2);
 }
-.dock-left { border-right: 1px solid var(--line); }
-.dock-right { border-left: 1px solid var(--line); }
 .dock-head {
   display: flex; align-items: flex-start; gap: var(--sp-1);
   min-height: 36px; padding: 5px var(--sp-2) 0 var(--sp-3); box-sizing: border-box; flex: none;
@@ -419,13 +420,22 @@ kbd {
   color: var(--muted); font-size: var(--fs-body); letter-spacing: 0.06em; margin-top: var(--sp-4);
 }
 .dock.collapsed .rail-title { display: block; }
+/* The Tools section's head: its name, then its row of tabs, also folded; its chevron points right while folded. */
+.dock-tools.collapsed .dock-tabs { display: flex; }
+.dock-tools.collapsed .dock-head { flex-direction: row; padding: 5px var(--sp-2) 0 var(--sp-3); border-bottom: 0; }
+.dock-tools .rail-title, .dock-tools.collapsed .rail-title {
+  display: block; order: -1; writing-mode: horizontal-tb; transform: none; margin: 0 var(--sp-3) 0 var(--sp-1);
+  font-size: var(--fs-caption); line-height: var(--ctl-h); text-transform: uppercase; letter-spacing: var(--label-spacing); color: var(--muted);
+}
+.dock-tools .dock-toggle svg { transition: transform 0.12s; }
+.dock-tools.collapsed .dock-toggle svg { transform: rotate(-90deg); }
 
 .resizer { background: transparent; position: relative; z-index: 2; }
-.resizer-left, .resizer-right { width: 5px; margin-inline: -2px; cursor: col-resize; }
-.resizer-bottom { height: 5px; margin-block: -2px; cursor: row-resize; }
+.resizer-left { width: 5px; margin-inline: -2px; cursor: col-resize; }
+.resizer-bottom, .resizer-tools { height: 5px; margin-block: -2px; cursor: row-resize; flex: none; }
 .resizer:hover, .resizer.dragging { background: var(--line-hover); }
 .resizer:focus-visible, .engine-split:focus-visible { background: var(--accent); outline: none; }
-.app.left-collapsed .resizer-left, .app.right-collapsed .resizer-right, .app.bottom-collapsed .resizer-bottom { display: none; }
+.app.left-collapsed .resizer-left, .app.bottom-collapsed .resizer-bottom { display: none; }
 
 /* bottom dock */
 .dock-bottom { border-top: 1px solid var(--line); height: var(--bh); }
@@ -1112,25 +1122,22 @@ textarea.state-input.tall { min-height: 50vh; }
   .status > :last-child { overflow: hidden; text-overflow: ellipsis; }
 }
 @media (min-width: 521px) and (max-width: 760px) {
-  /* A half-width window: the side docks take at most a third each, so the views keep room. */
+  /* A half-width window: the left column takes at most a third, so the views keep room. */
   .app:not(.left-collapsed) { --lw: min(var(--left, 300px), 34vw); }
-  .app:not(.right-collapsed) { --rw: min(var(--right, 360px), 34vw); }
 }
 @media (max-width: 520px) {
   /* A phone: undo, redo and Open in Neuroglancer stay in the palette and the Share menu. */
   .hide-phone { display: none !important; }
   .topbar { gap: var(--sp-3); padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); }
   .scene-tabs { min-width: 64px; }
-  .app { --lw: 34px; --rw: 34px; }
-  .resizer-left, .resizer-right { display: none; }
-  /* On a phone an open side dock floats over the views instead of squeezing them. */
-  .dock-left:not(.collapsed), .dock-right:not(.collapsed) {
-    position: absolute; top: 0; bottom: 0; z-index: 20;
+  .app { --lw: 34px; }
+  .resizer-left { display: none; }
+  /* On a phone the open left column floats over the views instead of squeezing them. */
+  .app:not(.left-collapsed) .side {
+    position: absolute; top: 0; bottom: 0; left: 0; z-index: 20;
     width: min(340px, 88vw);
     box-shadow: var(--shadow-dock);
   }
-  .dock-left:not(.collapsed) { left: 0; }
-  .dock-right:not(.collapsed) { right: 0; }
   .dock-bottom { height: min(var(--bh), 30vh); }
 }
 

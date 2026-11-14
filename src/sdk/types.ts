@@ -117,10 +117,12 @@ export interface Manifest {
     commands?: CommandContribution[];
     keybindings?: { key: string; command: string; args?: unknown; when?: string }[];
     /**
-     * A panel in the `left` slot is a tool: it goes to the Tools dock, listed
-     * under `group` ("Image", "Labels", "Space", "Vectors"; "Other" when not
-     * given).  `minSize`: pixels the dock grows to, at least, when the panel
-     * is shown (not saved as the dock's size).
+     * A panel in the `left` (or `right`) slot is a tool: it goes to the
+     * Tools section of the left column, below the layers, listed under
+     * `group` ("Image", "Labels", "Space", "Vectors"; "Other" when not
+     * given), and is listed while its `when` holds (for the data selected,
+     * say: `selectedLayerType == image`).  `minSize`: pixels the dock grows
+     * to, at least, when the panel is shown (not saved as the dock's size).
      */
     panels?: { id: string; title: string; slot: DockSlot; group?: string; order?: number; when?: string; minSize?: number }[];
     datasetActions?: { command: string; title?: string; when?: string }[];
