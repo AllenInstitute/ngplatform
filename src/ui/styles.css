@@ -308,13 +308,15 @@ a.btn { text-decoration: none; }
 .dock.collapsed .dock-status { display: block; }
 /* Open, the dock shows the jobs and the log themselves */
 .dock-bottom:not(.collapsed) .dock-status { visibility: hidden; }
-/* Items on the right of the status line (src/ui/statusbar.ts): values in mono, each cut
+/* Items on the right of the status line (src/ui/statusbar.ts): readouts, each cut
    short with an ellipsis once the line is full, a line between them. */
 .status-items { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; max-width: 60%; height: var(--ctl-h); overflow: hidden; padding: 0 var(--sp-4); }
 .status-items[hidden] { display: none; }
-.status-item { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; color: var(--muted); font: var(--fs-body)/var(--ctl-h) var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.status-item { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; color: var(--text); font: var(--fs-body)/var(--ctl-h) var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .status-item > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-item + .status-item { margin-left: var(--sp-5); padding-left: var(--sp-5); border-left: 1px solid var(--line-strong); }
+/* An item is a readout: its value in the text's colour, a label (.status-label) and a unit (.readout-unit) quiet. */
+.status-item :is(.status-label, .readout-unit) { color: var(--muted); }
 .status-item .status-label { font-family: var(--ui); }
 .activity-jobs:empty { display: none; }
 .activity-jobs { padding-bottom: var(--sp-3); }
@@ -1283,6 +1285,47 @@ textarea.state-input.tall { min-height: 50vh; }
 .faint { color: var(--faint); }
 .hint { color: var(--faint); font-size: var(--fs-caption); line-height: 1.4; margin: 0; }
 .readout { font: var(--fs-caption)/1.4 var(--ui); color: var(--muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+/* ---------------------------------------------------------------- readouts
+   readout() (@ngplatform/sdk/dom): a value shown, not edited here (the
+   coordinates over the views, the status line's items, sizes and counts in a
+   panel), in Source Code Pro with tabular digits; its unit in the muted grey
+   after a thin space. */
+.readout-value { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap; }
+.readout-unit, .readout-value .status-label { color: var(--muted); }
+/* Numbers the app shows in its panels: card counts, sizes in the browser's storage, the resolution histograms' legend. */
+.card-badge, .overview-list .num { font-family: var(--mono); }
+.ins-render-scale .neuroglancer-render-scale-widget-legend { font: var(--fs-caption)/1.4 var(--mono); font-variant-numeric: tabular-nums; }
+/* Neuroglancer's coordinates over the views: each name quiet, its unit (in brackets) quiet, the coordinate in the text's colour. */
+.engine .neuroglancer-viewer-top-row { padding-inline: var(--sp-2); }
+.engine :is(.neuroglancer-position-dimension-coordinate, .neuroglancer-position-dimension-name, .neuroglancer-position-dimension-scale) {
+  font: var(--fs-body)/1.7 var(--mono); font-variant-numeric: tabular-nums;
+}
+.engine .neuroglancer-position-dimension-name { color: var(--muted); }
+.engine .neuroglancer-position-dimension-scale,
+.engine .neuroglancer-position-dimension-scale-container[data-is-empty="false"]::before,
+.engine .neuroglancer-position-dimension-scale-container[data-is-empty="false"]::after { color: var(--muted); }
+.engine .neuroglancer-position-dimension-coordinate { color: var(--text); }
+.engine .neuroglancer-position-dimension + .neuroglancer-position-dimension { margin-left: var(--sp-5); }
+.engine :is(.neuroglancer-position-dimension:focus-within, .neuroglancer-position-dimension[data-dropdown-visible="true"]) { border-color: var(--line-focus); background: var(--ink-0); }
+.engine .neuroglancer-dimension-dropdown-coordinate-label { color: var(--muted); }
+.engine .neuroglancer-dimension-dropdown-coordinate-entry:hover { background: var(--hover); }
+
+/* A layer's data source, compact (src/engine/inspector/source.ts): the store's name, under it
+   where it is (quiet) and the path between, cut short at its start; copy and edit beside it. */
+.source-line { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: start; gap: 0 var(--sp-1); }
+.source-text {
+  display: grid; min-width: 0; padding: var(--sp-1) var(--sp-2); margin: 0; border: 1px solid transparent; background: transparent;
+  color: var(--text); text-align: left; cursor: text;
+}
+.source-text:hover { border-color: var(--line-hover); background: var(--ink-0); }
+.source-name { font: var(--fs-body)/1.5 var(--mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-at { display: flex; min-width: 0; font: var(--fs-caption)/1.4 var(--mono); color: var(--muted); white-space: nowrap; }
+.source-where { flex: 0 1 auto; min-width: 6ch; overflow: hidden; text-overflow: ellipsis; }
+.source-path { flex: 0 1 auto; min-width: 2ch; overflow: hidden; text-overflow: ellipsis; direction: rtl; }
+.source-path:empty { display: none; }
+.source-line .btn.icon { color: var(--muted); }
+.source-line .btn.icon:hover { color: var(--text); }
 
 /* toggle() and checkbox(): the control, then its label. */
 .choice { display: inline-flex; align-items: center; gap: var(--sp-3); color: var(--text); font-size: var(--fs-body); cursor: pointer; min-height: var(--ctl-h); }
