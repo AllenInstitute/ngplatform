@@ -15,6 +15,7 @@
   --ink-1: #0c0c0c;      /* bars, an open card */
   --ink-2: #141414;      /* docks */
   --ink-3: #1f1f1f;      /* raised: a card's head, a secondary button */
+  --ink-card: #1a1a1a;   /* a card's body: a step above the dock, below its head */
   --ink-4: #292929;      /* pressed */
   /* What floats over the rest (menus, tips, toasts, sheets): a step lighter, with --line-strong. */
   --surface-overlay: #1c1c1c;
@@ -293,7 +294,7 @@ a.btn { text-decoration: none; }
 .activity-jobs { padding-bottom: var(--sp-3); }
 /* Settings: one section at a time */
 .settings-nav { margin-bottom: var(--sp-5); }
-.settings-body { display: grid; gap: 10px; min-height: 280px; }
+.settings-body { display: grid; gap: 10px; min-height: 280px; align-content: start; }
 .settings-statistics { display: flex; flex-direction: column; min-height: 240px; }
 /* Source details folded */
 /* The minor heading in a panel: a folded part's summary and a section's sub-heading, one style. */
@@ -1183,7 +1184,9 @@ textarea.state-input.tall { min-height: 50vh; }
 
 /* card (@ngplatform/sdk/dom): a collapsible section of a panel */
 /* No outline: its head is raised, its body on the panel. */
-.card { border-radius: var(--r); margin: 0 0 var(--sp-4); }
+/* A card is one block, raised off the dock: its head (ink-3) over its body (ink-card), within one
+   edge, so an open card's settings read as its own and not the dock's. */
+.card { border-radius: var(--r); margin: 0 0 var(--sp-4); border: 1px solid var(--line-strong); background: var(--ink-card); height: max-content; }
 /* The card title: the panel's heading style. */
 .card > .card-head { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-5); font-weight: 600; font-size: var(--fs-heading); color: var(--text); background: var(--ink-3); cursor: pointer; list-style: none; user-select: none; }
 .card > .card-head::-webkit-details-marker { display: none; }
@@ -1192,7 +1195,7 @@ textarea.state-input.tall { min-height: 50vh; }
 .card > .card-head:hover { background: var(--ink-4); }
 .card-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-badge { font: 400 var(--fs-caption) var(--ui); font-variant-numeric: tabular-nums; color: var(--muted); }
-.card > .card-body { display: grid; gap: var(--sp-4); padding: var(--sp-4) var(--sp-5) var(--sp-5); }
+.card > .card-body { display: grid; gap: var(--sp-4); padding: var(--sp-5) var(--sp-5) var(--sp-5); border-top: 1px solid var(--line-strong); }
 .card .section-title:first-child { margin-top: 0; }
 .card[data-card="compute.this"] .runner-section > .section-head > .section-title { display: none; }
 

@@ -6,6 +6,7 @@ colors:
   ink-1: "#0c0c0c"
   ink-2: "#141414"
   ink-3: "#1f1f1f"
+  ink-card: "#1a1a1a"
   ink-4: "#292929"
   surface-overlay: "#1c1c1c"
   line: "#242424"
@@ -94,6 +95,9 @@ components:
     backgroundColor: "{colors.ink-3}"
     textColor: "{colors.text}"
     rounded: "{rounded.none}"
+  card-body:
+    backgroundColor: "{colors.ink-card}"
+    rounded: "{rounded.none}"
 ---
 
 # Design System: ngplatform
@@ -132,8 +136,9 @@ Greyscale with a light-grey accent; colour belongs to the data and to state.
 
 ### Neutral
 - **Engine Black** (#000, ink-0): behind the viewer, and the wells of fields and the log.
-- **Bar Black** (#0c0c0c, ink-1): bars and an open card's body.
+- **Bar Black** (#0c0c0c, ink-1): bars.
 - **Dock Grey** (#141414, ink-2): docks.
+- **Card Grey** (#1a1a1a, ink-card): a card's body, a step above the dock.
 - **Raised Grey** (#1f1f1f, ink-3): a card's head, a secondary button.
 - **Pressed Grey** (#292929, ink-4): pressed controls.
 - **Overlay Grey** (#1c1c1c): menus, tips, toasts and sheets, with the strong line.
@@ -197,7 +202,7 @@ alike. The one round shape is the on/off switch, a pill with a round knob.
 - **Buttons**: primary is the light-grey accent with black text; secondary is raised grey; danger is red words, a red fill under the pointer. One height per container.
 - **Fields and selects**: a black well, a #3a3a3a edge, lighter under the pointer and with focus.
 - **On/off**: a round switch, grey off and green on; a tick box where a list of options each turn on.
-- **Cards**: a raised-grey head with the heading, the body on bar black; open or closed.
+- **Cards**: one block raised off the dock, within a #333 edge: a raised-grey head (ink-3) with the heading over a card-grey body (ink-card); a closed card is its head.
 - **Selection**: a light-grey bar down the left and a faint tint.
 - **Tabs**: the chosen tab underlined in #e6e6e6.
 
