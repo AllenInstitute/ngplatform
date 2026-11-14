@@ -22,8 +22,9 @@ The types, the manifest check and the parts a panel is built from.
 |---|---|
 | `PluginModule` | What a tool plugin's `plugin.ts` exports: `activate(ctx)`, and `deactivate()` if it needs one. |
 | `Manifest` | What the platform shows before loading a plugin: id, name, kind, `contributes` (commands, panels, scene kinds, state), `guide`. |
-| `PlatformContext` | The `ctx` a tool plugin is given: `commands`, `ui`, `workspace`, `viewer`, `state`, `settings`, `context`, `jobs`, `runner`, `hosts`, `services`, `open`, `log`, `auth` and `subscriptions`. |
+| `PlatformContext` | The `ctx` a tool plugin is given: `commands`, `ui`, `workspace`, `viewer`, `views`, `state`, `settings`, `context`, `jobs`, `runner`, `hosts`, `services`, `open`, `log`, `auth` and `subscriptions`. |
 | `WorkspaceApi`, `ViewerApi` | Scenes, datasets and layers; the views, positions, layers' specs and drawing in the 3-D view. |
+| `ViewToolsApi`, `ViewShape`, `ViewShapeHandle` | Shapes with handles in the 2-D and 3-D views (`point`, `sphere`, `box`, `plane`): `add` one (its `onChange(value, done)` gets each drag, `done` when let go; its `card` shows over the view while it is selected), `select`, `onSelect`, `pick` (clicks in the views as points) and `lookingAt`. See the plugin guide's [In-view tools](https://github.com/AllenInstitute/ngplatform/blob/main/plugins/README.md#in-view-tools). |
 | `RunnerApi`, `HostsApi` | Jobs on this computer, and the computers paired in Settings › Compute. |
 | `AuthProvider`, `AuthService`, `SourceSignIn` | A sign-in method of a plugin's own, listed in Settings › Sign-in. |
 | `VirtualFormat` | A kind of file a data type plugin reads in place. |
@@ -60,6 +61,7 @@ are in [Building a panel](https://github.com/AllenInstitute/ngplatform/blob/main
 |---|---|
 | `fakeDocument` | A stand-in document for panel tests in Node: build a panel, read its text, click and type as a person would. |
 | `FakeElement`, `FakeEvent`, `FakeDom` | Its parts and type. |
+| `fakeViewTools`, `FakeViewTools` | A stand-in for `ctx.views`: the shapes a plugin added, dragged (`drag(id, value, done)`) and clicked (`click(at)`, for a picker) as a person would. |
 
 ## `@ngplatform/sdk/workers`, `/worker_rpc` and `/virtual`
 

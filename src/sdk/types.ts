@@ -491,6 +491,102 @@ export interface ViewPanelInfo {
   project(global: ArrayLike<number>): { x: number; y: number; depth: number } | undefined;
 }
 
+// ---------------------------------------------------------- in-view tools
+
+/** What every shape drawn over the views has; see ViewShape. */
+export interface ViewShapeBase {
+  /** Unique among the plugin's shapes; what `selected()` and `onSelect` name. */
+  id: string;
+  /** The floating card's title; a point shows it beside itself (a landmark's number). */
+  label?: string;
+  /** CSS colour of its lines when not selected (a group's colour); light grey when none. */
+  colour?: string;
+  /** False: drawn and selectable (its card shows), without handles. Default true. */
+  editable?: boolean;
+  /** The views it is drawn in. Default "both". */
+  views?: "2d" | "3d" | "both";
+  /**
+   * The floating card shown over the view while this shape is selected:
+   * exact values, choices, delete.  Drawn when the shape is selected and
+   * disposed when it is not; it keeps itself up to date meanwhile (an
+   * `update` does not draw it again).
+   */
+  card?: (host: HTMLElement) => Disposer | void;
+}
+
+/**
+ * A shape drawn over Neuroglancer's 2-D and 3-D views, with handles that
+ * drag it.  Coordinates are global (all global dimensions, as
+ * `ViewPanelInfo.project` takes; dimensions not displayed are ignored),
+ * and a sphere's radii and a box's corners are along the global axes.
+ * `onChange` gets each new value: with `done` false while the mouse moves
+ * (keep it out of undo), true when it is let go (one undo step).  The
+ * shape moves as dragged; the plugin's `update` with the value it keeps
+ * (rounded, clamped) puts it there.
+ */
+export type ViewShape = ViewShapeBase &
+  (
+    | { kind: "point"; at: number[]; onChange?(value: { at: number[] }, done: boolean): void }
+    | {
+        kind: "sphere";
+        centre: number[];
+        radii: number[];
+        /** Its radii keep their ratios as one is dragged (a sphere of one radius). */
+        uniform?: boolean;
+        onChange?(value: { centre: number[]; radii: number[] }, done: boolean): void;
+      }
+    | { kind: "box"; lower: number[]; upper: number[]; onChange?(value: { lower: number[]; upper: number[] }, done: boolean): void }
+    | {
+        kind: "plane";
+        point: number[];
+        /** Display coordinates (needs no unit length). */
+        normal: number[];
+        /** The side of the square drawn in the 3-D view and of the line in a 2-D view, in global units; else about 160 pixels. */
+        size?: number;
+        /** False: its handle moves it along its normal, with no ring to turn it. Default true. */
+        turns?: boolean;
+        onChange?(value: { point: number[]; normal: number[] }, done: boolean): void;
+      }
+  );
+
+/** A shape over the views, as `ViewToolsApi.add` returns it. */
+export interface ViewShapeHandle {
+  /** Changes the shape (its geometry, label, colour, card…); it is drawn again. */
+  update(patch: Partial<ViewShape>): void;
+  /** Takes it off the views (and out of the selection). */
+  dispose(): void;
+}
+
+/**
+ * Shapes with handles in Neuroglancer's 2-D and 3-D views: regions,
+ * crops, cut planes, landmarks.  Drawn on a canvas over each view (never
+ * into captures); the views' own mouse use is untouched except on a
+ * handle.  Selecting a shape (clicking it) shows its handles and its card;
+ * one is selected at a time, and Escape or a click on an empty part of a
+ * view clears it.  Alt+wheel over a selected sphere or box scales it, and
+ * the arrow keys (Shift: ten times) move it a unit while the mouse is
+ * over a view.
+ */
+export interface ViewToolsApi {
+  add(shape: ViewShape): ViewShapeHandle;
+  /** The selected shape's id, when it is one of this plugin's. */
+  selected(): string | undefined;
+  /** Selects one of this plugin's shapes (its card shows), or clears the selection. */
+  select(id: string | undefined): void;
+  /** Calls back when which of this plugin's shapes is selected changes (undefined: none of them). */
+  onSelect(callback: (id: string | undefined) => void): Disposer;
+  /**
+   * Until disposed, a click in a view that is not on a shape is a point:
+   * `onPick` gets the global position under the mouse (in the 3-D view,
+   * on what is drawn there; nothing when the mouse is over nothing).  The
+   * view's own click still happens.  One picker at a time: a new one
+   * replaces the last.
+   */
+  pick(onPick: (at: number[], view: "2d" | "3d") => void): Disposer;
+  /** Where the user is looking: the place the mouse was last over in a view, while that is still in sight; else the views' centre. */
+  lookingAt(): number[];
+}
+
 /** One frame of the 3-D view, as a plugin draws into it. */
 export interface Frame3d {
   gl: WebGL2RenderingContext;
@@ -750,6 +846,8 @@ export interface PlatformContext {
   };
   workspace: WorkspaceApi;
   viewer: ViewerApi;
+  /** Shapes with handles in the 2-D and 3-D views (regions, crops, cut planes, landmarks); removed when the plugin deactivates. */
+  views: ViewToolsApi;
   /**
    * This plugin's slice of the workspace state: undoable, in the link.
    * State saved by an older version of the plugin (its manifest's
