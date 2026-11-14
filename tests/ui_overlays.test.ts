@@ -164,6 +164,15 @@ describe("palette", () => {
     expect(document.querySelector("#palette-results")!.textContent).toBe("No command matches.");
   });
 
+  it("names each group once, above its commands, which stay together", () => {
+    open();
+    const items = [...document.querySelectorAll("#palette-results li")].map((li) => (li.classList.contains("result-group") ? `# ${li.textContent}` : li.textContent));
+    // Edit, then View's three commands together.
+    expect(items.filter((t) => t!.startsWith("# "))).toEqual(["# Edit", "# View"]);
+    expect(items.indexOf("# View")).toBe(items.length - 4);
+    expect(rows().every((r) => !r.textContent!.includes("View"))).toBe(true);
+  });
+
   it("closes with Escape without running anything", () => {
     const { input, run } = open();
     key(input, "Escape");

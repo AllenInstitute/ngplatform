@@ -129,6 +129,19 @@ export function sheet(title: string, body: Node[], foot: Node[], options: { wide
   );
 }
 
+/** The commands with each group's together, the groups in the order of their best match. */
+function groupInOrder(commands: Command[]): Command[] {
+  const groups = new Map<string, Command[]>();
+  for (const command of commands) {
+    const list = groups.get(command.group);
+    if (list === undefined) groups.set(command.group, [command]);
+    else list.push(command);
+  }
+  return [...groups.values()].flat();
+}
+
+const sentenceCase = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
 export function showPalette(
   commands: () => Command[],
   available: (command: Command) => boolean,
@@ -155,14 +168,19 @@ export function showPalette(
   let index = 0;
 
   const render = () => {
-    matches = matchCommands(commands(), input.value);
+    matches = groupInOrder(matchCommands(commands(), input.value));
     index = Math.min(index, Math.max(0, matches.length - 1));
     results.replaceChildren(
       ...(matches.length === 0
         ? [h("li", { class: "result", role: "option", "aria-disabled": "true", "aria-selected": "false" }, h("span", { class: "hint" }, "No command matches."))]
-        : matches.map((command, i) => {
+        : matches.flatMap((command, i) => {
             const key = keyFor(command);
-            return h(
+            // Each group's name once, above its first command (the options are named by their titles).
+            const head =
+              i === 0 || matches[i - 1].group !== command.group
+                ? [h("li", { class: "result-group", role: "presentation" }, sentenceCase(command.group))]
+                : [];
+            return [...head, h(
               "li",
               {
                 class: available(command) ? "result" : "result unavailable",
@@ -178,10 +196,10 @@ export function showPalette(
                 },
                 onclick: () => choose(i),
               },
-              h("span", {}, h("span", { class: "group-name" }, command.group), command.title),
+              h("span", {}, command.title),
               key ? h("kbd", {}, keyLabel(key)) : null,
               command.hint ? h("span", { class: "hint" }, command.hint) : null,
-            );
+            )];
           })),
     );
     // The highlighted row is the one a screen reader reads, while the keyboard stays in the box.
