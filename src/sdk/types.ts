@@ -420,12 +420,14 @@ export interface ViewerApi {
   /** Calls back after each frame the views draw. */
   onRendered(callback: () => void): Disposer;
   /**
-   * A small picture of the 3-D view (else of the first view shown) as it is
-   * next drawn, without the platform's overlays: a data URL (WebP where the
-   * browser writes it, else PNG), `width` × `height` pixels, the view
-   * cropped to fill it.  Undefined when no view is shown.
+   * A small picture of the 3-D view (else of the first view shown; with
+   * `view` "3d", of the 3-D view only, whatever the layout) once what it
+   * shows has loaded (at most a few seconds), without the platform's
+   * overlays: a data URL (WebP where the browser writes it, else PNG),
+   * `width` × `height` pixels, the view cropped to fill it.  Undefined when
+   * no such view is shown.
    */
-  thumbnail?(width: number, height: number): Promise<string | undefined>;
+  thumbnail?(width: number, height: number, view?: "3d" | "any"): Promise<string | undefined>;
   /**
    * A layer's first data source's transform, from its source space to the
    * global one, and the transform the source itself gives (its default).

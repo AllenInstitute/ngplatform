@@ -42,7 +42,8 @@ export class BookmarkStrip {
         const button = el(
           "button",
           {
-            class: `view-aids-thumb${b.id === current ? " current" : ""}`,
+            // With no picture (none could be taken), the name alone.
+            class: `view-aids-thumb${b.id === current ? " current" : ""}${b.thumbnail ? "" : " no-image"}`,
             type: "button",
             title: `${b.name}: click to go there; right-click to rename or delete`,
             "aria-label": `Bookmark ${i + 1}: ${b.name}`,
@@ -50,7 +51,7 @@ export class BookmarkStrip {
             "data-id": b.id,
             onclick: () => this.actions.go(b.id),
           },
-          b.thumbnail ? el("img", { src: b.thumbnail, alt: "" }) : el("span", { class: "view-aids-thumb-empty" }),
+          b.thumbnail ? el("img", { src: b.thumbnail, alt: "" }) : null,
           el("span", { class: "view-aids-thumb-name" }, b.name),
         ) as HTMLButtonElement;
         button.addEventListener("contextmenu", (e) => {

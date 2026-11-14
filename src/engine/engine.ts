@@ -1512,20 +1512,33 @@ export class Engine {
     return this.viewer.display.updateFinished.add(callback);
   }
 
-  /** A small picture of the 3-D view (else the first view) as next drawn, cropped to fill `width` × `height` (see ViewerApi.thumbnail). */
-  thumbnail(width: number, height: number): Promise<string | undefined> {
-    type Shown = { sliceView?: unknown; element?: HTMLElement; canvasRelativeClippedLeft: number; canvasRelativeClippedTop: number; renderViewport: { width: number; height: number } };
+  /**
+   * A small picture of the 3-D view (else the first view; with `view` "3d",
+   * of the 3-D view only), cropped to fill `width` × `height`, once what it
+   * shows has loaded (or after a few seconds): see ViewerApi.thumbnail.
+   */
+  thumbnail(width: number, height: number, view: "3d" | "any" = "any"): Promise<string | undefined> {
+    type Shown = { sliceView?: unknown; element?: HTMLElement; isReady?(): boolean; canvasRelativeClippedLeft: number; canvasRelativeClippedTop: number; renderViewport: { width: number; height: number } };
     const display = this.viewer.display;
     const shown = [...display.panels].filter((p) => {
       const any = p as unknown as Shown;
       return any.renderViewport !== undefined && any.element?.isConnected === true && "canvasRelativeClippedLeft" in any && any.renderViewport.width > 0;
     }) as unknown as Shown[];
-    const panel = shown.find((p) => p.sliceView === undefined) ?? shown[0];
+    const panel = shown.find((p) => p.sliceView === undefined) ?? (view === "3d" ? undefined : shown[0]);
     if (panel === undefined) return Promise.resolve(undefined);
+    const begun = performance.now();
     return new Promise((resolve) => {
+      let wait: ReturnType<typeof setTimeout> | undefined;
       const off = display.updateFinished.add(() => {
+        // Not until the view has drawn what it shows (a view just shown, or just moved, is still loading).
+        if (panel.isReady?.() === false && performance.now() - begun < 4000) {
+          clearTimeout(wait);
+          wait = setTimeout(() => display.scheduleRedraw(), 100);
+          return;
+        }
         off();
         clearTimeout(timer);
+        clearTimeout(wait);
         // Copied at once, while the drawing buffer still holds the frame just drawn.
         const { width: w, height: h } = panel.renderViewport;
         const scale = Math.max(width / w, height / h);
@@ -1544,8 +1557,9 @@ export class Engine {
       });
       const timer = setTimeout(() => {
         off();
+        clearTimeout(wait);
         resolve(undefined);
-      }, 3000);
+      }, 6000);
       display.scheduleRedraw();
     });
   }

@@ -20,7 +20,9 @@ export const STYLE = `
   position: relative; flex: none; width: 64px; height: 40px; padding: 0; margin: 0; cursor: pointer;
   background: var(--ink-0); border: 1px solid var(--line-strong); border-radius: 0; overflow: hidden;
 }
-.view-aids-thumb img, .view-aids-thumb-empty { display: block; width: 100%; height: 100%; object-fit: cover; }
+.view-aids-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.view-aids-thumb.no-image { width: auto; min-width: 64px; max-width: 128px; height: 24px; align-self: flex-end; }
+.view-aids-thumb.no-image .view-aids-thumb-name { position: static; line-height: 22px; background: none; }
 .view-aids-thumb-name {
   position: absolute; left: 0; right: 0; bottom: 0; padding: 0 var(--sp-2);
   font: var(--fs-caption)/14px var(--ui); color: var(--text); background: var(--view-ink-label);
