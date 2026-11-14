@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { VIEW_DEFAULTS, VIEW_OUTLINE, withViewDefaults } from "../src/core/view_defaults.js";
+import type { Json } from "../src/core/workspace.js";
 import {
   addDataset,
   addScene,
@@ -112,7 +114,7 @@ describe("scenes", () => {
   it("adds an empty scene that keeps the space and layout, and a copy that keeps everything", () => {
     const p0 = emptyPlatform(ids);
     const empty = addScene(p0, sceneA, {}, ids);
-    expect(empty.ng).toEqual({ layout: "xy" });
+    expect(empty.ng).toEqual({ ...VIEW_DEFAULTS, layout: "xy" });
     expect(empty.platform.scenes.map((s) => s.name)).toEqual(["Scene 1", "Scene 2"]);
     expect(empty.platform.activeScene).toBe(empty.id);
     // The scene left behind carries its state.
@@ -213,5 +215,21 @@ describe("scene kinds", () => {
     expect(read.scenes.find((s) => s.id === "a")?.app).toEqual({ x: { version: 1, data: 1 } });
     const copy = addScene(read, { layers: [] }, { copy: true, kind: "collection" }, ids);
     expect(copy.platform.scenes.find((s) => s.id === copy.id)?.kind).toBeUndefined();
+  });
+});
+
+describe("view defaults", () => {
+  it("fill in what a new scene or an example leaves out, and nothing it states", () => {
+    const ng = withViewDefaults({
+      crossSectionBackgroundColor: "#808080",
+      layers: [
+        { type: "image", source: "a", name: "a" },
+        { type: "segmentation", source: "b", name: "b", annotationColor: "#ff0000" },
+        { type: "annotation", source: "local://annotations", name: "c" },
+      ],
+    });
+    expect(ng.crossSectionBackgroundColor).toBe("#808080");
+    expect((ng.layers as Json[]).map((l) => l.annotationColor)).toEqual([VIEW_OUTLINE, "#ff0000", undefined]);
+    expect(withViewDefaults({})).toEqual(VIEW_DEFAULTS);
   });
 });

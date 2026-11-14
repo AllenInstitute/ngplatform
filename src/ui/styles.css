@@ -64,6 +64,15 @@
   --dec-x: #e0574b;
   --dec-y: #5cb46c;
   --dec-z: #4f88dc;
+  /* The views' own chrome (Neuroglancer's, restyled; src/core/view_defaults.ts sets the
+     first two as defaults of a new scene): the margin around the sections (a black stage,
+     the data floats on it), a layer's bounding box, and the axis labels a step quieter
+     than --dec-x/y/z (each at least 5:1 on the margin). */
+  --view-margin: #0c0c0c;
+  --view-outline: #666;
+  --view-x: #ce6e65;
+  --view-y: #71af7c;
+  --view-z: #6890cb;
   /* Overlays: the dimmed page behind a sheet, and the shadows that lift things off it. */
   --scrim: rgba(0, 0, 0, 0.6);
   --shadow-sheet: 0 20px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(0, 0, 0, 0.4);
@@ -1149,6 +1158,34 @@ textarea.state-input.tall { min-height: 50vh; }
   .dock-bottom { height: min(var(--bh), 30vh); }
 }
 
+
+/* ------------------------------------------------- Neuroglancer's view chrome
+   What Neuroglancer draws as DOM over its views, in the system: each panel in a
+   1 px frame, the one with the focus in the accent; the axis labels (top left
+   of each panel, its scales and depth on hover) as captions in the readouts'
+   face, the names in the quieter axis colours.  The margin, the bounding boxes
+   and the scale bar are drawn in WebGL: the first two are a new scene's
+   defaults (src/core/view_defaults.ts), the scale bar's face and size are set
+   by the engine; the axis lines keep Neuroglancer's red, green and blue. */
+.engine .neuroglancer-show-panel-borders .neuroglancer-panel { border-width: 1px; border-color: var(--line-strong); }
+.engine .neuroglancer-show-panel-borders .neuroglancer-panel:focus-within { border-color: var(--accent); }
+.engine .neuroglancer-display-dimensions-widget {
+  top: var(--sp-2); left: var(--sp-2); padding: var(--sp-1) var(--sp-2);
+  background: rgba(0, 0, 0, 0.55); color: var(--muted); font: var(--fs-caption)/1.3 var(--mono); font-variant-numeric: tabular-nums;
+}
+.engine .neuroglancer-display-dimensions-widget:is(:hover, [data-active="true"]) { background: var(--surface-overlay); outline: 1px solid var(--line-strong); }
+.engine .neuroglancer-display-dimensions-input-base { font: var(--fs-caption)/1.3 var(--mono); color: var(--text); padding: 1px var(--sp-1); }
+.engine .neuroglancer-display-dimensions-input-base:hover { border-color: var(--line-hover); }
+.engine .neuroglancer-display-dimensions-input-base:focus { background: var(--ink-0); border-color: var(--line-focus); }
+.engine .neuroglancer-display-dimensions-widget-scale-unit,
+.engine .neuroglancer-display-dimensions-input-wrapper::before,
+.engine .neuroglancer-display-dimensions-input-wrapper::after,
+.engine .neuroglancer-display-dimensions-widget-scale-factor::after { color: var(--muted); }
+/* Neuroglancer colours the three names inline (#f00, #0f0, #99f). */
+.engine .neuroglancer-display-dimensions-widget-dimension:nth-child(1) .neuroglancer-display-dimensions-widget-name { color: var(--view-x) !important; }
+.engine .neuroglancer-display-dimensions-widget-dimension:nth-child(2) .neuroglancer-display-dimensions-widget-name { color: var(--view-y) !important; }
+.engine .neuroglancer-display-dimensions-widget-dimension:nth-child(3) .neuroglancer-display-dimensions-widget-name { color: var(--view-z) !important; }
+.engine .neuroglancer-display-dimensions-widget :is(label, .neuroglancer-display-dimensions-widget-default) { font: var(--fs-caption)/1.3 var(--ui); color: var(--muted); }
 
 /* Neuroglancer's own bar inside the viewer: position, left; tool status. */
 .engine .neuroglancer-viewer-top-row { background: var(--ink-1); border-bottom: 1px solid var(--line); margin-bottom: 0; min-height: 26px; }

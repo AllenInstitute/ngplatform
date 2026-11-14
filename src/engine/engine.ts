@@ -38,6 +38,7 @@ import { applyLookupTable, layerLookupSource } from "./lookup_tables.js";
 import { addMomentum } from "./momentum.js";
 import { mountInspector, mountSource } from "./inspector/index.js";
 import { sizeMemoryLimits } from "./memory.js";
+import { VIEW_MARGIN, VIEW_OUTLINE } from "../core/view_defaults.js";
 import { type ChunkSourceStatistics, chunkStatistics, mountViewSettings } from "./view_settings.js";
 import { guardSelectedValues, type SelectedValues } from "./selected_values.js";
 import { watchOutlines } from "./outlines.js";
@@ -295,6 +296,7 @@ export class Engine {
     });
     // GPU and system memory by the computer's memory, not Neuroglancer's 1 GB and 2 GB everywhere.
     sizeMemoryLimits(this.viewer);
+    styleScaleBar(this.viewer);
     guardSelectedValues(this.viewer.layerSelectedValues as unknown as SelectedValues);
     this.viewer.coordinateSpace.changed.add(() => {
       this.preferXyz();
@@ -810,6 +812,21 @@ export class Engine {
     });
   }
 
+  /**
+   * Draws a new image or segmentation layer's bounding box in the view's
+   * outline grey (--view-outline) once it has loaded and its type is known,
+   * unless its annotation colour is set.  For layers the platform adds, not
+   * those a link carries (src/core/view_defaults.ts).
+   */
+  outlineWhenLoaded(name: string): void {
+    this.whenLoaded(name, () => true, () => {
+      const layer = this.managed(name)?.layer;
+      if (!(layer instanceof ImageUserLayer || layer instanceof SegmentationUserLayer)) return;
+      if ((layer.toJSON() as Json).annotationColor !== undefined) return;
+      layer.annotationDisplayState.color.restoreState(VIEW_OUTLINE);
+    });
+  }
+
   /** Runs `run` once layer `name` is ready and `also` holds, if within `timeout` ms. */
   private whenLoaded(name: string, also: () => boolean, run: () => void | Promise<void>, timeout = 120_000): void {
     const v = this.viewer;
@@ -950,6 +967,11 @@ export class Engine {
 
   viewOptions(): Record<string, boolean> {
     return Object.fromEntries(Object.entries(this.viewOptionTrackables()).map(([k, t]) => [k, t.value]));
+  }
+
+  /** The views' defaults for a new, empty viewer (src/core/view_defaults.ts): a near-black margin around the sections. */
+  applyViewDefaults(): void {
+    this.viewer.crossSectionBackgroundColor.restoreState(VIEW_MARGIN);
   }
 
   setViewOption(key: string, value: boolean): void {
@@ -1464,4 +1486,26 @@ export class Engine {
     this.disposers.splice(0).forEach((d) => d());
     this.viewer.dispose();
   }
+}
+
+/**
+ * The scale bar in the readouts' face (Source Code Pro), smaller and with a
+ * thinner bar than Neuroglancer's 15 px bold sans-serif.  Neuroglancer draws
+ * it in WebGL from a canvas, always white and bold on a 30 % black box: its
+ * face and sizes are all that can be set.  Not part of a link's state.
+ */
+function styleScaleBar(viewer: Viewer): void {
+  const style = () => {
+    viewer.scaleBarOptions.value = {
+      ...viewer.scaleBarOptions.value,
+      fontName: '"Source Code Pro", ui-monospace, monospace',
+      textHeightInPixels: 12,
+      barHeightInPixels: 3,
+      barTopMarginInPixels: 3,
+      paddingInPixels: 4,
+    };
+  };
+  style();
+  // The canvas draws in whatever face is loaded: again once the readouts' face is.
+  document.fonts?.load('bold 12px "Source Code Pro"').then(style, () => {});
 }
