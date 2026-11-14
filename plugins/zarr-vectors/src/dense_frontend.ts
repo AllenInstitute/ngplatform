@@ -294,11 +294,12 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
       this.sequential = data.sequential;
       this.objectPerVertex = data.objectPerVertex;
       this.uploads = data;
-      (source as ZarrVectorsGeometryChunkSource).knownBytes.set(
-        x.id,
-        drawChunkBytes(data).gpu,
-      );
     }
+    // An empty cell is known too, at no size, as the worker counts it.
+    (source as ZarrVectorsGeometryChunkSource).knownBytes.set(
+      x.id,
+      data === undefined ? 0 : drawChunkBytes(data).gpu,
+    );
   }
 
   copyToGPU(gl: GL) {

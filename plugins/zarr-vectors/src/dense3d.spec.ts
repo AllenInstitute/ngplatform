@@ -135,3 +135,89 @@ describe("a 3-D view's chunks", () => {
     expect(dense.byLevel[0] + dense.byLevel[1]).toBeGreaterThan(0);
   });
 });
+
+describe("a sparse coarsest level (a cell atlas)", () => {
+  // The ABC atlas's store: 3.74 M cells in a 12.6 x 8 x 10.5 mm mouse brain,
+  // in 0.5 mm cells at every one of five levels, each an eighth of the one
+  // below: the coarsest holds 913 cells, so most of its cells are empty.
+  const alower = [0, 0, 0];
+  const aupper = [12.6, 8, 10.5];
+  const acell = [0.5, 0.5, 0.5];
+  const alevels = 5;
+  const avolume = aupper[0] * aupper[1] * aupper[2];
+  const adensities = Array.from({ length: alevels }, (_, l) => 3.74e6 / 8 ** l / avolume);
+  const cellVolume = acell[0] * acell[1] * acell[2];
+  const aview = (fieldOfView: number) => {
+    const v = view(fieldOfView);
+    const centre = vec3.fromValues(6.3, 4, 5.25);
+    const fovy = Math.PI / 4;
+    const distance = fieldOfView / (2 * Math.tan(fovy / 2) * (WIDTH / HEIGHT));
+    const projection = mat4.perspective(mat4.create(), fovy, WIDTH / HEIGHT, distance * 0.1, distance + 30);
+    const eye = vec3.fromValues(6.3, 4 - distance, 5.25);
+    const viewMatrix = mat4.lookAt(mat4.create(), eye, centre, vec3.fromValues(0, 0, 1));
+    return { ...v, viewProjectionMat: mat4.multiply(mat4.create(), projection, viewMatrix), chunkSizes: Array.from({ length: alevels }, () => acell), lowerClip: alower, upperClip: aupper };
+  };
+  const aroots = (): DenseNode[] => {
+    const out: DenseNode[] = [];
+    for (let x = 0; x < Math.ceil(aupper[0] / acell[0]); ++x) {
+      for (let y = 0; y < Math.ceil(aupper[1] / acell[1]); ++y) {
+        for (let z = 0; z < Math.ceil(aupper[2] / acell[2]); ++z) out.push({ level: alevels - 1, position: Float32Array.of(x, y, z) });
+      }
+    }
+    return out;
+  };
+  /** The coarsest level as read: each cell's vertices drawn at random about its mean (0.1), most none. */
+  const standIns = (seed: number) => {
+    let s = seed;
+    const random = () => ((s = (s * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+    const mean = adensities[alevels - 1] * cellVolume;
+    const sizes = new Map<string, number>();
+    return (level: number, position: Float32Array) => {
+      if (level !== alevels - 1) return undefined;
+      const key = position.join();
+      if (!sizes.has(key)) {
+        // Poisson by inversion.
+        let k = 0;
+        let p = Math.exp(-mean);
+        let f = p;
+        const u = random();
+        while (u > f) p *= mean / ++k, (f += p);
+        sizes.set(key, k * BYTES_PER_VERTEX);
+      }
+      return sizes.get(key);
+    };
+  };
+  /** Each region's finest level drawn (regions wholly out of view, none drawn, left out). */
+  const levelsOf = (chosen: DenseRoot[]) => chosen.filter(({ leaves }) => leaves.length > 0).map(({ leaves }) => Math.min(...leaves.map((l) => l.level)));
+
+  it("refine under an empty stand-in as under any other, so no region is left at the coarsest level", () => {
+    const read = standIns(1);
+    const chosen = refineDense3dChunks(aroots(), aview(16), adensities, 1, BUDGET, BYTES_PER_VERTEX, read);
+    const finest = levelsOf(chosen);
+    // Every region of the brain at the same, finer level: no patches of the 913-cell stand-in.
+    expect(new Set(finest).size).toBe(1);
+    expect(finest[0]).toBeLessThan(alevels - 1);
+    // As before empty cells counted as read: the regions under them never refined, a patchwork.
+    const unread = (level: number, position: Float32Array) => (read(level, position) || undefined);
+    const before = levelsOf(refineDense3dChunks(aroots(), aview(16), adensities, 1, BUDGET, BYTES_PER_VERTEX, unread));
+    expect(before.filter((l) => l === alevels - 1).length).toBeGreaterThan(before.length / 2);
+  });
+
+  it("count a region under a sparse stand-in at its level's density, so the budget holds", () => {
+    // A budget for about half the brain at the finest level. The finer chunks hold
+    // their level's mean, whatever the stand-in over them happened to hold.
+    const budget = 0.5 * 3.74e6 * BYTES_PER_VERTEX;
+    const chosen = refineDense3dChunks(aroots(), aview(16), adensities, 1, budget, BYTES_PER_VERTEX, standIns(2));
+    let bytes = 0;
+    for (const { leaves } of chosen) for (const l of leaves) bytes += adensities[l.level] * cellVolume * BYTES_PER_VERTEX;
+    expect(bytes).toBeLessThanOrEqual(budget * 1.1);
+  });
+
+  it("choose among thousands of the coarsest level's chunks quickly", () => {
+    const roots = aroots();
+    expect(roots.length).toBeGreaterThan(8000);
+    const t = performance.now();
+    refineDense3dChunks(roots, aview(16), adensities, 1, BUDGET, BYTES_PER_VERTEX, standIns(3));
+    expect(performance.now() - t).toBeLessThan(500);
+  });
+});

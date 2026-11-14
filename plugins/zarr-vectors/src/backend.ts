@@ -219,11 +219,11 @@ export class ZarrVectorsDenseChunk extends SliceViewChunk {
   downloadSucceeded() {
     const { data } = this;
     let bytes = { gpu: 0, cpu: 0 };
-    if (data !== undefined) {
-      const source = this.source as ZarrVectorsGeometryChunkSourceBackend;
-      bytes = drawChunkBytes(data, source.layout);
-      source.knownBytes.set(this.key!, bytes.gpu);
-    }
+    const source = this.source as ZarrVectorsGeometryChunkSourceBackend;
+    if (data !== undefined) bytes = drawChunkBytes(data, source.layout);
+    // An empty cell (none written) is known too, at no size: a 3-D view refines
+    // the region under it, where a sparse coarsest level is mostly such cells.
+    source.knownBytes.set(this.key!, bytes.gpu);
     this.systemMemoryBytes = bytes.cpu;
     this.gpuMemoryBytes = bytes.gpu;
     super.downloadSucceeded();

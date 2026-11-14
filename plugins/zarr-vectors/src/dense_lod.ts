@@ -518,6 +518,9 @@ export function refineDense3dChunks(
   // before counts at its own size; one not yet read, at its level's density
   // scaled by how much denser than its level's mean the coarsest chunk over
   // it turned out (`local`, per root), which loads first as the stand-in.
+  // A stand-in of a few vertices says little (a sparse coarsest level, such
+  // as a cell atlas's 1 in 4,096: one vertex more or less is a factor of
+  // ten), so the factor is drawn towards 1 by LOCAL_PRIOR vertices.
   const local = new Float64Array(roots.length).fill(1);
   const bytesOf = (
     level: number,
@@ -535,32 +538,57 @@ export function refineDense3dChunks(
     pixel: number;
   }
   let used = 0;
+  // Nearest (finest pixels) first: a binary heap, as a whole store in view
+  // puts thousands of the coarsest level's chunks in it (a cell atlas in
+  // 0.5 mm cells: 8,400).
   const queue: Candidate[] = [];
+  const push = (c: Candidate) => {
+    let i = queue.push(c) - 1;
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (queue[parent].pixel <= queue[i].pixel) break;
+      [queue[parent], queue[i]] = [queue[i], queue[parent]];
+      i = parent;
+    }
+  };
+  const pop = (): Candidate => {
+    const top = queue[0];
+    const last = queue.pop()!;
+    if (queue.length > 0) {
+      queue[0] = last;
+      let i = 0;
+      for (;;) {
+        const l = 2 * i + 1;
+        const r = l + 1;
+        let m = i;
+        if (l < queue.length && queue[l].pixel < queue[m].pixel) m = l;
+        if (r < queue.length && queue[r].pixel < queue[m].pixel) m = r;
+        if (m === i) break;
+        [queue[m], queue[i]] = [queue[i], queue[m]];
+        i = m;
+      }
+    }
+    return top;
+  };
   roots.forEach(({ root }, rootIndex) => {
     const box = boxOf(root.level, root.position)!;
     const volume = volumeOf(box);
     const known = knownBytes?.(root.level, root.position);
     const mean = densities[root.level] * volume * bytesPerVertex;
-    if (known !== undefined && mean > 0) local[rootIndex] = known / mean;
+    if (known !== undefined && mean > 0 && bytesPerVertex > 0) {
+      local[rootIndex] = (known / bytesPerVertex + LOCAL_PRIOR) / (mean / bytesPerVertex + LOCAL_PRIOR);
+    }
     used += known ?? mean;
     // Refined once its own size says how dense it is (when sizes are known
-    // at all), so no finer chunk is read only to be let go.
+    // at all; an empty chunk's is 0), so no finer chunk is read only to be let go.
     if (knownBytes === undefined || known !== undefined) {
-      queue.push({ rootIndex, node: root, volume, pixel: pixelSize(box) });
+      push({ rootIndex, node: root, volume, pixel: pixelSize(box) });
     }
   });
   const leafSets = roots.map(() => new Map<string, DenseNode>());
   roots.forEach(({ root }, i) => leafSets[i].set(`${root.level}:${root.position.join()}`, root));
-  // Nearest (finest pixels) first; a binary heap would do the same in fewer
-  // steps, but the queue holds at most a few hundred chunks.
   while (queue.length > 0) {
-    let best = 0;
-    for (let i = 1; i < queue.length; ++i) {
-      if (queue[i].pixel < queue[best].pixel) best = i;
-    }
-    const c = queue[best];
-    queue[best] = queue[queue.length - 1];
-    queue.pop();
+    const c = pop();
     const finer = c.node.level - 1;
     if (finer < 0) continue;
     if (spacing(finer, c.volume, c.pixel) < target) continue;
@@ -612,12 +640,15 @@ export function refineDense3dChunks(
     leaves.delete(`${c.node.level}:${c.node.position.join()}`);
     for (const child of children) {
       leaves.set(`${child.node.level}:${child.node.position.join()}`, child.node);
-      queue.push(child);
+      push(child);
     }
   }
   roots.forEach((r, i) => (r.leaves = [...leafSets[i].values()]));
   return roots;
 }
+
+/** Vertices of prior weight on a stand-in's density factor (see refineDense3dChunks). */
+export const LOCAL_PRIOR = 16;
 
 /** Points `tsource.curPositionInChunks` at a node's chunk. */
 export function setNodePosition(
