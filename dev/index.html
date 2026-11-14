@@ -6,6 +6,8 @@
     <!-- The build puts its Content-Security-Policy here (src/platform/csp.ts). -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
+    <!-- The theme (Settings › View), before the page is first drawn. -->
+    <script src="./theme.js"></script>
     <title>ngplatform</title>
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <!-- IBM Plex, served with the app (public/fonts). -->
@@ -13,14 +15,15 @@
     <!-- The loading screen, shown until main.ts has built the shell: over the
          page rather than in it, so nothing moves when it goes. -->
     <style>
-      html { background: #000; }
-      .boot { position: fixed; inset: 0; z-index: 2147483647; display: grid; place-content: center; justify-items: center; gap: 12px; background: #000; color: #949494; font: 13px/1.45 "IBM Plex Sans", system-ui, sans-serif; }
-      .boot-bar { width: 160px; height: 2px; background: #262626; overflow: hidden; }
-      .boot-bar::after { content: ""; display: block; width: 40%; height: 100%; background: #d0d0d0; animation: boot-slide 1.2s ease-in-out infinite; }
+      html { background: #000; --boot-ink: #000; --boot-text: #949494; --boot-track: #262626; --boot-bar: #d0d0d0; }
+      html[data-theme="light"] { background: #fff; --boot-ink: #fff; --boot-text: #6b6b6b; --boot-track: #e0e0e0; --boot-bar: #2e2e2e; }
+      .boot { position: fixed; inset: 0; z-index: 2147483647; display: grid; place-content: center; justify-items: center; gap: 12px; background: var(--boot-ink); color: var(--boot-text); font: 13px/1.45 "IBM Plex Sans", system-ui, sans-serif; }
+      .boot-bar { width: 160px; height: 2px; background: var(--boot-track); overflow: hidden; }
+      .boot-bar::after { content: ""; display: block; width: 40%; height: 100%; background: var(--boot-bar); animation: boot-slide 1.2s ease-in-out infinite; }
       @keyframes boot-slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
       @media (prefers-reduced-motion: reduce) { .boot-bar::after { animation: none; width: 100%; opacity: 0.4; } }
     </style>
-    <script type="module" crossorigin src="./assets/main-CPGMDx21.js"></script>
+    <script type="module" crossorigin src="./assets/main-CPWVeROO.js"></script>
     <link rel="modulepreload" crossorigin href="./assets/worker_factories-CgfNo_7I.js">
     <link rel="modulepreload" crossorigin href="./assets/hash-BMM8fdB1.js">
     <link rel="modulepreload" crossorigin href="./assets/default_provider-B3Ks6hpK.js">
@@ -39,20 +42,20 @@
     <link rel="modulepreload" crossorigin href="./assets/manifest-et55Ro64.js">
     <link rel="modulepreload" crossorigin href="./assets/manifest-Cti3EB3v.js">
     <link rel="modulepreload" crossorigin href="./assets/sources-CfxaY8yx.js">
-    <link rel="modulepreload" crossorigin href="./assets/index-CpX5WWIj.js">
+    <link rel="modulepreload" crossorigin href="./assets/index-C4_ZS5_2.js">
     <link rel="modulepreload" crossorigin href="./assets/colour_shader-0DT8aXPm.js">
-    <link rel="modulepreload" crossorigin href="./assets/dom-CBuUgqkf.js">
+    <link rel="modulepreload" crossorigin href="./assets/dom-CwP6c8Q5.js">
     <link rel="modulepreload" crossorigin href="./assets/ome-B1MVvfZm.js">
     <link rel="modulepreload" crossorigin href="./assets/format-DboGQ6hA.js">
-    <link rel="modulepreload" crossorigin href="./assets/overlays-Cf0t6c73.js">
+    <link rel="modulepreload" crossorigin href="./assets/overlays-DyuFXh5Q.js">
     <link rel="modulepreload" crossorigin href="./assets/routes-D_DbX2-V.js">
     <link rel="modulepreload" crossorigin href="./assets/mat4-DjgDCVUW.js">
     <link rel="modulepreload" crossorigin href="./assets/zip-CpJRIpD3.js">
     <link rel="modulepreload" crossorigin href="./assets/volume-1M4IcpMS.js">
-    <link rel="modulepreload" crossorigin href="./assets/docks-C1ndkHRg.js">
+    <link rel="modulepreload" crossorigin href="./assets/docks-CoMBdoMm.js">
     <link rel="stylesheet" crossorigin href="./assets/default_provider-BP_YUIjt.css">
     <link rel="stylesheet" crossorigin href="./assets/viewer-DT8BFPu_.css">
-    <link rel="stylesheet" crossorigin href="./assets/main-JF4H6YzF.css">
+    <link rel="stylesheet" crossorigin href="./assets/main-CfBfCuUG.css">
     <link rel="modulepreload" crossorigin href="./assets/register_default-DPLKr4BW.js">
     <link rel="modulepreload" crossorigin href="./assets/zarr_array-BiUbmOXp.js">
   </head>
