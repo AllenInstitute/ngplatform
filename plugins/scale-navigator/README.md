@@ -42,9 +42,10 @@ rule Neuroglancer's slice views use (`filterVisibleSources` in
 ## Notes
 
 - HiP-CT's zooms (VOIs) in the Human Organ Atlas bucket carry no
-  registration to their overview: each starts at its own origin. They nest
-  in a scene only once placed with a layer transform; the plugin does not
-  guess one.
+  registration to their overview: each starts at its own origin, so opened
+  as they are a zoom lies in the overview's corner and is shown there. They
+  nest where they were scanned only once placed with a layer transform;
+  the plugin does not guess one.
 - In Neuroglancer's 3-D-only layout the 3-D panel has no switch group, so
   **Zoom boxes** is then only in the command palette.
 
