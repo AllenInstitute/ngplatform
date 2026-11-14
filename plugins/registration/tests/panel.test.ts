@@ -6,7 +6,7 @@
  * warping, saving, transform files, and the panel kept up to date in place.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Json, LayerTransform, PlatformContext } from "@ngplatform/sdk";
+import type { Json, LayerTransform, PlatformContext, ViewShape } from "@ngplatform/sdk";
 import { type FakeDom, fakeDocument, fakeViewTools } from "@ngplatform/sdk/testing";
 import { notOffered, Registration, type Saved, type SaveWorker } from "../plugin.js";
 import { finestThatFits, saveBytes } from "../volume_io.js";
@@ -228,7 +228,9 @@ describe("the Registration panel", () => {
       "registration.transformFile",
       "registration.image",
     ]);
-    expect(card(host, "registration.transform").open).toBe(true);
+    // The landmarks and the box in the views lead; the sliders are there, closed, for exact entry.
+    expect(card(host, "registration.transform").open).toBe(false);
+    expect(dom.text(host.querySelector(".rg-lead")!)).toContain("Landmarks");
     // No private number boxes, radios or headings; every select in the shared field style; every on/off control the SDK's.
     expect(host.querySelectorAll(".rg-num, h3, input[type=radio]")).toEqual([]);
     expect(Array.from(host.querySelectorAll("select"), (s) => s.className).every((c) => c === "text-input")).toBe(true);
@@ -271,7 +273,7 @@ describe("the Registration panel", () => {
     expect(f.saved().pairs[0].moving).toEqual([12, 20, 30]);
     // Live: moving onto fixed, 2 mm along -x.
     expect(f.matrix("brain")[12]).toBeCloseTo(-2, 9);
-    expect(host.querySelector(".card-badge")!.textContent).toBe("1 pair");
+    expect(host.querySelector(".rg-lead")!.querySelector(".readout-value")!.textContent).toBe("1\u2009pair");
     expect(dom.text(host.querySelector(".rg-pairs")!)).toContain("Fixed x, y, z (mm) Moving x, y, z (mm) Error 1 10.0, 20.0, 30.0");
     expect(dom.text(host)).toContain("RMS 0.00 mm");
     // The landmarks show in their annotation layers, the moving one where the layer now puts it.
@@ -337,7 +339,7 @@ describe("the Registration panel", () => {
     expect(f.saved().pairs[0].moving).toBeDefined();
     f.ctx.state.set(before);
     expect(dom.text(host.querySelector(".rg-pairs")!)).toContain("—");
-    expect(host.querySelector(".card-badge")!.textContent).toBe("1 pair");
+    expect(host.querySelector(".rg-lead")!.querySelector(".readout-value")!.textContent).toBe("1\u2009pair");
     f.ctx.state.set({ ...before, pairs: [] });
     expect(host.querySelector(".rg-pairs")).toBeNull();
     expect(button(host, "Clear pairs").disabled).toBe(true);
@@ -404,6 +406,81 @@ describe("the Registration panel", () => {
     button(host, "Stop placing").click();
     f.views.click([1, 1, 1]);
     expect(f.saved().pairs).toHaveLength(1);
+  });
+
+  it("moves, turns and scales the layer by its box in the views, as the sliders do, one undo step a drag", async () => {
+    const f = fakeContext();
+    f.add("brain");
+    const { host } = await open(f);
+    const frame = () => f.views.shapes.get("frame") as Extract<ViewShape, { kind: "frame" }>;
+    // The layer's box: a 100 mm cube about (50, 50, 50), its ring about its centre, in the 2-D views only.
+    expect(frame()).toMatchObject({ kind: "frame", views: "2d", title: "brain", centre: [50, 50, 50], axes: [[50, 0, 0], [0, 50, 0], [0, 0, 50]], pivot: [50, 50, 50] });
+    const states: unknown[] = [];
+    f.ctx.state.onChanged(() => states.push(f.saved()));
+    // Dragged 3 mm along x, then 5: each from where the drag began; saved once, when let go.
+    f.views.drag("frame", { change: { kind: "move", by: [3, 0, 0] } }, false);
+    f.views.drag("frame", { change: { kind: "move", by: [5, 0, 0] } }, false);
+    expect(f.matrix("brain")[12]).toBeCloseTo(5, 9);
+    expect(states).toHaveLength(0);
+    f.views.drag("frame", { change: { kind: "move", by: [5, 0, 0] } }, true);
+    expect(states).toHaveLength(1);
+    expect(f.saved().manual.translate).toEqual([5, 0, 0]);
+    expect(frame().centre).toEqual([55, 50, 50]);
+    expect(frame().pivot).toEqual([55, 50, 50]);
+    // Turned 90° about z (an axial view's normal) through its ring's centre: the angle changes, not the translation.
+    f.views.drag("frame", { change: { kind: "turn", axis: [0, 0, 1], angle: Math.PI / 2, about: [55, 50, 50] } }, true);
+    expect(f.saved().manual.rotate).toEqual([0, 0, 90]);
+    expect(f.saved().manual.translate).toEqual([5, 0, 0]);
+    expect(frame().centre.map((v) => Math.round(v * 1e6) / 1e6)).toEqual([55, 50, 50]);
+    // Its corner pulled: its own first axis (along y now) is the layer's x, scaled.
+    f.views.drag("frame", { change: { kind: "scale", factors: [1.5, 1, 1], uniform: false } }, true);
+    expect(f.saved().manual.scale).toEqual([1.5, 1, 1]);
+    // The sliders show the same values (Rotate Z), and the card shows them as readouts, with Flip and Restore.
+    expect(number(host, "Rotate Z (I-S)").value).toBe("90");
+    const cardHost = dom.host();
+    frame().card!(cardHost);
+    expect(Array.from(cardHost.querySelectorAll(".readout-value"), (r) => r.textContent)).toEqual(["0.0", "0.0", "90.0", "5.00", "0.00", "0.00", "1.500", "1.000", "1.000"]);
+    expect(Array.from(cardHost.querySelectorAll(".readout-unit"), (r) => r.textContent).filter((u) => u)).toEqual(["°", "mm", "×"]);
+    const flipY = Array.from(cardHost.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.getAttribute("aria-label") === "Flip along y")!;
+    flipY.click();
+    expect(f.saved().manual.flip).toEqual([false, true, false]);
+    expect(flipY.getAttribute("aria-pressed")).toBe("true");
+    button(cardHost, "Restore").click();
+    expect(f.saved().manual).toMatchObject({ translate: [0, 0, 0], rotate: [0, 0, 0], flip: [false, false, false] });
+    expect(frame().centre).toEqual([50, 50, 50]);
+    // While pairs are placed, the box is not there (a click inside it is a landmark).
+    button(host, "Place pairs").click();
+    expect(f.views.shapes.has("frame")).toBe(false);
+    button(host, "Stop placing").click();
+    expect(f.views.shapes.has("frame")).toBe(true);
+    // Edit in views selects it.
+    button(host, "Edit in views").click();
+    expect(f.views.selected()).toBe("frame");
+  });
+
+  it("titles a landmark's card by its pair, with both points and the error after the fit as readouts", async () => {
+    const f = fakeContext();
+    f.add("brain");
+    await open(f);
+    for (const [x, y, m] of [[10, 20, 12], [40, 50, 41], [70, 20, 73]]) {
+      mark(f, "fixed", [x, y, 30]);
+      mark(f, "moving", [m, y, 30]);
+    }
+    const id = f.saved().pairs[0].id;
+    const shape = f.views.shapes.get(`m${id}`)!;
+    expect(shape).toMatchObject({ label: "1", title: "Pair 1" });
+    const cardHost = dom.host();
+    shape.card!(cardHost);
+    expect(Array.from(cardHost.querySelectorAll(".view-card-label"), (l) => [l.textContent, l.classList.contains("chosen")])).toEqual([
+      ["Fixed", false],
+      ["Moving", true],
+      ["Error", false],
+    ]);
+    const values = Array.from(cardHost.querySelectorAll<HTMLElement>(".readout-value"), (r) => r.textContent);
+    expect(values.slice(0, 6)).toEqual(["10.0", "20.0", "30.0", "12.0", "20.0", "30.0"]);
+    // The error, known once the pairs are fitted (three for a rigid fit).
+    expect(values[6]).toMatch(/^\d+\.\d\d$/);
+    expect(cardHost.querySelector<HTMLElement>(".view-card-wide")!.hidden).toBe(false);
   });
 
   it("warps through four pairs or more, and says when there are too few", async () => {

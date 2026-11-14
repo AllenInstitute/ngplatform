@@ -288,7 +288,7 @@ class ViewAids {
 
   private async addBookmark(): Promise<void> {
     const camera = cameraNow(this.ctx);
-    const thumbnail = await this.ctx.viewer.thumbnail?.(THUMB.width, THUMB.height).catch(() => undefined);
+    const thumbnail = await this.ctx.viewer.thumbnail?.(THUMB.width, THUMB.height, "3d").catch(() => undefined);
     const bookmark: Bookmark = { id: crypto.randomUUID().slice(0, 8), name: nextName(this.saved.bookmarks), camera, ...(thumbnail ? { thumbnail } : {}) };
     this.current = bookmark.id;
     this.write({ bookmarks: [...this.saved.bookmarks, bookmark] });
@@ -297,7 +297,7 @@ class ViewAids {
 
   private async replace(id: string): Promise<void> {
     const camera = cameraNow(this.ctx);
-    const thumbnail = await this.ctx.viewer.thumbnail?.(THUMB.width, THUMB.height).catch(() => undefined);
+    const thumbnail = await this.ctx.viewer.thumbnail?.(THUMB.width, THUMB.height, "3d").catch(() => undefined);
     this.write({ bookmarks: this.saved.bookmarks.map((b) => (b.id === id ? { ...b, camera, ...(thumbnail ? { thumbnail } : {}) } : b)) });
     this.current = id;
   }

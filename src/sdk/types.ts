@@ -420,12 +420,14 @@ export interface ViewerApi {
   /** Calls back after each frame the views draw. */
   onRendered(callback: () => void): Disposer;
   /**
-   * A small picture of the 3-D view (else of the first view shown) as it is
-   * next drawn, without the platform's overlays: a data URL (WebP where the
-   * browser writes it, else PNG), `width` × `height` pixels, the view
-   * cropped to fill it.  Undefined when no view is shown.
+   * A small picture of the 3-D view (else of the first view shown; with
+   * `view` "3d", of the 3-D view only, whatever the layout) once what it
+   * shows has loaded (at most a few seconds), without the platform's
+   * overlays: a data URL (WebP where the browser writes it, else PNG),
+   * `width` × `height` pixels, the view cropped to fill it.  Undefined when
+   * no such view is shown.
    */
-  thumbnail?(width: number, height: number): Promise<string | undefined>;
+  thumbnail?(width: number, height: number, view?: "3d" | "any"): Promise<string | undefined>;
   /**
    * A layer's first data source's transform, from its source space to the
    * global one, and the transform the source itself gives (its default).
@@ -559,8 +561,10 @@ export interface ViewPanelInfo {
 export interface ViewShapeBase {
   /** Unique among the plugin's shapes; what `selected()` and `onSelect` name. */
   id: string;
-  /** The floating card's title; a point shows it beside itself (a landmark's number). */
+  /** The floating card's title, unless `title` gives one; a point shows it beside itself (a landmark's number). */
   label?: string;
+  /** The floating card's heading, when it is not the label ("Pair 1" for a point labelled "1"). */
+  title?: string;
   /** CSS colour of its lines when not selected (a group's colour); light grey when none. */
   colour?: string;
   /** False: drawn and selectable (its card shows), without handles. Default true. */
@@ -623,7 +627,32 @@ export type ViewShape = ViewShapeBase &
         turns?: boolean;
         onChange?(value: { point: number[]; normal: number[] }, done: boolean): void;
       }
+    | {
+        kind: "frame";
+        /** Its centre. */
+        centre: number[];
+        /** Its three half-edge vectors (global units, any directions): a box turned and sized as a layer's data is placed. */
+        axes: number[][];
+        /** What its ring turns about (Registration's Rotate around); else its centre. */
+        pivot?: number[];
+        /** False: no ring. Default true. */
+        turns?: boolean;
+        onChange?(value: { centre: number[]; axes: number[][]; pivot?: number[]; change: ViewFrameChange }, done: boolean): void;
+      }
   );
+
+/**
+ * What a drag did to a frame, from the frame as it was when the drag
+ * began (an arrow key: one step): moved by a vector; turned by `angle`
+ * radians (right-handed) about `axis` (a unit vector, display
+ * coordinates: the section's normal) through `about`; or scaled along
+ * each of its own axes by `factors` (about its centre; `uniform`: Shift
+ * held, all three alike).
+ */
+export type ViewFrameChange =
+  | { kind: "move"; by: number[] }
+  | { kind: "turn"; axis: number[]; angle: number; about: number[] }
+  | { kind: "scale"; factors: [number, number, number]; uniform: boolean };
 
 /** A shape over the views, as `ViewToolsApi.add` returns it. */
 export interface ViewShapeHandle {

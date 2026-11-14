@@ -6,7 +6,27 @@
  */
 import { describe, expect, it } from "vitest";
 import { apply4, identity4, invert4, type Mat4, multiply4, type Vec3 } from "../fit.js";
-import { axisOrder, axisRotation, identityManual, type Manual, manualMatrix, permute, readManual, scaleFromSlider, sliderFromScale, translationStep, turned, unpermute } from "../manual.js";
+import {
+  axisAngleRotation,
+  axisOrder,
+  axisRotation,
+  eulerOf,
+  identityManual,
+  type Manual,
+  manualMatrix,
+  moveManual,
+  permute,
+  readManual,
+  rotationOf,
+  scaleFromSlider,
+  scaleManual,
+  shownPivot,
+  sliderFromScale,
+  translationStep,
+  turned,
+  turnManual,
+  unpermute,
+} from "../manual.js";
 
 const close = (a: ArrayLike<number>, b: ArrayLike<number>, digits = 9) => Array.from(a).forEach((v, i) => expect(v).toBeCloseTo(b[i], digits));
 
@@ -132,5 +152,52 @@ describe("moving by hand, as Freeview", () => {
     expect(translationStep(256)).toBe(0.5);
     expect(translationStep(189)).toBe(0.2);
     expect(translationStep(1)).toBe(0.001);
+  });
+});
+
+describe("moving the layer by its box in the views", () => {
+  const centre: Vec3 = [10, -5, 3];
+  const cursor: Vec3 = [0, 0, 0];
+
+  it("reads the angles back from the rotation they make", () => {
+    for (const r of [[10, 20, 30], [-170, 45, 90.5], [0, -89, 12], [179.5, 0, -179.5]] as Vec3[]) close(eulerOf(rotationOf(r)), r, 5);
+    // Gimbal lock: the same rotation, its turn all about z.
+    const locked = eulerOf(rotationOf([30, 90, 10]));
+    close(rotationOf(locked), rotationOf([30, 90, 10]), 9);
+    close(axisAngleRotation([0, 0, 1], 90), axisRotation(2, 90), 12);
+  });
+
+  it("turns about the shown pivot: the angles change, the translation stays", () => {
+    for (const around of ["centre", "cursor"] as const) {
+      const m: Manual = { ...identityManual(around), translate: [4, -2, 7], rotate: [10, -20, 35], scale: [1.2, 0.9, 1], flip: [true, false, false] };
+      const p0: Vec3 = around === "centre" ? centre : cursor;
+      const fixed = { ...m, pivot: p0 };
+      const axis: Vec3 = [0.2, -0.5, 0.84];
+      const n = Math.hypot(...axis);
+      const unitAxis = axis.map((v) => v / n) as Vec3;
+      const turned = turnManual(m, unitAxis, 25, p0);
+      expect(turned.translate).toEqual(m.translate);
+      expect(turned.pivot).toEqual(p0);
+      // The whole transform is the old one turned about the shown pivot.
+      const v = shownPivot(m, centre, cursor);
+      const q = axisAngleRotation(unitAxis, 25);
+      const about = identity4();
+      for (let r = 0; r < 3; ++r) {
+        for (let c = 0; c < 3; ++c) about[4 * r + c] = q[3 * r + c];
+        about[4 * r + 3] = v[r] - (q[3 * r] * v[0] + q[3 * r + 1] * v[1] + q[3 * r + 2] * v[2]);
+      }
+      close(manualMatrix(turned, centre), multiply4(about, manualMatrix(fixed, centre)), 6);
+      // The shown pivot stays put.
+      close(apply4(manualMatrix(turned, centre), apply4(invert4(manualMatrix(fixed, centre)), v)), v, 6);
+    }
+  });
+
+  it("moves and scales", () => {
+    const m = { ...identityManual(), translate: [1, 2, 3] as Vec3, scale: [1, 2, 0.5] as Vec3 };
+    expect(moveManual(m, [0.5, -2, 0]).translate).toEqual([1.5, 0, 3]);
+    expect(scaleManual(m, [2, 0.5, 1]).scale).toEqual([2, 1, 0.5]);
+    expect(scaleManual(m, [0, 1, 1]).scale).toEqual([1, 2, 0.5]);
+    expect(shownPivot({ ...m, pivot: [5, 5, 5] }, centre, cursor)).toEqual([6, 7, 8]);
+    expect(shownPivot(m, centre, cursor)).toEqual([11, -3, 6]);
   });
 });

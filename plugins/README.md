@@ -299,13 +299,13 @@ it is deactivated. Subscriptions a plugin makes itself go in
 | `commands.register / invoke` | Supply declared commands; call any command with arguments (validated against the declared schema, defaults filled in). |
 | `ui.panel / showPanel` | Render declared panels; return a disposer for cleanup. A panel declared in the `left` slot is a tool: it shows in the Tools section of the left column, below the layers, under its `group` (`bottom` panels stay in the Activity dock). Build it from the SDK's parts: see [Building a panel](#building-a-panel). |
 | `ui.view` | Show a view beside Neuroglancer's, where its 3-D panel would be; one at a time, with a draggable divider. |
-| `ui.viewToggle` | A switch beside "Sections" in the 3-D panel (volume rendering's "Volume"); `order` (lower first, 100 when not given) keeps one plugin's switches together. |
+| `ui.viewToggle` | A switch beside "Sections" in the 3-D panel (volume rendering's "Volume"); `order` (lower first, 100 when not given) keeps one plugin's switches together. On a 3-D panel narrower than 560 px they fold into one View menu before Sections. |
 | `ui.overlay / screenshotOverlay` | An element over the views, and painting into Neuroglancer's screenshots (labels use both). |
 | `ui.statusItem` | An element on the right of the status line below the views (also while the Activity dock is collapsed), `{ order, label }`, until its disposer is called or the plugin stops: a short value kept up to date in place, such as a scale breadcrumb or the level on screen. Drawn in the mono face (a child with the class `status-label` in the interface's), lower `order` further left, and shortened with … when the line is full. |
-| `views` | Shapes with handles in the 2-D and 3-D views (points, spheres, boxes, planes), dragged in place, and a floating card while one is selected; a picker for clicks in the views. See [In-view tools](#in-view-tools). |
+| `views` | Shapes with handles in the 2-D and 3-D views (points, spheres, boxes, planes, frames), dragged in place, and a floating card while one is selected; a picker for clicks in the views. See [In-view tools](#in-view-tools). |
 | `ui.toast / confirm / form / sheet` | Messages, confirmation, a dialog generated from a schema, and a sheet whose body the plugin draws. |
 | `workspace` | Scenes, datasets, layers and the selection; add datasets and derived layers, remove layers. `undoSteps` gives the change the workspace's undo and redo would take, with when it was made (Segmentation undoes strokes and workspace changes as one history with it). |
-| `viewer` | The active scene's Neuroglancer state as JSON (`patchState` applies only what changed, as one undo step), layers, the pointer, the position, a segmentation layer's segment properties, and a temporary set of visible segments (not saved in the link). `draw3d` draws in the 3-D view with a layer (raw WebGL2, Neuroglancer's camera and depth; volume rendering uses it); `panels` and `onRendered` place things over the views; `layerTransform` and `setLayerTransform` read and set a layer's transform (registration); `layerBounds` gives a layer's box in global coordinates, its finest voxel and its pyramid's levels, and `renderedLevel` the level Neuroglancer drew in the sections in its last frame (the scale navigator); `reloadData` has Neuroglancer read again what it holds from a URL (data a plugin serves and changed: Segmentation's label volumes). `lookupTables` lists the lookup tables that come with the app, reads one, and reads or sets a segmentation layer's (Atlas). |
+| `viewer` | The active scene's Neuroglancer state as JSON (`patchState` applies only what changed, as one undo step), layers, the pointer, the position, a segmentation layer's segment properties, and a temporary set of visible segments (not saved in the link). `draw3d` draws in the 3-D view with a layer (raw WebGL2, Neuroglancer's camera and depth; volume rendering uses it); `panels` and `onRendered` place things over the views; `layerTransform` and `setLayerTransform` read and set a layer's transform (registration); `thumbnail(w, h, "3d")` a small picture of the 3-D view once loaded (bookmarks); `layerBounds` gives a layer's box in global coordinates, its finest voxel and its pyramid's levels, and `renderedLevel` the level Neuroglancer drew in the sections in its last frame (the scale navigator); `reloadData` has Neuroglancer read again what it holds from a URL (data a plugin serves and changed: Segmentation's label volumes). `lookupTables` lists the lookup tables that come with the app, reads one, and reads or sets a segmentation layer's (Atlas). |
 | `workspace.local` | Files of data opened from this computer: whether a URL is one, writing into it (track filtering saves groups this way), and opening a file the plugin made in the page as data (track filtering's density maps). |
 | `state` | The plugin's slice of the workspace state: in the link, undoable, versioned. |
 | `settings` | Per-user settings kept in this browser, never in the link. |
@@ -345,6 +345,34 @@ region.update({ centre: [11, 20, 30] });   // when the plugin's own state change
 ctx.views.select("r1");                   // a new shape, ready to drag
 ```
 
+A **frame** is a box turned any way: a layer's data as it is placed
+(Registration's moving layer). Its drags are reported as what they did,
+from the frame as the drag found it, so the plugin applies them to its own
+transform:
+
+```ts
+ctx.views.add({
+  id: "frame",
+  kind: "frame",
+  views: "2d",
+  centre,                          // global
+  axes: [a0, a1, a2],              // half-edge vectors, global units
+  pivot,                           // what its ring turns about (else its centre)
+  title: "brain",                  // the card's heading (else the label)
+  onChange: ({ change }, done) => {
+    // { kind: "move", by } | { kind: "turn", axis, angle, about } | { kind: "scale", factors, uniform }
+    apply(change, done);
+  },
+});
+```
+
+In a 2-D view a frame is its outline where the section cuts it: a drag
+inside it (once selected) or on its edge moves it in the section's plane,
+its ring (taken on its rim) turns it about the section's normal through
+the pivot, and the knobs at the outline's corners scale its axes (Shift:
+all three alike). In the 3-D view it is a wireframe that moves. Until it
+is selected its inside is the view's, so a click there is Neuroglancer's.
+
 - **Handles.** Clicking a shape selects it (one at a time; Escape or a
   click on an empty part of a view clears it, and that click still reaches
   Neuroglancer). A selected shape shows its handles: its centre moves it in
@@ -362,9 +390,12 @@ ctx.views.select("r1");                   // a new shape, ready to drag
   and `onchange` do). The shape follows the mouse by itself; `update` with
   the value the plugin kept (rounded or clamped) puts it there.
 - **The card** is the one panel that floats: at the top left of the view
-  the shape was selected in, right of Neuroglancer's axis labels, only
-  while the shape is selected. It holds what the handles do not: exact
-  numbers, choices (AND, OR, NOT), delete. The dock's controls for the same
+  the shape was selected in, 8 px in from the top and 8 px right of
+  Neuroglancer's axis labels, only while the shape is selected. Its
+  heading is the shape's `title` (else its `label`: give a point labelled
+  "1" the title "Pair 1"). It holds what the handles do not: exact
+  numbers (shown ones as `readout()`s, in rows under the axes' names in a
+  `view-card-values` grid), choices (AND, OR, NOT), delete. The dock's controls for the same
   things keep working; both edit the same state.
 - **Links and captions.** `caption: { text, value }` puts a small label at
   a shape's top left on screen (the name in the interface's face, the value

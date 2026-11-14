@@ -274,6 +274,33 @@ export function pickCube(q: Quat, sx: number, sy: number, band = BAND): Vec3 | u
   return p.map((v) => (v > edge ? 1 : v < -edge ? -1 : 0)) as Vec3;
 }
 
+/** Hamilton product a·b of quaternions [x, y, z, w]. */
+export function multiplyQuat(a: Quat, b: Quat): Quat {
+  const [ax, ay, az, aw] = a;
+  const [bx, by, bz, bw] = b;
+  return [aw * bx + ax * bw + ay * bz - az * by, aw * by - ax * bz + ay * bw + az * bx, aw * bz + ax * by - ay * bx + az * bw, aw * bw - ax * bx - ay * by - az * bz];
+}
+
+/**
+ * How much more than the view the cube is drawn turned, degrees: about the
+ * view's vertical (yaw) and its horizontal (pitch), so that seen face-on it
+ * still shows two more faces, its edges and its depth, and never reads as
+ * a flat framed square.  For display only: what a click on it names, and
+ * where the view turns, are the view's own.
+ */
+export const CUBE_TILT = { yaw: 12, pitch: 12 };
+
+/** The orientation the cube is drawn with: the view's, turned by `tilt` in view coordinates (toView of it is the tilt after toView of the view's). */
+export function shownOrientation(q: Quat, tilt: { yaw: number; pitch: number } = CUBE_TILT): Quat {
+  const half = (deg: number) => (deg * Math.PI) / 360;
+  // Seen from a little to the right and above: the right and top faces show.
+  const yaw: Quat = [0, Math.sin(half(tilt.yaw)), 0, Math.cos(half(tilt.yaw))];
+  const pitch: Quat = [Math.sin(half(tilt.pitch)), 0, 0, Math.cos(half(tilt.pitch))];
+  const t = multiplyQuat(pitch, yaw);
+  const inverse: Quat = [-t[0], -t[1], -t[2], t[3]];
+  return normalise(multiplyQuat(normalise(q), inverse));
+}
+
 /** A face of the cube as drawn: its direction, its corners (display coordinates) and how squarely it faces the viewer (0 to 1). */
 export interface CubeFace {
   normal: Vec3;

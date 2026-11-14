@@ -1,12 +1,13 @@
 /**
  * The orientation cube: a small cube in the 3-D view's top right, turned
- * as the view is, its faces lettered by the data's sides (R/L, A/P, S/I,
+ * as the view is (and a little more, CUBE_TILT, so its edges and depth
+ * read even face-on), its faces lettered by the data's sides (R/L, A/P, S/I,
  * else ±x, ±y, ±z), each letter turned by quarters to read upright.  Under the pointer a face, an edge or a corner lights
  * up; a click turns the view to look at it.  Below it, Realign (to the
  * nearest standard view) and Bookmark.
  */
 import { el, iconButton, viewInk } from "@ngplatform/sdk/dom";
-import { type Axes, letterBasis, pickCube, type Quat, targetLetters, targetWords, toView, type Vec3, visibleFaces, zoneOnFace } from "./geometry.js";
+import { type Axes, letterBasis, pickCube, type Quat, shownOrientation, targetLetters, targetWords, toView, type Vec3, visibleFaces, zoneOnFace } from "./geometry.js";
 
 /** The cube's picture, CSS pixels square, and its half-size in it. */
 export const CUBE_SIZE = 64;
@@ -56,7 +57,8 @@ export class OrientationCube {
 
   /** Shows the view's orientation (drawn again only when it or the axes changed). */
   update(q: Quat, axes: Axes): void {
-    this.q = q;
+    // Drawn, and picked, with the display tilt: a click names the face, edge or corner drawn under it.
+    this.q = shownOrientation(q);
     this.axes = axes;
     this.draw();
   }
@@ -145,8 +147,8 @@ export class OrientationCube {
       context.fillText(letter, 0, 0.5);
       context.restore();
     }
-    // Edges in the direction colours: an edge along x in dec-x, and so on.
-    context.lineWidth = 1.5;
+    // Thin edges in the direction colours (an edge along x in dec-x, and so on): the only colour on it.
+    context.lineWidth = 1;
     for (const face of faces) {
       const corners = face.corners;
       for (let i = 0; i < 4; ++i) {

@@ -20,12 +20,17 @@ import {
   boxCorners,
   BOX_EDGES,
   boxSection,
+  changedFrame,
+  type FrameChange as Change,
   convexOrder,
+  cornersSection,
   cross,
   dot,
   ellipsePoints,
   ellipseReach,
   ellipsoidSection,
+  frameCorners,
+  frameScale,
   insidePolygon,
   jacobian,
   type Mat3,
@@ -37,9 +42,11 @@ import {
   rotate,
   scale,
   screenOf,
+  screenTurn,
   type Section,
   sectionDistance,
   sectionOf,
+  sectionPoint,
   segmentDistance,
   solve3,
   sub,
@@ -49,7 +56,7 @@ import {
   viewPlaneDelta,
 } from "../core/view_geometry.js";
 import { el, iconButton, viewInk, type ViewInk } from "../sdk/dom.js";
-import type { Disposer, ViewPanelInfo, ViewShape, ViewShapeHandle, ViewToolsApi } from "../sdk/types.js";
+import type { Disposer, ViewFrameChange, ViewPanelInfo, ViewShape, ViewShapeHandle, ViewToolsApi } from "../sdk/types.js";
 
 /** What the tools need of the viewer; the shell supplies it (./apis.ts), tests fake it. */
 export interface ViewToolsHost {
@@ -86,8 +93,11 @@ const MIN_GAP = 14;
 /** A press that moves less than this, px, and is let go soon, is a click. */
 const CLICK_SLOP = 4;
 const CLICK_MS = 600;
-/** The floating card's place in its panel: right of Neuroglancer's axis-label strip. */
+/** The floating card's place in its panel: 8 px in from the top, and 8 px right of Neuroglancer's axis-label column (or this far in when there is none). */
 const CARD_AT = { left: 36, top: 8 };
+const CARD_INSET = 8;
+/** A frame's ring: a share of the smaller side of its section on screen, within these radii, px. */
+const FRAME_RING = { share: 0.3, least: 24, most: 90 };
 
 type HandleKind = "move" | "corner" | "face" | "radius" | "normal" | "ring";
 interface Handle {
@@ -101,6 +111,10 @@ interface Handle {
   reach?: number;
   /** A ring's radius, px. */
   ring?: number;
+  /** A ring taken only on its rim (a frame's: inside it, the frame moves). */
+  rim?: boolean;
+  /** Where a frame's corner knob is, in display coordinates (on the section). */
+  at?: Vec3;
 }
 
 interface Entry {
@@ -150,7 +164,14 @@ interface PanelState {
 }
 
 /** A shape's geometry in display coordinates, as dragged. */
-type Geometry = { kind: "point"; p: Vec3 } | { kind: "sphere"; c: Vec3; r: Vec3 } | { kind: "box"; lo: Vec3; hi: Vec3 } | { kind: "plane"; q: Vec3; n: Vec3 };
+type Geometry =
+  | { kind: "point"; p: Vec3 }
+  | { kind: "sphere"; c: Vec3; r: Vec3 }
+  | { kind: "box"; lo: Vec3; hi: Vec3 }
+  | { kind: "plane"; q: Vec3; n: Vec3 }
+  | { kind: "frame"; c: Vec3; a: [Vec3, Vec3, Vec3]; pivot: Vec3 };
+
+
 
 interface Drag {
   entry: Entry;
@@ -166,6 +187,11 @@ interface Drag {
   g0: Geometry;
   g: Geometry;
   moved: boolean;
+  /** A frame's ring: the turn so far (radians); its change, as reported. */
+  angle: number;
+  change?: Change;
+  /** Shift held (a frame's corner scales all its axes alike). */
+  shift: boolean;
 }
 
 const finite = (v: unknown): v is number[] => Array.isArray(v) && v.every((x) => typeof x === "number" && Number.isFinite(x));
@@ -287,7 +313,7 @@ export class ViewTools {
         if (this.entries.get(key) !== entry) return;
         entry.shape = { ...entry.shape, ...patch } as ViewShape;
         // An open card stays (it keeps itself up to date); a new `card` is drawn when the shape is next selected.
-        if (this.selectedKey === key && this.card !== undefined && patch.label !== undefined) this.card.element.querySelector(".view-card-title")!.textContent = this.title(entry);
+        if (this.selectedKey === key && this.card !== undefined && (patch.label !== undefined || patch.title !== undefined)) this.card.element.querySelector(".view-card-title")!.textContent = this.title(entry);
         this.redraw();
       },
       dispose: () => {
@@ -316,7 +342,7 @@ export class ViewTools {
 
   private title(entry: Entry): string {
     const s = entry.shape;
-    return s.label ?? { point: "Point", sphere: "Sphere", box: "Box", plane: "Plane" }[s.kind];
+    return s.title ?? s.label ?? { point: "Point", sphere: "Sphere", box: "Box", plane: "Plane", frame: "Frame" }[s.kind];
   }
 
   // --------------------------------------------------------------- card
@@ -374,10 +400,11 @@ export class ViewTools {
         ...panels.filter((p) => drawnIn(p)),
         ...panels,
       ];
-      const box = [CARD_AT.left, CARD_AT.top, CARD_AT.left + card.element.offsetWidth, CARD_AT.top + card.element.offsetHeight];
       const covers = (p: PanelState) => {
         const d = drawnIn(p);
         if (d === undefined) return false;
+        const left = this.cardLeft(p);
+        const box = [left, CARD_AT.top, left + card.element.offsetWidth, CARD_AT.top + card.element.offsetHeight];
         const points = [...d.lines.flatMap((l) => l.points), ...d.handles.map((h): Vec2 => [h.x, h.y]), ...(d.point ? [d.point] : [])];
         if (points.length === 0) return false;
         const xs = points.map((q) => q[0]);
@@ -393,8 +420,18 @@ export class ViewTools {
     const rect = rectOf(panel);
     // On the ground of the view it is over.
     card.element.classList.toggle("over-3d", panel.info.kind === "3d");
-    card.element.style.left = `${Math.round(rect.left - root.left + CARD_AT.left)}px`;
+    card.element.style.left = `${Math.round(rect.left - root.left + this.cardLeft(panel))}px`;
     card.element.style.top = `${Math.round(rect.top - root.top + CARD_AT.top)}px`;
+  }
+
+  /** How far in from a panel's left the card goes: 8 px right of Neuroglancer's axis-label column, where the panel shows one. */
+  private cardLeft(panel: PanelState | undefined): number {
+    const element = panel?.info.element;
+    const column = element?.querySelector<HTMLElement>(".neuroglancer-display-dimensions-widget");
+    if (element === undefined || column == null) return CARD_AT.left;
+    const r = column.getBoundingClientRect();
+    if (r.width === 0) return CARD_AT.left;
+    return Math.round(r.right - element.getBoundingClientRect().left + CARD_INSET);
   }
 
   // ------------------------------------------------------------ drawing
@@ -610,13 +647,19 @@ export class ViewTools {
         const n = unit(this.toDisplay(lens, s.normal, "zero"));
         return norm(n) > 0 ? { kind: "plane", q: this.toDisplay(lens, s.point), n } : undefined;
       }
+      case "frame": {
+        if (!finite(s.centre) || !Array.isArray(s.axes) || s.axes.length !== 3 || !s.axes.every(finite)) return undefined;
+        const c = this.toDisplay(lens, s.centre);
+        const a = s.axes.map((v) => this.toDisplay(lens, v, "zero")) as [Vec3, Vec3, Vec3];
+        return { kind: "frame", c, a, pivot: finite(s.pivot) ? this.toDisplay(lens, s.pivot) : c };
+      }
     }
   }
 
   /** Writes a dragged geometry back into the shape, and the value its plugin is told. */
-  private apply(entry: Entry, lens: Lens, g: Geometry): Record<string, number[]> {
+  private apply(entry: Entry, lens: Lens, g: Geometry, change?: Change): Record<string, unknown> {
     const s = entry.shape;
-    let value: Record<string, number[]>;
+    let value: Record<string, unknown>;
     if (g.kind === "point" && s.kind === "point") value = { at: this.toGlobal(lens, g.p, s.at) };
     else if (g.kind === "sphere" && s.kind === "sphere") value = { centre: this.toGlobal(lens, g.c, s.centre), radii: this.toGlobal(lens, g.r, s.radii.length >= 3 ? s.radii : [g.r[0], g.r[1], g.r[2]]) };
     else if (g.kind === "box" && s.kind === "box") {
@@ -624,12 +667,24 @@ export class ViewTools {
       const hi = g.lo.map((v, i) => Math.max(v, g.hi[i])) as Vec3;
       value = { lower: this.toGlobal(lens, lo, s.lower), upper: this.toGlobal(lens, hi, s.upper) };
     } else if (g.kind === "plane" && s.kind === "plane") value = { point: this.toGlobal(lens, g.q, s.point), normal: this.toGlobal(lens, g.n, s.normal.map(() => 0)) };
-    else return {};
+    else if (g.kind === "frame" && s.kind === "frame") {
+      const zero = s.centre.map(() => 0);
+      const vector = (v: Vec3) => this.toGlobal(lens, v, zero);
+      const reported: ViewFrameChange =
+        change === undefined || change.kind === "move"
+          ? { kind: "move", by: vector(change?.by ?? [0, 0, 0]) }
+          : change.kind === "turn"
+            ? { kind: "turn", axis: vector(change.axis), angle: change.angle, about: this.toGlobal(lens, change.about, s.centre) }
+            : { kind: "scale", factors: [...change.factors], uniform: change.uniform };
+      value = { centre: this.toGlobal(lens, g.c, s.centre), axes: g.a.map(vector), ...(s.pivot ? { pivot: this.toGlobal(lens, g.pivot, s.pivot) } : {}), change: reported };
+      entry.shape = { ...s, centre: value.centre as number[], axes: value.axes as number[][], ...(s.pivot ? { pivot: value.pivot as number[] } : {}) };
+      return value;
+    } else return {};
     entry.shape = { ...s, ...value } as ViewShape;
     return value;
   }
 
-  private tell(entry: Entry, value: Record<string, number[]>, done: boolean): void {
+  private tell(entry: Entry, value: Record<string, unknown>, done: boolean): void {
     try {
       (entry.shape.onChange as ((v: unknown, done: boolean) => void) | undefined)?.(value, done);
     } catch (e) {
@@ -784,6 +839,38 @@ export class ViewTools {
       return out;
     }
 
+    if (g.kind === "frame") {
+      const corners = frameCorners(g.c, g.a);
+      if (section === undefined) {
+        for (const [a, b] of BOX_EDGES) {
+          const points: Vec3[] = [];
+          for (let t = 0; t <= 8; ++t) points.push(add(corners[a], scale(sub(corners[b], corners[a]), t / 8)));
+          polyline(points, false);
+        }
+        if (out.lines.length === 0) return undefined;
+        out.centre = screen(g.c);
+        if (handles) handle("move", g.c);
+        return out;
+      }
+      const polygon = convexOrder(cornersSection(corners, section).map((p) => screen(p)!));
+      if (polygon.length < 3) return undefined;
+      out.lines.push({ points: polygon, closed: true });
+      out.area = polygon;
+      out.centre = screen(onSection(section, g.c));
+      if (handles) {
+        // Its ring about the pivot (inside it, the frame moves), and a knob at each corner of its section that scales it.
+        if (s.kind === "frame" && s.turns !== false) {
+          const at = screen(onSection(section, g.pivot));
+          const xs = polygon.map((p) => p[0]);
+          const ys = polygon.map((p) => p[1]);
+          const side = Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+          if (at !== undefined) handle("ring", at, { ring: Math.max(FRAME_RING.least, Math.min(FRAME_RING.most, side * FRAME_RING.share)), rim: true });
+        }
+        polygon.forEach((p, i) => handle("corner", p, { index: i, at: sectionPoint(section, p[0], p[1]) }));
+      }
+      return out;
+    }
+
     // A plane.
     const { q, n } = g;
     const j = lens.jac(q);
@@ -931,14 +1018,16 @@ export class ViewTools {
     if (this.hiddenAll) return undefined;
     const p: Vec2 = [x, y];
     const byOrder = [...state.drawn].sort((a, b) => (a.entry.key === this.selectedKey ? -1 : b.entry.key === this.selectedKey ? 1 : b.entry.order - a.entry.order));
+    // Handles, lines, points and captions first, of every shape; then the insides (a selected frame's
+    // inside, the size of an image, would else hide the landmarks within it).
     for (const d of byOrder) {
       let best: Handle | undefined;
       let bestDistance = Infinity;
       for (const h of d.handles) {
-        // A ring is taken anywhere within it (the centre's own handle nearer the middle): from inside it
-        // tilts the plane like a trackball, from its rim it turns about the line of sight.
+        // A plane's ring is taken anywhere within it (the centre's own handle nearer the middle): from inside it
+        // tilts the plane like a trackball, from its rim it turns about the line of sight.  A frame's only on its rim.
         const fromCentre = Math.hypot(x - h.x, y - h.y);
-        const distance = h.kind === "ring" ? (fromCentre <= h.ring! ? 8 : fromCentre - h.ring! + 3) : fromCentre;
+        const distance = h.kind === "ring" ? (h.rim ? Math.abs(fromCentre - h.ring!) + 2 : fromCentre <= h.ring! ? 8 : fromCentre - h.ring! + 3) : fromCentre;
         if (distance <= REACH && distance < bestDistance) {
           best = h;
           bestDistance = distance;
@@ -954,8 +1043,11 @@ export class ViewTools {
       }
       const c = d.caption;
       if (c !== undefined && x >= c.x - 2 && x <= c.x + c.w + 2 && y >= c.y - 2 && y <= c.y + c.h + 2) return { drawn: d, part: "line" };
-      // A link's inside is the view's.
-      if (d.area !== undefined && !link(d.entry.shape) && insidePolygon(p, d.area)) return { drawn: d, part: "area" };
+    }
+    for (const d of byOrder) {
+      // A link's inside is the view's; so is a frame's until it is selected.
+      const inside = !link(d.entry.shape) && (d.entry.shape.kind !== "frame" || d.entry.key === this.selectedKey);
+      if (d.area !== undefined && inside && insidePolygon(p, d.area)) return { drawn: d, part: "area" };
     }
     return undefined;
   }
@@ -1030,7 +1122,7 @@ export class ViewTools {
     const handle: Handle = hit.handle ?? { kind: entry.shape.kind === "plane" ? "normal" : "move", x, y };
     const centre = hit.drawn.centre ?? [x, y];
     const rect = state.info.element.getBoundingClientRect();
-    this.drag = { entry, panel: state, lens: state.lens, handle, start: [x, y], last: [x, y], centre: [centre[0], centre[1]], origin: [rect.left, rect.top], g0: g, g: structuredClone(g), moved: false };
+    this.drag = { entry, panel: state, lens: state.lens, handle, start: [x, y], last: [x, y], centre: [centre[0], centre[1]], origin: [rect.left, rect.top], g0: g, g: structuredClone(g), moved: false, angle: 0, shift: false };
     this.setCursor(state, handle.kind === "ring" ? "grabbing" : handle.kind === "move" ? "move" : "grabbing");
     const move = (m: PointerEvent) => {
       m.stopPropagation();
@@ -1093,10 +1185,11 @@ export class ViewTools {
     if (!drag.moved && Math.hypot(now[0] - drag.start[0], now[1] - drag.start[1]) < 2) return;
     drag.moved = true;
     drag.last = now;
+    drag.shift = e.shiftKey;
     const next = this.step(drag, now, dx, dy);
     if (next === undefined) return;
     drag.g = next;
-    this.tell(drag.entry, this.apply(drag.entry, drag.lens, next), false);
+    this.tell(drag.entry, this.apply(drag.entry, drag.lens, next, drag.change), false);
     this.draw();
   }
 
@@ -1156,6 +1249,21 @@ export class ViewTools {
         const t = axisDelta(j, g.n, dx, dy);
         return { kind: "plane", q: add(g.q, scale(g.n, t)), n: g.n };
       }
+      case "frame": {
+        if (g0.kind !== "frame") return undefined;
+        // Each from the frame as the drag found it.
+        const section = lens.section;
+        let change: Change;
+        if (handle.kind === "ring" && section !== undefined) {
+          drag.angle += screenTurn([handle.x, handle.y], [now[0] - dx, now[1] - dy], now);
+          change = { kind: "turn", axis: section.normal, angle: drag.angle, about: onSection(section, g0.pivot) };
+        } else if (handle.kind === "corner" && handle.at !== undefined && section !== undefined) {
+          const d = viewPlaneDelta(j, now[0] - drag.start[0], now[1] - drag.start[1]);
+          change = { kind: "scale", factors: frameScale(g0.a, sub(handle.at, g0.c), d, section.normal, drag.shift), uniform: drag.shift };
+        } else change = { kind: "move", by: viewPlaneDelta(j, now[0] - drag.start[0], now[1] - drag.start[1]) };
+        drag.change = change;
+        return { kind: "frame", ...changedFrame(g0, change) };
+      }
     }
   }
 
@@ -1168,6 +1276,8 @@ export class ViewTools {
         return g.c;
       case "plane":
         return g.q;
+      case "frame":
+        return handle.at ?? g.c;
       case "box": {
         const centre = scale(add(g.lo, g.hi), 0.5);
         if (handle.kind === "corner") return boxCorners(g.lo, g.hi)[handle.index!];
@@ -1187,7 +1297,7 @@ export class ViewTools {
     this.drag = undefined;
     if (drag === undefined) return;
     this.setCursor(drag.panel, undefined);
-    if (drag.moved && this.entries.get(drag.entry.key) === drag.entry) this.tell(drag.entry, this.apply(drag.entry, drag.lens, drag.g), true);
+    if (drag.moved && this.entries.get(drag.entry.key) === drag.entry) this.tell(drag.entry, this.apply(drag.entry, drag.lens, drag.g, drag.change), true);
     this.draw();
     this.placeCard(true);
   }
@@ -1281,6 +1391,7 @@ export class ViewTools {
     e.stopPropagation();
     const stepSize = e.shiftKey ? 10 : 1;
     let next: Geometry;
+    let change: Change | undefined;
     if (g.kind === "plane") {
       // Along its normal: right and up move it to the side it faces on screen, or forward.
       const [sx, sy] = screenOf(j, g.n);
@@ -1303,9 +1414,12 @@ export class ViewTools {
         }
       }
       const d = scale(axis(best), sign * stepSize);
-      next = g.kind === "point" ? { kind: "point", p: add(g.p, d) } : g.kind === "sphere" ? { ...g, c: add(g.c, d) } : { kind: "box", lo: add(g.lo, d), hi: add(g.hi, d) };
+      if (g.kind === "frame") {
+        change = { kind: "move", by: d };
+        next = { kind: "frame", ...changedFrame(g, change) };
+      } else next = g.kind === "point" ? { kind: "point", p: add(g.p, d) } : g.kind === "sphere" ? { ...g, c: add(g.c, d) } : { kind: "box", lo: add(g.lo, d), hi: add(g.hi, d) };
     }
-    this.tell(entry, this.apply(entry, state.lens, next), true);
+    this.tell(entry, this.apply(entry, state.lens, next, change), true);
     this.draw();
   }
 

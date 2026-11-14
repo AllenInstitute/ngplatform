@@ -9,6 +9,7 @@ import {
   nearestStandard,
   pickCube,
   type Quat,
+  shownOrientation,
   slerp,
   standardViews,
   targetLetters,
@@ -188,5 +189,29 @@ describe("the cube", () => {
       close(toView(q, right), [1, 0, 0]);
       close(toView(q, down), [0, 1, 0]);
     }
+  });
+});
+
+describe("the cube as shown", () => {
+  it("is turned a little more than the view, so face-on it shows its top and right faces too", () => {
+    for (const q of [[0, 0, 0, 1], axisAngle([0, 1, 0], Math.PI / 2), axisAngle([1, 0, 0], -Math.PI / 2)] as Quat[]) {
+      const shown = shownOrientation(q);
+      // About 17° in all (12° each way).
+      expect(angleBetween(q, shown)).toBeGreaterThan(0.25);
+      expect(angleBetween(q, shown)).toBeLessThan(0.35);
+      const faces = visibleFaces(shown);
+      expect(faces).toHaveLength(3);
+      const onScreen = faces.map((f) => toView(shown, f.normal));
+      // The face the view looks at still faces it most; one more up the screen, one more to the right.
+      expect(Math.max(...faces.map((f) => f.facing))).toBeGreaterThan(0.9);
+      expect(onScreen.some((v) => v[1] < -0.9)).toBe(true);
+      expect(onScreen.some((v) => v[0] > 0.9)).toBe(true);
+    }
+  });
+
+  it("turns in view coordinates: the same tilt after any view", () => {
+    const q = axisAngle([0.3, -0.4, 0.8], 1.1);
+    const tiltOnly = shownOrientation([0, 0, 0, 1]);
+    for (const v of [[1, 0, 0], [0, 1, 0], [0.2, 0.5, -0.7]] as Vec3[]) close(toView(shownOrientation(q), v), toView(tiltOnly, toView(q, v)));
   });
 });
