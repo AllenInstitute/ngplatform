@@ -5,7 +5,7 @@
  * watchable values (so a change made anywhere, in the views, by undo or
  * by a link, shows here at once, and a change here applies at once).
  */
-import { type Attrs, type Child, el } from "../../sdk/dom.js";
+import { type Attrs, type Child, el, icon } from "../../sdk/dom.js";
 import { RefCounted, WatchableVisibilityPriority } from "../neuroglancer.js";
 
 /** One of Neuroglancer's watchable values, as far as the inspector needs it. */
@@ -102,7 +102,12 @@ export function note(text: string, className = ""): HTMLElement {
   return el("p", { class: `ins-note ${className}`.trim() }, text);
 }
 
-/** An outline button; with `className` "icon ins-remove", the small × that removes something. */
+/** The small remove button (a cross icon) beside a link, a range, an annotation or a property; `label` names it. */
+export function removeButton(label: string, onclick: (e: MouseEvent) => void): HTMLButtonElement {
+  return el("button", { type: "button", class: "btn icon ins-remove", title: label, "aria-label": label, onclick }, icon("close"));
+}
+
+/** An outline button. */
 export function button(label: string, onclick: (e: MouseEvent) => void, title?: string, className = "outline"): HTMLButtonElement {
   return el("button", { type: "button", class: `btn ${className}`.trim(), title, onclick }, label);
 }

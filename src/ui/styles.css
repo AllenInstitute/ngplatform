@@ -124,6 +124,8 @@
   --sp-7: 24px;          /* between sections */
   /* The least a pointer target is (WCAG 2.5.8); what is drawn can be smaller. */
   --hit: 24px;
+  /* An icon's size (src/sdk/icons.ts). */
+  --icon: 16px;
   /* Controls: buttons, fields and selects are one height in the docks and
      panels, a larger one in sheets.  A container sets --ctl-h and --ctl-fs;
      a button never does. */
@@ -264,7 +266,12 @@ a.btn { text-decoration: none; }
 .btn.danger { background: var(--ink-3); color: var(--err); border-color: var(--line-strong); }
 .btn.danger:hover:not(:disabled) { background: var(--danger); color: var(--danger-ink); border-color: transparent; }
 .btn.danger:active:not(:disabled) { background: var(--danger-hover); }
-.btn svg { width: 15px; height: 15px; flex: none; }
+/* Icons (src/sdk/icons.ts): one set, drawn at 16 px with a 1 px line; inside a line of text, at the text's size. */
+.btn svg, .scene-close svg, .scene-kind-add svg, .palette-trigger svg, .ds-icon svg, .btn.icon.info-btn svg,
+.ins-star svg, .ins-head-icon svg, .history-mark svg, .runner-up-button svg { width: var(--icon); height: var(--icon); flex: none; }
+.inline-icon, .empty.error svg { width: 1em; height: 1em; vertical-align: -0.15em; }
+/* A mark that is a shape, not a line: filled. */
+.history-mark svg path, .ins-star.on svg path { fill: currentColor; }
 /* An icon button is square. */
 .btn.icon { min-width: var(--ctl-h); padding: 0 var(--sp-1); justify-content: center; }
 
@@ -296,7 +303,6 @@ a.btn { text-decoration: none; }
   display: inline-grid; place-items: center; width: var(--hit); height: var(--hit); flex: none;
   border: 0; padding: 0; background: transparent; color: var(--faint); cursor: pointer; visibility: hidden;
 }
-.scene-close svg { width: 11px; height: 11px; }
 .scene-tab:hover .scene-close, .scene-tab[aria-selected="true"] .scene-close { visibility: visible; }
 .scene-close:hover { color: var(--text); background: var(--hover); }
 .scene-add { color: var(--muted); }
@@ -336,7 +342,6 @@ a.btn { text-decoration: none; }
 /* The minor heading in a panel: a folded part's summary and a section's sub-heading, one style. */
 .ins-details > summary { cursor: pointer; color: var(--muted); font: 600 var(--fs-body)/1.2 var(--ui); margin: var(--sp-3) 0; }
 /* Over an empty scene */
-.scene-kind-add svg { width: 11px; height: 11px; }
 .plugin-sheet { display: grid; gap: var(--sp-5); }
 
 .palette-trigger {
@@ -346,7 +351,6 @@ a.btn { text-decoration: none; }
   background: var(--ink-0); color: var(--muted); cursor: pointer;
 }
 .palette-trigger:hover { border-color: var(--line-hover); color: var(--text); }
-.palette-trigger svg { width: 15px; height: 15px; flex: none; }
 .palette-trigger .grow { flex: 1; text-align: left; white-space: nowrap; }
 kbd {
   font: var(--fs-caption)/1 var(--mono);
@@ -507,7 +511,7 @@ kbd {
 .empty { color: var(--muted); margin: 0; }
 .empty strong { color: var(--text); font-weight: 500; }
 .empty.error, .error { color: var(--err); }
-.empty.error svg { width: 13px; height: 13px; vertical-align: -2px; margin-right: var(--sp-2); }
+.empty.error svg { margin-right: var(--sp-2); }
 .note { color: var(--faint); font-size: var(--fs-body); margin: var(--sp-5) 0 0; }
 .row-actions { display: flex; gap: var(--sp-3); flex-wrap: wrap; margin-top: var(--sp-4); }
 
@@ -563,7 +567,6 @@ kbd {
 .ds-row.local-pick .choice > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .ds-row.local-pick .sub { grid-column: 1 / -1; }
 .ds-icon { display: inline-flex; color: var(--muted); }
-.ds-icon svg { width: 15px; height: 15px; }
 .ds-group { display: grid; gap: var(--sp-1); }
 .ds-layers { display: grid; gap: var(--sp-1); margin-left: 22px; padding-left: var(--sp-4); border-left: 1px solid var(--line); }
 .layer-row {
@@ -766,6 +769,7 @@ kbd {
 .runner-files li { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-1) var(--sp-3); }
 .runner-files li.chosen { background: var(--accent-soft); }
 .runner-files li.store > button { font-weight: 500; }
+.runner-up-button { display: inline-flex; align-items: center; gap: var(--sp-2); }
 .runner-drop-choices { margin: var(--sp-4) 0 0; padding-left: 18px; display: grid; gap: var(--sp-3); color: var(--muted, inherit); }
 .runner-serves { display: grid; gap: var(--sp-2); }
 .runner-serves .runner-entry { display: flex; align-items: center; gap: var(--sp-4); min-width: 0; }
@@ -1004,7 +1008,8 @@ textarea.ins-grow.ins-clipped {
 .ins-seg-row .num { text-align: right; font-family: var(--mono); font-size: var(--fs-caption); overflow: hidden; }
 .ins-seg-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .ins-seg-row.shown .ins-seg-label { color: var(--text); }
-.ins-star { border: 0; background: transparent; color: var(--faint); cursor: pointer; padding: 0; font-size: var(--fs-control); line-height: 1; }
+.ins-star { display: inline-grid; place-items: center; border: 0; background: transparent; color: var(--faint); cursor: pointer; padding: 0; }
+.ins-head-icon { display: inline-grid; place-items: center; }
 .ins-star.on { color: var(--text); }
 .ins-swatch { width: 14px; height: 14px; border: 1px solid var(--swatch-line); padding: 0; cursor: pointer; position: relative; }
 /* Drawn at 14 px, a target of 24 (its colour is set inline, so not by padding). */
@@ -1124,20 +1129,21 @@ textarea.state-input.tall { min-height: 50vh; }
 .history-filter { max-width: 220px; }
 .history-rows { overflow-y: auto; padding: var(--sp-2); display: grid; }
 .history-row {
-  display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; align-items: center; gap: var(--sp-3);
+  display: grid; grid-template-columns: var(--icon) minmax(0, 1fr) auto; align-items: center; gap: var(--sp-3);
   min-height: 28px; padding: 0 10px 0 calc(4px + var(--depth, 0) * 16px); border: 0; background: transparent;
   color: var(--text); text-align: left; font-size: var(--fs-control); cursor: pointer;
 }
 .history-row:hover, .history-row:focus-visible { background: var(--hover); outline: none; }
 .history-row:focus-visible { box-shadow: inset 0 0 0 1px var(--line-strong); }
 .history-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.history-mark { color: var(--accent); font-size: var(--fs-caption); text-align: center; }
+.history-mark { display: inline-grid; place-items: center; color: var(--accent); }
 .history-datasets { color: var(--muted); }
 .history-row.current { background: var(--select-soft); color: var(--text-strong); }
 .history-row.current .history-label { font-weight: 600; }
 .history-row.undone .history-label { color: var(--faint); text-decoration: line-through; text-decoration-color: var(--faint); }
 .history-row.branch .history-label { color: var(--muted); }
-.history-row.fold { grid-template-columns: 14px minmax(0, 1fr); color: var(--muted); font-size: var(--fs-body); }
+.history-row.fold { grid-template-columns: var(--icon) minmax(0, 1fr); color: var(--muted); font-size: var(--fs-body); }
+.history-row.fold .history-mark { color: var(--muted); }
 .history-row.fold .history-label { grid-column: 2; }
 .history-empty { padding: 10px var(--sp-5); color: var(--faint); font-size: var(--fs-body); }
 
@@ -1362,7 +1368,6 @@ textarea.state-input.tall { min-height: 50vh; }
    in a line of text than its icon. */
 .info { display: inline-flex; flex: none; }
 .btn.icon.info-btn { color: var(--muted); margin-block: calc((var(--ctl-h) - 16px) / -2); }
-.btn.icon.info-btn svg { width: 13px; height: 13px; }
 .btn.icon.info-btn:hover, .btn.icon.info-btn[aria-expanded="true"] { color: var(--text); }
 .info-tip {
   position: fixed; z-index: 140; max-width: 260px; padding: var(--sp-3) var(--sp-4);

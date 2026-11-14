@@ -44,7 +44,8 @@ export const STYLE = `
 .sg-group-head.sg-drop { outline: 1px dashed var(--select); outline-offset: -2px; }
 .sg-group-head .text-input.sg-name { height: 22px; min-width: 0; width: 100%; font-weight: 600; }
 .sg-group-head .sg-icon[aria-pressed="false"] { color: var(--faint); }
-.sg-caret { width: 16px; padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer; font-size: var(--fs-caption); }
+.sg-caret { display: inline-grid; place-items: center; width: 16px; padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer; }
+.sg-caret svg { width: 16px; height: 16px; }
 .sg-segment.sg-in-group { padding-left: 14px; }
 .sg-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sg-segment .text-input.sg-name { height: 22px; min-width: 0; width: 100%; }

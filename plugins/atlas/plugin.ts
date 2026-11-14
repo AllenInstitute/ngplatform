@@ -10,7 +10,7 @@
  * drawn again only when what it lists changes, not when a region is chosen.
  */
 import type { LookupTableInfo, PlatformContext, PluginModule } from "@ngplatform/sdk";
-import { button, card, checkbox, downloadBlob, el, emptyState, field, safeFileName, statusLine } from "@ngplatform/sdk/dom";
+import { button, card, checkbox, downloadBlob, el, emptyState, field, icon, safeFileName, statusLine } from "@ngplatform/sdk/dom";
 import { csv } from "@ngplatform/sdk/format";
 import { layerSourceUrl } from "@ngplatform/sdk/sources";
 import { Lru } from "@ngplatform/sdk/virtual";
@@ -32,7 +32,8 @@ const STYLE = `
 .at-node:hover { background: var(--hover); }
 .at-item[aria-selected="true"] > .at-node { background: var(--select-soft); }
 .at-item.at-match > .at-node .at-name { font-weight: 600; }
-.at-caret { width: 12px; flex: none; text-align: center; color: var(--faint); font-size: var(--fs-caption); }
+.at-caret { display: inline-grid; place-items: center; width: 16px; height: 16px; flex: none; color: var(--faint); }
+.at-caret svg { width: 16px; height: 16px; }
 .at-swatch { width: 10px; height: 10px; flex: none; border: 1px solid var(--swatch-line); }
 .at-swatch.at-none { visibility: hidden; }
 .at-name { flex: 1 1 auto; min-width: 8em; overflow: hidden; text-overflow: ellipsis; }
@@ -696,7 +697,7 @@ export class AtlasPanel {
     const n = this.totals?.get(r);
     const volume = this.counted?.voxelVolume;
     const size = n !== undefined && volume !== undefined ? physicalText(n * volume, 3) : undefined;
-    const caret = el("span", { class: "at-caret", "aria-hidden": "true" }, children.length === 0 ? "" : open ? "▾" : "▸");
+    const caret = el("span", { class: "at-caret", "aria-hidden": "true" }, children.length === 0 ? null : icon(open ? "chevron-down" : "chevron-right"));
     const row = el(
       "div",
       {
@@ -770,7 +771,7 @@ export class AtlasPanel {
       if (had) item.focus();
     }
     item.setAttribute("aria-expanded", String(open));
-    item.querySelector(".at-caret")!.textContent = open ? "▾" : "▸";
+    item.querySelector(".at-caret")!.replaceChildren(icon(open ? "chevron-down" : "chevron-right"));
     this.rove();
   }
 

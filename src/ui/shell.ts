@@ -1010,7 +1010,7 @@ export class Shell {
         const { preference } = engine.panelConvention();
         showMenu(
           this.root.querySelector<HTMLElement>('.topbar button[title="Settings"]') ?? { x: window.innerWidth - 320, y: 48 },
-          conventions.map(([id, title]) => ({ label: `${preference === id ? "✓ " : ""}${title}`, current: preference === id, run: () => engine.setPanelConvention(id) })),
+          conventions.map(([id, title]) => ({ label: title, current: preference === id, run: () => engine.setPanelConvention(id) })),
         );
       },
     });

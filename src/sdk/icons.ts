@@ -1,7 +1,8 @@
 /**
- * The app's icons: line drawings on a 24-unit grid, in the text's colour,
- * by name.  Plugins use them as the shell does, in an icon button or beside
- * a button's label.
+ * The app's icons: one set of line drawings on a 24-unit grid, drawn at
+ * 16 px (a 1 px line: 1.5 units), in the text's colour, by name.  Plugins
+ * use them as the shell does, in an icon button or beside a button's label,
+ * and never a character (×, ⋯, ▸, ✓) in an icon's place.
  *
  *     import { icon, iconButton } from "@ngplatform/sdk/dom";
  *     iconButton("trash", "Remove", () => remove());
@@ -24,7 +25,11 @@ const PATHS = {
   eye: "M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
   "eye-off": "M3 3l18 18M10.6 5.6A10 10 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-3 3.8M6.3 6.9C3.9 8.6 2.5 12 2.5 12S6 18.5 12 18.5a9.6 9.6 0 0 0 4.4-1.1M9.9 9.9a3 3 0 0 0 4.2 4.2",
   trash: "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13",
-  more: "M5 12h.01M12 12h.01M19 12h.01",
+  // Three dots, each a ring so small it reads as a dot.
+  more: "M5 12a1.25 1.25 0 1 0 2.5 0 1.25 1.25 0 1 0-2.5 0zM10.75 12a1.25 1.25 0 1 0 2.5 0 1.25 1.25 0 1 0-2.5 0zM16.5 12a1.25 1.25 0 1 0 2.5 0 1.25 1.25 0 1 0-2.5 0z",
+  star: "M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z",
+  "corner-down-right": "M6 5v6a3 3 0 0 0 3 3h10M15 10l4 4-4 4",
+  dot: "M12 9.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 1 0 0-5z",
   "chevron-right": "M9 6l6 6-6 6",
   "chevron-down": "M6 9l6 6 6-6",
   "arrow-up": "M12 19V5M6 11l6-6 6 6",
@@ -87,7 +92,7 @@ export function icon(name: IconName | (string & {})): SVGSVGElement {
   path.setAttribute("d", (PATHS as Record<string, string>)[name] ?? "");
   path.setAttribute("fill", "none");
   path.setAttribute("stroke", "currentColor");
-  path.setAttribute("stroke-width", "1.7");
+  path.setAttribute("stroke-width", "1.5");
   path.setAttribute("stroke-linecap", "round");
   path.setAttribute("stroke-linejoin", "round");
   svg.append(path);

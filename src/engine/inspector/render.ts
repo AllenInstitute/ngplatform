@@ -29,6 +29,7 @@ import {
   embed,
   enumSelect,
   note,
+  removeButton,
   row,
   type Scope,
   section,
@@ -124,7 +125,7 @@ function linkedGroup(scope: Scope, group: any): HTMLElement {
     if (group.linkedLayers.size > 0) {
       host.replaceChildren(
         ...[...group.linkedLayers].map((other: any) =>
-          el("span", { class: "ins-chip" }, other.managedLayer.name, button("×", () => group.getGroup(other).isolate(), "Unlink this layer", "icon ins-remove")),
+          el("span", { class: "ins-chip" }, other.managedLayer.name, removeButton("Unlink this layer", () => group.getGroup(other).isolate())),
         ),
         button("Unlink all", () => group.isolate()),
       );

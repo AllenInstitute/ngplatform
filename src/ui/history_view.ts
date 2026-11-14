@@ -15,7 +15,7 @@
  * closes the view.
  */
 import type { HistoryNode } from "../core/history.js";
-import { h } from "./dom.js";
+import { h, icon } from "./dom.js";
 import { closeMenu } from "./overlays.js";
 
 export type ViewRow =
@@ -134,7 +134,8 @@ export function showHistoryView(anchor: HTMLElement, source: HistorySource): voi
               title: row.branches === 1 ? "Changes made from the state below after going back to it" : `${row.branches} branches made from the state below after going back to it`,
               onclick: () => toggle(row.at),
             },
-            h("span", { class: "history-label" }, `${row.open ? "▾" : "↳"} ${row.count} other change${row.count === 1 ? "" : "s"}`),
+            h("span", { class: "history-mark" }, icon(row.open ? "chevron-down" : "corner-down-right")),
+            h("span", { class: "history-label" }, `${row.count} other change${row.count === 1 ? "" : "s"}`),
           );
         }
         const n = row.node;
@@ -156,7 +157,7 @@ export function showHistoryView(anchor: HTMLElement, source: HistorySource): voi
               if (n.state !== "current") source.goToNode(n.id);
             },
           },
-          h("span", { class: "history-mark", "aria-hidden": "true" }, n.state === "current" ? "●" : ""),
+          h("span", { class: "history-mark" }, n.state === "current" ? icon("dot") : null),
           h("span", { class: "history-label" }, text, datasets.length > 0 ? h("span", { class: "history-datasets" }, ` · ${datasets.join(", ")}`) : null),
           h("span", { class: "menu-detail" }, when(n.time)),
         );

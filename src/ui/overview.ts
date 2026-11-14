@@ -10,7 +10,7 @@ import type { DatasetRecord } from "../core/workspace.js";
 import type { OverviewStatus } from "../virtual/images/nifti.js";
 import { DEFAULT_SETTINGS, listOverviews, type OverviewSettings, readSettings, removeOverviews, writeSettings } from "../virtual/images/overview_cache.js";
 import { exportKind } from "../virtual/out/kinds.js";
-import { clear, h } from "./dom.js";
+import { clear, h, icon } from "./dom.js";
 import { offer, toast } from "./overlays.js";
 import type { Workbench } from "./workbench.js";
 
@@ -116,7 +116,7 @@ export function renderOverviewSettings(host: HTMLElement, wb: Workbench): void {
       ...all.flatMap((o) => [
         h("span", { class: "name", title: o.lastModified ? `last changed ${new Date(o.lastModified).toLocaleString()}` : "" }, o.name),
         h("span", { class: "num", title: "The file's size" }, o.size ? sizeText(o.size) : ""),
-        h("span", { class: "num", title: o.built ? "Built: every level it keeps" : "Kept as viewed" }, `${sizeText(o.bytes)}${o.built ? " ✓" : ""}`),
+        h("span", { class: "num", title: o.built ? "Built: every level it keeps" : "Kept as viewed" }, sizeText(o.bytes), o.built ? builtMark() : null),
         h("button", { class: "btn outline small", type: "button", onclick: () => void clearOne(o.dir, o.name, o.size, o.lastModified) }, "Clear"),
       ]),
     );
@@ -166,4 +166,14 @@ export function renderOverviewSettings(host: HTMLElement, wb: Workbench): void {
     totalGB.value = String(s.totalGB);
   });
   void refresh();
+}
+
+/** A tick after the size of an image whose every level is built, named for a screen reader. */
+function builtMark(): SVGSVGElement {
+  const tick = icon("check");
+  tick.removeAttribute("aria-hidden");
+  tick.setAttribute("role", "img");
+  tick.setAttribute("aria-label", "built");
+  tick.classList.add("inline-icon");
+  return tick;
 }
