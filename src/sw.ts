@@ -47,7 +47,7 @@ const VERSION = typeof __SW_VERSION__ === "string" ? __SW_VERSION__ : "dev";
 /** The app's page and startup files, relative to the scope (none from the dev server). */
 declare const __SW_PRECACHE__: string[];
 const PRECACHE = typeof __SW_PRECACHE__ === "object" ? __SW_PRECACHE__ : [];
-const SHELL = cacheName(VERSION);
+const SHELL = cacheName(VERSION, self.registration.scope);
 
 const PREFIXES = prefixesOf(self.registration.scope);
 const PREFIX = PREFIXES.local;
@@ -76,8 +76,8 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) =>
   event.waitUntil(
     (async () => {
-      // The caches of older versions of this worker go; others' are left alone.
-      for (const name of staleCaches(await caches.keys(), VERSION)) await caches.delete(name);
+      // The caches of older versions of this folder's worker go; others' (another folder's app) are left alone.
+      for (const name of staleCaches(await caches.keys(), VERSION, self.registration.scope)) await caches.delete(name);
       await self.clients.claim();
       for (const client of await self.clients.matchAll({ type: "window" })) client.postMessage({ type: "sw-version", version: VERSION });
     })(),
