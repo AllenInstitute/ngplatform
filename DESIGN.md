@@ -165,8 +165,11 @@ components:
     backgroundColor: "{colors.surface-overlay}"
     rounded: "{rounded.none}"
   selected-row:
-    backgroundColor: "{colors.select-soft}"
+    outline: "1px {colors.text}"
     textColor: "{colors.text-strong}"
+  active-item:
+    backgroundColor: "{colors.accent}"
+    textColor: "{colors.accent-ink}"
   layer-chip:
     textColor: "{colors.text}"
     rounded: "{rounded.none}"
@@ -229,11 +232,12 @@ Black and white at a few opacities; one red; colour belongs to the data.
 - **Overlay** (#141414): what floats: menus, the command palette, sheets, toasts, tips, a view's floating card.
 - **Lines** (white 10 % between parts, 20 % a control's or a section's edge, 36 % under the pointer, 92 % a field with the focus).
 - **Text** (white 92 %), **Strong** (#fff), **Muted** (64 %), **Faint** (46 %, 4.6:1 on black): labels are muted, hints and disabled words faint.
-- **Hover** (white 6 %), **Pressed** (10 %), **Selected row** (8 %, with the strong text), **Selected text** (30 %).
+- **Hover** (white 6 %), **Pressed** (10 %), **Selected text** (30 %). A selected row is not a tint (see Chosen and on).
 
 ### Chosen and on
 - **Inverted** (#ebebeb fill, black words): the chosen tab, the pressed segment or toggle, the primary button, a switch that is on (its knob black). Tick boxes and sliders are the browser's own, in this white.
-- **Outlined** (1 px white): the scene shown, the focused view's frame, a field with the focus.
+- **Outlined** (1 px white): the scene shown, the focused view's frame, a field with the focus, a **selected row** (the layer selected, a menu's current item: a 1 px outline in the text's colour, no fill, its words in the strong text).
+- **Active item** (inverted): the row the keyboard is on in a menu or the command palette (the palette's row under the pointer too); under the pointer a menu's item takes only the hover tint.
 - **Focus**: a 1 px white outline, 2 px out.
 
 ### Error
@@ -257,7 +261,7 @@ Neuroglancer's own parts over and in the views, in this system.
 The dark set mirrored (`colors-light`, `:root[data-theme="light"]` in `src/ui/styles.css`): what is white at an opacity in the dark is black at about the same one in the light.
 - **White** (#fff, ink-0 … ink-card) for panels, wells and bars; **Overlay** (#f4f4f4) for what floats, with its 1 px line-strong edge and a lighter shadow.
 - **Text** black 88 %, **Muted** 62 %, **Faint** 56 % (not 46 %: black at 46 % is 3.4:1 on white). Every level at least 4.8:1 on white and on the overlay grey: text 16.5 and 15.3, muted 6.2 and 6.0, faint 4.95 and 4.85.
-- **Lines** black 10, 20 and 36 %, the focus's field 88 %; **Hover** 6 %, **Pressed** 10 %, **Selected row** 8 %, **Selected text** 22 %.
+- **Lines** black 10, 20 and 36 %, the focus's field 88 %; **Hover** 6 %, **Pressed** 10 %, **Selected text** 22 %; a selected row a 1 px black-88 % outline.
 - **Inverted** is a black fill (#141414) with white words; **Outlined** a 1 px black line; **Focus** a 1 px black outline, 2 px out.
 - **Error red** a step darker, #c53929: 5.3:1 on white, 4.8:1 on the overlay grey (#db4437 there would be 4.3 and 3.9). In the dark #db4437 is 4.9:1 on black and 4.3:1 on the overlay grey.
 - Scrollbars, the caret, placeholders, ranges and tick boxes follow (the browser draws them in the light scheme, in the accent).
@@ -300,6 +304,13 @@ in sheets (28 px); a container sets the height, a button never does. A
 pointer target is never less than 24 px (WCAG 2.5.8), whatever is drawn.
 Every panel works at phone width with no sideways scroll.
 
+The left column has one inset: its content 12 px in from either side, so
+every row starts on one left edge and ends on one right edge, and one
+nested step of 12 px (a dataset's settings and its views, a card's body).
+A row that can be selected spans the column (its outline edge to edge),
+its content on the 12 px edge. Cards and the plugins there are open at
+their sides: lines above and below, not boxes.
+
 ## Elevation & Depth
 
 Flat: parts sit side by side on black, divided by 1 px lines. Only what
@@ -329,7 +340,11 @@ sheets alike. The one round shape is the on/off switch.
 - **On/off**: a round switch, a quiet track off, white on; a tick box (the browser's own, white) where a list of options each turn on.
 - **Cards**: a 1 px line around a head and its body, both black; a closed card is its head.
 - **Layer chips**: a layer's number (Neuroglancer's, in draw order) in a small square, mono: white while shown, faint while hidden.
-- **Selection**: the white 8 % tint and the strong text; no bar down the left.
+- **Layer rows**: the chip and the name, then the layer's kind (image, segmentation, vectors…; "local" before it for data on this computer) in the muted mono caption, right-aligned before the row's icons.
+- **Layer source**: the source line sits above the layer's tabs, and Neuroglancer's Source tab was folded into Details beneath it before this redesign; kept, because a layer's source is what the layer is, so it shows whichever tab is open, while its rarely changed parts (subsources, transforms) stay folded.
+- **Segmented controls**: joined buttons sharing their edges, the chosen one inverted (Min-Max, 1-99% and 5-95%: the preset that applies, while the range is the one it found).
+- **Contrast** (Neuroglancer's invlerp): its colour bar in CSS (the colour map across the range; Neuroglancer draws it, and the histogram, with WebGL into the views' canvas, which does not reach the left column), the bounds as mono readouts, the histogram left to Neuroglancer.
+- **Selection**: a selected row has a 1 px outline in the text's colour and its words in the strong text, no fill and no bar down the left; the row the keyboard is on in a menu or the palette is inverted. Never a grey tint for either.
 - **Icons**: one set of line drawings (`src/sdk/icons.ts`), 16 px with a 1 px line; inside a line of text, at the text's size. Never a character (×, ⋯, ▸, ✓) in an icon's place; an icon-only button has a name.
 - **Browser surfaces**: selected text on white 30 % (black 22 % in the light); a caret in the strong text; thin scrollbars with a 36 % thumb; placeholders a quieter text; ranges and tick boxes the browser's own in the accent.
 - **Shader editor** (CodeMirror): greyscale in both themes, the syntax told by weight and opacity, not hue: keywords and types in the strong text at 600, names and numbers in the text, punctuation muted, comments faint, an error red; selected text and the matching bracket in the selection tints.
@@ -341,7 +356,7 @@ sheets alike. The one round shape is the on/off switch.
 - **Do** use the tokens in `src/ui/styles.css`; `npm run ui:audit` counts font sizes, button styles, radii and inline styles against `plans/ui-audit-baseline.json`.
 - **Don't** add a hue to the chrome, a grey fill to tell parts apart, a gradient or a rounded card; the light theme is the dark one mirrored, not a look of its own.
 - **Don't** colour what is drawn over the views with fixed values: read the view's ink (`viewInk()`, the `--view-ink-*` tokens), so it reads on either ground.
-- **Don't** use green, or any colour, for on or selected: invert or outline in white.
+- **Don't** use green, any colour, or a grey tint for on or selected: invert or outline in white.
 - **Don't** put a character where an icon belongs, or a coloured bar down the side of a selected row.
 - **Don't** animate for decoration: motion only shows a change of state, briefly.
 - **Don't** add a type size, a radius or a control height outside the scales.

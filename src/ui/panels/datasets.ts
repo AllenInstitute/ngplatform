@@ -65,8 +65,24 @@ interface Row {
   sub: string;
   /** Its (first) layer's number in the scene, as Neuroglancer numbers layers (1, 2, … in draw order). */
   number: number | undefined;
-  views: { name: string; number: number | undefined; visible: boolean; selected: boolean; status: Status; where: string }[];
+  /** What kind of data its layer shows ("image", "segmentation", "vectors", …), with "local" before it for data on this computer. */
+  kind: string;
+  views: { name: string; number: number | undefined; visible: boolean; selected: boolean; status: Status; kind: string }[];
 }
+
+/**
+ * The kind of data a layer shows, as its tag on the row: Neuroglancer's
+ * layer type, "vectors" for a Zarr Vectors store; nothing for a layer not
+ * yet typed.
+ */
+export function layerKind(layer: Pick<LayerInfo, "type" | "sources"> | undefined): string {
+  if (layer === undefined) return "";
+  if (layer.sources.some((s) => /zarr-?vectors/i.test(s))) return "vectors";
+  return layer.type === "new" || layer.type === "auto" ? "" : layer.type;
+}
+
+/** A row's tag: the layer's kind, after "local" for data on this computer. */
+const kindTag = (where: string, kind: string) => [where.toLowerCase(), kind].filter(Boolean).join(" ");
 
 /** A layer's number, as Neuroglancer's layer bar shows it: a small square, white while the layer is shown. */
 const layerChip = (n: number | undefined) => (n === undefined ? null : h("span", { class: "layer-chip", "aria-hidden": "true" }, String(n)));
@@ -152,10 +168,11 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
         url,
         sub: layers[0]?.error ?? sourceName(url),
         number: numberOf.get(entry.layers[0]),
+        kind: kindTag(where(url), layerKind(layers[0])),
         views:
           entry.layers.length <= 1
             ? []
-            : layers.map((layer) => ({ name: layer.name, number: numberOf.get(layer.name), visible: layer.visible, selected: layer.name === selected, status: statusOf([layer]), where: where(layer.sources[0] ?? "") })),
+            : layers.map((layer) => ({ name: layer.name, number: numberOf.get(layer.name), visible: layer.visible, selected: layer.name === selected, status: statusOf([layer]), kind: kindTag(where(layer.sources[0] ?? ""), layerKind(layer)) })),
       };
     });
   };
@@ -362,7 +379,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
       arrow,
       shown,
       h("span", { class: "ds-name-cell" }, layerChip(row.number), h("span", { class: "ds-name" }, row.name), statusDot(row.status)),
-      h("span", { class: "type" }, row.where),
+      h("span", { class: "layer-kind" }, row.kind),
       focusKey(
         iconButton("more", "More actions", (e) => {
           e.stopPropagation();
@@ -392,7 +409,7 @@ export function renderDatasetsPanel(host: HTMLElement, wb: Workbench): () => voi
             },
             viewShown,
             h("span", { class: "ds-name-cell" }, layerChip(view.number), h("span", { class: "ds-name" }, view.name), statusDot(view.status)),
-            h("span", { class: "type" }, view.where),
+            h("span", { class: "layer-kind" }, view.kind),
           ),
           `view:${view.name}`,
         );

@@ -30,7 +30,7 @@ const STYLE = `
 .at-item:focus-visible > .at-node { outline: 2px solid var(--accent); outline-offset: -2px; }
 .at-node { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-1) var(--sp-3) var(--sp-1) 0; cursor: pointer; white-space: nowrap; }
 .at-node:hover { background: var(--hover); }
-.at-item[aria-selected="true"] > .at-node { background: var(--select-soft); }
+.at-item[aria-selected="true"] > .at-node { box-shadow: inset 0 0 0 1px var(--text); }
 .at-item.at-match > .at-node .at-name { font-weight: 600; }
 .at-caret { display: inline-grid; place-items: center; width: 16px; height: 16px; flex: none; color: var(--faint); }
 .at-caret svg { width: 16px; height: 16px; }

@@ -102,17 +102,32 @@ export class LevelChip {
   /** "≈" while the level is worked out rather than read. */
   private readonly approx = el("span", { class: "scale-nav-approx" });
   private readonly index = readout("");
+  private readonly dot = el("span", { class: "scale-nav-dot", "aria-hidden": "true" }, " · ");
   private readonly size = readout("");
   private key = "";
 
   constructor() {
-    this.element.append(this.approx, el("span", { class: "status-label" }, "level"), " ", this.index, el("span", { class: "scale-nav-dot", "aria-hidden": "true" }, " · "), this.size);
+    this.element.append(this.approx, el("span", { class: "status-label" }, "level"), " ", this.index, this.dot, this.size);
+  }
+
+  /** A layer whose levels are not known yet (no section has drawn it, and it is not drawn in one now): a dash, so the chip keeps its place. */
+  unknown(layer: string): void {
+    const key = `unknown:${layer}`;
+    if (key === this.key) return;
+    this.key = key;
+    this.approx.textContent = "";
+    this.index.set("–");
+    this.dot.hidden = true;
+    this.size.hidden = true;
+    this.element.title = `The levels of ${layer}'s pyramid are not known yet: they are read once a section draws it.`;
   }
 
   set(level: LevelShown): void {
     const key = JSON.stringify(level);
     if (key === this.key) return;
     this.key = key;
+    this.dot.hidden = false;
+    this.size.hidden = false;
     this.approx.textContent = level.estimated ? "≈ " : "";
     this.index.set(`${level.index}/${level.count}`);
     const { value, unit } = lengthText(level.voxel);

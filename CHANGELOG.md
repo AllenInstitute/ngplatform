@@ -40,11 +40,36 @@ The production polish: the work of an audit of every panel and plugin
   Pro, tabular digits, the unit quiet. A layer's source in the Layers panel
   is a compact line (the store's name, where it is beneath) with copy and
   edit buttons, the whole address in the box while editing.
-- What is selected in a list is a tint and strong text, no bar down the left; one
+- What is selected in a list is outlined in 1 px of the text's colour, its
+  words strong, no fill and no bar down the left; the item the keyboard is
+  on in a menu, and the palette's highlighted command, are inverted. One
   floating style (`float-surface`) for menus, the palette, toasts and tips;
   motion tokens, none with reduced motion; one 16 px icon set in place of
   characters (×, ▸, ✓); selected text, scrollbars and number fields in the
   app's greys.
+
+### The review's fixes
+
+- The left column on one inset: everything 12 px in from either side, one
+  step of 12 px for what is nested (a dataset's settings and views, a
+  card's body); cards and the plugins there are open at their sides.
+- A layer's row tags its kind (`image`, `segmentation`, `vectors`) in the
+  muted mono face; labels in the inspector wrap rather than being cut.
+- The contrast control: its colour bar drawn in CSS from the colour map and
+  range (Neuroglancer draws it in the views' canvas, which the left column
+  is not over), the bounds as readouts, Min-Max, 1-99% and 5-95% as one
+  segmented control with the preset that set the range inverted.
+- A resolution histogram not drawn says so in the theme's words, the
+  target's line kept off them.
+- No title over the tools' tabs; the palette names each group once, above
+  its commands, in sentence case; links and menu items that open a new tab
+  end in the external-link icon instead of ↗.
+- The status line: "Undo history for this link restored" on opening a link
+  whose history was kept; messages that are not errors fade from the line
+  after a few seconds; the level chip stays in every layout, the 3-D view
+  alone included; the pointer's position after the position bar has units.
+- At phone width nothing scrolls sideways: Open is its icon, GitHub is in
+  the Help menu, the scene's tab shrinks, and the level chip stays whole.
 
 ### A light theme
 

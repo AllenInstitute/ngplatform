@@ -51,8 +51,10 @@ levels (`s0`, `0`…). It is read from what Neuroglancer drew in the
 sections in its last frame, as **Resolution (slice)** in the layer's
 Rendering tab shows it; while a finer level is still loading, the tooltip
 says which. When no section draws the layer (the 3-D layout, which shows
-no sections), the level is worked out from the zoom as Neuroglancer would
-choose it, and marked `≈`.
+no sections, or volume rendering), the level is worked out from the zoom
+as Neuroglancer would choose it, and marked `≈`, from the levels last read;
+until any have been read, the chip shows `level –`. The chip stays in
+every layout and is never cut short.
 
 ## Zoom boxes
 

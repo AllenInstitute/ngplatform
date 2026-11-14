@@ -55,7 +55,9 @@
   /* Hover and pressed: white layers over whatever is beneath. */
   --state-hover: rgba(255, 255, 255, 0.06);
   --state-press: rgba(255, 255, 255, 0.10);
-  /* What is selected in a list: a white tint and the strong text. */
+  /* What is selected in a list: a 1 px outline in the text's colour and the strong text,
+     no fill (--select-soft is left for CodeMirror's matching bracket).  The row the keyboard
+     is on in a menu or the palette is inverted (--accent, --accent-ink). */
   --select: #fff;
   --select-strong: #fff;
   --select-soft: rgba(255, 255, 255, 0.08);
@@ -443,6 +445,9 @@ a.btn { text-decoration: none; }
 /* The Activity line: the running job, else the last message, also while the dock is collapsed */
 .dock-status { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; border: 0; background: transparent; color: var(--muted); font: var(--fs-body) var(--ui); font-variant-numeric: tabular-nums; padding: 0 var(--sp-4); cursor: pointer; }
 .dock-status.err { color: var(--err); }
+/* A message that is not an error fades from the line after a few seconds (src/ui/shell.ts); it stays in Activity. */
+.dock-status { transition: opacity var(--t) var(--ease-out); }
+.dock-status.fading { opacity: 0; }
 .dock-status:empty { visibility: hidden; }
 .dock.collapsed .dock-status { display: block; }
 /* Open, the dock shows the jobs and the log themselves */
@@ -585,6 +590,9 @@ kbd {
 .dock-left > .dock-head .tab:not([aria-selected="true"]) { color: var(--faint); }
 .dock-body { flex: 1; overflow: auto; min-height: 0; }
 .dock-pane { padding: var(--sp-5); min-height: 100%; box-sizing: border-box; }
+/* The left column: its content 12 px in from either side (one left and one right edge for
+   every row), and one nested step of 12 px (a dataset's settings, its views). */
+.side .dock-head { padding-left: var(--sp-5); padding-right: var(--sp-5); }
 .dock.collapsed .dock-body, .dock.collapsed .dock-tabs { display: none; }
 .dock.collapsed .dock-head { flex-direction: column; height: auto; padding: var(--sp-3) 0; border: 0; }
 .rail-title {
@@ -594,11 +602,9 @@ kbd {
 .dock.collapsed .rail-title { display: block; }
 /* The Tools section's head: its name, then its row of tabs, also folded; its chevron points right while folded. */
 .dock-tools.collapsed .dock-tabs { display: flex; }
-.dock-tools.collapsed .dock-head { flex-direction: row; padding: 5px var(--sp-2) 0 var(--sp-3); border-bottom: 0; }
-.dock-tools .rail-title, .dock-tools.collapsed .rail-title {
-  display: block; order: -1; writing-mode: horizontal-tb; transform: none; margin: 0 var(--sp-3) 0 var(--sp-1);
-  font-size: var(--fs-caption); line-height: var(--ctl-h); text-transform: uppercase; letter-spacing: var(--label-spacing); color: var(--muted);
-}
+.dock-tools.collapsed .dock-head { flex-direction: row; padding: 5px var(--sp-5) 0; border-bottom: 0; }
+/* Its tabs name themselves: no title over them (the section and its tab list are named "Tools" for a screen reader). */
+.dock-tools .rail-title, .dock-tools.collapsed .rail-title { display: none; }
 .dock-tools .dock-toggle svg { transition: transform var(--t-fast) var(--ease-out); }
 .dock-tools.collapsed .dock-toggle svg { transform: rotate(-90deg); }
 
@@ -648,6 +654,12 @@ kbd {
 /* Where a dataset is (gs, s3, local): small capitals. */
 .type { font: var(--fs-caption)/1 var(--ui); text-transform: uppercase; letter-spacing: var(--label-spacing); color: var(--muted); white-space: nowrap; }
 
+/* A layer's kind (image, segmentation, vectors…) on its row: muted, in the mono face, before its icons. */
+.layer-kind { font: var(--fs-caption)/1.2 var(--mono); color: var(--muted); white-space: nowrap; justify-self: end; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+/* The name first: as wide as it is (cut short only past the row), the kind in what is left. */
+.layers-list .ds-row.card-row { grid-template-columns: auto auto minmax(0, max-content) minmax(0, 1fr) auto; }
+.layers-list .layer-row { grid-template-columns: auto minmax(0, max-content) minmax(0, 1fr); }
+
 /* dataset and scene rows */
 .datasets { display: grid; gap: var(--sp-2); }
 .ds-row {
@@ -656,8 +668,8 @@ kbd {
   background: transparent; text-align: left; width: 100%; box-sizing: border-box; color: inherit;
 }
 .ds-row:hover { background: var(--hover); }
-/* Selected: a tint, its name in the strong text (no bar down the left). */
-.ds-row.selected { background: var(--select-soft); }
+/* Selected: a 1 px outline in the text's colour, no fill, its name in the strong text (no bar down the left). */
+.ds-row.selected, .layer-row.selected { border-color: var(--text); }
 :is(.ds-row, .layer-row).selected .ds-name { color: var(--text-strong); }
 .ds-row .ds-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .ds-row .sub {
@@ -709,7 +721,6 @@ kbd {
   padding: var(--sp-2) var(--sp-3); border-radius: var(--r); cursor: pointer; border: 1px solid transparent; font-size: var(--fs-body);
 }
 .layer-row:hover { background: var(--hover); }
-.layer-row.selected { background: var(--select-soft); }
 .layer-row .ds-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A view's tick box keeps its row as low as the name beside it. */
 .layer-row .choice { min-height: 0; }
@@ -755,15 +766,21 @@ kbd {
 
 /* Layers: one card per dataset, its settings (the layer's sections) inside it while open, in one scrolling column */
 .dock-pane[data-tab="layers"] { display: flex; flex-direction: column; padding: 0; height: 100%; }
-.layers-list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: var(--sp-4) var(--sp-5); }
-.layers-list .panel-actions { justify-content: space-between; align-items: center; margin-bottom: var(--sp-2); }
+.layers-list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: var(--sp-4) 0; }
+.layers-list .panel-actions { justify-content: space-between; align-items: center; margin-bottom: var(--sp-2); padding: 0 var(--sp-5); }
+.layers-list > .note-bar, .layers-list .datasets > .empty-state { margin-inline: var(--sp-5); }
+/* A row spans the column (its outline, when selected, from edge to edge); its content 12 px in (11 and its 1 px edge). */
+.layers-list .ds-row { padding: var(--sp-2) 11px; }
+/* A dataset's views, one step in: a line down their left, their content 24 px in. */
+.layers-list .ds-layers { margin-left: var(--sp-5); padding-left: 0; }
+.layers-list .layer-row { padding: var(--sp-1) 11px var(--sp-1) 10px; }
 .layers-list .panel-actions .section-title { margin: 0; }
 .layers-list .ds-row .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Open, the card grows to hold the dataset's settings: one box, its row the head (no box of its
    own), the settings below a line, darker than the dock; the selected dataset's card with the selection's bar. */
 .ds-card { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; border-radius: var(--r); }
 .ds-card.open { background: var(--ink-1); padding-bottom: var(--sp-4); }
-.ds-card.open.selected .ds-row.card-row { background: var(--select-soft); }
+.ds-card.open.selected .ds-row.card-row { border-color: var(--text); }
 /* More room between datasets than within one: an open card stands apart from its neighbours. */
 .ds-card.open:not(:first-child) { margin-top: var(--sp-3); }
 .ds-card.open:not(:last-child) { margin-bottom: var(--sp-3); }
@@ -775,7 +792,7 @@ kbd {
 .ds-expand[aria-expanded="true"]::before { transform: rotate(45deg); }
 .ds-expand:hover { background: var(--hover); }
 /* Each level as wide as the panel, no wider: the controls shrink with it. */
-.ds-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-4); padding: var(--sp-2) var(--sp-4) 0; border-top: 1px solid var(--line); min-width: 0; }
+.ds-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-4); padding: var(--sp-2) var(--sp-5) 0 var(--sp-7); border-top: 1px solid var(--line); min-width: 0; }
 .ds-body .layer-controls-host, .ds-body .layer-source-host { min-width: 0; }
 /* The source, part of the card itself: a band above the tabs. */
 .ds-body .layer-source-host { padding-bottom: var(--sp-4); border-bottom: 1px solid var(--line); }
@@ -791,6 +808,10 @@ kbd {
 .plugin { border: 1px solid var(--line); border-radius: var(--r); padding: var(--sp-5); display: grid; gap: var(--sp-3); }
 .plugin-desc { margin: 0; color: var(--muted); font-size: var(--fs-body); line-height: 1.45; }
 .plugin.on { border-color: var(--line-strong); }
+/* In the left column the plugins are rows divided by lines, on its two edges. */
+.side .plugin-list { gap: 0; }
+.side .plugin, .side .plugin.on { border-width: 1px 0 0; border-color: var(--line); padding: var(--sp-5) 0; }
+.side .plugin:last-child { border-bottom-width: 1px; }
 .chip.kind-datatype { color: var(--text); }
 .chip.kind-tool { color: var(--muted); }
 .switch-label { margin-left: auto; display: inline-flex; }
@@ -980,9 +1001,9 @@ textarea.py-in {
    as wide as the panel, no wider. */
 .ins-root { display: flex; flex-direction: column; min-width: 0; }
 .ins-tabs { display: flex; flex-wrap: wrap; gap: var(--sp-1); border-bottom: 1px solid var(--line); flex: none; }
-.ins-content { min-width: 0; padding: var(--sp-3) var(--sp-1) var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-2); }
+.ins-content { min-width: 0; padding: var(--sp-3) 0 var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-2); }
 .ins-content > * { min-width: 0; }
-.ins-section { border-bottom: 1px solid var(--line); padding: var(--sp-4) var(--sp-1) 10px; display: flex; flex-direction: column; gap: var(--sp-2); }
+.ins-section { border-bottom: 1px solid var(--line); padding: var(--sp-4) 0 var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-2); }
 .ins-section:last-child { border-bottom: 0; }
 .ins-section[hidden], .ins-row[hidden] { display: none; }
 .ins-section-head { display: flex; align-items: center; gap: var(--sp-4); }
@@ -996,7 +1017,8 @@ textarea.py-in {
 .ins-row.ins-wide { grid-template-columns: minmax(0, 1fr); }
 .ins-row.ins-wide > .ins-label { margin-top: var(--sp-2); }
 .ins-check-row { display: flex; align-items: center; gap: var(--sp-4); cursor: pointer; min-height: 24px; }
-.ins-label { color: var(--muted); font-size: var(--fs-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A label wraps to a second line rather than being cut short. */
+.ins-label { color: var(--muted); font-size: var(--fs-body); line-height: 1.25; overflow-wrap: break-word; min-width: 0; }
 .ins-control { min-width: 0; display: flex; align-items: center; }
 .ins-control > * { min-width: 0; }
 .ins-inline { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
@@ -1038,6 +1060,15 @@ textarea.py-in {
 .ins-render-scale .neuroglancer-render-scale-widget > canvas { filter: grayscale(1); }
 .ins-render-scale .neuroglancer-render-scale-widget-legend { width: auto; display: flex; justify-content: space-between; gap: var(--sp-4); color: var(--muted); }
 .ins-render-scale .neuroglancer-render-scale-widget-legend > div { height: auto; }
+/* Not drawn now (the layer hidden, or not in a view): only the foot of the histogram shown (the
+   levels' stubs), so neither the target's line nor Neuroglancer's own white words cross the
+   middle, and "not drawn" there in the theme's words. */
+.ins-render-scale .neuroglancer-render-scale-widget { position: relative; }
+.ins-render-scale[data-inactive] .neuroglancer-render-scale-widget > canvas { clip-path: inset(calc(100% - 4px) 1px 1px 1px); }
+.ins-render-scale[data-inactive] .neuroglancer-render-scale-widget::after {
+  content: "not drawn"; position: absolute; left: 50%; top: 20px; transform: translate(-50%, -50%); pointer-events: none;
+  padding: 0 var(--sp-3); background: var(--ink-0); color: var(--muted); font: var(--fs-caption)/18px var(--ui);
+}
 .ins-code { border: 1px solid var(--line); }
 .ins-code .CodeMirror { height: 180px; background: var(--ink-0); color: var(--text); font: var(--fs-body)/1.45 var(--mono); }
 .ins-code.tall .CodeMirror { height: 60vh; }
@@ -1070,23 +1101,37 @@ textarea.py-in {
 .ins-controls { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-2); }
 .ins-controls[hidden] { display: none; }
 .ins-control-list { display: flex; flex-direction: column; gap: var(--sp-2); }
-/* Until the histogram and the colour bar first draw, their canvases have the default 300 × 150 size and cover the range buttons below them. */
+/* Neuroglancer's contrast editor (invlerp): its colour bar and its histogram are drawn by WebGL
+   into the views' canvas, which does not reach the left column, so here the bar is drawn in CSS
+   (the colour map over the range, src/engine/inspector/shader.ts sets --ins-ramp) and the
+   histogram is left to Neuroglancer (its box, quiet).  Until they first draw, their canvases have
+   the default 300 × 150 size and would cover what is below them. */
 .ins-controls .neuroglancer-invlerp-cdfpanel,
-.ins-controls .neuroglancer-invlerp-legend-panel { overflow: hidden; border-color: var(--line); }
-/* The contrast editor's bounds as the app's number fields, and its range buttons (Min-Max, 1-99%) as outline buttons. */
-/* (Neuroglancer sizes each bound to its digits, in ch, and places the range bounds by percentages: no gaps.) */
+.ins-controls .neuroglancer-invlerp-legend-panel { overflow: hidden; border: 1px solid var(--line); box-sizing: border-box; }
+.ins-controls .neuroglancer-invlerp-legend-panel { height: 10px; background: var(--ins-ramp, linear-gradient(90deg, #000, #fff)); }
+.ins-controls .ins-histogram.no-ramp .neuroglancer-invlerp-legend-panel { display: none; }
+.ins-controls .neuroglancer-invlerp-cdfpanel { height: 40px; }
+/* The bounds as readouts in the mono face (fields still: a line under the pointer, the focus's with the focus);
+   the range's (above the histogram) in the text, the window's (its ends, below) muted.
+   (Neuroglancer sizes each bound to its digits, in ch, and places the range bounds by percentages: no gaps.) */
 .ins-root .neuroglancer-invlerp-widget-bounds { align-items: center; margin: var(--sp-1) 0; }
 .ins-root input.neuroglancer-invlerp-widget-bound {
-  height: calc(var(--ctl-h) - 2px); box-sizing: content-box; padding: 0 var(--sp-2); border: 1px solid var(--line);
-  background: var(--ink-0); color: var(--text); font: var(--fs-body) var(--mono);
+  height: 20px; box-sizing: content-box; padding: 0 var(--sp-1); border: 1px solid transparent; margin: 0 calc(-1 * var(--sp-1) - 1px);
+  background: transparent; color: var(--text); font: var(--fs-body) var(--mono); font-variant-numeric: tabular-nums;
 }
+.ins-root input.neuroglancer-invlerp-widget-bound:hover { border-color: var(--line-hover); }
+.ins-root input.neuroglancer-invlerp-widget-bound:focus { border-color: var(--line-focus); background: var(--ink-0); outline: none; }
 .ins-root input.neuroglancer-invlerp-widget-window-bound { color: var(--muted); }
-.ins-root .neuroglancer-invlerp-range-finder-button-container { gap: var(--sp-2); margin-top: var(--sp-2); }
+.ins-root .neuroglancer-invlerp-widget-range-spacer { color: var(--muted); }
+/* Min-Max, 1-99% and 5-95%: one segmented control (shared edges), the preset that applies inverted. */
+.ins-root .neuroglancer-invlerp-range-finder-button-container { display: flex; gap: 0; margin-top: var(--sp-2); }
 .ins-root .neuroglancer-invlerp-range-finder-button {
-  height: var(--ctl-h); box-sizing: border-box; margin: 0; padding: 0 var(--sp-4); border: 1px solid var(--line); border-radius: 0;
+  height: var(--ctl-h); box-sizing: border-box; margin: 0; padding: 0 var(--sp-4); border: 1px solid var(--line-strong); border-radius: 0;
   background: transparent; color: var(--text); font: var(--ctl-fs) var(--ui); cursor: pointer;
 }
-.ins-root .neuroglancer-invlerp-range-finder-button:hover { background: var(--hover); }
+.ins-root .neuroglancer-invlerp-range-finder-button + .neuroglancer-invlerp-range-finder-button { border-left: 0; }
+.ins-root .neuroglancer-invlerp-range-finder-button:hover { background: var(--hover); border-color: var(--line-hover); }
+.ins-root .neuroglancer-invlerp-range-finder-button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 
 /* Source */
 .ins-sources { display: flex; flex-direction: column; }
@@ -1239,13 +1284,21 @@ textarea.state-input.tall { min-height: 50vh; }
 .palette-input:focus-visible { outline: none; }
 /* A sheet with no control takes the keyboard itself, without a ring. */
 .sheet[tabindex="-1"]:focus { outline: none; }
-.results { list-style: none; margin: 0; padding: var(--sp-3); overflow: auto; }
+.palette-input { flex: none; }
+/* The list scrolls, never the palette (its search field stays whole). */
+.results { list-style: none; margin: 0; padding: var(--sp-3); overflow: auto; min-height: 0; }
 .result {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 var(--sp-5); align-items: center;
   padding: var(--sp-4) 10px; border-radius: var(--r); cursor: pointer;
 }
-.result[aria-selected="true"] { background: var(--hover); }
-.result .group-name { color: var(--faint); font-size: var(--fs-caption); text-transform: uppercase; letter-spacing: var(--label-spacing); margin-right: var(--sp-4); }
+.result:hover { background: var(--hover); }
+/* The highlighted row (the arrows', or under the pointer): inverted, as a chosen tab. */
+.result[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); }
+.result[aria-selected="true"] :is(.hint, kbd) { color: var(--accent-ink); }
+.result[aria-selected="true"] kbd { background: transparent; border-color: currentColor; }
+/* A group's name once, above its first command: a caption in sentence case. */
+.result-group { padding: var(--sp-4) 10px var(--sp-1); color: var(--faint); font-size: var(--fs-caption); }
+.result-group:first-child { padding-top: var(--sp-2); }
 .result .hint { grid-column: 1; color: var(--muted); font-size: var(--fs-body); }
 .result.unavailable { opacity: 0.45; }
 
@@ -1256,7 +1309,11 @@ textarea.state-input.tall { min-height: 50vh; }
   text-align: left; height: 30px; padding: 0 10px; border: 0; border-radius: 0;
   background: transparent; color: var(--text); cursor: pointer; font-size: var(--fs-control);
 }
-.menu-item:hover:not(:disabled), .menu-item:focus-visible { background: var(--hover); outline: none; }
+.menu-item:hover:not(:disabled) { background: var(--hover); }
+.menu-item:focus { outline: none; }
+/* The item the keyboard is on: inverted (under the pointer, a tint). */
+.menu-item:focus-visible { background: var(--accent); color: var(--accent-ink); }
+.menu-item:focus-visible .menu-detail { color: var(--accent-ink); }
 .menu-item:active:not(:disabled) { background: var(--state-press); }
 .menu-item:disabled { color: var(--faint); cursor: default; }
 .menu-item.danger { color: var(--err); }
@@ -1264,7 +1321,8 @@ textarea.state-input.tall { min-height: 50vh; }
 .menu-item.with-detail { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-width: 300px; }
 .menu-detail { color: var(--faint); font-variant-numeric: tabular-nums; font-size: var(--fs-body); }
 .menu-item.muted .menu-label { color: var(--faint); text-decoration: line-through; text-decoration-color: var(--swatch-line); }
-.menu-item.current { background: var(--select-soft); color: var(--text-strong); }
+.menu-item.current { box-shadow: inset 0 0 0 1px var(--text); color: var(--text-strong); }
+.menu-item.current:focus-visible { color: var(--accent-ink); }
 .menu-item.current .menu-label { font-weight: 600; }
 .menu-sep { height: 1px; background: var(--line); margin: var(--sp-2) var(--sp-1); }
 
@@ -1279,12 +1337,14 @@ textarea.state-input.tall { min-height: 50vh; }
   min-height: 28px; padding: 0 10px 0 calc(4px + var(--depth, 0) * 16px); border: 0; background: transparent;
   color: var(--text); text-align: left; font-size: var(--fs-control); cursor: pointer;
 }
-.history-row:hover, .history-row:focus-visible { background: var(--hover); outline: none; }
-.history-row:focus-visible { box-shadow: inset 0 0 0 1px var(--line-strong); }
+.history-row:hover { background: var(--hover); }
+.history-row:focus { outline: none; }
+.history-row:focus-visible { background: var(--accent); color: var(--accent-ink); }
+.history-row:focus-visible :is(.history-mark, .history-datasets, .history-label) { color: var(--accent-ink); }
 .history-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-mark { display: inline-grid; place-items: center; color: var(--accent); }
 .history-datasets { color: var(--muted); }
-.history-row.current { background: var(--select-soft); color: var(--text-strong); }
+.history-row.current { box-shadow: inset 0 0 0 1px var(--text); color: var(--text-strong); }
 .history-row.current .history-label { font-weight: 600; }
 .history-row.undone .history-label { color: var(--faint); text-decoration: line-through; text-decoration-color: var(--faint); }
 .history-row.branch .history-label { color: var(--muted); }
@@ -1335,6 +1395,13 @@ textarea.state-input.tall { min-height: 50vh; }
   .hide-phone { display: none !important; }
   .topbar { gap: var(--sp-3); padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); }
   .scene-tabs { min-width: 64px; }
+  /* The scene's tab shrinks (its name cut short) rather than being cut off. */
+  .scene-tab { flex: 0 1 auto; min-width: 48px; }
+  /* The status line: the items whole as far as they go (the breadcrumb cuts itself short at its
+     left, the level chip never), the activity message in what is left, so it is the first to go;
+     the dock's name too (its button keeps it). */
+  .status-items { max-width: none; padding: 0 var(--sp-2); }
+  .dock-bottom.collapsed .rail-title { display: none; }
   .app { --lw: 34px; }
   .resizer-left { display: none; }
   /* On a phone the open left column floats over the views instead of squeezing them. */
@@ -1566,6 +1633,11 @@ textarea.state-input.tall { min-height: 50vh; }
 /* A part with nothing in it now (a region not shown) takes no gap. */
 .stack > :empty,
 .card > .card-body > :empty { display: none; }
+/* In the left column a card is open at its sides, as a dataset's: lines above and below, its head on
+   the column's edge, its body one step (12 px) in, every row ending on the column's one right edge. */
+.side .card { border-left: 0; border-right: 0; }
+.side .card > .card-head { padding: var(--sp-4) 0; }
+.side .card > .card-body { padding: var(--sp-5) 0 var(--sp-5) var(--sp-5); }
 .grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-4); }
 .muted { color: var(--muted); }
 .faint { color: var(--faint); }
@@ -1597,14 +1669,21 @@ textarea.state-input.tall { min-height: 50vh; }
 .engine .neuroglancer-position-dimension + .neuroglancer-position-dimension { margin-left: var(--sp-5); }
 .engine :is(.neuroglancer-position-dimension:focus-within, .neuroglancer-position-dimension[data-dropdown-visible="true"]) { border-color: var(--line-focus); background: var(--ink-0); }
 .engine :is(.neuroglancer-dimension-dropdown-coordinate-label, .neuroglancer-position-dimension-coordinate-label) { color: var(--muted); }
-/* The pointer's position after it (one line of text, names and values together): a readout, quieter than the view's. */
-.engine .neuroglancer-mouse-position-widget { margin-left: var(--sp-6); font: var(--fs-body)/1.7 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+/* The pointer's position after it: Neuroglancer's line of text (names and values, no units) is
+   hidden and followed by readouts with units (src/ui/pointer_readout.ts), after a 1 px line;
+   quieter than the view's position. */
+.engine .neuroglancer-mouse-position-widget { display: none; }
+.engine .pointer-readout { display: flex; align-items: center; gap: var(--sp-5); margin-left: var(--sp-5); padding-left: var(--sp-5); border-left: 1px solid var(--line-strong); font: var(--fs-body)/1.7 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+.engine .pointer-readout:empty { display: none; }
+.engine .pointer-name { color: var(--faint); }
+.engine .pointer-readout .readout-unit { color: var(--faint); }
 .engine .neuroglancer-dimension-dropdown-coordinate-entry:hover { background: var(--hover); }
 
 /* A layer's data source, compact (src/engine/inspector/source.ts): the store's name, under it
    where it is (quiet) and the path between, cut short at its start; copy and edit beside it. */
 .source-line { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: start; gap: 0 var(--sp-1); }
-.source-text { display: grid; min-width: 0; padding: var(--sp-1) var(--sp-2); border: 1px solid transparent; cursor: text; }
+/* Its words on the column's edge, its box (shown under the pointer) out beyond it. */
+.source-text { display: grid; min-width: 0; padding: var(--sp-1) var(--sp-2); margin-left: calc(-1 * var(--sp-2) - 1px); border: 1px solid transparent; cursor: text; }
 .source-text:hover { border-color: var(--line-hover); background: var(--ink-0); }
 .source-name { font: var(--fs-body)/1.5 var(--mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .source-at { display: flex; min-width: 0; font: var(--fs-caption)/1.4 var(--mono); color: var(--muted); white-space: nowrap; }

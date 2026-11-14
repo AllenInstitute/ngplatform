@@ -18,7 +18,7 @@ export const STYLE = `
 .an-table .num { text-align: right; font-family: var(--mono); font-size: var(--fs-caption); white-space: nowrap; overflow-wrap: normal; }
 .an-click { cursor: pointer; }
 .an-click:hover td { background: var(--hover); }
-.an-current td { background: var(--select-soft); }
+.an-current { outline: 1px solid var(--text); outline-offset: -1px; }
 .an-results { display: grid; gap: var(--sp-3); }
 .an-result { border: 1px solid var(--line); padding: var(--sp-3) var(--sp-4); display: grid; gap: var(--sp-2); }
 .an-result-head { display: grid; gap: var(--sp-1); font-size: var(--fs-body); }

@@ -21,6 +21,9 @@ export const STYLE = `
 .status-item .scale-nav-crumb:hover { background: var(--hover); color: var(--text-strong); }
 .status-item .scale-nav-crumb:focus-visible { outline: 1px solid var(--focus); outline-offset: -2px; }
 .status-item .scale-nav-level { display: block; white-space: nowrap; }
+/* The level chip is never cut: the breadcrumb and the activity message give way first. */
+.status-item:has(> .scale-nav-level) { flex: none; }
+.status-item > .scale-nav-level { overflow: visible; }
 .scale-nav-approx { color: var(--muted); }
 .scale-nav-dot { color: var(--faint); white-space: pre; }
 `;

@@ -9,6 +9,7 @@ related_targets: ["src/ui/docks.ts"]
 
 Mode: Operate (researchers exploring large brain data; views first).
 Scope: layout of the workspace window, tools that work inside Neuroglancer's 2-D and 3-D views, Cinematic Anatomy-style view aids, and a HiP-CT scale navigator. Additive to Neuroglancer only: DOM overlays, event listeners in front of its panels, render layers through the existing draw3d hook and state patches; no change to Neuroglancer's own code or behaviour. Visual system: DESIGN.md ("The Instrument Panel"), extended in this redesign (user, 2026-11-14): Neuroglancer's chrome brought into the system, a data palette, a readout style for values, one floating-surface style, motion tokens, one icon set.
+Reference: the approved target panel (user, 2026-11-14), its "Rebuilt" column and the states grid: /tmp/claude-1001/-home-andrew/2aa6762a-0d90-42de-ac9e-0f202a8d1010/scratchpad/ngp/system/design-systems-2.png; its CSS values in compare2.html beside it.
 
 ## Direction contract
 

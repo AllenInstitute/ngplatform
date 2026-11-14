@@ -3,6 +3,7 @@ import { keyLabel as platformKeyLabel } from "../core/keybindings.js";
 
 /** `h` is the shell's name for the SDK's `el`. */
 export { type Attrs, append, clear, el as h, icon, iconButton } from "../sdk/dom.js";
+import { type Attrs, el as h, icon } from "../sdk/dom.js";
 
 /** The platform's mark: three axes in direction-encoded colour (x, y, z). */
 export function mark(): SVGSVGElement {
@@ -27,6 +28,16 @@ export function mark(): SVGSVGElement {
     svg.append(path);
   }
   return svg;
+}
+
+/**
+ * A link that opens in a new tab: its words, then the external-link line
+ * icon at the text's size (never a character such as ↗ in its place).
+ */
+export function externalLink(href: string, text: string, attrs: Attrs = {}): HTMLAnchorElement {
+  const mark = icon("external");
+  mark.classList.add("inline-icon");
+  return h("a", { href, target: "_blank", rel: "noopener noreferrer", title: "Opens in a new tab", ...attrs }, text, " ", mark) as HTMLAnchorElement;
 }
 
 export function isMac(): boolean {

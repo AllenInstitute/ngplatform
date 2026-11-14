@@ -134,15 +134,20 @@ class ScaleNavigator {
     if (viewer.layerBounds === undefined) return [];
     const { scales } = dimensionsOf(this.part("dimensions"));
     const out: Volume[] = [];
-    this.levels.clear();
+    // Each layer's levels, kept while it is there: a layout without sections (the 3-D view alone,
+    // volume rendering) reads none, and the chip goes on from those last read.
+    const names = new Set(viewer.layers().map((l) => l.name));
+    for (const name of [...this.levels.keys()]) if (!names.has(name)) this.levels.delete(name);
     for (const layer of viewer.layers()) {
       if (layer.type !== "image") continue;
       const b = viewer.layerBounds(layer.name);
       if (b === undefined || !Number.isFinite(voxelOf(b))) continue;
-      this.levels.set(
-        layer.name,
-        b.levels.map((l) => l.voxelSize),
-      );
+      if (b.levels.length > 0) {
+        this.levels.set(
+          layer.name,
+          b.levels.map((l) => l.voxelSize),
+        );
+      }
       out.push({ name: layer.name, lower: b.lower, upper: b.upper, voxelSize: b.voxelSize, step: b.voxelSize.map((v, g) => v / scales[g]), visible: layer.visible });
     }
     return out;
@@ -192,14 +197,17 @@ class ScaleNavigator {
     return this.volumes.find((v) => v.name === selected) ?? [...this.chain].reverse().find((v) => v.visible);
   }
 
+  /** The chip, in every layout while an image layer is there: its level, or a dash while its levels are not known yet. */
   private showLevel(): void {
-    const shown = this.level();
-    if (shown === undefined) {
+    const layer = this.levelLayer();
+    if (layer === undefined) {
       this.chipItem?.();
       this.chipItem = undefined;
       return;
     }
-    this.chip.set(shown);
+    const shown = this.level();
+    if (shown === undefined) this.chip.unknown(layer.name);
+    else this.chip.set(shown);
     this.chipItem ??= this.ctx.ui.statusItem(this.chip.element, { order: 51, label: "Pyramid level" });
   }
 

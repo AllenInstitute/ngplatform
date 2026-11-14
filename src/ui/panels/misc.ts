@@ -3,7 +3,7 @@ import type { LocalPlugins, UrlPluginOffer } from "../../platform/local_plugins.
 import type { Manifest } from "../../sdk/types.js";
 import { bytesText } from "../../sdk/format.js";
 import type { ChunkSourceStatistics } from "../../engine/engine.js";
-import { clear, h, icon, iconButton } from "../dom.js";
+import { clear, externalLink, h, icon, iconButton } from "../dom.js";
 import { field, info, statusLine, toggle } from "../../sdk/dom.js";
 import { renderMarkdown } from "../markdown.js";
 import { closeSheet, sheet, showMenu, showSheet } from "../overlays.js";
@@ -150,7 +150,7 @@ export function showPluginInfo(manifest: Manifest): void {
         manifest.description ? h("p", { class: "lead" }, manifest.description) : h("span"),
         manifest.guide ? renderMarkdown(manifest.guide) : h("p", { class: "empty" }, "This plugin has no guide."),
         manifest.links?.length
-          ? h("ul", { class: "links" }, ...manifest.links.map((l) => h("li", {}, h("a", { href: l.url, target: "_blank", rel: "noopener" }, l.title, " ↗"))))
+          ? h("ul", { class: "links" }, ...manifest.links.map((l) => h("li", {}, externalLink(l.url, l.title))))
           : h("span"),
         h("dl", { class: "facts" }, ...facts.flatMap(([k, v]) => [h("dt", {}, k), h("dd", {}, v)])),
       ],
@@ -244,7 +244,7 @@ export function renderPluginsPanel(host: HTMLElement, wb: Workbench, local: Loca
       { label: "Folder with manifest.json…", run: () => void local.add(true) },
       { label: "From a URL…", run: () => addFromUrl(local) },
       "-",
-      { label: "How to write a plugin ↗", run: () => window.open(GUIDE, "_blank", "noopener") },
+      { label: "How to write a plugin", external: true, run: () => window.open(GUIDE, "_blank", "noopener") },
     ]),
   );
   host.append(
