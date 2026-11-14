@@ -93,6 +93,7 @@ class ViewAids {
         this.toggles.cube.set(this.saved.cube);
         this.toggles.labels.set(this.saved.labels);
         this.toggles.graphics.set(this.saved.hidden === undefined);
+        this.ctx.views.setAllHidden(this.saved.hidden !== undefined);
         this.schedule();
       }),
       ctx.viewer.onRendered(() => this.schedule()),
@@ -148,6 +149,7 @@ class ViewAids {
       this.write({ hidden: undefined });
     }
     this.toggles.graphics.set(this.saved.hidden === undefined);
+    this.ctx.views.setAllHidden(this.saved.hidden !== undefined);
   }
 
   // ---------------------------------------------------------- per frame

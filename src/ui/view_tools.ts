@@ -212,6 +212,8 @@ export class ViewTools {
   private card: { key: string; element: HTMLElement; dispose: Disposer | void } | undefined;
   private frame = 0;
   private order = 0;
+  /** Hide graphics: no shape is drawn or taken, and the card is hidden, until shown again. */
+  private hiddenAll = false;
   private readonly offs: Disposer[] = [];
 
   constructor(private readonly host: ViewToolsHost) {
@@ -258,6 +260,8 @@ export class ViewTools {
         });
       },
       lookingAt: () => this.lookingAt(),
+      setAllHidden: (hidden) => this.setAllHidden(hidden),
+      allHidden: () => this.hiddenAll,
     };
   }
 
@@ -332,6 +336,7 @@ export class ViewTools {
     element.addEventListener("pointerdown", (e) => e.stopPropagation());
     this.root().append(element);
     this.card = { key: entry.key, element, dispose: entry.shape.card(body) };
+    element.hidden = this.hiddenAll;
     // Laid out first (a shape just added has not been drawn yet), so the card is put where it does not cover it.
     this.cardPanel = undefined;
     this.draw();
@@ -401,6 +406,16 @@ export class ViewTools {
   }
 
   /** Draws again on the next animation frame (after a change of a shape, a resize). */
+  /** Hides every shape of every plugin, and the card, for a clean picture (View aids' Graphics switch), or shows them again. */
+  setAllHidden(hidden: boolean): void {
+    if (this.hiddenAll === hidden) return;
+    this.hiddenAll = hidden;
+    this.hover = undefined;
+    if (this.card !== undefined) this.card.element.hidden = hidden;
+    this.updateCursors();
+    this.redraw();
+  }
+
   redraw(): void {
     if (this.frame !== 0) return;
     this.frame = requestAnimationFrame(() => {
@@ -461,7 +476,7 @@ export class ViewTools {
       const lens = state.lens;
       if (lens === undefined) continue;
       const ink = viewInk(canvas);
-      const entries = [...this.entries.values()].sort((a, b) => (a.key === this.selectedKey ? 1 : b.key === this.selectedKey ? -1 : a.order - b.order));
+      const entries = (this.hiddenAll ? [] : [...this.entries.values()]).sort((a, b) => (a.key === this.selectedKey ? 1 : b.key === this.selectedKey ? -1 : a.order - b.order));
       for (const entry of entries) {
         if (!shows(entry.shape, lens.kind)) continue;
         const drawn = this.layout(entry, lens, entry.key === this.selectedKey);
@@ -913,6 +928,7 @@ export class ViewTools {
 
   /** What is under the mouse in a panel: a handle, or a shape's line or area. */
   private hit(state: PanelState, x: number, y: number): { drawn: Drawn; handle?: Handle; part: "handle" | "line" | "area" } | undefined {
+    if (this.hiddenAll) return undefined;
     const p: Vec2 = [x, y];
     const byOrder = [...state.drawn].sort((a, b) => (a.entry.key === this.selectedKey ? -1 : b.entry.key === this.selectedKey ? 1 : b.entry.order - a.entry.order));
     for (const d of byOrder) {

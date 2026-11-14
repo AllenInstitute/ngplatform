@@ -19,7 +19,7 @@ In the 3-D view's top right, turned as the view is. Its faces are lettered by th
 Every point annotation with a description, in the scene's visible annotation layers, is named at the 3-D view's left or right side, with a thin line to its point; the labels keep their points' order round the view so lines do not cross, and never overlap. **Labels** beside **Sections** shows or hides them. They are drawn into captures and screenshots. Points behind tissue are not greyed.
 
 ## Hide graphics
-**Graphics** beside **Sections** off hides Neuroglancer's axis lines, the data's bounding box and the scale bar, and these aids, for a clean picture; on puts back exactly what was shown.
+**Graphics** beside **Sections** off hides Neuroglancer's axis lines, the data's bounding box and the scale bar, these aids and every tool's shapes in the views (regions, cut planes, landmarks, zoom boxes), for a clean picture; on puts back exactly what was shown.
 
 ## Bookmarks
 **Bookmark this view** (below the cube, or in the command palette) keeps the camera: position, orientation, zoom, depth, the sections' scale and the layout, with a small picture. The bookmarks are a strip along the 3-D view's bottom edge: click one to fly there; right-click to rename, replace or delete it; **Play** moves through them in order. They are kept in the scene (in the link, and undone with undo).

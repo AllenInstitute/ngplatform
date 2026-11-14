@@ -427,6 +427,8 @@ export interface FakeViewTools extends ViewToolsApi {
   click(at: number[], view?: "2d" | "3d"): void;
   /** What `lookingAt()` answers; when unset, the views' centre (`options.centre`, else the origin). */
   looking: number[] | undefined;
+  /** What `setAllHidden` last set. */
+  hiddenAll: boolean;
 }
 
 /**
@@ -448,6 +450,7 @@ export function fakeViewTools(options: { centre?: () => number[] } = {}): FakeVi
   const fake: FakeViewTools = {
     shapes,
     looking: undefined,
+    hiddenAll: false,
     add(shape) {
       const id = shape.id;
       const token = {};
@@ -478,6 +481,10 @@ export function fakeViewTools(options: { centre?: () => number[] } = {}): FakeVi
       };
     },
     lookingAt: () => (fake.looking ?? options.centre?.() ?? [0, 0, 0]).slice(),
+    setAllHidden: (hidden: boolean) => {
+      fake.hiddenAll = hidden;
+    },
+    allHidden: () => fake.hiddenAll === true,
     drag(id, value, done = true) {
       const shape = shapes.get(id);
       if (shape === undefined) throw new Error(`no shape ${id}`);

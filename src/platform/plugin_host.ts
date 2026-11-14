@@ -107,6 +107,8 @@ function noViewTools(): ViewToolsApi {
     },
     pick: () => () => {},
     lookingAt: () => [0, 0, 0],
+    setAllHidden: () => {},
+    allHidden: () => false,
   };
 }
 

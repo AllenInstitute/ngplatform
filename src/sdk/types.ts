@@ -661,6 +661,13 @@ export interface ViewToolsApi {
   pick(onPick: (at: number[], view: "2d" | "3d") => void): Disposer;
   /** Where the user is looking: the place the mouse was last over in a view, while that is still in sight; else the views' centre. */
   lookingAt(): number[];
+  /**
+   * Hides every plugin's shapes and the card (they are neither drawn nor
+   * clickable) for a clean picture, or shows them again: View aids'
+   * Graphics switch.  Not saved; a plugin's own shapes stay as they are.
+   */
+  setAllHidden(hidden: boolean): void;
+  allHidden(): boolean;
 }
 
 /** One frame of the 3-D view, as a plugin draws into it. */
