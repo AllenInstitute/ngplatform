@@ -3,7 +3,7 @@
  * The shell's layout (src/ui/shell.ts) in a DOM, before it is attached to
  * an engine: the top bar, the views and the three docks are mounted with
  * their landmarks and names (one left column: the layers above the tools),
- * the docks start as they should, and the top
+ * the docks start as they should, the status line takes items, and the top
  * bar's buttons and menus (Open, Share, Capture, Settings, Help, the
  * command search) run the commands they name.  What attaching wires up
  * (the engine, plugins, keys) is the browser smoke test's
@@ -19,6 +19,7 @@ vi.hoisted(() => {
 
 import { closeMenu } from "../src/ui/overlays.js";
 import { Shell } from "../src/ui/shell.js";
+import { addStatusItem } from "../src/ui/statusbar.js";
 
 let root: HTMLElement;
 let run: ReturnType<typeof vi.fn>;
@@ -69,6 +70,17 @@ describe("layout", () => {
     expect(root.classList.contains("tools-empty")).toBe(true);
     expect(dock("bottom").classList.contains("collapsed")).toBe(true);
     expect(root.querySelector(".start-card")).toBeNull();
+  });
+
+  it("puts the status items to the right of the activity message, on the status line", () => {
+    const head = root.querySelector(".dock-bottom .dock-head")!;
+    const parts = [...head.children].map((e) => e.classList[0]);
+    expect(parts.indexOf("status-items")).toBe(parts.indexOf("dock-status") + 1);
+    const item = Object.assign(document.createElement("span"), { textContent: "S-21-46 › 20 µm" });
+    const remove = addStatusItem(item, { order: 10, label: "Scale" });
+    expect(head.querySelector(".status-items")!.contains(item)).toBe(true);
+    remove();
+    expect(head.querySelector(".status-items")!.contains(item)).toBe(false);
   });
 
   it("names every icon-only button for a screen reader", () => {

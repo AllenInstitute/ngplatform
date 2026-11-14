@@ -287,6 +287,14 @@ a.btn { text-decoration: none; }
 .dock.collapsed .dock-status { display: block; }
 /* Open, the dock shows the jobs and the log themselves */
 .dock-bottom:not(.collapsed) .dock-status { visibility: hidden; }
+/* Items on the right of the status line (src/ui/statusbar.ts): values in mono, each cut
+   short with an ellipsis once the line is full, a line between them. */
+.status-items { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; max-width: 60%; height: var(--ctl-h); overflow: hidden; padding: 0 var(--sp-4); }
+.status-items[hidden] { display: none; }
+.status-item { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; color: var(--muted); font: var(--fs-body)/var(--ctl-h) var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.status-item > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-item + .status-item { margin-left: var(--sp-5); padding-left: var(--sp-5); border-left: 1px solid var(--line-strong); }
+.status-item .status-label { font-family: var(--ui); }
 .activity-jobs:empty { display: none; }
 .activity-jobs { padding-bottom: var(--sp-3); }
 /* Settings: one section at a time */
@@ -440,7 +448,7 @@ kbd {
 /* bottom dock */
 .dock-bottom { border-top: 1px solid var(--line); height: var(--bh); }
 .dock-bottom.collapsed { height: 34px; }
-.dock-bottom.collapsed .dock-head { flex-direction: row; height: 34px; padding: 0 var(--sp-2) 0 var(--sp-3); }
+.dock-bottom.collapsed .dock-head { flex-direction: row; align-items: center; height: 34px; padding: 0 var(--sp-2) 0 var(--sp-3); }
 .dock-bottom.collapsed .rail-title { writing-mode: horizontal-tb; transform: none; margin: 0 var(--sp-4) 0 var(--sp-2); }
 .dock-bottom .rail-title { order: 0; }
 

@@ -32,7 +32,7 @@ function services() {
     views: { mount: () => () => {} },
     examples: new ExampleRegistry(),
     open: new OpenHandlerRegistry(),
-    ui: { toast: (m) => logs.push(`toast: ${m}`), confirm: async () => true, form: async () => undefined, viewToggle: () => ({ set: () => {}, dispose: () => {} }), overlay: () => ({ element: {} as HTMLElement, dispose: () => {} }), screenshotOverlay: () => () => {}, sheet: () => () => {} },
+    ui: { toast: (m) => logs.push(`toast: ${m}`), confirm: async () => true, form: async () => undefined, viewToggle: () => ({ set: () => {}, dispose: () => {} }), overlay: () => ({ element: {} as HTMLElement, dispose: () => {} }), screenshotOverlay: () => () => {}, statusItem: () => () => {}, sheet: () => () => {} },
     workspace: {} as WorkspaceApi,
     viewer: {} as ViewerApi,
     slices: {
@@ -312,5 +312,25 @@ describe("handles a plugin disposes itself", () => {
     await host.deactivate(m.id);
     // Only the overlay still held is disposed when the plugin stops.
     expect(disposed).toEqual(["overlay", "toggle", "draw3d", "overlay"]);
+  });
+  it("include the status line's items: one left when the plugin stops goes with it", async () => {
+    const { s } = services();
+    const shown: string[] = [];
+    s.ui.statusItem = (element, options) => {
+      shown.push(`${element.textContent} ${options?.order}`);
+      return () => shown.splice(shown.indexOf(`${element.textContent} ${options?.order}`), 1);
+    };
+    const host = new PluginHost(s);
+    const m: Manifest = { ...manifest, id: "org.example.scale", activation: ["onStartup"], contributes: {} };
+    host.register(m, async () => ({
+      activate(ctx) {
+        ctx.ui.statusItem({ textContent: "S-21-46 › 20 µm" } as HTMLElement, { order: 10 });
+        ctx.ui.statusItem({ textContent: "L3" } as HTMLElement, { order: 20 })();
+      },
+    }));
+    await host.activate(m.id);
+    expect(shown).toEqual(["S-21-46 › 20 µm 10"]);
+    await host.deactivate(m.id);
+    expect(shown).toEqual([]);
   });
 });

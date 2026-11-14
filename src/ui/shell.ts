@@ -50,6 +50,7 @@ import type { CatalogueEntry } from "../../plugins/index.js";
 import { registerBuiltins } from "../builtins/index.js";
 import { contextKeyFor } from "./context.js";
 import { asTool, describeSize, followDrag, type DockTab, DockManager, prefs } from "./docks.js";
+import { addStatusItem, statusItems } from "./statusbar.js";
 import { h, icon, iconButton, isMac, keyLabel, mark } from "./dom.js";
 import { closeSheet, confirmDialog, copyText, formDialog, offer, promptDialog, sheet, sheetIsOpen, showMenu, showPalette, showSheet, toast } from "./overlays.js";
 import { ActivityLog, WARNING_EVENT, warningLine } from "./panels/activity.js";
@@ -203,6 +204,8 @@ export class Shell {
     const workspace = h("div", { class: "workspace" }, side, this.docks.resizer("left"), centre);
     this.root.append(topbar, workspace, this.docks.resizer("bottom"), this.docks.element("bottom"));
     this.activityLine.addEventListener("click", () => this.docks.show("activity"));
+    // The status line: the activity message on the left, then the items plugins put there (a scale, say).
+    this.docks.addToHead("bottom", statusItems.element);
     this.docks.addToHead("bottom", this.activityLine);
     const narrow = window.matchMedia("(max-width: 520px)");
     this.docks.restore(narrow.matches);
@@ -334,6 +337,7 @@ export class Shell {
         viewToggle: (spec) => engine.viewToggle(spec),
         overlay: () => engine.addOverlay(),
         screenshotOverlay: (paint) => engine.addScreenshotOverlay(paint),
+        statusItem: (element, options) => addStatusItem(element, options),
         form: (title, schema, initial) => formDialog(title, schema, initial),
         sheet: (title, render, options) => {
           const body = h("div", { class: "plugin-sheet" });
